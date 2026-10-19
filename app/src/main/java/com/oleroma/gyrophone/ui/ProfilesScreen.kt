@@ -1,0 +1,165 @@
+package com.oleroma.gyrophone.ui
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.oleroma.gyrophone.core.model.Describe
+import com.oleroma.gyrophone.core.model.GyroMode
+import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.Mapping
+import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.TouchKind
+import com.oleroma.gyrophone.runtime.GamepadRuntime
+import java.util.UUID
+
+/** Profile list and mapping editor. Builtin profiles are duplicated before editing. */
+@Composable
+fun ProfilesScreen(runtime: GamepadRuntime) {
+    val profiles by runtime.profiles.collectAsStateWithLifecycle()
+    val active by runtime.activeProfile.collectAsStateWithLifecycle()
+    var selectedId by remember { mutableStateOf(active.id) }
+    val selected = profiles.firstOrNull { it.id == selectedId } ?: active
+
+    Row(Modifier.fillMaxSize().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        LazyColumn(Modifier.weight(0.35f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            items(profiles, key = { it.id }) { p ->
+                val marker = if (p.id == active.id) "● " else ""
+                val suffix = if (runtime.store.isBuiltin(p)) "  (built-in)" else ""
+                Text(
+                    marker + p.name + suffix,
+                    Modifier.fillMaxWidth().clickable { selectedId = p.id }.padding(8.dp),
+                    color = if (p.id == selectedId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                )
+            }
+        }
+        ProfileEditor(runtime, selected, onSelect = { selectedId = it }, modifier = Modifier.weight(0.65f))
+    }
+}
+
+@Composable
+private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (String) -> Unit, modifier: Modifier) {
+    val builtin = runtime.store.isBuiltin(profile)
+    var learning by remember { mutableStateOf(false) }
+    var pendingSource by remember { mutableStateOf<InputSource?>(null) }
+    var pickTouch by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) { onDispose { runtime.learnListener = null } }
+
+    fun edit(change: (Profile) -> Profile) {
+        val base = if (builtin) profile.copy(id = "user." + UUID.randomUUID(), name = profile.name + " (custom)") else profile
+        val updated = change(base)
+        runtime.saveProfile(updated)
+        onSelect(updated.id)
+    }
+
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(profile.name, style = MaterialTheme.typography.titleMedium)
+        if (builtin) Text("Built-in: changes are saved as a custom copy.", style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { runtime.activate(profile) }) { Text("Use") }
+            OutlinedButton(onClick = { edit { it } }) { Text("Duplicate") }
+            if (!builtin) OutlinedButton(onClick = { runtime.deleteProfile(profile) }) { Text("Delete") }
+        }
+
+        Text("Gyro to mouse", style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(GyroMode.OFF to "Off", GyroMode.ALWAYS to "Always", GyroMode.HOLD_OR_TOGGLE to "Hold / toggle button")
+                .forEach { (mode, label) ->
+                    FilterChip(selected = profile.gyro.mode == mode, onClick = {
+                        edit { it.copy(gyro = it.gyro.copy(mode = mode)) }
+                    }, label = { Text(label) })
+                }
+        }
+        var sens by remember(profile.id) { mutableStateOf(profile.gyro.sensitivity) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Sensitivity %.0f".format(sens), Modifier.padding(end = 8.dp))
+            Slider(value = sens, onValueChange = { sens = it }, valueRange = 2f..60f,
+                onValueChangeFinished = { edit { it.copy(gyro = it.gyro.copy(sensitivity = sens)) } })
+        }
+
+        HorizontalDivider()
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Mappings", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            OutlinedButton(onClick = {
+                learning = true
+                runtime.learnListener = { src -> learning = false; pendingSource = src }
+            }) { Text(if (learning) "Press a control…" else "Add from controller") }
+            OutlinedButton(onClick = { pickTouch = true }) { Text("Add from touch") }
+        }
+        LazyColumn(Modifier.heightIn(max = 600.dp)) {
+            itemsIndexed(profile.mappings) { index, m ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("${Describe.source(m.source)}  →  ${Describe.target(m.target)}", Modifier.weight(1f))
+                    TextButton(onClick = {
+                        edit { it.copy(mappings = it.mappings.filterIndexed { i, _ -> i != index }) }
+                    }) { Text("Remove") }
+                }
+            }
+        }
+    }
+
+    if (pickTouch) {
+        AlertDialog(
+            onDismissRequest = { pickTouch = false },
+            confirmButton = { TextButton(onClick = { pickTouch = false }) { Text("Cancel") } },
+            title = { Text("Touch control") },
+            text = {
+                LazyColumn {
+                    items(profile.touchControls) { c ->
+                        Text(c.label + " (" + c.id + ")", Modifier.fillMaxWidth().clickable {
+                            pickTouch = false
+                            pendingSource = if (c.kind == TouchKind.STICK) {
+                                InputSource.TouchStick(c.id, com.oleroma.gyrophone.core.model.StickAxis.X)
+                            } else InputSource.Touch(c.id)
+                        }.padding(10.dp))
+                    }
+                }
+            },
+        )
+    }
+
+    pendingSource?.let { source ->
+        AlertDialog(
+            onDismissRequest = { pendingSource = null },
+            confirmButton = { TextButton(onClick = { pendingSource = null }) { Text("Cancel") } },
+            title = { Text("Map ${Describe.source(source)} to") },
+            text = {
+                LazyColumn {
+                    items(Describe.allTargets) { target ->
+                        Text(Describe.target(target), Modifier.fillMaxWidth().clickable {
+                            pendingSource = null
+                            edit { it.copy(mappings = it.mappings + Mapping(source, target)) }
+                        }.padding(10.dp))
+                    }
+                }
+            },
+        )
+    }
+}
