@@ -17,6 +17,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /** Keeps the active output link (Bluetooth HID or Wi-Fi) and the gyro alive while the PC is connected. */
@@ -35,14 +37,16 @@ class GamepadService : Service() {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         runtime.start()
         scope.launch {
-            runtime.linkState.collect { s ->
-                val text = when (s) {
+            runtime.linkState.map { s ->
+                when (s) {
                     is LinkState.Connected -> getString(R.string.notification_text, s.name)
                     is LinkState.Failed -> s.reason
                     is LinkState.Pairing -> "Pairing with ${s.host}"
                     is LinkState.HostSilent -> "${s.name} is not answering, reconnecting…"
                     else -> getString(R.string.notification_idle)
                 }
+            }.distinctUntilChanged().collect { text ->
+                // Connected's detail (RSSI, link speed) changes every second; post only when the text does.
                 nm.notify(NOTIFICATION_ID, notification(text))
             }
         }

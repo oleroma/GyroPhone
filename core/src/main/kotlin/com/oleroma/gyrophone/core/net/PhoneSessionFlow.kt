@@ -257,7 +257,8 @@ class PhoneSessionFlow(
             val n = WireCodec.encodeDiscover(Discover(att.reqId, phoneId), buf)
             for (target in broadcastTargets()) out.add(Out.Send(buf.copyOf(n), target))
             att.nextDiscoverMs = nowMs + Wire.DISCOVER_INTERVAL_MS
-            if (live == null) setStatus(SessionStatus.DISCOVERING, out)
+            // NOT_PAIRED, VERSION_MISMATCH and HOST_EXITED stay until a WELCOME or a new attempt.
+            if (live == null && status == SessionStatus.CONNECTING) setStatus(SessionStatus.DISCOVERING, out)
         }
     }
 

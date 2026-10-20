@@ -17,7 +17,19 @@ internal static class Program
         Application.SetCompatibleTextRenderingDefault(false);
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
-        using var mutex = new Mutex(initiallyOwned: true, MutexName, out bool owned);
+        Mutex mutex;
+        bool owned;
+        try
+        {
+            mutex = new Mutex(initiallyOwned: true, MutexName, out owned);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // An elevated instance owns the mutex and its default DACL denies us: it is running.
+            ShowAlreadyRunning();
+            return 0;
+        }
+        using var _ = mutex;
         if (!owned && args.Contains(RestartedArg))
         {
             try
@@ -31,8 +43,7 @@ internal static class Program
         }
         if (!owned)
         {
-            MessageBox.Show("GyroPhone Companion is already running. Look for its icon in the notification area.",
-                AppName, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            ShowAlreadyRunning();
             return 0;
         }
 
@@ -48,4 +59,8 @@ internal static class Program
         }
         return 0;
     }
+
+    private static void ShowAlreadyRunning() =>
+        MessageBox.Show("GyroPhone Companion is already running. Look for its icon in the notification area.",
+            AppName, MessageBoxButtons.OK, MessageBoxIcon.Information);
 }

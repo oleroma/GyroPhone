@@ -53,10 +53,6 @@ internal static class Program
         var clock = StopwatchClock.Instance;
         var keyMouse = new SendInputSink(log.Write);
 
-        var markerPath = HeldKeysMarker.DefaultPath();
-        int recovered = HeldKeysMarker.Recover(markerPath, keyMouse);
-        if (recovered > 0) log.Write($"released {recovered} inputs left held by a previous run");
-
         var store = new SettingsStore(SettingsStore.DefaultPath());
         var settings = store.Load(Environment.MachineName, log.Write);
 
@@ -91,6 +87,10 @@ internal static class Program
             csv?.Dispose();
             return 1;
         }
+        // Owning the port is the single-instance guard: only now is the marker ours to recover.
+        var markerPath = HeldKeysMarker.DefaultPath();
+        int recovered = HeldKeysMarker.Recover(markerPath, keyMouse);
+        if (recovered > 0) log.Write($"released {recovered} inputs left held by a previous run");
         var marker = new HeldKeysMarker(markerPath);
         var watchdog = new Watchdog(engine, clock, marker, store,
             ElevationProbe.IsForegroundElevated, NetworkCategory.IsAnyConnectedPublic, log.Write);
@@ -99,8 +99,9 @@ internal static class Program
         if (pair) engine.OpenPairingWindow();
         watchdog.Start();
         log.Write($"listening on UDP {Wire.Port} as '{settings.HostName}', output {settings.OutputMode}, driver {(pad.DriverOk ? "ok" : "missing")}");
+        string exe = Environment.ProcessPath ?? "GyroPhoneHeadless.exe";
         if (!FirewallHelper.RuleExists())
-            log.Write($"no '{FirewallHelper.RuleName}' firewall rule; if the phone cannot find this PC run as admin: netsh {FirewallHelper.AddRuleArguments(Environment.ProcessPath ?? "GyroPhoneHeadless.exe")}");
+            log.Write($"no '{FirewallHelper.RuleName}' firewall rule; if the phone cannot find this PC run as admin: netsh {FirewallHelper.DeleteRulesArguments(exe)} & netsh {FirewallHelper.AddRuleArguments(exe)}");
         PrintStatus(engine);
 
         int shutdown = 0;

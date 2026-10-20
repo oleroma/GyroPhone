@@ -50,6 +50,7 @@ public sealed class HostEngine
     private const long StatusIntervalUs = Wire.StatusIntervalMs * 1000L;
     private const long RumbleMinIntervalUs = 10_000; // at most 100 Hz
     private const int RumbleDirty = 1 << 16;
+    private const long EndedSidQuietUs = 1_000_000; // stray BYE/STATE copies after an end draw no ERROR
 
     private readonly object _lock = new();
     private readonly IKeyMouseSink _keyMouse;
@@ -78,6 +79,9 @@ public sealed class HostEngine
     private readonly byte[] _injectedKeys = new byte[StateFrame.KeyBitmapSize];
     private byte _injectedMouse;
     private int _heldVersion;
+    // Ups injected while UIPI or the secure desktop may have dropped them; re-sent when that ends.
+    private readonly byte[] _blockedUps = new byte[StateFrame.KeyBitmapSize];
+    private byte _blockedMouseUps;
     private readonly InjectEvent[] _inject = new InjectEvent[InputDiff.MaxEvents];
     private readonly InjectEvent[] _releaseEvents = new InjectEvent[256 + 8];
     private X360Frame _lastX360;
@@ -96,6 +100,10 @@ public sealed class HostEngine
     private bool _loggedX360Dropped;
     private LatencySample _pendingSample;
     private bool _hasPendingSample;
+
+    private readonly uint[] _endedSids = new uint[4];
+    private readonly long[] _endedUntilUs = new long[4];
+    private int _endedNext;
 
     private long _datagrams, _dropped, _badAuth, _states, _injections, _unknownUsages, _errors, _exceptions;
 
@@ -222,6 +230,8 @@ public sealed class HostEngine
         if (s == null)
         {
             _dropped++;
+            // A BYE needs no answer, and the trailing copies of a just-ended session are expected.
+            if (type == PacketType.Bye || RecentlyEnded(sid, nowUs)) return;
             SendError(ErrorCode.SessionUnknown, d.Length, from, nowUs);
             return;
         }
@@ -259,6 +269,7 @@ public sealed class HostEngine
                 break;
             case PacketType.Bye:
                 _events.Log($"phone said bye (reason {plain[0]})");
+                RememberEnded(s.SessionId);
                 EndActive(hostByeReason: null);
                 break;
         }
@@ -267,7 +278,11 @@ public sealed class HostEngine
     private void HandlePendingControl(HostSession s, byte type, ReadOnlySpan<byte> plain, long nowUs)
     {
         if (type == PacketType.Ping) SendPong(s, plain, nowUs);
-        else if (type == PacketType.Bye) _sessions.Remove(s);
+        else if (type == PacketType.Bye)
+        {
+            RememberEnded(s.SessionId);
+            _sessions.Remove(s);
+        }
     }
 
     private void OnState(ReadOnlySpan<byte> plain, uint seq, long nowUs)
@@ -353,6 +368,10 @@ public sealed class HostEngine
 
             SubmitPad(_pending);
 
+            bool blocked = _elevatedForeground;
+            Span<byte> before = stackalloc byte[StateFrame.KeyBitmapSize];
+            byte beforeMouse = _injectedMouse;
+            if (blocked) _injectedKeys.CopyTo(before);
             int unknown = 0;
             int n = InputDiff.Diff(_injectedKeys, _pending.Keys, ref _injectedMouse, _pending.MouseButtons,
                 Math.Clamp(dx, -Wire.MaxMouseDelta, Wire.MaxMouseDelta),
@@ -360,6 +379,7 @@ public sealed class HostEngine
                 Math.Clamp(dw, -Wire.MaxWheelDelta, Wire.MaxWheelDelta),
                 _inject, ref unknown);
             _unknownUsages += unknown;
+            if (blocked) NoteBlockedUps(before, beforeMouse);
             if (n > 0)
             {
                 _keyMouse.Inject(_inject.AsSpan(0, n));
@@ -452,8 +472,10 @@ public sealed class HostEngine
         lock (_lock)
         {
             if (elevatedForeground == _elevatedForeground && networkPublic == _networkPublic) return;
+            bool wasBlocked = Blocked;
             _elevatedForeground = elevatedForeground;
             _networkPublic = networkPublic;
+            if (wasBlocked && !Blocked) ResyncAfterBlock();
             _events.StateChanged();
         }
     }
@@ -569,8 +591,10 @@ public sealed class HostEngine
         lock (_lock)
         {
             if (locked == _locked) return;
+            bool wasBlocked = Blocked;
             _locked = locked;
             if (locked) ReleaseAllLocked();
+            else if (wasBlocked && !Blocked) ResyncAfterBlock();
             _events.StateChanged();
         }
     }
@@ -654,7 +678,11 @@ public sealed class HostEngine
         var a = _sessions.Active;
         if (a == null) return;
         ReleaseAllLocked();
-        if (hostByeReason is { } r) SendHostBye(a, r);
+        if (hostByeReason is { } r)
+        {
+            SendHostBye(a, r);
+            RememberEnded(a.SessionId); // in-flight packets cross the HOST_BYE
+        }
         _sessions.DropActive();
         _pad.Unplug();
         _padFrameValid = false;
@@ -666,6 +694,11 @@ public sealed class HostEngine
     private void ReleaseAllLocked()
     {
         _hasPending = false;
+        if (Blocked)
+        {
+            for (int i = 0; i < _injectedKeys.Length; i++) _blockedUps[i] |= _injectedKeys[i];
+            _blockedMouseUps |= _injectedMouse;
+        }
         while (InputDiff.AnyHeld(_injectedKeys, _injectedMouse))
         {
             int n = InputDiff.ReleaseAll(_injectedKeys, ref _injectedMouse, _releaseEvents);
@@ -686,6 +719,57 @@ public sealed class HostEngine
                 _padFrameValid = true;
                 break;
         }
+    }
+
+    /// <summary>SendInput may be silently dropped: an elevated window is in front (UIPI) or the secure desktop is up.</summary>
+    private bool Blocked => _elevatedForeground || _locked;
+
+    private void NoteBlockedUps(ReadOnlySpan<byte> before, byte beforeMouse)
+    {
+        for (int i = 0; i < _injectedKeys.Length; i++) _blockedUps[i] |= (byte)(before[i] & ~_injectedKeys[i]);
+        _blockedMouseUps |= (byte)(beforeMouse & ~_injectedMouse);
+    }
+
+    /// <summary>
+    /// Input is deliverable again: re-sends the ups injected while it was blocked (for usages not
+    /// held now), then re-sends downs for the held set, so the system key state matches ours.
+    /// </summary>
+    private void ResyncAfterBlock()
+    {
+        Span<byte> ups = stackalloc byte[StateFrame.KeyBitmapSize];
+        for (int i = 0; i < ups.Length; i++) ups[i] = (byte)(_blockedUps[i] & ~_injectedKeys[i]);
+        byte upsMouse = (byte)(_blockedMouseUps & ~_injectedMouse);
+        Array.Clear(_blockedUps);
+        _blockedMouseUps = 0;
+        while (InputDiff.AnyHeld(ups, upsMouse))
+        {
+            int n = InputDiff.ReleaseAll(ups, ref upsMouse, _releaseEvents);
+            if (n > 0) _keyMouse.Inject(_releaseEvents.AsSpan(0, n));
+        }
+
+        Span<byte> sent = stackalloc byte[StateFrame.KeyBitmapSize];
+        byte sentMouse = 0;
+        int unknown = 0;
+        while (true)
+        {
+            int n = InputDiff.Diff(sent, _injectedKeys, ref sentMouse, _injectedMouse, 0, 0, 0, _inject, ref unknown);
+            if (n == 0) break;
+            _keyMouse.Inject(_inject.AsSpan(0, n));
+        }
+    }
+
+    private void RememberEnded(uint sid)
+    {
+        _endedSids[_endedNext] = sid;
+        _endedUntilUs[_endedNext] = _clock.NowUs + EndedSidQuietUs;
+        _endedNext = (_endedNext + 1) % _endedSids.Length;
+    }
+
+    private bool RecentlyEnded(uint sid, long nowUs)
+    {
+        for (int i = 0; i < _endedSids.Length; i++)
+            if (_endedSids[i] == sid && nowUs < _endedUntilUs[i]) return true;
+        return false;
     }
 
     private void PlugPad()

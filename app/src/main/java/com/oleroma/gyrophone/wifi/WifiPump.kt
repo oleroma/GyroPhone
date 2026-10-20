@@ -203,6 +203,13 @@ class WifiPump(private val engine: MappingEngine) {
     private fun sendSealed(c: LiveSession, type: Int, plainLen: Int): Boolean {
         val ci = cipher ?: return false
         val s = socket ?: return false
+        if ((seq.toLong() and 0xFFFF_FFFFL) == 0xFFFF_FFFFL) {
+            // Seq space spent and the rekey never landed: stop sealing under this key rather than
+            // wrap and reuse GCM nonces. Keep cur so the loop does not re-switch to it with seq 0;
+            // the next session from the flow gets a fresh cipher.
+            cipher = null
+            return false
+        }
         seq++
         if ((seq.toLong() and 0xFFFF_FFFFL) >= Wire.REKEY_SEQ) c.rekeyRequested = true
         WireCodec.writeHeader(header, type, c.sessionId, seq)

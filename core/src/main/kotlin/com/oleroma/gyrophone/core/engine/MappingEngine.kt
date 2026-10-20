@@ -27,10 +27,13 @@ class MappingEngine(profile: Profile) {
     private val lock = Any()
 
     var profile: Profile = profile
-        set(value) = synchronized(lock) {
-            field = value
-            gyroToggled = false
-            keyOrder.clear()
+        set(value) {
+            synchronized(lock) {
+                field = value
+                gyroToggled = false
+                keyOrder.clear()
+            }
+            onChange?.run()
         }
 
     private val keys = HashSet<Int>()
@@ -108,9 +111,12 @@ class MappingEngine(profile: Profile) {
         }
 
     /** Releases everything, e.g. when the profile changes or the host disconnects. */
-    fun reset() = synchronized(lock) {
-        keys.clear(); axes.clear(); touches.clear(); touchSticks.clear(); keyOrder.clear()
-        gyroToggled = false; mouseDx = 0; mouseDy = 0; wheel = 0
+    fun reset() {
+        synchronized(lock) {
+            keys.clear(); axes.clear(); touches.clear(); touchSticks.clear(); keyOrder.clear()
+            gyroToggled = false; mouseDx = 0; mouseDy = 0; wheel = 0
+        }
+        onChange?.run()
     }
 
     /** Computes the current HID state and drains accumulated relative mouse motion. */

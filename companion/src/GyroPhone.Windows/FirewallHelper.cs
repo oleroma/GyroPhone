@@ -43,14 +43,24 @@ public static class FirewallHelper
         + $"protocol=UDP localport={Wire.Port} profile=private,domain";
 
     /// <summary>
-    /// Adds the rule through an elevated netsh (UAC prompt). Returns false when the user declined or
-    /// netsh failed. Blocks until netsh exits, so call it off the UI thread.
+    /// The netsh arguments that delete every inbound rule for this executable, including the Block rules
+    /// Windows creates when its first-run firewall prompt is dismissed (Block wins over Allow).
+    /// </summary>
+    public static string DeleteRulesArguments(string exePath) =>
+        $"advfirewall firewall delete rule name=all dir=in program=\"{exePath}\"";
+
+    /// <summary>
+    /// Replaces this executable's inbound rules with ours through one elevated cmd (UAC prompt): the
+    /// delete clears any Block rule, then the add runs whatever the delete returned. Returns false when the
+    /// user declined or the add failed. Blocks until it exits, so call it off the UI thread.
     /// </summary>
     public static bool AddRuleElevated(string exePath)
     {
         try
         {
-            var psi = new ProcessStartInfo("netsh", AddRuleArguments(exePath))
+            // cmd /c strips the outer quotes and keeps the inner ones; the exit code is the add's.
+            var psi = new ProcessStartInfo("cmd.exe",
+                $"/c \"netsh {DeleteRulesArguments(exePath)} & netsh {AddRuleArguments(exePath)}\"")
             {
                 UseShellExecute = true,
                 Verb = "runas",

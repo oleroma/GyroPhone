@@ -201,8 +201,10 @@ public sealed class UdpLoopbackTests : IDisposable
     public void SecondServerOnSamePortReportsPortInUse()
     {
         var other = new UdpHostServer(_engine, _clock, _host);
-        if (OperatingSystem.IsWindows() || !other.Start())
-            Assert.Equal(ServerState.PortInUse, other.State);
+        bool started = other.Start();
+        // Windows refuses the second bind (ExclusiveAddressUse); Linux may allow it.
+        if (OperatingSystem.IsWindows()) Assert.False(started);
+        if (!started) Assert.Equal(ServerState.PortInUse, other.State);
         other.Dispose();
     }
 

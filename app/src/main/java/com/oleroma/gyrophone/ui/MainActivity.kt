@@ -45,6 +45,8 @@ class MainActivity : ComponentActivity() {
 
     private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         if (canStartService()) GamepadService.start(this)
+        // The service may already run (Wi-Fi start, then Bluetooth picked): start HID now it is allowed.
+        if (hasBluetooth() && runtime.transport.value == TransportKind.BLUETOOTH) runtime.hid.start()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

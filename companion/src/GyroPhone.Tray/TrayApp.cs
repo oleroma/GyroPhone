@@ -67,10 +67,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _log.Write($"starting {Application.ProductVersion}, elevated {ElevationProbe.IsSelfElevated}");
 
         _keyMouse = new SendInputSink(_log.Write);
-        var markerPath = HeldKeysMarker.DefaultPath();
-        int recovered = HeldKeysMarker.Recover(markerPath, _keyMouse);
-        if (recovered > 0) _log.Write($"released {recovered} inputs left held by a previous run");
-        _marker = new HeldKeysMarker(markerPath);
+        _marker = new HeldKeysMarker(HeldKeysMarker.DefaultPath());
 
         var store = new SettingsStore(SettingsStore.DefaultPath());
         var settings = store.Load(Environment.MachineName, _log.Write);
@@ -147,6 +144,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
 
         if (_server.Start())
         {
+            // Owning the port is the single-instance guard: only now is the marker ours to recover.
+            int recovered = HeldKeysMarker.Recover(_marker.Path, _keyMouse);
+            if (recovered > 0) _log.Write($"released {recovered} inputs left held by a previous run");
             _engine.Start(_clock.NowUs);
             _watchdog.Start();
             _log.Write($"listening on UDP {Wire.Port} as '{settings.HostName}'");

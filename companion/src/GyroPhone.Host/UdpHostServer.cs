@@ -66,7 +66,7 @@ public sealed class UdpHostServer : IDatagramSender, IDisposable
         catch (SocketException e)
         {
             s.Dispose();
-            State = e.SocketErrorCode == SocketError.AddressAlreadyInUse ? ServerState.PortInUse : ServerState.Failed;
+            State = e.SocketErrorCode is SocketError.AddressAlreadyInUse or SocketError.AccessDenied ? ServerState.PortInUse : ServerState.Failed;
             _log($"bind {_bind} failed: {e.SocketErrorCode}");
             return false;
         }

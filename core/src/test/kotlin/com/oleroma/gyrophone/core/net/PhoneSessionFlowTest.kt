@@ -148,6 +148,16 @@ class PhoneSessionFlowTest {
         assertTrue(f.isRunning) // the key is kept and retries go on
     }
 
+    @Test fun notPairedStaysThroughDiscoveryTicks() {
+        val f = flow()
+        f.connect(0)
+        val n = WireCodec.encodeError(ErrorPacket(ErrorCode.NOT_PAIRED), buf)
+        f.deliver(buf.copyOf(n), 10)
+        var t = 10L
+        while (t < 2600) { t += 10; f.onTick(t) }
+        assertEquals(SessionStatus.NOT_PAIRED, f.status)
+    }
+
     @Test fun rekeyRunsANewHelloAndSwapsSessions() {
         val f = flow()
         val old = goLive(f)
