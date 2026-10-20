@@ -41,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -60,11 +61,17 @@ import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.Placement
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.contains
+import com.oleroma.gyrophone.core.model.placeSize
+import com.oleroma.gyrophone.core.model.placeX
+import com.oleroma.gyrophone.core.model.placeY
+import com.oleroma.gyrophone.core.model.placement
+import com.oleroma.gyrophone.core.model.withPlacement
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import java.util.UUID
 import kotlin.math.hypot
@@ -79,8 +86,11 @@ private enum class EditGesture { PRESS, MOVE, RESIZE, PINCH, EMPTY, NONE }
 /**
  * Full-screen virtual game pad for the active profile. Multi-touch: each finger that lands on a
  * stick owns it until lifted; other fingers press whatever button they are over (sliding works).
+ * A finger that lands on empty background drives the touchpad (cursor, taps, drag, scroll).
+ * Controls have separate landscape and portrait placements; the pad box's shape picks one.
  * Edit mode works on a draft profile: tap a control for its settings and mappings, drag to move,
- * drag the corner handle or pinch to resize. Done saves (a builtin becomes a custom copy).
+ * drag the corner handle or pinch to resize. Edits change the current orientation's placement.
+ * Done saves (a builtin becomes a custom copy).
  */
 @Composable
 fun PadScreen(runtime: GamepadRuntime) {
@@ -99,6 +109,7 @@ fun PadScreen(runtime: GamepadRuntime) {
         for (id in stickPos.keys.toList()) runtime.engine.setTouchStick(id, 0f, 0f)
         pressed.clear()
         stickPos.clear()
+        runtime.engine.touchpadCancel()
     }
 
     DisposableEffect(Unit) { onDispose { releaseAll() } }
@@ -108,22 +119,29 @@ fun PadScreen(runtime: GamepadRuntime) {
         val w = constraints.maxWidth.toFloat()
         val h = constraints.maxHeight.toFloat()
 
-        fun center(c: TouchControl) = Offset(c.x * w, c.y * h)
-        fun half(c: TouchControl) = c.size * h / 2f
+        val pxPerDp = density.density
+        val portrait = h > w
+        val unit = minOf(w, h) // control size base: the pad area's shorter side
+
+        fun center(c: TouchControl) = Offset(c.placeX(portrait) * w, c.placeY(portrait) * h)
+        fun half(c: TouchControl) = c.placeSize(portrait) * unit / 2f
         fun hit(controls: List<TouchControl>, p: Offset): TouchControl? =
-            controls.lastOrNull { it.contains(p.x, p.y, w, h) }
+            controls.lastOrNull { it.contains(p.x, p.y, w, h, inPortrait = portrait) }
         fun handleCenter(c: TouchControl): Offset {
             val d = if (c.shape == TouchShape.CIRCLE) half(c) * 0.7071f else half(c)
             return center(c) + Offset(d, d)
         }
 
-        /** Keeps the whole control on screen, optionally snapping its centre to the grid. */
+        /**
+         * Sets the current orientation's centre, keeping the whole control on screen and
+         * optionally snapping the centre to the grid.
+         */
         fun place(c: TouchControl, x: Float, y: Float, snapToGrid: Boolean): TouchControl {
             val sx = if (snapToGrid) (x / GRID).roundToInt() * GRID else x
             val sy = if (snapToGrid) (y / GRID).roundToInt() * GRID else y
             val hx = (half(c) / w).coerceAtMost(0.5f)
             val hy = (half(c) / h).coerceAtMost(0.5f)
-            return c.copy(x = sx.coerceIn(hx, 1f - hx), y = sy.coerceIn(hy, 1f - hy))
+            return c.withPlacement(portrait, sx.coerceIn(hx, 1f - hx), sy.coerceIn(hy, 1f - hy), c.placeSize(portrait))
         }
 
         fun updateControl(id: String, change: (TouchControl) -> TouchControl) {
@@ -132,8 +150,11 @@ fun PadScreen(runtime: GamepadRuntime) {
         }
 
         fun resize(id: String, size: Float) = updateControl(id) {
-            val sized = it.copy(size = size.coerceIn(TouchControl.MIN_SIZE, TouchControl.MAX_SIZE))
-            place(sized, sized.x, sized.y, false)
+            val sized = it.withPlacement(
+                portrait, it.placeX(portrait), it.placeY(portrait),
+                size.coerceIn(TouchControl.MIN_SIZE, TouchControl.MAX_SIZE),
+            )
+            place(sized, sized.placeX(portrait), sized.placeY(portrait), false)
         }
 
         val touchModifier = if (editing) {
@@ -163,7 +184,7 @@ fun PadScreen(runtime: GamepadRuntime) {
                         if (sel != null && (downPos - handleCenter(sel)).getDistance() <= handleRadius) {
                             mode = EditGesture.RESIZE
                             target = sel.id
-                            startSize = sel.size
+                            startSize = sel.placeSize(portrait)
                             resizeK = if (sel.shape == TouchShape.CIRCLE) 1.4142f else 1f
                         } else {
                             val c = hit(controls, downPos)
@@ -193,7 +214,7 @@ fun PadScreen(runtime: GamepadRuntime) {
                                     pinchB = down[1].id
                                     target = c.id
                                     selected = c.id
-                                    startSize = c.size
+                                    startSize = c.placeSize(portrait)
                                     pinchStart = dist
                                     dragging = false
                                 } else {
@@ -232,7 +253,7 @@ fun PadScreen(runtime: GamepadRuntime) {
                                     } else {
                                         val id = target
                                         val delta = main.position - downPos
-                                        if (id != null) resize(id, startSize + resizeK * (delta.x + delta.y) / h)
+                                        if (id != null) resize(id, startSize + resizeK * (delta.x + delta.y) / unit)
                                     }
                                 }
                                 EditGesture.PINCH -> {
@@ -261,11 +282,14 @@ fun PadScreen(runtime: GamepadRuntime) {
                 }
             }
         } else {
-            Modifier.pointerInput("play", profile, w, h) {
+            Modifier.pointerInput("play", profile, w, h, pxPerDp) {
                 releaseAll()
                 val controls = profile.touchControls
+                val padEnabled = profile.touchpad.enabled
+                runtime.engine.touchpadPxPerDp = pxPerDp
                 val stickOwner = HashMap<PointerId, String>()
                 val stickCenters = HashMap<String, Offset>()
+                val padOwner = HashSet<PointerId>()
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
@@ -273,10 +297,25 @@ fun PadScreen(runtime: GamepadRuntime) {
                         for (ch in event.changes) {
                             if (ch.pressed && !ch.previousPressed) {
                                 val c = hit(controls, ch.position)
-                                if (c?.kind == TouchKind.STICK && c.id !in stickOwner.values) {
+                                if (c == null && padEnabled) {
+                                    // A finger that lands on empty background is a touchpad finger until it lifts.
+                                    padOwner.add(ch.id)
+                                    runtime.engine.touchpadDown(ch.id.value, ch.position.x, ch.position.y)
+                                } else if (c?.kind == TouchKind.STICK && c.id !in stickOwner.values) {
                                     stickOwner[ch.id] = c.id
                                     stickCenters[c.id] = center(c)
                                 }
+                            } else if (ch.id in padOwner) {
+                                if (!ch.pressed) {
+                                    padOwner.remove(ch.id)
+                                    runtime.engine.touchpadUp(ch.id.value)
+                                } else if (ch.position != ch.previousPosition) {
+                                    runtime.engine.touchpadMove(ch.id.value, ch.position.x, ch.position.y)
+                                }
+                            }
+                            if (ch.id in padOwner) {
+                                ch.consume()
+                                continue
                             }
                             val stickId = stickOwner[ch.id]
                             if (!ch.pressed) {
@@ -311,6 +350,16 @@ fun PadScreen(runtime: GamepadRuntime) {
             }
         }
 
+        if (!editing && profile.touchpad.enabled && (profile.touchControls.isEmpty() || portrait)) {
+            Text(
+                "Touchpad",
+                color = Color.White.copy(alpha = 0.18f),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.align(
+                    if (profile.touchControls.isEmpty()) Alignment.Center else BiasAlignment(0f, -0.35f),
+                ),
+            )
+        }
         Box(Modifier.fillMaxSize().then(touchModifier)) {
             if (editing && snap) {
                 Canvas(Modifier.fillMaxSize()) {
@@ -372,21 +421,27 @@ fun PadScreen(runtime: GamepadRuntime) {
         } else {
             val compact = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
             Row(
-                Modifier.align(Alignment.TopCenter).padding(8.dp),
+                Modifier.align(Alignment.TopCenter).padding(8.dp).horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                Text(
+                    if (portrait) "Portrait layout" else "Landscape layout",
+                    color = Color.White.copy(alpha = 0.7f),
+                    style = MaterialTheme.typography.labelLarge,
+                )
                 FilledTonalButton(contentPadding = compact, onClick = addButton@{
                     val d = draft ?: return@addButton
                     val id = freshId(d, "btn")
-                    val c = TouchControl(id, TouchKind.BUTTON, "", 0.5f, 0.5f, NEW_BUTTON_SIZE, TouchShape.CIRCLE)
-                    draft = d.copy(touchControls = d.touchControls + place(c, c.x, c.y, false))
+                    val c = newControl(d, id, TouchKind.BUTTON, NEW_BUTTON_SIZE, portrait)
+                    draft = d.copy(touchControls = d.touchControls + place(c, 0.5f, 0.5f, false))
                     selected = id
                 }) { Text("+ Button") }
                 FilledTonalButton(contentPadding = compact, onClick = addStick@{
                     val d = draft ?: return@addStick
                     val id = freshId(d, "stick")
-                    val c = TouchControl(id, TouchKind.STICK, "", 0.5f, 0.5f, NEW_STICK_SIZE, TouchShape.CIRCLE)
-                    draft = d.copy(touchControls = d.touchControls + place(c, c.x, c.y, false))
+                    val c = newControl(d, id, TouchKind.STICK, NEW_STICK_SIZE, portrait)
+                    draft = d.copy(touchControls = d.touchControls + place(c, 0.5f, 0.5f, false))
                     selected = id
                 }) { Text("+ Stick") }
                 if (snap) {
@@ -421,19 +476,36 @@ fun PadScreen(runtime: GamepadRuntime) {
             val d = draft
             val sel = d?.touchControls?.firstOrNull { it.id == selected }
             if (d != null && sel != null && !dragging) {
-                val panelWidth = (maxWidth * 0.42f).coerceAtMost(360.dp)
+                // Landscape: docked at the side away from the control. Portrait: the half away from it.
+                val panelWidth = if (portrait) maxWidth - 16.dp else (maxWidth * 0.42f).coerceAtMost(360.dp)
+                val panelModifier = if (portrait) {
+                    Modifier
+                        .align(if (sel.placeY(true) > 0.5f) Alignment.TopCenter else Alignment.BottomCenter)
+                        .padding(start = 8.dp, end = 8.dp, top = 56.dp, bottom = 8.dp)
+                        .fillMaxHeight(0.5f)
+                } else {
+                    Modifier
+                        .align(if (sel.placeX(false) < 0.5f) Alignment.CenterEnd else Alignment.CenterStart)
+                        .padding(start = 8.dp, end = 8.dp, top = 56.dp, bottom = 8.dp)
+                        .fillMaxHeight()
+                }
                 ControlSettingsPanel(
                     profile = d,
                     control = sel,
                     runtime = runtime,
                     width = panelWidth,
+                    inPortrait = portrait,
                     onProfileChange = { draft = it },
-                    onControlChange = { changed -> updateControl(sel.id) { place(changed, changed.x, changed.y, false) } },
+                    onControlChange = { changed ->
+                        updateControl(sel.id) { place(changed, changed.placeX(portrait), changed.placeY(portrait), false) }
+                    },
                     onSize = { resize(sel.id, it) },
                     onDuplicate = {
                         val (p, id) = duplicate(d, sel)
                         val copy = p.touchControls.first { it.id == id }
-                        draft = p.copy(touchControls = p.touchControls.map { if (it.id == id) place(copy, copy.x, copy.y, false) else it })
+                        draft = p.copy(touchControls = p.touchControls.map {
+                            if (it.id == id) place(copy, copy.placeX(portrait), copy.placeY(portrait), false) else it
+                        })
                         selected = id
                     },
                     onDelete = {
@@ -441,10 +513,7 @@ fun PadScreen(runtime: GamepadRuntime) {
                         selected = null
                     },
                     onClose = { selected = null },
-                    modifier = Modifier
-                        .align(if (sel.x < 0.5f) Alignment.CenterEnd else Alignment.CenterStart)
-                        .padding(start = 8.dp, end = 8.dp, top = 56.dp, bottom = 8.dp)
-                        .fillMaxHeight(),
+                    modifier = panelModifier,
                 )
             }
         }
@@ -473,6 +542,34 @@ private fun freshId(profile: Profile, prefix: String): String {
     return Bindings.newTouchId(profile.touchControls + orphans, prefix)
 }
 
+/** Candidate centres, best first, for a new control in the layout that is not being edited. */
+private val NEW_SPOTS = listOf(
+    0.5f to 0.5f, 0.5f to 0.3f, 0.5f to 0.75f, 0.3f to 0.3f, 0.7f to 0.3f,
+    0.3f to 0.5f, 0.7f to 0.5f, 0.3f to 0.75f, 0.7f to 0.75f, 0.5f to 0.2f, 0.5f to 0.8f,
+)
+
+/**
+ * A new control of [size]. The caller centres it in the orientation being edited; in the other
+ * orientation (which the user does not see while adding) it goes to the first candidate spot no
+ * existing control covers, so it never silently sits on top of, say, the Gyro button there.
+ */
+private fun newControl(profile: Profile, id: String, kind: TouchKind, size: Float, inPortrait: Boolean): TouchControl {
+    val other = !inPortrait
+    // Nominal pad box of the other orientation, short side 1000.
+    val bw = if (other) 1000f else 2000f
+    val bh = if (other) 2000f else 1000f
+    val half = size * 1000f / 2f
+    val spot = NEW_SPOTS.firstOrNull { (x, y) ->
+        profile.touchControls.none {
+            val r = it.placeSize(other) * 1000f / 2f
+            hypot(it.placeX(other) * bw - x * bw, it.placeY(other) * bh - y * bh) < r + half
+        }
+    } ?: NEW_SPOTS[0]
+    val c = TouchControl(id, kind, "", 0.5f, 0.5f, size, TouchShape.CIRCLE)
+    return if (other) c.copy(portrait = Placement(spot.first, spot.second, size))
+    else c.copy(x = spot.first, y = spot.second, portrait = Placement(0.5f, 0.5f, size))
+}
+
 /** Copies a control and its mappings next to the original; returns the profile and the new id. */
 private fun duplicate(profile: Profile, c: TouchControl): Pair<Profile, String> {
     val id = freshId(profile, if (c.kind == TouchKind.STICK) "stick" else "btn")
@@ -483,8 +580,18 @@ private fun duplicate(profile: Profile, c: TouchControl): Pair<Profile, String> 
             else -> null
         }
     }
-    val dx = if (c.x < 0.5f) 0.05f else -0.05f
-    val copy = c.copy(id = id, x = c.x + dx, y = c.y + 0.05f)
+    // Offset towards the centre in both orientations, so the copy never hides under the original
+    // and stays on screen in the layout not being edited (the edited one is clamped by place()).
+    fun toCentre(v: Float, d: Float) = if (v < 0.5f) v + d else v - d
+    val p = c.placement(true)
+    val lHalf = (c.size / 2f).coerceAtMost(0.5f) // landscape: size is a fraction of the height
+    val pHalf = (p.size / 2f).coerceAtMost(0.5f) // portrait: size is a fraction of the width
+    val copy = c.copy(
+        id = id,
+        x = toCentre(c.x, 0.05f),
+        y = toCentre(c.y, 0.05f).coerceIn(lHalf, 1f - lHalf),
+        portrait = Placement(toCentre(p.x, 0.05f).coerceIn(pHalf, 1f - pHalf), toCentre(p.y, 0.03f), p.size),
+    )
     return profile.copy(touchControls = profile.touchControls + copy, mappings = profile.mappings + copies) to id
 }
 
@@ -526,13 +633,14 @@ private fun PadControl(
     }
 }
 
-/** Settings and mappings of the selected control, docked at a screen side. */
+/** Settings and mappings of the selected control, docked at a screen side (portrait: top or bottom half). */
 @Composable
 private fun ControlSettingsPanel(
     profile: Profile,
     control: TouchControl,
     runtime: GamepadRuntime,
     width: Dp,
+    inPortrait: Boolean,
     onProfileChange: (Profile) -> Unit,
     onControlChange: (TouchControl) -> Unit,
     onSize: (Float) -> Unit,
@@ -577,9 +685,9 @@ private fun ControlSettingsPanel(
                 SelectChip("Square", control.shape == TouchShape.SQUARE) { onControlChange(current.copy(shape = TouchShape.SQUARE)) }
             }
             Column {
-                Text("Size ${(control.size * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
+                Text("Size ${(control.placeSize(inPortrait) * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
                 Slider(
-                    value = control.size,
+                    value = control.placeSize(inPortrait),
                     onValueChange = onSize,
                     valueRange = TouchControl.MIN_SIZE..TouchControl.MAX_SIZE,
                 )

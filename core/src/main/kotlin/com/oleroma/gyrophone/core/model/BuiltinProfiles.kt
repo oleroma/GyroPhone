@@ -3,7 +3,7 @@ package com.oleroma.gyrophone.core.model
 /** Profiles that ship with the app. Users copy and edit them; the originals stay read-only. */
 object BuiltinProfiles {
 
-    /** Prebuilt landscape virtual game pad, Xbox layout. */
+    /** Prebuilt virtual game pad, Xbox layout (landscape placement; see [virtualGamepadPortrait]). */
     val virtualGamepadControls: List<TouchControl> = listOf(
         TouchControl("ls", TouchKind.STICK, "LS", 0.14f, 0.62f, 0.38f),
         TouchControl("rs", TouchKind.STICK, "RS", 0.66f, 0.74f, 0.30f),
@@ -23,6 +23,33 @@ object BuiltinProfiles {
         TouchControl("menu", TouchKind.BUTTON, "Menu", 0.58f, 0.30f, 0.10f, TouchShape.SQUARE),
         TouchControl("gyro", TouchKind.BUTTON, "Gyro", 0.50f, 0.52f, 0.12f),
     )
+
+    /** Portrait placements of [virtualGamepadControls]: controls in the lower half, touchpad space above. */
+    private val virtualGamepadPortrait: Map<String, Placement> = mapOf(
+        "lb" to Placement(0.11f, 0.12f, 0.18f), "lt" to Placement(0.31f, 0.12f, 0.18f),
+        "rt" to Placement(0.69f, 0.12f, 0.18f), "rb" to Placement(0.89f, 0.12f, 0.18f),
+        "view" to Placement(0.30f, 0.54f, 0.13f), "gyro" to Placement(0.50f, 0.54f, 0.16f),
+        "menu" to Placement(0.70f, 0.54f, 0.13f),
+        "ls" to Placement(0.25f, 0.70f, 0.40f),
+        "x" to Placement(0.61f, 0.70f, 0.14f), "y" to Placement(0.76f, 0.628f, 0.14f),
+        "b" to Placement(0.91f, 0.70f, 0.14f), "a" to Placement(0.76f, 0.772f, 0.14f),
+        "up" to Placement(0.22f, 0.845f, 0.11f), "down" to Placement(0.22f, 0.955f, 0.11f),
+        "left" to Placement(0.10f, 0.90f, 0.11f), "right" to Placement(0.34f, 0.90f, 0.11f),
+        "rs" to Placement(0.70f, 0.90f, 0.26f),
+    )
+
+    private val virtualGamepadById: Map<String, TouchControl> = virtualGamepadControls.associateBy { it.id }
+
+    /**
+     * The builtin portrait placement of [c] if it is a Virtual gamepad control still at its
+     * builtin landscape placement, else null. Gives copies saved before portrait existed the
+     * designed portrait layout instead of a derived one. Allocation-free.
+     */
+    internal fun builtinPortrait(c: TouchControl): Placement? {
+        val b = virtualGamepadById[c.id] ?: return null
+        if (b.kind != c.kind || b.x != c.x || b.y != c.y || b.size != c.size) return null
+        return virtualGamepadPortrait[c.id]
+    }
 
     private fun touchMappings(): List<Mapping> {
         fun t(id: String, target: OutputTarget) = Mapping(InputSource.Touch(id), target)
@@ -47,7 +74,7 @@ object BuiltinProfiles {
         id = "builtin.virtual_gamepad",
         name = "Virtual gamepad",
         mappings = touchMappings() + KnownLayouts.standardControllerMappings(),
-        touchControls = virtualGamepadControls,
+        touchControls = virtualGamepadControls.map { it.copy(portrait = virtualGamepadPortrait[it.id]) },
     )
 
     /** Attached controller (e.g. GameSir X5) passed through; L3 holds gyro-to-mouse. */

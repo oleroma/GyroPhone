@@ -19,10 +19,12 @@ import kotlin.math.max
 
 /**
  * Turns raw phone-side input (controller keys/axes, touch controls, gyro) into the HID state the
- * host sees, according to the active [Profile]. Thread-safe: input arrives from the UI thread and
- * the sensor thread, and the report pump reads [snapshot] from its own thread.
+ * host sees, according to the active [Profile]. The pad screen's empty background feeds a
+ * [Touchpad] whose cursor motion, wheel and clicks are added to the mouse output whatever the gyro
+ * mode. Thread-safe: input arrives from the UI thread and the sensor thread, and the report pump
+ * reads [snapshot] from its own thread. [clock] (nanoseconds) times touchpad gestures.
  */
-class MappingEngine(profile: Profile) {
+class MappingEngine(profile: Profile, private val clock: () -> Long = System::nanoTime) {
 
     private val lock = Any()
 
@@ -32,6 +34,8 @@ class MappingEngine(profile: Profile) {
                 field = value
                 gyroToggled = false
                 keyOrder.clear()
+                touchpad.settings = value.touchpad
+                touchpad.cancel(clock())
             }
             onChange?.run()
         }
@@ -45,6 +49,7 @@ class MappingEngine(profile: Profile) {
     private var mouseDx = 0
     private var mouseDy = 0
     private var wheel = 0
+    private val touchpad = Touchpad(profile.touchpad)
 
     /** Keyboard usages in press order, so the 6-key array is stable while keys are held. */
     private val keyOrder = LinkedHashSet<Int>()
@@ -90,7 +95,7 @@ class MappingEngine(profile: Profile) {
         onChange?.run()
     }
 
-    /** Relative mouse motion from the gyro, already in mouse counts. */
+    /** Relative mouse motion from the gyro, already in mouse counts (touchpad motion has its own path). */
     fun addMouseMotion(dx: Int, dy: Int) {
         synchronized(lock) {
             mouseDx += dx
@@ -98,6 +103,41 @@ class MappingEngine(profile: Profile) {
         }
         onChange?.run()
     }
+
+    /** Background-of-the-pad touchpad finger, position in px of the pad area. */
+    fun touchpadDown(pointer: Long, x: Float, y: Float) {
+        synchronized(lock) { touchpad.down(pointer, x, y, clock()) }
+        onChange?.run()
+    }
+
+    fun touchpadMove(pointer: Long, x: Float, y: Float) {
+        synchronized(lock) { touchpad.move(pointer, x, y, clock()) }
+        onChange?.run()
+    }
+
+    fun touchpadUp(pointer: Long) {
+        synchronized(lock) { touchpad.up(pointer, clock()) }
+        onChange?.run()
+    }
+
+    /** Ends any touchpad gesture (pad left, rotated, profile changed). */
+    fun touchpadCancel() {
+        synchronized(lock) { touchpad.cancel(clock()) }
+        onChange?.run()
+    }
+
+    /** px per dp of the touch surface. */
+    var touchpadPxPerDp: Float
+        get() = synchronized(lock) { touchpad.pxPerDp }
+        set(value) { synchronized(lock) { touchpad.pxPerDp = value } }
+
+    /** Shortest visible click press/release; see [Touchpad.minPulseFor]. */
+    var touchpadMinPulseNanos: Long
+        get() = synchronized(lock) { touchpad.minPulseNanos }
+        set(value) { synchronized(lock) { touchpad.minPulseNanos = value } }
+
+    /** When the touchpad next needs a snapshot without new input (Long.MAX_VALUE = never). */
+    fun touchpadDeadlineNanos(): Long = synchronized(lock) { touchpad.nextDeadline() }
 
     /** Whether gyro motion should currently move the mouse. */
     val gyroActive: Boolean
@@ -115,6 +155,7 @@ class MappingEngine(profile: Profile) {
         synchronized(lock) {
             keys.clear(); axes.clear(); touches.clear(); touchSticks.clear(); keyOrder.clear()
             gyroToggled = false; mouseDx = 0; mouseDy = 0; wheel = 0
+            touchpad.reset()
         }
         onChange?.run()
     }
@@ -168,8 +209,14 @@ class MappingEngine(profile: Profile) {
             rx = toStick(stick[2]), ry = toStick(stick[3]),
             lt = toTrigger(trigger[0]), rt = toTrigger(trigger[1]),
         )
-        val mouse = MouseState(mouseButtons, mouseDx, mouseDy, wheel)
+        // Touchpad output is never gated by gyroActive.
+        val padButtons = touchpad.poll(clock())
+        val mouse = MouseState(
+            mouseButtons or padButtons,
+            mouseDx + touchpad.dx, mouseDy + touchpad.dy, wheel + touchpad.wheel,
+        )
         mouseDx = 0; mouseDy = 0; wheel = 0
+        touchpad.drainMotion()
         HidState(gamepad, KeyboardState(modifiers, array), mouse)
     }
 

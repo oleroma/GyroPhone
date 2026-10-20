@@ -160,7 +160,7 @@ class WifiPump(private val engine: MappingEngine) {
                     sendSealed(c, PacketType.LINK_INFO, n)
                 }
             }
-            val wakeAt = minOf(scheduler.nextDeadline(), nextPingNs, lastLinkInfoNs + SECOND_NS)
+            val wakeAt = minOf(minOf(scheduler.nextDeadline(), nextPingNs), minOf(lastLinkInfoNs + SECOND_NS, engine.touchpadDeadlineNanos()))
             val wait = wakeAt - System.nanoTime()
             if (wait > 0) LockSupport.parkNanos(wait)
         }
