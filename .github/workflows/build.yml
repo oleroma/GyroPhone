@@ -15,11 +15,36 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
       - name: Unit tests
         run: ./gradlew :core:test --stacktrace
+      - name: Companion tests (Linux)
+        run: dotnet test companion/GyroPhone.Companion.Linux.slnf -c Release
       - name: Build APK
         run: ./gradlew :app:assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: gyrophone-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+
+  companion:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Test
+        run: dotnet test companion/GyroPhone.Companion.sln -c Release
+      - name: Publish
+        run: >-
+          dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
+          -p:PublishReadyToRun=true -p:DebugType=none -p:Version=0.1.${{ github.run_number }} -o out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gyrophone-companion-win-x64
+          path: out/GyroPhoneCompanion.exe
+          if-no-files-found: error

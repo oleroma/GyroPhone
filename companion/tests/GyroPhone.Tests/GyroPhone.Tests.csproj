@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>GyroPhone.Tests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/GyroPhone.Protocol/GyroPhone.Protocol.csproj" />
+    <ProjectReference Include="../../src/GyroPhone.Host/GyroPhone.Host.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Golden vectors shared with the Kotlin suite; never edited here. -->
+    <None Include="../../../core/src/test/resources/protocol/v1/wire-v1.json" Link="vectors/wire-v1.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

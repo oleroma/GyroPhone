@@ -10,7 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
 import com.oleroma.gyrophone.R
-import com.oleroma.gyrophone.hid.HidDeviceManager
+import com.oleroma.gyrophone.link.LinkState
 import com.oleroma.gyrophone.runtime
 import com.oleroma.gyrophone.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
@@ -19,7 +19,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
-/** Keeps the HID registration, report pump and gyro alive while the PC is connected. */
+/** Keeps the active output link (Bluetooth HID or Wi-Fi) and the gyro alive while the PC is connected. */
 class GamepadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -35,10 +35,12 @@ class GamepadService : Service() {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         runtime.start()
         scope.launch {
-            runtime.hid.state.collect { s ->
+            runtime.linkState.collect { s ->
                 val text = when (s) {
-                    is HidDeviceManager.State.Connected -> getString(R.string.notification_text, s.name)
-                    is HidDeviceManager.State.Failed -> s.reason
+                    is LinkState.Connected -> getString(R.string.notification_text, s.name)
+                    is LinkState.Failed -> s.reason
+                    is LinkState.Pairing -> "Pairing with ${s.host}"
+                    is LinkState.HostSilent -> "${s.name} is not answering, reconnecting…"
                     else -> getString(R.string.notification_idle)
                 }
                 nm.notify(NOTIFICATION_ID, notification(text))

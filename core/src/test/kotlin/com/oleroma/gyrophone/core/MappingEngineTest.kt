@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.hid.Hat
+import com.oleroma.gyrophone.core.hid.HidState
 import com.oleroma.gyrophone.core.model.AndroidAxis
 import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AxisHalf
@@ -98,5 +99,28 @@ class MappingEngineTest {
             val text = json.encodeToString(Profile.serializer(), p)
             assertEquals(p, json.decodeFromString(Profile.serializer(), text))
         }
+    }
+
+    @Test fun onChangeFiresOncePerMutationOutsideTheLock() {
+        val e = MappingEngine(BuiltinProfiles.keyboardMouse)
+        var calls = 0
+        e.onChange = Runnable {
+            calls++
+            // Another thread must be able to take the engine lock: the callback runs after it is released.
+            var snap: HidState? = null
+            val t = Thread { snap = e.snapshot() }
+            t.start(); t.join(2000)
+            assertFalse("snapshot blocked: onChange ran under the lock", t.isAlive)
+            assertTrue(snap != null)
+        }
+        assertTrue(e.setKey(AndroidKey.BUTTON_R2, true))
+        e.setAxis(AndroidAxis.Y, -0.9f)
+        e.setTouch("x", true)
+        e.setTouchStick("s", 0.1f, 0.2f)
+        e.addMouseMotion(3, 4)
+        assertEquals(5, calls)
+        e.onChange = null
+        e.setKey(AndroidKey.BUTTON_R2, false)
+        assertEquals(5, calls)
     }
 }

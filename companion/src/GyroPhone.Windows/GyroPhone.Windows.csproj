@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Windows sinks and helpers: ViGEm pads, SendInput, MMCSS, DPAPI, firewall and network probes. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>GyroPhone.Windows</RootNamespace>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Nefarius.ViGEm.Client" Version="1.21.256" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../GyroPhone.Protocol/GyroPhone.Protocol.csproj" />
+    <ProjectReference Include="../GyroPhone.Host/GyroPhone.Host.csproj" />
+  </ItemGroup>
+</Project>

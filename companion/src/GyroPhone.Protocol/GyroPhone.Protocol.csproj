@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Wire protocol v1, crypto and pure output mapping. No I/O, no Windows APIs. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>GyroPhone.Protocol</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="GyroPhone.Tests" />
+  </ItemGroup>
+</Project>
