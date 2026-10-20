@@ -48,27 +48,24 @@ class MappingEngine(profile: Profile) {
 
     /** Returns true if the profile maps this key, so the caller can consume the event. */
     fun setKey(keyCode: Int, pressed: Boolean): Boolean = synchronized(lock) {
-        val changed = if (pressed) keys.add(keyCode) else keys.remove(keyCode)
-        val mapped = profile.mappings.filter { it.source == InputSource.Key(keyCode) }
-        if (changed && pressed) onPress(mapped.map { it.target })
-        mapped.isNotEmpty()
+        firingEvents { if (pressed) keys.add(keyCode) else keys.remove(keyCode) }
+        profile.mappings.any { it.source == InputSource.Key(keyCode) }
     }
 
     fun setAxis(axis: Int, value: Float) = synchronized(lock) {
-        if (abs(value) < AXIS_EPSILON) axes.remove(axis) else axes[axis] = value
+        firingEvents { if (abs(value) < AXIS_EPSILON) axes.remove(axis) else axes[axis] = value }
     }
 
     fun setTouch(id: String, pressed: Boolean) = synchronized(lock) {
-        val changed = if (pressed) touches.add(id) else touches.remove(id)
-        if (changed && pressed) {
-            onPress(profile.mappings.filter { it.source == InputSource.Touch(id) }.map { it.target })
-        }
+        firingEvents { if (pressed) touches.add(id) else touches.remove(id) }
     }
 
     /** Touch stick deflection, each axis in -1..1 (Y positive = down, like the HID game pad). */
     fun setTouchStick(id: String, x: Float, y: Float) = synchronized(lock) {
-        touchSticks[id to StickAxis.X] = x
-        touchSticks[id to StickAxis.Y] = y
+        firingEvents {
+            touchSticks[id to StickAxis.X] = x
+            touchSticks[id to StickAxis.Y] = y
+        }
     }
 
     /** Relative mouse motion from the gyro, already in mouse counts. */
@@ -148,8 +145,28 @@ class MappingEngine(profile: Profile) {
         HidState(gamepad, KeyboardState(modifiers, array), mouse)
     }
 
-    private fun onPress(targets: List<OutputTarget>) {
-        for (t in targets) when (t) {
+    /**
+     * Applies an input change and fires event-style targets (wheel steps, gyro toggle) that it
+     * newly engages. A target fires once per engagement however many held sources map to it, so
+     * an input written to several sources (trigger axis + key) cannot double-fire.
+     */
+    private inline fun firingEvents(change: () -> Unit) {
+        val before = engagedEvents()
+        change()
+        for (t in engagedEvents()) if (t !in before) onPress(t)
+    }
+
+    private fun engagedEvents(): Set<OutputTarget> {
+        val out = HashSet<OutputTarget>()
+        for (m in profile.mappings) {
+            val t = m.target
+            if ((t is OutputTarget.Wheel || t == OutputTarget.GyroToggle) && value(m.source) >= PRESS_THRESHOLD) out.add(t)
+        }
+        return out
+    }
+
+    private fun onPress(t: OutputTarget) {
+        when (t) {
             OutputTarget.GyroToggle -> gyroToggled = !gyroToggled
             is OutputTarget.Wheel -> wheel += t.step
             else -> Unit
@@ -157,6 +174,8 @@ class MappingEngine(profile: Profile) {
     }
 
     /** Current value of a source: digital 0/1, analog -1..1 (or 0..1 for a half). */
+    fun sourceValue(source: InputSource): Float = synchronized(lock) { value(source) }
+
     private fun value(source: InputSource): Float = when (source) {
         is InputSource.Key -> if (source.keyCode in keys) 1f else 0f
         is InputSource.Touch -> if (source.id in touches) 1f else 0f

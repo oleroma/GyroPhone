@@ -15,6 +15,7 @@ import com.oleroma.gyrophone.hid.ReportPump
 import com.oleroma.gyrophone.sensor.GyroSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.util.UUID
 
 /** A game controller attached to the phone (e.g. GameSir X5). */
 data class AttachedController(
@@ -23,6 +24,10 @@ data class AttachedController(
     val vendorId: Int,
     val productId: Int,
     val known: KnownController?,
+    /** Android keycodes the device reports having (empty = unknown). */
+    val keys: Set<Int> = emptySet(),
+    /** Android motion axes the device reports (empty = unknown). */
+    val axes: Set<Int> = emptySet(),
 )
 
 /**
@@ -71,6 +76,9 @@ class GamepadRuntime(context: Context) {
 
     /** When set, the next controller input is captured for the mapping editor instead of sent. */
     @Volatile var learnListener: ((InputSource) -> Unit)? = null
+
+    /** When set, the next key-down of a physical keyboard or pad is delivered here as its raw Android keycode and swallowed. */
+    @Volatile var keyLearnListener: ((androidKeyCode: Int) -> Unit)? = null
 
     init {
         hid.reportProvider = { id ->
@@ -129,16 +137,38 @@ class GamepadRuntime(context: Context) {
         if (profile.id == _activeProfile.value.id) activate(BuiltinProfiles.virtualGamepad)
     }
 
+    /**
+     * Applies [change] to the active profile and saves it; a builtin is saved as a custom copy,
+     * which becomes active. Returns the saved profile.
+     */
+    fun editActiveProfile(change: (Profile) -> Profile): Profile {
+        val active = _activeProfile.value
+        var edited = change(active)
+        if (edited == active) return active
+        if (store.isBuiltin(active)) {
+            edited = edited.copy(id = "user." + UUID.randomUUID(), name = active.name + " (custom)")
+        }
+        store.save(edited)
+        refreshProfiles()
+        activate(edited)
+        return edited
+    }
+
+    /** Live value of a phone-side source (for highlighting pressed controls). */
+    fun sourceValue(source: InputSource): Float = engine.sourceValue(source)
+
     private fun refreshProfiles() { _profiles.value = store.all() }
 
     /** Called by the input layer whenever the set of attached controllers changes. */
     fun onControllersChanged(list: List<AttachedController>) {
         val added = list.filter { c -> _controllers.value.none { it.deviceId == c.deviceId } }
         _controllers.value = list
-        // Auto-switch to a profile made for a newly attached controller.
+        // Auto-switch to a profile made for a newly attached controller, but never away from a
+        // user profile that is not tied to specific controllers (e.g. a customised builtin).
         for (c in added) {
             val active = _activeProfile.value
             if (active.controllers.any { it.matches(c.vendorId, c.productId, c.name) }) continue
+            if (!store.isBuiltin(active) && active.controllers.isEmpty()) continue
             BuiltinProfiles.forController(_profiles.value, c.vendorId, c.productId, c.name)?.let { activate(it) }
         }
     }

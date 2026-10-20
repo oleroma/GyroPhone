@@ -40,8 +40,13 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 
 1. Open GyroPhone and allow the Bluetooth permissions.
 2. Tap **Make discoverable**. On Windows, open Settings › Bluetooth & devices › Add device and pick the phone.
-3. Open the **Pad** tab to play. **Edit layout** lets you drag controls, resize them and add buttons, then save a custom profile.
-4. In **Profiles**, tap **Add from controller**, press a button on the X5 and pick the output. **Add from touch** maps a touch control the same way.
+3. Open the **Pad** tab to play. **Edit layout** turns on the pad editor:
+   * Drag a control to move it.
+   * Tap a control to open its settings panel. There you set its label, its shape (circle or square) and its size, and you map it to any gamepad button, stick, trigger, keyboard key, mouse button, wheel or gyro action. Sticks also have presets: left stick, right stick, WASD, arrow keys or D-pad.
+   * Resize the selected control with the handle on its corner, or pinch with two fingers.
+   * **+ Button** and **+ Stick** add new controls, and **Snap** aligns controls to a grid. **Done** saves the layout and its mappings, and **Cancel** throws the changes away.
+4. Open the **Controller** tab to remap an attached controller. The app recognises it (GameSir X5, Xbox, PlayStation, Nintendo, 8BitDo, Razer Kishi, Backbone and others) and draws it. An unknown pad gets a generic layout with only the buttons it reports. Every button starts on its standard action. Tap a button to map it to any other gamepad, keyboard or mouse output, and **Reset to default** or **Reset all to standard** undoes your changes. Pressed buttons and stick movement light up live. With no controller attached, you can preview each layout.
+5. Edits in the Pad and Controller tabs go to the active profile. A built-in profile is saved as a custom copy. **Profiles** still has **Add from controller** and **Add from touch** for mapping a source directly.
 
 ## Project layout
 
@@ -59,6 +64,8 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 - [x] Mapping engine: any input → any output, with gyro hold and toggle
 - [x] Virtual touch gamepad, a prebuilt layout and a drag-to-place editor
 - [x] Profiles with JSON storage and auto-selection when a controller is attached
+- [x] Pad editor: tap a control to open its settings and mappings, circle or square shapes, resize by handle or pinch
+- [x] Controller tab: the attached controller drawn with every remappable button, standard actions by default
 
 **M2: Tuning on the OnePlus 15**
 - [ ] Measure the real gyro rate and the end-to-end latency (input → Windows)

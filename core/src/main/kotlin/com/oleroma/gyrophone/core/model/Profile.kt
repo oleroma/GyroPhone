@@ -1,13 +1,17 @@
 package com.oleroma.gyrophone.core.model
 
 import kotlinx.serialization.Serializable
+import kotlin.math.abs
 
 @Serializable
 enum class TouchKind { BUTTON, STICK }
 
+@Serializable
+enum class TouchShape { CIRCLE, SQUARE }
+
 /**
  * A control drawn on the touchscreen. Position is the centre, normalised to the screen (0..1),
- * size is the diameter as a fraction of the screen height.
+ * size is the diameter (circle) or side length (square) as a fraction of the screen height.
  */
 @Serializable
 data class TouchControl(
@@ -17,7 +21,24 @@ data class TouchControl(
     val x: Float,
     val y: Float,
     val size: Float = 0.16f,
-)
+    val shape: TouchShape = TouchShape.CIRCLE,
+) {
+    companion object {
+        const val MIN_SIZE = 0.06f
+        const val MAX_SIZE = 0.6f
+    }
+}
+
+/** Hit test in pixels; [slop] enlarges the hit area relative to the drawn shape. */
+fun TouchControl.contains(px: Float, py: Float, screenW: Float, screenH: Float, slop: Float = 1.15f): Boolean {
+    val dx = px - x * screenW
+    val dy = py - y * screenH
+    val half = size * screenH / 2f * slop
+    return when (shape) {
+        TouchShape.CIRCLE -> dx * dx + dy * dy <= half * half
+        TouchShape.SQUARE -> abs(dx) <= half && abs(dy) <= half
+    }
+}
 
 @Serializable
 enum class GyroMode { OFF, ALWAYS, HOLD_OR_TOGGLE }

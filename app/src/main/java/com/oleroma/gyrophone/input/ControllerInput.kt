@@ -6,6 +6,7 @@ import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import com.oleroma.gyrophone.core.model.AndroidAxis
+import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownLayouts
@@ -35,11 +36,19 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         if (device.isVirtual) return false
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0) return true
         val pressed = event.action == KeyEvent.ACTION_DOWN
+        runtime.keyLearnListener?.let { learn ->
+            if (pressed) { runtime.keyLearnListener = null; learn(event.keyCode) }
+            return true
+        }
         runtime.learnListener?.let { learn ->
             if (pressed) { runtime.learnListener = null; learn(InputSource.Key(event.keyCode)) }
             return true
         }
-        return runtime.engine.setKey(event.keyCode, pressed)
+        val mapped = runtime.engine.setKey(event.keyCode, pressed)
+        // Unmapped pad buttons must do nothing, not fall back to BACK / focus navigation.
+        val fromPad = event.source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+            runtime.controllers.value.any { it.deviceId == device.id }
+        return mapped || fromPad
     }
 
     fun onGenericMotionEvent(event: MotionEvent): Boolean {
@@ -80,7 +89,16 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             val isPad = d.sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
                 d.sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
             if (d.isVirtual || !isPad) return@mapNotNull null
-            AttachedController(d.id, d.name, d.vendorId, d.productId, KnownLayouts.identify(d.vendorId, d.productId, d.name))
+            val has = d.hasKeys(*KEY_CANDIDATES)
+            AttachedController(
+                deviceId = d.id,
+                name = d.name,
+                vendorId = d.vendorId,
+                productId = d.productId,
+                known = KnownLayouts.identify(d.vendorId, d.productId, d.name),
+                keys = KEY_CANDIDATES.filterIndexed { i, _ -> has.getOrElse(i) { false } }.toSet(),
+                axes = d.motionRanges.map { it.axis }.toSet(),
+            )
         }
         runtime.onControllersChanged(list)
     }
@@ -90,5 +108,9 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
 
     companion object {
         private const val LEARN_THRESHOLD = 0.6f
+
+        /** Keycodes probed with InputDevice.hasKeys: every known controller key plus BUTTON_1..16. */
+        private val KEY_CANDIDATES: IntArray =
+            (AndroidKey.names.keys + (AndroidKey.BUTTON_1 until AndroidKey.BUTTON_1 + 16)).distinct().toIntArray()
     }
 }
