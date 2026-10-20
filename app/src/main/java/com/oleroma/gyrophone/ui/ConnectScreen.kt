@@ -54,6 +54,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
     val rate by runtime.reportRateHz.collectAsStateWithLifecycle()
     val wifiRate by runtime.wifiRateHz.collectAsStateWithLifecycle()
     var stats by remember { mutableStateOf(runtime.linkStats()) }
+    val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?" }
     LaunchedEffect(transport) {
         while (true) { stats = runtime.linkStats(); delay(1000) }
     }
@@ -88,6 +89,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Profile: ${profile.name}", style = MaterialTheme.typography.titleMedium)
+            Text("GyroPhone $version", style = MaterialTheme.typography.bodySmall)
             Text("Gyro: ${gyro.source}")
             Text("Gyro rate: ${gyro.rateHz} Hz" + if (gyro.active) " · moving mouse" else "")
             Text("Report rate", style = MaterialTheme.typography.titleSmall)

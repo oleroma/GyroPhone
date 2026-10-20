@@ -1,69 +1,74 @@
 @echo off
-rem Bring the phone app and the PC companion up to the newest successful CI build.
+rem Download the newest successful CI build of GyroPhone and update the phone.
 rem Usage: update.cmd [branch]   (default: newest build on any branch)
+rem
+rem Builds go next to the repo, outside it, so branch checkouts never see them:
+rem   ..\gyrophone-builds\0.1.<build>-<commit>\   one folder per build (GyroPhoneCompanion.exe, app-debug.apk, BUILD.txt)
+rem   ..\gyrophone-builds\latest\                 always the newest one
+rem The Start menu entry "GyroPhone Companion" opens latest\GyroPhoneCompanion.exe.
 rem Phone: in-place update only (adb install -r), keeps settings, never uninstalls.
-rem Skips anything already at that build, so it is safe to run as often as you like.
-rem Downloads go to %LOCALAPPDATA%\GyroPhone\builds\<run id>, outside any repo checkout.
-rem It never starts or closes apps; start the companion from the Start menu (GyroPhone Companion).
+rem It never starts or closes apps; you launch them yourself.
 setlocal
 set "REPO=oleroma/GyroPhone"
+for %%d in ("%~dp0..") do set "ROOT=%%~fd\gyrophone-builds"
 set "BRANCH_ARG="
 if not "%~1"=="" set "BRANCH_ARG=--branch %~1"
 
-for /f "tokens=1,2 delims=	" %%i in ('gh run list -R %REPO% --workflow Build %BRANCH_ARG% --status success --limit 1 --json databaseId^,headBranch --jq ".[0] | [.databaseId, .headBranch] | @tsv"') do (
-  set "RUN_ID=%%i"
-  set "RUN_BRANCH=%%j"
+for /f "tokens=1-4 delims=	" %%a in ('gh run list -R %REPO% --workflow Build %BRANCH_ARG% --status success --limit 1 --json databaseId^,number^,headBranch^,headSha --jq ".[0] | [.databaseId, .number, .headBranch, .headSha[0:7]] | @tsv"') do (
+  set "RUN_ID=%%a"
+  set "NUM=%%b"
+  set "BRANCH=%%c"
+  set "SHA=%%d"
 )
 if "%RUN_ID%"=="" (
   echo No successful Build run found.
   exit /b 1
 )
-echo Newest successful build: run %RUN_ID% on %RUN_BRANCH%
+set "VER=0.1.%NUM%-%SHA%"
+set "OUT=%ROOT%\%VER%"
+echo Newest build: %VER%  (branch %BRANCH%)
 
-set "STATE=%LOCALAPPDATA%\GyroPhone\builds"
-set "OUT=%STATE%\%RUN_ID%"
 if not exist "%OUT%" mkdir "%OUT%" || exit /b 1
-
-rem ---- PC companion ----
-set "PC_DONE="
-if exist "%STATE%\companion.last" set /p PC_DONE=<"%STATE%\companion.last"
-if "%PC_DONE%"=="%RUN_ID%" (
-  echo Companion already at %RUN_ID%.
-) else (
-  if not exist "%OUT%\GyroPhoneCompanion.exe" gh run download %RUN_ID% -R %REPO% -n gyrophone-companion-win-x64 -D "%OUT%"
-  if exist "%OUT%\GyroPhoneCompanion.exe" (
-    >"%STATE%\companion.last" echo %RUN_ID%
-    echo Companion downloaded: %OUT%\GyroPhoneCompanion.exe
-    rem Start menu entry "GyroPhone Companion" always points at the newest download.
-    powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Programs')+'\GyroPhone Companion.lnk'); $s.TargetPath='%OUT%\GyroPhoneCompanion.exe'; $s.WorkingDirectory='%OUT%'; $s.Save()"
-    echo Close the running companion and start this one when you are ready.
-  ) else (
-    echo This build has no companion yet.
-  )
+if not exist "%OUT%\GyroPhoneCompanion.exe" gh run download %RUN_ID% -R %REPO% -n gyrophone-companion-win-x64 -D "%OUT%"
+if not exist "%OUT%\app-debug.apk" gh run download %RUN_ID% -R %REPO% -n gyrophone-debug-apk -D "%OUT%"
+> "%OUT%\BUILD.txt" (
+  echo GyroPhone %VER%
+  echo branch  %BRANCH%
+  echo commit  %SHA%
+  echo CI run  https://github.com/%REPO%/actions/runs/%RUN_ID%
 )
+
+rem latest -> this build (a folder link, so a companion running from an older build is untouched).
+if exist "%ROOT%\latest" rmdir "%ROOT%\latest"
+mklink /J "%ROOT%\latest" "%OUT%" >nul
+if exist "%OUT%\GyroPhoneCompanion.exe" powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Programs')+'\GyroPhone Companion.lnk'); $s.TargetPath='%ROOT%\latest\GyroPhoneCompanion.exe'; $s.WorkingDirectory='%ROOT%\latest'; $s.Save()"
 
 rem ---- Phone ----
-set "PHONE_DONE="
-if exist "%STATE%\phone.last" set /p PHONE_DONE=<"%STATE%\phone.last"
-if "%PHONE_DONE%"=="%RUN_ID%" (
-  echo Phone already at %RUN_ID%.
-  goto :end
-)
 set "PHONE="
 for /f "skip=1 tokens=1,2" %%a in ('adb devices') do if "%%b"=="device" set "PHONE=%%a"
 if "%PHONE%"=="" (
-  echo Phone not connected over adb; it will update next time.
-  goto :end
+  echo Phone not connected over adb: not updated.
+  goto :done
 )
-if not exist "%OUT%\app-debug.apk" gh run download %RUN_ID% -R %REPO% -n gyrophone-debug-apk -D "%OUT%"
+set "ON_PHONE="
+for /f "tokens=2 delims==" %%v in ('adb shell dumpsys package com.oleroma.gyrophone ^| findstr versionName') do set "ON_PHONE=%%v"
+if "%ON_PHONE%"=="%VER%" (
+  echo Phone already has %VER%.
+  goto :done
+)
 if not exist "%OUT%\app-debug.apk" (
-  echo app-debug.apk not found in %OUT%
-  goto :end
+  echo app-debug.apk missing in %OUT%
+  goto :done
 )
-adb install -r "%OUT%\app-debug.apk" && (
-  >"%STATE%\phone.last" echo %RUN_ID%
-  echo Phone updated to %RUN_ID%.
-)
+rem -d: builds from different branches can have a lower build number than the one installed.
+adb install -r -d "%OUT%\app-debug.apk" && echo Phone updated: %ON_PHONE% -^> %VER%
 
-:end
+:done
+echo.
+echo Latest: %ROOT%\latest   (GyroPhone %VER%)
+if exist "%OUT%\GyroPhoneCompanion.exe" (
+  echo PC: start "GyroPhone Companion" from the Start menu. Close the running one first if it is older.
+) else (
+  echo This build has no companion.
+)
 endlocal

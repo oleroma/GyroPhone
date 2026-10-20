@@ -24,6 +24,8 @@ jobs:
         run: dotnet test companion/GyroPhone.Companion.Linux.slnf -c Release
       - name: Build APK
         run: ./gradlew :app:assembleDebug --stacktrace
+        env:
+          GP_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/upload-artifact@v4
         with:
           name: gyrophone-debug-apk
@@ -39,10 +41,12 @@ jobs:
       - name: Test
         run: dotnet test companion/GyroPhone.Companion.sln -c Release
       - name: Publish
+        env:
+          GP_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: >-
           dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contained true
           -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
-          -p:PublishReadyToRun=true -p:DebugType=none -p:Version=0.1.${{ github.run_number }} -o out
+          -p:PublishReadyToRun=true -p:DebugType=none -p:Version=0.1.${{ github.run_number }} -p:InformationalVersion=0.1.${{ github.run_number }}-${{ env.GP_COMMIT }} -p:IncludeSourceRevisionInInformationalVersion=false -o out
       - uses: actions/upload-artifact@v4
         with:
           name: gyrophone-companion-win-x64

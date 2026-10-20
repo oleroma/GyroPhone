@@ -102,8 +102,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _restartAdminItem = new ToolStripMenuItem("Restart as administrator", null, (_, _) => RestartAsAdmin());
         var logItem = new ToolStripMenuItem("Open log folder", null, (_, _) => OpenLogFolder());
         var exitItem = new ToolStripMenuItem("Exit", null, (_, _) => ExitApp());
+        var versionItem = new ToolStripMenuItem($"{Program.AppName} {Application.ProductVersion}") { Enabled = false };
         _menu.Items.AddRange(new ToolStripItem[]
         {
+            versionItem,
             _statusItem,
             new ToolStripSeparator(),
             outputItem,

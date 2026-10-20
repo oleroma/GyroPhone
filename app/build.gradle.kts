@@ -16,8 +16,11 @@ android {
         // OnePlus 15 ships Android 16 (API 36); API 35 keeps one step of headroom for testing.
         minSdk = 35
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // CI stamps each build: 0.1.<run number>-<commit>. Local builds are 0.1.0-dev.
+        val run = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+        val sha = System.getenv("GP_COMMIT")?.take(7)
+        versionCode = run ?: 1
+        versionName = if (run != null) "0.1.$run" + (sha?.let { "-$it" } ?: "") else "0.1.0-dev"
     }
 
     signingConfigs {
