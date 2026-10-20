@@ -2,7 +2,8 @@ namespace GyroPhone.Protocol.Mapping;
 
 /// <summary>
 /// Diffs the injected keyboard/mouse state against a target STATE and writes SendInput events
-/// (SPEC 3.3). Order: modifier downs, key downs, key ups, modifier ups, mouse buttons, move, wheel.
+/// (SPEC 3.3). Order: modifier downs, key downs, key ups, modifier ups, mouse buttons, move, wheel,
+/// horizontal wheel.
 /// The injected state is updated in place for every event written, so anything that did not fit
 /// in the output span is picked up by the next call.
 /// </summary>
@@ -10,17 +11,21 @@ public static class InputDiff
 {
     public const int MaxEvents = 96;
     private const int MouseButtonCount = 5;
-    // Room kept for mouse buttons, move and wheel so keys can never starve them.
-    private const int MouseReserve = MouseButtonCount + 2;
+    // Room kept for mouse buttons, move and both wheels so keys can never starve them.
+    private const int MouseReserve = MouseButtonCount + 3;
     private const int ModByte = StateFrame.ModifierByte;
 
     /// <summary>
     /// injected/injectedMouse: what the host has sent so far (updated). target/targetMouse: the
-    /// new STATE. Usages 0..3 and usages with no scan code are never injected; each newly seen
-    /// unknown usage increments <paramref name="unknown"/>. Returns the event count.
+    /// new STATE. Wheels are in 1/120 notch. Usages 0..3 and usages with no scan code are never
+    /// injected; each newly seen unknown usage increments <paramref name="unknown"/>. Returns the event count.
     /// </summary>
     public static int Diff(Span<byte> injected, ReadOnlySpan<byte> target, ref byte injectedMouse, byte targetMouse,
-        int dx, int dy, int wheel, Span<InjectEvent> output, ref int unknown)
+        int dx, int dy, int wheel, Span<InjectEvent> output, ref int unknown) =>
+        Diff(injected, target, ref injectedMouse, targetMouse, dx, dy, wheel, 0, output, ref unknown);
+
+    public static int Diff(Span<byte> injected, ReadOnlySpan<byte> target, ref byte injectedMouse, byte targetMouse,
+        int dx, int dy, int wheel, int hwheel, Span<InjectEvent> output, ref int unknown)
     {
         int n = 0;
         int keyLimit = Math.Min(output.Length, MaxEvents) - MouseReserve;
@@ -44,9 +49,10 @@ public static class InputDiff
         }
         injectedMouse = (byte)(targetMouse & 0x1F);
 
-        // 6. move, 7. wheel
+        // 6. move, 7. wheel, 8. horizontal wheel
         if (dx != 0 || dy != 0) output[n++] = InjectEvent.Move(dx, dy);
         if (wheel != 0) output[n++] = InjectEvent.Wheel(wheel);
+        if (hwheel != 0) output[n++] = InjectEvent.HWheel(hwheel);
         return n;
     }
 

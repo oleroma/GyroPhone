@@ -27,6 +27,8 @@ object Wire {
     const val ERROR_SIZE = 16
 
     const val STATE_PLAIN = 66
+    /** STATE_HIRES: STATE with the wheel total in 1/120 notch, plus a horizontal wheel total. */
+    const val STATE_HIRES_PLAIN = 70
     const val PING_PLAIN = 8
     const val LINK_INFO_PLAIN = 22
     const val BYE_PLAIN = 4
@@ -63,6 +65,8 @@ object Wire {
     const val PAIR_USER_TIMEOUT_S = 60
     const val MAX_MOUSE_DELTA = 16384
     const val MAX_WHEEL_DELTA = 64
+    /** [MAX_WHEEL_DELTA] in STATE_HIRES units (1/120 notch). */
+    const val MAX_WHEEL_DELTA_HIRES = MAX_WHEEL_DELTA * 120
     /** P->H seq at which the phone runs a new HELLO (unsigned, so compare as Long). */
     const val REKEY_SEQ = 0xF0000000L
     const val ERROR_RATE_PER_IP = 10
@@ -101,6 +105,7 @@ object Wire {
     /** Plaintext size of a sealed [type], or -1 if it is not a sealed type. */
     fun plainSizeOf(type: Int): Int = when (type) {
         PacketType.STATE -> STATE_PLAIN
+        PacketType.STATE_HIRES -> STATE_HIRES_PLAIN
         PacketType.PING -> PING_PLAIN
         PacketType.LINK_INFO -> LINK_INFO_PLAIN
         PacketType.BYE -> BYE_PLAIN
@@ -127,6 +132,8 @@ object PacketType {
     const val STATE = 0x20
     const val PING = 0x21
     const val LINK_INFO = 0x22
+    /** Sent instead of STATE when WELCOME has [HostFlags.HIRES_WHEEL]. */
+    const val STATE_HIRES = 0x23
     const val BYE = 0x2F
     const val PONG = 0x30
     const val HOST_STATUS = 0x31
@@ -191,6 +198,8 @@ object OutputMode {
 object HostFlags {
     const val VIGEM_OK = 1
     const val FOREGROUND_SUPPORTED = 2
+    /** The host accepts STATE_HIRES (smooth vertical and horizontal wheel). */
+    const val HIRES_WHEEL = 4
 }
 
 /** STATE flags. */

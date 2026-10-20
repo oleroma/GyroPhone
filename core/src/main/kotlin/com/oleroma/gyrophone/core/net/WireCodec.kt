@@ -173,11 +173,19 @@ object WireCodec {
         out.putI32(off + 54, f.mouseTotalX)
         out.putI32(off + 58, f.mouseTotalY)
         out.putI32(off + 62, f.wheelTotal)
-        return Wire.STATE_PLAIN
+        if (!f.hires) return Wire.STATE_PLAIN
+        out.putI32(off + 66, f.hwheelTotal)
+        return Wire.STATE_HIRES_PLAIN
     }
 
-    /** Decodes a STATE plaintext into [into] (allocation-free) as sent, without receiver clamping. */
-    fun decodeStatePlain(buf: ByteArray, off: Int = 0, into: StateFrame = StateFrame()): StateFrame {
+    /** Packet type a frame is sent as: STATE, or STATE_HIRES when [StateFrame.hires]. */
+    fun stateType(f: StateFrame): Int = if (f.hires) PacketType.STATE_HIRES else PacketType.STATE
+
+    /**
+     * Decodes a STATE (or, with [hires], STATE_HIRES) plaintext into [into] (allocation-free) as
+     * sent, without receiver clamping.
+     */
+    fun decodeStatePlain(buf: ByteArray, off: Int = 0, into: StateFrame = StateFrame(), hires: Boolean = false): StateFrame {
         into.phoneTimeUs = buf.getI32(off)
         into.flags = buf.getU16(off + 4)
         into.buttons = buf.getU16(off + 6)
@@ -193,12 +201,14 @@ object WireCodec {
         into.mouseTotalX = buf.getI32(off + 54)
         into.mouseTotalY = buf.getI32(off + 58)
         into.wheelTotal = buf.getI32(off + 62)
+        into.hires = hires
+        into.hwheelTotal = if (hires) buf.getI32(off + 66) else 0
         return into
     }
 
     /** Packet type of a sealed plaintext, or -1 for an unsealed packet. */
     fun sealedTypeOf(p: WirePacket): Int = when (p) {
-        is StateFrame -> PacketType.STATE
+        is StateFrame -> stateType(p)
         is Ping -> PacketType.PING
         is LinkInfo -> PacketType.LINK_INFO
         is Bye -> PacketType.BYE
@@ -258,6 +268,7 @@ object WireCodec {
         if (len != Wire.plainSizeOf(type)) return null
         return when (type) {
             PacketType.STATE -> decodeStatePlain(buf, off)
+            PacketType.STATE_HIRES -> decodeStatePlain(buf, off, hires = true)
             PacketType.PING -> Ping(buf.getU64(off))
             PacketType.PONG -> Pong(buf.getU64(off), buf.getU64(off + 8), buf.getU64(off + 16))
             PacketType.LINK_INFO -> LinkInfo(

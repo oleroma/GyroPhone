@@ -76,6 +76,21 @@ public class MouseDeltaTrackerTests
     }
 
     [Fact]
+    public void EngineInjectsHiresWheels()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        Assert.True(phone.OnWelcome(h.Send(phone, phone.Hello())!));
+        Assert.NotEqual(0, phone.WelcomeHostFlags & WelcomeFlags.HiresWheel);
+        phone.Frame.Hires = true;
+        h.Send(phone, phone.State());
+        h.Clock.NowUs += 1000;
+        h.Send(phone, phone.State(f => { f.WheelTotal = 30; f.HWheelTotal = -12; }));
+        Assert.Equal(30, h.KeyMouse.Wheel);
+        Assert.Equal(-12, h.KeyMouse.HWheel);
+    }
+
+    [Fact]
     public void ResetRebases()
     {
         var t = new MouseDeltaTracker();
@@ -95,5 +110,21 @@ public class MouseDeltaTrackerTests
         t.Apply(0, -100000, 1000, 1000, out _, out int dy, out int dw);
         Assert.Equal(-Wire.MaxMouseDelta, dy);
         Assert.Equal(Wire.MaxWheelDelta, dw);
+    }
+
+    [Fact]
+    public void HiresUnitsAndModeSwitchRebases()
+    {
+        var t = new MouseDeltaTracker();
+        t.Apply(0, 0, 0, 0, true, 0, out _, out _, out _, out _);
+        t.Apply(0, 0, 30, -7, true, 1000, out _, out _, out int dw, out int dh);
+        Assert.Equal((30, -7), (dw, dh));
+        t.Apply(0, 0, 100000, 0, true, 2000, out _, out _, out dw, out _);
+        Assert.Equal(Wire.MaxWheelDeltaHires, dw);
+        // Back to plain STATE: totals are in other units, so no delta.
+        t.Apply(0, 0, 5, 0, false, 3000, out _, out _, out dw, out _);
+        Assert.Equal(0, dw);
+        t.Apply(0, 0, 6, 0, false, 4000, out _, out _, out dw, out _);
+        Assert.Equal(1, dw);
     }
 }

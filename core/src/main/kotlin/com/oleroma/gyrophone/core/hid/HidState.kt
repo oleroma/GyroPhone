@@ -72,21 +72,36 @@ data class KeyboardState(
     }
 }
 
+/**
+ * Mouse output of one snapshot. [wheel] (up +) and [hwheel] (right +) are in 1/120 notch units
+ * (Windows WHEEL_DELTA fractions); the transport converts them for the host.
+ */
 data class MouseState(
     val buttons: Int = 0,
     val dx: Int = 0,
     val dy: Int = 0,
     val wheel: Int = 0,
+    val hwheel: Int = 0,
 ) {
-    val hasMotion: Boolean get() = dx != 0 || dy != 0 || wheel != 0
+    val hasMotion: Boolean get() = dx != 0 || dy != 0 || wheel != 0 || hwheel != 0
 
-    fun encode(): ByteArray {
-        val out = ByteArray(HidDescriptor.MOUSE_REPORT_SIZE)
-        out[0] = (buttons and 0x1F).toByte()
-        putInt16(out, 1, dx.coerceIn(-32767, 32767))
-        putInt16(out, 3, dy.coerceIn(-32767, 32767))
-        out[5] = wheel.coerceIn(-127, 127).toByte()
-        return out
+    companion object {
+        /** One wheel notch in [wheel] / [hwheel] units. */
+        const val WHEEL_UNIT = 120
+
+        /**
+         * The HID mouse input report. [wheel] and [pan] are in the units the host currently reads:
+         * whole notches, or 1/120 notch once it has enabled the resolution multiplier.
+         */
+        fun report(buttons: Int, dx: Int, dy: Int, wheel: Int, pan: Int): ByteArray {
+            val out = ByteArray(HidDescriptor.MOUSE_REPORT_SIZE)
+            out[0] = (buttons and 0x1F).toByte()
+            putInt16(out, 1, dx.coerceIn(-32767, 32767))
+            putInt16(out, 3, dy.coerceIn(-32767, 32767))
+            putInt16(out, 5, wheel.coerceIn(-32767, 32767))
+            putInt16(out, 7, pan.coerceIn(-32767, 32767))
+            return out
+        }
     }
 }
 

@@ -73,7 +73,8 @@ public sealed class HostEngine
     private readonly StateFrame _pending = new();
     private bool _hasPending;
     private readonly MouseDeltaTracker _mouse = new();
-    private int _accDx, _accDy, _accWheel;
+    /// <summary>Motion since the last Flush; both wheels in 1/120 notch.</summary>
+    private int _accDx, _accDy, _accWheel, _accHWheel;
 
     // injected state
     private readonly byte[] _injectedKeys = new byte[StateFrame.KeyBitmapSize];
@@ -247,7 +248,7 @@ public sealed class HostEngine
 
         if (!s.Promoted)
         {
-            if (type != PacketType.State)
+            if (type != PacketType.State && type != PacketType.StateHires)
             {
                 HandlePendingControl(s, type, plain, nowUs);
                 return;
@@ -259,6 +260,7 @@ public sealed class HostEngine
         switch (type)
         {
             case PacketType.State:
+            case PacketType.StateHires:
                 OnState(plain, seq, nowUs);
                 break;
             case PacketType.Ping:
@@ -292,10 +294,13 @@ public sealed class HostEngine
         _pending.CopyFrom(_rxFrame);
         _hasPending = true;
         _releasedForSilence = false;
-        _mouse.Apply(_rxFrame.MouseTotalX, _rxFrame.MouseTotalY, _rxFrame.WheelTotal, nowUs, out int dx, out int dy, out int dw);
+        _mouse.Apply(_rxFrame.MouseTotalX, _rxFrame.MouseTotalY, _rxFrame.WheelTotal, _rxFrame.HWheelTotal,
+            _rxFrame.Hires, nowUs, out int dx, out int dy, out int dw, out int dh);
         _accDx += dx;
         _accDy += dy;
-        _accWheel += dw;
+        // Plain STATE counts whole notches.
+        _accWheel += _rxFrame.Hires ? dw : dw * InjectEvent.WheelDelta;
+        _accHWheel += dh;
         long lat = _stats.OnState(_rxFrame.PhoneTimeUs, nowUs);
         if (LatencySampleHook != null)
         {
@@ -325,7 +330,7 @@ public sealed class HostEngine
             return;
         }
         var s = _sessions.CreatePending(hello, phone.Info.Name, phone.PairKey, _settings.HostId,
-            (byte)_settings.OutputMode, _pad.DriverOk ? WelcomeFlags.VigemOk : (byte)0, from, nowUs);
+            (byte)_settings.OutputMode, (byte)((_pad.DriverOk ? WelcomeFlags.VigemOk : 0) | WelcomeFlags.HiresWheel), from, nowUs);
         Reply(s.Welcome, from);
     }
 
@@ -339,7 +344,7 @@ public sealed class HostEngine
             old.Dispose();
         }
         _mouse.Reset();
-        _accDx = _accDy = _accWheel = 0;
+        _accDx = _accDy = _accWheel = _accHWheel = 0;
         _stats.Reset();
         _releasedForSilence = false;
         _hasPending = false;
@@ -362,8 +367,8 @@ public sealed class HostEngine
             SendPendingRumble(nowUs);
             if (!_hasPending) return;
             _hasPending = false;
-            int dx = _accDx, dy = _accDy, dw = _accWheel;
-            _accDx = _accDy = _accWheel = 0;
+            int dx = _accDx, dy = _accDy, dw = _accWheel, dh = _accHWheel;
+            _accDx = _accDy = _accWheel = _accHWheel = 0;
             if (_paused || _locked) return; // baseline already updated, nothing injected
 
             SubmitPad(_pending);
@@ -376,7 +381,8 @@ public sealed class HostEngine
             int n = InputDiff.Diff(_injectedKeys, _pending.Keys, ref _injectedMouse, _pending.MouseButtons,
                 Math.Clamp(dx, -Wire.MaxMouseDelta, Wire.MaxMouseDelta),
                 Math.Clamp(dy, -Wire.MaxMouseDelta, Wire.MaxMouseDelta),
-                Math.Clamp(dw, -Wire.MaxWheelDelta, Wire.MaxWheelDelta),
+                Math.Clamp(dw, -Wire.MaxWheelDeltaHires, Wire.MaxWheelDeltaHires),
+                Math.Clamp(dh, -Wire.MaxWheelDeltaHires, Wire.MaxWheelDeltaHires),
                 _inject, ref unknown);
             _unknownUsages += unknown;
             if (blocked) NoteBlockedUps(before, beforeMouse);
@@ -386,7 +392,7 @@ public sealed class HostEngine
                 _injections++;
                 for (int i = 0; i < n; i++)
                 {
-                    if (_inject[i].Kind == InjectKind.Key || (_inject[i].Flags & ~(InjectEvent.MouseMove | InjectEvent.MouseWheel)) != 0)
+                    if (_inject[i].Kind == InjectKind.Key || (_inject[i].Flags & ~(InjectEvent.MouseMove | InjectEvent.MouseWheel | InjectEvent.MouseHWheel)) != 0)
                     {
                         _heldVersion++;
                         break;
