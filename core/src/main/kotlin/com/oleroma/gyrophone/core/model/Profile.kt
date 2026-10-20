@@ -133,6 +133,32 @@ data class GyroSettings(
     val tighteningThreshold: Float = 1.5f,
     /** Below this speed (deg/s) motion is averaged over a short window. 0 disables. */
     val smoothingThreshold: Float = 4f,
+    /**
+     * Axis mapping used while the phone is held in portrait. Null = same as the fields above,
+     * which are the landscape mapping (and the only one in profiles saved before this existed).
+     */
+    val portrait: GyroAxes? = null,
+) {
+    val landscapeAxes: GyroAxes get() = GyroAxes(mouseX, invertX, scaleX, mouseY, invertY, scaleY)
+
+    fun axesFor(portrait: Boolean): GyroAxes = (if (portrait) this.portrait else null) ?: landscapeAxes
+
+    /** Returns a copy with [axes] as the mapping for that orientation. */
+    fun withAxes(portrait: Boolean, axes: GyroAxes): GyroSettings =
+        if (portrait) copy(portrait = axes)
+        else copy(mouseX = axes.mouseX, invertX = axes.invertX, scaleX = axes.scaleX,
+            mouseY = axes.mouseY, invertY = axes.invertY, scaleY = axes.scaleY)
+}
+
+/** Which motion drives each mouse axis; see [GyroSettings.mouseX] and [GyroSettings.mouseY]. */
+@Serializable
+data class GyroAxes(
+    val mouseX: MotionAxis = MotionAxis.YAW,
+    val invertX: Boolean = false,
+    val scaleX: Float = 1f,
+    val mouseY: MotionAxis = MotionAxis.PITCH,
+    val invertY: Boolean = false,
+    val scaleY: Float = 1f,
 )
 
 /** The pad screen's empty background as a laptop touchpad. */
