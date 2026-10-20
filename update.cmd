@@ -4,7 +4,7 @@ rem Usage: update.cmd [branch]   (default: newest build on any branch)
 rem Phone: in-place update only (adb install -r), keeps settings, never uninstalls.
 rem Skips anything already at that build, so it is safe to run as often as you like.
 rem Downloads go to %LOCALAPPDATA%\GyroPhone\builds\<run id>, outside any repo checkout.
-rem It never starts or closes apps on the PC or the phone; you launch them yourself.
+rem It never starts or closes apps; start the companion from the Start menu (GyroPhone Companion).
 setlocal
 set "REPO=oleroma/GyroPhone"
 set "BRANCH_ARG="
@@ -34,6 +34,8 @@ if "%PC_DONE%"=="%RUN_ID%" (
   if exist "%OUT%\GyroPhoneCompanion.exe" (
     >"%STATE%\companion.last" echo %RUN_ID%
     echo Companion downloaded: %OUT%\GyroPhoneCompanion.exe
+    rem Start menu entry "GyroPhone Companion" always points at the newest download.
+    powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Programs')+'\GyroPhone Companion.lnk'); $s.TargetPath='%OUT%\GyroPhoneCompanion.exe'; $s.WorkingDirectory='%OUT%'; $s.Save()"
     echo Close the running companion and start this one when you are ready.
   ) else (
     echo This build has no companion yet.
