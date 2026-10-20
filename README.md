@@ -13,7 +13,8 @@ Gyro (sensor direct channel) ────┘                                    
 ```
 
 * **Bluetooth HID device.** The phone registers itself through `BluetoothHidDevice` as one composite device with a gamepad, a 6-key keyboard and a 16-bit mouse. Windows pairs with it like any Bluetooth controller, and nothing needs to be installed on the PC.
-* **Gyro.** The gyro is read through `SensorDirectChannel` (shared memory written by the sensor HAL, with no Binder or Looper hop) at the highest rate the phone offers. If the phone doesn't support that, it falls back to `SENSOR_DELAY_FASTEST` on a high-priority thread. Gyro-to-mouse uses Alpakka/JoyShockMapper-style tightening and tiered smoothing, and keeps sub-count remainders so slow aiming isn't lost. The axes follow the landscape orientation automatically.
+* **Gyro.** The gyro is read through `SensorDirectChannel` (shared memory written by the sensor HAL, with no Binder or Looper hop) at the highest rate the phone offers. If the phone doesn't support that, it falls back to `SENSOR_DELAY_FASTEST` on a high-priority thread. Gyro-to-mouse uses Alpakka/JoyShockMapper-style tightening and tiered smoothing, and keeps sub-count remainders so slow aiming isn't lost. Each profile sets how the phone is held (auto from screen rotation, landscape either way, portrait or flat) and which motion (yaw, pitch or roll) drives mouse X and Y, with per-axis invert.
+* **Report rate.** Reports go out at a fixed rate (60 to 500 Hz, 125 Hz by default), and mouse motion is merged between reports. Android gives no signal when Bluetooth has actually sent a report, so a rate above what the link can carry builds a queue, which feels like growing lag. The Connect tab shows reports sent per second so you can pick the best rate.
 * **Mapping.** Any input on the phone side (a controller button or axis, a keyboard key, a touch button or touch stick) can map to any output: a gamepad button, axis or trigger, a keyboard key, a mouse button, the wheel, or gyro hold/toggle. One input can drive several outputs, and several inputs can drive one output.
 * **Profiles.** Profiles are JSON files. Three are built in: *Virtual gamepad* (a prebuilt touch layout), *Controller passthrough* (X5 → PC gamepad, R3 toggles gyro) and *Keyboard + mouse (WASD)*. When a known controller is attached (GameSir, Xbox, PlayStation, Nintendo, 8BitDo), the matching profile is selected automatically. Any other standard pad still works through Android's normalised button layout.
 
@@ -61,7 +62,8 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 
 **M2: Tuning on the OnePlus 15**
 - [ ] Measure the real gyro rate and the end-to-end latency (input → Windows)
-- [ ] Tune Bluetooth QoS and the report-pump interval, and check that sniff mode is off while active
+- [x] Selectable report rate with live send stats, plus gyro orientation and yaw/pitch/roll → mouse axis routing
+- [ ] Tune Bluetooth QoS, and check that sniff mode is off while active
 - [ ] Gyro calibration (bias on rest), player-space yaw (gravity-aware) and ratchet
 - [ ] Stick deadzones and curves, and haptic feedback on touch buttons
 - [ ] Keep sending input while the screen is off or another app is in front

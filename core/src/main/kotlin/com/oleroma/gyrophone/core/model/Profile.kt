@@ -22,20 +22,42 @@ data class TouchControl(
 @Serializable
 enum class GyroMode { OFF, ALWAYS, HOLD_OR_TOGGLE }
 
+/** How the phone is held. AUTO follows the screen rotation. */
 @Serializable
-enum class SensorAxis { X, Y, Z }
+enum class GyroOrientation(val label: String) {
+    AUTO("Auto (screen rotation)"),
+    LANDSCAPE_LEFT("Landscape, top on the left"),
+    LANDSCAPE_RIGHT("Landscape, top on the right"),
+    PORTRAIT("Portrait"),
+    FLAT("Flat, screen up"),
+}
+
+/** Rotation of the phone in the player's frame. */
+@Serializable
+enum class MotionAxis(val label: String) {
+    /** Turning left/right around the vertical axis. */
+    YAW("Yaw"),
+    /** Tilting the far edge up/down. */
+    PITCH("Pitch"),
+    /** Tilting like a steering wheel. */
+    ROLL("Roll"),
+    NONE("None"),
+}
 
 @Serializable
 data class GyroSettings(
     val mode: GyroMode = GyroMode.HOLD_OR_TOGGLE,
     /** Mouse counts per degree of rotation. */
     val sensitivity: Float = 16f,
-    /** Derive yaw/pitch axes from the display rotation (landscape either way round). */
-    val autoOrient: Boolean = true,
-    val yawAxis: SensorAxis = SensorAxis.X,
-    val yawInvert: Boolean = true,
-    val pitchAxis: SensorAxis = SensorAxis.Y,
-    val pitchInvert: Boolean = false,
+    val orientation: GyroOrientation = GyroOrientation.AUTO,
+    /** Motion that moves the cursor horizontally: yaw right / pitch up / roll clockwise = right. */
+    val mouseX: MotionAxis = MotionAxis.YAW,
+    val invertX: Boolean = false,
+    val scaleX: Float = 1f,
+    /** Motion that moves the cursor vertically: pitch up / yaw right / roll clockwise = up. */
+    val mouseY: MotionAxis = MotionAxis.PITCH,
+    val invertY: Boolean = false,
+    val scaleY: Float = 1f,
     /** Below this speed (deg/s) motion is scaled down, killing hand jitter. 0 disables. */
     val tighteningThreshold: Float = 1.5f,
     /** Below this speed (deg/s) motion is averaged over a short window. 0 disables. */

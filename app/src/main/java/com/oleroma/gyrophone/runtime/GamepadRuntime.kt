@@ -46,6 +46,13 @@ class GamepadRuntime(context: Context) {
     val engine = MappingEngine(_activeProfile.value)
     private val pump = ReportPump(engine, hid)
     private val gyroMouse = GyroMouse(_activeProfile.value.gyro)
+    private val prefs = appContext.getSharedPreferences("gyrophone", Context.MODE_PRIVATE)
+
+    private val _reportRateHz = MutableStateFlow(prefs.getInt(KEY_RATE, ReportPump.DEFAULT_RATE_HZ))
+    val reportRateHz: StateFlow<Int> = _reportRateHz
+
+    data class LinkStats(val sentPerSecond: Int, val failedPerSecond: Int)
+    fun linkStats() = LinkStats(pump.sentPerSecond, pump.failedPerSecond)
 
     private val _controllers = MutableStateFlow<List<AttachedController>>(emptyList())
     val controllers: StateFlow<List<AttachedController>> = _controllers
@@ -56,7 +63,6 @@ class GamepadRuntime(context: Context) {
     data class GyroInfo(val source: String = "Not started", val rateHz: Int = 0, val active: Boolean = false)
 
     private var gyro: GyroSource? = null
-    @Volatile private var displayRotation = 90
     private var lastGyroTs = 0L
     private var rateWindowStart = 0L
     private var rateCount = 0
@@ -74,6 +80,13 @@ class GamepadRuntime(context: Context) {
             }
         }
         hid.onHostConnected = { pump.invalidate() }
+        pump.intervalNanos = 1_000_000_000L / _reportRateHz.value
+    }
+
+    fun setReportRate(hz: Int) {
+        prefs.edit().putInt(KEY_RATE, hz).apply()
+        _reportRateHz.value = hz
+        pump.intervalNanos = 1_000_000_000L / hz
     }
 
     fun start() {
@@ -90,8 +103,8 @@ class GamepadRuntime(context: Context) {
     }
 
     fun setDisplayRotation(degrees: Int) {
-        displayRotation = degrees
-        applyGyroSettings(_activeProfile.value)
+        gyroMouse.displayRotation = degrees
+        gyroMouse.reset()
     }
 
     fun activate(profile: Profile) {
@@ -129,8 +142,7 @@ class GamepadRuntime(context: Context) {
     }
 
     private fun applyGyroSettings(profile: Profile) {
-        val g = profile.gyro
-        gyroMouse.settings = if (g.autoOrient) GyroMouse.defaultsForRotation(displayRotation, g) else g
+        gyroMouse.settings = profile.gyro
         gyroMouse.reset()
     }
 
@@ -146,6 +158,10 @@ class GamepadRuntime(context: Context) {
             }
         }
         _gyroInfo.value = GyroInfo(source = "Unavailable")
+    }
+
+    companion object {
+        private const val KEY_RATE = "report_rate_hz"
     }
 
     private fun onGyroSample(x: Float, y: Float, z: Float, ts: Long) {

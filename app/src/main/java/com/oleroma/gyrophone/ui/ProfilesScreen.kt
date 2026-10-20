@@ -6,7 +6,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,6 +21,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -32,6 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.GyroMode
+import com.oleroma.gyrophone.core.model.GyroOrientation
+import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.Profile
@@ -79,7 +85,7 @@ private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (
         onSelect(updated.id)
     }
 
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(profile.name, style = MaterialTheme.typography.titleMedium)
         if (builtin) Text("Built-in: changes are saved as a custom copy.", style = MaterialTheme.typography.bodySmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -103,6 +109,20 @@ private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (
             Slider(value = sens, onValueChange = { sens = it }, valueRange = 2f..60f,
                 onValueChangeFinished = { edit { it.copy(gyro = it.gyro.copy(sensitivity = sens)) } })
         }
+        Text("Held as", style = MaterialTheme.typography.bodyMedium)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            GyroOrientation.entries.forEach { o ->
+                FilterChip(selected = profile.gyro.orientation == o,
+                    onClick = { edit { it.copy(gyro = it.gyro.copy(orientation = o)) } },
+                    label = { Text(o.label) })
+            }
+        }
+        AxisRow("Mouse left/right", profile.gyro.mouseX, profile.gyro.invertX,
+            onAxis = { a -> edit { it.copy(gyro = it.gyro.copy(mouseX = a)) } },
+            onInvert = { inv -> edit { it.copy(gyro = it.gyro.copy(invertX = inv)) } })
+        AxisRow("Mouse up/down", profile.gyro.mouseY, profile.gyro.invertY,
+            onAxis = { a -> edit { it.copy(gyro = it.gyro.copy(mouseY = a)) } },
+            onInvert = { inv -> edit { it.copy(gyro = it.gyro.copy(invertY = inv)) } })
 
         HorizontalDivider()
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -161,5 +181,23 @@ private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun AxisRow(
+    title: String,
+    axis: MotionAxis,
+    inverted: Boolean,
+    onAxis: (MotionAxis) -> Unit,
+    onInvert: (Boolean) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, Modifier.padding(end = 4.dp))
+        MotionAxis.entries.forEach { a ->
+            FilterChip(selected = axis == a, onClick = { onAxis(a) }, label = { Text(a.label) })
+        }
+        Text("Invert", Modifier.padding(start = 8.dp))
+        Switch(checked = inverted, onCheckedChange = onInvert)
     }
 }
