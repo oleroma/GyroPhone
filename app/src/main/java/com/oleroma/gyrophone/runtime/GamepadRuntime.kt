@@ -10,11 +10,24 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownController
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.data.ProfileStore
+import com.oleroma.gyrophone.core.net.ByeReason
+import com.oleroma.gyrophone.core.net.Wire
 import com.oleroma.gyrophone.hid.HidDeviceManager
 import com.oleroma.gyrophone.hid.ReportPump
+import com.oleroma.gyrophone.link.BluetoothLink
+import com.oleroma.gyrophone.link.LinkState
+import com.oleroma.gyrophone.link.LinkStats
+import com.oleroma.gyrophone.link.OutputLink
+import com.oleroma.gyrophone.link.TransportKind
 import com.oleroma.gyrophone.sensor.GyroSource
+import com.oleroma.gyrophone.wifi.WifiLink
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 /** A game controller attached to the phone (e.g. GameSir X5). */
@@ -31,8 +44,9 @@ data class AttachedController(
 )
 
 /**
- * Process-wide wiring: profiles -> mapping engine -> report pump -> Bluetooth HID, plus the gyro.
- * Started and stopped by GamepadService; the UI reads its state flows.
+ * Process-wide wiring: profiles -> mapping engine -> the active output link (Bluetooth HID via
+ * the report pump, or Wi-Fi to the PC companion), plus the gyro. Started and stopped by
+ * GamepadService; the UI reads its state flows.
  */
 class GamepadRuntime(context: Context) {
     private val appContext = context.applicationContext
@@ -58,8 +72,36 @@ class GamepadRuntime(context: Context) {
     )
     val reportRateHz: StateFlow<Int> = _reportRateHz
 
-    data class LinkStats(val sentPerSecond: Int, val failedPerSecond: Int)
-    fun linkStats() = LinkStats(pump.sentPerSecond, pump.failedPerSecond)
+    val bluetooth = BluetoothLink(appContext, hid, pump)
+    val wifi = WifiLink(appContext, engine)
+
+    private val _transport = MutableStateFlow(
+        prefs.getString(KEY_TRANSPORT, null)?.let { name -> TransportKind.entries.firstOrNull { it.name == name } }
+            ?: TransportKind.BLUETOOTH,
+    )
+    /** Which link carries input to the PC. Only one link runs at a time. */
+    val transport: StateFlow<TransportKind> = _transport
+
+    private val _wifiRateHz = MutableStateFlow(
+        prefs.getInt(KEY_WIFI_RATE, Wire.DEFAULT_RATE_HZ).takeIf { it in Wire.RATES_HZ } ?: Wire.DEFAULT_RATE_HZ,
+    )
+    val wifiRateHz: StateFlow<Int> = _wifiRateHz
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val _linkState = MutableStateFlow<LinkState>(LinkState.Off)
+    /** State of the active link. */
+    val linkState: StateFlow<LinkState> = _linkState
+
+    @Volatile private var running = false
+
+    private val active: OutputLink get() = link(_transport.value)
+
+    private fun link(kind: TransportKind): OutputLink = when (kind) {
+        TransportKind.BLUETOOTH -> bluetooth
+        TransportKind.WIFI -> wifi
+    }
+
+    fun linkStats(): LinkStats = active.stats()
 
     private val _controllers = MutableStateFlow<List<AttachedController>>(emptyList())
     val controllers: StateFlow<List<AttachedController>> = _controllers
@@ -91,6 +133,10 @@ class GamepadRuntime(context: Context) {
         }
         hid.onHostConnected = { pump.invalidate() }
         pump.intervalNanos = 1_000_000_000L / _reportRateHz.value
+        wifi.rateHz = _wifiRateHz.value
+        scope.launch {
+            _transport.collectLatest { kind -> link(kind).state.collect { _linkState.value = it } }
+        }
     }
 
     fun setReportRate(hz: Int) {
@@ -99,17 +145,39 @@ class GamepadRuntime(context: Context) {
         pump.intervalNanos = 1_000_000_000L / hz
     }
 
-    fun start() {
-        hid.start()
-        pump.start()
+    fun setWifiRate(hz: Int) {
+        prefs.edit().putInt(KEY_WIFI_RATE, hz).apply()
+        _wifiRateHz.value = hz
+        wifi.rateHz = hz
+    }
+
+    /**
+     * Switches the output link: the old one stops (a Wi-Fi session says BYE first), the engine
+     * releases everything, then the new one starts if the runtime is running.
+     */
+    @Synchronized fun setTransport(kind: TransportKind) {
+        if (kind == _transport.value) return
+        prefs.edit().putString(KEY_TRANSPORT, kind.name).apply()
+        if (running) {
+            val old = active
+            if (old is WifiLink) old.stop(ByeReason.TRANSPORT_SWITCH) else old.stop()
+        }
+        engine.reset()
+        _transport.value = kind
+        if (running) active.start()
+    }
+
+    @Synchronized fun start() {
+        running = true
+        active.start()
         startGyro()
     }
 
-    fun stop() {
+    @Synchronized fun stop() {
         gyro?.stop(); gyro = null
-        pump.stop()
-        hid.stop()
+        active.stop()
         engine.reset()
+        running = false
     }
 
     fun setDisplayRotation(degrees: Int) {
@@ -194,6 +262,8 @@ class GamepadRuntime(context: Context) {
 
     companion object {
         private const val KEY_RATE = "report_rate_hz"
+        private const val KEY_WIFI_RATE = "wifi_rate_hz"
+        private const val KEY_TRANSPORT = "transport"
     }
 
     private fun onGyroSample(x: Float, y: Float, z: Float, ts: Long) {

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Host engine: UDP server, pairing, sessions and injection logic behind abstractions. No Windows APIs. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>GyroPhone.Host</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../GyroPhone.Protocol/GyroPhone.Protocol.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="GyroPhone.Tests" />
+  </ItemGroup>
+</Project>

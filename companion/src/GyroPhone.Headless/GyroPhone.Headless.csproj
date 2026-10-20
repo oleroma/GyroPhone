@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Console host for diagnostics and latency measurement: same engine as the tray, console pair prompt. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>GyroPhone.Headless</RootNamespace>
+    <AssemblyName>GyroPhoneHeadless</AssemblyName>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../GyroPhone.Protocol/GyroPhone.Protocol.csproj" />
+    <ProjectReference Include="../GyroPhone.Host/GyroPhone.Host.csproj" />
+    <ProjectReference Include="../GyroPhone.Windows/GyroPhone.Windows.csproj" />
+  </ItemGroup>
+</Project>

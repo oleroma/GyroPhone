@@ -1,0 +1,12 @@
+{
+  "solution": {
+    "path": "GyroPhone.Companion.sln",
+    "projects": [
+      "src\\GyroPhone.Protocol\\GyroPhone.Protocol.csproj",
+      "src\\GyroPhone.Host\\GyroPhone.Host.csproj",
+      "src\\GyroPhone.Windows\\GyroPhone.Windows.csproj",
+      "src\\GyroPhone.Headless\\GyroPhone.Headless.csproj",
+      "tests\\GyroPhone.Tests\\GyroPhone.Tests.csproj"
+    ]
+  }
+}

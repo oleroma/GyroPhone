@@ -15,6 +15,16 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Wi-Fi link to the PC companion (UDP on the LAN). All normal permissions. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Also satisfies the connectedDevice foreground-service type without BLUETOOTH_CONNECT. -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!-- WIFI_MODE_FULL_LOW_LATENCY lock while a Wi-Fi session is live. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- TODO(target 37 / Android 17): LAN access will need the local-network runtime permission,
+         expected to be android.permission.ACCESS_LOCAL_NETWORK. Verify the name before targeting 37. -->
 
     <application
         android:name=".GyroPhoneApp"

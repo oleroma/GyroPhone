@@ -1,0 +1,621 @@
+package com.oleroma.gyrophone.wifi
+
+import android.content.Context
+import android.os.Build
+import android.os.Process
+import android.os.SystemClock
+import android.provider.Settings
+import android.util.Log
+import com.oleroma.gyrophone.core.engine.MappingEngine
+import com.oleroma.gyrophone.core.net.Announce
+import com.oleroma.gyrophone.core.net.AnnounceFlags
+import com.oleroma.gyrophone.core.net.ByeReason
+import com.oleroma.gyrophone.core.net.Caps
+import com.oleroma.gyrophone.core.net.ClockSync
+import com.oleroma.gyrophone.core.net.Crypto
+import com.oleroma.gyrophone.core.net.Discover
+import com.oleroma.gyrophone.core.net.HostFlags
+import com.oleroma.gyrophone.core.net.HostStatus
+import com.oleroma.gyrophone.core.net.HostStatusFlags
+import com.oleroma.gyrophone.core.net.LinkInfo
+import com.oleroma.gyrophone.core.net.LinkInfoFlags
+import com.oleroma.gyrophone.core.net.LiveSession
+import com.oleroma.gyrophone.core.net.PacketType
+import com.oleroma.gyrophone.core.net.PairFailure
+import com.oleroma.gyrophone.core.net.PairState
+import com.oleroma.gyrophone.core.net.PairingMath
+import com.oleroma.gyrophone.core.net.PhonePairingFlow
+import com.oleroma.gyrophone.core.net.PhoneSessionFlow
+import com.oleroma.gyrophone.core.net.Pong
+import com.oleroma.gyrophone.core.net.SessionStatus
+import com.oleroma.gyrophone.core.net.Wire
+import com.oleroma.gyrophone.core.net.WireCodec
+import com.oleroma.gyrophone.core.net.getI32
+import com.oleroma.gyrophone.link.LinkState
+import com.oleroma.gyrophone.link.LinkStats
+import com.oleroma.gyrophone.link.OutputLink
+import com.oleroma.gyrophone.link.TransportKind
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import java.io.IOException
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.SocketException
+import java.net.SocketTimeoutException
+import java.util.concurrent.ConcurrentLinkedQueue
+
+/** A PC that answered DISCOVER within the last [Wire.HOST_EXPIRY_MS]. */
+data class DiscoveredHost(
+    val hostIdHex: String,
+    val name: String,
+    val address: String,
+    val port: Int,
+    val flags: Int,
+    /** This phone holds a pairing key for it. */
+    val paired: Boolean,
+) {
+    val pairingOpen: Boolean get() = flags and AnnounceFlags.PAIRING_OPEN != 0
+    val vigemOk: Boolean get() = flags and AnnounceFlags.VIGEM_OK != 0
+    val busy: Boolean get() = flags and AnnounceFlags.BUSY != 0
+}
+
+/** What the pairing dialog shows: the PC's name and where the attempt is. */
+data class PairingView(val hostName: String, val state: PairState)
+
+/**
+ * Wi-Fi transport to the GyroPhone companion on a Windows PC (UDP, wire protocol v1).
+ *
+ * One unconnected socket carries everything. The `gp-wifi-rx` thread owns all protocol state:
+ * it receives with a 50 ms timeout, drives [PhonePairingFlow] and [PhoneSessionFlow], runs
+ * discovery and executes UI commands from a queue, so no flow is touched from two threads.
+ * [WifiPump] sends input on the live session.
+ */
+class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink {
+    override val kind = TransportKind.WIFI
+
+    private val appContext = context.applicationContext
+    val store = WifiPairingStore(appContext)
+    private val locks = WifiLocks(appContext)
+    private val binder = WifiNetworkBinder(appContext) { post { onNetworkChanged() } }
+    private val pump = WifiPump(engine)
+
+    private val _state = MutableStateFlow<LinkState>(LinkState.Off)
+    override val state: StateFlow<LinkState> = _state
+
+    private val _found = MutableStateFlow<List<DiscoveredHost>>(emptyList())
+    /** PCs on this network, refreshed by DISCOVER every second while not connected. */
+    val found: StateFlow<List<DiscoveredHost>> = _found
+
+    private val _nothingFound = MutableStateFlow(false)
+    /** True after 3 s of discovery without a single ANNOUNCE. */
+    val nothingFound: StateFlow<Boolean> = _nothingFound
+
+    private val _pairing = MutableStateFlow<PairingView?>(null)
+    /** The pairing attempt for the dialog; null when there is none. Cleared by [dismissPair]. */
+    val pairing: StateFlow<PairingView?> = _pairing
+
+    private val _notice = MutableStateFlow<String?>(null)
+    /** A one-off problem with the last UI action (bad address, unreadable key), or null. */
+    val notice: StateFlow<String?> = _notice
+
+    private val _currentHostId = MutableStateFlow<String?>(null)
+    /** The paired PC the session runs for (connecting or connected), or null. */
+    val currentHostId: StateFlow<String?> = _currentHostId
+
+    /** Paired PCs, most recently used first. */
+    val paired: StateFlow<List<StoredHost>> get() = store.hosts
+
+    /** Max STATE rate (250, 500 or 1000 Hz). */
+    var rateHz: Int = Wire.DEFAULT_RATE_HZ
+        set(value) {
+            field = value
+            pump.rateHz = value
+            post { session?.maxRateHz = value }
+        }
+
+    @Volatile private var running = false
+    @Volatile private var socket: DatagramSocket? = null
+    private var rxThread: Thread? = null
+    private val commands = ConcurrentLinkedQueue<Runnable>()
+
+    // Rx-thread state.
+    private var session: PhoneSessionFlow? = null
+    private var sessionHostId: String? = null
+    private var sessionHostName = ""
+    private var live: LiveSession? = null
+    private var pairFlow: PhonePairingFlow? = null
+    private val clock = ClockSync()
+    private val foundSeen = HashMap<String, Long>()
+    private val foundMap = LinkedHashMap<String, DiscoveredHost>()
+    private val manualTargets = LinkedHashSet<InetSocketAddress>()
+    private var nextScanMs = 0L
+    private var scanStartMs = 0L
+    private var lastAnnounceMs = 0L
+    private var nextRefreshMs = 0L
+    private val txBuf = ByteArray(Wire.MAX_DATAGRAM)
+
+    // Read by the pump (LINK_INFO) and the UI (stats).
+    @Volatile private var clockOffsetUs = 0L
+    @Volatile private var rttMinUs = -1L
+    @Volatile private var hostStatus: HostStatus? = null
+    @Volatile private var welcomeHostFlags: Int? = null
+
+    init {
+        pump.rateHz = rateHz
+        pump.linkInfoSource = ::buildLinkInfo
+    }
+
+    override fun start() {
+        if (running) return
+        val s = try {
+            DatagramSocket(0).apply {
+                broadcast = true
+                trafficClass = Wire.DSCP_TRAFFIC_CLASS
+                sendBufferSize = SEND_BUFFER
+                soTimeout = RX_TIMEOUT_MS
+            }
+        } catch (e: SocketException) {
+            Log.e(TAG, "no UDP socket", e)
+            _state.value = LinkState.Failed("Could not open a network socket")
+            return
+        }
+        socket = s
+        running = true
+        commands.clear()
+        binder.register(s)
+        pump.start(s)
+        engine.onChange = pump.wake
+        _state.value = LinkState.Searching
+        post { autoConnect() }
+        rxThread = Thread({ rxLoop() }, "gp-wifi-rx").apply { start() }
+    }
+
+    override fun stop() = stop(ByeReason.SHUTDOWN)
+
+    /** Stops the link; a live session first gets a neutral STATE and BYE([byeReason]). */
+    fun stop(byeReason: Int) {
+        if (!running) return
+        running = false
+        engine.onChange = null
+        rxThread?.let { t ->
+            try {
+                t.join(RX_JOIN_MS)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+        rxThread = null
+        // The rx thread is gone: its state is ours now. The pump says goodbye on the open socket.
+        pump.stop(byeReason)
+        session?.disconnect()
+        session = null
+        sessionHostId = null
+        _currentHostId.value = null
+        live = null
+        pairFlow?.cancel()
+        pairFlow = null
+        _pairing.value = null
+        commands.clear()
+        binder.unregister()
+        socket?.close()
+        socket = null
+        locks.release()
+        foundMap.clear()
+        foundSeen.clear()
+        _found.value = emptyList()
+        _nothingFound.value = false
+        _notice.value = null
+        hostStatus = null
+        welcomeHostFlags = null
+        _state.value = LinkState.Off
+    }
+
+    override fun stats(): LinkStats {
+        val info = binder.info
+        val hs = hostStatus
+        val rtt = rttMinUs
+        return LinkStats(
+            sentPerSecond = pump.sentPerSecond,
+            failedPerSecond = pump.failedPerSecond,
+            hostRxPerSecond = hs?.rxPerSec,
+            lossPercent = hs?.let { it.lossPermille / 10f },
+            latP50Ms = hs?.latP50Us?.takeIf { it != UNKNOWN_LATENCY }?.let { (it.toLong() and 0xFFFF_FFFFL) / 1000f },
+            latP99Ms = hs?.latP99Us?.takeIf { it != UNKNOWN_LATENCY }?.let { (it.toLong() and 0xFFFF_FFFFL) / 1000f },
+            rttMs = rtt.takeIf { it >= 0 }?.let { it / 1000f },
+            band = info.band,
+            rssi = info.rssiDbm,
+            linkMbps = info.linkMbps,
+            lowLatencyLock = locks.held,
+            vigemOk = hs?.let { it.flags and HostStatusFlags.VIGEM_OK != 0 }
+                ?: welcomeHostFlags?.let { it and HostFlags.VIGEM_OK != 0 },
+        )
+    }
+
+    // ---- UI commands (run on the rx thread) ----
+
+    /** Connects to a paired PC (HELLO to its last address, DISCOVER fallback). */
+    fun connect(hostIdHex: String) = post { connectTo(hostIdHex) }
+
+    /** Ends the current session (neutral STATE + BYE) and goes back to discovery. */
+    fun disconnect() = post { endSession(ByeReason.USER) }
+
+    /** Starts pairing with a PC whose pairing window is open. */
+    fun pair(host: DiscoveredHost) = post { startPairing(host) }
+
+    /** The user compared the codes and tapped Confirm. */
+    fun confirmPair() = post { pairFlow?.let { handlePairOuts(it.userConfirmed(SystemClock.elapsedRealtime())) } }
+
+    fun cancelPair() = post { pairFlow?.let { handlePairOuts(it.cancel()) } }
+
+    /** Closes the pairing dialog after the attempt finished. */
+    fun dismissPair() {
+        val p = _pairing.value ?: return
+        if (p.state.isFinished()) _pairing.value = null
+    }
+
+    /**
+     * Looks for the PC at [ip] with unicast DISCOVER (for networks that drop broadcasts); the
+     * address keeps being probed with every discovery round until the link stops.
+     */
+    fun connectByIp(ip: String) {
+        val text = ip.trim()
+        if (text.isEmpty() || !running) return
+        Thread({
+            val addr = runCatching { InetAddress.getByName(text) }.getOrNull()
+            if (addr == null) {
+                post { _notice.value = "Unknown address \"$text\"" }
+            } else {
+                post {
+                    _notice.value = null
+                    manualTargets.add(InetSocketAddress(addr, Wire.PORT))
+                    nextScanMs = 0L // probe now
+                }
+            }
+        }, "gp-wifi-resolve").start()
+    }
+
+    /** Forgets a paired PC here (the PC keeps its own entry until removed there). */
+    fun forget(hostIdHex: String) = post {
+        if (sessionHostId == hostIdHex) endSession(ByeReason.USER)
+        store.forget(hostIdHex)
+        foundMap[hostIdHex]?.let { foundMap[hostIdHex] = it.copy(paired = false) }
+        publishFound()
+    }
+
+    private fun post(r: Runnable) {
+        if (running) commands.add(r)
+    }
+
+    // ---- rx thread ----
+
+    private fun rxLoop() {
+        Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND)
+        val buf = ByteArray(Wire.MAX_DATAGRAM)
+        val packet = DatagramPacket(buf, buf.size)
+        while (running) {
+            while (true) {
+                val r = commands.poll() ?: break
+                try {
+                    r.run()
+                } catch (e: RuntimeException) {
+                    Log.e(TAG, "command failed", e)
+                }
+            }
+            val s = socket ?: break
+            try {
+                packet.setLength(buf.size)
+                s.receive(packet)
+                val from = packet.socketAddress as? InetSocketAddress
+                if (from != null) onDatagram(buf, packet.length, from, SystemClock.elapsedRealtime())
+            } catch (e: SocketTimeoutException) {
+                // tick below
+            } catch (e: IOException) {
+                if (!running) break
+                Log.w(TAG, "receive failed", e)
+                SystemClock.sleep(RX_TIMEOUT_MS.toLong())
+            } catch (e: RuntimeException) {
+                Log.e(TAG, "bad datagram", e) // one bad packet never kills the loop
+            }
+            try {
+                tick(SystemClock.elapsedRealtime())
+            } catch (e: RuntimeException) {
+                Log.e(TAG, "tick failed", e)
+            }
+        }
+    }
+
+    private fun onDatagram(buf: ByteArray, len: Int, from: InetSocketAddress, nowMs: Long) {
+        val type = WireCodec.classify(buf, len)
+        if (type < 0) return
+        when (type) {
+            PacketType.ANNOUNCE -> (WireCodec.decodePlain(buf, len) as? Announce)?.let { onAnnounce(it, from, nowMs) }
+            PacketType.PAIR_HOST, PacketType.PAIR_ACK, PacketType.PAIR_DONE -> {
+                val f = pairFlow ?: return
+                val p = WireCodec.decodePlain(buf, len) ?: return
+                handlePairOuts(f.onPacket(p, nowMs))
+                return
+            }
+        }
+        session?.let { handleSessionOuts(it.onDatagram(buf, len, from, nowMs)) }
+    }
+
+    private fun tick(nowMs: Long) {
+        pairFlow?.let { handlePairOuts(it.onTick(nowMs)) }
+        session?.let { handleSessionOuts(it.onTick(nowMs)) }
+
+        // Discovery: our own rounds while no session runs; the session flow runs its own
+        // (with its reqId) while it looks for its PC. ANNOUNCEs feed [found] either way.
+        val f = session
+        val ownScan = f == null || !f.isRunning
+        if (ownScan && nowMs >= nextScanMs) {
+            val n = WireCodec.encodeDiscover(Discover(Crypto.randomBytes(4).getI32(0), store.phoneId), txBuf)
+            for (target in broadcastTargets()) send(txBuf, n, target)
+            nextScanMs = nowMs + Wire.DISCOVER_INTERVAL_MS
+        }
+        val discovering = ownScan || f?.status == SessionStatus.DISCOVERING
+        if (discovering) {
+            if (scanStartMs == 0L) scanStartMs = nowMs
+        } else {
+            scanStartMs = 0L
+        }
+        _nothingFound.value = discovering && foundMap.isEmpty() &&
+            nowMs - scanStartMs >= Wire.HOST_EXPIRY_MS && nowMs - lastAnnounceMs >= Wire.HOST_EXPIRY_MS
+
+        var expired = false
+        val iter = foundSeen.entries.iterator()
+        while (iter.hasNext()) {
+            val e = iter.next()
+            if (nowMs - e.value >= Wire.HOST_EXPIRY_MS) {
+                iter.remove()
+                foundMap.remove(e.key)
+                expired = true
+            }
+        }
+        if (expired) publishFound()
+
+        if (nowMs >= nextRefreshMs) {
+            nextRefreshMs = nowMs + REFRESH_MS
+            publishState() // Wi-Fi radio details in the status line
+        }
+    }
+
+    private fun onAnnounce(a: Announce, from: InetSocketAddress, nowMs: Long) {
+        val id = a.hostId.toHex()
+        lastAnnounceMs = nowMs
+        foundSeen[id] = nowMs
+        val host = DiscoveredHost(
+            hostIdHex = id,
+            name = a.name.ifBlank { "PC" },
+            address = from.address?.hostAddress ?: from.hostString,
+            port = from.port,
+            flags = a.flags,
+            paired = store.find(id) != null,
+        )
+        if (foundMap[id] != host) {
+            foundMap[id] = host
+            publishFound()
+        }
+    }
+
+    private fun publishFound() {
+        _found.value = foundMap.values.toList()
+    }
+
+    private fun broadcastTargets(): List<InetSocketAddress> {
+        val list = ArrayList<InetSocketAddress>(4)
+        list.add(InetSocketAddress(LIMITED_BROADCAST, Wire.PORT))
+        binder.broadcast?.let { list.add(InetSocketAddress(it, Wire.PORT)) }
+        list.addAll(manualTargets)
+        return list
+    }
+
+    private fun send(bytes: ByteArray, len: Int, to: InetSocketAddress) {
+        val s = socket ?: return
+        try {
+            s.send(DatagramPacket(bytes, len, to))
+        } catch (e: IOException) {
+            Log.d(TAG, "send to $to failed: ${e.message}")
+        }
+    }
+
+    private fun autoConnect() {
+        val last = store.mostRecent() ?: return
+        connectTo(last.hostIdHex)
+    }
+
+    private fun connectTo(hostIdHex: String) {
+        val stored = store.find(hostIdHex) ?: return
+        // A fresh ANNOUNCE beats the stored address (DHCP may have moved the PC).
+        val seen = foundMap[hostIdHex]?.let { runCatching { InetSocketAddress(InetAddress.getByName(it.address), it.port) }.getOrNull() }
+        val host = store.unwrap(stored, seen)
+        if (host == null) {
+            _notice.value = "The key for ${stored.name} is unreadable. Forget it and pair again."
+            return
+        }
+        _notice.value = null
+        endSession(ByeReason.USER)
+        store.touch(hostIdHex)
+        val f = PhoneSessionFlow(store.phoneId, host, ::broadcastTargets, Caps.RUMBLE, rateHz)
+        session = f
+        sessionHostId = hostIdHex
+        _currentHostId.value = hostIdHex
+        sessionHostName = stored.name
+        handleSessionOuts(f.connect(SystemClock.elapsedRealtime()))
+        publishState()
+    }
+
+    /** Stops the session flow; the pump says BYE([reason]) if the session was live. */
+    private fun endSession(reason: Int) {
+        val f = session ?: return
+        f.disconnect()
+        session = null
+        sessionHostId = null
+        _currentHostId.value = null
+        if (live != null) {
+            live = null
+            pump.setSession(null, reason)
+        }
+        locks.release()
+        hostStatus = null
+        welcomeHostFlags = null
+        publishState()
+    }
+
+    private fun startPairing(host: DiscoveredHost) {
+        if (pairFlow != null) return
+        val addr = runCatching { InetSocketAddress(InetAddress.getByName(host.address), host.port) }.getOrNull() ?: return
+        val f = PhonePairingFlow(store.phoneId, phoneName(), addr)
+        pairFlow = f
+        _pairing.value = PairingView(host.name, PairState.Idle)
+        handlePairOuts(f.start(SystemClock.elapsedRealtime()))
+    }
+
+    private fun handlePairOuts(outs: List<PhonePairingFlow.Out>) {
+        for (o in outs) when (o) {
+            is PhonePairingFlow.Out.Send -> send(o.bytes, o.bytes.size, o.addr)
+            is PhonePairingFlow.Out.State -> onPairState(o.state)
+        }
+    }
+
+    private fun onPairState(s: PairState) {
+        val name = _pairing.value?.hostName ?: ""
+        _pairing.value = PairingView(name, s)
+        when (s) {
+            is PairState.Done -> {
+                pairFlow = null
+                if (store.save(s.host)) {
+                    val id = s.host.hostId.toHex()
+                    foundMap[id]?.let { foundMap[id] = it.copy(paired = true); publishFound() }
+                    connectTo(id)
+                } else {
+                    _notice.value = "Could not store the pairing key"
+                }
+            }
+            is PairState.Failed -> {
+                pairFlow = null
+                if (s.reason == PairFailure.CANCELLED) _pairing.value = null // the user closed it
+            }
+            else -> Unit
+        }
+        publishState()
+    }
+
+    private fun handleSessionOuts(outs: List<PhoneSessionFlow.Out>) {
+        var changed = false
+        for (o in outs) when (o) {
+            is PhoneSessionFlow.Out.Send -> send(o.bytes, o.bytes.size, o.addr)
+            is PhoneSessionFlow.Out.Live -> {
+                val s = o.session
+                live = s
+                // A replacement (rekey, new HELLO after silence) needs no BYE; neither does a
+                // session the PC ended with HOST_BYE.
+                pump.setSession(s)
+                clock.reset()
+                clockOffsetUs = 0L
+                rttMinUs = -1L
+                hostStatus = null
+                welcomeHostFlags = s?.hostFlags
+                if (s != null) locks.acquire() else locks.release()
+                changed = true
+            }
+            is PhoneSessionFlow.Out.Status -> changed = true
+            is PhoneSessionFlow.Out.HostAddress -> sessionHostId?.let { store.updateAddress(it, o.addr) }
+            is PhoneSessionFlow.Out.Received -> when (val p = o.packet) {
+                is Pong -> onPong(p)
+                is HostStatus -> hostStatus = p
+                else -> Unit // RUMBLE is ignored in v1; ANNOUNCE was handled already
+            }
+        }
+        if (changed) publishState()
+    }
+
+    private fun onPong(p: Pong) {
+        val t4 = WifiPump.phoneUs()
+        if (clock.add(p.t1, p.t2, p.t3, t4)) {
+            clockOffsetUs = clock.offsetUs
+            rttMinUs = clock.rttMinUs
+            pump.requestLinkInfo()
+        }
+    }
+
+    private fun onNetworkChanged() {
+        nextScanMs = 0L // look around the new network at once
+        session?.let { handleSessionOuts(it.reconnect(SystemClock.elapsedRealtime())) }
+        publishState()
+    }
+
+    /** Pump thread: LINK_INFO for the PC's latency statistics, once a clock sample exists. */
+    private fun buildLinkInfo(): LinkInfo? {
+        val rtt = rttMinUs
+        if (rtt < 0) return null
+        val info = binder.info
+        return LinkInfo(
+            clockOffsetUs = clockOffsetUs,
+            rttMinUs = rtt.coerceAtMost(0xFFFF_FFFFL).toInt(),
+            sendRateHz = pump.rateHz,
+            rssiDbm = (info.rssiDbm ?: 0).coerceIn(-128, 127),
+            band = info.band,
+            linkMbps = (info.linkMbps ?: 0).coerceIn(0, 0xFFFF),
+            freqMhz = (info.freqMhz ?: 0).coerceIn(0, 0xFFFF),
+            flags = if (locks.held) LinkInfoFlags.LOW_LATENCY_LOCK_HELD else 0,
+        )
+    }
+
+    private fun publishState() {
+        if (!running) return
+        val pf = pairFlow
+        val pv = _pairing.value
+        val f = session
+        _state.value = when {
+            pf != null && pv != null -> LinkState.Pairing(sasOf(pv.state), pv.hostName)
+            f != null -> when (f.status) {
+                SessionStatus.LIVE -> LinkState.Connected(sessionHostName, radioDetail())
+                SessionStatus.HOST_SILENT -> LinkState.HostSilent(sessionHostName)
+                SessionStatus.NOT_PAIRED -> LinkState.Failed("$sessionHostName no longer knows this phone. Pair again?")
+                SessionStatus.VERSION_MISMATCH -> LinkState.Failed("Update GyroPhone / the PC app")
+                SessionStatus.REPLACED -> LinkState.Failed("Another phone took over $sessionHostName")
+                SessionStatus.FORGOTTEN -> LinkState.Failed("$sessionHostName forgot this phone. Pair again?")
+                SessionStatus.IDLE, SessionStatus.CONNECTING, SessionStatus.DISCOVERING, SessionStatus.HOST_EXITED ->
+                    LinkState.Connecting(sessionHostName)
+            }
+            binder.network == null -> LinkState.Failed("Not connected to Wi-Fi")
+            else -> LinkState.Searching
+        }
+    }
+
+    /** "5 GHz · 1201 Mbps · −51 dBm", leaving out what is unknown. */
+    private fun radioDetail(): String {
+        val info = binder.info
+        val parts = ArrayList<String>(3)
+        if (info.band != 0) parts.add("${info.band} GHz")
+        info.linkMbps?.let { parts.add("$it Mbps") }
+        info.rssiDbm?.let { parts.add("${it.toString().replace('-', '−')} dBm") }
+        return parts.joinToString(" · ")
+    }
+
+    private fun phoneName(): String =
+        Settings.Global.getString(appContext.contentResolver, Settings.Global.DEVICE_NAME)?.takeIf { it.isNotBlank() }
+            ?: Build.MODEL
+
+    companion object {
+        private const val TAG = "WifiLink"
+        private const val RX_TIMEOUT_MS = 50
+        private const val RX_JOIN_MS = 300L
+        private const val SEND_BUFFER = 8192
+        private const val REFRESH_MS = 1000L
+        private const val UNKNOWN_LATENCY = -1 // 0xFFFFFFFF
+        private val LIMITED_BROADCAST: InetAddress =
+            InetAddress.getByAddress(byteArrayOf(-1, -1, -1, -1))
+
+        private fun sasOf(s: PairState): String? = when (s) {
+            is PairState.GotHost -> PairingMath.formatSas(s.sas)
+            is PairState.AwaitUser -> PairingMath.formatSas(s.sas)
+            is PairState.Confirming -> PairingMath.formatSas(s.sas)
+            else -> null
+        }
+
+        private fun PairState.isFinished(): Boolean = this is PairState.Done || this is PairState.Failed
+    }
+}

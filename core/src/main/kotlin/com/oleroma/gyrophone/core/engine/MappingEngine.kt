@@ -27,10 +27,13 @@ class MappingEngine(profile: Profile) {
     private val lock = Any()
 
     var profile: Profile = profile
-        set(value) = synchronized(lock) {
-            field = value
-            gyroToggled = false
-            keyOrder.clear()
+        set(value) {
+            synchronized(lock) {
+                field = value
+                gyroToggled = false
+                keyOrder.clear()
+            }
+            onChange?.run()
         }
 
     private val keys = HashSet<Int>()
@@ -46,32 +49,54 @@ class MappingEngine(profile: Profile) {
     /** Keyboard usages in press order, so the 6-key array is stable while keys are held. */
     private val keyOrder = LinkedHashSet<Int>()
 
+    /**
+     * Called after every input mutation, outside the engine lock, so a transport can wake its
+     * sender without polling. The callback may call [snapshot].
+     */
+    @Volatile var onChange: Runnable? = null
+
     /** Returns true if the profile maps this key, so the caller can consume the event. */
-    fun setKey(keyCode: Int, pressed: Boolean): Boolean = synchronized(lock) {
-        firingEvents { if (pressed) keys.add(keyCode) else keys.remove(keyCode) }
-        profile.mappings.any { it.source == InputSource.Key(keyCode) }
+    fun setKey(keyCode: Int, pressed: Boolean): Boolean {
+        val mapped = synchronized(lock) {
+            firingEvents { if (pressed) keys.add(keyCode) else keys.remove(keyCode) }
+            profile.mappings.any { it.source == InputSource.Key(keyCode) }
+        }
+        onChange?.run()
+        return mapped
     }
 
-    fun setAxis(axis: Int, value: Float) = synchronized(lock) {
-        firingEvents { if (abs(value) < AXIS_EPSILON) axes.remove(axis) else axes[axis] = value }
+    fun setAxis(axis: Int, value: Float) {
+        synchronized(lock) {
+            firingEvents { if (abs(value) < AXIS_EPSILON) axes.remove(axis) else axes[axis] = value }
+        }
+        onChange?.run()
     }
 
-    fun setTouch(id: String, pressed: Boolean) = synchronized(lock) {
-        firingEvents { if (pressed) touches.add(id) else touches.remove(id) }
+    fun setTouch(id: String, pressed: Boolean) {
+        synchronized(lock) {
+            firingEvents { if (pressed) touches.add(id) else touches.remove(id) }
+        }
+        onChange?.run()
     }
 
     /** Touch stick deflection, each axis in -1..1 (Y positive = down, like the HID game pad). */
-    fun setTouchStick(id: String, x: Float, y: Float) = synchronized(lock) {
-        firingEvents {
-            touchSticks[id to StickAxis.X] = x
-            touchSticks[id to StickAxis.Y] = y
+    fun setTouchStick(id: String, x: Float, y: Float) {
+        synchronized(lock) {
+            firingEvents {
+                touchSticks[id to StickAxis.X] = x
+                touchSticks[id to StickAxis.Y] = y
+            }
         }
+        onChange?.run()
     }
 
     /** Relative mouse motion from the gyro, already in mouse counts. */
-    fun addMouseMotion(dx: Int, dy: Int) = synchronized(lock) {
-        mouseDx += dx
-        mouseDy += dy
+    fun addMouseMotion(dx: Int, dy: Int) {
+        synchronized(lock) {
+            mouseDx += dx
+            mouseDy += dy
+        }
+        onChange?.run()
     }
 
     /** Whether gyro motion should currently move the mouse. */
@@ -86,9 +111,12 @@ class MappingEngine(profile: Profile) {
         }
 
     /** Releases everything, e.g. when the profile changes or the host disconnects. */
-    fun reset() = synchronized(lock) {
-        keys.clear(); axes.clear(); touches.clear(); touchSticks.clear(); keyOrder.clear()
-        gyroToggled = false; mouseDx = 0; mouseDy = 0; wheel = 0
+    fun reset() {
+        synchronized(lock) {
+            keys.clear(); axes.clear(); touches.clear(); touchSticks.clear(); keyOrder.clear()
+            gyroToggled = false; mouseDx = 0; mouseDy = 0; wheel = 0
+        }
+        onChange?.run()
     }
 
     /** Computes the current HID state and drains accumulated relative mouse motion. */

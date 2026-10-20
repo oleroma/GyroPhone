@@ -28,6 +28,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.oleroma.gyrophone.input.ControllerInput
+import com.oleroma.gyrophone.link.TransportKind
 import com.oleroma.gyrophone.runtime
 import com.oleroma.gyrophone.service.GamepadService
 
@@ -43,7 +44,9 @@ class MainActivity : ComponentActivity() {
     )
 
     private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        if (hasBluetooth()) GamepadService.start(this)
+        if (canStartService()) GamepadService.start(this)
+        // The service may already run (Wi-Fi start, then Bluetooth picked): start HID now it is allowed.
+        if (hasBluetooth() && runtime.transport.value == TransportKind.BLUETOOTH) runtime.hid.start()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -57,7 +60,8 @@ class MainActivity : ComponentActivity() {
 
         controllerInput = ControllerInput(this, runtime)
 
-        if (hasBluetooth()) GamepadService.start(this) else permissionRequest.launch(permissions)
+        // Wi-Fi needs no runtime permission; Bluetooth HID needs BLUETOOTH_CONNECT first.
+        if (canStartService()) GamepadService.start(this) else permissionRequest.launch(permissions)
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
@@ -112,6 +116,8 @@ class MainActivity : ComponentActivity() {
         }
         runtime.setDisplayRotation(degrees)
     }
+
+    private fun canStartService() = hasBluetooth() || runtime.transport.value == TransportKind.WIFI
 
     private fun hasBluetooth() =
         ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED

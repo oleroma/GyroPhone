@@ -42,6 +42,8 @@ class HidDeviceManager(private val context: Context) {
 
     @Volatile private var hid: BluetoothHidDevice? = null
     @Volatile private var host: BluetoothDevice? = null
+    /** False after stop(): a proxy that connects late is closed instead of registering the app. */
+    @Volatile private var wanted = false
 
     /** Supplies the current report bytes when the host polls with GET_REPORT. */
     var reportProvider: ((reportId: Int) -> ByteArray?)? = null
@@ -55,12 +57,14 @@ class HidDeviceManager(private val context: Context) {
     fun start() {
         val a = adapter ?: run { _state.value = State.Failed("No Bluetooth adapter"); return }
         if (!a.isEnabled) { _state.value = State.Failed("Bluetooth is off"); return }
+        wanted = true
         if (hid != null) return
         _state.value = State.Registering
         a.getProfileProxy(context, proxyListener, BluetoothProfile.HID_DEVICE)
     }
 
     fun stop() {
+        wanted = false
         hid?.let { proxy ->
             host?.let { proxy.disconnect(it) }
             proxy.unregisterApp()
@@ -92,6 +96,11 @@ class HidDeviceManager(private val context: Context) {
     private val proxyListener = object : BluetoothProfile.ServiceListener {
         override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
             val device = proxy as BluetoothHidDevice
+            // stop() ran before the proxy arrived, or an earlier start() already has one.
+            if (!wanted || hid != null) {
+                adapter?.closeProfileProxy(BluetoothProfile.HID_DEVICE, proxy)
+                return
+            }
             hid = device
             val ok = device.registerApp(sdp, null, qos, callbackExecutor, hidCallback)
             if (!ok) _state.value = State.Failed("Another app owns the HID profile")

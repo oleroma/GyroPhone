@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Tray app (GyroPhoneCompanion.exe). WinForms: builds on Windows only (CI windows-latest). -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>GyroPhone.Tray</RootNamespace>
+    <AssemblyName>GyroPhoneCompanion</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>GyroPhone.ico</ApplicationIcon>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../GyroPhone.Protocol/GyroPhone.Protocol.csproj" />
+    <ProjectReference Include="../GyroPhone.Host/GyroPhone.Host.csproj" />
+    <ProjectReference Include="../GyroPhone.Windows/GyroPhone.Windows.csproj" />
+  </ItemGroup>
+</Project>

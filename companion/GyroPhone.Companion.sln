@@ -1,0 +1,64 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{2C7BE73A-6E74-4F38-8A60-11B2E68AFC50}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GyroPhone.Protocol", "src\GyroPhone.Protocol\GyroPhone.Protocol.csproj", "{B6F5BF92-1167-4FDB-9188-FA81FBA77AA4}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GyroPhone.Host", "src\GyroPhone.Host\GyroPhone.Host.csproj", "{2BBB4895-DFF9-43B7-BA6A-F700EA0ED9B1}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{CD9EC362-7C4F-493B-9A84-8C4C7E031675}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GyroPhone.Tests", "tests\GyroPhone.Tests\GyroPhone.Tests.csproj", "{5EC4478E-2A3B-48C2-8BC1-DF02B35956D0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GyroPhone.Windows", "src\GyroPhone.Windows\GyroPhone.Windows.csproj", "{216B844B-814A-4F07-815F-8326BF093608}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GyroPhone.Headless", "src\GyroPhone.Headless\GyroPhone.Headless.csproj", "{C78EBAC0-162C-459A-B076-0ABCEE3C196E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GyroPhone.Tray", "src\GyroPhone.Tray\GyroPhone.Tray.csproj", "{8E3D5C1A-4B7F-4C2E-9A61-3F0B2D7E9C45}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B6F5BF92-1167-4FDB-9188-FA81FBA77AA4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B6F5BF92-1167-4FDB-9188-FA81FBA77AA4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B6F5BF92-1167-4FDB-9188-FA81FBA77AA4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B6F5BF92-1167-4FDB-9188-FA81FBA77AA4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2BBB4895-DFF9-43B7-BA6A-F700EA0ED9B1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2BBB4895-DFF9-43B7-BA6A-F700EA0ED9B1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2BBB4895-DFF9-43B7-BA6A-F700EA0ED9B1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2BBB4895-DFF9-43B7-BA6A-F700EA0ED9B1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5EC4478E-2A3B-48C2-8BC1-DF02B35956D0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5EC4478E-2A3B-48C2-8BC1-DF02B35956D0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5EC4478E-2A3B-48C2-8BC1-DF02B35956D0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5EC4478E-2A3B-48C2-8BC1-DF02B35956D0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{216B844B-814A-4F07-815F-8326BF093608}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{216B844B-814A-4F07-815F-8326BF093608}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{216B844B-814A-4F07-815F-8326BF093608}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{216B844B-814A-4F07-815F-8326BF093608}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C78EBAC0-162C-459A-B076-0ABCEE3C196E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C78EBAC0-162C-459A-B076-0ABCEE3C196E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C78EBAC0-162C-459A-B076-0ABCEE3C196E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C78EBAC0-162C-459A-B076-0ABCEE3C196E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8E3D5C1A-4B7F-4C2E-9A61-3F0B2D7E9C45}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8E3D5C1A-4B7F-4C2E-9A61-3F0B2D7E9C45}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8E3D5C1A-4B7F-4C2E-9A61-3F0B2D7E9C45}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8E3D5C1A-4B7F-4C2E-9A61-3F0B2D7E9C45}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{B6F5BF92-1167-4FDB-9188-FA81FBA77AA4} = {2C7BE73A-6E74-4F38-8A60-11B2E68AFC50}
+		{2BBB4895-DFF9-43B7-BA6A-F700EA0ED9B1} = {2C7BE73A-6E74-4F38-8A60-11B2E68AFC50}
+		{5EC4478E-2A3B-48C2-8BC1-DF02B35956D0} = {CD9EC362-7C4F-493B-9A84-8C4C7E031675}
+		{216B844B-814A-4F07-815F-8326BF093608} = {2C7BE73A-6E74-4F38-8A60-11B2E68AFC50}
+		{C78EBAC0-162C-459A-B076-0ABCEE3C196E} = {2C7BE73A-6E74-4F38-8A60-11B2E68AFC50}
+		{8E3D5C1A-4B7F-4C2E-9A61-3F0B2D7E9C45} = {2C7BE73A-6E74-4F38-8A60-11B2E68AFC50}
+	EndGlobalSection
+EndGlobal
