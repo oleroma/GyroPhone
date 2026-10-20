@@ -2,15 +2,15 @@
 rem Download the newest successful CI build of GyroPhone and update the phone.
 rem Usage: update.cmd [branch]   (default: newest build on any branch)
 rem
-rem Builds go next to the repo, outside it, so branch checkouts never see them:
-rem   ..\gyrophone-builds\0.1.<build>-<commit>\   one folder per build (GyroPhoneCompanion.exe, app-debug.apk, BUILD.txt)
-rem   ..\gyrophone-builds\latest\                 always the newest one
+rem Builds go in builds\ inside the repo (git-ignored):
+rem   builds\0.1.<build>-<commit>\       one folder per build (GyroPhoneCompanion.exe, app-debug.apk, BUILD.txt)
+rem   builds\latest\                     always the newest one
 rem The Start menu entry "GyroPhone Companion" opens latest\GyroPhoneCompanion.exe.
 rem Phone: in-place update only (adb install -r), keeps settings, never uninstalls.
 rem It never starts or closes apps; you launch them yourself.
 setlocal
 set "REPO=oleroma/GyroPhone"
-for %%d in ("%~dp0..") do set "ROOT=%%~fd\gyrophone-builds"
+set "ROOT=%~dp0builds"
 set "BRANCH_ARG="
 if not "%~1"=="" set "BRANCH_ARG=--branch %~1"
 
