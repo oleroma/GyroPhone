@@ -1,11 +1,13 @@
 package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.engine.GyroMouse
+import com.oleroma.gyrophone.core.model.GyroAxes
 import com.oleroma.gyrophone.core.model.GyroOrientation
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.sensor.DirectReportParser
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.ByteBuffer
@@ -19,6 +21,31 @@ class GyroAndSensorTest {
         var total = 0
         repeat(1000) { total += g.update(-rad, 0f, 0f, 0.001f).dx }
         assertEquals(900, total)
+    }
+
+    @Test fun portraitUsesItsOwnAxesAndLandscapeKeepsTheMainOnes() {
+        val base = GyroSettings(sensitivity = 10f, tighteningThreshold = 0f, smoothingThreshold = 0f)
+        val s = base.withAxes(portrait = true, GyroAxes(mouseX = MotionAxis.ROLL, invertX = true))
+        val g = GyroMouse(s)
+        val rad = (90.0 * Math.PI / 180.0).toFloat()
+        // Portrait: roll clockwise is -z, inverted -> cursor left.
+        g.displayRotation = 0
+        var total = 0
+        repeat(1000) { total += g.update(0f, 0f, -rad, 0.001f).dx }
+        assertEquals(-900, total)
+        // Landscape still uses yaw for X, unaffected by the portrait mapping.
+        g.displayRotation = 90; g.reset(); total = 0
+        repeat(1000) { total += g.update(-rad, 0f, 0f, 0.001f).dx }
+        assertEquals(900, total)
+    }
+
+    @Test fun portraitFallsBackToLandscapeAxesWhenUnset() {
+        val s = GyroSettings(mouseX = MotionAxis.ROLL, invertY = true)
+        assertNull(s.portrait)
+        assertEquals(s.landscapeAxes, s.axesFor(portrait = true))
+        val edited = s.withAxes(portrait = false, s.landscapeAxes.copy(mouseY = MotionAxis.YAW))
+        assertEquals(MotionAxis.YAW, edited.mouseY)
+        assertNull(edited.portrait)
     }
 
     @Test fun tinyJitterIsTightened() {

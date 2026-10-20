@@ -40,9 +40,11 @@ class GyroMouse(var settings: GyroSettings = GyroSettings()) {
      * counter-clockwise looking down the axis. Each orientation names which device axis points
      * up / right / toward the player.
      */
-    fun motion(gx: Float, gy: Float, gz: Float): Motion {
+    fun motion(gx: Float, gy: Float, gz: Float): Motion = motion(gx, gy, gz, resolvedOrientation())
+
+    private fun motion(gx: Float, gy: Float, gz: Float, resolved: Resolved): Motion {
         val x = gx * RAD_TO_DEG; val y = gy * RAD_TO_DEG; val z = gz * RAD_TO_DEG
-        return when (resolvedOrientation()) {
+        return when (resolved) {
             Resolved.LANDSCAPE_LEFT -> Motion(yaw = -x, pitch = -y, roll = -z)
             Resolved.LANDSCAPE_RIGHT -> Motion(yaw = x, pitch = y, roll = -z)
             Resolved.PORTRAIT -> Motion(yaw = -y, pitch = x, roll = -z)
@@ -57,10 +59,15 @@ class GyroMouse(var settings: GyroSettings = GyroSettings()) {
      */
     fun update(gx: Float, gy: Float, gz: Float, dtSeconds: Float): Counts {
         val s = settings
-        val m = motion(gx, gy, gz)
+        val resolved = resolvedOrientation()
+        val m = motion(gx, gy, gz, resolved)
+        // Portrait has its own axis mapping when set; read fields directly to avoid allocating.
+        val p = if (resolved == Resolved.PORTRAIT || resolved == Resolved.PORTRAIT_UPSIDE_DOWN) s.portrait else null
         // Cursor X right = +, cursor Y: up = + here, flipped to HID (down = +) at the end.
-        var vx = m[s.mouseX] * s.scaleX * (if (s.invertX) -1f else 1f)
-        var vy = m[s.mouseY] * s.scaleY * (if (s.invertY) -1f else 1f)
+        var vx = if (p != null) m[p.mouseX] * p.scaleX * (if (p.invertX) -1f else 1f)
+        else m[s.mouseX] * s.scaleX * (if (s.invertX) -1f else 1f)
+        var vy = if (p != null) m[p.mouseY] * p.scaleY * (if (p.invertY) -1f else 1f)
+        else m[s.mouseY] * s.scaleY * (if (s.invertY) -1f else 1f)
 
         val speed = sqrt(vx * vx + vy * vy)
         if (s.tighteningThreshold > 0f && speed < s.tighteningThreshold) {

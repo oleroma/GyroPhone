@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.Describe
+import com.oleroma.gyrophone.core.model.GyroAxes
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroOrientation
 import com.oleroma.gyrophone.core.model.MotionAxis
@@ -148,12 +149,30 @@ private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (
                     label = { Text(o.label) })
             }
         }
-        AxisRow("Mouse left/right", profile.gyro.mouseX, profile.gyro.invertX,
-            onAxis = { a -> edit { it.copy(gyro = it.gyro.copy(mouseX = a)) } },
-            onInvert = { inv -> edit { it.copy(gyro = it.gyro.copy(invertX = inv)) } })
-        AxisRow("Mouse up/down", profile.gyro.mouseY, profile.gyro.invertY,
-            onAxis = { a -> edit { it.copy(gyro = it.gyro.copy(mouseY = a)) } },
-            onInvert = { inv -> edit { it.copy(gyro = it.gyro.copy(invertY = inv)) } })
+        // Landscape and portrait each have their own axis mapping; start on the way the phone is held.
+        val heldPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
+        var axesPortrait by remember(heldPortrait) { mutableStateOf(heldPortrait) }
+        val axes = profile.gyro.axesFor(axesPortrait)
+        fun editAxes(change: (GyroAxes) -> GyroAxes) =
+            edit { it.copy(gyro = it.gyro.withAxes(axesPortrait, change(it.gyro.axesFor(axesPortrait)))) }
+        Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Axes for", Modifier.padding(end = 4.dp))
+            FilterChip(selected = !axesPortrait, onClick = { axesPortrait = false }, label = { Text("Landscape") })
+            FilterChip(selected = axesPortrait, onClick = { axesPortrait = true }, label = { Text("Portrait") })
+            if (axesPortrait && profile.gyro.portrait != null) {
+                TextButton(onClick = { edit { it.copy(gyro = it.gyro.copy(portrait = null)) } }) { Text("Same as landscape") }
+            }
+        }
+        if (axesPortrait && profile.gyro.portrait == null) {
+            Text("Portrait uses the landscape axes until you change one here.", style = MaterialTheme.typography.bodySmall)
+        }
+        AxisRow("Mouse left/right", axes.mouseX, axes.invertX,
+            onAxis = { a -> editAxes { it.copy(mouseX = a) } },
+            onInvert = { inv -> editAxes { it.copy(invertX = inv) } })
+        AxisRow("Mouse up/down", axes.mouseY, axes.invertY,
+            onAxis = { a -> editAxes { it.copy(mouseY = a) } },
+            onInvert = { inv -> editAxes { it.copy(invertY = inv) } })
 
         HorizontalDivider()
         Text("Touchpad (empty pad area)", style = MaterialTheme.typography.titleSmall)
