@@ -4,6 +4,7 @@ rem Usage: update.cmd [branch]   (default: newest build on any branch)
 rem Phone: in-place update only (adb install -r), keeps settings, never uninstalls.
 rem Skips anything already at that build, so it is safe to run as often as you like.
 rem Downloads go to builds\<run id> next to this script (git-ignored).
+rem It never starts or closes apps on the PC or the phone; you launch them yourself.
 setlocal
 set "REPO=oleroma/GyroPhone"
 set "HERE=%~dp0"
@@ -32,11 +33,9 @@ if "%PC_DONE%"=="%RUN_ID%" (
 ) else (
   if not exist "%OUT%\GyroPhoneCompanion.exe" gh run download %RUN_ID% -R %REPO% -n gyrophone-companion-win-x64 -D "%OUT%"
   if exist "%OUT%\GyroPhoneCompanion.exe" (
-    taskkill /im GyroPhoneCompanion.exe >nul 2>&1
-    timeout /t 2 /nobreak >nul
-    start "" "%OUT%\GyroPhoneCompanion.exe"
     >"%STATE%\companion.last" echo %RUN_ID%
-    echo Companion updated to %RUN_ID%.
+    echo Companion downloaded: %OUT%\GyroPhoneCompanion.exe
+    echo Close the running companion and start this one when you are ready.
   ) else (
     echo This build has no companion yet.
   )
