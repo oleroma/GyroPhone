@@ -7,9 +7,12 @@ import org.junit.Test
 class MouseTotalsTest {
     @Test fun accumulatesAndWraps() {
         val t = MouseTotals()
-        t.add(MouseState(dx = 10, dy = -4, wheel = 1))
-        t.add(MouseState(dx = 5, dy = -5))
-        assertEquals(15, t.x); assertEquals(-9, t.y); assertEquals(1, t.wheel)
+        t.add(MouseState(dx = 10, dy = -4, wheel = 60, hwheel = -7))
+        t.add(MouseState(dx = 5, dy = -5, wheel = 90))
+        assertEquals(15, t.x); assertEquals(-9, t.y); assertEquals(150, t.wheel); assertEquals(-7, t.hwheel)
+        assertEquals(1, t.wheelNotches)
+        t.add(0, 0, -200)
+        assertEquals(-50, t.wheel); assertEquals(0, t.wheelNotches)
         t.add(Int.MAX_VALUE, 0, 0)
         assertEquals(Int.MIN_VALUE + 14, t.x)
         // The host's wrapping difference still recovers the real delta.
@@ -17,6 +20,6 @@ class MouseTotalsTest {
         t.add(100, 0, 0)
         assertEquals(100, t.x - before)
         t.reset()
-        assertEquals(0, t.x); assertEquals(0, t.y); assertEquals(0, t.wheel)
+        assertEquals(0, t.x); assertEquals(0, t.y); assertEquals(0, t.wheel); assertEquals(0, t.wheelNotches)
     }
 }

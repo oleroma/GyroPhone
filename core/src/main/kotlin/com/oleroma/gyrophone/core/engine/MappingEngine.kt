@@ -48,6 +48,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private var gyroToggled = false
     private var mouseDx = 0
     private var mouseDy = 0
+    /** Wheel from bindings, in 1/120 notch. */
     private var wheel = 0
     private val touchpad = Touchpad(profile.touchpad)
 
@@ -193,6 +194,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
         }
 
+        // Touchpad gestures (Alt+Tab, Ctrl zoom, Win shortcuts) hold keys like any binding.
+        val padButtons = touchpad.poll(clock())
+        if (touchpad.key != 0) heldKeys.add(touchpad.key)
         keyOrder.retainAll(heldKeys)
         keyOrder.addAll(heldKeys)
         var modifiers = 0
@@ -201,6 +205,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             if (HidUsage.isModifier(usage)) modifiers = modifiers or HidUsage.modifierBit(usage)
             else if (array.size < 6) array.add(usage)
         }
+        modifiers = modifiers or touchpad.keyModifiers
 
         val gamepad = GamepadState(
             buttons = buttons,
@@ -210,10 +215,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             lt = toTrigger(trigger[0]), rt = toTrigger(trigger[1]),
         )
         // Touchpad output is never gated by gyroActive.
-        val padButtons = touchpad.poll(clock())
         val mouse = MouseState(
             mouseButtons or padButtons,
-            mouseDx + touchpad.dx, mouseDy + touchpad.dy, wheel + touchpad.wheel,
+            mouseDx + touchpad.dx, mouseDy + touchpad.dy, wheel + touchpad.wheel, touchpad.hwheel,
         )
         mouseDx = 0; mouseDy = 0; wheel = 0
         touchpad.drainMotion()
@@ -243,7 +247,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun onPress(t: OutputTarget) {
         when (t) {
             OutputTarget.GyroToggle -> gyroToggled = !gyroToggled
-            is OutputTarget.Wheel -> wheel += t.step
+            is OutputTarget.Wheel -> wheel += t.step * MouseState.WHEEL_UNIT
             else -> Unit
         }
     }

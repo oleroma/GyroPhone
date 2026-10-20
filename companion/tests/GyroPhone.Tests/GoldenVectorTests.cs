@@ -323,7 +323,12 @@ public class GoldenVectorTests
         var from = new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 5000).Serialize();
 
         engine.OnDatagram(Vectors.Packet("HELLO").Bytes("hex"), from, h.Clock.NowUs);
-        Assert.Equal(Vectors.Packet("WELCOME").Str("hex"), Hex.S(h.Sender.Last));
+        // The vector predates HiresWheel; the engine also sets that flag, so re-mac the vector with it.
+        var welcome = Vectors.Packet("WELCOME").Bytes("hex");
+        welcome[61] |= WelcomeFlags.HiresWheel;
+        using (var mac = new System.Security.Cryptography.HMACSHA256(S.Bytes("pairKey")))
+            mac.ComputeHash(welcome, 0, Wire.WelcomeSize - Wire.HelloMac).AsSpan(0, Wire.HelloMac).CopyTo(welcome.AsSpan(Wire.WelcomeSize - Wire.HelloMac));
+        Assert.Equal(Hex.S(welcome), Hex.S(h.Sender.Last));
 
         foreach (var inv in Vectors.Root.GetProperty("invalid").EnumerateArray())
         {

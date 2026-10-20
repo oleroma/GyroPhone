@@ -139,7 +139,13 @@ class GamepadRuntime(context: Context) {
                 else -> null
             }
         }
+        hid.featureProvider = { id ->
+            if (id == HidDescriptor.REPORT_ID_MOUSE_FEATURE) byteArrayOf(pump.mouseFeature.toByte()) else null
+        }
+        hid.onFeature = { id, value -> if (id == HidDescriptor.REPORT_ID_MOUSE_FEATURE) pump.mouseFeature = value }
         hid.onHostConnected = { pump.invalidate() }
+        // The next connection starts in whole notches until the host enables the multipliers again.
+        hid.onHostDisconnected = { pump.mouseFeature = 0 }
         pump.intervalNanos = 1_000_000_000L / _reportRateHz.value
         engine.touchpadMinPulseNanos = Touchpad.minPulseFor(pump.intervalNanos)
         wifi.rateHz = _wifiRateHz.value

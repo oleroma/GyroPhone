@@ -30,7 +30,7 @@ class StateFrameTest {
 
     @Test fun fillCopiesPadAndClamps() {
         val g = GamepadState(buttons = 0x8003, hat = Hat.UP_RIGHT, lx = -40000, ly = 5, rx = 7, ry = -7, lt = 2000, rt = 3)
-        totals.add(3, 4, 5)
+        totals.add(3, 4, 5 * 120)
         val f = StateFrame().apply { fill(HidState(gamepad = g, mouse = MouseState(buttons = 0x11)), totals, true) }
         assertEquals(StateFlags.GYRO_ACTIVE, f.flags)
         assertEquals(0x8003, f.buttons)
@@ -39,6 +39,29 @@ class StateFrameTest {
         assertEquals(1023, f.lt)
         assertEquals(0x11, f.mouseButtons)
         assertEquals(3, f.mouseTotalX); assertEquals(4, f.mouseTotalY); assertEquals(5, f.wheelTotal)
+        assertEquals(PacketType.STATE, WireCodec.stateType(f))
+        // A host that takes STATE_HIRES gets the wheel in 1/120 notch.
+        val h = StateFrame().apply { fill(HidState(), totals, false, hires = true) }
+        assertEquals(600, h.wheelTotal)
+        assertEquals(PacketType.STATE_HIRES, WireCodec.stateType(h))
+    }
+
+    /** Same bytes as WireCodecTests.StateHiresLayout in the companion. */
+    @Test fun stateHiresLayout() {
+        val f = StateFrame().apply {
+            phoneTimeUs = 0x01020304; flags = 1; buttons = 0x8001; hat = 2; mouseButtons = 1
+            lx = -1; ly = 2; rx = -3; ry = 4; lt = 5; rt = 1023
+            mouseTotalX = 10; mouseTotalY = -20; wheelTotal = 300; hwheelTotal = -45; hires = true
+            setKey(0x04)
+            keyBitmap[StateFrame.MODIFIER_BYTE] = 0x04
+        }
+        val plain = ByteArray(Wire.STATE_HIRES_PLAIN)
+        assertEquals(Wire.STATE_HIRES_PLAIN, WireCodec.encodeStatePlain(f, plain))
+        assertEquals("04030201010001800201ffff0200fdff04000500ff0310000000000000000000000000000000000000000000000000000000040000000a000000ecffffff2c010000d3ffffff", plain.hex())
+        val back = WireCodec.decodeSealedPlain(PacketType.STATE_HIRES, plain, 0, plain.size) as StateFrame
+        assertTrue(back.hires)
+        assertEquals(300, back.wheelTotal); assertEquals(-45, back.hwheelTotal)
+        assertEquals(Wire.STATE_HIRES_PLAIN + Wire.HEADER + Wire.GCM_TAG, Wire.sizeOf(PacketType.STATE_HIRES))
     }
 
     @Test fun reservedUsagesAreNeverSet() {

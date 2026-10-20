@@ -46,7 +46,7 @@ class MappingEngineTest {
         assertEquals(0x02, s.keyboard.modifiers)
         assertEquals(listOf(0x1A), s.keyboard.keys)
         assertEquals(1, s.mouse.buttons)
-        assertEquals(1, s.mouse.wheel)
+        assertEquals(120, s.mouse.wheel)
         assertEquals(0, e.snapshot().mouse.wheel) // drained
     }
 
@@ -82,11 +82,11 @@ class MappingEngineTest {
         ), gyro = GyroSettings(mode = GyroMode.HOLD_OR_TOGGLE))
         val e = MappingEngine(p)
         e.setAxis(AndroidAxis.X, -1f)
-        assertEquals(1, e.snapshot().mouse.wheel)
+        assertEquals(120, e.snapshot().mouse.wheel)
         e.setAxis(AndroidAxis.X, -0.9f)
         assertEquals(0, e.snapshot().mouse.wheel)
         e.setTouchStick("s", 0f, -1f)
-        assertEquals(-1, e.snapshot().mouse.wheel)
+        assertEquals(-120, e.snapshot().mouse.wheel)
         // Trigger reported as both axis and key toggles once.
         e.setAxis(AndroidAxis.RTRIGGER, 1f); e.setKey(AndroidKey.BUTTON_R2, true)
         assertTrue(e.gyroActive)

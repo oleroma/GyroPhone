@@ -16,6 +16,8 @@ public static class PacketType
     public const byte State = 0x20;
     public const byte Ping = 0x21;
     public const byte LinkInfo = 0x22;
+    /// <summary>STATE with 1/120-notch wheel totals; sent only to a host whose WELCOME has HiresWheel.</summary>
+    public const byte StateHires = 0x23;
     public const byte Bye = 0x2F;
     public const byte Pong = 0x30;
     public const byte HostStatus = 0x31;
@@ -51,6 +53,7 @@ public static class PacketType
     public static int PlainSize(byte type) => type switch
     {
         State => Wire.StatePlain,
+        StateHires => Wire.StateHiresPlain,
         Ping => Wire.PingPlain,
         LinkInfo => Wire.LinkInfoPlain,
         Bye => Wire.ByePlain,

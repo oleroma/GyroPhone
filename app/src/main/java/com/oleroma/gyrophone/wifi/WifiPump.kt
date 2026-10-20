@@ -5,6 +5,7 @@ import android.os.SystemClock
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.net.Bye
 import com.oleroma.gyrophone.core.net.ByeReason
+import com.oleroma.gyrophone.core.net.HostFlags
 import com.oleroma.gyrophone.core.net.LinkInfo
 import com.oleroma.gyrophone.core.net.LiveSession
 import com.oleroma.gyrophone.core.net.MouseTotals
@@ -65,6 +66,8 @@ class WifiPump(private val engine: MappingEngine) {
     private val out = ByteArray(Wire.MAX_DATAGRAM)
     private val packet = DatagramPacket(out, out.size)
     private var cur: LiveSession? = null
+    /** The PC takes STATE_HIRES (1/120 notch wheel, horizontal wheel). */
+    private var hires = false
     private var cipher: SessionCipher? = null
     private var seq = 0
     private var nextPingNs = 0L
@@ -135,15 +138,15 @@ class WifiPump(private val engine: MappingEngine) {
             val hz = rateHz
             if (scheduler.rateHz != hz) scheduler.rateHz = hz
 
-            frame.fill(s, totals, engine.gyroActive)
+            frame.fill(s, totals, engine.gyroActive, hires)
             val discrete = !frame.discreteEquals(lastSent)
             val dirty = discrete || !frame.totalsEqual(lastSent)
             val kind = scheduler.poll(now, dirty, discrete)
             if (kind != SendScheduler.NONE) {
                 frame.flags = frame.flags or SendScheduler.flagsFor(kind)
                 frame.phoneTimeUs = phoneUs().toInt()
-                WireCodec.encodeStatePlain(frame, plain, 0)
-                if (sendSealed(c, PacketType.STATE, Wire.STATE_PLAIN)) sentCount++ else failedCount++
+                val stateLen = WireCodec.encodeStatePlain(frame, plain, 0)
+                if (sendSealed(c, WireCodec.stateType(frame), stateLen)) sentCount++ else failedCount++
                 lastSent.copyFrom(frame)
                 scheduler.markSent(now, kind, discrete)
             }
@@ -171,6 +174,7 @@ class WifiPump(private val engine: MappingEngine) {
 
     private fun switchTo(session: LiveSession?) {
         cur = session
+        hires = session != null && session.hostFlags and HostFlags.HIRES_WHEEL != 0
         cipher = session?.let { SessionCipher(it.kPH, Wire.DIR_P2H) }
         seq = 0
         totals.reset()
@@ -185,12 +189,14 @@ class WifiPump(private val engine: MappingEngine) {
     /** One neutral STATE (totals kept), then BYE x3 at 5 ms intervals. */
     private fun goodbye(c: LiveSession, reason: Int) {
         frame.clear()
+        frame.hires = hires
         frame.mouseTotalX = totals.x
         frame.mouseTotalY = totals.y
-        frame.wheelTotal = totals.wheel
+        frame.wheelTotal = if (hires) totals.wheel else totals.wheelNotches
+        frame.hwheelTotal = if (hires) totals.hwheel else 0
         frame.phoneTimeUs = phoneUs().toInt()
-        WireCodec.encodeStatePlain(frame, plain, 0)
-        sendSealed(c, PacketType.STATE, Wire.STATE_PLAIN)
+        val stateLen = WireCodec.encodeStatePlain(frame, plain, 0)
+        sendSealed(c, WireCodec.stateType(frame), stateLen)
         val bye = Bye(reason)
         for (i in 0 until BYE_COUNT) {
             if (i > 0) LockSupport.parkNanos(BYE_SPACING_NS)

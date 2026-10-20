@@ -94,7 +94,7 @@ internal sealed class FakeKeyMouse : IKeyMouseSink
     public readonly List<InjectEvent[]> Calls = new();
     public readonly HashSet<ushort> HeldKeys = new();
     public readonly HashSet<string> HeldButtons = new();
-    public long MouseX, MouseY, Wheel;
+    public long MouseX, MouseY, Wheel, HWheel;
 
     public IEnumerable<InjectEvent> All => Calls.SelectMany(c => c);
 
@@ -111,6 +111,7 @@ internal sealed class FakeKeyMouse : IKeyMouseSink
             }
             if ((e.Flags & InjectEvent.MouseMove) != 0) { MouseX += e.Dx; MouseY += e.Dy; }
             if ((e.Flags & InjectEvent.MouseWheel) != 0) Wheel += e.MouseData;
+            if ((e.Flags & InjectEvent.MouseHWheel) != 0) HWheel += e.MouseData;
             Button(e, InjectEvent.MouseLeftDown, InjectEvent.MouseLeftUp, "L");
             Button(e, InjectEvent.MouseRightDown, InjectEvent.MouseRightUp, "R");
             Button(e, InjectEvent.MouseMiddleDown, InjectEvent.MouseMiddleUp, "M");
@@ -260,11 +261,14 @@ internal sealed class FakePhone : IDisposable
         return b;
     }
 
+    public byte WelcomeHostFlags;
+
     public bool OnWelcome(byte[] d)
     {
         if (!WireCodec.TryDecodeWelcome(d, out var w) || !WireCodec.VerifyMac(PairKey!, d)) return false;
         if (!w.NP.AsSpan().SequenceEqual(HelloNonce)) return false;
         SessionId = w.SessionId;
+        WelcomeHostFlags = w.HostFlags;
         var (kPH, kHP) = SessionKeys.Derive(PairKey!, HelloNonce, w.NH, w.SessionId);
         _tx?.Dispose();
         _rx?.Dispose();
@@ -285,9 +289,9 @@ internal sealed class FakePhone : IDisposable
     public byte[] State(Action<StateFrame>? change = null)
     {
         change?.Invoke(Frame);
-        var p = new byte[Wire.StatePlain];
+        var p = new byte[Frame.Hires ? Wire.StateHiresPlain : Wire.StatePlain];
         Frame.Encode(p);
-        return Sealed(PacketType.State, p);
+        return Sealed(Frame.Hires ? PacketType.StateHires : PacketType.State, p);
     }
 
     public byte[] Ping(ulong t1)

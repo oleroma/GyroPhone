@@ -1,6 +1,9 @@
 package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.engine.Touchpad
+import com.oleroma.gyrophone.core.model.FingerGestures
+import com.oleroma.gyrophone.core.model.GestureAction
+import com.oleroma.gyrophone.core.model.GestureActions
 import com.oleroma.gyrophone.core.model.MouseButton
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import org.junit.Assert.assertEquals
@@ -10,6 +13,14 @@ import org.junit.Test
 private const val MS = 1_000_000L
 private val L = 1 shl MouseButton.LEFT.bit
 private val R = 1 shl MouseButton.RIGHT.bit
+
+private val NO_GLIDE = TouchpadSettings(acceleration = 0f, inertia = false)
+private const val CTRL = GestureActions.CTRL shl 8
+private const val ALT = GestureActions.ALT shl 8
+private const val SHIFT = GestureActions.SHIFT shl 8
+private const val WIN = GestureActions.WIN shl 8
+private const val TAB = 0x2B
+private val M = 1 shl MouseButton.MIDDLE.bit
 
 private fun pad(s: TouchpadSettings = TouchpadSettings(acceleration = 0f)) =
     Touchpad(s).apply { pxPerDp = 1f; minPulseNanos = 40 * MS }
@@ -32,6 +43,11 @@ private class Driver(val pad: Touchpad, val stepMs: Long = 5) {
     var dx = 0
     var dy = 0
     var wheel = 0
+    var hwheel = 0
+    /** Visible key state per poll: modifiers shl 8 or usage. */
+    val keys = ArrayList<Int>()
+    /** Wheel that arrived while Ctrl was not visible. */
+    var wheelWithoutCtrl = 0
     /** dx while the left button was visible. */
     var dxWhileLeft = 0
 
@@ -44,7 +60,9 @@ private class Driver(val pad: Touchpad, val stepMs: Long = 5) {
     fun poll() {
         val b = pad.poll(t)
         buttons.add(b); times.add(t)
-        dx += pad.dx; dy += pad.dy; wheel += pad.wheel
+        dx += pad.dx; dy += pad.dy; wheel += pad.wheel; hwheel += pad.hwheel
+        keys.add((pad.keyModifiers shl 8) or pad.key)
+        if (pad.keyModifiers and GestureActions.CTRL == 0) wheelWithoutCtrl += pad.wheel
         if (b and L != 0) dxWhileLeft += pad.dx
         pad.drainMotion()
     }
@@ -194,20 +212,22 @@ class TouchpadTest {
         return d
     }
 
-    @Test fun twoFingerScrollEmitsNotches() {
-        val d = scroll(TouchpadSettings(acceleration = 0f))
-        assertEquals(10, d.wheel)
+    @Test fun twoFingerScrollEmitsHighResolutionWheel() {
+        // 240 dp of travel = 10 notches = 1200 units.
+        val d = scroll(NO_GLIDE)
+        assertEquals(1200, d.wheel)
+        assertEquals(0, d.hwheel)
         assertTrue(d.buttons.all { it == 0 })
         assertEquals(0, d.dx); assertEquals(0, d.dy)
-        assertEquals(-10, scroll(TouchpadSettings(acceleration = 0f, naturalScroll = false)).wheel)
-        assertEquals(20, scroll(TouchpadSettings(acceleration = 0f, scrollSpeed = 2f)).wheel)
-        val off = scroll(TouchpadSettings(acceleration = 0f, twoFingerScroll = false))
+        assertEquals(-1200, scroll(NO_GLIDE.copy(naturalScroll = false)).wheel)
+        assertEquals(2400, scroll(NO_GLIDE.copy(scrollSpeed = 2f)).wheel)
+        val off = scroll(NO_GLIDE.copy(twoFingerScroll = false))
         assertEquals(0, off.wheel)
         assertTrue(off.buttons.all { it == 0 })
     }
 
     @Test fun fingerAddedMidMoveScrollsOnlyFromItsDown() {
-        val d = Driver(pad())
+        val d = Driver(pad(NO_GLIDE))
         d.down(0, 100f, 100f, id = 1)
         for (i in 1..30) d.move(i * 5L, 100f, 100f + i * 10f, id = 1) // cursor 300 px down
         d.down(160, 200f, 400f, id = 2)
@@ -217,7 +237,7 @@ class TouchpadTest {
         }
         d.up(220, id = 1); d.up(222, id = 2); d.until(500)
         // 48 px of two-finger travel = 2 notches; the 300 px cursor swipe adds none.
-        assertEquals(2, d.wheel)
+        assertEquals(240, d.wheel)
         assertTrue(d.buttons.all { it == 0 })
     }
 
@@ -335,5 +355,229 @@ class TouchpadTest {
         assertEquals(Touchpad.MAX_FINGERS, p.fingers)
         for (i in 1..Touchpad.MAX_FINGERS + 2) p.up(i.toLong(), 20 * MS)
         assertEquals(0, p.fingers)
+    }
+
+    // ---- high-resolution scroll, inertia, pinch, gestures ----
+
+    /** Fingers [ids] at x = 100, 200, ... moving together by (stepX, stepY) px every 10 ms. */
+    private fun Driver.together(ids: List<Long>, from: Long, steps: Int, stepX: Float, stepY: Float, startY: Float = 300f) {
+        for ((k, id) in ids.withIndex()) down(from + k, 100f + k * 100f, startY, id)
+        for (i in 1..steps) for ((k, id) in ids.withIndex()) {
+            move(from + 10 + i * 10L + k, 100f + k * 100f + i * stepX, startY + i * stepY, id)
+        }
+    }
+
+    @Test fun firstMillimetreAlreadyScrolls() {
+        val d = Driver(pad(NO_GLIDE))
+        d.down(0, 100f, 100f, id = 1); d.down(2, 200f, 100f, id = 2)
+        d.until(200) // past the tap time: any travel scrolls
+        d.move(200, 100f, 102f, id = 1); d.move(201, 200f, 102f, id = 2)
+        d.until(210)
+        assertEquals(10, d.wheel) // 2 dp = 10 units, no notch threshold
+    }
+
+    @Test fun horizontalScrollFollowsFingers() {
+        val d = Driver(pad(NO_GLIDE))
+        d.together(listOf(1L, 2L), 0, 10, 10f, 0f)
+        d.up(200, 1); d.up(201, 2); d.until(400)
+        // Natural: fingers right = content right = pan left.
+        assertEquals(-500, d.hwheel)
+        assertEquals(0, d.wheel)
+        val off = Driver(pad(NO_GLIDE.copy(horizontalScroll = false)))
+        off.together(listOf(1L, 2L), 0, 10, 10f, 0f)
+        off.up(200, 1); off.up(201, 2); off.until(400)
+        assertEquals(0, off.hwheel)
+    }
+
+    private fun fling(s: TouchpadSettings = TouchpadSettings(acceleration = 0f)): Driver {
+        val d = Driver(pad(s))
+        d.together(listOf(1L, 2L), 0, 10, 0f, 15f) // 1.5 dp/ms
+        d.up(115, 1); d.up(116, 2)
+        return d
+    }
+
+    @Test fun flingGlidesAndStops() {
+        val d = fling()
+        val atLift = d.wheel
+        assertEquals(750, atLift) // 150 dp
+        d.until(130)
+        assertTrue(d.wheel > atLift)
+        assertTrue(d.pad.nextDeadline() < Long.MAX_VALUE)
+        d.until(4000)
+        val glide = d.wheel - atLift
+        // v ≈ 7.5 units/ms, τ = 325 ms: about 2400 units.
+        assertTrue("glide $glide", glide in 1500..3200)
+        assertEquals(Long.MAX_VALUE, d.pad.nextDeadline())
+        val before = d.wheel
+        d.until(5000)
+        assertEquals(before, d.wheel)
+        assertEquals(0, fling(NO_GLIDE).apply { until(4000) }.wheel - 750)
+    }
+
+    @Test fun touchStopsGlide() {
+        val d = fling()
+        d.until(150)
+        d.down(150, 500f, 500f, id = 9)
+        d.until(160)
+        val w = d.wheel
+        d.until(1000)
+        assertEquals(w, d.wheel)
+    }
+
+    @Test fun pauseBeforeLiftDoesNotFling() {
+        val d = Driver(pad(TouchpadSettings(acceleration = 0f)))
+        d.together(listOf(1L, 2L), 0, 10, 0f, 15f)
+        d.up(300, 1); d.up(301, 2); d.until(1500)
+        assertEquals(750, d.wheel)
+    }
+
+    @Test fun staggeredLiftStillFlingsAndLastFingerDoesNotMoveCursor() {
+        val d = Driver(pad(TouchpadSettings(acceleration = 0f)))
+        d.together(listOf(1L, 2L), 0, 10, 0f, 15f)
+        d.up(115, 1)
+        d.move(150, 210f, 460f, id = 2)
+        d.up(170, 2); d.until(2000)
+        assertTrue(d.wheel > 1500)
+        assertEquals(0, d.dx); assertEquals(0, d.dy)
+    }
+
+    @Test fun remainingFingerMovesCursorAfterLiftWindow() {
+        val d = Driver(pad(NO_GLIDE))
+        d.together(listOf(1L, 2L), 0, 10, 0f, 15f)
+        d.up(115, 1)
+        d.until(300)
+        d.move(300, 260f, 450f, id = 2)
+        d.up(310, 2); d.until(600)
+        assertEquals(90, d.dx) // 60 dp at sensitivity 1.5
+    }
+
+    @Test fun pinchHoldsCtrlAroundZoomWheel() {
+        val d = Driver(pad(TouchpadSettings(acceleration = 0f)))
+        d.down(0, 200f, 300f, id = 1); d.down(2, 300f, 300f, id = 2)
+        for (i in 1..10) {
+            d.move(10 + i * 10L, 200f - i * 4f, 300f, id = 1)
+            d.move(11 + i * 10L, 300f + i * 4f, 300f, id = 2)
+        }
+        d.up(130, 1); d.up(131, 2); d.until(600)
+        assertEquals(240, d.wheel) // 80 dp of spread at 40 dp per notch: zoom in 2 notches
+        assertEquals(0, d.wheelWithoutCtrl)
+        assertEquals(listOf(0, CTRL, 0), d.keys.edges())
+        assertEquals(0, d.hwheel)
+        val closing = Driver(pad(TouchpadSettings(acceleration = 0f)))
+        closing.down(0, 100f, 300f, id = 1); closing.down(2, 400f, 300f, id = 2)
+        for (i in 1..10) {
+            closing.move(10 + i * 10L, 100f + i * 4f, 300f, id = 1)
+            closing.move(11 + i * 10L, 400f - i * 4f, 300f, id = 2)
+        }
+        closing.up(130, 1); closing.up(131, 2); closing.until(600)
+        assertEquals(-240, closing.wheel)
+        assertEquals(0, closing.wheelWithoutCtrl)
+    }
+
+    @Test fun pinchOffScrollsInstead() {
+        val d = Driver(pad(NO_GLIDE.copy(pinchZoom = false)))
+        d.down(0, 200f, 300f, id = 1); d.down(2, 300f, 300f, id = 2)
+        for (i in 1..10) {
+            d.move(10 + i * 10L, 200f - i * 4f, 300f, id = 1)
+            d.move(11 + i * 10L, 300f + i * 4f, 300f, id = 2)
+        }
+        d.up(130, 1); d.up(131, 2); d.until(600)
+        assertTrue(d.keys.all { it == 0 })
+    }
+
+    @Test fun threeFingerSwipeUpIsTaskView() {
+        val d = Driver(pad())
+        d.together(listOf(1L, 2L, 3L), 0, 8, 0f, -10f)
+        d.up(200, 1); d.up(201, 2); d.up(202, 3); d.until(600)
+        assertEquals(listOf(0, WIN or TAB, 0), d.keys.edges())
+        assertTrue(d.buttons.all { it == 0 })
+        assertEquals(0, d.wheel); assertEquals(0, d.dx)
+        // Each key state is held for the minimum pulse.
+        assertTrue(d.keys.runs().drop(1).dropLast(1).all { it * 5 >= 40 })
+    }
+
+    @Test fun threeFingerSwipeDownIsShowDesktop() {
+        val d = Driver(pad())
+        d.together(listOf(1L, 2L, 3L), 0, 8, 0f, 10f)
+        d.up(200, 1); d.up(201, 2); d.up(202, 3); d.until(600)
+        assertEquals(listOf(0, WIN or 0x07, 0), d.keys.edges())
+    }
+
+    @Test fun threeFingerSidewaysScrubsAltTab() {
+        val d = Driver(pad())
+        // Right 50 dp: Alt held, Tab. Then another 90 dp right: Tab again. Then 100 dp back left: Shift+Tab.
+        d.together(listOf(1L, 2L, 3L), 0, 5, 10f, 0f)
+        for (i in 1..9) for (k in 0..2) d.move(70 + i * 10L + k, 150f + k * 100f + i * 10f, 300f, (k + 1).toLong())
+        for (i in 1..10) for (k in 0..2) d.move(170 + i * 10L + k, 240f + k * 100f - i * 10f, 300f, (k + 1).toLong())
+        d.until(500)
+        assertEquals(ALT, d.keys.last()) // still held while the fingers stay down
+        d.up(500, 1); d.up(501, 2); d.up(502, 3); d.until(900)
+        assertEquals(listOf(0, ALT, ALT or TAB, ALT, ALT or TAB, ALT, ALT or SHIFT or TAB, ALT, 0), d.keys.edges())
+    }
+
+    @Test fun fourFingerSwipesSwitchDesktops() {
+        val d = Driver(pad())
+        d.together(listOf(1L, 2L, 3L, 4L), 0, 8, -10f, 0f)
+        d.up(200, 1); d.up(201, 2); d.up(202, 3); d.up(203, 4); d.until(600)
+        assertEquals(listOf(0, CTRL or WIN or 0x50, 0), d.keys.edges())
+    }
+
+    @Test fun threeAndFourFingerTaps() {
+        val three = Driver(pad())
+        three.down(0, 100f, 100f, 1); three.down(5, 200f, 100f, 2); three.down(10, 300f, 100f, 3)
+        three.up(80, 1); three.up(85, 2); three.up(90, 3); three.until(400)
+        assertEquals(listOf(0, M, 0), three.buttons.edges())
+        val four = Driver(pad())
+        for (k in 0..3) four.down(k * 3L, 100f + k * 100f, 100f, k + 1L)
+        for (k in 0..3) four.up(80 + k * 3L, k + 1L)
+        four.until(400)
+        assertEquals(listOf(0, WIN or 0x11, 0), four.keys.edges())
+        assertTrue(four.buttons.all { it == 0 })
+    }
+
+    @Test fun gesturesAreConfigurable() {
+        val s = TouchpadSettings(acceleration = 0f,
+            gestures3 = FingerGestures.WINDOWS_3.copy(swipeUp = GestureAction.Mouse(MouseButton.BACK)))
+        val d = Driver(pad(s))
+        d.together(listOf(1L, 2L, 3L), 0, 8, 0f, -10f)
+        d.up(200, 1); d.up(201, 2); d.up(202, 3); d.until(600)
+        assertEquals(listOf(0, 1 shl MouseButton.BACK.bit, 0), d.buttons.edges())
+        assertTrue(d.keys.all { it == 0 })
+    }
+
+    @Test fun gesturesOffThreeFingersScroll() {
+        val d = Driver(pad(NO_GLIDE.copy(gestures = false)))
+        d.together(listOf(1L, 2L, 3L), 0, 8, 0f, 10f)
+        d.up(200, 1); d.up(201, 2); d.up(202, 3); d.until(600)
+        assertTrue(d.keys.all { it == 0 })
+        assertTrue("wheel ${d.wheel}", d.wheel in 395..400) // 80 dp; thirds round down
+    }
+
+    @Test fun cancelReleasesHeldAlt() {
+        val d = Driver(pad())
+        d.together(listOf(1L, 2L, 3L), 0, 5, 10f, 0f)
+        d.until(200)
+        assertEquals(ALT, d.keys.last())
+        d.pad.cancel(d.t)
+        d.until(400)
+        assertEquals(0, d.keys.last())
+    }
+
+    @Test fun anchoredThumbPinchZooms() {
+        val d = Driver(pad(TouchpadSettings(acceleration = 0f)))
+        d.down(0, 200f, 300f, id = 1); d.down(2, 300f, 300f, id = 2)
+        for (i in 1..10) d.move(10 + i * 10L, 300f + i * 8f, 300f, id = 2)
+        d.up(130, 2); d.up(131, 1); d.until(600)
+        assertEquals(240, d.wheel)
+        assertEquals(listOf(0, CTRL, 0), d.keys.edges())
+    }
+
+    @Test fun oldProfileJsonGetsGestureDefaults() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val s = json.decodeFromString(TouchpadSettings.serializer(), """{"scrollSpeed":2.0}""")
+        assertEquals(TouchpadSettings(scrollSpeed = 2f), s)
+        assertEquals(FingerGestures.WINDOWS_3, s.gestures3)
+        val custom = s.copy(gestures4 = s.gestures4.copy(tap = GestureAction.Keys(GestureActions.WIN, 0x04)))
+        assertEquals(custom, json.decodeFromString(TouchpadSettings.serializer(), json.encodeToString(TouchpadSettings.serializer(), custom)))
     }
 }

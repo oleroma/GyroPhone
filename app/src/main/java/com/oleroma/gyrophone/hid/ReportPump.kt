@@ -35,7 +35,9 @@ class ReportPump(
     private var lastMouseButtons = 0
     private var pendingDx = 0
     private var pendingDy = 0
+    /** Wheel and pan not yet reported, in 1/120 notch. */
     private var pendingWheel = 0
+    private var pendingPan = 0
     private var mouseButtons = 0
     private var mouseTurn = false
     /** Mouse buttons pressed in a snapshot but not yet reported to the host. */
@@ -58,6 +60,13 @@ class ReportPump(
     @Volatile var lastKeyboardReport: ByteArray = KeyboardState().encode()
         private set
 
+    /**
+     * The mouse feature report the host last set: which resolution multipliers are on. Until the
+     * host enables one, that axis is reported in whole notches (the rest stays pending), so a
+     * host that ignores the multiplier never scrolls 120 times too far.
+     */
+    @Volatile var mouseFeature = 0
+
     fun start() {
         if (running) return
         running = true
@@ -77,7 +86,7 @@ class ReportPump(
     fun invalidate() {
         lastGamepad = null
         lastKeyboard = null
-        pendingDx = 0; pendingDy = 0; pendingWheel = 0
+        pendingDx = 0; pendingDy = 0; pendingWheel = 0; pendingPan = 0
         latchedDown = 0; latchedUp = 0
     }
 
@@ -106,6 +115,7 @@ class ReportPump(
         pendingDx += s.mouse.dx
         pendingDy += s.mouse.dy
         pendingWheel += s.mouse.wheel
+        pendingPan += s.mouse.hwheel
         // Edges that have not reached the host yet stay latched, so a skipped turn or failed send
         // cannot lose a click: a release goes out before a press that followed it (double click).
         val b = s.mouse.buttons
@@ -114,7 +124,10 @@ class ReportPump(
         mouseButtons = if (latchedUp != 0) lastMouseButtons and latchedUp.inv() else b or latchedDown
 
         val padDirty = s.gamepad != lastGamepad
-        val mouseDirty = pendingDx != 0 || pendingDy != 0 || pendingWheel != 0 || mouseButtons != lastMouseButtons
+        val feature = mouseFeature
+        val mouseDirty = pendingDx != 0 || pendingDy != 0 || mouseButtons != lastMouseButtons ||
+            wheelOut(pendingWheel, HidDescriptor.wheelHiRes(feature)) != 0 ||
+            wheelOut(pendingPan, HidDescriptor.panHiRes(feature)) != 0
         when {
             s.keyboard != lastKeyboard -> {
                 val bytes = s.keyboard.encode()
@@ -136,13 +149,24 @@ class ReportPump(
         }
     }
 
+    /** Pending 1/120-notch travel as the host reads it now: as is, or in whole notches (rest stays pending). */
+    private fun wheelOut(pending: Int, hiRes: Boolean): Int =
+        if (hiRes) pending.coerceIn(-MOUSE_MAX, MOUSE_MAX)
+        else (pending / MouseState.WHEEL_UNIT).coerceIn(-MAX_NOTCHES, MAX_NOTCHES)
+
     private fun sendMouse() {
         val dx = pendingDx.coerceIn(-MOUSE_MAX, MOUSE_MAX)
         val dy = pendingDy.coerceIn(-MOUSE_MAX, MOUSE_MAX)
-        val wheel = pendingWheel.coerceIn(-127, 127)
-        val report = MouseState(mouseButtons, dx, dy, wheel).encode()
+        val feature = mouseFeature
+        val wheelHiRes = HidDescriptor.wheelHiRes(feature)
+        val panHiRes = HidDescriptor.panHiRes(feature)
+        val wheel = wheelOut(pendingWheel, wheelHiRes)
+        val pan = wheelOut(pendingPan, panHiRes)
+        val report = MouseState.report(mouseButtons, dx, dy, wheel, pan)
         if (send(HidDescriptor.REPORT_ID_MOUSE, report)) {
-            pendingDx -= dx; pendingDy -= dy; pendingWheel -= wheel
+            pendingDx -= dx; pendingDy -= dy
+            pendingWheel -= if (wheelHiRes) wheel else wheel * MouseState.WHEEL_UNIT
+            pendingPan -= if (panHiRes) pan else pan * MouseState.WHEEL_UNIT
             lastMouseButtons = mouseButtons
             if (latchedUp != 0) latchedUp = 0 else latchedDown = 0
         }
@@ -157,6 +181,7 @@ class ReportPump(
         val RATES_HZ = intArrayOf(30, 45, 60, 75, 90)
         const val DEFAULT_RATE_HZ = 60
         private const val MOUSE_MAX = 32767
+        private const val MAX_NOTCHES = 127
         const val DEFAULT_INTERVAL_NANOS = 1_000_000_000L / DEFAULT_RATE_HZ
     }
 }

@@ -49,6 +49,12 @@ class HidDeviceManager(private val context: Context) {
     var reportProvider: ((reportId: Int) -> ByteArray?)? = null
     /** Called after a host connects, so the pump re-sends full state. */
     var onHostConnected: (() -> Unit)? = null
+    /** Called when the host disconnects. */
+    var onHostDisconnected: (() -> Unit)? = null
+    /** Current feature report bytes for GET_REPORT(feature), or null if the ID has none. */
+    var featureProvider: ((reportId: Int) -> ByteArray?)? = null
+    /** SET_REPORT(feature) from the host: report ID and its value byte. */
+    var onFeature: ((reportId: Int, value: Int) -> Unit)? = null
 
     val isConnected: Boolean get() = host != null
 
@@ -72,6 +78,7 @@ class HidDeviceManager(private val context: Context) {
         }
         hid = null
         host = null
+        onHostDisconnected?.invoke()
         _state.value = State.Off
     }
 
@@ -135,6 +142,7 @@ class HidDeviceManager(private val context: Context) {
                 BluetoothProfile.STATE_CONNECTING -> _state.value = State.Connecting(device.name ?: device.address)
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     if (host?.address == device.address) host = null
+                    onHostDisconnected?.invoke()
                     if (hid != null) _state.value = State.Ready
                 }
             }
@@ -142,12 +150,22 @@ class HidDeviceManager(private val context: Context) {
 
         override fun onGetReport(device: BluetoothDevice, type: Byte, id: Byte, bufferSize: Int) {
             val proxy = hid ?: return
-            val data = if (type == BluetoothHidDevice.REPORT_TYPE_INPUT) reportProvider?.invoke(id.toInt()) else null
+            val data = when (type) {
+                BluetoothHidDevice.REPORT_TYPE_INPUT -> reportProvider?.invoke(id.toInt())
+                BluetoothHidDevice.REPORT_TYPE_FEATURE -> featureProvider?.invoke(id.toInt())
+                else -> null
+            }
             if (data != null) proxy.replyReport(device, type, id, data)
             else proxy.reportError(device, BluetoothHidDevice.ERROR_RSP_INVALID_RPT_ID)
         }
 
         override fun onSetReport(device: BluetoothDevice, type: Byte, id: Byte, data: ByteArray) {
+            if (type == BluetoothHidDevice.REPORT_TYPE_FEATURE && data.isNotEmpty()) {
+                // Stacks differ on whether the report ID byte leads the data.
+                val value = if (data.size >= 2 && data[0] == id) data[1] else data[0]
+                Log.i(TAG, "SET_REPORT feature id=$id value=0x%02X".format(value.toInt() and 0xFF))
+                onFeature?.invoke(id.toInt(), value.toInt() and 0xFF)
+            }
             // Keyboard LED output reports etc. are acknowledged and ignored for now.
             hid?.reportError(device, BluetoothHidDevice.ERROR_RSP_SUCCESS)
         }

@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.core.model
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlin.math.abs
 import kotlin.math.min
@@ -177,7 +178,105 @@ data class TouchpadSettings(
     val scrollSpeed: Float = 1f,
     /** Content follows the fingers (finger down scrolls up), like a phone or Windows touchpad. */
     val naturalScroll: Boolean = true,
-)
+    /** Two-finger scrolling also moves sideways. */
+    val horizontalScroll: Boolean = true,
+    /** A two-finger scroll that lifts while moving keeps gliding and slows down. */
+    val inertia: Boolean = true,
+    /** Glide time constant in ms: how long the scroll keeps going after the fingers lift. */
+    val inertiaGlideMs: Float = 325f,
+    /** Two fingers spreading or closing zoom (Ctrl + wheel). */
+    val pinchZoom: Boolean = true,
+    /** Three- and four-finger swipes and taps run [gestures3] / [gestures4]. */
+    val gestures: Boolean = true,
+    val gestures3: FingerGestures = FingerGestures.WINDOWS_3,
+    val gestures4: FingerGestures = FingerGestures.WINDOWS_4,
+) {
+    fun gesturesFor(fingers: Int): FingerGestures = if (fingers >= 4) gestures4 else gestures3
+
+    companion object {
+        const val MIN_GLIDE_MS = 100f
+        const val MAX_GLIDE_MS = 1000f
+    }
+}
+
+/** Swipe directions and tap of a three- or four-finger touchpad gesture. */
+@Serializable
+enum class TouchpadGesture(val label: String) {
+    SWIPE_UP("Swipe up"),
+    SWIPE_DOWN("Swipe down"),
+    SWIPE_LEFT("Swipe left"),
+    SWIPE_RIGHT("Swipe right"),
+    TAP("Tap"),
+}
+
+/** What each [TouchpadGesture] does for one finger count. */
+@Serializable
+data class FingerGestures(
+    val swipeUp: GestureAction = GestureAction.None,
+    val swipeDown: GestureAction = GestureAction.None,
+    val swipeLeft: GestureAction = GestureAction.None,
+    val swipeRight: GestureAction = GestureAction.None,
+    val tap: GestureAction = GestureAction.None,
+) {
+    fun action(g: TouchpadGesture): GestureAction = when (g) {
+        TouchpadGesture.SWIPE_UP -> swipeUp
+        TouchpadGesture.SWIPE_DOWN -> swipeDown
+        TouchpadGesture.SWIPE_LEFT -> swipeLeft
+        TouchpadGesture.SWIPE_RIGHT -> swipeRight
+        TouchpadGesture.TAP -> tap
+    }
+
+    fun with(g: TouchpadGesture, a: GestureAction): FingerGestures = when (g) {
+        TouchpadGesture.SWIPE_UP -> copy(swipeUp = a)
+        TouchpadGesture.SWIPE_DOWN -> copy(swipeDown = a)
+        TouchpadGesture.SWIPE_LEFT -> copy(swipeLeft = a)
+        TouchpadGesture.SWIPE_RIGHT -> copy(swipeRight = a)
+        TouchpadGesture.TAP -> copy(tap = a)
+    }
+
+    companion object {
+        /** Windows precision touchpad defaults. */
+        val WINDOWS_3 = FingerGestures(
+            swipeUp = GestureActions.TASK_VIEW,
+            swipeDown = GestureActions.SHOW_DESKTOP,
+            swipeLeft = GestureAction.SwitchApps,
+            swipeRight = GestureAction.SwitchApps,
+            tap = GestureAction.Mouse(MouseButton.MIDDLE),
+        )
+        val WINDOWS_4 = FingerGestures(
+            swipeUp = GestureActions.TASK_VIEW,
+            swipeDown = GestureActions.SHOW_DESKTOP,
+            swipeLeft = GestureActions.DESKTOP_LEFT,
+            swipeRight = GestureActions.DESKTOP_RIGHT,
+            tap = GestureActions.NOTIFICATIONS,
+        )
+    }
+}
+
+/** What a touchpad gesture sends to the PC. */
+@Serializable
+sealed interface GestureAction {
+    @Serializable @SerialName("none")
+    data object None : GestureAction
+
+    /**
+     * Presses and releases a key combo. [modifiers] uses the HID modifier byte bits (LCtrl = 1,
+     * LShift = 2, LAlt = 4, LWin = 8, ...); [key] is a HID usage, or 0 for modifiers alone.
+     */
+    @Serializable @SerialName("keys")
+    data class Keys(val modifiers: Int, val key: Int = 0) : GestureAction
+
+    /** Clicks a mouse button. */
+    @Serializable @SerialName("mouse")
+    data class Mouse(val button: MouseButton) : GestureAction
+
+    /**
+     * Windows app switching: Alt is held while the fingers stay down and Tab (moving right) or
+     * Shift+Tab (moving left) is sent per step of travel. On an up/down swipe it is one Alt+Tab.
+     */
+    @Serializable @SerialName("switch_apps")
+    data object SwitchApps : GestureAction
+}
 
 /** Matches an Android InputDevice. Null fields match anything. */
 @Serializable

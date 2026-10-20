@@ -26,6 +26,7 @@ public struct InjectEvent
     public const uint MouseXDown = 0x0080;
     public const uint MouseXUp = 0x0100;
     public const uint MouseWheel = 0x0800;
+    public const uint MouseHWheel = 0x1000;
     public const int XButton1 = 1;
     public const int XButton2 = 2;
     public const int WheelDelta = 120;
@@ -81,7 +82,11 @@ public struct InjectEvent
     public static InjectEvent Move(int dx, int dy) =>
         new() { Kind = InjectKind.Mouse, Flags = MouseMove, Dx = dx, Dy = dy };
 
-    /// <summary>Wheel steps in detents, + = away from the user; mouseData = steps * 120.</summary>
-    public static InjectEvent Wheel(int steps) =>
-        new() { Kind = InjectKind.Mouse, Flags = MouseWheel, MouseData = steps * WheelDelta };
+    /// <summary>Wheel in 1/120 detent (WHEEL_DELTA = one notch), + = away from the user.</summary>
+    public static InjectEvent Wheel(int amount) =>
+        new() { Kind = InjectKind.Mouse, Flags = MouseWheel, MouseData = amount };
+
+    /// <summary>Horizontal wheel in 1/120 detent, + = right.</summary>
+    public static InjectEvent HWheel(int amount) =>
+        new() { Kind = InjectKind.Mouse, Flags = MouseHWheel, MouseData = amount };
 }

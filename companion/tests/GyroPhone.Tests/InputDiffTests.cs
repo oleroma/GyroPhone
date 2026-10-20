@@ -10,9 +10,9 @@ public class InputDiffTests
     private readonly InjectEvent[] _out = new InjectEvent[InputDiff.MaxEvents];
     private int _unknown;
 
-    private InjectEvent[] Diff(StateFrame target, int dx = 0, int dy = 0, int wheel = 0)
+    private InjectEvent[] Diff(StateFrame target, int dx = 0, int dy = 0, int wheel = 0, int hwheel = 0)
     {
-        int n = InputDiff.Diff(_injected, target.Keys, ref _mouse, target.MouseButtons, dx, dy, wheel, _out, ref _unknown);
+        int n = InputDiff.Diff(_injected, target.Keys, ref _mouse, target.MouseButtons, dx, dy, wheel, hwheel, _out, ref _unknown);
         return _out[..n];
     }
 
@@ -29,7 +29,7 @@ public class InputDiffTests
         t.SetKey(0x05, true);      // B down
         t.SetKey(0xE1, true);      // LShift down; LCtrl up; A up
         t.MouseButtons = 2;        // L up, R down
-        var e = Diff(t, 3, -4, 2);
+        var e = Diff(t, 3, -4, 240);
 
         Assert.Equal(8, e.Length);
         Assert.Equal((0xE1, false), (e[0].Usage, e[0].IsKeyUp));
@@ -82,10 +82,18 @@ public class InputDiffTests
     }
 
     [Fact]
+    public void HiresWheelsPassFractions()
+    {
+        var e = Diff(new StateFrame(), wheel: 17, hwheel: -5);
+        Assert.Equal((InjectEvent.MouseWheel, 17), (e[0].Flags, e[0].MouseData));
+        Assert.Equal((InjectEvent.MouseHWheel, -5), (e[1].Flags, e[1].MouseData));
+    }
+
+    [Fact]
     public void XButtonsAndWheel()
     {
         var s = new StateFrame { MouseButtons = 0b11000 };
-        var e = Diff(s, wheel: -3);
+        var e = Diff(s, wheel: -360);
         Assert.Equal((InjectEvent.MouseXDown, InjectEvent.XButton1), (e[0].Flags, e[0].MouseData));
         Assert.Equal((InjectEvent.MouseXDown, InjectEvent.XButton2), (e[1].Flags, e[1].MouseData));
         Assert.Equal(-360, e[2].MouseData);
@@ -140,7 +148,7 @@ public class InputDiffTests
         var s = new StateFrame();
         for (int u = 0x04; u <= 0x73; u++) s.SetKey(u, true); // ~110 keys, more than fit
         s.MouseButtons = 1;
-        var first = Diff(s, 1, 1, 1);
+        var first = Diff(s, 1, 1, 120);
         Assert.True(first.Length <= InputDiff.MaxEvents);
         Assert.Contains(first, x => x.Flags == InjectEvent.MouseLeftDown);
         Assert.Contains(first, x => x.Flags == InjectEvent.MouseMove);

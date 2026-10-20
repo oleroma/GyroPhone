@@ -2,7 +2,8 @@ namespace GyroPhone.Protocol;
 
 /// <summary>
 /// The 66-byte STATE plaintext (SPEC 1.7) as a reusable mutable frame. Pad, keys and mouse buttons
-/// are absolute; mouse and wheel are cumulative wrapping totals.
+/// are absolute; mouse and wheel are cumulative wrapping totals. With <see cref="Hires"/> it is the
+/// 70-byte STATE_HIRES: the wheel total in 1/120 notch and a horizontal wheel total after it.
 /// </summary>
 public sealed class StateFrame
 {
@@ -20,6 +21,10 @@ public sealed class StateFrame
     public ushort Lt, Rt;
     public readonly byte[] Keys = new byte[KeyBitmapSize];
     public int MouseTotalX, MouseTotalY, WheelTotal;
+    /// <summary>Horizontal wheel total in 1/120 notch, right = +. STATE_HIRES only.</summary>
+    public int HWheelTotal;
+    /// <summary>Encoded / decoded as STATE_HIRES.</summary>
+    public bool Hires;
 
     public byte Modifiers
     {
@@ -58,6 +63,7 @@ public sealed class StateFrame
         Lt = o.Lt; Rt = o.Rt;
         o.Keys.CopyTo(Keys, 0);
         MouseTotalX = o.MouseTotalX; MouseTotalY = o.MouseTotalY; WheelTotal = o.WheelTotal;
+        HWheelTotal = o.HWheelTotal; Hires = o.Hires;
     }
 
     public int Encode(Span<byte> b)
@@ -77,10 +83,15 @@ public sealed class StateFrame
         Le.PutI32(b, 54, MouseTotalX);
         Le.PutI32(b, 58, MouseTotalY);
         Le.PutI32(b, 62, WheelTotal);
-        return Wire.StatePlain;
+        if (!Hires) return Wire.StatePlain;
+        Le.PutI32(b, 66, HWheelTotal);
+        return Wire.StateHiresPlain;
     }
 
-    /// <summary>Reads a plaintext of exactly <see cref="Wire.StatePlain"/> bytes. Values are taken as sent; clamping is the mapper's job.</summary>
+    /// <summary>
+    /// Reads a plaintext of exactly <see cref="Wire.StatePlain"/> bytes (STATE) or
+    /// <see cref="Wire.StateHiresPlain"/> bytes (STATE_HIRES). Values are taken as sent; clamping is the mapper's job.
+    /// </summary>
     public void Decode(ReadOnlySpan<byte> b)
     {
         PhoneTimeUs = Le.U32(b, 0);
@@ -98,5 +109,7 @@ public sealed class StateFrame
         MouseTotalX = Le.I32(b, 54);
         MouseTotalY = Le.I32(b, 58);
         WheelTotal = Le.I32(b, 62);
+        Hires = b.Length >= Wire.StateHiresPlain;
+        HWheelTotal = Hires ? Le.I32(b, 66) : 0;
     }
 }

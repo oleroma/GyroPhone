@@ -26,6 +26,8 @@ public static class Wire
     public const int ErrorSize = 16;
 
     public const int StatePlain = 66;
+    /// <summary>STATE_HIRES: STATE with the wheel total in 1/120 notch plus a horizontal wheel total.</summary>
+    public const int StateHiresPlain = 70;
     public const int PingPlain = 8;
     public const int LinkInfoPlain = 22;
     public const int ByePlain = 4;
@@ -62,6 +64,8 @@ public static class Wire
 
     public const int MaxMouseDelta = 16384;
     public const int MaxWheelDelta = 64;
+    /// <summary><see cref="MaxWheelDelta"/> in STATE_HIRES units (1/120 notch).</summary>
+    public const int MaxWheelDeltaHires = MaxWheelDelta * 120;
     public const uint RekeySeq = 0xF0000000;
 
     public const int ErrorRatePerIp = 10;   // per second
@@ -129,6 +133,8 @@ public static class WelcomeFlags
 {
     public const byte VigemOk = 1 << 0;
     public const byte ForegroundSupported = 1 << 1;
+    /// <summary>The host takes STATE_HIRES (smooth vertical and horizontal wheel).</summary>
+    public const byte HiresWheel = 1 << 2;
 }
 
 /// <summary>Output device the host exposes. Values are the wire outputMode byte.</summary>

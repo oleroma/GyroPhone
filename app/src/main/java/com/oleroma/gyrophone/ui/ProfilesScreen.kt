@@ -46,6 +46,7 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchKind
+import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import java.util.UUID
 
@@ -202,6 +203,30 @@ private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (
             Text("Scroll speed %.1f".format(tpScroll), Modifier.padding(end = 8.dp))
             Slider(value = tpScroll, onValueChange = { tpScroll = it }, valueRange = 0.25f..3f,
                 onValueChangeFinished = { edit { it.copy(touchpad = it.touchpad.copy(scrollSpeed = tpScroll)) } })
+        }
+        SwitchRow("Horizontal scrolling", profile.touchpad.horizontalScroll) { v ->
+            edit { it.copy(touchpad = it.touchpad.copy(horizontalScroll = v)) }
+        }
+        SwitchRow("Inertia (keeps scrolling after a flick)", profile.touchpad.inertia) { v ->
+            edit { it.copy(touchpad = it.touchpad.copy(inertia = v)) }
+        }
+        if (profile.touchpad.inertia) {
+            var tpGlide by remember(profile.id) { mutableStateOf(profile.touchpad.inertiaGlideMs) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Glide %.0f ms".format(tpGlide), Modifier.padding(end = 8.dp))
+                Slider(value = tpGlide, onValueChange = { tpGlide = it },
+                    valueRange = TouchpadSettings.MIN_GLIDE_MS..TouchpadSettings.MAX_GLIDE_MS,
+                    onValueChangeFinished = { edit { it.copy(touchpad = it.touchpad.copy(inertiaGlideMs = tpGlide)) } })
+            }
+        }
+        SwitchRow("Pinch to zoom (Ctrl + wheel)", profile.touchpad.pinchZoom) { v ->
+            edit { it.copy(touchpad = it.touchpad.copy(pinchZoom = v)) }
+        }
+        SwitchRow("3 and 4 finger gestures", profile.touchpad.gestures) { v ->
+            edit { it.copy(touchpad = it.touchpad.copy(gestures = v)) }
+        }
+        if (profile.touchpad.gestures) {
+            TouchpadGestureList(runtime, profile.touchpad) { tp -> edit { it.copy(touchpad = tp) } }
         }
 
         HorizontalDivider()
