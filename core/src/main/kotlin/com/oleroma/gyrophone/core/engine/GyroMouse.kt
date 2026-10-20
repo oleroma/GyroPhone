@@ -15,7 +15,7 @@ import kotlin.math.sqrt
 class GyroMouse(var settings: GyroSettings = GyroSettings()) {
 
     /** Screen rotation in degrees (0/90/180/270), used when orientation is AUTO. */
-    var displayRotation: Int = 90
+    @Volatile var displayRotation: Int = 90
 
     private var remX = 0f
     private var remY = 0f

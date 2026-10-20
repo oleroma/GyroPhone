@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.core.model
 
 import kotlinx.serialization.Serializable
 import kotlin.math.abs
+import kotlin.math.min
 
 @Serializable
 enum class TouchKind { BUTTON, STICK }
@@ -9,9 +10,15 @@ enum class TouchKind { BUTTON, STICK }
 @Serializable
 enum class TouchShape { CIRCLE, SQUARE }
 
+/** Centre (0..1 of the pad area) and size (fraction of the pad area's shorter side). */
+@Serializable
+data class Placement(val x: Float, val y: Float, val size: Float)
+
 /**
- * A control drawn on the touchscreen. Position is the centre, normalised to the screen (0..1),
- * size is the diameter (circle) or side length (square) as a fraction of the screen height.
+ * A control drawn on the touchscreen. Position is the centre, normalised to the pad area (0..1);
+ * size is the diameter (circle) or side length (square) as a fraction of the pad area's shorter
+ * side (its height in landscape). [x], [y] and [size] are the landscape placement; [portrait] is
+ * the portrait one, or null to derive it from the landscape placement.
  */
 @Serializable
 data class TouchControl(
@@ -22,18 +29,61 @@ data class TouchControl(
     val y: Float,
     val size: Float = 0.16f,
     val shape: TouchShape = TouchShape.CIRCLE,
+    /** Portrait placement; null = derived from the landscape one. Keep last (positional callers). */
+    val portrait: Placement? = null,
 ) {
     companion object {
         const val MIN_SIZE = 0.06f
         const val MAX_SIZE = 0.6f
+        /**
+         * Derived portrait layout: the landscape layout squeezed into the lower part (the top is
+         * left for the touchpad), sizes scaled down, centres pulled in so nothing leaves the width.
+         */
+        const val PORTRAIT_TOP = 0.45f
+        const val PORTRAIT_SIZE_SCALE = 0.75f
     }
 }
 
-/** Hit test in pixels; [slop] enlarges the hit area relative to the drawn shape. */
-fun TouchControl.contains(px: Float, py: Float, screenW: Float, screenH: Float, slop: Float = 1.15f): Boolean {
-    val dx = px - x * screenW
-    val dy = py - y * screenH
-    val half = size * screenH / 2f * slop
+/**
+ * The explicit portrait placement, else the builtin one for a control still at its builtin
+ * landscape placement (copies of the Virtual gamepad saved before portrait existed), else null.
+ */
+private fun TouchControl.portraitOrBuiltin(): Placement? = portrait ?: BuiltinProfiles.builtinPortrait(this)
+
+fun TouchControl.placeX(inPortrait: Boolean): Float {
+    if (!inPortrait) return x
+    portraitOrBuiltin()?.let { return it.x }
+    // Portrait sizes are fractions of the width, so the half-extent in x is half the size.
+    val half = size * TouchControl.PORTRAIT_SIZE_SCALE / 2f
+    return x.coerceIn(half, 1f - half)
+}
+
+fun TouchControl.placeY(inPortrait: Boolean): Float =
+    if (!inPortrait) y else portraitOrBuiltin()?.y ?: (TouchControl.PORTRAIT_TOP + y * (1f - TouchControl.PORTRAIT_TOP))
+
+fun TouchControl.placeSize(inPortrait: Boolean): Float =
+    if (!inPortrait) size else portraitOrBuiltin()?.size ?: (size * TouchControl.PORTRAIT_SIZE_SCALE)
+
+/** Resolved placement (allocates; editor use). */
+fun TouchControl.placement(inPortrait: Boolean): Placement =
+    Placement(placeX(inPortrait), placeY(inPortrait), placeSize(inPortrait))
+
+/**
+ * Copy with the given orientation's placement replaced. Editing landscape first pins the
+ * current (possibly derived) portrait placement, so the portrait layout does not move.
+ */
+fun TouchControl.withPlacement(inPortrait: Boolean, x: Float, y: Float, size: Float): TouchControl =
+    if (inPortrait) copy(portrait = Placement(x, y, size))
+    else copy(x = x, y = y, size = size, portrait = portrait ?: placement(true))
+
+/** Hit test in pixels of the pad area; [slop] enlarges the hit area relative to the drawn shape. */
+fun TouchControl.contains(
+    px: Float, py: Float, screenW: Float, screenH: Float,
+    slop: Float = 1.15f, inPortrait: Boolean = false,
+): Boolean {
+    val dx = px - placeX(inPortrait) * screenW
+    val dy = py - placeY(inPortrait) * screenH
+    val half = placeSize(inPortrait) * min(screenW, screenH) / 2f * slop
     return when (shape) {
         TouchShape.CIRCLE -> dx * dx + dy * dy <= half * half
         TouchShape.SQUARE -> abs(dx) <= half && abs(dy) <= half
@@ -85,6 +135,24 @@ data class GyroSettings(
     val smoothingThreshold: Float = 4f,
 )
 
+/** The pad screen's empty background as a laptop touchpad. */
+@Serializable
+data class TouchpadSettings(
+    val enabled: Boolean = true,
+    /** Mouse counts per dp of finger travel at low speed. */
+    val sensitivity: Float = 1.5f,
+    /** Extra gain for fast swipes: up to 1 + this. 0 = linear. */
+    val acceleration: Float = 1f,
+    val tapToClick: Boolean = true,
+    /** Tap then touch and move drags with the left button held. */
+    val tapDrag: Boolean = true,
+    val twoFingerScroll: Boolean = true,
+    /** Wheel notches per Touchpad.SCROLL_DP_PER_NOTCH dp of two-finger travel. */
+    val scrollSpeed: Float = 1f,
+    /** Content follows the fingers (finger down scrolls up), like a phone or Windows touchpad. */
+    val naturalScroll: Boolean = true,
+)
+
 /** Matches an Android InputDevice. Null fields match anything. */
 @Serializable
 data class DeviceMatch(
@@ -109,4 +177,6 @@ data class Profile(
     val controllers: List<DeviceMatch> = emptyList(),
     /** Windows executables this profile belongs to (used by the companion for auto-switching). */
     val games: List<String> = emptyList(),
+    /** The pad screen's background as a touchpad. */
+    val touchpad: TouchpadSettings = TouchpadSettings(),
 )

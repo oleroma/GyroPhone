@@ -18,8 +18,9 @@ import java.util.concurrent.locks.LockSupport
  *
  * On the OnePlus 15 the stack keeps the HID link in sniff mode (it re-enters sniff after every
  * report and cannot be told not to), which allows roughly one packet per sniff interval. So
- * each tick sends at most ONE report: keyboard changes first, then game pad and mouse take
- * turns. Mouse motion that is not sent yet keeps accumulating, so nothing is lost or queued.
+ * each tick sends at most ONE report: keyboard changes first, then mouse button changes, then
+ * game pad and mouse take turns. Mouse motion that is not sent yet keeps accumulating, so
+ * nothing is lost or queued.
  */
 class ReportPump(
     private val engine: MappingEngine,
@@ -37,6 +38,10 @@ class ReportPump(
     private var pendingWheel = 0
     private var mouseButtons = 0
     private var mouseTurn = false
+    /** Mouse buttons pressed in a snapshot but not yet reported to the host. */
+    private var latchedDown = 0
+    /** Mouse buttons released in a snapshot but not yet reported to the host. */
+    private var latchedUp = 0
 
     /** Reports handed to the stack / refused by it during the last full second. */
     @Volatile var sentPerSecond = 0
@@ -73,6 +78,7 @@ class ReportPump(
         lastGamepad = null
         lastKeyboard = null
         pendingDx = 0; pendingDy = 0; pendingWheel = 0
+        latchedDown = 0; latchedUp = 0
     }
 
     private fun loop() {
@@ -100,7 +106,12 @@ class ReportPump(
         pendingDx += s.mouse.dx
         pendingDy += s.mouse.dy
         pendingWheel += s.mouse.wheel
-        mouseButtons = s.mouse.buttons
+        // Edges that have not reached the host yet stay latched, so a skipped turn or failed send
+        // cannot lose a click: a release goes out before a press that followed it (double click).
+        val b = s.mouse.buttons
+        latchedUp = latchedUp or (lastMouseButtons and b.inv())
+        latchedDown = latchedDown or (b and (lastMouseButtons.inv() or latchedUp))
+        mouseButtons = if (latchedUp != 0) lastMouseButtons and latchedUp.inv() else b or latchedDown
 
         val padDirty = s.gamepad != lastGamepad
         val mouseDirty = pendingDx != 0 || pendingDy != 0 || pendingWheel != 0 || mouseButtons != lastMouseButtons
@@ -112,6 +123,7 @@ class ReportPump(
                     lastKeyboardReport = bytes
                 }
             }
+            mouseButtons != lastMouseButtons -> sendMouse() // click edges go out on the next tick
             padDirty && !(mouseDirty && mouseTurn) -> {
                 val bytes = s.gamepad.encode()
                 if (send(HidDescriptor.REPORT_ID_GAMEPAD, bytes)) {
@@ -120,18 +132,21 @@ class ReportPump(
                 }
                 mouseTurn = true
             }
-            mouseDirty -> {
-                val dx = pendingDx.coerceIn(-MOUSE_MAX, MOUSE_MAX)
-                val dy = pendingDy.coerceIn(-MOUSE_MAX, MOUSE_MAX)
-                val wheel = pendingWheel.coerceIn(-127, 127)
-                val report = MouseState(mouseButtons, dx, dy, wheel).encode()
-                if (send(HidDescriptor.REPORT_ID_MOUSE, report)) {
-                    pendingDx -= dx; pendingDy -= dy; pendingWheel -= wheel
-                    lastMouseButtons = mouseButtons
-                }
-                mouseTurn = false
-            }
+            mouseDirty -> sendMouse()
         }
+    }
+
+    private fun sendMouse() {
+        val dx = pendingDx.coerceIn(-MOUSE_MAX, MOUSE_MAX)
+        val dy = pendingDy.coerceIn(-MOUSE_MAX, MOUSE_MAX)
+        val wheel = pendingWheel.coerceIn(-127, 127)
+        val report = MouseState(mouseButtons, dx, dy, wheel).encode()
+        if (send(HidDescriptor.REPORT_ID_MOUSE, report)) {
+            pendingDx -= dx; pendingDy -= dy; pendingWheel -= wheel
+            lastMouseButtons = mouseButtons
+            if (latchedUp != 0) latchedUp = 0 else latchedDown = 0
+        }
+        mouseTurn = false
     }
 
     companion object {

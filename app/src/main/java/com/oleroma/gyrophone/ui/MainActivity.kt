@@ -2,7 +2,10 @@ package com.oleroma.gyrophone.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.hardware.display.DisplayManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.Surface
@@ -18,6 +21,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -27,6 +31,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.input.ControllerInput
 import com.oleroma.gyrophone.link.TransportKind
 import com.oleroma.gyrophone.runtime
@@ -35,6 +40,16 @@ import com.oleroma.gyrophone.service.GamepadService
 class MainActivity : ComponentActivity() {
 
     private lateinit var controllerInput: ControllerInput
+
+    private var lastRotation = -1
+    /** 180-degree flips change no Configuration, so onConfigurationChanged alone misses them. */
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = Unit
+        override fun onDisplayRemoved(displayId: Int) = Unit
+        override fun onDisplayChanged(displayId: Int) {
+            if (displayId == display?.displayId) updateRotation()
+        }
+    }
 
     private val permissions = arrayOf(
         Manifest.permission.BLUETOOTH_CONNECT,
@@ -65,6 +80,8 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
+                val orientation by runtime.screenOrientation.collectAsStateWithLifecycle()
+                LaunchedEffect(orientation) { requestedOrientation = orientation.activityValue }
                 Surface(Modifier.fillMaxSize()) {
                     var tab by rememberSaveable { mutableIntStateOf(0) }
                     Column(Modifier.fillMaxSize()) {
@@ -88,11 +105,15 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         controllerInput.register()
+        getSystemService(DisplayManager::class.java)
+            .registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
+        lastRotation = -1
         updateRotation()
     }
 
     override fun onPause() {
         controllerInput.unregister()
+        getSystemService(DisplayManager::class.java).unregisterDisplayListener(displayListener)
         super.onPause()
     }
 
@@ -114,6 +135,9 @@ class MainActivity : ComponentActivity() {
             Surface.ROTATION_270 -> 270
             else -> 90
         }
+        // onDisplayChanged also fires on refresh-rate changes: only a real rotation resets the gyro filters.
+        if (degrees == lastRotation) return
+        lastRotation = degrees
         runtime.setDisplayRotation(degrees)
     }
 

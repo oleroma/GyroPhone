@@ -4,6 +4,7 @@ import android.content.Context
 import android.hardware.SensorManager
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import com.oleroma.gyrophone.core.engine.MappingEngine
+import com.oleroma.gyrophone.core.engine.Touchpad
 import com.oleroma.gyrophone.core.hid.HidDescriptor
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.InputSource
@@ -87,6 +88,13 @@ class GamepadRuntime(context: Context) {
     )
     val wifiRateHz: StateFlow<Int> = _wifiRateHz
 
+    private val _screenOrientation = MutableStateFlow(
+        prefs.getString(KEY_ORIENTATION, null)?.let { name -> ScreenOrientation.entries.firstOrNull { it.name == name } }
+            ?: ScreenOrientation.AUTO,
+    )
+    /** How the activity may rotate; MainActivity applies it. */
+    val screenOrientation: StateFlow<ScreenOrientation> = _screenOrientation
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _linkState = MutableStateFlow<LinkState>(LinkState.Off)
     /** State of the active link. */
@@ -133,6 +141,7 @@ class GamepadRuntime(context: Context) {
         }
         hid.onHostConnected = { pump.invalidate() }
         pump.intervalNanos = 1_000_000_000L / _reportRateHz.value
+        engine.touchpadMinPulseNanos = Touchpad.minPulseFor(pump.intervalNanos)
         wifi.rateHz = _wifiRateHz.value
         scope.launch {
             _transport.collectLatest { kind -> link(kind).state.collect { _linkState.value = it } }
@@ -143,6 +152,12 @@ class GamepadRuntime(context: Context) {
         prefs.edit().putInt(KEY_RATE, hz).apply()
         _reportRateHz.value = hz
         pump.intervalNanos = 1_000_000_000L / hz
+        engine.touchpadMinPulseNanos = Touchpad.minPulseFor(pump.intervalNanos)
+    }
+
+    fun setScreenOrientation(o: ScreenOrientation) {
+        prefs.edit().putString(KEY_ORIENTATION, o.name).apply()
+        _screenOrientation.value = o
     }
 
     fun setWifiRate(hz: Int) {
@@ -169,6 +184,8 @@ class GamepadRuntime(context: Context) {
 
     @Synchronized fun start() {
         running = true
+        // Nothing polls the engine while no link runs: drop touchpad taps queued meanwhile.
+        engine.touchpadCancel()
         active.start()
         startGyro()
     }
@@ -264,6 +281,7 @@ class GamepadRuntime(context: Context) {
         private const val KEY_RATE = "report_rate_hz"
         private const val KEY_WIFI_RATE = "wifi_rate_hz"
         private const val KEY_TRANSPORT = "transport"
+        private const val KEY_ORIENTATION = "screen_orientation"
     }
 
     private fun onGyroSample(x: Float, y: Float, z: Float, ts: Long) {

@@ -15,6 +15,7 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.StickAxis
+import com.oleroma.gyrophone.core.model.TouchpadSettings
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -122,5 +123,78 @@ class MappingEngineTest {
         e.onChange = null
         e.setKey(AndroidKey.BUTTON_R2, false)
         assertEquals(5, calls)
+    }
+
+    private val MS = 1_000_000L
+
+    private fun gyroOff(now: () -> Long) =
+        MappingEngine(BuiltinProfiles.virtualGamepad.copy(gyro = GyroSettings(mode = GyroMode.OFF)), now)
+            .apply { touchpadPxPerDp = 1f }
+
+    @Test fun touchpadClicksWithGyroOff() {
+        var now = 0L
+        val e = gyroOff { now }
+        e.touchpadDown(1, 100f, 100f)
+        now = 60 * MS
+        e.touchpadUp(1)
+        assertEquals(1, e.snapshot().mouse.buttons and 1)
+        assertFalse(e.gyroActive)
+    }
+
+    @Test fun touchpadMotionBypassesGyroGate() {
+        var now = 0L
+        val e = gyroOff { now }
+        e.touchpadDown(1, 100f, 100f)
+        now = 20 * MS
+        e.touchpadMove(1, 200f, 100f)
+        assertFalse(e.gyroActive)
+        assertTrue(e.snapshot().mouse.dx > 0)
+        assertEquals(0, e.snapshot().mouse.dx) // drained
+    }
+
+    @Test fun touchpadButtonsOrWithMappedMouse() {
+        var now = 0L
+        val e = MappingEngine(BuiltinProfiles.keyboardMouse) { now }
+        e.touchpadPxPerDp = 1f
+        e.setKey(AndroidKey.BUTTON_R2, true) // mouse left
+        e.touchpadDown(1, 100f, 100f); e.touchpadDown(2, 200f, 100f)
+        now = 50 * MS
+        e.touchpadUp(1); e.touchpadUp(2)
+        assertEquals(0b11, e.snapshot().mouse.buttons)
+    }
+
+    private fun dragging(now: () -> Long, set: (Long) -> Unit): MappingEngine {
+        val e = gyroOff(now)
+        e.touchpadDown(1, 100f, 100f); set(60 * MS); e.touchpadUp(1)
+        assertEquals(1, e.snapshot().mouse.buttons)
+        set(120 * MS); e.touchpadDown(1, 100f, 100f)
+        set(140 * MS); e.touchpadMove(1, 150f, 100f)
+        assertEquals(1, e.snapshot().mouse.buttons)
+        return e
+    }
+
+    @Test fun resetReleasesTouchpad() {
+        var now = 0L
+        val e = dragging({ now }) { now = it }
+        e.reset()
+        assertEquals(0, e.snapshot().mouse.buttons)
+    }
+
+    @Test fun profileChangeCancelsTouchpad() {
+        var now = 0L
+        val e = dragging({ now }) { now = it }
+        e.profile = e.profile.copy(touchpad = TouchpadSettings(sensitivity = 2f))
+        now = 150 * MS // L shown since 60 ms, longer than the minimum pulse: released at once
+        assertEquals(0, e.snapshot().mouse.buttons)
+        e.touchpadMove(1, 300f, 100f) // finger forgotten
+        assertEquals(0, e.snapshot().mouse.dx)
+    }
+
+    @Test fun onChangeFiresForTouchpad() {
+        val e = MappingEngine(BuiltinProfiles.virtualGamepad)
+        var calls = 0
+        e.onChange = Runnable { calls++ }
+        e.touchpadDown(1, 0f, 0f); e.touchpadMove(1, 50f, 0f); e.touchpadUp(1)
+        assertEquals(3, calls)
     }
 }
