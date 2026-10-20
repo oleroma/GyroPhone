@@ -20,6 +20,17 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        // Shared debug key committed to the repo so every CI build can update the installed app
+        // in place (a fresh per-runner debug key forces an uninstall, wiping saved profiles).
+        getByName("debug") {
+            storeFile = rootProject.file("keystore/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
