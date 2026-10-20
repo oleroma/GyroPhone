@@ -48,7 +48,9 @@ class GamepadRuntime(context: Context) {
     private val gyroMouse = GyroMouse(_activeProfile.value.gyro)
     private val prefs = appContext.getSharedPreferences("gyrophone", Context.MODE_PRIVATE)
 
-    private val _reportRateHz = MutableStateFlow(prefs.getInt(KEY_RATE, ReportPump.DEFAULT_RATE_HZ))
+    private val _reportRateHz = MutableStateFlow(
+        prefs.getInt(KEY_RATE, ReportPump.DEFAULT_RATE_HZ).takeIf { it in ReportPump.RATES_HZ } ?: ReportPump.DEFAULT_RATE_HZ,
+    )
     val reportRateHz: StateFlow<Int> = _reportRateHz
 
     data class LinkStats(val sentPerSecond: Int, val failedPerSecond: Int)

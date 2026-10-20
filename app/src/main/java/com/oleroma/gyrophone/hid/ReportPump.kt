@@ -4,6 +4,7 @@ import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.hid.GamepadState
 import com.oleroma.gyrophone.core.hid.HidDescriptor
 import com.oleroma.gyrophone.core.hid.KeyboardState
+import com.oleroma.gyrophone.core.hid.MouseState
 import java.util.concurrent.locks.LockSupport
 
 /**
@@ -14,6 +15,11 @@ import java.util.concurrent.locks.LockSupport
  * The rate matters: sendReport() only enqueues, and Android gives no "sent" callback. If we
  * enqueue faster than the Bluetooth link drains, reports pile up in the stack and every new
  * movement waits behind the backlog, which feels like heavy, growing lag.
+ *
+ * On the OnePlus 15 the stack keeps the HID link in sniff mode (it re-enters sniff after every
+ * report and cannot be told not to), which allows roughly one packet per sniff interval. So
+ * each tick sends at most ONE report: keyboard changes first, then game pad and mouse take
+ * turns. Mouse motion that is not sent yet keeps accumulating, so nothing is lost or queued.
  */
 class ReportPump(
     private val engine: MappingEngine,
@@ -26,6 +32,11 @@ class ReportPump(
     @Volatile private var lastGamepad: GamepadState? = null
     @Volatile private var lastKeyboard: KeyboardState? = null
     private var lastMouseButtons = 0
+    private var pendingDx = 0
+    private var pendingDy = 0
+    private var pendingWheel = 0
+    private var mouseButtons = 0
+    private var mouseTurn = false
 
     /** Reports handed to the stack / refused by it during the last full second. */
     @Volatile var sentPerSecond = 0
@@ -61,6 +72,7 @@ class ReportPump(
     fun invalidate() {
         lastGamepad = null
         lastKeyboard = null
+        pendingDx = 0; pendingDy = 0; pendingWheel = 0
     }
 
     private fun loop() {
@@ -85,29 +97,51 @@ class ReportPump(
 
     private fun tick() {
         val s = engine.snapshot()
-        if (s.gamepad != lastGamepad) {
-            val bytes = s.gamepad.encode()
-            if (send(HidDescriptor.REPORT_ID_GAMEPAD, bytes)) {
-                lastGamepad = s.gamepad
-                lastGamepadReport = bytes
+        pendingDx += s.mouse.dx
+        pendingDy += s.mouse.dy
+        pendingWheel += s.mouse.wheel
+        mouseButtons = s.mouse.buttons
+
+        val padDirty = s.gamepad != lastGamepad
+        val mouseDirty = pendingDx != 0 || pendingDy != 0 || pendingWheel != 0 || mouseButtons != lastMouseButtons
+        when {
+            s.keyboard != lastKeyboard -> {
+                val bytes = s.keyboard.encode()
+                if (send(HidDescriptor.REPORT_ID_KEYBOARD, bytes)) {
+                    lastKeyboard = s.keyboard
+                    lastKeyboardReport = bytes
+                }
             }
-        }
-        if (s.keyboard != lastKeyboard) {
-            val bytes = s.keyboard.encode()
-            if (send(HidDescriptor.REPORT_ID_KEYBOARD, bytes)) {
-                lastKeyboard = s.keyboard
-                lastKeyboardReport = bytes
+            padDirty && !(mouseDirty && mouseTurn) -> {
+                val bytes = s.gamepad.encode()
+                if (send(HidDescriptor.REPORT_ID_GAMEPAD, bytes)) {
+                    lastGamepad = s.gamepad
+                    lastGamepadReport = bytes
+                }
+                mouseTurn = true
             }
-        }
-        if (s.mouse.hasMotion || s.mouse.buttons != lastMouseButtons) {
-            if (send(HidDescriptor.REPORT_ID_MOUSE, s.mouse.encode())) lastMouseButtons = s.mouse.buttons
+            mouseDirty -> {
+                val dx = pendingDx.coerceIn(-MOUSE_MAX, MOUSE_MAX)
+                val dy = pendingDy.coerceIn(-MOUSE_MAX, MOUSE_MAX)
+                val wheel = pendingWheel.coerceIn(-127, 127)
+                val report = MouseState(mouseButtons, dx, dy, wheel).encode()
+                if (send(HidDescriptor.REPORT_ID_MOUSE, report)) {
+                    pendingDx -= dx; pendingDy -= dy; pendingWheel -= wheel
+                    lastMouseButtons = mouseButtons
+                }
+                mouseTurn = false
+            }
         }
     }
 
     companion object {
-        /** Selectable report rates. Bluetooth Classic HID links commonly drain 90-250 reports/s. */
-        val RATES_HZ = intArrayOf(60, 90, 125, 250, 500)
-        const val DEFAULT_RATE_HZ = 125
+        /**
+         * Selectable report rates. In sniff mode (AOSP HID default ~11.25 ms) the link carries
+         * roughly 89 packets/s at best, so higher rates only build a queue. 60 Hz leaves headroom.
+         */
+        val RATES_HZ = intArrayOf(30, 45, 60, 75, 90)
+        const val DEFAULT_RATE_HZ = 60
+        private const val MOUSE_MAX = 32767
         const val DEFAULT_INTERVAL_NANOS = 1_000_000_000L / DEFAULT_RATE_HZ
     }
 }

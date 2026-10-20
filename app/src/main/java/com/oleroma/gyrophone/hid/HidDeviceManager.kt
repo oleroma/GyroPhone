@@ -17,7 +17,7 @@ import java.util.concurrent.Executors
 /**
  * Registers the phone as a Bluetooth Classic HID device (game pad + keyboard + mouse) and sends
  * reports to the connected host. Classic BR/EDR HID is what Windows pairs with natively; the
- * interrupt channel QoS below asks for guaranteed service with a low latency target.
+ * interrupt channel QoS below asks for guaranteed service sized for 1000 reports/s at minimal latency.
  *
  * Callers must hold BLUETOOTH_CONNECT (requested by MainActivity before the service starts).
  */
@@ -156,16 +156,21 @@ class HidDeviceManager(private val context: Context) {
         )
 
         /**
-         * Outgoing (interrupt channel) QoS. Latency is in microseconds; 3750 us = 6 BR/EDR slots.
-         * The host and controller may negotiate this up; tune on the OnePlus 15 with the latency
-         * test in the roadmap.
+         * Outgoing (interrupt channel) QoS, a token bucket in bytes. The values copied from the
+         * usual BluetoothHidDevice samples (token rate 800 B/s) cap the link at about 100 small
+         * reports/s where the stack or host honours it: every report on the wire is 2 bytes of
+         * header + payload, so anything faster queues and arrives late (higher rates felt laggier).
+         * Size it for 1000 Hz of all three reports (mouse 8 + game pad 17 + keyboard 10 bytes).
+         * Latency is in microseconds: 1250 us = 2 BR/EDR slots, the shortest poll interval.
          */
+        private const val TOKEN_RATE_BYTES_PER_SEC = 1000 * (8 + 17 + 10)
+
         private val qos = BluetoothHidDeviceAppQosSettings(
             BluetoothHidDeviceAppQosSettings.SERVICE_GUARANTEED,
-            800,
-            9,
+            TOKEN_RATE_BYTES_PER_SEC,
+            128,
             0,
-            3750,
+            1250,
             BluetoothHidDeviceAppQosSettings.MAX,
         )
     }
