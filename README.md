@@ -62,6 +62,13 @@ Phone (mapping engine) ─► UDP, AES-GCM sealed ─► GyroPhoneCompanion ─�
 
 The CI on every PR builds the APK and uploads it as an artifact named `gyrophone-debug-apk`. It also tests and publishes the Windows companion as a single self-contained `GyroPhoneCompanion.exe` in the artifact `gyrophone-companion-win-x64`.
 
+The newest successful build is also published as the [`latest` prerelease](https://github.com/oleroma/GyroPhone/releases/tag/latest), with fixed download links:
+
+* Phone: https://github.com/oleroma/GyroPhone/releases/download/latest/GyroPhone.apk
+* PC: https://github.com/oleroma/GyroPhone/releases/download/latest/GyroPhoneCompanion.exe
+
+`update.cmd` downloads the newest build into `..\gyrophone-builds\latest` and updates the phone over adb.
+
 Locally you need JDK 17 and the Android SDK (API 36):
 
 ```

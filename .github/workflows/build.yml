@@ -52,3 +52,33 @@ jobs:
           name: gyrophone-companion-win-x64
           path: out/GyroPhoneCompanion.exe
           if-no-files-found: error
+
+  # Rolling "latest" prerelease: stable direct download links for the newest successful build.
+  #   https://github.com/oleroma/GyroPhone/releases/download/latest/GyroPhone.apk
+  #   https://github.com/oleroma/GyroPhone/releases/download/latest/GyroPhoneCompanion.exe
+  latest:
+    needs: [build, companion]
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: latest-release
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      GP_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      GP_BRANCH: ${{ github.head_ref || github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+      - name: Publish latest
+        run: |
+          VER="0.1.${{ github.run_number }}-${GP_COMMIT:0:7}"
+          cp dl/gyrophone-debug-apk/app-debug.apk GyroPhone.apk
+          cp dl/gyrophone-companion-win-x64/GyroPhoneCompanion.exe GyroPhoneCompanion.exe
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest GyroPhone.apk GyroPhoneCompanion.exe --prerelease --target "$GP_COMMIT" \
+            --title "Latest build $VER" \
+            --notes "GyroPhone $VER from branch \`$GP_BRANCH\` ([CI run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}))."
