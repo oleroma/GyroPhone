@@ -12,12 +12,16 @@ public static class FirewallHelper
 {
     public const string RuleName = "GyroPhone Companion";
 
-    /// <summary>True when a rule with our name exists. netsh exits with 1 when no rule matches.</summary>
-    public static bool RuleExists()
+    /// <summary>
+    /// True when a rule with our name exists for this executable (rules are per path, so a copy elsewhere
+    /// needs its own). netsh exits with 1 when no rule matches; the verbose listing includes each rule's
+    /// program path whatever the display language.
+    /// </summary>
+    public static bool RuleExists(string exePath)
     {
         try
         {
-            var psi = new ProcessStartInfo("netsh", $"advfirewall firewall show rule name=\"{RuleName}\"")
+            var psi = new ProcessStartInfo("netsh", $"advfirewall firewall show rule name=\"{RuleName}\" verbose")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -26,10 +30,10 @@ public static class FirewallHelper
             };
             using var p = Process.Start(psi);
             if (p == null) return false;
-            p.StandardOutput.ReadToEnd();
+            string output = p.StandardOutput.ReadToEnd();
             p.StandardError.ReadToEnd();
             if (!p.WaitForExit(10_000)) return false;
-            return p.ExitCode == 0;
+            return p.ExitCode == 0 && output.Contains(exePath, StringComparison.OrdinalIgnoreCase);
         }
         catch (Exception e) when (e is Win32Exception or InvalidOperationException)
         {

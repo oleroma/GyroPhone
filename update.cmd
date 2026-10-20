@@ -5,7 +5,10 @@ rem
 rem Builds go in builds\ inside the repo (git-ignored):
 rem   builds\0.1.<build>-<commit>\       one folder per build (GyroPhoneCompanion.exe, app-debug.apk, BUILD.txt)
 rem   builds\latest\                     always the newest one
-rem The Start menu entry "GyroPhone Companion" opens latest\GyroPhoneCompanion.exe.
+rem PC: the companion is installed at one fixed path, %LOCALAPPDATA%\Programs\GyroPhone, so its
+rem firewall rule and Start with Windows entry survive updates; the Start menu entry opens it there.
+rem A running companion is swapped by renaming it to .old; it restarts into the new build by itself
+rem once no phone is connected (pairing and settings live in %APPDATA%\GyroPhone).
 rem Phone: in-place update only (adb install -r), keeps settings, never uninstalls.
 rem It never starts or closes apps; you launch them yourself.
 setlocal
@@ -41,7 +44,29 @@ if not exist "%OUT%\app-debug.apk" gh run download %RUN_ID% -R %REPO% -n gyropho
 rem latest -> this build (a folder link, so a companion running from an older build is untouched).
 if exist "%ROOT%\latest" rmdir "%ROOT%\latest"
 mklink /J "%ROOT%\latest" "%OUT%" >nul
-if exist "%OUT%\GyroPhoneCompanion.exe" powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Programs')+'\GyroPhone Companion.lnk'); $s.TargetPath='%ROOT%\latest\GyroPhoneCompanion.exe'; $s.WorkingDirectory='%ROOT%\latest'; $s.Save()"
+
+rem ---- PC ----
+set "APP=%LOCALAPPDATA%\Programs\GyroPhone"
+set "APP_EXE=%APP%\GyroPhoneCompanion.exe"
+set "PC="
+if not exist "%OUT%\GyroPhoneCompanion.exe" goto :phone
+if not exist "%APP%" mkdir "%APP%"
+fc /b "%OUT%\GyroPhoneCompanion.exe" "%APP_EXE%" >nul 2>&1 && (set "PC=same" & goto :shortcut)
+rem .old files still in use belong to a companion that has not restarted yet; they go next time.
+del /q "%APP%\GyroPhoneCompanion.exe*.old" >nul 2>&1
+copy /y "%OUT%\GyroPhoneCompanion.exe" "%APP_EXE%.tmp" >nul || goto :pcfail
+set "OLD=%APP_EXE%.old"
+if exist "%OLD%" set "OLD=%APP_EXE%.%RANDOM%.old"
+if exist "%APP_EXE%" move /y "%APP_EXE%" "%OLD%" >nul || goto :pcfail
+move /y "%APP_EXE%.tmp" "%APP_EXE%" >nul || goto :pcfail
+set "PC=installed"
+goto :shortcut
+:pcfail
+set "PC=failed"
+:shortcut
+powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Programs')+'\GyroPhone Companion.lnk'); $s.TargetPath='%APP_EXE%'; $s.WorkingDirectory='%APP%'; $s.Save()"
+
+:phone
 
 rem ---- Phone ----
 set "PHONE="
@@ -66,9 +91,8 @@ adb install -r -d "%OUT%\app-debug.apk" && echo Phone updated: %ON_PHONE% -^> %V
 :done
 echo.
 echo Latest: %ROOT%\latest   (GyroPhone %VER%)
-if exist "%OUT%\GyroPhoneCompanion.exe" (
-  echo PC: start "GyroPhone Companion" from the Start menu. Close the running one first if it is older.
-) else (
-  echo This build has no companion.
-)
+if "%PC%"=="installed" echo PC: companion %VER% installed in %APP%. A running companion switches to it when no phone is connected.
+if "%PC%"=="same" echo PC: companion in %APP% is already %VER%.
+if "%PC%"=="failed" echo PC: could not install the companion in %APP%.
+if "%PC%"=="" echo This build has no companion.
 endlocal
