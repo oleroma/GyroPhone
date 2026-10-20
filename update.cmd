@@ -11,7 +11,7 @@ set "HERE=%~dp0"
 set "BRANCH_ARG="
 if not "%~1"=="" set "BRANCH_ARG=--branch %~1"
 
-for /f "tokens=1,2 delims=	" %%i in ('gh run list -R %REPO% --workflow Build %BRANCH_ARG% --status success --limit 1 --json databaseId^,headBranch --jq ".[0] | \"\(.databaseId)\t\(.headBranch)\""') do (
+for /f "tokens=1,2 delims=	" %%i in ('gh run list -R %REPO% --workflow Build %BRANCH_ARG% --status success --limit 1 --json databaseId^,headBranch --jq ".[0] | [.databaseId, .headBranch] | @tsv"') do (
   set "RUN_ID=%%i"
   set "RUN_BRANCH=%%j"
 )
