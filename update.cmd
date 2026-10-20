@@ -1,6 +1,6 @@
 @echo off
 rem Download the newest successful CI build of GyroPhone and update the phone.
-rem Usage: update.cmd [branch]   (default: newest build on any branch)
+rem Usage: update.cmd [branch]   (default: dev, the development branch)
 rem
 rem Builds go in builds\ inside the repo (git-ignored):
 rem   builds\0.1.<build>-<commit>\       one folder per build (GyroPhoneCompanion.exe, app-debug.apk, BUILD.txt)
@@ -11,7 +11,7 @@ rem It never starts or closes apps; you launch them yourself.
 setlocal
 set "REPO=oleroma/GyroPhone"
 set "ROOT=%~dp0builds"
-set "BRANCH_ARG="
+set "BRANCH_ARG=--branch dev"
 if not "%~1"=="" set "BRANCH_ARG=--branch %~1"
 
 for /f "tokens=1-4 delims=	" %%a in ('gh run list -R %REPO% --workflow Build %BRANCH_ARG% --status success --limit 1 --json databaseId^,number^,headBranch^,headSha --jq ".[0] | [.databaseId, .number, .headBranch, .headSha[0:7]] | @tsv"') do (
