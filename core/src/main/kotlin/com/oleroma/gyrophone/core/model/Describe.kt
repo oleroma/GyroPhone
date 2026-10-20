@@ -35,16 +35,65 @@ object Describe {
         AxisHalf.NEGATIVE -> " −"
     }
 
-    /** Every target the picker offers, in display order. */
-    val allTargets: List<OutputTarget> = buildList {
-        GamepadButton.entries.forEach { add(OutputTarget.Pad(it)) }
-        GamepadAxis.entries.forEach {
-            add(OutputTarget.PadAxis(it))
-            if (!it.isTrigger) add(OutputTarget.PadAxis(it, -1f))
+    /** Compact chip text, e.g. "A", "LT", "Key W", "Mouse L", "Wheel ↑", "Gyro hold". */
+    fun shortTarget(t: OutputTarget): String = when (t) {
+        is OutputTarget.Pad -> when (t.button) {
+            GamepadButton.DPAD_UP -> "D-pad ↑"
+            GamepadButton.DPAD_DOWN -> "D-pad ↓"
+            GamepadButton.DPAD_LEFT -> "D-pad ←"
+            GamepadButton.DPAD_RIGHT -> "D-pad →"
+            else -> t.button.label
         }
-        MouseButton.entries.forEach { add(OutputTarget.Mouse(it)) }
-        add(OutputTarget.Wheel(1)); add(OutputTarget.Wheel(-1))
-        add(OutputTarget.GyroHold); add(OutputTarget.GyroToggle)
-        HidUsage.names.keys.sorted().forEach { add(OutputTarget.Key(it)) }
+        is OutputTarget.PadAxis -> when (t.axis) {
+            GamepadAxis.LX -> "LS X"
+            GamepadAxis.LY -> "LS Y"
+            GamepadAxis.RX -> "RS X"
+            GamepadAxis.RY -> "RS Y"
+            GamepadAxis.LT -> "LT"
+            GamepadAxis.RT -> "RT"
+        } + if (t.scale < 0) " inv" else ""
+        is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage))
+        is OutputTarget.Mouse -> when (t.button) {
+            MouseButton.LEFT -> "Mouse L"
+            MouseButton.RIGHT -> "Mouse R"
+            MouseButton.MIDDLE -> "Mouse M"
+            MouseButton.BACK -> "Mouse Back"
+            MouseButton.FORWARD -> "Mouse Fwd"
+        }
+        is OutputTarget.Wheel -> if (t.step > 0) "Wheel ↑" else "Wheel ↓"
+        OutputTarget.GyroHold -> "Gyro hold"
+        OutputTarget.GyroToggle -> "Gyro toggle"
     }
+
+    private val keyboardOrder: List<Int> = buildList {
+        addAll(0x04..0x1D) // letters
+        addAll(0x1E..0x27) // digits
+        addAll(0x3A..0x45) // F1-F12
+        addAll(0x68..0x73) // F13-F24
+        addAll(HidUsage.LEFT_CTRL..HidUsage.RIGHT_GUI)
+        addAll(listOf(0x2C, 0x28, 0x29, 0x2A, 0x2B, 0x39)) // Space, Enter, Esc, Backspace, Tab, Caps Lock
+        addAll(listOf(0x52, 0x51, 0x50, 0x4F)) // arrows
+        addAll(0x49..0x4E) // Insert, Home, Page Up, Delete, End, Page Down
+        addAll(listOf(0x46, 0x47, 0x48, 0x65)) // Print Screen, Scroll Lock, Pause, Menu
+        addAll(0x2D..0x38) // symbols
+        addAll(0x53..0x63) // keypad
+    }
+
+    /** Picker targets in display groups. */
+    val targetGroups: List<Pair<String, List<OutputTarget>>> = listOf(
+        "Gamepad buttons" to GamepadButton.entries.map { OutputTarget.Pad(it) },
+        "Gamepad sticks & triggers" to GamepadAxis.entries.flatMap {
+            if (it.isTrigger) listOf(OutputTarget.PadAxis(it)) else listOf(OutputTarget.PadAxis(it), OutputTarget.PadAxis(it, -1f))
+        },
+        "Mouse" to MouseButton.entries.map { OutputTarget.Mouse(it) } + listOf(OutputTarget.Wheel(1), OutputTarget.Wheel(-1)),
+        "Gyro" to listOf(OutputTarget.GyroHold, OutputTarget.GyroToggle),
+        "Keyboard" to (keyboardOrder.filter { it in HidUsage.names } + HidUsage.names.keys.sorted())
+            .distinct().map { OutputTarget.Key(it) },
+    )
+
+    /** Every target the picker offers, in display order. */
+    val allTargets: List<OutputTarget> = targetGroups.flatMap { it.second }
+
+    /** Targets that make sense for an analog input (full stick axis). */
+    val analogTargets: List<OutputTarget> = allTargets.filterIsInstance<OutputTarget.PadAxis>()
 }

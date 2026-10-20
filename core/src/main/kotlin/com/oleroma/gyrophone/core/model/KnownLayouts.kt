@@ -3,10 +3,19 @@ package com.oleroma.gyrophone.core.model
 /** Physical face-button convention of an attached controller. */
 enum class FaceLayout { XBOX, PLAYSTATION, NINTENDO }
 
+/** Diagram the Controller screen draws for a face layout when nothing more specific is known. */
+val FaceLayout.diagram: DiagramStyle
+    get() = when (this) {
+        FaceLayout.XBOX -> DiagramStyle.XBOX
+        FaceLayout.PLAYSTATION -> DiagramStyle.PLAYSTATION
+        FaceLayout.NINTENDO -> DiagramStyle.NINTENDO
+    }
+
 data class KnownController(
     val name: String,
     val match: DeviceMatch,
     val layout: FaceLayout,
+    val diagram: DiagramStyle = layout.diagram,
 )
 
 /**
@@ -16,12 +25,17 @@ data class KnownController(
  */
 object KnownLayouts {
     val controllers: List<KnownController> = listOf(
-        KnownController("GameSir X5", DeviceMatch(nameContains = "GameSir X5"), FaceLayout.XBOX),
+        KnownController("GameSir X5", DeviceMatch(nameContains = "GameSir X5"), FaceLayout.XBOX, DiagramStyle.GAMESIR_X5),
+        KnownController("Razer Kishi", DeviceMatch(nameContains = "Kishi"), FaceLayout.XBOX),
+        KnownController("Backbone One", DeviceMatch(nameContains = "Backbone"), FaceLayout.XBOX),
+        KnownController("DualSense", DeviceMatch(nameContains = "DualSense"), FaceLayout.PLAYSTATION),
         KnownController("GameSir", DeviceMatch(vendorId = 0x3537), FaceLayout.XBOX),
         KnownController("Xbox controller", DeviceMatch(vendorId = 0x045E), FaceLayout.XBOX),
         KnownController("PlayStation controller", DeviceMatch(vendorId = 0x054C), FaceLayout.PLAYSTATION),
         KnownController("Nintendo controller", DeviceMatch(vendorId = 0x057E), FaceLayout.NINTENDO),
         KnownController("8BitDo", DeviceMatch(vendorId = 0x2DC8), FaceLayout.XBOX),
+        KnownController("Razer controller", DeviceMatch(vendorId = 0x1532), FaceLayout.XBOX),
+        KnownController("Backbone", DeviceMatch(vendorId = 0x358A), FaceLayout.XBOX),
     )
 
     fun identify(vendorId: Int, productId: Int, name: String): KnownController? =

@@ -65,13 +65,14 @@ class MainActivity : ComponentActivity() {
                     var tab by rememberSaveable { mutableIntStateOf(0) }
                     Column(Modifier.fillMaxSize()) {
                         TabRow(selectedTabIndex = tab) {
-                            listOf("Connect", "Pad", "Profiles").forEachIndexed { i, title ->
+                            listOf("Connect", "Pad", "Controller", "Profiles").forEachIndexed { i, title ->
                                 Tab(selected = tab == i, onClick = { tab = i }, text = { Text(title) })
                             }
                         }
                         when (tab) {
                             0 -> ConnectScreen(runtime, onRetry = { permissionRequest.launch(permissions) })
                             1 -> PadScreen(runtime)
+                            2 -> ControllerScreen(runtime)
                             else -> ProfilesScreen(runtime)
                         }
                     }

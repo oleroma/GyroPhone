@@ -4,6 +4,7 @@ import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.hid.Hat
 import com.oleroma.gyrophone.core.model.AndroidAxis
 import com.oleroma.gyrophone.core.model.AndroidKey
+import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.GamepadButton
 import com.oleroma.gyrophone.core.model.GyroMode
@@ -12,6 +13,7 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.StickAxis
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -67,6 +69,27 @@ class MappingEngineTest {
         assertTrue(e.gyroActive)
         e.setKey(AndroidKey.BUTTON_THUMBR, true)
         assertFalse(e.gyroActive)
+    }
+
+    @Test fun axisSourcesFireEventTargetsOncePerPress() {
+        val p = Profile("t", "t", listOf(
+            Mapping(InputSource.Axis(AndroidAxis.X, AxisHalf.NEGATIVE), OutputTarget.Wheel(1)),
+            Mapping(InputSource.Axis(AndroidAxis.RTRIGGER, AxisHalf.FULL), OutputTarget.GyroToggle),
+            Mapping(InputSource.Key(AndroidKey.BUTTON_R2), OutputTarget.GyroToggle),
+            Mapping(InputSource.TouchStick("s", StickAxis.Y, AxisHalf.NEGATIVE), OutputTarget.Wheel(-1)),
+        ), gyro = GyroSettings(mode = GyroMode.HOLD_OR_TOGGLE))
+        val e = MappingEngine(p)
+        e.setAxis(AndroidAxis.X, -1f)
+        assertEquals(1, e.snapshot().mouse.wheel)
+        e.setAxis(AndroidAxis.X, -0.9f)
+        assertEquals(0, e.snapshot().mouse.wheel)
+        e.setTouchStick("s", 0f, -1f)
+        assertEquals(-1, e.snapshot().mouse.wheel)
+        // Trigger reported as both axis and key toggles once.
+        e.setAxis(AndroidAxis.RTRIGGER, 1f); e.setKey(AndroidKey.BUTTON_R2, true)
+        assertTrue(e.gyroActive)
+        e.setAxis(AndroidAxis.RTRIGGER, 0f); e.setKey(AndroidKey.BUTTON_R2, false)
+        assertTrue(e.gyroActive)
     }
 
     @Test fun profilesRoundTripAsJson() {
