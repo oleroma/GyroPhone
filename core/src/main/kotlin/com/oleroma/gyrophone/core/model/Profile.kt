@@ -307,6 +307,10 @@ data class Profile(
     val touchpad: TouchpadSettings = TouchpadSettings(),
     /** Opacity of every on-screen control in play ([MIN_CONTROL_OPACITY]..1). */
     val controlOpacity: Float = 1f,
+    /** Opacity of the two fullscreen corners ([FullscreenChord]) in play; they ignore [controlOpacity]. */
+    val fullscreenOpacity: Float = 0.5f,
+    /** Resizing one fullscreen corner resizes the other too. */
+    val fullscreenSameSize: Boolean = true,
 ) {
     companion object {
         const val MIN_CONTROL_OPACITY = 0.1f

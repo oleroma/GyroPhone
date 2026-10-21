@@ -30,6 +30,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -166,12 +167,19 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
             draft = d.copy(touchControls = d.touchControls.map { if (it.id == id) change(it) else it })
         }
 
-        fun resize(id: String, size: Float) = updateControl(id) {
+        fun resizeOne(id: String, size: Float) = updateControl(id) {
             val sized = it.withPlacement(
                 portrait, it.placeX(portrait), it.placeY(portrait),
                 size.coerceIn(TouchControl.MIN_SIZE, TouchControl.MAX_SIZE),
             )
             place(sized, sized.placeX(portrait), sized.placeY(portrait), false)
+        }
+
+        /** Resizes a control; with [Profile.fullscreenSameSize], both fullscreen corners follow. */
+        fun resize(id: String, size: Float) {
+            val d = draft ?: return
+            val corner = d.touchControls.any { it.id == id && it.kind == TouchKind.FULLSCREEN }
+            if (corner && d.fullscreenSameSize) FullscreenChord.ids(d).forEach { resizeOne(it, size) } else resizeOne(id, size)
         }
 
         val touchModifier = if (editing) {
@@ -413,7 +421,6 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
                 val tint = when {
                     isSelected -> Color(0xFFFFC857)
                     isPressed -> Color(0xFF7CC4FF)
-                    c.kind == TouchKind.FULLSCREEN -> Color(0x33FFFFFF)
                     else -> Color(0x66FFFFFF)
                 }
                 PadControl(
@@ -427,7 +434,10 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
                     modifier = Modifier
                         .offset { IntOffset((ctr.x - r).roundToInt(), (ctr.y - r).roundToInt()) }
                         // While editing, faint controls stay findable.
-                        .alpha(if (editing) max(shown.controlOpacity, MIN_EDIT_OPACITY) else shown.controlOpacity),
+                        .alpha(
+                            (if (c.kind == TouchKind.FULLSCREEN) shown.fullscreenOpacity else shown.controlOpacity)
+                                .let { if (editing) max(it, MIN_EDIT_OPACITY) else it },
+                        ),
                 )
             }
         }
@@ -707,7 +717,20 @@ private fun ControlSettingsPanel(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (control.kind == TouchKind.FULLSCREEN) {
-                FullscreenCornerSettings(control, inPortrait, onSize, onDelete, onClose)
+                FullscreenCornerSettings(
+                    control = control,
+                    inPortrait = inPortrait,
+                    sameSize = profile.fullscreenSameSize,
+                    onSameSize = { on ->
+                        onProfileChange(profile.copy(fullscreenSameSize = on))
+                        if (on) onSize(control.placeSize(inPortrait))
+                    },
+                    opacity = profile.fullscreenOpacity,
+                    onOpacity = { onProfileChange(profile.copy(fullscreenOpacity = it)) },
+                    onSize = onSize,
+                    onDelete = onDelete,
+                    onClose = onClose,
+                )
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -769,6 +792,10 @@ private fun ControlSettingsPanel(
 private fun FullscreenCornerSettings(
     control: TouchControl,
     inPortrait: Boolean,
+    sameSize: Boolean,
+    onSameSize: (Boolean) -> Unit,
+    opacity: Float,
+    onOpacity: (Float) -> Unit,
     onSize: (Float) -> Unit,
     onDelete: () -> Unit,
     onClose: () -> Unit,
@@ -794,6 +821,14 @@ private fun FullscreenCornerSettings(
             onValueChange = onSize,
             valueRange = TouchControl.MIN_SIZE..TouchControl.MAX_SIZE,
         )
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Same size for both corners", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+        Switch(checked = sameSize, onCheckedChange = onSameSize)
+    }
+    Column {
+        Text("Corner opacity ${(opacity * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
+        Slider(value = opacity, onValueChange = onOpacity, valueRange = Profile.MIN_CONTROL_OPACITY..1f)
     }
     HorizontalDivider()
     Row {
