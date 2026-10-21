@@ -257,7 +257,7 @@ private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (
             title = { Text("Touch control") },
             text = {
                 LazyColumn {
-                    items(profile.touchControls) { c ->
+                    items(profile.touchControls.filter { it.kind != TouchKind.FULLSCREEN }) { c ->
                         Text(c.label + " (" + c.id + ")", Modifier.fillMaxWidth().clickable {
                             pickTouch = false
                             pendingSource = if (c.kind == TouchKind.STICK) {

@@ -6,7 +6,8 @@ import kotlin.math.abs
 import kotlin.math.min
 
 @Serializable
-enum class TouchKind { BUTTON, STICK }
+/** FULLSCREEN: one of the two corners that, pressed together, toggle the full-screen pad (see [FullscreenChord]). */
+enum class TouchKind { BUTTON, STICK, FULLSCREEN }
 
 @Serializable
 enum class TouchShape { CIRCLE, SQUARE }

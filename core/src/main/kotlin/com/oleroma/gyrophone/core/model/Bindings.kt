@@ -50,7 +50,7 @@ object Bindings {
     fun removeTarget(profile: Profile, input: BindableInput, target: OutputTarget): Profile =
         setTargets(profile, input, targets(profile, input) - target)
 
-    /** Inputs a touch control exposes: BUTTON -> [Touch(id)]; STICK -> X axis, Y axis (analog), Left, Right, Up, Down (halves). */
+    /** Inputs a touch control exposes: BUTTON -> [Touch(id)]; STICK -> X axis, Y axis (analog), Left, Right, Up, Down (halves); FULLSCREEN -> none. */
     fun touchInputs(control: TouchControl): List<BindableInput> = when (control.kind) {
         TouchKind.BUTTON -> listOf(BindableInput(control.label.ifBlank { control.id }, listOf(InputSource.Touch(control.id))))
         TouchKind.STICK -> {
@@ -64,6 +64,7 @@ object Bindings {
                 BindableInput("Down", s(StickAxis.Y, AxisHalf.POSITIVE)),
             )
         }
+        TouchKind.FULLSCREEN -> emptyList()
     }
 
     /** Drops a touch control and all of its mappings (on delete). */
