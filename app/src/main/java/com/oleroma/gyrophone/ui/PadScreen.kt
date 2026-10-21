@@ -131,7 +131,12 @@ internal object TouchStream {
  * saves (a builtin becomes a custom copy) and switches to the workspace being edited.
  */
 @Composable
-fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen: (Boolean) -> Unit = {}) {
+fun PadScreen(
+    runtime: GamepadRuntime,
+    fullscreen: Boolean = false,
+    onFullscreen: (Boolean) -> Unit = {},
+    onEditPad: (String) -> Unit = {},
+) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
@@ -152,6 +157,8 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
     var menuSize by remember { mutableStateOf(IntSize.Zero) }
     var menuFolded by remember { mutableStateOf(false) }
     var showWsSettings by remember { mutableStateOf(false) }
+    /** The attached-devices dialog (play mode only). */
+    var showDevices by remember { mutableStateOf(false) }
     var dragging by remember { mutableStateOf(false) }
     var snap by remember { mutableStateOf(false) }
     val stickPos = remember { mutableStateMapOf<String, Offset>() }
@@ -650,17 +657,38 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
 
         if (!editing) {
             if (!fullscreen) {
-                FilledTonalButton(
-                    onClick = {
-                        releaseAll()
-                        selected = null
-                        showWsSettings = false
-                        dragging = false
-                        editIndex = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
-                        draft = profile
+                Row(
+                    Modifier.align(Alignment.TopCenter).padding(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FilledTonalButton(
+                        onClick = {
+                            releaseAll()
+                            selected = null
+                            showWsSettings = false
+                            dragging = false
+                            editIndex = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
+                            draft = profile
+                        },
+                    ) { Text("Edit layout") }
+                    FilledTonalButton(
+                        onClick = {
+                            releaseAll()
+                            showDevices = true
+                        },
+                    ) { Text("Devices (${ws.pads.size})") }
+                }
+            }
+            if (showDevices && !fullscreen) {
+                AttachedDevicesPanel(
+                    runtime = runtime,
+                    onDismiss = { showDevices = false },
+                    onEditPad = { id ->
+                        showDevices = false
+                        onEditPad(id)
                     },
-                    modifier = Modifier.align(Alignment.TopCenter).padding(8.dp),
-                ) { Text("Edit layout") }
+                )
             }
         } else {
             val compact = PaddingValues(horizontal = 12.dp, vertical = 4.dp)

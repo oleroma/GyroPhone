@@ -89,6 +89,8 @@ class MainActivity : ComponentActivity() {
                     // Full-screen pad: the profile's two fullscreen corners pressed together; Back also leaves.
                     var fullscreen by rememberSaveable { mutableStateOf(false) }
                     BackHandler(enabled = fullscreen) { fullscreen = false }
+                    /** Pad to open in the Controller tab, set by the Pad tab's devices panel. */
+                    var editPadId by rememberSaveable { mutableStateOf<String?>(null) }
                     Column(Modifier.fillMaxSize()) {
                         if (!fullscreen) {
                             TabRow(selectedTabIndex = tab) {
@@ -99,8 +101,17 @@ class MainActivity : ComponentActivity() {
                         }
                         when (tab) {
                             0 -> ConnectScreen(runtime, onRetry = { permissionRequest.launch(permissions) })
-                            1 -> PadScreen(runtime, fullscreen = fullscreen, onFullscreen = { fullscreen = it })
-                            2 -> ControllerScreen(runtime)
+                            1 -> PadScreen(
+                                runtime,
+                                fullscreen = fullscreen,
+                                onFullscreen = { fullscreen = it },
+                                onEditPad = { id ->
+                                    editPadId = id
+                                    fullscreen = false
+                                    tab = 2
+                                },
+                            )
+                            2 -> ControllerScreen(runtime, editPadId = editPadId, onEditPadShown = { editPadId = null })
                             else -> ProfilesScreen(runtime)
                         }
                     }

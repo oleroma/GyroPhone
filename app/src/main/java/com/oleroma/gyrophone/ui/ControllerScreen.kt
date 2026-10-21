@@ -27,6 +27,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -69,6 +70,8 @@ import com.oleroma.gyrophone.core.model.DiagramStyle
 import com.oleroma.gyrophone.core.model.FaceLayout
 import com.oleroma.gyrophone.core.model.KnownLayouts
 import com.oleroma.gyrophone.core.model.Mapping
+import com.oleroma.gyrophone.core.model.PadPreset
+import com.oleroma.gyrophone.core.model.PadPresets
 import com.oleroma.gyrophone.core.model.PhysicalControl
 import com.oleroma.gyrophone.core.model.PhysicalKind
 import com.oleroma.gyrophone.core.model.diagram
@@ -117,11 +120,15 @@ private fun attachedPadFor(c: AttachedController, taken: List<AttachedPad>): Att
 
 /**
  * The game pads attached to the active workspace, each drawn as a diagram; tap a control to remap
- * it for that pad. Connected pads not attached to the workspace can be attached here.
+ * it for that pad. Connected pads not attached to the workspace can be attached here. Each pad's
+ * mapping can be switched to a pad preset, or saved as a new one.
+ *
+ * [editPadId], when set, selects that pad once; then [onEditPadShown] is called.
  */
 @Composable
-fun ControllerScreen(runtime: GamepadRuntime) {
+fun ControllerScreen(runtime: GamepadRuntime, editPadId: String? = null, onEditPadShown: () -> Unit = {}) {
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
+    val userPresets by runtime.padPresets.collectAsStateWithLifecycle()
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val workspaceIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
     val workspace = profile.workspace(workspaceIndex)
@@ -130,6 +137,16 @@ fun ControllerScreen(runtime: GamepadRuntime) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var confirmResetAll by remember { mutableStateOf(false) }
     var confirmDetach by remember { mutableStateOf(false) }
+    var savePresetName by remember { mutableStateOf<String?>(null) }
+    var confirmDeletePreset by remember { mutableStateOf<PadPreset?>(null) }
+
+    LaunchedEffect(editPadId) {
+        if (editPadId != null) {
+            padId = editPadId
+            selectedId = null
+            onEditPadShown()
+        }
+    }
 
     val pad: AttachedPad? = workspace.pads.firstOrNull { it.id == padId } ?: workspace.pads.firstOrNull()
     val device: AttachedController? = pad?.let { connectedFor(it, controllers) }
@@ -145,6 +162,7 @@ fun ControllerScreen(runtime: GamepadRuntime) {
         }
     }
     val selected = if (pad == null) null else diagram.controls.firstOrNull { it.id == selectedId }
+    val appliedPreset: PadPreset? = pad?.let { PadPresets.applied(it, userPresets) }
 
     /** Rewrites the shown pad in the active workspace (a builtin profile is saved as a custom copy). */
     fun editPad(change: (AttachedPad) -> AttachedPad) {
@@ -246,6 +264,37 @@ fun ControllerScreen(runtime: GamepadRuntime) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                Text("Preset", style = MaterialTheme.typography.labelLarge)
+                for (preset in PadPresets.all(pad.family, userPresets)) {
+                    FilterChip(
+                        selected = preset.id == appliedPreset?.id,
+                        onClick = {
+                            if (preset.id != appliedPreset?.id) {
+                                runtime.applyPadPreset(pad.id, preset)
+                                selectedId = null
+                            }
+                        },
+                        label = { Text(preset.name, maxLines = 1) },
+                    )
+                }
+                if (appliedPreset == null) {
+                    FilterChip(
+                        selected = true,
+                        onClick = {},
+                        enabled = false,
+                        label = { Text(PadPresets.CUSTOM_NAME) },
+                    )
+                }
+                OutlinedButton(onClick = { savePresetName = "${pad.name} preset" }) { Text("Save as preset…") }
+                if (appliedPreset != null && !PadPresets.isBuiltin(appliedPreset.id)) {
+                    OutlinedButton(onClick = { confirmDeletePreset = appliedPreset }) { Text("Delete preset") }
+                }
+            }
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text("Buttons", style = MaterialTheme.typography.labelLarge)
                 for (family in FaceLayout.entries) {
                     FilterChip(
@@ -300,6 +349,51 @@ fun ControllerScreen(runtime: GamepadRuntime) {
                 }) { Text("Reset") }
             },
             dismissButton = { TextButton(onClick = { confirmResetAll = false }) { Text("Cancel") } },
+        )
+    }
+
+    val presetName = savePresetName
+    if (presetName != null && pad != null) {
+        AlertDialog(
+            onDismissRequest = { savePresetName = null },
+            title = { Text("Save as preset") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Saves the current mapping of ${pad.name} so it can be applied to any pad.")
+                    OutlinedTextField(
+                        value = presetName,
+                        onValueChange = { savePresetName = it },
+                        label = { Text("Preset name") },
+                        singleLine = true,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        savePresetName = null
+                        runtime.savePadPreset(presetName, pad.mappings)
+                    },
+                    enabled = presetName.isNotBlank(),
+                ) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { savePresetName = null }) { Text("Cancel") } },
+        )
+    }
+
+    val presetToDelete = confirmDeletePreset
+    if (presetToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDeletePreset = null },
+            title = { Text("Delete preset \"${presetToDelete.name}\"?") },
+            text = { Text("The preset is removed. Pads using it keep their current mapping, shown as ${PadPresets.CUSTOM_NAME}.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDeletePreset = null
+                    runtime.deletePadPreset(presetToDelete.id)
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDeletePreset = null }) { Text("Cancel") } },
         )
     }
 
