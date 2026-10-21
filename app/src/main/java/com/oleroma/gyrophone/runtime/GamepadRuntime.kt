@@ -59,13 +59,17 @@ class GamepadRuntime(context: Context) {
     val profiles: StateFlow<List<Profile>> = _profiles
 
     private val _activeProfile = MutableStateFlow(
-        _profiles.value.firstOrNull { it.id == store.activeProfileId } ?: BuiltinProfiles.virtualGamepad,
+        store.activeProfileId.let { id -> _profiles.value.firstOrNull { it.id == id } } ?: BuiltinProfiles.default,
     )
     val activeProfile: StateFlow<Profile> = _activeProfile
 
-    val engine = MappingEngine(_activeProfile.value)
+    private val _workspaceIndex = MutableStateFlow(rememberedWorkspace(_activeProfile.value))
+    /** Index of the active workspace in [activeProfile] (always in range). */
+    val workspaceIndex: StateFlow<Int> = _workspaceIndex
+
+    val engine = MappingEngine(_activeProfile.value).also { it.workspaceIndex = _workspaceIndex.value }
     private val pump = ReportPump(engine, hid)
-    private val gyroMouse = GyroMouse(_activeProfile.value.gyro)
+    private val gyroMouse = GyroMouse(_activeProfile.value.workspace(_workspaceIndex.value).gyro)
     private val prefs = appContext.getSharedPreferences("gyrophone", Context.MODE_PRIVATE)
 
     private val _reportRateHz = MutableStateFlow(
@@ -208,13 +212,35 @@ class GamepadRuntime(context: Context) {
         gyroMouse.reset()
     }
 
+    /** Makes [profile] active, in the workspace that was last active in it. */
     fun activate(profile: Profile) {
         store.activeProfileId = profile.id
-        _activeProfile.value = profile
+        val index = rememberedWorkspace(profile)
         engine.reset()
         engine.profile = profile
-        applyGyroSettings(profile)
+        engine.workspaceIndex = index
+        _activeProfile.value = profile
+        _workspaceIndex.value = index
+        applyWorkspaceGyro()
     }
+
+    /**
+     * Switches the active profile to its workspace [index] (clamped): everything held is released,
+     * gyro follows the workspace, and the index is remembered for the profile.
+     */
+    fun switchWorkspace(index: Int) {
+        val profile = _activeProfile.value
+        val i = index.coerceIn(0, profile.workspaces.lastIndex)
+        if (i == _workspaceIndex.value && i == engine.workspaceIndex) return
+        engine.workspaceIndex = i
+        _workspaceIndex.value = i
+        store.setWorkspaceIndex(profile.id, i)
+        applyWorkspaceGyro()
+    }
+
+    /** The saved workspace index of [profile], clamped into range. */
+    private fun rememberedWorkspace(profile: Profile): Int =
+        store.workspaceIndex(profile.id).coerceIn(0, profile.workspaces.lastIndex)
 
     fun saveProfile(profile: Profile) {
         store.save(profile)
@@ -225,12 +251,13 @@ class GamepadRuntime(context: Context) {
     fun deleteProfile(profile: Profile) {
         store.delete(profile.id)
         refreshProfiles()
-        if (profile.id == _activeProfile.value.id) activate(BuiltinProfiles.virtualGamepad)
+        if (profile.id == _activeProfile.value.id) activate(BuiltinProfiles.default)
     }
 
     /**
      * Applies [change] to the active profile and saves it; a builtin is saved as a custom copy,
-     * which becomes active. Returns the saved profile.
+     * which becomes active. The current workspace stays active (clamped if the edit removed it).
+     * Returns the saved profile.
      */
     fun editActiveProfile(change: (Profile) -> Profile): Profile {
         val active = _activeProfile.value
@@ -240,6 +267,7 @@ class GamepadRuntime(context: Context) {
             edited = edited.copy(id = "user." + UUID.randomUUID(), name = active.name + " (custom)")
         }
         store.save(edited)
+        store.setWorkspaceIndex(edited.id, _workspaceIndex.value.coerceIn(0, edited.workspaces.lastIndex))
         refreshProfiles()
         activate(edited)
         return edited
@@ -250,7 +278,11 @@ class GamepadRuntime(context: Context) {
 
     private fun refreshProfiles() { _profiles.value = store.all() }
 
-    /** Called by the input layer whenever the set of attached controllers changes. */
+    /**
+     * Called by the input layer whenever the set of attached controllers changes. May switch to a
+     * profile made for a newly attached controller ([Profile.controllers]); never changes the
+     * workspace of the active profile.
+     */
     fun onControllersChanged(list: List<AttachedController>) {
         val added = list.filter { c -> _controllers.value.none { it.deviceId == c.deviceId } }
         _controllers.value = list
@@ -264,8 +296,9 @@ class GamepadRuntime(context: Context) {
         }
     }
 
-    private fun applyGyroSettings(profile: Profile) {
-        gyroMouse.settings = profile.gyro
+    /** Gyro settings follow the active workspace. */
+    private fun applyWorkspaceGyro() {
+        gyroMouse.settings = _activeProfile.value.workspace(_workspaceIndex.value).gyro
         gyroMouse.reset()
     }
 

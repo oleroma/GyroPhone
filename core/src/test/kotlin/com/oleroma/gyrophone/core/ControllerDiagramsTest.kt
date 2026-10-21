@@ -53,13 +53,13 @@ class ControllerDiagramsTest {
     @Test fun resetControlRestoresStandard() {
         val d = ControllerDiagrams.of(DiagramStyle.XBOX)
         val a = d.controls.first { it.id == "a" }
-        val base = Profile("p", "p", KnownLayouts.standardControllerMappings())
+        val base = KnownLayouts.standardControllerMappings()
         val edited = Bindings.setTargets(base, a.inputs.single(), listOf(OutputTarget.Key(0x2C)))
         val reset = ControllerDiagrams.resetControl(edited, a)
         assertEquals(listOf(OutputTarget.Pad(GamepadButton.A)), Bindings.targets(reset, a.inputs.single()))
 
-        val all = ControllerDiagrams.resetAll(BuiltinProfiles.keyboardMouse, d)
-        val e = MappingEngine(all)
+        val all = ControllerDiagrams.resetAll(BuiltinProfiles.kbmPadMappings(), d)
+        val e = MappingEngine(profileOf(all))
         e.setKey(AndroidKey.BUTTON_A, true)
         e.setAxis(AndroidAxis.Y, -1f)
         e.setAxis(AndroidAxis.HAT_X, 1f)

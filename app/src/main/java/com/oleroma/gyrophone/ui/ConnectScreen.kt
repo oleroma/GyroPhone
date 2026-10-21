@@ -57,6 +57,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
     val gyro by runtime.gyroInfo.collectAsStateWithLifecycle()
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
+    val workspaceIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
     val rate by runtime.reportRateHz.collectAsStateWithLifecycle()
     val wifiRate by runtime.wifiRateHz.collectAsStateWithLifecycle()
     val orientation by runtime.screenOrientation.collectAsStateWithLifecycle()
@@ -100,6 +101,10 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
     } }
     val statusContent: @Composable () -> Unit = {
         Text("Profile: ${profile.name}", style = MaterialTheme.typography.titleMedium)
+        if (profile.workspaces.size > 1) {
+            val w = profile.workspace(workspaceIndex)
+            Text("Workspace ${workspaceIndex.coerceIn(0, profile.workspaces.lastIndex) + 1}/${profile.workspaces.size}: ${w.name}")
+        }
         Text("GyroPhone $version", style = MaterialTheme.typography.bodySmall)
         Text("Gyro: ${gyro.source}")
         Text("Gyro rate: ${gyro.rateHz} Hz" + if (gyro.active) " · moving mouse" else "")

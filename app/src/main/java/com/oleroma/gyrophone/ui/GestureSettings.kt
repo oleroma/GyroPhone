@@ -36,7 +36,7 @@ import com.oleroma.gyrophone.core.model.TouchpadGesture
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
-/** The 3- and 4-finger gesture list of a profile's touchpad settings; tapping one opens a picker. */
+/** The 3- and 4-finger gesture list of a workspace's touchpad settings; tapping one opens a picker. */
 @Composable
 fun TouchpadGestureList(runtime: GamepadRuntime, settings: TouchpadSettings, onChange: (TouchpadSettings) -> Unit) {
     var picking by remember { mutableStateOf<Pair<Int, TouchpadGesture>?>(null) }

@@ -5,6 +5,7 @@ import android.hardware.input.InputManager
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import com.oleroma.gyrophone.core.engine.PadDevice
 import com.oleroma.gyrophone.core.model.AndroidAxis
 import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AxisHalf
@@ -17,7 +18,8 @@ import kotlin.math.abs
 /**
  * Feeds key and joystick events from devices attached to the phone (GameSir X5, any XInput/HID
  * pad, a USB or Bluetooth keyboard) into the mapping engine, and tracks which controllers are
- * attached. Android only delivers these to the foreground activity, so MainActivity forwards them.
+ * attached. Each event carries its device, so only pads attached to the active workspace act.
+ * Android only delivers these to the foreground activity, so MainActivity forwards them.
  */
 class ControllerInput(context: Context, private val runtime: GamepadRuntime) : InputManager.InputDeviceListener {
 
@@ -44,7 +46,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             if (pressed) { runtime.learnListener = null; learn(InputSource.Key(event.keyCode)) }
             return true
         }
-        val mapped = runtime.engine.setKey(event.keyCode, pressed)
+        val mapped = runtime.engine.setKey(padDevice(device), event.keyCode, pressed)
         // Unmapped pad buttons must do nothing, not fall back to BACK / focus navigation.
         val fromPad = event.source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
             runtime.controllers.value.any { it.deviceId == device.id }
@@ -57,6 +59,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         ) return false
         val device = event.device ?: return false
         val learn = runtime.learnListener
+        val pad = padDevice(device)
         for (axis in AndroidAxis.polled) {
             val range = device.getMotionRange(axis, event.source) ?: continue
             var v = event.getAxisValue(axis)
@@ -74,13 +77,17 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
                 }
                 continue
             }
-            runtime.engine.setAxis(axis, v)
+            runtime.engine.setAxis(pad, axis, v)
         }
         return true
     }
 
     override fun onInputDeviceAdded(deviceId: Int) = refresh()
-    override fun onInputDeviceRemoved(deviceId: Int) = refresh()
+    override fun onInputDeviceRemoved(deviceId: Int) {
+        // Releases whatever that device held, then drops it from the attached list.
+        runtime.engine.deviceRemoved(deviceId)
+        refresh()
+    }
     override fun onInputDeviceChanged(deviceId: Int) = refresh()
 
     private fun refresh() {
@@ -102,6 +109,9 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         }
         runtime.onControllersChanged(list)
     }
+
+    /** The engine's view of [device]: it picks the active workspace's attached pad by model. */
+    private fun padDevice(device: InputDevice) = PadDevice(device.id, device.vendorId, device.productId, device.name)
 
     private fun isTrigger(axis: Int) = axis == AndroidAxis.LTRIGGER || axis == AndroidAxis.RTRIGGER ||
         axis == AndroidAxis.GAS || axis == AndroidAxis.BRAKE

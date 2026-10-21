@@ -58,15 +58,20 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.oleroma.gyrophone.core.model.AttachedPad
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.ControllerDiagram
 import com.oleroma.gyrophone.core.model.ControllerDiagrams
 import com.oleroma.gyrophone.core.model.Describe
+import com.oleroma.gyrophone.core.model.DeviceMatch
 import com.oleroma.gyrophone.core.model.DiagramStyle
+import com.oleroma.gyrophone.core.model.FaceLayout
+import com.oleroma.gyrophone.core.model.KnownLayouts
+import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.PhysicalControl
 import com.oleroma.gyrophone.core.model.PhysicalKind
-import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.diagram
 import com.oleroma.gyrophone.runtime.AttachedController
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.abs
@@ -81,39 +86,108 @@ private val DiagramStyle.title: String
         DiagramStyle.GENERIC -> "Generic"
     }
 
-/** Attached controllers drawn as a diagram; tap a control to remap it on the active profile. */
+private val FaceLayout.title: String
+    get() = when (this) {
+        FaceLayout.XBOX -> "Xbox"
+        FaceLayout.PLAYSTATION -> "PlayStation"
+        FaceLayout.NINTENDO -> "Nintendo"
+    }
+
+/** The connected controller an attached pad stands for, if any is connected. */
+private fun connectedFor(pad: AttachedPad, controllers: List<AttachedController>): AttachedController? =
+    controllers.firstOrNull { pad.matches(it.vendorId, it.productId, it.name) }
+
+/** A new attached pad for a connected controller: matched by model, mapped for its family. */
+private fun attachedPadFor(c: AttachedController, taken: List<AttachedPad>): AttachedPad {
+    val family = c.known?.layout ?: FaceLayout.XBOX
+    // Vendor/product identify the model; some Bluetooth pads report none, then the name does.
+    val match = if (c.vendorId != 0 || c.productId != 0) DeviceMatch(vendorId = c.vendorId, productId = c.productId)
+    else DeviceMatch(nameContains = c.name)
+    val used = taken.mapTo(HashSet()) { it.id }
+    var n = 1
+    while ("pad$n" in used) n++
+    return AttachedPad(
+        id = "pad$n",
+        match = match,
+        name = c.known?.name ?: c.name,
+        family = family,
+        mappings = KnownLayouts.familyMappings(family),
+    )
+}
+
+/**
+ * The game pads attached to the active workspace, each drawn as a diagram; tap a control to remap
+ * it for that pad. Connected pads not attached to the workspace can be attached here.
+ */
 @Composable
 fun ControllerScreen(runtime: GamepadRuntime) {
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
-    var deviceId by rememberSaveable { mutableStateOf<Int?>(null) }
+    val workspaceIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
+    val workspace = profile.workspace(workspaceIndex)
+    var padId by rememberSaveable { mutableStateOf<String?>(null) }
     var previewStyle by rememberSaveable { mutableStateOf(DiagramStyle.XBOX) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var confirmResetAll by remember { mutableStateOf(false) }
+    var confirmDetach by remember { mutableStateOf(false) }
 
-    val device: AttachedController? = controllers.firstOrNull { it.deviceId == deviceId } ?: controllers.firstOrNull()
-    val diagram = remember(device, previewStyle) {
-        if (device != null) ControllerDiagrams.forDevice(device.known, device.keys, device.axes)
-        else ControllerDiagrams.of(previewStyle)
+    val pad: AttachedPad? = workspace.pads.firstOrNull { it.id == padId } ?: workspace.pads.firstOrNull()
+    val device: AttachedController? = pad?.let { connectedFor(it, controllers) }
+    val unattached = controllers.filter { c -> workspace.padFor(c.vendorId, c.productId, c.name) == null }
+    val diagram = remember(pad?.id, pad?.match, pad?.family, device, previewStyle) {
+        when {
+            device != null -> ControllerDiagrams.forDevice(device.known, device.keys, device.axes)
+            pad != null -> {
+                val known = pad.match?.let { m -> KnownLayouts.controllers.firstOrNull { it.match == m } }
+                if (known != null) ControllerDiagrams.forDevice(known) else ControllerDiagrams.of(pad.family.diagram)
+            }
+            else -> ControllerDiagrams.of(previewStyle)
+        }
     }
-    val selected = diagram.controls.firstOrNull { it.id == selectedId }
-    val edit: (Profile) -> Unit = { p -> runtime.editActiveProfile { p } }
+    val selected = if (pad == null) null else diagram.controls.firstOrNull { it.id == selectedId }
+
+    /** Rewrites the shown pad in the active workspace (a builtin profile is saved as a custom copy). */
+    fun editPad(change: (AttachedPad) -> AttachedPad) {
+        val id = pad?.id ?: return
+        runtime.editActiveProfile { p ->
+            p.updateWorkspace(runtime.workspaceIndex.value) { w -> w.copy(pads = w.pads.map { if (it.id == id) change(it) else it }) }
+        }
+    }
+
+    fun attach(c: AttachedController) {
+        var added: AttachedPad? = null
+        runtime.editActiveProfile { p ->
+            p.updateWorkspace(runtime.workspaceIndex.value) { w ->
+                val new = attachedPadFor(c, w.pads).also { added = it }
+                w.copy(pads = w.pads + new)
+            }
+        }
+        padId = added?.id
+        selectedId = null
+    }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f)) {
-                if (device != null) {
-                    Text(device.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (pad != null) {
+                    Text(pad.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        (device.known?.let { "Recognised as ${it.name}" } ?: "Unknown controller, generic layout") +
-                            "  ·  VID 0x%04X  PID 0x%04X".format(device.vendorId, device.productId),
+                        when {
+                            device != null -> "Connected: ${device.name}" +
+                                "  ·  VID 0x%04X  PID 0x%04X".format(device.vendorId, device.productId)
+                            pad.match == null -> "Acts for any game pad connected to the phone"
+                            else -> "Not connected"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 } else {
-                    Text("No controller attached", style = MaterialTheme.typography.titleMedium)
+                    Text("No game pad in this workspace", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Attach a controller to see and remap its buttons. Previewing a layout:",
+                        if (unattached.isNotEmpty()) "Attach a connected pad below to use it in \"${workspace.name}\"."
+                        else "Connect a game pad to the phone to attach it. Previewing a layout:",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -121,7 +195,7 @@ fun ControllerScreen(runtime: GamepadRuntime) {
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    "Editing: ${profile.name}",
+                    "Editing: ${profile.name} · ${workspace.name}",
                     style = MaterialTheme.typography.labelLarge,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -134,24 +208,50 @@ fun ControllerScreen(runtime: GamepadRuntime) {
                     )
                 }
             }
-            OutlinedButton(onClick = { confirmResetAll = true }) { Text("Reset all to standard") }
+            if (pad != null) {
+                OutlinedButton(onClick = { confirmResetAll = true }) { Text("Reset all") }
+                OutlinedButton(onClick = { confirmDetach = true }) { Text("Detach") }
+            }
         }
 
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (controllers.isNotEmpty()) {
-                for (c in controllers) {
-                    FilterChip(
-                        selected = c.deviceId == device?.deviceId,
-                        onClick = { deviceId = c.deviceId; selectedId = null },
-                        label = { Text(c.known?.name ?: c.name, maxLines = 1) },
-                    )
-                }
-            } else {
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            for (p in workspace.pads) {
+                FilterChip(
+                    selected = p.id == pad?.id,
+                    onClick = { padId = p.id; selectedId = null },
+                    label = { Text(p.name, maxLines = 1) },
+                )
+            }
+            for (c in unattached) {
+                OutlinedButton(onClick = { attach(c) }) { Text("Attach ${c.known?.name ?: c.name}", maxLines = 1) }
+            }
+            if (workspace.pads.isEmpty() && unattached.isEmpty()) {
                 for (style in DiagramStyle.entries) {
                     FilterChip(
                         selected = style == previewStyle,
                         onClick = { previewStyle = style; selectedId = null },
                         label = { Text(style.title) },
+                    )
+                }
+            }
+        }
+
+        if (pad != null) {
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Buttons", style = MaterialTheme.typography.labelLarge)
+                for (family in FaceLayout.entries) {
+                    FilterChip(
+                        selected = family == pad.family,
+                        onClick = { editPad { it.copy(family = family) } },
+                        label = { Text(family.title) },
                     )
                 }
             }
@@ -167,18 +267,20 @@ fun ControllerScreen(runtime: GamepadRuntime) {
             ) {
                 ControllerDiagramView(
                     diagram = diagram,
-                    profile = profile,
+                    mappings = pad?.mappings ?: KnownLayouts.familyMappings(FaceLayout.XBOX),
+                    family = pad?.family ?: FaceLayout.XBOX,
                     runtime = runtime,
                     selectedId = selected?.id,
-                    onSelect = { selectedId = if (selectedId == it) null else it },
+                    onSelect = { if (pad != null) selectedId = if (selectedId == it) null else it },
                 )
             }
-            if (selected != null) {
+            if (selected != null && pad != null) {
                 ControlPanel(
                     control = selected,
-                    profile = profile,
+                    mappings = pad.mappings,
+                    family = pad.family,
                     runtime = runtime,
-                    onChange = edit,
+                    onChange = { m -> editPad { it.copy(mappings = m) } },
                     onClose = { selectedId = null },
                     modifier = Modifier.width(340.dp).fillMaxHeight(),
                 )
@@ -186,18 +288,38 @@ fun ControllerScreen(runtime: GamepadRuntime) {
         }
     }
 
-    if (confirmResetAll) {
+    if (confirmResetAll && pad != null) {
         AlertDialog(
             onDismissRequest = { confirmResetAll = false },
             title = { Text("Reset all to standard?") },
-            text = { Text("Every button of ${diagram.name} goes back to its standard action in \"${profile.name}\".") },
+            text = { Text("Every button of ${pad.name} goes back to its standard ${pad.family.title} action in \"${workspace.name}\".") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmResetAll = false
-                    runtime.editActiveProfile { ControllerDiagrams.resetAll(it, diagram) }
+                    editPad { it.copy(mappings = ControllerDiagrams.resetAll(it.mappings, diagram, it.family)) }
                 }) { Text("Reset") }
             },
             dismissButton = { TextButton(onClick = { confirmResetAll = false }) { Text("Cancel") } },
+        )
+    }
+
+    if (confirmDetach && pad != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDetach = false },
+            title = { Text("Detach ${pad.name}?") },
+            text = { Text("It stops acting in \"${workspace.name}\" and its mapping here is removed.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDetach = false
+                    val id = pad.id
+                    runtime.editActiveProfile { p ->
+                        p.updateWorkspace(runtime.workspaceIndex.value) { w -> w.copy(pads = w.pads.filterNot { it.id == id }) }
+                    }
+                    padId = null
+                    selectedId = null
+                }) { Text("Detach") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDetach = false }) { Text("Cancel") } },
         )
     }
 }
@@ -240,16 +362,18 @@ private fun readLive(runtime: GamepadRuntime, diagram: ControllerDiagram): LiveS
 }
 
 /** Short text of what a control currently does. */
-private fun summary(profile: Profile, control: PhysicalControl): String =
-    control.inputs.firstNotNullOfOrNull { Bindings.targets(profile, it).firstOrNull() }?.let { Describe.shortTarget(it) } ?: "Unmapped"
+private fun summary(mappings: List<Mapping>, control: PhysicalControl): String =
+    control.inputs.firstNotNullOfOrNull { Bindings.targets(mappings, it).firstOrNull() }?.let { Describe.shortTarget(it) } ?: "Unmapped"
 
-private fun isModified(profile: Profile, control: PhysicalControl): Boolean =
-    control.inputs.any { Bindings.targets(profile, it).toSet() != ControllerDiagrams.defaultTargets(it).toSet() }
+/** Differs from the standard mapping of a pad of [family]. */
+private fun isModified(mappings: List<Mapping>, control: PhysicalControl, family: FaceLayout): Boolean =
+    control.inputs.any { Bindings.targets(mappings, it).toSet() != ControllerDiagrams.defaultTargets(it, family).toSet() }
 
 @Composable
 private fun ControllerDiagramView(
     diagram: ControllerDiagram,
-    profile: Profile,
+    mappings: List<Mapping>,
+    family: FaceLayout,
     runtime: GamepadRuntime,
     selectedId: String?,
     onSelect: (String) -> Unit,
@@ -281,8 +405,8 @@ private fun ControllerDiagramView(
                 widthDp = w * c.w,
                 heightDp = h * c.h,
                 modifier = Modifier.offset(x = w * (c.x - c.w / 2f), y = h * (c.y - c.h / 2f)),
-                summary = summary(profile, c),
-                modified = isModified(profile, c),
+                summary = summary(mappings, c),
+                modified = isModified(mappings, c, family),
                 selected = c.id == selectedId,
                 live = live,
                 onClick = { onSelect(c.id) },
@@ -567,9 +691,10 @@ private fun DrawScope.drawBody(style: DiagramStyle) {
 @Composable
 private fun ControlPanel(
     control: PhysicalControl,
-    profile: Profile,
+    mappings: List<Mapping>,
+    family: FaceLayout,
     runtime: GamepadRuntime,
-    onChange: (Profile) -> Unit,
+    onChange: (List<Mapping>) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier,
 ) {
@@ -584,9 +709,9 @@ private fun ControlPanel(
             }
             if (control.kind == PhysicalKind.STICK && control.inputs.size >= 6) {
                 val stickInputs = control.inputs.take(6)
-                val current = stickInputs.map { Bindings.targets(profile, it).toSet() }
+                val current = stickInputs.map { Bindings.targets(mappings, it).toSet() }
                 val activePreset = Bindings.StickPreset.entries.firstOrNull { preset ->
-                    val p = Bindings.applyStickPreset(profile, stickInputs, preset)
+                    val p = Bindings.applyStickPreset(mappings, stickInputs, preset)
                     stickInputs.map { Bindings.targets(p, it).toSet() } == current
                 }
                 Text("Preset", style = MaterialTheme.typography.labelLarge)
@@ -594,7 +719,7 @@ private fun ControlPanel(
                     for (preset in Bindings.StickPreset.entries) {
                         FilterChip(
                             selected = preset == activePreset,
-                            onClick = { onChange(Bindings.applyStickPreset(profile, stickInputs, preset)) },
+                            onClick = { onChange(Bindings.applyStickPreset(mappings, stickInputs, preset)) },
                             label = { Text(preset.label) },
                         )
                     }
@@ -602,15 +727,15 @@ private fun ControlPanel(
             }
             Text("Mapping", style = MaterialTheme.typography.labelLarge)
             BindingList(
-                profile = profile,
+                mappings = mappings,
                 inputs = control.inputs,
                 onChange = onChange,
                 runtime = runtime,
-                defaults = { ControllerDiagrams.defaultTargets(it) },
+                defaults = { ControllerDiagrams.defaultTargets(it, family) },
             )
             OutlinedButton(
-                onClick = { onChange(ControllerDiagrams.resetControl(profile, control)) },
-                enabled = isModified(profile, control),
+                onClick = { onChange(ControllerDiagrams.resetControl(mappings, control, family)) },
+                enabled = isModified(mappings, control, family),
             ) { Text("Reset to default") }
         }
     }

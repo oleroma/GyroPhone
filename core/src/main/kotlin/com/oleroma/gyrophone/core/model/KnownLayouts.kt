@@ -1,6 +1,7 @@
 package com.oleroma.gyrophone.core.model
 
 /** Physical face-button convention of an attached controller. */
+@kotlinx.serialization.Serializable
 enum class FaceLayout { XBOX, PLAYSTATION, NINTENDO }
 
 /** Diagram the Controller screen draws for a face layout when nothing more specific is known. */
@@ -40,6 +41,23 @@ object KnownLayouts {
 
     fun identify(vendorId: Int, productId: Int, name: String): KnownController? =
         controllers.firstOrNull { it.match.matches(vendorId, productId, name) }
+
+    /**
+     * The starting mapping of a pad attached with [family]: the standard one, except that a
+     * Nintendo pad matches the PC buttons by label, so A/B and X/Y swap positions.
+     */
+    fun familyMappings(family: FaceLayout): List<Mapping> {
+        val standard = standardControllerMappings(family)
+        if (family != FaceLayout.NINTENDO) return standard
+        val swap = mapOf(
+            GamepadButton.A to GamepadButton.B, GamepadButton.B to GamepadButton.A,
+            GamepadButton.X to GamepadButton.Y, GamepadButton.Y to GamepadButton.X,
+        )
+        return standard.map { m ->
+            val t = m.target
+            if (t is OutputTarget.Pad && t.button in swap) m.copy(target = OutputTarget.Pad(swap.getValue(t.button))) else m
+        }
+    }
 
     /** Standard mapping from Android's normalised game pad events to the host game pad. */
     fun standardControllerMappings(layout: FaceLayout = FaceLayout.XBOX): List<Mapping> {
