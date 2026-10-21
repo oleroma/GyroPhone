@@ -13,6 +13,7 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MouseButton
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.ProfileJson
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchShape
@@ -40,22 +41,22 @@ class BindingsTest {
     private val padB = OutputTarget.Pad(GamepadButton.B)
 
     @Test fun setTargetsReplacesInPlaceAndKeepsOrder() {
-        val p = Profile("p", "p", listOf(t("x", padB), t("a", padA), t("y", padB), t("a", OutputTarget.Key(4))))
+        val p = listOf(t("x", padB), t("a", padA), t("y", padB), t("a", OutputTarget.Key(4)))
         val out = Bindings.setTargets(p, a, listOf(OutputTarget.Mouse(MouseButton.LEFT), OutputTarget.Key(5)))
         assertEquals(
             listOf(t("x", padB), t("a", OutputTarget.Mouse(MouseButton.LEFT)), t("a", OutputTarget.Key(5)), t("y", padB)),
-            out.mappings,
+            out,
         )
-        val appended = Bindings.setTargets(Profile("q", "q", listOf(t("x", padB))), a, listOf(padA))
-        assertEquals(listOf(t("x", padB), t("a", padA)), appended.mappings)
+        val appended = Bindings.setTargets(listOf(t("x", padB)), a, listOf(padA))
+        assertEquals(listOf(t("x", padB), t("a", padA)), appended)
         assertEquals(listOf(OutputTarget.Mouse(MouseButton.LEFT), OutputTarget.Key(5)), Bindings.targets(out, a))
     }
 
     @Test fun addAndRemoveTarget() {
-        var p = Profile("p", "p", emptyList())
+        var p = emptyList<Mapping>()
         p = Bindings.addTarget(p, a, padA)
         p = Bindings.addTarget(p, a, padA)
-        assertEquals(1, p.mappings.size)
+        assertEquals(1, p.size)
         p = Bindings.addTarget(p, a, padB)
         p = Bindings.removeTarget(p, a, padA)
         assertEquals(listOf(padB), Bindings.targets(p, a))
@@ -66,10 +67,10 @@ class BindingsTest {
             "LT",
             listOf(InputSource.Axis(AndroidAxis.LTRIGGER), InputSource.Axis(AndroidAxis.BRAKE), InputSource.Key(104)),
         )
-        val kbm = BuiltinProfiles.keyboardMouse
+        val kbm = BuiltinProfiles.kbmPadMappings()
         assertEquals(listOf(OutputTarget.Mouse(MouseButton.RIGHT)), Bindings.targets(kbm, lt))
         val out = Bindings.setTargets(kbm, lt, listOf(OutputTarget.Key(0x2C)))
-        assertTrue(out.mappings.none { it.source == InputSource.Axis(AndroidAxis.LTRIGGER, AxisHalf.POSITIVE) })
+        assertTrue(out.none { it.source == InputSource.Axis(AndroidAxis.LTRIGGER, AxisHalf.POSITIVE) })
         assertEquals(listOf(OutputTarget.Key(0x2C)), Bindings.targets(out, lt))
         // A stick half is not merged with the full axis.
         val x = BindableInput("X", listOf(InputSource.Axis(AndroidAxis.X)), analog = true)
@@ -77,7 +78,7 @@ class BindingsTest {
     }
 
     @Test fun removeTouchControlDropsItsMappings() {
-        val p = BuiltinProfiles.virtualGamepad
+        val p = BuiltinProfiles.controllerWorkspace
         val out = Bindings.removeTouchControl(p, "ls")
         assertTrue(out.touchControls.none { it.id == "ls" })
         assertTrue(out.mappings.none { (it.source as? InputSource.TouchStick)?.id == "ls" })
@@ -98,9 +99,9 @@ class BindingsTest {
     @Test fun stickPresetsDriveTheEngine() {
         val stick = TouchControl("s1", TouchKind.STICK, "S", 0.5f, 0.5f)
         val inputs = Bindings.touchInputs(stick)
-        var p = Profile("p", "p", emptyList(), touchControls = listOf(stick))
+        var p = emptyList<Mapping>()
         p = Bindings.applyStickPreset(p, inputs, Bindings.StickPreset.WASD)
-        val e = MappingEngine(p)
+        val e = MappingEngine(profileOf(p, listOf(stick)))
         e.setTouchStick("s1", 0f, -1f)
         assertEquals(listOf(0x1A), e.snapshot().keyboard.keys)
         e.setTouchStick("s1", 1f, 0f)
@@ -108,13 +109,13 @@ class BindingsTest {
 
         p = Bindings.applyStickPreset(p, inputs, Bindings.StickPreset.RIGHT_STICK)
         assertEquals(listOf(OutputTarget.PadAxis(GamepadAxis.RX)), Bindings.targets(p, inputs[0]))
-        assertEquals(2, p.mappings.size)
-        e.profile = p
+        assertEquals(2, p.size)
+        e.profile = profileOf(p, listOf(stick))
         e.setTouchStick("s1", -1f, 0f)
         assertEquals(-32767, e.snapshot().gamepad.rx)
 
         p = Bindings.applyStickPreset(p, inputs, Bindings.StickPreset.NONE)
-        assertTrue(p.mappings.isEmpty())
+        assertTrue(p.isEmpty())
     }
 
     @Test fun containsCircleVersusSquare() {
@@ -138,17 +139,17 @@ class BindingsTest {
         assertFalse(json.encodeToString(TouchControl("a", TouchKind.BUTTON, "A", 0.1f, 0.2f, 0.3f)).contains("portrait"))
         val withPortrait = c.copy(portrait = Placement(0.3f, 0.4f, 0.2f))
         assertEquals(withPortrait, json.decodeFromString<TouchControl>(json.encodeToString(withPortrait)))
-        val p = BuiltinProfiles.virtualGamepad
+        val p = BuiltinProfiles.default
         assertEquals(p, json.decodeFromString<Profile>(json.encodeToString(p)))
     }
 
     @Test fun profileJsonWithoutTouchpadKeepsDefaults() {
         val json = Json { ignoreUnknownKeys = true }
-        val p = json.decodeFromString<Profile>("""{"id":"p","name":"p","mappings":[]}""")
-        assertEquals(TouchpadSettings(), p.touchpad)
+        val p = ProfileJson.decode("""{"id":"p","name":"p","mappings":[]}""")
+        assertEquals(TouchpadSettings(), p.main.touchpad)
         assertFalse(json.encodeToString(p).contains("touchpad"))
-        assertFalse(json.encodeToString(BuiltinProfiles.controllerPassthrough).contains("touchpad"))
-        val custom = p.copy(touchpad = TouchpadSettings(tapDrag = false, sensitivity = 2f))
+        assertFalse(json.encodeToString(wasdProfile).contains("touchpad"))
+        val custom = p.updateWorkspace(0) { it.copy(touchpad = TouchpadSettings(tapDrag = false, sensitivity = 2f)) }
         assertEquals(custom, json.decodeFromString<Profile>(json.encodeToString(custom)))
     }
 
@@ -185,7 +186,7 @@ class BindingsTest {
     }
 
     @Test fun builtinPortraitLayoutFitsAndDoesNotOverlap() {
-        val controls = BuiltinProfiles.virtualGamepad.touchControls
+        val controls = BuiltinProfiles.controllerWorkspace.touchControls
         assertTrue(controls.all { it.portrait != null })
         for ((w, h) in listOf(412f to 860f, 360f to 700f, 412f to 780f)) {
             val unit = min(w, h)
@@ -211,15 +212,16 @@ class BindingsTest {
     @Test fun builtinLandscapeUnchanged() {
         val ls = BuiltinProfiles.virtualGamepadControls.first { it.id == "ls" }
         assertEquals(Triple(0.14f, 0.62f, 0.38f), Triple(ls.x, ls.y, ls.size))
-        assertEquals(BuiltinProfiles.virtualGamepadControls,
-            BuiltinProfiles.virtualGamepad.touchControls.map { it.copy(portrait = null) })
+        // The Controller preset keeps the same control ids.
+        assertEquals(BuiltinProfiles.virtualGamepadControls.map { it.id },
+            BuiltinProfiles.controllerWorkspace.touchControls.map { it.id })
     }
 
     @Test fun savedBuiltinCopyWithoutPortraitGetsBuiltinPortrait() {
         // A copy saved before portrait existed: same ids and landscape values, no portrait.
         val old = BuiltinProfiles.virtualGamepadControls
-        for ((c, builtin) in old.zip(BuiltinProfiles.virtualGamepad.touchControls)) {
-            assertEquals(builtin.portrait, c.placement(true))
+        for (c in old) {
+            assertEquals(BuiltinProfiles.virtualGamepadPortrait.getValue(c.id), c.placement(true))
         }
         // Moved in landscape by an older version: no longer matches, so derived.
         val moved = old.first { it.id == "a" }.copy(x = 0.5f)

@@ -198,16 +198,15 @@ object ControllerDiagrams {
         return base.copy(controls = kept + extraButtons(supportedKeys, base.aspect))
     }
 
-    private val standardProfile by lazy { Profile("standard", "Standard", KnownLayouts.standardControllerMappings()) }
+    /** Default (standard action) targets for a physical input of a pad of [family]. */
+    fun defaultTargets(input: BindableInput, family: FaceLayout = FaceLayout.XBOX): List<OutputTarget> =
+        Bindings.targets(KnownLayouts.familyMappings(family), input)
 
-    /** Default (standard action) targets for a physical input, from KnownLayouts.standardControllerMappings. */
-    fun defaultTargets(input: BindableInput): List<OutputTarget> = Bindings.targets(standardProfile, input)
-
-    /** Resets one control of a profile to standard actions. */
-    fun resetControl(profile: Profile, control: PhysicalControl): Profile =
-        control.inputs.fold(profile) { p, input -> Bindings.setTargets(p, input, defaultTargets(input)) }
+    /** Resets one control of an attached pad's mappings to standard actions. */
+    fun resetControl(mappings: List<Mapping>, control: PhysicalControl, family: FaceLayout = FaceLayout.XBOX): List<Mapping> =
+        control.inputs.fold(mappings) { m, input -> Bindings.setTargets(m, input, defaultTargets(input, family)) }
 
     /** Resets every control of [diagram] to standard actions. */
-    fun resetAll(profile: Profile, diagram: ControllerDiagram): Profile =
-        diagram.controls.fold(profile) { p, c -> resetControl(p, c) }
+    fun resetAll(mappings: List<Mapping>, diagram: ControllerDiagram, family: FaceLayout = FaceLayout.XBOX): List<Mapping> =
+        diagram.controls.fold(mappings) { m, c -> resetControl(m, c, family) }
 }

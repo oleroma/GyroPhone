@@ -59,17 +59,21 @@ import com.oleroma.gyrophone.core.hid.AndroidKeyToHid
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
+import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
-import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlinx.coroutines.launch
 
-/** Lists inputs with their mapped targets as removable chips plus an Add button per input. Tapping a chip replaces it. */
+/**
+ * Lists inputs with their mapped targets as removable chips plus an Add button per input. Tapping
+ * a chip replaces it. [mappings] is the list being edited (a workspace's touch mappings or an
+ * attached pad's); [onChange] receives the rewritten list.
+ */
 @Composable
 fun BindingList(
-    profile: Profile,
+    mappings: List<Mapping>,
     inputs: List<BindableInput>,
-    onChange: (Profile) -> Unit,
+    onChange: (List<Mapping>) -> Unit,
     runtime: GamepadRuntime,
     defaults: ((BindableInput) -> List<OutputTarget>)? = null,
 ) {
@@ -78,7 +82,7 @@ fun BindingList(
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         for (input in inputs) {
-            val targets = Bindings.targets(profile, input)
+            val targets = Bindings.targets(mappings, input)
             val standard = defaults?.invoke(input)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (inputs.size > 1) {
@@ -107,13 +111,13 @@ fun BindingList(
                         TargetChip(
                             text = Describe.shortTarget(t),
                             onClick = { picking = input to t },
-                            onRemove = { onChange(Bindings.removeTarget(profile, input, t)) },
+                            onRemove = { onChange(Bindings.removeTarget(mappings, input, t)) },
                         )
                     }
                     AddChip(onClick = { picking = input to null })
                 }
                 if (standard != null && standard.toSet() != targets.toSet()) {
-                    TextButton(onClick = { onChange(Bindings.setTargets(profile, input, standard)) }) {
+                    TextButton(onClick = { onChange(Bindings.setTargets(mappings, input, standard)) }) {
                         Text("Reset", style = MaterialTheme.typography.labelMedium)
                     }
                 }
@@ -125,15 +129,15 @@ fun BindingList(
         TargetPickerDialog(
             analog = input.analog,
             runtime = runtime,
-            current = Bindings.targets(profile, input),
+            current = Bindings.targets(mappings, input),
             onPick = { picked ->
-                val current = Bindings.targets(profile, input)
+                val current = Bindings.targets(mappings, input)
                 val next = if (replacing != null && replacing in current) {
                     current.map { if (it == replacing) picked else it }.distinct()
                 } else {
                     (current + picked).distinct()
                 }
-                onChange(Bindings.setTargets(profile, input, next))
+                onChange(Bindings.setTargets(mappings, input, next))
             },
             onDismiss = { picking = null },
         )

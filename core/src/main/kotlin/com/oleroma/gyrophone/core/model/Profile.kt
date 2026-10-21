@@ -6,7 +6,7 @@ import kotlin.math.abs
 import kotlin.math.min
 
 @Serializable
-/** FULLSCREEN: one of the two corners that, pressed together, toggle the full-screen pad (see [FullscreenChord]). */
+/** FULLSCREEN: a workspace corner (see [NavCorners]); it lives in [Profile.corners], never in a workspace. */
 enum class TouchKind { BUTTON, STICK, FULLSCREEN }
 
 @Serializable
@@ -292,26 +292,55 @@ data class DeviceMatch(
             (nameContains == null || name.contains(nameContains, ignoreCase = true))
 }
 
+/**
+ * A game profile: an ordered list of [workspaces], each a complete setup (on-screen layout,
+ * touchpad, gyro and the physical game pads attached to it). The two [corners] are shared by all
+ * workspaces: tap left = previous workspace, tap right = next, both together = fullscreen.
+ * Files saved before workspaces existed are read by [ProfileJson], which migrates them.
+ */
 @Serializable
 data class Profile(
     val id: String,
     val name: String,
-    val mappings: List<Mapping>,
-    val touchControls: List<TouchControl> = emptyList(),
-    val gyro: GyroSettings = GyroSettings(),
-    /** Auto-select this profile when a matching controller is attached to the phone. */
-    val controllers: List<DeviceMatch> = emptyList(),
+    /** Never empty (see [ProfileJson.normalize]). */
+    val workspaces: List<Workspace>,
+    /** Stepping past the last workspace goes to the first (and back). */
+    val wrapWorkspaces: Boolean = false,
     /** Windows executables this profile belongs to (used by the companion for auto-switching). */
     val games: List<String> = emptyList(),
-    /** The pad screen's background as a touchpad. */
-    val touchpad: TouchpadSettings = TouchpadSettings(),
-    /** Opacity of every on-screen control in play ([MIN_CONTROL_OPACITY]..1). */
-    val controlOpacity: Float = 1f,
-    /** Opacity of the two fullscreen corners ([FullscreenChord]) in play; they ignore [controlOpacity]. */
-    val fullscreenOpacity: Float = 0.5f,
-    /** Resizing one fullscreen corner resizes the other too. */
-    val fullscreenSameSize: Boolean = true,
+    /** Auto-select this profile when a matching controller is attached to the phone. */
+    val controllers: List<DeviceMatch> = emptyList(),
+    /** The previous / next workspace corners ([NavCorners]), kind [TouchKind.FULLSCREEN]. */
+    val corners: List<TouchControl> = NavCorners.defaults(),
+    /** Opacity of the corners in play; they ignore the workspaces' control opacity. */
+    val cornerOpacity: Float = 0.5f,
+    /** Resizing one corner resizes the other too. */
+    val cornerSameSize: Boolean = true,
 ) {
+    /** The workspace at [index], clamped into range. */
+    fun workspace(index: Int): Workspace = workspaces[index.coerceIn(0, workspaces.lastIndex)]
+
+    fun indexOfWorkspace(id: String): Int = workspaces.indexOfFirst { it.id == id }
+
+    /** Copy with the workspace at [index] replaced by [change] of it. */
+    fun updateWorkspace(index: Int, change: (Workspace) -> Workspace): Profile {
+        val i = index.coerceIn(0, workspaces.lastIndex)
+        return copy(workspaces = workspaces.mapIndexed { k, w -> if (k == i) change(w) else w })
+    }
+
+    /** Where ← / → from [index] lead; null at an end without wrap-around. */
+    fun previousWorkspace(index: Int): Int? = when {
+        index > 0 -> index - 1
+        wrapWorkspaces && workspaces.size > 1 -> workspaces.lastIndex
+        else -> null
+    }
+
+    fun nextWorkspace(index: Int): Int? = when {
+        index < workspaces.lastIndex -> index + 1
+        wrapWorkspaces && workspaces.size > 1 -> 0
+        else -> null
+    }
+
     companion object {
         const val MIN_CONTROL_OPACITY = 0.1f
     }

@@ -14,6 +14,7 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.ProfileJson
 import com.oleroma.gyrophone.core.model.StickAxis
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import kotlinx.serialization.json.Json
@@ -24,7 +25,7 @@ import org.junit.Test
 
 class MappingEngineTest {
     @Test fun controllerButtonsAndSticks() {
-        val e = MappingEngine(BuiltinProfiles.controllerPassthrough)
+        val e = MappingEngine(controllerProfile)
         assertTrue(e.setKey(AndroidKey.BUTTON_A, true))
         e.setAxis(AndroidAxis.X, -1f)
         e.setAxis(AndroidAxis.HAT_Y, -1f)
@@ -37,7 +38,7 @@ class MappingEngineTest {
     }
 
     @Test fun anyButtonToKeyboardAndMouse() {
-        val e = MappingEngine(BuiltinProfiles.keyboardMouse)
+        val e = MappingEngine(wasdProfile)
         e.setKey(AndroidKey.BUTTON_THUMBL, true) // Shift
         e.setAxis(AndroidAxis.Y, -0.9f) // W
         e.setKey(AndroidKey.BUTTON_R2, true) // left click
@@ -51,7 +52,7 @@ class MappingEngineTest {
     }
 
     @Test fun touchControlsAndGyroHold() {
-        val e = MappingEngine(BuiltinProfiles.virtualGamepad)
+        val e = MappingEngine(controllerProfile)
         assertFalse(e.gyroActive)
         e.setTouch("gyro", true)
         assertTrue(e.gyroActive)
@@ -64,7 +65,7 @@ class MappingEngineTest {
     }
 
     @Test fun gyroToggle() {
-        val p = Profile("t", "t", listOf(Mapping(InputSource.Key(AndroidKey.BUTTON_THUMBR), OutputTarget.GyroToggle)),
+        val p = profileOf(listOf(Mapping(InputSource.Key(AndroidKey.BUTTON_THUMBR), OutputTarget.GyroToggle)),
             gyro = GyroSettings(mode = GyroMode.HOLD_OR_TOGGLE))
         val e = MappingEngine(p)
         e.setKey(AndroidKey.BUTTON_THUMBR, true); e.setKey(AndroidKey.BUTTON_THUMBR, false)
@@ -74,7 +75,7 @@ class MappingEngineTest {
     }
 
     @Test fun axisSourcesFireEventTargetsOncePerPress() {
-        val p = Profile("t", "t", listOf(
+        val p = profileOf(listOf(
             Mapping(InputSource.Axis(AndroidAxis.X, AxisHalf.NEGATIVE), OutputTarget.Wheel(1)),
             Mapping(InputSource.Axis(AndroidAxis.RTRIGGER, AxisHalf.FULL), OutputTarget.GyroToggle),
             Mapping(InputSource.Key(AndroidKey.BUTTON_R2), OutputTarget.GyroToggle),
@@ -99,11 +100,12 @@ class MappingEngineTest {
         for (p in BuiltinProfiles.all) {
             val text = json.encodeToString(Profile.serializer(), p)
             assertEquals(p, json.decodeFromString(Profile.serializer(), text))
+            assertEquals(p, ProfileJson.decode(ProfileJson.encode(p)))
         }
     }
 
     @Test fun onChangeFiresOncePerMutationOutsideTheLock() {
-        val e = MappingEngine(BuiltinProfiles.keyboardMouse)
+        val e = MappingEngine(wasdProfile)
         var calls = 0
         e.onChange = Runnable {
             calls++
@@ -128,7 +130,7 @@ class MappingEngineTest {
     private val MS = 1_000_000L
 
     private fun gyroOff(now: () -> Long) =
-        MappingEngine(BuiltinProfiles.virtualGamepad.copy(gyro = GyroSettings(mode = GyroMode.OFF)), now)
+        MappingEngine(single(BuiltinProfiles.controllerWorkspace.copy(gyro = GyroSettings(mode = GyroMode.OFF))), now)
             .apply { touchpadPxPerDp = 1f }
 
     @Test fun touchpadClicksWithGyroOff() {
@@ -154,7 +156,7 @@ class MappingEngineTest {
 
     @Test fun touchpadButtonsOrWithMappedMouse() {
         var now = 0L
-        val e = MappingEngine(BuiltinProfiles.keyboardMouse) { now }
+        val e = MappingEngine(wasdProfile) { now }
         e.touchpadPxPerDp = 1f
         e.setKey(AndroidKey.BUTTON_R2, true) // mouse left
         e.touchpadDown(1, 100f, 100f); e.touchpadDown(2, 200f, 100f)
@@ -183,7 +185,7 @@ class MappingEngineTest {
     @Test fun profileChangeCancelsTouchpad() {
         var now = 0L
         val e = dragging({ now }) { now = it }
-        e.profile = e.profile.copy(touchpad = TouchpadSettings(sensitivity = 2f))
+        e.profile = e.profile.updateWorkspace(0) { it.copy(touchpad = TouchpadSettings(sensitivity = 2f)) }
         now = 150 * MS // L shown since 60 ms, longer than the minimum pulse: released at once
         assertEquals(0, e.snapshot().mouse.buttons)
         e.touchpadMove(1, 300f, 100f) // finger forgotten
@@ -191,7 +193,7 @@ class MappingEngineTest {
     }
 
     @Test fun onChangeFiresForTouchpad() {
-        val e = MappingEngine(BuiltinProfiles.virtualGamepad)
+        val e = MappingEngine(controllerProfile)
         var calls = 0
         e.onChange = Runnable { calls++ }
         e.touchpadDown(1, 0f, 0f); e.touchpadMove(1, 50f, 0f); e.touchpadUp(1)
