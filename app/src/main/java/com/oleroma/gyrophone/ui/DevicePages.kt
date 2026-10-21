@@ -91,7 +91,11 @@ internal fun PadProfileEditor(
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
     val userPresets by runtime.padPresets.collectAsStateWithLifecycle()
-    val padDevice = menuDevices(profile, controllers).firstOrNull { it.key == deviceKey }
+    val found = menuDevices(profile, controllers, userPresets).firstOrNull { it.key == deviceKey }
+    // Keep the device once found: a controller that disconnects mid-edit must not end the editor.
+    val lastFound = remember(deviceKey) { arrayOfNulls<PadDevice>(1) }
+    if (found != null) lastFound[0] = found
+    val padDevice = found ?: lastFound[0]
     if (padDevice == null) {
         Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("This device is no longer in the menu.")
@@ -100,7 +104,7 @@ internal fun PadProfileEditor(
         return
     }
     // A pad of the device to draw the buttons for (the one to load into, else any, else a stand-in).
-    val loadPad = loadInto?.let { i -> profile.workspace(i).pads.firstOrNull { it.id == loadPadId } }
+    val loadPad = loadInto?.let { i -> profile.workspace(i).pads.firstOrNull { it.id == loadPadId && it.match == padDevice.match } }
     val pad = loadPad
         ?: profile.workspaces.flatMap { it.pads }.firstOrNull { it.match == padDevice.match }
         ?: AttachedPad(id = "", match = padDevice.match, name = padDevice.name, family = padDevice.family)
@@ -176,7 +180,7 @@ internal fun PadProfileEditor(
         val saved = if (source != null && !builtin) {
             source.copy(name = trimmed, mappings = mappings).also { runtime.updatePadPreset(it) }
         } else {
-            runtime.savePadPreset(trimmed, mappings, padDevice.match)
+            runtime.savePadPreset(trimmed, mappings, padDevice)
         }
         if (loadInto != null && loadPad != null) runtime.applyPadPreset(loadPad.id, saved, loadInto)
         onDone()
@@ -383,16 +387,22 @@ internal fun PadProfileEditor(
 
 /**
  * The devices the menu lists: those attached to any workspace of [profile], then connected
- * controllers that none of their specific matches covers.
+ * controllers that none of their specific matches covers, then devices that only saved profiles
+ * in [userPresets] name.
  */
-internal fun menuDevices(profile: Profile, controllers: List<AttachedController>): List<PadDevice> {
+internal fun menuDevices(
+    profile: Profile,
+    controllers: List<AttachedController>,
+    userPresets: List<PadPreset>,
+): List<PadDevice> {
     val attached = PadDevices.inProfile(profile)
     val extra = controllers
         // An "any game pad" device does not hide a connected model: it can still get its own place.
         .filter { c -> attached.none { d -> d.match?.matches(c.vendorId, c.productId, c.name) == true } }
         .map { deviceOf(it) }
         .distinctBy { it.match }
-    return attached + extra
+    // Devices only known from their saved profiles, so those profiles stay reachable.
+    return attached + extra + PadDevices.ofProfiles(userPresets, attached + extra)
 }
 
 /** [c] as a device: matched by vendor / product id when both are known, else by name. */

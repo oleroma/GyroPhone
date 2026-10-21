@@ -17,6 +17,19 @@ object PadDevices {
     fun inProfile(profile: Profile): List<PadDevice> =
         profile.workspaces.flatMap { it.pads }.distinctBy { it.match }.map { PadDevice(it.match, it.name, it.family) }
 
+    /**
+     * The devices profiles in [user] are attached to, other than those in [known] (unnamed ones
+     * take their known model's name, else the name they match).
+     */
+    fun ofProfiles(user: List<PadPreset>, known: List<PadDevice>): List<PadDevice> =
+        user.mapNotNull { p -> p.device?.let { p to it } }
+            .filter { (_, m) -> known.none { it.match == m } }
+            .distinctBy { (_, m) -> m }
+            .map { (p, m) ->
+                val model = KnownLayouts.controllers.firstOrNull { it.match == m }
+                PadDevice(m, p.deviceName ?: model?.name ?: m.nameContains ?: "Game pad", p.deviceFamily ?: model?.layout ?: FaceLayout.XBOX)
+            }
+
     /** [workspace] with [device] attached as a new pad on the standard mapping for its family. */
     fun attach(workspace: Workspace, device: PadDevice): Workspace {
         val used = workspace.pads.mapTo(HashSet()) { it.id }

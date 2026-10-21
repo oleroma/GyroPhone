@@ -703,26 +703,24 @@ fun PadScreen(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    // Drag handle: its own row on top, so it never scrolls away with the buttons.
-                    Text(
-                        "⠿  ≡  ⠿",
-                        color = Color.White.copy(alpha = 0.8f),
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier
-                            .pointerInput(w, h) {
-                                detectDragGestures { change, drag ->
-                                    change.consume()
-                                    menuOffset = clampMenu(clampMenu(menuOffset) + drag)
-                                }
-                            }
-                            .padding(horizontal = 24.dp, vertical = 0.dp),
-                    )
+                    // Fixed top row (never scrolls): the drag handle and ◀ n/N name ▶ to switch the edited workspace.
                     Row(
-                        Modifier.horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        // Workspace switching inside the draft: ◀ n/N name ▶.
+                        Text(
+                            "⠿",
+                            color = Color.White.copy(alpha = 0.8f),
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier
+                                .pointerInput(w, h) {
+                                    detectDragGestures { change, drag ->
+                                        change.consume()
+                                        menuOffset = clampMenu(clampMenu(menuOffset) + drag)
+                                    }
+                                }
+                                .padding(horizontal = 12.dp, vertical = 2.dp),
+                        )
                         draft?.let { dw ->
                             val k = editIndex.coerceIn(0, dw.workspaces.lastIndex)
                             OutlinedButton(contentPadding = compact, enabled = k > 0, onClick = {
@@ -734,12 +732,20 @@ fun PadScreen(
                                 color = Color.White,
                                 style = MaterialTheme.typography.labelLarge,
                                 maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 160.dp),
                             )
                             OutlinedButton(contentPadding = compact, enabled = k < dw.workspaces.lastIndex, onClick = {
                                 editIndex = k + 1
                                 selected = null
                             }) { Text("▶") }
                         }
+                    }
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         if (!menuFolded) {
                             Text(
                                 if (portrait) "Portrait layout" else "Landscape layout",

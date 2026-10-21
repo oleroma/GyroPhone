@@ -47,4 +47,15 @@ class PadDevicesTest {
         assertEquals(listOf(PadPresets.STANDARD, PadPresets.KBM, "user.pad1", "user.pad3"), ids)
         assertEquals(listOf(mine), PadPresets.decode(PadPresets.encode(listOf(mine))))
     }
+
+    @Test fun devicesOnlyKnownFromProfilesAreListed() {
+        val listed = listOf(PadDevice(ds, "DualSense", FaceLayout.PLAYSTATION))
+        val user = listOf(
+            PadPreset("user.pad1", "A", device = ds),
+            PadPreset("user.pad2", "B", device = x5, deviceName = "GameSir X5", deviceFamily = FaceLayout.XBOX),
+            PadPreset("user.pad3", "C", device = x5),
+            PadPreset("user.pad4", "D"),
+        )
+        assertEquals(listOf(PadDevice(x5, "GameSir X5", FaceLayout.XBOX)), PadDevices.ofProfiles(user, listed))
+    }
 }

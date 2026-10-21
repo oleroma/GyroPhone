@@ -13,6 +13,9 @@ data class PadPreset(
     val mappings: List<Mapping> = emptyList(),
     /** The device this profile is attached to ([PadDevice.match]); null = offered for every device. */
     val device: DeviceMatch? = null,
+    /** That device's name and button layout, so it is listed even when no workspace uses it. */
+    val deviceName: String? = null,
+    val deviceFamily: FaceLayout? = null,
 )
 
 /**

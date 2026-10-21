@@ -9,7 +9,7 @@ import com.oleroma.gyrophone.core.hid.HidDescriptor
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownController
-import com.oleroma.gyrophone.core.model.DeviceMatch
+import com.oleroma.gyrophone.core.model.PadDevice
 import com.oleroma.gyrophone.core.model.PadPreset
 import com.oleroma.gyrophone.core.model.PadPresets
 import com.oleroma.gyrophone.core.model.Mapping
@@ -282,8 +282,11 @@ class GamepadRuntime(context: Context) {
     val padPresets: StateFlow<List<PadPreset>> = _padPresets
 
     /** Saves [mappings] as a new user pad preset named [name], attached to [device]; returns it. */
-    fun savePadPreset(name: String, mappings: List<Mapping>, device: DeviceMatch? = null): PadPreset {
-        val preset = PadPreset(PadPresets.newId(_padPresets.value.map { it.id }), name.trim().ifBlank { "My preset" }, mappings, device)
+    fun savePadPreset(name: String, mappings: List<Mapping>, device: PadDevice? = null): PadPreset {
+        val preset = PadPreset(
+            PadPresets.newId(_padPresets.value.map { it.id }), name.trim().ifBlank { "My preset" }, mappings,
+            device = device?.match, deviceName = device?.name, deviceFamily = device?.family,
+        )
         _padPresets.value = _padPresets.value + preset
         store.savePadPresets(_padPresets.value)
         return preset

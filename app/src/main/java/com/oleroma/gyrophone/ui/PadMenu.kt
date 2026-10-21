@@ -166,7 +166,7 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onOpen: (PadMe
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
     val userPresets by runtime.padPresets.collectAsStateWithLifecycle()
     val current = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
-    val devices = menuDevices(profile, controllers)
+    val devices = menuDevices(profile, controllers, userPresets)
     val open = MenuOpenState.open
     fun isOpen(key: String, default: Boolean = false) = open[key] ?: default
     fun toggle(key: String, default: Boolean = false) { open[key] = !isOpen(key, default) }
