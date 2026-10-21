@@ -293,7 +293,13 @@ private fun PadProfiles(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            TextButton(onClick = { onOpen(PadMenuPage.EditProfile(device.key, preset.id, wsIndex, pad.id)) }) { Text("Edit") }
+            TextButton(onClick = {
+                // Only the profile the pad uses is loaded back into it on Save; others are just edited.
+                onOpen(
+                    if (selected) PadMenuPage.EditProfile(device.key, preset.id, wsIndex, pad.id)
+                    else PadMenuPage.EditProfile(device.key, preset.id),
+                )
+            }) { Text("Edit") }
         }
     }
     if (applied == null) {
