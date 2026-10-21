@@ -212,15 +212,16 @@ class BindingsTest {
     @Test fun builtinLandscapeUnchanged() {
         val ls = BuiltinProfiles.virtualGamepadControls.first { it.id == "ls" }
         assertEquals(Triple(0.14f, 0.62f, 0.38f), Triple(ls.x, ls.y, ls.size))
-        assertEquals(BuiltinProfiles.virtualGamepadControls,
-            BuiltinProfiles.controllerWorkspace.touchControls.map { it.copy(portrait = null) })
+        // The Controller preset keeps the same control ids.
+        assertEquals(BuiltinProfiles.virtualGamepadControls.map { it.id },
+            BuiltinProfiles.controllerWorkspace.touchControls.map { it.id })
     }
 
     @Test fun savedBuiltinCopyWithoutPortraitGetsBuiltinPortrait() {
         // A copy saved before portrait existed: same ids and landscape values, no portrait.
         val old = BuiltinProfiles.virtualGamepadControls
-        for ((c, builtin) in old.zip(BuiltinProfiles.controllerWorkspace.touchControls)) {
-            assertEquals(builtin.portrait, c.placement(true))
+        for (c in old) {
+            assertEquals(BuiltinProfiles.virtualGamepadPortrait.getValue(c.id), c.placement(true))
         }
         // Moved in landscape by an older version: no longer matches, so derived.
         val moved = old.first { it.id == "a" }.copy(x = 0.5f)
