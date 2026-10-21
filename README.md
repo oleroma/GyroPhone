@@ -1,3 +1,13 @@
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./media/logo_light.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./media/logo_dark.svg">
+    <!-- The fallback image for older browsers -->
+    <img alt="gyrophone" src="./media/logo_light.svg" width="200">
+  </picture>
+  <br>
+</h1>
+
 # GyroPhone
 
 GyroPhone turns an Android phone into a Bluetooth or Wi-Fi gamepad, keyboard and mouse for a PC, in the spirit of the [Alpakka](https://github.com/inputlabs/alpakka_firmware) controller. Gyro moves the mouse. A clip-on controller such as the GameSir X5 supplies the physical buttons, and you can place virtual buttons anywhere on the touchscreen.
