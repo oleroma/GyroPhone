@@ -66,7 +66,9 @@ class ControlOpacityTest {
     @Test fun oldProfilesAreFullyOpaqueAndOpacitySurvivesJson() {
         val old = json.decodeFromString(Profile.serializer(), """{"id":"p","name":"P","mappings":[]}""")
         assertEquals(1f, old.controlOpacity)
-        val faint = old.copy(controlOpacity = 0.35f)
+        assertEquals(0.5f, old.fullscreenOpacity)
+        assertTrue(old.fullscreenSameSize)
+        val faint = old.copy(controlOpacity = 0.35f, fullscreenOpacity = 0.2f, fullscreenSameSize = false)
         assertEquals(faint, json.decodeFromString(Profile.serializer(), json.encodeToString(Profile.serializer(), faint)))
     }
 }
