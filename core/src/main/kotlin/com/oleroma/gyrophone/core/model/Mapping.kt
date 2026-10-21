@@ -77,6 +77,10 @@ sealed interface OutputTarget {
     /** Each press flips gyro-to-mouse on/off. */
     @Serializable @SerialName("gyro_toggle")
     data object GyroToggle : OutputTarget
+
+    /** Gyro-to-mouse pauses while the source is held (ratchet: re-centre the phone). */
+    @Serializable @SerialName("gyro_pause")
+    data object GyroPause : OutputTarget
 }
 
 @Serializable

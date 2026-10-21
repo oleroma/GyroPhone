@@ -201,6 +201,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Whether gyro motion should currently move the mouse. */
     val gyroActive: Boolean
         get() = synchronized(lock) {
+            if (mappings.any { it.target == OutputTarget.GyroPause && value(it.source) >= PRESS_THRESHOLD }) return@synchronized false
             when (profile.workspace(workspaceIndex).gyro.mode) {
                 GyroMode.OFF -> false
                 GyroMode.ALWAYS -> true
@@ -248,7 +249,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 }
                 is OutputTarget.Key -> if (v >= PRESS_THRESHOLD) heldKeys.add(t.usage)
                 is OutputTarget.Mouse -> if (v >= PRESS_THRESHOLD) mouseButtons = mouseButtons or (1 shl t.button.bit)
-                is OutputTarget.Wheel, OutputTarget.GyroHold, OutputTarget.GyroToggle -> Unit
+                is OutputTarget.Wheel, OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause -> Unit
             }
         }
 

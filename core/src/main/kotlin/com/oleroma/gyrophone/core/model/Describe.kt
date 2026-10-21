@@ -27,6 +27,7 @@ object Describe {
         is OutputTarget.Wheel -> if (t.step > 0) "Wheel up" else "Wheel down"
         OutputTarget.GyroHold -> "Hold for gyro mouse"
         OutputTarget.GyroToggle -> "Toggle gyro mouse"
+        OutputTarget.GyroPause -> "Pause gyro mouse (ratchet)"
     }
 
     private fun half(h: AxisHalf) = when (h) {
@@ -63,6 +64,7 @@ object Describe {
         is OutputTarget.Wheel -> if (t.step > 0) "Wheel ↑" else "Wheel ↓"
         OutputTarget.GyroHold -> "Gyro hold"
         OutputTarget.GyroToggle -> "Gyro toggle"
+        OutputTarget.GyroPause -> "Ratchet"
     }
 
     private val keyboardOrder: List<Int> = buildList {
@@ -86,7 +88,7 @@ object Describe {
             if (it.isTrigger) listOf(OutputTarget.PadAxis(it)) else listOf(OutputTarget.PadAxis(it), OutputTarget.PadAxis(it, -1f))
         },
         "Mouse" to MouseButton.entries.map { OutputTarget.Mouse(it) } + listOf(OutputTarget.Wheel(1), OutputTarget.Wheel(-1)),
-        "Gyro" to listOf(OutputTarget.GyroHold, OutputTarget.GyroToggle),
+        "Gyro" to listOf(OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause),
         "Keyboard" to (keyboardOrder.filter { it in HidUsage.names } + HidUsage.names.keys.sorted())
             .distinct().map { OutputTarget.Key(it) },
     )
