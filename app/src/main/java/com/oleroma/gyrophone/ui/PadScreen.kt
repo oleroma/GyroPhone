@@ -1,6 +1,5 @@
 package com.oleroma.gyrophone.ui
 
-import android.view.MotionEvent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -86,6 +85,11 @@ private const val NEW_BUTTON_SIZE = 0.14f
 private const val NEW_STICK_SIZE = 0.3f
 
 private enum class EditGesture { PRESS, MOVE, RESIZE, PINCH, EMPTY, NONE }
+
+/** Whether the touch event being dispatched is a cancel; set by [MainActivity] (main thread). */
+internal object TouchStream {
+    var cancelled = false
+}
 
 /**
  * Full-screen virtual game pad for the active profile. Multi-touch: each finger that lands on a
@@ -301,10 +305,8 @@ fun PadScreen(runtime: GamepadRuntime) {
                         val event = awaitPointerEvent()
                         val buttonsDown = HashSet<String>()
                         // The system took the touch (e.g. a three-finger screenshot gesture): Compose
-                        // then lifts every pointer without a MotionEvent. That is not a tap.
-                        val me = event.motionEvent
-                        val systemCancel = event.changes.any { !it.pressed && it.previousPressed } &&
-                            (me == null || me.actionMasked == MotionEvent.ACTION_CANCEL)
+                        // reports the cancel as every pointer lifting. That is not a tap.
+                        val systemCancel = TouchStream.cancelled && event.changes.any { !it.pressed && it.previousPressed }
                         if (systemCancel && padOwner.isNotEmpty()) {
                             if (padOwner.size >= 2) systemTookTouch++
                             padOwner.clear()
