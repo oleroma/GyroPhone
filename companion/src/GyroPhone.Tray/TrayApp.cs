@@ -47,6 +47,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private readonly ToolStripMenuItem _installDriverItem, _retryDriverItem;
     private readonly ToolStripMenuItem _restartAdminItem;
     private readonly System.Windows.Forms.Timer _uiTimer;
+    private readonly CompanionUpdater _updater;
+    private readonly ToolStripMenuItem _versionItem;
 
     private PairForm? _pairForm;
     private StatusForm? _statusForm;
@@ -102,10 +104,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _restartAdminItem = new ToolStripMenuItem("Restart as administrator", null, (_, _) => RestartAsAdmin());
         var logItem = new ToolStripMenuItem("Open log folder", null, (_, _) => OpenLogFolder());
         var exitItem = new ToolStripMenuItem("Exit", null, (_, _) => ExitApp());
-        var versionItem = new ToolStripMenuItem($"{Program.AppName} {Application.ProductVersion}") { Enabled = false };
+        _versionItem = new ToolStripMenuItem($"{Program.AppName} {Application.ProductVersion}") { Enabled = false };
         _menu.Items.AddRange(new ToolStripItem[]
         {
-            versionItem,
+            _versionItem,
             _statusItem,
             new ToolStripSeparator(),
             outputItem,
@@ -141,6 +143,11 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         Application.ApplicationExit += OnApplicationExit;
         AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
 
+        _updater = new CompanionUpdater(_exePath, Application.ProductVersion, _log.Write,
+            isIdle: () => !_engine.Snapshot().Connected && (_pairForm == null || _pairForm.IsDisposed),
+            exitForUpdate: ExitApp);
+        _updater.Changed += Refresh;
+
         _uiTimer = new System.Windows.Forms.Timer { Interval = 1000 };
         _uiTimer.Tick += (_, _) => Refresh();
 
@@ -158,11 +165,14 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _log.Write(_server.State == ServerState.PortInUse ? $"port {Wire.Port} in use" : "UDP server failed to start");
         }
         _uiTimer.Start();
+        _updater.Start();
         CheckFirewallAsync();
         Refresh();
 
         if (_padError != null)
             Balloon("Gamepad output is off", $"{_padError}. Keyboard and mouse still work. Use \"Install gamepad driver\" in the menu.", ToolTipIcon.Warning);
+        if (Program.JustUpdated)
+            Balloon("GyroPhone Companion updated", $"Now running {Application.ProductVersion}. Pairing and settings are kept.", ToolTipIcon.Info);
         // First run: the engine opened the pairing window because nothing is paired yet.
         if (_engine.Snapshot().PairingWindowS > 0) OpenPairForm();
     }
@@ -246,6 +256,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _retryDriverItem.Available = !s.DriverOk;
         _restartAdminItem.Available = !ElevationProbe.IsSelfElevated;
         RebuildPhones(s.PairedPhones);
+        _versionItem.Text = _updater.Pending is { } pending
+            ? $"{Program.AppName} {Application.ProductVersion} · {pending} starts when the phone disconnects"
+            : $"{Program.AppName} {Application.ProductVersion}";
+        if (!s.Connected) _updater.TryRestart();
 
         if (s.ElevatedForeground && !ElevationProbe.IsSelfElevated && s.Connected && !_uipiHintShown)
         {
@@ -394,7 +408,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
 
     private void CheckFirewallAsync() => Task.Run(() =>
     {
-        bool ok = FirewallHelper.RuleExists();
+        bool ok = FirewallHelper.RuleExists(_exePath);
         Post(() =>
         {
             _firewallOk = ok;
@@ -405,7 +419,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private void AllowThroughFirewall() => Task.Run(() =>
     {
         bool added = FirewallHelper.AddRuleElevated(_exePath);
-        bool ok = FirewallHelper.RuleExists();
+        bool ok = FirewallHelper.RuleExists(_exePath);
         _log.Write($"firewall rule add {(added ? "ok" : "failed or declined")}, present {ok}");
         Post(() =>
         {
@@ -556,6 +570,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             SystemEvents.PowerModeChanged -= OnPowerModeChanged;
             Application.ApplicationExit -= OnApplicationExit;
             _uiTimer.Stop();
+            _updater.Dispose();
             _watchdog.Dispose();
             _engine.Shutdown();
             _server.Stop();

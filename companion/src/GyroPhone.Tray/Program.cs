@@ -10,6 +10,11 @@ internal static class Program
     /// <summary>Passed by "Restart as administrator": wait for the old instance to exit instead of bowing out.</summary>
     public const string RestartedArg = "--restarted";
 
+    /// <summary>Passed when restarting into a newer build, which then says it was updated.</summary>
+    public const string UpdatedArg = "--updated";
+
+    public static bool JustUpdated { get; private set; }
+
     [STAThread]
     private static int Main(string[] args)
     {
@@ -47,6 +52,7 @@ internal static class Program
             return 0;
         }
 
+        JustUpdated = args.Contains(UpdatedArg);
         GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
         try
         {
