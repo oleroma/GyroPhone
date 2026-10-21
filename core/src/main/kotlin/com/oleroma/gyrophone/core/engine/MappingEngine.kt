@@ -87,6 +87,38 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     @Volatile var onChange: Runnable? = null
 
+    // ---- Workspaces API (contract; see the PR). Implementations are filled in by the engine work. ----
+
+    /**
+     * A key of a physical device. Only the active workspace's [com.oleroma.gyrophone.core.model.AttachedPad]
+     * matching [device] (Workspace.padFor) maps it; an unattached device does nothing. Returns true
+     * when that pad maps the key, so the caller can consume the event.
+     */
+    fun setKey(device: PadDevice, keyCode: Int, pressed: Boolean): Boolean = setKey(keyCode, pressed)
+
+    /** An axis of a physical device; routed like [setKey]. */
+    fun setAxis(device: PadDevice, axis: Int, value: Float) = setAxis(axis, value)
+
+    /** Releases everything a device holds (it was disconnected). */
+    fun deviceRemoved(deviceId: Int) = Unit
+
+    /**
+     * A finger landed on touch control [id] (BUTTON kind) at [x], [y] px of the pad area. With
+     * the workspace's touchpadOverButtons off it presses at once; on, it presses on a still lift,
+     * after a still hold, or becomes a touchpad finger when it moves. [pointer] is the finger id.
+     */
+    fun buttonDown(pointer: Long, id: String, x: Float, y: Float) = setTouch(id, true)
+
+    fun buttonMove(pointer: Long, x: Float, y: Float) = Unit
+
+    fun buttonUp(pointer: Long) = Unit
+
+    /** Touch controls whose modifier is latched or locked (sticky modifiers), for highlighting. */
+    fun latchedTouches(): Set<String> = emptySet()
+
+    /** Touch controls currently pressed (including by touchpad-over-buttons commits), for highlighting. */
+    fun pressedTouches(): Set<String> = synchronized(lock) { HashSet(touches) }
+
     /** Returns true if the profile maps this key, so the caller can consume the event. */
     fun setKey(keyCode: Int, pressed: Boolean): Boolean {
         val mapped = synchronized(lock) {

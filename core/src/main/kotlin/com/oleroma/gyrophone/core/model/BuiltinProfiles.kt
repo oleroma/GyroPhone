@@ -96,12 +96,17 @@ object BuiltinProfiles {
         stickyModifiers = true,
     )
 
+    /** Workspaces offered by "Add workspace" and put in every new profile. */
+    val presets: List<Workspace> get() = listOf(controllerWorkspace, wasdWorkspace, keyboardWorkspace)
+
+    /** An empty workspace: touchpad only, no controls, no pads. */
+    fun blankWorkspace(name: String = "Workspace") = Workspace(id = "ws", name = name)
+
+    /** A new profile with the three preset workspaces. */
+    fun newProfile(id: String, name: String) = Profile(id = id, name = name, workspaces = presets)
+
     /** The profile a fresh install starts in: Controller, WASD and Keyboard workspaces. */
-    val default = Profile(
-        id = "builtin.default",
-        name = "Default",
-        workspaces = listOf(controllerWorkspace, wasdWorkspace, keyboardWorkspace),
-    )
+    val default = newProfile("builtin.default", "Default")
 
     /** Today's controller-as-keyboard-and-mouse mapping (left stick = WASD, triggers = mouse). */
     fun kbmPadMappings(): List<Mapping> = listOf(
