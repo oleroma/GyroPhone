@@ -290,20 +290,23 @@ class GamepadRuntime(context: Context) {
 
     /**
      * Replaces the user pad preset with [preset]'s id (name and mappings) and gives every pad that
-     * uses it, in all saved profiles, the new mappings. Builtin presets are never changed.
+     * uses it ([PadPresets.uses]) in the saved user profiles the new mappings. Builtin presets and
+     * builtin profiles are never changed.
      */
     fun updatePadPreset(preset: PadPreset) {
-        if (PadPresets.isBuiltin(preset.id) || _padPresets.value.none { it.id == preset.id }) return
+        val old = _padPresets.value.firstOrNull { it.id == preset.id }
+        if (PadPresets.isBuiltin(preset.id) || old == null) return
         _padPresets.value = _padPresets.value.map { if (it.id == preset.id) preset else it }
         store.savePadPresets(_padPresets.value)
         val activeId = _activeProfile.value.id
         for (p in store.userProfiles()) {
             if (p.id == activeId) continue
-            val updated = PadPresets.retarget(p, preset)
+            val updated = PadPresets.retarget(p, old, preset)
             if (updated !== p) store.save(updated)
         }
         refreshProfiles()
-        editActiveProfile { PadPresets.retarget(it, preset) }
+        // A builtin active profile is left alone: changing it would fork a custom copy.
+        if (!store.isBuiltin(_activeProfile.value)) editActiveProfile { PadPresets.retarget(it, old, preset) }
     }
 
     /** Removes a user pad preset (pads that use it keep their mappings and show as Custom). */

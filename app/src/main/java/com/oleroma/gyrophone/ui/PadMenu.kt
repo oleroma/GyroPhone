@@ -123,13 +123,16 @@ private fun PadMenu(
     val page = stack.last()
     fun open(p: PadMenuPage) = onNavigate(stack + p)
     val back = { onNavigate(stack.dropLast(1)) }
+    /** Set by a page with unsaved changes: it asks before running the given way out. */
+    var leaveGuard by remember { mutableStateOf<((() -> Unit) -> Unit)?>(null) }
+    fun leave(action: () -> Unit) = leaveGuard?.invoke(action) ?: action()
 
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = back) { Text(if (stack.size > 1) "← Back" else "← Pad") }
+            TextButton(onClick = { leave(back) }) { Text(if (stack.size > 1) "← Back" else "← Pad") }
             Text(
                 stack.joinToString("  ›  ") { pageTitle(it, profile.workspace(wsIndex)) },
                 style = MaterialTheme.typography.titleMedium,
@@ -137,7 +140,7 @@ private fun PadMenu(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = { onNavigate(emptyList()) }) { Text("Close") }
+            TextButton(onClick = { leave { onNavigate(emptyList()) } }) { Text("Close") }
         }
         HorizontalDivider()
         val content = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)
@@ -196,6 +199,7 @@ private fun PadMenu(
                 page.presetId,
                 content,
                 onDone = back,
+                onLeaveGuard = { leaveGuard = it },
             )
         }
     }

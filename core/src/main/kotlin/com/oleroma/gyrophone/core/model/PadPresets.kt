@@ -55,14 +55,22 @@ object PadPresets {
     fun apply(pad: AttachedPad, preset: PadPreset): AttachedPad = pad.copy(mappings = preset.mappings, presetId = preset.id)
 
     /**
-     * [profile] with every pad that names [preset] (in any workspace) given its current mappings;
-     * the same instance when no pad names it. Pads that only happen to match are left alone.
+     * True when [pad] uses the saved preset [old]: its mappings still equal the preset's (order
+     * ignored) and it names that preset, or names none (pads saved before presets were named).
+     * A pad that names a deleted preset whose id was reused, or that was edited since, is not.
      */
-    fun retarget(profile: Profile, preset: PadPreset): Profile {
-        if (profile.workspaces.none { w -> w.pads.any { it.presetId == preset.id && it.mappings != preset.mappings } }) return profile
+    fun uses(pad: AttachedPad, old: PadPreset): Boolean =
+        (pad.presetId == old.id || pad.presetId == null) && pad.mappings.toSet() == old.mappings.toSet()
+
+    /**
+     * [profile] with every pad that [uses] [old] (in any workspace) given [updated]'s mappings and
+     * id; the same instance when no pad uses it.
+     */
+    fun retarget(profile: Profile, old: PadPreset, updated: PadPreset): Profile {
+        if (profile.workspaces.none { w -> w.pads.any { uses(it, old) } }) return profile
         return profile.copy(workspaces = profile.workspaces.map { w ->
-            if (w.pads.none { it.presetId == preset.id }) w
-            else w.copy(pads = w.pads.map { if (it.presetId == preset.id) it.copy(mappings = preset.mappings) else it })
+            if (w.pads.none { uses(it, old) }) w
+            else w.copy(pads = w.pads.map { if (uses(it, old)) apply(it, updated) else it })
         })
     }
 

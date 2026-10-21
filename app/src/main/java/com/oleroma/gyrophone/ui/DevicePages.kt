@@ -26,10 +26,12 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
@@ -178,7 +180,10 @@ internal fun DevicePage(
         Text("Load a saved profile", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
         for (preset in PadPresets.all(pad.family, userPresets)) {
             Row(
-                Modifier.fillMaxWidth().clickable { if (preset.id != applied?.id) runtime.applyPadPreset(pad.id, preset) },
+                // Loading the shown preset again links a pad saved before pads named their preset.
+                Modifier.fillMaxWidth().clickable {
+                    if (preset.id != applied?.id || pad.presetId != preset.id) runtime.applyPadPreset(pad.id, preset)
+                },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 RadioButton(selected = preset.id == applied?.id, onClick = null, modifier = Modifier.padding(8.dp))
@@ -263,6 +268,8 @@ internal fun PadProfileEditor(
     presetId: String?,
     modifier: Modifier,
     onDone: () -> Unit,
+    /** Gets a guard while there are unsaved changes (null otherwise); the menu leaves through it. */
+    onLeaveGuard: (((() -> Unit) -> Unit)?) -> Unit,
 ) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
@@ -304,7 +311,7 @@ internal fun PadProfileEditor(
     }
     val users = remember(source, profile) {
         if (source == null || builtin) 0
-        else profile.workspaces.sumOf { w -> w.pads.count { it.presetId == source.id } }
+        else profile.workspaces.sumOf { w -> w.pads.count { PadPresets.uses(it, source) } }
     }
 
     // Live: rows whose input is pressed (half or more) on a connected pad.
@@ -330,7 +337,17 @@ internal fun PadProfileEditor(
         }
     }
 
+    /** Where to go once changes are discarded; null = [onDone]. */
+    var pendingLeave by remember { mutableStateOf<(() -> Unit)?>(null) }
     BackHandler(enabled = dirty) { confirmDiscard = true }
+    val guard by rememberUpdatedState<(() -> Unit) -> Unit>({ action ->
+        pendingLeave = action
+        confirmDiscard = true
+    })
+    DisposableEffect(dirty) {
+        onLeaveGuard(if (dirty) { action -> guard(action) } else null)
+        onDispose { onLeaveGuard(null) }
+    }
 
     fun save() {
         val trimmed = name.trim().ifEmpty { startName }
@@ -454,6 +471,12 @@ internal fun PadProfileEditor(
                                 )
                             }
                             AddChip(onClick = { picking = input to null })
+                            val standard = ControllerDiagrams.defaultTargets(input, pad.family)
+                            if (standard.toSet() != targets.toSet()) {
+                                TextButton(onClick = { mappings = Bindings.setTargets(mappings, input, standard) }) {
+                                    Text("Standard", style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
                         }
                     }
                 }
@@ -497,16 +520,26 @@ internal fun PadProfileEditor(
 
     if (confirmDiscard) {
         AlertDialog(
-            onDismissRequest = { confirmDiscard = false },
+            onDismissRequest = {
+                confirmDiscard = false
+                pendingLeave = null
+            },
             title = { Text("Discard changes?") },
             text = { Text("The changes to \"$startName\" are not saved.") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDiscard = false
-                    onDone()
+                    val leave = pendingLeave ?: onDone
+                    pendingLeave = null
+                    leave()
                 }) { Text("Discard", color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("Keep editing") } },
+            dismissButton = {
+                TextButton(onClick = {
+                    confirmDiscard = false
+                    pendingLeave = null
+                }) { Text("Keep editing") }
+            },
         )
     }
 

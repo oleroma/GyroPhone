@@ -57,19 +57,39 @@ class PadPresetsTest {
         assertNull(PadPresets.applied(edited, listOf(copy)))
     }
 
-    @Test fun retargetUpdatesOnlyPadsNamingThePreset() {
+    @Test fun retargetUpdatesOnlyPadsUsingThePreset() {
         val racing = PadPreset("user.pad1", "Racing", listOf(Mapping(InputSource.Key(96), OutputTarget.Key(44))))
         val named = PadPresets.apply(pad.copy(id = "pad1"), racing)
-        val lookalike = pad.copy(id = "pad2", mappings = racing.mappings)
+        // Saved before presets were named: same mappings, no id. It uses Racing too.
+        val unnamed = pad.copy(id = "pad2", mappings = racing.mappings)
+        // Names Racing but was edited since: no longer uses it.
+        val edited = named.copy(id = "pad3", mappings = racing.mappings + Mapping(InputSource.Key(97), OutputTarget.Key(45)))
+        // Same mappings but loaded from another preset.
+        val other = pad.copy(id = "pad4", mappings = racing.mappings, presetId = "user.pad9")
         val profile = Profile(
             id = "user.p", name = "P",
-            workspaces = listOf(Workspace("ws1", "A", pads = listOf(named, lookalike)), Workspace("ws2", "B", pads = listOf(pad))),
+            workspaces = listOf(
+                Workspace("ws1", "A", pads = listOf(named, unnamed, edited, other)),
+                Workspace("ws2", "B", pads = listOf(pad)),
+            ),
         )
-        assertSame(profile, PadPresets.retarget(profile, racing))
-        val changed = racing.copy(mappings = listOf(Mapping(InputSource.Key(97), OutputTarget.Key(45))))
-        val out = PadPresets.retarget(profile, changed)
-        assertEquals(changed.mappings, out.workspaces[0].pads[0].mappings)
-        assertEquals(racing.mappings, out.workspaces[0].pads[1].mappings)
-        assertSame(profile.workspaces[1], out.workspaces[1])
+        val unused = PadPreset("user.pad7", "Unused", listOf(Mapping(InputSource.Key(99), OutputTarget.Key(47))))
+        assertSame(profile, PadPresets.retarget(profile, unused, unused.copy(mappings = emptyList())))
+        val changed = racing.copy(mappings = listOf(Mapping(InputSource.Key(98), OutputTarget.Key(46))))
+        val pads = PadPresets.retarget(profile, racing, changed).workspaces[0].pads
+        assertEquals(changed.mappings, pads[0].mappings)
+        assertEquals(changed.mappings, pads[1].mappings)
+        assertEquals("user.pad1", pads[1].presetId)
+        assertEquals(edited, pads[2])
+        assertEquals(other, pads[3])
+        assertSame(profile.workspaces[1], PadPresets.retarget(profile, racing, changed).workspaces[1])
+    }
+
+    @Test fun aReusedIdDoesNotTakeOverPadsOfTheDeletedPreset() {
+        val racing = PadPreset("user.pad1", "Racing", listOf(Mapping(InputSource.Key(96), OutputTarget.Key(44))))
+        val stale = PadPresets.apply(pad, racing)
+        val shooter = PadPreset("user.pad1", "Shooter", listOf(Mapping(InputSource.Key(97), OutputTarget.Key(45))))
+        val profile = Profile(id = "user.p", name = "P", workspaces = listOf(Workspace("ws1", "A", pads = listOf(stale))))
+        assertSame(profile, PadPresets.retarget(profile, shooter, shooter.copy(mappings = emptyList())))
     }
 }
