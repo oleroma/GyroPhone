@@ -10,6 +10,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.Surface
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,6 +25,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -84,15 +86,20 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(orientation) { requestedOrientation = orientation.activityValue }
                 Surface(Modifier.fillMaxSize()) {
                     var tab by rememberSaveable { mutableIntStateOf(0) }
+                    // Full-screen pad: the profile's two fullscreen corners pressed together; Back also leaves.
+                    var fullscreen by rememberSaveable { mutableStateOf(false) }
+                    BackHandler(enabled = fullscreen) { fullscreen = false }
                     Column(Modifier.fillMaxSize()) {
-                        TabRow(selectedTabIndex = tab) {
-                            listOf("Connect", "Pad", "Controller", "Profiles").forEachIndexed { i, title ->
-                                Tab(selected = tab == i, onClick = { tab = i }, text = { Text(title) })
+                        if (!fullscreen) {
+                            TabRow(selectedTabIndex = tab) {
+                                listOf("Connect", "Pad", "Controller", "Profiles").forEachIndexed { i, title ->
+                                    Tab(selected = tab == i, onClick = { tab = i }, text = { Text(title) })
+                                }
                             }
                         }
                         when (tab) {
                             0 -> ConnectScreen(runtime, onRetry = { permissionRequest.launch(permissions) })
-                            1 -> PadScreen(runtime)
+                            1 -> PadScreen(runtime, fullscreen = fullscreen, onFullscreen = { fullscreen = it })
                             2 -> ControllerScreen(runtime)
                             else -> ProfilesScreen(runtime)
                         }

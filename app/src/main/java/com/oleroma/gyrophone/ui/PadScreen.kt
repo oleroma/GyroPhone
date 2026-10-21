@@ -62,6 +62,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
+import com.oleroma.gyrophone.core.model.FullscreenChord
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Placement
 import com.oleroma.gyrophone.core.model.Profile
@@ -101,8 +102,15 @@ internal object TouchStream {
  * Done saves (a builtin becomes a custom copy).
  */
 @Composable
-fun PadScreen(runtime: GamepadRuntime) {
+fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen: (Boolean) -> Unit = {}) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
+    val isFullscreen by rememberUpdatedState(fullscreen)
+    val setFullscreen by rememberUpdatedState(onFullscreen)
+    /**
+     * Set once the fullscreen chord fired, cleared when both corners are free again. Outside the
+     * touch handler because the toggle resizes the pad, which restarts the handler mid-press.
+     */
+    val chordFired = remember { BooleanArray(1) }
     var draft by remember { mutableStateOf<Profile?>(null) }
     var selected by remember { mutableStateOf<String?>(null) }
     var dragging by remember { mutableStateOf(false) }
@@ -300,10 +308,12 @@ fun PadScreen(runtime: GamepadRuntime) {
                 val stickOwner = HashMap<PointerId, String>()
                 val stickCenters = HashMap<String, Offset>()
                 val padOwner = HashSet<PointerId>()
+                val chordIds = FullscreenChord.ids(profile)
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
                         val buttonsDown = HashSet<String>()
+                        val cornersDown = HashSet<String>()
                         // The system took the touch (e.g. a three-finger screenshot gesture): Compose
                         // reports the cancel as every pointer lifting. That is not a tap.
                         val systemCancel = TouchStream.cancelled && event.changes.any { !it.pressed && it.previousPressed }
@@ -352,7 +362,10 @@ fun PadScreen(runtime: GamepadRuntime) {
                                     stickPos[stickId] = d
                                 }
                             } else {
-                                hit(controls, ch.position)?.takeIf { it.kind == TouchKind.BUTTON }?.let { buttonsDown += it.id }
+                                hit(controls, ch.position)?.let {
+                                    if (it.kind == TouchKind.BUTTON) buttonsDown += it.id
+                                    else if (it.kind == TouchKind.FULLSCREEN) cornersDown += it.id
+                                }
                             }
                             ch.consume()
                         }
@@ -362,6 +375,14 @@ fun PadScreen(runtime: GamepadRuntime) {
                                 if (down) pressed[c.id] = true else pressed.remove(c.id)
                                 runtime.engine.setTouch(c.id, down)
                             }
+                        }
+                        if (chordIds.size >= 2 && cornersDown.containsAll(chordIds)) {
+                            if (!chordFired[0]) {
+                                chordFired[0] = true
+                                setFullscreen(!isFullscreen)
+                            }
+                        } else if (cornersDown.isEmpty()) {
+                            chordFired[0] = false
                         }
                     }
                 }
@@ -412,6 +433,7 @@ fun PadScreen(runtime: GamepadRuntime) {
                 val tint = when {
                     isSelected -> Color(0xFFFFC857)
                     isPressed -> Color(0xFF7CC4FF)
+                    c.kind == TouchKind.FULLSCREEN -> Color(0x33FFFFFF)
                     else -> Color(0x66FFFFFF)
                 }
                 PadControl(
@@ -438,7 +460,7 @@ fun PadScreen(runtime: GamepadRuntime) {
             }
         }
 
-        if (!editing) {
+        if (!editing && !fullscreen) {
             FilledTonalButton(
                 onClick = {
                     releaseAll()
@@ -474,6 +496,13 @@ fun PadScreen(runtime: GamepadRuntime) {
                     draft = d.copy(touchControls = d.touchControls + place(c, 0.5f, 0.5f, false))
                     selected = id
                 }) { Text("+ Stick") }
+                if (draft?.let { FullscreenChord.has(it) } == false) {
+                    FilledTonalButton(contentPadding = compact, onClick = addCorners@{
+                        val d = draft ?: return@addCorners
+                        draft = FullscreenChord.add(d)
+                        selected = FullscreenChord.ids(draft!!).firstOrNull()
+                    }) { Text("+ Fullscreen") }
+                }
                 if (snap) {
                     FilledTonalButton(contentPadding = compact, onClick = { snap = false }) { Text("Snap: on") }
                 } else {
@@ -539,7 +568,7 @@ fun PadScreen(runtime: GamepadRuntime) {
                         selected = id
                     },
                     onDelete = {
-                        draft = Bindings.removeTouchControl(d, sel.id)
+                        draft = if (sel.kind == TouchKind.FULLSCREEN) FullscreenChord.remove(d) else Bindings.removeTouchControl(d, sel.id)
                         selected = null
                     },
                     onClose = { selected = null },
@@ -692,58 +721,99 @@ private fun ControlSettingsPanel(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    (if (control.kind == TouchKind.STICK) "Stick" else "Button") + " · " + control.id,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
+            if (control.kind == TouchKind.FULLSCREEN) {
+                FullscreenCornerSettings(control, inPortrait, onSize, onDelete, onClose)
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        (if (control.kind == TouchKind.STICK) "Stick" else "Button") + " · " + control.id,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onClose) { Text("✕") }
+                }
+                OutlinedTextField(
+                    value = control.label,
+                    onValueChange = { onControlChange(current.copy(label = it)) },
+                    label = { Text("Label") },
+                    placeholder = { Text("Shows the mapping") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                TextButton(onClick = onClose) { Text("✕") }
-            }
-            OutlinedTextField(
-                value = control.label,
-                onValueChange = { onControlChange(current.copy(label = it)) },
-                label = { Text("Label") },
-                placeholder = { Text("Shows the mapping") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Shape", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(52.dp))
-                SelectChip("Circle", control.shape == TouchShape.CIRCLE) { onControlChange(current.copy(shape = TouchShape.CIRCLE)) }
-                SelectChip("Square", control.shape == TouchShape.SQUARE) { onControlChange(current.copy(shape = TouchShape.SQUARE)) }
-            }
-            Column {
-                Text("Size ${(control.placeSize(inPortrait) * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
-                Slider(
-                    value = control.placeSize(inPortrait),
-                    onValueChange = onSize,
-                    valueRange = TouchControl.MIN_SIZE..TouchControl.MAX_SIZE,
-                )
-            }
-            HorizontalDivider()
-            Text("Mapping", style = MaterialTheme.typography.titleSmall)
-            if (control.kind == TouchKind.STICK) {
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    for (preset in Bindings.StickPreset.entries) {
-                        SelectChip(preset.label, presetMatches(profile, inputs, preset)) {
-                            onProfileChange(Bindings.applyStickPreset(profile, inputs, preset))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Shape", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(52.dp))
+                    SelectChip("Circle", control.shape == TouchShape.CIRCLE) { onControlChange(current.copy(shape = TouchShape.CIRCLE)) }
+                    SelectChip("Square", control.shape == TouchShape.SQUARE) { onControlChange(current.copy(shape = TouchShape.SQUARE)) }
+                }
+                Column {
+                    Text("Size ${(control.placeSize(inPortrait) * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
+                    Slider(
+                        value = control.placeSize(inPortrait),
+                        onValueChange = onSize,
+                        valueRange = TouchControl.MIN_SIZE..TouchControl.MAX_SIZE,
+                    )
+                }
+                HorizontalDivider()
+                Text("Mapping", style = MaterialTheme.typography.titleSmall)
+                if (control.kind == TouchKind.STICK) {
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        for (preset in Bindings.StickPreset.entries) {
+                            SelectChip(preset.label, presetMatches(profile, inputs, preset)) {
+                                onProfileChange(Bindings.applyStickPreset(profile, inputs, preset))
+                            }
                         }
                     }
                 }
-            }
-            BindingList(profile = profile, inputs = inputs, onChange = onProfileChange, runtime = runtime)
-            HorizontalDivider()
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onDuplicate) { Text("Duplicate") }
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = onDelete) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                BindingList(profile = profile, inputs = inputs, onChange = onProfileChange, runtime = runtime)
+                HorizontalDivider()
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onDuplicate) { Text("Duplicate") }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onDelete) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun FullscreenCornerSettings(
+    control: TouchControl,
+    inPortrait: Boolean,
+    onSize: (Float) -> Unit,
+    onDelete: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "Fullscreen corner",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onClose) { Text("✕") }
+    }
+    Text(
+        "Press both fullscreen corners at the same time to hide the tabs and the Edit button. " +
+            "Press both again (or Back) to show them. Drag each corner where you like.",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Column {
+        Text("Size ${(control.placeSize(inPortrait) * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
+        Slider(
+            value = control.placeSize(inPortrait),
+            onValueChange = onSize,
+            valueRange = TouchControl.MIN_SIZE..TouchControl.MAX_SIZE,
+        )
+    }
+    HorizontalDivider()
+    Row {
+        Spacer(Modifier.weight(1f))
+        TextButton(onClick = onDelete) { Text("Remove fullscreen", color = MaterialTheme.colorScheme.error) }
     }
 }
 
