@@ -51,7 +51,10 @@ set "APP_EXE=%APP%\GyroPhoneCompanion.exe"
 set "PC="
 if not exist "%OUT%\GyroPhoneCompanion.exe" goto :phone
 if not exist "%APP%" mkdir "%APP%"
-fc /b "%OUT%\GyroPhoneCompanion.exe" "%APP_EXE%" >nul 2>&1 && (set "PC=same" & goto :shortcut)
+rem VERSION.txt names the build at APP_EXE (comparing the 76 MB exes byte by byte is slow).
+set "HAVE="
+if exist "%APP_EXE%" if exist "%APP%\VERSION.txt" set /p HAVE=<"%APP%\VERSION.txt"
+if "%HAVE%"=="%VER%" (set "PC=same" & goto :shortcut)
 rem .old files still in use belong to a companion that has not restarted yet; they go next time.
 del /q "%APP%\GyroPhoneCompanion.exe*.old" >nul 2>&1
 copy /y "%OUT%\GyroPhoneCompanion.exe" "%APP_EXE%.tmp" >nul || goto :pcfail
@@ -59,6 +62,7 @@ set "OLD=%APP_EXE%.old"
 if exist "%OLD%" set "OLD=%APP_EXE%.%RANDOM%.old"
 if exist "%APP_EXE%" move /y "%APP_EXE%" "%OLD%" >nul || goto :pcfail
 move /y "%APP_EXE%.tmp" "%APP_EXE%" >nul || goto :pcfail
+>"%APP%\VERSION.txt" echo %VER%
 set "PC=installed"
 goto :shortcut
 :pcfail
