@@ -9,6 +9,9 @@ import com.oleroma.gyrophone.core.hid.HidDescriptor
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownController
+import com.oleroma.gyrophone.core.model.PadPreset
+import com.oleroma.gyrophone.core.model.PadPresets
+import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.data.ProfileStore
 import com.oleroma.gyrophone.core.net.ByeReason
@@ -271,6 +274,33 @@ class GamepadRuntime(context: Context) {
         refreshProfiles()
         activate(edited)
         return edited
+    }
+
+    private val _padPresets = MutableStateFlow(store.padPresets())
+    /** The user's own pad presets (the builtins come from [PadPresets.builtins]). */
+    val padPresets: StateFlow<List<PadPreset>> = _padPresets
+
+    /** Saves [mappings] as a new user pad preset named [name]; returns it. */
+    fun savePadPreset(name: String, mappings: List<Mapping>): PadPreset {
+        val preset = PadPreset(PadPresets.newId(_padPresets.value.map { it.id }), name.trim().ifBlank { "My preset" }, mappings)
+        _padPresets.value = _padPresets.value + preset
+        store.savePadPresets(_padPresets.value)
+        return preset
+    }
+
+    /** Removes a user pad preset (pads that use it keep their mappings and show as Custom). */
+    fun deletePadPreset(id: String) {
+        _padPresets.value = _padPresets.value.filterNot { it.id == id }
+        store.savePadPresets(_padPresets.value)
+    }
+
+    /** Applies [preset] to the attached pad [padId] of the active workspace. */
+    fun applyPadPreset(padId: String, preset: PadPreset) {
+        editActiveProfile { p ->
+            p.updateWorkspace(workspaceIndex.value) { w ->
+                w.copy(pads = w.pads.map { if (it.id == padId) PadPresets.apply(it, preset) else it })
+            }
+        }
     }
 
     /** Live value of a phone-side source (for highlighting pressed controls). */
