@@ -45,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -78,14 +79,16 @@ import com.oleroma.gyrophone.core.model.withPlacement
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import java.util.UUID
 import kotlin.math.hypot
+import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 private const val GRID = 0.02f
 private const val NEW_BUTTON_SIZE = 0.14f
 private const val NEW_STICK_SIZE = 0.3f
+private const val MIN_EDIT_OPACITY = 0.5f
 
-private enum class EditGesture { PRESS, MOVE, RESIZE, PINCH, EMPTY, NONE }
+private enum class EditGesture { PRESS, MOVE, PINCH, EMPTY, NONE }
 
 /** Whether the touch event being dispatched is a cancel; set by [MainActivity] (main thread). */
 internal object TouchStream {
@@ -98,7 +101,7 @@ internal object TouchStream {
  * A finger that lands on empty background drives the touchpad (cursor, taps, drag, scroll).
  * Controls have separate landscape and portrait placements; the pad box's shape picks one.
  * Edit mode works on a draft profile: tap a control for its settings and mappings, drag to move,
- * drag the corner handle or pinch to resize. Edits change the current orientation's placement.
+ * pinch or use the size slider to resize. Edits change the current orientation's placement.
  * Done saves (a builtin becomes a custom copy).
  */
 @Composable
@@ -107,7 +110,7 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
     val isFullscreen by rememberUpdatedState(fullscreen)
     val setFullscreen by rememberUpdatedState(onFullscreen)
     /**
-     * Set once the fullscreen chord fired, cleared when both corners are free again. Outside the
+     * Set once the fullscreen chord fired, cleared when every finger is up. Outside the
      * touch handler because the toggle resizes the pad, which restarts the handler mid-press.
      */
     val chordFired = remember { BooleanArray(1) }
@@ -145,10 +148,6 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
         fun half(c: TouchControl) = c.placeSize(portrait) * unit / 2f
         fun hit(controls: List<TouchControl>, p: Offset): TouchControl? =
             controls.lastOrNull { it.contains(p.x, p.y, w, h, inPortrait = portrait) }
-        fun handleCenter(c: TouchControl): Offset {
-            val d = if (c.shape == TouchShape.CIRCLE) half(c) * 0.7071f else half(c)
-            return center(c) + Offset(d, d)
-        }
 
         /**
          * Sets the current orientation's centre, keeping the whole control on screen and
@@ -178,7 +177,6 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
         val touchModifier = if (editing) {
             Modifier.pointerInput("edit", w, h) {
                 val slop = viewConfiguration.touchSlop
-                val handleRadius = 28.dp.toPx()
                 awaitPointerEventScope {
                     while (true) {
                         var event = awaitPointerEvent()
@@ -190,29 +188,20 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
                         val controls = draft?.touchControls ?: emptyList()
                         val downPos = first.position
                         val pointer = first.id
-                        val sel = controls.firstOrNull { it.id == selected }
                         var mode: EditGesture
                         var target: String? = null
                         var grab = Offset.Zero
                         var startSize = 0f
                         var pinchStart = 0f
-                        var resizeK = 1f
                         var pinchA: PointerId? = null
                         var pinchB: PointerId? = null
-                        if (sel != null && (downPos - handleCenter(sel)).getDistance() <= handleRadius) {
-                            mode = EditGesture.RESIZE
-                            target = sel.id
-                            startSize = sel.placeSize(portrait)
-                            resizeK = if (sel.shape == TouchShape.CIRCLE) 1.4142f else 1f
+                        val c = hit(controls, downPos)
+                        if (c != null) {
+                            mode = EditGesture.PRESS
+                            target = c.id
+                            grab = downPos - center(c)
                         } else {
-                            val c = hit(controls, downPos)
-                            if (c != null) {
-                                mode = EditGesture.PRESS
-                                target = c.id
-                                grab = downPos - center(c)
-                            } else {
-                                mode = EditGesture.EMPTY
-                            }
+                            mode = EditGesture.EMPTY
                         }
                         event.changes.forEach { it.consume() }
 
@@ -263,15 +252,6 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
                                             val p = main.position - grab
                                             updateControl(id) { place(it, p.x / w, p.y / h, snap) }
                                         }
-                                    }
-                                }
-                                EditGesture.RESIZE -> {
-                                    if (main == null || !main.pressed) {
-                                        mode = EditGesture.NONE
-                                    } else {
-                                        val id = target
-                                        val delta = main.position - downPos
-                                        if (id != null) resize(id, startSize + resizeK * (delta.x + delta.y) / unit)
                                     }
                                 }
                                 EditGesture.PINCH -> {
@@ -381,7 +361,7 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
                                 chordFired[0] = true
                                 setFullscreen(!isFullscreen)
                             }
-                        } else if (cornersDown.isEmpty()) {
+                        } else if (event.changes.none { it.pressed }) {
                             chordFired[0] = false
                         }
                     }
@@ -444,32 +424,26 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
                     filled = isPressed || isSelected,
                     knob = stickPos[c.id] ?: Offset.Zero,
                     knobRadiusPx = r * 0.6f,
-                    modifier = Modifier.offset { IntOffset((ctr.x - r).roundToInt(), (ctr.y - r).roundToInt()) },
+                    modifier = Modifier
+                        .offset { IntOffset((ctr.x - r).roundToInt(), (ctr.y - r).roundToInt()) }
+                        // While editing, faint controls stay findable.
+                        .alpha(if (editing) max(shown.controlOpacity, MIN_EDIT_OPACITY) else shown.controlOpacity),
                 )
-                if (isSelected && !dragging) {
-                    val hc = handleCenter(c)
-                    val handlePx = with(density) { 20.dp.toPx() }
-                    Box(
-                        Modifier
-                            .offset { IntOffset((hc.x - handlePx / 2).roundToInt(), (hc.y - handlePx / 2).roundToInt()) }
-                            .size(20.dp)
-                            .background(Color(0xFFFFC857), CircleShape)
-                            .border(2.dp, Color(0xFF101318), CircleShape),
-                    )
-                }
             }
         }
 
-        if (!editing && !fullscreen) {
-            FilledTonalButton(
-                onClick = {
-                    releaseAll()
-                    selected = null
-                    dragging = false
-                    draft = profile
-                },
-                modifier = Modifier.align(Alignment.TopCenter).padding(8.dp),
-            ) { Text("Edit layout") }
+        if (!editing) {
+            if (!fullscreen) {
+                FilledTonalButton(
+                    onClick = {
+                        releaseAll()
+                        selected = null
+                        dragging = false
+                        draft = profile
+                    },
+                    modifier = Modifier.align(Alignment.TopCenter).padding(8.dp),
+                ) { Text("Edit layout") }
+            }
         } else {
             val compact = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
             Row(
@@ -503,6 +477,17 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
                         selected = FullscreenChord.ids(draft!!).firstOrNull()
                     }) { Text("+ Fullscreen") }
                 }
+                Text(
+                    "Opacity ${(shown.controlOpacity * 100).roundToInt()}%",
+                    color = Color.White.copy(alpha = 0.7f),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Slider(
+                    value = shown.controlOpacity,
+                    onValueChange = { v -> draft = draft?.copy(controlOpacity = v) },
+                    valueRange = Profile.MIN_CONTROL_OPACITY..1f,
+                    modifier = Modifier.width(120.dp),
+                )
                 if (snap) {
                     FilledTonalButton(contentPadding = compact, onClick = { snap = false }) { Text("Snap: on") }
                 } else {

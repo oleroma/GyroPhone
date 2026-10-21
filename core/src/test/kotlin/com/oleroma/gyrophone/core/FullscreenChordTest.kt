@@ -59,3 +59,14 @@ class FullscreenChordTest {
         assertEquals(p, json.decodeFromString(Profile.serializer(), json.encodeToString(Profile.serializer(), p)))
     }
 }
+
+class ControlOpacityTest {
+    private val json = Json { ignoreUnknownKeys = true }
+
+    @Test fun oldProfilesAreFullyOpaqueAndOpacitySurvivesJson() {
+        val old = json.decodeFromString(Profile.serializer(), """{"id":"p","name":"P","mappings":[]}""")
+        assertEquals(1f, old.controlOpacity)
+        val faint = old.copy(controlOpacity = 0.35f)
+        assertEquals(faint, json.decodeFromString(Profile.serializer(), json.encodeToString(Profile.serializer(), faint)))
+    }
+}
