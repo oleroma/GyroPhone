@@ -2,6 +2,8 @@ package com.oleroma.gyrophone.data
 
 import android.content.Context
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
+import com.oleroma.gyrophone.core.model.PadPreset
+import com.oleroma.gyrophone.core.model.PadPresets
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.ProfileJson
 import java.io.File
@@ -62,6 +64,24 @@ class ProfileStore(context: Context) {
 
     fun setWorkspaceIndex(id: String, index: Int) {
         prefs.edit().putInt(KEY_WORKSPACE_PREFIX + id, index).apply()
+    }
+
+    private val padPresetsFile = File(context.filesDir, "pad_presets.json")
+
+    /** The user's pad presets (empty if none saved, or if the file cannot be read: it is then left alone). */
+    @Synchronized fun padPresets(): List<PadPreset> =
+        if (!padPresetsFile.exists()) emptyList()
+        else PadPresets.decode(padPresetsFile.readText()).orEmpty()
+
+    /** Saves the user's pad presets; refuses to replace a file that exists but cannot be read. */
+    @Synchronized fun savePadPresets(presets: List<PadPreset>) {
+        if (padPresetsFile.exists() && PadPresets.decode(padPresetsFile.readText()) == null) return
+        val tmp = File(padPresetsFile.path + ".tmp")
+        tmp.writeText(PadPresets.encode(presets))
+        if (!tmp.renameTo(padPresetsFile)) {
+            padPresetsFile.writeText(tmp.readText())
+            tmp.delete()
+        }
     }
 
     fun isBuiltin(profile: Profile): Boolean = profile.id.startsWith("builtin.")
