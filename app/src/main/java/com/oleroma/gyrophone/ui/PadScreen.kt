@@ -7,6 +7,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,10 +19,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -56,11 +59,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -69,6 +75,7 @@ import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
+import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.Placement
 import com.oleroma.gyrophone.core.model.Profile
@@ -99,7 +106,11 @@ private const val PILL_MS = 1_000L
 /** Highlight refresh while a finger is on a button (holds and lift commits happen between events). */
 private const val HIGHLIGHT_POLL_MS = 50L
 
-private enum class EditGesture { PRESS, MOVE, PINCH, EMPTY, NONE }
+/** PRESS: on a control, not yet moved; HELD: the same after a long press (context menu open). */
+private enum class EditGesture { PRESS, HELD, MOVE, PINCH, EMPTY, NONE }
+
+/** What edit mode shows for the selected control: its mapping picker or its context menu. */
+private enum class EditMenu { NONE, MAPPING, CONTEXT }
 
 /** Whether the touch event being dispatched is a cancel; set by [MainActivity] (main thread). */
 internal object TouchStream {
@@ -113,10 +124,11 @@ internal object TouchStream {
  * background drives the touchpad (cursor, taps, drag, scroll). The two corners ([Profile.corners])
  * are always shown: tap ← / → for the previous / next workspace, both together for fullscreen.
  * Controls have separate landscape and portrait placements; the pad box's shape picks one.
- * Edit mode works on a draft profile: the workspace bar picks, adds and arranges workspaces; tap a
- * control or a corner for its settings and mappings, drag to move, pinch or use the size slider
- * to resize. Edits change the current orientation's placement. Done saves (a builtin becomes a
- * custom copy) and switches to the workspace being edited.
+ * Edit mode works on a draft profile. Its menu floats and can be dragged (or folded) out of the
+ * way; its workspace bar picks, adds and arranges workspaces. Tap a control to change its mapping,
+ * long-press it (or tap a corner) for a menu next to it with all its settings, drag to move,
+ * pinch or use the size slider to resize. Edits change the current orientation's placement. Done
+ * saves (a builtin becomes a custom copy) and switches to the workspace being edited.
  */
 @Composable
 fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen: (Boolean) -> Unit = {}) {
@@ -134,6 +146,11 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
     /** Workspace shown while editing (index into the draft). */
     var editIndex by remember { mutableIntStateOf(0) }
     var selected by remember { mutableStateOf<String?>(null) }
+    var menu by remember { mutableStateOf(EditMenu.NONE) }
+    /** The floating edit menu: drag offset from its top-centre home, size, folded. */
+    var menuOffset by remember { mutableStateOf(Offset.Zero) }
+    var menuSize by remember { mutableStateOf(IntSize.Zero) }
+    var menuFolded by remember { mutableStateOf(false) }
     var showWsSettings by remember { mutableStateOf(false) }
     var dragging by remember { mutableStateOf(false) }
     var snap by remember { mutableStateOf(false) }
@@ -264,6 +281,7 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
         val touchModifier = if (editing) {
             Modifier.pointerInput("edit", w, h) {
                 val slop = viewConfiguration.touchSlop
+                val longPressMs = viewConfiguration.longPressTimeoutMillis
                 awaitPointerEventScope {
                     while (true) {
                         var event = awaitPointerEvent()
@@ -285,6 +303,8 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
                         var pinchA: PointerId? = null
                         var pinchB: PointerId? = null
                         val c = hit(corners, downPos) ?: hit(controls, downPos)
+                        val pressedAt = first.uptimeMillis
+                        var lastAt = pressedAt
                         if (c != null) {
                             mode = EditGesture.PRESS
                             target = c.id
@@ -295,7 +315,21 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
                         event.changes.forEach { it.consume() }
 
                         while (true) {
-                            event = awaitPointerEvent()
+                            // A still press on a control that lasts opens its context menu.
+                            val next = if (mode == EditGesture.PRESS) {
+                                withTimeoutOrNull(max(1L, pressedAt + longPressMs - lastAt)) { awaitPointerEvent() }
+                            } else {
+                                awaitPointerEvent()
+                            }
+                            if (next == null) {
+                                mode = EditGesture.HELD
+                                selected = target
+                                menu = EditMenu.CONTEXT
+                                showWsSettings = false
+                                continue
+                            }
+                            event = next
+                            lastAt = event.changes.firstOrNull()?.uptimeMillis ?: lastAt
                             val down = event.changes.filter { it.pressed }
                             if (down.isEmpty()) break
                             val main = event.changes.firstOrNull { it.id == pointer }
@@ -309,6 +343,7 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
                                     pinchB = down[1].id
                                     target = c.id
                                     selected = c.id
+                                    menu = EditMenu.NONE
                                     showWsSettings = false
                                     startSize = c.placeSize(portrait)
                                     pinchStart = dist
@@ -319,9 +354,10 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
                             }
 
                             when (mode) {
-                                EditGesture.PRESS -> if (main != null && (main.position - downPos).getDistance() > slop) {
+                                EditGesture.PRESS, EditGesture.HELD -> if (main != null && (main.position - downPos).getDistance() > slop) {
                                     mode = EditGesture.MOVE
                                     selected = target
+                                    menu = EditMenu.NONE
                                     showWsSettings = false
                                     dragging = true
                                 }
@@ -362,10 +398,15 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
 
                         when (mode) {
                             EditGesture.PRESS -> {
+                                // A tap: a control's mapping; a corner (no mapping) its menu.
                                 selected = target
+                                menu = if (target != null && d0 != null && isCorner(d0, target)) EditMenu.CONTEXT else EditMenu.MAPPING
                                 showWsSettings = false
                             }
-                            EditGesture.EMPTY -> selected = null
+                            EditGesture.EMPTY -> {
+                                selected = null
+                                menu = EditMenu.NONE
+                            }
                             else -> Unit
                         }
                         dragging = false
@@ -623,148 +664,201 @@ fun PadScreen(runtime: GamepadRuntime, fullscreen: Boolean = false, onFullscreen
             }
         } else {
             val compact = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-            Row(
-                Modifier.align(Alignment.TopCenter).padding(8.dp).horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    if (portrait) "Portrait layout" else "Landscape layout",
-                    color = Color.White.copy(alpha = 0.7f),
-                    style = MaterialTheme.typography.labelLarge,
-                )
-                FilledTonalButton(contentPadding = compact, onClick = addButton@{
-                    val d = draft ?: return@addButton
-                    val wk = d.workspace(editIndex)
-                    val id = freshId(wk, "btn")
-                    val c = newControl(wk, id, TouchKind.BUTTON, NEW_BUTTON_SIZE, portrait)
-                    editWorkspace { it.copy(touchControls = it.touchControls + place(c, 0.5f, 0.5f, false)) }
-                    selected = id
-                    showWsSettings = false
-                }) { Text("+ Button") }
-                FilledTonalButton(contentPadding = compact, onClick = addStick@{
-                    val d = draft ?: return@addStick
-                    val wk = d.workspace(editIndex)
-                    val id = freshId(wk, "stick")
-                    val c = newControl(wk, id, TouchKind.STICK, NEW_STICK_SIZE, portrait)
-                    editWorkspace { it.copy(touchControls = it.touchControls + place(c, 0.5f, 0.5f, false)) }
-                    selected = id
-                    showWsSettings = false
-                }) { Text("+ Stick") }
-                if (snap) {
-                    FilledTonalButton(contentPadding = compact, onClick = { snap = false }) { Text("Snap: on") }
-                } else {
-                    OutlinedButton(contentPadding = compact, onClick = { snap = true }) { Text("Snap: off") }
-                }
-                OutlinedButton(contentPadding = compact, onClick = cancel@{
-                    val d = draft ?: return@cancel
-                    // Stay on the workspace being looked at if the saved profile has it.
-                    val i = profile.indexOfWorkspace(d.workspace(editIndex).id)
-                    draft = null
-                    selected = null
-                    showWsSettings = false
-                    dragging = false
-                    if (i >= 0 && i != runtime.workspaceIndex.value) runtime.switchWorkspace(i)
-                }) { Text("Cancel") }
-                FilledTonalButton(contentPadding = compact, onClick = done@{
-                    val d = draft ?: return@done
-                    val idx = editIndex.coerceIn(0, d.workspaces.lastIndex)
-                    val active = runtime.activeProfile.value
-                    if (d == active) {
-                        Unit
-                    } else if (d.id == active.id) {
-                        runtime.editActiveProfile { d }
-                    } else {
-                        val saved = if (runtime.store.isBuiltin(d)) {
-                            d.copy(id = "user." + UUID.randomUUID(), name = d.name + " (custom)")
-                        } else d
-                        runtime.saveProfile(saved)
-                        runtime.activate(saved)
-                    }
-                    if (runtime.workspaceIndex.value != idx) runtime.switchWorkspace(idx)
-                    draft = null
-                    selected = null
-                    showWsSettings = false
-                    dragging = false
-                }) { Text("Done") }
+            fun clampMenu(o: Offset): Offset {
+                val mx = max(0f, (w - menuSize.width) / 2f)
+                return Offset(o.x.coerceIn(-mx, mx), o.y.coerceIn(0f, max(0f, h - menuSize.height)))
             }
-
-            val d = draft
-            if (d != null) {
+            val menuAt = clampMenu(menuOffset)
+            // The edit menu floats over the pad: drag it by its handle, or fold it, to reach what is under it.
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset { IntOffset(menuAt.x.roundToInt(), menuAt.y.roundToInt()) }
+                    .onSizeChanged { menuSize = it }
+                    .padding(8.dp)
+                    .widthIn(max = maxWidth - 16.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xE01E232B),
+                shadowElevation = 8.dp,
+            ) {
                 Column(
-                    Modifier.align(Alignment.BottomCenter).padding(8.dp),
+                    Modifier.padding(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    AttachHints(
-                        unattached = unattachedControllers(ws, controllers),
-                        onAttach = { c -> editWorkspace { attachController(it, c) } },
-                    )
-                    WorkspaceBar(
-                        profile = d,
-                        index = shownIndex,
-                        onSelect = { k ->
-                            editIndex = k
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "⠿",
+                            color = Color.White.copy(alpha = 0.8f),
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier
+                                .pointerInput(w, h) {
+                                    detectDragGestures { change, drag ->
+                                        change.consume()
+                                        menuOffset = clampMenu(clampMenu(menuOffset) + drag)
+                                    }
+                                }
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                        )
+                        if (!menuFolded) {
+                            Text(
+                                if (portrait) "Portrait layout" else "Landscape layout",
+                                color = Color.White.copy(alpha = 0.7f),
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            FilledTonalButton(contentPadding = compact, onClick = addButton@{
+                                val d = draft ?: return@addButton
+                                val wk = d.workspace(editIndex)
+                                val id = freshId(wk, "btn")
+                                val c = newControl(wk, id, TouchKind.BUTTON, NEW_BUTTON_SIZE, portrait)
+                                editWorkspace { it.copy(touchControls = it.touchControls + place(c, 0.5f, 0.5f, false)) }
+                                selected = id
+                                menu = EditMenu.MAPPING
+                                showWsSettings = false
+                            }) { Text("+ Button") }
+                            FilledTonalButton(contentPadding = compact, onClick = addStick@{
+                                val d = draft ?: return@addStick
+                                val wk = d.workspace(editIndex)
+                                val id = freshId(wk, "stick")
+                                val c = newControl(wk, id, TouchKind.STICK, NEW_STICK_SIZE, portrait)
+                                editWorkspace { it.copy(touchControls = it.touchControls + place(c, 0.5f, 0.5f, false)) }
+                                selected = id
+                                menu = EditMenu.MAPPING
+                                showWsSettings = false
+                            }) { Text("+ Stick") }
+                            if (snap) {
+                                FilledTonalButton(contentPadding = compact, onClick = { snap = false }) { Text("Snap: on") }
+                            } else {
+                                OutlinedButton(contentPadding = compact, onClick = { snap = true }) { Text("Snap: off") }
+                            }
+                        }
+                        OutlinedButton(contentPadding = compact, onClick = { menuFolded = !menuFolded }) {
+                            Text(if (menuFolded) "More ▾" else "Less ▴")
+                        }
+                        OutlinedButton(contentPadding = compact, onClick = cancel@{
+                            val d = draft ?: return@cancel
+                            // Stay on the workspace being looked at if the saved profile has it.
+                            val i = profile.indexOfWorkspace(d.workspace(editIndex).id)
+                            draft = null
                             selected = null
-                        },
-                        onProfileChange = { p, k ->
-                            draft = p
-                            editIndex = k.coerceIn(0, p.workspaces.lastIndex)
+                            showWsSettings = false
+                            dragging = false
+                            if (i >= 0 && i != runtime.workspaceIndex.value) runtime.switchWorkspace(i)
+                        }) { Text("Cancel") }
+                        FilledTonalButton(contentPadding = compact, onClick = done@{
+                            val d = draft ?: return@done
+                            val idx = editIndex.coerceIn(0, d.workspaces.lastIndex)
+                            val active = runtime.activeProfile.value
+                            if (d == active) {
+                                Unit
+                            } else if (d.id == active.id) {
+                                runtime.editActiveProfile { d }
+                            } else {
+                                val saved = if (runtime.store.isBuiltin(d)) {
+                                    d.copy(id = "user." + UUID.randomUUID(), name = d.name + " (custom)")
+                                } else d
+                                runtime.saveProfile(saved)
+                                runtime.activate(saved)
+                            }
+                            if (runtime.workspaceIndex.value != idx) runtime.switchWorkspace(idx)
+                            draft = null
                             selected = null
-                        },
-                        onSettings = {
-                            selected = null
-                            showWsSettings = !showWsSettings
-                        },
-                    )
+                            showWsSettings = false
+                            dragging = false
+                        }) { Text("Done") }
+                    }
+                    val d = draft
+                    if (d != null && !menuFolded) {
+                        AttachHints(
+                            unattached = unattachedControllers(ws, controllers),
+                            onAttach = { c -> editWorkspace { attachController(it, c) } },
+                        )
+                        WorkspaceBar(
+                            profile = d,
+                            index = shownIndex,
+                            onSelect = { k ->
+                                editIndex = k
+                                selected = null
+                            },
+                            onProfileChange = { p, k ->
+                                draft = p
+                                editIndex = k.coerceIn(0, p.workspaces.lastIndex)
+                                selected = null
+                            },
+                            onSettings = {
+                                selected = null
+                                showWsSettings = !showWsSettings
+                            },
+                        )
+                    }
                 }
             }
 
+            val d = draft
             val sel = findControl(selected)
-            // Landscape: docked at the side away from the control. Portrait: the half away from it.
+            // Workspace settings: docked at the right (landscape) or the top half (portrait).
             val panelWidth = if (portrait) maxWidth - 16.dp else (maxWidth * 0.42f).coerceAtMost(360.dp)
-            if (d != null && sel != null && !dragging) {
-                val panelModifier = if (portrait) {
-                    Modifier
-                        .align(if (sel.placeY(true) > 0.5f) Alignment.TopCenter else Alignment.BottomCenter)
-                        .padding(start = 8.dp, end = 8.dp, top = 56.dp, bottom = 8.dp)
-                        .fillMaxHeight(0.5f)
-                } else {
-                    Modifier
-                        .align(if (sel.placeX(false) < 0.5f) Alignment.CenterEnd else Alignment.CenterStart)
-                        .padding(start = 8.dp, end = 8.dp, top = 56.dp, bottom = 8.dp)
-                        .fillMaxHeight()
-                }
-                ControlSettingsPanel(
-                    profile = d,
-                    workspace = ws,
-                    control = sel,
+            val tapPick = d != null && sel != null && !dragging && menu == EditMenu.MAPPING && sel.kind == TouchKind.BUTTON
+            if (tapPick && sel != null) {
+                // Tap on a button: straight to its mapping. The pick replaces the button's (first) action.
+                val input = Bindings.touchInputs(sel).first()
+                TargetPickerDialog(
+                    analog = false,
                     runtime = runtime,
-                    width = panelWidth,
-                    inPortrait = portrait,
-                    onProfileChange = { draft = it },
-                    onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
-                    onControlChange = { changed ->
-                        updateControl(sel.id) { place(changed, changed.placeX(portrait), changed.placeY(portrait), false) }
-                    },
-                    onSize = { resize(sel.id, it) },
-                    onDuplicate = {
-                        val (nw, id) = duplicate(ws, sel)
-                        val copy = nw.touchControls.first { it.id == id }
+                    current = Bindings.targets(ws.mappings, input),
+                    onPick = { t: OutputTarget ->
                         editWorkspace {
-                            nw.copy(touchControls = nw.touchControls.map {
-                                if (it.id == id) place(copy, copy.placeX(portrait), copy.placeY(portrait), false) else it
-                            })
+                            val current = Bindings.targets(it.mappings, input)
+                            val next = (listOf(t) + current.drop(1)).distinct()
+                            it.copy(mappings = Bindings.setTargets(it.mappings, input, next))
                         }
-                        selected = id
                     },
-                    onDelete = {
-                        editWorkspace { Bindings.removeTouchControl(it, sel.id) }
-                        selected = null
-                    },
-                    onClose = { selected = null },
-                    modifier = panelModifier,
+                    onDismiss = { menu = EditMenu.NONE },
                 )
+            } else if (d != null && sel != null && !dragging && menu != EditMenu.NONE) {
+                // Long press (or a tap on a stick or a corner): a menu right next to the control.
+                NearControl(anchor = center(sel), anchorHalf = half(sel)) {
+                    ControlSettingsPanel(
+                        profile = d,
+                        workspace = ws,
+                        control = sel,
+                        runtime = runtime,
+                        width = (maxWidth - 16.dp).coerceAtMost(340.dp),
+                        inPortrait = portrait,
+                        mappingOnly = menu == EditMenu.MAPPING,
+                        onMore = { menu = EditMenu.CONTEXT },
+                        onProfileChange = { draft = it },
+                        onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
+                        onControlChange = { changed ->
+                            updateControl(sel.id) { place(changed, changed.placeX(portrait), changed.placeY(portrait), false) }
+                        },
+                        onSize = { resize(sel.id, it) },
+                        onDuplicate = {
+                            val (nw, id) = duplicate(ws, sel)
+                            val copy = nw.touchControls.first { it.id == id }
+                            editWorkspace {
+                                nw.copy(touchControls = nw.touchControls.map {
+                                    if (it.id == id) place(copy, copy.placeX(portrait), copy.placeY(portrait), false) else it
+                                })
+                            }
+                            selected = id
+                        },
+                        onDelete = {
+                            editWorkspace { Bindings.removeTouchControl(it, sel.id) }
+                            selected = null
+                            menu = EditMenu.NONE
+                        },
+                        onClose = {
+                            selected = null
+                            menu = EditMenu.NONE
+                        },
+                        modifier = Modifier.heightIn(max = maxHeight - 16.dp),
+                    )
+                }
             } else if (d != null && showWsSettings && sel == null) {
                 val panelModifier = if (portrait) {
                     Modifier
@@ -864,6 +958,38 @@ private fun duplicate(workspace: Workspace, c: TouchControl): Pair<Workspace, St
     return workspace.copy(touchControls = workspace.touchControls + copy, mappings = workspace.mappings + copies) to id
 }
 
+/**
+ * Places [content] beside a control centred at [anchor] (px of the pad area, [anchorHalf] its
+ * half size): right of it if it fits, else left, else below or above; always kept on screen.
+ * Takes no touches itself, so the pad around the menu stays editable.
+ */
+@Composable
+private fun NearControl(anchor: Offset, anchorHalf: Float, content: @Composable () -> Unit) {
+    Layout(content = content, modifier = Modifier.fillMaxSize()) { measurables, constraints ->
+        val box = constraints.copy(minWidth = 0, minHeight = 0)
+        val p = measurables.first().measure(box)
+        val gap = 8.dp.roundToPx()
+        val bw = constraints.maxWidth
+        val bh = constraints.maxHeight
+        val right = (anchor.x + anchorHalf).roundToInt() + gap
+        val left = (anchor.x - anchorHalf).roundToInt() - gap - p.width
+        val below = (anchor.y + anchorHalf).roundToInt() + gap
+        val above = (anchor.y - anchorHalf).roundToInt() - gap - p.height
+        val beside = right + p.width <= bw || left >= 0
+        val x = when {
+            right + p.width <= bw -> right
+            left >= 0 -> left
+            else -> anchor.x.roundToInt() - p.width / 2
+        }.coerceIn(0, max(0, bw - p.width))
+        val y = when {
+            beside -> anchor.y.roundToInt() - p.height / 2
+            below + p.height <= bh -> below
+            else -> above
+        }.coerceIn(0, max(0, bh - p.height))
+        layout(bw, bh) { p.place(x, y) }
+    }
+}
+
 @Composable
 private fun PadControl(
     control: TouchControl,
@@ -903,8 +1029,8 @@ private fun PadControl(
 }
 
 /**
- * Settings and mappings of the selected control (or corner), docked at a screen side (portrait:
- * top or bottom half). Corner settings change [profile]; a control's mappings live in [workspace].
+ * Settings and mappings of the selected control (or corner), shown next to it. Corner settings
+ * change [profile]; a control's mappings live in [workspace].
  */
 @Composable
 private fun ControlSettingsPanel(
@@ -914,6 +1040,9 @@ private fun ControlSettingsPanel(
     runtime: GamepadRuntime,
     width: Dp,
     inPortrait: Boolean,
+    /** Only the mapping (a tap on a stick); [onMore] opens the full menu. */
+    mappingOnly: Boolean = false,
+    onMore: () -> Unit = {},
     onProfileChange: (Profile) -> Unit,
     onMappingsChange: (List<Mapping>) -> Unit,
     onControlChange: (TouchControl) -> Unit,
@@ -960,28 +1089,30 @@ private fun ControlSettingsPanel(
                     )
                     TextButton(onClick = onClose) { Text("✕") }
                 }
-                OutlinedTextField(
-                    value = control.label,
-                    onValueChange = { onControlChange(current.copy(label = it)) },
-                    label = { Text("Label") },
-                    placeholder = { Text("Shows the mapping") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Shape", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(52.dp))
-                    SelectChip("Circle", control.shape == TouchShape.CIRCLE) { onControlChange(current.copy(shape = TouchShape.CIRCLE)) }
-                    SelectChip("Square", control.shape == TouchShape.SQUARE) { onControlChange(current.copy(shape = TouchShape.SQUARE)) }
-                }
-                Column {
-                    Text("Size ${(control.placeSize(inPortrait) * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
-                    Slider(
-                        value = control.placeSize(inPortrait),
-                        onValueChange = onSize,
-                        valueRange = TouchControl.MIN_SIZE..TouchControl.MAX_SIZE,
+                if (!mappingOnly) {
+                    OutlinedTextField(
+                        value = control.label,
+                        onValueChange = { onControlChange(current.copy(label = it)) },
+                        label = { Text("Label") },
+                        placeholder = { Text("Shows the mapping") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
                     )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Shape", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(52.dp))
+                        SelectChip("Circle", control.shape == TouchShape.CIRCLE) { onControlChange(current.copy(shape = TouchShape.CIRCLE)) }
+                        SelectChip("Square", control.shape == TouchShape.SQUARE) { onControlChange(current.copy(shape = TouchShape.SQUARE)) }
+                    }
+                    Column {
+                        Text("Size ${(control.placeSize(inPortrait) * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
+                        Slider(
+                            value = control.placeSize(inPortrait),
+                            onValueChange = onSize,
+                            valueRange = TouchControl.MIN_SIZE..TouchControl.MAX_SIZE,
+                        )
+                    }
+                    HorizontalDivider()
                 }
-                HorizontalDivider()
                 Text("Mapping", style = MaterialTheme.typography.titleSmall)
                 if (control.kind == TouchKind.STICK) {
                     Row(
@@ -997,10 +1128,14 @@ private fun ControlSettingsPanel(
                 }
                 TouchMappingList(mappings = workspace.mappings, inputs = inputs, onChange = onMappingsChange, runtime = runtime)
                 HorizontalDivider()
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onDuplicate) { Text("Duplicate") }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onDelete) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                if (mappingOnly) {
+                    TextButton(onClick = onMore) { Text("All settings…") }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onDuplicate) { Text("Duplicate") }
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = onDelete) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                    }
                 }
             }
         }
