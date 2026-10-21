@@ -11,9 +11,11 @@ import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.GamepadButton
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.StickAxis
+import com.oleroma.gyrophone.core.model.Workspace
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -32,13 +34,35 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         set(value) {
             synchronized(lock) {
                 field = value
-                gyroToggled = false
-                keyOrder.clear()
-                touchpad.settings = value.touchpad
-                touchpad.cancel(clock())
+                applyWorkspace()
             }
             onChange?.run()
         }
+
+    /** Index of the active workspace in [profile]; out-of-range values are clamped. */
+    var workspaceIndex: Int = 0
+        set(value) {
+            synchronized(lock) {
+                field = value
+                applyWorkspace()
+            }
+            onChange?.run()
+        }
+
+    /** The active workspace of [profile]. */
+    val workspace: Workspace get() = synchronized(lock) { profile.workspace(workspaceIndex) }
+
+    /** Touch mappings of the active workspace followed by those of its attached pads. */
+    private var mappings: List<Mapping> = emptyList()
+
+    private fun applyWorkspace() {
+        val w = profile.workspace(workspaceIndex)
+        mappings = w.mappings + w.pads.flatMap { it.mappings }
+        gyroToggled = false
+        keyOrder.clear()
+        touchpad.settings = w.touchpad
+        touchpad.cancel(clock())
+    }
 
     private val keys = HashSet<Int>()
     private val axes = HashMap<Int, Float>()
@@ -50,10 +74,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private var mouseDy = 0
     /** Wheel from bindings, in 1/120 notch. */
     private var wheel = 0
-    private val touchpad = Touchpad(profile.touchpad)
+    private val touchpad = Touchpad(profile.workspace(0).touchpad)
 
     /** Keyboard usages in press order, so the 6-key array is stable while keys are held. */
     private val keyOrder = LinkedHashSet<Int>()
+
+    init { applyWorkspace() }
 
     /**
      * Called after every input mutation, outside the engine lock, so a transport can wake its
@@ -65,7 +91,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     fun setKey(keyCode: Int, pressed: Boolean): Boolean {
         val mapped = synchronized(lock) {
             firingEvents { if (pressed) keys.add(keyCode) else keys.remove(keyCode) }
-            profile.mappings.any { it.source == InputSource.Key(keyCode) }
+            mappings.any { it.source == InputSource.Key(keyCode) }
         }
         onChange?.run()
         return mapped
@@ -143,11 +169,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Whether gyro motion should currently move the mouse. */
     val gyroActive: Boolean
         get() = synchronized(lock) {
-            when (profile.gyro.mode) {
+            when (profile.workspace(workspaceIndex).gyro.mode) {
                 GyroMode.OFF -> false
                 GyroMode.ALWAYS -> true
                 GyroMode.HOLD_OR_TOGGLE -> gyroToggled ||
-                    profile.mappings.any { it.target == OutputTarget.GyroHold && value(it.source) >= PRESS_THRESHOLD }
+                    mappings.any { it.target == OutputTarget.GyroHold && value(it.source) >= PRESS_THRESHOLD }
             }
         }
 
@@ -170,7 +196,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         var mouseButtons = 0
         val heldKeys = HashSet<Int>()
 
-        for (m in profile.mappings) {
+        for (m in mappings) {
             val v = value(m.source)
             when (val t = m.target) {
                 is OutputTarget.Pad -> if (v >= PRESS_THRESHOLD) when (t.button) {
@@ -237,7 +263,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     private fun engagedEvents(): Set<OutputTarget> {
         val out = HashSet<OutputTarget>()
-        for (m in profile.mappings) {
+        for (m in mappings) {
             val t = m.target
             if ((t is OutputTarget.Wheel || t == OutputTarget.GyroToggle) && value(m.source) >= PRESS_THRESHOLD) out.add(t)
         }

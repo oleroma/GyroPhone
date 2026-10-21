@@ -69,52 +69,67 @@ object BuiltinProfiles {
         )
     }
 
+    private fun anyPad(mappings: List<Mapping>) = AttachedPad(id = "pad1", mappings = mappings)
+
     /** Touchscreen game pad plus any attached controller, gyro on the "Gyro" touch button. */
-    val virtualGamepad = Profile(
-        id = "builtin.virtual_gamepad",
-        name = "Virtual gamepad",
-        mappings = touchMappings() + KnownLayouts.standardControllerMappings(),
+    val controllerWorkspace = Workspace(
+        id = "controller",
+        name = "Controller",
         touchControls = virtualGamepadControls.map { it.copy(portrait = virtualGamepadPortrait[it.id]) },
+        mappings = touchMappings(),
+        pads = listOf(anyPad(KnownLayouts.standardControllerMappings())),
     )
 
-    /** Attached controller (e.g. GameSir X5) passed through; L3 holds gyro-to-mouse. */
-    val controllerPassthrough = Profile(
-        id = "builtin.controller",
-        name = "Controller passthrough",
-        mappings = KnownLayouts.standardControllerMappings() +
-            Mapping(InputSource.Key(AndroidKey.BUTTON_THUMBR), OutputTarget.GyroToggle),
-        controllers = KnownLayouts.controllers.map { it.match },
-    )
-
-    /** Controller as keyboard + mouse for games without controller support (WASD layout). */
-    val keyboardMouse = Profile(
-        id = "builtin.kbm",
-        name = "Keyboard + mouse (WASD)",
-        mappings = listOf(
-            Mapping(InputSource.Axis(AndroidAxis.Y, AxisHalf.NEGATIVE), OutputTarget.Key(0x1A)), // W
-            Mapping(InputSource.Axis(AndroidAxis.Y, AxisHalf.POSITIVE), OutputTarget.Key(0x16)), // S
-            Mapping(InputSource.Axis(AndroidAxis.X, AxisHalf.NEGATIVE), OutputTarget.Key(0x04)), // A
-            Mapping(InputSource.Axis(AndroidAxis.X, AxisHalf.POSITIVE), OutputTarget.Key(0x07)), // D
-            Mapping(InputSource.Key(AndroidKey.BUTTON_A), OutputTarget.Key(0x2C)), // Space
-            Mapping(InputSource.Key(AndroidKey.BUTTON_B), OutputTarget.Key(0x06)), // C
-            Mapping(InputSource.Key(AndroidKey.BUTTON_X), OutputTarget.Key(0x15)), // R
-            Mapping(InputSource.Key(AndroidKey.BUTTON_Y), OutputTarget.Key(0x08)), // E
-            Mapping(InputSource.Key(AndroidKey.BUTTON_L1), OutputTarget.Key(0x14)), // Q
-            Mapping(InputSource.Key(AndroidKey.BUTTON_R1), OutputTarget.Key(0x09)), // F
-            Mapping(InputSource.Key(AndroidKey.BUTTON_THUMBL), OutputTarget.Key(0xE1)), // Shift
-            Mapping(InputSource.Key(AndroidKey.BUTTON_START), OutputTarget.Key(0x29)), // Esc
-            Mapping(InputSource.Key(AndroidKey.BUTTON_SELECT), OutputTarget.Key(0x2B)), // Tab
-            Mapping(InputSource.Axis(AndroidAxis.LTRIGGER, AxisHalf.POSITIVE), OutputTarget.Mouse(MouseButton.RIGHT)),
-            Mapping(InputSource.Axis(AndroidAxis.RTRIGGER, AxisHalf.POSITIVE), OutputTarget.Mouse(MouseButton.LEFT)),
-            Mapping(InputSource.Key(AndroidKey.BUTTON_L2), OutputTarget.Mouse(MouseButton.RIGHT)),
-            Mapping(InputSource.Key(AndroidKey.BUTTON_R2), OutputTarget.Mouse(MouseButton.LEFT)),
-            Mapping(InputSource.Key(AndroidKey.DPAD_UP), OutputTarget.Wheel(1)),
-            Mapping(InputSource.Key(AndroidKey.DPAD_DOWN), OutputTarget.Wheel(-1)),
-        ),
+    /** Keyboard + mouse for games without controller support (WASD layout); gyro always on. */
+    val wasdWorkspace = Workspace(
+        id = "wasd",
+        name = "WASD",
         gyro = GyroSettings(mode = GyroMode.ALWAYS),
+        pads = listOf(anyPad(kbmPadMappings())),
     )
 
-    val all: List<Profile> = listOf(virtualGamepad, controllerPassthrough, keyboardMouse)
+    /** A full keyboard (K380 layout) under a touchpad strip. */
+    val keyboardWorkspace = Workspace(
+        id = "keyboard",
+        name = "Keyboard",
+        touchpadOverButtons = true,
+        stickyModifiers = true,
+    )
+
+    /** The profile a fresh install starts in: Controller, WASD and Keyboard workspaces. */
+    val default = Profile(
+        id = "builtin.default",
+        name = "Default",
+        workspaces = listOf(controllerWorkspace, wasdWorkspace, keyboardWorkspace),
+    )
+
+    /** Today's controller-as-keyboard-and-mouse mapping (left stick = WASD, triggers = mouse). */
+    fun kbmPadMappings(): List<Mapping> = listOf(
+        Mapping(InputSource.Axis(AndroidAxis.Y, AxisHalf.NEGATIVE), OutputTarget.Key(0x1A)), // W
+        Mapping(InputSource.Axis(AndroidAxis.Y, AxisHalf.POSITIVE), OutputTarget.Key(0x16)), // S
+        Mapping(InputSource.Axis(AndroidAxis.X, AxisHalf.NEGATIVE), OutputTarget.Key(0x04)), // A
+        Mapping(InputSource.Axis(AndroidAxis.X, AxisHalf.POSITIVE), OutputTarget.Key(0x07)), // D
+        Mapping(InputSource.Key(AndroidKey.BUTTON_A), OutputTarget.Key(0x2C)), // Space
+        Mapping(InputSource.Key(AndroidKey.BUTTON_B), OutputTarget.Key(0x06)), // C
+        Mapping(InputSource.Key(AndroidKey.BUTTON_X), OutputTarget.Key(0x15)), // R
+        Mapping(InputSource.Key(AndroidKey.BUTTON_Y), OutputTarget.Key(0x08)), // E
+        Mapping(InputSource.Key(AndroidKey.BUTTON_L1), OutputTarget.Key(0x14)), // Q
+        Mapping(InputSource.Key(AndroidKey.BUTTON_R1), OutputTarget.Key(0x09)), // F
+        Mapping(InputSource.Key(AndroidKey.BUTTON_THUMBL), OutputTarget.Key(0xE1)), // Shift
+        Mapping(InputSource.Key(AndroidKey.BUTTON_START), OutputTarget.Key(0x29)), // Esc
+        Mapping(InputSource.Key(AndroidKey.BUTTON_SELECT), OutputTarget.Key(0x2B)), // Tab
+        Mapping(InputSource.Axis(AndroidAxis.LTRIGGER, AxisHalf.POSITIVE), OutputTarget.Mouse(MouseButton.RIGHT)),
+        Mapping(InputSource.Axis(AndroidAxis.RTRIGGER, AxisHalf.POSITIVE), OutputTarget.Mouse(MouseButton.LEFT)),
+        Mapping(InputSource.Key(AndroidKey.BUTTON_L2), OutputTarget.Mouse(MouseButton.RIGHT)),
+        Mapping(InputSource.Key(AndroidKey.BUTTON_R2), OutputTarget.Mouse(MouseButton.LEFT)),
+        Mapping(InputSource.Key(AndroidKey.DPAD_UP), OutputTarget.Wheel(1)),
+        Mapping(InputSource.Key(AndroidKey.DPAD_DOWN), OutputTarget.Wheel(-1)),
+    )
+
+    val all: List<Profile> = listOf(default)
+
+    /** Ids of the builtins before workspaces; a saved active id among them means [default]. */
+    val retiredIds: Set<String> = setOf("builtin.virtual_gamepad", "builtin.controller", "builtin.kbm")
 
     /** Picks the profile for an attached controller: a user profile that matches it, else a builtin. */
     fun forController(profiles: List<Profile>, vendorId: Int, productId: Int, name: String): Profile? =
