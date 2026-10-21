@@ -305,4 +305,10 @@ data class Profile(
     val games: List<String> = emptyList(),
     /** The pad screen's background as a touchpad. */
     val touchpad: TouchpadSettings = TouchpadSettings(),
-)
+    /** Opacity of every on-screen control in play ([MIN_CONTROL_OPACITY]..1). */
+    val controlOpacity: Float = 1f,
+) {
+    companion object {
+        const val MIN_CONTROL_OPACITY = 0.1f
+    }
+}
