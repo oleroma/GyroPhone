@@ -32,11 +32,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.oleroma.gyrophone.core.model.AttachedPad
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
-import com.oleroma.gyrophone.core.model.DeviceMatch
-import com.oleroma.gyrophone.core.model.FaceLayout
-import com.oleroma.gyrophone.core.model.KnownLayouts
+import com.oleroma.gyrophone.core.model.PadDevices
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceEdits
@@ -194,30 +191,9 @@ internal fun unattachedControllers(workspace: Workspace, controllers: List<Attac
         .filter { workspace.padFor(it.vendorId, it.productId, it.name) == null }
         .distinctBy { Triple(it.vendorId, it.productId, it.name) }
 
-/**
- * [workspace] with [controller]'s model attached: matched by vendor / product id when both are
- * known, else by name; the family and starting mappings come from the known layout (Xbox if unknown).
- */
-internal fun attachController(workspace: Workspace, controller: AttachedController): Workspace {
-    val c = controller
-    val match = if (c.vendorId != 0 && c.productId != 0) {
-        DeviceMatch(vendorId = c.vendorId, productId = c.productId)
-    } else {
-        DeviceMatch(nameContains = c.name)
-    }
-    val family = c.known?.layout ?: FaceLayout.XBOX
-    val used = workspace.pads.mapTo(HashSet()) { it.id }
-    var n = 1
-    while ("pad$n" in used) n++
-    val pad = AttachedPad(
-        id = "pad$n",
-        match = match,
-        name = displayName(c),
-        family = family,
-        mappings = KnownLayouts.familyMappings(family),
-    )
-    return workspace.copy(pads = workspace.pads + pad)
-}
+/** [workspace] with [controller]'s model attached on the standard profile (see [deviceOf]). */
+internal fun attachController(workspace: Workspace, controller: AttachedController): Workspace =
+    PadDevices.attach(workspace, deviceOf(controller))
 
 private fun displayName(c: AttachedController): String = c.known?.name ?: c.name
 

@@ -9,6 +9,7 @@ import com.oleroma.gyrophone.core.hid.HidDescriptor
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownController
+import com.oleroma.gyrophone.core.model.DeviceMatch
 import com.oleroma.gyrophone.core.model.PadPreset
 import com.oleroma.gyrophone.core.model.PadPresets
 import com.oleroma.gyrophone.core.model.Mapping
@@ -280,9 +281,9 @@ class GamepadRuntime(context: Context) {
     /** The user's own pad presets (the builtins come from [PadPresets.builtins]). */
     val padPresets: StateFlow<List<PadPreset>> = _padPresets
 
-    /** Saves [mappings] as a new user pad preset named [name]; returns it. */
-    fun savePadPreset(name: String, mappings: List<Mapping>): PadPreset {
-        val preset = PadPreset(PadPresets.newId(_padPresets.value.map { it.id }), name.trim().ifBlank { "My preset" }, mappings)
+    /** Saves [mappings] as a new user pad preset named [name], attached to [device]; returns it. */
+    fun savePadPreset(name: String, mappings: List<Mapping>, device: DeviceMatch? = null): PadPreset {
+        val preset = PadPreset(PadPresets.newId(_padPresets.value.map { it.id }), name.trim().ifBlank { "My preset" }, mappings, device)
         _padPresets.value = _padPresets.value + preset
         store.savePadPresets(_padPresets.value)
         return preset
@@ -315,10 +316,10 @@ class GamepadRuntime(context: Context) {
         store.savePadPresets(_padPresets.value)
     }
 
-    /** Applies [preset] to the attached pad [padId] of the active workspace. */
-    fun applyPadPreset(padId: String, preset: PadPreset) {
+    /** Applies [preset] to the attached pad [padId] of workspace [wsIndex] (default: the active one). */
+    fun applyPadPreset(padId: String, preset: PadPreset, wsIndex: Int = workspaceIndex.value) {
         editActiveProfile { p ->
-            p.updateWorkspace(workspaceIndex.value) { w ->
+            p.updateWorkspace(wsIndex) { w ->
                 w.copy(pads = w.pads.map { if (it.id == padId) PadPresets.apply(it, preset) else it })
             }
         }

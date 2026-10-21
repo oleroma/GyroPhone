@@ -5,15 +5,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
@@ -27,7 +22,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -47,64 +41,34 @@ import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import java.util.UUID
 
-/** Game profile list and profile editor (pad menu page). Builtin profiles are duplicated before editing. */
+/**
+ * Game profiles as a section of the pad menu (no scrolling of its own): the profiles to pick from
+ * (tap = use it) and the editor of the selected one. Builtin profiles are duplicated before editing.
+ */
 @Composable
-internal fun ProfilesPage(runtime: GamepadRuntime) {
+internal fun GameProfileSection(runtime: GamepadRuntime) {
     val profiles by runtime.profiles.collectAsStateWithLifecycle()
     val active by runtime.activeProfile.collectAsStateWithLifecycle()
     var selectedId by remember { mutableStateOf(active.id) }
     val selected = profiles.firstOrNull { it.id == selectedId } ?: active
-    val portrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
-    // One editor instance for both layouts: rotating moves it instead of recreating it, so open
-    // dialogs and uncommitted slider values survive.
-    val editor = remember(runtime) {
-        movableContentOf { p: Profile, mod: Modifier ->
-            ProfileEditor(runtime, p, onSelect = { selectedId = it }, modifier = mod)
-        }
-    }
-    val newProfile = {
-        val p = BuiltinProfiles.newProfile("user." + UUID.randomUUID(), "New profile")
-        runtime.saveProfile(p)
-        selectedId = p.id
-    }
 
-    if (portrait) {
-        // Portrait: the list on top, the editor below it.
-        Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            ProfileList(runtime, profiles, active.id, selectedId, { selectedId = it }, newProfile, Modifier.fillMaxWidth().heightIn(max = 220.dp))
-            editor(selected, Modifier.weight(1f))
-        }
-    } else {
-        Row(Modifier.fillMaxSize().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            ProfileList(runtime, profiles, active.id, selectedId, { selectedId = it }, newProfile, Modifier.weight(0.35f))
-            editor(selected, Modifier.weight(0.65f))
-        }
-    }
-}
-
-@Composable
-private fun ProfileList(
-    runtime: GamepadRuntime,
-    profiles: List<Profile>,
-    activeId: String,
-    selectedId: String,
-    onSelect: (String) -> Unit,
-    onNew: () -> Unit,
-    modifier: Modifier,
-) {
-    LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        items(profiles, key = { it.id }) { p ->
-            val marker = if (p.id == activeId) "● " else ""
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        for (p in profiles) {
+            val marker = if (p.id == active.id) "● " else ""
             val suffix = if (runtime.store.isBuiltin(p)) "  (built-in)" else ""
             Text(
                 marker + p.name + suffix,
-                Modifier.fillMaxWidth().clickable { onSelect(p.id) }.padding(8.dp),
-                color = if (p.id == selectedId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                Modifier.fillMaxWidth().clickable { selectedId = p.id }.padding(8.dp),
+                color = if (p.id == selected.id) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             )
         }
-        item {
-            OutlinedButton(onClick = onNew, modifier = Modifier.padding(top = 4.dp)) { Text("New profile") }
-        }
+        OutlinedButton(onClick = {
+            val p = BuiltinProfiles.newProfile("user." + UUID.randomUUID(), "New profile")
+            runtime.saveProfile(p)
+            selectedId = p.id
+        }) { Text("New game profile") }
+        HorizontalDivider(Modifier.padding(vertical = 4.dp))
+        ProfileEditor(runtime, selected, onSelect = { selectedId = it }, modifier = Modifier.fillMaxWidth())
     }
 }
 
@@ -112,7 +76,6 @@ private fun ProfileList(
 private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (String) -> Unit, modifier: Modifier) {
     val builtin = runtime.store.isBuiltin(profile)
     val activeProfile by runtime.activeProfile.collectAsStateWithLifecycle()
-    val workspaceIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
     val isActive = profile.id == activeProfile.id
     var confirmDelete by remember { mutableStateOf(false) }
 
@@ -129,7 +92,7 @@ private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (
         onSelect(updated.id)
     }
 
-    Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(profile.name, style = MaterialTheme.typography.titleMedium)
         if (builtin) Text("Built-in: changes are saved as a custom copy.", style = MaterialTheme.typography.bodySmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -164,20 +127,9 @@ private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (
         HorizontalDivider()
         Text("Workspaces", style = MaterialTheme.typography.titleSmall)
         Text(
-            "Tap ← and → on the pad to switch; both together = fullscreen. Add, rename and reorder them with Edit layout.",
+            "${profile.workspaces.size} workspace(s). Tap ← and → on the pad to switch; both together = fullscreen.",
             style = MaterialTheme.typography.bodySmall,
         )
-        profile.workspaces.forEachIndexed { i, w ->
-            val current = isActive && i == workspaceIndex
-            Text(
-                (if (current) "● " else "") + "${i + 1}. ${w.name}" + workspaceSummary(w),
-                Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = isActive) { runtime.switchWorkspace(i) }
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                color = if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-            )
-        }
         SwitchRow("Wrap around (→ on the last goes to the first)", profile.wrapWorkspaces) { v ->
             edit { it.copy(wrapWorkspaces = v) }
         }
@@ -188,13 +140,12 @@ private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (
                 onValueChangeFinished = { edit { it.copy(cornerOpacity = cornerOpacity) } })
         }
         SwitchRow("← and → resize together", profile.cornerSameSize) { v -> edit { it.copy(cornerSameSize = v) } }
-
-        HorizontalDivider()
-        Text(
-            if (isActive) "Gyro, touchpad and devices are set per workspace: Menu › Workspace settings and Menu › Devices."
-            else "Gyro, touchpad and devices are set per workspace. Use this profile to edit them from the menu.",
-            style = MaterialTheme.typography.bodySmall,
-        )
+        if (!isActive) {
+            Text(
+                "Its workspaces and devices show in the menu once it is in use.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
     }
 
     if (confirmDelete) {
@@ -212,19 +163,6 @@ private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
         )
     }
-}
-
-/** "  ·  2 pads · gyro always" style hints for the workspace list. */
-private fun workspaceSummary(w: Workspace): String {
-    val parts = buildList {
-        if (w.pads.isNotEmpty()) add(if (w.pads.size == 1) w.pads[0].name else "${w.pads.size} pads")
-        when (w.gyro.mode) {
-            GyroMode.OFF -> {}
-            GyroMode.ALWAYS -> add("gyro always")
-            GyroMode.HOLD_OR_TOGGLE -> add("gyro on hold")
-        }
-    }
-    return if (parts.isEmpty()) "" else "  ·  " + parts.joinToString(" · ")
 }
 
 /** Windows executables the companion switches to this profile for. */
@@ -260,19 +198,18 @@ private fun GamesEditor(games: List<String>, onChange: (List<String>) -> Unit) {
 }
 
 /**
- * Gyro and touchpad settings of the active profile's current workspace ([index]). Edits go
+ * Gyro and touchpad settings of the active profile's workspace [index]. Edits go
  * through [GamepadRuntime.editActiveProfile], so a builtin becomes an active custom copy.
  */
 @Composable
 internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index: Int) {
     val ws = profile.workspace(index)
     fun editWs(change: (Workspace) -> Workspace) {
-        runtime.editActiveProfile { it.updateWorkspace(runtime.workspaceIndex.value, change) }
+        runtime.editActiveProfile { it.updateWorkspace(index, change) }
     }
     // Slider drafts restart when the profile or workspace changes.
     val key = profile.id + "/" + ws.id
 
-    Text("Workspace \"${ws.name}\"", style = MaterialTheme.typography.titleSmall)
     Text("Gyro to mouse", style = MaterialTheme.typography.titleSmall)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(GyroMode.OFF to "Off", GyroMode.ALWAYS to "Always", GyroMode.HOLD_OR_TOGGLE to "Hold / toggle button")

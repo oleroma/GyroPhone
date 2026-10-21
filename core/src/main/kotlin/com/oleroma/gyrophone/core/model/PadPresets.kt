@@ -11,6 +11,8 @@ data class PadPreset(
     val name: String,
     /** Android key / axis sources ([InputSource.Key], [InputSource.Axis]) to PC outputs. */
     val mappings: List<Mapping> = emptyList(),
+    /** The device this profile is attached to ([PadDevice.match]); null = offered for every device. */
+    val device: DeviceMatch? = null,
 )
 
 /**
@@ -37,6 +39,10 @@ object PadPresets {
 
     /** Builtins for [family], then [user] presets. */
     fun all(family: FaceLayout, user: List<PadPreset>): List<PadPreset> = builtins(family) + user
+
+    /** The profiles of a device: builtins for its [family], then [user] presets attached to [match] or to no device. */
+    fun forDevice(match: DeviceMatch?, family: FaceLayout, user: List<PadPreset>): List<PadPreset> =
+        builtins(family) + user.filter { it.device == null || it.device == match }
 
     /**
      * The pad's preset: the one it names while the mappings still equal it, else the first preset

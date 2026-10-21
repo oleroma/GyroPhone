@@ -129,17 +129,14 @@ internal object TouchStream {
  * long-press it (or tap a corner) for a menu next to it with all its settings, drag to move,
  * pinch or use the size slider to resize. Edits change the current orientation's placement. Done
  * saves (a builtin becomes a custom copy) and switches to the workspace being edited.
- * In play mode the Devices and Menu buttons open the pad menu ([PadMenu]) through [onOpenMenu].
+ * In play mode the Menu button opens the pad menu ([PadTab]) through [onOpenMenu].
  */
 @Composable
 fun PadScreen(
     runtime: GamepadRuntime,
     fullscreen: Boolean = false,
     onFullscreen: (Boolean) -> Unit = {},
-    onOpenMenu: (PadMenuPage) -> Unit = {},
-    /** Set to open edit mode (the menu's "Edit on-screen layout"); [onEditRequestHandled] clears it. */
-    editRequest: Boolean = false,
-    onEditRequestHandled: () -> Unit = {},
+    onOpenMenu: () -> Unit = {},
 ) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
@@ -204,12 +201,6 @@ fun PadScreen(
         dragging = false
         editIndex = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
         draft = profile
-    }
-
-    LaunchedEffect(editRequest) {
-        if (!editRequest) return@LaunchedEffect
-        if (draft == null) startEditing()
-        onEditRequestHandled()
     }
 
     val pollHighlights = !editing && (fingersOnButtons > 0 || pressedIds.isNotEmpty())
@@ -683,13 +674,7 @@ fun PadScreen(
                     FilledTonalButton(
                         onClick = {
                             releaseAll()
-                            onOpenMenu(PadMenuPage.Devices)
-                        },
-                    ) { Text("Devices (${ws.pads.size})") }
-                    FilledTonalButton(
-                        onClick = {
-                            releaseAll()
-                            onOpenMenu(PadMenuPage.Root)
+                            onOpenMenu()
                         },
                     ) { Text("Menu") }
                 }
@@ -718,24 +703,43 @@ fun PadScreen(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    // Drag handle: its own row on top, so it never scrolls away with the buttons.
+                    Text(
+                        "⠿  ≡  ⠿",
+                        color = Color.White.copy(alpha = 0.8f),
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier
+                            .pointerInput(w, h) {
+                                detectDragGestures { change, drag ->
+                                    change.consume()
+                                    menuOffset = clampMenu(clampMenu(menuOffset) + drag)
+                                }
+                            }
+                            .padding(horizontal = 24.dp, vertical = 0.dp),
+                    )
                     Row(
                         Modifier.horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            "⠿",
-                            color = Color.White.copy(alpha = 0.8f),
-                            style = MaterialTheme.typography.titleLarge,
-                            modifier = Modifier
-                                .pointerInput(w, h) {
-                                    detectDragGestures { change, drag ->
-                                        change.consume()
-                                        menuOffset = clampMenu(clampMenu(menuOffset) + drag)
-                                    }
-                                }
-                                .padding(horizontal = 8.dp, vertical = 2.dp),
-                        )
+                        // Workspace switching inside the draft: ◀ n/N name ▶.
+                        draft?.let { dw ->
+                            val k = editIndex.coerceIn(0, dw.workspaces.lastIndex)
+                            OutlinedButton(contentPadding = compact, enabled = k > 0, onClick = {
+                                editIndex = k - 1
+                                selected = null
+                            }) { Text("◀") }
+                            Text(
+                                "${k + 1}/${dw.workspaces.size} · ${dw.workspace(k).name}",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1,
+                            )
+                            OutlinedButton(contentPadding = compact, enabled = k < dw.workspaces.lastIndex, onClick = {
+                                editIndex = k + 1
+                                selected = null
+                            }) { Text("▶") }
+                        }
                         if (!menuFolded) {
                             Text(
                                 if (portrait) "Portrait layout" else "Landscape layout",
