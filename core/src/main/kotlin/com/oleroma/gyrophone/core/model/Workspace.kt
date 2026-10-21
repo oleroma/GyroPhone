@@ -48,6 +48,11 @@ data class AttachedPad(
     val family: FaceLayout = FaceLayout.XBOX,
     /** Android key / axis sources ([InputSource.Key], [InputSource.Axis]) to PC outputs. */
     val mappings: List<Mapping> = emptyList(),
+    /**
+     * The pad profile ([PadPreset]) last loaded into [mappings]; null on pads attached before pad
+     * profiles were stored. Saving that profile again updates every pad that names it.
+     */
+    val presetId: String? = null,
 ) {
     fun matches(vendorId: Int, productId: Int, name: String): Boolean =
         match?.matches(vendorId, productId, name) ?: true

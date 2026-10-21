@@ -14,9 +14,10 @@ data class PadPreset(
 )
 
 /**
- * The pad presets: two builtins (the standard controller mapping for the pad's family, and
- * keyboard + mouse with WASD) followed by the user's own. A pad's preset is not stored: it is
- * whichever preset has exactly the pad's mappings, so editing a mapping makes the pad "Custom".
+ * The pad presets (shown as a device's "profile"): two builtins (the standard controller mapping
+ * for the pad's family, and keyboard + mouse with WASD) followed by the user's own. A pad keeps a
+ * copy of its preset's mappings and the preset's id ([AttachedPad.presetId]); it shows that preset
+ * while the mappings still match it, else any preset with exactly its mappings, else "Custom".
  */
 object PadPresets {
     const val STANDARD = "builtin.standard"
@@ -37,16 +38,33 @@ object PadPresets {
     /** Builtins for [family], then [user] presets. */
     fun all(family: FaceLayout, user: List<PadPreset>): List<PadPreset> = builtins(family) + user
 
-    /** The first preset whose mappings equal the pad's (order ignored), or null when the pad is custom. */
+    /**
+     * The pad's preset: the one it names while the mappings still equal it, else the first preset
+     * whose mappings equal the pad's (order ignored), or null when the pad is custom.
+     */
     fun applied(pad: AttachedPad, user: List<PadPreset>): PadPreset? {
         val mine = pad.mappings.toSet()
-        return all(pad.family, user).firstOrNull { it.mappings.toSet() == mine }
+        val all = all(pad.family, user)
+        pad.presetId?.let { id -> all.firstOrNull { it.id == id && it.mappings.toSet() == mine }?.let { return it } }
+        return all.firstOrNull { it.mappings.toSet() == mine }
     }
 
     /** The name shown for the pad's mapping: its preset's, else [CUSTOM_NAME]. */
     fun label(pad: AttachedPad, user: List<PadPreset>): String = applied(pad, user)?.name ?: CUSTOM_NAME
 
-    fun apply(pad: AttachedPad, preset: PadPreset): AttachedPad = pad.copy(mappings = preset.mappings)
+    fun apply(pad: AttachedPad, preset: PadPreset): AttachedPad = pad.copy(mappings = preset.mappings, presetId = preset.id)
+
+    /**
+     * [profile] with every pad that names [preset] (in any workspace) given its current mappings;
+     * the same instance when no pad names it. Pads that only happen to match are left alone.
+     */
+    fun retarget(profile: Profile, preset: PadPreset): Profile {
+        if (profile.workspaces.none { w -> w.pads.any { it.presetId == preset.id && it.mappings != preset.mappings } }) return profile
+        return profile.copy(workspaces = profile.workspaces.map { w ->
+            if (w.pads.none { it.presetId == preset.id }) w
+            else w.copy(pads = w.pads.map { if (it.presetId == preset.id) it.copy(mappings = preset.mappings) else it })
+        })
+    }
 
     /** A user preset id not in [taken]. */
     fun newId(taken: Collection<String>): String {

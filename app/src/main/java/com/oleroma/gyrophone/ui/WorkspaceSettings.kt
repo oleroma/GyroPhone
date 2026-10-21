@@ -144,7 +144,7 @@ internal fun WorkspaceSettingsPanel(
             }
             if (w.pads.isNotEmpty()) {
                 Text(
-                    "Edit a pad's buttons on the Controller tab.",
+                    "Edit a pad's profile in the pad menu: Menu › Devices.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

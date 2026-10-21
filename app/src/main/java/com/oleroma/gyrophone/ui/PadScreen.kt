@@ -129,13 +129,17 @@ internal object TouchStream {
  * long-press it (or tap a corner) for a menu next to it with all its settings, drag to move,
  * pinch or use the size slider to resize. Edits change the current orientation's placement. Done
  * saves (a builtin becomes a custom copy) and switches to the workspace being edited.
+ * In play mode the Devices and Menu buttons open the pad menu ([PadMenu]) through [onOpenMenu].
  */
 @Composable
 fun PadScreen(
     runtime: GamepadRuntime,
     fullscreen: Boolean = false,
     onFullscreen: (Boolean) -> Unit = {},
-    onEditPad: (String) -> Unit = {},
+    onOpenMenu: (PadMenuPage) -> Unit = {},
+    /** Set to open edit mode (the menu's "Edit on-screen layout"); [onEditRequestHandled] clears it. */
+    editRequest: Boolean = false,
+    onEditRequestHandled: () -> Unit = {},
 ) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
@@ -157,8 +161,6 @@ fun PadScreen(
     var menuSize by remember { mutableStateOf(IntSize.Zero) }
     var menuFolded by remember { mutableStateOf(false) }
     var showWsSettings by remember { mutableStateOf(false) }
-    /** The attached-devices dialog (play mode only). */
-    var showDevices by remember { mutableStateOf(false) }
     var dragging by remember { mutableStateOf(false) }
     var snap by remember { mutableStateOf(false) }
     val stickPos = remember { mutableStateMapOf<String, Offset>() }
@@ -194,6 +196,21 @@ fun PadScreen(
     }
 
     DisposableEffect(Unit) { onDispose { releaseAll() } }
+
+    fun startEditing() {
+        releaseAll()
+        selected = null
+        showWsSettings = false
+        dragging = false
+        editIndex = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
+        draft = profile
+    }
+
+    LaunchedEffect(editRequest) {
+        if (!editRequest) return@LaunchedEffect
+        if (draft == null) startEditing()
+        onEditRequestHandled()
+    }
 
     val pollHighlights = !editing && (fingersOnButtons > 0 || pressedIds.isNotEmpty())
     LaunchedEffect(pollHighlights) {
@@ -662,33 +679,20 @@ fun PadScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    FilledTonalButton(onClick = { startEditing() }) { Text("Edit layout") }
                     FilledTonalButton(
                         onClick = {
                             releaseAll()
-                            selected = null
-                            showWsSettings = false
-                            dragging = false
-                            editIndex = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
-                            draft = profile
-                        },
-                    ) { Text("Edit layout") }
-                    FilledTonalButton(
-                        onClick = {
-                            releaseAll()
-                            showDevices = true
+                            onOpenMenu(PadMenuPage.Devices)
                         },
                     ) { Text("Devices (${ws.pads.size})") }
+                    FilledTonalButton(
+                        onClick = {
+                            releaseAll()
+                            onOpenMenu(PadMenuPage.Root)
+                        },
+                    ) { Text("Menu") }
                 }
-            }
-            if (showDevices && !fullscreen) {
-                AttachedDevicesPanel(
-                    runtime = runtime,
-                    onDismiss = { showDevices = false },
-                    onEditPad = { id ->
-                        showDevices = false
-                        onEditPad(id)
-                    },
-                )
             }
         } else {
             val compact = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
@@ -1192,7 +1196,7 @@ private fun CornerSettings(
     }
     Text(
         "Tap ← for the previous workspace and → for the next. Press both at the same time to hide " +
-            "the tabs and the Edit button; press both again (or Back) to show them. The corners are " +
+            "the tabs and the pad's buttons; press both again (or Back) to show them. The corners are " +
             "the same in every workspace; drag each one where you like.",
         style = MaterialTheme.typography.bodyMedium,
     )

@@ -47,9 +47,9 @@ import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import java.util.UUID
 
-/** Profile list and profile editor. Builtin profiles are duplicated before editing. */
+/** Game profile list and profile editor (pad menu page). Builtin profiles are duplicated before editing. */
 @Composable
-fun ProfilesScreen(runtime: GamepadRuntime) {
+internal fun ProfilesPage(runtime: GamepadRuntime) {
     val profiles by runtime.profiles.collectAsStateWithLifecycle()
     val active by runtime.activeProfile.collectAsStateWithLifecycle()
     var selectedId by remember { mutableStateOf(active.id) }
@@ -164,7 +164,7 @@ private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (
         HorizontalDivider()
         Text("Workspaces", style = MaterialTheme.typography.titleSmall)
         Text(
-            "Tap ← and → on the pad to switch; both together = fullscreen. Add, rename and reorder them in the Pad tab's edit mode.",
+            "Tap ← and → on the pad to switch; both together = fullscreen. Add, rename and reorder them with Edit layout.",
             style = MaterialTheme.typography.bodySmall,
         )
         profile.workspaces.forEachIndexed { i, w ->
@@ -190,15 +190,11 @@ private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (
         SwitchRow("← and → resize together", profile.cornerSameSize) { v -> edit { it.copy(cornerSameSize = v) } }
 
         HorizontalDivider()
-        if (isActive) {
-            WorkspaceSettings(runtime, profile, workspaceIndex)
-        } else {
-            Text("Workspace settings", style = MaterialTheme.typography.titleSmall)
-            Text(
-                "Gyro and touchpad are set per workspace. Use this profile to edit them for its current workspace.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
+        Text(
+            if (isActive) "Gyro, touchpad and devices are set per workspace: Menu › Workspace settings and Menu › Devices."
+            else "Gyro, touchpad and devices are set per workspace. Use this profile to edit them from the menu.",
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 
     if (confirmDelete) {
@@ -268,7 +264,7 @@ private fun GamesEditor(games: List<String>, onChange: (List<String>) -> Unit) {
  * through [GamepadRuntime.editActiveProfile], so a builtin becomes an active custom copy.
  */
 @Composable
-private fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index: Int) {
+internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index: Int) {
     val ws = profile.workspace(index)
     fun editWs(change: (Workspace) -> Workspace) {
         runtime.editActiveProfile { it.updateWorkspace(runtime.workspaceIndex.value, change) }
