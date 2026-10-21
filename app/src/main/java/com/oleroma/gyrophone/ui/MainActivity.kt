@@ -128,6 +128,11 @@ class MainActivity : ComponentActivity() {
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean =
         controllerInput.onGenericMotionEvent(event) || super.dispatchGenericMotionEvent(event)
 
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        TouchStream.cancelled = event.actionMasked == MotionEvent.ACTION_CANCEL
+        return super.dispatchTouchEvent(event)
+    }
+
     private fun updateRotation() {
         val degrees = when (display?.rotation) {
             Surface.ROTATION_0 -> 0

@@ -61,9 +61,11 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings()) {
     private var primary = 0
     /** Down time of the gesture's first finger. */
     private var t0 = 0L
+    /** Down time of the newest finger (multi-finger taps are timed from it). */
+    private var lastDownNs = 0L
     private var tapDeadline = 0L
     private var maxFingers = 0
-    /** A multi-finger touch that may still end as a right/middle click or a gesture tap. */
+    /** A multi-finger touch that has not moved or changed into something else (see [multiTapOpen]). */
     private var tapCandidate = false
     /** Slots that reported a move in the current touch frame (MULTI). */
     private var movedMask = 0
@@ -136,7 +138,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings()) {
         count++
         when (state) {
             State.IDLE -> { state = State.TOUCH; primary = slot; t0 = now }
-            State.TOUCH -> { state = State.MULTI; tapCandidate = true; maxFingers = 2 }
+            State.TOUCH -> { state = State.MULTI; tapCandidate = true; maxFingers = 2; lastDownNs = now }
             State.MOVE -> {
                 // A finger added mid-move only scrolls; measure from here, so the cursor travel
                 // so far does not count as scroll travel.
@@ -152,10 +154,13 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings()) {
             State.MULTI, State.SWIPE -> {
                 // Fingers rarely land together: measure travel from the newest arrangement.
                 maxFingers = max(maxFingers, count)
+                lastDownNs = now
                 rebase()
             }
+            // Two fingers often start moving before the third lands: that is a swipe, not a scroll or zoom.
+            State.SCROLL, State.PINCH -> if (count >= 3 && settings.gestures) startSwipe()
             State.SCROLL_LIFT -> state = State.SCROLL
-            State.DRAG, State.SCROLL, State.PINCH, State.SCRUB, State.IGNORE -> Unit
+            State.DRAG, State.SCRUB, State.IGNORE -> Unit
         }
     }
 
@@ -223,10 +228,10 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings()) {
             }
             State.MULTI -> when {
                 count == 0 -> {
-                    if (tapCandidate && settings.tapToClick && now - t0 <= TAP_MAX_NS) multiTap()
+                    if (settings.tapToClick && multiTapOpen(now)) multiTap()
                     state = State.IDLE
                 }
-                count == 1 && !tapCandidate -> { state = State.MOVE; primary = firstUsed(); startRun() }
+                count == 1 && !multiTapOpen(now) -> { state = State.MOVE; primary = firstUsed(); startRun() }
                 else -> rebase() // still waiting for the last finger or a move
             }
             State.SCROLL -> when (count) {
@@ -330,7 +335,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings()) {
             State.TAP_WAIT -> if (now >= tapDeadline) { enqueue(0); state = State.IDLE }
             // Tap then hold without moving: drag, the button is already held.
             State.TAP_TOUCH -> if (now - t0 > TAP_MAX_NS) { state = State.DRAG; startRun() }
-            State.MULTI -> if (tapCandidate && now - t0 > TAP_MAX_NS) tapCandidate = false
+            State.MULTI -> if (tapCandidate && !multiTapOpen(now)) tapCandidate = false
             State.SCROLL_LIFT -> if (now - liftNs > LIFT_WINDOW_NS) {
                 // The finger stayed: it moves the cursor from where it is now.
                 rebase()
@@ -339,6 +344,24 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings()) {
             }
             else -> Unit
         }
+    }
+
+    /**
+     * Fingers of a multi-finger tap land and lift tens of ms apart, so the tap is timed from the
+     * newest finger, within an overall limit that keeps a resting hand from clicking. Three and
+     * four fingers get longer, as they take longer to put down and lift.
+     */
+    private fun multiTapOpen(now: Long): Boolean =
+        tapCandidate && now - t0 <= MULTI_TAP_MAX_NS &&
+            now - lastDownNs <= if (maxFingers >= 3) MULTI_TAP_HOLD_NS else TAP_MAX_NS
+
+    /** Leaves a scroll or pinch for a three/four-finger swipe measured from here. */
+    private fun startSwipe() {
+        if (state == State.PINCH) { zoomPending = 0; endKeys() }
+        state = State.SWIPE
+        tapCandidate = false
+        maxFingers = max(maxFingers, count)
+        rebase()
     }
 
     /** MULTI after a move: decides between scroll, pinch, swipe and (later) a tap. */
@@ -640,6 +663,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings()) {
     companion object {
         const val TAP_MAX_NS = 180_000_000L          // touch shorter than this (and inside slop) is a tap
         const val TAP_DRAG_WINDOW_NS = 220_000_000L  // after a tap: second touch within this = drag / double click
+        /** Three/four-finger tap: newest finger down to last up; any multi-finger tap: first down to last up. */
+        const val MULTI_TAP_HOLD_NS = 250_000_000L
+        const val MULTI_TAP_MAX_NS = 400_000_000L
         const val TAP_SLOP_DP = 10f                  // movement allowed inside a tap, per finger, from its down point
         const val SCROLL_DP_PER_NOTCH = 24f          // at scrollSpeed 1
         /** Wheel units per notch (Windows WHEEL_DELTA). */

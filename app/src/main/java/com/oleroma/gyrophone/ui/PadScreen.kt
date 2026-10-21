@@ -34,7 +34,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,12 +78,18 @@ import com.oleroma.gyrophone.runtime.GamepadRuntime
 import java.util.UUID
 import kotlin.math.hypot
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 private const val GRID = 0.02f
 private const val NEW_BUTTON_SIZE = 0.14f
 private const val NEW_STICK_SIZE = 0.3f
 
 private enum class EditGesture { PRESS, MOVE, RESIZE, PINCH, EMPTY, NONE }
+
+/** Whether the touch event being dispatched is a cancel; set by [MainActivity] (main thread). */
+internal object TouchStream {
+    var cancelled = false
+}
 
 /**
  * Full-screen virtual game pad for the active profile. Multi-touch: each finger that lands on a
@@ -101,6 +109,8 @@ fun PadScreen(runtime: GamepadRuntime) {
     var snap by remember { mutableStateOf(false) }
     val pressed = remember { mutableStateMapOf<String, Boolean>() }
     val stickPos = remember { mutableStateMapOf<String, Offset>() }
+    /** Counts multi-finger touches that Android cancelled (a phone gesture took them). */
+    var systemTookTouch by remember { mutableIntStateOf(0) }
     val editing = draft != null
     val shown = draft ?: profile
 
@@ -294,6 +304,14 @@ fun PadScreen(runtime: GamepadRuntime) {
                     while (true) {
                         val event = awaitPointerEvent()
                         val buttonsDown = HashSet<String>()
+                        // The system took the touch (e.g. a three-finger screenshot gesture): Compose
+                        // reports the cancel as every pointer lifting. That is not a tap.
+                        val systemCancel = TouchStream.cancelled && event.changes.any { !it.pressed && it.previousPressed }
+                        if (systemCancel && padOwner.isNotEmpty()) {
+                            if (padOwner.size >= 2) systemTookTouch++
+                            padOwner.clear()
+                            runtime.engine.touchpadCancel()
+                        }
                         for (ch in event.changes) {
                             if (ch.pressed && !ch.previousPressed) {
                                 val c = hit(controls, ch.position)
@@ -358,6 +376,18 @@ fun PadScreen(runtime: GamepadRuntime) {
                 modifier = Modifier.align(
                     if (profile.touchControls.isEmpty()) Alignment.Center else BiasAlignment(0f, -0.35f),
                 ),
+            )
+        }
+        if (systemTookTouch > 0) {
+            LaunchedEffect(systemTookTouch) {
+                delay(5_000)
+                systemTookTouch = 0
+            }
+            Text(
+                "The phone took that touch. Turn off its three-finger screenshot gestures to use touchpad gestures.",
+                color = Color.White.copy(alpha = 0.7f),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.align(Alignment.TopCenter).padding(16.dp),
             )
         }
         Box(Modifier.fillMaxSize().then(touchModifier)) {
