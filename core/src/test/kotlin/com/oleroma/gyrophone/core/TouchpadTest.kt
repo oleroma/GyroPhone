@@ -535,6 +535,80 @@ class TouchpadTest {
         assertTrue(four.buttons.all { it == 0 })
     }
 
+    // Real fingers land and lift tens of ms apart and wobble a little on the glass.
+
+    @Test fun slowStaggeredThreeFingerTapIsMiddleClick() {
+        // 50 ms between fingers: 250 ms from the first down to the last up.
+        val d = Driver(pad())
+        d.down(0, 100f, 100f, 1); d.down(50, 200f, 100f, 2); d.down(100, 300f, 100f, 3)
+        d.up(170, 1); d.up(210, 2); d.up(250, 3); d.until(600)
+        assertEquals(listOf(0, M, 0), d.buttons.edges())
+        assertTrue(d.keys.all { it == 0 })
+    }
+
+    @Test fun slowStaggeredFourFingerTapIsNotifications() {
+        val d = Driver(pad())
+        for (k in 0..3) d.down(k * 40L, 100f + k * 100f, 100f, k + 1L)
+        for (k in 0..3) d.up(200 + k * 40L, k + 1L)
+        d.until(700)
+        assertEquals(listOf(0, WIN or 0x11, 0), d.keys.edges())
+        assertTrue(d.buttons.all { it == 0 })
+    }
+
+    @Test fun threeFingerTapWithWobbleBeforeTheLastFinger() {
+        val d = Driver(pad())
+        d.down(0, 100f, 100f, 1); d.down(30, 200f, 100f, 2)
+        d.move(40, 104f, 103f, 1); d.move(41, 198f, 104f, 2); d.move(50, 103f, 99f, 1)
+        d.down(80, 300f, 100f, 3)
+        d.move(90, 301f, 102f, 3)
+        d.up(150, 1); d.up(170, 2); d.up(190, 3); d.until(600)
+        assertEquals(listOf(0, M, 0), d.buttons.edges())
+        assertEquals(0, d.wheel); assertEquals(0, d.dx)
+    }
+
+    @Test fun threeFingerRestIsNotATap() {
+        val d = Driver(pad())
+        d.down(0, 100f, 100f, 1); d.down(20, 200f, 100f, 2); d.down(40, 300f, 100f, 3)
+        d.up(400, 1); d.up(410, 2); d.up(420, 3); d.until(800)
+        assertTrue(d.buttons.all { it == 0 })
+        assertTrue(d.keys.all { it == 0 })
+    }
+
+    @Test fun thirdFingerAfterTwoStartedScrollingSwipes() {
+        val d = Driver(pad(NO_GLIDE))
+        d.down(0, 100f, 300f, 1); d.down(20, 200f, 300f, 2)
+        // The first two fingers already drift up (a scroll starts) before the third lands.
+        for (i in 1..3) { d.move(20 + i * 10L, 100f, 300f - i * 4f, 1); d.move(21 + i * 10L, 200f, 300f - i * 4f, 2) }
+        d.down(60, 300f, 290f, 3)
+        for (i in 1..8) for (k in 0..2) d.move(60 + i * 10L + k, 100f + k * 100f, 288f - i * 10f, k + 1L)
+        d.up(200, 1); d.up(201, 2); d.up(202, 3); d.until(600)
+        assertEquals(listOf(0, WIN or TAB, 0), d.keys.edges())
+        assertTrue(d.buttons.all { it == 0 })
+    }
+
+    @Test fun thirdFingerDuringPinchSwipesAndReleasesCtrl() {
+        val d = Driver(pad())
+        d.down(0, 200f, 300f, 1); d.down(10, 300f, 300f, 2)
+        for (i in 1..3) d.move(10 + i * 10L, 300f + i * 5f, 300f, 2) // spread +15 dp: pinch
+        d.down(50, 400f, 300f, 3)
+        val xs = listOf(200f, 315f, 400f)
+        for (i in 1..8) for (k in 0..2) d.move(50 + i * 10L + k, xs[k], 300f + i * 10f, k + 1L)
+        d.up(200, 1); d.up(201, 2); d.up(202, 3); d.until(700)
+        assertEquals(0, d.keys.last())
+        assertEquals(WIN or 0x07, d.keys.edges().filter { it != 0 }.last())
+        assertTrue(d.keys.none { it == WIN or 0x07 or CTRL })
+        assertEquals(0, d.wheelWithoutCtrl)
+    }
+
+    @Test fun staggeredSlowThreeFingerSwipe() {
+        val d = Driver(pad())
+        d.down(0, 100f, 300f, 1); d.down(60, 200f, 300f, 2); d.down(120, 300f, 300f, 3)
+        for (i in 1..10) for (k in 0..2) d.move(200 + i * 16L + k, 100f + k * 100f, 300f - i * 6f, k + 1L)
+        d.up(400, 1); d.up(430, 2); d.up(460, 3); d.until(800)
+        assertEquals(listOf(0, WIN or TAB, 0), d.keys.edges())
+        assertTrue(d.buttons.all { it == 0 })
+    }
+
     @Test fun gesturesAreConfigurable() {
         val s = TouchpadSettings(acceleration = 0f,
             gestures3 = FingerGestures.WINDOWS_3.copy(swipeUp = GestureAction.Mouse(MouseButton.BACK)))
