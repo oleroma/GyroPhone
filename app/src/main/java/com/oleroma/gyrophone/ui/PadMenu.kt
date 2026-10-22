@@ -266,7 +266,8 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onOpen: (PadMe
 
 /**
  * One device of workspace [wsIndex]: its button layout (how its buttons are named and drawn) and
- * Remove. Its mappings are the controller category of the workspace's mapping profile.
+ * Remove. Its mappings are the controller category of the workspace's mapping profile, unless it
+ * kept its own from before mapping profiles.
  */
 @Composable
 private fun DeviceItem(runtime: GamepadRuntime, wsIndex: Int, pad: AttachedPad, onRemove: () -> Unit) {
@@ -284,6 +285,14 @@ private fun DeviceItem(runtime: GamepadRuntime, wsIndex: Int, pad: AttachedPad, 
                 label = { Text(familyTitle(family)) },
             )
         }
+    }
+    pad.own?.let { own ->
+        Hint("This pad keeps the mappings it had before mapping profiles (${own.size}), instead of the profile's Controller set.")
+        OutlinedButton(onClick = {
+            runtime.editActiveProfile { p ->
+                p.updateWorkspace(wsIndex) { w -> w.copy(pads = w.pads.map { if (it.id == pad.id) it.copy(own = null) else it }) }
+            }
+        }) { Text("Use the profile's Controller mappings") }
     }
     TextButton(onClick = onRemove) { Text("Remove device", color = MaterialTheme.colorScheme.error) }
 }

@@ -11,7 +11,6 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.OutputTarget
-import com.oleroma.gyrophone.core.model.PadPreset
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
@@ -37,27 +36,34 @@ class MappingProfilesTest {
     private val set = Profile("user.workspaces", "Workspaces", listOf(ws1, ws2, ws3))
 
     @Test fun migrateSharesEqualWorkspacesAndKeepsEveryMapping() {
-        val m = MappingProfiles.migrate(set, emptyList())
+        val m = MappingProfiles.migrate(set)
         assertEquals(listOf("Main", "Other"), m.profiles.map { it.name })
         assertEquals(listOf("map1", "map1", "map2"), m.set.workspaces.map { it.mappingProfileId })
         assertTrue(m.set.workspaces.all { w -> w.mappings.isEmpty() && w.pads.all { it.mappings.isEmpty() } })
-        // The second pad of "Other" maps differently: kept as a pad preset.
-        assertEquals(listOf("Other · ${AttachedPad.ANY_NAME}"), m.presets.map { it.name })
-        // Resolving gives back what each workspace had.
+        // The second pad of "Other" maps differently: it keeps its own mappings.
+        assertEquals(listOf(null, listOf(key(AndroidKey.BUTTON_B, b))), m.set.workspaces[2].pads.map { it.own })
+        // Resolving gives back what every workspace and pad had.
         val resolved = MappingProfiles.resolve(m.set, m.profiles)
         for ((old, new) in set.workspaces.zip(resolved.workspaces)) {
             assertEquals(old.mappings.toSet(), new.mappings.toSet())
-            assertEquals(old.pads.first().mappings, new.pads.first().mappings)
+            assertEquals(old.pads.map { it.mappings }, new.pads.map { it.mappings })
         }
+        // Keyboards used to act through the first "any game pad" pad: its key mappings are the keyboard set.
+        assertEquals(listOf(key(AndroidKey.BUTTON_A, b)), resolved.workspaces[2].keyboard)
     }
 
-    @Test fun migrateSkipsPadMappingsAPresetAlreadyHas() {
-        val m = MappingProfiles.migrate(set, listOf(PadPreset("user.pad1", "Mine", listOf(key(AndroidKey.BUTTON_B, b)))))
-        assertEquals(emptyList<PadPreset>(), m.presets)
+    @Test fun aPadWithItsOwnMappingsKeepsEditsToThemOutOfTheProfile() {
+        val m = MappingProfiles.migrate(set)
+        val before = MappingProfiles.resolve(m.set, m.profiles)
+        val after = before.updateWorkspace(2) { w ->
+            w.copy(pads = w.pads.map { if (it.id == "pad2") it.copy(mappings = listOf(key(AndroidKey.BUTTON_Y, a))) else it })
+        }
+        assertEquals(m.profiles, MappingProfiles.absorb(m.profiles, before, after))
+        assertEquals(listOf(key(AndroidKey.BUTTON_Y, a)), MappingProfiles.strip(after).workspaces[2].pads[1].own)
     }
 
     @Test fun absorbTakesTouchAndControllerEditsIntoTheWorkspacesProfile() {
-        val m = MappingProfiles.migrate(set, emptyList())
+        val m = MappingProfiles.migrate(set)
         val before = MappingProfiles.resolve(m.set, m.profiles)
         val after = before.updateWorkspace(0) { w ->
             w.copy(mappings = listOf(touch("btn1", b), touch("btn2", b)), pads = w.pads.map { it.copy(mappings = listOf(key(AndroidKey.BUTTON_X, a))) })
@@ -73,7 +79,7 @@ class MappingProfilesTest {
     }
 
     @Test fun absorbKeepsMappingsOfADeletedControlAndIgnoresANewPad() {
-        val m = MappingProfiles.migrate(set, emptyList())
+        val m = MappingProfiles.migrate(set)
         val before = MappingProfiles.resolve(m.set, m.profiles)
         val after = before.updateWorkspace(0) { w ->
             w.copy(touchControls = listOf(button("btn1")), mappings = listOf(touch("btn1", a)), pads = w.pads + pad("pad9", listOf(key(AndroidKey.BUTTON_Y, a))))
@@ -90,7 +96,7 @@ class MappingProfilesTest {
     }
 
     @Test fun builtinWorkspacesEachGetAProfile() {
-        val m = MappingProfiles.migrate(BuiltinProfiles.default, emptyList())
+        val m = MappingProfiles.migrate(BuiltinProfiles.default)
         assertEquals(BuiltinProfiles.default.workspaces.map { it.name }, m.profiles.map { it.name })
         assertEquals(m.profiles.map { it.id }, m.set.workspaces.map { it.mappingProfileId })
     }
@@ -116,7 +122,7 @@ class MappingProfilesTest {
     }
 
     @Test fun encodeRoundTrips() {
-        val list = MappingProfiles.migrate(set, emptyList()).profiles
+        val list = MappingProfiles.migrate(set).profiles
         assertEquals(list, MappingProfiles.decode(MappingProfiles.encode(list)))
     }
 }

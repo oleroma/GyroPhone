@@ -63,6 +63,12 @@ data class AttachedPad(
      * profiles were stored. Saving that profile again updates every pad that names it.
      */
     val presetId: String? = null,
+    /**
+     * This pad's own mappings, used instead of the mapping profile's controller set; null = the
+     * profile's. Only pads that mapped differently from the first pad of their workspace before
+     * mapping profiles have them, so nothing changed for them on update.
+     */
+    val own: List<Mapping>? = null,
 ) {
     fun matches(vendorId: Int, productId: Int, name: String): Boolean =
         match?.matches(vendorId, productId, name) ?: true

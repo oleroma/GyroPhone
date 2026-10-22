@@ -386,8 +386,7 @@ class GamepadRuntime(context: Context) {
     /**
      * The mapping profiles, or on the first start after they were added, profiles made from the
      * mappings [set] still holds ([MappingProfiles.migrate]); the set is then saved without them
-     * (a copy as it was is kept beside it) and pad mappings that no profile kept become pad
-     * presets. Returns the stored set. An unreadable mapping file is left alone and the set is
+     * (a copy as it was is kept beside it). Returns the stored set. An unreadable mapping file is left alone and the set is
      * used as it is, with its own mappings.
      */
     private fun loadMappings(set: Profile): Profile {
@@ -399,11 +398,7 @@ class GamepadRuntime(context: Context) {
             _mappingProfiles.value = listOf(MappingProfile("map1", MappingProfiles.DEFAULT_NAME))
             return set
         }
-        val m = MappingProfiles.migrate(set, _padPresets.value)
-        if (m.presets.isNotEmpty()) {
-            _padPresets.value = _padPresets.value + m.presets
-            store.savePadPresets(_padPresets.value)
-        }
+        val m = MappingProfiles.migrate(set)
         _mappingProfiles.value = m.profiles
         store.saveMappingProfiles(m.profiles)
         store.backup(set, "pre-mappings")
