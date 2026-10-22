@@ -151,8 +151,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     private var lastKeyReqs = HashMap<Int, String>()
     /** Host id -> (trusted key id or "" -> status) from the latest key ANNOUNCEs. */
     private val keyAnswers = HashMap<String, HashMap<String, KeyStatus>>()
-    /** Host ids whose key session started by itself since the link started (once each). */
-    private val keyAutoTried = HashSet<String>()
+    /** Host ids the user disconnected from while this link runs: no key auto-connect to them. */
+    private val keyUserStopped = HashSet<String>()
     private var sessionKeyId: String? = null
     private var nextKeyScanMs = 0L
 
@@ -189,7 +189,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         binder.register(s)
         pump.start(s)
         engine.onChange = pump.wake
-        keyAutoTried.clear()
+        keyUserStopped.clear()
         keys.startWatching { post { onTrustedChanged(keys.rescan()) } }
         _state.value = LinkState.Searching
         post { autoConnect() }
@@ -267,10 +267,16 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     fun connect(hostIdHex: String) = post { connectTo(hostIdHex) }
 
     /** Ends the current session (neutral STATE + BYE) and goes back to discovery. */
-    fun disconnect() = post { endSession(ByeReason.USER) }
+    fun disconnect() = post {
+        sessionHostId?.let { keyUserStopped.add(it) }
+        endSession(ByeReason.USER)
+    }
 
     /** Connects to a PC by key file pairing (both sides know each other's key). */
-    fun connectByKey(hostIdHex: String) = post { connectKeyTo(hostIdHex) }
+    fun connectByKey(hostIdHex: String) = post {
+        keyUserStopped.remove(hostIdHex)
+        connectKeyTo(hostIdHex)
+    }
 
     /** Adds a PC key (host.pub text) to trusted_hosts; returns an error message or null. */
     fun importHostKey(text: String): String? = keys.import(text).also { if (it == null) post { onTrustedChanged(true) } }
@@ -464,9 +470,18 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             foundMap[id] = host
             publishFound()
         }
-        if (host.keyStatus == KeyStatus.READY && session == null && pairFlow == null && keyAutoTried.add(id)) {
+        if (host.keyStatus == KeyStatus.READY && pairFlow == null && id !in keyUserStopped && keySessionWanted()) {
             connectKeyTo(id) // both sides know each other: no prompt
         }
+    }
+
+    /**
+     * A key session may start by itself: nothing runs, or a code session ended for good (the PC
+     * forgot this phone, or the code pairing was forgotten here).
+     */
+    private fun keySessionWanted(): Boolean {
+        val f = session ?: return true
+        return sessionKeyId == null && (f.status == SessionStatus.NOT_PAIRED || f.status == SessionStatus.FORGOTTEN)
     }
 
     /** The best key answer [hostIdHex] gave for a key this phone still trusts. */

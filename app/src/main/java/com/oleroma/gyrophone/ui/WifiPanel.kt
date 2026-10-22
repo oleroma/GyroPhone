@@ -46,7 +46,13 @@ fun WifiPanel(runtime: GamepadRuntime, stats: LinkStats, modifier: Modifier = Mo
     Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(statusLine(state))
         notice?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        if (connected && pairedByKey) Text("Paired by key", style = MaterialTheme.typography.bodySmall)
+        if (sessionActive && pairedByKey) {
+            // A key session has no row under Paired PCs, so it gets its own Disconnect.
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Paired by key", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = { wifi.disconnect() }) { Text("Disconnect") }
+            }
+        }
         if (connected) {
             warnings(stats).forEach { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         }
