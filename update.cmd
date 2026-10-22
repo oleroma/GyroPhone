@@ -1,72 +1,32 @@
 @echo off
-rem Build GyroPhone on this PC and update the companion and the phone.
-rem Usage: update.cmd [commit]   (default: HEAD; commit your changes first)
-rem
-rem Builds go in build\ inside the repo (git-ignored):
-rem   build\gyrophone.apk, build\GyroPhoneCompanion.exe   the newest build
-rem   build\builds\0.1.<n>-<commit>\                       the last 4 builds (APK, exe, BUILD.txt)
-rem   build\builds\0.1.<n>-<commit>\src\                   the git worktree each one was built from
-rem <n> is the commit count, so a later commit always gets a higher build number.
-rem The companion needs the .NET 8 SDK; without it only the APK is built.
+rem Install the newest GyroPhone build from build\ on this PC and the phone. Build it first with build.cmd.
+rem Usage: update.cmd
+rem It installs only what build.cmd left directly in build\ (gyrophone.apk, GyroPhoneCompanion.exe,
+rem BUILD.txt); it never builds or downloads anything.
 rem PC: the companion is installed at one fixed path, %LOCALAPPDATA%\Programs\GyroPhone, so its
 rem firewall rule and Start with Windows entry survive updates; the Start menu entry opens it there.
 rem A running companion is swapped by renaming it to .old; it restarts into the new build by itself
 rem once no phone is connected (pairing and settings live in %APPDATA%\GyroPhone).
 rem Phone: in-place update only (adb install -r), keeps settings, never uninstalls.
+rem Key pairing: with the phone on adb it also swaps key files, so the phone connects over Wi-Fi
+rem without a code: the phone's phone.pub goes to %APPDATA%\GyroPhoneuthorized_phones and the
+rem PC's host.pub to the phone's keys	rusted_hosts. Only public keys are copied.
 rem It never starts or closes apps; you launch them yourself.
-setlocal enabledelayedexpansion
+setlocal
 cd /d "%~dp0"
-set "REF=%~1"
-if "%REF%"=="" set "REF=HEAD"
-if not defined JAVA_HOME set "JAVA_HOME=%~dp0..\tools\jdk17"
-if not defined ANDROID_HOME set "ANDROID_HOME=%~dp0..\tools\android-sdk"
-set "BUILD=%~dp0build"
-
-for /f %%c in ('git rev-parse --short "%REF%"') do set "SHA=%%c"
-if "%SHA%"=="" exit /b 1
-for /f %%n in ('git rev-list --count %SHA%') do set "NUM=%%n"
-set "VER=0.1.%NUM%-%SHA%"
-set "OUT=%BUILD%\builds\%VER%"
-echo Building GyroPhone %VER%
-
-if not exist "%OUT%\src" git worktree add --detach "%OUT%\src" %SHA% || exit /b 1
-set "GP_BUILD=%NUM%"
-set "GP_COMMIT=%SHA%"
-if not exist "%OUT%\gyrophone.apk" (
-  pushd "%OUT%\src"
-  call "%OUT%\src\gradlew.bat" --no-daemon :app:assembleDebug || (popd & exit /b 1)
-  popd
-  copy /y "%OUT%\src\app\build\outputs\apk\debug\app-debug.apk" "%OUT%\gyrophone.apk" >nul || exit /b 1
+set "OUT=%~dp0build"
+if not exist "%OUT%\BUILD.txt" (
+  echo No build in %OUT%: run build.cmd first.
+  exit /b 1
 )
-set "HAVE_SDK="
-for /f %%s in ('dotnet --list-sdks 2^>nul ^| findstr /b "8. 9. 10."') do set "HAVE_SDK=1"
-if defined HAVE_SDK if not exist "%OUT%\GyroPhoneCompanion.exe" (
-  dotnet publish "%OUT%\src\companion\src\GyroPhone.Tray" -c Release -r win-x64 --self-contained true ^
-    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true ^
-    -p:PublishReadyToRun=true -p:DebugType=none -p:Version=0.1.%NUM% -p:InformationalVersion=%VER% ^
-    -p:IncludeSourceRevisionInInformationalVersion=false -o "%OUT%" || exit /b 1
+rem BUILD.txt starts with "GyroPhone <version>".
+set "VER="
+for /f "usebackq tokens=2" %%v in ("%OUT%\BUILD.txt") do if not defined VER set "VER=%%v"
+if "%VER%"=="" (
+  echo %OUT%\BUILD.txt names no version.
+  exit /b 1
 )
-if not exist "%OUT%\GyroPhoneCompanion.exe" echo No .NET 8 SDK found: built the APK only.
-> "%OUT%\BUILD.txt" (
-  echo GyroPhone %VER%
-  echo commit  %SHA%
-)
-
-rem The newest build sits directly in build\.
-copy /y "%OUT%\gyrophone.apk" "%BUILD%\gyrophone.apk" >nul
-if exist "%OUT%\GyroPhoneCompanion.exe" copy /y "%OUT%\GyroPhoneCompanion.exe" "%BUILD%\GyroPhoneCompanion.exe" >nul
-copy /y "%OUT%\BUILD.txt" "%BUILD%\BUILD.txt" >nul
-
-rem Keep the newest 4 build folders, removing older ones with their worktrees.
-set /a KEEP=0
-for /f "delims=" %%d in ('dir /b /ad /o-d "%BUILD%\builds"') do (
-  set /a KEEP+=1
-  if !KEEP! gtr 4 (
-    git worktree remove --force "%BUILD%\builds\%%d\src"
-    rmdir /s /q "%BUILD%\builds\%%d"
-  )
-)
-del /q "%BUILD%\debug-*" >nul 2>&1
+echo Installing GyroPhone %VER%
 
 rem ---- PC ----
 set "APP=%LOCALAPPDATA%\Programs\GyroPhone"
@@ -106,18 +66,49 @@ set "ON_PHONE="
 for /f "tokens=2 delims==" %%v in ('adb shell dumpsys package com.oleroma.gyrophone ^| findstr versionName') do set "ON_PHONE=%%v"
 if "%ON_PHONE%"=="%VER%" (
   echo Phone already has %VER%.
-  goto :done
+  goto :keys
 )
 if not exist "%OUT%\gyrophone.apk" (
   echo gyrophone.apk missing in %OUT%
-  goto :done
+  goto :keys
 )
 rem -d: builds from different branches can have a lower build number than the one installed.
 adb install -r -d "%OUT%\gyrophone.apk" && echo Phone updated: %ON_PHONE% -^> %VER%
 
+:keys
+rem ---- Key pairing ----
+set "PHONE_KEYS=/sdcard/Android/data/com.oleroma.gyrophone/files/keys"
+set "GP_DATA=%APPDATA%\GyroPhone"
+rem The companion makes host.pub when it runs; this script never starts it.
+if not exist "%GP_DATA%\host.pub" (
+  echo Key pairing: the PC has no key yet. Start GyroPhone Companion once, then run update.cmd again.
+  goto :done
+)
+set "PHONE_PUB=%TEMP%\gyrophone-phone.pub"
+del /q "%PHONE_PUB%" >nul 2>&1
+adb pull "%PHONE_KEYS%/phone.pub" "%PHONE_PUB%" >nul 2>&1
+if not exist "%PHONE_PUB%" (
+  echo Key pairing: the phone has no key yet. Open GyroPhone once, then run update.cmd again.
+  goto :done
+)
+rem The file is named after the phone (the name in phone.pub, made safe for a file name).
+powershell -NoProfile -Command "$p = (Get-Content -LiteralPath $env:PHONE_PUB -TotalCount 1) -split ' ', 3; $n = if ($p.Count -ge 3) { $p[2] } else { 'phone' }; $n = ($n -replace '[^\w .-]', '_').Trim(' .'); if (-not $n) { $n = 'phone' }; $n" > "%TEMP%\gyrophone-phone-name.txt"
+set "PHONE_NAME=phone"
+set /p PHONE_NAME=<"%TEMP%\gyrophone-phone-name.txt"
+if not exist "%GP_DATA%uthorized_phones" mkdir "%GP_DATA%uthorized_phones"
+set "PHONE_DEST=%GP_DATA%uthorized_phones\%PHONE_NAME%.pub"
+rem Overwrite only when it changed, so the companion is not poked for nothing.
+fc /b "%PHONE_PUB%" "%PHONE_DEST%" >nul 2>&1 || copy /y "%PHONE_PUB%" "%PHONE_DEST%" >nul || goto :keysfail
+adb shell mkdir -p "%PHONE_KEYS%/trusted_hosts" >nul 2>&1
+adb push "%GP_DATA%\host.pub" "%PHONE_KEYS%/trusted_hosts/%COMPUTERNAME%.pub" >nul 2>&1 || goto :keysfail
+echo Key pairing: phone and PC know each other.
+goto :done
+:keysfail
+echo Key pairing: could not copy the key files; code pairing still works.
+
 :done
 echo.
-echo Newest: %BUILD%   (GyroPhone %VER%)
+echo Installed from: %OUT%   (GyroPhone %VER%)
 if "%PC%"=="installed" echo PC: companion %VER% installed in %APP%. A running companion switches to it when no phone is connected.
 if "%PC%"=="same" echo PC: companion in %APP% is already %VER%.
 if "%PC%"=="failed" echo PC: could not install the companion in %APP%.
