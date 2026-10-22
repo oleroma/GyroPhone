@@ -13,10 +13,10 @@ public static class FirewallHelper
     public const string RuleName = "GyroPhone Companion";
 
     /// <summary>
-    /// True when Windows Firewall lets this executable receive UDP on a Private network: an enabled
-    /// inbound Allow rule for its path (any name, so the rule Windows adds from its own first-run
-    /// prompt counts too) covering UDP and the Private profile, and no enabled inbound Block rule for it
-    /// there (Block wins over Allow). Rules are per path, so a copy elsewhere needs its own. Reads the
+    /// True when Windows Firewall lets this executable receive UDP on the networks it is connected to
+    /// now: an enabled inbound Allow rule for its path (any name, so the rule Windows adds from its own
+    /// first-run prompt counts too) covering UDP and an active profile (Private, Public or Domain), and
+    /// no enabled inbound Block rule for it there (Block wins over Allow). Rules are per path, so a copy elsewhere needs its own. Reads the
     /// rules through the firewall's COM API, which needs no elevation; falls back to netsh by our rule
     /// name when that fails.
     /// </summary>
@@ -38,6 +38,7 @@ public static class FirewallHelper
     private const int ProtocolUdp = 17;
     private const int ProtocolAny = 256;
     private const int ProfilePrivate = 2;
+    private const int ProfileAll = 0x7FFFFFFF;
 
     /// <summary>The COM answer, or null when the firewall policy cannot be read that way.</summary>
     private static bool? ComRuleAllows(string exePath)
@@ -48,6 +49,9 @@ public static class FirewallHelper
             if (type == null) return null;
             dynamic? policy = Activator.CreateInstance(type);
             if (policy == null) return null;
+            // The profiles of the connected networks; none connected: judge by Private, where pairing happens.
+            int active = (int)policy.CurrentProfileTypes;
+            if ((active & ProfileAll) == 0) active = ProfilePrivate;
             bool allowed = false;
             foreach (dynamic rule in policy.Rules)
             {
@@ -56,7 +60,7 @@ public static class FirewallHelper
                 if (!(bool)rule.Enabled || (int)rule.Direction != DirectionIn) continue;
                 int protocol = rule.Protocol;
                 if (protocol != ProtocolUdp && protocol != ProtocolAny) continue;
-                if (((int)rule.Profiles & ProfilePrivate) == 0) continue;
+                if (((int)rule.Profiles & active) == 0) continue;
                 int action = rule.Action;
                 if (action == ActionBlock) return false;
                 if (action == ActionAllow) allowed = true;
