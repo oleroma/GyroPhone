@@ -57,7 +57,8 @@ public sealed class P256 : IDisposable
             using var k = DecodePublic(pub);
             return true;
         }
-        catch (CryptographicException)
+        // Windows CNG reports an off-curve point as PlatformNotSupportedException.
+        catch (Exception e) when (e is CryptographicException or PlatformNotSupportedException)
         {
             return false;
         }
