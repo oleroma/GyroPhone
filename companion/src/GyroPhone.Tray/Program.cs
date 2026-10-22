@@ -25,6 +25,7 @@ internal static class Program
     private static int Main(string[] args)
     {
         if (args.Contains(InitKeysArg)) return InitKeys();
+        if (args.Contains(Watcher.Arg)) return Watcher.Run();
 
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);

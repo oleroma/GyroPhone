@@ -44,6 +44,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private readonly ToolStripMenuItem _hostKeyItem;
     private readonly ToolStripMenuItem _pauseItem;
     private readonly ToolStripMenuItem _autoStartItem;
+    private readonly ToolStripMenuItem _watcherItem;
     private readonly ToolStripMenuItem _uipiItem;
     private readonly ToolStripMenuItem _networkItem;
     private readonly ToolStripMenuItem _firewallItem;
@@ -113,6 +114,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _pauseItem = new ToolStripMenuItem("Pause input");
         _pauseItem.Click += (_, _) => _engine.SetPaused(!_pauseItem.Checked);
         _autoStartItem = new ToolStripMenuItem("Start with Windows", null, (_, _) => ToggleAutoStart());
+        _watcherItem = new ToolStripMenuItem("Start when my phone appears", null, (_, _) => ToggleWatcher());
         _uipiItem = new ToolStripMenuItem("The game runs as administrator: restart as administrator", null, (_, _) => RestartAsAdmin());
         _networkItem = new ToolStripMenuItem("This network is Public: make it Private…", null, (_, _) => Open(NetworkCategory.SettingsUri));
         _firewallItem = new ToolStripMenuItem("Allow through firewall…", null, (_, _) => AllowThroughFirewall());
@@ -135,6 +137,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             statusFormItem,
             _pauseItem,
             _autoStartItem,
+            _watcherItem,
             new ToolStripSeparator(),
             _uipiItem,
             _networkItem,
@@ -268,6 +271,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _outOff.Checked = s.OutputMode == OutputMode.None;
         _pauseItem.Checked = s.Paused;
         _autoStartItem.Checked = IsAutoStartOn();
+        _watcherItem.Checked = IsWatcherOn();
         _uipiItem.Available = s.ElevatedForeground && !ElevationProbe.IsSelfElevated;
         _networkItem.Available = s.NetworkPublic;
         _firewallItem.Available = _firewallOk == false;
@@ -428,6 +432,55 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     {
         bool enable = !IsAutoStartOn();
         if (TrySetAutoStart(enable)) _engine.SetStartWithWindows(enable);
+        Refresh();
+    }
+
+    private static bool IsWatcherOn()
+    {
+        try
+        {
+            return AutoStart.IsEnabled(AutoStart.WatcherValueName, Watcher.InstalledExe, Watcher.Arg);
+        }
+        catch (Exception e) when (e is UnauthorizedAccessException or System.Security.SecurityException or IOException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// "Start when my phone appears": a per-user Run entry for the installed exe with --watch, started
+    /// now too. Off removes the entry and stops the running watcher.
+    /// </summary>
+    private void ToggleWatcher()
+    {
+        bool enable = !IsWatcherOn();
+        if (enable && !File.Exists(Watcher.InstalledExe))
+        {
+            MessageBox.Show($"Install the companion with update.cmd first (it goes to {Path.GetDirectoryName(Watcher.InstalledExe)}).",
+                Program.AppName, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        try
+        {
+            AutoStart.Set(AutoStart.WatcherValueName, enable, Watcher.InstalledExe, Watcher.Arg);
+            if (enable)
+            {
+                using var p = Process.Start(new ProcessStartInfo(Watcher.InstalledExe, Watcher.Arg)
+                {
+                    UseShellExecute = true,
+                    WorkingDirectory = Path.GetDirectoryName(Watcher.InstalledExe) ?? "",
+                });
+            }
+            else
+            {
+                Watcher.SignalStop();
+            }
+            _log.Write($"watcher {(enable ? "on" : "off")}");
+        }
+        catch (Exception e) when (e is UnauthorizedAccessException or System.Security.SecurityException or IOException or Win32Exception)
+        {
+            _log.Write($"watcher change failed: {e.GetType().Name}");
+        }
         Refresh();
     }
 

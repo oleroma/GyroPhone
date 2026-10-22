@@ -179,3 +179,30 @@ public class KeyPairingTests
         return a.Flags;
     }
 }
+
+public class PhoneWatchTests
+{
+    private static readonly JsonElement K = Vectors.Key;
+
+    private static byte[] Discover(byte[] phoneId, byte[]? phoneKeyId = null)
+    {
+        var b = new byte[Wire.DiscoverSize];
+        WireCodec.EncodeDiscover(new Discover(1, phoneId, 0, null, phoneKeyId), b);
+        return b;
+    }
+
+    [Fact]
+    public void OnlyKnownPhonesCount()
+    {
+        var w = new PhoneWatch([Harness.Phone1Id], [K.Bytes("pkP")]);
+        Assert.False(w.Empty);
+        Assert.True(w.IsKnownPhone(Discover(Harness.Phone1Id)));
+        Assert.True(w.IsKnownPhone(Discover(Hex.Range(0x70, 16), K.Bytes("phoneKeyId"))));
+        Assert.False(w.IsKnownPhone(Discover(Hex.Range(0x70, 16))));
+        Assert.False(w.IsKnownPhone(Discover(Hex.Range(0x70, 16), new byte[8])));
+        var other = Discover(Harness.Phone1Id);
+        other[3] = PacketType.Hello; // not a DISCOVER
+        Assert.False(w.IsKnownPhone(other));
+        Assert.True(new PhoneWatch([], []).Empty);
+    }
+}
