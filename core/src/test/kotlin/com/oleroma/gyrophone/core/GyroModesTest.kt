@@ -110,10 +110,13 @@ class GyroModesTest {
         assertEquals(GyroMode.ALWAYS, GyroSettings(mode = GyroMode.HOLD_OR_TOGGLE).toggledMode().mode)
     }
 
-    @Test fun presetsHaveGyroAxesForBothOrientations() {
+    @Test fun presetsHaveRollAndPitchGyroAxesForBothOrientations() {
         for (w in BuiltinProfiles.presets + BuiltinProfiles.blankWorkspace()) {
             assertNotNull("${w.name} portrait axes", w.gyro.portrait)
             assertEquals(w.gyro.landscapeAxes, w.gyro.axesFor(portrait = true))
+            assertEquals(MotionAxis.ROLL, w.gyro.axesFor(portrait = true).mouseX)
+            assertEquals(MotionAxis.PITCH, w.gyro.axesFor(portrait = true).mouseY)
+            assertEquals(MotionAxis.ROLL, w.gyro.landscapeAxes.mouseX)
         }
     }
 
