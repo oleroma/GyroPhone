@@ -17,12 +17,15 @@ import com.oleroma.gyrophone.core.net.Discover
 import com.oleroma.gyrophone.core.net.HostFlags
 import com.oleroma.gyrophone.core.net.HostStatus
 import com.oleroma.gyrophone.core.net.HostStatusFlags
+import com.oleroma.gyrophone.core.net.KeyPairing
+import com.oleroma.gyrophone.core.net.KeyStatus
 import com.oleroma.gyrophone.core.net.LinkInfo
 import com.oleroma.gyrophone.core.net.LinkInfoFlags
 import com.oleroma.gyrophone.core.net.LiveSession
 import com.oleroma.gyrophone.core.net.PacketType
 import com.oleroma.gyrophone.core.net.PairFailure
 import com.oleroma.gyrophone.core.net.PairState
+import com.oleroma.gyrophone.core.net.PairedHost
 import com.oleroma.gyrophone.core.net.PairingMath
 import com.oleroma.gyrophone.core.net.PhonePairingFlow
 import com.oleroma.gyrophone.core.net.PhoneSessionFlow
@@ -55,6 +58,8 @@ data class DiscoveredHost(
     val flags: Int,
     /** This phone holds a pairing key for it. */
     val paired: Boolean,
+    /** Key file pairing with it, from this phone's key DISCOVERs. */
+    val keyStatus: KeyStatus = KeyStatus.NONE,
 ) {
     val pairingOpen: Boolean get() = flags and AnnounceFlags.PAIRING_OPEN != 0
     val vigemOk: Boolean get() = flags and AnnounceFlags.VIGEM_OK != 0
@@ -77,6 +82,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     private val appContext = context.applicationContext
     val store = WifiPairingStore(appContext)
+    /** Key file pairing: this phone's key and the PC keys it trusts. */
+    val keys = PhoneKeys(appContext, ::phoneName)
     private val locks = WifiLocks(appContext)
     private val binder = WifiNetworkBinder(appContext) { post { onNetworkChanged() } }
     private val pump = WifiPump(engine)
@@ -107,6 +114,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** Paired PCs, most recently used first. */
     val paired: StateFlow<List<StoredHost>> get() = store.hosts
 
+    private val _pairedByKey = MutableStateFlow(false)
+    /** The current session uses key file pairing. */
+    val pairedByKey: StateFlow<Boolean> = _pairedByKey
+
     /** Max STATE rate (250, 500 or 1000 Hz). */
     var rateHz: Int = Wire.DEFAULT_RATE_HZ
         set(value) {
@@ -135,6 +146,15 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     private var lastAnnounceMs = 0L
     private var nextRefreshMs = 0L
     private val txBuf = ByteArray(Wire.MAX_DATAGRAM)
+    /** DISCOVER reqId -> hex key id of the trusted PC key it named ("" for none), this round and the last. */
+    private var keyReqs = HashMap<Int, String>()
+    private var lastKeyReqs = HashMap<Int, String>()
+    /** Host id -> (trusted key id or "" -> status) from the latest key ANNOUNCEs. */
+    private val keyAnswers = HashMap<String, HashMap<String, KeyStatus>>()
+    /** Host ids whose key session started by itself since the link started (once each). */
+    private val keyAutoTried = HashSet<String>()
+    private var sessionKeyId: String? = null
+    private var nextKeyScanMs = 0L
 
     // Read by the pump (LINK_INFO) and the UI (stats).
     @Volatile private var clockOffsetUs = 0L
@@ -145,6 +165,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     init {
         pump.rateHz = rateHz
         pump.linkInfoSource = ::buildLinkInfo
+        // The Keystore key and phone.pub exist from the first start, so update.cmd can fetch it.
+        Thread({ keys.publish() }, "gp-keys").start()
     }
 
     override fun start() {
@@ -167,6 +189,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         binder.register(s)
         pump.start(s)
         engine.onChange = pump.wake
+        keyAutoTried.clear()
+        keys.startWatching { post { onTrustedChanged(keys.rescan()) } }
         _state.value = LinkState.Searching
         post { autoConnect() }
         rxThread = Thread({ rxLoop() }, "gp-wifi-rx").apply { start() }
@@ -179,6 +203,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         if (!running) return
         running = false
         engine.onChange = null
+        keys.stopWatching()
         rxThread?.let { t ->
             try {
                 t.join(RX_JOIN_MS)
@@ -192,6 +217,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         session?.disconnect()
         session = null
         sessionHostId = null
+        sessionKeyId = null
+        _pairedByKey.value = false
         _currentHostId.value = null
         live = null
         pairFlow?.cancel()
@@ -204,6 +231,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         locks.release()
         foundMap.clear()
         foundSeen.clear()
+        keyAnswers.clear()
         _found.value = emptyList()
         _nothingFound.value = false
         _notice.value = null
@@ -240,6 +268,18 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     /** Ends the current session (neutral STATE + BYE) and goes back to discovery. */
     fun disconnect() = post { endSession(ByeReason.USER) }
+
+    /** Connects to a PC by key file pairing (both sides know each other's key). */
+    fun connectByKey(hostIdHex: String) = post { connectKeyTo(hostIdHex) }
+
+    /** Adds a PC key (host.pub text) to trusted_hosts; returns an error message or null. */
+    fun importHostKey(text: String): String? = keys.import(text).also { if (it == null) post { onTrustedChanged(true) } }
+
+    /** Removes a trusted PC key; a session on it ends. */
+    fun removeHostKey(host: TrustedHost) {
+        keys.remove(host)
+        post { onTrustedChanged(true) }
+    }
 
     /** Starts pairing with a PC whose pairing window is open. */
     fun pair(host: DiscoveredHost) = post { startPairing(host) }
@@ -350,9 +390,12 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         val f = session
         val ownScan = f == null || !f.isRunning
         if (ownScan && nowMs >= nextScanMs) {
-            val n = WireCodec.encodeDiscover(Discover(Crypto.randomBytes(4).getI32(0), store.phoneId), txBuf)
-            for (target in broadcastTargets()) send(txBuf, n, target)
+            sendDiscovers()
             nextScanMs = nowMs + Wire.DISCOVER_INTERVAL_MS
+        }
+        if (nowMs >= nextKeyScanMs) {
+            nextKeyScanMs = nowMs + KEY_RESCAN_MS
+            onTrustedChanged(keys.rescan()) // FileObserver can miss writes made over adb
         }
         val discovering = ownScan || f?.status == SessionStatus.DISCOVERING
         if (discovering) {
@@ -381,10 +424,33 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         }
     }
 
+    /**
+     * One DISCOVER per trusted PC key (at most [MAX_KEY_DISCOVERS]), each naming that key and this
+     * phone's key, or a single one naming only this phone's key. Old PCs ignore the key ids.
+     */
+    private fun sendDiscovers() {
+        val phoneKeyId = keys.key?.let { KeyPairing.keyId(it.publicKey) } ?: ByteArray(Wire.KEY_ID_SIZE)
+        val trusted = keys.trusted.value.take(MAX_KEY_DISCOVERS)
+        lastKeyReqs = keyReqs
+        keyReqs = HashMap()
+        val targets = broadcastTargets()
+        val named = if (trusted.isEmpty()) listOf<TrustedHost?>(null) else trusted
+        for (t in named) {
+            val reqId = Crypto.randomBytes(4).getI32(0)
+            keyReqs[reqId] = t?.keyIdHex ?: ""
+            val hostKeyId = t?.key?.keyId ?: ByteArray(Wire.KEY_ID_SIZE)
+            val n = WireCodec.encodeDiscover(Discover(reqId, store.phoneId, 0, hostKeyId, phoneKeyId), txBuf)
+            for (target in targets) send(txBuf, n, target)
+        }
+    }
+
     private fun onAnnounce(a: Announce, from: InetSocketAddress, nowMs: Long) {
         val id = a.hostId.toHex()
         lastAnnounceMs = nowMs
         foundSeen[id] = nowMs
+        (keyReqs[a.reqId] ?: lastKeyReqs[a.reqId])?.let { keyId ->
+            keyAnswers.getOrPut(id) { HashMap() }[keyId] = KeyPairing.status(a.flags)
+        }
         val host = DiscoveredHost(
             hostIdHex = id,
             name = a.name.ifBlank { "PC" },
@@ -392,11 +458,46 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             port = from.port,
             flags = a.flags,
             paired = store.find(id) != null,
+            keyStatus = keyStatusOf(id),
         )
         if (foundMap[id] != host) {
             foundMap[id] = host
             publishFound()
         }
+        if (host.keyStatus == KeyStatus.READY && session == null && pairFlow == null && keyAutoTried.add(id)) {
+            connectKeyTo(id) // both sides know each other: no prompt
+        }
+    }
+
+    /** The best key answer [hostIdHex] gave for a key this phone still trusts. */
+    private fun keyStatusOf(hostIdHex: String): KeyStatus {
+        val answers = keyAnswers[hostIdHex] ?: return KeyStatus.NONE
+        val current = keys.trusted.value.mapTo(HashSet()) { it.keyIdHex }.apply { add("") }
+        val sts = answers.filterKeys { it in current }.values
+        return KEY_STATUS_ORDER.firstOrNull { it in sts } ?: KeyStatus.NONE
+    }
+
+    /** The trusted PC key [hostIdHex] said is its own, if any. */
+    private fun matchedKey(hostIdHex: String): TrustedHost? {
+        val answers = keyAnswers[hostIdHex] ?: return null
+        return keys.trusted.value.firstOrNull { answers[it.keyIdHex] == KeyStatus.READY }
+    }
+
+    /** trusted_hosts changed (or may have): refresh key statuses, end a session whose key is gone. */
+    private fun onTrustedChanged(changed: Boolean) {
+        if (!changed) return
+        val ids = keys.trusted.value.mapTo(HashSet()) { it.keyIdHex }
+        if (sessionKeyId != null && sessionKeyId !in ids) endSession(ByeReason.USER)
+        var any = false
+        for ((id, h) in foundMap.entries.toList()) {
+            val st = keyStatusOf(id)
+            if (h.keyStatus != st) {
+                foundMap[id] = h.copy(keyStatus = st)
+                any = true
+            }
+        }
+        if (any) publishFound()
+        nextScanMs = 0L // ask the PCs about the new keys now
     }
 
     private fun publishFound() {
@@ -452,6 +553,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         f.disconnect()
         session = null
         sessionHostId = null
+        sessionKeyId = null
+        _pairedByKey.value = false
         _currentHostId.value = null
         if (live != null) {
             live = null
@@ -460,6 +563,36 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         locks.release()
         hostStatus = null
         welcomeHostFlags = null
+        publishState()
+    }
+
+    private fun connectKeyTo(hostIdHex: String) {
+        val found = foundMap[hostIdHex] ?: return
+        val trusted = matchedKey(hostIdHex) ?: return
+        val k = keys.key ?: return
+        val addr = runCatching { InetSocketAddress(InetAddress.getByName(found.address), found.port) }.getOrNull()
+        val secrets = try {
+            KeyPairing.phoneSecrets(k, trusted.key.publicKey)
+        } catch (e: Exception) {
+            Log.e(TAG, "key agreement failed", e)
+            null
+        }
+        if (secrets == null) {
+            _notice.value = "Key pairing with ${found.name} failed"
+            return
+        }
+        val (keyPhoneId, pairKey) = secrets
+        _notice.value = null
+        endSession(ByeReason.USER)
+        val host = PairedHost(hexToBytes(hostIdHex), found.name, pairKey, addr)
+        val f = PhoneSessionFlow(keyPhoneId, host, ::broadcastTargets, Caps.RUMBLE, rateHz)
+        session = f
+        sessionHostId = hostIdHex
+        sessionKeyId = trusted.keyIdHex
+        _pairedByKey.value = true
+        _currentHostId.value = hostIdHex
+        sessionHostName = found.name
+        handleSessionOuts(f.connect(SystemClock.elapsedRealtime()))
         publishState()
     }
 
@@ -573,7 +706,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             f != null -> when (f.status) {
                 SessionStatus.LIVE -> LinkState.Connected(sessionHostName, radioDetail())
                 SessionStatus.HOST_SILENT -> LinkState.HostSilent(sessionHostName)
-                SessionStatus.NOT_PAIRED -> LinkState.Failed("$sessionHostName no longer knows this phone. Pair again?")
+                SessionStatus.NOT_PAIRED -> LinkState.Failed(
+                    if (sessionKeyId != null) "$sessionHostName no longer has this phone's key. Run update.cmd or pair with a code"
+                    else "$sessionHostName no longer knows this phone. Pair again?",
+                )
                 SessionStatus.VERSION_MISMATCH -> LinkState.Failed("Update GyroPhone / the PC app")
                 SessionStatus.REPLACED -> LinkState.Failed("Another phone took over $sessionHostName")
                 SessionStatus.FORGOTTEN -> LinkState.Failed("$sessionHostName forgot this phone. Pair again?")
@@ -606,6 +742,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         private const val SEND_BUFFER = 8192
         private const val REFRESH_MS = 1000L
         private const val UNKNOWN_LATENCY = -1 // 0xFFFFFFFF
+        private const val MAX_KEY_DISCOVERS = 4
+        private const val KEY_RESCAN_MS = 2000L
+        /** When a PC answered several key DISCOVERs, the most useful answer wins. */
+        private val KEY_STATUS_ORDER = listOf(KeyStatus.READY, KeyStatus.PC_LACKS_PHONE, KeyStatus.PHONE_LACKS_PC)
         private val LIMITED_BROADCAST: InetAddress =
             InetAddress.getByAddress(byteArrayOf(-1, -1, -1, -1))
 

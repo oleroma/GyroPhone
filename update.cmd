@@ -11,6 +11,9 @@ rem A running companion is swapped by renaming it to .old; it restarts into the 
 rem once no phone is connected (pairing and settings live in %APPDATA%\GyroPhone).
 rem Phone: in-place update only (adb install -r), keeps settings, never uninstalls.
 rem It never starts or closes apps; you launch them yourself.
+rem Key pairing: with the phone on adb it also swaps key files, so the phone connects over Wi-Fi
+rem without a code: the phone's phone.pub goes to %APPDATA%\GyroPhone\authorized_phones and the
+rem PC's host.pub to the phone's keys\trusted_hosts. Only public keys are copied.
 setlocal
 set "REPO=oleroma/GyroPhone"
 set "ROOT=%~dp0builds"
@@ -83,14 +86,44 @@ set "ON_PHONE="
 for /f "tokens=2 delims==" %%v in ('adb shell dumpsys package com.oleroma.gyrophone ^| findstr versionName') do set "ON_PHONE=%%v"
 if "%ON_PHONE%"=="%VER%" (
   echo Phone already has %VER%.
-  goto :done
+  goto :keys
 )
 if not exist "%OUT%\app-debug.apk" (
   echo app-debug.apk missing in %OUT%
-  goto :done
+  goto :keys
 )
 rem -d: builds from different branches can have a lower build number than the one installed.
 adb install -r -d "%OUT%\app-debug.apk" && echo Phone updated: %ON_PHONE% -^> %VER%
+
+:keys
+rem ---- Key pairing ----
+set "PHONE_KEYS=/sdcard/Android/data/com.oleroma.gyrophone/files/keys"
+set "GP_DATA=%APPDATA%\GyroPhone"
+if not exist "%GP_DATA%\host.pub" (
+  echo Key pairing: start GyroPhone Companion once so it makes its key, then run update.cmd again.
+  goto :done
+)
+set "PHONE_PUB=%TEMP%\gyrophone-phone.pub"
+del /q "%PHONE_PUB%" >nul 2>&1
+adb pull "%PHONE_KEYS%/phone.pub" "%PHONE_PUB%" >nul 2>&1
+if not exist "%PHONE_PUB%" (
+  echo Key pairing: the phone has no key yet. Open GyroPhone once, then run update.cmd again.
+  goto :done
+)
+rem The file is named after the phone (the name in phone.pub, made safe for a file name).
+powershell -NoProfile -Command "$p = (Get-Content -LiteralPath $env:PHONE_PUB -TotalCount 1) -split ' ', 3; $n = if ($p.Count -ge 3) { $p[2] } else { 'phone' }; $n = ($n -replace '[^\w .-]', '_').Trim(' .'); if (-not $n) { $n = 'phone' }; $n" > "%TEMP%\gyrophone-phone-name.txt"
+set "PHONE_NAME=phone"
+set /p PHONE_NAME=<"%TEMP%\gyrophone-phone-name.txt"
+if not exist "%GP_DATA%\authorized_phones" mkdir "%GP_DATA%\authorized_phones"
+set "PHONE_DEST=%GP_DATA%\authorized_phones\%PHONE_NAME%.pub"
+rem Overwrite only when it changed, so the companion is not poked for nothing.
+fc /b "%PHONE_PUB%" "%PHONE_DEST%" >nul 2>&1 || copy /y "%PHONE_PUB%" "%PHONE_DEST%" >nul || goto :keysfail
+adb shell mkdir -p "%PHONE_KEYS%/trusted_hosts" >nul 2>&1
+adb push "%GP_DATA%\host.pub" "%PHONE_KEYS%/trusted_hosts/%COMPUTERNAME%.pub" >nul 2>&1 || goto :keysfail
+echo Key pairing: phone and PC know each other.
+goto :done
+:keysfail
+echo Key pairing: could not copy the key files; code pairing still works.
 
 :done
 echo.
