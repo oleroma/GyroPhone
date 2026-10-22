@@ -14,6 +14,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -101,6 +102,43 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
     AxisRow("Mouse up/down", axes.mouseY, axes.invertY,
         onAxis = { a -> editAxes { it.copy(mouseY = a) } },
         onInvert = { inv -> editAxes { it.copy(invertY = inv) } })
+    // Both filters default to off: raw gyro. Calibration only subtracts a fixed resting bias.
+    var tight by remember(key) { mutableStateOf(ws.gyro.tighteningThreshold) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Jitter cutoff " + if (tight < 0.05f) "off" else "%.1f°/s".format(tight), Modifier.padding(end = 8.dp))
+        Slider(value = tight, onValueChange = { tight = it }, valueRange = 0f..5f,
+            onValueChangeFinished = {
+                if (tight < 0.05f) tight = 0f
+                editWs { it.copy(gyro = it.gyro.copy(tighteningThreshold = tight)) }
+            })
+    }
+    var smooth by remember(key) { mutableStateOf(ws.gyro.smoothingThreshold) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Smoothing " + if (smooth < 0.05f) "off" else "below %.1f°/s".format(smooth), Modifier.padding(end = 8.dp))
+        Slider(value = smooth, onValueChange = { smooth = it }, valueRange = 0f..10f,
+            onValueChangeFinished = {
+                if (smooth < 0.05f) smooth = 0f
+                editWs { it.copy(gyro = it.gyro.copy(smoothingThreshold = smooth)) }
+            })
+    }
+    val cal by runtime.calibrationState.collectAsState()
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            when (val c = cal) {
+                GamepadRuntime.CalibrationState.None -> "Not calibrated (phone's own drift correction only)"
+                GamepadRuntime.CalibrationState.Running -> "Calibrating: keep the phone still…"
+                GamepadRuntime.CalibrationState.Moved -> "The phone moved. Lay it flat and try again."
+                is GamepadRuntime.CalibrationState.Calibrated -> "Calibrated (removes %.2f°/s drift)".format(c.degPerSec)
+            },
+            Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+        )
+        if (cal is GamepadRuntime.CalibrationState.Calibrated) {
+            TextButton(onClick = { runtime.clearGyroCalibration() }) { Text("Clear") }
+        }
+        TextButton(onClick = { runtime.calibrateGyro() }, enabled = cal != GamepadRuntime.CalibrationState.Running) {
+            Text("Calibrate")
+        }
+    }
 
     HorizontalDivider()
     Text("Touch keys", style = MaterialTheme.typography.titleSmall)

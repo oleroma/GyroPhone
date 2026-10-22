@@ -141,10 +141,10 @@ data class GyroSettings(
     val mouseY: MotionAxis = MotionAxis.PITCH,
     val invertY: Boolean = false,
     val scaleY: Float = 1f,
-    /** Below this speed (deg/s) motion is scaled down, killing hand jitter. 0 disables. */
-    val tighteningThreshold: Float = 1.5f,
-    /** Below this speed (deg/s) motion is averaged over a short window. 0 disables. */
-    val smoothingThreshold: Float = 4f,
+    /** Below this speed (deg/s) motion is scaled down, killing hand jitter. 0 (default, raw gyro) disables. */
+    val tighteningThreshold: Float = 0f,
+    /** Below this speed (deg/s) motion is averaged over a short window. 0 (default, raw gyro) disables. */
+    val smoothingThreshold: Float = 0f,
     /**
      * Axis mapping used while the phone is held in portrait. Null = same as the fields above,
      * which are the landscape mapping (and the only one in profiles saved before this existed).

@@ -9,8 +9,9 @@ import kotlin.math.sqrt
 /**
  * Gyro-to-mouse conversion (Alpakka / JoyShockMapper style). Converts the sensor's angular
  * velocity into yaw / pitch / roll for the chosen [GyroOrientation], routes the chosen motion to
- * each mouse axis, applies soft tightening and tiered smoothing at low speeds, scales to mouse
- * counts and keeps the sub-count remainder so slow motion is not lost.
+ * each mouse axis, optionally applies soft tightening and tiered smoothing at low speeds (both off
+ * by default: raw gyro), scales to mouse counts and keeps the sub-count remainder so slow motion
+ * is not lost.
  */
 class GyroMouse(var settings: GyroSettings = GyroSettings()) {
 

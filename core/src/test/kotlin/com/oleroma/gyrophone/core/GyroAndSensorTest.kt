@@ -49,7 +49,7 @@ class GyroAndSensorTest {
     }
 
     @Test fun tinyJitterIsTightened() {
-        val g = GyroMouse(GyroSettings(sensitivity = 10f))
+        val g = GyroMouse(GyroSettings(sensitivity = 10f, tighteningThreshold = 1.5f))
         var total = 0
         repeat(1000) { total += g.update(0.002f, 0f, 0f, 0.001f).dx } // ~0.11 deg/s noise
         assertTrue(total == 0)
