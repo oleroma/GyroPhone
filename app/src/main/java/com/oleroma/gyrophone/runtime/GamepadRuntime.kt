@@ -386,23 +386,36 @@ class GamepadRuntime(context: Context) {
     /**
      * The mapping profiles, or on the first start after they were added, profiles made from the
      * mappings [set] still holds ([MappingProfiles.migrate]); the set is then saved without them
-     * (a copy as it was is kept beside it). Returns the stored set. An unreadable mapping file is left alone and the set is
-     * used as it is, with its own mappings.
+     * (a copy as it was is kept beside it). Returns the stored set. An unreadable mapping file is
+     * left alone and the set is used as it is, with its own mappings.
      */
     private fun loadMappings(set: Profile): Profile {
         store.mappingProfiles()?.takeIf { it.isNotEmpty() }?.let {
-            _mappingProfiles.value = it
-            return set
+            val before = if (store.mappingMigration < MAPPING_MIGRATION) store.readBackup(set.id, BACKUP_TAG) else null
+            if (before == null) {
+                store.mappingMigration = MAPPING_MIGRATION
+                _mappingProfiles.value = it
+                return set
+            }
+            // The first move (build 0.1.61) lost keyboard and extra-pad mappings: redo it once from
+            // the copy it kept, keeping its result beside the file.
+            store.backupMappings("v1")
+            return migrateMappings(before)
         }
         if (store.hasMappingFile()) {
             _mappingProfiles.value = listOf(MappingProfile("map1", MappingProfiles.DEFAULT_NAME))
             return set
         }
+        store.backup(set, BACKUP_TAG)
+        return migrateMappings(set)
+    }
+
+    private fun migrateMappings(set: Profile): Profile {
         val m = MappingProfiles.migrate(set)
         _mappingProfiles.value = m.profiles
         store.saveMappingProfiles(m.profiles)
-        store.backup(set, "pre-mappings")
         store.save(m.set)
+        store.mappingMigration = MAPPING_MIGRATION
         return m.set
     }
 
@@ -431,6 +444,9 @@ class GamepadRuntime(context: Context) {
         private const val KEY_WIFI_RATE = "wifi_rate_hz"
         private const val KEY_TRANSPORT = "transport"
         private const val KEY_ORIENTATION = "screen_orientation"
+        /** Version of [MappingProfiles.migrate]'s rules; a phone that ran an older one redoes it from [BACKUP_TAG]. */
+        private const val MAPPING_MIGRATION = 2
+        private const val BACKUP_TAG = "pre-mappings"
     }
 
     private fun onGyroSample(x: Float, y: Float, z: Float, ts: Long) {

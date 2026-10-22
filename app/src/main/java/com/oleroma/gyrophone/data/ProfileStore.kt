@@ -116,6 +116,23 @@ class ProfileStore(context: Context) {
         if (!bak.exists()) bak.writeText(ProfileJson.encode(profile))
     }
 
+    /** The copy [backup] kept of profile [id] under [tag], or null when there is none (or it cannot be read). */
+    @Synchronized fun readBackup(id: String, tag: String): Profile? {
+        val bak = File(dir, fileName(id) + ".$tag.bak")
+        return if (!bak.exists()) null else runCatching { ProfileJson.decode(bak.readText()) }.getOrNull()
+    }
+
+    /** Keeps a copy of the mapping profile file as "mapping_profiles.json.<tag>.bak"; an existing copy is kept. */
+    @Synchronized fun backupMappings(tag: String) {
+        val bak = File(mappingFile.path + ".$tag.bak")
+        if (mappingFile.exists() && !bak.exists()) mappingFile.copyTo(bak)
+    }
+
+    /** Which version of the move to mapping profiles last ran (0 = none recorded). */
+    var mappingMigration: Int
+        get() = prefs.getInt(KEY_MAPPING_MIGRATION, 0)
+        set(value) { prefs.edit().putInt(KEY_MAPPING_MIGRATION, value).apply() }
+
     fun isBuiltin(profile: Profile): Boolean = profile.id.startsWith("builtin.")
 
     private fun fileName(id: String) = id.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".json"
@@ -132,5 +149,6 @@ class ProfileStore(context: Context) {
     companion object {
         private const val KEY_ACTIVE = "active_profile"
         private const val KEY_WORKSPACE_PREFIX = "workspace_"
+        private const val KEY_MAPPING_MIGRATION = "mapping_migration"
     }
 }
