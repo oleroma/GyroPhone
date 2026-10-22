@@ -76,6 +76,8 @@ public static class Wire
     public const int NonceSize = 16;
     public const int PublicKeySize = 65;
     public const int HashSize = 32;
+    /// <summary>KeyPairing.KeyId: the first 8 bytes of SHA-256 of a static public key.</summary>
+    public const int KeyIdSize = 8;
     public const int AnnounceNameMax = 29;
     public const int PairNameMax = 31;
     public const int ForegroundNameMax = 64;
@@ -98,6 +100,10 @@ public static class AnnounceFlags
     public const ushort VigemOk = 1 << 1;
     public const ushort PairedWithYou = 1 << 2;
     public const ushort Busy = 1 << 3;
+    /// <summary>DISCOVER's hostKeyId is this host's key (key file pairing).</summary>
+    public const ushort KeyMatch = 1 << 4;
+    /// <summary>DISCOVER's phoneKeyId is in authorized_phones.</summary>
+    public const ushort KnowsYourKey = 1 << 5;
 }
 
 /// <summary>PAIR_ACK status.</summary>

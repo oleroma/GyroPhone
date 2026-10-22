@@ -82,6 +82,8 @@ object Wire {
     const val NONCE_SIZE = 16
     const val PUBLIC_KEY_SIZE = 65
     const val HASH_SIZE = 32
+    /** [KeyPairing.keyId]: the first 8 bytes of SHA-256 of a static public key. */
+    const val KEY_ID_SIZE = 8
     const val ANNOUNCE_NAME_MAX = 29
     const val PAIR_NAME_MAX = 31
     const val FOREGROUND_EXE_MAX = 64
@@ -160,6 +162,10 @@ object AnnounceFlags {
     const val VIGEM_OK = 2
     const val PAIRED_WITH_YOU = 4
     const val BUSY = 8
+    /** DISCOVER's hostKeyId is this PC's key (key file pairing). */
+    const val KEY_MATCH = 16
+    /** DISCOVER's phoneKeyId is in this PC's authorized_phones folder. */
+    const val KNOWS_YOUR_KEY = 32
 }
 
 /** PAIR_ACK status. */

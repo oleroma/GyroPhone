@@ -3,6 +3,7 @@ using GyroPhone.Host;
 using GyroPhone.Host.Abstractions;
 using GyroPhone.Host.Settings;
 using GyroPhone.Protocol;
+using GyroPhone.Protocol.Crypto;
 using GyroPhone.Protocol.Mapping;
 using GyroPhone.Windows;
 
@@ -66,8 +67,13 @@ internal static class Program
 
         var prompt = new ConsolePairPrompt();
         var events = new ConsoleEvents(log);
-        var engine = new HostEngine(settings, pad, keyMouse, prompt, new DpapiKeyProtector(), clock, events);
+        var protector = new DpapiKeyProtector();
+        var keyFiles = new KeyFiles(KeyFiles.DefaultDirectory());
+        var hostKey = keyFiles.LoadOrCreateHostKey(protector, settings.HostName, log.Write);
+        var engine = new HostEngine(settings, pad, keyMouse, prompt, protector, clock, events, hostKey: hostKey);
         prompt.Engine = engine;
+        using var authorized = new AuthorizedPhonesWatcher(keyFiles, engine.SetAuthorizedPhones, log.Write);
+        log.Write($"key file pairing: {KeyPairing.Fingerprint(hostKey.PublicKey)}, phones in {keyFiles.AuthorizedDirectory}");
 
         LatencyCsv? csv = null;
         if (csvPath != null)

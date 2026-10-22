@@ -7,7 +7,17 @@ package com.oleroma.gyrophone.core.net
  */
 sealed interface WirePacket
 
-data class Discover(val reqId: Int, val phoneId: ByteArray, val flags: Int = 0) : WirePacket
+/**
+ * [hostKeyId] names the PC key this phone trusts and [phoneKeyId] this phone's own key (both
+ * [KeyPairing.keyId], all zero when absent). Hosts without key pairing ignore them.
+ */
+data class Discover(
+    val reqId: Int,
+    val phoneId: ByteArray,
+    val flags: Int = 0,
+    val hostKeyId: ByteArray = ByteArray(Wire.KEY_ID_SIZE),
+    val phoneKeyId: ByteArray = ByteArray(Wire.KEY_ID_SIZE),
+) : WirePacket
 
 data class Announce(val reqId: Int, val hostId: ByteArray, val flags: Int, val name: String) : WirePacket
 
