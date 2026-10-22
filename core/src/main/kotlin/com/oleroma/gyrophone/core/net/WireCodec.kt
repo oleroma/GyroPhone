@@ -117,6 +117,25 @@ object WireCodec {
             Crypto.writeTrailingMac(pairKey, out, Wire.WELCOME_SIZE)
         }
 
+    /** KEY_ENROLL with its mac computed under the QR code's [token]. */
+    fun encodeKeyEnroll(reqId: Int, token: ByteArray, pkP: ByteArray, name: String, out: ByteArray): Int =
+        fixed(out, PacketType.KEY_ENROLL, Wire.KEY_ENROLL_SIZE) {
+            out.putU32(12, reqId)
+            putBytes(out, 16, QrPairing.tokenId(token), Wire.KEY_ID_SIZE)
+            putBytes(out, 24, pkP, Wire.PUBLIC_KEY_SIZE)
+            putName(out, 89, name, Wire.PAIR_NAME_MAX)
+            putBytes(out, 121, QrPairing.enrollMac(token, out), QrPairing.MAC_SIZE)
+        }
+
+    /** KEY_ENROLL_ACK; [token] null leaves the mac zero (the PC does not know the token). */
+    fun encodeKeyEnrollAck(reqId: Int, tokenId: ByteArray, status: Int, token: ByteArray?, pkP: ByteArray?, out: ByteArray): Int =
+        fixed(out, PacketType.KEY_ENROLL_ACK, Wire.KEY_ENROLL_ACK_SIZE) {
+            out.putU32(12, reqId)
+            putBytes(out, 16, tokenId, Wire.KEY_ID_SIZE)
+            out.putU8(24, status)
+            if (token != null && pkP != null) putBytes(out, 25, QrPairing.ackMac(token, out, pkP), QrPairing.MAC_SIZE)
+        }
+
     fun encodeError(p: ErrorPacket, out: ByteArray): Int = fixed(out, PacketType.ERROR, Wire.ERROR_SIZE) {
         out.putU16(12, p.code)
         out.putU8(14, p.maxVersion)
@@ -156,6 +175,13 @@ object WireCodec {
                 slice(buf, 44, Wire.NONCE_SIZE), buf.getU8(60), buf.getU8(61), buf.getU16(62),
             )
             PacketType.ERROR -> ErrorPacket(buf.getU16(12), buf.getU8(14))
+            PacketType.KEY_ENROLL -> KeyEnroll(
+                buf.getI32(12), slice(buf, 16, Wire.KEY_ID_SIZE), slice(buf, 24, Wire.PUBLIC_KEY_SIZE),
+                getName(buf, 89, Wire.PAIR_NAME_MAX) ?: return null, slice(buf, 121, QrPairing.MAC_SIZE),
+            )
+            PacketType.KEY_ENROLL_ACK -> KeyEnrollAck(
+                buf.getI32(12), slice(buf, 16, Wire.KEY_ID_SIZE), buf.getU8(24), slice(buf, 25, QrPairing.MAC_SIZE),
+            )
             else -> null
         }
     }

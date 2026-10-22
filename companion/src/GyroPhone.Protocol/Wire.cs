@@ -24,6 +24,9 @@ public static class Wire
     public const int HelloSize = 68;
     public const int WelcomeSize = 80;
     public const int ErrorSize = 16;
+    /// <summary>QR code pairing: the phone's key, MACed with the QR's one-time token.</summary>
+    public const int KeyEnrollSize = 137;
+    public const int KeyEnrollAckSize = 41;
 
     public const int StatePlain = 66;
     /// <summary>STATE_HIRES: STATE with the wheel total in 1/120 notch plus a horizontal wheel total.</summary>
@@ -61,6 +64,9 @@ public static class Wire
     public const int PairCooldownMs = 5000;
     public const int PairMaxFails = 3;
     public const int PairUserTimeoutS = 60;
+    /// <summary>How long a QR code shown by the PC stays valid.</summary>
+    public const int QrPairingS = 300;
+    public const int QrTokenSize = 16;
 
     public const int MaxMouseDelta = 16384;
     public const int MaxWheelDelta = 64;
@@ -125,6 +131,18 @@ public static class PairDoneStatus
     public const byte Timeout = 2;
     public const byte BadConfirm = 3;
     public const byte Pending = 4;
+}
+
+/// <summary>KEY_ENROLL_ACK status.</summary>
+public static class EnrollStatus
+{
+    public const byte Ok = 0;
+    /// <summary>No open QR code has that token. Not MACed: the host does not know the token.</summary>
+    public const byte Expired = 1;
+    /// <summary>Another phone already used this QR code.</summary>
+    public const byte Used = 2;
+    /// <summary>The host has no key of its own. Not MACed.</summary>
+    public const byte NoKey = 3;
 }
 
 /// <summary>HELLO caps.</summary>

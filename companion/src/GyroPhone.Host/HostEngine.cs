@@ -33,7 +33,9 @@ public sealed record HostSnapshot(
     bool AnyDatagramSeen,
     IReadOnlyList<PairedPhoneInfo> PairedPhones,
     HostCounters Counters,
-    string? HostKeyFingerprint = null);
+    string? HostKeyFingerprint = null,
+    int QrPairingS = 0,
+    string? QrEnrolledPhone = null);
 
 /// <summary>A paired phone for the tray: code-paired (in settings) or key-paired (a file in authorized_phones).</summary>
 public sealed record PairedPhoneInfo(byte[] PhoneId, string Name, DateTime LastSeenUtc, bool ByKey = false,
@@ -70,6 +72,9 @@ public sealed class HostEngine
     /// <summary>Hex KeyId of every authorized phone key, for ANNOUNCE KnowsYourKey.</summary>
     private readonly HashSet<string> _authorizedKeyIds = new();
     private readonly byte[]? _hostKeyId;
+    /// <summary>The last list from authorized_phones, so a QR enrolment can add to it.</summary>
+    private IReadOnlyList<AuthorizedPhone> _authorizedList = [];
+    private QrSession? _qr;
     private readonly SessionManager _sessions;
     private readonly PairingManager _pairing;
     private readonly RateLimiter _errorLimiter = new(Wire.ErrorRatePerIp, Wire.ErrorRateGlobal);
@@ -230,6 +235,10 @@ public sealed class HostEngine
                 return;
             case PacketType.Hello:
                 OnHello(d, from, nowUs);
+                return;
+            case PacketType.KeyEnroll:
+                if (WireCodec.TryDecodeKeyEnroll(d, out var ke)) OnKeyEnroll(d, ke, from, nowUs);
+                else _dropped++;
                 return;
         }
 
@@ -545,6 +554,38 @@ public sealed class HostEngine
         }
     }
 
+    /// <summary>
+    /// Shows a QR code: returns its one-time token (null without a host key). The first phone that
+    /// sends KEY_ENROLL with it is authorized: <paramref name="save"/> writes its key file and
+    /// returns the path, or null when that failed. Lasts <see cref="Wire.QrPairingS"/> or until
+    /// <see cref="CloseQrPairing"/>; opening again replaces the token.
+    /// </summary>
+    public byte[]? OpenQrPairing(Func<PubKeyFile, string?> save)
+    {
+        lock (_lock)
+        {
+            if (_hostKey == null) return null;
+            _qr?.Clear();
+            var token = QrPairing.NewToken();
+            _qr = new QrSession(token, QrPairing.TokenId(token), _clock.NowUs + Wire.QrPairingS * 1_000_000L, save);
+            _events.StateChanged();
+            return token;
+        }
+    }
+
+    public void CloseQrPairing()
+    {
+        lock (_lock)
+        {
+            _qr?.Clear();
+            _qr = null;
+            _events.StateChanged();
+        }
+    }
+
+    /// <summary>This host's public key, for the QR code (null without key pairing).</summary>
+    public byte[]? HostPublicKey => _hostKey?.PublicKey;
+
     public void OpenPairingWindow()
     {
         lock (_lock)
@@ -660,6 +701,7 @@ public sealed class HostEngine
         lock (_lock)
         {
             if (_hostKey == null) return;
+            _authorizedList = phones;
             var next = new Dictionary<string, KeyPhone>();
             _authorizedKeyIds.Clear();
             foreach (var p in phones)
@@ -729,13 +771,60 @@ public sealed class HostEngine
                 _stats.RxPerSec, _stats.LossPermille, _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs,
                 _stats.LastLinkInfo, _anyDatagram, phones,
                 new HostCounters(_datagrams, _dropped, _badAuth, _states, _injections, _unknownUsages, _errors, _exceptions),
-                _hostKey == null ? null : KeyPairing.Fingerprint(_hostKey.PublicKey));
+                _hostKey == null ? null : KeyPairing.Fingerprint(_hostKey.PublicKey),
+                _qr != null && now < _qr.ExpiresUs ? (int)((_qr.ExpiresUs - now + 999_999) / 1_000_000) : 0,
+                _qr?.EnrolledName);
         }
     }
 
     // =====================================================================================
     // internals
     // =====================================================================================
+
+    /// <summary>
+    /// KEY_ENROLL: a phone scanned the QR code. Only the open token's holder gets an answer it can
+    /// check; the first valid key is saved and authorized, and repeats of it are acked again.
+    /// </summary>
+    private void OnKeyEnroll(ReadOnlySpan<byte> d, KeyEnroll e, SocketAddress from, long nowUs)
+    {
+        var q = _qr;
+        Span<byte> ack = stackalloc byte[Wire.KeyEnrollAckSize];
+        if (_hostKey == null || q == null || nowUs >= q.ExpiresUs || !e.TokenId.AsSpan().SequenceEqual(q.TokenId))
+        {
+            _dropped++;
+            if (!_errorLimiter.TryAcquire(from, nowUs)) return;
+            WireCodec.EncodeKeyEnrollAck(e.ReqId, e.TokenId, _hostKey == null ? EnrollStatus.NoKey : EnrollStatus.Expired, default, default, ack);
+            Reply(ack, from);
+            return;
+        }
+        if (!QrPairing.CheckEnroll(d, q.Token) || !P256.IsValidPublic(e.PkP))
+        {
+            _badAuth++; // not from the QR code: silence
+            return;
+        }
+        if (q.EnrolledKey == null)
+        {
+            var key = new PubKeyFile(e.PkP, e.Name.Length > 0 ? e.Name : "Phone");
+            string? file;
+            try
+            {
+                file = q.Save(key);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                file = null;
+                _events.Log($"could not save the key of '{key.Name}': {ex.GetType().Name}");
+            }
+            if (file == null) return; // the phone retries; nothing was authorized
+            q.EnrolledKey = e.PkP;
+            q.EnrolledName = key.Name;
+            _events.Log($"'{key.Name}' paired by QR code");
+            SetAuthorizedPhones([.. _authorizedList.Where(a => !a.Key.PublicKey.AsSpan().SequenceEqual(e.PkP)), new AuthorizedPhone(file, key)]);
+        }
+        byte status = q.EnrolledKey.AsSpan().SequenceEqual(e.PkP) ? EnrollStatus.Ok : EnrollStatus.Used;
+        WireCodec.EncodeKeyEnrollAck(e.ReqId, e.TokenId, status, q.Token, e.PkP, ack);
+        Reply(ack, from);
+    }
 
     private void OnPaired(byte[] phoneId, string name, byte[] pairKey)
     {
@@ -961,4 +1050,17 @@ public sealed class HostEngine
         public string Fingerprint { get; } = fingerprint;
         public DateTime LastSeenUtc { get; set; }
     }
+}
+
+/// <summary>The QR code on screen: its one-time token and the phone that used it.</summary>
+internal sealed class QrSession(byte[] token, byte[] tokenId, long expiresUs, Func<PubKeyFile, string?> save)
+{
+    public byte[] Token { get; } = token;
+    public byte[] TokenId { get; } = tokenId;
+    public long ExpiresUs { get; } = expiresUs;
+    public Func<PubKeyFile, string?> Save { get; } = save;
+    public byte[]? EnrolledKey { get; set; }
+    public string? EnrolledName { get; set; }
+
+    public void Clear() => System.Security.Cryptography.CryptographicOperations.ZeroMemory(Token);
 }

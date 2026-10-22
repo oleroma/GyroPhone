@@ -39,6 +39,12 @@ data class PairConfirm(val attemptId: Int, val phoneId: ByteArray, val confirmP:
 
 data class PairDone(val attemptId: Int, val status: Int, val confirmH: ByteArray = ByteArray(Wire.HASH_SIZE)) : WirePacket
 
+/** KEY_ENROLL: [mac] is [QrPairing.enrollMac] under the QR code's token. */
+data class KeyEnroll(val reqId: Int, val tokenId: ByteArray, val pkP: ByteArray, val name: String, val mac: ByteArray) : WirePacket
+
+/** KEY_ENROLL_ACK: [mac] is [QrPairing.ackMac] (all zero for [EnrollStatus.EXPIRED] and [EnrollStatus.NO_KEY]). */
+data class KeyEnrollAck(val reqId: Int, val tokenId: ByteArray, val status: Int, val mac: ByteArray) : WirePacket
+
 /** HELLO without its mac; the mac is written by the encoder and checked with [Crypto.verifyTrailingMac]. */
 data class Hello(val phoneId: ByteArray, val nP: ByteArray, val caps: Int, val maxRateHz: Int) : WirePacket
 

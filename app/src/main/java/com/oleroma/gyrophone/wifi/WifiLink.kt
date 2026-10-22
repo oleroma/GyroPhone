@@ -15,6 +15,7 @@ import com.oleroma.gyrophone.core.net.Caps
 import com.oleroma.gyrophone.core.net.ClockSync
 import com.oleroma.gyrophone.core.net.Crypto
 import com.oleroma.gyrophone.core.net.Discover
+import com.oleroma.gyrophone.core.net.EnrollResult
 import com.oleroma.gyrophone.core.net.HostFlags
 import com.oleroma.gyrophone.core.net.HostStatus
 import com.oleroma.gyrophone.core.net.HostStatusFlags
@@ -31,6 +32,10 @@ import com.oleroma.gyrophone.core.net.PairingMath
 import com.oleroma.gyrophone.core.net.PhonePairingFlow
 import com.oleroma.gyrophone.core.net.PhoneSessionFlow
 import com.oleroma.gyrophone.core.net.Pong
+import com.oleroma.gyrophone.core.net.PubKeyFile
+import com.oleroma.gyrophone.core.net.QrEnrollFlow
+import com.oleroma.gyrophone.core.net.QrInvite
+import com.oleroma.gyrophone.core.net.QrPairing
 import com.oleroma.gyrophone.core.net.SessionStatus
 import com.oleroma.gyrophone.core.net.Wire
 import com.oleroma.gyrophone.core.net.WireCodec
@@ -66,6 +71,9 @@ data class DiscoveredHost(
     val vigemOk: Boolean get() = flags and AnnounceFlags.VIGEM_OK != 0
     val busy: Boolean get() = flags and AnnounceFlags.BUSY != 0
 }
+
+/** QR code pairing with [hostName]: what to show, and whether it is over (and worked). */
+data class QrPairView(val hostName: String, val message: String, val finished: Boolean = false, val ok: Boolean = false)
 
 /** What the pairing dialog shows: the PC's name and where the attempt is. */
 data class PairingView(val hostName: String, val state: PairState)
@@ -125,6 +133,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         _autoConnect.value = on
     }
 
+    private val _qrPairing = MutableStateFlow<QrPairView?>(null)
+    /** The last QR code pairing, or null. Cleared by [dismissQr]. */
+    val qrPairing: StateFlow<QrPairView?> = _qrPairing
+
     private val _pairedByKey = MutableStateFlow(false)
     /** The current session uses key file pairing. */
     val pairedByKey: StateFlow<Boolean> = _pairedByKey
@@ -165,6 +177,11 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** Host ids the user disconnected from while this link runs: no key auto-connect to them. */
     private val keyUserStopped = HashSet<String>()
     private var sessionKeyId: String? = null
+    private var qrFlow: QrEnrollFlow? = null
+    /** The PC key a QR code just added: connect to that PC as soon as it answers, auto-connect or not. */
+    private var qrConnectKeyId: String? = null
+    private var qrConnectName = ""
+    private var qrConnectUntilMs = 0L
     private var nextKeyScanMs = 0L
 
     // Read by the pump (LINK_INFO) and the UI (stats).
@@ -235,6 +252,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         pairFlow?.cancel()
         pairFlow = null
         _pairing.value = null
+        qrFlow?.cancel()
+        qrFlow = null
+        qrConnectKeyId = null
+        _qrPairing.value = null
         commands.clear()
         binder.unregister()
         socket?.close()
@@ -296,6 +317,22 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     fun removeHostKey(host: TrustedHost) {
         keys.remove(host)
         post { onTrustedChanged(true) }
+    }
+
+    /**
+     * A scanned QR code: trusts the PC in it and sends it this phone's key, then connects.
+     * Returns an error message, or null when pairing started (see [qrPairing]).
+     */
+    fun scanQr(text: String): String? {
+        val invite = QrPairing.parse(text) ?: return "That is not a GyroPhone pairing code. On the PC choose Pair new phone."
+        if (!running) return "Turn the Wi-Fi link on first"
+        post { startQr(invite) }
+        return null
+    }
+
+    /** Closes the QR pairing message once it is over. */
+    fun dismissQr() {
+        if (_qrPairing.value?.finished == true) _qrPairing.value = null
     }
 
     /** Starts pairing with a PC whose pairing window is open. */
@@ -388,6 +425,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         if (type < 0) return
         when (type) {
             PacketType.ANNOUNCE -> (WireCodec.decodePlain(buf, len) as? Announce)?.let { onAnnounce(it, from, nowMs) }
+            PacketType.KEY_ENROLL_ACK -> {
+                qrFlow?.let { handleQrOuts(it, it.onDatagram(buf, len)) }
+                return
+            }
             PacketType.PAIR_HOST, PacketType.PAIR_ACK, PacketType.PAIR_DONE -> {
                 val f = pairFlow ?: return
                 val p = WireCodec.decodePlain(buf, len) ?: return
@@ -400,6 +441,11 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     private fun tick(nowMs: Long) {
         pairFlow?.let { handlePairOuts(it.onTick(nowMs)) }
+        qrFlow?.let { handleQrOuts(it, it.onTick(nowMs)) }
+        if (qrConnectKeyId != null && nowMs >= qrConnectUntilMs) {
+            qrConnectKeyId = null // paired, but the PC did not answer a key DISCOVER in time
+            _qrPairing.value = QrPairView(qrConnectName, "Paired with $qrConnectName. Tap Connect when it shows up below.", finished = true, ok = true)
+        }
         session?.let { handleSessionOuts(it.onTick(nowMs)) }
 
         // Discovery: our own rounds while no session runs; the session flow runs its own
@@ -480,6 +526,14 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         if (foundMap[id] != host) {
             foundMap[id] = host
             publishFound()
+        }
+        val qrKey = qrConnectKeyId
+        if (qrKey != null && host.keyStatus == KeyStatus.READY && pairFlow == null && matchedKey(id)?.keyIdHex == qrKey) {
+            qrConnectKeyId = null
+            keyUserStopped.remove(id)
+            connectKeyTo(id) // the user just scanned this PC's QR code
+            _qrPairing.value = QrPairView(qrConnectName, "Paired with $qrConnectName", finished = true, ok = true)
+            return
         }
         if (host.keyStatus == KeyStatus.READY && pairFlow == null && id !in keyUserStopped && keySessionWanted()) {
             connectKeyTo(id) // both sides know each other: no prompt
@@ -621,6 +675,62 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         sessionHostName = found.name
         handleSessionOuts(f.connect(SystemClock.elapsedRealtime()))
         publishState()
+    }
+
+    private fun startQr(invite: QrInvite) {
+        val name = invite.name.ifBlank { "PC" }
+        val k = keys.key
+        if (k == null) {
+            _qrPairing.value = QrPairView(name, "This phone has no pairing key (Android Keystore refused)", finished = true)
+            return
+        }
+        qrFlow?.cancel()
+        qrConnectKeyId = null
+        for (a in invite.addresses) {
+            runCatching { InetAddress.getByName(a) }.getOrNull()?.let { manualTargets.add(InetSocketAddress(it, invite.port)) }
+        }
+        val f = QrEnrollFlow(invite, k.publicKey, phoneName(), ::broadcastTargets)
+        qrFlow = f
+        _qrPairing.value = QrPairView(name, "Pairing with $name…")
+        handleQrOuts(f, f.start(SystemClock.elapsedRealtime()))
+    }
+
+    private fun handleQrOuts(f: QrEnrollFlow, outs: List<QrEnrollFlow.Out>) {
+        for (o in outs) when (o) {
+            is QrEnrollFlow.Out.Send -> send(o.bytes, o.bytes.size, o.addr)
+            is QrEnrollFlow.Out.Done -> onQrDone(f.invite, o.result)
+        }
+    }
+
+    private fun onQrDone(invite: QrInvite, r: EnrollResult) {
+        qrFlow = null
+        val name = invite.name.ifBlank { "PC" }
+        if (r != EnrollResult.OK) {
+            val why = when (r) {
+                EnrollResult.EXPIRED -> "The QR code expired. On the PC choose Pair new phone again."
+                EnrollResult.USED -> "Another phone already used this QR code. On the PC choose Pair new phone again."
+                EnrollResult.NO_KEY -> "$name has key pairing off (see its log). Pair with a code instead."
+                else -> "No answer from $name. Check that the phone is on the same network as the PC."
+            }
+            _qrPairing.value = QrPairView(name, why, finished = true)
+            return
+        }
+        // The PC knows this phone now; trust its key like an imported host.pub.
+        val err = keys.import(PubKeyFile(invite.hostKey, name).format())
+        if (err != null) {
+            _qrPairing.value = QrPairView(name, err, finished = true)
+            return
+        }
+        onTrustedChanged(true)
+        if (session?.isRunning == true) {
+            // Another session runs, so no DISCOVER goes out to find the PC: leave connecting to the user.
+            _qrPairing.value = QrPairView(name, "Paired with $name", finished = true, ok = true)
+            return
+        }
+        qrConnectKeyId = KeyPairing.keyId(invite.hostKey).toHex()
+        qrConnectName = name
+        qrConnectUntilMs = SystemClock.elapsedRealtime() + QR_CONNECT_WAIT_MS
+        _qrPairing.value = QrPairView(name, "Paired with $name, connecting…")
     }
 
     private fun startPairing(host: DiscoveredHost) {
@@ -779,6 +889,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         private const val MAX_KEY_DISCOVERS = 4
         private const val KEY_AUTO_CONNECT = "keyAutoConnect"
         private const val KEY_RESCAN_MS = 2000L
+        /** After a QR code pairing, how long to wait for the PC to answer a key DISCOVER. */
+        private const val QR_CONNECT_WAIT_MS = 5000L
         /** When a PC answered several key DISCOVERs, the most useful answer wins. */
         private val KEY_STATUS_ORDER = listOf(KeyStatus.READY, KeyStatus.PC_LACKS_PHONE, KeyStatus.PHONE_LACKS_PC)
         private val LIMITED_BROADCAST: InetAddress =

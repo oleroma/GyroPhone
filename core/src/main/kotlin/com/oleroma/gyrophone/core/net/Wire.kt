@@ -25,6 +25,9 @@ object Wire {
     const val HELLO_SIZE = 68
     const val WELCOME_SIZE = 80
     const val ERROR_SIZE = 16
+    /** QR code pairing: the phone sends its key, MACed with the QR's one-time token. */
+    const val KEY_ENROLL_SIZE = 137
+    const val KEY_ENROLL_ACK_SIZE = 41
 
     const val STATE_PLAIN = 66
     /** STATE_HIRES: STATE with the wheel total in 1/120 notch, plus a horizontal wheel total. */
@@ -63,6 +66,12 @@ object Wire {
     const val PAIR_COOLDOWN_MS = 5000
     const val PAIR_MAX_FAILS = 3
     const val PAIR_USER_TIMEOUT_S = 60
+    /** How long a QR code shown by the PC stays valid. */
+    const val QR_PAIRING_S = 300
+    const val QR_TOKEN_SIZE = 16
+    const val QR_RETX_MS = 250
+    /** The phone gives up a QR enrolment that got no answer after this long. */
+    const val QR_GIVE_UP_MS = 10_000
     const val MAX_MOUSE_DELTA = 16384
     const val MAX_WHEEL_DELTA = 64
     /** [MAX_WHEEL_DELTA] in STATE_HIRES units (1/120 notch). */
@@ -101,6 +110,8 @@ object Wire {
         PacketType.HELLO -> HELLO_SIZE
         PacketType.WELCOME -> WELCOME_SIZE
         PacketType.ERROR -> ERROR_SIZE
+        PacketType.KEY_ENROLL -> KEY_ENROLL_SIZE
+        PacketType.KEY_ENROLL_ACK -> KEY_ENROLL_ACK_SIZE
         else -> plainSizeOf(type).let { if (it < 0) -1 else sealedSize(it) }
     }
 
@@ -129,6 +140,9 @@ object PacketType {
     const val PAIR_ACK = 0x06
     const val PAIR_CONFIRM = 0x07
     const val PAIR_DONE = 0x08
+    /** Phone to PC: this phone's key, for the PC whose QR code it scanned. */
+    const val KEY_ENROLL = 0x09
+    const val KEY_ENROLL_ACK = 0x0A
     const val HELLO = 0x10
     const val WELCOME = 0x11
     const val STATE = 0x20
@@ -185,6 +199,17 @@ object DoneStatus {
     const val TIMEOUT = 2
     const val BAD_CONFIRM = 3
     const val PENDING = 4
+}
+
+/** KEY_ENROLL_ACK status. */
+object EnrollStatus {
+    const val OK = 0
+    /** No QR code with that token is open (closed, expired or never shown). Not MACed. */
+    const val EXPIRED = 1
+    /** Another phone already used this QR code. */
+    const val USED = 2
+    /** The PC has no key of its own. Not MACed. */
+    const val NO_KEY = 3
 }
 
 /** HELLO caps. */

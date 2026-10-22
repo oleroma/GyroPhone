@@ -107,6 +107,22 @@ public sealed class KeyFiles
         return list;
     }
 
+    /// <summary>
+    /// Writes <paramref name="key"/> to authorized_phones (QR code pairing) and returns its path. A file
+    /// already holding the same key is reused; a name taken by another key gets " 2", " 3", ...
+    /// </summary>
+    public string AddAuthorized(PubKeyFile key)
+    {
+        System.IO.Directory.CreateDirectory(AuthorizedDirectory);
+        foreach (var a in ReadAuthorized())
+            if (a.Key.PublicKey.AsSpan().SequenceEqual(key.PublicKey)) return a.File;
+        var baseName = key.Name.Length > 0 ? key.Name : "Phone";
+        var path = Path.Combine(AuthorizedDirectory, KeyPairing.FileName(baseName));
+        for (int n = 2; File.Exists(path); n++) path = Path.Combine(AuthorizedDirectory, KeyPairing.FileName($"{baseName} {n}"));
+        WriteAtomic(path, System.Text.Encoding.UTF8.GetBytes(key.Format()));
+        return path;
+    }
+
     private static void WriteAtomic(string path, byte[] bytes)
     {
         var tmp = path + ".tmp";

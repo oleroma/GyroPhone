@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,6 +23,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import com.oleroma.gyrophone.core.net.KeyStatus
 import com.oleroma.gyrophone.link.LinkState
 import com.oleroma.gyrophone.link.LinkStats
@@ -39,6 +42,11 @@ fun WifiPanel(runtime: GamepadRuntime, stats: LinkStats, modifier: Modifier = Mo
     val notice by wifi.notice.collectAsStateWithLifecycle()
     val current by wifi.currentHostId.collectAsStateWithLifecycle()
     val pairedByKey by wifi.pairedByKey.collectAsStateWithLifecycle()
+    val qr by wifi.qrPairing.collectAsStateWithLifecycle()
+    var scanError by rememberSaveable { mutableStateOf<String?>(null) }
+    val scanner = rememberLauncherForActivityResult(ScanContract()) { result ->
+        result.contents?.let { scanError = wifi.scanQr(it) } // null contents: the user backed out
+    }
     var address by rememberSaveable { mutableStateOf("") }
     val connected = state is LinkState.Connected
     val sessionActive = state is LinkState.Connected || state is LinkState.Connecting || state is LinkState.HostSilent
@@ -52,6 +60,32 @@ fun WifiPanel(runtime: GamepadRuntime, stats: LinkStats, modifier: Modifier = Mo
                 Text("Paired by key", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick = { wifi.disconnect() }) { Text("Disconnect") }
             }
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                "New PC? On the PC choose Pair new phone and scan its QR code.",
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Button(onClick = {
+                scanError = null
+                wifi.dismissQr()
+                scanner.launch(
+                    ScanOptions()
+                        .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                        .setPrompt("Scan the QR code in GyroPhone Companion")
+                        .setBeepEnabled(false)
+                        .setOrientationLocked(false),
+                )
+            }) { Text("Scan QR code") }
+        }
+        scanError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        qr?.let { q ->
+            Text(
+                q.message,
+                color = if (q.finished && !q.ok) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
         if (connected) {
             warnings(stats).forEach { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
@@ -153,8 +187,8 @@ fun WifiPanel(runtime: GamepadRuntime, stats: LinkStats, modifier: Modifier = Mo
 
 /** Why key pairing with a PC does not work yet, or null. */
 private fun keyHint(name: String, status: KeyStatus): String? = when (status) {
-    KeyStatus.PC_LACKS_PHONE -> "$name doesn't know this phone yet: run update.cmd on the PC, or pair with a code"
-    KeyStatus.PHONE_LACKS_PC -> "This phone doesn't know $name yet: run update.cmd, import the PC key, or pair with a code"
+    KeyStatus.PC_LACKS_PHONE -> "$name doesn't know this phone yet: scan its QR code (Pair new phone on the PC)"
+    KeyStatus.PHONE_LACKS_PC -> "This phone doesn't know $name yet: scan its QR code (Pair new phone on the PC)"
     KeyStatus.READY, KeyStatus.NONE -> null
 }
 

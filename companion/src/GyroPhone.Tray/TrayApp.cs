@@ -338,7 +338,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     {
         if (_pairForm == null || _pairForm.IsDisposed)
         {
-            var form = new PairForm(_engine, _engine.Settings.HostName);
+            var form = new PairForm(_engine, _engine.Settings.HostName, _engine.HostPublicKey != null ? _keyFiles : null);
             form.FormClosed += (_, _) =>
             {
                 if (ReferenceEquals(_pairForm, form)) _pairForm = null; // a closed modeless form disposes itself

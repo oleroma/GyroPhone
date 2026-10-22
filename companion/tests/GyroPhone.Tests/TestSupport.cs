@@ -27,7 +27,12 @@ internal static class Vectors
     private static readonly Lazy<JsonDocument> KeyDoc = new(() =>
         JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "vectors", "key-v1.json"))));
 
+    private static readonly Lazy<JsonDocument> QrDoc = new(() =>
+        JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "vectors", "qr-v1.json"))));
+
     public static JsonElement Root => Doc.Value.RootElement;
+    /// <summary>QR code pairing vectors (qr-v1.json).</summary>
+    public static JsonElement Qr => QrDoc.Value.RootElement;
     /// <summary>Key file pairing vectors (key-v1.json).</summary>
     public static JsonElement Key => KeyDoc.Value.RootElement;
     public static JsonElement Pairing => Root.GetProperty("pairing");
