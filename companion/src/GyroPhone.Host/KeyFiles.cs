@@ -70,12 +70,22 @@ public sealed class KeyFiles
     }
 
     /// <summary>Every valid .pub in authorized_phones, in file name order. Unreadable files are skipped.</summary>
-    public List<AuthorizedPhone> ReadAuthorized(Action<string>? log = null)
+    public List<AuthorizedPhone> ReadAuthorized(Action<string>? log = null) => ReadAuthorized(log, out _);
+
+    /// <summary>Same, and <paramref name="summary"/> says what the scan saw (for the tray's Status window).</summary>
+    public List<AuthorizedPhone> ReadAuthorized(Action<string>? log, out string summary)
     {
         var list = new List<AuthorizedPhone>();
-        if (!System.IO.Directory.Exists(AuthorizedDirectory)) return list;
+        if (!System.IO.Directory.Exists(AuthorizedDirectory))
+        {
+            summary = "folder missing";
+            return list;
+        }
+        int files = 0;
+        var problems = new List<string>();
         foreach (var f in System.IO.Directory.EnumerateFiles(AuthorizedDirectory, "*.pub").Order(StringComparer.OrdinalIgnoreCase))
         {
+            files++;
             string text;
             try
             {
@@ -83,11 +93,17 @@ public sealed class KeyFiles
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
+                problems.Add($"{Path.GetFileName(f)}: {e.GetType().Name}");
                 continue; // still being written: the watcher fires again when it is closed
             }
             if (PubKeyFile.Parse(text) is { } k) list.Add(new AuthorizedPhone(f, k));
-            else log?.Invoke($"ignoring {Path.GetFileName(f)}: not a GyroPhone key file");
+            else
+            {
+                problems.Add($"{Path.GetFileName(f)}: not a key file");
+                log?.Invoke($"ignoring {Path.GetFileName(f)}: not a GyroPhone key file");
+            }
         }
+        summary = $"{list.Count} of {files} .pub file(s) valid" + (problems.Count > 0 ? $" ({string.Join("; ", problems)})" : "");
         return list;
     }
 
@@ -148,13 +164,28 @@ public sealed class AuthorizedPhonesWatcher : IDisposable
         Reload();
     }
 
+    /// <summary>What the last read of the folder saw, with its local time, or why it failed.</summary>
+    public string LastScan { get; private set; } = "not read yet";
+
     /// <summary>Reads the folder again now (also used by "Forget" after deleting a file).</summary>
     public void Reload()
     {
         lock (_lock)
         {
             if (_disposed) return;
-            _onChange(_files.ReadAuthorized(_log));
+            try
+            {
+                var list = _files.ReadAuthorized(_log, out var summary);
+                _onChange(list);
+                LastScan = $"{summary}, {DateTime.Now:HH:mm:ss}";
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException
+                                           or CryptographicException or ArgumentException)
+            {
+                // A scan that fails keeps the phones from the last good one, and says why.
+                LastScan = $"failed {DateTime.Now:HH:mm:ss}: {e.GetType().Name}: {e.Message}";
+                _log?.Invoke($"reading authorized_phones failed: {e.GetType().Name}: {e.Message}");
+            }
         }
     }
 

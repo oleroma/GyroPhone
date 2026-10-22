@@ -388,6 +388,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         b.AppendLine($"Pairing:      {(s.PairingWindowS > 0 ? $"open, {s.PairingWindowS} s left" : "closed")}, {s.PairedPhones.Count} paired phone(s)"
             + $" ({s.PairedPhones.Count(p => p.ByKey)} by key)");
         b.AppendLine($"PC key:       {s.HostKeyFingerprint ?? "unavailable" + (_keyError != null ? $" ({_keyError})" : "")}, {_keyFiles.Directory}");
+        b.AppendLine($"Phone keys:   {(_authorized == null ? "not read (no PC key)" : _authorized.LastScan)}");
         b.AppendLine($"Log:          {_log.Path}{(_log.LastError is { } le ? $" (cannot write: {le})" : "")}");
         b.AppendLine($"Running as:   {Environment.UserDomainName}\\{Environment.UserName}, {_exePath}");
         var c = s.Counters;
