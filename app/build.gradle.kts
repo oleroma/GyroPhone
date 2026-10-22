@@ -16,15 +16,15 @@ android {
         // OnePlus 15 ships Android 16 (API 36); API 35 keeps one step of headroom for testing.
         minSdk = 35
         targetSdk = 36
-        // CI stamps each build: 0.1.<run number>-<commit>. Local builds are 0.1.0-dev.
-        val run = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+        // update.cmd stamps each build: 0.1.<commit count>-<commit>. Plain Gradle builds are 0.1.0-dev.
+        val run = System.getenv("GP_BUILD")?.toIntOrNull()
         val sha = System.getenv("GP_COMMIT")?.take(7)
         versionCode = run ?: 1
         versionName = if (run != null) "0.1.$run" + (sha?.let { "-$it" } ?: "") else "0.1.0-dev"
     }
 
     signingConfigs {
-        // Shared debug key committed to the repo so every CI build can update the installed app
+        // Shared debug key committed to the repo so every build can update the installed app
         // in place (a fresh per-runner debug key forces an uninstall, wiping saved profiles).
         getByName("debug") {
             storeFile = rootProject.file("keystore/debug.keystore")
