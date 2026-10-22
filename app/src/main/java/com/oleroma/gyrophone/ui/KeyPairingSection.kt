@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -32,6 +33,7 @@ fun KeyPairingSection(wifi: WifiLink) {
     val context = LocalContext.current
     val fingerprint by wifi.keys.fingerprint.collectAsStateWithLifecycle()
     val trusted by wifi.keys.trusted.collectAsStateWithLifecycle()
+    val autoConnect by wifi.autoConnect.collectAsStateWithLifecycle()
     var message by remember { mutableStateOf<String?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -51,6 +53,13 @@ fun KeyPairingSection(wifi: WifiLink) {
             "update.cmd swaps keys with the PC over adb, so the phone connects without a code.",
             style = MaterialTheme.typography.bodySmall,
         )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text("Connect automatically")
+                Text("Only while GyroPhone is on screen", style = MaterialTheme.typography.bodySmall)
+            }
+            Switch(checked = autoConnect, onCheckedChange = { wifi.setAutoConnect(it) })
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = {

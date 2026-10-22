@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.wifi
 
+import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
 import android.os.Process
@@ -113,6 +114,16 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     /** Paired PCs, most recently used first. */
     val paired: StateFlow<List<StoredHost>> get() = store.hosts
+
+    private val prefs = appContext.getSharedPreferences("gyrophone_wifi", Context.MODE_PRIVATE)
+    private val _autoConnect = MutableStateFlow(prefs.getBoolean(KEY_AUTO_CONNECT, true))
+    /** Connect by key without a tap while GyroPhone is on screen (never from the background). */
+    val autoConnect: StateFlow<Boolean> = _autoConnect
+
+    fun setAutoConnect(on: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_CONNECT, on).apply()
+        _autoConnect.value = on
+    }
 
     private val _pairedByKey = MutableStateFlow(false)
     /** The current session uses key file pairing. */
@@ -480,6 +491,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
      * forgot this phone, or the code pairing was forgotten here).
      */
     private fun keySessionWanted(): Boolean {
+        if (!_autoConnect.value || !appOnScreen()) return false
         val f = session ?: return true
         return sessionKeyId == null && (f.status == SessionStatus.NOT_PAIRED || f.status == SessionStatus.FORGOTTEN)
     }
@@ -736,6 +748,13 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         }
     }
 
+    /** An activity of ours is visible (a foreground service alone does not count). */
+    private fun appOnScreen(): Boolean {
+        val info = ActivityManager.RunningAppProcessInfo()
+        ActivityManager.getMyMemoryState(info)
+        return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+    }
+
     /** "5 GHz · 1201 Mbps · −51 dBm", leaving out what is unknown. */
     private fun radioDetail(): String {
         val info = binder.info
@@ -758,6 +777,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         private const val REFRESH_MS = 1000L
         private const val UNKNOWN_LATENCY = -1 // 0xFFFFFFFF
         private const val MAX_KEY_DISCOVERS = 4
+        private const val KEY_AUTO_CONNECT = "keyAutoConnect"
         private const val KEY_RESCAN_MS = 2000L
         /** When a PC answered several key DISCOVERs, the most useful answer wins. */
         private val KEY_STATUS_ORDER = listOf(KeyStatus.READY, KeyStatus.PC_LACKS_PHONE, KeyStatus.PHONE_LACKS_PC)
