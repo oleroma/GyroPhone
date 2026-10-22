@@ -35,26 +35,17 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.AttachedPad
 import com.oleroma.gyrophone.core.model.FaceLayout
+import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.PadDevice
 import com.oleroma.gyrophone.core.model.PadDevices
-import com.oleroma.gyrophone.core.model.PadPreset
-import com.oleroma.gyrophone.core.model.PadPresets
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
 /** A page of the pad menu. Encoded as text so the open page survives the activity being recreated. */
 sealed interface PadMenuPage {
     /** The menu of the current workspace: one list with collapsible categories. */
     data object Root : PadMenuPage
-    /**
-     * Full settings of a profile of device [deviceKey]; [presetId] null = a new profile. With
-     * [loadInto] (a workspace index) the saved profile is loaded into pad [loadPadId] there.
-     */
-    data class EditProfile(
-        val deviceKey: String,
-        val presetId: String?,
-        val loadInto: Int? = null,
-        val loadPadId: String? = null,
-    ) : PadMenuPage
+    /** Full settings of mapping profile [profileId]; null = a new profile for the current workspace. */
+    data class EditMapping(val profileId: String?) : PadMenuPage
 
     companion object {
         private const val SEP = "\n"
@@ -62,8 +53,7 @@ sealed interface PadMenuPage {
         fun encode(stack: List<PadMenuPage>): String = stack.joinToString(SEP) { p ->
             when (p) {
                 Root -> "root"
-                is EditProfile -> listOf("edit", p.deviceKey, p.presetId ?: "", p.loadInto?.toString() ?: "", p.loadPadId ?: "")
-                    .joinToString("\t")
+                is EditMapping -> "mapping\t" + (p.profileId ?: "")
             }
         }
 
@@ -71,14 +61,7 @@ sealed interface PadMenuPage {
             val f = line.split("\t")
             when (f[0]) {
                 "root" -> Root
-                "edit" -> f.getOrNull(1)?.let { key ->
-                    EditProfile(
-                        key,
-                        f.getOrNull(2)?.ifEmpty { null },
-                        f.getOrNull(3)?.toIntOrNull(),
-                        f.getOrNull(4)?.ifEmpty { null },
-                    )
-                }
+                "mapping" -> EditMapping(f.getOrNull(1)?.ifEmpty { null })
                 else -> null
             }
         }
@@ -87,9 +70,8 @@ sealed interface PadMenuPage {
 
 /**
  * The Pad tab: the pad itself, or the pad menu in its place. The menu is about the current
- * workspace only: its devices, each with its profile, then its settings, as collapsible
- * categories. Editing a device profile opens its own page. Workspaces hold everything; there are
- * no game profiles to pick.
+ * workspace only: its mapping profile, its devices, then its settings, as collapsible categories.
+ * Editing a mapping profile opens its own page.
  * Back steps out one page at a time.
  */
 @Composable
@@ -135,7 +117,7 @@ private fun PadMenu(
             TextButton(onClick = { leave(back) }) { Text(if (stack.size > 1) "← Back" else "← Pad") }
             Text(
                 when (page) {
-                    is PadMenuPage.EditProfile -> if (page.presetId == null) "New profile" else "Profile"
+                    is PadMenuPage.EditMapping -> if (page.profileId == null) "New mapping profile" else "Mapping profile"
                     PadMenuPage.Root -> "Menu"
                 },
                 style = MaterialTheme.typography.titleMedium,
@@ -148,12 +130,9 @@ private fun PadMenu(
         val content = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)
         when (page) {
             PadMenuPage.Root -> MenuList(runtime, content, onOpen = { open(it) })
-            is PadMenuPage.EditProfile -> PadProfileEditor(
+            is PadMenuPage.EditMapping -> MappingProfileEditor(
                 runtime,
-                page.deviceKey,
-                page.presetId,
-                page.loadInto,
-                page.loadPadId,
+                page.profileId,
                 content,
                 onDone = back,
                 onLeaveGuard = { leaveGuard = it },
@@ -163,19 +142,20 @@ private fun PadMenu(
 }
 
 /**
- * The menu of the current workspace only: its devices, each with its profile (load another, edit
- * one or make a new one), then the workspace's settings. Another workspace's
- * devices are changed by switching to it on the pad first (← / →).
+ * The menu of the current workspace only: which mapping profile it uses (pick, edit or make a new
+ * one), its devices, then its settings. Another workspace is changed by switching to it on the pad
+ * first (← / →).
  */
 @Composable
 private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onOpen: (PadMenuPage) -> Unit) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
-    val userPresets by runtime.padPresets.collectAsStateWithLifecycle()
+    val mappings by runtime.mappingProfiles.collectAsStateWithLifecycle()
     val current = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
     val ws = profile.workspace(current)
-    val devices = menuDevices(profile, controllers, userPresets)
+    val using = MappingProfiles.of(ws, mappings)
+    val devices = menuDevices(profile, controllers)
     val open = MenuOpenState.open
     fun isOpen(key: String, default: Boolean = false) = open[key] ?: default
     fun toggle(key: String, default: Boolean = false) { open[key] = !isOpen(key, default) }
@@ -191,24 +171,54 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onOpen: (PadMe
         )
         if (profile.workspaces.size > 1) Hint("Other workspaces: switch with ← / → on the pad, then open the menu there.")
 
+        // ── Mapping profile of this workspace ───────────────────────────────
+        CategoryHeader("Mapping profile", using?.name, isOpen("mapping", true)) { toggle("mapping", true) }
+        if (isOpen("mapping", true)) {
+            Indented {
+                Hint("Touch buttons, keyboard and controller mappings. Tap one to use it in this workspace.")
+                for (m in mappings) {
+                    val selected = m.id == using?.id
+                    val users = profile.workspaces.filter { it.mappingProfileId == m.id }
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { if (!selected) runtime.selectMappingProfile(m.id, current) }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = selected, onClick = null, modifier = Modifier.padding(end = 8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(m.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                (if (users.isEmpty()) "Not used" else "Used by " + users.joinToString { it.name }) +
+                                    " · ${m.touch.size + m.keyboard.size + m.controller.size} mappings",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        TextButton(onClick = { onOpen(PadMenuPage.EditMapping(m.id)) }) { Text("Edit") }
+                    }
+                }
+                OutlinedButton(onClick = { onOpen(PadMenuPage.EditMapping(null)) }) { Text("+ New profile") }
+            }
+        }
+
         // ── Devices of this workspace ───────────────────────────────────────
         CategoryHeader("Devices", "${ws.pads.size}", isOpen("devices", true)) { toggle("devices", true) }
         if (isOpen("devices", true)) {
-            if (ws.pads.isEmpty()) Hint("No game pads in this workspace: only the touch screen.")
+            if (ws.pads.isEmpty()) Hint("No game pads in this workspace: only the touch screen (and a keyboard, if one is connected).")
             for (pad in ws.pads) {
                 val device = devices.firstOrNull { it.match == pad.match } ?: PadDevice(pad.match, pad.name, pad.family)
-                val applied = PadPresets.applied(pad, userPresets)
                 val key = "pad/" + ws.id + "/" + pad.id
                 ItemHeader(
                     title = pad.name,
-                    subtitle = (if (isConnected(device, controllers)) "Connected" else if (pad.match == null) "Any game pad" else "Not connected") +
-                        " · Profile: " + (applied?.name ?: PadPresets.CUSTOM_NAME),
-                    expanded = isOpen(key, true),
-                ) { toggle(key, true) }
-                if (isOpen(key, true)) {
-                    Indented {
-                        PadProfiles(runtime, current, pad, device, userPresets, onOpen, onRemove = { removing = pad })
-                    }
+                    subtitle = if (isConnected(device, controllers)) "Connected" else if (pad.match == null) "Any game pad" else "Not connected",
+                    expanded = isOpen(key),
+                ) { toggle(key) }
+                if (isOpen(key)) {
+                    Indented { DeviceItem(runtime, current, pad, onRemove = { removing = pad }) }
                 }
             }
             val addable = devices.filter { d -> ws.pads.none { it.match == d.match } }
@@ -240,7 +250,7 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onOpen: (PadMe
         AlertDialog(
             onDismissRequest = { removing = null },
             title = { Text("Remove ${pad.name}?") },
-            text = { Text("It stops acting in \"${ws.name}\". Its profiles are kept.") },
+            text = { Text("It stops acting in \"${ws.name}\". The mapping profile is kept.") },
             confirmButton = {
                 TextButton(onClick = {
                     removing = null
@@ -255,86 +265,27 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onOpen: (PadMe
 }
 
 /**
- * One device of workspace [wsIndex]: its profiles (tap = load it into the pad; Edit opens its
- * settings), + New profile, the button layout, and Remove.
+ * One device of workspace [wsIndex]: its button layout (how its buttons are named and drawn) and
+ * Remove. Its mappings are the controller category of the workspace's mapping profile.
  */
 @Composable
-private fun PadProfiles(
-    runtime: GamepadRuntime,
-    wsIndex: Int,
-    pad: AttachedPad,
-    device: PadDevice,
-    userPresets: List<PadPreset>,
-    onOpen: (PadMenuPage) -> Unit,
-    onRemove: () -> Unit,
-) {
-    val applied = PadPresets.applied(pad, userPresets)
-    Text("Profile", style = MaterialTheme.typography.labelLarge)
-    for (preset in PadPresets.forDevice(pad.match, pad.family, userPresets)) {
-        val selected = preset.id == applied?.id
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clickable {
-                    // Loading the shown profile again links a pad saved before pads named their profile.
-                    if (!selected || pad.presetId != preset.id) runtime.applyPadPreset(pad.id, preset, wsIndex)
-                }
-                .padding(vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            RadioButton(selected = selected, onClick = null, modifier = Modifier.padding(end = 8.dp))
-            Column(Modifier.weight(1f)) {
-                Text(preset.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    (if (PadPresets.isBuiltin(preset.id)) "Built in · " else "") + "${preset.mappings.size} mappings",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            TextButton(onClick = {
-                // Only the profile the pad uses is loaded back into it on Save; others are just edited.
-                onOpen(
-                    if (selected) PadMenuPage.EditProfile(device.key, preset.id, wsIndex, pad.id)
-                    else PadMenuPage.EditProfile(device.key, preset.id),
-                )
-            }) { Text("Edit") }
-        }
-    }
-    if (applied == null) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(selected = true, onClick = null, modifier = Modifier.padding(end = 8.dp))
-            Text("${PadPresets.CUSTOM_NAME} (not saved)", modifier = Modifier.weight(1f))
-        }
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = { onOpen(PadMenuPage.EditProfile(device.key, null, wsIndex, pad.id)) }) {
-            Text(if (applied == null) "Save as profile…" else "+ New profile")
-        }
-        TextButton(onClick = onRemove) { Text("Remove device", color = MaterialTheme.colorScheme.error) }
-    }
-    Text("Button layout", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
+private fun DeviceItem(runtime: GamepadRuntime, wsIndex: Int, pad: AttachedPad, onRemove: () -> Unit) {
+    Text("Button layout", style = MaterialTheme.typography.labelLarge)
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         for (family in FaceLayout.entries) {
             FilterChip(
                 selected = family == pad.family,
                 onClick = {
                     if (family == pad.family) return@FilterChip
-                    // A pad on the standard profile takes the new layout's standard mapping.
-                    val onStandard = applied?.id == PadPresets.STANDARD
-                    val standard = PadPresets.builtins(family).first { it.id == PadPresets.STANDARD }
                     runtime.editActiveProfile { p ->
-                        p.updateWorkspace(wsIndex) { w ->
-                            w.copy(pads = w.pads.map {
-                                if (it.id != pad.id) it
-                                else it.copy(family = family).let { moved -> if (onStandard) PadPresets.apply(moved, standard) else moved }
-                            })
-                        }
+                        p.updateWorkspace(wsIndex) { w -> w.copy(pads = w.pads.map { if (it.id == pad.id) it.copy(family = family) else it }) }
                     }
                 },
                 label = { Text(familyTitle(family)) },
             )
         }
     }
+    TextButton(onClick = onRemove) { Text("Remove device", color = MaterialTheme.colorScheme.error) }
 }
 
 /** Which menu categories and items are expanded; kept for as long as the app runs. */
@@ -395,7 +346,7 @@ private fun Indented(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun Hint(text: String) {
+internal fun Hint(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.bodySmall,

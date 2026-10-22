@@ -12,7 +12,10 @@ data class Workspace(
     val id: String,
     val name: String,
     val touchControls: List<TouchControl> = emptyList(),
-    /** Mappings of the touch controls ([InputSource.Touch] / [InputSource.TouchStick] sources). */
+    /**
+     * Mappings of the touch controls ([InputSource.Touch] / [InputSource.TouchStick] sources). Only
+     * in a resolved set ([MappingProfiles.resolve]); stored sets keep them in the mapping profile.
+     */
     val mappings: List<Mapping> = emptyList(),
     val touchpad: TouchpadSettings = TouchpadSettings(),
     val gyro: GyroSettings = GyroSettings(),
@@ -30,6 +33,10 @@ data class Workspace(
     val stickyModifiers: Boolean = false,
     /** Physical game pads that act in this workspace; a connected pad not listed does nothing here. */
     val pads: List<AttachedPad> = emptyList(),
+    /** The [MappingProfile] this workspace uses; null = the first one (sets saved before them). */
+    val mappingProfileId: String? = null,
+    /** Physical keyboard mappings; like [mappings], only in a resolved set. */
+    val keyboard: List<Mapping> = emptyList(),
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =
@@ -46,7 +53,10 @@ data class AttachedPad(
     val name: String = ANY_NAME,
     /** Face-button convention the mapping started from; see [KnownLayouts.familyMappings]. */
     val family: FaceLayout = FaceLayout.XBOX,
-    /** Android key / axis sources ([InputSource.Key], [InputSource.Axis]) to PC outputs. */
+    /**
+     * Android key / axis sources ([InputSource.Key], [InputSource.Axis]) to PC outputs: the
+     * workspace's mapping profile's controller set in a resolved set, empty when stored.
+     */
     val mappings: List<Mapping> = emptyList(),
     /**
      * The pad profile ([PadPreset]) last loaded into [mappings]; null on pads attached before pad

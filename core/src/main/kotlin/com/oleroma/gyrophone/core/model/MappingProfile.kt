@@ -1,0 +1,184 @@
+package com.oleroma.gyrophone.core.model
+
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
+
+/**
+ * Every remap in one place, in three categories: the on-screen [touch] buttons (keyed by control
+ * id), physical [keyboard] keys, and [controller] buttons and sticks (one set for every attached
+ * game pad). Each workspace names the profile it uses ([Workspace.mappingProfileId]) and keeps only
+ * its layout, devices and gyro / touchpad settings; [MappingProfiles.resolve] puts its profile's
+ * mappings into it for the engine.
+ */
+@Serializable
+data class MappingProfile(
+    val id: String,
+    val name: String,
+    /** [InputSource.Touch] / [InputSource.TouchStick] sources. */
+    val touch: List<Mapping> = emptyList(),
+    /** [InputSource.Key] sources from a physical keyboard. */
+    val keyboard: List<Mapping> = emptyList(),
+    /** [InputSource.Key] / [InputSource.Axis] sources from a game pad. */
+    val controller: List<Mapping> = emptyList(),
+)
+
+object MappingProfiles {
+    const val DEFAULT_NAME = "My mappings"
+
+    private val json = Json { prettyPrint = true; ignoreUnknownKeys = true }
+    private val listSerializer = ListSerializer(MappingProfile.serializer())
+
+    fun encode(profiles: List<MappingProfile>): String = json.encodeToString(listSerializer, profiles)
+
+    /** Reads a saved list; unreadable text gives null (the caller keeps the file). */
+    fun decode(text: String): List<MappingProfile>? = runCatching { json.decodeFromString(listSerializer, text) }.getOrNull()
+
+    fun newId(taken: Collection<String>): String {
+        var n = 1
+        while ("map$n" in taken) n++
+        return "map$n"
+    }
+
+    /** The touch control id a mapping's source belongs to, or null for a key / axis source. */
+    fun touchId(source: InputSource): String? = when (source) {
+        is InputSource.Touch -> source.id
+        is InputSource.TouchStick -> source.id
+        else -> null
+    }
+
+    /**
+     * A new profile: the builtin touch mappings for every control of [set] that has one, and the
+     * standard controller mapping.
+     */
+    fun fresh(id: String, name: String, set: Profile): MappingProfile {
+        val ids = set.workspaces.flatMapTo(HashSet()) { w -> w.touchControls.map { it.id } }
+        val touch = BuiltinProfiles.all.flatMap { p -> p.workspaces.flatMap { it.mappings } }
+            .filter { touchId(it.source) in ids }
+            .distinct()
+        return MappingProfile(id, name, touch = touch, controller = KnownLayouts.familyMappings(FaceLayout.XBOX))
+    }
+
+    /** The profile [w] uses: the one it names, else the first of [profiles]. */
+    fun of(w: Workspace, profiles: List<MappingProfile>): MappingProfile? =
+        profiles.firstOrNull { it.id == w.mappingProfileId } ?: profiles.firstOrNull()
+
+    /**
+     * [set] as the engine and editors see it: each workspace's touch mappings are its profile's for
+     * its controls, every attached pad has the profile's controller set, and [Workspace.keyboard]
+     * holds its keyboard set. A workspace with no profile (empty [profiles]) is left as it is.
+     */
+    fun resolve(set: Profile, profiles: List<MappingProfile>): Profile = set.copy(
+        workspaces = set.workspaces.map { w -> of(w, profiles)?.let { resolve(w, it) } ?: w },
+    )
+
+    fun resolve(w: Workspace, mapping: MappingProfile): Workspace {
+        val ids = w.touchControls.mapTo(HashSet()) { it.id }
+        return w.copy(
+            mappingProfileId = mapping.id,
+            mappings = mapping.touch.filter { touchId(it.source) in ids },
+            keyboard = mapping.keyboard,
+            pads = w.pads.map { it.copy(mappings = mapping.controller) },
+        )
+    }
+
+    /** [set] without mappings (they live in the mapping profiles), as it is stored. */
+    fun strip(set: Profile): Profile = set.copy(
+        workspaces = set.workspaces.map { w ->
+            w.copy(mappings = emptyList(), keyboard = emptyList(), pads = w.pads.map { it.copy(mappings = emptyList(), presetId = null) })
+        },
+    )
+
+    /**
+     * [profiles] with the mapping edits made between [before] and [after] (resolved sets, see
+     * [resolve]) taken into each workspace's profile. Touch: mappings of the workspace's controls
+     * removed or added since [before] (a workspace new in [after] is compared with its profile); a
+     * deleted control leaves its mappings, since another workspace may have it. Controller: the
+     * mappings of a pad that changed since [before]; a newly attached pad only gives its mappings
+     * when the set is empty.
+     */
+    fun absorb(profiles: List<MappingProfile>, before: Profile, after: Profile): List<MappingProfile> {
+        var result = profiles
+        for (w in after.workspaces) {
+            val mapping = of(w, result) ?: continue
+            val old = before.workspaces.firstOrNull { it.id == w.id && it.mappingProfileId == w.mappingProfileId }
+            val ids = w.touchControls.mapTo(HashSet()) { it.id }
+            val was = (old?.mappings ?: mapping.touch).filter { touchId(it.source) in ids }.toSet()
+            val now = w.mappings.filter { touchId(it.source) in ids }.toSet()
+            val touch = (mapping.touch.filterNot { it in was - now } + (now - was)).distinct()
+            val changed = w.pads.firstOrNull { p ->
+                val oldPad = old?.pads?.firstOrNull { it.id == p.id }
+                if (oldPad != null) p.mappings.toSet() != oldPad.mappings.toSet()
+                else mapping.controller.isEmpty() && p.mappings.isNotEmpty()
+            }
+            val controller = changed?.mappings ?: mapping.controller
+            if (touch == mapping.touch && controller == mapping.controller) continue
+            val updated = mapping.copy(touch = touch, controller = controller)
+            result = result.map { if (it.id == mapping.id) updated else it }
+        }
+        return result
+    }
+
+    /**
+     * Gives each workspace of [after] that names no profile one: a workspace that comes with its own
+     * mappings (a builtin preset added) gets a new profile made of them, named after it; any other
+     * (a blank one) uses [fallbackId]. Returns the set and the profiles with any new ones added.
+     */
+    fun adopt(profiles: List<MappingProfile>, after: Profile, fallbackId: String?): Pair<Profile, List<MappingProfile>> {
+        if (after.workspaces.none { it.mappingProfileId == null }) return after to profiles
+        val all = ArrayList(profiles)
+        val workspaces = after.workspaces.map { w ->
+            if (w.mappingProfileId != null) return@map w
+            val ids = w.touchControls.mapTo(HashSet()) { it.id }
+            val touch = w.mappings.filter { touchId(it.source) in ids }
+            val controller = w.pads.firstOrNull()?.mappings.orEmpty()
+            if (touch.isEmpty() && controller.isEmpty() && fallbackId != null) return@map w.copy(mappingProfileId = fallbackId)
+            val created = MappingProfile(
+                newId(all.map { it.id }), w.name, touch = touch, keyboard = w.keyboard,
+                controller = controller.ifEmpty { KnownLayouts.familyMappings(FaceLayout.XBOX) },
+            )
+            all += created
+            w.copy(mappingProfileId = created.id)
+        }
+        return after.copy(workspaces = workspaces) to all
+    }
+
+    /** What [migrate] makes from a set that still holds its own mappings. */
+    data class Migration(val set: Profile, val profiles: List<MappingProfile>, val presets: List<PadPreset>)
+
+    /**
+     * Moves the mappings out of a [set] saved before mapping profiles. Each workspace gets a profile
+     * with its touch mappings and its first pad's controller set (the standard one without pads);
+     * workspaces whose mappings are equal share one, named after the first of them. Every other
+     * distinct pad mapping becomes a pad preset "<workspace> · <pad>" unless [presets] already has
+     * it. The returned set is [strip]ped and each workspace names its profile.
+     */
+    fun migrate(set: Profile, presets: List<PadPreset>): Migration {
+        val profiles = ArrayList<MappingProfile>()
+        val workspaces = set.workspaces.map { w ->
+            val ids = w.touchControls.mapTo(HashSet()) { it.id }
+            val touch = w.mappings.filter { touchId(it.source) in ids }
+            val controller = w.pads.firstOrNull()?.mappings ?: KnownLayouts.familyMappings(FaceLayout.XBOX)
+            val same = profiles.firstOrNull { p ->
+                p.controller.toSet() == controller.toSet() && p.touch.filter { touchId(it.source) in ids }.toSet() == touch.toSet() &&
+                    // Sharing must not change what the earlier workspaces' controls do.
+                    touch.none { m -> p.touch.any { touchId(it.source) == touchId(m.source) && it !in touch } }
+            }
+            val mapping = same ?: MappingProfile(newId(profiles.map { it.id }), w.name, touch = touch, controller = controller).also { profiles += it }
+            w.copy(mappingProfileId = mapping.id)
+        }
+        val known = (presets.map { it.mappings.toSet() } + profiles.map { it.controller.toSet() }).toMutableSet()
+        val newPresets = ArrayList<PadPreset>()
+        for (w in set.workspaces) for (p in w.pads) {
+            if (p.mappings.isEmpty() || !known.add(p.mappings.toSet())) continue
+            val pid = PadPresets.newId(presets.map { it.id } + newPresets.map { it.id })
+            newPresets += PadPreset(pid, "${w.name} · ${p.name}", p.mappings)
+        }
+        return Migration(strip(set.copy(workspaces = workspaces)), profiles, newPresets)
+    }
+
+    /** Ids used by any control of [set] or any touch mapping of [profiles]: a new control must avoid them. */
+    fun takenTouchIds(set: Profile, profiles: List<MappingProfile>): Set<String> =
+        set.workspaces.flatMapTo(HashSet()) { w -> w.touchControls.map { it.id } } +
+            profiles.flatMap { p -> p.touch.mapNotNull { touchId(it.source) } }
+}

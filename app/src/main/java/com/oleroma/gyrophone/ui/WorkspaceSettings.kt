@@ -144,7 +144,7 @@ internal fun WorkspaceSettingsPanel(
             }
             if (w.pads.isNotEmpty()) {
                 Text(
-                    "Edit a pad's profile from the pad's Menu, under Devices.",
+                    "Pad mappings are in the Controller part of the mapping profile (Menu → Mapping profile → Edit).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -166,7 +166,7 @@ private fun padSubtitle(pad: AttachedPad): String {
         FaceLayout.NINTENDO -> "Nintendo layout"
     }
     val which = if (pad.match == null) "any connected pad" else "this model"
-    return "$family · $which · ${pad.mappings.size} mappings"
+    return "$family · $which"
 }
 
 @Composable

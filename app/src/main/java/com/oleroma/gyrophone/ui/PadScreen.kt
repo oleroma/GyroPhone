@@ -75,6 +75,7 @@ import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
+import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.Placement
@@ -90,7 +91,6 @@ import com.oleroma.gyrophone.core.model.placeY
 import com.oleroma.gyrophone.core.model.placement
 import com.oleroma.gyrophone.core.model.withPlacement
 import com.oleroma.gyrophone.runtime.GamepadRuntime
-import java.util.UUID
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -755,7 +755,7 @@ fun PadScreen(
                             FilledTonalButton(contentPadding = compact, onClick = addButton@{
                                 val d = draft ?: return@addButton
                                 val wk = d.workspace(editIndex)
-                                val id = freshId(wk, "btn")
+                                val id = freshId(wk, "btn", takenIds(d, runtime))
                                 val c = newControl(wk, id, TouchKind.BUTTON, NEW_BUTTON_SIZE, portrait)
                                 editWorkspace { it.copy(touchControls = it.touchControls + place(c, 0.5f, 0.5f, false)) }
                                 selected = id
@@ -765,7 +765,7 @@ fun PadScreen(
                             FilledTonalButton(contentPadding = compact, onClick = addStick@{
                                 val d = draft ?: return@addStick
                                 val wk = d.workspace(editIndex)
-                                val id = freshId(wk, "stick")
+                                val id = freshId(wk, "stick", takenIds(d, runtime))
                                 val c = newControl(wk, id, TouchKind.STICK, NEW_STICK_SIZE, portrait)
                                 editWorkspace { it.copy(touchControls = it.touchControls + place(c, 0.5f, 0.5f, false)) }
                                 selected = id
@@ -794,18 +794,7 @@ fun PadScreen(
                         FilledTonalButton(contentPadding = compact, onClick = done@{
                             val d = draft ?: return@done
                             val idx = editIndex.coerceIn(0, d.workspaces.lastIndex)
-                            val active = runtime.activeProfile.value
-                            if (d == active) {
-                                Unit
-                            } else if (d.id == active.id) {
-                                runtime.editActiveProfile { d }
-                            } else {
-                                val saved = if (runtime.store.isBuiltin(d)) {
-                                    d.copy(id = "user." + UUID.randomUUID(), name = d.name + " (custom)")
-                                } else d
-                                runtime.saveProfile(saved)
-                                runtime.activate(saved)
-                            }
+                            runtime.editActiveProfile { d }
                             if (runtime.workspaceIndex.value != idx) runtime.switchWorkspace(idx)
                             draft = null
                             selected = null
@@ -880,7 +869,7 @@ fun PadScreen(
                         },
                         onSize = { resize(sel.id, it) },
                         onDuplicate = {
-                            val (nw, id) = duplicate(ws, sel)
+                            val (nw, id) = duplicate(ws, sel, takenIds(draft ?: profile, runtime))
                             val copy = nw.touchControls.first { it.id == id }
                             editWorkspace {
                                 nw.copy(touchControls = nw.touchControls.map {
@@ -935,15 +924,22 @@ private fun controlLabel(workspace: Workspace, c: TouchControl, editing: Boolean
 private fun shapeOf(c: TouchControl): Shape =
     if (c.shape == TouchShape.SQUARE) RoundedCornerShape(percent = 12) else CircleShape
 
-/** Id not used by any control of the workspace nor by its leftover mappings. */
-private fun freshId(workspace: Workspace, prefix: String): String {
+/**
+ * Ids a new control must not take: any control's in [set] or any mapping profile's, so it never
+ * picks up the mappings of a button in another workspace or of a deleted one.
+ */
+private fun takenIds(set: Profile, runtime: GamepadRuntime): Set<String> =
+    MappingProfiles.takenTouchIds(set, runtime.mappingProfiles.value)
+
+/** Id not used by any control of the workspace, by its leftover mappings, nor in [taken]. */
+private fun freshId(workspace: Workspace, prefix: String, taken: Set<String>): String {
     val orphans = workspace.mappings.mapNotNull {
         when (val s = it.source) {
             is InputSource.Touch -> s.id
             is InputSource.TouchStick -> s.id
             else -> null
         }
-    }.distinct().map { TouchControl(it, TouchKind.BUTTON, "", 0f, 0f) }
+    }.plus(taken).distinct().map { TouchControl(it, TouchKind.BUTTON, "", 0f, 0f) }
     return Bindings.newTouchId(workspace.touchControls + orphans, prefix)
 }
 
@@ -976,8 +972,8 @@ private fun newControl(workspace: Workspace, id: String, kind: TouchKind, size: 
 }
 
 /** Copies a control and its mappings next to the original; returns the workspace and the new id. */
-private fun duplicate(workspace: Workspace, c: TouchControl): Pair<Workspace, String> {
-    val id = freshId(workspace, if (c.kind == TouchKind.STICK) "stick" else "btn")
+private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>): Pair<Workspace, String> {
+    val id = freshId(workspace, if (c.kind == TouchKind.STICK) "stick" else "btn", taken)
     val copies = workspace.mappings.mapNotNull { m ->
         when (val s = m.source) {
             is InputSource.Touch -> if (s.id == c.id) m.copy(source = InputSource.Touch(id)) else null
