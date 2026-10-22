@@ -1,4 +1,7 @@
 using System.Runtime;
+using GyroPhone.Host;
+using GyroPhone.Host.Settings;
+using GyroPhone.Windows;
 
 namespace GyroPhone.Tray;
 
@@ -15,9 +18,14 @@ internal static class Program
 
     public static bool JustUpdated { get; private set; }
 
+    /// <summary>update.cmd: make host.key and host.pub if missing, then exit. No window, no tray, no server.</summary>
+    public const string InitKeysArg = "--init-keys";
+
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Contains(InitKeysArg)) return InitKeys();
+
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
@@ -64,6 +72,21 @@ internal static class Program
             mutex.ReleaseMutex();
         }
         return 0;
+    }
+
+    private static int InitKeys()
+    {
+        try
+        {
+            var settingsPath = SettingsStore.DefaultPath();
+            var name = File.Exists(settingsPath) ? new SettingsStore(settingsPath).Load(Environment.MachineName).HostName : Environment.MachineName;
+            using var key = new KeyFiles(KeyFiles.DefaultDirectory()).LoadOrCreateHostKey(new DpapiKeyProtector(), name);
+            return 0;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+        {
+            return 1;
+        }
     }
 
     private static void ShowAlreadyRunning() =>

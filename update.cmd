@@ -99,8 +99,13 @@ adb install -r -d "%OUT%\app-debug.apk" && echo Phone updated: %ON_PHONE% -^> %V
 rem ---- Key pairing ----
 set "PHONE_KEYS=/sdcard/Android/data/com.oleroma.gyrophone/files/keys"
 set "GP_DATA=%APPDATA%\GyroPhone"
+rem A PC whose companion never ran this build has no key yet: the companion makes it and exits
+rem at once (--init-keys opens no window and starts nothing). Builds that know the flag say so in the exe's file properties.
+set "INIT_KEYS="
+if exist "%APP_EXE%" powershell -NoProfile -Command "if ((Get-Item -LiteralPath $env:APP_EXE).VersionInfo.Comments -like '*--init-keys*') { exit 0 } else { exit 1 }" && set "INIT_KEYS=1"
+if defined INIT_KEYS if not exist "%GP_DATA%\host.pub" if exist "%APP_EXE%" start "" /wait "%APP_EXE%" --init-keys
 if not exist "%GP_DATA%\host.pub" (
-  echo Key pairing: start GyroPhone Companion once so it makes its key, then run update.cmd again.
+  echo Key pairing: the PC has no key yet. Start GyroPhone Companion once, then run update.cmd again.
   goto :done
 )
 set "PHONE_PUB=%TEMP%\gyrophone-phone.pub"
