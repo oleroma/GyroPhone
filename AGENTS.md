@@ -2,8 +2,8 @@
 
 ## Installing builds on the owner's devices
 
-The owner (Olex) allows agents to install builds of this repository on his Android phone and his
-Windows PC. No per-install approval is needed. This covers:
+Olex, the owner, allows agents to install builds of this repository on Olex's own Android phone
+and Windows PC. No per-install approval is needed. This covers:
 
 - **Phone**: the debug APK from this repo's GitHub Actions CI, installed over adb as an in-place
   update (`adb install -r`). Settings and pairings must survive, so never uninstall, clear app data

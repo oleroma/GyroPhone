@@ -173,7 +173,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _uiTimer = new System.Windows.Forms.Timer { Interval = 1000 };
         _uiTimer.Tick += (_, _) => Refresh();
 
-        if (_server.Start())
+        if (StartServer())
         {
             // Owning the port is the single-instance guard: only now is the marker ours to recover.
             int recovered = HeldKeysMarker.Recover(_marker.Path, _keyMouse);
@@ -426,6 +426,24 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         {
             _log.Write($"open keys folder failed: {e.GetType().Name}");
         }
+    }
+
+    /// <summary>
+    /// Binds UDP 47800. When the watcher holds it, asks it to let go and retries until it has
+    /// (the watcher checks once a second).
+    /// </summary>
+    private bool StartServer()
+    {
+        if (_server.Start()) return true;
+        if (_server.State != ServerState.PortInUse || !Watcher.AskToYieldPort()) return false;
+        _log.Write($"port {Wire.Port} held by the watcher: asked it to yield");
+        for (int i = 0; i < 20; i++)
+        {
+            Thread.Sleep(250);
+            if (_server.Start()) return true;
+            if (_server.State != ServerState.PortInUse) return false;
+        }
+        return false;
     }
 
     private void ToggleAutoStart()
