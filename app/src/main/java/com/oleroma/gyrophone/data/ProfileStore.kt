@@ -2,6 +2,8 @@ package com.oleroma.gyrophone.data
 
 import android.content.Context
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
+import com.oleroma.gyrophone.core.model.MappingProfile
+import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.PadPreset
 import com.oleroma.gyrophone.core.model.PadPresets
 import com.oleroma.gyrophone.core.model.Profile
@@ -84,6 +86,53 @@ class ProfileStore(context: Context) {
         }
     }
 
+    private val mappingFile = File(context.filesDir, "mapping_profiles.json")
+
+    /** The saved mapping profiles; null when none were ever saved, or the file cannot be read (it is then left alone). */
+    @Synchronized fun mappingProfiles(): List<MappingProfile>? =
+        if (!mappingFile.exists()) null
+        else MappingProfiles.decode(mappingFile.readText())
+
+    /** True when a mapping profile file exists, readable or not. */
+    fun hasMappingFile(): Boolean = mappingFile.exists()
+
+    /** Saves the mapping profiles; refuses to replace a file that exists but cannot be read. */
+    @Synchronized fun saveMappingProfiles(profiles: List<MappingProfile>) {
+        if (mappingFile.exists() && MappingProfiles.decode(mappingFile.readText()) == null) return
+        val tmp = File(mappingFile.path + ".tmp")
+        tmp.writeText(MappingProfiles.encode(profiles))
+        if (!tmp.renameTo(mappingFile)) {
+            mappingFile.writeText(tmp.readText())
+            tmp.delete()
+        }
+    }
+
+    /**
+     * Keeps a copy of [profile] as it is now in "<file>.<tag>.bak" beside the profiles (not listed
+     * as a profile); an existing copy is never overwritten.
+     */
+    @Synchronized fun backup(profile: Profile, tag: String) {
+        val bak = File(dir, fileName(profile.id) + ".$tag.bak")
+        if (!bak.exists()) bak.writeText(ProfileJson.encode(profile))
+    }
+
+    /** The copy [backup] kept of profile [id] under [tag], or null when there is none (or it cannot be read). */
+    @Synchronized fun readBackup(id: String, tag: String): Profile? {
+        val bak = File(dir, fileName(id) + ".$tag.bak")
+        return if (!bak.exists()) null else runCatching { ProfileJson.decode(bak.readText()) }.getOrNull()
+    }
+
+    /** Keeps a copy of the mapping profile file as "mapping_profiles.json.<tag>.bak"; an existing copy is kept. */
+    @Synchronized fun backupMappings(tag: String) {
+        val bak = File(mappingFile.path + ".$tag.bak")
+        if (mappingFile.exists() && !bak.exists()) mappingFile.copyTo(bak)
+    }
+
+    /** Which version of the move to mapping profiles last ran (0 = none recorded). */
+    var mappingMigration: Int
+        get() = prefs.getInt(KEY_MAPPING_MIGRATION, 0)
+        set(value) { prefs.edit().putInt(KEY_MAPPING_MIGRATION, value).apply() }
+
     fun isBuiltin(profile: Profile): Boolean = profile.id.startsWith("builtin.")
 
     private fun fileName(id: String) = id.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".json"
@@ -100,5 +149,6 @@ class ProfileStore(context: Context) {
     companion object {
         private const val KEY_ACTIVE = "active_profile"
         private const val KEY_WORKSPACE_PREFIX = "workspace_"
+        private const val KEY_MAPPING_MIGRATION = "mapping_migration"
     }
 }

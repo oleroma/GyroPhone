@@ -145,7 +145,7 @@ fun BindingList(
 }
 
 @Composable
-private fun TargetChip(text: String, onClick: () -> Unit, onRemove: () -> Unit) {
+internal fun TargetChip(text: String, onClick: () -> Unit, onRemove: () -> Unit) {
     val shape = RoundedCornerShape(8.dp)
     Row(
         Modifier
@@ -171,7 +171,7 @@ private fun TargetChip(text: String, onClick: () -> Unit, onRemove: () -> Unit) 
 }
 
 @Composable
-private fun AddChip(onClick: () -> Unit) {
+internal fun AddChip(onClick: () -> Unit) {
     val shape = RoundedCornerShape(8.dp)
     Box(
         Modifier

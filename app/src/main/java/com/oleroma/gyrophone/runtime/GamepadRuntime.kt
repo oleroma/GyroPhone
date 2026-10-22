@@ -9,10 +9,14 @@ import com.oleroma.gyrophone.core.hid.HidDescriptor
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownController
+import com.oleroma.gyrophone.core.model.MappingProfile
+import com.oleroma.gyrophone.core.model.MappingProfiles
+import com.oleroma.gyrophone.core.model.PadDevice
 import com.oleroma.gyrophone.core.model.PadPreset
 import com.oleroma.gyrophone.core.model.PadPresets
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.WorkspaceSet
 import com.oleroma.gyrophone.data.ProfileStore
 import com.oleroma.gyrophone.core.net.ByeReason
 import com.oleroma.gyrophone.core.net.Wire
@@ -32,7 +36,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 /** A game controller attached to the phone (e.g. GameSir X5). */
 data class AttachedController(
@@ -58,12 +61,25 @@ class GamepadRuntime(context: Context) {
     val store = ProfileStore(appContext)
     val hid = HidDeviceManager(appContext)
 
+    private val _padPresets = MutableStateFlow(store.padPresets())
+    /** The user's own pad presets (the builtins come from [PadPresets.builtins]). */
+    val padPresets: StateFlow<List<PadPreset>> = _padPresets
+
+    private val _mappingProfiles = MutableStateFlow<List<MappingProfile>>(emptyList())
+    /** Every mapping profile (touch, keyboard and controller mappings); never empty. */
+    val mappingProfiles: StateFlow<List<MappingProfile>> = _mappingProfiles
+
+    /**
+     * All workspaces live in one profile ([WorkspaceSet]), stored without mappings: each workspace
+     * names its [MappingProfile]. See [loadWorkspaceSet] and [loadMappings].
+     */
+    private var stored: Profile = loadMappings(loadWorkspaceSet())
+
     private val _profiles = MutableStateFlow(store.all())
     val profiles: StateFlow<List<Profile>> = _profiles
 
-    private val _activeProfile = MutableStateFlow(
-        store.activeProfileId.let { id -> _profiles.value.firstOrNull { it.id == id } } ?: BuiltinProfiles.default,
-    )
+    private val _activeProfile = MutableStateFlow(MappingProfiles.resolve(stored, _mappingProfiles.value))
+    /** The workspace set with each workspace's mapping profile filled in ([MappingProfiles.resolve]). */
     val activeProfile: StateFlow<Profile> = _activeProfile
 
     private val _workspaceIndex = MutableStateFlow(rememberedWorkspace(_activeProfile.value))
@@ -215,8 +231,8 @@ class GamepadRuntime(context: Context) {
         gyroMouse.reset()
     }
 
-    /** Makes [profile] active, in the workspace that was last active in it. */
-    fun activate(profile: Profile) {
+    /** Makes the resolved [profile] active, in the workspace that was last active in it. */
+    private fun activate(profile: Profile) {
         store.activeProfileId = profile.id
         val index = rememberedWorkspace(profile)
         engine.reset()
@@ -245,62 +261,90 @@ class GamepadRuntime(context: Context) {
     private fun rememberedWorkspace(profile: Profile): Int =
         store.workspaceIndex(profile.id).coerceIn(0, profile.workspaces.lastIndex)
 
-    fun saveProfile(profile: Profile) {
-        store.save(profile)
-        refreshProfiles()
-        if (profile.id == _activeProfile.value.id) activate(profile)
+    /**
+     * Applies [change] to the active (resolved) workspace set and saves it: layout, device and
+     * settings edits go to the set, mapping edits to each workspace's mapping profile
+     * ([MappingProfiles.adopt], [MappingProfiles.absorb]). The current workspace stays active (clamped if the edit removed
+     * it). Returns the new resolved set.
+     */
+    fun editActiveProfile(change: (Profile) -> Profile): Profile {
+        val before = _activeProfile.value
+        val changed = change(before)
+        if (changed == before) return before
+        // An added workspace gets a profile of its own mappings, or the current workspace's.
+        val fallback = before.workspace(_workspaceIndex.value).mappingProfileId
+        val (after, withNew) = MappingProfiles.adopt(_mappingProfiles.value, changed, fallback)
+        commit(MappingProfiles.strip(after), MappingProfiles.absorb(withNew, before, after))
+        return _activeProfile.value
     }
 
-    fun deleteProfile(profile: Profile) {
-        store.delete(profile.id)
-        refreshProfiles()
-        if (profile.id == _activeProfile.value.id) activate(BuiltinProfiles.default)
+    /** Saves [set] (without mappings) and [profiles], and makes the resolved set active. */
+    private fun commit(set: Profile, profiles: List<MappingProfile>) {
+        if (profiles != _mappingProfiles.value) {
+            _mappingProfiles.value = profiles
+            store.saveMappingProfiles(profiles)
+        }
+        if (set != stored) {
+            stored = set
+            store.save(set)
+            store.setWorkspaceIndex(set.id, _workspaceIndex.value.coerceIn(0, set.workspaces.lastIndex))
+            refreshProfiles()
+        }
+        activate(MappingProfiles.resolve(stored, _mappingProfiles.value))
+    }
+
+    /** Replaces the mapping profile with [profile]'s id (name and mappings); every workspace using it follows. */
+    fun updateMappingProfile(profile: MappingProfile) {
+        if (_mappingProfiles.value.none { it.id == profile.id }) return
+        commit(stored, _mappingProfiles.value.map { if (it.id == profile.id) profile else it })
     }
 
     /**
-     * Applies [change] to the active profile and saves it; a builtin is saved as a custom copy,
-     * which becomes active. The current workspace stays active (clamped if the edit removed it).
-     * Returns the saved profile.
+     * Adds a mapping profile named [name] with [from]'s mappings (none: the builtin touch mappings
+     * and the standard controller set) and makes workspace [wsIndex] use it. Returns it.
      */
-    fun editActiveProfile(change: (Profile) -> Profile): Profile {
-        val active = _activeProfile.value
-        var edited = change(active)
-        if (edited == active) return active
-        if (store.isBuiltin(active)) {
-            edited = edited.copy(id = "user." + UUID.randomUUID(), name = active.name + " (custom)")
-        }
-        store.save(edited)
-        store.setWorkspaceIndex(edited.id, _workspaceIndex.value.coerceIn(0, edited.workspaces.lastIndex))
-        refreshProfiles()
-        activate(edited)
-        return edited
+    fun newMappingProfile(name: String, from: MappingProfile?, wsIndex: Int = workspaceIndex.value): MappingProfile {
+        val id = MappingProfiles.newId(_mappingProfiles.value.map { it.id })
+        val trimmed = name.trim().ifBlank { "Profile" }
+        val created = from?.copy(id = id, name = trimmed) ?: MappingProfiles.fresh(id, trimmed, stored)
+        commit(useMapping(stored, wsIndex, id), _mappingProfiles.value + created)
+        return created
     }
 
-    private val _padPresets = MutableStateFlow(store.padPresets())
-    /** The user's own pad presets (the builtins come from [PadPresets.builtins]). */
-    val padPresets: StateFlow<List<PadPreset>> = _padPresets
+    /** Makes workspace [wsIndex] use mapping profile [id]. */
+    fun selectMappingProfile(id: String, wsIndex: Int = workspaceIndex.value) {
+        if (_mappingProfiles.value.none { it.id == id }) return
+        commit(useMapping(stored, wsIndex, id), _mappingProfiles.value)
+    }
 
-    /** Saves [mappings] as a new user pad preset named [name]; returns it. */
-    fun savePadPreset(name: String, mappings: List<Mapping>): PadPreset {
-        val preset = PadPreset(PadPresets.newId(_padPresets.value.map { it.id }), name.trim().ifBlank { "My preset" }, mappings)
+    /** Deletes mapping profile [id] unless it is the last; workspaces that used it switch to the first left. */
+    fun deleteMappingProfile(id: String) {
+        val left = _mappingProfiles.value.filterNot { it.id == id }
+        if (left.isEmpty() || left.size == _mappingProfiles.value.size) return
+        val set = stored.copy(workspaces = stored.workspaces.map { w ->
+            if (w.mappingProfileId == id || w.mappingProfileId == null) w.copy(mappingProfileId = left.first().id) else w
+        })
+        commit(set, left)
+    }
+
+    private fun useMapping(set: Profile, wsIndex: Int, id: String): Profile =
+        set.updateWorkspace(wsIndex) { it.copy(mappingProfileId = id) }
+
+    /** Saves [mappings] as a new user pad preset named [name], attached to [device]; returns it. */
+    fun savePadPreset(name: String, mappings: List<Mapping>, device: PadDevice? = null): PadPreset {
+        val preset = PadPreset(
+            PadPresets.newId(_padPresets.value.map { it.id }), name.trim().ifBlank { "My preset" }, mappings,
+            device = device?.match, deviceName = device?.name, deviceFamily = device?.family,
+        )
         _padPresets.value = _padPresets.value + preset
         store.savePadPresets(_padPresets.value)
         return preset
     }
 
-    /** Removes a user pad preset (pads that use it keep their mappings and show as Custom). */
+    /** Removes a user pad preset (a controller set loaded from it is kept). */
     fun deletePadPreset(id: String) {
         _padPresets.value = _padPresets.value.filterNot { it.id == id }
         store.savePadPresets(_padPresets.value)
-    }
-
-    /** Applies [preset] to the attached pad [padId] of the active workspace. */
-    fun applyPadPreset(padId: String, preset: PadPreset) {
-        editActiveProfile { p ->
-            p.updateWorkspace(workspaceIndex.value) { w ->
-                w.copy(pads = w.pads.map { if (it.id == padId) PadPresets.apply(it, preset) else it })
-            }
-        }
     }
 
     /** Live value of a phone-side source (for highlighting pressed controls). */
@@ -309,21 +353,70 @@ class GamepadRuntime(context: Context) {
     private fun refreshProfiles() { _profiles.value = store.all() }
 
     /**
-     * Called by the input layer whenever the set of attached controllers changes. May switch to a
-     * profile made for a newly attached controller ([Profile.controllers]); never changes the
-     * workspace of the active profile.
+     * Called by the input layer whenever the set of attached controllers changes. Never changes
+     * the workspace.
      */
     fun onControllersChanged(list: List<AttachedController>) {
-        val added = list.filter { c -> _controllers.value.none { it.deviceId == c.deviceId } }
         _controllers.value = list
-        // Auto-switch to a profile made for a newly attached controller, but never away from a
-        // user profile that is not tied to specific controllers (e.g. a customised builtin).
-        for (c in added) {
-            val active = _activeProfile.value
-            if (active.controllers.any { it.matches(c.vendorId, c.productId, c.name) }) continue
-            if (!store.isBuiltin(active) && active.controllers.isEmpty()) continue
-            BuiltinProfiles.forController(_profiles.value, c.vendorId, c.productId, c.name)?.let { activate(it) }
+    }
+
+    /**
+     * The saved workspace set, or on the first start after game profiles were removed, a new one
+     * merged from the profile that was active (its workspaces first, so the current one stays
+     * current) and every other user profile. Old profile files are left on disk untouched.
+     */
+    private fun loadWorkspaceSet(): Profile {
+        val users = store.userProfiles()
+        users.firstOrNull { it.id == WorkspaceSet.ID }?.let {
+            store.activeProfileId = it.id
+            return it
         }
+        val activeId = store.activeProfileId
+        val active = users.firstOrNull { it.id == activeId }
+            ?: BuiltinProfiles.all.firstOrNull { it.id == activeId }
+            ?: users.firstOrNull()
+            ?: BuiltinProfiles.default
+        val set = WorkspaceSet.merge(active, users.filter { it.id != active.id })
+        store.save(set)
+        store.setWorkspaceIndex(set.id, store.workspaceIndex(active.id))
+        store.activeProfileId = set.id
+        return set
+    }
+
+    /**
+     * The mapping profiles, or on the first start after they were added, profiles made from the
+     * mappings [set] still holds ([MappingProfiles.migrate]); the set is then saved without them
+     * (a copy as it was is kept beside it). Returns the stored set. An unreadable mapping file is
+     * left alone and the set is used as it is, with its own mappings.
+     */
+    private fun loadMappings(set: Profile): Profile {
+        store.mappingProfiles()?.takeIf { it.isNotEmpty() }?.let {
+            val before = if (store.mappingMigration < MAPPING_MIGRATION) store.readBackup(set.id, BACKUP_TAG) else null
+            if (before == null) {
+                store.mappingMigration = MAPPING_MIGRATION
+                _mappingProfiles.value = it
+                return set
+            }
+            // The first move (build 0.1.61) lost keyboard and extra-pad mappings: redo it once from
+            // the copy it kept, keeping its result beside the file.
+            store.backupMappings("v1")
+            return migrateMappings(before)
+        }
+        if (store.hasMappingFile()) {
+            _mappingProfiles.value = listOf(MappingProfile("map1", MappingProfiles.DEFAULT_NAME))
+            return set
+        }
+        store.backup(set, BACKUP_TAG)
+        return migrateMappings(set)
+    }
+
+    private fun migrateMappings(set: Profile): Profile {
+        val m = MappingProfiles.migrate(set)
+        _mappingProfiles.value = m.profiles
+        store.saveMappingProfiles(m.profiles)
+        store.save(m.set)
+        store.mappingMigration = MAPPING_MIGRATION
+        return m.set
     }
 
     /** Gyro settings follow the active workspace. */
@@ -351,6 +444,9 @@ class GamepadRuntime(context: Context) {
         private const val KEY_WIFI_RATE = "wifi_rate_hz"
         private const val KEY_TRANSPORT = "transport"
         private const val KEY_ORIENTATION = "screen_orientation"
+        /** Version of [MappingProfiles.migrate]'s rules; a phone that ran an older one redoes it from [BACKUP_TAG]. */
+        private const val MAPPING_MIGRATION = 2
+        private const val BACKUP_TAG = "pre-mappings"
     }
 
     private fun onGyroSample(x: Float, y: Float, z: Float, ts: Long) {
