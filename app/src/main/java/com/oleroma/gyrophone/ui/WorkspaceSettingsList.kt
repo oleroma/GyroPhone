@@ -1,21 +1,14 @@
 package com.oleroma.gyrophone.ui
 
 import android.content.res.Configuration
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -29,8 +22,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.GyroAxes
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroOrientation
@@ -39,163 +30,6 @@ import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.runtime.GamepadRuntime
-import java.util.UUID
-
-/**
- * Game profiles as a section of the pad menu (no scrolling of its own): the profiles to pick from
- * (tap = use it) and the editor of the selected one. Builtin profiles are duplicated before editing.
- */
-@Composable
-internal fun GameProfileSection(runtime: GamepadRuntime) {
-    val profiles by runtime.profiles.collectAsStateWithLifecycle()
-    val active by runtime.activeProfile.collectAsStateWithLifecycle()
-    var selectedId by remember { mutableStateOf(active.id) }
-    val selected = profiles.firstOrNull { it.id == selectedId } ?: active
-
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        for (p in profiles) {
-            val marker = if (p.id == active.id) "● " else ""
-            val suffix = if (runtime.store.isBuiltin(p)) "  (built-in)" else ""
-            Text(
-                marker + p.name + suffix,
-                Modifier.fillMaxWidth().clickable { selectedId = p.id }.padding(8.dp),
-                color = if (p.id == selected.id) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-            )
-        }
-        OutlinedButton(onClick = {
-            val p = BuiltinProfiles.newProfile("user." + UUID.randomUUID(), "New profile")
-            runtime.saveProfile(p)
-            selectedId = p.id
-        }) { Text("New game profile") }
-        HorizontalDivider(Modifier.padding(vertical = 4.dp))
-        ProfileEditor(runtime, selected, onSelect = { selectedId = it }, modifier = Modifier.fillMaxWidth())
-    }
-}
-
-@Composable
-private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (String) -> Unit, modifier: Modifier) {
-    val builtin = runtime.store.isBuiltin(profile)
-    val activeProfile by runtime.activeProfile.collectAsStateWithLifecycle()
-    val isActive = profile.id == activeProfile.id
-    var confirmDelete by remember { mutableStateOf(false) }
-
-    /** Saves [change] of this profile; a builtin becomes a custom copy (active if this one was). */
-    fun edit(change: (Profile) -> Profile) {
-        if (isActive) {
-            onSelect(runtime.editActiveProfile(change).id)
-            return
-        }
-        val base = if (builtin) profile.copy(id = "user." + UUID.randomUUID(), name = profile.name + " (custom)") else profile
-        val updated = change(base)
-        if (updated == profile) return
-        runtime.saveProfile(updated)
-        onSelect(updated.id)
-    }
-
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(profile.name, style = MaterialTheme.typography.titleMedium)
-        if (builtin) Text("Built-in: changes are saved as a custom copy.", style = MaterialTheme.typography.bodySmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { runtime.activate(profile) }, enabled = !isActive) { Text(if (isActive) "In use" else "Use") }
-            OutlinedButton(onClick = {
-                val copy = profile.copy(id = "user." + UUID.randomUUID(), name = profile.name + " copy")
-                runtime.saveProfile(copy)
-                onSelect(copy.id)
-            }) { Text("Duplicate") }
-            if (!builtin) OutlinedButton(onClick = { confirmDelete = true }) { Text("Delete") }
-        }
-
-        if (!builtin) {
-            var name by remember(profile.id) { mutableStateOf(profile.name) }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    singleLine = true,
-                    label = { Text("Name") },
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    onClick = { edit { it.copy(name = name.trim()) } },
-                    enabled = name.isNotBlank() && name.trim() != profile.name,
-                ) { Text("Rename") }
-            }
-        }
-
-        GamesEditor(profile.games) { games -> edit { it.copy(games = games) } }
-
-        HorizontalDivider()
-        Text("Workspaces", style = MaterialTheme.typography.titleSmall)
-        Text(
-            "${profile.workspaces.size} workspace(s). Tap ← and → on the pad to switch; both together = fullscreen.",
-            style = MaterialTheme.typography.bodySmall,
-        )
-        SwitchRow("Wrap around (→ on the last goes to the first)", profile.wrapWorkspaces) { v ->
-            edit { it.copy(wrapWorkspaces = v) }
-        }
-        var cornerOpacity by remember(profile.id) { mutableStateOf(profile.cornerOpacity) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("← → opacity %.0f%%".format(cornerOpacity * 100f), Modifier.padding(end = 8.dp))
-            Slider(value = cornerOpacity, onValueChange = { cornerOpacity = it }, valueRange = Profile.MIN_CONTROL_OPACITY..1f,
-                onValueChangeFinished = { edit { it.copy(cornerOpacity = cornerOpacity) } })
-        }
-        SwitchRow("← and → resize together", profile.cornerSameSize) { v -> edit { it.copy(cornerSameSize = v) } }
-        if (!isActive) {
-            Text(
-                "Use it to see and set up its workspaces on the pad.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-    }
-
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete \"${profile.name}\"?") },
-            text = { Text("Its workspaces, layouts and mappings are removed from the phone.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDelete = false
-                    runtime.deleteProfile(profile)
-                    onSelect(runtime.activeProfile.value.id)
-                }) { Text("Delete") }
-            },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
-        )
-    }
-}
-
-/** Windows executables the companion switches to this profile for. */
-@Composable
-private fun GamesEditor(games: List<String>, onChange: (List<String>) -> Unit) {
-    var entry by remember { mutableStateOf("") }
-    Text("Games", style = MaterialTheme.typography.titleSmall)
-    if (games.isEmpty()) {
-        Text("No games: the PC companion never switches to this profile by itself.", style = MaterialTheme.typography.bodySmall)
-    }
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        for (g in games) {
-            FilterChip(selected = true, onClick = { onChange(games - g) }, label = { Text("$g  ✕") })
-        }
-    }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(
-            value = entry,
-            onValueChange = { entry = it },
-            singleLine = true,
-            placeholder = { Text("game.exe") },
-            modifier = Modifier.weight(1f),
-        )
-        TextButton(
-            onClick = {
-                val g = entry.trim()
-                if (g.isNotEmpty() && games.none { it.equals(g, ignoreCase = true) }) onChange(games + g)
-                entry = ""
-            },
-            enabled = entry.isNotBlank(),
-        ) { Text("Add") }
-    }
-}
 
 /**
  * Gyro and touchpad settings of the active profile's workspace [index]. Edits go

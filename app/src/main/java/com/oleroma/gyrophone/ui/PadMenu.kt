@@ -45,8 +45,6 @@ import com.oleroma.gyrophone.runtime.GamepadRuntime
 sealed interface PadMenuPage {
     /** The menu of the current workspace: one list with collapsible categories. */
     data object Root : PadMenuPage
-    /** Game profiles (above workspaces): pick, create, rename, delete; games and corners. */
-    data object GameProfiles : PadMenuPage
     /**
      * Full settings of a profile of device [deviceKey]; [presetId] null = a new profile. With
      * [loadInto] (a workspace index) the saved profile is loaded into pad [loadPadId] there.
@@ -64,7 +62,6 @@ sealed interface PadMenuPage {
         fun encode(stack: List<PadMenuPage>): String = stack.joinToString(SEP) { p ->
             when (p) {
                 Root -> "root"
-                GameProfiles -> "game"
                 is EditProfile -> listOf("edit", p.deviceKey, p.presetId ?: "", p.loadInto?.toString() ?: "", p.loadPadId ?: "")
                     .joinToString("\t")
             }
@@ -74,7 +71,6 @@ sealed interface PadMenuPage {
             val f = line.split("\t")
             when (f[0]) {
                 "root" -> Root
-                "game" -> GameProfiles
                 "edit" -> f.getOrNull(1)?.let { key ->
                     EditProfile(
                         key,
@@ -92,8 +88,8 @@ sealed interface PadMenuPage {
 /**
  * The Pad tab: the pad itself, or the pad menu in its place. The menu is about the current
  * workspace only: its devices, each with its profile, then its settings, as collapsible
- * categories. Editing a device profile opens its own page. The pad's Game profile button opens
- * the game profiles page (they hold the workspaces, so they are not in the workspace menu).
+ * categories. Editing a device profile opens its own page. Workspaces hold everything; there are
+ * no game profiles to pick.
  * Back steps out one page at a time.
  */
 @Composable
@@ -140,7 +136,6 @@ private fun PadMenu(
             Text(
                 when (page) {
                     is PadMenuPage.EditProfile -> if (page.presetId == null) "New profile" else "Profile"
-                    PadMenuPage.GameProfiles -> "Game profiles"
                     PadMenuPage.Root -> "Menu"
                 },
                 style = MaterialTheme.typography.titleMedium,
@@ -153,7 +148,6 @@ private fun PadMenu(
         val content = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)
         when (page) {
             PadMenuPage.Root -> MenuList(runtime, content, onOpen = { open(it) })
-            PadMenuPage.GameProfiles -> Column(content.verticalScroll(rememberScrollState())) { GameProfileSection(runtime) }
             is PadMenuPage.EditProfile -> PadProfileEditor(
                 runtime,
                 page.deviceKey,
@@ -170,7 +164,7 @@ private fun PadMenu(
 
 /**
  * The menu of the current workspace only: its devices, each with its profile (load another, edit
- * one or make a new one), then the workspace's settings. Game profiles have their own page. Another workspace's
+ * one or make a new one), then the workspace's settings. Another workspace's
  * devices are changed by switching to it on the pad first (← / →).
  */
 @Composable

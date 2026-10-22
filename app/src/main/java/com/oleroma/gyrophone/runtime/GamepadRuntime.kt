@@ -14,6 +14,7 @@ import com.oleroma.gyrophone.core.model.PadPreset
 import com.oleroma.gyrophone.core.model.PadPresets
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.WorkspaceSet
 import com.oleroma.gyrophone.data.ProfileStore
 import com.oleroma.gyrophone.core.net.ByeReason
 import com.oleroma.gyrophone.core.net.Wire
@@ -59,12 +60,13 @@ class GamepadRuntime(context: Context) {
     val store = ProfileStore(appContext)
     val hid = HidDeviceManager(appContext)
 
+    /** All workspaces live in one profile ([WorkspaceSet]); see [loadWorkspaceSet]. */
+    private val workspaceSet = loadWorkspaceSet()
+
     private val _profiles = MutableStateFlow(store.all())
     val profiles: StateFlow<List<Profile>> = _profiles
 
-    private val _activeProfile = MutableStateFlow(
-        store.activeProfileId.let { id -> _profiles.value.firstOrNull { it.id == id } } ?: BuiltinProfiles.default,
-    )
+    private val _activeProfile = MutableStateFlow(workspaceSet)
     val activeProfile: StateFlow<Profile> = _activeProfile
 
     private val _workspaceIndex = MutableStateFlow(rememberedWorkspace(_activeProfile.value))
@@ -294,20 +296,14 @@ class GamepadRuntime(context: Context) {
 
     /**
      * Replaces the user pad preset with [preset]'s id (name and mappings) and gives every pad that
-     * uses it ([PadPresets.uses]) in the saved user profiles the new mappings. Builtin presets and
-     * builtin profiles are never changed.
+     * uses it ([PadPresets.uses]) in the workspaces the new mappings. Builtin presets are never
+     * changed; profile files from before workspaces held everything are left alone.
      */
     fun updatePadPreset(preset: PadPreset) {
         val old = _padPresets.value.firstOrNull { it.id == preset.id }
         if (PadPresets.isBuiltin(preset.id) || old == null) return
         _padPresets.value = _padPresets.value.map { if (it.id == preset.id) preset else it }
         store.savePadPresets(_padPresets.value)
-        val activeId = _activeProfile.value.id
-        for (p in store.userProfiles()) {
-            if (p.id == activeId) continue
-            val updated = PadPresets.retarget(p, old, preset)
-            if (updated !== p) store.save(updated)
-        }
         refreshProfiles()
         // A builtin active profile is left alone: changing it would fork a custom copy.
         if (!store.isBuiltin(_activeProfile.value)) editActiveProfile { PadPresets.retarget(it, old, preset) }
@@ -334,21 +330,34 @@ class GamepadRuntime(context: Context) {
     private fun refreshProfiles() { _profiles.value = store.all() }
 
     /**
-     * Called by the input layer whenever the set of attached controllers changes. May switch to a
-     * profile made for a newly attached controller ([Profile.controllers]); never changes the
-     * workspace of the active profile.
+     * Called by the input layer whenever the set of attached controllers changes. Never changes
+     * the workspace.
      */
     fun onControllersChanged(list: List<AttachedController>) {
-        val added = list.filter { c -> _controllers.value.none { it.deviceId == c.deviceId } }
         _controllers.value = list
-        // Auto-switch to a profile made for a newly attached controller, but never away from a
-        // user profile that is not tied to specific controllers (e.g. a customised builtin).
-        for (c in added) {
-            val active = _activeProfile.value
-            if (active.controllers.any { it.matches(c.vendorId, c.productId, c.name) }) continue
-            if (!store.isBuiltin(active) && active.controllers.isEmpty()) continue
-            BuiltinProfiles.forController(_profiles.value, c.vendorId, c.productId, c.name)?.let { activate(it) }
+    }
+
+    /**
+     * The saved workspace set, or on the first start after game profiles were removed, a new one
+     * merged from the profile that was active (its workspaces first, so the current one stays
+     * current) and every other user profile. Old profile files are left on disk untouched.
+     */
+    private fun loadWorkspaceSet(): Profile {
+        val users = store.userProfiles()
+        users.firstOrNull { it.id == WorkspaceSet.ID }?.let {
+            store.activeProfileId = it.id
+            return it
         }
+        val activeId = store.activeProfileId
+        val active = users.firstOrNull { it.id == activeId }
+            ?: BuiltinProfiles.all.firstOrNull { it.id == activeId }
+            ?: users.firstOrNull()
+            ?: BuiltinProfiles.default
+        val set = WorkspaceSet.merge(active, users.filter { it.id != active.id })
+        store.save(set)
+        store.setWorkspaceIndex(set.id, store.workspaceIndex(active.id))
+        store.activeProfileId = set.id
+        return set
     }
 
     /** Gyro settings follow the active workspace. */

@@ -129,8 +129,7 @@ internal object TouchStream {
  * long-press it (or tap a corner) for a menu next to it with all its settings, drag to move,
  * pinch or use the size slider to resize. Edits change the current orientation's placement. Done
  * saves (a builtin becomes a custom copy) and switches to the workspace being edited.
- * In play mode the Menu button opens the workspace menu and the game profile button (showing the
- * active game profile's name) opens the game profiles page ([PadTab]) through [onOpenMenu].
+ * In play mode the Menu button opens the workspace menu ([PadTab]) through [onOpenMenu].
  */
 @Composable
 fun PadScreen(
@@ -678,12 +677,6 @@ fun PadScreen(
                             onOpenMenu(PadMenuPage.Root)
                         },
                     ) { Text("Menu") }
-                    FilledTonalButton(
-                        onClick = {
-                            releaseAll()
-                            onOpenMenu(PadMenuPage.GameProfiles)
-                        },
-                    ) { Text(profile.name, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp)) }
                 }
             }
         } else {
@@ -1125,6 +1118,8 @@ private fun ControlSettingsPanel(
                     },
                     opacity = profile.cornerOpacity,
                     onOpacity = { onProfileChange(profile.copy(cornerOpacity = it)) },
+                    wrap = profile.wrapWorkspaces,
+                    onWrap = { onProfileChange(profile.copy(wrapWorkspaces = it)) },
                     onSize = onSize,
                     onClose = onClose,
                 )
@@ -1199,6 +1194,8 @@ private fun CornerSettings(
     onSameSize: (Boolean) -> Unit,
     opacity: Float,
     onOpacity: (Float) -> Unit,
+    wrap: Boolean,
+    onWrap: (Boolean) -> Unit,
     onSize: (Float) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -1232,6 +1229,10 @@ private fun CornerSettings(
     Column {
         Text("Corner opacity ${(opacity * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
         Slider(value = opacity, onValueChange = onOpacity, valueRange = Profile.MIN_CONTROL_OPACITY..1f)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Wrap around (→ on the last goes to the first)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+        Switch(checked = wrap, onCheckedChange = onWrap)
     }
 }
 

@@ -135,7 +135,7 @@ internal fun PadProfileEditor(
         }
     }
     val users = remember(source, profile) {
-        // Pads in this game profile that use it.
+        // Pads in all workspaces that use it.
         if (source == null || builtin) 0
         else profile.workspaces.sumOf { w -> w.pads.count { PadPresets.uses(it, source) } }
     }
@@ -204,7 +204,7 @@ internal fun PadProfileEditor(
                 when {
                     source == null -> append("Saving adds a new profile to this device" + (if (loadPad != null) " and loads it into its workspace." else "."))
                     builtin -> append("\"${source.name}\" is built in: saving adds your own copy to this device.")
-                    else -> append("Saving updates every pad that uses this profile ($users in this game profile, and any in other game profiles).")
+                    else -> append("Saving updates every workspace pad that uses this profile ($users across your workspaces).")
                 }
             },
             style = MaterialTheme.typography.bodySmall,
