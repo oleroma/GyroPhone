@@ -48,7 +48,7 @@ Phone (mapping engine) ─► UDP, AES-GCM sealed ─► GyroPhoneCompanion ─�
 
 **On the PC**
 
-1. Run `update.cmd` (see *Building*). It builds `GyroPhoneCompanion.exe` and installs it in `%LOCALAPPDATA%\Programs\GyroPhone`. It is unsigned, so SmartScreen may warn the first time: choose *More info*, then *Run anyway*.
+1. Run `build.cmd`, then `update.cmd` (see *Building*). `update.cmd` installs the newest `GyroPhoneCompanion.exe` in `%LOCALAPPDATA%\Programs\GyroPhone`. It is unsigned, so SmartScreen may warn the first time: choose *More info*, then *Run anyway*.
 2. For the game pad, install the ViGEmBus driver from [github.com/nefarius/ViGEmBus/releases](https://github.com/nefarius/ViGEmBus/releases). Without it the companion still sends keyboard and mouse, the tray icon turns amber, and the menu offers *Install gamepad driver* and *Retry driver*. ViGEmBus is no longer developed upstream but still installs and works on Windows 10 and 11.
 3. Start the companion. The first time, Windows asks whether to allow it through the firewall: allow it on **Private** networks. If you missed that prompt, use *Allow through firewall…* in the tray menu. The app never opens the firewall for Public networks, so your home network must be set to Private (Settings › Network & internet › your network). The tray warns you when it is Public.
 4. On the first run nothing is paired yet, so the pairing window opens by itself. Later use *Pair new phone…* in the tray menu. It stays open for two minutes.
@@ -73,7 +73,7 @@ Phone (mapping engine) ─► UDP, AES-GCM sealed ─► GyroPhoneCompanion ─�
 
 ## Building
 
-Everything is built on the dev PC; CI only runs the tests. Commit, then run `update.cmd`. It builds that commit in its own git worktree, puts the newest `gyrophone.apk` and `GyroPhoneCompanion.exe` in `build\` (ignored by git), keeps the last 4 builds in `build\builds\0.1.<commit count>-<commit>\`, installs the companion and updates the phone over adb. You need JDK 17 and the Android SDK (API 36), and the .NET 8 SDK for the companion; without .NET it builds the APK only.
+Everything is built on the dev PC; CI only runs the tests. Commit, then run `build.cmd [commit]` (default `HEAD`). It builds that commit in its own git worktree, puts the newest `gyrophone.apk` and `GyroPhoneCompanion.exe` in `build\` (ignored by git) and keeps the last 4 builds in `build\builds\0.1.<commit count>-<commit>\`. Then run `update.cmd`: it installs only that newest build from `build\` (the companion in `%LOCALAPPDATA%\Programs\GyroPhone`, the APK on the phone over adb) and swaps the phone and PC key files. It never builds or downloads anything. You need JDK 17 and the Android SDK (API 36), and the .NET 8 SDK for the companion; without .NET it builds the APK only.
 
 The tests:
 
