@@ -28,6 +28,11 @@ public sealed class FileLog : IDisposable
 
     public string Path { get; }
 
+    /// <summary>Why the last write to <see cref="Path"/> failed (exception type and message), or null after a good one.</summary>
+    public string? LastError => _lastError;
+
+    private volatile string? _lastError;
+
     public static string DefaultDirectory() => System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GyroPhone", "logs");
 
@@ -54,6 +59,7 @@ public sealed class FileLog : IDisposable
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
+            _lastError = $"{e.GetType().Name}: {e.Message}";
         }
         foreach (var line in _queue.GetConsumingEnumerable())
         {
@@ -62,9 +68,11 @@ public sealed class FileLog : IDisposable
             try
             {
                 File.AppendAllText(Path, line + Environment.NewLine);
+                _lastError = null;
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
+                _lastError = $"{e.GetType().Name}: {e.Message}";
             }
         }
     }

@@ -13,32 +13,82 @@ public static class FirewallHelper
     public const string RuleName = "GyroPhone Companion";
 
     /// <summary>
-    /// True when a rule with our name exists for this executable (rules are per path, so a copy elsewhere
-    /// needs its own). netsh exits with 1 when no rule matches; the verbose listing includes each rule's
-    /// program path whatever the display language.
+    /// True when Windows Firewall lets this executable receive UDP on a Private network: an enabled
+    /// inbound Allow rule for its path (any name, so the rule Windows adds from its own first-run
+    /// prompt counts too) covering UDP and the Private profile, and no enabled inbound Block rule for it
+    /// there (Block wins over Allow). Rules are per path, so a copy elsewhere needs its own. Reads the
+    /// rules through the firewall's COM API, which needs no elevation; falls back to netsh by our rule
+    /// name when that fails.
     /// </summary>
     public static bool RuleExists(string exePath)
     {
         try
         {
-            var psi = new ProcessStartInfo("netsh", $"advfirewall firewall show rule name=\"{RuleName}\" verbose")
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            using var p = Process.Start(psi);
-            if (p == null) return false;
-            string output = p.StandardOutput.ReadToEnd();
-            p.StandardError.ReadToEnd();
-            if (!p.WaitForExit(10_000)) return false;
-            return p.ExitCode == 0 && output.Contains(exePath, StringComparison.OrdinalIgnoreCase);
+            return ComRuleAllows(exePath) ?? NetshRuleExists(exePath);
         }
         catch (Exception e) when (e is Win32Exception or InvalidOperationException)
         {
             return false;
         }
+    }
+
+    private const int DirectionIn = 1;
+    private const int ActionBlock = 0;
+    private const int ActionAllow = 1;
+    private const int ProtocolUdp = 17;
+    private const int ProtocolAny = 256;
+    private const int ProfilePrivate = 2;
+
+    /// <summary>The COM answer, or null when the firewall policy cannot be read that way.</summary>
+    private static bool? ComRuleAllows(string exePath)
+    {
+        try
+        {
+            var type = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
+            if (type == null) return null;
+            dynamic? policy = Activator.CreateInstance(type);
+            if (policy == null) return null;
+            bool allowed = false;
+            foreach (dynamic rule in policy.Rules)
+            {
+                string? app = rule.ApplicationName;
+                if (app == null || !string.Equals(app, exePath, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!(bool)rule.Enabled || (int)rule.Direction != DirectionIn) continue;
+                int protocol = rule.Protocol;
+                if (protocol != ProtocolUdp && protocol != ProtocolAny) continue;
+                if (((int)rule.Profiles & ProfilePrivate) == 0) continue;
+                int action = rule.Action;
+                if (action == ActionBlock) return false;
+                if (action == ActionAllow) allowed = true;
+            }
+            return allowed;
+        }
+        catch (Exception e) when (e is System.Runtime.InteropServices.COMException or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException
+                                       or InvalidCastException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// netsh by our rule name: exits with 1 when no rule matches; the verbose listing includes each
+    /// rule's program path whatever the display language.
+    /// </summary>
+    private static bool NetshRuleExists(string exePath)
+    {
+        var psi = new ProcessStartInfo("netsh", $"advfirewall firewall show rule name=\"{RuleName}\" verbose")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        using var p = Process.Start(psi);
+        if (p == null) return false;
+        string output = p.StandardOutput.ReadToEnd();
+        p.StandardError.ReadToEnd();
+        if (!p.WaitForExit(10_000)) return false;
+        return p.ExitCode == 0 && output.Contains(exePath, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>The netsh arguments that add the rule for this executable.</summary>

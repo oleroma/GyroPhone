@@ -58,6 +58,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private StatusForm? _statusForm;
     private int _refreshQueued;
     private bool? _firewallOk;
+    /// <summary>Why key file pairing is off (the host key could not be loaded), or null.</summary>
+    private readonly string? _keyError;
     private bool _firewallHintShown, _uipiHintShown, _publicHintShown;
     private string _phonesKey = "";
     private bool _sessionLocked, _suspended;
@@ -87,7 +89,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
         {
-            _log.Write($"key file pairing off: {e.GetType().Name}");
+            _keyError = $"{e.GetType().Name}: {e.Message}";
+            _log.Write($"key file pairing off: {_keyError}");
         }
         _engine = new HostEngine(settings, _pad, _keyMouse, this, protector, _clock, this, hostKey: hostKey);
         if (hostKey != null) _authorized = new AuthorizedPhonesWatcher(_keyFiles, _engine.SetAuthorizedPhones, _log.Write);
@@ -279,7 +282,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _retryDriverItem.Available = !s.DriverOk;
         _restartAdminItem.Available = !ElevationProbe.IsSelfElevated;
         RebuildPhones(s.PairedPhones);
-        _hostKeyItem.Text = s.HostKeyFingerprint is { } fp ? $"This PC's key: {fp}" : "This PC's key: unavailable (see log)";
+        _hostKeyItem.Text = s.HostKeyFingerprint is { } fp ? $"This PC's key: {fp}" : "This PC's key: unavailable (see Status)";
         _versionItem.Text = _updater.Pending is { } pending
             ? $"{Program.AppName} {Application.ProductVersion} · {pending} starts when the phone disconnects"
             : $"{Program.AppName} {Application.ProductVersion}";
@@ -384,7 +387,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             + $"this app {(ElevationProbe.IsSelfElevated ? "elevated" : "not elevated")}");
         b.AppendLine($"Pairing:      {(s.PairingWindowS > 0 ? $"open, {s.PairingWindowS} s left" : "closed")}, {s.PairedPhones.Count} paired phone(s)"
             + $" ({s.PairedPhones.Count(p => p.ByKey)} by key)");
-        b.AppendLine($"PC key:       {s.HostKeyFingerprint ?? "unavailable"}, {_keyFiles.Directory}");
+        b.AppendLine($"PC key:       {s.HostKeyFingerprint ?? "unavailable" + (_keyError != null ? $" ({_keyError})" : "")}, {_keyFiles.Directory}");
+        b.AppendLine($"Log:          {_log.Path}{(_log.LastError is { } le ? $" (cannot write: {le})" : "")}");
+        b.AppendLine($"Running as:   {Environment.UserDomainName}\\{Environment.UserName}, {_exePath}");
         var c = s.Counters;
         b.AppendLine();
         b.AppendLine($"datagrams {c.Datagrams}  states {c.States}  injections {c.Injections}  SendInput short {_keyMouse.ShortWrites}");
