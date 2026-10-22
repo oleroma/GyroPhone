@@ -75,6 +75,7 @@ import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
+import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.Placement
@@ -90,7 +91,6 @@ import com.oleroma.gyrophone.core.model.placeY
 import com.oleroma.gyrophone.core.model.placement
 import com.oleroma.gyrophone.core.model.withPlacement
 import com.oleroma.gyrophone.runtime.GamepadRuntime
-import java.util.UUID
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -129,13 +129,14 @@ internal object TouchStream {
  * long-press it (or tap a corner) for a menu next to it with all its settings, drag to move,
  * pinch or use the size slider to resize. Edits change the current orientation's placement. Done
  * saves (a builtin becomes a custom copy) and switches to the workspace being edited.
+ * In play mode the Menu button opens the workspace menu ([PadTab]) through [onOpenMenu].
  */
 @Composable
 fun PadScreen(
     runtime: GamepadRuntime,
     fullscreen: Boolean = false,
     onFullscreen: (Boolean) -> Unit = {},
-    onEditPad: (String) -> Unit = {},
+    onOpenMenu: (PadMenuPage) -> Unit = {},
 ) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
@@ -157,8 +158,6 @@ fun PadScreen(
     var menuSize by remember { mutableStateOf(IntSize.Zero) }
     var menuFolded by remember { mutableStateOf(false) }
     var showWsSettings by remember { mutableStateOf(false) }
-    /** The attached-devices dialog (play mode only). */
-    var showDevices by remember { mutableStateOf(false) }
     var dragging by remember { mutableStateOf(false) }
     var snap by remember { mutableStateOf(false) }
     val stickPos = remember { mutableStateMapOf<String, Offset>() }
@@ -194,6 +193,15 @@ fun PadScreen(
     }
 
     DisposableEffect(Unit) { onDispose { releaseAll() } }
+
+    fun startEditing() {
+        releaseAll()
+        selected = null
+        showWsSettings = false
+        dragging = false
+        editIndex = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
+        draft = profile
+    }
 
     val pollHighlights = !editing && (fingersOnButtons > 0 || pressedIds.isNotEmpty())
     LaunchedEffect(pollHighlights) {
@@ -662,33 +670,14 @@ fun PadScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    FilledTonalButton(onClick = { startEditing() }) { Text("Edit layout") }
                     FilledTonalButton(
                         onClick = {
                             releaseAll()
-                            selected = null
-                            showWsSettings = false
-                            dragging = false
-                            editIndex = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
-                            draft = profile
+                            onOpenMenu(PadMenuPage.Root)
                         },
-                    ) { Text("Edit layout") }
-                    FilledTonalButton(
-                        onClick = {
-                            releaseAll()
-                            showDevices = true
-                        },
-                    ) { Text("Devices (${ws.pads.size})") }
+                    ) { Text("Menu") }
                 }
-            }
-            if (showDevices && !fullscreen) {
-                AttachedDevicesPanel(
-                    runtime = runtime,
-                    onDismiss = { showDevices = false },
-                    onEditPad = { id ->
-                        showDevices = false
-                        onEditPad(id)
-                    },
-                )
             }
         } else {
             val compact = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
@@ -714,8 +703,8 @@ fun PadScreen(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    // Fixed top row (never scrolls): the drag handle and ◀ n/N name ▶ to switch the edited workspace.
                     Row(
-                        Modifier.horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -730,8 +719,33 @@ fun PadScreen(
                                         menuOffset = clampMenu(clampMenu(menuOffset) + drag)
                                     }
                                 }
-                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                                .padding(horizontal = 12.dp, vertical = 2.dp),
                         )
+                        draft?.let { dw ->
+                            val k = editIndex.coerceIn(0, dw.workspaces.lastIndex)
+                            OutlinedButton(contentPadding = compact, enabled = k > 0, onClick = {
+                                editIndex = k - 1
+                                selected = null
+                            }) { Text("◀") }
+                            Text(
+                                "${k + 1}/${dw.workspaces.size} · ${dw.workspace(k).name}",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 160.dp),
+                            )
+                            OutlinedButton(contentPadding = compact, enabled = k < dw.workspaces.lastIndex, onClick = {
+                                editIndex = k + 1
+                                selected = null
+                            }) { Text("▶") }
+                        }
+                    }
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         if (!menuFolded) {
                             Text(
                                 if (portrait) "Portrait layout" else "Landscape layout",
@@ -741,7 +755,7 @@ fun PadScreen(
                             FilledTonalButton(contentPadding = compact, onClick = addButton@{
                                 val d = draft ?: return@addButton
                                 val wk = d.workspace(editIndex)
-                                val id = freshId(wk, "btn")
+                                val id = freshId(wk, "btn", takenIds(d, runtime))
                                 val c = newControl(wk, id, TouchKind.BUTTON, NEW_BUTTON_SIZE, portrait)
                                 editWorkspace { it.copy(touchControls = it.touchControls + place(c, 0.5f, 0.5f, false)) }
                                 selected = id
@@ -751,7 +765,7 @@ fun PadScreen(
                             FilledTonalButton(contentPadding = compact, onClick = addStick@{
                                 val d = draft ?: return@addStick
                                 val wk = d.workspace(editIndex)
-                                val id = freshId(wk, "stick")
+                                val id = freshId(wk, "stick", takenIds(d, runtime))
                                 val c = newControl(wk, id, TouchKind.STICK, NEW_STICK_SIZE, portrait)
                                 editWorkspace { it.copy(touchControls = it.touchControls + place(c, 0.5f, 0.5f, false)) }
                                 selected = id
@@ -780,18 +794,7 @@ fun PadScreen(
                         FilledTonalButton(contentPadding = compact, onClick = done@{
                             val d = draft ?: return@done
                             val idx = editIndex.coerceIn(0, d.workspaces.lastIndex)
-                            val active = runtime.activeProfile.value
-                            if (d == active) {
-                                Unit
-                            } else if (d.id == active.id) {
-                                runtime.editActiveProfile { d }
-                            } else {
-                                val saved = if (runtime.store.isBuiltin(d)) {
-                                    d.copy(id = "user." + UUID.randomUUID(), name = d.name + " (custom)")
-                                } else d
-                                runtime.saveProfile(saved)
-                                runtime.activate(saved)
-                            }
+                            runtime.editActiveProfile { d }
                             if (runtime.workspaceIndex.value != idx) runtime.switchWorkspace(idx)
                             draft = null
                             selected = null
@@ -866,7 +869,7 @@ fun PadScreen(
                         },
                         onSize = { resize(sel.id, it) },
                         onDuplicate = {
-                            val (nw, id) = duplicate(ws, sel)
+                            val (nw, id) = duplicate(ws, sel, takenIds(draft ?: profile, runtime))
                             val copy = nw.touchControls.first { it.id == id }
                             editWorkspace {
                                 nw.copy(touchControls = nw.touchControls.map {
@@ -921,15 +924,22 @@ private fun controlLabel(workspace: Workspace, c: TouchControl, editing: Boolean
 private fun shapeOf(c: TouchControl): Shape =
     if (c.shape == TouchShape.SQUARE) RoundedCornerShape(percent = 12) else CircleShape
 
-/** Id not used by any control of the workspace nor by its leftover mappings. */
-private fun freshId(workspace: Workspace, prefix: String): String {
+/**
+ * Ids a new control must not take: any control's in [set] or any mapping profile's, so it never
+ * picks up the mappings of a button in another workspace or of a deleted one.
+ */
+private fun takenIds(set: Profile, runtime: GamepadRuntime): Set<String> =
+    MappingProfiles.takenTouchIds(set, runtime.mappingProfiles.value)
+
+/** Id not used by any control of the workspace, by its leftover mappings, nor in [taken]. */
+private fun freshId(workspace: Workspace, prefix: String, taken: Set<String>): String {
     val orphans = workspace.mappings.mapNotNull {
         when (val s = it.source) {
             is InputSource.Touch -> s.id
             is InputSource.TouchStick -> s.id
             else -> null
         }
-    }.distinct().map { TouchControl(it, TouchKind.BUTTON, "", 0f, 0f) }
+    }.plus(taken).distinct().map { TouchControl(it, TouchKind.BUTTON, "", 0f, 0f) }
     return Bindings.newTouchId(workspace.touchControls + orphans, prefix)
 }
 
@@ -962,8 +972,8 @@ private fun newControl(workspace: Workspace, id: String, kind: TouchKind, size: 
 }
 
 /** Copies a control and its mappings next to the original; returns the workspace and the new id. */
-private fun duplicate(workspace: Workspace, c: TouchControl): Pair<Workspace, String> {
-    val id = freshId(workspace, if (c.kind == TouchKind.STICK) "stick" else "btn")
+private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>): Pair<Workspace, String> {
+    val id = freshId(workspace, if (c.kind == TouchKind.STICK) "stick" else "btn", taken)
     val copies = workspace.mappings.mapNotNull { m ->
         when (val s = m.source) {
             is InputSource.Touch -> if (s.id == c.id) m.copy(source = InputSource.Touch(id)) else null
@@ -1104,6 +1114,8 @@ private fun ControlSettingsPanel(
                     },
                     opacity = profile.cornerOpacity,
                     onOpacity = { onProfileChange(profile.copy(cornerOpacity = it)) },
+                    wrap = profile.wrapWorkspaces,
+                    onWrap = { onProfileChange(profile.copy(wrapWorkspaces = it)) },
                     onSize = onSize,
                     onClose = onClose,
                 )
@@ -1178,6 +1190,8 @@ private fun CornerSettings(
     onSameSize: (Boolean) -> Unit,
     opacity: Float,
     onOpacity: (Float) -> Unit,
+    wrap: Boolean,
+    onWrap: (Boolean) -> Unit,
     onSize: (Float) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -1192,7 +1206,7 @@ private fun CornerSettings(
     }
     Text(
         "Tap ← for the previous workspace and → for the next. Press both at the same time to hide " +
-            "the tabs and the Edit button; press both again (or Back) to show them. The corners are " +
+            "the tabs and the pad's buttons; press both again (or Back) to show them. The corners are " +
             "the same in every workspace; drag each one where you like.",
         style = MaterialTheme.typography.bodyMedium,
     )
@@ -1211,6 +1225,10 @@ private fun CornerSettings(
     Column {
         Text("Corner opacity ${(opacity * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
         Slider(value = opacity, onValueChange = onOpacity, valueRange = Profile.MIN_CONTROL_OPACITY..1f)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Wrap around (→ on the last goes to the first)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+        Switch(checked = wrap, onCheckedChange = onWrap)
     }
 }
 
