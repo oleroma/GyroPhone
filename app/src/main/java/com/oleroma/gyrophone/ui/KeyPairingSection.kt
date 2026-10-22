@@ -26,7 +26,8 @@ import com.oleroma.gyrophone.wifi.WifiLink
 
 /**
  * Connect tab, Wi-Fi: key file pairing. Shows this phone's key fingerprint, shares phone.pub,
- * imports a PC's host.pub, and lists the trusted PCs. update.cmd does the same over adb.
+ * imports a PC's host.pub, and lists the trusted PCs. QR code pairing (WifiPanel) and update.cmd
+ * fill the same folders.
  */
 @Composable
 fun KeyPairingSection(wifi: WifiLink) {
@@ -50,7 +51,7 @@ fun KeyPairingSection(wifi: WifiLink) {
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
-            "update.cmd swaps keys with the PC over adb, so the phone connects without a code.",
+            "Scanning a PC's QR code (or running update.cmd, which swaps keys over adb) lets the phone connect without a code.",
             style = MaterialTheme.typography.bodySmall,
         )
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

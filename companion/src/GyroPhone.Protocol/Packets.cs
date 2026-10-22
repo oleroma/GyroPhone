@@ -32,6 +32,9 @@ public sealed record Hello(byte[] PhoneId, byte[] NP, uint Caps, ushort MaxRateH
 /// <summary>WELCOME without its mac.</summary>
 public sealed record Welcome(uint SessionId, byte[] HostId, byte[] NP, byte[] NH, byte OutputMode, byte HostFlags, ushort KeepaliveMs);
 
+/// <summary>KEY_ENROLL; <see cref="Mac"/> is QrPairing.EnrollMac under the QR code's token.</summary>
+public sealed record KeyEnroll(uint ReqId, byte[] TokenId, byte[] PkP, string Name, byte[] Mac);
+
 public sealed record ErrorPacket(ushort Code, byte MaxVersion);
 
 // Sealed plaintexts.

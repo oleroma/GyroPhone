@@ -108,6 +108,39 @@ public static class WireCodec
         return true;
     }
 
+    // ---- QR code pairing ----
+
+    public static bool TryDecodeKeyEnroll(ReadOnlySpan<byte> b, out KeyEnroll p)
+    {
+        p = null!;
+        if (!CheckFrame(b, PacketType.KeyEnroll) || !TryReadName(b, 89, Wire.PairNameMax, out var name)) return false;
+        p = new KeyEnroll(Le.U32(b, 12), Get(b, 16, Wire.KeyIdSize), Get(b, 24, Wire.PublicKeySize), name, Get(b, 121, Crypto.QrPairing.MacSize));
+        return true;
+    }
+
+    /// <summary>KEY_ENROLL with its mac under <paramref name="token"/> (the phone side; for tests).</summary>
+    public static int EncodeKeyEnroll(uint reqId, ReadOnlySpan<byte> token, ReadOnlySpan<byte> pkP, string name, Span<byte> b)
+    {
+        var o = Start(b, PacketType.KeyEnroll);
+        Le.PutU32(o, 12, reqId);
+        Put(o, 16, Crypto.QrPairing.TokenId(token), Wire.KeyIdSize);
+        Put(o, 24, pkP, Wire.PublicKeySize);
+        WriteName(o, 89, name, Wire.PairNameMax);
+        Crypto.QrPairing.EnrollMac(token, o[..121]).CopyTo(o[121..]);
+        return o.Length;
+    }
+
+    /// <summary>KEY_ENROLL_ACK; with no token (EXPIRED, NO_KEY) the mac stays zero.</summary>
+    public static int EncodeKeyEnrollAck(uint reqId, ReadOnlySpan<byte> tokenId, byte status, ReadOnlySpan<byte> token, ReadOnlySpan<byte> pkP, Span<byte> b)
+    {
+        var o = Start(b, PacketType.KeyEnrollAck);
+        Le.PutU32(o, 12, reqId);
+        Put(o, 16, tokenId, Wire.KeyIdSize);
+        o[24] = status;
+        if (!token.IsEmpty) Crypto.QrPairing.AckMac(token, o[..25], pkP).CopyTo(o[25..]);
+        return o.Length;
+    }
+
     // ---- pairing ----
 
     public static int EncodePairStart(PairStart p, Span<byte> b)

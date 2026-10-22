@@ -1,13 +1,17 @@
+using System.Collections;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using GyroPhone.Host;
 using GyroPhone.Protocol;
+using GyroPhone.Protocol.Crypto;
 
 namespace GyroPhone.Tray;
 
 /// <summary>
-/// "Pair new phone…": shows this PC's name, addresses and port with the pairing window countdown,
-/// then "Pair <phone>? Code 400 588" with Allow and Deny once a phone has revealed its commitment.
+/// "Pair new phone…": a QR code for GyroPhone's "Scan QR code" (key pairing with a one-time token,
+/// renewed when it expires, gone when the form closes), and for code pairing this PC's name,
+/// addresses and port with the pairing window countdown, then "Pair <phone>? Code 400 588" with
+/// Allow and Deny once a phone has revealed its commitment.
 /// The engine snapshot is the single source of truth; the form only reads it and answers through
 /// HostEngine.AnswerPair. Closing the form denies an open prompt; the pairing window itself stays
 /// open until it expires or a pairing succeeds, so an allowed attempt can still finish on the phone.
@@ -15,6 +19,12 @@ namespace GyroPhone.Tray;
 internal sealed class PairForm : Form
 {
     private readonly HostEngine _engine;
+    private readonly string _hostName;
+    private readonly KeyFiles? _keyFiles;
+    private readonly PictureBox _qrBox;
+    private readonly Label _qrHint;
+    private Bitmap? _qrImage;
+    private bool _qrShown;
     private readonly Font _titleFont;
     private readonly Font _codeFont;
     private readonly Label _countdown;
@@ -28,9 +38,11 @@ internal sealed class PairForm : Form
     private uint _promptAttempt;
     private DateTime? _allowedUtc;
 
-    public PairForm(HostEngine engine, string hostName)
+    public PairForm(HostEngine engine, string hostName, KeyFiles? keyFiles)
     {
         _engine = engine;
+        _hostName = hostName;
+        _keyFiles = keyFiles;
         Text = "Pair new phone - " + Program.AppName;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -58,8 +70,12 @@ internal sealed class PairForm : Form
         // Waiting for a phone: where to find this PC.
         _waitPanel = Column();
         _waitPanel.Controls.Add(NewLabel("Pair a new phone", _titleFont));
-        _waitPanel.Controls.Add(NewLabel("On the phone open GyroPhone, choose Wi-Fi in the Connect tab and tap this PC "
-            + "under \"Found on this network\". If it is not listed, use \"Enter PC address\"."));
+        _qrHint = NewLabel("In GyroPhone open the Connect tab, choose Wi-Fi and tap \"Scan QR code\". The phone connects by itself.");
+        _waitPanel.Controls.Add(_qrHint);
+        _qrBox = new PictureBox { SizeMode = PictureBoxSizeMode.AutoSize, Margin = new Padding(3, 6, 3, 12) };
+        _waitPanel.Controls.Add(_qrBox);
+        _waitPanel.Controls.Add(NewLabel("Or pair with a code: in the Connect tab tap this PC under \"Found on this network\". "
+            + "If it is not listed, use \"Enter PC address\"."));
         _waitPanel.Controls.Add(NewLabel($"PC name: {hostName}"));
         _waitPanel.Controls.Add(NewLabel($"Address: {LocalAddresses()}   UDP port {Wire.Port}"));
         _countdown = NewLabel("");
@@ -109,6 +125,7 @@ internal sealed class PairForm : Form
         _timer.Tick += (_, _) => RefreshNow();
         Load += (_, _) =>
         {
+            ShowNewQr();
             RefreshNow();
             _timer.Start();
         };
@@ -119,6 +136,16 @@ internal sealed class PairForm : Form
     {
         if (IsDisposed) return;
         var s = _engine.Snapshot();
+        if (s.QrEnrolledPhone is { } qrPhone)
+        {
+            _result.Text = $"Paired with {qrPhone} by QR code. You can close this window.";
+            _result.Visible = true;
+            ShowQr(false);
+        }
+        else if (_qrShown && s.QrPairingS == 0)
+        {
+            ShowNewQr(); // expired: a fresh token
+        }
         if (s.PairPrompt is { } p)
         {
             bool fresh = p.AttemptId != _promptAttempt;
@@ -167,9 +194,46 @@ internal sealed class PairForm : Form
         RefreshNow();
     }
 
+    /// <summary>A new one-time QR code (hidden when this PC has no key).</summary>
+    private void ShowNewQr()
+    {
+        var token = _keyFiles == null ? null : _engine.OpenQrPairing(_keyFiles.AddAuthorized);
+        if (token == null || _engine.HostPublicKey is not { } hostKey)
+        {
+            ShowQr(false);
+            return;
+        }
+        var text = QrPairing.Format(new QrInvite(hostKey, token, _hostName, LocalAddressList()));
+        var old = _qrImage;
+        _qrImage = Render(QrCode.Modules(text), Math.Max(4, 5 * DeviceDpi / 96));
+        _qrBox.Image = _qrImage;
+        old?.Dispose();
+        ShowQr(true);
+    }
+
+    private void ShowQr(bool on)
+    {
+        _qrShown = on;
+        _qrBox.Visible = on;
+        _qrHint.Visible = on;
+    }
+
+    private static Bitmap Render(IReadOnlyList<BitArray> modules, int scale)
+    {
+        int n = modules.Count;
+        var bmp = new Bitmap(n * scale, n * scale);
+        using var g = Graphics.FromImage(bmp);
+        g.Clear(Color.White);
+        for (int y = 0; y < n; y++)
+            for (int x = 0; x < n; x++)
+                if (modules[y][x]) g.FillRectangle(Brushes.Black, x * scale, y * scale, scale, scale);
+        return bmp;
+    }
+
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         _timer.Stop();
+        _engine.CloseQrPairing();
         if (_promptAttempt != 0) _engine.AnswerPair(_promptAttempt, false);
         _promptAttempt = 0;
         base.OnFormClosing(e);
@@ -182,6 +246,7 @@ internal sealed class PairForm : Form
             _timer.Dispose();
             _titleFont.Dispose();
             _codeFont.Dispose();
+            _qrImage?.Dispose();
         }
         base.Dispose(disposing);
     }
@@ -220,6 +285,13 @@ internal sealed class PairForm : Form
     /// <summary>IPv4 addresses of the adapters that are up (no loopback or tunnels), for typing into the phone.</summary>
     private static string LocalAddresses()
     {
+        var list = LocalAddressList();
+        return list.Count == 0 ? "no network" : string.Join(", ", list);
+    }
+
+    /// <summary>Same, as a list (at most four go into the QR code).</summary>
+    private static List<string> LocalAddressList()
+    {
         var list = new List<string>();
         try
         {
@@ -235,6 +307,6 @@ internal sealed class PairForm : Form
         catch (NetworkInformationException)
         {
         }
-        return list.Count == 0 ? "no network" : string.Join(", ", list);
+        return list.Take(4).ToList();
     }
 }
