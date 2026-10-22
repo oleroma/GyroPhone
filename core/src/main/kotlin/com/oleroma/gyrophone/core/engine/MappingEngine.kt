@@ -30,11 +30,11 @@ import kotlin.math.min
  * and touch buttons.
  *
  * Input is evaluated in source groups that merge into one PC output: the workspace's touch
- * mappings over the touch state, and each connected device over the mappings of the attached pad
- * it matches (a device no pad matches does nothing). Buttons, keys and mouse buttons OR together;
- * a stick axis takes the group with the largest deflection, a trigger the largest value. The legacy
- * [setKey] / [setAxis] overloads without a device are one "any device" source evaluated against
- * every pad of the workspace.
+ * mappings over the touch state, each connected device over the mappings of the attached pad it
+ * matches (a device no pad matches does nothing), and each keyboard over the keyboard mappings.
+ * Buttons, keys and mouse buttons OR together; a stick axis takes the group with the largest
+ * deflection, a trigger the largest value. The legacy [setKey] / [setAxis] overloads without a
+ * device are one "any device" source evaluated against every pad of the workspace.
  */
 class MappingEngine(profile: Profile, private val clock: () -> Long = System::nanoTime) {
 
@@ -65,7 +65,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private var ws: Workspace = profile.workspace(0)
     /** Touch mappings of the active workspace (the touch source group). */
     private var touchMappings: List<Mapping> = emptyList()
-    /** Mappings of each attached pad of the active workspace, by pad index. */
+    /** Mappings of each attached pad of the active workspace, by pad index, then the keyboard's. */
     private var padMappings: Array<List<Mapping>> = emptyArray()
     /** Touch controls whose mappings are all keyboard modifiers, when sticky modifiers are on. */
     private var modifierIds: Set<String> = emptySet()
@@ -167,7 +167,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val w = profile.workspace(workspaceIndex)
         ws = w
         touchMappings = w.mappings
-        padMappings = Array(w.pads.size) { w.pads[it].mappings }
+        padMappings = Array(w.pads.size + 1) { if (it < w.pads.size) w.pads[it].mappings else w.keyboard }
         modifierIds = if (w.stickyModifiers) modifierControls(w.mappings) else emptySet()
         releaseHeld()
         for (d in deviceList) d.pad = resolvePad(d.device)
@@ -188,6 +188,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     private fun resolvePad(device: PadDevice?): Int {
         if (device == null) return -1
+        if (device.keyboard) return ws.pads.size
         return ws.pads.indexOfFirst { it.matches(device.vendorId, device.productId, device.name) }
     }
 

@@ -110,8 +110,15 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         runtime.onControllersChanged(list)
     }
 
-    /** The engine's view of [device]: it picks the active workspace's attached pad by model. */
-    private fun padDevice(device: InputDevice) = PadDevice(device.id, device.vendorId, device.productId, device.name)
+    /**
+     * The engine's view of [device]: it picks the active workspace's attached pad by model, or the
+     * keyboard mappings for a full keyboard that is not also a game pad.
+     */
+    private fun padDevice(device: InputDevice) = PadDevice(
+        device.id, device.vendorId, device.productId, device.name,
+        keyboard = device.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC &&
+            device.sources and InputDevice.SOURCE_GAMEPAD != InputDevice.SOURCE_GAMEPAD,
+    )
 
     private fun isTrigger(axis: Int) = axis == AndroidAxis.LTRIGGER || axis == AndroidAxis.RTRIGGER ||
         axis == AndroidAxis.GAS || axis == AndroidAxis.BRAKE

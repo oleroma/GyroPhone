@@ -85,23 +85,22 @@ class MainActivity : ComponentActivity() {
                 val orientation by runtime.screenOrientation.collectAsStateWithLifecycle()
                 LaunchedEffect(orientation) { requestedOrientation = orientation.activityValue }
                 Surface(Modifier.fillMaxSize()) {
+                    // Two tabs: Connect, and Pad (the pad, with every other setting in its menu).
                     var tab by rememberSaveable { mutableIntStateOf(0) }
                     // Full-screen pad: the profile's two fullscreen corners pressed together; Back also leaves.
                     var fullscreen by rememberSaveable { mutableStateOf(false) }
                     BackHandler(enabled = fullscreen) { fullscreen = false }
                     Column(Modifier.fillMaxSize()) {
                         if (!fullscreen) {
-                            TabRow(selectedTabIndex = tab) {
-                                listOf("Connect", "Pad", "Controller", "Profiles").forEachIndexed { i, title ->
-                                    Tab(selected = tab == i, onClick = { tab = i }, text = { Text(title) })
+                            TabRow(selectedTabIndex = if (tab == 0) 0 else 1) {
+                                listOf("Connect", "Pad").forEachIndexed { i, title ->
+                                    Tab(selected = (if (tab == 0) 0 else 1) == i, onClick = { tab = i }, text = { Text(title) })
                                 }
                             }
                         }
                         when (tab) {
                             0 -> ConnectScreen(runtime, onRetry = { permissionRequest.launch(permissions) })
-                            1 -> PadScreen(runtime, fullscreen = fullscreen, onFullscreen = { fullscreen = it })
-                            2 -> ControllerScreen(runtime)
-                            else -> ProfilesScreen(runtime)
+                            else -> PadTab(runtime, fullscreen = fullscreen, onFullscreen = { fullscreen = it })
                         }
                     }
                 }

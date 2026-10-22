@@ -100,7 +100,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
         }
     } }
     val statusContent: @Composable () -> Unit = {
-        Text("Profile: ${profile.name}", style = MaterialTheme.typography.titleMedium)
+        Text("Workspaces", style = MaterialTheme.typography.titleMedium)
         if (profile.workspaces.size > 1) {
             val w = profile.workspace(workspaceIndex)
             Text("Workspace ${workspaceIndex.coerceIn(0, profile.workspaces.lastIndex) + 1}/${profile.workspaces.size}: ${w.name}")
