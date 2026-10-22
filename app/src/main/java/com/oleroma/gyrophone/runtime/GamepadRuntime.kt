@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.runtime
 
 import android.content.Context
 import android.hardware.SensorManager
+import com.oleroma.gyrophone.core.engine.GyroCalibration
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.Touchpad
@@ -36,6 +37,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 /** A game controller attached to the phone (e.g. GameSir X5). */
 data class AttachedController(
@@ -141,6 +143,23 @@ class GamepadRuntime(context: Context) {
     val gyroInfo: StateFlow<GyroInfo> = _gyroInfo
 
     data class GyroInfo(val source: String = "Not started", val rateHz: Int = 0, val active: Boolean = false)
+
+    /** Rest-calibration state shown in the pad Menu. */
+    sealed interface CalibrationState {
+        data object None : CalibrationState
+        data object Running : CalibrationState
+        data object Moved : CalibrationState
+        /** Bias in deg/s, largest axis, for display. */
+        data class Calibrated(val degPerSec: Float) : CalibrationState
+    }
+
+    // Constant bias (rad/s) subtracted from every gyro sample; set by rest calibration, kept per phone.
+    @Volatile private var biasX = prefs.getFloat(KEY_BIAS_X, 0f)
+    @Volatile private var biasY = prefs.getFloat(KEY_BIAS_Y, 0f)
+    @Volatile private var biasZ = prefs.getFloat(KEY_BIAS_Z, 0f)
+    @Volatile private var calibration: GyroCalibration? = null
+    private val _calibration = MutableStateFlow(storedCalibration())
+    val calibrationState: StateFlow<CalibrationState> = _calibration
 
     private var gyro: GyroSource? = null
     private var lastGyroTs = 0L
@@ -254,6 +273,23 @@ class GamepadRuntime(context: Context) {
         engine.workspaceIndex = i
         _workspaceIndex.value = i
         store.setWorkspaceIndex(profile.id, i)
+        applyWorkspaceGyro()
+    }
+
+    /**
+     * The gyro corner: switches the active workspace's gyro between always on and always off
+     * (from hold / toggle: always on) and saves it. What is held stays held.
+     */
+    fun toggleGyroMode() {
+        val i = _workspaceIndex.value
+        val next = _activeProfile.value.workspace(i).gyro.toggledMode()
+        val set = stored.updateWorkspace(i) { it.copy(gyro = next) }
+        if (set == stored) return
+        stored = set
+        store.save(set)
+        refreshProfiles()
+        engine.setGyro(next)
+        _activeProfile.value = _activeProfile.value.updateWorkspace(i) { it.copy(gyro = next) }
         applyWorkspaceGyro()
     }
 
@@ -419,6 +455,29 @@ class GamepadRuntime(context: Context) {
         return m.set
     }
 
+    /** Measures the gyro's resting bias for 2 seconds; the phone must lie still meanwhile. */
+    fun calibrateGyro() {
+        if (gyro == null) return
+        calibration = GyroCalibration()
+        _calibration.value = CalibrationState.Running
+    }
+
+    fun clearGyroCalibration() {
+        calibration = null
+        setBias(0f, 0f, 0f)
+    }
+
+    private fun setBias(x: Float, y: Float, z: Float) {
+        biasX = x; biasY = y; biasZ = z
+        prefs.edit().putFloat(KEY_BIAS_X, x).putFloat(KEY_BIAS_Y, y).putFloat(KEY_BIAS_Z, z).apply()
+        _calibration.value = storedCalibration()
+    }
+
+    private fun storedCalibration(): CalibrationState {
+        val m = maxOf(abs(biasX), abs(biasY), abs(biasZ))
+        return if (m == 0f) CalibrationState.None else CalibrationState.Calibrated(Math.toDegrees(m.toDouble()).toFloat())
+    }
+
     /** Gyro settings follow the active workspace. */
     private fun applyWorkspaceGyro() {
         gyroMouse.settings = _activeProfile.value.workspace(_workspaceIndex.value).gyro
@@ -444,6 +503,9 @@ class GamepadRuntime(context: Context) {
         private const val KEY_WIFI_RATE = "wifi_rate_hz"
         private const val KEY_TRANSPORT = "transport"
         private const val KEY_ORIENTATION = "screen_orientation"
+        private const val KEY_BIAS_X = "gyro_bias_x"
+        private const val KEY_BIAS_Y = "gyro_bias_y"
+        private const val KEY_BIAS_Z = "gyro_bias_z"
         /** Version of [MappingProfiles.migrate]'s rules; a phone that ran an older one redoes it from [BACKUP_TAG]. */
         private const val MAPPING_MIGRATION = 2
         private const val BACKUP_TAG = "pre-mappings"
@@ -452,9 +514,16 @@ class GamepadRuntime(context: Context) {
     private fun onGyroSample(x: Float, y: Float, z: Float, ts: Long) {
         val dt = if (lastGyroTs == 0L) 0f else ((ts - lastGyroTs) / 1e9f).coerceIn(0f, 0.05f)
         lastGyroTs = ts
+        calibration?.let { cal ->
+            when (val r = cal.add(x, y, z, ts)) {
+                null -> Unit
+                is GyroCalibration.Result.Done -> { calibration = null; setBias(r.x, r.y, r.z) }
+                GyroCalibration.Result.Moved -> { calibration = null; _calibration.value = CalibrationState.Moved }
+            }
+        }
         val active = engine.gyroActive
         if (active) {
-            val c = gyroMouse.update(x, y, z, dt)
+            val c = gyroMouse.update(x - biasX, y - biasY, z - biasZ, dt)
             if (c.dx != 0 || c.dy != 0) engine.addMouseMotion(c.dx, c.dy)
         } else {
             gyroMouse.reset()

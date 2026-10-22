@@ -10,6 +10,7 @@ import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.GamepadButton
 import com.oleroma.gyrophone.core.model.GyroMode
+import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
@@ -40,10 +41,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     private val lock = Any()
 
-    var profile: Profile = profile
+    private var current: Profile = profile
+
+    var profile: Profile
+        get() = current
         set(value) {
             synchronized(lock) {
-                field = value
+                current = value
                 applyWorkspace()
             }
             onChange?.run()
@@ -457,16 +461,36 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         d
     }
 
-    /** Whether gyro motion should currently move the mouse. */
+    /**
+     * Whether gyro motion should currently move the mouse. A ratchet (a held [OutputTarget.GyroPause]
+     * source, or a touchpad finger with [com.oleroma.gyrophone.core.model.GyroSettings.touchpadRatchet])
+     * flips always on / always off while held, and pauses hold / toggle. A [OutputTarget.GyroToggle]
+     * press flips always on / always off until the workspace changes.
+     */
     val gyroActive: Boolean
         get() = synchronized(lock) {
-            if (engaged(OutputTarget.GyroPause)) return@synchronized false
-            when (ws.gyro.mode) {
-                GyroMode.OFF -> false
-                GyroMode.ALWAYS -> true
-                GyroMode.HOLD_OR_TOGGLE -> gyroToggled || engaged(OutputTarget.GyroHold)
+            val g = ws.gyro
+            val ratchet = (g.touchpadRatchet && touchpad.fingers > 0) || engaged(OutputTarget.GyroPause)
+            when (g.mode) {
+                GyroMode.OFF -> gyroToggled != ratchet
+                GyroMode.ALWAYS -> gyroToggled == ratchet
+                GyroMode.HOLD_OR_TOGGLE -> !ratchet && (gyroToggled || engaged(OutputTarget.GyroHold))
             }
         }
+
+    /**
+     * Replaces the active workspace's gyro settings (the gyro corner switching its mode) without
+     * releasing what is held. A toggle press made before no longer flips the new mode.
+     */
+    fun setGyro(settings: GyroSettings) {
+        synchronized(lock) {
+            if (settings == ws.gyro) return
+            ws = ws.copy(gyro = settings)
+            current = current.updateWorkspace(workspaceIndex) { it.copy(gyro = settings) }
+            gyroToggled = false
+        }
+        onChange?.run()
+    }
 
     /** Releases everything, e.g. when the profile changes or the host disconnects. */
     fun reset() {

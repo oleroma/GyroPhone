@@ -107,7 +107,7 @@ internal static class Program
         log.Write($"listening on UDP {Wire.Port} as '{settings.HostName}', output {settings.OutputMode}, driver {(pad.DriverOk ? "ok" : "missing")}");
         string exe = Environment.ProcessPath ?? "GyroPhoneHeadless.exe";
         if (!FirewallHelper.RuleExists(exe))
-            log.Write($"no '{FirewallHelper.RuleName}' firewall rule; if the phone cannot find this PC run as admin: netsh {FirewallHelper.DeleteRulesArguments(exe)} & netsh {FirewallHelper.AddRuleArguments(exe)}");
+            log.Write($"no firewall rule lets this exe in; if the phone cannot find this PC run as admin: netsh {FirewallHelper.DeleteRulesArguments(exe)} & netsh {FirewallHelper.AddRuleArguments(exe)}");
         PrintStatus(engine);
 
         int shutdown = 0;
