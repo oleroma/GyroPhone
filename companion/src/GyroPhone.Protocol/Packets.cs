@@ -6,7 +6,11 @@ namespace GyroPhone.Protocol;
 /// <summary>The 12-byte header carried by every packet.</summary>
 public readonly record struct PacketHeader(byte Type, uint SessionId, uint Seq);
 
-public sealed record Discover(uint ReqId, byte[] PhoneId, ushort Flags);
+/// <summary>
+/// HostKeyId names the host key the phone trusts and PhoneKeyId the phone's own key (KeyPairing.KeyId,
+/// all zero when absent; null encodes as zero).
+/// </summary>
+public sealed record Discover(uint ReqId, byte[] PhoneId, ushort Flags, byte[]? HostKeyId = null, byte[]? PhoneKeyId = null);
 
 public sealed record Announce(uint ReqId, byte[] HostId, ushort Flags, string Name);
 

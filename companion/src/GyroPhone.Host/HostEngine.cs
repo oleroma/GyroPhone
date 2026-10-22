@@ -31,8 +31,13 @@ public sealed record HostSnapshot(
     uint JitterUs,
     LinkInfo? PhoneLink,
     bool AnyDatagramSeen,
-    IReadOnlyList<(byte[] PhoneId, string Name, DateTime LastSeenUtc)> PairedPhones,
-    HostCounters Counters);
+    IReadOnlyList<PairedPhoneInfo> PairedPhones,
+    HostCounters Counters,
+    string? HostKeyFingerprint = null);
+
+/// <summary>A paired phone for the tray: code-paired (in settings) or key-paired (a file in authorized_phones).</summary>
+public sealed record PairedPhoneInfo(byte[] PhoneId, string Name, DateTime LastSeenUtc, bool ByKey = false,
+    string? KeyFile = null, string? Fingerprint = null);
 
 /// <summary>Diagnostic counters. Never contain key material.</summary>
 public sealed record HostCounters(long Datagrams, long Dropped, long BadAuth, long States, long Injections,
@@ -59,6 +64,12 @@ public sealed class HostEngine
     private readonly IHostEvents _events;
     private readonly HostSettings _settings;
     private readonly Dictionary<string, (PairedPhone Info, byte[] PairKey)> _phones = new();
+    private readonly P256? _hostKey;
+    /// <summary>Key-paired phones by hex keyPhoneId; rebuilt from authorized_phones, never stored in settings.</summary>
+    private readonly Dictionary<string, KeyPhone> _keyPhones = new();
+    /// <summary>Hex KeyId of every authorized phone key, for ANNOUNCE KnowsYourKey.</summary>
+    private readonly HashSet<string> _authorizedKeyIds = new();
+    private readonly byte[]? _hostKeyId;
     private readonly SessionManager _sessions;
     private readonly PairingManager _pairing;
     private readonly RateLimiter _errorLimiter = new(Wire.ErrorRatePerIp, Wire.ErrorRateGlobal);
@@ -110,9 +121,11 @@ public sealed class HostEngine
 
     public HostEngine(HostSettings settings, IPadSink pad, IKeyMouseSink keyMouse, IPairPrompt prompt,
         IKeyProtector protector, IClock? clock = null, IHostEvents? events = null,
-        Func<int, byte[]>? random = null, Func<P256>? newPairKey = null)
+        Func<int, byte[]>? random = null, Func<P256>? newPairKey = null, P256? hostKey = null)
     {
         _settings = settings;
+        _hostKey = hostKey;
+        _hostKeyId = hostKey == null ? null : KeyPairing.KeyId(hostKey.PublicKey);
         _pad = pad;
         _keyMouse = keyMouse;
         _protector = protector;
@@ -149,7 +162,7 @@ public sealed class HostEngine
     {
         lock (_lock)
         {
-            if (_phones.Count == 0) _pairing.Open(nowUs);
+            if (_phones.Count == 0 && _keyPhones.Count == 0) _pairing.Open(nowUs);
         }
     }
 
@@ -312,12 +325,19 @@ public sealed class HostEngine
     private void OnHello(ReadOnlySpan<byte> d, SocketAddress from, long nowUs)
     {
         if (!WireCodec.TryDecodeHello(d, out var hello)) return;
-        if (!_phones.TryGetValue(Convert.ToHexString(hello.PhoneId), out var phone))
+        var hex = Convert.ToHexString(hello.PhoneId);
+        bool byCode = _phones.TryGetValue(hex, out var phone);
+        bool byKey = _keyPhones.TryGetValue(hex, out var keyPhone);
+        if (!byCode && !byKey)
         {
             SendError(ErrorCode.NotPaired, d.Length, from, nowUs);
             return;
         }
-        if (!WireCodec.VerifyMac(phone.PairKey, d))
+        byte[] pairKey;
+        string name;
+        if (byCode && WireCodec.VerifyMac(phone.PairKey, d)) (pairKey, name) = (phone.PairKey, phone.Info.Name);
+        else if (byKey && WireCodec.VerifyMac(keyPhone!.PairKey, d)) (pairKey, name) = (keyPhone.PairKey, keyPhone.Name);
+        else
         {
             _badAuth++; // bad mac: no reply at all
             return;
@@ -329,7 +349,7 @@ public sealed class HostEngine
             Reply(existing.Welcome, from);
             return;
         }
-        var s = _sessions.CreatePending(hello, phone.Info.Name, phone.PairKey, _settings.HostId,
+        var s = _sessions.CreatePending(hello, name, pairKey, _settings.HostId,
             (byte)_settings.OutputMode, (byte)((_pad.DriverOk ? WelcomeFlags.VigemOk : 0) | WelcomeFlags.HiresWheel), from, nowUs);
         Reply(s.Welcome, from);
     }
@@ -353,6 +373,10 @@ public sealed class HostEngine
         {
             phone.Info.LastSeenUtc = DateTime.UtcNow;
             _settingsDirty = true;
+        }
+        else if (_keyPhones.TryGetValue(Convert.ToHexString(s.PhoneId), out var keyPhone))
+        {
+            keyPhone.LastSeenUtc = DateTime.UtcNow;
         }
         _events.Log($"session started with '{s.PhoneName}'");
         SendStatus(s, nowUs);
@@ -627,6 +651,57 @@ public sealed class HostEngine
         }
     }
 
+    /// <summary>
+    /// The phone keys in authorized_phones (from the folder watcher). New keys are paired at once;
+    /// a phone whose file is gone is dropped, live session included.
+    /// </summary>
+    public void SetAuthorizedPhones(IReadOnlyList<AuthorizedPhone> phones)
+    {
+        lock (_lock)
+        {
+            if (_hostKey == null) return;
+            var next = new Dictionary<string, KeyPhone>();
+            _authorizedKeyIds.Clear();
+            foreach (var p in phones)
+            {
+                _authorizedKeyIds.Add(Convert.ToHexString(KeyPairing.KeyId(p.Key.PublicKey)));
+                var (id, pairKey) = KeyPairing.HostSecrets(_hostKey, p.Key.PublicKey);
+                var hex = Convert.ToHexString(id);
+                if (next.ContainsKey(hex))
+                {
+                    CryptographicOperations.ZeroMemory(pairKey); // the same key in two files
+                    continue;
+                }
+                var name = p.Key.Name.Length > 0 ? p.Key.Name : Path.GetFileNameWithoutExtension(p.File);
+                if (_keyPhones.TryGetValue(hex, out var old))
+                {
+                    // Same key: keep the array sessions may still hold, take the (maybe renamed) file.
+                    CryptographicOperations.ZeroMemory(pairKey);
+                    next[hex] = new KeyPhone(p.File, name, old.PhoneId, old.PairKey, old.Fingerprint) { LastSeenUtc = old.LastSeenUtc };
+                }
+                else
+                {
+                    next[hex] = new KeyPhone(p.File, name, id, pairKey, p.Key.Fingerprint) { LastSeenUtc = DateTime.MinValue };
+                }
+            }
+            foreach (var (hex, old) in _keyPhones)
+            {
+                if (next.ContainsKey(hex)) continue;
+                _events.Log($"key of '{old.Name}' removed; phone no longer authorized");
+                _sessions.RemovePending(old.PhoneId);
+                if (_sessions.Active is { } a && a.SamePhone(old.PhoneId)) EndActive(HostByeReason.Forgotten);
+                CryptographicOperations.ZeroMemory(old.PairKey);
+            }
+            foreach (var (hex, kp) in next)
+            {
+                if (!_keyPhones.ContainsKey(hex)) _events.Log($"authorized '{kp.Name}' by key {kp.Fingerprint}");
+            }
+            _keyPhones.Clear();
+            foreach (var (hex, kp) in next) _keyPhones[hex] = kp;
+            _events.StateChanged();
+        }
+    }
+
     /// <summary>Exit: release-all, then HOST_BYE(EXIT) and unplug.</summary>
     public void Shutdown()
     {
@@ -644,14 +719,17 @@ public sealed class HostEngine
         {
             long now = _clock.NowUs;
             var a = _sessions.Active;
-            var phones = _phones.Values.Select(p => (p.Info.PhoneId, p.Info.Name, p.Info.LastSeenUtc)).ToList();
+            var phones = _phones.Values.Select(p => new PairedPhoneInfo(p.Info.PhoneId, p.Info.Name, p.Info.LastSeenUtc))
+                .Concat(_keyPhones.Values.Select(k => new PairedPhoneInfo(k.PhoneId, k.Name, k.LastSeenUtc, true, k.File, k.Fingerprint)))
+                .ToList();
             return new HostSnapshot(
                 a?.PhoneName, a != null, _releasedForSilence, _settings.OutputMode, _pad.DriverOk,
                 _pad.Plugged != OutputMode.None, _paused || _locked, _elevatedForeground, _networkPublic,
                 _pairing.WindowRemainingS(now), _pairing.PromptInfo,
                 _stats.RxPerSec, _stats.LossPermille, _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs,
                 _stats.LastLinkInfo, _anyDatagram, phones,
-                new HostCounters(_datagrams, _dropped, _badAuth, _states, _injections, _unknownUsages, _errors, _exceptions));
+                new HostCounters(_datagrams, _dropped, _badAuth, _states, _injections, _unknownUsages, _errors, _exceptions),
+                _hostKey == null ? null : KeyPairing.Fingerprint(_hostKey.PublicKey));
         }
     }
 
@@ -792,7 +870,11 @@ public sealed class HostEngine
         ushort flags = 0;
         if (_pairing.IsOpen(nowUs)) flags |= AnnounceFlags.PairingOpen;
         if (_pad.DriverOk) flags |= AnnounceFlags.VigemOk;
-        if (_phones.ContainsKey(Convert.ToHexString(disc.PhoneId))) flags |= AnnounceFlags.PairedWithYou;
+        if (_phones.ContainsKey(Convert.ToHexString(disc.PhoneId)) || _keyPhones.ContainsKey(Convert.ToHexString(disc.PhoneId)))
+            flags |= AnnounceFlags.PairedWithYou;
+        if (_hostKeyId != null && disc.HostKeyId is { } hk && hk.AsSpan().SequenceEqual(_hostKeyId)) flags |= AnnounceFlags.KeyMatch;
+        if (disc.PhoneKeyId is { } pk && pk.AsSpan().ContainsAnyExcept((byte)0) && _authorizedKeyIds.Contains(Convert.ToHexString(pk)))
+            flags |= AnnounceFlags.KnowsYourKey;
         if (_sessions.Active is { } a && !a.SamePhone(disc.PhoneId)) flags |= AnnounceFlags.Busy;
         var b = new byte[Wire.AnnounceSize];
         WireCodec.EncodeAnnounce(new Announce(disc.ReqId, _settings.HostId, flags, _settings.HostName), b);
@@ -868,5 +950,15 @@ public sealed class HostEngine
         Span<byte> p = stackalloc byte[Wire.RumblePlain];
         WireCodec.EncodeRumble(new Rumble((byte)(packed >> 8), (byte)packed), p);
         a.SendSealed(PacketType.Rumble, p, _sender);
+    }
+
+    private sealed class KeyPhone(string file, string name, byte[] phoneId, byte[] pairKey, string fingerprint)
+    {
+        public string File { get; } = file;
+        public string Name { get; } = name;
+        public byte[] PhoneId { get; } = phoneId;
+        public byte[] PairKey { get; } = pairKey;
+        public string Fingerprint { get; } = fingerprint;
+        public DateTime LastSeenUtc { get; set; }
     }
 }

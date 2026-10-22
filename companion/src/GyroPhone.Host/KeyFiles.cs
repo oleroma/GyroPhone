@@ -1,0 +1,179 @@
+using System.Security.Cryptography;
+using GyroPhone.Host.Abstractions;
+using GyroPhone.Protocol.Crypto;
+
+namespace GyroPhone.Host;
+
+/// <summary>A phone key from authorized_phones: the file it came from and what it holds.</summary>
+public sealed record AuthorizedPhone(string File, PubKeyFile Key);
+
+/// <summary>
+/// Where key file pairing lives on the PC: %APPDATA%\GyroPhone\host.key (the private scalar, wrapped
+/// by the IKeyProtector), host.pub next to it, and authorized_phones\*.pub.
+/// </summary>
+public sealed class KeyFiles
+{
+    public KeyFiles(string directory) => Directory = directory;
+
+    public static string DefaultDirectory() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GyroPhone");
+
+    public string Directory { get; }
+    public string HostKeyPath => Path.Combine(Directory, "host.key");
+    public string HostPubPath => Path.Combine(Directory, "host.pub");
+    public string AuthorizedDirectory => Path.Combine(Directory, "authorized_phones");
+
+    /// <summary>
+    /// The host's static key: loaded from host.key, or created on first start. host.pub is rewritten
+    /// when it is missing or differs (for example after a rename of the PC).
+    /// </summary>
+    public P256 LoadOrCreateHostKey(IKeyProtector protector, string hostName, Action<string>? log = null)
+    {
+        System.IO.Directory.CreateDirectory(Directory);
+        System.IO.Directory.CreateDirectory(AuthorizedDirectory);
+        P256? key = null;
+        if (File.Exists(HostKeyPath))
+        {
+            try
+            {
+                var d = protector.Unprotect(File.ReadAllBytes(HostKeyPath));
+                key = P256.FromPrivateScalar(d);
+                CryptographicOperations.ZeroMemory(d);
+            }
+            catch (Exception e) when (e is CryptographicException or ArgumentException or IOException)
+            {
+                // Never overwrite a key we cannot read (another Windows user's DPAPI blob, say).
+                var bad = $"{HostKeyPath}.bad-{DateTime.UtcNow:yyyyMMddHHmmss}";
+                try { File.Move(HostKeyPath, bad, overwrite: true); } catch (IOException) { }
+                log?.Invoke($"host key unreadable ({e.GetType().Name}); moved aside, making a new one");
+            }
+        }
+        if (key == null)
+        {
+            key = P256.Generate();
+            var d = key.ExportPrivateScalar();
+            WriteAtomic(HostKeyPath, protector.Protect(d));
+            CryptographicOperations.ZeroMemory(d);
+            log?.Invoke($"created host key {KeyPairing.Fingerprint(key.PublicKey)}");
+        }
+        var line = new PubKeyFile(key.PublicKey, hostName).Format();
+        try
+        {
+            if (!File.Exists(HostPubPath) || File.ReadAllText(HostPubPath) != line)
+                WriteAtomic(HostPubPath, System.Text.Encoding.UTF8.GetBytes(line));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            log?.Invoke($"could not write host.pub: {e.GetType().Name}");
+        }
+        return key;
+    }
+
+    /// <summary>Every valid .pub in authorized_phones, in file name order. Unreadable files are skipped.</summary>
+    public List<AuthorizedPhone> ReadAuthorized(Action<string>? log = null)
+    {
+        var list = new List<AuthorizedPhone>();
+        if (!System.IO.Directory.Exists(AuthorizedDirectory)) return list;
+        foreach (var f in System.IO.Directory.EnumerateFiles(AuthorizedDirectory, "*.pub").Order(StringComparer.OrdinalIgnoreCase))
+        {
+            string text;
+            try
+            {
+                text = File.ReadAllText(f);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                continue; // still being written: the watcher fires again when it is closed
+            }
+            if (PubKeyFile.Parse(text) is { } k) list.Add(new AuthorizedPhone(f, k));
+            else log?.Invoke($"ignoring {Path.GetFileName(f)}: not a GyroPhone key file");
+        }
+        return list;
+    }
+
+    private static void WriteAtomic(string path, byte[] bytes)
+    {
+        var tmp = path + ".tmp";
+        File.WriteAllBytes(tmp, bytes);
+        File.Move(tmp, path, overwrite: true);
+    }
+}
+
+/// <summary>
+/// Watches authorized_phones and hands the current list to <paramref name="onChange"/> (on a thread
+/// pool thread) shortly after any change, plus once at start. Adding a file authorizes that phone
+/// at once; deleting it revokes it.
+/// </summary>
+public sealed class AuthorizedPhonesWatcher : IDisposable
+{
+    private const int DebounceMs = 300;
+
+    private readonly KeyFiles _files;
+    private readonly Action<IReadOnlyList<AuthorizedPhone>> _onChange;
+    private readonly Action<string>? _log;
+    private readonly FileSystemWatcher? _watcher;
+    private readonly Timer _debounce;
+    private readonly object _lock = new();
+    private bool _disposed;
+
+    public AuthorizedPhonesWatcher(KeyFiles files, Action<IReadOnlyList<AuthorizedPhone>> onChange, Action<string>? log = null)
+    {
+        _files = files;
+        _onChange = onChange;
+        _log = log;
+        _debounce = new Timer(_ => Reload(), null, Timeout.Infinite, Timeout.Infinite);
+        try
+        {
+            System.IO.Directory.CreateDirectory(files.AuthorizedDirectory);
+            _watcher = new FileSystemWatcher(files.AuthorizedDirectory)
+            {
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                IncludeSubdirectories = false,
+            };
+            _watcher.Created += (_, _) => Kick();
+            _watcher.Changed += (_, _) => Kick();
+            _watcher.Deleted += (_, _) => Kick();
+            _watcher.Renamed += (_, _) => Kick();
+            _watcher.Error += (_, e) =>
+            {
+                _log?.Invoke($"authorized_phones watcher error: {e.GetException().GetType().Name}");
+                Kick();
+            };
+            _watcher.EnableRaisingEvents = true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            _log?.Invoke($"cannot watch authorized_phones: {e.GetType().Name}");
+        }
+        Reload();
+    }
+
+    /// <summary>Reads the folder again now (also used by "Forget" after deleting a file).</summary>
+    public void Reload()
+    {
+        lock (_lock)
+        {
+            if (_disposed) return;
+            _onChange(_files.ReadAuthorized(_log));
+        }
+    }
+
+    private void Kick()
+    {
+        lock (_lock)
+        {
+            if (!_disposed) _debounce.Change(DebounceMs, Timeout.Infinite);
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_lock)
+        {
+            if (_disposed) return;
+            _disposed = true;
+        }
+        _watcher?.Dispose();
+        _debounce.Dispose();
+    }
+}

@@ -24,7 +24,12 @@ internal static class Vectors
     private static readonly Lazy<JsonDocument> Doc = new(() =>
         JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "vectors", "wire-v1.json"))));
 
+    private static readonly Lazy<JsonDocument> KeyDoc = new(() =>
+        JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "vectors", "key-v1.json"))));
+
     public static JsonElement Root => Doc.Value.RootElement;
+    /// <summary>Key file pairing vectors (key-v1.json).</summary>
+    public static JsonElement Key => KeyDoc.Value.RootElement;
     public static JsonElement Pairing => Root.GetProperty("pairing");
     public static JsonElement Session => Root.GetProperty("session");
 
@@ -342,11 +347,11 @@ internal sealed class Harness : IDisposable
     public readonly HostEngine Engine;
 
     public Harness(Func<int, byte[]>? random = null, Func<P256>? newKey = null, bool pairDefault = true,
-        OutputMode mode = OutputMode.Xbox360)
+        OutputMode mode = OutputMode.Xbox360, P256? hostKey = null)
     {
         Settings = new HostSettings { HostId = Hex.Range(0x10, 16), HostName = "DESKTOP-OLEX", OutputMode = mode };
         if (pairDefault) AddPaired(Phone1Id, "OnePlus 15", Phone1Key);
-        Engine = new HostEngine(Settings, Pad, KeyMouse, Prompt, new PlainProtector(), Clock, Events, random, newKey);
+        Engine = new HostEngine(Settings, Pad, KeyMouse, Prompt, new PlainProtector(), Clock, Events, random, newKey, hostKey);
         Engine.AttachSender(Sender);
     }
 

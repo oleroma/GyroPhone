@@ -30,6 +30,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private readonly HostEngine _engine;
     private readonly UdpHostServer _server;
     private readonly Watchdog _watchdog;
+    private readonly KeyFiles _keyFiles;
+    private readonly AuthorizedPhonesWatcher? _authorized;
     private IPadSink _pad;
     private string? _padError;
 
@@ -39,6 +41,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _outX360, _outDs4, _outOff;
     private readonly ToolStripMenuItem _phonesItem;
+    private readonly ToolStripMenuItem _hostKeyItem;
     private readonly ToolStripMenuItem _pauseItem;
     private readonly ToolStripMenuItem _autoStartItem;
     private readonly ToolStripMenuItem _uipiItem;
@@ -74,7 +77,19 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         var store = new SettingsStore(SettingsStore.DefaultPath());
         var settings = store.Load(Environment.MachineName, _log.Write);
         _pad = ViGEmPadSink.Create(_log.Write, out _padError);
-        _engine = new HostEngine(settings, _pad, _keyMouse, this, new DpapiKeyProtector(), _clock, this);
+        var protector = new DpapiKeyProtector();
+        _keyFiles = new KeyFiles(KeyFiles.DefaultDirectory());
+        GyroPhone.Protocol.Crypto.P256? hostKey = null;
+        try
+        {
+            hostKey = _keyFiles.LoadOrCreateHostKey(protector, settings.HostName, _log.Write);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+        {
+            _log.Write($"key file pairing off: {e.GetType().Name}");
+        }
+        _engine = new HostEngine(settings, _pad, _keyMouse, this, protector, _clock, this, hostKey: hostKey);
+        if (hostKey != null) _authorized = new AuthorizedPhonesWatcher(_keyFiles, _engine.SetAuthorizedPhones, _log.Write);
         _server = new UdpHostServer(_engine, _clock,
             onRxThreadStart: () => Mmcss.TryEnter("Games", Mmcss.AvrtPriorityHigh, _log.Write), log: _log.Write);
         _watchdog = new Watchdog(_engine, _clock, _marker, store,
@@ -92,6 +107,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         outputItem.DropDownItems.AddRange(new ToolStripItem[] { _outX360, _outDs4, _outOff });
         var pairItem = new ToolStripMenuItem("Pair new phone…", null, (_, _) => PairNewPhone());
         _phonesItem = new ToolStripMenuItem("Paired phones");
+        _hostKeyItem = new ToolStripMenuItem("This PC's key: none") { Enabled = false };
+        var keysFolderItem = new ToolStripMenuItem("Open keys folder", null, (_, _) => OpenKeysFolder());
         var statusFormItem = new ToolStripMenuItem("Status…", null, (_, _) => ShowStatusForm());
         _pauseItem = new ToolStripMenuItem("Pause input");
         _pauseItem.Click += (_, _) => _engine.SetPaused(!_pauseItem.Checked);
@@ -113,6 +130,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             outputItem,
             pairItem,
             _phonesItem,
+            keysFolderItem,
+            _hostKeyItem,
             statusFormItem,
             _pauseItem,
             _autoStartItem,
@@ -256,6 +275,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _retryDriverItem.Available = !s.DriverOk;
         _restartAdminItem.Available = !ElevationProbe.IsSelfElevated;
         RebuildPhones(s.PairedPhones);
+        _hostKeyItem.Text = s.HostKeyFingerprint is { } fp ? $"This PC's key: {fp}" : "This PC's key: unavailable (see log)";
         _versionItem.Text = _updater.Pending is { } pending
             ? $"{Program.AppName} {Application.ProductVersion} · {pending} starts when the phone disconnects"
             : $"{Program.AppName} {Application.ProductVersion}";
@@ -280,9 +300,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         }
     }
 
-    private void RebuildPhones(IReadOnlyList<(byte[] PhoneId, string Name, DateTime LastSeenUtc)> phones)
+    private void RebuildPhones(IReadOnlyList<PairedPhoneInfo> phones)
     {
-        var key = string.Join("|", phones.Select(p => Convert.ToHexString(p.PhoneId) + p.Name));
+        var key = string.Join("|", phones.Select(p => Convert.ToHexString(p.PhoneId) + p.Name + p.KeyFile));
         if (key == _phonesKey) return;
         _phonesKey = key;
         _phonesItem.DropDownItems.Clear();
@@ -293,10 +313,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         }
         foreach (var p in phones)
         {
-            var id = p.PhoneId;
-            var name = p.Name;
-            var item = new ToolStripMenuItem(name);
-            item.DropDownItems.Add(new ToolStripMenuItem("Forget", null, (_, _) => Forget(id, name)));
+            var phone = p;
+            var item = new ToolStripMenuItem($"{p.Name} · {(p.ByKey ? "key" : "code")}");
+            if (p.Fingerprint != null) item.DropDownItems.Add(new ToolStripMenuItem(p.Fingerprint) { Enabled = false });
+            item.DropDownItems.Add(new ToolStripMenuItem("Forget", null, (_, _) => Forget(phone)));
             _phonesItem.DropDownItems.Add(item);
         }
     }
@@ -358,7 +378,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             + (_firewallOk switch { true => "present", false => "missing", null => "checking" }));
         b.AppendLine($"Server:       {(_server.State == ServerState.Running ? $"UDP {Wire.Port}" : _server.State.ToString())}, "
             + $"this app {(ElevationProbe.IsSelfElevated ? "elevated" : "not elevated")}");
-        b.AppendLine($"Pairing:      {(s.PairingWindowS > 0 ? $"open, {s.PairingWindowS} s left" : "closed")}, {s.PairedPhones.Count} paired phone(s)");
+        b.AppendLine($"Pairing:      {(s.PairingWindowS > 0 ? $"open, {s.PairingWindowS} s left" : "closed")}, {s.PairedPhones.Count} paired phone(s)"
+            + $" ({s.PairedPhones.Count(p => p.ByKey)} by key)");
+        b.AppendLine($"PC key:       {s.HostKeyFingerprint ?? "unavailable"}, {_keyFiles.Directory}");
         var c = s.Counters;
         b.AppendLine();
         b.AppendLine($"datagrams {c.Datagrams}  states {c.States}  injections {c.Injections}  SendInput short {_keyMouse.ShortWrites}");
@@ -366,11 +388,40 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         return b.ToString();
     }
 
-    private void Forget(byte[] phoneId, string name)
+    private void Forget(PairedPhoneInfo phone)
     {
-        var r = MessageBox.Show($"Forget {name}? The phone will need to pair again.", Program.AppName,
-            MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
-        if (r == DialogResult.OK) _engine.Forget(phoneId);
+        var text = phone.ByKey
+            ? $"Forget {phone.Name}? This deletes its key file {Path.GetFileName(phone.KeyFile)}; run update.cmd or pair with a code to connect again."
+            : $"Forget {phone.Name}? The phone will need to pair again.";
+        var r = MessageBox.Show(text, Program.AppName, MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
+        if (r != DialogResult.OK) return;
+        if (!phone.ByKey)
+        {
+            _engine.Forget(phone.PhoneId);
+            return;
+        }
+        try
+        {
+            File.Delete(phone.KeyFile!);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _log.Write($"could not delete key file: {e.GetType().Name}");
+        }
+        _authorized?.Reload();
+    }
+
+    private void OpenKeysFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(_keyFiles.AuthorizedDirectory);
+            using var p = Process.Start(new ProcessStartInfo("explorer.exe", $"\"{_keyFiles.Directory}\"") { UseShellExecute = true });
+        }
+        catch (Exception e) when (e is Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            _log.Write($"open keys folder failed: {e.GetType().Name}");
+        }
     }
 
     private void ToggleAutoStart()
@@ -571,6 +622,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             Application.ApplicationExit -= OnApplicationExit;
             _uiTimer.Stop();
             _updater.Dispose();
+            _authorized?.Dispose();
             _watchdog.Dispose();
             _engine.Shutdown();
             _server.Stop();

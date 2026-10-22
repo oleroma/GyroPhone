@@ -77,6 +77,8 @@ public static class WireCodec
         Le.PutU32(o, 12, p.ReqId);
         Put(o, 16, p.PhoneId, Wire.IdSize);
         Le.PutU16(o, 32, p.Flags);
+        if (p.HostKeyId != null) Put(o, 34, p.HostKeyId, Wire.KeyIdSize);
+        if (p.PhoneKeyId != null) Put(o, 42, p.PhoneKeyId, Wire.KeyIdSize);
         return o.Length;
     }
 
@@ -84,7 +86,7 @@ public static class WireCodec
     {
         p = null!;
         if (!CheckFrame(b, PacketType.Discover)) return false;
-        p = new Discover(Le.U32(b, 12), Get(b, 16, Wire.IdSize), Le.U16(b, 32));
+        p = new Discover(Le.U32(b, 12), Get(b, 16, Wire.IdSize), Le.U16(b, 32), Get(b, 34, Wire.KeyIdSize), Get(b, 42, Wire.KeyIdSize));
         return true;
     }
 

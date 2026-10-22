@@ -46,6 +46,8 @@ object WireCodec {
         out.putU32(12, p.reqId)
         putBytes(out, 16, p.phoneId, Wire.ID_SIZE)
         out.putU16(32, p.flags)
+        putBytes(out, 34, p.hostKeyId, Wire.KEY_ID_SIZE)
+        putBytes(out, 42, p.phoneKeyId, Wire.KEY_ID_SIZE)
     }
 
     fun encodeAnnounce(p: Announce, out: ByteArray): Int = fixed(out, PacketType.ANNOUNCE, Wire.ANNOUNCE_SIZE) {
@@ -128,7 +130,10 @@ object WireCodec {
         val type = classify(buf, len)
         if (type < 0 || PacketType.isSealed(type)) return null
         return when (type) {
-            PacketType.DISCOVER -> Discover(buf.getI32(12), slice(buf, 16, Wire.ID_SIZE), buf.getU16(32))
+            PacketType.DISCOVER -> Discover(
+                buf.getI32(12), slice(buf, 16, Wire.ID_SIZE), buf.getU16(32),
+                slice(buf, 34, Wire.KEY_ID_SIZE), slice(buf, 42, Wire.KEY_ID_SIZE),
+            )
             PacketType.ANNOUNCE -> Announce(
                 buf.getI32(12), slice(buf, 16, Wire.ID_SIZE), buf.getU16(32),
                 getName(buf, 34, Wire.ANNOUNCE_NAME_MAX) ?: return null,

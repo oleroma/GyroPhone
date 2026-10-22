@@ -1,0 +1,25 @@
+{
+  "_note": "GyroPhone key file pairing golden vectors (wire v1 additions). All hex lowercase. Generated with Python cryptography; Kotlin and C# suites must reproduce every value.",
+  "phonePrivD": "3333333333333333333333333333333333333333333333333333333333333333",
+  "hostPrivD": "4444444444444444444444444444444444444444444444444444444444444444",
+  "pkP": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1",
+  "pkH": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a",
+  "ss": "5238f9f956812e75918895390fa057a2063aa66d4d5eefbe6ecdcf78342d2922",
+  "salt": "df8c7d98bfc67eb52e6d4175ef042b83f2441b56cc4c76a3d44503e550ff6e7d",
+  "pairKey": "782243d0905f08cff65761ead8ca746954d0a06b546a3c5b8583b2fb0a1743bb",
+  "keyPhoneId": "c02cd6839eb1ec5eec2376337aa8a2e4",
+  "phoneKeyId": "727235892575dc68",
+  "hostKeyId": "da35a142ef073d5a",
+  "phoneFingerprint": "SHA256:7272…b644",
+  "hostFingerprint": "SHA256:da35…6b46",
+  "phoneFile": "gyrophone-p256 BFGnWAgziY6hsYPL1zUKQJkHjG7xweGOlwzXaDA18l59ARBSJxKwtafP8IFoVIaYSpTmgx7axG5zYPqdg0p6gaE= OnePlus 15",
+  "hostFile": "gyrophone-p256 BFs2iQ2svXyalrt0oe4os9LXW3LgmiDvJc+Ob9ip8DUNDhS+2NRoKjTYNTi9/1uW6JpmZuwNtXRdAvoSEAct91o= OLEX",
+  "discover": {
+    "hex": "4750010100000000000000000df0ad0b000102030405060708090a0b0c0d0e0f0000da35a142ef073d5a727235892575dc680000000000000000000000000000",
+    "reqId": 195948557,
+    "phoneId": "000102030405060708090a0b0c0d0e0f",
+    "flags": 0,
+    "hostKeyId": "da35a142ef073d5a",
+    "phoneKeyId": "727235892575dc68"
+  }
+}
