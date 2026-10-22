@@ -73,7 +73,7 @@ Phone (mapping engine) ─► UDP, AES-GCM sealed ─► GyroPhoneCompanion ─�
 
 ## Building
 
-Everything is built on the dev PC; CI only runs the tests. Commit, then run `build\build.cmd [commit]` (default `HEAD`). It builds that commit in its own git worktree, puts the newest `gyrophone.apk` and `GyroPhoneCompanion.exe` in `build\` (ignored by git) and keeps the last 4 builds in `build\builds\0.1.<commit count>-<commit>\`. Then run `build\update.cmd`: it installs only that newest build from `build\` (the companion in `%LOCALAPPDATA%\Programs\GyroPhone`, the APK on the phone over adb) and swaps the phone and PC key files. It never builds or downloads anything. Both scripts live in `build` with the builds, so git does not track them. You need JDK 17 and the Android SDK (API 36), and the .NET 8 SDK for the companion; without .NET it builds the APK only.
+Everything is built on the dev PC; CI only runs the tests. Commit, then run `build\build.cmd [commit]` (default `HEAD`). It builds that commit in its own git worktree, puts the newest `gyrophone.apk` and `GyroPhoneCompanion.exe` in `build\` (ignored by git) and keeps the last 4 builds in `build\builds\0.1.<commit count>-<commit>\`. Then run `build\update.cmd`: it installs only that newest build from `build\` (the companion in `%LOCALAPPDATA%\Programs\GyroPhone`, the APK on the phone over adb) and swaps the phone and PC key files. It never builds or downloads anything. To swap only the key files, run `build\keys.cmd` (`build\update.cmd` runs it too). The scripts live in `build\` with the builds, so git does not track them. You need JDK 17 and the Android SDK (API 36), and the .NET 8 SDK for the companion; without .NET it builds the APK only.
 
 The tests:
 
