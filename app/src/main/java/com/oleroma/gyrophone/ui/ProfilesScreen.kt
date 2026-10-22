@@ -142,7 +142,7 @@ private fun ProfileEditor(runtime: GamepadRuntime, profile: Profile, onSelect: (
         SwitchRow("← and → resize together", profile.cornerSameSize) { v -> edit { it.copy(cornerSameSize = v) } }
         if (!isActive) {
             Text(
-                "Its workspaces and devices show in the menu once it is in use.",
+                "Use it to see and set up its workspaces on the pad.",
                 style = MaterialTheme.typography.bodySmall,
             )
         }

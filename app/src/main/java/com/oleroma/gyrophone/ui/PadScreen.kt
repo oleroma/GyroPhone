@@ -129,14 +129,15 @@ internal object TouchStream {
  * long-press it (or tap a corner) for a menu next to it with all its settings, drag to move,
  * pinch or use the size slider to resize. Edits change the current orientation's placement. Done
  * saves (a builtin becomes a custom copy) and switches to the workspace being edited.
- * In play mode the Menu button opens the pad menu ([PadTab]) through [onOpenMenu].
+ * In play mode the Menu button opens the workspace menu and the game profile button (showing the
+ * active game profile's name) opens the game profiles page ([PadTab]) through [onOpenMenu].
  */
 @Composable
 fun PadScreen(
     runtime: GamepadRuntime,
     fullscreen: Boolean = false,
     onFullscreen: (Boolean) -> Unit = {},
-    onOpenMenu: () -> Unit = {},
+    onOpenMenu: (PadMenuPage) -> Unit = {},
 ) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
@@ -674,9 +675,15 @@ fun PadScreen(
                     FilledTonalButton(
                         onClick = {
                             releaseAll()
-                            onOpenMenu()
+                            onOpenMenu(PadMenuPage.Root)
                         },
                     ) { Text("Menu") }
+                    FilledTonalButton(
+                        onClick = {
+                            releaseAll()
+                            onOpenMenu(PadMenuPage.GameProfiles)
+                        },
+                    ) { Text(profile.name, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp)) }
                 }
             }
         } else {
