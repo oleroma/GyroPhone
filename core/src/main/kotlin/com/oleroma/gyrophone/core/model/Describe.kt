@@ -27,7 +27,7 @@ object Describe {
         is OutputTarget.Wheel -> if (t.step > 0) "Wheel up" else "Wheel down"
         OutputTarget.GyroHold -> "Hold for gyro mouse"
         OutputTarget.GyroToggle -> "Toggle gyro mouse"
-        OutputTarget.GyroPause -> "Pause gyro mouse (ratchet)"
+        OutputTarget.GyroPause -> "Ratchet (flip gyro while held)"
     }
 
     private fun half(h: AxisHalf) = when (h) {

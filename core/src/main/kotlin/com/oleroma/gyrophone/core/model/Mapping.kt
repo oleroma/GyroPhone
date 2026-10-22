@@ -74,11 +74,14 @@ sealed interface OutputTarget {
     @Serializable @SerialName("gyro_hold")
     data object GyroHold : OutputTarget
 
-    /** Each press flips gyro-to-mouse on/off. */
+    /** Each press flips gyro-to-mouse on/off (in always on / always off, until the workspace changes). */
     @Serializable @SerialName("gyro_toggle")
     data object GyroToggle : OutputTarget
 
-    /** Gyro-to-mouse pauses while the source is held (ratchet: re-centre the phone). */
+    /**
+     * Ratchet: while the source is held, always-on gyro pauses (re-centre the phone) and always-off
+     * gyro engages; hold / toggle gyro pauses. See [GyroMode].
+     */
     @Serializable @SerialName("gyro_pause")
     data object GyroPause : OutputTarget
 }

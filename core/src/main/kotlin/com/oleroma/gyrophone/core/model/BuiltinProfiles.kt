@@ -69,6 +69,9 @@ object BuiltinProfiles {
 
     private fun anyPad(mappings: List<Mapping>) = AttachedPad(id = "pad1", mappings = mappings)
 
+    /** Gyro in [mode] with its axes set for landscape and portrait alike. */
+    private fun gyro(mode: GyroMode) = GyroSettings(mode = mode).withBothOrientations()
+
     // Controller
 
     /**
@@ -125,6 +128,7 @@ object BuiltinProfiles {
         name = "Controller",
         touchControls = controllerControls,
         mappings = controllerMappings(),
+        gyro = gyro(GyroMode.HOLD_OR_TOGGLE),
         pads = listOf(anyPad(KnownLayouts.standardControllerMappings())),
     )
 
@@ -179,7 +183,7 @@ object BuiltinProfiles {
         name = "WASD",
         touchControls = wasdControls,
         mappings = wasdMappings(),
-        gyro = GyroSettings(mode = GyroMode.ALWAYS),
+        gyro = gyro(GyroMode.ALWAYS),
         pads = listOf(anyPad(kbmPadMappings())),
     )
 
@@ -285,7 +289,7 @@ object BuiltinProfiles {
         name = "Keyboard",
         touchControls = keyboardControls,
         mappings = keyboardMappings(),
-        gyro = GyroSettings(mode = GyroMode.OFF),
+        gyro = gyro(GyroMode.OFF),
         touchpadOverButtons = true,
         stickyModifiers = true,
     )
@@ -294,7 +298,7 @@ object BuiltinProfiles {
     val presets: List<Workspace> get() = listOf(controllerWorkspace, wasdWorkspace, keyboardWorkspace)
 
     /** An empty workspace: touchpad only, no controls, no pads. */
-    fun blankWorkspace(name: String = "Workspace") = Workspace(id = "ws", name = name)
+    fun blankWorkspace(name: String = "Workspace") = Workspace(id = "ws", name = name, gyro = gyro(GyroMode.HOLD_OR_TOGGLE))
 
     /** A new profile with the three preset workspaces. */
     fun newProfile(id: String, name: String) = Profile(id = id, name = name, workspaces = presets)

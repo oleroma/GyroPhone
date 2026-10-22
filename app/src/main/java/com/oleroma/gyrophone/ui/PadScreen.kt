@@ -73,6 +73,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
+import com.oleroma.gyrophone.core.model.GyroMode
+import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingProfiles
@@ -121,8 +123,9 @@ internal object TouchStream {
  * Full-screen virtual game pad for the active profile's active workspace. Multi-touch: each finger
  * that lands on a stick owns it until lifted; a finger that lands on a button goes to the engine
  * (which applies touchpad over buttons and sticky modifiers). A finger that lands on empty
- * background drives the touchpad (cursor, taps, drag, scroll). The two corners ([Profile.corners])
- * are always shown: tap ← / → for the previous / next workspace, both together for fullscreen.
+ * background drives the touchpad (cursor, taps, drag, scroll). The corners ([Profile.corners])
+ * are always shown: tap ← / → for the previous / next workspace, both together for fullscreen;
+ * tap the gyro corner (unless hidden) to switch gyro between always on and always off.
  * Controls have separate landscape and portrait placements; the pad box's shape picks one.
  * Edit mode works on a draft profile. Its menu floats and can be dragged (or folded) out of the
  * way; its workspace bar picks, adds and arranges workspaces. Tap a control to change its mapping,
@@ -170,6 +173,11 @@ fun PadScreen(
     /** Counts multi-finger touches that Android cancelled (a phone gesture took them). */
     var systemTookTouch by remember { mutableIntStateOf(0) }
     val editing = draft != null
+    /**
+     * Restarts the play touch handler on layout changes but not on gyro changes, so the gyro
+     * corner switching the mode leaves held sticks and buttons alone.
+     */
+    val playKey = remember(profile) { profile.copy(workspaces = profile.workspaces.map { it.copy(gyro = GyroSettings()) }) }
     val shown = draft ?: profile
     val shownIndex = (if (editing) editIndex else wsIndex).coerceIn(0, shown.workspaces.lastIndex)
     val ws = shown.workspace(shownIndex)
@@ -287,7 +295,7 @@ fun PadScreen(
             place(sized, sized.placeX(portrait), sized.placeY(portrait), false)
         }
 
-        /** Resizes a control; with [Profile.cornerSameSize], both corners follow. */
+        /** Resizes a control; with [Profile.cornerSameSize], all corners follow. */
         fun resize(id: String, size: Float) {
             val d = draft ?: return
             if (isCorner(d, id) && d.cornerSameSize) d.corners.map { it.id }.forEach { resizeOne(it, size) } else resizeOne(id, size)
@@ -306,7 +314,7 @@ fun PadScreen(
                             continue
                         }
                         val d0 = draft
-                        val corners = d0?.corners ?: emptyList()
+                        val corners = d0?.shownCorners ?: emptyList()
                         val controls = d0?.workspace(editIndex)?.touchControls ?: emptyList()
                         val downPos = first.position
                         val pointer = first.id
@@ -429,11 +437,11 @@ fun PadScreen(
                 }
             }
         } else {
-            Modifier.pointerInput("play", profile, wsIndex, w, h, pxPerDp) {
+            Modifier.pointerInput("play", playKey, wsIndex, w, h, pxPerDp) {
                 releaseAll()
                 val workspace = profile.workspace(wsIndex)
                 val controls = workspace.touchControls
-                val corners = profile.corners
+                val corners = profile.shownCorners
                 val padEnabled = workspace.touchpad.enabled
                 runtime.engine.touchpadPxPerDp = pxPerDp
                 val stickOwner = HashMap<PointerId, String>()
@@ -441,8 +449,12 @@ fun PadScreen(
                 val padOwner = HashSet<PointerId>()
                 val cornerOwner = HashMap<PointerId, String>()
 
-                /** A corner tapped on its own: previous / next workspace (nothing at an end). */
+                /** A corner tapped on its own: previous / next workspace (nothing at an end), or the gyro mode. */
                 fun stepFrom(cornerId: String) {
+                    if (cornerId == NavCorners.GYRO) {
+                        runtime.toggleGyroMode()
+                        return
+                    }
                     val i = runtime.workspaceIndex.value
                     val to = when (cornerId) {
                         NavCorners.PREV -> profile.previousWorkspace(i)
@@ -614,7 +626,7 @@ fun PadScreen(
                 )
             }
             // The corners: shared by all workspaces, drawn over the controls, always shown.
-            for (c in shown.corners) {
+            for (c in shown.shownCorners) {
                 val r = half(c)
                 val ctr = center(c)
                 val isSelected = editing && selected == c.id
@@ -624,9 +636,12 @@ fun PadScreen(
                     NavCorners.NEXT -> shown.nextWorkspace(shownIndex) == null
                     else -> false
                 }
+                // The gyro corner is lit while its workspace's gyro is always on.
+                val gyroOn = !editing && c.id == NavCorners.GYRO && ws.gyro.mode == GyroMode.ALWAYS
                 val tint = when {
                     isSelected -> Color(0xFFFFC857)
                     isPressed -> Color(0xFF7CC4FF)
+                    gyroOn -> Color(0xFF8FE39A)
                     else -> Color(0x66FFFFFF)
                 }
                 val base = shown.cornerOpacity.let { if (editing) max(it, MIN_EDIT_OPACITY) else it }
@@ -635,7 +650,7 @@ fun PadScreen(
                     label = c.label,
                     sizeDp = with(density) { (r * 2).toDp() },
                     tint = tint,
-                    filled = isPressed || isSelected,
+                    filled = isPressed || isSelected || gyroOn,
                     knob = Offset.Zero,
                     knobRadiusPx = 0f,
                     modifier = Modifier
@@ -1116,6 +1131,8 @@ private fun ControlSettingsPanel(
                     onOpacity = { onProfileChange(profile.copy(cornerOpacity = it)) },
                     wrap = profile.wrapWorkspaces,
                     onWrap = { onProfileChange(profile.copy(wrapWorkspaces = it)) },
+                    gyroCorner = profile.gyroCorner,
+                    onGyroCorner = { onProfileChange(profile.copy(gyroCorner = it)) },
                     onSize = onSize,
                     onClose = onClose,
                 )
@@ -1192,12 +1209,15 @@ private fun CornerSettings(
     onOpacity: (Float) -> Unit,
     wrap: Boolean,
     onWrap: (Boolean) -> Unit,
+    gyroCorner: Boolean,
+    onGyroCorner: (Boolean) -> Unit,
     onSize: (Float) -> Unit,
     onClose: () -> Unit,
 ) {
+    val isGyro = control.id == NavCorners.GYRO
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-            "Workspace corner " + control.label,
+            if (isGyro) "Gyro corner" else "Workspace corner " + control.label,
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.weight(1f),
@@ -1205,9 +1225,16 @@ private fun CornerSettings(
         TextButton(onClick = onClose) { Text("✕") }
     }
     Text(
-        "Tap ← for the previous workspace and → for the next. Press both at the same time to hide " +
-            "the tabs and the pad's buttons; press both again (or Back) to show them. The corners are " +
-            "the same in every workspace; drag each one where you like.",
+        if (isGyro) {
+            "Tap it to switch this workspace's gyro between always on and always off. Ratchet buttons " +
+                "and the touchpad ratchet flip with it: they pause always-on gyro and engage always-off " +
+                "gyro while held. It is lit while gyro is always on. The corners are the same in every " +
+                "workspace; drag each one where you like."
+        } else {
+            "Tap ← for the previous workspace and → for the next. Press both at the same time to hide " +
+                "the tabs and the pad's buttons; press both again (or Back) to show them. The corners are " +
+                "the same in every workspace; drag each one where you like."
+        },
         style = MaterialTheme.typography.bodyMedium,
     )
     Column {
@@ -1219,7 +1246,7 @@ private fun CornerSettings(
         )
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Same size for both corners", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+        Text("Same size for all corners", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
         Switch(checked = sameSize, onCheckedChange = onSameSize)
     }
     Column {
@@ -1229,6 +1256,12 @@ private fun CornerSettings(
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Wrap around (→ on the last goes to the first)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
         Switch(checked = wrap, onCheckedChange = onWrap)
+    }
+    if (isGyro) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Show the gyro corner", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+            Switch(checked = gyroCorner, onCheckedChange = onGyroCorner)
+        }
     }
 }
 

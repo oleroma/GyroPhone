@@ -45,13 +45,26 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
     val key = profile.id + "/" + ws.id
 
     Text("Gyro to mouse", style = MaterialTheme.typography.titleSmall)
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(GyroMode.OFF to "Off", GyroMode.ALWAYS to "Always", GyroMode.HOLD_OR_TOGGLE to "Hold / toggle button")
-            .forEach { (mode, label) ->
-                FilterChip(selected = ws.gyro.mode == mode, onClick = {
-                    editWs { it.copy(gyro = it.gyro.copy(mode = mode)) }
-                }, label = { Text(label) })
-            }
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(GyroMode.ALWAYS, GyroMode.OFF, GyroMode.HOLD_OR_TOGGLE).forEach { mode ->
+            FilterChip(selected = ws.gyro.mode == mode, onClick = {
+                editWs { it.copy(gyro = it.gyro.copy(mode = mode)) }
+            }, label = { Text(mode.label) })
+        }
+    }
+    Text(
+        when (ws.gyro.mode) {
+            GyroMode.ALWAYS -> "Gyro moves the mouse; a Ratchet button pauses it while held."
+            GyroMode.OFF -> "Gyro is off; a Ratchet button turns it on while held."
+            GyroMode.HOLD_OR_TOGGLE -> "Gyro moves the mouse while a Gyro hold button is held or after a Gyro toggle press."
+        } + " Map Ratchet to any touch or controller button.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    SwitchRow("Touchpad is a ratchet (a finger on the touchpad flips gyro while it is down)", ws.gyro.touchpadRatchet) { v ->
+        editWs { it.copy(gyro = it.gyro.copy(touchpadRatchet = v)) }
+    }
+    SwitchRow("Gyro corner (tap to switch always on / always off, in every workspace)", profile.gyroCorner) { v ->
+        runtime.editActiveProfile { it.copy(gyroCorner = v) }
     }
     var sens by remember(key) { mutableStateOf(ws.gyro.sensitivity) }
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -78,12 +91,9 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
         Text("Axes for", Modifier.padding(end = 4.dp))
         FilterChip(selected = !axesPortrait, onClick = { axesPortrait = false }, label = { Text("Landscape") })
         FilterChip(selected = axesPortrait, onClick = { axesPortrait = true }, label = { Text("Portrait") })
-        if (axesPortrait && ws.gyro.portrait != null) {
-            TextButton(onClick = { editWs { it.copy(gyro = it.gyro.copy(portrait = null)) } }) { Text("Same as landscape") }
+        if (axesPortrait && ws.gyro.axesFor(true) != ws.gyro.landscapeAxes) {
+            TextButton(onClick = { editWs { it.copy(gyro = it.gyro.copy(portrait = it.gyro.landscapeAxes)) } }) { Text("Copy landscape") }
         }
-    }
-    if (axesPortrait && ws.gyro.portrait == null) {
-        Text("Portrait uses the landscape axes until you change one here.", style = MaterialTheme.typography.bodySmall)
     }
     AxisRow("Mouse left/right", axes.mouseX, axes.invertX,
         onAxis = { a -> editAxes { it.copy(mouseX = a) } },

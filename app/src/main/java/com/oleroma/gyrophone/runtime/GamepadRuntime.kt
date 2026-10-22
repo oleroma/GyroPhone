@@ -257,6 +257,23 @@ class GamepadRuntime(context: Context) {
         applyWorkspaceGyro()
     }
 
+    /**
+     * The gyro corner: switches the active workspace's gyro between always on and always off
+     * (from hold / toggle: always on) and saves it. What is held stays held.
+     */
+    fun toggleGyroMode() {
+        val i = _workspaceIndex.value
+        val next = _activeProfile.value.workspace(i).gyro.toggledMode()
+        val set = stored.updateWorkspace(i) { it.copy(gyro = next) }
+        if (set == stored) return
+        stored = set
+        store.save(set)
+        refreshProfiles()
+        engine.setGyro(next)
+        _activeProfile.value = _activeProfile.value.updateWorkspace(i) { it.copy(gyro = next) }
+        applyWorkspaceGyro()
+    }
+
     /** The saved workspace index of [profile], clamped into range. */
     private fun rememberedWorkspace(profile: Profile): Int =
         store.workspaceIndex(profile.id).coerceIn(0, profile.workspaces.lastIndex)
