@@ -94,8 +94,14 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         }
         _engine = new HostEngine(settings, _pad, _keyMouse, this, protector, _clock, this, hostKey: hostKey);
         if (hostKey != null) _authorized = new AuthorizedPhonesWatcher(_keyFiles, _engine.SetAuthorizedPhones, _log.Write);
+        PowerQos.TryDisableForProcess(_log.Write);
         _server = new UdpHostServer(_engine, _clock,
-            onRxThreadStart: () => Mmcss.TryEnter("Games", Mmcss.AvrtPriorityHigh, _log.Write), log: _log.Write);
+            onRxThreadStart: () =>
+            {
+                Mmcss.TryEnter("Games", Mmcss.AvrtPriorityHigh, _log.Write);
+                PowerQos.TryDisableForThread(_log.Write);
+            },
+            log: _log.Write);
         _watchdog = new Watchdog(_engine, _clock, _marker, store,
             ElevationProbe.IsForegroundElevated, NetworkCategory.IsAnyConnectedPublic, _log.Write);
 

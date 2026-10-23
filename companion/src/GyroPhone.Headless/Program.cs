@@ -83,8 +83,14 @@ internal static class Program
             log.Write($"latency log: {Path.GetFullPath(csvPath)}");
         }
 
+        PowerQos.TryDisableForProcess(log.Write);
         var server = new UdpHostServer(engine, clock,
-            onRxThreadStart: () => Mmcss.TryEnter("Games", Mmcss.AvrtPriorityHigh, log.Write), log: log.Write);
+            onRxThreadStart: () =>
+            {
+                Mmcss.TryEnter("Games", Mmcss.AvrtPriorityHigh, log.Write);
+                PowerQos.TryDisableForThread(log.Write);
+            },
+            log: log.Write);
         if (!server.Start())
         {
             log.Write(server.State == ServerState.PortInUse

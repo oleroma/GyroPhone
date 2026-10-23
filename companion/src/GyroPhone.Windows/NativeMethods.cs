@@ -15,6 +15,20 @@ internal static unsafe class NativeMethods
 
     public const int AvrtPriorityHigh = 1;
 
+    public const int ThreadPowerThrottling = 3; // THREAD_INFORMATION_CLASS
+    public const int ProcessPowerThrottling = 4; // PROCESS_INFORMATION_CLASS
+    public const uint PowerThrottlingCurrentVersion = 1;
+    public const uint PowerThrottlingExecutionSpeed = 0x1;
+
+    /// <summary>THREAD_POWER_THROTTLING_STATE and PROCESS_POWER_THROTTLING_STATE (same layout).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POWER_THROTTLING_STATE
+    {
+        public uint Version;
+        public uint ControlMask;
+        public uint StateMask;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct MOUSEINPUT
     {
@@ -75,6 +89,19 @@ internal static unsafe class NativeMethods
 
     [DllImport("kernel32.dll")]
     public static extern nint GetCurrentProcess();
+
+    [DllImport("kernel32.dll")]
+    public static extern nint GetCurrentThread();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetThreadInformation(nint thread, int threadInformationClass,
+        ref POWER_THROTTLING_STATE threadInformation, uint threadInformationSize);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetProcessInformation(nint process, int processInformationClass,
+        ref POWER_THROTTLING_STATE processInformation, uint processInformationSize);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

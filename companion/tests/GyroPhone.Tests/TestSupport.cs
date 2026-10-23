@@ -89,9 +89,20 @@ internal sealed class FakePad : IPadSink
         Plugged = OutputMode.None;
     }
 
-    public void Submit(in X360Frame frame) => X360.Add(frame);
+    /// <summary>Thrown by Submit while set, like a ViGEm call after a driver reset.</summary>
+    public Exception? FailWith { get; set; }
 
-    public void Submit(in Ds4Frame frame) => Ds4.Add(frame);
+    public void Submit(in X360Frame frame)
+    {
+        if (FailWith != null) throw FailWith;
+        X360.Add(frame);
+    }
+
+    public void Submit(in Ds4Frame frame)
+    {
+        if (FailWith != null) throw FailWith;
+        Ds4.Add(frame);
+    }
 
     public event Action<byte, byte>? Rumble;
 

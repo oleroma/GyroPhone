@@ -51,9 +51,9 @@ public class QrPairingTests
             return "/keys/" + KeyPairing.FileName(k.Name);
         }
 
-        // No QR code on screen: EXPIRED, unauthenticated.
+        // A token this PC never issued (another PC's QR code, sent by broadcast): silence.
         var stray = Enroll(new byte[16], K.Bytes("pkP"));
-        Assert.Equal(EnrollStatus.Expired, AckStatus(h.Send(phone, stray)));
+        Assert.Null(h.Send(phone, stray));
 
         var token = h.Engine.OpenQrPairing(Save)!;
         Assert.Equal(Wire.QrPairingS, h.Engine.Snapshot().QrPairingS);
@@ -101,15 +101,22 @@ public class QrPairingTests
         Assert.Equal(0, h.Engine.Snapshot().QrPairingS);
         Assert.Equal(EnrollStatus.Expired, AckStatus(h.Send(phone, Enroll(token, K.Bytes("pkP")))));
 
-        token = h.Engine.OpenQrPairing(_ => null)!; // saving fails: no answer, nothing authorized
+        // The phone keeps its own copy of the token; closing zeroes the engine's.
+        token = (byte[])h.Engine.OpenQrPairing(_ => null)!.Clone(); // saving fails: no answer, nothing authorized
         Assert.Null(h.Send(phone, Enroll(token, K.Bytes("pkP"))));
         Assert.Empty(h.Engine.Snapshot().PairedPhones);
         h.Engine.CloseQrPairing();
         Assert.Equal(EnrollStatus.Expired, AckStatus(h.Send(phone, Enroll(token, K.Bytes("pkP")))));
 
+        // A newer QR code: the earlier token stays EXPIRED, a token this PC never issued gets nothing.
+        Assert.NotNull(h.Engine.OpenQrPairing(_ => "x.pub"));
+        Assert.Equal(EnrollStatus.Expired, AckStatus(h.Send(phone, Enroll(token, K.Bytes("pkP")))));
+        Assert.Null(h.Send(phone, Enroll(Hex.Range(0x30, 16), K.Bytes("pkP"))));
+
+        // Without a host key this PC issued no QR code, so a broadcast KEY_ENROLL gets no NO_KEY.
         var noKey = new Harness(pairDefault: false);
         Assert.Null(noKey.Engine.OpenQrPairing(_ => "x.pub"));
-        Assert.Equal(EnrollStatus.NoKey, AckStatus(noKey.Send(phone, Enroll(new byte[16], K.Bytes("pkP")))));
+        Assert.Null(noKey.Send(phone, Enroll(new byte[16], K.Bytes("pkP"))));
     }
 
     [Fact]

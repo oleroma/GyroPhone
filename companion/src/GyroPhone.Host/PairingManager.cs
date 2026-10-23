@@ -7,9 +7,10 @@ namespace GyroPhone.Host;
 
 /// <summary>
 /// Host side of commit/reveal pairing with an explicit Allow on the PC (SPEC 1.5). One attempt at a
-/// time, only while the pairing window is open. Every message is idempotent per attemptId: a
-/// retransmit gets the cached reply. Replies are written into the caller's buffer; the return value
-/// is the reply length (0 = stay silent). Not thread-safe: HostEngine calls it under its lock.
+/// time (a new start from the same phone replaces its own), only while the pairing window is open.
+/// Every message is idempotent per attemptId: a retransmit gets the cached reply. Replies are written
+/// into the caller's buffer; the return value is the reply length (0 = stay silent). Not thread-safe:
+/// HostEngine calls it under its lock.
 /// </summary>
 public sealed class PairingManager
 {
@@ -72,7 +73,13 @@ public sealed class PairingManager
         if (_attempt != null)
         {
             if (_attempt.SameStart(m)) return Copy(_attempt.HostReply, reply);
-            return Ack(0, PairAckStatus.Busy, reply);
+            if (!_attempt.PhoneId.AsSpan().SequenceEqual(m.PhoneId)) return Ack(0, PairAckStatus.Busy, reply);
+            if (!P256.IsValidPublic(m.PkP)) return 0;
+            // The same phone started over (cancelled, or its app restarted): the new attempt replaces its old one.
+            // The phone id travels in clear, so replacing a revealed attempt counts toward the failure limit
+            // (without a cooldown): a LAN peer cannot keep swapping the code on the PC.
+            if (_attempt.Revealed && ++_failures >= Wire.PairMaxFails) _windowUntilUs = long.MinValue;
+            End(nowUs, cooldown: false);
         }
         if (!IsOpen(nowUs)) return Ack(0, PairAckStatus.Closed, reply);
         if (nowUs < _cooldownUntilUs) return Ack(0, PairAckStatus.Cooldown, reply);

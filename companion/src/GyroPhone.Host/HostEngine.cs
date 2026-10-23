@@ -47,7 +47,8 @@ public sealed record HostCounters(long Datagrams, long Dropped, long BadAuth, lo
 
 /// <summary>
 /// The host protocol engine (SPEC 3.2). All state is guarded by one engine lock. Entry points:
-/// OnDatagram (rx thread: control packets inline, newest STATE kept), Flush (rx thread: inject once),
+/// OnDatagram (rx thread: control packets inline, newest STATE kept, the one before it injected first
+/// when its keys or buttons differ), Flush (rx thread: inject once),
 /// OnTick (watchdog), AnswerPair (UI). All I/O goes through the abstractions so it runs on Linux.
 /// </summary>
 public sealed class HostEngine
@@ -58,6 +59,9 @@ public sealed class HostEngine
     private const long RumbleMinIntervalUs = 10_000; // at most 100 Hz
     private const int RumbleDirty = 1 << 16;
     private const long EndedSidQuietUs = 1_000_000; // stray BYE/STATE copies after an end draw no ERROR
+    /// <summary>How long a pad button pressed and released inside one receive burst stays visible to polling games.</summary>
+    private const long PadEdgeHoldUs = 20_000;
+    private const long PadRetryUs = 100_000; // a broken ViGEm bus is retried at 10 Hz, not per packet
 
     private readonly object _lock = new();
     private readonly IKeyMouseSink _keyMouse;
@@ -104,6 +108,21 @@ public sealed class HostEngine
     private X360Frame _lastX360;
     private Ds4Frame _lastDs4;
     private bool _padFrameValid;
+    /// <summary>After a failed pad submit, SubmitPad waits until then instead of failing on every packet.</summary>
+    private long _padRetryAfterUs = long.MinValue;
+    // Pad buttons and hat from a frame injected mid-burst, kept pressed until _padHoldUntilUs.
+    private ushort _padHoldButtons;
+    private byte _padHoldHat = StateFrame.HatCenter;
+    private long _padHoldUntilUs = long.MinValue;
+    /// <summary>The last pad submit carried held buttons the newest STATE no longer has.</summary>
+    private bool _padHeld;
+    private readonly StateFrame _padMerged = new();
+    // Raw pad buttons and hat of the last frame Flush submitted, and when each was pressed:
+    // only a press younger than PadEdgeHoldUs is held, never a button held from long before.
+    private ushort _lastPendingButtons;
+    private byte _lastPendingHat = StateFrame.HatCenter;
+    private readonly long[] _padPressUs = NewPressTimes();
+    private long _hatPressUs = long.MinValue;
 
     private bool _paused, _locked;
     private bool _releasedForSilence;
@@ -114,13 +133,17 @@ public sealed class HostEngine
     private long _lastRumbleUs = -RumbleMinIntervalUs;
     private bool _settingsDirty;
     private bool _anyDatagram;
-    private bool _loggedX360Dropped;
+    private bool _loggedX360Dropped, _loggedPadFailure;
     private LatencySample _pendingSample;
     private bool _hasPendingSample;
 
     private readonly uint[] _endedSids = new uint[4];
     private readonly long[] _endedUntilUs = new long[4];
     private int _endedNext;
+
+    /// <summary>Token ids of the last QR codes this PC showed: only these get an (unauthenticated) EXPIRED.</summary>
+    private readonly byte[]?[] _issuedTokenIds = new byte[4][];
+    private int _issuedNext;
 
     private long _datagrams, _dropped, _badAuth, _states, _injections, _unknownUsages, _errors, _exceptions;
 
@@ -313,6 +336,10 @@ public sealed class HostEngine
     {
         _states++;
         _rxFrame.Decode(plain);
+        // A burst can hold a press and its release: inject the older frame first so no edge is lost.
+        // Frames that differ only in motion still merge into one injection.
+        // Flush re-enters the engine lock OnDatagram holds.
+        if (_hasPending && EdgesDiffer(_pending, _rxFrame)) Flush(nowUs, edge: true);
         _pending.CopyFrom(_rxFrame);
         _hasPending = true;
         _releasedForSilence = false;
@@ -368,10 +395,22 @@ public sealed class HostEngine
         var old = _sessions.Promote(s);
         if (old != null)
         {
-            ReleaseAllLocked();
-            SendHostBye(old, HostByeReason.Replaced);
+            if (old.SamePhone(s.PhoneId))
+            {
+                // The same phone moved to a new session (network change, HOST_SILENT recovery): what it
+                // holds stays injected and its first STATE is diffed against it. The old session's
+                // last STATE goes in first; its late copies draw no ERROR.
+                if (_hasPending) Flush(nowUs, edge: false);
+                RememberEnded(old.SessionId);
+            }
+            else
+            {
+                ReleaseAllLocked();
+                SendHostBye(old, HostByeReason.Replaced);
+            }
             old.Dispose();
         }
+        // The phone restarts its totals at 0 for a new session.
         _mouse.Reset();
         _accDx = _accDy = _accWheel = _accHWheel = 0;
         _stats.Reset();
@@ -393,7 +432,10 @@ public sealed class HostEngine
     }
 
     /// <summary>Injects the newest STATE received since the last Flush: pad only when the mapped frame changed, SendInput only with events.</summary>
-    public void Flush(long nowUs)
+    public void Flush(long nowUs) => Flush(nowUs, edge: false);
+
+    /// <summary><paramref name="edge"/>: a newer STATE with other keys or buttons replaces this one in the same burst.</summary>
+    private void Flush(long nowUs, bool edge)
     {
         lock (_lock)
         {
@@ -404,7 +446,9 @@ public sealed class HostEngine
             _accDx = _accDy = _accWheel = _accHWheel = 0;
             if (_paused || _locked) return; // baseline already updated, nothing injected
 
-            SubmitPad(_pending);
+            SubmitPad(_pending, nowUs);
+            NotePadPresses(nowUs);
+            if (edge) HoldPadEdge(nowUs);
 
             bool blocked = _elevatedForeground;
             Span<byte> before = stackalloc byte[StateFrame.KeyBitmapSize];
@@ -440,8 +484,74 @@ public sealed class HostEngine
         }
     }
 
-    private void SubmitPad(StateFrame s)
+    /// <summary>Discrete input differs: what one injection per burst could lose (a press and its release).</summary>
+    private static bool EdgesDiffer(StateFrame a, StateFrame b) =>
+        a.Buttons != b.Buttons || a.Hat != b.Hat || a.MouseButtons != b.MouseButtons || !a.Keys.AsSpan().SequenceEqual(b.Keys);
+
+    private static long[] NewPressTimes()
     {
+        var t = new long[16];
+        Array.Fill(t, long.MinValue);
+        return t;
+    }
+
+    /// <summary>
+    /// Records when each pad button and hat direction of the frame just submitted was pressed.
+    /// </summary>
+    private void NotePadPresses(long nowUs)
+    {
+        int pressed = _pending.Buttons & ~_lastPendingButtons;
+        for (int i = 0; pressed != 0; i++, pressed >>= 1)
+            if ((pressed & 1) != 0) _padPressUs[i] = nowUs;
+        byte hat = PadMapper.HatOf(_pending);
+        if (hat != _lastPendingHat && hat != StateFrame.HatCenter) _hatPressUs = nowUs;
+        _lastPendingButtons = _pending.Buttons;
+        _lastPendingHat = hat;
+    }
+
+    /// <summary>
+    /// The pending frame was just injected with a newer one right behind it. SendInput queues both
+    /// edges, but a game polling the pad would miss a button held for microseconds, so a button or
+    /// hat direction pressed within the last <see cref="PadEdgeHoldUs"/> that the newer frame drops
+    /// stays pressed for <see cref="PadEdgeHoldUs"/>. Anything held longer lets go at once.
+    /// </summary>
+    private void HoldPadEdge(long nowUs)
+    {
+        long recent = nowUs - PadEdgeHoldUs;
+        int released = _pending.Buttons & ~_rxFrame.Buttons;
+        ushort fresh = 0;
+        for (int i = 0; released != 0; i++, released >>= 1)
+            if ((released & 1) != 0 && _padPressUs[i] > recent) fresh |= (ushort)(1 << i);
+        byte hat = _lastPendingHat;
+        if (hat == PadMapper.HatOf(_rxFrame) || _hatPressUs <= recent) hat = StateFrame.HatCenter;
+        if (fresh == 0 && hat == StateFrame.HatCenter) return;
+        if (nowUs >= _padHoldUntilUs)
+        {
+            _padHoldButtons = 0;
+            _padHoldHat = StateFrame.HatCenter;
+        }
+        _padHoldButtons |= fresh;
+        if (hat != StateFrame.HatCenter) _padHoldHat = hat;
+        _padHoldUntilUs = nowUs + PadEdgeHoldUs;
+    }
+
+    private void SubmitPad(StateFrame s, long nowUs)
+    {
+        _padHeld = false;
+        if (nowUs < _padHoldUntilUs)
+        {
+            ushort buttons = (ushort)(s.Buttons | _padHoldButtons);
+            byte hat = PadMapper.HatOf(s) == StateFrame.HatCenter ? _padHoldHat : s.Hat;
+            if (buttons != s.Buttons || hat != s.Hat)
+            {
+                _padMerged.CopyFrom(s);
+                _padMerged.Buttons = buttons;
+                _padMerged.Hat = hat;
+                s = _padMerged;
+                _padHeld = true;
+            }
+        }
+        if (!_padFrameValid && nowUs < _padRetryAfterUs) return;
         switch (_pad.Plugged)
         {
             case OutputMode.Xbox360:
@@ -452,18 +562,58 @@ public sealed class HostEngine
                     _events.Log("M1-M4/SHARE have no Xbox 360 button; dropped");
                 }
                 if (_padFrameValid && x == _lastX360) return;
-                _pad.Submit(x);
+                if (!TrySubmit(x)) { _padRetryAfterUs = nowUs + PadRetryUs; return; } // the next flush after it sends it again
                 _lastX360 = x;
                 _padFrameValid = true;
                 break;
             case OutputMode.DualShock4:
                 var f = PadMapper.ToDs4(s);
                 if (_padFrameValid && f == _lastDs4) return;
-                _pad.Submit(f);
+                if (!TrySubmit(f)) { _padRetryAfterUs = nowUs + PadRetryUs; return; }
                 _lastDs4 = f;
                 _padFrameValid = true;
                 break;
         }
+    }
+
+    // A pad failure (bus handle gone after a driver reset, say) must never stop keyboard, mouse or a release.
+    private bool TrySubmit(in X360Frame f)
+    {
+        try
+        {
+            _pad.Submit(f);
+            _loggedPadFailure = false;
+            return true;
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            PadFailed(e);
+            return false;
+        }
+    }
+
+    private bool TrySubmit(in Ds4Frame f)
+    {
+        try
+        {
+            _pad.Submit(f);
+            _loggedPadFailure = false;
+            return true;
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            PadFailed(e);
+            return false;
+        }
+    }
+
+    private void PadFailed(Exception e)
+    {
+        _exceptions++;
+        _padFrameValid = false;
+        if (_loggedPadFailure) return;
+        _loggedPadFailure = true;
+        _events.Log($"pad submit failed: {e.GetType().Name}");
     }
 
     // =====================================================================================
@@ -492,6 +642,8 @@ public sealed class HostEngine
                     _events.StateChanged();
                 }
             }
+            // A pad button held from a burst is let go even when no STATE follows.
+            if (_padHeld && nowUs >= _padHoldUntilUs && !_hasPending && !_paused && !_locked) SubmitPad(_pending, nowUs);
             _sessions.ExpirePending(nowUs);
             if (_pairing.Tick(nowUs)) _events.StateChanged();
 
@@ -541,6 +693,12 @@ public sealed class HostEngine
         }
     }
 
+    /// <summary>A write of what <see cref="TakeDirtySettings"/> returned failed: it is written again later.</summary>
+    public void MarkSettingsDirty()
+    {
+        lock (_lock) _settingsDirty = true;
+    }
+
     // =====================================================================================
     // UI commands
     // =====================================================================================
@@ -568,6 +726,8 @@ public sealed class HostEngine
             _qr?.Clear();
             var token = QrPairing.NewToken();
             _qr = new QrSession(token, QrPairing.TokenId(token), _clock.NowUs + Wire.QrPairingS * 1_000_000L, save);
+            _issuedTokenIds[_issuedNext] = _qr.TokenId;
+            _issuedNext = (_issuedNext + 1) % _issuedTokenIds.Length;
             _events.StateChanged();
             return token;
         }
@@ -706,7 +866,8 @@ public sealed class HostEngine
             _authorizedKeyIds.Clear();
             foreach (var p in phones)
             {
-                _authorizedKeyIds.Add(Convert.ToHexString(KeyPairing.KeyId(p.Key.PublicKey)));
+                var keyId = KeyPairing.KeyId(p.Key.PublicKey);
+                _authorizedKeyIds.Add(Convert.ToHexString(keyId));
                 var (id, pairKey) = KeyPairing.HostSecrets(_hostKey, p.Key.PublicKey);
                 var hex = Convert.ToHexString(id);
                 if (next.ContainsKey(hex))
@@ -719,11 +880,11 @@ public sealed class HostEngine
                 {
                     // Same key: keep the array sessions may still hold, take the (maybe renamed) file.
                     CryptographicOperations.ZeroMemory(pairKey);
-                    next[hex] = new KeyPhone(p.File, name, old.PhoneId, old.PairKey, old.Fingerprint) { LastSeenUtc = old.LastSeenUtc };
+                    next[hex] = new KeyPhone(p.File, name, old.PhoneId, old.PairKey, old.Fingerprint, old.KeyId) { LastSeenUtc = old.LastSeenUtc };
                 }
                 else
                 {
-                    next[hex] = new KeyPhone(p.File, name, id, pairKey, p.Key.Fingerprint) { LastSeenUtc = DateTime.MinValue };
+                    next[hex] = new KeyPhone(p.File, name, id, pairKey, p.Key.Fingerprint, keyId) { LastSeenUtc = DateTime.MinValue };
                 }
             }
             foreach (var (hex, old) in _keyPhones)
@@ -783,7 +944,9 @@ public sealed class HostEngine
 
     /// <summary>
     /// KEY_ENROLL: a phone scanned the QR code. Only the open token's holder gets an answer it can
-    /// check; the first valid key is saved and authorized, and repeats of it are acked again.
+    /// check; the first valid key is saved and authorized, and repeats of it are acked again. The
+    /// phone also broadcasts it, so a token this PC never issued gets no answer at all: an
+    /// unauthenticated refusal from another PC would end the real pairing.
     /// </summary>
     private void OnKeyEnroll(ReadOnlySpan<byte> d, KeyEnroll e, SocketAddress from, long nowUs)
     {
@@ -792,8 +955,9 @@ public sealed class HostEngine
         if (_hostKey == null || q == null || nowUs >= q.ExpiresUs || !e.TokenId.AsSpan().SequenceEqual(q.TokenId))
         {
             _dropped++;
-            if (!_errorLimiter.TryAcquire(from, nowUs)) return;
-            WireCodec.EncodeKeyEnrollAck(e.ReqId, e.TokenId, _hostKey == null ? EnrollStatus.NoKey : EnrollStatus.Expired, default, default, ack);
+            // Without a host key no token was ever issued, so no NO_KEY either.
+            if (!IssuedToken(e.TokenId) || !_errorLimiter.TryAcquire(from, nowUs)) return;
+            WireCodec.EncodeKeyEnrollAck(e.ReqId, e.TokenId, EnrollStatus.Expired, default, default, ack);
             Reply(ack, from);
             return;
         }
@@ -824,6 +988,13 @@ public sealed class HostEngine
         byte status = q.EnrolledKey.AsSpan().SequenceEqual(e.PkP) ? EnrollStatus.Ok : EnrollStatus.Used;
         WireCodec.EncodeKeyEnrollAck(e.ReqId, e.TokenId, status, q.Token, e.PkP, ack);
         Reply(ack, from);
+    }
+
+    private bool IssuedToken(ReadOnlySpan<byte> tokenId)
+    {
+        foreach (var t in _issuedTokenIds)
+            if (t != null && tokenId.SequenceEqual(t)) return true;
+        return false;
     }
 
     private void OnPaired(byte[] phoneId, string name, byte[] pairKey)
@@ -867,6 +1038,14 @@ public sealed class HostEngine
     private void ReleaseAllLocked()
     {
         _hasPending = false;
+        _padHoldButtons = 0;
+        _padHoldHat = StateFrame.HatCenter;
+        _padHoldUntilUs = long.MinValue;
+        _padHeld = false;
+        _lastPendingButtons = 0;
+        _lastPendingHat = StateFrame.HatCenter;
+        Array.Fill(_padPressUs, long.MinValue);
+        _hatPressUs = long.MinValue;
         if (Blocked)
         {
             for (int i = 0; i < _injectedKeys.Length; i++) _blockedUps[i] |= _injectedKeys[i];
@@ -882,12 +1061,12 @@ public sealed class HostEngine
         switch (_pad.Plugged)
         {
             case OutputMode.Xbox360:
-                _pad.Submit(X360Frame.Neutral);
+                if (!TrySubmit(X360Frame.Neutral)) break;
                 _lastX360 = X360Frame.Neutral;
                 _padFrameValid = true;
                 break;
             case OutputMode.DualShock4:
-                _pad.Submit(Ds4Frame.Neutral);
+                if (!TrySubmit(Ds4Frame.Neutral)) break;
                 _lastDs4 = Ds4Frame.Neutral;
                 _padFrameValid = true;
                 break;
@@ -964,10 +1143,21 @@ public sealed class HostEngine
         if (_hostKeyId != null && disc.HostKeyId is { } hk && hk.AsSpan().SequenceEqual(_hostKeyId)) flags |= AnnounceFlags.KeyMatch;
         if (disc.PhoneKeyId is { } pk && pk.AsSpan().ContainsAnyExcept((byte)0) && _authorizedKeyIds.Contains(Convert.ToHexString(pk)))
             flags |= AnnounceFlags.KnowsYourKey;
-        if (_sessions.Active is { } a && !a.SamePhone(disc.PhoneId)) flags |= AnnounceFlags.Busy;
+        if (_sessions.Active is { } a && !IsSessionPhone(a, disc)) flags |= AnnounceFlags.Busy;
         var b = new byte[Wire.AnnounceSize];
         WireCodec.EncodeAnnounce(new Announce(disc.ReqId, _settings.HostId, flags, _settings.HostName), b);
         return b;
+    }
+
+    /// <summary>
+    /// The DISCOVER comes from the phone holding <paramref name="a"/>: the session's phone id (a code
+    /// session, or a key session's own flow), or for a key session the phone's key id next to its store id.
+    /// </summary>
+    private bool IsSessionPhone(HostSession a, Discover disc)
+    {
+        if (a.SamePhone(disc.PhoneId)) return true;
+        return disc.PhoneKeyId is { } k && _keyPhones.TryGetValue(Convert.ToHexString(a.PhoneId), out var kp)
+            && k.AsSpan().SequenceEqual(kp.KeyId);
     }
 
     private void ReplyPairing(int n, SocketAddress to)
@@ -1041,13 +1231,15 @@ public sealed class HostEngine
         a.SendSealed(PacketType.Rumble, p, _sender);
     }
 
-    private sealed class KeyPhone(string file, string name, byte[] phoneId, byte[] pairKey, string fingerprint)
+    private sealed class KeyPhone(string file, string name, byte[] phoneId, byte[] pairKey, string fingerprint, byte[] keyId)
     {
         public string File { get; } = file;
         public string Name { get; } = name;
         public byte[] PhoneId { get; } = phoneId;
         public byte[] PairKey { get; } = pairKey;
         public string Fingerprint { get; } = fingerprint;
+        /// <summary>The phone key's id, as the phone's DISCOVER carries it.</summary>
+        public byte[] KeyId { get; } = keyId;
         public DateTime LastSeenUtc { get; set; }
     }
 }
