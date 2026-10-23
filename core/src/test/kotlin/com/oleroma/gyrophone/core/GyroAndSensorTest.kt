@@ -48,6 +48,16 @@ class GyroAndSensorTest {
         assertNull(edited.portrait)
     }
 
+    @Test fun verticalRatioScalesOnlyVertical() {
+        val g = GyroMouse(GyroSettings(sensitivity = 10f, verticalRatio = 0.5f))
+        val rad = (90.0 * Math.PI / 180.0).toFloat()
+        var dx = 0; var dy = 0
+        // Landscape left: yaw right = -x, pitch up = -y (cursor up = negative HID y).
+        repeat(1000) { val c = g.update(-rad, -rad, 0f, 0.001f); dx += c.dx; dy += c.dy }
+        assertEquals(900, dx)
+        assertEquals(-450, dy)
+    }
+
     @Test fun tinyJitterIsTightened() {
         val g = GyroMouse(GyroSettings(sensitivity = 10f, tighteningThreshold = 1.5f))
         var total = 0

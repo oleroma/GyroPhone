@@ -146,6 +146,8 @@ data class GyroSettings(
     val mouseY: MotionAxis = MotionAxis.PITCH,
     val invertY: Boolean = false,
     val scaleY: Float = 1f,
+    /** Vertical sensitivity as a share of horizontal (0.5 = cursor moves half as fast up/down), both orientations. */
+    val verticalRatio: Float = 1f,
     /** Below this speed (deg/s) motion is scaled down, killing hand jitter. 0 (default, raw gyro) disables. */
     val tighteningThreshold: Float = 0f,
     /** Below this speed (deg/s) motion is averaged over a short window. 0 (default, raw gyro) disables. */

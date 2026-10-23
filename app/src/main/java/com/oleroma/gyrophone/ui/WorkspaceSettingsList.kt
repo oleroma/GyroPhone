@@ -74,6 +74,12 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
         Slider(value = sens, onValueChange = { sens = it }, valueRange = 2f..60f,
             onValueChangeFinished = { editWs { it.copy(gyro = it.gyro.copy(sensitivity = sens)) } })
     }
+    var ratio by remember(key) { mutableStateOf(ws.gyro.verticalRatio) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Vertical %.2f× horizontal".format(ratio), Modifier.padding(end = 8.dp))
+        Slider(value = ratio, onValueChange = { ratio = (it * 20).roundToInt() / 20f }, valueRange = 0.25f..2f,
+            onValueChangeFinished = { editWs { it.copy(gyro = it.gyro.copy(verticalRatio = ratio)) } })
+    }
     Text("Held as", style = MaterialTheme.typography.bodyMedium)
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         GyroOrientation.entries.forEach { o ->
