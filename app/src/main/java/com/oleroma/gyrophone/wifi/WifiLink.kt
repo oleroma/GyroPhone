@@ -177,6 +177,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** Host ids the user disconnected from while this link runs: no key auto-connect to them. */
     private val keyUserStopped = HashSet<String>()
     private var sessionKeyId: String? = null
+    /** When the current session flow started, so a stuck one can give way to a key session. */
+    private var sessionStartMs = 0L
     private var qrFlow: QrEnrollFlow? = null
     /** The PC key a QR code just added: connect to that PC as soon as it answers, auto-connect or not. */
     private var qrConnectKeyId: String? = null
@@ -448,10 +450,11 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         }
         session?.let { handleSessionOuts(it.onTick(nowMs)) }
 
-        // Discovery: our own rounds while no session runs; the session flow runs its own
-        // (with its reqId) while it looks for its PC. ANNOUNCEs feed [found] either way.
+        // Discovery: our own rounds while no session is up. A session flow still looking for its
+        // PC runs its own (with its reqId), but only ours name the trusted keys, so they go out
+        // too: otherwise a stuck session hides that a PC is ready by key. ANNOUNCEs feed [found].
         val f = session
-        val ownScan = f == null || !f.isRunning
+        val ownScan = f == null || !f.isRunning || !f.status.isUp()
         if (ownScan && nowMs >= nextScanMs) {
             sendDiscovers()
             nextScanMs = nowMs + Wire.DISCOVER_INTERVAL_MS
@@ -535,20 +538,26 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             _qrPairing.value = QrPairView(qrConnectName, "Paired with $qrConnectName", finished = true, ok = true)
             return
         }
-        if (host.keyStatus == KeyStatus.READY && pairFlow == null && id !in keyUserStopped && keySessionWanted()) {
+        if (host.keyStatus == KeyStatus.READY && pairFlow == null && id !in keyUserStopped && keySessionWanted(nowMs)) {
             connectKeyTo(id) // both sides know each other: no prompt
         }
     }
 
     /**
-     * A key session may start by itself: nothing runs, or a code session ended for good (the PC
-     * forgot this phone, or the code pairing was forgotten here).
+     * A key session may start by itself: nothing runs, or the current session has not come up
+     * within [KEY_TAKEOVER_MS]. That covers a code session to a PC that no longer answers it and a
+     * key session the PC refused (e.g. HELLO arrived while a restarting companion was still
+     * loading its keys), which is retried at that pace. Another phone taking over is respected.
      */
-    private fun keySessionWanted(): Boolean {
+    private fun keySessionWanted(nowMs: Long): Boolean {
         if (!_autoConnect.value || !appOnScreen()) return false
         val f = session ?: return true
-        return sessionKeyId == null && (f.status == SessionStatus.NOT_PAIRED || f.status == SessionStatus.FORGOTTEN)
+        if (f.isRunning && f.status.isUp()) return false
+        if (f.status == SessionStatus.REPLACED || f.status == SessionStatus.VERSION_MISMATCH) return false
+        return nowMs - sessionStartMs >= KEY_TAKEOVER_MS
     }
+
+    private fun SessionStatus.isUp() = this == SessionStatus.LIVE || this == SessionStatus.HOST_SILENT
 
     /** The best key answer [hostIdHex] gave for a key this phone still trusts. */
     private fun keyStatusOf(hostIdHex: String): KeyStatus {
@@ -622,6 +631,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         val f = PhoneSessionFlow(store.phoneId, host, ::broadcastTargets, Caps.RUMBLE, rateHz)
         session = f
         sessionHostId = hostIdHex
+        sessionStartMs = SystemClock.elapsedRealtime()
         _currentHostId.value = hostIdHex
         sessionHostName = stored.name
         handleSessionOuts(f.connect(SystemClock.elapsedRealtime()))
@@ -669,6 +679,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         val f = PhoneSessionFlow(keyPhoneId, host, ::broadcastTargets, Caps.RUMBLE, rateHz)
         session = f
         sessionHostId = hostIdHex
+        sessionStartMs = SystemClock.elapsedRealtime()
         sessionKeyId = trusted.keyIdHex
         _pairedByKey.value = true
         _currentHostId.value = hostIdHex
@@ -891,6 +902,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         private const val KEY_RESCAN_MS = 2000L
         /** After a QR code pairing, how long to wait for the PC to answer a key DISCOVER. */
         private const val QR_CONNECT_WAIT_MS = 5000L
+        /** How long a session may stay down before a PC that is ready by key replaces it. */
+        private const val KEY_TAKEOVER_MS = 3000L
         /** When a PC answered several key DISCOVERs, the most useful answer wins. */
         private val KEY_STATUS_ORDER = listOf(KeyStatus.READY, KeyStatus.PC_LACKS_PHONE, KeyStatus.PHONE_LACKS_PC)
         private val LIMITED_BROADCAST: InetAddress =
