@@ -548,7 +548,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val v = touchSticks.getOrPut(id) { StickState() }
                 val cfg = stickCfgs[id]
                 var mag = hypot(x, y)
-                var k = if (mag > 1f) 1f / mag else 1f
+                // Axes pass through as given (the pad screen keeps the knob in the circle).
+                var k = 1f
                 val dz = cfg?.deadzone ?: 0f
                 if (dz > 0f) k = if (mag <= dz) 0f else min(1f, (mag - dz) / (1f - dz)) / mag
                 v.x = x * k; v.y = y * k; mag = min(1f, mag * k)
