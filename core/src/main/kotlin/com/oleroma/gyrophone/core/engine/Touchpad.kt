@@ -124,7 +124,11 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings()) {
 
     val fingers: Int get() = count
 
-    fun down(pointer: Long, x: Float, y: Float, now: Long) {
+    /**
+     * A finger landed. An [aiming] finger (a touch button's finger driving the cursor) only
+     * moves the cursor from its first motion: it never taps, double-tap-drags or joins a multi-finger tap.
+     */
+    fun down(pointer: Long, x: Float, y: Float, now: Long, aiming: Boolean = false) {
         advance(now)
         gliding = false // any touch stops a glide at once
         movedMask = 0
@@ -137,21 +141,27 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings()) {
         downX[slot] = x; downY[slot] = y; lastX[slot] = x; lastY[slot] = y
         count++
         when (state) {
-            State.IDLE -> { state = State.TOUCH; primary = slot; t0 = now }
-            State.TOUCH -> { state = State.MULTI; tapCandidate = true; maxFingers = 2; lastDownNs = now }
+            State.IDLE -> { state = State.TOUCH; primary = slot; t0 = if (aiming) now - TAP_MAX_NS - 1 else now }
+            State.TOUCH -> { state = State.MULTI; tapCandidate = !aiming; maxFingers = 2; lastDownNs = now }
             State.MOVE -> {
                 // A finger added mid-move only scrolls; measure from here, so the cursor travel
                 // so far does not count as scroll travel.
                 rebase()
                 state = State.MULTI; tapCandidate = false; maxFingers = 2
             }
-            State.TAP_WAIT -> { state = State.TAP_TOUCH; primary = slot; t0 = now }
+            State.TAP_WAIT -> if (aiming) {
+                enqueue(0) // finish the click; this finger does not drag
+                state = State.TOUCH; primary = slot; t0 = now - TAP_MAX_NS - 1
+            } else {
+                state = State.TAP_TOUCH; primary = slot; t0 = now
+            }
             State.TAP_TOUCH -> {
                 enqueue(0) // finish the click
                 state = State.MULTI; tapCandidate = false; maxFingers = 2
                 rebase()
             }
             State.MULTI, State.SWIPE -> {
+                if (aiming) tapCandidate = false
                 // Fingers rarely land together: measure travel from the newest arrangement.
                 maxFingers = max(maxFingers, count)
                 lastDownNs = now

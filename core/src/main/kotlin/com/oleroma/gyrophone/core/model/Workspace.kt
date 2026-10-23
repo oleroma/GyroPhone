@@ -22,10 +22,13 @@ data class Workspace(
     /** Opacity of the on-screen controls in play ([Profile.MIN_CONTROL_OPACITY]..1). */
     val controlOpacity: Float = 1f,
     /**
-     * A finger that lands on a button and moves becomes a touchpad finger; a still tap presses the
-     * button on lift, a still hold presses it after a moment. Off: buttons press on touch-down.
+     * A finger on a button drives the touchpad from touch-down; the button presses only on a still
+     * lift within [buttonTapMs]. Off: buttons press on touch-down. Click-through buttons
+     * ([TouchControl.clickThrough]) always press on touch-down and drive the touchpad.
      */
     val touchpadOverButtons: Boolean = false,
+    /** Touchpad over buttons: the longest touch that still presses the button, in ms. */
+    val buttonTapMs: Int = DEFAULT_BUTTON_TAP_MS,
     /**
      * Touch keys mapped to keyboard modifiers latch: tap = the next key only, double tap = locked,
      * hold = held while down.
@@ -41,6 +44,12 @@ data class Workspace(
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =
         pads.firstOrNull { it.matches(vendorId, productId, name) }
+
+    companion object {
+        const val DEFAULT_BUTTON_TAP_MS = 200
+        const val MIN_BUTTON_TAP_MS = 80
+        const val MAX_BUTTON_TAP_MS = 500
+    }
 }
 
 /** A physical game pad model attached to a [Workspace], with its own mappings. */

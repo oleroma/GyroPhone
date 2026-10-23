@@ -17,6 +17,8 @@ import com.oleroma.gyrophone.core.model.MouseButton
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.StickAxis
+import com.oleroma.gyrophone.core.model.TouchControl
+import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Workspace
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -250,9 +252,17 @@ class WorkspaceEngineTest {
     private val A = 0x04
     private val B = 0x05
 
-    private fun buttons(overButtons: Boolean, sticky: Boolean = false, now: () -> Long): MappingEngine {
+    private fun buttons(
+        overButtons: Boolean,
+        sticky: Boolean = false,
+        clickThrough: Set<String> = emptySet(),
+        now: () -> Long,
+    ): MappingEngine {
         val p = single(Workspace(
             id = "w", name = "w", touchpadOverButtons = overButtons, stickyModifiers = sticky,
+            touchControls = listOf("a", "b", "shift", "ctrl", "wh").map {
+                TouchControl(it, TouchKind.BUTTON, it, 0.5f, 0.5f, clickThrough = it in clickThrough)
+            },
             mappings = listOf(
                 touch("a", OutputTarget.Key(A)),
                 touch("b", OutputTarget.Key(B)),
@@ -309,42 +319,43 @@ class WorkspaceEngineTest {
         now = 50 * MS; assertTrue(keys(e).isEmpty())
     }
 
-    @Test fun stillHoldPressesAfterTheHoldTime() {
+    @Test fun longTouchIsOnlyATouchpadTouch() {
         var now = 0L
         val e = buttons(overButtons = true) { now }
         e.buttonDown(1, "a", 100f, 100f)
-        assertEquals(MappingEngine.BUTTON_HOLD_NS, e.touchpadDeadlineNanos())
-        now = 299 * MS
-        assertTrue(keys(e).isEmpty())
-        now = 300 * MS
-        assertEquals(listOf(A), keys(e)) // resolved by the snapshot itself
-        now = 600 * MS
-        e.buttonMove(1, 300f, 100f) // held keys stay keys
-        assertEquals(listOf(A), keys(e))
+        assertEquals(Long.MAX_VALUE, e.touchpadDeadlineNanos()) // nothing to wait for
+        now = 201 * MS // past the 200 ms tap
         e.buttonUp(1)
-        assertTrue(keys(e).isEmpty())
+        now = 400 * MS
+        repeat(2) {
+            val s = e.snapshot()
+            assertTrue(s.keyboard.keys.isEmpty())
+            assertEquals(0, s.mouse.buttons)
+        }
     }
 
-    @Test fun holdResolvesOnOtherInputToo() {
+    @Test fun tapLengthIsTheWorkspaceSetting() {
         var now = 0L
-        val e = buttons(overButtons = true) { now }
-        e.buttonDown(1, "wh", 100f, 100f)
-        now = 350 * MS
-        e.setTouch("x", true) // any input resolves the due hold and fires its event once
-        assertEquals(-120, e.snapshot().mouse.wheel)
-        assertEquals(setOf("wh", "x"), e.pressedTouches())
+        val p = single(Workspace(
+            id = "w", name = "w", touchpadOverButtons = true, buttonTapMs = 300,
+            mappings = listOf(touch("a", OutputTarget.Key(A))),
+        ))
+        val e = MappingEngine(p) { now }.apply { touchpadPxPerDp = 2f; touchpadMinPulseNanos = 40 * MS }
+        e.buttonDown(1, "a", 0f, 0f)
+        now = 280 * MS
+        e.buttonUp(1)
+        assertEquals(listOf(A), keys(e))
     }
 
-    @Test fun movingFingerBecomesATouchpadFinger() {
+    @Test fun buttonFingerMovesTheCursorAtOnce() {
         var now = 0L
         val e = buttons(overButtons = true) { now }
         e.buttonDown(1, "a", 100f, 100f)
+        now = 10 * MS
+        e.buttonMove(1, 110f, 100f) // 5 dp, still a tap candidate, but the cursor moves already
+        assertTrue(e.snapshot().mouse.dx > 0)
         now = 20 * MS
-        e.buttonMove(1, 125f, 100f) // 12.5 dp: past the slop
-        assertTrue(e.pressedTouches().isEmpty())
-        assertEquals(0, e.snapshot().mouse.dx) // starts from where it is: no jump
-        now = 40 * MS
-        e.buttonMove(1, 165f, 100f)
+        e.buttonMove(1, 165f, 100f) // past the slop: no longer a tap
         val s = e.snapshot()
         assertTrue(s.mouse.dx > 0)
         assertTrue(s.keyboard.keys.isEmpty())
@@ -356,7 +367,6 @@ class WorkspaceEngineTest {
             assertEquals(0, t.mouse.buttons)
             assertTrue(t.keyboard.keys.isEmpty())
         }
-        assertEquals(Long.MAX_VALUE, e.touchpadDeadlineNanos())
     }
 
     @Test fun twoButtonFingersAtOnce() {
@@ -368,9 +378,76 @@ class WorkspaceEngineTest {
         e.buttonUp(2)
         assertEquals(listOf(B), keys(e))
         now = 400 * MS
-        assertEquals(listOf(A), keys(e))
+        assertTrue(keys(e).isEmpty())
+        e.buttonUp(1) // held too long: not a tap
+        assertTrue(keys(e).isEmpty())
+    }
+
+    // ---- Click-through buttons ----
+
+    @Test fun clickThroughPressesAtOnceAndMovesTheCursor() {
+        for (over in listOf(false, true)) {
+            var now = 0L
+            val e = buttons(overButtons = over, clickThrough = setOf("a")) { now }
+            e.buttonDown(1, "a", 100f, 100f)
+            assertEquals("over=$over", listOf(A), keys(e))
+            now = 10 * MS
+            e.buttonMove(1, 104f, 100f) // no slop: the first motion moves the cursor
+            val s = e.snapshot()
+            assertTrue(s.mouse.dx > 0)
+            assertEquals(listOf(A), s.keyboard.keys)
+            now = 50 * MS
+            e.buttonUp(1) // a quick lift releases the key and never clicks
+            now = 500 * MS
+            repeat(3) {
+                val t = e.snapshot()
+                assertTrue(t.keyboard.keys.isEmpty())
+                assertEquals(0, t.mouse.buttons)
+            }
+        }
+    }
+
+    @Test fun clickThroughNeverTurnsATouchpadTapIntoADrag() {
+        var now = 0L
+        val e = buttons(overButtons = false, clickThrough = setOf("a")) { now }
+        e.touchpadDown(7, 500f, 500f)
+        now = 30 * MS
+        e.touchpadUp(7) // a tap: with tap-drag the click waits for a second touch
+        now = 60 * MS
+        e.buttonDown(1, "a", 100f, 100f)
+        now = 400 * MS
+        e.buttonMove(1, 150f, 100f)
+        // The tap's click plays out (shown for its minimum pulse), then nothing stays held.
+        for (t in 1..4) { now = (400 + 50 * t) * MS; e.snapshot() }
+        val s = e.snapshot()
+        assertEquals(0, s.mouse.buttons)
+        assertEquals(listOf(A), s.keyboard.keys)
+        e.buttonUp(1)
+    }
+
+    @Test fun touchpadCancelKeepsAClickThroughKey() {
+        var now = 0L
+        val e = buttons(overButtons = false, clickThrough = setOf("a")) { now }
+        e.buttonDown(1, "a", 100f, 100f)
+        e.touchpadCancel()
+        now = 20 * MS
+        e.buttonMove(1, 200f, 100f)
+        val s = e.snapshot()
+        assertEquals(listOf(A), s.keyboard.keys)
+        assertEquals(0, s.mouse.dx)
         e.buttonUp(1)
         assertTrue(keys(e).isEmpty())
+    }
+
+    @Test fun otherButtonsStayPlain() {
+        var now = 0L
+        val e = buttons(overButtons = false, clickThrough = setOf("a")) { now }
+        e.buttonDown(1, "b", 100f, 100f)
+        now = 20 * MS
+        e.buttonMove(1, 200f, 100f)
+        val s = e.snapshot()
+        assertEquals(listOf(B), s.keyboard.keys)
+        assertEquals(0, s.mouse.dx)
     }
 
     @Test fun unknownFingersAreIgnoredAndWorkspaceChangeForgetsFingers() {
@@ -465,7 +542,7 @@ class WorkspaceEngineTest {
 
     @Test fun heldModifierWorksAsNormalHold() {
         var now = 0L
-        val e = buttons(overButtons = true, sticky = true) { now }
+        val e = buttons(overButtons = false, sticky = true) { now }
         e.buttonDown(1, "shift", 0f, 0f)
         now = 400 * MS
         assertEquals(0x02, mods(e))
@@ -478,11 +555,26 @@ class WorkspaceEngineTest {
         assertEquals(0, mods(e))
     }
 
-    @Test fun modifierFingerJoinsAChordBeforeTheHoldTime() {
+    @Test fun heldModifierOverButtonsJoinsTheNextKey() {
+        var now = 0L
+        val e = buttons(overButtons = true, sticky = true) { now }
+        e.buttonDown(1, "shift", 0f, 0f)
+        now = 400 * MS
+        assertEquals(0, mods(e)) // held long: a touchpad finger so far
+        tap(e, 2, "a", 500 * MS, { now = it })
+        checkShiftA(e) // a key while it is down makes it a held Shift
+        now = 700 * MS
+        e.buttonUp(1)
+        assertTrue(e.latchedTouches().isEmpty())
+        now = 800 * MS
+        assertEquals(0, mods(e))
+    }
+
+    @Test fun modifierFingerJoinsAChord() {
         var now = 0L
         val e = buttons(overButtons = true, sticky = true) { now }
         e.buttonDown(1, "ctrl", 0f, 0f)
-        tap(e, 2, "a", 50 * MS, { now = it }) // Ctrl still under 300 ms
+        tap(e, 2, "a", 50 * MS, { now = it })
         val s = e.snapshot()
         assertEquals(0x01, s.keyboard.modifiers)
         assertEquals(listOf(A), s.keyboard.keys)

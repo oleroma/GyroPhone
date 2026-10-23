@@ -1168,6 +1168,22 @@ private fun ControlSettingsPanel(
                             valueRange = TouchControl.MIN_SIZE..TouchControl.MAX_SIZE,
                         )
                     }
+                    if (control.kind == TouchKind.BUTTON) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Click-through", style = MaterialTheme.typography.labelLarge)
+                                Text(
+                                    "Presses at once, and the same finger moves the cursor until it lifts.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = control.clickThrough,
+                                onCheckedChange = { onControlChange(current.copy(clickThrough = it)) },
+                            )
+                        }
+                    }
                     HorizontalDivider()
                 }
                 Text("Mapping", style = MaterialTheme.typography.titleSmall)
