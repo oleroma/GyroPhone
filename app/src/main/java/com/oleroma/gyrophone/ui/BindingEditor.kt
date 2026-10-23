@@ -130,6 +130,7 @@ fun BindingList(
     picking?.let { (input, replacing) ->
         TargetPickerDialog(
             analog = input.analog,
+            swipe = input.swipe,
             runtime = runtime,
             current = Bindings.targets(mappings, input),
             onPick = { picked ->
@@ -196,7 +197,7 @@ private sealed interface PickerEntry {
 /**
  * Grouped target picker dialog with a search field, a section list per group, and "Press a key on
  * a keyboard" capture (uses runtime.keyLearnListener + AndroidKeyToHid). analog=true -> only analog
- * targets. Picking calls [onPick] and then [onDismiss]; [current] targets are shown as mapped.
+ * targets; swipe=true -> analog and mouse motion targets. Picking calls [onPick] and then [onDismiss]; [current] targets are shown as mapped.
  */
 @Composable
 fun TargetPickerDialog(
@@ -205,18 +206,12 @@ fun TargetPickerDialog(
     onPick: (OutputTarget) -> Unit,
     onDismiss: () -> Unit,
     current: List<OutputTarget> = emptyList(),
+    swipe: Boolean = false,
 ) {
     var query by remember { mutableStateOf("") }
     var capturing by remember { mutableStateOf(false) }
 
-    val groups = remember(analog) {
-        if (analog) {
-            val allowed = Describe.analogTargets.toSet()
-            Describe.targetGroups.map { (name, list) -> name to list.filter { it in allowed } }.filter { it.second.isNotEmpty() }
-        } else {
-            Describe.targetGroups
-        }
-    }
+    val groups = remember(analog, swipe) { Describe.pickerGroups(analog, swipe) }
     val entries = remember(groups, query) {
         val q = query.trim()
         buildList {

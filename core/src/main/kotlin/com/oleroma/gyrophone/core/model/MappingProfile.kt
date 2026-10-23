@@ -45,6 +45,7 @@ object MappingProfiles {
         is InputSource.Touch -> source.id
         is InputSource.TouchStick -> source.id
         is InputSource.TouchStickDiagonal -> source.id
+        is InputSource.TouchSwipe -> source.id
         else -> null
     }
 

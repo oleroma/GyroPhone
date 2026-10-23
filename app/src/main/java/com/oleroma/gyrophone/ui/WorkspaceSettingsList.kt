@@ -68,16 +68,17 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
     }
     var sens by remember(key) { mutableStateOf(ws.gyro.sensitivity) }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Sensitivity %.0f".format(sens), Modifier.padding(end = 8.dp))
-        Slider(value = sens, onValueChange = { sens = it }, valueRange = 2f..60f,
+        Text("X sensitivity %.0f".format(sens), Modifier.padding(end = 8.dp))
+        Slider(value = sens, onValueChange = { sens = it.roundToInt().toFloat() }, valueRange = 0f..60f,
             onValueChangeFinished = { editWs { it.copy(gyro = it.gyro.copy(sensitivity = sens)) } })
     }
-    var ratio by remember(key) { mutableStateOf(ws.gyro.verticalRatio) }
+    var sensY by remember(key) { mutableStateOf(ws.gyro.verticalSensitivity) }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Vertical %.2f× horizontal".format(ratio), Modifier.padding(end = 8.dp))
-        Slider(value = ratio, onValueChange = { ratio = (it * 20).roundToInt() / 20f }, valueRange = 0.25f..2f,
-            onValueChangeFinished = { editWs { it.copy(gyro = it.gyro.copy(verticalRatio = ratio)) } })
+        Text("Y sensitivity %.0f".format(sensY), Modifier.padding(end = 8.dp))
+        Slider(value = sensY, onValueChange = { sensY = it.roundToInt().toFloat() }, valueRange = 0f..60f,
+            onValueChangeFinished = { editWs { it.copy(gyro = it.gyro.copy(sensitivityY = sensY)) } })
     }
+    Text("Mouse counts per degree, sideways (X) and up and down (Y). 0 turns that direction off.", style = MaterialTheme.typography.bodySmall)
     Text("Held as", style = MaterialTheme.typography.bodyMedium)
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         GyroOrientation.entries.forEach { o ->
@@ -183,10 +184,17 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
     }
     var tpSens by remember(key) { mutableStateOf(tp.sensitivity) }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Speed %.1f".format(tpSens), Modifier.padding(end = 8.dp))
-        Slider(value = tpSens, onValueChange = { tpSens = it }, valueRange = 0.3f..5f,
+        Text("X speed %.1f".format(tpSens), Modifier.padding(end = 8.dp))
+        Slider(value = tpSens, onValueChange = { tpSens = (it * 10).roundToInt() / 10f }, valueRange = 0f..5f,
             onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(sensitivity = tpSens)) } })
     }
+    var tpSensY by remember(key) { mutableStateOf(tp.verticalSensitivity) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Y speed %.1f".format(tpSensY), Modifier.padding(end = 8.dp))
+        Slider(value = tpSensY, onValueChange = { tpSensY = (it * 10).roundToInt() / 10f }, valueRange = 0f..5f,
+            onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(sensitivityY = tpSensY)) } })
+    }
+    Text("0 turns that direction off, e.g. X 0 for a touchpad that only moves up and down.", style = MaterialTheme.typography.bodySmall)
     var tpAccel by remember(key) { mutableStateOf(tp.acceleration) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Acceleration %.1f".format(tpAccel), Modifier.padding(end = 8.dp))

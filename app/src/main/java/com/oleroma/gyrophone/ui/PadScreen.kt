@@ -1100,6 +1100,7 @@ private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>)
             is InputSource.Touch -> if (s.id == c.id) m.copy(source = InputSource.Touch(id)) else null
             is InputSource.TouchStick -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             is InputSource.TouchStickDiagonal -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
+            is InputSource.TouchSwipe -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             else -> null
         }
     }
@@ -1308,6 +1309,27 @@ private fun ControlSettingsPanel(
                                 onCheckedChange = { onControlChange(current.copy(clickThrough = it)) },
                             )
                         }
+                        if (!control.clickThrough) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Swipe", style = MaterialTheme.typography.labelLarge)
+                                    Text(
+                                        "A small touchpad of its own: a tap presses it, a swipe does its swipe " +
+                                            "mappings below (mouse, scroll, a stick or keys per direction).",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Switch(
+                                    checked = control.swipe,
+                                    onCheckedChange = { onControlChange(current.copy(swipe = it)) },
+                                )
+                            }
+                            if (control.swipe) {
+                                SwipeSensSlider("Swipe X sensitivity", control.swipeSensX) { onControlChange(current.copy(swipeSensX = it)) }
+                                SwipeSensSlider("Swipe Y sensitivity", control.swipeSensY) { onControlChange(current.copy(swipeSensY = it)) }
+                            }
+                        }
                         val input = inputs.first()
                         val targets = Bindings.targets(workspace.mappings, input)
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1429,6 +1451,19 @@ private fun SizeSlider(title: String, value: Float, onChange: (Float) -> Unit) {
         Slider(
             value = sqrt(((value - TouchControl.MIN_SIZE) / span).coerceIn(0f, 1f)),
             onValueChange = { t -> onChange(TouchControl.MIN_SIZE + span * t * t) },
+        )
+    }
+}
+
+/** A swipe sensitivity of a button in swipe mode; 0 turns that direction off. */
+@Composable
+private fun SwipeSensSlider(title: String, value: Float, onChange: (Float) -> Unit) {
+    Column {
+        Text("$title %.1f".format(value), style = MaterialTheme.typography.labelLarge)
+        Slider(
+            value = value,
+            onValueChange = { onChange((it * 10).roundToInt() / 10f) },
+            valueRange = 0f..TouchControl.MAX_SWIPE_SENS,
         )
     }
 }

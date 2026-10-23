@@ -7,6 +7,8 @@ data class BindableInput(
     val sources: List<InputSource>,
     /** True for a full analog stick axis: only PadAxis targets make sense. */
     val analog: Boolean = false,
+    /** A swipe axis: mouse motion and scrolling make sense too ([Describe.swipeTargets]). */
+    val swipe: Boolean = false,
 )
 
 /**
@@ -53,11 +55,26 @@ object Bindings {
         setTargets(mappings, input, targets(mappings, input) - target)
 
     /**
-     * Inputs a touch control exposes: BUTTON -> [Touch(id)]; STICK -> X axis, Y axis (analog),
+     * Inputs a touch control exposes: BUTTON -> [Touch(id)], in swipe mode also the swipe X and Y
+     * axes and the four swipe directions; STICK -> X axis, Y axis (analog),
      * Left, Right, Up, Down (halves), and with 8 zones the four diagonals; FULLSCREEN -> none.
      */
     fun touchInputs(control: TouchControl): List<BindableInput> = when (control.kind) {
-        TouchKind.BUTTON -> listOf(BindableInput(control.label.ifBlank { control.id }, listOf(InputSource.Touch(control.id))))
+        TouchKind.BUTTON -> {
+            val press = BindableInput(control.label.ifBlank { control.id }, listOf(InputSource.Touch(control.id)))
+            if (!control.swipes) listOf(press) else {
+                fun s(axis: StickAxis, half: AxisHalf = AxisHalf.FULL) = listOf(InputSource.TouchSwipe(control.id, axis, half))
+                listOf(
+                    press,
+                    BindableInput("Swipe X", s(StickAxis.X), analog = true, swipe = true),
+                    BindableInput("Swipe Y", s(StickAxis.Y), analog = true, swipe = true),
+                    BindableInput("Swipe left", s(StickAxis.X, AxisHalf.NEGATIVE)),
+                    BindableInput("Swipe right", s(StickAxis.X, AxisHalf.POSITIVE)),
+                    BindableInput("Swipe up", s(StickAxis.Y, AxisHalf.NEGATIVE)),
+                    BindableInput("Swipe down", s(StickAxis.Y, AxisHalf.POSITIVE)),
+                )
+            }
+        }
         TouchKind.STICK -> {
             fun s(axis: StickAxis, half: AxisHalf = AxisHalf.FULL) = listOf(InputSource.TouchStick(control.id, axis, half))
             listOf(

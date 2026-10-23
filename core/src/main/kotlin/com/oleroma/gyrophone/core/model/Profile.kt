@@ -57,12 +57,24 @@ data class TouchControl(
     val deadzone: Float = 0f,
     /** STICK: how deflection becomes directions. */
     val zones: StickZones = StickZones.OVERLAP,
+    /**
+     * BUTTON without click-through: a small touchpad of its own. A still tap presses it; a swipe
+     * drives its swipe mappings ([InputSource.TouchSwipe]) instead.
+     */
+    val swipe: Boolean = false,
+    /** Swipe sensitivity across and down: mouse counts per dp of travel (0 = that axis is off). */
+    val swipeSensX: Float = 1.5f,
+    val swipeSensY: Float = 1.5f,
 ) {
+    /** In swipe mode: a button with [swipe] on and click-through off. */
+    val swipes: Boolean get() = kind == TouchKind.BUTTON && swipe && !clickThrough
+
     companion object {
         const val MIN_SIZE = 0.06f
         /** Fractions of the shorter side: over 1 a control can span the long side (and fill the screen). */
         const val MAX_SIZE = 2.4f
         const val MAX_DEADZONE = 0.6f
+        const val MAX_SWIPE_SENS = 6f
         /**
          * Derived portrait layout: the landscape layout squeezed into the lower part (the top is
          * left for the touchpad), sizes scaled down, centres pulled in so nothing leaves the width.
@@ -167,8 +179,10 @@ enum class MotionAxis(val label: String) {
 @Serializable
 data class GyroSettings(
     val mode: GyroMode = GyroMode.OFF,
-    /** Mouse counts per degree of rotation. */
+    /** Horizontal mouse counts per degree of rotation (0 = the cursor never moves sideways). */
     val sensitivity: Float = 16f,
+    /** Vertical mouse counts per degree; null (older files) = [sensitivity] × [verticalRatio]. */
+    val sensitivityY: Float? = null,
     val orientation: GyroOrientation = GyroOrientation.AUTO,
     /** Motion that moves the cursor horizontally: yaw right / pitch up / roll clockwise = right. */
     val mouseX: MotionAxis = MotionAxis.YAW,
@@ -178,7 +192,7 @@ data class GyroSettings(
     val mouseY: MotionAxis = MotionAxis.PITCH,
     val invertY: Boolean = false,
     val scaleY: Float = 1f,
-    /** Vertical sensitivity as a share of horizontal (0.5 = cursor moves half as fast up/down), both orientations. */
+    /** Only read from older files, through [verticalSensitivity]. */
     val verticalRatio: Float = 1f,
     /** Below this speed (deg/s) motion is scaled down, killing hand jitter. 0 (default, raw gyro) disables. */
     val tighteningThreshold: Float = 0f,
@@ -195,6 +209,8 @@ data class GyroSettings(
      */
     val touchpadRatchet: Boolean = false,
 ) {
+    val verticalSensitivity: Float get() = sensitivityY ?: (sensitivity * verticalRatio)
+
     val landscapeAxes: GyroAxes get() = GyroAxes(mouseX, invertX, scaleX, mouseY, invertY, scaleY)
 
     fun axesFor(portrait: Boolean): GyroAxes = (if (portrait) this.portrait else null) ?: landscapeAxes
@@ -224,8 +240,10 @@ data class GyroAxes(
 @Serializable
 data class TouchpadSettings(
     val enabled: Boolean = true,
-    /** Mouse counts per dp of finger travel at low speed. */
+    /** Horizontal mouse counts per dp of finger travel at low speed (0 = no sideways motion). */
     val sensitivity: Float = 1.5f,
+    /** Vertical counts per dp; null (older files) = [sensitivity]. */
+    val sensitivityY: Float? = null,
     /** Extra gain for fast swipes: up to 1 + this. 0 = linear. */
     val acceleration: Float = 1f,
     val tapToClick: Boolean = true,
@@ -250,6 +268,8 @@ data class TouchpadSettings(
     val gestures4: FingerGestures = FingerGestures.WINDOWS_4,
 ) {
     fun gesturesFor(fingers: Int): FingerGestures = if (fingers >= 4) gestures4 else gestures3
+
+    val verticalSensitivity: Float get() = sensitivityY ?: sensitivity
 
     companion object {
         const val MIN_GLIDE_MS = 100f

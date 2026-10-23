@@ -26,6 +26,12 @@ enum class AxisHalf { FULL, POSITIVE, NEGATIVE }
 @Serializable
 enum class StickAxis { X, Y }
 
+/** Relative mouse output of a swipe axis ([OutputTarget.MouseAxis]). */
+@Serializable
+enum class MouseMotion(val label: String) {
+    MOVE_X("Mouse move X"), MOVE_Y("Mouse move Y"), WHEEL("Scroll"), HWHEEL("Scroll sideways"),
+}
+
 /** A diagonal zone of a touch stick split into 8 directions ([StickZones.EIGHT]). */
 @Serializable
 enum class StickDiagonal(val label: String) {
@@ -57,6 +63,14 @@ sealed interface InputSource {
     /** A diagonal zone of a virtual touchscreen stick with 8 zones. */
     @Serializable @SerialName("touch_stick_diagonal")
     data class TouchStickDiagonal(val id: String, val diagonal: StickDiagonal) : InputSource
+
+    /**
+     * A swipe on a touch button in swipe mode ([TouchControl.swipe]). FULL: the axis, as relative
+     * motion for [OutputTarget.MouseAxis] and as the distance from the touch-down point (a floating
+     * stick) for everything else; a half: that direction of the distance, pressed past half of it.
+     */
+    @Serializable @SerialName("touch_swipe")
+    data class TouchSwipe(val id: String, val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL) : InputSource
 }
 
 /** Something the host PC receives. */
@@ -75,6 +89,14 @@ sealed interface OutputTarget {
 
     @Serializable @SerialName("mouse")
     data class Mouse(val button: MouseButton) : OutputTarget
+
+    /**
+     * Mouse motion or scrolling that follows a swipe axis ([InputSource.TouchSwipe] FULL), scaled
+     * by the button's swipe sensitivity. Scrolling is natural (the page follows the finger);
+     * [scale] -1 reverses.
+     */
+    @Serializable @SerialName("mouse_axis")
+    data class MouseAxis(val motion: MouseMotion, val scale: Float = 1f) : OutputTarget
 
     /** Mouse wheel, +1 up / -1 down per press. */
     @Serializable @SerialName("wheel")
