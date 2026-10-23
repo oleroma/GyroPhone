@@ -110,6 +110,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        runtime.setForeground(true)
         controllerInput.register()
         getSystemService(DisplayManager::class.java)
             .registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
@@ -118,6 +119,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        runtime.setForeground(false)
         controllerInput.unregister()
         getSystemService(DisplayManager::class.java).unregisterDisplayListener(displayListener)
         super.onPause()

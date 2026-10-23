@@ -120,6 +120,22 @@ class GamepadRuntime(context: Context) {
     /** How the activity may rotate; MainActivity applies it. */
     val screenOrientation: StateFlow<ScreenOrientation> = _screenOrientation
 
+    private val _padOnlyInput = MutableStateFlow(prefs.getBoolean(KEY_PAD_ONLY_INPUT, true))
+    /** When on (the default), controller, keyboard and gyro input reach the PC only while the pad is on screen. */
+    val padOnlyInput: StateFlow<Boolean> = _padOnlyInput
+
+    /** The pad is shown in play mode (not the menu, the editor or the Connect tab); set by PadScreen. */
+    private var padShown = false
+    /** The activity is resumed; set by MainActivity. */
+    private var foreground = false
+
+    /**
+     * Whether controller, keyboard and gyro input go to the engine. False while [padOnlyInput] is on
+     * and the pad is not on screen; the link stays up and sends nothing held.
+     */
+    @Volatile var inputAllowed = !_padOnlyInput.value
+        private set
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _linkState = MutableStateFlow<LinkState>(LinkState.Off)
     /** State of the active link. */
@@ -212,6 +228,24 @@ class GamepadRuntime(context: Context) {
         prefs.edit().putInt(KEY_WIFI_RATE, hz).apply()
         _wifiRateHz.value = hz
         wifi.rateHz = hz
+    }
+
+    fun setPadOnlyInput(on: Boolean) {
+        prefs.edit().putBoolean(KEY_PAD_ONLY_INPUT, on).apply()
+        _padOnlyInput.value = on
+        updateInputAllowed()
+    }
+
+    fun setPadShown(shown: Boolean) { padShown = shown; updateInputAllowed() }
+
+    fun setForeground(resumed: Boolean) { foreground = resumed; updateInputAllowed() }
+
+    /** Leaving the pad releases everything held, so no key or button sticks on the PC. */
+    @Synchronized private fun updateInputAllowed() {
+        val allowed = !_padOnlyInput.value || (padShown && foreground)
+        if (allowed == inputAllowed) return
+        inputAllowed = allowed
+        if (!allowed) engine.reset()
     }
 
     /**
@@ -503,6 +537,7 @@ class GamepadRuntime(context: Context) {
         private const val KEY_WIFI_RATE = "wifi_rate_hz"
         private const val KEY_TRANSPORT = "transport"
         private const val KEY_ORIENTATION = "screen_orientation"
+        private const val KEY_PAD_ONLY_INPUT = "pad_only_input"
         private const val KEY_BIAS_X = "gyro_bias_x"
         private const val KEY_BIAS_Y = "gyro_bias_y"
         private const val KEY_BIAS_Z = "gyro_bias_z"
@@ -521,7 +556,7 @@ class GamepadRuntime(context: Context) {
                 GyroCalibration.Result.Moved -> { calibration = null; _calibration.value = CalibrationState.Moved }
             }
         }
-        val active = engine.gyroActive
+        val active = inputAllowed && engine.gyroActive
         if (active) {
             val c = gyroMouse.update(x - biasX, y - biasY, z - biasZ, dt)
             if (c.dx != 0 || c.dy != 0) engine.addMouseMotion(c.dx, c.dy)

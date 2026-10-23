@@ -201,6 +201,11 @@ fun PadScreen(
     }
 
     DisposableEffect(Unit) { onDispose { releaseAll() } }
+    // Input reaches the PC only while the pad is in play mode ([GamepadRuntime.padOnlyInput]).
+    DisposableEffect(editing) {
+        runtime.setPadShown(!editing)
+        onDispose { runtime.setPadShown(false) }
+    }
 
     fun startEditing() {
         releaseAll()
