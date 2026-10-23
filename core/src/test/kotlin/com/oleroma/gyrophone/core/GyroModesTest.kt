@@ -138,12 +138,15 @@ class GyroModesTest {
             ),
             gyro = GyroSettings(mode = GyroMode.ALWAYS, touchpadRatchet = true),
         )
-        val e = MappingEngine(single(ws))
+        var now = 0L
+        val e = MappingEngine(single(ws)) { now }
         e.buttonDown(1, "plain", 10f, 10f)
         assertTrue(e.gyroActive)
+        now += 100_000_000L
         e.buttonUp(1)
         e.buttonDown(2, "rat", 10f, 10f)
         assertFalse(e.gyroActive)
+        now += 100_000_000L // past the shortest press, so the lift releases at once
         e.buttonUp(2)
         assertTrue(e.gyroActive)
         // A background finger is still the touchpad ratchet.

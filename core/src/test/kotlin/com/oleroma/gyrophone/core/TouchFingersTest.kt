@@ -153,12 +153,13 @@ class TouchFingersTest {
         assertEquals(0, o.wheel); assertEquals(0, o.hwheel)
     }
 
-    @Test fun aimingFingersStillCountForTheGyroRatchet() {
+    /** The touchpad ratchet is for background fingers; a click-through button ratchets only with its own Ratchet. */
+    @Test fun aimingFingersDoNotCountForTheTouchpadRatchet() {
         var now = 0L
         val e = engine(clickThrough = true, gyro = GyroSettings(mode = GyroMode.ALWAYS, touchpadRatchet = true)) { now }
         assertTrue(e.gyroActive)
         e.buttonDown(1, "a", 100f, 100f)
-        assertFalse(e.gyroActive)
+        assertTrue(e.gyroActive)
         now = 50 * MS
         e.buttonUp(1)
         assertTrue(e.gyroActive)
