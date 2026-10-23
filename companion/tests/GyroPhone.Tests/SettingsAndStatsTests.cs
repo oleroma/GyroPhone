@@ -40,6 +40,54 @@ public sealed class SettingsAndStatsTests : IDisposable
     }
 
     [Fact]
+    public void TornSettingsComeBackFromTheBackup()
+    {
+        var store = new SettingsStore(Path.Combine(_dir, "settings.json"));
+        var s = store.Load("PC");
+        s.PairedPhones.Add(new PairedPhone { PhoneId = Hex.Range(0, 16), Name = "A", ProtectedKey = [1] });
+        store.Save(s);
+        s.PairedPhones.Add(new PairedPhone { PhoneId = Hex.Range(16, 16), Name = "B", ProtectedKey = [2] });
+        store.Save(s); // .bak now holds the copy with phone A only
+        // A power cut after the rename but before the data: right size, all zeros.
+        File.WriteAllBytes(store.Path, new byte[new FileInfo(store.Path).Length]);
+        var back = new SettingsStore(store.Path).Load("other");
+        Assert.Equal(s.HostId, back.HostId);
+        Assert.Equal("A", Assert.Single(back.PairedPhones).Name);
+        Assert.Single(Directory.GetFiles(_dir, "settings.json.bad-*"));
+        Assert.Equal(s.HostId, new SettingsStore(store.Path).Load("other").HostId); // and saved back in place
+    }
+
+    [Fact]
+    public void MissingSettingsComeBackFromTheBackup()
+    {
+        var store = new SettingsStore(Path.Combine(_dir, "settings.json"));
+        var s = store.Load("PC");
+        store.Save(s);
+        File.Delete(store.Path);
+        Assert.Equal(s.HostId, new SettingsStore(store.Path).Load("other").HostId);
+    }
+
+    [Fact]
+    public void FailedSettingsWriteIsRetried()
+    {
+        var store = new SettingsStore(Path.Combine(_dir, "settings.json"));
+        Directory.CreateDirectory(store.Path + ".tmp"); // the write cannot create its temp file
+        var h = new Harness();
+        using var wd = new Watchdog(h.Engine, h.Clock, store: store);
+        Assert.True(h.Engine.Forget(Harness.Phone1Id));
+        wd.Tick();
+        Assert.False(File.Exists(store.Path));
+        Directory.Delete(store.Path + ".tmp");
+        h.Clock.AdvanceMs(100);
+        wd.Tick(); // still waiting out the retry pause
+        Assert.False(File.Exists(store.Path));
+        h.Clock.AdvanceMs(1000);
+        wd.Tick();
+        Assert.True(File.Exists(store.Path));
+        Assert.Empty(store.Load("x").PairedPhones);
+    }
+
+    [Fact]
     public void EnginePersistsPairingViaWatchdog()
     {
         var store = new SettingsStore(Path.Combine(_dir, "settings.json"));
