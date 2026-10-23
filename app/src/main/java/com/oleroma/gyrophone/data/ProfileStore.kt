@@ -1,6 +1,7 @@
 package com.oleroma.gyrophone.data
 
 import android.content.Context
+import android.util.Log
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.MappingProfiles
@@ -9,6 +10,8 @@ import com.oleroma.gyrophone.core.model.PadPresets
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.ProfileJson
 import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.Executors
 
 /**
  * User profiles as JSON files in app storage; builtins are always listed after them. Files are
@@ -41,12 +44,43 @@ class ProfileStore(context: Context) {
     @Synchronized fun save(profile: Profile) {
         require(!isBuiltin(profile)) { "builtin profiles are read-only" }
         val file = files[profile.id] ?: freeFile(profile.id).also { files[profile.id] = it }
-        // Write beside it and rename, so a crash mid-write never leaves a truncated profile.
-        val tmp = File(dir, file.name + ".tmp")
-        tmp.writeText(ProfileJson.encode(profile))
+        replaceFile(file, ProfileJson.encode(profile))
+    }
+
+    /**
+     * Writes [text] beside [file], flushes it to the disk and renames it over [file], so a crash
+     * or power cut leaves the old file or the new one, never a torn one.
+     */
+    private fun replaceFile(file: File, text: String) {
+        val tmp = File(file.path + ".tmp")
+        FileOutputStream(tmp).use { out ->
+            out.write(text.toByteArray())
+            out.fd.sync()
+        }
         if (!tmp.renameTo(file)) {
-            file.writeText(tmp.readText())
+            file.writeText(text)
             tmp.delete()
+        }
+    }
+
+    /** Profiles waiting for [saveLater]'s writer, the newest per id. */
+    private val pending = HashMap<String, Profile>()
+    private val writer = Executors.newSingleThreadExecutor { r -> Thread(r, "profile-writer") }
+
+    /**
+     * Saves [profile] on one background thread, so a caller on the UI thread (a gyro corner tap in
+     * touch dispatch) never waits for the disk. Writes run one at a time and each takes the newest
+     * profile queued for its id, so an older one never lands after a newer one. Once a profile is
+     * saved through here, save it only through here: a direct [save] could be overwritten by an
+     * older one still queued.
+     */
+    fun saveLater(profile: Profile) {
+        require(!isBuiltin(profile)) { "builtin profiles are read-only" }
+        // A write already queued for this id will pick this newer profile up.
+        if (synchronized(pending) { pending.put(profile.id, profile) != null }) return
+        writer.execute {
+            val newest = synchronized(pending) { pending.remove(profile.id) } ?: return@execute
+            try { save(newest) } catch (e: Exception) { Log.w(TAG, "saving profile ${newest.id} failed", e) }
         }
     }
 
@@ -78,12 +112,7 @@ class ProfileStore(context: Context) {
     /** Saves the user's pad presets; refuses to replace a file that exists but cannot be read. */
     @Synchronized fun savePadPresets(presets: List<PadPreset>) {
         if (padPresetsFile.exists() && PadPresets.decode(padPresetsFile.readText()) == null) return
-        val tmp = File(padPresetsFile.path + ".tmp")
-        tmp.writeText(PadPresets.encode(presets))
-        if (!tmp.renameTo(padPresetsFile)) {
-            padPresetsFile.writeText(tmp.readText())
-            tmp.delete()
-        }
+        replaceFile(padPresetsFile, PadPresets.encode(presets))
     }
 
     private val mappingFile = File(context.filesDir, "mapping_profiles.json")
@@ -99,12 +128,7 @@ class ProfileStore(context: Context) {
     /** Saves the mapping profiles; refuses to replace a file that exists but cannot be read. */
     @Synchronized fun saveMappingProfiles(profiles: List<MappingProfile>) {
         if (mappingFile.exists() && MappingProfiles.decode(mappingFile.readText()) == null) return
-        val tmp = File(mappingFile.path + ".tmp")
-        tmp.writeText(MappingProfiles.encode(profiles))
-        if (!tmp.renameTo(mappingFile)) {
-            mappingFile.writeText(tmp.readText())
-            tmp.delete()
-        }
+        replaceFile(mappingFile, MappingProfiles.encode(profiles))
     }
 
     /**
@@ -147,6 +171,7 @@ class ProfileStore(context: Context) {
     }
 
     companion object {
+        private const val TAG = "ProfileStore"
         private const val KEY_ACTIVE = "active_profile"
         private const val KEY_WORKSPACE_PREFIX = "workspace_"
         private const val KEY_MAPPING_MIGRATION = "mapping_migration"

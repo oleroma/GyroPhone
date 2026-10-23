@@ -28,6 +28,9 @@ class QrPairingTest {
     private val reqId = v["reqId"]!!.jsonPrimitive.long.toInt()
     private val addresses = v["addresses"]!!.jsonArray.map { it.jsonPrimitive.content }
     private val bcast = InetSocketAddress(InetAddress.getByName("192.168.1.255"), Wire.PORT)
+    /** The PC in the QR code (its first address) and another PC on the LAN. */
+    private val qrPc = InetSocketAddress(InetAddress.getByName(addresses[0]), Wire.PORT)
+    private val otherPc = InetSocketAddress(InetAddress.getByName("192.168.1.99"), Wire.PORT)
 
     private fun invite() = QrInvite(pkH, token, v.str("hostName"), addresses, Wire.PORT)
     private fun flow() = QrEnrollFlow(invite(), pkP, v.str("phoneName"), { listOf(bcast) }, reqId)
@@ -82,23 +85,55 @@ class QrPairingTest {
 
         // A stranger's ACK (wrong mac) and an old request are ignored.
         val forged = hex(v.str("ackOk")).also { it[30] = (it[30] + 1).toByte() }
-        assertTrue(f.onDatagram(forged, forged.size).isEmpty())
+        assertTrue(f.onDatagram(forged, forged.size, qrPc).isEmpty())
         val ok = hex(v.str("ackOk"))
-        assertTrue(QrEnrollFlow(invite(), pkP, "x", { emptyList() }, reqId + 1).onDatagram(ok, ok.size).isEmpty())
+        assertTrue(QrEnrollFlow(invite(), pkP, "x", { emptyList() }, reqId + 1).onDatagram(ok, ok.size, qrPc).isEmpty())
 
-        assertEquals(listOf(QrEnrollFlow.Out.Done(EnrollResult.OK)), f.onDatagram(ok, ok.size))
+        assertEquals(listOf(QrEnrollFlow.Out.Done(EnrollResult.OK)), f.onDatagram(ok, ok.size, qrPc))
         assertTrue(f.finished)
         assertTrue(f.onTick(5000).isEmpty())
     }
 
     @Test fun flowReportsRefusalsAndSilence() {
         val used = hex(v.str("ackUsed"))
-        assertEquals(listOf(QrEnrollFlow.Out.Done(EnrollResult.USED)), flow().apply { start(0) }.onDatagram(used, used.size))
+        assertEquals(listOf(QrEnrollFlow.Out.Done(EnrollResult.USED)), flow().apply { start(0) }.onDatagram(used, used.size, otherPc))
         val expired = hex(v.str("ackExpired"))
-        assertEquals(listOf(QrEnrollFlow.Out.Done(EnrollResult.EXPIRED)), flow().apply { start(0) }.onDatagram(expired, expired.size))
+        assertEquals(listOf(QrEnrollFlow.Out.Done(EnrollResult.EXPIRED)), flow().apply { start(0) }.onDatagram(expired, expired.size, qrPc))
+        val noKey = noKeyAck()
+        assertEquals(listOf(QrEnrollFlow.Out.Done(EnrollResult.NO_KEY)), flow().apply { start(0) }.onDatagram(noKey, noKey.size, qrPc))
         val f = flow()
         f.start(0)
         assertEquals(listOf(QrEnrollFlow.Out.Done(EnrollResult.NO_ANSWER)), f.onTick(Wire.QR_GIVE_UP_MS.toLong()))
+    }
+
+    @Test fun anotherPcsRefusalDoesNotBeatTheScannedPc() {
+        // Any PC on the LAN answers the broadcast KEY_ENROLL; its EXPIRED has no MAC.
+        val expired = hex(v.str("ackExpired"))
+        val ok = hex(v.str("ackOk"))
+        val f = flow()
+        f.start(0)
+        assertTrue(f.onDatagram(expired, expired.size, otherPc).isEmpty())
+        assertTrue(f.onTick(Wire.QR_RETX_MS.toLong()).isNotEmpty()) // still enrolling
+        assertEquals(listOf(QrEnrollFlow.Out.Done(EnrollResult.OK)), f.onDatagram(ok, ok.size, otherPc))
+
+        // Without an answer from the scanned PC, the refusal is reported at give-up (EXPIRED beats NO_KEY).
+        val noKey = noKeyAck()
+        val g = flow()
+        g.start(0)
+        assertTrue(g.onDatagram(noKey, noKey.size, otherPc).isEmpty())
+        assertTrue(g.onTick(Wire.QR_GIVE_UP_MS - 1L).none { it is QrEnrollFlow.Out.Done })
+        assertEquals(listOf(QrEnrollFlow.Out.Done(EnrollResult.NO_KEY)), g.onTick(Wire.QR_GIVE_UP_MS.toLong()))
+        val h = flow()
+        h.start(0)
+        h.onDatagram(expired, expired.size, otherPc)
+        h.onDatagram(noKey, noKey.size, otherPc)
+        assertEquals(listOf(QrEnrollFlow.Out.Done(EnrollResult.EXPIRED)), h.onTick(Wire.QR_GIVE_UP_MS.toLong()))
+    }
+
+    private fun noKeyAck(): ByteArray {
+        val buf = ByteArray(Wire.MAX_DATAGRAM)
+        val n = WireCodec.encodeKeyEnrollAck(reqId, QrPairing.tokenId(token), EnrollStatus.NO_KEY, null, null, buf)
+        return buf.copyOf(n)
     }
 
     private fun JsonObject.str(key: String): String = this[key]!!.jsonPrimitive.content

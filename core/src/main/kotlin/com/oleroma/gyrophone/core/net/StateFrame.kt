@@ -47,7 +47,8 @@ class StateFrame : WirePacket {
         lt = g.lt.coerceIn(0, GamepadState.TRIGGER_MAX)
         rt = g.rt.coerceIn(0, GamepadState.TRIGGER_MAX)
         keyBitmap.fill(0)
-        for (usage in s.keyboard.keys) setKey(usage)
+        val keys = s.allKeys
+        for (i in keys.indices) setKey(keys[i])
         keyBitmap[MODIFIER_BYTE] = s.keyboard.modifiers.toByte()
         mouseTotalX = totals.x
         mouseTotalY = totals.y

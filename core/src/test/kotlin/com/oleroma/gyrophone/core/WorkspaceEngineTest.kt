@@ -435,6 +435,7 @@ class WorkspaceEngineTest {
         val s = e.snapshot()
         assertEquals(listOf(A), s.keyboard.keys)
         assertEquals(0, s.mouse.dx)
+        now = 60 * MS // past the minimum pulse, so the lift releases at once
         e.buttonUp(1)
         assertTrue(keys(e).isEmpty())
     }

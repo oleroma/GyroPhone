@@ -1,5 +1,7 @@
 package com.oleroma.gyrophone.ui
 
+import android.view.InputDevice
+import android.view.View
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -62,6 +64,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -114,9 +117,32 @@ private enum class EditGesture { PRESS, HELD, MOVE, PINCH, EMPTY, NONE }
 /** What edit mode shows for the selected control: its mapping picker or its context menu. */
 private enum class EditMenu { NONE, MAPPING, CONTEXT }
 
-/** Whether the touch event being dispatched is a cancel; set by [MainActivity] (main thread). */
+/**
+ * The touch event being dispatched, as [MainActivity] saw it (main thread; Compose runs the pad's
+ * pointer handler synchronously inside dispatchTouchEvent). Also owns the window's unbuffered
+ * input request: without one, Android hands MOVE events over once per frame (touch resampled
+ * 5 ms into the past) instead of as they arrive.
+ */
 internal object TouchStream {
+    /** A system ACTION_CANCEL: the phone took every pointer. */
     var cancelled = false
+    /** An ACTION_POINTER_UP with FLAG_CANCELED: the one pointer that lifted was unintended (e.g. a palm). */
+    var pointerCancelled = false
+    /** MotionEvent.getEventTimeNanos: CLOCK_MONOTONIC, the same base as System.nanoTime (the engine's clock). */
+    var eventNanos = 0L
+    /** The pad is in play mode: touch is unbuffered too. Menus and the editor keep batched, resampled touch. */
+    private var playUnbuffered = false
+
+    /** Asks for unbuffered joystick input (always) and touch (in play mode). [decor] is the window's decor view. */
+    fun requestUnbuffered(decor: View) {
+        val pointer = if (playUnbuffered) InputDevice.SOURCE_CLASS_POINTER else InputDevice.SOURCE_CLASS_NONE
+        decor.requestUnbufferedDispatch(InputDevice.SOURCE_CLASS_JOYSTICK or pointer)
+    }
+
+    fun setPlayUnbuffered(decor: View, on: Boolean) {
+        playUnbuffered = on
+        requestUnbuffered(decor)
+    }
 }
 
 /**
@@ -163,7 +189,10 @@ fun PadScreen(
     var showWsSettings by remember { mutableStateOf(false) }
     var dragging by remember { mutableStateOf(false) }
     var snap by remember { mutableStateOf(false) }
+    /** Knob offsets; read only while placing the knobs, so stick motion re-places them without recomposing. */
     val stickPos = remember { mutableStateMapOf<String, Offset>() }
+    /** Sticks with a finger on them (changes only on touch-down and lift). */
+    var heldSticks by remember { mutableStateOf<Set<String>>(emptySet()) }
     /** Pointers currently routed to engine.buttonDown/Move/Up. */
     val buttonFingers = remember { HashSet<Long>() }
     var fingersOnButtons by remember { mutableIntStateOf(0) }
@@ -190,11 +219,12 @@ fun PadScreen(
     }
 
     fun releaseAll() {
-        for (p in buttonFingers) runtime.engine.buttonUp(p)
+        for (p in buttonFingers) runtime.engine.buttonCancel(p)
         buttonFingers.clear()
         fingersOnButtons = 0
         for (id in stickPos.keys.toList()) runtime.engine.setTouchStick(id, 0f, 0f)
         stickPos.clear()
+        heldSticks = emptySet()
         cornersHeld = emptySet()
         runtime.engine.touchpadCancel()
         refreshHighlights()
@@ -205,6 +235,14 @@ fun PadScreen(
     DisposableEffect(editing) {
         runtime.setPadShown(!editing)
         onDispose { runtime.setPadShown(false) }
+    }
+    // Play-mode touch reaches the engine as it arrives, not once per frame. Asked on the decor view:
+    // ViewRootImpl reads its request, and a child's pointer request alone would not carry the joystick bit.
+    val view = LocalView.current
+    DisposableEffect(view, editing) {
+        val decor = view.rootView
+        if (!editing) TouchStream.setPlayUnbuffered(decor, true)
+        onDispose { TouchStream.setPlayUnbuffered(decor, false) }
     }
 
     fun startEditing() {
@@ -469,18 +507,39 @@ fun PadScreen(
                     if (to != null && to != i) runtime.switchWorkspace(to)
                 }
 
+                /** Still on corner [id]: its hit area plus the touch slop, so a slight drift still counts as a tap. */
+                fun onCorner(id: String, p: Offset): Boolean {
+                    val c = corners.firstOrNull { it.id == id } ?: return false
+                    return c.contains(p.x, p.y, w, h, slop = 1.15f + viewConfiguration.touchSlop / half(c), inPortrait = portrait)
+                }
+
+                /** Sends and shows the deflection of a finger at [p] on stick [c] (clamped to the unit circle). */
+                fun deflect(c: TouchControl, p: Offset) {
+                    var d = (p - stickCenters.getValue(c.id)) / half(c)
+                    val len = hypot(d.x, d.y)
+                    if (len > 1f) d /= len
+                    runtime.engine.setTouchStick(c.id, d.x, d.y)
+                    stickPos[c.id] = d
+                }
+
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
+                        // Event time for the touchpad's speed math (processing time jitters).
+                        val at = TouchStream.eventNanos
                         // The system took the touch (e.g. a three-finger screenshot gesture): Compose
                         // reports the cancel as every pointer lifting. That is not a tap.
                         val systemCancel = TouchStream.cancelled && event.changes.any { !it.pressed && it.previousPressed }
+                        // Android judged the one pointer that lifted unintended (e.g. a palm): not a tap either.
+                        val pointerCancel = !systemCancel && TouchStream.pointerCancelled
                         if (systemCancel) {
                             if (padOwner.isNotEmpty()) {
                                 if (padOwner.size >= 2) systemTookTouch++
                                 padOwner.clear()
                                 runtime.engine.touchpadCancel()
                             }
+                            for (p in buttonFingers) runtime.engine.buttonCancel(p)
+                            buttonFingers.clear()
                             cornerOwner.clear()
                         }
                         for (ch in event.changes) {
@@ -495,17 +554,20 @@ fun PadScreen(
                                     // A finger that lands on empty background is a touchpad finger until it lifts.
                                     if (padEnabled) {
                                         padOwner.add(ch.id)
-                                        runtime.engine.touchpadDown(pid, ch.position.x, ch.position.y)
+                                        runtime.engine.touchpadDown(pid, ch.position.x, ch.position.y, at)
                                     }
                                 } else if (c.kind == TouchKind.STICK) {
                                     if (c.id !in stickOwner.values) {
                                         stickOwner[ch.id] = c.id
                                         stickCenters[c.id] = center(c)
+                                        heldSticks = heldSticks + c.id
+                                        // Deflect at once: a still thumb sends no MOVE.
+                                        deflect(c, ch.position)
                                     }
                                 } else if (c.kind == TouchKind.BUTTON) {
                                     // Every finger on a button goes to the engine (touchpad over buttons, sticky modifiers).
                                     buttonFingers.add(pid)
-                                    runtime.engine.buttonDown(pid, c.id, ch.position.x, ch.position.y)
+                                    runtime.engine.buttonDown(pid, c.id, ch.position.x, ch.position.y, at)
                                 }
                                 ch.consume()
                                 continue
@@ -513,22 +575,26 @@ fun PadScreen(
                             if (ch.id in padOwner) {
                                 if (!ch.pressed) {
                                     padOwner.remove(ch.id)
-                                    runtime.engine.touchpadUp(pid)
+                                    if (pointerCancel) runtime.engine.touchpadCancel(pid) else runtime.engine.touchpadUp(pid)
                                 } else if (ch.position != ch.previousPosition) {
-                                    runtime.engine.touchpadMove(pid, ch.position.x, ch.position.y)
+                                    runtime.engine.touchpadMove(pid, ch.position.x, ch.position.y, at)
                                 }
                             } else if (pid in buttonFingers) {
                                 if (!ch.pressed) {
                                     buttonFingers.remove(pid)
-                                    runtime.engine.buttonUp(pid)
+                                    if (pointerCancel) runtime.engine.buttonCancel(pid) else runtime.engine.buttonUp(pid)
                                 } else if (ch.position != ch.previousPosition) {
-                                    runtime.engine.buttonMove(pid, ch.position.x, ch.position.y)
+                                    runtime.engine.buttonMove(pid, ch.position.x, ch.position.y, at)
                                 }
                             } else if (ch.id in cornerOwner) {
                                 if (!ch.pressed) {
                                     val id = cornerOwner.remove(ch.id)
-                                    // A tap: pressed and released without the other corner (no chord).
-                                    if (id != null && !chordFired[0] && cornerOwner.isEmpty()) stepFrom(id)
+                                    // A tap: pressed and released on the corner without the other corner (no chord).
+                                    if (id != null && !pointerCancel && !chordFired[0] && cornerOwner.isEmpty() &&
+                                        onCorner(id, ch.position)
+                                    ) {
+                                        stepFrom(id)
+                                    }
                                 }
                             } else {
                                 val stickId = stickOwner[ch.id]
@@ -537,32 +603,31 @@ fun PadScreen(
                                         stickOwner.remove(ch.id)
                                         runtime.engine.setTouchStick(stickId, 0f, 0f)
                                         stickPos.remove(stickId)
-                                    } else {
+                                        heldSticks = heldSticks - stickId
+                                    } else if (ch.position != ch.previousPosition) {
                                         val c = controls.firstOrNull { it.id == stickId }
-                                        if (c != null) {
-                                            var d = (ch.position - stickCenters.getValue(stickId)) / half(c)
-                                            val len = hypot(d.x, d.y)
-                                            if (len > 1f) d /= len
-                                            runtime.engine.setTouchStick(stickId, d.x, d.y)
-                                            stickPos[stickId] = d
-                                        }
+                                        if (c != null) deflect(c, ch.position)
                                     }
                                 }
                             }
                             ch.consume()
                         }
-                        val held = cornerOwner.values.toSet()
-                        if (held != cornersHeld) cornersHeld = held
-                        if (NavCorners.PREV in held && NavCorners.NEXT in held) {
-                            if (!chordFired[0]) {
-                                chordFired[0] = true
-                                setFullscreen(!isFullscreen)
+                        // Only touch-downs and lifts change ownership; holds, pulses and lift commits
+                        // between events are kept right by the highlight poll.
+                        if (event.changes.any { it.pressed != it.previousPressed }) {
+                            val held = cornerOwner.values.toSet()
+                            if (held != cornersHeld) cornersHeld = held
+                            if (NavCorners.PREV in held && NavCorners.NEXT in held) {
+                                if (!chordFired[0]) {
+                                    chordFired[0] = true
+                                    setFullscreen(!isFullscreen)
+                                }
+                            } else if (event.changes.none { it.pressed }) {
+                                chordFired[0] = false
                             }
-                        } else if (event.changes.none { it.pressed }) {
-                            chordFired[0] = false
+                            if (fingersOnButtons != buttonFingers.size) fingersOnButtons = buttonFingers.size
+                            refreshHighlights()
                         }
-                        if (fingersOnButtons != buttonFingers.size) fingersOnButtons = buttonFingers.size
-                        refreshHighlights()
                     }
                 }
             }
@@ -604,11 +669,12 @@ fun PadScreen(
                     }
                 }
             }
+            val labels = remember(ws, editing) { ws.touchControls.associate { it.id to controlLabel(ws, it, editing) } }
             for (c in ws.touchControls) {
                 val r = half(c)
                 val ctr = center(c)
                 val isSelected = editing && selected == c.id
-                val isPressed = !editing && (c.id in pressedIds || stickPos.containsKey(c.id))
+                val isPressed = !editing && (c.id in pressedIds || c.id in heldSticks)
                 val isLatched = !editing && c.id in latchedIds
                 val tint = when {
                     isSelected -> Color(0xFFFFC857)
@@ -618,11 +684,11 @@ fun PadScreen(
                 }
                 PadControl(
                     control = c,
-                    label = controlLabel(ws, c, editing),
+                    label = labels[c.id] ?: "",
                     sizeDp = with(density) { (r * 2).toDp() },
                     tint = tint,
                     filled = isPressed || isSelected || isLatched,
-                    knob = stickPos[c.id] ?: Offset.Zero,
+                    knob = { stickPos[c.id] ?: Offset.Zero },
                     knobRadiusPx = r * 0.6f,
                     modifier = Modifier
                         .offset { IntOffset((ctr.x - r).roundToInt(), (ctr.y - r).roundToInt()) }
@@ -656,7 +722,7 @@ fun PadScreen(
                     sizeDp = with(density) { (r * 2).toDp() },
                     tint = tint,
                     filled = isPressed || isSelected || gyroOn,
-                    knob = Offset.Zero,
+                    knob = { Offset.Zero },
                     knobRadiusPx = 0f,
                     modifier = Modifier
                         .offset { IntOffset((ctr.x - r).roundToInt(), (ctr.y - r).roundToInt()) }
@@ -1055,7 +1121,8 @@ private fun PadControl(
     sizeDp: Dp,
     tint: Color,
     filled: Boolean,
-    knob: Offset,
+    /** Read while placing the knob only, so stick motion does not recompose the pad. */
+    knob: () -> Offset,
     knobRadiusPx: Float,
     modifier: Modifier = Modifier,
 ) {
@@ -1070,7 +1137,10 @@ private fun PadControl(
         if (control.kind == TouchKind.STICK) {
             Box(
                 Modifier
-                    .offset { IntOffset((knob.x * knobRadiusPx).roundToInt(), (knob.y * knobRadiusPx).roundToInt()) }
+                    .offset {
+                        val k = knob()
+                        IntOffset((k.x * knobRadiusPx).roundToInt(), (k.y * knobRadiusPx).roundToInt())
+                    }
                     .size(sizeDp / 2.5f)
                     .background(tint.copy(alpha = 0.6f), CircleShape),
             )

@@ -61,7 +61,7 @@ data class GamepadState(
 
 data class KeyboardState(
     val modifiers: Int = 0,
-    /** Up to six non-modifier HID usages, in press order. */
+    /** Up to six non-modifier HID usages, in press order (see [HidState.allKeys]). */
     val keys: List<Int> = emptyList(),
 ) {
     fun encode(): ByteArray {
@@ -105,11 +105,17 @@ data class MouseState(
     }
 }
 
-/** Everything the phone currently reports to the host. */
+/**
+ * Everything the phone currently reports to the host. [allKeys] is every held non-modifier usage
+ * in press order, for Wi-Fi's full key bitmap; [keyboard] keeps the first six for the Bluetooth
+ * report (kept apart so that report and its change detection ignore a seventh key). A copy that
+ * replaces [keyboard] must pass [allKeys] too, or Wi-Fi keeps sending the old keys.
+ */
 data class HidState(
     val gamepad: GamepadState = GamepadState(),
     val keyboard: KeyboardState = KeyboardState(),
     val mouse: MouseState = MouseState(),
+    val allKeys: List<Int> = keyboard.keys,
 )
 
 private fun putInt16(out: ByteArray, offset: Int, value: Int) {

@@ -1,16 +1,13 @@
 package com.oleroma.gyrophone.hid
 
 import com.oleroma.gyrophone.core.engine.MappingEngine
-import com.oleroma.gyrophone.core.hid.GamepadState
-import com.oleroma.gyrophone.core.hid.HidDescriptor
-import com.oleroma.gyrophone.core.hid.KeyboardState
-import com.oleroma.gyrophone.core.hid.MouseState
+import com.oleroma.gyrophone.core.hid.ReportScheduler
 import java.util.concurrent.locks.LockSupport
 
 /**
  * Dedicated thread that snapshots the mapping engine at a fixed interval and sends only what
  * changed. Mouse motion accumulates between ticks, so a fast gyro never floods the Bluetooth
- * queue; game pad and keyboard reports go out only on change.
+ * queue; game pad and keyboard reports go out only on change (and once a second while idle).
  *
  * The rate matters: sendReport() only enqueues, and Android gives no "sent" callback. If we
  * enqueue faster than the Bluetooth link drains, reports pile up in the stack and every new
@@ -18,9 +15,9 @@ import java.util.concurrent.locks.LockSupport
  *
  * On the OnePlus 15 the stack keeps the HID link in sniff mode (it re-enters sniff after every
  * report and cannot be told not to), which allows roughly one packet per sniff interval. So
- * each tick sends at most ONE report: keyboard changes first, then mouse button changes, then
- * game pad and mouse take turns. Mouse motion that is not sent yet keeps accumulating, so
- * nothing is lost or queued.
+ * each tick sends at most ONE report, chosen by [ReportScheduler], and two reports are never
+ * closer than one interval. After a tick that sent nothing, input (the engine's onChange) ends
+ * the wait early instead of waiting for the next tick on the grid.
  */
 class ReportPump(
     private val engine: MappingEngine,
@@ -28,22 +25,23 @@ class ReportPump(
     @Volatile var intervalNanos: Long = DEFAULT_INTERVAL_NANOS,
 ) {
     @Volatile private var running = false
-    private var thread: Thread? = null
+    /** The current loop's thread; a loop whose thread is no longer this one exits. */
+    @Volatile private var thread: Thread? = null
+    /** Report state of the current loop; a fresh one per start(). */
+    @Volatile private var scheduler = ReportScheduler(::send)
+    /** Set by [invalidate]; the pump thread resets [scheduler] before its next snapshot. */
+    @Volatile private var invalidated = false
+    /** The loop sent nothing on its last tick and is waiting: input may end the wait. */
+    @Volatile private var idleWaiting = false
+    @Volatile private var inputArrived = false
 
-    @Volatile private var lastGamepad: GamepadState? = null
-    @Volatile private var lastKeyboard: KeyboardState? = null
-    private var lastMouseButtons = 0
-    private var pendingDx = 0
-    private var pendingDy = 0
-    /** Wheel and pan not yet reported, in 1/120 notch. */
-    private var pendingWheel = 0
-    private var pendingPan = 0
-    private var mouseButtons = 0
-    private var mouseTurn = false
-    /** Mouse buttons pressed in a snapshot but not yet reported to the host. */
-    private var latchedDown = 0
-    /** Mouse buttons released in a snapshot but not yet reported to the host. */
-    private var latchedUp = 0
+    /** Set as `engine.onChange` while running; wakes the loop only while it waits idle. */
+    private val wake = Runnable {
+        if (idleWaiting) {
+            inputArrived = true
+            LockSupport.unpark(thread)
+        }
+    }
 
     /** Reports handed to the stack / refused by it during the last full second. */
     @Volatile var sentPerSecond = 0
@@ -55,10 +53,8 @@ class ReportPump(
     private var statsWindowStart = 0L
 
     /** Latest encoded reports, for GET_REPORT requests from the host. */
-    @Volatile var lastGamepadReport: ByteArray = GamepadState().encode()
-        private set
-    @Volatile var lastKeyboardReport: ByteArray = KeyboardState().encode()
-        private set
+    val lastGamepadReport: ByteArray get() = scheduler.lastGamepadReport
+    val lastKeyboardReport: ByteArray get() = scheduler.lastKeyboardReport
 
     /**
      * The mouse feature report the host last set: which resolution multipliers are on. Until the
@@ -70,38 +66,72 @@ class ReportPump(
     fun start() {
         if (running) return
         running = true
-        thread = Thread({ loop() }, "hid-report-pump").apply {
-            priority = Thread.MAX_PRIORITY
-            start()
-        }
+        invalidated = false
+        val s = ReportScheduler(::send)
+        scheduler = s
+        val t = Thread({ loop(s) }, "hid-report-pump").apply { priority = Thread.MAX_PRIORITY }
+        thread = t
+        engine.onChange = wake
+        t.start()
     }
 
     fun stop() {
+        val t = thread ?: return
         running = false
-        thread?.interrupt()
         thread = null
+        if (engine.onChange === wake) engine.onChange = null
+        t.interrupt()
+        try {
+            t.join(STOP_JOIN_MS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+        sentPerSecond = 0
+        failedPerSecond = 0
     }
 
-    /** Forces a full re-send on the next tick (after a host connects). */
+    /** Forces a full re-send on the next tick (after a host connects); safe from any thread. */
     fun invalidate() {
-        lastGamepad = null
-        lastKeyboard = null
-        pendingDx = 0; pendingDy = 0; pendingWheel = 0; pendingPan = 0
-        latchedDown = 0; latchedUp = 0
+        invalidated = true
     }
 
-    private fun loop() {
+    private fun loop(s: ReportScheduler) {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
-        while (running) {
+        val me = Thread.currentThread()
+        while (running && thread === me) {
             val start = System.nanoTime()
-            if (hid.isConnected) tick() else engine.snapshot() // drain motion while idle
+            val connected = hid.isConnected
+            val sent = if (connected) tick(s, start) else {
+                engine.snapshot() // drain motion while idle
+                false
+            }
             if (start - statsWindowStart >= 1_000_000_000L) {
                 sentPerSecond = sentCount; failedPerSecond = failedCount
                 sentCount = 0; failedCount = 0; statsWindowStart = start
             }
-            val sleep = intervalNanos - (System.nanoTime() - start)
-            if (sleep > 0) LockSupport.parkNanos(sleep)
+            waitUntil(s, start + intervalNanos, me, inputWakes = connected && !sent)
         }
+    }
+
+    /**
+     * Parks until the periodic tick at [tickAt]. With [inputWakes] (the last tick sent nothing),
+     * input shortens the wait: the loop then ticks as soon as the last report is one interval
+     * old. Early returns from park (a stale unpark) never shorten it otherwise.
+     */
+    private fun waitUntil(s: ReportScheduler, tickAt: Long, me: Thread, inputWakes: Boolean) {
+        var wakeAt = tickAt
+        inputArrived = false
+        idleWaiting = inputWakes
+        while (running && thread === me) {
+            if (inputWakes && inputArrived) {
+                inputArrived = false
+                wakeAt = ReportScheduler.inputTickAt(wakeAt, s.lastSendNanos, intervalNanos)
+            }
+            val wait = wakeAt - System.nanoTime()
+            if (wait <= 0) break
+            LockSupport.parkNanos(wait)
+        }
+        idleWaiting = false
     }
 
     private fun send(reportId: Int, bytes: ByteArray): Boolean {
@@ -110,67 +140,13 @@ class ReportPump(
         return ok
     }
 
-    private fun tick() {
-        val s = engine.snapshot()
-        pendingDx += s.mouse.dx
-        pendingDy += s.mouse.dy
-        pendingWheel += s.mouse.wheel
-        pendingPan += s.mouse.hwheel
-        // Edges that have not reached the host yet stay latched, so a skipped turn or failed send
-        // cannot lose a click: a release goes out before a press that followed it (double click).
-        val b = s.mouse.buttons
-        latchedUp = latchedUp or (lastMouseButtons and b.inv())
-        latchedDown = latchedDown or (b and (lastMouseButtons.inv() or latchedUp))
-        mouseButtons = if (latchedUp != 0) lastMouseButtons and latchedUp.inv() else b or latchedDown
-
-        val padDirty = s.gamepad != lastGamepad
-        val feature = mouseFeature
-        val mouseDirty = pendingDx != 0 || pendingDy != 0 || mouseButtons != lastMouseButtons ||
-            wheelOut(pendingWheel, HidDescriptor.wheelHiRes(feature)) != 0 ||
-            wheelOut(pendingPan, HidDescriptor.panHiRes(feature)) != 0
-        when {
-            s.keyboard != lastKeyboard -> {
-                val bytes = s.keyboard.encode()
-                if (send(HidDescriptor.REPORT_ID_KEYBOARD, bytes)) {
-                    lastKeyboard = s.keyboard
-                    lastKeyboardReport = bytes
-                }
-            }
-            mouseButtons != lastMouseButtons -> sendMouse() // click edges go out on the next tick
-            padDirty && !(mouseDirty && mouseTurn) -> {
-                val bytes = s.gamepad.encode()
-                if (send(HidDescriptor.REPORT_ID_GAMEPAD, bytes)) {
-                    lastGamepad = s.gamepad
-                    lastGamepadReport = bytes
-                }
-                mouseTurn = true
-            }
-            mouseDirty -> sendMouse()
+    /** One snapshot, at most one report. Returns whether a report was handed to the stack. */
+    private fun tick(s: ReportScheduler, now: Long): Boolean {
+        if (invalidated) {
+            invalidated = false
+            s.reset()
         }
-    }
-
-    /** Pending 1/120-notch travel as the host reads it now: as is, or in whole notches (rest stays pending). */
-    private fun wheelOut(pending: Int, hiRes: Boolean): Int =
-        if (hiRes) pending.coerceIn(-MOUSE_MAX, MOUSE_MAX)
-        else (pending / MouseState.WHEEL_UNIT).coerceIn(-MAX_NOTCHES, MAX_NOTCHES)
-
-    private fun sendMouse() {
-        val dx = pendingDx.coerceIn(-MOUSE_MAX, MOUSE_MAX)
-        val dy = pendingDy.coerceIn(-MOUSE_MAX, MOUSE_MAX)
-        val feature = mouseFeature
-        val wheelHiRes = HidDescriptor.wheelHiRes(feature)
-        val panHiRes = HidDescriptor.panHiRes(feature)
-        val wheel = wheelOut(pendingWheel, wheelHiRes)
-        val pan = wheelOut(pendingPan, panHiRes)
-        val report = MouseState.report(mouseButtons, dx, dy, wheel, pan)
-        if (send(HidDescriptor.REPORT_ID_MOUSE, report)) {
-            pendingDx -= dx; pendingDy -= dy
-            pendingWheel -= if (wheelHiRes) wheel else wheel * MouseState.WHEEL_UNIT
-            pendingPan -= if (panHiRes) pan else pan * MouseState.WHEEL_UNIT
-            lastMouseButtons = mouseButtons
-            if (latchedUp != 0) latchedUp = 0 else latchedDown = 0
-        }
-        mouseTurn = false
+        return s.tick(engine.snapshot(), now, mouseFeature)
     }
 
     companion object {
@@ -180,8 +156,7 @@ class ReportPump(
          */
         val RATES_HZ = intArrayOf(30, 45, 60, 75, 90)
         const val DEFAULT_RATE_HZ = 60
-        private const val MOUSE_MAX = 32767
-        private const val MAX_NOTCHES = 127
         const val DEFAULT_INTERVAL_NANOS = 1_000_000_000L / DEFAULT_RATE_HZ
+        private const val STOP_JOIN_MS = 500L
     }
 }

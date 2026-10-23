@@ -123,6 +123,32 @@ public class KeyPairingTests
     }
 
     [Fact]
+    public void OwnKeySessionIsNotBusy()
+    {
+        using var hostKey = P256.FromPrivateScalar(K.Bytes("hostPrivD"));
+        var h = new Harness(pairDefault: false, hostKey: hostKey);
+        h.Engine.SetAuthorizedPhones([new AuthorizedPhone("p.pub", new PubKeyFile(K.Bytes("pkP"), "p"))]);
+        var phone = FakePhone.Paired(K.Bytes("keyPhoneId"), "OnePlus 15", K.Bytes("pairKey"));
+        h.Connect(phone);
+        Assert.True(h.Engine.Snapshot().Connected);
+
+        // The app's own DISCOVER: store phone id plus its key id. Not busy for the phone that holds the session.
+        Assert.Equal(0, AnnounceFlagsFor(h, phone) & AnnounceFlags.Busy);
+        // The session flow's DISCOVER names the key phone id itself.
+        var b = new byte[Wire.DiscoverSize];
+        WireCodec.EncodeDiscover(new Discover(3, K.Bytes("keyPhoneId"), 0), b);
+        Assert.True(WireCodec.TryDecodeAnnounce(h.Send(phone, b)!, out var a));
+        Assert.Equal(0, a.Flags & AnnounceFlags.Busy);
+        // Another phone (another key id, or none) still sees BUSY.
+        var other = new byte[Wire.DiscoverSize];
+        WireCodec.EncodeDiscover(new Discover(4, Hex.Range(0x70, 16), 0, K.Bytes("hostKeyId"), Hex.Range(0x01, 8)), other);
+        Assert.True(WireCodec.TryDecodeAnnounce(h.Send(phone, other)!, out a));
+        Assert.NotEqual(0, a.Flags & AnnounceFlags.Busy);
+        Assert.True(WireCodec.TryDecodeAnnounce(h.Send(phone, new FakePhone(Hex.Range(0x70, 16), "x").Discover())!, out a));
+        Assert.NotEqual(0, a.Flags & AnnounceFlags.Busy);
+    }
+
+    [Fact]
     public void KeyPhoneSkipsTheFirstRunPairingWindow()
     {
         using var hostKey = P256.Generate();
@@ -204,5 +230,37 @@ public class PhoneWatchTests
         other[3] = PacketType.Hello; // not a DISCOVER
         Assert.False(w.IsKnownPhone(other));
         Assert.True(new PhoneWatch([], []).Empty);
+    }
+
+    [Fact]
+    public void LoadKnowsKeySessionPhoneIds()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "gp-watch-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var files = new KeyFiles(dir);
+            Directory.CreateDirectory(files.AuthorizedDirectory);
+            File.WriteAllText(Path.Combine(files.AuthorizedDirectory, "OnePlus 15.pub"), K.Str("phoneFile") + "\n");
+            var settings = Path.Combine(dir, "settings.json");
+            // The key session flow's DISCOVER: keyPhoneId as the phone id, no key ids.
+            var flowDiscover = Discover(K.Bytes("keyPhoneId"));
+
+            // No host.pub yet: only the key id counts, nothing throws.
+            var w = PhoneWatch.Load(settings, files);
+            Assert.False(w.IsKnownPhone(flowDiscover));
+            Assert.True(w.IsKnownPhone(Discover(Hex.Range(0x70, 16), K.Bytes("phoneKeyId"))));
+
+            File.WriteAllText(files.HostPubPath, "garbage");
+            Assert.False(PhoneWatch.Load(settings, files).IsKnownPhone(flowDiscover));
+
+            File.WriteAllText(files.HostPubPath, new PubKeyFile(K.Bytes("pkH"), "OLEX").Format());
+            w = PhoneWatch.Load(settings, files);
+            Assert.True(w.IsKnownPhone(flowDiscover));
+            Assert.False(w.IsKnownPhone(Discover(Hex.Range(0x70, 16))));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
     }
 }

@@ -25,14 +25,17 @@ interface GyroSource {
 
     companion object {
         /**
-         * Lowest-latency path available without root: the sensor direct channel (shared memory
-         * written by the sensor HAL, no Binder or Looper hop) at its highest rate, falling back
-         * to a listener at SENSOR_DELAY_FASTEST on a high-priority thread.
+         * Fresh sources to try in order, best first. Lowest-latency path available without root:
+         * the sensor direct channel (shared memory written by the sensor HAL, no Binder or Looper
+         * hop) at its highest rate, when supported; then a listener at SENSOR_DELAY_FASTEST on a
+         * high-priority thread, used when the direct channel cannot start (or runs capped, see
+         * GamepadRuntime). Empty when the phone has no gyroscope.
          */
-        fun best(sensorManager: SensorManager): GyroSource? {
-            val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) ?: return null
+        fun candidates(sensorManager: SensorManager): List<GyroSource> {
+            val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) ?: return emptyList()
             val direct = DirectChannelGyroSource(sensorManager, sensor)
-            return if (direct.isSupported) direct else ListenerGyroSource(sensorManager, sensor)
+            val listener = ListenerGyroSource(sensorManager, sensor)
+            return if (direct.isSupported) listOf(direct, listener) else listOf(listener)
         }
     }
 }
@@ -61,7 +64,8 @@ class ListenerGyroSource(
 
     override fun stop() {
         listener?.let { sensorManager.unregisterListener(it) }
-        thread?.quitSafely()
+        // Let a callback already running finish, so the next source never overlaps this one.
+        thread?.let { it.quitSafely(); it.join(50) }
         listener = null; thread = null
     }
 }
@@ -91,19 +95,25 @@ class DirectChannelGyroSource(
 
     override fun start(sink: GyroSink): Boolean {
         val size = EVENTS * DirectReportParser.EVENT_SIZE
+        var mem: MemoryFile? = null
+        var ch: SensorDirectChannel? = null
         return try {
-            val mem = MemoryFile("gyrophone-gyro", size)
-            val ch = sensorManager.createDirectChannel(mem)
-            val token = ch.configure(sensor, rateLevel)
-            if (token <= 0) { ch.close(); mem.close(); return false }
-            memory = mem; channel = ch; running = true
-            thread = Thread({ poll(mem, token, size, sink) }, "gyro-direct").apply {
+            val m = MemoryFile("gyrophone-gyro", size).also { mem = it }
+            val c = sensorManager.createDirectChannel(m).also { ch = it }
+            val token = c.configure(sensor, rateLevel)
+            if (token <= 0) { c.close(); m.close(); return false }
+            memory = m; channel = c; running = true
+            thread = Thread({ poll(m, token, size, sink) }, "gyro-direct").apply {
                 priority = Thread.MAX_PRIORITY
                 start()
             }
             true
         } catch (e: Exception) {
             Log.w(TAG, "direct channel unavailable", e)
+            // Closing the channel also stops it if configure() had started it.
+            running = false; memory = null; channel = null; thread = null
+            runCatching { ch?.close() }
+            runCatching { mem?.close() }
             false
         }
     }
@@ -128,7 +138,8 @@ class DirectChannelGyroSource(
         running = false
         thread?.join(50)
         thread = null
-        channel?.let { it.configure(sensor, SensorDirectChannel.RATE_STOP); it.close() }
+        // Stopped and recreated on every pause: a failed stop must not crash, close() still frees it.
+        channel?.let { runCatching { it.configure(sensor, SensorDirectChannel.RATE_STOP) }; it.close() }
         memory?.close()
         channel = null; memory = null
     }
