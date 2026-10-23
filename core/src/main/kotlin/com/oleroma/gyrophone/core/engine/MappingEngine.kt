@@ -16,6 +16,7 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.StickAxis
+import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Workspace
 import java.util.BitSet
 import kotlin.math.abs
@@ -124,6 +125,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private val bpDownNs = LongArray(MAX_BUTTON_FINGERS)
     /** Pressed at once on touch-down (touchpadOverButtons off), so a quick release is a tap. */
     private val bpImmediate = BooleanArray(MAX_BUTTON_FINGERS)
+    /** Click-through touch buttons of the workspace: pressed and driving the touchpad at once. */
+    private var clickThroughIds: Set<String> = emptySet()
 
     /** A still tap committed on lift: pressed until a snapshot has shown it for the minimum pulse. */
     private class Pulse(val id: String, val startNs: Long) { var seen = false }
@@ -173,6 +176,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         touchMappings = w.mappings
         padMappings = Array(w.pads.size + 1) { if (it < w.pads.size) w.pads[it].mappings else w.keyboard }
         modifierIds = if (w.stickyModifiers) modifierControls(w.mappings) else emptySet()
+        clickThroughIds = w.touchControls.filter { it.kind == TouchKind.BUTTON && it.clickThrough }.mapTo(HashSet()) { it.id }
         releaseHeld()
         for (d in deviceList) d.pad = resolvePad(d.device)
         touchpad.settings = w.touchpad
@@ -254,8 +258,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /**
      * A finger landed on touch control [id] (BUTTON kind) at [x], [y] px of the pad area. With
-     * the workspace's touchpadOverButtons off it presses at once; on, it presses on a still lift,
-     * after a still hold, or becomes a touchpad finger when it moves. [pointer] is the finger id.
+     * the workspace's touchpadOverButtons off it presses at once; on, it moves the cursor at once
+     * and presses the button only as a tap (a still lift within the workspace's buttonTapMs). A
+     * click-through control presses at once and its finger also moves the cursor until it lifts.
+     * [pointer] is the finger id.
      */
     fun buttonDown(pointer: Long, id: String, x: Float, y: Float) {
         synchronized(lock) {
@@ -266,12 +272,18 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (slot < 0) return@firingEvents
                 bpPointer[slot] = pointer; bpControl[slot] = id
                 bpDownX[slot] = x; bpDownY[slot] = y; bpDownNs[slot] = now
-                bpImmediate[slot] = !ws.touchpadOverButtons
-                if (bpImmediate[slot]) {
+                bpImmediate[slot] = id in clickThroughIds || !ws.touchpadOverButtons
+                if (id in clickThroughIds) {
+                    bpState[slot] = BP_THROUGH
+                    press(id)
+                    touchpad.down(pointer, x, y, now, aiming = true)
+                } else if (bpImmediate[slot]) {
                     bpState[slot] = BP_PRESSED
                     press(id)
                 } else {
+                    // Touchpad over buttons: a cursor finger at once, a key only if it taps.
                     bpState[slot] = BP_PENDING
+                    touchpad.down(pointer, x, y, now, aiming = true)
                 }
             }
         }
@@ -287,16 +299,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (slot < 0) return@firingEvents
                 when (bpState[slot]) {
                     BP_PENDING -> {
+                        touchpad.move(pointer, x, y, now)
                         val ddx = x - bpDownX[slot]; val ddy = y - bpDownY[slot]
                         val slop = BUTTON_SLOP_DP * touchpad.pxPerDp
-                        if (ddx * ddx + ddy * ddy > slop * slop) {
-                            // A touchpad finger from where it is now. It is dated past the tap
-                            // window, so lifting it never clicks: the finger came to move.
-                            bpState[slot] = BP_TOUCHPAD
-                            touchpad.down(pointer, x, y, now - Touchpad.TAP_MAX_NS - 1)
-                        }
+                        // Moved too far to be a tap: only a touchpad finger now.
+                        if (ddx * ddx + ddy * ddy > slop * slop) bpState[slot] = BP_TOUCHPAD
                     }
-                    BP_TOUCHPAD -> touchpad.move(pointer, x, y, now)
+                    BP_TOUCHPAD, BP_THROUGH -> touchpad.move(pointer, x, y, now)
                     else -> Unit
                 }
             }
@@ -313,12 +322,18 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (slot < 0) return@firingEvents
                 val id = bpControl[slot]!!
                 when (bpState[slot]) {
-                    // Still and short: the tap commits now.
-                    BP_PENDING -> if (id in modifierIds) modifierTap(id, now) else {
-                        pulses.add(Pulse(id, now))
-                        press(id)
+                    // Still and short: the tap commits now. Longer is only a touchpad touch.
+                    BP_PENDING -> {
+                        touchpad.up(pointer, now)
+                        if (now - bpDownNs[slot] <= ws.buttonTapMs * 1_000_000L) {
+                            if (id in modifierIds) modifierTap(id, now) else {
+                                pulses.add(Pulse(id, now))
+                                press(id)
+                            }
+                        }
                     }
-                    BP_PRESSED -> {
+                    BP_PRESSED, BP_THROUGH -> {
+                        if (bpState[slot] == BP_THROUGH) touchpad.up(pointer, now)
                         release(id)
                         if (id in modifierIds) modifierUp(id, bpImmediate[slot] && now - bpDownNs[slot] < BUTTON_HOLD_NS, now)
                     }
@@ -434,7 +449,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     fun touchpadCancel() {
         synchronized(lock) {
             // Button fingers that became touchpad fingers are gone with the gesture.
-            for (i in 0 until MAX_BUTTON_FINGERS) if (bpState[i] == BP_TOUCHPAD) { bpState[i] = BP_FREE; bpControl[i] = null }
+            for (i in 0 until MAX_BUTTON_FINGERS) {
+                if (bpState[i] == BP_TOUCHPAD || bpState[i] == BP_PENDING) { bpState[i] = BP_FREE; bpControl[i] = null }
+            }
+            // Click-through fingers keep their button; only the cursor part ends.
+            for (i in 0 until MAX_BUTTON_FINGERS) if (bpState[i] == BP_THROUGH) bpState[i] = BP_PRESSED
             touchpad.cancel(clock())
         }
         onChange?.run()
@@ -452,11 +471,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /**
      * When the engine next needs a snapshot without new input (Long.MAX_VALUE = never): touchpad
-     * timers, a button finger's hold, a tap's release.
+     * timers, a tap's release.
      */
     fun touchpadDeadlineNanos(): Long = synchronized(lock) {
         var d = touchpad.nextDeadline()
-        for (i in 0 until MAX_BUTTON_FINGERS) if (bpState[i] == BP_PENDING) d = min(d, bpDownNs[i] + BUTTON_HOLD_NS)
         for (i in pulses.indices) d = min(d, pulses[i].startNs + touchpad.minPulseNanos)
         d
     }
@@ -624,21 +642,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     private fun buttonsDue(now: Long): Boolean {
-        for (i in 0 until MAX_BUTTON_FINGERS) if (bpState[i] == BP_PENDING && now - bpDownNs[i] >= BUTTON_HOLD_NS) return true
         for (i in pulses.indices) if (pulseDone(pulses[i], now)) return true
         return false
     }
 
     private fun pulseDone(p: Pulse, now: Long) = p.seen && now - p.startNs >= touchpad.minPulseNanos
 
-    /** A still finger held past the hold time presses its key until lift; shown taps release. */
+    /** Shown taps release. */
     private fun resolveButtons(now: Long) {
-        for (i in 0 until MAX_BUTTON_FINGERS) {
-            if (bpState[i] == BP_PENDING && now - bpDownNs[i] >= BUTTON_HOLD_NS) {
-                bpState[i] = BP_PRESSED
-                press(bpControl[i]!!)
-            }
-        }
         var i = 0
         while (i < pulses.size) {
             val p = pulses[i]
@@ -683,11 +694,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** A latched modifier now applies to this key; held modifiers are being used as a chord. */
     private fun nonModifierPressed() {
         for (l in latches.values) if (l.state == LATCH_ON) l.state = LATCH_USED
-        // A modifier finger still deciding between tap and hold is part of this chord: held now.
+        // A modifier finger that could still be a tap is part of this chord: held now, and still
+        // moving the cursor.
         for (i in 0 until MAX_BUTTON_FINGERS) {
             val c = bpControl[i]
             if (bpState[i] == BP_PENDING && c != null && c in modifierIds) {
-                bpState[i] = BP_PRESSED
+                bpState[i] = BP_THROUGH
                 press(c)
             }
         }
@@ -776,16 +788,19 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
         /** Touchpad over buttons: a finger that moves further than this becomes a touchpad finger. */
         const val BUTTON_SLOP_DP = 10f
-        /** Touchpad over buttons: a still finger held this long holds the key. Also the longest sticky-modifier tap. */
+        /** The longest sticky-modifier tap of a key that presses at once. */
         const val BUTTON_HOLD_NS = 300_000_000L
         /** Sticky modifiers: a second tap within this of the first locks the modifier. */
         const val STICKY_DOUBLE_TAP_NS = 400_000_000L
         private const val MAX_BUTTON_FINGERS = 10
 
         private const val BP_FREE = 0
+        /** Touchpad over buttons: a touchpad finger that is still a tap candidate. */
         private const val BP_PENDING = 1
         private const val BP_PRESSED = 2
         private const val BP_TOUCHPAD = 3
+        /** Click-through: pressed and a touchpad finger. */
+        private const val BP_THROUGH = 4
 
         private const val LATCH_NONE = 0
         /** Latched for the next non-modifier key. */

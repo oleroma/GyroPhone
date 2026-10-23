@@ -31,6 +31,7 @@ import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.runtime.GamepadRuntime
+import kotlin.math.roundToInt
 
 /**
  * Gyro and touchpad settings of the active profile's workspace [index]. Edits go
@@ -142,8 +143,17 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
 
     HorizontalDivider()
     Text("Touch keys", style = MaterialTheme.typography.titleSmall)
-    SwitchRow("Touchpad over buttons (a moving finger on a key moves the cursor)", ws.touchpadOverButtons) { v ->
+    SwitchRow("Touchpad over buttons (a finger on a key moves the cursor; a quick tap presses it)", ws.touchpadOverButtons) { v ->
         editWs { it.copy(touchpadOverButtons = v) }
+    }
+    if (ws.touchpadOverButtons) {
+        var tapMs by remember(key) { mutableStateOf(ws.buttonTapMs.toFloat()) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Tap up to %.0f ms".format(tapMs), Modifier.padding(end = 8.dp))
+            Slider(value = tapMs, onValueChange = { tapMs = (it / 10f).roundToInt() * 10f },
+                valueRange = Workspace.MIN_BUTTON_TAP_MS.toFloat()..Workspace.MAX_BUTTON_TAP_MS.toFloat(),
+                onValueChangeFinished = { editWs { it.copy(buttonTapMs = tapMs.roundToInt()) } })
+        }
     }
     SwitchRow("Sticky modifiers (tap Shift, Ctrl… for the next key; double tap locks)", ws.stickyModifiers) { v ->
         editWs { it.copy(stickyModifiers = v) }

@@ -33,6 +33,11 @@ data class TouchControl(
     val shape: TouchShape = TouchShape.CIRCLE,
     /** Portrait placement; null = derived from the landscape one. Keep last (positional callers). */
     val portrait: Placement? = null,
+    /**
+     * Click-through (BUTTON kind): the finger presses at once and also moves the cursor like a
+     * touchpad finger until it lifts, like a fire button you aim with in mobile shooters.
+     */
+    val clickThrough: Boolean = false,
 ) {
     companion object {
         const val MIN_SIZE = 0.06f
