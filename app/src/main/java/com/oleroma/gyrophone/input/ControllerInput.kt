@@ -46,10 +46,12 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             if (pressed) { runtime.learnListener = null; learn(InputSource.Key(event.keyCode)) }
             return true
         }
-        val mapped = runtime.engine.setKey(padDevice(device), event.keyCode, pressed)
         // Unmapped pad buttons must do nothing, not fall back to BACK / focus navigation.
         val fromPad = event.source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
             runtime.controllers.value.any { it.deviceId == device.id }
+        // Pad not on screen: nothing is sent, and a keyboard types into the app as usual.
+        if (!runtime.inputAllowed) return fromPad
+        val mapped = runtime.engine.setKey(padDevice(device), event.keyCode, pressed)
         return mapped || fromPad
     }
 
@@ -59,6 +61,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         ) return false
         val device = event.device ?: return false
         val learn = runtime.learnListener
+        if (learn == null && !runtime.inputAllowed) return true
         val pad = padDevice(device)
         for (axis in AndroidAxis.polled) {
             val range = device.getMotionRange(axis, event.source) ?: continue
