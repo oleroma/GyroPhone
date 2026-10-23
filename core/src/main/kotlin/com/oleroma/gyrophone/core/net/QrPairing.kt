@@ -134,6 +134,9 @@ enum class EnrollResult {
 /**
  * The phone side of QR code pairing: KEY_ENROLL every [Wire.QR_RETX_MS] to the QR's addresses and
  * the broadcast targets until a matching KEY_ENROLL_ACK arrives or [Wire.QR_GIVE_UP_MS] passes.
+ * EXPIRED and NO_KEY carry no MAC, and every PC on the LAN answers the broadcast, so they end the
+ * flow at once only from one of the QR's addresses; from anywhere else they are reported at
+ * [Wire.QR_GIVE_UP_MS] unless the PC in the QR code answers first.
  * Pure and single-threaded, like [PhonePairingFlow].
  */
 class QrEnrollFlow(
@@ -152,6 +155,9 @@ class QrEnrollFlow(
     private val direct = invite.addresses.mapNotNull {
         runCatching { InetSocketAddress(InetAddress.getByName(it), invite.port) }.getOrNull()
     }
+    private val directHosts = direct.mapTo(HashSet()) { it.address }
+    /** An EXPIRED or NO_KEY from an address not in the QR code (maybe another PC), held until give-up. */
+    private var strayRefusal: EnrollResult? = null
     private var startMs = 0L
     private var nextSendMs = 0L
     var finished = false
@@ -165,7 +171,7 @@ class QrEnrollFlow(
 
     fun onTick(nowMs: Long): List<Out> {
         if (finished) return emptyList()
-        if (nowMs - startMs >= Wire.QR_GIVE_UP_MS) return finish(EnrollResult.NO_ANSWER)
+        if (nowMs - startMs >= Wire.QR_GIVE_UP_MS) return finish(strayRefusal ?: EnrollResult.NO_ANSWER)
         if (nowMs < nextSendMs) return emptyList()
         nextSendMs = nowMs + Wire.QR_RETX_MS
         val buf = ByteArray(Wire.KEY_ENROLL_SIZE)
@@ -173,8 +179,8 @@ class QrEnrollFlow(
         return (direct + broadcastTargets()).distinct().map { Out.Send(buf, it) }
     }
 
-    /** A datagram that may be our KEY_ENROLL_ACK. */
-    fun onDatagram(buf: ByteArray, len: Int): List<Out> {
+    /** A datagram from [from] that may be our KEY_ENROLL_ACK. */
+    fun onDatagram(buf: ByteArray, len: Int, from: InetSocketAddress): List<Out> {
         if (finished) return emptyList()
         val a = WireCodec.decodePlain(buf, len) as? KeyEnrollAck ?: return emptyList()
         if (a.reqId != reqId || !a.tokenId.contentEquals(tokenId)) return emptyList()
@@ -182,10 +188,17 @@ class QrEnrollFlow(
         return when (a.status) {
             EnrollStatus.OK -> if (macOk) finish(EnrollResult.OK) else emptyList()
             EnrollStatus.USED -> if (macOk) finish(EnrollResult.USED) else emptyList()
-            EnrollStatus.EXPIRED -> finish(EnrollResult.EXPIRED)
-            EnrollStatus.NO_KEY -> finish(EnrollResult.NO_KEY)
+            EnrollStatus.EXPIRED -> refused(EnrollResult.EXPIRED, from)
+            EnrollStatus.NO_KEY -> refused(EnrollResult.NO_KEY, from)
             else -> emptyList()
         }
+    }
+
+    private fun refused(r: EnrollResult, from: InetSocketAddress): List<Out> {
+        if (from.address in directHosts) return finish(r)
+        // EXPIRED is the likelier answer of the scanned PC itself, so it wins over NO_KEY.
+        if (strayRefusal != EnrollResult.EXPIRED) strayRefusal = r
+        return emptyList()
     }
 
     fun cancel() {
