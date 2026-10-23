@@ -10,14 +10,18 @@ import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.util.Log
 import com.oleroma.gyrophone.core.hid.HidDescriptor
+import com.oleroma.gyrophone.core.hid.HostReconnect
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Registers the phone as a Bluetooth Classic HID device (game pad + keyboard + mouse) and sends
  * reports to the connected host. Classic BR/EDR HID is what Windows pairs with natively; the
  * interrupt channel QoS below asks for guaranteed service sized for 1000 reports/s at minimal latency.
+ * When the link to the host drops without the user asking, the last host is reconnected with
+ * backoff ([HostReconnect]).
  *
  * Callers must hold BLUETOOTH_CONNECT (requested by MainActivity before the service starts).
  */
@@ -38,12 +42,21 @@ class HidDeviceManager(private val context: Context) {
     val state: StateFlow<State> = _state
 
     private val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
-    private val callbackExecutor = Executors.newSingleThreadExecutor { Thread(it, "hid-callback") }
+    /** HID callbacks and reconnect attempts, in order on one thread. */
+    private val callbackExecutor = Executors.newSingleThreadScheduledExecutor { Thread(it, "hid-callback") }
 
     @Volatile private var hid: BluetoothHidDevice? = null
     @Volatile private var host: BluetoothDevice? = null
     /** False after stop(): a proxy that connects late is closed instead of registering the app. */
     @Volatile private var wanted = false
+    /** The stack reports the app registered (onAppStatusChanged). */
+    @Volatile private var appRegistered = false
+    /** registerApp() accepted the request and its onAppStatusChanged has not come yet. */
+    @Volatile private var registering = false
+    /** The host last connected, which [reconnect] retries. */
+    @Volatile private var lastHost: BluetoothDevice? = null
+    /** Retry rules; guarded by itself. */
+    private val reconnect = HostReconnect()
 
     /** Supplies the current report bytes when the host polls with GET_REPORT. */
     var reportProvider: ((reportId: Int) -> ByteArray?)? = null
@@ -60,17 +73,24 @@ class HidDeviceManager(private val context: Context) {
 
     fun bondedHosts(): List<BluetoothDevice> = adapter?.bondedDevices?.toList().orEmpty()
 
+    /** Registers the app; also the Retry after a refused or dropped registration. */
     fun start() {
         val a = adapter ?: run { _state.value = State.Failed("No Bluetooth adapter"); return }
-        if (!a.isEnabled) { _state.value = State.Failed("Bluetooth is off"); return }
         wanted = true
-        if (hid != null) return
-        _state.value = State.Registering
-        a.getProfileProxy(context, proxyListener, BluetoothProfile.HID_DEVICE)
+        val proxy = hid
+        if (proxy != null) {
+            // A pending registration answers by itself; a refused or dropped one is tried again.
+            if (!appRegistered && !registering) register(proxy)
+            return
+        }
+        // With Bluetooth off the proxy connects, and registers, once the adapter turns on.
+        _state.value = if (a.isEnabled) State.Registering else State.Failed("Bluetooth is off")
+        a.getProfileProxy(context, ProxyListener(), BluetoothProfile.HID_DEVICE)
     }
 
     fun stop() {
         wanted = false
+        synchronized(reconnect) { reconnect.cancel() }
         hid?.let { proxy ->
             host?.let { proxy.disconnect(it) }
             proxy.unregisterApp()
@@ -78,17 +98,27 @@ class HidDeviceManager(private val context: Context) {
         }
         hid = null
         host = null
+        appRegistered = false
+        registering = false
         onHostDisconnected?.invoke()
         _state.value = State.Off
     }
 
+    /** The user picked [device]: it replaces any pending reconnect. */
     fun connect(device: BluetoothDevice) {
+        synchronized(reconnect) { reconnect.userConnect() }
+        connectNow(device)
+    }
+
+    private fun connectNow(device: BluetoothDevice) {
         val proxy = hid ?: return
         _state.value = State.Connecting(device.name ?: device.address)
         if (!proxy.connect(device)) _state.value = State.Failed("Could not connect to ${device.name}")
     }
 
+    /** The user disconnects: that link is not reconnected. */
     fun disconnect() {
+        synchronized(reconnect) { reconnect.userDisconnect() }
         val proxy = hid ?: return
         host?.let { proxy.disconnect(it) }
     }
@@ -100,7 +130,63 @@ class HidDeviceManager(private val context: Context) {
         return proxy.sendReport(device, reportId, payload)
     }
 
-    private val proxyListener = object : BluetoothProfile.ServiceListener {
+    /**
+     * Registers the app on [proxy]. If the service refuses, a stale registration of ours (one
+     * whose callback never came) is dropped and registration tried once more. unregisterApp() does
+     * nothing when another app owns the profile, and its result is ignored: it can free our stale
+     * slot and still return false.
+     */
+    private fun register(proxy: BluetoothHidDevice) {
+        _state.value = State.Registering
+        registering = true
+        val ok = proxy.registerApp(sdp, null, qos, callbackExecutor, hidCallback) ||
+            run { proxy.unregisterApp(); proxy.registerApp(sdp, null, qos, callbackExecutor, hidCallback) }
+        if (!ok) {
+            registering = false
+            _state.value = State.Failed("Another app owns the HID profile")
+        }
+    }
+
+    private fun canRetry() = wanted && appRegistered && hid != null
+
+    /** Applies [step] to the retry rules and schedules the attempt it asks for, if any. */
+    private fun retryStep(step: HostReconnect.() -> Long) {
+        val delayMs: Long
+        val generation: Int
+        synchronized(reconnect) {
+            delayMs = reconnect.step()
+            generation = reconnect.generation
+        }
+        if (delayMs >= 0) callbackExecutor.schedule({ retryHost(generation) }, delayMs, TimeUnit.MILLISECONDS)
+    }
+
+    private fun retryHost(generation: Int) {
+        synchronized(reconnect) {
+            if (reconnect.generation != generation || reconnect.retrying == null) return
+        }
+        val proxy = hid
+        val device = lastHost
+        // The bond goes after the drop when the host removed the phone (virtual cable unplug):
+        // connecting to an unbonded host would start pairing instead.
+        if (proxy == null || device == null || !canRetry() || host != null ||
+            device.bondState != BluetoothDevice.BOND_BONDED
+        ) {
+            synchronized(reconnect) { reconnect.cancel() }
+            return
+        }
+        Log.i(TAG, "reconnecting to ${device.address}")
+        _state.value = State.Connecting(device.name ?: device.address)
+        // A failed attempt ends in STATE_DISCONNECTED, which schedules the next one.
+        if (!proxy.connect(device)) {
+            if (hid != null) _state.value = State.Ready
+            retryStep { attemptRefused() }
+        }
+    }
+
+    /** One per getProfileProxy() call, so a proxy we closed cannot clear the one in use. */
+    private inner class ProxyListener : BluetoothProfile.ServiceListener {
+        private var mine: BluetoothHidDevice? = null
+
         override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
             val device = proxy as BluetoothHidDevice
             // stop() ran before the proxy arrived, or an earlier start() already has one.
@@ -108,14 +194,18 @@ class HidDeviceManager(private val context: Context) {
                 adapter?.closeProfileProxy(BluetoothProfile.HID_DEVICE, proxy)
                 return
             }
+            mine = device
             hid = device
-            val ok = device.registerApp(sdp, null, qos, callbackExecutor, hidCallback)
-            if (!ok) _state.value = State.Failed("Another app owns the HID profile")
+            register(device)
         }
 
         override fun onServiceDisconnected(profile: Int) {
+            // Bluetooth turned off; the proxy connects (and registers) again when it is back on.
+            if (mine == null || hid !== mine) return
             hid = null
             host = null
+            appRegistered = false
+            registering = false
             _state.value = State.Off
         }
     }
@@ -123,19 +213,24 @@ class HidDeviceManager(private val context: Context) {
     private val hidCallback = object : BluetoothHidDevice.Callback() {
         override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
             Log.i(TAG, "app registered=$registered plugged=${pluggedDevice?.address}")
+            appRegistered = registered
+            registering = false
+            if (hid == null) return // stopped meanwhile
             if (!registered) {
-                if (hid != null) _state.value = State.Failed("HID app unregistered")
+                _state.value = State.Failed("HID app unregistered")
                 return
             }
             _state.value = State.Ready
             // Reconnect to the last host if the stack remembers one.
-            pluggedDevice?.let { connect(it) }
+            pluggedDevice?.let { connectNow(it) }
         }
 
         override fun onConnectionStateChanged(device: BluetoothDevice, state: Int) {
             when (state) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     host = device
+                    lastHost = device
+                    synchronized(reconnect) { reconnect.connected(device.address) }
                     _state.value = State.Connected(device.name ?: device.address, device.address)
                     onHostConnected?.invoke()
                 }
@@ -144,8 +239,19 @@ class HidDeviceManager(private val context: Context) {
                     if (host?.address == device.address) host = null
                     onHostDisconnected?.invoke()
                     if (hid != null) _state.value = State.Ready
+                    // An unexpected drop of the last host, or a failed retry: try it again later.
+                    val retry = canRetry() && device.bondState == BluetoothDevice.BOND_BONDED
+                    retryStep { disconnected(device.address, retry) }
                 }
             }
+        }
+
+        override fun onVirtualCableUnplug(device: BluetoothDevice) {
+            // The host removed the phone (unplug or unpair on the PC). The stack reports the
+            // disconnect first, so this cancels the retry that drop scheduled; the host ended the
+            // link on purpose and it is not retried.
+            Log.i(TAG, "virtual cable unplug from ${device.address}")
+            synchronized(reconnect) { reconnect.userDisconnect() }
         }
 
         override fun onGetReport(device: BluetoothDevice, type: Byte, id: Byte, bufferSize: Int) {
