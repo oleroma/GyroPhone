@@ -26,6 +26,12 @@ enum class AxisHalf { FULL, POSITIVE, NEGATIVE }
 @Serializable
 enum class StickAxis { X, Y }
 
+/** A diagonal zone of a touch stick split into 8 directions ([StickZones.EIGHT]). */
+@Serializable
+enum class StickDiagonal(val label: String) {
+    UP_LEFT("Up-left"), UP_RIGHT("Up-right"), DOWN_LEFT("Down-left"), DOWN_RIGHT("Down-right"),
+}
+
 @Serializable
 enum class MouseButton(val bit: Int) { LEFT(0), RIGHT(1), MIDDLE(2), BACK(3), FORWARD(4) }
 
@@ -47,6 +53,10 @@ sealed interface InputSource {
     /** One axis of a virtual touchscreen stick. */
     @Serializable @SerialName("touch_stick")
     data class TouchStick(val id: String, val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL) : InputSource
+
+    /** A diagonal zone of a virtual touchscreen stick with 8 zones. */
+    @Serializable @SerialName("touch_stick_diagonal")
+    data class TouchStickDiagonal(val id: String, val diagonal: StickDiagonal) : InputSource
 }
 
 /** Something the host PC receives. */

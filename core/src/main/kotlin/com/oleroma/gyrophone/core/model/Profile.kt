@@ -12,14 +12,27 @@ enum class TouchKind { BUTTON, STICK, FULLSCREEN }
 @Serializable
 enum class TouchShape { CIRCLE, SQUARE }
 
+/**
+ * How a touch stick turns into directions for its Left / Right / Up / Down mappings. OVERLAP:
+ * each half on its own, so a diagonal presses two; FOUR: one of 4 zones at a time; EIGHT: 8 zones,
+ * a diagonal zone fires its own mapping ([InputSource.TouchStickDiagonal]), or both neighbours
+ * when it has none.
+ */
+@Serializable
+enum class StickZones(val label: String) {
+    OVERLAP("4, diagonals press two"),
+    FOUR("4 zones"),
+    EIGHT("8 zones"),
+}
+
 /** Centre (0..1 of the pad area) and size (fraction of the pad area's shorter side). */
 @Serializable
 data class Placement(val x: Float, val y: Float, val size: Float)
 
 /**
  * A control drawn on the touchscreen. Position is the centre, normalised to the pad area (0..1);
- * size is the diameter (circle) or side length (square) as a fraction of the pad area's shorter
- * side (its height in landscape). [x], [y] and [size] are the landscape placement; [portrait] is
+ * size is the diameter (circle) or width (square) as a fraction of the pad area's shorter
+ * side (its height in landscape); a square button's height is size × [aspect]. [x], [y] and [size] are the landscape placement; [portrait] is
  * the portrait one, or null to derive it from the landscape placement.
  */
 @Serializable
@@ -38,10 +51,18 @@ data class TouchControl(
      * touchpad finger until it lifts, like a fire button you aim with in mobile shooters.
      */
     val clickThrough: Boolean = false,
+    /** Height / width of a SQUARE button (circles and sticks stay even), in both orientations. */
+    val aspect: Float = 1f,
+    /** STICK: deflection (0..1 of the radius) that counts as centred; the rest is rescaled to 0..1. */
+    val deadzone: Float = 0f,
+    /** STICK: how deflection becomes directions. */
+    val zones: StickZones = StickZones.OVERLAP,
 ) {
     companion object {
         const val MIN_SIZE = 0.06f
-        const val MAX_SIZE = 0.6f
+        /** Fractions of the shorter side: over 1 a control can span the long side (and fill the screen). */
+        const val MAX_SIZE = 2.4f
+        const val MAX_DEADZONE = 0.6f
         /**
          * Derived portrait layout: the landscape layout squeezed into the lower part (the top is
          * left for the touchpad), sizes scaled down, centres pulled in so nothing leaves the width.
@@ -71,6 +92,10 @@ fun TouchControl.placeY(inPortrait: Boolean): Float =
 fun TouchControl.placeSize(inPortrait: Boolean): Float =
     if (!inPortrait) size else portraitOrBuiltin()?.size ?: (size * TouchControl.PORTRAIT_SIZE_SCALE)
 
+/** Height / width as drawn: [TouchControl.aspect] for a square button, else 1. */
+val TouchControl.heightRatio: Float
+    get() = if (shape == TouchShape.SQUARE && kind == TouchKind.BUTTON) aspect else 1f
+
 /** Resolved placement (allocates; editor use). */
 fun TouchControl.placement(inPortrait: Boolean): Placement =
     Placement(placeX(inPortrait), placeY(inPortrait), placeSize(inPortrait))
@@ -90,10 +115,15 @@ fun TouchControl.contains(
 ): Boolean {
     val dx = px - placeX(inPortrait) * screenW
     val dy = py - placeY(inPortrait) * screenH
-    val half = placeSize(inPortrait) * min(screenW, screenH) / 2f * slop
+    val half = placeSize(inPortrait) * min(screenW, screenH) / 2f
     return when (shape) {
-        TouchShape.CIRCLE -> dx * dx + dy * dy <= half * half
-        TouchShape.SQUARE -> abs(dx) <= half && abs(dy) <= half
+        TouchShape.CIRCLE -> dx * dx + dy * dy <= half * half * slop * slop
+        // Slop as a margin from the shorter side, so a long strip is not enlarged a lot along its length.
+        TouchShape.SQUARE -> {
+            val halfH = half * heightRatio
+            val margin = min(half, halfH) * (slop - 1f)
+            abs(dx) <= half + margin && abs(dy) <= halfH + margin
+        }
     }
 }
 

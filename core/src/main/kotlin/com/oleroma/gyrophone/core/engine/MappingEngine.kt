@@ -18,12 +18,19 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.StickAxis
+import com.oleroma.gyrophone.core.model.StickDiagonal
+import com.oleroma.gyrophone.core.model.StickZones
+import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Workspace
 import java.util.BitSet
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * Turns raw phone-side input (controller keys/axes, touch controls, gyro) into the HID state the
@@ -166,7 +173,21 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private val touches = HashMap<String, Int>()
     /** Controls held through [setTouch], with their press time. */
     private val setTouchHeld = HashMap<String, Long>()
-    private val touchSticks = HashMap<String, FloatArray>()
+    private val touchSticks = HashMap<String, StickState>()
+
+    /** Deadzone and zones of a touch stick; [diagonalMapped] by [StickDiagonal] ordinal. */
+    private class StickCfg(val deadzone: Float, val zones: StickZones, val diagonalMapped: BooleanArray)
+    private var stickCfgs: Map<String, StickCfg> = emptyMap()
+
+    /**
+     * A touch stick past its deadzone: [x], [y] rescaled, [mag] their length (0..1). With zones,
+     * [dirs] holds the active directions (DIR_* bits) and the halves read [mag] from it.
+     */
+    private class StickState {
+        var x = 0f; var y = 0f; var mag = 0f
+        var zoned = false
+        var dirs = 0
+    }
 
     // Fingers on touch buttons (see buttonDown), fixed slots so pointer events allocate little.
     private val bpPointer = LongArray(MAX_BUTTON_FINGERS)
@@ -231,6 +252,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         mapsRightTriggerAxis = BooleanArray(padMappings.size) { mapsTriggerAxis(padMappings[it], AndroidAxis.RTRIGGER, AndroidAxis.GAS) }
         modifierIds = if (w.stickyModifiers) modifierControls(w.mappings) else emptySet()
         clickThroughIds = w.touchControls.filter { it.kind == TouchKind.BUTTON && it.clickThrough }.mapTo(HashSet()) { it.id }
+        stickCfgs = w.touchControls.filter { it.kind == TouchKind.STICK }.associate { c ->
+            val mapped = BooleanArray(StickDiagonal.entries.size)
+            for (m in w.mappings) {
+                val src = m.source
+                if (src is InputSource.TouchStickDiagonal && src.id == c.id) mapped[src.diagonal.ordinal] = true
+            }
+            c.id to StickCfg(c.deadzone.coerceIn(0f, TouchControl.MAX_DEADZONE), c.zones, mapped)
+        }
         releaseHeld()
         for (d in deviceList) d.pad = resolvePad(d.device)
         touchpad.settings = w.touchpad
@@ -516,8 +545,16 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     fun setTouchStick(id: String, x: Float, y: Float) {
         synchronized(lock) {
             firingEvents(clock()) {
-                val v = touchSticks.getOrPut(id) { FloatArray(2) }
-                v[0] = x; v[1] = y
+                val v = touchSticks.getOrPut(id) { StickState() }
+                val cfg = stickCfgs[id]
+                var mag = hypot(x, y)
+                var k = if (mag > 1f) 1f / mag else 1f
+                val dz = cfg?.deadzone ?: 0f
+                if (dz > 0f) k = if (mag <= dz) 0f else min(1f, (mag - dz) / (1f - dz)) / mag
+                v.x = x * k; v.y = y * k; mag = min(1f, mag * k)
+                v.mag = mag
+                v.zoned = cfg != null && cfg.zones != StickZones.OVERLAP
+                v.dirs = if (!v.zoned || mag == 0f) 0 else zoneDirs(v.x, v.y, cfg!!)
             }
         }
         onChange?.run()
@@ -920,7 +957,37 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         is InputSource.Touch -> if (touches.containsKey(source.id) || latched(source.id)) 1f else 0f
         is InputSource.TouchStick -> {
             val v = touchSticks[source.id]
-            if (v == null) 0f else half(if (source.axis == StickAxis.X) v[0] else v[1], source.half)
+            when {
+                v == null -> 0f
+                v.zoned && source.half != AxisHalf.FULL -> {
+                    val bit = when (source.axis) {
+                        StickAxis.X -> if (source.half == AxisHalf.POSITIVE) DIR_RIGHT else DIR_LEFT
+                        StickAxis.Y -> if (source.half == AxisHalf.POSITIVE) DIR_DOWN else DIR_UP
+                    }
+                    if (v.dirs and bit != 0) v.mag else 0f
+                }
+                else -> half(if (source.axis == StickAxis.X) v.x else v.y, source.half)
+            }
+        }
+        is InputSource.TouchStickDiagonal -> {
+            val v = touchSticks[source.id]
+            if (v != null && v.dirs and (DIR_DIAGONAL shl source.diagonal.ordinal) != 0) v.mag else 0f
+        }
+    }
+
+    /** Directions of zoned stick [cfg] deflected to ([x], [y]), Y down. */
+    private fun zoneDirs(x: Float, y: Float, cfg: StickCfg): Int {
+        val angle = atan2(y, x).toDouble()
+        return if (cfg.zones == StickZones.FOUR) {
+            FOUR_ZONES[Math.floorMod((angle / (PI / 2)).roundToInt(), 4)]
+        } else {
+            val zone = Math.floorMod((angle / (PI / 4)).roundToInt(), 8)
+            val diagonal = EIGHT_ZONE_DIAGONAL[zone]
+            when {
+                diagonal == null -> EIGHT_ZONES[zone]
+                cfg.diagonalMapped[diagonal.ordinal] -> DIR_DIAGONAL shl diagonal.ordinal
+                else -> EIGHT_ZONES[zone]
+            }
         }
     }
 
@@ -941,6 +1008,24 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     companion object {
         const val PRESS_THRESHOLD = 0.5f
+
+        private const val DIR_RIGHT = 1
+        private const val DIR_DOWN = 2
+        private const val DIR_LEFT = 4
+        private const val DIR_UP = 8
+        /** Shifted left by a [StickDiagonal] ordinal. */
+        private const val DIR_DIAGONAL = 16
+        /** Zone 0 is right, then clockwise on screen (Y grows down). */
+        private val FOUR_ZONES = intArrayOf(DIR_RIGHT, DIR_DOWN, DIR_LEFT, DIR_UP)
+        /** The halves each of the 8 zones presses (a diagonal's two when it has no mapping of its own). */
+        private val EIGHT_ZONES = intArrayOf(
+            DIR_RIGHT, DIR_RIGHT or DIR_DOWN, DIR_DOWN, DIR_DOWN or DIR_LEFT,
+            DIR_LEFT, DIR_LEFT or DIR_UP, DIR_UP, DIR_UP or DIR_RIGHT,
+        )
+        private val EIGHT_ZONE_DIAGONAL = arrayOf(
+            null, StickDiagonal.DOWN_RIGHT, null, StickDiagonal.DOWN_LEFT,
+            null, StickDiagonal.UP_LEFT, null, StickDiagonal.UP_RIGHT,
+        )
         private const val AXIS_EPSILON = 1e-4f
         /** Android axis ids are 0..47 (MotionEvent.AXIS_GENERIC_16). */
         private const val AXIS_SLOTS = 64

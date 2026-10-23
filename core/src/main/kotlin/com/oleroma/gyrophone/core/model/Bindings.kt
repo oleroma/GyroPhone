@@ -52,7 +52,10 @@ object Bindings {
     fun removeTarget(mappings: List<Mapping>, input: BindableInput, target: OutputTarget): List<Mapping> =
         setTargets(mappings, input, targets(mappings, input) - target)
 
-    /** Inputs a touch control exposes: BUTTON -> [Touch(id)]; STICK -> X axis, Y axis (analog), Left, Right, Up, Down (halves); FULLSCREEN -> none. */
+    /**
+     * Inputs a touch control exposes: BUTTON -> [Touch(id)]; STICK -> X axis, Y axis (analog),
+     * Left, Right, Up, Down (halves), and with 8 zones the four diagonals; FULLSCREEN -> none.
+     */
     fun touchInputs(control: TouchControl): List<BindableInput> = when (control.kind) {
         TouchKind.BUTTON -> listOf(BindableInput(control.label.ifBlank { control.id }, listOf(InputSource.Touch(control.id))))
         TouchKind.STICK -> {
@@ -64,7 +67,9 @@ object Bindings {
                 BindableInput("Right", s(StickAxis.X, AxisHalf.POSITIVE)),
                 BindableInput("Up", s(StickAxis.Y, AxisHalf.NEGATIVE)),
                 BindableInput("Down", s(StickAxis.Y, AxisHalf.POSITIVE)),
-            )
+            ) + if (control.zones != StickZones.EIGHT) emptyList() else StickDiagonal.entries.map {
+                BindableInput(it.label, listOf(InputSource.TouchStickDiagonal(control.id, it)))
+            }
         }
         TouchKind.FULLSCREEN -> emptyList()
     }
@@ -72,10 +77,7 @@ object Bindings {
     /** Drops a touch control and all of its mappings (on delete). */
     fun removeTouchControl(workspace: Workspace, id: String): Workspace = workspace.copy(
         touchControls = workspace.touchControls.filterNot { it.id == id },
-        mappings = workspace.mappings.filterNot {
-            val s = it.source
-            (s is InputSource.Touch && s.id == id) || (s is InputSource.TouchStick && s.id == id)
-        },
+        mappings = workspace.mappings.filterNot { MappingProfiles.touchId(it.source) == id },
     )
 
     /** Fresh id not used by any control: prefix + n. */
@@ -92,7 +94,8 @@ object Bindings {
 
     /**
      * Rewrites the six stick inputs (X axis, Y axis, Left, Right, Up, Down, as returned by
-     * [touchInputs] or a physical stick's inputs; extra inputs are left alone) for a preset.
+     * [touchInputs] or a physical stick's inputs) for a preset. Diagonals are cleared, so they
+     * press both neighbours; other extra inputs (a stick's click) are left alone.
      */
     fun applyStickPreset(mappings: List<Mapping>, stickInputs: List<BindableInput>, preset: StickPreset): List<Mapping> {
         require(stickInputs.size >= 6) { "Expected X, Y, Left, Right, Up, Down inputs" }
@@ -118,6 +121,9 @@ object Bindings {
         }
         var m = mappings
         for (i in 0 until 6) m = setTargets(m, stickInputs[i], plan[i])
+        for (input in stickInputs.drop(6)) {
+            if (input.sources.all { it is InputSource.TouchStickDiagonal }) m = setTargets(m, input, emptyList())
+        }
         return m
     }
 }

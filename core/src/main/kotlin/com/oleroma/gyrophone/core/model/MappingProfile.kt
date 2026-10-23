@@ -44,6 +44,7 @@ object MappingProfiles {
     fun touchId(source: InputSource): String? = when (source) {
         is InputSource.Touch -> source.id
         is InputSource.TouchStick -> source.id
+        is InputSource.TouchStickDiagonal -> source.id
         else -> null
     }
 

@@ -17,6 +17,7 @@ object Describe {
         is InputSource.Axis -> (axisNames[s.axis] ?: "Axis ${s.axis}") + half(s.half)
         is InputSource.Touch -> "Touch ${s.id}"
         is InputSource.TouchStick -> "Touch stick ${s.id} ${s.axis}" + half(s.half)
+        is InputSource.TouchStickDiagonal -> "Touch stick ${s.id} ${s.diagonal.label}"
     }
 
     fun target(t: OutputTarget): String = when (t) {
