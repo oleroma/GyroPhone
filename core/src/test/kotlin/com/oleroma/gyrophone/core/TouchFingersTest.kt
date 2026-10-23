@@ -193,6 +193,35 @@ class TouchFingersTest {
 
     // ---- System cancels ----
 
+    @Test fun quickButtonTapBetweenTwoSnapshotsIsStillShown() {
+        var now = 0L
+        val e = engine { now }
+        assertTrue(e.snapshot().keyboard.keys.isEmpty())
+        // Down and up 10 ms apart, both between two ticks of a 30 Hz pump.
+        now = 5 * MS
+        e.buttonDown(1, "a", 100f, 100f)
+        now = 15 * MS
+        e.buttonUp(1)
+        now = 33 * MS
+        assertEquals(listOf(A), e.snapshot().keyboard.keys)
+        // Held for the minimum pulse from its down, then released.
+        assertEquals(45 * MS, e.touchpadDeadlineNanos())
+        now = 45 * MS
+        assertTrue(e.snapshot().keyboard.keys.isEmpty())
+        assertTrue(e.pressedTouches().isEmpty())
+        assertEquals(Long.MAX_VALUE, e.touchpadDeadlineNanos())
+    }
+
+    @Test fun longerButtonPressReleasesAtOnce() {
+        var now = 0L
+        val e = engine(clickThrough = true) { now }
+        e.buttonDown(1, "a", 100f, 100f)
+        assertEquals(listOf(A), e.snapshot().keyboard.keys)
+        now = 60 * MS
+        e.buttonUp(1)
+        assertTrue(e.snapshot().keyboard.keys.isEmpty())
+    }
+
     @Test fun cancelledOverButtonsFingerNeverTaps() {
         var now = 0L
         val e = engine(overButtons = true) { now }

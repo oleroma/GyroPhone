@@ -67,6 +67,12 @@ class SendScheduler(rateHz: Int = Wire.DEFAULT_RATE_HZ) {
         }
     }
 
+    /**
+     * Before this time (ns) nothing may be sent, so the pump should not take an engine snapshot
+     * yet: one taken now would show, and use up, a quick tap that no packet then carries.
+     */
+    fun sendableAt(): Long = if (hasSent) lastSentNs + minIntervalNs else Long.MIN_VALUE
+
     /** When [poll] may next return something other than [NONE] without a new input change. */
     fun nextDeadline(): Long {
         if (!hasSent) return Long.MIN_VALUE

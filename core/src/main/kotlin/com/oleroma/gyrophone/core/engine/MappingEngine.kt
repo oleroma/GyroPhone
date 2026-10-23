@@ -415,8 +415,16 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                     }
                     BP_PRESSED, BP_THROUGH -> {
                         if (bpState[slot] == BP_THROUGH) touchpad.up(pointer, now)
-                        release(id)
-                        if (id in modifierIds) modifierUp(id, bpImmediate[slot] && now - bpDownNs[slot] < BUTTON_HOLD_NS, now)
+                        if (id in modifierIds) {
+                            release(id)
+                            modifierUp(id, bpImmediate[slot] && now - bpDownNs[slot] < BUTTON_HOLD_NS, now)
+                        } else if (now - bpDownNs[slot] < touchpad.minPulseNanos) {
+                            // A quick tap stays pressed until a snapshot has shown it for the
+                            // minimum pulse, so a pump that ticks between its down and up still sends it.
+                            pulses.add(Pulse(id, bpDownNs[slot]))
+                        } else {
+                            release(id)
+                        }
                     }
                     BP_TOUCHPAD -> touchpad.up(pointer, now)
                 }
