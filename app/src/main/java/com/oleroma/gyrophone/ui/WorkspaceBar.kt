@@ -40,9 +40,9 @@ import com.oleroma.gyrophone.core.model.WorkspaceEdits
 import com.oleroma.gyrophone.runtime.AttachedController
 
 /**
- * Edit-mode bar of the profile's workspaces: a chip per workspace (tap = show it), and rename,
- * move left / right, duplicate, delete (not the last), add (blank or a preset) and settings for
- * the shown one. [onProfileChange] gets the edited profile and the index to show next.
+ * Edit-mode row of the profile's workspaces: a chip per workspace (tap = show it, tap the shown one
+ * = its settings) and add (blank or a preset). [onProfileChange] gets the edited profile and the
+ * index to show next.
  */
 @Composable
 internal fun WorkspaceBar(
@@ -51,25 +51,63 @@ internal fun WorkspaceBar(
     onSelect: (Int) -> Unit,
     onProfileChange: (Profile, Int) -> Unit,
     onSettings: () -> Unit,
-    modifier: Modifier = Modifier,
+) {
+    val i = index.coerceIn(0, profile.workspaces.lastIndex)
+    var adding by remember { mutableStateOf(false) }
+    val compact = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+
+    profile.workspaces.forEachIndexed { k, w ->
+        WorkspaceChip("${k + 1} · ${w.name}" + if (k == i) " ⚙" else "", k == i) { if (k == i) onSettings() else onSelect(k) }
+    }
+    FilledTonalButton(contentPadding = compact, onClick = { adding = true }) { Text("+ Workspace") }
+
+    if (adding) {
+        AlertDialog(
+            onDismissRequest = { adding = false },
+            title = { Text("Add workspace") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    val choices = listOf(
+                        "Blank (touchpad only)" to BuiltinProfiles.blankWorkspace("Workspace ${profile.workspaces.size + 1}"),
+                    ) + BuiltinProfiles.presets.map { it.name to it }
+                    for ((label, w) in choices) {
+                        Text(
+                            label,
+                            Modifier.fillMaxWidth().clickable {
+                                adding = false
+                                val (p, at) = WorkspaceEdits.add(profile, w)
+                                onProfileChange(p, at)
+                            }.padding(12.dp),
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { adding = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+/**
+ * Rename, move left / right, duplicate and delete (not the last) for workspace [index], at the
+ * top of its settings. [onProfileChange] gets the edited profile and the index to show next.
+ */
+@Composable
+internal fun WorkspaceActions(
+    profile: Profile,
+    index: Int,
+    onProfileChange: (Profile, Int) -> Unit,
 ) {
     val i = index.coerceIn(0, profile.workspaces.lastIndex)
     val current = profile.workspace(i)
     var renaming by remember { mutableStateOf<String?>(null) }
-    var adding by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     val compact = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
 
     Row(
-        modifier.horizontalScroll(rememberScrollState()),
+        Modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        profile.workspaces.forEachIndexed { k, w ->
-            WorkspaceChip("${k + 1} · ${w.name}", k == i) { onSelect(k) }
-        }
-        FilledTonalButton(contentPadding = compact, onClick = { adding = true }) { Text("+ Workspace") }
-        OutlinedButton(contentPadding = compact, onClick = onSettings) { Text("Settings") }
         OutlinedButton(contentPadding = compact, onClick = { renaming = current.name }) { Text("Rename") }
         if (i > 0) {
             OutlinedButton(contentPadding = compact, onClick = {
@@ -113,31 +151,6 @@ internal fun WorkspaceBar(
                 }) { Text("OK") }
             },
             dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel") } },
-        )
-    }
-
-    if (adding) {
-        AlertDialog(
-            onDismissRequest = { adding = false },
-            title = { Text("Add workspace") },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    val choices = listOf(
-                        "Blank (touchpad only)" to BuiltinProfiles.blankWorkspace("Workspace ${profile.workspaces.size + 1}"),
-                    ) + BuiltinProfiles.presets.map { it.name to it }
-                    for ((label, w) in choices) {
-                        Text(
-                            label,
-                            Modifier.fillMaxWidth().clickable {
-                                adding = false
-                                val (p, at) = WorkspaceEdits.add(profile, w)
-                                onProfileChange(p, at)
-                            }.padding(12.dp),
-                        )
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { adding = false }) { Text("Cancel") } },
         )
     }
 

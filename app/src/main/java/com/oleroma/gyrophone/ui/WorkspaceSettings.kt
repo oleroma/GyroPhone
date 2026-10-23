@@ -50,8 +50,9 @@ import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.roundToInt
 
 /**
- * Settings of one workspace (edit mode, opened from the workspace bar): gyro mode, touchpad,
- * touchpad over buttons, sticky modifiers, control opacity and the attached game pads.
+ * Settings of one workspace (edit mode, tap the shown workspace in the edit panel): [actions]
+ * (rename, move, ...), gyro mode, touchpad, touchpad over buttons, sticky modifiers, control
+ * opacity and the attached game pads ([attach] offers connected ones), then [more].
  */
 @Composable
 internal fun WorkspaceSettingsPanel(
@@ -60,6 +61,9 @@ internal fun WorkspaceSettingsPanel(
     onChange: (Workspace) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    actions: @Composable () -> Unit = {},
+    attach: @Composable () -> Unit = {},
+    more: @Composable () -> Unit = {},
 ) {
     val w = workspace
     Surface(
@@ -84,6 +88,7 @@ internal fun WorkspaceSettingsPanel(
                 )
                 TextButton(onClick = onClose) { Text("✕") }
             }
+            actions()
 
             Text("Gyro", style = MaterialTheme.typography.labelLarge)
             Row(
@@ -154,11 +159,14 @@ internal fun WorkspaceSettingsPanel(
             }
             if (w.pads.isNotEmpty()) {
                 Text(
-                    "Pad mappings are in the Controller part of the mapping profile (Menu → Mapping profile → Edit).",
+                    "Pad mappings are in the Controller part of the mapping profile (All settings below → Mapping profile → Edit).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            attach()
+            HorizontalDivider()
+            more()
         }
     }
 }

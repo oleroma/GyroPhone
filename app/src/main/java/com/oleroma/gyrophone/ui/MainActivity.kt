@@ -14,17 +14,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -88,24 +83,16 @@ class MainActivity : ComponentActivity() {
                 val orientation by runtime.screenOrientation.collectAsStateWithLifecycle()
                 LaunchedEffect(orientation) { requestedOrientation = orientation.activityValue }
                 Surface(Modifier.fillMaxSize()) {
-                    // Two tabs: Connect, and Pad (the pad, with every other setting in its menu).
-                    var tab by rememberSaveable { mutableIntStateOf(0) }
-                    // Full-screen pad: the profile's two fullscreen corners pressed together; Back also leaves.
-                    var fullscreen by rememberSaveable { mutableStateOf(false) }
+                    // No tabs: the app opens on the pad; Connection and Settings open from its capsules.
+                    // Full-screen pad: the ← and → corners pressed together; Back also leaves.
+                    var fullscreen by rememberSaveable { mutableStateOf(runtime.startFullscreen.value) }
                     BackHandler(enabled = fullscreen) { fullscreen = false }
-                    Column(Modifier.fillMaxSize()) {
-                        if (!fullscreen) {
-                            TabRow(selectedTabIndex = if (tab == 0) 0 else 1) {
-                                listOf("Connect", "Pad").forEachIndexed { i, title ->
-                                    Tab(selected = (if (tab == 0) 0 else 1) == i, onClick = { tab = i }, text = { Text(title) })
-                                }
-                            }
-                        }
-                        when (tab) {
-                            0 -> ConnectScreen(runtime, onRetry = { permissionRequest.launch(permissions) })
-                            else -> PadTab(runtime, fullscreen = fullscreen, onFullscreen = { fullscreen = it })
-                        }
-                    }
+                    PadTab(
+                        runtime,
+                        fullscreen = fullscreen,
+                        onFullscreen = { fullscreen = it },
+                        onRetry = { permissionRequest.launch(permissions) },
+                    )
                 }
             }
         }

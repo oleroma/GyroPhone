@@ -25,7 +25,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -48,24 +47,17 @@ import com.oleroma.gyrophone.link.TransportKind
 import com.oleroma.gyrophone.service.GamepadService
 import kotlinx.coroutines.delay
 import com.oleroma.gyrophone.runtime.GamepadRuntime
-import com.oleroma.gyrophone.runtime.ScreenOrientation
 
 @OptIn(ExperimentalMaterial3Api::class)
+/** The Connection page (from the pad's Connection capsule): the PC link and its report rate. */
 @Composable
 fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
     val context = LocalContext.current
     val transport by runtime.transport.collectAsStateWithLifecycle()
-    val gyro by runtime.gyroInfo.collectAsStateWithLifecycle()
-    val controllers by runtime.controllers.collectAsStateWithLifecycle()
-    val profile by runtime.activeProfile.collectAsStateWithLifecycle()
-    val workspaceIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
     val rate by runtime.reportRateHz.collectAsStateWithLifecycle()
     val wifiRate by runtime.wifiRateHz.collectAsStateWithLifecycle()
-    val orientation by runtime.screenOrientation.collectAsStateWithLifecycle()
-    val padOnly by runtime.padOnlyInput.collectAsStateWithLifecycle()
     val portrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
     var stats by remember { mutableStateOf(runtime.linkStats()) }
-    val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?" }
     LaunchedEffect(transport) {
         while (true) { stats = runtime.linkStats(); delay(1000) }
     }
@@ -102,14 +94,6 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
         }
     } }
     val statusContent: @Composable () -> Unit = {
-        Text("Workspaces", style = MaterialTheme.typography.titleMedium)
-        if (profile.workspaces.size > 1) {
-            val w = profile.workspace(workspaceIndex)
-            Text("Workspace ${workspaceIndex.coerceIn(0, profile.workspaces.lastIndex) + 1}/${profile.workspaces.size}: ${w.name}")
-        }
-        Text("GyroPhone $version", style = MaterialTheme.typography.bodySmall)
-        Text("Gyro: ${gyro.source}")
-        Text("Gyro rate: ${gyro.rateHz} Hz" + if (gyro.active) " · moving mouse" else "")
         Text("Report rate", style = MaterialTheme.typography.titleSmall)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             if (transport == TransportKind.WIFI) {
@@ -132,26 +116,6 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
             )
             Text("If the mouse lags behind your hand, pick a lower rate. Bluetooth queues anything faster than the link can carry.",
                 style = MaterialTheme.typography.bodySmall)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Send input only while the pad is open", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-            Switch(checked = padOnly, onCheckedChange = { runtime.setPadOnlyInput(it) })
-        }
-        Text(
-            if (padOnly) "Controller, keyboard and gyro reach the PC only on the Pad tab, outside its menu and edit mode. The connection stays up."
-            else "Controller, keyboard and gyro reach the PC from anywhere, also with the app in the background.",
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Text("Screen rotation", style = MaterialTheme.typography.titleSmall)
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            ScreenOrientation.entries.forEach { o ->
-                FilterChip(selected = orientation == o, onClick = { runtime.setScreenOrientation(o) }, label = { Text(o.label) })
-            }
-        }
-        Text("Controllers on phone", style = MaterialTheme.typography.titleSmall)
-        if (controllers.isEmpty()) Text("None. Attach a GameSir X5 or any gamepad.")
-        controllers.forEach { c ->
-            Text("${c.name} (${c.known?.name ?: "standard layout"}) " + "%04X:%04X".format(c.vendorId, c.productId))
         }
     }
 
