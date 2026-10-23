@@ -5,6 +5,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -297,70 +299,98 @@ private fun PickerBody(
     }
     LaunchedEffect(entries) { gridState.scrollToItem(0) }
 
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (headers.size > 1) {
-            LazyColumn(Modifier.widthIn(min = 140.dp, max = 180.dp).fillMaxHeight()) {
-                lazyItemsIndexed(headers) { _, (title, index) ->
-                    val selected = title == currentHeader
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)
-                            .clickable { scope.launch { gridState.animateScrollToItem(index) } }
-                            .padding(horizontal = 12.dp, vertical = 12.dp),
-                    )
+    fun jump(index: Int) { scope.launch { gridState.animateScrollToItem(index) } }
+    val search: @Composable (Modifier) -> Unit = { m ->
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQuery,
+            singleLine = true,
+            placeholder = { Text("Search, e.g. W, LT, wheel") },
+            trailingIcon = {
+                if (query.isNotEmpty()) TextButton(onClick = { onQuery("") }) { Text("✕") }
+            },
+            modifier = m,
+        )
+    }
+    val grid: @Composable () -> Unit = {
+        if (entries.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Nothing matches \"$query\"", color = MaterialTheme.colorScheme.outline)
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 112.dp),
+                state = gridState,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxSize().padding(end = 8.dp),
+            ) {
+                itemsIndexed(
+                    entries,
+                    span = { _, e -> GridItemSpan(if (e is PickerEntry.Header) maxLineSpan else 1) },
+                ) { _, e ->
+                    when (e) {
+                        is PickerEntry.Header -> Text(
+                            e.title,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
+                        )
+                        is PickerEntry.Item -> TargetCell(e.target, mapped = e.target in current, onClick = { onPick(e.target) })
+                    }
                 }
             }
         }
-        Column(Modifier.weight(1f).fillMaxHeight()) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = onQuery,
-                    singleLine = true,
-                    placeholder = { Text("Search, e.g. W, LT, wheel") },
-                    trailingIcon = {
-                        if (query.isNotEmpty()) TextButton(onClick = { onQuery("") }) { Text("✕") }
-                    },
-                    modifier = Modifier.weight(1f),
-                )
-                if (showCapture) {
-                    OutlinedButton(onClick = onCapture) { Text("Press a key on a keyboard") }
-                }
-                Spacer(Modifier.width(4.dp))
-            }
-            Spacer(Modifier.size(8.dp))
-            if (entries.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Nothing matches \"$query\"", color = MaterialTheme.colorScheme.outline)
-                }
-            } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 112.dp),
-                    state = gridState,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.fillMaxSize().padding(end = 8.dp),
-                ) {
-                    itemsIndexed(
-                        entries,
-                        span = { _, e -> GridItemSpan(if (e is PickerEntry.Header) maxLineSpan else 1) },
-                    ) { _, e ->
-                        when (e) {
-                            is PickerEntry.Header -> Text(
-                                e.title,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
-                            )
-                            is PickerEntry.Item -> TargetCell(e.target, mapped = e.target in current, onClick = { onPick(e.target) })
+    }
+
+    BoxWithConstraints(modifier) {
+        if (maxWidth < 560.dp) {
+            // Narrow (portrait): categories as a scrolling row of chips, search and key capture stacked.
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (headers.size > 1) {
+                    Row(Modifier.horizontalScroll(rememberScrollState()).padding(end = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for ((title, index) in headers) {
+                            FilterChip(selected = title == currentHeader, onClick = { jump(index) }, label = { Text(title) })
                         }
                     }
+                }
+                search(Modifier.fillMaxWidth().padding(end = 8.dp))
+                if (showCapture) {
+                    OutlinedButton(onClick = onCapture, modifier = Modifier.fillMaxWidth().padding(end = 8.dp)) { Text("Press a key on a keyboard") }
+                }
+                Box(Modifier.weight(1f).fillMaxWidth()) { grid() }
+            }
+        } else {
+            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (headers.size > 1) {
+                    LazyColumn(Modifier.widthIn(min = 140.dp, max = 180.dp).fillMaxHeight()) {
+                        lazyItemsIndexed(headers) { _, (title, index) ->
+                            val selected = title == currentHeader
+                            Text(
+                                title,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)
+                                    .clickable { jump(index) }
+                                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                            )
+                        }
+                    }
+                }
+                Column(Modifier.weight(1f).fillMaxHeight()) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        search(Modifier.weight(1f))
+                        if (showCapture) {
+                            OutlinedButton(onClick = onCapture) { Text("Press a key on a keyboard") }
+                        }
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    Spacer(Modifier.size(8.dp))
+                    grid()
                 }
             }
         }
