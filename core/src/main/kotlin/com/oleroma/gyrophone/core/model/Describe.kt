@@ -25,8 +25,8 @@ object Describe {
         is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage))
         is OutputTarget.Mouse -> "Mouse ${t.button.name.lowercase()}"
         is OutputTarget.Wheel -> if (t.step > 0) "Wheel up" else "Wheel down"
-        OutputTarget.GyroHold -> "Hold for gyro mouse"
-        OutputTarget.GyroToggle -> "Toggle gyro mouse"
+        OutputTarget.GyroHold -> "Ratchet (flip gyro while held)"
+        OutputTarget.GyroToggle -> "Toggle gyro (swap what a ratchet does)"
         OutputTarget.GyroPause -> "Ratchet (flip gyro while held)"
     }
 
@@ -62,8 +62,8 @@ object Describe {
             MouseButton.FORWARD -> "Mouse Fwd"
         }
         is OutputTarget.Wheel -> if (t.step > 0) "Wheel ↑" else "Wheel ↓"
-        OutputTarget.GyroHold -> "Gyro hold"
-        OutputTarget.GyroToggle -> "Gyro toggle"
+        OutputTarget.GyroHold -> "Ratchet"
+        OutputTarget.GyroToggle -> "Gyro ⇄"
         OutputTarget.GyroPause -> "Ratchet"
     }
 
@@ -88,7 +88,7 @@ object Describe {
             if (it.isTrigger) listOf(OutputTarget.PadAxis(it)) else listOf(OutputTarget.PadAxis(it), OutputTarget.PadAxis(it, -1f))
         },
         "Mouse" to MouseButton.entries.map { OutputTarget.Mouse(it) } + listOf(OutputTarget.Wheel(1), OutputTarget.Wheel(-1)),
-        "Gyro" to listOf(OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause),
+        "Gyro" to listOf(OutputTarget.GyroPause, OutputTarget.GyroToggle),
         "Keyboard" to (keyboardOrder.filter { it in HidUsage.names } + HidUsage.names.keys.sorted())
             .distinct().map { OutputTarget.Key(it) },
     )

@@ -16,6 +16,8 @@ import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.ProfileJson
+import com.oleroma.gyrophone.core.model.TouchControl
+import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Workspace
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -93,7 +95,7 @@ class GyroModesTest {
     @Test fun setGyroSwitchesModeAndKeepsHeldInputs() {
         val e = engine(GyroMode.ALWAYS)
         e.setTouch("a", true)
-        e.setGyro(e.workspace.gyro.toggledMode())
+        e.setGyro(e.workspace.gyro.copy(mode = GyroMode.OFF))
         assertEquals(GyroMode.OFF, e.workspace.gyro.mode)
         assertFalse(e.gyroActive)
         assertTrue(e.snapshot().gamepad.buttons != 0)
@@ -104,10 +106,70 @@ class GyroModesTest {
         assertEquals(GyroMode.OFF, e.workspace.gyro.mode)
     }
 
-    @Test fun cornerTogglesBetweenAlwaysOnAndOff() {
-        assertEquals(GyroMode.OFF, GyroSettings(mode = GyroMode.ALWAYS).toggledMode().mode)
-        assertEquals(GyroMode.ALWAYS, GyroSettings(mode = GyroMode.OFF).toggledMode().mode)
-        assertEquals(GyroMode.ALWAYS, GyroSettings(mode = GyroMode.HOLD_OR_TOGGLE).toggledMode().mode)
+    @Test fun gyroOffIgnoresRatchetsAndToggle() {
+        val e = engine(GyroMode.SENSOR_OFF, touchpadRatchet = true)
+        assertFalse(e.gyroActive)
+        e.setTouch("r", true)
+        assertFalse(e.gyroActive)
+        e.setKey(pad, AndroidKey.BUTTON_Y, true); e.setKey(pad, AndroidKey.BUTTON_Y, false)
+        assertFalse(e.gyroActive)
+        e.touchpadDown(1, 10f, 10f)
+        assertFalse(e.gyroActive)
+    }
+
+    @Test fun oldHoldOrToggleLoadsAsRatchetEnables() {
+        val old = Profile(id = "p", name = "P", workspaces = listOf(Workspace(id = "w", name = "w",
+            gyro = GyroSettings(mode = GyroMode.HOLD_OR_TOGGLE))))
+        assertEquals(GyroMode.OFF, ProfileJson.decode(ProfileJson.encode(old)).workspaces.single().gyro.mode)
+        assertEquals(GyroMode.OFF, GyroSettings().mode)
+    }
+
+    @Test fun clickThroughFingerRatchetsOnlyThroughItsButton() {
+        val ws = Workspace(
+            id = "w", name = "w",
+            touchControls = listOf(
+                TouchControl("plain", TouchKind.BUTTON, "p", 0.2f, 0.5f, clickThrough = true),
+                TouchControl("rat", TouchKind.BUTTON, "r", 0.8f, 0.5f, clickThrough = true),
+            ),
+            mappings = listOf(
+                Mapping(InputSource.Touch("plain"), OutputTarget.Pad(GamepadButton.A)),
+                Mapping(InputSource.Touch("rat"), OutputTarget.Pad(GamepadButton.B)),
+                Mapping(InputSource.Touch("rat"), OutputTarget.GyroPause),
+            ),
+            gyro = GyroSettings(mode = GyroMode.ALWAYS, touchpadRatchet = true),
+        )
+        val e = MappingEngine(single(ws))
+        e.buttonDown(1, "plain", 10f, 10f)
+        assertTrue(e.gyroActive)
+        e.buttonUp(1)
+        e.buttonDown(2, "rat", 10f, 10f)
+        assertFalse(e.gyroActive)
+        e.buttonUp(2)
+        assertTrue(e.gyroActive)
+        // A background finger is still the touchpad ratchet.
+        e.touchpadDown(3, 10f, 10f)
+        assertFalse(e.gyroActive)
+    }
+
+    @Test fun gyroCornerBecomesToggleButtons() {
+        val corner = TouchControl(NavCorners.GYRO, TouchKind.FULLSCREEN, "G", 0.9f, 0.06f)
+        val p = Profile(
+            id = "p", name = "P",
+            workspaces = listOf(Workspace(id = "w1", name = "1"), Workspace(id = "w2", name = "2")),
+            corners = NavCorners.defaults() + corner,
+        )
+        val q = NavCorners.gyroCornerToButtons(ProfileJson.decode(ProfileJson.encode(p)))
+        assertEquals(listOf(NavCorners.PREV, NavCorners.NEXT), q.corners.map { it.id })
+        for (w in q.workspaces) {
+            val b = w.touchControls.single { it.id == NavCorners.GYRO_BUTTON }
+            assertEquals(TouchKind.BUTTON, b.kind)
+            assertEquals(0.9f, b.x)
+            assertEquals(listOf(OutputTarget.GyroToggle), w.mappings.filter { it.source == InputSource.Touch(NavCorners.GYRO_BUTTON) }.map { it.target })
+        }
+        // A hidden corner just goes.
+        val hidden = NavCorners.gyroCornerToButtons(p.copy(gyroCorner = false))
+        assertEquals(listOf(NavCorners.PREV, NavCorners.NEXT), hidden.corners.map { it.id })
+        assertTrue(hidden.workspaces.all { it.touchControls.isEmpty() })
     }
 
     @Test fun presetsHaveRollAndPitchGyroAxesForBothOrientations() {
@@ -120,25 +182,24 @@ class GyroModesTest {
         }
     }
 
-    @Test fun loadingSpellsOutPortraitAxesAndAddsTheGyroCorner() {
+    @Test fun loadingSpellsOutPortraitAxes() {
         val custom = GyroSettings(mode = GyroMode.ALWAYS, mouseX = MotionAxis.ROLL, invertY = true)
         val old = Profile(
             id = "p", name = "P",
             workspaces = listOf(Workspace(id = "w", name = "w", gyro = custom)),
-            corners = NavCorners.defaults().filter { it.id != NavCorners.GYRO },
         )
         val p = ProfileJson.decode(ProfileJson.encode(old))
         val g = p.workspaces.single().gyro
         assertEquals(GyroAxes(mouseX = MotionAxis.ROLL, invertY = true), g.portrait)
         assertEquals(custom.landscapeAxes, g.landscapeAxes)
-        assertEquals(listOf(NavCorners.PREV, NavCorners.NEXT, NavCorners.GYRO), p.corners.map { it.id })
-        assertTrue(p.gyroCorner)
+        assertEquals(listOf(NavCorners.PREV, NavCorners.NEXT), p.corners.map { it.id })
         // Saved again it reads back the same.
         assertEquals(p, ProfileJson.decode(ProfileJson.encode(p)))
     }
 
-    @Test fun hiddenGyroCornerIsNotShown() {
-        val p = Profile(id = "p", name = "P", workspaces = listOf(Workspace(id = "w", name = "w")), gyroCorner = false)
+    @Test fun anOldGyroCornerIsNeverShown() {
+        val corner = TouchControl(NavCorners.GYRO, TouchKind.FULLSCREEN, "G", 0.9f, 0.06f)
+        val p = Profile(id = "p", name = "P", workspaces = listOf(Workspace(id = "w", name = "w")), corners = NavCorners.defaults() + corner)
         assertEquals(listOf(NavCorners.PREV, NavCorners.NEXT), p.shownCorners.map { it.id })
     }
 }

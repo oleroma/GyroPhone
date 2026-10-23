@@ -109,7 +109,7 @@ class PresetsTest {
             setOf("ls", "rs", "a", "b", "x", "y", "up", "down", "left", "right", "lb", "lt", "rb", "rt", "view", "menu", "gyro"),
             w.touchControls.map { it.id }.toSet(),
         )
-        assertEquals(GyroMode.HOLD_OR_TOGGLE, w.gyro.mode)
+        assertEquals(GyroMode.OFF, w.gyro.mode)
         assertEquals(1, w.pads.size)
         assertEquals(null, w.pads[0].match)
         assertFalse(w.touchpadOverButtons)

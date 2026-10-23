@@ -98,16 +98,18 @@ fun TouchControl.contains(
 }
 
 /**
- * When gyro moves the mouse. OFF = always off and ALWAYS = always on, each flipped while a ratchet
- * ([OutputTarget.GyroPause], or the touchpad with [GyroSettings.touchpadRatchet]) is held: always
- * on pauses, always off engages. HOLD_OR_TOGGLE = on while a hold button is held or after a toggle
- * press; a ratchet pauses it.
+ * When gyro moves the mouse. ALWAYS = on, a held ratchet ([OutputTarget.GyroPause], or a touchpad
+ * finger with [GyroSettings.touchpadRatchet]) pauses it; OFF = off, a held ratchet engages it;
+ * [OutputTarget.GyroToggle] swaps the two. SENSOR_OFF = gyro off completely (the sensor is not
+ * read, saving battery; ratchets and toggle do nothing). HOLD_OR_TOGGLE is only read from old
+ * files and loads as OFF ([ProfileJson.normalize]).
  */
 @Serializable
 enum class GyroMode(val label: String) {
-    OFF("Always off"),
-    ALWAYS("Always on"),
-    HOLD_OR_TOGGLE("Hold / toggle button"),
+    OFF("Ratchet enables"),
+    ALWAYS("Ratchet disables"),
+    SENSOR_OFF("Gyro off"),
+    HOLD_OR_TOGGLE("Ratchet enables"),
 }
 
 /** How the phone is held. AUTO follows the screen rotation. */
@@ -134,7 +136,7 @@ enum class MotionAxis(val label: String) {
 
 @Serializable
 data class GyroSettings(
-    val mode: GyroMode = GyroMode.HOLD_OR_TOGGLE,
+    val mode: GyroMode = GyroMode.OFF,
     /** Mouse counts per degree of rotation. */
     val sensitivity: Float = 16f,
     val orientation: GyroOrientation = GyroOrientation.AUTO,
@@ -157,7 +159,10 @@ data class GyroSettings(
      * which are the landscape mapping (and the only one in profiles saved before this existed).
      */
     val portrait: GyroAxes? = null,
-    /** A finger on the touchpad is a ratchet: gyro pauses (always on) or engages (always off) meanwhile. */
+    /**
+     * A finger on the empty touchpad is a ratchet: gyro pauses (ALWAYS) or engages (OFF) meanwhile.
+     * A click-through button's finger counts only through the button's own ratchet mapping.
+     */
     val touchpadRatchet: Boolean = false,
 ) {
     val landscapeAxes: GyroAxes get() = GyroAxes(mouseX, invertX, scaleX, mouseY, invertY, scaleY)
@@ -172,9 +177,6 @@ data class GyroSettings(
 
     /** Copy with the portrait axes spelled out (the landscape ones when unset), so each orientation has its own. */
     fun withBothOrientations(): GyroSettings = if (portrait != null) this else copy(portrait = landscapeAxes)
-
-    /** The mode the gyro corner ([NavCorners.GYRO]) switches to: always on <-> always off. */
-    fun toggledMode(): GyroSettings = copy(mode = if (mode == GyroMode.ALWAYS) GyroMode.OFF else GyroMode.ALWAYS)
 }
 
 /** Which motion drives each mouse axis; see [GyroSettings.mouseX] and [GyroSettings.mouseY]. */
@@ -336,18 +338,21 @@ data class Profile(
     val games: List<String> = emptyList(),
     /** Auto-select this profile when a matching controller is attached to the phone. */
     val controllers: List<DeviceMatch> = emptyList(),
-    /** The previous / next workspace and gyro corners ([NavCorners]), kind [TouchKind.FULLSCREEN]. */
+    /**
+     * The previous / next workspace corners ([NavCorners]), kind [TouchKind.FULLSCREEN]. A gyro
+     * corner from before Toggle gyro buttons may be here until [NavCorners.gyroCornerToButtons].
+     */
     val corners: List<TouchControl> = NavCorners.defaults(),
-    /** Show the gyro corner ([NavCorners.GYRO]); hidden it does nothing. */
+    /** Whether the old gyro corner ([NavCorners.GYRO]) was shown; read once to convert it. */
     val gyroCorner: Boolean = true,
     /** Opacity of the corners in play; they ignore the workspaces' control opacity. */
     val cornerOpacity: Float = 0.5f,
     /** Resizing one corner resizes the other too. */
     val cornerSameSize: Boolean = true,
 ) {
-    /** The corners shown on the pad: all of [corners] but a hidden gyro corner. */
+    /** The corners shown on the pad: ← and →. */
     val shownCorners: List<TouchControl>
-        get() = if (gyroCorner) corners else corners.filter { it.id != NavCorners.GYRO }
+        get() = corners.filter { it.id != NavCorners.GYRO }
 
     /** The workspace at [index], clamped into range. */
     fun workspace(index: Int): Workspace = workspaces[index.coerceIn(0, workspaces.lastIndex)]

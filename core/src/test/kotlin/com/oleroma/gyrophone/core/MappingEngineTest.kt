@@ -51,7 +51,7 @@ class MappingEngineTest {
         assertEquals(0, e.snapshot().mouse.wheel) // drained
     }
 
-    @Test fun touchControlsAndGyroHold() {
+    @Test fun touchControlsAndGyroRatchet() {
         val e = MappingEngine(controllerProfile)
         assertFalse(e.gyroActive)
         e.setTouch("gyro", true)

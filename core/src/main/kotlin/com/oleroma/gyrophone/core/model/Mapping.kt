@@ -70,17 +70,20 @@ sealed interface OutputTarget {
     @Serializable @SerialName("wheel")
     data class Wheel(val step: Int) : OutputTarget
 
-    /** Gyro-to-mouse is active while the source is held. */
+    /** From before the hold / toggle mode went: now works as a ratchet ([GyroPause]). */
     @Serializable @SerialName("gyro_hold")
     data object GyroHold : OutputTarget
 
-    /** Each press flips gyro-to-mouse on/off (in always on / always off, until the workspace changes). */
+    /**
+     * Toggle gyro: each press swaps "ratchet disables" and "ratchet enables" (until the workspace
+     * changes). Does nothing while gyro is off ([GyroMode.SENSOR_OFF]).
+     */
     @Serializable @SerialName("gyro_toggle")
     data object GyroToggle : OutputTarget
 
     /**
-     * Ratchet: while the source is held, always-on gyro pauses (re-centre the phone) and always-off
-     * gyro engages; hold / toggle gyro pauses. See [GyroMode].
+     * Ratchet: while the source is held, gyro in "ratchet disables" pauses (re-centre the phone) and
+     * gyro in "ratchet enables" engages. See [GyroMode].
      */
     @Serializable @SerialName("gyro_pause")
     data object GyroPause : OutputTarget

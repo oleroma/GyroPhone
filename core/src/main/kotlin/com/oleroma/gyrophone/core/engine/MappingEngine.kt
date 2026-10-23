@@ -609,18 +609,20 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /**
      * Whether gyro motion should currently move the mouse. A ratchet (a held [OutputTarget.GyroPause]
-     * source, or a touchpad finger with [com.oleroma.gyrophone.core.model.GyroSettings.touchpadRatchet])
-     * flips always on / always off while held, and pauses hold / toggle. A [OutputTarget.GyroToggle]
-     * press flips always on / always off until the workspace changes.
+     * or old [OutputTarget.GyroHold] source, or a background touchpad finger with
+     * [com.oleroma.gyrophone.core.model.GyroSettings.touchpadRatchet]; a click-through button's
+     * finger only through its button's own ratchet) pauses ALWAYS and engages OFF while held. A
+     * [OutputTarget.GyroToggle] press swaps the two until the workspace changes. SENSOR_OFF: never.
      */
     val gyroActive: Boolean
         get() = synchronized(lock) {
             val g = ws.gyro
-            val ratchet = (g.touchpadRatchet && touchpad.fingers > 0) || engaged(OutputTarget.GyroPause)
+            val ratchet = (g.touchpadRatchet && touchpad.padFingers > 0) ||
+                engaged(OutputTarget.GyroPause) || engaged(OutputTarget.GyroHold)
             when (g.mode) {
-                GyroMode.OFF -> gyroToggled != ratchet
+                GyroMode.OFF, GyroMode.HOLD_OR_TOGGLE -> gyroToggled != ratchet
                 GyroMode.ALWAYS -> gyroToggled == ratchet
-                GyroMode.HOLD_OR_TOGGLE -> !ratchet && (gyroToggled || engaged(OutputTarget.GyroHold))
+                GyroMode.SENSOR_OFF -> false
             }
         }
 

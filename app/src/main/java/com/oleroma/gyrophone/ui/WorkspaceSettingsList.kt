@@ -48,7 +48,7 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
 
     Text("Gyro to mouse", style = MaterialTheme.typography.titleSmall)
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(GyroMode.ALWAYS, GyroMode.OFF, GyroMode.HOLD_OR_TOGGLE).forEach { mode ->
+        listOf(GyroMode.ALWAYS, GyroMode.OFF, GyroMode.SENSOR_OFF).forEach { mode ->
             FilterChip(selected = ws.gyro.mode == mode, onClick = {
                 editWs { it.copy(gyro = it.gyro.copy(mode = mode)) }
             }, label = { Text(mode.label) })
@@ -56,17 +56,15 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
     }
     Text(
         when (ws.gyro.mode) {
-            GyroMode.ALWAYS -> "Gyro moves the mouse; a Ratchet button pauses it while held."
-            GyroMode.OFF -> "Gyro is off; a Ratchet button turns it on while held."
-            GyroMode.HOLD_OR_TOGGLE -> "Gyro moves the mouse while a Gyro hold button is held or after a Gyro toggle press."
-        } + " Map Ratchet to any touch or controller button.",
+            GyroMode.ALWAYS -> "Gyro moves the mouse; a ratchet pauses it while held."
+            GyroMode.SENSOR_OFF -> "Gyro is off completely: the sensor is not read (saves battery), and ratchets and Toggle gyro do nothing."
+            else -> "Gyro is off; a ratchet turns it on while held."
+        } + if (ws.gyro.mode == GyroMode.SENSOR_OFF) "" else
+            " Turn on Ratchet on any touch button (or map Ratchet to a controller button); Toggle gyro swaps the two modes.",
         style = MaterialTheme.typography.bodySmall,
     )
-    SwitchRow("Touchpad is a ratchet (a finger on the touchpad flips gyro while it is down)", ws.gyro.touchpadRatchet) { v ->
+    SwitchRow("Touchpad is a ratchet (a finger on the empty pad flips gyro while it is down)", ws.gyro.touchpadRatchet) { v ->
         editWs { it.copy(gyro = it.gyro.copy(touchpadRatchet = v)) }
-    }
-    SwitchRow("Gyro corner (tap to switch always on / always off, in every workspace)", profile.gyroCorner) { v ->
-        runtime.editActiveProfile { it.copy(gyroCorner = v) }
     }
     var sens by remember(key) { mutableStateOf(ws.gyro.sensitivity) }
     Row(verticalAlignment = Alignment.CenterVertically) {

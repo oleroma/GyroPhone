@@ -160,8 +160,7 @@ internal object TouchStream {
  * that lands on a stick owns it until lifted; a finger that lands on a button goes to the engine
  * (which applies touchpad over buttons and sticky modifiers). A finger that lands on empty
  * background drives the touchpad (cursor, taps, drag, scroll). The corners ([Profile.corners])
- * are always shown: tap ← / → for the previous / next workspace, both together for fullscreen;
- * tap the gyro corner (unless hidden) to switch gyro between always on and always off.
+ * are always shown: tap ← / → for the previous / next workspace, both together for fullscreen.
  * Controls have separate landscape and portrait placements; the pad box's shape picks one.
  * Edit mode works on the current workspace in a draft profile. Its menu floats and can be dragged
  * out of the way or resized; its ⚙ saves and opens the workspace's settings page. Tap a control to change its mapping,
@@ -523,12 +522,8 @@ fun PadScreen(
                 val padOwner = HashSet<PointerId>()
                 val cornerOwner = HashMap<PointerId, String>()
 
-                /** A corner tapped on its own: previous / next workspace (nothing at an end), or the gyro mode. */
+                /** A corner tapped on its own: previous / next workspace (nothing at an end). */
                 fun stepFrom(cornerId: String) {
-                    if (cornerId == NavCorners.GYRO) {
-                        runtime.toggleGyroMode()
-                        return
-                    }
                     val i = runtime.workspaceIndex.value
                     val to = when (cornerId) {
                         NavCorners.PREV -> profile.previousWorkspace(i)
@@ -747,12 +742,9 @@ fun PadScreen(
                     NavCorners.NEXT -> shown.nextWorkspace(shownIndex) == null
                     else -> false
                 }
-                // The gyro corner is lit while its workspace's gyro is always on.
-                val gyroOn = !editing && c.id == NavCorners.GYRO && ws.gyro.mode == GyroMode.ALWAYS
                 val tint = when {
                     isSelected -> Color(0xFFFFC857)
                     isPressed -> Color(0xFF7CC4FF)
-                    gyroOn -> Color(0xFF8FE39A)
                     else -> Color(0x66FFFFFF)
                 }
                 val base = shown.cornerOpacity.let { if (editing) max(it, MIN_EDIT_OPACITY) else it }
@@ -761,7 +753,7 @@ fun PadScreen(
                     label = c.label,
                     sizeDp = with(density) { (r * 2).toDp() },
                     tint = tint,
-                    filled = isPressed || isSelected || gyroOn,
+                    filled = isPressed || isSelected,
                     knob = { Offset.Zero },
                     knobRadiusPx = 0f,
                     modifier = Modifier
@@ -978,8 +970,10 @@ fun PadScreen(
                     current = Bindings.targets(ws.mappings, input),
                     onPick = { t: OutputTarget ->
                         editWorkspace {
+                            // The pick replaces the main action; a ratchet stays.
                             val current = Bindings.targets(it.mappings, input)
-                            val next = (listOf(t) + current.drop(1)).distinct()
+                            val main = current.filterNot(::isRatchet)
+                            val next = (listOf(t) + main.drop(1) + current.filter(::isRatchet)).distinct()
                             it.copy(mappings = Bindings.setTargets(it.mappings, input, next))
                         }
                     },
@@ -1282,6 +1276,29 @@ private fun ControlSettingsPanel(
                                 onCheckedChange = { onControlChange(current.copy(clickThrough = it)) },
                             )
                         }
+                        val input = inputs.first()
+                        val targets = Bindings.targets(workspace.mappings, input)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Ratchet", style = MaterialTheme.typography.labelLarge)
+                                Text(
+                                    "While held it also flips gyro, besides its action: pauses it (Ratchet disables) " +
+                                        "or turns it on (Ratchet enables). With click-through, only this switch " +
+                                        "makes its finger a ratchet.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = targets.any(::isRatchet),
+                                onCheckedChange = { on ->
+                                    val main = targets.filterNot(::isRatchet)
+                                    onMappingsChange(
+                                        Bindings.setTargets(workspace.mappings, input, if (on) main + OutputTarget.GyroPause else main),
+                                    )
+                                },
+                            )
+                        }
                     }
                     HorizontalDivider()
                 }
@@ -1323,10 +1340,9 @@ private fun CornerSettings(
     onSize: (Float) -> Unit,
     onClose: () -> Unit,
 ) {
-    val isGyro = control.id == NavCorners.GYRO
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-            if (isGyro) "Gyro corner" else "Workspace corner " + control.label,
+            "Workspace corner " + control.label,
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.weight(1f),
@@ -1334,16 +1350,9 @@ private fun CornerSettings(
         TextButton(onClick = onClose) { Text("✕") }
     }
     Text(
-        if (isGyro) {
-            "Tap it to switch this workspace's gyro between always on and always off. Ratchet buttons " +
-                "and the touchpad ratchet flip with it: they pause always-on gyro and engage always-off " +
-                "gyro while held. It is lit while gyro is always on. The corners are the same in every " +
-                "workspace; drag each one where you like."
-        } else {
-            "Tap ← for the previous workspace and → for the next. Press both at the same time for " +
-                "fullscreen (the buttons at the top hide); press both again (or Back) to leave it. The corners are " +
-                "the same in every workspace; drag each one where you like."
-        },
+        "Tap ← for the previous workspace and → for the next. Press both at the same time for " +
+            "fullscreen (the buttons at the top hide); press both again (or Back) to leave it. The corners are " +
+            "the same in every workspace; drag each one where you like.",
         style = MaterialTheme.typography.bodyMedium,
     )
     Column {
@@ -1359,11 +1368,14 @@ private fun CornerSettings(
         Switch(checked = sameSize, onCheckedChange = onSameSize)
     }
     Text(
-        "Corner opacity, wrap-around and the gyro corner are in Settings (on the pad).",
+        "Corner opacity and wrap-around are in Settings (on the pad).",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
+
+/** A ratchet action (the old gyro hold works as one). */
+private fun isRatchet(t: OutputTarget): Boolean = t == OutputTarget.GyroPause || t == OutputTarget.GyroHold
 
 /** True when the stick's mappings equal what [preset] would write. */
 private fun presetMatches(

@@ -18,6 +18,8 @@ import com.oleroma.gyrophone.core.model.PadDevice
 import com.oleroma.gyrophone.core.model.PadPreset
 import com.oleroma.gyrophone.core.model.PadPresets
 import com.oleroma.gyrophone.core.model.Mapping
+import com.oleroma.gyrophone.core.model.GyroMode
+import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.WorkspaceSet
 import com.oleroma.gyrophone.data.ProfileStore
@@ -365,23 +367,6 @@ class GamepadRuntime(context: Context) {
         applyWorkspaceGyro()
     }
 
-    /**
-     * The gyro corner: switches the active workspace's gyro between always on and always off
-     * (from hold / toggle: always on) and saves it. What is held stays held. Called from touch
-     * dispatch, so the change applies first and the file is written in the background.
-     */
-    fun toggleGyroMode() {
-        val i = _workspaceIndex.value
-        val next = _activeProfile.value.workspace(i).gyro.toggledMode()
-        val set = stored.updateWorkspace(i) { it.copy(gyro = next) }
-        if (set == stored) return
-        stored = set
-        engine.setGyro(next)
-        _activeProfile.value = _activeProfile.value.updateWorkspace(i) { it.copy(gyro = next) }
-        applyWorkspaceGyro()
-        store.saveLater(set)
-    }
-
     /** The saved workspace index of [profile], clamped into range. */
     private fun rememberedWorkspace(profile: Profile): Int =
         store.workspaceIndex(profile.id).coerceIn(0, profile.workspaces.lastIndex)
@@ -577,20 +562,27 @@ class GamepadRuntime(context: Context) {
     private fun applyWorkspaceGyro() {
         gyroMouse.settings = _activeProfile.value.workspace(_workspaceIndex.value).gyro
         gyroMouse.reset()
+        updateGyro()
     }
+
+    /** The active workspace's gyro is off completely ([GyroMode.SENSOR_OFF]): the sensor need not run. */
+    private fun gyroOff(): Boolean =
+        _activeProfile.value.workspace(_workspaceIndex.value).gyro.mode == GyroMode.SENSOR_OFF
 
     /**
      * Runs the gyro sensor while its samples are used: input is allowed or a calibration runs.
      * Otherwise (only while "send input only while the pad is open" is on and the pad is not on
-     * screen) it pauses, to save CPU and battery. Gyro modes, hold and ratchets never pause it, so
-     * aiming never waits for the sensor to start.
+     * screen, or with the workspace's gyro off completely) it stops, to save CPU and battery. The
+     * other gyro modes, toggle and ratchets never stop it, so aiming never waits for the sensor.
      */
     @Synchronized private fun updateGyro() {
-        if (running && (inputAllowed || calibration != null)) {
+        if (running && ((inputAllowed && !gyroOff()) || calibration != null)) {
             startGyro()
         } else if (running) {
             stopGyro()
-            if (_gyroInfo.value.source != UNAVAILABLE) _gyroInfo.value = GyroInfo(source = PAUSED)
+            if (_gyroInfo.value.source != UNAVAILABLE) {
+                _gyroInfo.value = GyroInfo(source = if (gyroOff()) GYRO_OFF else PAUSED)
+            }
         }
     }
 
@@ -633,6 +625,11 @@ class GamepadRuntime(context: Context) {
         startGyro()
     }
 
+    init {
+        // Profiles from before Toggle gyro buttons: the gyro corner becomes one in every workspace.
+        if (stored.corners.any { it.id == NavCorners.GYRO }) editActiveProfile { NavCorners.gyroCornerToButtons(it) }
+    }
+
     companion object {
         private const val KEY_RATE = "report_rate_hz"
         private const val KEY_WIFI_RATE = "wifi_rate_hz"
@@ -649,6 +646,7 @@ class GamepadRuntime(context: Context) {
         private const val MAPPING_MIGRATION = 2
         private const val BACKUP_TAG = "pre-mappings"
         private const val PAUSED = "Paused while the pad is not open"
+        private const val GYRO_OFF = "Off in this workspace"
         private const val UNAVAILABLE = "Unavailable"
     }
 

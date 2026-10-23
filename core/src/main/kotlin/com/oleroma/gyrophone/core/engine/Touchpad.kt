@@ -147,6 +147,8 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings()) {
 
     /** Fingers down, aiming ones included. */
     val fingers: Int get() = count + aimCount
+    /** Background fingers only (not a touch button's aiming finger). */
+    val padFingers: Int get() = count
 
     /**
      * A finger landed. An [aiming] finger (a touch button's finger driving the cursor) only
