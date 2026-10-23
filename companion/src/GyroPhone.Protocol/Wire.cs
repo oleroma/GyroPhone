@@ -24,6 +24,9 @@ public static class Wire
     public const int HelloSize = 68;
     public const int WelcomeSize = 80;
     public const int ErrorSize = 16;
+    /// <summary>QR code pairing: the phone's key, MACed with the QR's one-time token.</summary>
+    public const int KeyEnrollSize = 137;
+    public const int KeyEnrollAckSize = 41;
 
     public const int StatePlain = 66;
     /// <summary>STATE_HIRES: STATE with the wheel total in 1/120 notch plus a horizontal wheel total.</summary>
@@ -61,6 +64,9 @@ public static class Wire
     public const int PairCooldownMs = 5000;
     public const int PairMaxFails = 3;
     public const int PairUserTimeoutS = 60;
+    /// <summary>How long a QR code shown by the PC stays valid.</summary>
+    public const int QrPairingS = 300;
+    public const int QrTokenSize = 16;
 
     public const int MaxMouseDelta = 16384;
     public const int MaxWheelDelta = 64;
@@ -76,6 +82,8 @@ public static class Wire
     public const int NonceSize = 16;
     public const int PublicKeySize = 65;
     public const int HashSize = 32;
+    /// <summary>KeyPairing.KeyId: the first 8 bytes of SHA-256 of a static public key.</summary>
+    public const int KeyIdSize = 8;
     public const int AnnounceNameMax = 29;
     public const int PairNameMax = 31;
     public const int ForegroundNameMax = 64;
@@ -98,6 +106,10 @@ public static class AnnounceFlags
     public const ushort VigemOk = 1 << 1;
     public const ushort PairedWithYou = 1 << 2;
     public const ushort Busy = 1 << 3;
+    /// <summary>DISCOVER's hostKeyId is this host's key (key file pairing).</summary>
+    public const ushort KeyMatch = 1 << 4;
+    /// <summary>DISCOVER's phoneKeyId is in authorized_phones.</summary>
+    public const ushort KnowsYourKey = 1 << 5;
 }
 
 /// <summary>PAIR_ACK status.</summary>
@@ -119,6 +131,18 @@ public static class PairDoneStatus
     public const byte Timeout = 2;
     public const byte BadConfirm = 3;
     public const byte Pending = 4;
+}
+
+/// <summary>KEY_ENROLL_ACK status.</summary>
+public static class EnrollStatus
+{
+    public const byte Ok = 0;
+    /// <summary>No open QR code has that token. Not MACed: the host does not know the token.</summary>
+    public const byte Expired = 1;
+    /// <summary>Another phone already used this QR code.</summary>
+    public const byte Used = 2;
+    /// <summary>The host has no key of its own. Not MACed.</summary>
+    public const byte NoKey = 3;
 }
 
 /// <summary>HELLO caps.</summary>

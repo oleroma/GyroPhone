@@ -14,6 +14,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,6 +31,7 @@ import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.runtime.GamepadRuntime
+import kotlin.math.roundToInt
 
 /**
  * Gyro and touchpad settings of the active profile's workspace [index]. Edits go
@@ -45,19 +47,38 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
     val key = profile.id + "/" + ws.id
 
     Text("Gyro to mouse", style = MaterialTheme.typography.titleSmall)
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(GyroMode.OFF to "Off", GyroMode.ALWAYS to "Always", GyroMode.HOLD_OR_TOGGLE to "Hold / toggle button")
-            .forEach { (mode, label) ->
-                FilterChip(selected = ws.gyro.mode == mode, onClick = {
-                    editWs { it.copy(gyro = it.gyro.copy(mode = mode)) }
-                }, label = { Text(label) })
-            }
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(GyroMode.ALWAYS, GyroMode.OFF, GyroMode.HOLD_OR_TOGGLE).forEach { mode ->
+            FilterChip(selected = ws.gyro.mode == mode, onClick = {
+                editWs { it.copy(gyro = it.gyro.copy(mode = mode)) }
+            }, label = { Text(mode.label) })
+        }
+    }
+    Text(
+        when (ws.gyro.mode) {
+            GyroMode.ALWAYS -> "Gyro moves the mouse; a Ratchet button pauses it while held."
+            GyroMode.OFF -> "Gyro is off; a Ratchet button turns it on while held."
+            GyroMode.HOLD_OR_TOGGLE -> "Gyro moves the mouse while a Gyro hold button is held or after a Gyro toggle press."
+        } + " Map Ratchet to any touch or controller button.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    SwitchRow("Touchpad is a ratchet (a finger on the touchpad flips gyro while it is down)", ws.gyro.touchpadRatchet) { v ->
+        editWs { it.copy(gyro = it.gyro.copy(touchpadRatchet = v)) }
+    }
+    SwitchRow("Gyro corner (tap to switch always on / always off, in every workspace)", profile.gyroCorner) { v ->
+        runtime.editActiveProfile { it.copy(gyroCorner = v) }
     }
     var sens by remember(key) { mutableStateOf(ws.gyro.sensitivity) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Sensitivity %.0f".format(sens), Modifier.padding(end = 8.dp))
         Slider(value = sens, onValueChange = { sens = it }, valueRange = 2f..60f,
             onValueChangeFinished = { editWs { it.copy(gyro = it.gyro.copy(sensitivity = sens)) } })
+    }
+    var ratio by remember(key) { mutableStateOf(ws.gyro.verticalRatio) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Vertical %.2f× horizontal".format(ratio), Modifier.padding(end = 8.dp))
+        Slider(value = ratio, onValueChange = { ratio = (it * 20).roundToInt() / 20f }, valueRange = 0.25f..2f,
+            onValueChangeFinished = { editWs { it.copy(gyro = it.gyro.copy(verticalRatio = ratio)) } })
     }
     Text("Held as", style = MaterialTheme.typography.bodyMedium)
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -78,12 +99,9 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
         Text("Axes for", Modifier.padding(end = 4.dp))
         FilterChip(selected = !axesPortrait, onClick = { axesPortrait = false }, label = { Text("Landscape") })
         FilterChip(selected = axesPortrait, onClick = { axesPortrait = true }, label = { Text("Portrait") })
-        if (axesPortrait && ws.gyro.portrait != null) {
-            TextButton(onClick = { editWs { it.copy(gyro = it.gyro.copy(portrait = null)) } }) { Text("Same as landscape") }
+        if (axesPortrait && ws.gyro.axesFor(true) != ws.gyro.landscapeAxes) {
+            TextButton(onClick = { editWs { it.copy(gyro = it.gyro.copy(portrait = it.gyro.landscapeAxes)) } }) { Text("Copy landscape") }
         }
-    }
-    if (axesPortrait && ws.gyro.portrait == null) {
-        Text("Portrait uses the landscape axes until you change one here.", style = MaterialTheme.typography.bodySmall)
     }
     AxisRow("Mouse left/right", axes.mouseX, axes.invertX,
         onAxis = { a -> editAxes { it.copy(mouseX = a) } },
@@ -91,11 +109,57 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
     AxisRow("Mouse up/down", axes.mouseY, axes.invertY,
         onAxis = { a -> editAxes { it.copy(mouseY = a) } },
         onInvert = { inv -> editAxes { it.copy(invertY = inv) } })
+    // Both filters default to off: raw gyro. Calibration only subtracts a fixed resting bias.
+    var tight by remember(key) { mutableStateOf(ws.gyro.tighteningThreshold) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Jitter cutoff " + if (tight < 0.05f) "off" else "%.1f°/s".format(tight), Modifier.padding(end = 8.dp))
+        Slider(value = tight, onValueChange = { tight = it }, valueRange = 0f..5f,
+            onValueChangeFinished = {
+                if (tight < 0.05f) tight = 0f
+                editWs { it.copy(gyro = it.gyro.copy(tighteningThreshold = tight)) }
+            })
+    }
+    var smooth by remember(key) { mutableStateOf(ws.gyro.smoothingThreshold) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Smoothing " + if (smooth < 0.05f) "off" else "below %.1f°/s".format(smooth), Modifier.padding(end = 8.dp))
+        Slider(value = smooth, onValueChange = { smooth = it }, valueRange = 0f..10f,
+            onValueChangeFinished = {
+                if (smooth < 0.05f) smooth = 0f
+                editWs { it.copy(gyro = it.gyro.copy(smoothingThreshold = smooth)) }
+            })
+    }
+    val cal by runtime.calibrationState.collectAsState()
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            when (val c = cal) {
+                GamepadRuntime.CalibrationState.None -> "Not calibrated (phone's own drift correction only)"
+                GamepadRuntime.CalibrationState.Running -> "Calibrating: keep the phone still…"
+                GamepadRuntime.CalibrationState.Moved -> "The phone moved. Lay it flat and try again."
+                is GamepadRuntime.CalibrationState.Calibrated -> "Calibrated (removes %.2f°/s drift)".format(c.degPerSec)
+            },
+            Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+        )
+        if (cal is GamepadRuntime.CalibrationState.Calibrated) {
+            TextButton(onClick = { runtime.clearGyroCalibration() }) { Text("Clear") }
+        }
+        TextButton(onClick = { runtime.calibrateGyro() }, enabled = cal != GamepadRuntime.CalibrationState.Running) {
+            Text("Calibrate")
+        }
+    }
 
     HorizontalDivider()
     Text("Touch keys", style = MaterialTheme.typography.titleSmall)
-    SwitchRow("Touchpad over buttons (a moving finger on a key moves the cursor)", ws.touchpadOverButtons) { v ->
+    SwitchRow("Touchpad over buttons (a finger on a key moves the cursor; a quick tap presses it)", ws.touchpadOverButtons) { v ->
         editWs { it.copy(touchpadOverButtons = v) }
+    }
+    if (ws.touchpadOverButtons) {
+        var tapMs by remember(key) { mutableStateOf(ws.buttonTapMs.toFloat()) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Tap up to %.0f ms".format(tapMs), Modifier.padding(end = 8.dp))
+            Slider(value = tapMs, onValueChange = { tapMs = (it / 10f).roundToInt() * 10f },
+                valueRange = Workspace.MIN_BUTTON_TAP_MS.toFloat()..Workspace.MAX_BUTTON_TAP_MS.toFloat(),
+                onValueChangeFinished = { editWs { it.copy(buttonTapMs = tapMs.roundToInt()) } })
+        }
     }
     SwitchRow("Sticky modifiers (tap Shift, Ctrl… for the next key; double tap locks)", ws.stickyModifiers) { v ->
         editWs { it.copy(stickyModifiers = v) }

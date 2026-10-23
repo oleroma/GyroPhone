@@ -193,6 +193,172 @@ public class SessionManagerTests
     }
 
     [Fact]
+    public void SamePhoneReplacementKeepsHeldInput()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        h.Send(phone, phone.State(f => { f.SetKey(UsageW, true); f.MouseButtons = 1; f.Buttons = 1; f.MouseTotalX = 500; }));
+        uint oldSid = phone.SessionId;
+        var late = phone.State(); // an old-session copy still in flight
+        int calls = h.KeyMouse.Calls.Count;
+        int frames = h.Pad.X360.Count;
+        long mx = h.KeyMouse.MouseX;
+
+        // Network change: a new HELLO from the same phone; its totals restart at 0.
+        Assert.True(phone.OnWelcome(h.Send(phone, phone.Hello())!));
+        Assert.NotEqual(oldSid, phone.SessionId);
+        h.Sender.Clear();
+        h.Send(phone, phone.State(f => f.MouseTotalX = 0));
+        Assert.True(h.Engine.Snapshot().Connected);
+        Assert.Equal(calls, h.KeyMouse.Calls.Count); // no ups, no re-press
+        Assert.DoesNotContain(X360Frame.Neutral, h.Pad.X360.Skip(frames));
+        Assert.Contains((ushort)0x11, h.KeyMouse.HeldKeys);
+        Assert.Contains("L", h.KeyMouse.HeldButtons);
+        Assert.DoesNotContain(h.Sender.Sent, x => x.Data[3] == PacketType.HostBye);
+
+        // The late old-session packet is dropped silently (an ERROR would restart the phone's session).
+        h.Sender.Clear();
+        Assert.Null(h.Send(phone, late));
+
+        // Motion continues from the new baseline, and a dropped key is released once.
+        h.Send(phone, phone.State(f => { f.MouseTotalX = 7; f.SetKey(UsageW, false); }));
+        Assert.Equal(mx + 7, h.KeyMouse.MouseX); // the new session's first STATE is its baseline
+        Assert.DoesNotContain((ushort)0x11, h.KeyMouse.HeldKeys);
+        Assert.Single(h.KeyMouse.All, e => e.Kind == InjectKind.Key && e.IsKeyUp);
+    }
+
+    [Fact]
+    public void TapInsideOneBurstIsStillInjected()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        int frames = h.Pad.X360.Count;
+        // Press and release reach the socket together: one drain, one Flush.
+        h.Send(phone, phone.State(f => { f.SetKey(UsageW, true); f.MouseButtons = 1; f.Buttons = 1; }), flush: false);
+        h.Send(phone, phone.State(f => { f.MouseTotalX += 3; }), flush: false); // a repeat with motion only
+        h.Send(phone, phone.State(f => { f.SetKey(UsageW, false); f.MouseButtons = 0; f.Buttons = 0; }), flush: false);
+        h.Engine.Flush(h.Clock.NowUs);
+
+        var all = h.KeyMouse.All.ToList();
+        Assert.Contains(all, e => e.Kind == InjectKind.Key && !e.IsKeyUp);
+        Assert.Contains(all, e => e.Kind == InjectKind.Key && e.IsKeyUp);
+        Assert.Contains(all, e => (e.Flags & InjectEvent.MouseLeftDown) != 0);
+        Assert.Contains(all, e => (e.Flags & InjectEvent.MouseLeftUp) != 0);
+        Assert.True(h.KeyMouse.NothingHeld);
+        Assert.Equal(3, h.KeyMouse.MouseX);
+
+        // The pad button stays visible to a polling game for a moment, then lets go.
+        Assert.Equal(XusbButtons.A, h.Pad.X360[^1].Buttons);
+        Assert.Single(h.Pad.X360.Skip(frames), f => f.Buttons == XusbButtons.A);
+        h.Clock.AdvanceMs(5);
+        h.Send(phone, phone.State()); // a keepalive inside the hold changes nothing
+        Assert.Equal(XusbButtons.A, h.Pad.X360[^1].Buttons);
+        h.Tick(Wire.WatchdogTickMs);
+        Assert.Equal(0, h.Pad.X360[^1].Buttons);
+    }
+
+    [Fact]
+    public void LongHeldPadButtonReleasedInsideBurstLetsGoAtOnce()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        h.Send(phone, phone.State(f => { f.Buttons = 1; f.Hat = 0; }));
+        h.Clock.AdvanceMs(500);
+        // One drain: the stick moves while A and up are still held, then both are released.
+        h.Send(phone, phone.State(f => f.Rx = 9000), flush: false);
+        h.Send(phone, phone.State(f => { f.Buttons = 0; f.Hat = StateFrame.HatCenter; }), flush: false);
+        h.Engine.Flush(h.Clock.NowUs);
+        Assert.Equal(0, h.Pad.X360[^1].Buttons);
+    }
+
+    [Fact]
+    public void KeyEdgeDoesNotExtendHeldPadButton()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        h.Send(phone, phone.State(f => f.Buttons = 1));
+        h.Clock.AdvanceMs(500);
+        // A key tap inside one drain while A is held steadily.
+        h.Send(phone, phone.State(f => f.SetKey(UsageW, true)), flush: false);
+        h.Send(phone, phone.State(f => f.SetKey(UsageW, false)), flush: false);
+        h.Engine.Flush(h.Clock.NowUs);
+        h.Clock.AdvanceMs(3);
+        h.Send(phone, phone.State(f => f.Buttons = 0));
+        Assert.Equal(0, h.Pad.X360[^1].Buttons);
+    }
+
+    [Fact]
+    public void PadTapSpanningSeveralBurstFramesIsHeld()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        // A is pressed, a key edge follows, then A is released: all in one drain.
+        h.Send(phone, phone.State(f => f.Buttons = 1), flush: false);
+        h.Send(phone, phone.State(f => f.SetKey(UsageW, true)), flush: false);
+        h.Send(phone, phone.State(f => { f.Buttons = 0; f.SetKey(UsageW, false); }), flush: false);
+        h.Engine.Flush(h.Clock.NowUs);
+        Assert.Equal(XusbButtons.A, h.Pad.X360[^1].Buttons);
+        h.Tick(Wire.WatchdogTickMs);
+        Assert.Equal(0, h.Pad.X360[^1].Buttons);
+    }
+
+    [Fact]
+    public void PadFailureNeverStopsKeyboardMouseOrRelease()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        h.Pad.FailWith = new InvalidOperationException("bus gone");
+
+        h.Send(phone, phone.State(f => { f.SetKey(UsageW, true); f.Buttons = 1; f.MouseTotalX += 4; }));
+        Assert.Contains((ushort)0x11, h.KeyMouse.HeldKeys);
+        Assert.Equal(4, h.KeyMouse.MouseX);
+        h.Send(phone, phone.State(f => f.Buttons = 2));
+        Assert.Single(h.Events.Logs, l => l.StartsWith("pad submit failed"));
+
+        // Silence still releases the keys, and the session still ends cleanly.
+        h.Tick(Wire.ReleaseTimeoutMs + 10);
+        Assert.True(h.KeyMouse.NothingHeld);
+        h.Tick(Wire.SessionTimeoutMs);
+        Assert.False(h.Engine.Snapshot().Connected);
+    }
+
+    [Fact]
+    public void PadRecoversAfterFailure()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        h.Pad.FailWith = new InvalidOperationException("bus gone");
+        h.Send(phone, phone.State(f => f.Buttons = 1));
+        h.Pad.FailWith = null;
+        int frames = h.Pad.X360.Count;
+        h.Send(phone, phone.State(f => f.MouseTotalX += 1)); // a broken bus is not retried on every packet
+        Assert.Equal(frames, h.Pad.X360.Count);
+        h.Clock.AdvanceMs(100);
+        h.Send(phone, phone.State(f => f.MouseTotalX += 1)); // same pad frame: sent again, it never arrived
+        Assert.Equal(XusbButtons.A, h.Pad.X360[^1].Buttons);
+    }
+
+    [Fact]
+    public void MotionOnlyBurstInjectsOnce()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        int calls = h.KeyMouse.Calls.Count;
+        for (int i = 0; i < 4; i++) h.Send(phone, phone.State(f => f.MouseTotalX += 2), flush: false);
+        h.Engine.Flush(h.Clock.NowUs);
+        Assert.Equal(calls + 1, h.KeyMouse.Calls.Count);
+        Assert.Equal(8, h.KeyMouse.MouseX);
+    }
+
+    [Fact]
     public void OnlyAuthenticatedPacketMovesEndpoint()
     {
         var h = new Harness();

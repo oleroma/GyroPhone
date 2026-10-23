@@ -32,6 +32,18 @@ class SendSchedulerTest {
         assertEquals(NORMAL, s.step(ms, dirty = true))
     }
 
+    @Test fun sendableAtIsTheEndOfTheRateLimit() {
+        val s = SendScheduler(250)
+        assertEquals(Long.MIN_VALUE, s.sendableAt())
+        s.step(10 * ms, dirty = true)
+        assertEquals(14 * ms, s.sendableAt())
+        // Before it nothing goes out, however dirty; from it a change does.
+        assertEquals(NONE, s.step(14 * ms - 1, dirty = true, discrete = true))
+        assertEquals(NORMAL, s.step(s.sendableAt(), dirty = true, discrete = true))
+        s.reset()
+        assertEquals(Long.MIN_VALUE, s.sendableAt())
+    }
+
     @Test fun repeatsFollowADiscreteChangeAt2And6Ms() {
         val s = SendScheduler(1000)
         s.step(0, dirty = true, discrete = true)

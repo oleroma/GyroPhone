@@ -83,7 +83,7 @@ class PresetsTest {
         for (w in presets) {
             val ids = w.touchControls.map { it.id }
             assertEquals("${w.name} ids", ids.size, ids.toSet().size)
-            assertTrue(ids.none { it == NavCorners.PREV || it == NavCorners.NEXT })
+            assertTrue(ids.none { it == NavCorners.PREV || it == NavCorners.NEXT || it == NavCorners.GYRO })
             for (c in w.touchControls) {
                 assertTrue("${w.name}/${c.id} unmapped", w.mappings.any { m ->
                     val s = m.source

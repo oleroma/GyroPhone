@@ -9,10 +9,14 @@ import kotlin.math.sqrt
 /**
  * Gyro-to-mouse conversion (Alpakka / JoyShockMapper style). Converts the sensor's angular
  * velocity into yaw / pitch / roll for the chosen [GyroOrientation], routes the chosen motion to
- * each mouse axis, applies soft tightening and tiered smoothing at low speeds, scales to mouse
- * counts and keeps the sub-count remainder so slow motion is not lost.
+ * each mouse axis, optionally applies soft tightening and tiered smoothing at low speeds (both off
+ * by default: raw gyro), scales to mouse counts and keeps the sub-count remainder so slow motion
+ * is not lost.
  */
-class GyroMouse(var settings: GyroSettings = GyroSettings()) {
+class GyroMouse(settings: GyroSettings = GyroSettings()) {
+
+    /** Replaced whole from another thread (the UI); [update] reads it once per sample. */
+    @Volatile var settings: GyroSettings = settings
 
     /** Screen rotation in degrees (0/90/180/270), used when orientation is AUTO. */
     @Volatile var displayRotation: Int = 90
@@ -68,6 +72,7 @@ class GyroMouse(var settings: GyroSettings = GyroSettings()) {
         else m[s.mouseX] * s.scaleX * (if (s.invertX) -1f else 1f)
         var vy = if (p != null) m[p.mouseY] * p.scaleY * (if (p.invertY) -1f else 1f)
         else m[s.mouseY] * s.scaleY * (if (s.invertY) -1f else 1f)
+        vy *= s.verticalRatio
 
         val speed = sqrt(vx * vx + vy * vy)
         if (s.tighteningThreshold > 0f && speed < s.tighteningThreshold) {
@@ -75,13 +80,15 @@ class GyroMouse(var settings: GyroSettings = GyroSettings()) {
             vx *= k; vy *= k
         }
 
-        bufX[bufIndex] = vx; bufY[bufIndex] = vy
-        bufIndex = (bufIndex + 1) % SMOOTHING_WINDOW
         if (s.smoothingThreshold > 0f) {
-            // Fully smoothed below threshold/2, fully direct above threshold, blended between.
+            // Fully smoothed below threshold/2, fully direct above threshold, blended between. Only
+            // the smoothed share enters the window, so it is sent once, spread over the window, and
+            // fast motion is never replayed after the phone stops. Off (0): raw, the window unused.
             val direct = ((speed - s.smoothingThreshold / 2f) / (s.smoothingThreshold / 2f)).coerceIn(0f, 1f)
-            vx = vx * direct + bufX.average().toFloat() * (1f - direct)
-            vy = vy * direct + bufY.average().toFloat() * (1f - direct)
+            bufX[bufIndex] = vx * (1f - direct); bufY[bufIndex] = vy * (1f - direct)
+            bufIndex = (bufIndex + 1) % SMOOTHING_WINDOW
+            vx = vx * direct + bufX.average().toFloat()
+            vy = vy * direct + bufY.average().toFloat()
         }
 
         val fx = vx * dtSeconds * s.sensitivity + remX

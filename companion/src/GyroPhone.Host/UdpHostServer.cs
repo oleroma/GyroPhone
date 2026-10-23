@@ -15,7 +15,8 @@ public enum ServerState
 
 /// <summary>
 /// The one UDP socket on port 47800. Thread gp-rx blocks in ReceiveFrom, drains the backlog into
-/// HostEngine.OnDatagram, then calls Flush once, so a burst of STATEs causes a single injection.
+/// HostEngine.OnDatagram, then calls Flush once, so a burst of STATEs causes a single injection
+/// (the engine injects early only when a newer STATE changes keys or buttons).
 /// </summary>
 public sealed class UdpHostServer : IDatagramSender, IDisposable
 {

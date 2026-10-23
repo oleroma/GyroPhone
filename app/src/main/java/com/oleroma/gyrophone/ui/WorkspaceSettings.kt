@@ -100,9 +100,19 @@ internal fun WorkspaceSettingsPanel(
             }
             WsSwitchRow(
                 "Touchpad over buttons",
-                "A finger that moves on a button drives the touchpad; a still tap presses the button.",
+                "A finger on a button drives the touchpad at once; a quick still tap presses the button.",
                 w.touchpadOverButtons,
             ) { v -> onChange(w.copy(touchpadOverButtons = v)) }
+            if (w.touchpadOverButtons) {
+                Column {
+                    Text("Button tap up to ${w.buttonTapMs} ms", style = MaterialTheme.typography.labelLarge)
+                    Slider(
+                        value = w.buttonTapMs.toFloat(),
+                        onValueChange = { v -> onChange(w.copy(buttonTapMs = (v / 10f).roundToInt() * 10)) },
+                        valueRange = Workspace.MIN_BUTTON_TAP_MS.toFloat()..Workspace.MAX_BUTTON_TAP_MS.toFloat(),
+                    )
+                }
+            }
             WsSwitchRow(
                 "Sticky modifiers",
                 "Tap Shift, Ctrl, Alt or Win for the next key only; double tap to lock.",

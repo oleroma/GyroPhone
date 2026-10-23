@@ -9,6 +9,8 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>GyroPhone.ico</ApplicationIcon>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- update.cmd reads this (file properties, Comments) to know the exe takes the flag before it runs it. -->
+    <Description>GyroPhone Companion; supports --init-keys</Description>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../GyroPhone.Protocol/GyroPhone.Protocol.csproj" />

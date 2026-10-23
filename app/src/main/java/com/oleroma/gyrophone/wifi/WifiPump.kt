@@ -120,6 +120,15 @@ class WifiPump(private val engine: MappingEngine) {
     private fun loop() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
         while (running) {
+            // Inside the rate limit nothing can go out: wait instead of taking a snapshot that
+            // would use up a quick tap's edge. Motion keeps accumulating in the engine meanwhile.
+            if (cur != null && target.session === cur) {
+                val wait = scheduler.sendableAt() - System.nanoTime()
+                if (wait > 0) {
+                    LockSupport.parkNanos(wait)
+                    continue
+                }
+            }
             val s = engine.snapshot() // always drain motion, even with no session
             totals.add(s.mouse)
             val t = target

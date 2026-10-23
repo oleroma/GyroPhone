@@ -33,6 +33,11 @@ data class TouchControl(
     val shape: TouchShape = TouchShape.CIRCLE,
     /** Portrait placement; null = derived from the landscape one. Keep last (positional callers). */
     val portrait: Placement? = null,
+    /**
+     * Click-through (BUTTON kind): the finger presses at once and also moves the cursor like a
+     * touchpad finger until it lifts, like a fire button you aim with in mobile shooters.
+     */
+    val clickThrough: Boolean = false,
 ) {
     companion object {
         const val MIN_SIZE = 0.06f
@@ -92,8 +97,18 @@ fun TouchControl.contains(
     }
 }
 
+/**
+ * When gyro moves the mouse. OFF = always off and ALWAYS = always on, each flipped while a ratchet
+ * ([OutputTarget.GyroPause], or the touchpad with [GyroSettings.touchpadRatchet]) is held: always
+ * on pauses, always off engages. HOLD_OR_TOGGLE = on while a hold button is held or after a toggle
+ * press; a ratchet pauses it.
+ */
 @Serializable
-enum class GyroMode { OFF, ALWAYS, HOLD_OR_TOGGLE }
+enum class GyroMode(val label: String) {
+    OFF("Always off"),
+    ALWAYS("Always on"),
+    HOLD_OR_TOGGLE("Hold / toggle button"),
+}
 
 /** How the phone is held. AUTO follows the screen rotation. */
 @Serializable
@@ -131,15 +146,19 @@ data class GyroSettings(
     val mouseY: MotionAxis = MotionAxis.PITCH,
     val invertY: Boolean = false,
     val scaleY: Float = 1f,
-    /** Below this speed (deg/s) motion is scaled down, killing hand jitter. 0 disables. */
-    val tighteningThreshold: Float = 1.5f,
-    /** Below this speed (deg/s) motion is averaged over a short window. 0 disables. */
-    val smoothingThreshold: Float = 4f,
+    /** Vertical sensitivity as a share of horizontal (0.5 = cursor moves half as fast up/down), both orientations. */
+    val verticalRatio: Float = 1f,
+    /** Below this speed (deg/s) motion is scaled down, killing hand jitter. 0 (default, raw gyro) disables. */
+    val tighteningThreshold: Float = 0f,
+    /** Below this speed (deg/s) motion is averaged over a short window. 0 (default, raw gyro) disables. */
+    val smoothingThreshold: Float = 0f,
     /**
      * Axis mapping used while the phone is held in portrait. Null = same as the fields above,
      * which are the landscape mapping (and the only one in profiles saved before this existed).
      */
     val portrait: GyroAxes? = null,
+    /** A finger on the touchpad is a ratchet: gyro pauses (always on) or engages (always off) meanwhile. */
+    val touchpadRatchet: Boolean = false,
 ) {
     val landscapeAxes: GyroAxes get() = GyroAxes(mouseX, invertX, scaleX, mouseY, invertY, scaleY)
 
@@ -150,6 +169,12 @@ data class GyroSettings(
         if (portrait) copy(portrait = axes)
         else copy(mouseX = axes.mouseX, invertX = axes.invertX, scaleX = axes.scaleX,
             mouseY = axes.mouseY, invertY = axes.invertY, scaleY = axes.scaleY)
+
+    /** Copy with the portrait axes spelled out (the landscape ones when unset), so each orientation has its own. */
+    fun withBothOrientations(): GyroSettings = if (portrait != null) this else copy(portrait = landscapeAxes)
+
+    /** The mode the gyro corner ([NavCorners.GYRO]) switches to: always on <-> always off. */
+    fun toggledMode(): GyroSettings = copy(mode = if (mode == GyroMode.ALWAYS) GyroMode.OFF else GyroMode.ALWAYS)
 }
 
 /** Which motion drives each mouse axis; see [GyroSettings.mouseX] and [GyroSettings.mouseY]. */
@@ -294,8 +319,9 @@ data class DeviceMatch(
 
 /**
  * A game profile: an ordered list of [workspaces], each a complete setup (on-screen layout,
- * touchpad, gyro and the physical game pads attached to it). The two [corners] are shared by all
- * workspaces: tap left = previous workspace, tap right = next, both together = fullscreen.
+ * touchpad, gyro and the physical game pads attached to it). The [corners] are shared by all
+ * workspaces: tap left = previous workspace, tap right = next, both together = fullscreen, and the
+ * gyro corner switches the current workspace's gyro between always on and always off.
  * Files saved before workspaces existed are read by [ProfileJson], which migrates them.
  */
 @Serializable
@@ -310,13 +336,19 @@ data class Profile(
     val games: List<String> = emptyList(),
     /** Auto-select this profile when a matching controller is attached to the phone. */
     val controllers: List<DeviceMatch> = emptyList(),
-    /** The previous / next workspace corners ([NavCorners]), kind [TouchKind.FULLSCREEN]. */
+    /** The previous / next workspace and gyro corners ([NavCorners]), kind [TouchKind.FULLSCREEN]. */
     val corners: List<TouchControl> = NavCorners.defaults(),
+    /** Show the gyro corner ([NavCorners.GYRO]); hidden it does nothing. */
+    val gyroCorner: Boolean = true,
     /** Opacity of the corners in play; they ignore the workspaces' control opacity. */
     val cornerOpacity: Float = 0.5f,
     /** Resizing one corner resizes the other too. */
     val cornerSameSize: Boolean = true,
 ) {
+    /** The corners shown on the pad: all of [corners] but a hidden gyro corner. */
+    val shownCorners: List<TouchControl>
+        get() = if (gyroCorner) corners else corners.filter { it.id != NavCorners.GYRO }
+
     /** The workspace at [index], clamped into range. */
     fun workspace(index: Int): Workspace = workspaces[index.coerceIn(0, workspaces.lastIndex)]
 

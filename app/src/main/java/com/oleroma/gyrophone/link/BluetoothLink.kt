@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
-/** Bluetooth HID through the existing [HidDeviceManager] and [ReportPump], both unchanged. */
+/** Bluetooth HID through [HidDeviceManager] and [ReportPump]. */
 class BluetoothLink(
     private val context: Context,
     val hid: HidDeviceManager,

@@ -17,5 +17,7 @@
   <ItemGroup>
     <!-- Golden vectors shared with the Kotlin suite; never edited here. -->
     <None Include="../../../core/src/test/resources/protocol/v1/wire-v1.json" Link="vectors/wire-v1.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../core/src/test/resources/protocol/v1/key-v1.json" Link="vectors/key-v1.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../core/src/test/resources/protocol/v1/qr-v1.json" Link="vectors/qr-v1.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

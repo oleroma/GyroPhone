@@ -1,5 +1,8 @@
 package com.oleroma.gyrophone.core.model
 
+import kotlin.math.abs
+import kotlin.math.sign
+
 /**
  * Android KeyEvent / MotionEvent constants used by profiles. Duplicated here (stable platform
  * values) so the mapping core stays plain Kotlin and unit-testable on the JVM.
@@ -40,6 +43,9 @@ object AndroidAxis {
     const val X = 0
     const val Y = 1
     const val Z = 11
+    /** Right stick of pads on Generic.kl (xpad clones, plain HID pads); not in the default mappings. */
+    const val RX = 12
+    const val RY = 13
     const val RZ = 14
     const val HAT_X = 15
     const val HAT_Y = 16
@@ -49,5 +55,38 @@ object AndroidAxis {
     const val BRAKE = 23
 
     /** Axes the controller reader polls on every joystick MotionEvent. */
-    val polled: IntArray = intArrayOf(X, Y, Z, RZ, HAT_X, HAT_Y, LTRIGGER, RTRIGGER, GAS, BRAKE)
+    val polled: IntArray = intArrayOf(X, Y, Z, RX, RY, RZ, HAT_X, HAT_Y, LTRIGGER, RTRIGGER, GAS, BRAKE)
+
+    /** Learn mode: how far an axis must move from where it rested when learning started. */
+    const val LEARN_THRESHOLD = 0.6f
+
+    fun isTrigger(axis: Int) = axis == LTRIGGER || axis == RTRIGGER || axis == GAS || axis == BRAKE
+
+    /**
+     * Drops the device's flat region (InputDevice.MotionRange.flat) around rest and stretches the
+     * rest of the travel over 0..1, so the output starts at 0 at the edge of the flat region
+     * instead of jumping to [flat], and full deflection stays 1. Hat axes (-1 / 0 / 1) are only
+     * zeroed inside it.
+     */
+    fun deadzone(axis: Int, value: Float, flat: Float): Float {
+        val a = abs(value)
+        if (a <= flat) return 0f
+        if (flat <= 0f || axis == HAT_X || axis == HAT_Y || flat >= 1f) return value
+        return sign(value) * (a - flat) / (1f - flat)
+    }
+
+    /**
+     * The half of [axis] the user moved while learning, or null while [value] is within
+     * [LEARN_THRESHOLD] of [rest], its value when learning started (a trigger on a centred axis
+     * rests at -1). Triggers learn as a whole axis.
+     */
+    fun learnedHalf(axis: Int, value: Float, rest: Float): AxisHalf? {
+        val moved = value - rest
+        return when {
+            abs(moved) <= LEARN_THRESHOLD -> null
+            isTrigger(axis) -> AxisHalf.FULL
+            moved > 0 -> AxisHalf.POSITIVE
+            else -> AxisHalf.NEGATIVE
+        }
+    }
 }

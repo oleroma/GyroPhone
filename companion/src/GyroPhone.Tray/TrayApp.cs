@@ -30,6 +30,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private readonly HostEngine _engine;
     private readonly UdpHostServer _server;
     private readonly Watchdog _watchdog;
+    private readonly KeyFiles _keyFiles;
+    private readonly AuthorizedPhonesWatcher? _authorized;
     private IPadSink _pad;
     private string? _padError;
 
@@ -39,8 +41,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _outX360, _outDs4, _outOff;
     private readonly ToolStripMenuItem _phonesItem;
+    private readonly ToolStripMenuItem _hostKeyItem;
     private readonly ToolStripMenuItem _pauseItem;
     private readonly ToolStripMenuItem _autoStartItem;
+    private readonly ToolStripMenuItem _watcherItem;
     private readonly ToolStripMenuItem _uipiItem;
     private readonly ToolStripMenuItem _networkItem;
     private readonly ToolStripMenuItem _firewallItem;
@@ -54,6 +58,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private StatusForm? _statusForm;
     private int _refreshQueued;
     private bool? _firewallOk;
+    /// <summary>Why key file pairing is off (the host key could not be loaded), or null.</summary>
+    private readonly string? _keyError;
     private bool _firewallHintShown, _uipiHintShown, _publicHintShown;
     private string _phonesKey = "";
     private bool _sessionLocked, _suspended;
@@ -74,9 +80,28 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         var store = new SettingsStore(SettingsStore.DefaultPath());
         var settings = store.Load(Environment.MachineName, _log.Write);
         _pad = ViGEmPadSink.Create(_log.Write, out _padError);
-        _engine = new HostEngine(settings, _pad, _keyMouse, this, new DpapiKeyProtector(), _clock, this);
+        var protector = new DpapiKeyProtector();
+        _keyFiles = new KeyFiles(KeyFiles.DefaultDirectory());
+        GyroPhone.Protocol.Crypto.P256? hostKey = null;
+        try
+        {
+            hostKey = _keyFiles.LoadOrCreateHostKey(protector, settings.HostName, _log.Write);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+        {
+            _keyError = $"{e.GetType().Name}: {e.Message}";
+            _log.Write($"key file pairing off: {_keyError}");
+        }
+        _engine = new HostEngine(settings, _pad, _keyMouse, this, protector, _clock, this, hostKey: hostKey);
+        if (hostKey != null) _authorized = new AuthorizedPhonesWatcher(_keyFiles, _engine.SetAuthorizedPhones, _log.Write);
+        PowerQos.TryDisableForProcess(_log.Write);
         _server = new UdpHostServer(_engine, _clock,
-            onRxThreadStart: () => Mmcss.TryEnter("Games", Mmcss.AvrtPriorityHigh, _log.Write), log: _log.Write);
+            onRxThreadStart: () =>
+            {
+                Mmcss.TryEnter("Games", Mmcss.AvrtPriorityHigh, _log.Write);
+                PowerQos.TryDisableForThread(_log.Write);
+            },
+            log: _log.Write);
         _watchdog = new Watchdog(_engine, _clock, _marker, store,
             ElevationProbe.IsForegroundElevated, NetworkCategory.IsAnyConnectedPublic, _log.Write);
 
@@ -92,10 +117,13 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         outputItem.DropDownItems.AddRange(new ToolStripItem[] { _outX360, _outDs4, _outOff });
         var pairItem = new ToolStripMenuItem("Pair new phone…", null, (_, _) => PairNewPhone());
         _phonesItem = new ToolStripMenuItem("Paired phones");
+        _hostKeyItem = new ToolStripMenuItem("This PC's key: none") { Enabled = false };
+        var keysFolderItem = new ToolStripMenuItem("Open keys folder", null, (_, _) => OpenKeysFolder());
         var statusFormItem = new ToolStripMenuItem("Status…", null, (_, _) => ShowStatusForm());
         _pauseItem = new ToolStripMenuItem("Pause input");
         _pauseItem.Click += (_, _) => _engine.SetPaused(!_pauseItem.Checked);
         _autoStartItem = new ToolStripMenuItem("Start with Windows", null, (_, _) => ToggleAutoStart());
+        _watcherItem = new ToolStripMenuItem("Start when my phone appears", null, (_, _) => ToggleWatcher());
         _uipiItem = new ToolStripMenuItem("The game runs as administrator: restart as administrator", null, (_, _) => RestartAsAdmin());
         _networkItem = new ToolStripMenuItem("This network is Public: make it Private…", null, (_, _) => Open(NetworkCategory.SettingsUri));
         _firewallItem = new ToolStripMenuItem("Allow through firewall…", null, (_, _) => AllowThroughFirewall());
@@ -113,9 +141,12 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             outputItem,
             pairItem,
             _phonesItem,
+            keysFolderItem,
+            _hostKeyItem,
             statusFormItem,
             _pauseItem,
             _autoStartItem,
+            _watcherItem,
             new ToolStripSeparator(),
             _uipiItem,
             _networkItem,
@@ -151,7 +182,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _uiTimer = new System.Windows.Forms.Timer { Interval = 1000 };
         _uiTimer.Tick += (_, _) => Refresh();
 
-        if (_server.Start())
+        if (StartServer())
         {
             // Owning the port is the single-instance guard: only now is the marker ours to recover.
             int recovered = HeldKeysMarker.Recover(_marker.Path, _keyMouse);
@@ -249,6 +280,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _outOff.Checked = s.OutputMode == OutputMode.None;
         _pauseItem.Checked = s.Paused;
         _autoStartItem.Checked = IsAutoStartOn();
+        _watcherItem.Checked = IsWatcherOn();
         _uipiItem.Available = s.ElevatedForeground && !ElevationProbe.IsSelfElevated;
         _networkItem.Available = s.NetworkPublic;
         _firewallItem.Available = _firewallOk == false;
@@ -256,6 +288,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _retryDriverItem.Available = !s.DriverOk;
         _restartAdminItem.Available = !ElevationProbe.IsSelfElevated;
         RebuildPhones(s.PairedPhones);
+        _hostKeyItem.Text = s.HostKeyFingerprint is { } fp ? $"This PC's key: {fp}" : "This PC's key: unavailable (see Status)";
         _versionItem.Text = _updater.Pending is { } pending
             ? $"{Program.AppName} {Application.ProductVersion} · {pending} starts when the phone disconnects"
             : $"{Program.AppName} {Application.ProductVersion}";
@@ -280,9 +313,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         }
     }
 
-    private void RebuildPhones(IReadOnlyList<(byte[] PhoneId, string Name, DateTime LastSeenUtc)> phones)
+    private void RebuildPhones(IReadOnlyList<PairedPhoneInfo> phones)
     {
-        var key = string.Join("|", phones.Select(p => Convert.ToHexString(p.PhoneId) + p.Name));
+        var key = string.Join("|", phones.Select(p => Convert.ToHexString(p.PhoneId) + p.Name + p.KeyFile));
         if (key == _phonesKey) return;
         _phonesKey = key;
         _phonesItem.DropDownItems.Clear();
@@ -293,10 +326,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         }
         foreach (var p in phones)
         {
-            var id = p.PhoneId;
-            var name = p.Name;
-            var item = new ToolStripMenuItem(name);
-            item.DropDownItems.Add(new ToolStripMenuItem("Forget", null, (_, _) => Forget(id, name)));
+            var phone = p;
+            var item = new ToolStripMenuItem($"{p.Name} · {(p.ByKey ? "key" : "code")}");
+            if (p.Fingerprint != null) item.DropDownItems.Add(new ToolStripMenuItem(p.Fingerprint) { Enabled = false });
+            item.DropDownItems.Add(new ToolStripMenuItem("Forget", null, (_, _) => Forget(phone)));
             _phonesItem.DropDownItems.Add(item);
         }
     }
@@ -311,7 +344,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     {
         if (_pairForm == null || _pairForm.IsDisposed)
         {
-            var form = new PairForm(_engine, _engine.Settings.HostName);
+            var form = new PairForm(_engine, _engine.Settings.HostName, _engine.HostPublicKey != null ? _keyFiles : null);
             form.FormClosed += (_, _) =>
             {
                 if (ReferenceEquals(_pairForm, form)) _pairForm = null; // a closed modeless form disposes itself
@@ -358,7 +391,12 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             + (_firewallOk switch { true => "present", false => "missing", null => "checking" }));
         b.AppendLine($"Server:       {(_server.State == ServerState.Running ? $"UDP {Wire.Port}" : _server.State.ToString())}, "
             + $"this app {(ElevationProbe.IsSelfElevated ? "elevated" : "not elevated")}");
-        b.AppendLine($"Pairing:      {(s.PairingWindowS > 0 ? $"open, {s.PairingWindowS} s left" : "closed")}, {s.PairedPhones.Count} paired phone(s)");
+        b.AppendLine($"Pairing:      {(s.PairingWindowS > 0 ? $"open, {s.PairingWindowS} s left" : "closed")}, {s.PairedPhones.Count} paired phone(s)"
+            + $" ({s.PairedPhones.Count(p => p.ByKey)} by key)");
+        b.AppendLine($"PC key:       {s.HostKeyFingerprint ?? "unavailable" + (_keyError != null ? $" ({_keyError})" : "")}, {_keyFiles.Directory}");
+        b.AppendLine($"Phone keys:   {(_authorized == null ? "not read (no PC key)" : _authorized.LastScan)}");
+        b.AppendLine($"Log:          {_log.Path}{(_log.LastError is { } le ? $" (cannot write: {le})" : "")}");
+        b.AppendLine($"Running as:   {Environment.UserDomainName}\\{Environment.UserName}, {_exePath}");
         var c = s.Counters;
         b.AppendLine();
         b.AppendLine($"datagrams {c.Datagrams}  states {c.States}  injections {c.Injections}  SendInput short {_keyMouse.ShortWrites}");
@@ -366,17 +404,113 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         return b.ToString();
     }
 
-    private void Forget(byte[] phoneId, string name)
+    private void Forget(PairedPhoneInfo phone)
     {
-        var r = MessageBox.Show($"Forget {name}? The phone will need to pair again.", Program.AppName,
-            MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
-        if (r == DialogResult.OK) _engine.Forget(phoneId);
+        var text = phone.ByKey
+            ? $"Forget {phone.Name}? This deletes its key file {Path.GetFileName(phone.KeyFile)}; run update.cmd or pair with a code to connect again."
+            : $"Forget {phone.Name}? The phone will need to pair again.";
+        var r = MessageBox.Show(text, Program.AppName, MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
+        if (r != DialogResult.OK) return;
+        if (!phone.ByKey)
+        {
+            _engine.Forget(phone.PhoneId);
+            return;
+        }
+        try
+        {
+            File.Delete(phone.KeyFile!);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _log.Write($"could not delete key file: {e.GetType().Name}");
+        }
+        _authorized?.Reload();
+    }
+
+    private void OpenKeysFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(_keyFiles.AuthorizedDirectory);
+            using var p = Process.Start(new ProcessStartInfo("explorer.exe", $"\"{_keyFiles.Directory}\"") { UseShellExecute = true });
+        }
+        catch (Exception e) when (e is Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            _log.Write($"open keys folder failed: {e.GetType().Name}");
+        }
+    }
+
+    /// <summary>
+    /// Binds UDP 47800. When the watcher holds it, asks it to let go and retries until it has
+    /// (the watcher checks once a second).
+    /// </summary>
+    private bool StartServer()
+    {
+        if (_server.Start()) return true;
+        if (_server.State != ServerState.PortInUse || !Watcher.AskToYieldPort()) return false;
+        _log.Write($"port {Wire.Port} held by the watcher: asked it to yield");
+        for (int i = 0; i < 20; i++)
+        {
+            Thread.Sleep(250);
+            if (_server.Start()) return true;
+            if (_server.State != ServerState.PortInUse) return false;
+        }
+        return false;
     }
 
     private void ToggleAutoStart()
     {
         bool enable = !IsAutoStartOn();
         if (TrySetAutoStart(enable)) _engine.SetStartWithWindows(enable);
+        Refresh();
+    }
+
+    private static bool IsWatcherOn()
+    {
+        try
+        {
+            return AutoStart.IsEnabled(AutoStart.WatcherValueName, Watcher.InstalledExe, Watcher.Arg);
+        }
+        catch (Exception e) when (e is UnauthorizedAccessException or System.Security.SecurityException or IOException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// "Start when my phone appears": a per-user Run entry for the installed exe with --watch, started
+    /// now too. Off removes the entry and stops the running watcher.
+    /// </summary>
+    private void ToggleWatcher()
+    {
+        bool enable = !IsWatcherOn();
+        if (enable && !File.Exists(Watcher.InstalledExe))
+        {
+            MessageBox.Show($"Install the companion with update.cmd first (it goes to {Path.GetDirectoryName(Watcher.InstalledExe)}).",
+                Program.AppName, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        try
+        {
+            AutoStart.Set(AutoStart.WatcherValueName, enable, Watcher.InstalledExe, Watcher.Arg);
+            if (enable)
+            {
+                using var p = Process.Start(new ProcessStartInfo(Watcher.InstalledExe, Watcher.Arg)
+                {
+                    UseShellExecute = true,
+                    WorkingDirectory = Path.GetDirectoryName(Watcher.InstalledExe) ?? "",
+                });
+            }
+            else
+            {
+                Watcher.SignalStop();
+            }
+            _log.Write($"watcher {(enable ? "on" : "off")}");
+        }
+        catch (Exception e) when (e is UnauthorizedAccessException or System.Security.SecurityException or IOException or Win32Exception)
+        {
+            _log.Write($"watcher change failed: {e.GetType().Name}");
+        }
         Refresh();
     }
 
@@ -571,6 +705,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             Application.ApplicationExit -= OnApplicationExit;
             _uiTimer.Stop();
             _updater.Dispose();
+            _authorized?.Dispose();
             _watchdog.Dispose();
             _engine.Shutdown();
             _server.Stop();

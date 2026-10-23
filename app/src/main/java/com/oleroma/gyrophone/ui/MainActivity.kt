@@ -53,6 +53,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Re-asks for unbuffered dispatch once a focus change has finished overwriting the decor's request. */
+    private val reassertUnbuffered = Runnable { TouchStream.requestUnbuffered(window.decorView) }
+
     private val permissions = arrayOf(
         Manifest.permission.BLUETOOTH_CONNECT,
         Manifest.permission.BLUETOOTH_SCAN,
@@ -106,10 +109,19 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        // Any View focus change (Compose focus, leaving touch mode on a D-pad or keyboard key)
+        // makes every ancestor recompute its unbuffered request from its children, which drops
+        // the decor's own request. The listener fires before that recompute, so re-ask posted.
+        window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener { _, _ ->
+            val decor = window.decorView
+            decor.removeCallbacks(reassertUnbuffered)
+            decor.post(reassertUnbuffered)
+        }
     }
 
     override fun onResume() {
         super.onResume()
+        runtime.setForeground(true)
         controllerInput.register()
         getSystemService(DisplayManager::class.java)
             .registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
@@ -118,6 +130,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        runtime.setForeground(false)
         controllerInput.unregister()
         getSystemService(DisplayManager::class.java).unregisterDisplayListener(displayListener)
         super.onPause()
@@ -128,15 +141,39 @@ class MainActivity : ComponentActivity() {
         updateRotation()
     }
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        controllerInput.onKeyEvent(event) || super.dispatchKeyEvent(event)
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // A key may just have left touch mode and moved focus (see onCreate): re-ask at once,
+        // before the stick's next MOVE events. A no-op when the request is unchanged.
+        TouchStream.requestUnbuffered(window.decorView)
+        return controllerInput.onKeyEvent(event) || super.dispatchKeyEvent(event)
+    }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean =
         controllerInput.onGenericMotionEvent(event) || super.dispatchGenericMotionEvent(event)
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        // Entering touch mode can move focus too; same cheap re-ask as for keys.
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) TouchStream.requestUnbuffered(window.decorView)
         TouchStream.cancelled = event.actionMasked == MotionEvent.ACTION_CANCEL
+        TouchStream.pointerCancelled = event.actionMasked == MotionEvent.ACTION_POINTER_UP &&
+            (event.flags and MotionEvent.FLAG_CANCELED) != 0
+        TouchStream.eventNanos = event.eventTimeNanos
         return super.dispatchTouchEvent(event)
+    }
+
+    // Joystick (and, in play mode, touch) MOVE events as they arrive, not once per frame. Asked
+    // once attached, so it reaches ViewRootImpl at once. Any View focus change in the window
+    // resets the decor's request (ViewGroup.onDescendantUnbufferedRequested rebuilds it from the
+    // children, which never asked), so it is re-asserted after every focus change (onCreate's
+    // listener, key and touch-down dispatch) and when the window regains focus.
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        TouchStream.requestUnbuffered(window.decorView)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) TouchStream.requestUnbuffered(window.decorView)
     }
 
     private fun updateRotation() {

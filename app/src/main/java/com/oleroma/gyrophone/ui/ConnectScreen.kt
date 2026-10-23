@@ -25,6 +25,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -61,6 +62,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
     val rate by runtime.reportRateHz.collectAsStateWithLifecycle()
     val wifiRate by runtime.wifiRateHz.collectAsStateWithLifecycle()
     val orientation by runtime.screenOrientation.collectAsStateWithLifecycle()
+    val padOnly by runtime.padOnlyInput.collectAsStateWithLifecycle()
     val portrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
     var stats by remember { mutableStateOf(runtime.linkStats()) }
     val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?" }
@@ -131,6 +133,15 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
             Text("If the mouse lags behind your hand, pick a lower rate. Bluetooth queues anything faster than the link can carry.",
                 style = MaterialTheme.typography.bodySmall)
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Send input only while the pad is open", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            Switch(checked = padOnly, onCheckedChange = { runtime.setPadOnlyInput(it) })
+        }
+        Text(
+            if (padOnly) "Controller, keyboard and gyro reach the PC only on the Pad tab, outside its menu and edit mode. The connection stays up."
+            else "Controller, keyboard and gyro reach the PC from anywhere, also with the app in the background.",
+            style = MaterialTheme.typography.bodySmall,
+        )
         Text("Screen rotation", style = MaterialTheme.typography.titleSmall)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             ScreenOrientation.entries.forEach { o ->

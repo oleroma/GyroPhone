@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 namespace GyroPhone.Protocol.Crypto;
 
 /// <summary>
-/// Ephemeral P-256 key pair for pairing. Public keys travel as SEC1 uncompressed points
+/// P-256 key pair: ephemeral for code pairing, static for key file pairing. Public keys travel as SEC1 uncompressed points
 /// (04 || X || Y, big-endian, 65 bytes); the shared secret Z is the 32-byte X coordinate.
 /// </summary>
 public sealed class P256 : IDisposable
@@ -31,6 +31,17 @@ public sealed class P256 : IDisposable
         return new P256(ecdh);
     }
 
+    /// <summary>The 32-byte big-endian private scalar, for storing a static key (wrap it before it touches disk).</summary>
+    public byte[] ExportPrivateScalar()
+    {
+        var d = _key.ExportParameters(true).D!;
+        if (d.Length == CoordSize) return d;
+        var o = new byte[CoordSize];
+        d.CopyTo(o, CoordSize - d.Length);
+        CryptographicOperations.ZeroMemory(d);
+        return o;
+    }
+
     /// <summary>Z = X coordinate of d * peer. Throws <see cref="CryptographicException"/> on an invalid point.</summary>
     public byte[] Ecdh(ReadOnlySpan<byte> peerPublic)
     {
@@ -46,7 +57,8 @@ public sealed class P256 : IDisposable
             using var k = DecodePublic(pub);
             return true;
         }
-        catch (CryptographicException)
+        // Windows CNG reports an off-curve point as PlatformNotSupportedException.
+        catch (Exception e) when (e is CryptographicException or PlatformNotSupportedException)
         {
             return false;
         }

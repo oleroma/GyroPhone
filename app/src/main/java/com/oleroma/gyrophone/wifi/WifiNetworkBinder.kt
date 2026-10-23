@@ -8,6 +8,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiInfo
 import android.util.Log
+import com.oleroma.gyrophone.core.net.NetAddresses
 import java.io.IOException
 import java.net.DatagramSocket
 import java.net.Inet4Address
@@ -44,13 +45,14 @@ class WifiNetworkBinder(context: Context, private val onChanged: () -> Unit) {
 
     @Volatile private var socket: DatagramSocket? = null
     private var registered = false
-    private var lastAddresses = ""
+    /** The IPv4 addresses at the last callback ([NetAddresses.ipv4Key]); null until the first one. */
+    private var lastAddresses: String? = null
 
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             val changed = network != this@WifiNetworkBinder.network
             this@WifiNetworkBinder.network = network
-            if (changed) lastAddresses = ""
+            if (changed) lastAddresses = null
             bind()
             if (changed) onChanged()
         }
@@ -69,8 +71,8 @@ class WifiNetworkBinder(context: Context, private val onChanged: () -> Unit) {
         override fun onLinkPropertiesChanged(network: Network, lp: LinkProperties) {
             if (network != this@WifiNetworkBinder.network) return
             broadcast = directedBroadcast(lp)
-            val addresses = lp.linkAddresses.joinToString { it.toString() }
-            val changed = addresses != lastAddresses && lastAddresses.isNotEmpty()
+            val addresses = NetAddresses.ipv4Key(lp.linkAddresses.map { it.address to it.prefixLength })
+            val changed = lastAddresses != null && addresses != lastAddresses
             lastAddresses = addresses
             if (changed) {
                 bind()
@@ -83,7 +85,7 @@ class WifiNetworkBinder(context: Context, private val onChanged: () -> Unit) {
             this@WifiNetworkBinder.network = null
             info = WifiRadioInfo()
             broadcast = null
-            lastAddresses = ""
+            lastAddresses = null
             onChanged()
         }
     }
@@ -111,7 +113,7 @@ class WifiNetworkBinder(context: Context, private val onChanged: () -> Unit) {
         network = null
         info = WifiRadioInfo()
         broadcast = null
-        lastAddresses = ""
+        lastAddresses = null
     }
 
     private fun bind() {

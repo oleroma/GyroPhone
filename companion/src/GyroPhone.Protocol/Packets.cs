@@ -6,7 +6,11 @@ namespace GyroPhone.Protocol;
 /// <summary>The 12-byte header carried by every packet.</summary>
 public readonly record struct PacketHeader(byte Type, uint SessionId, uint Seq);
 
-public sealed record Discover(uint ReqId, byte[] PhoneId, ushort Flags);
+/// <summary>
+/// HostKeyId names the host key the phone trusts and PhoneKeyId the phone's own key (KeyPairing.KeyId,
+/// all zero when absent; null encodes as zero).
+/// </summary>
+public sealed record Discover(uint ReqId, byte[] PhoneId, ushort Flags, byte[]? HostKeyId = null, byte[]? PhoneKeyId = null);
 
 public sealed record Announce(uint ReqId, byte[] HostId, ushort Flags, string Name);
 
@@ -27,6 +31,9 @@ public sealed record Hello(byte[] PhoneId, byte[] NP, uint Caps, ushort MaxRateH
 
 /// <summary>WELCOME without its mac.</summary>
 public sealed record Welcome(uint SessionId, byte[] HostId, byte[] NP, byte[] NH, byte OutputMode, byte HostFlags, ushort KeepaliveMs);
+
+/// <summary>KEY_ENROLL; <see cref="Mac"/> is QrPairing.EnrollMac under the QR code's token.</summary>
+public sealed record KeyEnroll(uint ReqId, byte[] TokenId, byte[] PkP, string Name, byte[] Mac);
 
 public sealed record ErrorPacket(ushort Code, byte MaxVersion);
 

@@ -2,6 +2,9 @@ package com.oleroma.gyrophone.runtime
 
 import android.content.Context
 import android.hardware.SensorManager
+import android.os.Handler
+import android.os.Looper
+import com.oleroma.gyrophone.core.engine.GyroCalibration
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.Touchpad
@@ -20,6 +23,7 @@ import com.oleroma.gyrophone.core.model.WorkspaceSet
 import com.oleroma.gyrophone.data.ProfileStore
 import com.oleroma.gyrophone.core.net.ByeReason
 import com.oleroma.gyrophone.core.net.Wire
+import com.oleroma.gyrophone.core.sensor.GyroRateWindow
 import com.oleroma.gyrophone.hid.HidDeviceManager
 import com.oleroma.gyrophone.hid.ReportPump
 import com.oleroma.gyrophone.link.BluetoothLink
@@ -27,6 +31,7 @@ import com.oleroma.gyrophone.link.LinkState
 import com.oleroma.gyrophone.link.LinkStats
 import com.oleroma.gyrophone.link.OutputLink
 import com.oleroma.gyrophone.link.TransportKind
+import com.oleroma.gyrophone.sensor.DirectChannelGyroSource
 import com.oleroma.gyrophone.sensor.GyroSource
 import com.oleroma.gyrophone.wifi.WifiLink
 import kotlinx.coroutines.CoroutineScope
@@ -36,6 +41,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 /** A game controller attached to the phone (e.g. GameSir X5). */
 data class AttachedController(
@@ -74,9 +80,6 @@ class GamepadRuntime(context: Context) {
      * names its [MappingProfile]. See [loadWorkspaceSet] and [loadMappings].
      */
     private var stored: Profile = loadMappings(loadWorkspaceSet())
-
-    private val _profiles = MutableStateFlow(store.all())
-    val profiles: StateFlow<List<Profile>> = _profiles
 
     private val _activeProfile = MutableStateFlow(MappingProfiles.resolve(stored, _mappingProfiles.value))
     /** The workspace set with each workspace's mapping profile filled in ([MappingProfiles.resolve]). */
@@ -118,6 +121,22 @@ class GamepadRuntime(context: Context) {
     /** How the activity may rotate; MainActivity applies it. */
     val screenOrientation: StateFlow<ScreenOrientation> = _screenOrientation
 
+    private val _padOnlyInput = MutableStateFlow(prefs.getBoolean(KEY_PAD_ONLY_INPUT, true))
+    /** When on (the default), controller, keyboard and gyro input reach the PC only while the pad is on screen. */
+    val padOnlyInput: StateFlow<Boolean> = _padOnlyInput
+
+    /** The pad is shown in play mode (not the menu, the editor or the Connect tab); set by PadScreen. */
+    private var padShown = false
+    /** The activity is resumed; set by MainActivity. */
+    private var foreground = false
+
+    /**
+     * Whether controller, keyboard and gyro input go to the engine. False while [padOnlyInput] is on
+     * and the pad is not on screen; the link stays up and sends nothing held.
+     */
+    @Volatile var inputAllowed = !_padOnlyInput.value
+        private set
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _linkState = MutableStateFlow<LinkState>(LinkState.Off)
     /** State of the active link. */
@@ -140,12 +159,39 @@ class GamepadRuntime(context: Context) {
     private val _gyroInfo = MutableStateFlow(GyroInfo())
     val gyroInfo: StateFlow<GyroInfo> = _gyroInfo
 
+    /** What the Connect tab shows: the running source (or why none runs), its measured rate, and whether it moves the mouse. */
     data class GyroInfo(val source: String = "Not started", val rateHz: Int = 0, val active: Boolean = false)
 
+    /** Rest-calibration state shown in the pad Menu. */
+    sealed interface CalibrationState {
+        data object None : CalibrationState
+        data object Running : CalibrationState
+        data object Moved : CalibrationState
+        /** Bias in deg/s, largest axis, for display. */
+        data class Calibrated(val degPerSec: Float) : CalibrationState
+    }
+
+    // Constant bias (rad/s) subtracted from every gyro sample; set by rest calibration, kept per phone.
+    @Volatile private var biasX = prefs.getFloat(KEY_BIAS_X, 0f)
+    @Volatile private var biasY = prefs.getFloat(KEY_BIAS_Y, 0f)
+    @Volatile private var biasZ = prefs.getFloat(KEY_BIAS_Z, 0f)
+    @Volatile private var calibration: GyroCalibration? = null
+    private val _calibration = MutableStateFlow(storedCalibration())
+    val calibrationState: StateFlow<CalibrationState> = _calibration
+
+    /** Started, switched and stopped on the main thread only (under this object's lock). */
     private var gyro: GyroSource? = null
+    private val main = Handler(Looper.getMainLooper())
+    /**
+     * The direct channel ran capped (the microphone privacy toggle caps it to ~50 Hz, a listener
+     * to ~200 Hz): the listener runs instead until the next [start] or return to the foreground.
+     */
+    private var avoidDirect = false
+    /** The rate the capped direct channel measured, shown while [avoidDirect]. */
+    private var cappedHz = 0
+    // Owned by the thread of the running source; reset before each source starts.
     private var lastGyroTs = 0L
-    private var rateWindowStart = 0L
-    private var rateCount = 0
+    private val rateWindow = GyroRateWindow()
 
     /** When set, the next controller input is captured for the mapping editor instead of sent. */
     @Volatile var learnListener: ((InputSource) -> Unit)? = null
@@ -195,6 +241,37 @@ class GamepadRuntime(context: Context) {
         wifi.rateHz = hz
     }
 
+    fun setPadOnlyInput(on: Boolean) {
+        prefs.edit().putBoolean(KEY_PAD_ONLY_INPUT, on).apply()
+        _padOnlyInput.value = on
+        updateInputAllowed()
+    }
+
+    fun setPadShown(shown: Boolean) { padShown = shown; updateInputAllowed() }
+
+    @Synchronized fun setForeground(resumed: Boolean) {
+        foreground = resumed
+        // Back in front: try the capped direct channel again (the toggle may be off by now).
+        if (resumed && avoidDirect) {
+            avoidDirect = false
+            stopGyro()
+        }
+        updateInputAllowed()
+    }
+
+    /**
+     * Leaving the pad releases everything held, so no key or button sticks on the PC, and pauses
+     * the gyro sensor ([updateGyro]).
+     */
+    @Synchronized private fun updateInputAllowed() {
+        val allowed = !_padOnlyInput.value || (padShown && foreground)
+        if (allowed != inputAllowed) {
+            inputAllowed = allowed
+            if (!allowed) engine.reset()
+        }
+        updateGyro()
+    }
+
     /**
      * Switches the output link: the old one stops (a Wi-Fi session says BYE first), the engine
      * releases everything, then the new one starts if the runtime is running.
@@ -216,11 +293,15 @@ class GamepadRuntime(context: Context) {
         // Nothing polls the engine while no link runs: drop touchpad taps queued meanwhile.
         engine.touchpadCancel()
         active.start()
-        startGyro()
+        avoidDirect = false
+        updateGyro()
     }
 
     @Synchronized fun stop() {
-        gyro?.stop(); gyro = null
+        stopGyro()
+        // A calibration cut short must not start the sensor at the next start().
+        if (calibration != null) { calibration = null; _calibration.value = storedCalibration() }
+        _gyroInfo.value = GyroInfo()
         active.stop()
         engine.reset()
         running = false
@@ -257,6 +338,23 @@ class GamepadRuntime(context: Context) {
         applyWorkspaceGyro()
     }
 
+    /**
+     * The gyro corner: switches the active workspace's gyro between always on and always off
+     * (from hold / toggle: always on) and saves it. What is held stays held. Called from touch
+     * dispatch, so the change applies first and the file is written in the background.
+     */
+    fun toggleGyroMode() {
+        val i = _workspaceIndex.value
+        val next = _activeProfile.value.workspace(i).gyro.toggledMode()
+        val set = stored.updateWorkspace(i) { it.copy(gyro = next) }
+        if (set == stored) return
+        stored = set
+        engine.setGyro(next)
+        _activeProfile.value = _activeProfile.value.updateWorkspace(i) { it.copy(gyro = next) }
+        applyWorkspaceGyro()
+        store.saveLater(set)
+    }
+
     /** The saved workspace index of [profile], clamped into range. */
     private fun rememberedWorkspace(profile: Profile): Int =
         store.workspaceIndex(profile.id).coerceIn(0, profile.workspaces.lastIndex)
@@ -278,7 +376,10 @@ class GamepadRuntime(context: Context) {
         return _activeProfile.value
     }
 
-    /** Saves [set] (without mappings) and [profiles], and makes the resolved set active. */
+    /**
+     * Saves [set] (without mappings; in the background, like every save of the set after start)
+     * and [profiles], and makes the resolved set active.
+     */
     private fun commit(set: Profile, profiles: List<MappingProfile>) {
         if (profiles != _mappingProfiles.value) {
             _mappingProfiles.value = profiles
@@ -286,9 +387,8 @@ class GamepadRuntime(context: Context) {
         }
         if (set != stored) {
             stored = set
-            store.save(set)
+            store.saveLater(set)
             store.setWorkspaceIndex(set.id, _workspaceIndex.value.coerceIn(0, set.workspaces.lastIndex))
-            refreshProfiles()
         }
         activate(MappingProfiles.resolve(stored, _mappingProfiles.value))
     }
@@ -349,8 +449,6 @@ class GamepadRuntime(context: Context) {
 
     /** Live value of a phone-side source (for highlighting pressed controls). */
     fun sourceValue(source: InputSource): Float = engine.sourceValue(source)
-
-    private fun refreshProfiles() { _profiles.value = store.all() }
 
     /**
      * Called by the input layer whenever the set of attached controllers changes. Never changes
@@ -419,24 +517,93 @@ class GamepadRuntime(context: Context) {
         return m.set
     }
 
+    /**
+     * Measures the gyro's resting bias for 2 seconds; the phone must lie still meanwhile. A paused
+     * gyro runs for it (the pad menu, where it is started, pauses the gyro).
+     */
+    @Synchronized fun calibrateGyro() {
+        if (!running) return
+        calibration = GyroCalibration()
+        _calibration.value = CalibrationState.Running
+        updateGyro()
+        if (gyro == null) { calibration = null; _calibration.value = storedCalibration() }
+    }
+
+    @Synchronized fun clearGyroCalibration() {
+        calibration = null
+        setBias(0f, 0f, 0f)
+        updateGyro()
+    }
+
+    private fun setBias(x: Float, y: Float, z: Float) {
+        biasX = x; biasY = y; biasZ = z
+        prefs.edit().putFloat(KEY_BIAS_X, x).putFloat(KEY_BIAS_Y, y).putFloat(KEY_BIAS_Z, z).apply()
+        _calibration.value = storedCalibration()
+    }
+
+    private fun storedCalibration(): CalibrationState {
+        val m = maxOf(abs(biasX), abs(biasY), abs(biasZ))
+        return if (m == 0f) CalibrationState.None else CalibrationState.Calibrated(Math.toDegrees(m.toDouble()).toFloat())
+    }
+
     /** Gyro settings follow the active workspace. */
     private fun applyWorkspaceGyro() {
         gyroMouse.settings = _activeProfile.value.workspace(_workspaceIndex.value).gyro
         gyroMouse.reset()
     }
 
+    /**
+     * Runs the gyro sensor while its samples are used: input is allowed or a calibration runs.
+     * Otherwise (only while "send input only while the pad is open" is on and the pad is not on
+     * screen) it pauses, to save CPU and battery. Gyro modes, hold and ratchets never pause it, so
+     * aiming never waits for the sensor to start.
+     */
+    @Synchronized private fun updateGyro() {
+        if (running && (inputAllowed || calibration != null)) {
+            startGyro()
+        } else if (running) {
+            stopGyro()
+            if (_gyroInfo.value.source != UNAVAILABLE) _gyroInfo.value = GyroInfo(source = PAUSED)
+        }
+    }
+
     private fun startGyro() {
         if (gyro != null) return
         val sm = appContext.getSystemService(SensorManager::class.java) ?: return
-        val candidates = listOfNotNull(GyroSource.best(sm))
-        for (source in candidates) {
-            if (source.start(::onGyroSample)) {
+        val candidates = GyroSource.candidates(sm)
+        // While the direct channel is capped the listener goes first; the direct channel stays a last resort.
+        val ordered = if (avoidDirect) candidates.sortedBy { it is DirectChannelGyroSource } else candidates
+        for (source in ordered) {
+            // A new source is a new time base for dt and the rate; reset before its thread starts.
+            lastGyroTs = 0L
+            rateWindow.reset()
+            gyroMouse.reset() // no sub-count remainder or smoothing left from before a pause
+            if (source.start { x, y, z, ts -> onGyroSample(source, x, y, z, ts) }) {
                 gyro = source
-                _gyroInfo.value = GyroInfo(source = source.name)
+                val name = if (avoidDirect && source !is DirectChannelGyroSource) {
+                    "${source.name}; direct channel limited to ~$cappedHz Hz"
+                } else source.name
+                _gyroInfo.value = GyroInfo(source = name)
                 return
             }
         }
-        _gyroInfo.value = GyroInfo(source = "Unavailable")
+        _gyroInfo.value = GyroInfo(source = UNAVAILABLE)
+    }
+
+    /** Stops the running source, waiting briefly for its thread to deliver its last sample. */
+    private fun stopGyro() {
+        gyro?.stop()
+        gyro = null
+    }
+
+    /** The direct channel [source] stayed below the listener's rate: switch to the listener. */
+    @Synchronized private fun onDirectCapped(source: GyroSource, hz: Int) {
+        // Already avoiding it: the direct channel runs only because the listener failed to start.
+        if (gyro !== source || avoidDirect) return
+        avoidDirect = true
+        cappedHz = hz
+        stopGyro()
+        startGyro()
     }
 
     companion object {
@@ -444,26 +611,43 @@ class GamepadRuntime(context: Context) {
         private const val KEY_WIFI_RATE = "wifi_rate_hz"
         private const val KEY_TRANSPORT = "transport"
         private const val KEY_ORIENTATION = "screen_orientation"
+        private const val KEY_PAD_ONLY_INPUT = "pad_only_input"
+        private const val KEY_BIAS_X = "gyro_bias_x"
+        private const val KEY_BIAS_Y = "gyro_bias_y"
+        private const val KEY_BIAS_Z = "gyro_bias_z"
         /** Version of [MappingProfiles.migrate]'s rules; a phone that ran an older one redoes it from [BACKUP_TAG]. */
         private const val MAPPING_MIGRATION = 2
         private const val BACKUP_TAG = "pre-mappings"
+        private const val PAUSED = "Paused while the pad is not open"
+        private const val UNAVAILABLE = "Unavailable"
     }
 
-    private fun onGyroSample(x: Float, y: Float, z: Float, ts: Long) {
+    private fun onGyroSample(source: GyroSource, x: Float, y: Float, z: Float, ts: Long) {
         val dt = if (lastGyroTs == 0L) 0f else ((ts - lastGyroTs) / 1e9f).coerceIn(0f, 0.05f)
         lastGyroTs = ts
-        val active = engine.gyroActive
+        calibration?.let { cal ->
+            when (val r = cal.add(x, y, z, ts)) {
+                null -> Unit
+                is GyroCalibration.Result.Done -> { calibration = null; setBias(r.x, r.y, r.z); main.post { updateGyro() } }
+                GyroCalibration.Result.Moved -> {
+                    calibration = null; _calibration.value = CalibrationState.Moved; main.post { updateGyro() }
+                }
+            }
+        }
+        val active = inputAllowed && engine.gyroActive
         if (active) {
-            val c = gyroMouse.update(x, y, z, dt)
+            val c = gyroMouse.update(x - biasX, y - biasY, z - biasZ, dt)
             if (c.dx != 0 || c.dy != 0) engine.addMouseMotion(c.dx, c.dy)
         } else {
             gyroMouse.reset()
         }
-        rateCount++
-        if (ts - rateWindowStart >= 1_000_000_000L) {
-            _gyroInfo.value = _gyroInfo.value.copy(rateHz = rateCount, active = active)
-            rateWindowStart = ts
-            rateCount = 0
+        if (rateWindow.add(ts)) {
+            _gyroInfo.value = _gyroInfo.value.copy(rateHz = rateWindow.rateHz, active = active)
+            // Sources are switched on the main thread, never from the sampling thread itself.
+            if (rateWindow.capped && source is DirectChannelGyroSource) {
+                val hz = rateWindow.rateHz
+                main.post { onDirectCapped(source, hz) }
+            }
         }
     }
 }

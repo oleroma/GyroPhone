@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,6 +23,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import com.oleroma.gyrophone.core.net.KeyStatus
 import com.oleroma.gyrophone.link.LinkState
 import com.oleroma.gyrophone.link.LinkStats
 import com.oleroma.gyrophone.runtime.GamepadRuntime
@@ -37,6 +41,12 @@ fun WifiPanel(runtime: GamepadRuntime, stats: LinkStats, modifier: Modifier = Mo
     val pairing by wifi.pairing.collectAsStateWithLifecycle()
     val notice by wifi.notice.collectAsStateWithLifecycle()
     val current by wifi.currentHostId.collectAsStateWithLifecycle()
+    val pairedByKey by wifi.pairedByKey.collectAsStateWithLifecycle()
+    val qr by wifi.qrPairing.collectAsStateWithLifecycle()
+    var scanError by rememberSaveable { mutableStateOf<String?>(null) }
+    val scanner = rememberLauncherForActivityResult(ScanContract()) { result ->
+        result.contents?.let { scanError = wifi.scanQr(it) } // null contents: the user backed out
+    }
     var address by rememberSaveable { mutableStateOf("") }
     val connected = state is LinkState.Connected
     val sessionActive = state is LinkState.Connected || state is LinkState.Connecting || state is LinkState.HostSilent
@@ -44,6 +54,39 @@ fun WifiPanel(runtime: GamepadRuntime, stats: LinkStats, modifier: Modifier = Mo
     Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(statusLine(state))
         notice?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        if (sessionActive && pairedByKey) {
+            // A key session has no row under Paired PCs, so it gets its own Disconnect.
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Paired by key", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = { wifi.disconnect() }) { Text("Disconnect") }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                "New PC? On the PC choose Pair new phone and scan its QR code.",
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Button(onClick = {
+                scanError = null
+                wifi.dismissQr()
+                scanner.launch(
+                    ScanOptions()
+                        .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                        .setPrompt("Scan the QR code in GyroPhone Companion")
+                        .setBeepEnabled(false)
+                        .setOrientationLocked(false),
+                )
+            }) { Text("Scan QR code") }
+        }
+        scanError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        qr?.let { q ->
+            Text(
+                q.message,
+                color = if (q.finished && !q.ok) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         if (connected) {
             warnings(stats).forEach { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         }
@@ -84,8 +127,14 @@ fun WifiPanel(runtime: GamepadRuntime, stats: LinkStats, modifier: Modifier = Mo
                             (if (!host.vigemOk) " · no gamepad driver" else ""),
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    keyHint(host.name, host.keyStatus)?.takeIf { !host.paired }?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
                 }
                 when {
+                    host.keyStatus == KeyStatus.READY && !host.paired -> if (!(sessionActive && current == host.hostIdHex)) {
+                        OutlinedButton(onClick = { wifi.connectByKey(host.hostIdHex) }) { Text("Connect") }
+                    } else Unit
                     host.paired -> if (!(sessionActive && current == host.hostIdHex)) {
                         OutlinedButton(onClick = { wifi.connect(host.hostIdHex) }) { Text("Connect") }
                     } else Unit
@@ -107,6 +156,8 @@ fun WifiPanel(runtime: GamepadRuntime, stats: LinkStats, modifier: Modifier = Mo
             )
             OutlinedButton(onClick = { wifi.connectByIp(address) }, enabled = address.isNotBlank()) { Text("Find") }
         }
+
+        KeyPairingSection(wifi)
 
         Text("Link", style = MaterialTheme.typography.titleSmall)
         Text(
@@ -132,6 +183,13 @@ fun WifiPanel(runtime: GamepadRuntime, stats: LinkStats, modifier: Modifier = Mo
     pairing?.let { view ->
         PairDialog(view, onConfirm = { wifi.confirmPair() }, onCancel = { wifi.cancelPair() }, onDismiss = { wifi.dismissPair() })
     }
+}
+
+/** Why key pairing with a PC does not work yet, or null. */
+private fun keyHint(name: String, status: KeyStatus): String? = when (status) {
+    KeyStatus.PC_LACKS_PHONE -> "$name doesn't know this phone yet: scan its QR code (Pair new phone on the PC)"
+    KeyStatus.PHONE_LACKS_PC -> "This phone doesn't know $name yet: scan its QR code (Pair new phone on the PC)"
+    KeyStatus.READY, KeyStatus.NONE -> null
 }
 
 private fun statusLine(state: LinkState): String = when (state) {

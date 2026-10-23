@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.input
 
 import android.content.Context
 import android.hardware.input.InputManager
+import android.util.SparseArray
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -13,7 +14,6 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownLayouts
 import com.oleroma.gyrophone.runtime.AttachedController
 import com.oleroma.gyrophone.runtime.GamepadRuntime
-import kotlin.math.abs
 
 /**
  * Feeds key and joystick events from devices attached to the phone (GameSir X5, any XInput/HID
@@ -25,8 +25,37 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
 
     private val inputManager = context.getSystemService(InputManager::class.java)
 
+    /** One device the engine has seen input from, kept so joystick events do not allocate. */
+    private class Source(var pad: PadDevice) {
+        /** Last value of each [AndroidAxis.polled] axis. */
+        val last = FloatArray(AndroidAxis.polled.size)
+        /** [last] when learning started: learn mode needs a move away from where an axis rests. */
+        val rest = FloatArray(AndroidAxis.polled.size)
+        /** The learn listener [rest] belongs to. */
+        var learnFor: Any? = null
+        /** [last] holds a real event (until then an axis that rests at -1 would read as moved). */
+        var seen = false
+    }
+
+    private val sources = SparseArray<Source>()
+    // One joystick event's axes for MappingEngine.setAxes, reused.
+    private val axisIds = IntArray(AndroidAxis.polled.size)
+    private val axisValues = FloatArray(AndroidAxis.polled.size)
+
     fun register() {
         inputManager.registerInputDeviceListener(this, null)
+        // Devices that went away or changed while the listener was off.
+        val present = inputManager.inputDeviceIds
+        for (i in sources.size() - 1 downTo 0) {
+            val id = sources.keyAt(i)
+            val d = if (id in present) inputManager.getInputDevice(id) else null
+            if (d == null) {
+                runtime.engine.deviceRemoved(id)
+                sources.removeAt(i)
+            } else {
+                sources.valueAt(i).pad = padDevice(d)
+            }
+        }
         refresh()
     }
 
@@ -46,39 +75,61 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             if (pressed) { runtime.learnListener = null; learn(InputSource.Key(event.keyCode)) }
             return true
         }
-        val mapped = runtime.engine.setKey(padDevice(device), event.keyCode, pressed)
         // Unmapped pad buttons must do nothing, not fall back to BACK / focus navigation.
         val fromPad = event.source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
             runtime.controllers.value.any { it.deviceId == device.id }
+        // Pad not on screen: nothing is sent, and a keyboard types into the app as usual.
+        if (!runtime.inputAllowed) return fromPad
+        val mapped = runtime.engine.setKey(source(device).pad, event.keyCode, pressed)
         return mapped || fromPad
     }
 
     fun onGenericMotionEvent(event: MotionEvent): Boolean {
-        if (event.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK ||
-            event.action != MotionEvent.ACTION_MOVE
-        ) return false
+        if (event.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK) return false
+        if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            // Focus left the window (shade, dialog, split screen): the stick's return to rest goes
+            // to another window, so let go of this device's axes. Its keys get their own cancel.
+            if (runtime.learnListener == null) runtime.engine.clearAxes(event.deviceId)
+            return true
+        }
+        if (event.action != MotionEvent.ACTION_MOVE) return false
         val device = event.device ?: return false
+        val src = source(device)
         val learn = runtime.learnListener
-        val pad = padDevice(device)
-        for (axis in AndroidAxis.polled) {
+        if (learn !== src.learnFor) {
+            src.learnFor = learn
+            src.last.copyInto(src.rest)
+        }
+        val polled = AndroidAxis.polled
+        var n = 0
+        var learnedAxis = -1
+        var learned: AxisHalf? = null
+        for (i in polled.indices) {
+            val axis = polled[i]
             val range = device.getMotionRange(axis, event.source) ?: continue
-            var v = event.getAxisValue(axis)
-            if (abs(v) <= range.flat) v = 0f
+            val v = AndroidAxis.deadzone(axis, event.getAxisValue(axis), range.flat)
+            src.last[i] = v
             if (learn != null) {
-                if (abs(v) > LEARN_THRESHOLD) {
-                    runtime.learnListener = null
-                    val half = when {
-                        isTrigger(axis) -> AxisHalf.FULL
-                        v > 0 -> AxisHalf.POSITIVE
-                        else -> AxisHalf.NEGATIVE
-                    }
-                    learn(InputSource.Axis(axis, half))
-                    return true
+                if (!src.seen) { src.rest[i] = v; continue }
+                if (learned == null) {
+                    learned = AndroidAxis.learnedHalf(axis, v, src.rest[i])
+                    learnedAxis = axis
                 }
                 continue
             }
-            runtime.engine.setAxis(pad, axis, v)
+            axisIds[n] = axis; axisValues[n] = v; n++
         }
+        src.seen = true
+        if (learn != null) {
+            if (learned != null) {
+                runtime.learnListener = null
+                src.learnFor = null
+                learn(InputSource.Axis(learnedAxis, learned))
+            }
+            return true
+        }
+        // Pad not on screen: nothing is sent ([last] still follows the device for learning).
+        if (runtime.inputAllowed) runtime.engine.setAxes(src.pad, axisIds, axisValues, n)
         return true
     }
 
@@ -86,9 +137,14 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
     override fun onInputDeviceRemoved(deviceId: Int) {
         // Releases whatever that device held, then drops it from the attached list.
         runtime.engine.deviceRemoved(deviceId)
+        sources.remove(deviceId)
         refresh()
     }
-    override fun onInputDeviceChanged(deviceId: Int) = refresh()
+    override fun onInputDeviceChanged(deviceId: Int) {
+        val d = inputManager.getInputDevice(deviceId)
+        if (d != null) sources.get(deviceId)?.pad = padDevice(d)
+        refresh()
+    }
 
     private fun refresh() {
         val list = inputManager.inputDeviceIds.toList().mapNotNull { id ->
@@ -110,22 +166,25 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         runtime.onControllersChanged(list)
     }
 
+    private fun source(device: InputDevice): Source =
+        sources.get(device.id) ?: Source(padDevice(device)).also { sources.put(device.id, it) }
+
     /**
      * The engine's view of [device]: it picks the active workspace's attached pad by model, or the
-     * keyboard mappings for a full keyboard that is not also a game pad.
+     * keyboard mappings for a full keyboard that is not also a game pad. An analog trigger axis on
+     * a side makes the engine ignore that side's L2 / R2 key for the game pad trigger.
      */
     private fun padDevice(device: InputDevice) = PadDevice(
         device.id, device.vendorId, device.productId, device.name,
         keyboard = device.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC &&
             device.sources and InputDevice.SOURCE_GAMEPAD != InputDevice.SOURCE_GAMEPAD,
+        analogLeftTrigger = device.getMotionRange(AndroidAxis.LTRIGGER) != null ||
+            device.getMotionRange(AndroidAxis.BRAKE) != null,
+        analogRightTrigger = device.getMotionRange(AndroidAxis.RTRIGGER) != null ||
+            device.getMotionRange(AndroidAxis.GAS) != null,
     )
 
-    private fun isTrigger(axis: Int) = axis == AndroidAxis.LTRIGGER || axis == AndroidAxis.RTRIGGER ||
-        axis == AndroidAxis.GAS || axis == AndroidAxis.BRAKE
-
     companion object {
-        private const val LEARN_THRESHOLD = 0.6f
-
         /** Keycodes probed with InputDevice.hasKeys: every known controller key plus BUTTON_1..16. */
         private val KEY_CANDIDATES: IntArray =
             (AndroidKey.names.keys + (AndroidKey.BUTTON_1 until AndroidKey.BUTTON_1 + 16)).distinct().toIntArray()

@@ -134,6 +134,30 @@ public class PairingManagerTests
     }
 
     [Fact]
+    public void SamePhoneRestartReplacesItsOwnAttempt()
+    {
+        var h = NewHost();
+        var phone = StartAndReveal(h);
+        uint oldId = phone.AttemptId;
+        var start = phone.PairStart(); // cancelled on the phone, started again: new key and commit
+        Assert.True(phone.OnPairHost(h.Send(phone, start)!));
+        Assert.NotEqual(oldId, phone.AttemptId);
+        Assert.Contains(oldId, h.Prompt.Closed);
+        Assert.Equal(PairAckStatus.Ok, Ack(h.Send(phone, phone.PairReveal())).Status);
+        Assert.Equal(phone.AttemptId, h.Prompt.Shown[^1].AttemptId);
+
+        // A repeat of the new START gets the same PAIR_HOST; another phone is still busy.
+        var again = h.Send(phone, start)!;
+        Assert.True(WireCodec.TryDecodePairHost(again, out var ph));
+        Assert.Equal(phone.AttemptId, ph.AttemptId);
+        var second = NewPhone(0x70, "192.168.1.70");
+        Assert.Equal(PairAckStatus.Busy, Ack(h.Send(second, second.PairStart())).Status);
+
+        h.Engine.AnswerPair(phone.AttemptId, allow: true);
+        Assert.True(phone.OnPairDone(h.Send(phone, phone.PairConfirm())!, out _));
+    }
+
+    [Fact]
     public void BadCommitCountsAndThreeFailuresCloseWindow()
     {
         var h = NewHost();

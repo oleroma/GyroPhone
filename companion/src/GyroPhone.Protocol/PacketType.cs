@@ -11,6 +11,9 @@ public static class PacketType
     public const byte PairAck = 0x06;
     public const byte PairConfirm = 0x07;
     public const byte PairDone = 0x08;
+    /// <summary>Phone to host: the phone's static key, for the host whose QR code it scanned.</summary>
+    public const byte KeyEnroll = 0x09;
+    public const byte KeyEnrollAck = 0x0A;
     public const byte Hello = 0x10;
     public const byte Welcome = 0x11;
     public const byte State = 0x20;
@@ -46,6 +49,8 @@ public static class PacketType
         Hello => Wire.HelloSize,
         Welcome => Wire.WelcomeSize,
         Error => Wire.ErrorSize,
+        KeyEnroll => Wire.KeyEnrollSize,
+        KeyEnrollAck => Wire.KeyEnrollAckSize,
         _ => PlainSize(type) is var p && p >= 0 ? Wire.Header + p + Wire.GcmTag : -1,
     };
 

@@ -6,11 +6,14 @@ namespace GyroPhone.Host;
 
 /// <summary>
 /// 50 ms timer driving HostEngine.OnTick, plus the work that must stay off the rx thread: environment
-/// probes (1 Hz), the held-keys marker and settings writes. No timeBeginPeriod.
+/// probes (1 Hz, on the thread pool so a slow COM or service call never holds up OnTick's release of
+/// held input), the held-keys marker and settings writes. No timeBeginPeriod.
 /// </summary>
 public sealed class Watchdog : IDisposable
 {
     private const long ProbeIntervalUs = 1_000_000;
+    /// <summary>A failed settings write is tried again after this long.</summary>
+    private const long SaveRetryUs = 1_000_000;
 
     private readonly HostEngine _engine;
     private readonly IClock _clock;
@@ -22,7 +25,9 @@ public sealed class Watchdog : IDisposable
     private readonly byte[] _held = new byte[StateFrame.KeyBitmapSize];
     private Timer? _timer;
     private int _running;
+    private int _probing;
     private long _lastProbeUs = -ProbeIntervalUs;
+    private long _saveRetryAfterUs = long.MinValue;
 
     public Watchdog(HostEngine engine, IClock clock, HeldKeysMarker? marker = null, SettingsStore? store = null,
         Func<bool>? elevatedForegroundProbe = null, Func<bool>? networkPublicProbe = null, Action<string>? log = null)
@@ -46,20 +51,19 @@ public sealed class Watchdog : IDisposable
         try
         {
             long now = _clock.NowUs;
-            if (now - _lastProbeUs >= ProbeIntervalUs)
+            _engine.OnTick(now);
+            if (now - _lastProbeUs >= ProbeIntervalUs && (_elevatedProbe != null || _publicProbe != null) &&
+                Interlocked.Exchange(ref _probing, 1) == 0)
             {
                 _lastProbeUs = now;
-                bool elevated = Probe(_elevatedProbe);
-                bool pub = Probe(_publicProbe);
-                _engine.SetEnvironment(elevated, pub);
+                ThreadPool.UnsafeQueueUserWorkItem(_ => RunProbes(), null);
             }
-            _engine.OnTick(now);
             if (_marker != null)
             {
                 int version = _engine.HeldSnapshot(_held, out byte mb);
                 _marker.Update(version, _held, mb);
             }
-            SaveSettings();
+            if (now >= _saveRetryAfterUs) SaveSettings();
         }
         catch (Exception e)
         {
@@ -68,6 +72,20 @@ public sealed class Watchdog : IDisposable
         finally
         {
             Volatile.Write(ref _running, 0);
+        }
+    }
+
+    private void RunProbes()
+    {
+        try
+        {
+            bool elevated = Probe(_elevatedProbe);
+            bool pub = Probe(_publicProbe);
+            _engine.SetEnvironment(elevated, pub);
+        }
+        finally
+        {
+            Volatile.Write(ref _probing, 0);
         }
     }
 
@@ -80,10 +98,15 @@ public sealed class Watchdog : IDisposable
         try
         {
             _store.WriteAtomic(json);
+            _saveRetryAfterUs = long.MinValue;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            _log($"settings save failed: {e.GetType().Name}");
+            // Still to be written (a new pairing, say): try again shortly, since a scanner or backup
+            // tool may hold the file for a moment.
+            _engine.MarkSettingsDirty();
+            if (_saveRetryAfterUs == long.MinValue) _log($"settings save failed: {e.GetType().Name}; retrying");
+            _saveRetryAfterUs = _clock.NowUs + SaveRetryUs;
         }
     }
 
