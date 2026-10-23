@@ -46,6 +46,10 @@ private class Driver(val pad: Touchpad, val stepMs: Long = 5) {
     var hwheel = 0
     /** Visible key state per poll: modifiers shl 8 or usage. */
     val keys = ArrayList<Int>()
+    /** dx of each poll. */
+    val dxs = ArrayList<Int>()
+    /** Wheel of each poll. */
+    val wheels = ArrayList<Int>()
     /** Wheel that arrived while Ctrl was not visible. */
     var wheelWithoutCtrl = 0
     /** dx while the left button was visible. */
@@ -61,6 +65,7 @@ private class Driver(val pad: Touchpad, val stepMs: Long = 5) {
         val b = pad.poll(t)
         buttons.add(b); times.add(t)
         dx += pad.dx; dy += pad.dy; wheel += pad.wheel; hwheel += pad.hwheel
+        dxs.add(pad.dx); wheels.add(pad.wheel)
         keys.add((pad.keyModifiers shl 8) or pad.key)
         if (pad.keyModifiers and GestureActions.CTRL == 0) wheelWithoutCtrl += pad.wheel
         if (b and L != 0) dxWhileLeft += pad.dx
@@ -68,6 +73,8 @@ private class Driver(val pad: Touchpad, val stepMs: Long = 5) {
     }
 
     fun down(ms: Long, x: Float, y: Float, id: Long = 1) { until(ms); pad.down(id, x, y, t) }
+    /** A touch button's finger driving the cursor (click-through, touchpad over buttons). */
+    fun aim(ms: Long, x: Float, y: Float, id: Long) { until(ms); pad.down(id, x, y, t, aiming = true) }
     fun move(ms: Long, x: Float, y: Float, id: Long = 1) { until(ms); pad.move(id, x, y, t) }
     fun up(ms: Long, id: Long = 1) { until(ms); pad.up(id, t) }
 
@@ -441,6 +448,26 @@ class TouchpadTest {
         assertEquals(0, d.dx); assertEquals(0, d.dy)
     }
 
+    @Test fun wobbleAfterAStopDoesNotFling() {
+        // Scroll at 1.5 dp/ms, hold still for 150 ms, then lift one finger; the other wobbles 1 px as it goes.
+        val d = Driver(pad(TouchpadSettings(acceleration = 0f)))
+        d.together(listOf(1L, 2L), 0, 10, 0f, 15f)
+        d.up(261, 1)
+        d.move(280, 200f, 451f, id = 2)
+        d.up(301, 2); d.until(2000)
+        assertTrue("${d.wheel}", d.wheel in 750..760) // the scroll plus the 1 px wobble, no glide
+        assertEquals(0, d.dx); assertEquals(0, d.dy)
+    }
+
+    @Test fun remainingFingerThatScrolledThenStoppedDoesNotFling() {
+        val d = Driver(pad(TouchpadSettings(acceleration = 0f)))
+        d.together(listOf(1L, 2L), 0, 10, 0f, 15f)
+        d.up(115, 1)
+        for (i in 11..14) d.move(11 + i * 10L, 200f, 300f + i * 15f, id = 2)
+        d.up(225, 2); d.until(2000) // still for 74 ms, lifted inside the lift window
+        assertEquals(1050, d.wheel) // 150 dp with two fingers plus 60 dp with one, no glide
+    }
+
     @Test fun remainingFingerMovesCursorAfterLiftWindow() {
         val d = Driver(pad(NO_GLIDE))
         d.together(listOf(1L, 2L), 0, 10, 0f, 15f)
@@ -653,5 +680,257 @@ class TouchpadTest {
         assertEquals(FingerGestures.WINDOWS_3, s.gestures3)
         val custom = s.copy(gestures4 = s.gestures4.copy(tap = GestureAction.Keys(GestureActions.WIN, 0x04)))
         assertEquals(custom, json.decodeFromString(TouchpadSettings.serializer(), json.encodeToString(TouchpadSettings.serializer(), custom)))
+    }
+
+    // ---- Aiming fingers (touch buttons driving the cursor) stay out of the gestures ----
+
+    @Test fun aimingFingerDoesNotTurnAMoveIntoAGesture() {
+        val d = Driver(pad())
+        d.down(0, 500f, 500f, 1)
+        for (i in 1..10) d.move(i * 8L, 500f + i * 8f, 500f, 1)
+        d.aim(84, 100f, 100f, 2) // a click-through fire finger lands and stays still
+        assertEquals(2, d.pad.fingers) // the gyro's touchpad ratchet still counts it
+        for (i in 11..30) d.move(i * 8L, 500f + i * 8f, 500f + (i - 10) * 3f, 1)
+        d.until(300)
+        assertEquals(360, d.dx) // all 240 dp at sensitivity 1.5
+        assertEquals(90, d.dy)
+        assertEquals(0, d.wheel); assertEquals(0, d.hwheel)
+        assertTrue(d.keys.all { it == 0 })
+    }
+
+    @Test fun aimingFingerNeverPinchesAndTheAimLivesOnAfterItLifts() {
+        val d = Driver(pad())
+        d.down(0, 900f, 500f, 1)
+        for (i in 1..10) d.move(i * 8L, 900f - i * 4f, 500f, 1)
+        d.aim(84, 200f, 500f, 2) // the thumb now moves toward this finger: the spread shrinks
+        for (i in 11..30) d.move(i * 8L, 900f - i * 4f, 500f, 1)
+        d.up(250, 2)
+        for (i in 32..50) d.move(i * 8L, 900f - i * 4f, 500f, 1)
+        d.until(500)
+        assertEquals(-300, d.dx) // all 200 dp
+        assertEquals(0, d.wheel)
+        assertTrue(d.keys.all { it == 0 })
+    }
+
+    @Test fun aimingFingerFirstThenABackgroundTapIsALeftClick() {
+        val d = Driver(pad())
+        d.aim(0, 100f, 100f, 1)
+        d.down(40, 600f, 300f, 2)
+        d.up(100, 2)
+        d.up(150, 1)
+        d.until(600)
+        assertEquals(listOf(0, L, 0), d.buttons.edges())
+    }
+
+    @Test fun twoStillAimingFingersNeverStartASwipe() {
+        val d = Driver(pad())
+        d.down(0, 1800f, 600f, 1)
+        var x = 1800f
+        for (f in 1..6) { x -= 12f; d.move(f * 8L, x, 600f, 1) }
+        d.aim(55, 300f, 700f, 2); d.aim(60, 2200f, 900f, 3) // fire and aim-down-sights held
+        for (f in 8..40) { x -= 12f; d.move(f * 8L, x, 600f, 1) }
+        assertEquals(3, d.pad.fingers)
+        d.until(400)
+        assertEquals(-702, d.dx) // 468 dp
+        assertTrue(d.keys.all { it == 0 })
+        assertTrue(d.buttons.all { it == 0 })
+    }
+
+    @Test fun aimingFingersOnlyMoveTheCursor() {
+        // Two aiming fingers moving together add their motion: no scroll, no tap.
+        val d = Driver(pad())
+        d.aim(0, 100f, 100f, 1); d.aim(1, 300f, 100f, 2)
+        for (i in 1..10) { d.move(i * 10L, 100f, 100f + i * 10f, 1); d.move(i * 10L + 1, 300f, 100f + i * 10f, 2) }
+        d.up(120, 1); d.up(121, 2); d.until(500)
+        assertEquals(300, d.dy)
+        assertEquals(0, d.wheel)
+        assertTrue(d.buttons.all { it == 0 })
+        assertEquals(0, d.pad.fingers)
+    }
+
+    // ---- Smoothness ----
+
+    @Test fun staggeredLiftFlingStartsAtTheSecondLiftWithoutAJump() {
+        val d = Driver(pad(), stepMs = 1)
+        d.down(0, 100f, 300f, 1); d.down(1, 200f, 300f, 2)
+        for (i in 1..10) { d.move(10 + i * 10L, 100f, 300f + i * 15f, 1); d.move(11 + i * 10L, 200f, 300f + i * 15f, 2) }
+        d.up(115, 1)
+        for (i in 11..14) d.move(11 + i * 10L, 200f, 300f + i * 15f, 2) // the other finger keeps going
+        d.up(155, 2)
+        d.until(1500)
+        val during = (20..111).maxOf { kotlin.math.abs(d.wheels[it]) } // one polled 10 ms frame of scrolling
+        val between = (116..154).maxOf { kotlin.math.abs(d.wheels[it]) }
+        val atLift = d.wheels[155] + d.wheels[156]
+        assertTrue("no freeze between the lifts", between > 0)
+        assertTrue("step between the lifts $between vs $during", between <= during)
+        assertTrue("step at the second lift $atLift vs $during", kotlin.math.abs(atLift) <= during)
+        assertTrue(d.wheel > 1500) // still flings
+    }
+
+    private fun slowStart(s: TouchpadSettings): List<Int> {
+        val p = pad(s)
+        p.down(1, 0f, 0f, 0)
+        return (1..20).map { f -> p.move(1, f * 2.4f, 0f, f * 8 * MS); p.dx.also { p.drainMotion() } }
+    }
+
+    @Test fun tapToClickOffMovesFromTheFirstMotion() {
+        // 0.3 dp/ms: 3.6 counts per 8 ms frame at sensitivity 1.5.
+        val frames = slowStart(TouchpadSettings(acceleration = 0f, tapToClick = false))
+        assertTrue("$frames", frames.all { it in 3..4 })
+        // With tap-to-click on, the first 10 dp still wait (a tap must not move the cursor).
+        val tapOn = slowStart(TouchpadSettings(acceleration = 0f))
+        assertEquals(listOf(0, 0, 0, 0), tapOn.take(4))
+        assertEquals(frames.sum(), tapOn.sum())
+    }
+
+    private fun flick(aiming: Boolean): List<Int> {
+        val p = pad(TouchpadSettings())
+        p.down(1, 0f, 0f, 0, aiming)
+        return (1..5).map { f -> p.move(1, f * 16f, 0f, f * 8 * MS); p.dx.also { p.drainMotion() } }
+    }
+
+    @Test fun flickHasItsFullGainFromTheFirstFrame() {
+        // 2 dp/ms is past the top of the acceleration curve: 16 dp x 1.5 x 2 every frame.
+        assertEquals(listOf(48, 48, 48, 48, 48), flick(aiming = false))
+        assertEquals(listOf(48, 48, 48, 48, 48), flick(aiming = true))
+    }
+
+    @Test fun restAfterAFlickDoesNotAccelerateTheNextSlowStep() {
+        fun slowSteps(p: Touchpad, x0: Float, t0: Double): List<Int> {
+            var x = x0; var t = t0
+            return (1..6).map { x += 3.333f; t += 33.333; p.move(1, x, 0f, (t * MS).toLong()); p.dx.also { p.drainMotion() } }
+        }
+        val q = pad(TouchpadSettings()); q.down(1, 0f, 0f, 0)
+        for (f in 1..10) q.move(1, f * 15f, 0f, (f * 8.333 * MS).toLong()) // 1.8 dp/ms
+        q.drainMotion()
+        val afterRest = slowSteps(q, 150f, 83.33 + 300.0)
+        val r = pad(TouchpadSettings()); r.down(1, 0f, 0f, 0)
+        for (f in 1..10) r.move(1, f * 3.333f, 0f, (f * 33.333 * MS).toLong())
+        r.drainMotion()
+        val slowOnly = slowSteps(r, 33.33f, 333.33)
+        for (i in afterRest.indices) assertTrue("$afterRest vs $slowOnly", kotlin.math.abs(afterRest[i] - slowOnly[i]) <= 1)
+    }
+
+    @Test fun tapDragKeepsMotionMadeBeforeTheHoldTimer() {
+        val d = Driver(pad(TouchpadSettings(acceleration = 0f, sensitivity = 1f)))
+        d.down(0, 100f, 100f); d.up(60)
+        d.down(120, 100f, 100f)
+        d.move(200, 108f, 100f) // inside the slop: still a possible double tap
+        d.move(320, 110f, 100f) // the hold timer made it a drag before this
+        d.move(330, 120f, 100f)
+        d.up(340); d.until(700)
+        assertEquals(20, d.dx)
+        assertEquals(listOf(0, L, 0), d.buttons.edges())
+    }
+
+    @Test fun twoFingerTouchThatBecomesAMoveKeepsItsTravel() {
+        val p = pad(TouchpadSettings(acceleration = 0f, sensitivity = 1f))
+        var dx = 0
+        p.down(1, 100f, 100f, 0); p.down(2, 300f, 100f, 20 * MS)
+        p.up(2, 60 * MS) // the second finger lifts quickly; the first one stays
+        for (f in 1..40) { val t = 60 * MS + f * 8 * MS; p.move(1, 100f + f * 2f, 100f, t); p.poll(t); dx += p.dx; p.drainMotion() }
+        p.up(1, 400 * MS); p.poll(500 * MS); dx += p.dx
+        assertEquals(80, dx)
+    }
+
+    /** Two fingers rest, [f1] moves finger 1 a little (under the scroll and pinch thresholds), finger 2 lifts after the tap window. */
+    private fun liftAfterSmallTwoFingerTravel(f1x: Float): Pair<Int, Int> {
+        val d = Driver(pad(NO_GLIDE))
+        d.down(0, 100f, 300f, id = 1); d.down(2, 200f, 300f, id = 2)
+        for (i in 1..5) d.move(10 + i * 10L, 100f + f1x * i / 5, 300f, id = 1)
+        d.until(400)
+        d.up(400, 2); d.until(450)
+        val atLift = d.dx
+        for (i in 1..5) d.move(450 + i * 10L, 100f + f1x + i * 2f, 300f, id = 1)
+        d.up(520, 1); d.until(600)
+        return atLift to d.dx
+    }
+
+    @Test fun twoFingerRestThenLiftDoesNotJumpTheCursor() {
+        // Drift (centroid 2.5 dp) and spread (8 dp) both stayed under the thresholds: no cursor motion.
+        assertEquals(0 to 15, liftAfterSmallTwoFingerTravel(5f)) // then 10 dp at sensitivity 1.5
+        assertEquals(0 to 15, liftAfterSmallTwoFingerTravel(8f))
+    }
+
+    /** A two-finger scroll; with [batched], pairs of touch frames are processed back to back but keep their event times. */
+    private fun scrollTimedByEvents(batched: Boolean): Int {
+        val p = pad(TouchpadSettings(acceleration = 0f))
+        var wheel = 0
+        fun poll(t: Long) { p.poll(t); wheel += p.wheel; p.drainMotion() }
+        p.down(1, 100f, 300f, 0); p.down(2, 200f, 300f, 0)
+        for (f in 1..12) {
+            val ev = f * 8 * MS
+            val now = if (!batched) ev else if (f % 2 == 1) (f + 1) * 8 * MS else ev + 100_000L
+            p.move(1, 100f, 300f + f * 12f, now, ev); p.move(2, 200f, 300f + f * 12f, now + 1000, ev)
+            poll(now + 2000)
+        }
+        p.up(1, 100 * MS); p.up(2, 100 * MS + 1000)
+        for (t in 101..3000L) poll(t * MS)
+        return wheel
+    }
+
+    @Test fun flingVelocityIsTimedByTheEvents() {
+        val even = scrollTimedByEvents(batched = false)
+        assertTrue(even > 720 + 1000) // 144 dp of scroll plus a glide
+        assertEquals(even, scrollTimedByEvents(batched = true))
+    }
+
+    // ---- One finger cancelled by the system ----
+
+    @Test fun cancelledFingerNeverClicks() {
+        val one = Driver(pad())
+        one.down(0, 100f, 100f); one.until(60); one.pad.cancelFinger(1, one.t); one.up(80); one.until(500)
+        assertTrue(one.buttons.all { it == 0 })
+        assertEquals(0, one.pad.fingers)
+        // A two-finger tap with one finger cancelled: no right click when the other lifts.
+        val two = Driver(pad())
+        two.down(0, 100f, 100f, 1); two.down(20, 200f, 100f, 2)
+        two.until(60); two.pad.cancelFinger(2, two.t)
+        two.up(90, 1); two.until(600)
+        assertTrue(two.buttons.all { it == 0 })
+    }
+
+    @Test fun cancelledFingerEndsAPinchAndTheOtherFingerMovesTheCursor() {
+        val d = Driver(pad())
+        d.down(0, 200f, 300f, id = 1); d.down(2, 300f, 300f, id = 2)
+        for (i in 1..5) d.move(10 + i * 10L, 300f + i * 4f, 300f, id = 2) // spread: pinch, Ctrl held
+        d.until(80)
+        assertEquals(CTRL, d.keys.last())
+        d.pad.cancelFinger(2, d.t)
+        for (i in 1..4) d.move(80 + i * 10L, 200f + i * 10f, 300f, id = 1)
+        d.up(130, 1); d.until(600)
+        assertEquals(0, d.keys.last())
+        assertEquals(0, d.wheelWithoutCtrl)
+        assertEquals(60, d.dx) // 40 dp at sensitivity 1.5
+        assertTrue(d.buttons.all { it == 0 })
+    }
+
+    @Test fun cancelledScrollFingerNeverFlings() {
+        val d = Driver(pad(TouchpadSettings(acceleration = 0f)))
+        d.together(listOf(1L, 2L), 0, 10, 0f, 15f) // 1.5 dp/ms: lifting would fling
+        d.until(115); d.pad.cancelFinger(1, d.t)
+        d.up(116, 2); d.until(2000)
+        assertEquals(750, d.wheel)
+        assertEquals(0, d.dx); assertEquals(0, d.dy)
+    }
+
+    @Test fun cancelledAimingFingerIsGone() {
+        val d = Driver(pad())
+        d.aim(0, 100f, 100f, 1)
+        d.until(10); d.pad.cancelFinger(1, d.t)
+        assertEquals(0, d.pad.fingers)
+        d.move(20, 200f, 100f, 1)
+        assertEquals(0, d.dx)
+    }
+
+    @Test fun aimingFingerFinishesATapsClickSoItsAimNeverDrags() {
+        val d = Driver(pad())
+        d.down(0, 500f, 500f); d.up(30) // a tap: its click waits for a possible drag
+        d.aim(100, 100f, 100f, 2)
+        for (i in 1..20) d.move(100 + i * 10L, 100f + i * 5f, 100f, 2)
+        d.up(320, 2); d.until(600)
+        assertEquals(listOf(0, L, 0), d.buttons.edges())
+        assertEquals(0, d.dxWhileLeft)
+        assertEquals(150, d.dx)
     }
 }

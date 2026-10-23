@@ -261,9 +261,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * the workspace's touchpadOverButtons off it presses at once; on, it moves the cursor at once
      * and presses the button only as a tap (a still lift within the workspace's buttonTapMs). A
      * click-through control presses at once and its finger also moves the cursor until it lifts.
-     * [pointer] is the finger id.
+     * [pointer] is the finger id; [eventNanos] is the touch's event time (same clock as [clock]),
+     * used only for cursor speed.
      */
-    fun buttonDown(pointer: Long, id: String, x: Float, y: Float) {
+    fun buttonDown(pointer: Long, id: String, x: Float, y: Float, eventNanos: Long = clock()) {
         synchronized(lock) {
             val now = clock()
             firingEvents(now) {
@@ -276,22 +277,22 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (id in clickThroughIds) {
                     bpState[slot] = BP_THROUGH
                     press(id)
-                    touchpad.down(pointer, x, y, now, aiming = true)
+                    touchpad.down(pointer, x, y, now, aiming = true, eventNs = eventNanos)
                 } else if (bpImmediate[slot]) {
                     bpState[slot] = BP_PRESSED
                     press(id)
                 } else {
                     // Touchpad over buttons: a cursor finger at once, a key only if it taps.
                     bpState[slot] = BP_PENDING
-                    touchpad.down(pointer, x, y, now, aiming = true)
+                    touchpad.down(pointer, x, y, now, aiming = true, eventNs = eventNanos)
                 }
             }
         }
         onChange?.run()
     }
 
-    /** A finger that went down through [buttonDown] moved (px of the pad area). */
-    fun buttonMove(pointer: Long, x: Float, y: Float) {
+    /** A finger that went down through [buttonDown] moved (px of the pad area); [eventNanos] as there. */
+    fun buttonMove(pointer: Long, x: Float, y: Float, eventNanos: Long = clock()) {
         synchronized(lock) {
             val now = clock()
             firingEvents(now) {
@@ -299,13 +300,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (slot < 0) return@firingEvents
                 when (bpState[slot]) {
                     BP_PENDING -> {
-                        touchpad.move(pointer, x, y, now)
+                        touchpad.move(pointer, x, y, now, eventNanos)
                         val ddx = x - bpDownX[slot]; val ddy = y - bpDownY[slot]
                         val slop = BUTTON_SLOP_DP * touchpad.pxPerDp
                         // Moved too far to be a tap: only a touchpad finger now.
                         if (ddx * ddx + ddy * ddy > slop * slop) bpState[slot] = BP_TOUCHPAD
                     }
-                    BP_TOUCHPAD, BP_THROUGH -> touchpad.move(pointer, x, y, now)
+                    BP_TOUCHPAD, BP_THROUGH -> touchpad.move(pointer, x, y, now, eventNanos)
                     else -> Unit
                 }
             }
@@ -338,6 +339,32 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                         if (id in modifierIds) modifierUp(id, bpImmediate[slot] && now - bpDownNs[slot] < BUTTON_HOLD_NS, now)
                     }
                     BP_TOUCHPAD -> touchpad.up(pointer, now)
+                }
+                bpState[slot] = BP_FREE; bpControl[slot] = null
+            }
+        }
+        onChange?.run()
+    }
+
+    /**
+     * A finger that went down through [buttonDown] was cancelled by the system: what it pressed is
+     * released and its cursor part ends, but it never taps a key or latches a sticky modifier.
+     */
+    fun buttonCancel(pointer: Long) {
+        synchronized(lock) {
+            val now = clock()
+            firingEvents(now) {
+                val slot = slotOf(pointer)
+                if (slot < 0) return@firingEvents
+                val id = bpControl[slot]!!
+                when (bpState[slot]) {
+                    BP_PENDING, BP_TOUCHPAD -> touchpad.cancelFinger(pointer, now)
+                    BP_PRESSED, BP_THROUGH -> {
+                        if (bpState[slot] == BP_THROUGH) touchpad.cancelFinger(pointer, now)
+                        release(id)
+                        // Not a tap: the modifier only leaves its chord, a latch stays as it was.
+                        if (id in modifierIds && !touches.containsKey(id)) chorded.remove(id)
+                    }
                 }
                 bpState[slot] = BP_FREE; bpControl[slot] = null
             }
@@ -417,21 +444,24 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         onChange?.run()
     }
 
-    /** Background-of-the-pad touchpad finger, position in px of the pad area. */
-    fun touchpadDown(pointer: Long, x: Float, y: Float) {
+    /**
+     * Background-of-the-pad touchpad finger, position in px of the pad area. [eventNanos] is the
+     * touch's event time (same clock as [clock]), used only for cursor and scroll speed.
+     */
+    fun touchpadDown(pointer: Long, x: Float, y: Float, eventNanos: Long = clock()) {
         synchronized(lock) {
             val now = clock()
             resolveIfDue(now)
-            touchpad.down(pointer, x, y, now)
+            touchpad.down(pointer, x, y, now, eventNs = eventNanos)
         }
         onChange?.run()
     }
 
-    fun touchpadMove(pointer: Long, x: Float, y: Float) {
+    fun touchpadMove(pointer: Long, x: Float, y: Float, eventNanos: Long = clock()) {
         synchronized(lock) {
             val now = clock()
             resolveIfDue(now)
-            touchpad.move(pointer, x, y, now)
+            touchpad.move(pointer, x, y, now, eventNanos)
         }
         onChange?.run()
     }
@@ -455,6 +485,16 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             // Click-through fingers keep their button; only the cursor part ends.
             for (i in 0 until MAX_BUTTON_FINGERS) if (bpState[i] == BP_THROUGH) bpState[i] = BP_PRESSED
             touchpad.cancel(clock())
+        }
+        onChange?.run()
+    }
+
+    /** Removes one background touchpad finger the system cancelled: no click, tap, fling or held gesture key. */
+    fun touchpadCancel(pointer: Long) {
+        synchronized(lock) {
+            val now = clock()
+            resolveIfDue(now)
+            touchpad.cancelFinger(pointer, now)
         }
         onChange?.run()
     }
