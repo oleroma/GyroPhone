@@ -164,6 +164,12 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
     SwitchRow("Sticky modifiers (tap Shift, Ctrl… for the next key; double tap locks)", ws.stickyModifiers) { v ->
         editWs { it.copy(stickyModifiers = v) }
     }
+    var opacity by remember(key) { mutableStateOf(ws.controlOpacity) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Control opacity %.0f%%".format(opacity * 100), Modifier.padding(end = 8.dp))
+        Slider(value = opacity, onValueChange = { opacity = it }, valueRange = Profile.MIN_CONTROL_OPACITY..1f,
+            onValueChangeFinished = { editWs { it.copy(controlOpacity = opacity) } })
+    }
 
     HorizontalDivider()
     Text("Touchpad (empty pad area)", style = MaterialTheme.typography.titleSmall)

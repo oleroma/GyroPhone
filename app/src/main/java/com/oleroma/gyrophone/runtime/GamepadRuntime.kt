@@ -125,6 +125,18 @@ class GamepadRuntime(context: Context) {
     /** When on (the default), controller, keyboard and gyro input reach the PC only while the pad is on screen. */
     val padOnlyInput: StateFlow<Boolean> = _padOnlyInput
 
+    private val _startFullscreen = MutableStateFlow(prefs.getBoolean(KEY_START_FULLSCREEN, false))
+    /** Open the pad in fullscreen when the app starts. */
+    val startFullscreen: StateFlow<Boolean> = _startFullscreen
+
+    private val _cornerAutoHide = MutableStateFlow(prefs.getBoolean(KEY_CORNER_AUTO_HIDE, false))
+    /** The ← / → corners fade out after a few seconds in play; four quick taps show them again. */
+    val cornerAutoHide: StateFlow<Boolean> = _cornerAutoHide
+
+    private val _capsuleOrder = MutableStateFlow(prefs.getString(KEY_CAPSULE_ORDER, "") ?: "")
+    /** Order of the pad's top capsules: 'W' per workspace slot, 'S' Settings, 'C' Connection (see ui.capsules). */
+    val capsuleOrder: StateFlow<String> = _capsuleOrder
+
     /** The pad is shown in play mode (not the menu, the editor or the Connect tab); set by PadScreen. */
     private var padShown = false
     /** The activity is resumed; set by MainActivity. */
@@ -245,6 +257,21 @@ class GamepadRuntime(context: Context) {
         prefs.edit().putBoolean(KEY_PAD_ONLY_INPUT, on).apply()
         _padOnlyInput.value = on
         updateInputAllowed()
+    }
+
+    fun setStartFullscreen(on: Boolean) {
+        prefs.edit().putBoolean(KEY_START_FULLSCREEN, on).apply()
+        _startFullscreen.value = on
+    }
+
+    fun setCornerAutoHide(on: Boolean) {
+        prefs.edit().putBoolean(KEY_CORNER_AUTO_HIDE, on).apply()
+        _cornerAutoHide.value = on
+    }
+
+    fun setCapsuleOrder(order: String) {
+        prefs.edit().putString(KEY_CAPSULE_ORDER, order).apply()
+        _capsuleOrder.value = order
     }
 
     fun setPadShown(shown: Boolean) { padShown = shown; updateInputAllowed() }
@@ -612,6 +639,9 @@ class GamepadRuntime(context: Context) {
         private const val KEY_TRANSPORT = "transport"
         private const val KEY_ORIENTATION = "screen_orientation"
         private const val KEY_PAD_ONLY_INPUT = "pad_only_input"
+        private const val KEY_START_FULLSCREEN = "start_fullscreen"
+        private const val KEY_CORNER_AUTO_HIDE = "corner_auto_hide"
+        private const val KEY_CAPSULE_ORDER = "capsule_order"
         private const val KEY_BIAS_X = "gyro_bias_x"
         private const val KEY_BIAS_Y = "gyro_bias_y"
         private const val KEY_BIAS_Z = "gyro_bias_z"
