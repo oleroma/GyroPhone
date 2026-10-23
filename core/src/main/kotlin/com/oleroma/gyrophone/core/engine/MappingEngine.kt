@@ -6,6 +6,8 @@ import com.oleroma.gyrophone.core.hid.HidState
 import com.oleroma.gyrophone.core.hid.HidUsage
 import com.oleroma.gyrophone.core.hid.KeyboardState
 import com.oleroma.gyrophone.core.hid.MouseState
+import com.oleroma.gyrophone.core.model.AndroidAxis
+import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.GamepadButton
@@ -72,24 +74,58 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private var touchMappings: List<Mapping> = emptyList()
     /** Mappings of each attached pad of the active workspace, by pad index, then the keyboard's. */
     private var padMappings: Array<List<Mapping>> = emptyArray()
+    /**
+     * By [padMappings] index: the list maps a left (LTRIGGER / BRAKE) or right (RTRIGGER / GAS)
+     * analog trigger axis to a game pad trigger, so that side's L2 / R2 key duplicates it.
+     */
+    private var mapsLeftTriggerAxis = BooleanArray(0)
+    private var mapsRightTriggerAxis = BooleanArray(0)
     /** Touch controls whose mappings are all keyboard modifiers, when sticky modifiers are on. */
     private var modifierIds: Set<String> = emptySet()
 
-    /** Input state of one device: its keys, its axes and the pad of the workspace it acts as. */
+    /**
+     * Input state of one device: its keys, its axes and the pad of the workspace it acts as.
+     * [keys] is the real level (events, gyro hold); HID output reads [keyForOutput], which makes
+     * every key edge show in at least one snapshot, so a tap or a short release between two pump
+     * ticks is not lost.
+     */
     private class Dev(var device: PadDevice?) {
         /** Index into [padMappings]; -1 = not attached here (the device does nothing). */
         var pad = -1
         val keys = BitSet()
         val axes = FloatArray(AXIS_SLOTS)
         private var axisCount = 0
+        /** Keys pressed / released since the last snapshot, and what that snapshot showed. */
+        private val pressedSince = BitSet()
+        private val releasedSince = BitSet()
+        private val shown = BitSet()
+        private val scratch = BitSet()
 
-        val active: Boolean get() = axisCount > 0 || !keys.isEmpty
+        val active: Boolean get() = axisCount > 0 || !keys.isEmpty || !pressedSince.isEmpty || !shown.isEmpty
+        val hasAxes: Boolean get() = axisCount > 0
 
         fun key(code: Int): Boolean = code >= 0 && keys.get(code)
         fun axis(a: Int): Float = if (a in 0 until AXIS_SLOTS) axes[a] else 0f
 
+        /** Shown down: up if released since (even if pressed again). Shown up: down if pressed since. */
+        fun keyForOutput(code: Int): Boolean {
+            if (code < 0) return false
+            return if (shown.get(code)) keys.get(code) && !releasedSince.get(code)
+            else keys.get(code) || pressedSince.get(code)
+        }
+
+        /** A snapshot showed [keyForOutput]: remember it and start the next interval. */
+        fun shownInSnapshot() {
+            // shown = if (shown) keys && !released else keys || pressed
+            scratch.clear(); scratch.or(keys); scratch.or(pressedSince); scratch.andNot(shown)
+            shown.and(keys); shown.andNot(releasedSince); shown.or(scratch)
+            pressedSince.clear(); releasedSince.clear()
+        }
+
         fun setKey(code: Int, pressed: Boolean) {
-            if (code >= 0) keys.set(code, pressed)
+            if (code < 0) return
+            keys.set(code, pressed)
+            if (pressed) pressedSince.set(code) else releasedSince.set(code)
         }
 
         fun setAxis(a: Int, value: Float) {
@@ -99,8 +135,24 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             axes[a] = v
         }
 
+        /** Whether [setAxis] of the first [n] pairs would change anything. */
+        fun differs(ids: IntArray, values: FloatArray, n: Int): Boolean {
+            for (i in 0 until n) {
+                val a = ids[i]
+                if (a !in 0 until AXIS_SLOTS) continue
+                val v = if (abs(values[i]) < AXIS_EPSILON) 0f else values[i]
+                if (axes[a] != v) return true
+            }
+            return false
+        }
+
+        fun clearAxes() {
+            axes.fill(0f); axisCount = 0
+        }
+
         fun clear() {
             keys.clear(); axes.fill(0f); axisCount = 0
+            pressedSince.clear(); releasedSince.clear(); shown.clear()
         }
     }
 
@@ -175,6 +227,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         ws = w
         touchMappings = w.mappings
         padMappings = Array(w.pads.size + 1) { if (it < w.pads.size) w.pads[it].mappings else w.keyboard }
+        mapsLeftTriggerAxis = BooleanArray(padMappings.size) { mapsTriggerAxis(padMappings[it], AndroidAxis.LTRIGGER, AndroidAxis.BRAKE) }
+        mapsRightTriggerAxis = BooleanArray(padMappings.size) { mapsTriggerAxis(padMappings[it], AndroidAxis.RTRIGGER, AndroidAxis.GAS) }
         modifierIds = if (w.stickyModifiers) modifierControls(w.mappings) else emptySet()
         clickThroughIds = w.touchControls.filter { it.kind == TouchKind.BUTTON && it.clickThrough }.mapTo(HashSet()) { it.id }
         releaseHeld()
@@ -241,6 +295,32 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     fun setAxis(device: PadDevice, axis: Int, value: Float) {
         synchronized(lock) {
             firingEvents(clock()) { deviceFor(device).setAxis(axis, value) }
+        }
+        onChange?.run()
+    }
+
+    /**
+     * The first [n] axes of one joystick event ([axes] ids, [values]) as one change, so a snapshot
+     * never sees half of it. Wakes the sender only if a value changed. Allocation-free.
+     */
+    fun setAxes(device: PadDevice, axes: IntArray, values: FloatArray, n: Int) {
+        synchronized(lock) {
+            val d = devices[device.id]
+            if (d != null && d.device == device && !d.differs(axes, values, n)) return
+            firingEvents(clock()) {
+                val dev = deviceFor(device)
+                for (i in 0 until n) dev.setAxis(axes[i], values[i])
+            }
+        }
+        onChange?.run()
+    }
+
+    /** Zeroes every axis of a device and keeps its keys (its joystick events were cancelled). */
+    fun clearAxes(deviceId: Int) {
+        synchronized(lock) {
+            val d = devices[deviceId]
+            if (d == null || !d.hasAxes) return
+            firingEvents(clock()) { d.clearAxes() }
         }
         onChange?.run()
     }
@@ -560,7 +640,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         onChange?.run()
     }
 
-    /** Computes the current HID state and drains accumulated relative mouse motion. */
+    /**
+     * Computes the current HID state and drains accumulated relative mouse motion. A device key
+     * pressed or released since the last snapshot shows its edge here even if it already flipped
+     * back, so only the pumps may call this (OutputLink).
+     */
     fun snapshot(): HidState = synchronized(lock) {
         val now = clock()
         resolveIfDue(now)
@@ -569,6 +653,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         accUp = false; accDown = false; accLeft = false; accRight = false
         stick.fill(0f); trigger.fill(0f); heldKeys.fill(false)
         forEachGroup { ms, dev -> accumulate(ms, dev) }
+        for (i in deviceList.indices) deviceList[i].shownInSnapshot()
+        anyDevice.shownInSnapshot()
         for (i in pulses.indices) pulses[i].seen = true
 
         // Touchpad gestures (Alt+Tab, Ctrl zoom, Win shortcuts) hold keys like any binding.
@@ -583,10 +669,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (u in 0 until 256) if (heldKeys[u] && !inKeyOrder[u]) { keyOrder[keyOrderSize++] = u; inKeyOrder[u] = true }
         var modifiers = 0
         val array = ArrayList<Int>(6)
+        // Wi-Fi carries every key: a list of its own only once a seventh is held.
+        var all: ArrayList<Int>? = null
         for (i in 0 until keyOrderSize) {
             val usage = keyOrder[i]
             if (HidUsage.isModifier(usage)) modifiers = modifiers or HidUsage.modifierBit(usage)
             else if (array.size < 6) array.add(usage)
+            else (all ?: ArrayList(array).also { all = it }).add(usage)
         }
         modifiers = modifiers or touchpad.keyModifiers
 
@@ -604,15 +693,21 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         )
         mouseDx = 0; mouseDy = 0; wheel = 0
         touchpad.drainMotion()
-        HidState(gamepad, KeyboardState(modifiers, array), mouse)
+        HidState(gamepad, KeyboardState(modifiers, array), mouse, all ?: array)
     }
 
     /** Adds one source group's outputs; its stick axes sum, then merge by largest deflection. */
     private fun accumulate(ms: List<Mapping>, dev: Dev?) {
         groupStick.fill(0f)
+        val device = dev?.device
+        // A pad with an analog trigger may set its L2 / R2 key early: when this group also maps
+        // that side's analog axis to a trigger, the axis wins and the key adds nothing to LT / RT.
+        val pad = dev?.pad ?: -1
+        val dupL2 = device?.analogLeftTrigger == true && pad in mapsLeftTriggerAxis.indices && mapsLeftTriggerAxis[pad]
+        val dupR2 = device?.analogRightTrigger == true && pad in mapsRightTriggerAxis.indices && mapsRightTriggerAxis[pad]
         for (i in ms.indices) {
             val m = ms[i]
-            val v = value(m.source, dev)
+            val v = value(m.source, dev, output = true)
             when (val t = m.target) {
                 is OutputTarget.Pad -> if (v >= PRESS_THRESHOLD) when (t.button) {
                     GamepadButton.DPAD_UP -> accUp = true
@@ -623,9 +718,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 }
                 is OutputTarget.PadAxis -> {
                     val scaled = v * t.scale
+                    val src = m.source
+                    val dup = src is InputSource.Key &&
+                        ((dupL2 && src.keyCode == AndroidKey.BUTTON_L2) || (dupR2 && src.keyCode == AndroidKey.BUTTON_R2))
                     when (t.axis) {
-                        GamepadAxis.LT -> trigger[0] = max(trigger[0], abs(scaled))
-                        GamepadAxis.RT -> trigger[1] = max(trigger[1], abs(scaled))
+                        GamepadAxis.LT -> if (!dup) trigger[0] = max(trigger[0], abs(scaled))
+                        GamepadAxis.RT -> if (!dup) trigger[1] = max(trigger[1], abs(scaled))
                         else -> groupStick[t.axis.ordinal] += scaled
                     }
                 }
@@ -635,6 +733,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
         }
         for (a in 0 until 4) if (abs(groupStick[a]) > abs(stick[a])) stick[a] = groupStick[a]
+    }
+
+    /** Whether [ms] maps analog axis [a] or [b] to a game pad trigger. */
+    private fun mapsTriggerAxis(ms: List<Mapping>, a: Int, b: Int): Boolean = ms.any { m ->
+        val src = m.source
+        val t = m.target
+        src is InputSource.Axis && (src.axis == a || src.axis == b) &&
+            t is OutputTarget.PadAxis && (t.axis == GamepadAxis.LT || t.axis == GamepadAxis.RT)
     }
 
     /**
@@ -794,9 +900,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
     }
 
-    /** A source's value in one group: keys and axes from [dev] (none for the touch group). */
-    private fun value(source: InputSource, dev: Dev?): Float = when (source) {
-        is InputSource.Key -> if (dev != null && dev.key(source.keyCode)) 1f else 0f
+    /**
+     * A source's value in one group: keys and axes from [dev] (none for the touch group). [output]:
+     * for a snapshot's HID output, where every key edge since the last snapshot shows.
+     */
+    private fun value(source: InputSource, dev: Dev?, output: Boolean = false): Float = when (source) {
+        is InputSource.Key -> if (dev != null && (if (output) dev.keyForOutput(source.keyCode) else dev.key(source.keyCode))) 1f else 0f
         is InputSource.Axis -> if (dev == null) 0f else half(dev.axis(source.axis), source.half)
         is InputSource.Touch -> if (touches.containsKey(source.id) || latched(source.id)) 1f else 0f
         is InputSource.TouchStick -> {
