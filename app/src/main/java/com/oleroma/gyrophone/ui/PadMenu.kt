@@ -87,6 +87,8 @@ fun PadTab(runtime: GamepadRuntime, fullscreen: Boolean, onFullscreen: (Boolean)
     var stackText by rememberSaveable { mutableStateOf("") }
     val stack = remember(stackText) { PadMenuPage.decode(stackText) }
     fun go(next: List<PadMenuPage>) { stackText = PadMenuPage.encode(next) }
+    /** The workspace page was opened from edit mode: back on the pad, edit mode again. */
+    var editOnReturn by rememberSaveable { mutableStateOf(false) }
 
     if (stack.isEmpty()) {
         PadScreen(
@@ -97,10 +99,25 @@ fun PadTab(runtime: GamepadRuntime, fullscreen: Boolean, onFullscreen: (Boolean)
                 onFullscreen(false)
                 go(listOf(page))
             },
+            onWorkspaceSettings = {
+                editOnReturn = true
+                go(listOf(PadMenuPage.Root))
+            },
+            startInEdit = editOnReturn,
+            onEditResumed = { editOnReturn = false },
         )
     } else {
         BackHandler { go(stack.dropLast(1)) }
-        PadMenu(runtime = runtime, stack = stack, onNavigate = { go(it) }, onRetry = onRetry)
+        PadMenu(
+            runtime = runtime,
+            stack = stack,
+            onNavigate = { go(it) },
+            onRetry = onRetry,
+            onWorkspaceDeleted = {
+                editOnReturn = false
+                go(emptyList())
+            },
+        )
     }
 }
 
@@ -110,6 +127,7 @@ private fun PadMenu(
     stack: List<PadMenuPage>,
     onNavigate: (List<PadMenuPage>) -> Unit,
     onRetry: () -> Unit,
+    onWorkspaceDeleted: () -> Unit,
 ) {
     val page = stack.last()
     fun open(p: PadMenuPage) = onNavigate(stack + p)
@@ -127,7 +145,7 @@ private fun PadMenu(
             Text(
                 when (page) {
                     is PadMenuPage.EditMapping -> if (page.profileId == null) "New mapping profile" else "Mapping profile"
-                    PadMenuPage.Root -> "Workspace"
+                    PadMenuPage.Root -> "Workspace settings"
                     PadMenuPage.Connection -> "Connection"
                     PadMenuPage.AppSettings -> "Settings"
                 },
@@ -140,7 +158,7 @@ private fun PadMenu(
         HorizontalDivider()
         val content = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)
         when (page) {
-            PadMenuPage.Root -> MenuList(runtime, content, onOpen = { open(it) })
+            PadMenuPage.Root -> MenuList(runtime, content, onOpen = { open(it) }, onDeleted = onWorkspaceDeleted)
             PadMenuPage.Connection -> ConnectScreen(runtime, onRetry)
             PadMenuPage.AppSettings -> AppSettingsScreen(runtime, content)
             is PadMenuPage.EditMapping -> MappingProfileEditor(
@@ -155,11 +173,12 @@ private fun PadMenu(
 }
 
 /**
- * The full settings of the current workspace (opened from its settings in edit mode): which
+ * All settings of the current workspace (⚙ in edit mode): rename / duplicate / delete, which
  * mapping profile it uses (pick, edit or make a new one), its devices, then its settings.
+ * Settings of the whole app are on the Settings page instead.
  */
 @Composable
-private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onOpen: (PadMenuPage) -> Unit) {
+private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onOpen: (PadMenuPage) -> Unit, onDeleted: () -> Unit) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
@@ -181,6 +200,11 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onOpen: (PadMe
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 4.dp),
         )
+        WorkspaceActions(profile, current) { p, _ ->
+            val deleted = p.workspaces.size < profile.workspaces.size
+            runtime.editActiveProfile { p }
+            if (deleted) onDeleted()
+        }
 
         // ── Mapping profile of this workspace ───────────────────────────────
         CategoryHeader("Mapping profile", using?.name, isOpen("mapping", true)) { toggle("mapping", true) }

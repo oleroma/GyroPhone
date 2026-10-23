@@ -40,56 +40,8 @@ import com.oleroma.gyrophone.core.model.WorkspaceEdits
 import com.oleroma.gyrophone.runtime.AttachedController
 
 /**
- * Edit-mode row of the profile's workspaces: a chip per workspace (tap = show it, tap the shown one
- * = its settings) and add (blank or a preset). [onProfileChange] gets the edited profile and the
- * index to show next.
- */
-@Composable
-internal fun WorkspaceBar(
-    profile: Profile,
-    index: Int,
-    onSelect: (Int) -> Unit,
-    onProfileChange: (Profile, Int) -> Unit,
-    onSettings: () -> Unit,
-) {
-    val i = index.coerceIn(0, profile.workspaces.lastIndex)
-    var adding by remember { mutableStateOf(false) }
-    val compact = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-
-    profile.workspaces.forEachIndexed { k, w ->
-        WorkspaceChip("${k + 1} · ${w.name}" + if (k == i) " ⚙" else "", k == i) { if (k == i) onSettings() else onSelect(k) }
-    }
-    FilledTonalButton(contentPadding = compact, onClick = { adding = true }) { Text("+ Workspace") }
-
-    if (adding) {
-        AlertDialog(
-            onDismissRequest = { adding = false },
-            title = { Text("Add workspace") },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    val choices = listOf(
-                        "Blank (touchpad only)" to BuiltinProfiles.blankWorkspace("Workspace ${profile.workspaces.size + 1}"),
-                    ) + BuiltinProfiles.presets.map { it.name to it }
-                    for ((label, w) in choices) {
-                        Text(
-                            label,
-                            Modifier.fillMaxWidth().clickable {
-                                adding = false
-                                val (p, at) = WorkspaceEdits.add(profile, w)
-                                onProfileChange(p, at)
-                            }.padding(12.dp),
-                        )
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { adding = false }) { Text("Cancel") } },
-        )
-    }
-}
-
-/**
- * Rename, move left / right, duplicate and delete (not the last) for workspace [index], at the
- * top of its settings. [onProfileChange] gets the edited profile and the index to show next.
+ * Rename, duplicate and delete (not the last) for workspace [index], at the top of its settings
+ * (reorder by dragging its capsule on the pad). [onProfileChange] gets the edited profile and the index to show next.
  */
 @Composable
 internal fun WorkspaceActions(
@@ -109,16 +61,6 @@ internal fun WorkspaceActions(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         OutlinedButton(contentPadding = compact, onClick = { renaming = current.name }) { Text("Rename") }
-        if (i > 0) {
-            OutlinedButton(contentPadding = compact, onClick = {
-                onProfileChange(WorkspaceEdits.move(profile, i, i - 1), WorkspaceEdits.indexAfterMove(i, i, i - 1))
-            }) { Text("◀ Move") }
-        }
-        if (i < profile.workspaces.lastIndex) {
-            OutlinedButton(contentPadding = compact, onClick = {
-                onProfileChange(WorkspaceEdits.move(profile, i, i + 1), WorkspaceEdits.indexAfterMove(i, i, i + 1))
-            }) { Text("Move ▶") }
-        }
         OutlinedButton(contentPadding = compact, onClick = {
             val (p, at) = WorkspaceEdits.duplicate(profile, i)
             onProfileChange(p, at)
@@ -158,7 +100,7 @@ internal fun WorkspaceActions(
         AlertDialog(
             onDismissRequest = { deleting = false },
             title = { Text("Delete \"${current.name}\"?") },
-            text = { Text("Its controls, settings and attached pads go with it. Cancel in the edit bar still undoes it.") },
+            text = { Text("Its controls, settings and attached pads go with it. This can't be undone.") },
             confirmButton = {
                 TextButton(onClick = {
                     deleting = false
@@ -167,67 +109,6 @@ internal fun WorkspaceActions(
                 }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { deleting = false }) { Text("Cancel") } },
-        )
-    }
-}
-
-/** "Attach <name>" buttons for connected controllers that do nothing in the shown workspace. */
-@Composable
-internal fun AttachHints(
-    unattached: List<AttachedController>,
-    onAttach: (AttachedController) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    if (unattached.isEmpty()) return
-    val compact = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-    Row(
-        modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            "Not in this workspace:",
-            color = Color.White.copy(alpha = 0.7f),
-            style = MaterialTheme.typography.labelLarge,
-        )
-        for (c in unattached) {
-            FilledTonalButton(contentPadding = compact, onClick = { onAttach(c) }) {
-                Text("Attach ${displayName(c)}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-    }
-}
-
-/** Connected controllers that no attached pad of [workspace] matches (one per model). */
-internal fun unattachedControllers(workspace: Workspace, controllers: List<AttachedController>): List<AttachedController> =
-    controllers
-        .filter { workspace.padFor(it.vendorId, it.productId, it.name) == null }
-        .distinctBy { Triple(it.vendorId, it.productId, it.name) }
-
-/** [workspace] with [controller]'s model attached on the standard profile (see [deviceOf]). */
-internal fun attachController(workspace: Workspace, controller: AttachedController): Workspace =
-    PadDevices.attach(workspace, deviceOf(controller))
-
-private fun displayName(c: AttachedController): String = c.known?.name ?: c.name
-
-@Composable
-private fun WorkspaceChip(text: String, selected: Boolean, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(8.dp)
-    val colors = MaterialTheme.colorScheme
-    Box(
-        Modifier
-            .clip(shape)
-            .background(if (selected) colors.primaryContainer else Color(0xCC1E232B), shape)
-            .border(1.dp, if (selected) colors.primaryContainer else colors.outline, shape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-    ) {
-        Text(
-            text,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (selected) colors.onPrimaryContainer else Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
         )
     }
 }
