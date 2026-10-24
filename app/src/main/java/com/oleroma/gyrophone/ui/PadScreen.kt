@@ -524,7 +524,6 @@ fun PadScreen(
                 val workspace = profile.workspace(wsIndex)
                 val controls = workspace.touchControls
                 val corners = profile.shownCorners
-                val padEnabled = workspace.touchpad.enabled
                 runtime.engine.touchpadPxPerDp = pxPerDp
                 val stickOwner = HashMap<PointerId, String>()
                 val stickCenters = HashMap<String, Offset>()
@@ -592,11 +591,10 @@ fun PadScreen(
                                     // A corner belongs to the first finger on it until that finger lifts.
                                     if (corner.id !in cornerOwner.values) cornerOwner[ch.id] = corner.id
                                 } else if (c == null) {
-                                    // A finger that lands on empty background is a touchpad finger until it lifts.
-                                    if (padEnabled) {
-                                        padOwner.add(ch.id)
-                                        runtime.engine.touchpadDown(pid, ch.position.x, ch.position.y, at)
-                                    }
+                                    // A finger that lands on empty background is a touchpad finger until it lifts
+                                    // (with the touchpad off it moves nothing, but can still be a gyro ratchet).
+                                    padOwner.add(ch.id)
+                                    runtime.engine.touchpadDown(pid, ch.position.x, ch.position.y, at)
                                 } else if (c.kind == TouchKind.STICK) {
                                     if (c.id !in stickOwner.values) {
                                         stickOwner[ch.id] = c.id
@@ -1101,6 +1099,8 @@ private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>)
             is InputSource.TouchStick -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             is InputSource.TouchStickDiagonal -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             is InputSource.TouchSwipe -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
+            is InputSource.TouchRelease -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
+            is InputSource.TouchDoubleTap -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             else -> null
         }
     }
@@ -1328,7 +1328,37 @@ private fun ControlSettingsPanel(
                             if (control.swipe) {
                                 SwipeSensSlider("Swipe X sensitivity", control.swipeSensX) { onControlChange(current.copy(swipeSensX = it)) }
                                 SwipeSensSlider("Swipe Y sensitivity", control.swipeSensY) { onControlChange(current.copy(swipeSensY = it)) }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Press only on a tap", style = MaterialTheme.typography.labelLarge)
+                                        Text(
+                                            if (control.swipeTapOnRelease) "Presses when a still, short tap lifts; a swipe never presses."
+                                            else "Presses as soon as the finger touches, and stays pressed while it swipes.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    Switch(
+                                        checked = control.swipeTapOnRelease,
+                                        onCheckedChange = { onControlChange(current.copy(swipeTapOnRelease = it)) },
+                                    )
+                                }
                             }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Press waits for a double tap", style = MaterialTheme.typography.labelLarge)
+                                Text(
+                                    if (control.doubleTapWaits) "With a Double tap mapping, the press comes after a short wait, and a double tap does not press."
+                                    else "The press is instant; a double tap also presses twice. Map Double tap and Release below.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = control.doubleTapWaits,
+                                onCheckedChange = { onControlChange(current.copy(doubleTapWaits = it)) },
+                            )
                         }
                         val input = inputs.first()
                         val targets = Bindings.targets(workspace.mappings, input)

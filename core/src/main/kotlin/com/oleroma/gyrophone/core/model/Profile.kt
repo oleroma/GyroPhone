@@ -65,6 +65,13 @@ data class TouchControl(
     /** Swipe sensitivity across and down: mouse counts per dp of travel (0 = that axis is off). */
     val swipeSensX: Float = 1.5f,
     val swipeSensY: Float = 1.5f,
+    /** Swipe mode: press only on a still tap's release (else the press starts at touch-down). */
+    val swipeTapOnRelease: Boolean = false,
+    /**
+     * With a double tap mapping: the press waits to see if a second tap follows (a double tap
+     * then never presses). Off: the press is instant, and a double tap also presses twice.
+     */
+    val doubleTapWaits: Boolean = false,
 ) {
     /** In swipe mode: a button with [swipe] on and click-through off. */
     val swipes: Boolean get() = kind == TouchKind.BUTTON && swipe && !clickThrough
@@ -74,7 +81,7 @@ data class TouchControl(
         /** Fractions of the shorter side: over 1 a control can span the long side (and fill the screen). */
         const val MAX_SIZE = 2.4f
         const val MAX_DEADZONE = 0.6f
-        const val MAX_SWIPE_SENS = 6f
+        const val MAX_SWIPE_SENS = 12f
         /**
          * Derived portrait layout: the landscape layout squeezed into the lower part (the top is
          * left for the touchpad), sizes scaled down, centres pulled in so nothing leaves the width.
@@ -154,6 +161,10 @@ enum class GyroMode(val label: String) {
     HOLD_OR_TOGGLE("Ratchet enables"),
 }
 
+/** The cursor axes a gyro ratchet acts on. */
+@Serializable
+enum class RatchetAxes(val label: String) { BOTH("Both"), X("Only X"), Y("Only Y") }
+
 /** How the phone is held. AUTO follows the screen rotation. */
 @Serializable
 enum class GyroOrientation(val label: String) {
@@ -208,6 +219,8 @@ data class GyroSettings(
      * A click-through button's finger counts only through the button's own ratchet mapping.
      */
     val touchpadRatchet: Boolean = false,
+    /** Which cursor axes a ratchet flips; the other one stays as the mode has it without a ratchet. */
+    val ratchetAxes: RatchetAxes = RatchetAxes.BOTH,
 ) {
     val verticalSensitivity: Float get() = sensitivityY ?: (sensitivity * verticalRatio)
 

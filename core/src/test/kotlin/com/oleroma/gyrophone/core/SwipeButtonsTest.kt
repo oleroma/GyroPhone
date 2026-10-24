@@ -32,11 +32,13 @@ class SwipeButtonsTest {
         sensX: Float = 1f,
         sensY: Float = 1f,
         clickThrough: Boolean = false,
+        tapOnRelease: Boolean = true,
         now: () -> Long = { 0L },
     ): MappingEngine {
         val b = TouchControl(
             "b", TouchKind.BUTTON, "", 0.5f, 0.5f,
             clickThrough = clickThrough, swipe = true, swipeSensX = sensX, swipeSensY = sensY,
+            swipeTapOnRelease = tapOnRelease,
         )
         val p = single(Workspace(id = "w", name = "w", touchControls = listOf(b), mappings = mappings))
         return MappingEngine(p, now).apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 0 }
@@ -95,6 +97,17 @@ class SwipeButtonsTest {
     }
 
     @Test
+    fun swipeButtonPressesAtTouchByDefault() {
+        val e = engine(listOf(Mapping(InputSource.Touch("b"), OutputTarget.Key(A))), tapOnRelease = false)
+        e.buttonDown(1, "b", 100f, 100f)
+        assertEquals(listOf(A), e.snapshot().keyboard.keys)
+        e.buttonMove(1, 160f, 100f) // swiping keeps it held
+        assertEquals(listOf(A), e.snapshot().keyboard.keys)
+        e.buttonUp(1)
+        assertTrue(e.snapshot().keyboard.keys.isEmpty())
+    }
+
+    @Test
     fun stillTapPressesTheButton() {
         var t = 0L
         val e = engine(listOf(Mapping(InputSource.Touch("b"), OutputTarget.Key(A))), now = { t })
@@ -118,9 +131,9 @@ class SwipeButtonsTest {
     @Test
     fun clickThroughTurnsSwipeModeOff() {
         val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, swipe = true)
-        assertEquals(7, Bindings.touchInputs(b).size)
-        assertEquals(1, Bindings.touchInputs(b.copy(clickThrough = true)).size)
-        assertEquals(1, Bindings.touchInputs(b.copy(swipe = false)).size)
+        assertEquals(9, Bindings.touchInputs(b).size)
+        assertEquals(3, Bindings.touchInputs(b.copy(clickThrough = true)).size)
+        assertEquals(3, Bindings.touchInputs(b.copy(swipe = false)).size)
     }
 
     @Test

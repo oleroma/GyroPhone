@@ -28,10 +28,15 @@ import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroOrientation
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.RatchetAxes
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.roundToInt
+
+/** Slider tops: higher than the old 60 and 5, for fast flicks and big screens. */
+private const val MAX_GYRO_SENS = 150f
+private const val MAX_TOUCHPAD_SENS = 12f
 
 /**
  * Gyro and touchpad settings of the active profile's workspace [index]. Edits go
@@ -63,19 +68,33 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
             " Turn on Ratchet on any touch button (or map Ratchet to a controller button); Toggle gyro swaps the two modes.",
         style = MaterialTheme.typography.bodySmall,
     )
-    SwitchRow("Touchpad is a ratchet (a finger on the empty pad flips gyro while it is down)", ws.gyro.touchpadRatchet) { v ->
+    SwitchRow("Touchpad is a ratchet (a finger on the empty pad flips gyro while it is down, even with the touchpad off)", ws.gyro.touchpadRatchet) { v ->
         editWs { it.copy(gyro = it.gyro.copy(touchpadRatchet = v)) }
     }
+    Text("Ratchet acts on", style = MaterialTheme.typography.bodyMedium)
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        RatchetAxes.entries.forEach { a ->
+            FilterChip(
+                selected = ws.gyro.ratchetAxes == a,
+                onClick = { editWs { it.copy(gyro = it.gyro.copy(ratchetAxes = a)) } },
+                label = { Text(a.label) },
+            )
+        }
+    }
+    Text(
+        "Only X: a ratchet stops or starts only the sideways motion (re-centre left and right while up and down keeps going).",
+        style = MaterialTheme.typography.bodySmall,
+    )
     var sens by remember(key) { mutableStateOf(ws.gyro.sensitivity) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("X sensitivity %.0f".format(sens), Modifier.padding(end = 8.dp))
-        Slider(value = sens, onValueChange = { sens = it.roundToInt().toFloat() }, valueRange = 0f..60f,
+        Slider(value = sens, onValueChange = { sens = it.roundToInt().toFloat() }, valueRange = 0f..MAX_GYRO_SENS,
             onValueChangeFinished = { editWs { it.copy(gyro = it.gyro.copy(sensitivity = sens)) } })
     }
     var sensY by remember(key) { mutableStateOf(ws.gyro.verticalSensitivity) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Y sensitivity %.0f".format(sensY), Modifier.padding(end = 8.dp))
-        Slider(value = sensY, onValueChange = { sensY = it.roundToInt().toFloat() }, valueRange = 0f..60f,
+        Slider(value = sensY, onValueChange = { sensY = it.roundToInt().toFloat() }, valueRange = 0f..MAX_GYRO_SENS,
             onValueChangeFinished = { editWs { it.copy(gyro = it.gyro.copy(sensitivityY = sensY)) } })
     }
     Text("Mouse counts per degree, sideways (X) and up and down (Y). 0 turns that direction off.", style = MaterialTheme.typography.bodySmall)
@@ -185,13 +204,13 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
     var tpSens by remember(key) { mutableStateOf(tp.sensitivity) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("X speed %.1f".format(tpSens), Modifier.padding(end = 8.dp))
-        Slider(value = tpSens, onValueChange = { tpSens = (it * 10).roundToInt() / 10f }, valueRange = 0f..5f,
+        Slider(value = tpSens, onValueChange = { tpSens = (it * 10).roundToInt() / 10f }, valueRange = 0f..MAX_TOUCHPAD_SENS,
             onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(sensitivity = tpSens)) } })
     }
     var tpSensY by remember(key) { mutableStateOf(tp.verticalSensitivity) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Y speed %.1f".format(tpSensY), Modifier.padding(end = 8.dp))
-        Slider(value = tpSensY, onValueChange = { tpSensY = (it * 10).roundToInt() / 10f }, valueRange = 0f..5f,
+        Slider(value = tpSensY, onValueChange = { tpSensY = (it * 10).roundToInt() / 10f }, valueRange = 0f..MAX_TOUCHPAD_SENS,
             onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(sensitivityY = tpSensY)) } })
     }
     Text("0 turns that direction off, e.g. X 0 for a touchpad that only moves up and down.", style = MaterialTheme.typography.bodySmall)

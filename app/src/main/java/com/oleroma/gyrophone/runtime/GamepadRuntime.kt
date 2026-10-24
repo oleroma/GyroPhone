@@ -662,10 +662,14 @@ class GamepadRuntime(context: Context) {
                 }
             }
         }
-        val active = inputAllowed && engine.gyroActive
+        val axes = if (inputAllowed) engine.gyroAxes else 0
+        val active = axes != 0
         if (active) {
             val c = gyroMouse.update(x - biasX, y - biasY, z - biasZ, dt)
-            if (c.dx != 0 || c.dy != 0) engine.addMouseMotion(c.dx, c.dy)
+            // A ratchet on one axis leaves the other moving.
+            val dx = if (axes and MappingEngine.GYRO_X != 0) c.dx else 0
+            val dy = if (axes and MappingEngine.GYRO_Y != 0) c.dy else 0
+            if (dx != 0 || dy != 0) engine.addMouseMotion(dx, dy)
         } else {
             gyroMouse.reset()
         }

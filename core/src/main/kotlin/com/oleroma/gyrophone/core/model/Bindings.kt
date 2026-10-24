@@ -55,17 +55,21 @@ object Bindings {
         setTargets(mappings, input, targets(mappings, input) - target)
 
     /**
-     * Inputs a touch control exposes: BUTTON -> [Touch(id)], in swipe mode also the swipe X and Y
+     * Inputs a touch control exposes: BUTTON -> [Touch(id)] (its press), release and double tap, in swipe mode also the swipe X and Y
      * axes and the four swipe directions; STICK -> X axis, Y axis (analog),
      * Left, Right, Up, Down (halves), and with 8 zones the four diagonals; FULLSCREEN -> none.
      */
     fun touchInputs(control: TouchControl): List<BindableInput> = when (control.kind) {
         TouchKind.BUTTON -> {
             val press = BindableInput(control.label.ifBlank { control.id }, listOf(InputSource.Touch(control.id)))
-            if (!control.swipes) listOf(press) else {
+            val events = listOf(
+                press,
+                BindableInput("Release", listOf(InputSource.TouchRelease(control.id))),
+                BindableInput("Double tap", listOf(InputSource.TouchDoubleTap(control.id))),
+            )
+            if (!control.swipes) events else {
                 fun s(axis: StickAxis, half: AxisHalf = AxisHalf.FULL) = listOf(InputSource.TouchSwipe(control.id, axis, half))
-                listOf(
-                    press,
+                events + listOf(
                     BindableInput("Swipe X", s(StickAxis.X), analog = true, swipe = true),
                     BindableInput("Swipe Y", s(StickAxis.Y), analog = true, swipe = true),
                     BindableInput("Swipe left", s(StickAxis.X, AxisHalf.NEGATIVE)),

@@ -56,6 +56,14 @@ sealed interface InputSource {
     @Serializable @SerialName("touch")
     data class Touch(val id: String) : InputSource
 
+    /** A touch button's release: a short press when the button lets go. */
+    @Serializable @SerialName("touch_release")
+    data class TouchRelease(val id: String) : InputSource
+
+    /** A touch button's double tap: held while the second press is held. */
+    @Serializable @SerialName("touch_double")
+    data class TouchDoubleTap(val id: String) : InputSource
+
     /** One axis of a virtual touchscreen stick. */
     @Serializable @SerialName("touch_stick")
     data class TouchStick(val id: String, val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL) : InputSource
