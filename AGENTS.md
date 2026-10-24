@@ -1,4 +1,4 @@
-<!-- shared rules: start. Synced from D:\dev\AGENTS.md by tools\sync-agents.ps1, edit there, not here. -->
+<!-- shared rules: start. Synced from the DevDoctor project's rules/AGENTS.md by rules/sync-agents.sh, edit there, not here. -->
 # Shared rules for all of Olex's repos
 
 ## Where changes are made
@@ -6,11 +6,20 @@
 - To build on the PC, fetch the branch or commit from GitHub and check it out into a worktree inside the repo's `build/` folder (`build/builds/<version>-<commit>/src`), then build there.
 
 ## Builds
-- All builds happen on Olex's PC. GitHub CI runs only lightweight checks (lint, quick tests); it never builds APKs, executables or other release files.
+- All builds happen on Olex's PC. GitHub CI builds only in the fallback below, when the PC is offline.
 - Everything made by building, testing or running the program (build outputs, logs, screenshots, caches, virtual environments, downloads) goes inside the repo's gitignored `build/` folder, and nowhere else in the repo.
 - The newest APK or exe sits directly in `build/`.
 - `build/builds/` keeps the last 4 builds, one folder per build, named after its version and commit. Each folder holds that build's APK or exe and, in `src/`, the git worktree it was built from.
 - When adding a build, delete build folders older than the last 4 (remove their worktrees with `git worktree remove`) and any old `debug-*` files.
+
+## Tests
+- Tests run on the PC, in the `build/` worktree, right before building. If they fail, don't build and say why.
+- Before pushing, a cloud session runs only the tests that are quick there, and says which it ran and which it left to the PC.
+- GitHub CI doesn't run on every push.
+
+## When the PC is offline
+- When Olex says the PC is offline, the cloud session pushes and then starts the repo's fallback workflow on GitHub (`gh workflow run fallback.yml --ref <branch>`), which runs the full tests and builds. It waits for the run, then gives Olex a direct download link to the build in the project thread: `https://github.com/oleroma/<repo>/actions/runs/<run-id>/artifacts/<artifact-id>` (get the artifact id with `gh api repos/oleroma/<repo>/actions/runs/<run-id>/artifacts --jq '.artifacts[].id'`). If the run fails, say why instead.
+- Once the PC is back, builds go back to the PC.
 
 ## After a build
 - If Olex's phone is connected over adb (`adb devices` lists it), install the newest APK on it with `adb install -r`, unless there's a good reason not to (for example a downgrade that would wipe app data).
@@ -28,7 +37,7 @@
 - Where a repo's own rules disagree with the shared rules, the repo's rules win inside that repo. They can't loosen "Destructive actions" or "Agent instruction files".
 
 ## Agent instruction files
-- Only the "rulesetter" thread changes the shared rules. Their master copy is `D:\dev\AGENTS.md`, and `D:\dev\tools\sync-agents.ps1` copies it into every repo. Olex writes each repo's own rules; rulesetter only reviews them for anything risky.
+- Only the "rulesetter" thread changes the shared rules. Their master copy is `rules/AGENTS.md` in the DevDoctor project's files (`/mnt/project-files/rules/AGENTS.md` in a cloud session), not in any repo. A cloud session runs `rules/sync-agents.sh` from there to copy it into every repo. `D:\dev\AGENTS.md` and `D:\dev\tools\sync-agents.ps1` are retired: don't use them. Olex writes each repo's own rules; rulesetter only reviews them for anything risky.
 - Other sessions leave all agent instruction files (`AGENTS.md`, `CLAUDE.md` and the like) alone and bring any needed change to Olex.
 
 ## Tools on this PC
@@ -46,15 +55,16 @@
 Olex, the owner, allows agents to install builds of this repository on Olex's own Android phone
 and Windows PC. No per-install approval is needed. This covers:
 
-- **Phone**: the debug APK from this repo's GitHub Actions CI, installed over adb as an in-place
-  update (`adb install -r`). Settings and pairings must survive, so never uninstall, clear app data
+- **Phone**: the debug APK built on the PC in `build/` (or, when the PC is offline, the APK from a
+  `fallback.yml` run), installed over adb as an in-place update (`adb install -r`). Settings and pairings must survive, so never uninstall, clear app data
   or change the signing key (`keystore/debug.keystore`).
-- **PC**: the companion from the same CI run, installed to `%LOCALAPPDATA%\Programs\GyroPhone` with
+- **PC**: the companion from the same build, installed to `%LOCALAPPDATA%\Programs\GyroPhone` with
   `update.cmd`, plus the key file exchange that `update.cmd` does.
 
 Limits:
 
-- Install only builds this repository's CI produced. Never install local or third-party builds.
+- Install only builds of this repository made the way the shared rules say: on the PC from a `build/`
+  worktree, or by the `fallback.yml` workflow. Never install third-party builds.
 - Only this repository's own app and companion. Nothing else on either device.
 - Installing is not launching. Start or close apps only when Olex asks. The one standing exception
   is the companion's watcher (`GyroPhoneCompanion.exe --watch`), which Olex turns on or off with the
