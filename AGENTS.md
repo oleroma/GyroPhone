@@ -55,15 +55,16 @@
 Olex, the owner, allows agents to install builds of this repository on Olex's own Android phone
 and Windows PC. No per-install approval is needed. This covers:
 
-- **Phone**: the debug APK from this repo's GitHub Actions CI, installed over adb as an in-place
-  update (`adb install -r`). Settings and pairings must survive, so never uninstall, clear app data
+- **Phone**: the debug APK built on the PC in `build/` (or, when the PC is offline, the APK from a
+  `fallback.yml` run), installed over adb as an in-place update (`adb install -r`). Settings and pairings must survive, so never uninstall, clear app data
   or change the signing key (`keystore/debug.keystore`).
-- **PC**: the companion from the same CI run, installed to `%LOCALAPPDATA%\Programs\GyroPhone` with
+- **PC**: the companion from the same build, installed to `%LOCALAPPDATA%\Programs\GyroPhone` with
   `update.cmd`, plus the key file exchange that `update.cmd` does.
 
 Limits:
 
-- Install only builds this repository's CI produced. Never install local or third-party builds.
+- Install only builds of this repository made the way the shared rules say: on the PC from a `build/`
+  worktree, or by the `fallback.yml` workflow. Never install third-party builds.
 - Only this repository's own app and companion. Nothing else on either device.
 - Installing is not launching. Start or close apps only when Olex asks. The one standing exception
   is the companion's watcher (`GyroPhoneCompanion.exe --watch`), which Olex turns on or off with the
