@@ -65,9 +65,6 @@ fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
         SwitchRow("Wrap around (→ on the last workspace goes to the first)", profile.wrapWorkspaces) { on ->
             runtime.editActiveProfile { it.copy(wrapWorkspaces = on) }
         }
-        SwitchRow("Show the gyro corner", profile.gyroCorner) { on ->
-            runtime.editActiveProfile { it.copy(gyroCorner = on) }
-        }
         Hint("Size and position of the corners: Edit layout, then tap or drag a corner.")
 
         SwitchRow("Send input only while the pad is open", padOnly) { runtime.setPadOnlyInput(it) }

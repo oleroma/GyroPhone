@@ -14,6 +14,11 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -88,11 +93,13 @@ import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.Placement
 import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.StickZones
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.contains
+import com.oleroma.gyrophone.core.model.heightRatio
 import com.oleroma.gyrophone.core.model.placeSize
 import com.oleroma.gyrophone.core.model.placeX
 import com.oleroma.gyrophone.core.model.placeY
@@ -102,6 +109,7 @@ import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 import kotlinx.coroutines.delay
 
 private const val GRID = 0.02f
@@ -160,8 +168,7 @@ internal object TouchStream {
  * that lands on a stick owns it until lifted; a finger that lands on a button goes to the engine
  * (which applies touchpad over buttons and sticky modifiers). A finger that lands on empty
  * background drives the touchpad (cursor, taps, drag, scroll). The corners ([Profile.corners])
- * are always shown: tap ← / → for the previous / next workspace, both together for fullscreen;
- * tap the gyro corner (unless hidden) to switch gyro between always on and always off.
+ * are always shown: tap ← / → for the previous / next workspace, both together for fullscreen.
  * Controls have separate landscape and portrait placements; the pad box's shape picks one.
  * Edit mode works on the current workspace in a draft profile. Its menu floats and can be dragged
  * out of the way or resized; its ⚙ saves and opens the workspace's settings page. Tap a control to change its mapping,
@@ -326,6 +333,7 @@ fun PadScreen(
 
         fun center(c: TouchControl) = Offset(c.placeX(portrait) * w, c.placeY(portrait) * h)
         fun half(c: TouchControl) = c.placeSize(portrait) * unit / 2f
+        fun halfH(c: TouchControl) = half(c) * c.heightRatio
         fun hit(controls: List<TouchControl>, p: Offset): TouchControl? =
             controls.lastOrNull { it.contains(p.x, p.y, w, h, inPortrait = portrait) }
 
@@ -337,7 +345,7 @@ fun PadScreen(
             val sx = if (snapToGrid) (x / GRID).roundToInt() * GRID else x
             val sy = if (snapToGrid) (y / GRID).roundToInt() * GRID else y
             val hx = (half(c) / w).coerceAtMost(0.5f)
-            val hy = (half(c) / h).coerceAtMost(0.5f)
+            val hy = (halfH(c) / h).coerceAtMost(0.5f)
             return c.withPlacement(portrait, sx.coerceIn(hx, 1f - hx), sy.coerceIn(hy, 1f - hy), c.placeSize(portrait))
         }
 
@@ -516,19 +524,14 @@ fun PadScreen(
                 val workspace = profile.workspace(wsIndex)
                 val controls = workspace.touchControls
                 val corners = profile.shownCorners
-                val padEnabled = workspace.touchpad.enabled
                 runtime.engine.touchpadPxPerDp = pxPerDp
                 val stickOwner = HashMap<PointerId, String>()
                 val stickCenters = HashMap<String, Offset>()
                 val padOwner = HashSet<PointerId>()
                 val cornerOwner = HashMap<PointerId, String>()
 
-                /** A corner tapped on its own: previous / next workspace (nothing at an end), or the gyro mode. */
+                /** A corner tapped on its own: previous / next workspace (nothing at an end). */
                 fun stepFrom(cornerId: String) {
-                    if (cornerId == NavCorners.GYRO) {
-                        runtime.toggleGyroMode()
-                        return
-                    }
                     val i = runtime.workspaceIndex.value
                     val to = when (cornerId) {
                         NavCorners.PREV -> profile.previousWorkspace(i)
@@ -588,11 +591,10 @@ fun PadScreen(
                                     // A corner belongs to the first finger on it until that finger lifts.
                                     if (corner.id !in cornerOwner.values) cornerOwner[ch.id] = corner.id
                                 } else if (c == null) {
-                                    // A finger that lands on empty background is a touchpad finger until it lifts.
-                                    if (padEnabled) {
-                                        padOwner.add(ch.id)
-                                        runtime.engine.touchpadDown(pid, ch.position.x, ch.position.y, at)
-                                    }
+                                    // A finger that lands on empty background is a touchpad finger until it lifts
+                                    // (with the touchpad off it moves nothing, but can still be a gyro ratchet).
+                                    padOwner.add(ch.id)
+                                    runtime.engine.touchpadDown(pid, ch.position.x, ch.position.y, at)
                                 } else if (c.kind == TouchKind.STICK) {
                                     if (c.id !in stickOwner.values) {
                                         stickOwner[ch.id] = c.id
@@ -712,6 +714,7 @@ fun PadScreen(
             val labels = remember(ws, editing) { ws.touchControls.associate { it.id to controlLabel(ws, it, editing) } }
             for (c in ws.touchControls) {
                 val r = half(c)
+                val rh = halfH(c)
                 val ctr = center(c)
                 val isSelected = editing && selected == c.id
                 val isPressed = !editing && (c.id in pressedIds || c.id in heldSticks)
@@ -725,13 +728,14 @@ fun PadScreen(
                 PadControl(
                     control = c,
                     label = labels[c.id] ?: "",
-                    sizeDp = with(density) { (r * 2).toDp() },
+                    widthDp = with(density) { (r * 2).toDp() },
+                    heightDp = with(density) { (rh * 2).toDp() },
                     tint = tint,
                     filled = isPressed || isSelected || isLatched,
                     knob = { stickPos[c.id] ?: Offset.Zero },
                     knobRadiusPx = r * 0.6f,
                     modifier = Modifier
-                        .offset { IntOffset((ctr.x - r).roundToInt(), (ctr.y - r).roundToInt()) }
+                        .offset { IntOffset((ctr.x - r).roundToInt(), (ctr.y - rh).roundToInt()) }
                         // While editing, faint controls stay findable.
                         .alpha(ws.controlOpacity.let { if (editing) max(it, MIN_EDIT_OPACITY) else it }),
                 )
@@ -739,6 +743,7 @@ fun PadScreen(
             // The corners: shared by all workspaces, drawn over the controls, always shown.
             for (c in shown.shownCorners) {
                 val r = half(c)
+                val rh = halfH(c)
                 val ctr = center(c)
                 val isSelected = editing && selected == c.id
                 val isPressed = !editing && c.id in cornersHeld
@@ -747,25 +752,23 @@ fun PadScreen(
                     NavCorners.NEXT -> shown.nextWorkspace(shownIndex) == null
                     else -> false
                 }
-                // The gyro corner is lit while its workspace's gyro is always on.
-                val gyroOn = !editing && c.id == NavCorners.GYRO && ws.gyro.mode == GyroMode.ALWAYS
                 val tint = when {
                     isSelected -> Color(0xFFFFC857)
                     isPressed -> Color(0xFF7CC4FF)
-                    gyroOn -> Color(0xFF8FE39A)
                     else -> Color(0x66FFFFFF)
                 }
                 val base = shown.cornerOpacity.let { if (editing) max(it, MIN_EDIT_OPACITY) else it }
                 PadControl(
                     control = c,
                     label = c.label,
-                    sizeDp = with(density) { (r * 2).toDp() },
+                    widthDp = with(density) { (r * 2).toDp() },
+                    heightDp = with(density) { (rh * 2).toDp() },
                     tint = tint,
-                    filled = isPressed || isSelected || gyroOn,
+                    filled = isPressed || isSelected,
                     knob = { Offset.Zero },
                     knobRadiusPx = 0f,
                     modifier = Modifier
-                        .offset { IntOffset((ctr.x - r).roundToInt(), (ctr.y - r).roundToInt()) }
+                        .offset { IntOffset((ctr.x - r).roundToInt(), (ctr.y - rh).roundToInt()) }
                         .alpha(
                             if (editing) {
                                 if (atEnd) base * END_CORNER_ALPHA else base
@@ -810,7 +813,11 @@ fun PadScreen(
                         releaseAll()
                         onOpenMenu(PadMenuPage.Connection)
                     },
-                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
+                    // Clear of the camera cutout (left or right in landscape, top in portrait).
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top))
+                        .padding(8.dp),
                 )
             }
         } else {
@@ -978,8 +985,10 @@ fun PadScreen(
                     current = Bindings.targets(ws.mappings, input),
                     onPick = { t: OutputTarget ->
                         editWorkspace {
+                            // The pick replaces the main action; a ratchet stays.
                             val current = Bindings.targets(it.mappings, input)
-                            val next = (listOf(t) + current.drop(1)).distinct()
+                            val main = current.filterNot(::isRatchet)
+                            val next = (listOf(t) + main.drop(1) + current.filter(::isRatchet)).distinct()
                             it.copy(mappings = Bindings.setTargets(it.mappings, input, next))
                         }
                     },
@@ -987,7 +996,7 @@ fun PadScreen(
                 )
             } else if (d != null && sel != null && !dragging && menu != EditMenu.NONE) {
                 // Long press (or a tap on a stick or a corner): a menu right next to the control.
-                NearControl(anchor = center(sel), anchorHalf = half(sel)) {
+                NearControl(anchor = center(sel), anchorHalfW = half(sel), anchorHalfH = halfH(sel)) {
                     ControlSettingsPanel(
                         profile = d,
                         workspace = ws,
@@ -1049,13 +1058,7 @@ private fun takenIds(set: Profile, runtime: GamepadRuntime): Set<String> =
 
 /** Id not used by any control of the workspace, by its leftover mappings, nor in [taken]. */
 private fun freshId(workspace: Workspace, prefix: String, taken: Set<String>): String {
-    val orphans = workspace.mappings.mapNotNull {
-        when (val s = it.source) {
-            is InputSource.Touch -> s.id
-            is InputSource.TouchStick -> s.id
-            else -> null
-        }
-    }.plus(taken).distinct().map { TouchControl(it, TouchKind.BUTTON, "", 0f, 0f) }
+    val orphans = workspace.mappings.mapNotNull { MappingProfiles.touchId(it.source) }.plus(taken).distinct().map { TouchControl(it, TouchKind.BUTTON, "", 0f, 0f) }
     return Bindings.newTouchId(workspace.touchControls + orphans, prefix)
 }
 
@@ -1094,6 +1097,10 @@ private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>)
         when (val s = m.source) {
             is InputSource.Touch -> if (s.id == c.id) m.copy(source = InputSource.Touch(id)) else null
             is InputSource.TouchStick -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
+            is InputSource.TouchStickDiagonal -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
+            is InputSource.TouchSwipe -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
+            is InputSource.TouchRelease -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
+            is InputSource.TouchDoubleTap -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             else -> null
         }
     }
@@ -1101,7 +1108,7 @@ private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>)
     // and stays on screen in the layout not being edited (the edited one is clamped by place()).
     fun toCentre(v: Float, d: Float) = if (v < 0.5f) v + d else v - d
     val p = c.placement(true)
-    val lHalf = (c.size / 2f).coerceAtMost(0.5f) // landscape: size is a fraction of the height
+    val lHalf = (c.size * c.heightRatio / 2f).coerceAtMost(0.5f) // landscape: size is a fraction of the height
     val pHalf = (p.size / 2f).coerceAtMost(0.5f) // portrait: size is a fraction of the width
     val copy = c.copy(
         id = id,
@@ -1113,22 +1120,22 @@ private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>)
 }
 
 /**
- * Places [content] beside a control centred at [anchor] (px of the pad area, [anchorHalf] its
- * half size): right of it if it fits, else left, else below or above; always kept on screen.
+ * Places [content] beside a control centred at [anchor] (px of the pad area, [anchorHalfW] and
+ * [anchorHalfH] its half width and height): right of it if it fits, else left, else below or above; always kept on screen.
  * Takes no touches itself, so the pad around the menu stays editable.
  */
 @Composable
-private fun NearControl(anchor: Offset, anchorHalf: Float, content: @Composable () -> Unit) {
+private fun NearControl(anchor: Offset, anchorHalfW: Float, anchorHalfH: Float, content: @Composable () -> Unit) {
     Layout(content = content, modifier = Modifier.fillMaxSize()) { measurables, constraints ->
         val box = constraints.copy(minWidth = 0, minHeight = 0)
         val p = measurables.first().measure(box)
         val gap = 8.dp.roundToPx()
         val bw = constraints.maxWidth
         val bh = constraints.maxHeight
-        val right = (anchor.x + anchorHalf).roundToInt() + gap
-        val left = (anchor.x - anchorHalf).roundToInt() - gap - p.width
-        val below = (anchor.y + anchorHalf).roundToInt() + gap
-        val above = (anchor.y - anchorHalf).roundToInt() - gap - p.height
+        val right = (anchor.x + anchorHalfW).roundToInt() + gap
+        val left = (anchor.x - anchorHalfW).roundToInt() - gap - p.width
+        val below = (anchor.y + anchorHalfH).roundToInt() + gap
+        val above = (anchor.y - anchorHalfH).roundToInt() - gap - p.height
         val beside = right + p.width <= bw || left >= 0
         val x = when {
             right + p.width <= bw -> right
@@ -1148,7 +1155,8 @@ private fun NearControl(anchor: Offset, anchorHalf: Float, content: @Composable 
 private fun PadControl(
     control: TouchControl,
     label: String,
-    sizeDp: Dp,
+    widthDp: Dp,
+    heightDp: Dp,
     tint: Color,
     filled: Boolean,
     /** Read while placing the knob only, so stick motion does not recompose the pad. */
@@ -1159,7 +1167,7 @@ private fun PadControl(
     val shape = shapeOf(control)
     Box(
         modifier
-            .size(sizeDp)
+            .size(widthDp, heightDp)
             .border(2.dp, tint, shape)
             .background(if (filled) tint.copy(alpha = 0.25f) else Color.Transparent, shape),
         contentAlignment = Alignment.Center,
@@ -1171,7 +1179,7 @@ private fun PadControl(
                         val k = knob()
                         IntOffset((k.x * knobRadiusPx).roundToInt(), (k.y * knobRadiusPx).roundToInt())
                     }
-                    .size(sizeDp / 2.5f)
+                    .size(widthDp / 2.5f)
                     .background(tint.copy(alpha = 0.6f), CircleShape),
             )
         }
@@ -1259,13 +1267,32 @@ private fun ControlSettingsPanel(
                         SelectChip("Circle", control.shape == TouchShape.CIRCLE) { onControlChange(current.copy(shape = TouchShape.CIRCLE)) }
                         SelectChip("Square", control.shape == TouchShape.SQUARE) { onControlChange(current.copy(shape = TouchShape.SQUARE)) }
                     }
-                    Column {
-                        Text("Size ${(control.placeSize(inPortrait) * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
-                        Slider(
-                            value = control.placeSize(inPortrait),
-                            onValueChange = onSize,
-                            valueRange = TouchControl.MIN_SIZE..TouchControl.MAX_SIZE,
-                        )
+                    val size = control.placeSize(inPortrait)
+                    if (control.kind == TouchKind.BUTTON && control.shape == TouchShape.SQUARE) {
+                        // Width and height apart: each slider keeps the other side as it is.
+                        val height = size * control.aspect
+                        fun sized(w: Float, h: Float) = current.withPlacement(
+                            inPortrait, current.placeX(inPortrait), current.placeY(inPortrait), w,
+                        ).copy(aspect = h / w)
+                        SizeSlider("Width", size) { onControlChange(sized(it, height)) }
+                        SizeSlider("Height", height) { onControlChange(sized(size, it)) }
+                    } else {
+                        SizeSlider("Size", size, onSize)
+                    }
+                    if (control.kind == TouchKind.STICK) {
+                        Column {
+                            Text("Deadzone ${(control.deadzone * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
+                            Slider(
+                                value = control.deadzone,
+                                onValueChange = { onControlChange(current.copy(deadzone = it)) },
+                                valueRange = 0f..TouchControl.MAX_DEADZONE,
+                            )
+                            Text(
+                                "How far from the centre the stick stays at rest. Past it, the stick still reaches full.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                     if (control.kind == TouchKind.BUTTON) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1282,11 +1309,103 @@ private fun ControlSettingsPanel(
                                 onCheckedChange = { onControlChange(current.copy(clickThrough = it)) },
                             )
                         }
+                        if (!control.clickThrough) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Swipe", style = MaterialTheme.typography.labelLarge)
+                                    Text(
+                                        "A small touchpad of its own: a tap presses it, a swipe does its swipe " +
+                                            "mappings below (mouse, scroll, a stick or keys per direction).",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Switch(
+                                    checked = control.swipe,
+                                    onCheckedChange = { onControlChange(current.copy(swipe = it)) },
+                                )
+                            }
+                            if (control.swipe) {
+                                SwipeSensSlider("Swipe X sensitivity", control.swipeSensX) { onControlChange(current.copy(swipeSensX = it)) }
+                                SwipeSensSlider("Swipe Y sensitivity", control.swipeSensY) { onControlChange(current.copy(swipeSensY = it)) }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Press only on a tap", style = MaterialTheme.typography.labelLarge)
+                                        Text(
+                                            if (control.swipeTapOnRelease) "Presses when a still, short tap lifts; a swipe never presses."
+                                            else "Presses as soon as the finger touches, and stays pressed while it swipes.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    Switch(
+                                        checked = control.swipeTapOnRelease,
+                                        onCheckedChange = { onControlChange(current.copy(swipeTapOnRelease = it)) },
+                                    )
+                                }
+                            }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Press waits for a double tap", style = MaterialTheme.typography.labelLarge)
+                                Text(
+                                    if (control.doubleTapWaits) "With a Double tap mapping, the press comes after a short wait, and a double tap does not press."
+                                    else "The press is instant; a double tap also presses twice. Map Double tap and Release below.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = control.doubleTapWaits,
+                                onCheckedChange = { onControlChange(current.copy(doubleTapWaits = it)) },
+                            )
+                        }
+                        val input = inputs.first()
+                        val targets = Bindings.targets(workspace.mappings, input)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Ratchet", style = MaterialTheme.typography.labelLarge)
+                                Text(
+                                    "While held it also flips gyro, besides its action: pauses it (Ratchet disables) " +
+                                        "or turns it on (Ratchet enables). With click-through, only this switch " +
+                                        "makes its finger a ratchet.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = targets.any(::isRatchet),
+                                onCheckedChange = { on ->
+                                    val main = targets.filterNot(::isRatchet)
+                                    onMappingsChange(
+                                        Bindings.setTargets(workspace.mappings, input, if (on) main + OutputTarget.GyroPause else main),
+                                    )
+                                },
+                            )
+                        }
                     }
                     HorizontalDivider()
                 }
                 Text("Mapping", style = MaterialTheme.typography.titleSmall)
                 if (control.kind == TouchKind.STICK) {
+                    Text("Directions", style = MaterialTheme.typography.labelLarge)
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        for (z in StickZones.entries) {
+                            SelectChip(z.label, control.zones == z) { onControlChange(current.copy(zones = z)) }
+                        }
+                    }
+                    Text(
+                        when (control.zones) {
+                            StickZones.OVERLAP -> "Left, Right, Up and Down each on their own: a diagonal presses two."
+                            StickZones.FOUR -> "One of Left, Right, Up and Down at a time, never two."
+                            StickZones.EIGHT -> "8 zones. A diagonal does its own mapping, or presses both neighbours when it has none."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Row(
                         Modifier.horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1323,10 +1442,9 @@ private fun CornerSettings(
     onSize: (Float) -> Unit,
     onClose: () -> Unit,
 ) {
-    val isGyro = control.id == NavCorners.GYRO
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-            if (isGyro) "Gyro corner" else "Workspace corner " + control.label,
+            "Workspace corner " + control.label,
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.weight(1f),
@@ -1334,36 +1452,54 @@ private fun CornerSettings(
         TextButton(onClick = onClose) { Text("✕") }
     }
     Text(
-        if (isGyro) {
-            "Tap it to switch this workspace's gyro between always on and always off. Ratchet buttons " +
-                "and the touchpad ratchet flip with it: they pause always-on gyro and engage always-off " +
-                "gyro while held. It is lit while gyro is always on. The corners are the same in every " +
-                "workspace; drag each one where you like."
-        } else {
-            "Tap ← for the previous workspace and → for the next. Press both at the same time for " +
-                "fullscreen (the buttons at the top hide); press both again (or Back) to leave it. The corners are " +
-                "the same in every workspace; drag each one where you like."
-        },
+        "Tap ← for the previous workspace and → for the next. Press both at the same time for " +
+            "fullscreen (the buttons at the top hide); press both again (or Back) to leave it. The corners are " +
+            "the same in every workspace; drag each one where you like.",
         style = MaterialTheme.typography.bodyMedium,
     )
-    Column {
-        Text("Size ${(control.placeSize(inPortrait) * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
-        Slider(
-            value = control.placeSize(inPortrait),
-            onValueChange = onSize,
-            valueRange = TouchControl.MIN_SIZE..TouchControl.MAX_SIZE,
-        )
-    }
+    SizeSlider("Size", control.placeSize(inPortrait), onSize)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Same size for all corners", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
         Switch(checked = sameSize, onCheckedChange = onSameSize)
     }
     Text(
-        "Corner opacity, wrap-around and the gyro corner are in Settings (on the pad).",
+        "Corner opacity and wrap-around are in Settings (on the pad).",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
+
+/**
+ * A control size slider, in % of the pad's shorter side. The track is squared, so the usual
+ * sizes get most of it while the far end still fills the screen.
+ */
+@Composable
+private fun SizeSlider(title: String, value: Float, onChange: (Float) -> Unit) {
+    val span = TouchControl.MAX_SIZE - TouchControl.MIN_SIZE
+    Column {
+        Text("$title ${(value * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
+        Slider(
+            value = sqrt(((value - TouchControl.MIN_SIZE) / span).coerceIn(0f, 1f)),
+            onValueChange = { t -> onChange(TouchControl.MIN_SIZE + span * t * t) },
+        )
+    }
+}
+
+/** A swipe sensitivity of a button in swipe mode; 0 turns that direction off. */
+@Composable
+private fun SwipeSensSlider(title: String, value: Float, onChange: (Float) -> Unit) {
+    Column {
+        Text("$title %.1f".format(value), style = MaterialTheme.typography.labelLarge)
+        Slider(
+            value = value,
+            onValueChange = { onChange((it * 10).roundToInt() / 10f) },
+            valueRange = 0f..TouchControl.MAX_SWIPE_SENS,
+        )
+    }
+}
+
+/** A ratchet action (the old gyro hold works as one). */
+private fun isRatchet(t: OutputTarget): Boolean = t == OutputTarget.GyroPause || t == OutputTarget.GyroHold
 
 /** True when the stick's mappings equal what [preset] would write. */
 private fun presetMatches(
@@ -1372,7 +1508,7 @@ private fun presetMatches(
     preset: Bindings.StickPreset,
 ): Boolean {
     val applied = Bindings.applyStickPreset(mappings, inputs, preset)
-    return inputs.take(6).all { Bindings.targets(applied, it).toSet() == Bindings.targets(mappings, it).toSet() }
+    return inputs.all { Bindings.targets(applied, it).toSet() == Bindings.targets(mappings, it).toSet() }
 }
 
 @Composable

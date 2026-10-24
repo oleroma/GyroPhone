@@ -210,7 +210,7 @@ class WorkspaceEngineTest {
     @Test fun gyroToggleAndPauseFromAnyGroup() {
         val toggle = AttachedPad(id = "a", mappings = listOf(key(AndroidKey.BUTTON_Y, OutputTarget.GyroToggle)))
         val p = single(ws("w", listOf(toggle), mappings = listOf(touch("g", OutputTarget.GyroToggle)),
-            gyro = GyroSettings(mode = GyroMode.HOLD_OR_TOGGLE)))
+            gyro = GyroSettings(mode = GyroMode.OFF)))
         val e = MappingEngine(p)
         e.setKey(xbox, AndroidKey.BUTTON_Y, true)
         e.setTouch("g", true) // same engagement: no second flip

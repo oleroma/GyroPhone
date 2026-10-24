@@ -122,7 +122,7 @@ object BuiltinProfiles {
             t("lb", OutputTarget.Pad(GamepadButton.LB)), t("rb", OutputTarget.Pad(GamepadButton.RB)),
             t("lt", OutputTarget.PadAxis(GamepadAxis.LT)), t("rt", OutputTarget.PadAxis(GamepadAxis.RT)),
             t("view", OutputTarget.Pad(GamepadButton.BACK)), t("menu", OutputTarget.Pad(GamepadButton.START)),
-            t("gyro", OutputTarget.GyroHold),
+            t("gyro", OutputTarget.GyroPause),
         )
     }
 
@@ -132,7 +132,7 @@ object BuiltinProfiles {
         name = "Controller",
         touchControls = controllerControls,
         mappings = controllerMappings(),
-        gyro = gyro(GyroMode.HOLD_OR_TOGGLE),
+        gyro = gyro(GyroMode.OFF),
         pads = listOf(anyPad(KnownLayouts.standardControllerMappings())),
     )
 
@@ -302,7 +302,7 @@ object BuiltinProfiles {
     val presets: List<Workspace> get() = listOf(controllerWorkspace, wasdWorkspace, keyboardWorkspace)
 
     /** An empty workspace: touchpad only, no controls, no pads. */
-    fun blankWorkspace(name: String = "Workspace") = Workspace(id = "ws", name = name, gyro = gyro(GyroMode.HOLD_OR_TOGGLE))
+    fun blankWorkspace(name: String = "Workspace") = Workspace(id = "ws", name = name, gyro = gyro(GyroMode.OFF))
 
     /** A new profile with the three preset workspaces. */
     fun newProfile(id: String, name: String) = Profile(id = id, name = name, workspaces = presets)
