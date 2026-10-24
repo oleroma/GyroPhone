@@ -1,0 +1,95 @@
+name: Fallback build
+
+# Builds run on the dev PC. Run this by hand only when the PC is offline:
+#   gh workflow run fallback.yml --ref <branch>
+# It runs the tests, builds the debug APK and publishes it as a pre-release in
+# oleroma/phone-builds for Obtainium, and builds the Windows companion as an artifact.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fallback
+  cancel-in-progress: false
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Version
+        run: |
+          echo "GP_BUILD=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
+          echo "GP_COMMIT=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
+
+      - name: Unit tests
+        run: ./gradlew --no-daemon :core:test
+      - name: Companion tests (Linux)
+        run: dotnet test companion/GyroPhone.Companion.Linux.slnf -c Release
+
+      - name: Build
+        run: ./gradlew --no-daemon :app:assembleDebug
+
+      - name: Publish pre-release to phone-builds
+        env:
+          GH_TOKEN: ${{ secrets.PHONE_BUILDS_TOKEN }}
+          APP: gyrophone
+          APK: app/build/outputs/apk/debug/app-debug.apk
+        run: |
+          VERSION_CODE=$GP_BUILD
+          VERSION_NAME="0.1.$GP_BUILD-$GP_COMMIT"
+          asset="$APP-$VERSION_NAME-$VERSION_CODE.apk"
+          cp "$APK" "$asset"
+          sha=$(sha256sum "$asset" | cut -d' ' -f1)
+          printf 'Source: %s @ %s (CI)\nversionName: %s\nversionCode: %s\nSHA-256: %s\n' \
+            "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$VERSION_NAME" "$VERSION_CODE" "$sha" > notes.md
+          gh release create "$APP-$VERSION_CODE-ci-$GP_COMMIT" "$asset" \
+            --repo oleroma/phone-builds --prerelease \
+            --title "$APP $VERSION_NAME" --notes-file notes.md
+
+  companion:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Version
+        shell: bash
+        run: |
+          echo "GP_BUILD=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
+          echo "GP_COMMIT=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
+
+      - name: Test
+        run: dotnet test companion/GyroPhone.Companion.sln -c Release
+
+      - name: Build
+        shell: bash
+        run: >
+          dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true -p:PublishReadyToRun=true -p:DebugType=none
+          -p:Version=0.1.$GP_BUILD -p:InformationalVersion=0.1.$GP_BUILD-$GP_COMMIT
+          -p:IncludeSourceRevisionInInformationalVersion=false -o out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gyrophone-companion-win-x64
+          path: out
