@@ -44,7 +44,9 @@ jobs:
         run: ./gradlew --no-daemon :app:assembleDebug
 
       - name: Name the APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk "gyrophone-0.1.$GP_BUILD-$GP_COMMIT-$GP_BUILD.apk"
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk "gyrophone-0.1.$GP_BUILD-$GP_COMMIT-$GP_BUILD.apk"
+          echo "gyrophone-0.1.$GP_BUILD-$GP_COMMIT-$GP_BUILD.apk  SHA-256 \`$(sha256sum "gyrophone-0.1.$GP_BUILD-$GP_COMMIT-$GP_BUILD.apk" | cut -d" " -f1)\`" >> "$GITHUB_STEP_SUMMARY"
 
       # Saved on the run as the plain .apk, not a zip, so it installs straight from the download.
       - uses: actions/upload-artifact@v7
