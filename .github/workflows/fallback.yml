@@ -2,8 +2,7 @@ name: Fallback build
 
 # Builds run on the dev PC. Run this by hand only when the PC is offline:
 #   gh workflow run fallback.yml --ref <branch>
-# It runs the tests, builds the debug APK and publishes it as a pre-release in
-# oleroma/phone-builds for Obtainium, and builds the Windows companion as an artifact.
+# It runs the tests and saves the debug APK and the Windows companion on the run.
 on:
   workflow_dispatch:
 
@@ -44,22 +43,14 @@ jobs:
       - name: Build
         run: ./gradlew --no-daemon :app:assembleDebug
 
-      - name: Publish pre-release to phone-builds
-        env:
-          GH_TOKEN: ${{ secrets.PHONE_BUILDS_TOKEN }}
-          APP: gyrophone
-          APK: app/build/outputs/apk/debug/app-debug.apk
-        run: |
-          VERSION_CODE=$GP_BUILD
-          VERSION_NAME="0.1.$GP_BUILD-$GP_COMMIT"
-          asset="$APP-$VERSION_NAME-$VERSION_CODE.apk"
-          cp "$APK" "$asset"
-          sha=$(sha256sum "$asset" | cut -d' ' -f1)
-          printf 'Source: %s @ %s (CI)\nversionName: %s\nversionCode: %s\nSHA-256: %s\n' \
-            "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$VERSION_NAME" "$VERSION_CODE" "$sha" > notes.md
-          gh release create "$APP-$VERSION_CODE-ci-$GP_COMMIT" "$asset" \
-            --repo oleroma/phone-builds --prerelease \
-            --title "$APP $VERSION_NAME" --notes-file notes.md
+      - name: Name the APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk "gyrophone-0.1.$GP_BUILD-$GP_COMMIT-$GP_BUILD.apk"
+
+      # Saved on the run as the plain .apk, not a zip, so it installs straight from the download.
+      - uses: actions/upload-artifact@v7
+        with:
+          path: gyrophone-*.apk
+          archive: false
 
   companion:
     runs-on: windows-latest
