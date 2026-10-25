@@ -12,14 +12,27 @@ enum class TouchKind { BUTTON, STICK, FULLSCREEN }
 @Serializable
 enum class TouchShape { CIRCLE, SQUARE }
 
+/**
+ * How a touch stick turns into directions for its Left / Right / Up / Down mappings. OVERLAP:
+ * each half on its own, so a diagonal presses two; FOUR: one of 4 zones at a time; EIGHT: 8 zones,
+ * a diagonal zone fires its own mapping ([InputSource.TouchStickDiagonal]), or both neighbours
+ * when it has none.
+ */
+@Serializable
+enum class StickZones(val label: String) {
+    OVERLAP("4, diagonals press two"),
+    FOUR("4 zones"),
+    EIGHT("8 zones"),
+}
+
 /** Centre (0..1 of the pad area) and size (fraction of the pad area's shorter side). */
 @Serializable
 data class Placement(val x: Float, val y: Float, val size: Float)
 
 /**
  * A control drawn on the touchscreen. Position is the centre, normalised to the pad area (0..1);
- * size is the diameter (circle) or side length (square) as a fraction of the pad area's shorter
- * side (its height in landscape). [x], [y] and [size] are the landscape placement; [portrait] is
+ * size is the diameter (circle) or width (square) as a fraction of the pad area's shorter
+ * side (its height in landscape); a square button's height is size × [aspect]. [x], [y] and [size] are the landscape placement; [portrait] is
  * the portrait one, or null to derive it from the landscape placement.
  */
 @Serializable
@@ -38,10 +51,37 @@ data class TouchControl(
      * touchpad finger until it lifts, like a fire button you aim with in mobile shooters.
      */
     val clickThrough: Boolean = false,
+    /** Height / width of a SQUARE button (circles and sticks stay even), in both orientations. */
+    val aspect: Float = 1f,
+    /** STICK: deflection (0..1 of the radius) that counts as centred; the rest is rescaled to 0..1. */
+    val deadzone: Float = 0f,
+    /** STICK: how deflection becomes directions. */
+    val zones: StickZones = StickZones.OVERLAP,
+    /**
+     * BUTTON without click-through: a small touchpad of its own. A still tap presses it; a swipe
+     * drives its swipe mappings ([InputSource.TouchSwipe]) instead.
+     */
+    val swipe: Boolean = false,
+    /** Swipe sensitivity across and down: mouse counts per dp of travel (0 = that axis is off). */
+    val swipeSensX: Float = 1.5f,
+    val swipeSensY: Float = 1.5f,
+    /** Swipe mode: press only on a still tap's release (else the press starts at touch-down). */
+    val swipeTapOnRelease: Boolean = false,
+    /**
+     * With a double tap mapping: the press waits to see if a second tap follows (a double tap
+     * then never presses). Off: the press is instant, and a double tap also presses twice.
+     */
+    val doubleTapWaits: Boolean = false,
 ) {
+    /** In swipe mode: a button with [swipe] on and click-through off. */
+    val swipes: Boolean get() = kind == TouchKind.BUTTON && swipe && !clickThrough
+
     companion object {
         const val MIN_SIZE = 0.06f
-        const val MAX_SIZE = 0.6f
+        /** Fractions of the shorter side: over 1 a control can span the long side (and fill the screen). */
+        const val MAX_SIZE = 2.4f
+        const val MAX_DEADZONE = 0.6f
+        const val MAX_SWIPE_SENS = 12f
         /**
          * Derived portrait layout: the landscape layout squeezed into the lower part (the top is
          * left for the touchpad), sizes scaled down, centres pulled in so nothing leaves the width.
@@ -71,6 +111,10 @@ fun TouchControl.placeY(inPortrait: Boolean): Float =
 fun TouchControl.placeSize(inPortrait: Boolean): Float =
     if (!inPortrait) size else portraitOrBuiltin()?.size ?: (size * TouchControl.PORTRAIT_SIZE_SCALE)
 
+/** Height / width as drawn: [TouchControl.aspect] for a square button, else 1. */
+val TouchControl.heightRatio: Float
+    get() = if (shape == TouchShape.SQUARE && kind == TouchKind.BUTTON) aspect else 1f
+
 /** Resolved placement (allocates; editor use). */
 fun TouchControl.placement(inPortrait: Boolean): Placement =
     Placement(placeX(inPortrait), placeY(inPortrait), placeSize(inPortrait))
@@ -90,25 +134,36 @@ fun TouchControl.contains(
 ): Boolean {
     val dx = px - placeX(inPortrait) * screenW
     val dy = py - placeY(inPortrait) * screenH
-    val half = placeSize(inPortrait) * min(screenW, screenH) / 2f * slop
+    val half = placeSize(inPortrait) * min(screenW, screenH) / 2f
     return when (shape) {
-        TouchShape.CIRCLE -> dx * dx + dy * dy <= half * half
-        TouchShape.SQUARE -> abs(dx) <= half && abs(dy) <= half
+        TouchShape.CIRCLE -> dx * dx + dy * dy <= half * half * slop * slop
+        // Slop as a margin from the shorter side, so a long strip is not enlarged a lot along its length.
+        TouchShape.SQUARE -> {
+            val halfH = half * heightRatio
+            val margin = min(half, halfH) * (slop - 1f)
+            abs(dx) <= half + margin && abs(dy) <= halfH + margin
+        }
     }
 }
 
 /**
- * When gyro moves the mouse. OFF = always off and ALWAYS = always on, each flipped while a ratchet
- * ([OutputTarget.GyroPause], or the touchpad with [GyroSettings.touchpadRatchet]) is held: always
- * on pauses, always off engages. HOLD_OR_TOGGLE = on while a hold button is held or after a toggle
- * press; a ratchet pauses it.
+ * When gyro moves the mouse. ALWAYS = on, a held ratchet ([OutputTarget.GyroPause], or a touchpad
+ * finger with [GyroSettings.touchpadRatchet]) pauses it; OFF = off, a held ratchet engages it;
+ * [OutputTarget.GyroToggle] swaps the two. SENSOR_OFF = gyro off completely (the sensor is not
+ * read, saving battery; ratchets and toggle do nothing). HOLD_OR_TOGGLE is only read from old
+ * files and loads as OFF ([ProfileJson.normalize]).
  */
 @Serializable
 enum class GyroMode(val label: String) {
-    OFF("Always off"),
-    ALWAYS("Always on"),
-    HOLD_OR_TOGGLE("Hold / toggle button"),
+    OFF("Ratchet enables"),
+    ALWAYS("Ratchet disables"),
+    SENSOR_OFF("Gyro off"),
+    HOLD_OR_TOGGLE("Ratchet enables"),
 }
+
+/** The cursor axes a gyro ratchet acts on. */
+@Serializable
+enum class RatchetAxes(val label: String) { BOTH("Both"), X("Only X"), Y("Only Y") }
 
 /** How the phone is held. AUTO follows the screen rotation. */
 @Serializable
@@ -134,9 +189,11 @@ enum class MotionAxis(val label: String) {
 
 @Serializable
 data class GyroSettings(
-    val mode: GyroMode = GyroMode.HOLD_OR_TOGGLE,
-    /** Mouse counts per degree of rotation. */
+    val mode: GyroMode = GyroMode.OFF,
+    /** Horizontal mouse counts per degree of rotation (0 = the cursor never moves sideways). */
     val sensitivity: Float = 16f,
+    /** Vertical mouse counts per degree; null (older files) = [sensitivity] × [verticalRatio]. */
+    val sensitivityY: Float? = null,
     val orientation: GyroOrientation = GyroOrientation.AUTO,
     /** Motion that moves the cursor horizontally: yaw right / pitch up / roll clockwise = right. */
     val mouseX: MotionAxis = MotionAxis.YAW,
@@ -146,7 +203,7 @@ data class GyroSettings(
     val mouseY: MotionAxis = MotionAxis.PITCH,
     val invertY: Boolean = false,
     val scaleY: Float = 1f,
-    /** Vertical sensitivity as a share of horizontal (0.5 = cursor moves half as fast up/down), both orientations. */
+    /** Only read from older files, through [verticalSensitivity]. */
     val verticalRatio: Float = 1f,
     /** Below this speed (deg/s) motion is scaled down, killing hand jitter. 0 (default, raw gyro) disables. */
     val tighteningThreshold: Float = 0f,
@@ -157,9 +214,16 @@ data class GyroSettings(
      * which are the landscape mapping (and the only one in profiles saved before this existed).
      */
     val portrait: GyroAxes? = null,
-    /** A finger on the touchpad is a ratchet: gyro pauses (always on) or engages (always off) meanwhile. */
+    /**
+     * A finger on the empty touchpad is a ratchet: gyro pauses (ALWAYS) or engages (OFF) meanwhile.
+     * A click-through button's finger counts only through the button's own ratchet mapping.
+     */
     val touchpadRatchet: Boolean = false,
+    /** Which cursor axes a ratchet flips; the other one stays as the mode has it without a ratchet. */
+    val ratchetAxes: RatchetAxes = RatchetAxes.BOTH,
 ) {
+    val verticalSensitivity: Float get() = sensitivityY ?: (sensitivity * verticalRatio)
+
     val landscapeAxes: GyroAxes get() = GyroAxes(mouseX, invertX, scaleX, mouseY, invertY, scaleY)
 
     fun axesFor(portrait: Boolean): GyroAxes = (if (portrait) this.portrait else null) ?: landscapeAxes
@@ -172,9 +236,6 @@ data class GyroSettings(
 
     /** Copy with the portrait axes spelled out (the landscape ones when unset), so each orientation has its own. */
     fun withBothOrientations(): GyroSettings = if (portrait != null) this else copy(portrait = landscapeAxes)
-
-    /** The mode the gyro corner ([NavCorners.GYRO]) switches to: always on <-> always off. */
-    fun toggledMode(): GyroSettings = copy(mode = if (mode == GyroMode.ALWAYS) GyroMode.OFF else GyroMode.ALWAYS)
 }
 
 /** Which motion drives each mouse axis; see [GyroSettings.mouseX] and [GyroSettings.mouseY]. */
@@ -192,8 +253,10 @@ data class GyroAxes(
 @Serializable
 data class TouchpadSettings(
     val enabled: Boolean = true,
-    /** Mouse counts per dp of finger travel at low speed. */
+    /** Horizontal mouse counts per dp of finger travel at low speed (0 = no sideways motion). */
     val sensitivity: Float = 1.5f,
+    /** Vertical counts per dp; null (older files) = [sensitivity]. */
+    val sensitivityY: Float? = null,
     /** Extra gain for fast swipes: up to 1 + this. 0 = linear. */
     val acceleration: Float = 1f,
     val tapToClick: Boolean = true,
@@ -218,6 +281,8 @@ data class TouchpadSettings(
     val gestures4: FingerGestures = FingerGestures.WINDOWS_4,
 ) {
     fun gesturesFor(fingers: Int): FingerGestures = if (fingers >= 4) gestures4 else gestures3
+
+    val verticalSensitivity: Float get() = sensitivityY ?: sensitivity
 
     companion object {
         const val MIN_GLIDE_MS = 100f
@@ -336,18 +401,21 @@ data class Profile(
     val games: List<String> = emptyList(),
     /** Auto-select this profile when a matching controller is attached to the phone. */
     val controllers: List<DeviceMatch> = emptyList(),
-    /** The previous / next workspace and gyro corners ([NavCorners]), kind [TouchKind.FULLSCREEN]. */
+    /**
+     * The previous / next workspace corners ([NavCorners]), kind [TouchKind.FULLSCREEN]. A gyro
+     * corner from before Toggle gyro buttons may be here until [NavCorners.gyroCornerToButtons].
+     */
     val corners: List<TouchControl> = NavCorners.defaults(),
-    /** Show the gyro corner ([NavCorners.GYRO]); hidden it does nothing. */
+    /** Whether the old gyro corner ([NavCorners.GYRO]) was shown; read once to convert it. */
     val gyroCorner: Boolean = true,
     /** Opacity of the corners in play; they ignore the workspaces' control opacity. */
     val cornerOpacity: Float = 0.5f,
     /** Resizing one corner resizes the other too. */
     val cornerSameSize: Boolean = true,
 ) {
-    /** The corners shown on the pad: all of [corners] but a hidden gyro corner. */
+    /** The corners shown on the pad: ← and →. */
     val shownCorners: List<TouchControl>
-        get() = if (gyroCorner) corners else corners.filter { it.id != NavCorners.GYRO }
+        get() = corners.filter { it.id != NavCorners.GYRO }
 
     /** The workspace at [index], clamped into range. */
     fun workspace(index: Int): Workspace = workspaces[index.coerceIn(0, workspaces.lastIndex)]

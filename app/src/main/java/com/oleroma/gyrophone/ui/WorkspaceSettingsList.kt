@@ -28,10 +28,15 @@ import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroOrientation
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.RatchetAxes
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.roundToInt
+
+/** Slider tops: higher than the old 60 and 5, for fast flicks and big screens. */
+private const val MAX_GYRO_SENS = 150f
+private const val MAX_TOUCHPAD_SENS = 12f
 
 /**
  * Gyro and touchpad settings of the active profile's workspace [index]. Edits go
@@ -48,7 +53,7 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
 
     Text("Gyro to mouse", style = MaterialTheme.typography.titleSmall)
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(GyroMode.ALWAYS, GyroMode.OFF, GyroMode.HOLD_OR_TOGGLE).forEach { mode ->
+        listOf(GyroMode.ALWAYS, GyroMode.OFF, GyroMode.SENSOR_OFF).forEach { mode ->
             FilterChip(selected = ws.gyro.mode == mode, onClick = {
                 editWs { it.copy(gyro = it.gyro.copy(mode = mode)) }
             }, label = { Text(mode.label) })
@@ -56,30 +61,43 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
     }
     Text(
         when (ws.gyro.mode) {
-            GyroMode.ALWAYS -> "Gyro moves the mouse; a Ratchet button pauses it while held."
-            GyroMode.OFF -> "Gyro is off; a Ratchet button turns it on while held."
-            GyroMode.HOLD_OR_TOGGLE -> "Gyro moves the mouse while a Gyro hold button is held or after a Gyro toggle press."
-        } + " Map Ratchet to any touch or controller button.",
+            GyroMode.ALWAYS -> "Gyro moves the mouse; a ratchet pauses it while held."
+            GyroMode.SENSOR_OFF -> "Gyro is off completely: the sensor is not read (saves battery), and ratchets and Toggle gyro do nothing."
+            else -> "Gyro is off; a ratchet turns it on while held."
+        } + if (ws.gyro.mode == GyroMode.SENSOR_OFF) "" else
+            " Turn on Ratchet on any touch button (or map Ratchet to a controller button); Toggle gyro swaps the two modes.",
         style = MaterialTheme.typography.bodySmall,
     )
-    SwitchRow("Touchpad is a ratchet (a finger on the touchpad flips gyro while it is down)", ws.gyro.touchpadRatchet) { v ->
+    SwitchRow("Touchpad is a ratchet (a finger on the empty pad flips gyro while it is down, even with the touchpad off)", ws.gyro.touchpadRatchet) { v ->
         editWs { it.copy(gyro = it.gyro.copy(touchpadRatchet = v)) }
     }
-    SwitchRow("Gyro corner (tap to switch always on / always off, in every workspace)", profile.gyroCorner) { v ->
-        runtime.editActiveProfile { it.copy(gyroCorner = v) }
+    Text("Ratchet acts on", style = MaterialTheme.typography.bodyMedium)
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        RatchetAxes.entries.forEach { a ->
+            FilterChip(
+                selected = ws.gyro.ratchetAxes == a,
+                onClick = { editWs { it.copy(gyro = it.gyro.copy(ratchetAxes = a)) } },
+                label = { Text(a.label) },
+            )
+        }
     }
+    Text(
+        "Only X: a ratchet stops or starts only the sideways motion (re-centre left and right while up and down keeps going).",
+        style = MaterialTheme.typography.bodySmall,
+    )
     var sens by remember(key) { mutableStateOf(ws.gyro.sensitivity) }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Sensitivity %.0f".format(sens), Modifier.padding(end = 8.dp))
-        Slider(value = sens, onValueChange = { sens = it }, valueRange = 2f..60f,
+        Text("X sensitivity %.0f".format(sens), Modifier.padding(end = 8.dp))
+        Slider(value = sens, onValueChange = { sens = it.roundToInt().toFloat() }, valueRange = 0f..MAX_GYRO_SENS,
             onValueChangeFinished = { editWs { it.copy(gyro = it.gyro.copy(sensitivity = sens)) } })
     }
-    var ratio by remember(key) { mutableStateOf(ws.gyro.verticalRatio) }
+    var sensY by remember(key) { mutableStateOf(ws.gyro.verticalSensitivity) }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Vertical %.2f× horizontal".format(ratio), Modifier.padding(end = 8.dp))
-        Slider(value = ratio, onValueChange = { ratio = (it * 20).roundToInt() / 20f }, valueRange = 0.25f..2f,
-            onValueChangeFinished = { editWs { it.copy(gyro = it.gyro.copy(verticalRatio = ratio)) } })
+        Text("Y sensitivity %.0f".format(sensY), Modifier.padding(end = 8.dp))
+        Slider(value = sensY, onValueChange = { sensY = it.roundToInt().toFloat() }, valueRange = 0f..MAX_GYRO_SENS,
+            onValueChangeFinished = { editWs { it.copy(gyro = it.gyro.copy(sensitivityY = sensY)) } })
     }
+    Text("Mouse counts per degree, sideways (X) and up and down (Y). 0 turns that direction off.", style = MaterialTheme.typography.bodySmall)
     Text("Held as", style = MaterialTheme.typography.bodyMedium)
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         GyroOrientation.entries.forEach { o ->
@@ -185,10 +203,17 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
     }
     var tpSens by remember(key) { mutableStateOf(tp.sensitivity) }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Speed %.1f".format(tpSens), Modifier.padding(end = 8.dp))
-        Slider(value = tpSens, onValueChange = { tpSens = it }, valueRange = 0.3f..5f,
+        Text("X speed %.1f".format(tpSens), Modifier.padding(end = 8.dp))
+        Slider(value = tpSens, onValueChange = { tpSens = (it * 10).roundToInt() / 10f }, valueRange = 0f..MAX_TOUCHPAD_SENS,
             onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(sensitivity = tpSens)) } })
     }
+    var tpSensY by remember(key) { mutableStateOf(tp.verticalSensitivity) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Y speed %.1f".format(tpSensY), Modifier.padding(end = 8.dp))
+        Slider(value = tpSensY, onValueChange = { tpSensY = (it * 10).roundToInt() / 10f }, valueRange = 0f..MAX_TOUCHPAD_SENS,
+            onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(sensitivityY = tpSensY)) } })
+    }
+    Text("0 turns that direction off, e.g. X 0 for a touchpad that only moves up and down.", style = MaterialTheme.typography.bodySmall)
     var tpAccel by remember(key) { mutableStateOf(tp.acceleration) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Acceleration %.1f".format(tpAccel), Modifier.padding(end = 8.dp))

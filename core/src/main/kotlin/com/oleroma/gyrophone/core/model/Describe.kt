@@ -17,6 +17,10 @@ object Describe {
         is InputSource.Axis -> (axisNames[s.axis] ?: "Axis ${s.axis}") + half(s.half)
         is InputSource.Touch -> "Touch ${s.id}"
         is InputSource.TouchStick -> "Touch stick ${s.id} ${s.axis}" + half(s.half)
+        is InputSource.TouchStickDiagonal -> "Touch stick ${s.id} ${s.diagonal.label}"
+        is InputSource.TouchSwipe -> "Swipe on ${s.id} ${s.axis}" + half(s.half)
+        is InputSource.TouchRelease -> "Touch ${s.id} release"
+        is InputSource.TouchDoubleTap -> "Touch ${s.id} double tap"
     }
 
     fun target(t: OutputTarget): String = when (t) {
@@ -25,8 +29,9 @@ object Describe {
         is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage))
         is OutputTarget.Mouse -> "Mouse ${t.button.name.lowercase()}"
         is OutputTarget.Wheel -> if (t.step > 0) "Wheel up" else "Wheel down"
-        OutputTarget.GyroHold -> "Hold for gyro mouse"
-        OutputTarget.GyroToggle -> "Toggle gyro mouse"
+        is OutputTarget.MouseAxis -> t.motion.label + if (t.scale < 0) ", reversed" else ""
+        OutputTarget.GyroHold -> "Ratchet (flip gyro while held)"
+        OutputTarget.GyroToggle -> "Toggle gyro (swap what a ratchet does)"
         OutputTarget.GyroPause -> "Ratchet (flip gyro while held)"
     }
 
@@ -62,8 +67,14 @@ object Describe {
             MouseButton.FORWARD -> "Mouse Fwd"
         }
         is OutputTarget.Wheel -> if (t.step > 0) "Wheel ↑" else "Wheel ↓"
-        OutputTarget.GyroHold -> "Gyro hold"
-        OutputTarget.GyroToggle -> "Gyro toggle"
+        is OutputTarget.MouseAxis -> when (t.motion) {
+            MouseMotion.MOVE_X -> "Mouse X"
+            MouseMotion.MOVE_Y -> "Mouse Y"
+            MouseMotion.WHEEL -> "Scroll"
+            MouseMotion.HWHEEL -> "Scroll ↔"
+        } + if (t.scale < 0) " rev" else ""
+        OutputTarget.GyroHold -> "Ratchet"
+        OutputTarget.GyroToggle -> "Gyro ⇄"
         OutputTarget.GyroPause -> "Ratchet"
     }
 
@@ -88,7 +99,8 @@ object Describe {
             if (it.isTrigger) listOf(OutputTarget.PadAxis(it)) else listOf(OutputTarget.PadAxis(it), OutputTarget.PadAxis(it, -1f))
         },
         "Mouse" to MouseButton.entries.map { OutputTarget.Mouse(it) } + listOf(OutputTarget.Wheel(1), OutputTarget.Wheel(-1)),
-        "Gyro" to listOf(OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause),
+        "Mouse motion" to MouseMotion.entries.flatMap { listOf(OutputTarget.MouseAxis(it), OutputTarget.MouseAxis(it, -1f)) },
+        "Gyro" to listOf(OutputTarget.GyroPause, OutputTarget.GyroToggle),
         "Keyboard" to (keyboardOrder.filter { it in HidUsage.names } + HidUsage.names.keys.sorted())
             .distinct().map { OutputTarget.Key(it) },
     )
@@ -98,4 +110,17 @@ object Describe {
 
     /** Targets that make sense for an analog input (full stick axis). */
     val analogTargets: List<OutputTarget> = allTargets.filterIsInstance<OutputTarget.PadAxis>()
+
+    /** Targets of a swipe axis: mouse motion and scrolling, or a game pad axis (floating stick). */
+    val swipeTargets: List<OutputTarget> = allTargets.filter { it is OutputTarget.MouseAxis || it is OutputTarget.PadAxis }
+
+    /** Targets of the picker for [analog] / [swipe] inputs; mouse motion only follows swipes. */
+    fun pickerGroups(analog: Boolean, swipe: Boolean): List<Pair<String, List<OutputTarget>>> {
+        val allowed: (OutputTarget) -> Boolean = when {
+            swipe -> { t -> t is OutputTarget.MouseAxis || t is OutputTarget.PadAxis }
+            analog -> { t -> t is OutputTarget.PadAxis }
+            else -> { t -> t !is OutputTarget.MouseAxis }
+        }
+        return targetGroups.map { (name, list) -> name to list.filter(allowed) }.filter { it.second.isNotEmpty() }
+    }
 }

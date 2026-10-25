@@ -101,6 +101,7 @@ internal fun TouchMappingList(
     picking?.let { (input, replacing) ->
         TargetPickerDialog(
             analog = input.analog,
+            swipe = input.swipe,
             runtime = runtime,
             current = Bindings.targets(mappings, input),
             onPick = { picked ->

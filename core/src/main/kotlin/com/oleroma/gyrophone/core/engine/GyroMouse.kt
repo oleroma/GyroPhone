@@ -72,7 +72,6 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
         else m[s.mouseX] * s.scaleX * (if (s.invertX) -1f else 1f)
         var vy = if (p != null) m[p.mouseY] * p.scaleY * (if (p.invertY) -1f else 1f)
         else m[s.mouseY] * s.scaleY * (if (s.invertY) -1f else 1f)
-        vy *= s.verticalRatio
 
         val speed = sqrt(vx * vx + vy * vy)
         if (s.tighteningThreshold > 0f && speed < s.tighteningThreshold) {
@@ -92,7 +91,7 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
         }
 
         val fx = vx * dtSeconds * s.sensitivity + remX
-        val fy = -vy * dtSeconds * s.sensitivity + remY
+        val fy = -vy * dtSeconds * s.verticalSensitivity + remY
         val dx = fx.roundToInt()
         val dy = fy.roundToInt()
         remX = fx - dx

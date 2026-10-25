@@ -26,6 +26,18 @@ enum class AxisHalf { FULL, POSITIVE, NEGATIVE }
 @Serializable
 enum class StickAxis { X, Y }
 
+/** Relative mouse output of a swipe axis ([OutputTarget.MouseAxis]). */
+@Serializable
+enum class MouseMotion(val label: String) {
+    MOVE_X("Mouse move X"), MOVE_Y("Mouse move Y"), WHEEL("Scroll"), HWHEEL("Scroll sideways"),
+}
+
+/** A diagonal zone of a touch stick split into 8 directions ([StickZones.EIGHT]). */
+@Serializable
+enum class StickDiagonal(val label: String) {
+    UP_LEFT("Up-left"), UP_RIGHT("Up-right"), DOWN_LEFT("Down-left"), DOWN_RIGHT("Down-right"),
+}
+
 @Serializable
 enum class MouseButton(val bit: Int) { LEFT(0), RIGHT(1), MIDDLE(2), BACK(3), FORWARD(4) }
 
@@ -44,9 +56,29 @@ sealed interface InputSource {
     @Serializable @SerialName("touch")
     data class Touch(val id: String) : InputSource
 
+    /** A touch button's release: a short press when the button lets go. */
+    @Serializable @SerialName("touch_release")
+    data class TouchRelease(val id: String) : InputSource
+
+    /** A touch button's double tap: held while the second press is held. */
+    @Serializable @SerialName("touch_double")
+    data class TouchDoubleTap(val id: String) : InputSource
+
     /** One axis of a virtual touchscreen stick. */
     @Serializable @SerialName("touch_stick")
     data class TouchStick(val id: String, val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL) : InputSource
+
+    /** A diagonal zone of a virtual touchscreen stick with 8 zones. */
+    @Serializable @SerialName("touch_stick_diagonal")
+    data class TouchStickDiagonal(val id: String, val diagonal: StickDiagonal) : InputSource
+
+    /**
+     * A swipe on a touch button in swipe mode ([TouchControl.swipe]). FULL: the axis, as relative
+     * motion for [OutputTarget.MouseAxis] and as the distance from the touch-down point (a floating
+     * stick) for everything else; a half: that direction of the distance, pressed past half of it.
+     */
+    @Serializable @SerialName("touch_swipe")
+    data class TouchSwipe(val id: String, val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL) : InputSource
 }
 
 /** Something the host PC receives. */
@@ -66,21 +98,32 @@ sealed interface OutputTarget {
     @Serializable @SerialName("mouse")
     data class Mouse(val button: MouseButton) : OutputTarget
 
+    /**
+     * Mouse motion or scrolling that follows a swipe axis ([InputSource.TouchSwipe] FULL), scaled
+     * by the button's swipe sensitivity. Scrolling is natural (the page follows the finger);
+     * [scale] -1 reverses.
+     */
+    @Serializable @SerialName("mouse_axis")
+    data class MouseAxis(val motion: MouseMotion, val scale: Float = 1f) : OutputTarget
+
     /** Mouse wheel, +1 up / -1 down per press. */
     @Serializable @SerialName("wheel")
     data class Wheel(val step: Int) : OutputTarget
 
-    /** Gyro-to-mouse is active while the source is held. */
+    /** From before the hold / toggle mode went: now works as a ratchet ([GyroPause]). */
     @Serializable @SerialName("gyro_hold")
     data object GyroHold : OutputTarget
 
-    /** Each press flips gyro-to-mouse on/off (in always on / always off, until the workspace changes). */
+    /**
+     * Toggle gyro: each press swaps "ratchet disables" and "ratchet enables" (until the workspace
+     * changes). Does nothing while gyro is off ([GyroMode.SENSOR_OFF]).
+     */
     @Serializable @SerialName("gyro_toggle")
     data object GyroToggle : OutputTarget
 
     /**
-     * Ratchet: while the source is held, always-on gyro pauses (re-centre the phone) and always-off
-     * gyro engages; hold / toggle gyro pauses. See [GyroMode].
+     * Ratchet: while the source is held, gyro in "ratchet disables" pauses (re-centre the phone) and
+     * gyro in "ratchet enables" engages. See [GyroMode].
      */
     @Serializable @SerialName("gyro_pause")
     data object GyroPause : OutputTarget

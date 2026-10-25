@@ -31,7 +31,8 @@ object ProfileJson {
         var workspaces = p.workspaces.map { w ->
             val clean = if (w.touchControls.none { it.kind == TouchKind.FULLSCREEN }) w
             else w.copy(touchControls = w.touchControls.filterNot { it.kind == TouchKind.FULLSCREEN })
-            if (clean.gyro.portrait != null) clean else clean.copy(gyro = clean.gyro.withBothOrientations())
+            val g = if (clean.gyro.mode == GyroMode.HOLD_OR_TOGGLE) clean.copy(gyro = clean.gyro.copy(mode = GyroMode.OFF)) else clean
+            if (g.gyro.portrait != null) g else g.copy(gyro = g.gyro.withBothOrientations())
         }
         if (workspaces.isEmpty()) workspaces = listOf(Workspace(id = "ws1", name = "Main"))
         val seen = HashSet<String>()

@@ -63,7 +63,7 @@ class WorkspaceModelTest {
         assertEquals(AttachedPad.ANY_NAME, pad.name)
         assertEquals(listOf(InputSource.Key(96)), pad.mappings.map { it.source })
         // Corners: the left one (fs1) becomes ←, keeping its placement.
-        assertEquals(listOf(NavCorners.PREV, NavCorners.NEXT, NavCorners.GYRO), p.corners.map { it.id })
+        assertEquals(listOf(NavCorners.PREV, NavCorners.NEXT), p.corners.map { it.id })
         assertEquals(0.1f, p.corners[0].x)
         assertEquals(0.9f, p.corners[1].x)
         assertEquals(0.3f, p.cornerOpacity)

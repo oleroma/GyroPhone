@@ -387,6 +387,7 @@ internal fun MappingProfileEditor(
     picking?.let { (category, input, replacing) ->
         TargetPickerDialog(
             analog = input.analog,
+            swipe = input.swipe,
             runtime = runtime,
             current = Bindings.targets(get(category), input),
             onPick = { picked ->
