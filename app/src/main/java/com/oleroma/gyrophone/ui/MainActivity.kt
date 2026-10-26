@@ -1,6 +1,7 @@
 package com.oleroma.gyrophone.ui
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.hardware.display.DisplayManager
 import android.os.Bundle
@@ -128,6 +129,9 @@ class MainActivity : ComponentActivity() {
         updateRotation()
     }
 
+    // dispatchKeyEvent is public Activity API; lint flags it only because AndroidX's
+    // ComponentActivity marks its own override restricted.
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         // A key may just have left touch mode and moved focus (see onCreate): re-ask at once,
         // before the stick's next MOVE events. A no-op when the request is unchanged.
