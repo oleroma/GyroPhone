@@ -75,9 +75,9 @@ Phone (mapping engine) ─► UDP, AES-GCM sealed ─► GyroPhoneCompanion ─�
 
 ## Building
 
-Everything is built and tested on the dev PC; GitHub CI doesn't run on push. Commit, then run `build\build.cmd [commit]` (default `HEAD`). It builds that commit in its own git worktree, puts the newest `gyrophone.apk` and `GyroPhoneCompanion.exe` in `build\` (ignored by git) and keeps the last 4 builds in `build\builds\0.1.<commit count>-<commit>\`. Then run `build\update.cmd`: it installs only that newest build from `build\` (the companion in `%LOCALAPPDATA%\Programs\GyroPhone`, the APK on the phone over adb) and swaps the phone and PC key files. It never builds or downloads anything. To swap only the key files, run `build\keys.cmd` (`build\update.cmd` runs it too). The scripts live in `build\` with the builds, so git does not track them. You need JDK 17 and the Android SDK (API 36), and the .NET 8 SDK for the companion; without .NET it builds the APK only.
+Builds run through the scripts in `.agents/` (see `AGENTS.md`). On the PC, check the commit out in the `build\src` worktree and run `bash build/src/.agents/agent-build pc`: it runs the quick tests, builds `gyrophone-0.1.<commit count>.apk` and `GyroPhoneCompanion.exe`, puts the newest ones in `build\` (ignored by git), keeps the last 4 builds in `build\builds\0.1.<commit count>-<commit>\`, and installs the APK on a connected phone. Then `.agents/hooks/install` installs the companion in `%LOCALAPPDATA%\Programs\GyroPhone` (a running companion switches to it once no phone is connected) and, with the phone on adb, swaps the phone and PC key files so they connect over Wi-Fi without a code. The build itself is `.agents/hooks/build`. You need JDK 17, the Android SDK (API 36) and the .NET 8 SDK, found through `JAVA_HOME`, `ANDROID_HOME` and the `PATH`.
 
-When the PC is offline, the manual `fallback.yml` workflow runs the tests, and saves the APK and the companion (`gyrophone-companion-win-x64`) on the run.
+When the PC is offline, the `fallback.yml` workflow, started by hand on a branch, runs the quick tests and saves the APK and the companion on the run. A push to `main` runs the full checks only.
 
 The tests:
 

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Full checks, run on main after Olex lands dev. Not run on branches.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+
+bash .agents/hooks/quick-test
+./gradlew :app:lintDebug

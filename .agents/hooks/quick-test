@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Quick tests, run by every branch build (PC and fallback) before building:
+# the Kotlin core's unit tests and the companion's tests.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+
+./gradlew :core:test
+
+# The Windows-only companion projects build only on Windows; elsewhere the
+# cross-platform ones (protocol, engine and their tests) still run.
+if [ "${OS:-}" = Windows_NT ]; then
+  dotnet test companion/GyroPhone.Companion.sln -c Release
+else
+  dotnet test companion/GyroPhone.Companion.Linux.slnf -c Release
+fi

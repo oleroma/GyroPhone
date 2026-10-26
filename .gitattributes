@@ -1,1 +1,3 @@
 *.cmd text eol=crlf
+# The agent scripts and hooks run in bash, which fails on Windows line endings.
+.agents/** text eol=lf

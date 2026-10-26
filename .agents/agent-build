@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# Step 3: build the feature branch.
+# Usage:
+#   build/src/.agents/agent-build pc   on the PC, from the build/src worktree (AGENTS.md step 3)
+#   .agents/agent-build ci             in the cloud, on the feature branch
+source "$(dirname "$0")/lib.sh"
+cd "$WORKTREE"
+
+HOOKS="$WORKTREE/.agents/hooks"
+INSTALL_NOTE=""
+NOTES=()
+
+build_pc() {
+  [ "$WORKTREE" -ef "$BUILD_DIR/src" ] || die "Run this from the build/src worktree, as in AGENTS.md step 3."
+
+  local lock="$BUILD_DIR/.build-lock"
+  mkdir "$lock" 2>/dev/null || die "Another build is running in build/src, or $lock was left behind. Ask Olex."
+  cleanup() { rmdir "$lock" 2>/dev/null || true; }
+
+  local commit
+  commit="$(git rev-parse --short=7 HEAD)"
+
+  if [ -f "$HOOKS/quick-test" ]; then
+    bash "$HOOKS/quick-test" || die "Quick tests failed at $commit. Not built."
+  fi
+
+  local out_file="$BUILD_DIR/logs/build-output.txt"
+  if ! bash "$HOOKS/build" >"$out_file"; then
+    cat "$out_file"
+    die "Build failed at $commit."
+  fi
+  cat "$out_file"
+
+  # The hook prints one "build-file: <path> <version>" line per build file.
+  local version="" line rel v files=() names=()
+  while IFS= read -r line; do
+    case "$line" in
+      "build-file: "*)
+        line="${line#build-file: }"
+        rel="${line% *}"
+        v="${line##* }"
+        [ -n "$rel" ] && [ "$rel" != "$line" ] || die "Bad build-file line from the build hook: $line"
+        [ -f "$WORKTREE/$rel" ] || die "Build file not found: $rel"
+        files+=("$WORKTREE/$rel")
+        names+=("$(basename "$rel")")
+        if [ -z "$version" ]; then version="$v"; fi
+        ;;
+    esac
+  done <"$out_file"
+  [ "${#files[@]}" -gt 0 ] || die "The build hook printed no \"build-file: <path> <version>\" line."
+
+  # One folder per build, and the newest build files directly in build/.
+  local dest="$BUILD_DIR/builds/$version-$commit" old
+  mkdir -p "$dest"
+  cp "${files[@]}" "$dest/"
+  if [ -f "$BUILD_DIR/.newest" ]; then
+    while IFS= read -r old; do
+      if [ -n "$old" ]; then rm -f "$BUILD_DIR/$old"; fi
+    done <"$BUILD_DIR/.newest"
+  fi
+  cp "${files[@]}" "$BUILD_DIR/"
+  printf '%s\n' "${names[@]}" >"$BUILD_DIR/.newest"
+
+  # Keep the last 4 builds. Old-style build folders may hold a worktree; prune forgets those.
+  ls -1dt "$BUILD_DIR"/builds/*/ | tail -n +5 | while read -r old; do rm -rf "$old"; done
+  git -C "$MAIN_REPO" worktree prune
+
+  local summary=("Built $version at $commit:") name paths=()
+  for name in "${names[@]}"; do
+    summary+=("File: $BUILD_DIR/$name")
+    paths+=("$BUILD_DIR/$name")
+    case "$name" in
+      *.apk)
+        install_apk "$BUILD_DIR/$name" "$name"
+        NOTES+=("$name: $INSTALL_NOTE")
+        ;;
+      *)
+        if [ ! -f "$HOOKS/install" ]; then NOTES+=("$name: not an APK, ask Olex whether to install it."); fi
+        ;;
+    esac
+  done
+
+  # The repo's install hook installs the other build files and does any setup after an
+  # install. Its "note: <text>" lines go into the summary.
+  if [ -f "$HOOKS/install" ]; then
+    local hook_out="$BUILD_DIR/logs/install-output.txt" line
+    if ! bash "$HOOKS/install" "$version" "${paths[@]}" >"$hook_out"; then
+      NOTES+=("The install hook failed; see the log.")
+    fi
+    cat "$hook_out"
+    while IFS= read -r line; do
+      case "$line" in "note: "*) NOTES+=("${line#note: }") ;; esac
+    done <"$hook_out"
+  fi
+
+  finish done "${summary[@]}" "${NOTES[@]}"
+}
+
+find_adb() { # adb comes from the PATH; prints nothing if it isn't there
+  if command -v adb >/dev/null 2>&1; then echo adb; fi
+  return 0
+}
+
+phone_notify() { # phone_notify <adb> <title> <text>
+  "$1" shell "cmd notification post -t '$2' agent-build '$3'" || true
+}
+
+install_apk() { # install_apk <apk> <name>; sets INSTALL_NOTE
+  local apk="$1" title="${2%.apk}" adb devices out
+  adb="$(find_adb)"
+  if [ -z "$adb" ]; then
+    INSTALL_NOTE="Not installed: adb not found."
+    return
+  fi
+  export MSYS_NO_PATHCONV=1
+
+  devices="$("$adb" devices | awk 'NR > 1 && $2 == "device"' | wc -l | tr -d ' ')"
+  if [ "$devices" = 0 ]; then
+    INSTALL_NOTE="Not installed: no phone connected."
+    return
+  fi
+  if [ "$devices" != 1 ]; then
+    INSTALL_NOTE="Not installed: more than one device connected."
+    return
+  fi
+
+  "$adb" shell cmd vibrator_manager synced oneshot 200 || true
+  phone_notify "$adb" "$title" "Installing now"
+  # -r keeps app data. Without -d, adb refuses a downgrade instead of wiping data.
+  if out="$("$adb" install -r "$apk" 2>&1)" && grep -q Success <<<"$out"; then
+    echo "$out"
+    phone_notify "$adb" "$title" "Install complete"
+    INSTALL_NOTE="Installed on the phone."
+  else
+    echo "$out"
+    phone_notify "$adb" "$title" "Install failed"
+    if grep -q VERSION_DOWNGRADE <<<"$out"; then
+      INSTALL_NOTE="Not installed: it's a downgrade, which would wipe app data."
+    else
+      INSTALL_NOTE="Install failed: $(grep -m 1 -E 'Failure|Error' <<<"$out" || echo "see the log")"
+    fi
+  fi
+}
+
+build_ci() {
+  require_feature_branch
+  git fetch origin "$BRANCH"
+  [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$BRANCH")" ] ||
+    die "HEAD isn't what's pushed on origin/$BRANCH. Run agent-commit first."
+
+  local sha slug since run="" i
+  sha="$(git rev-parse HEAD)"
+  slug="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+  since="$(date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:%SZ)"
+  gh workflow run fallback.yml --ref "$BRANCH"
+
+  for i in $(seq 1 30); do
+    sleep 4
+    run="$(gh run list --workflow fallback.yml --branch "$BRANCH" --event workflow_dispatch --limit 10 \
+      --json databaseId,headSha,createdAt \
+      --jq "[.[] | select(.headSha == \"$sha\" and .createdAt >= \"$since\")][0].databaseId // empty")"
+    if [ -n "$run" ]; then break; fi
+  done
+  [ -n "$run" ] || die "Started the fallback workflow but couldn't find its run."
+
+  local url="https://github.com/$slug/actions/runs/$run"
+  gh run watch "$run" --exit-status --interval 15 || die "The fallback run failed: $url"
+
+  local arts art id name dest="$BUILD_DIR/ci/$run" summary=("Built on GitHub: $url")
+  arts="$(gh api "repos/$slug/actions/runs/$run/artifacts" --jq '.artifacts[] | "\(.id) \(.name)"')"
+  [ -n "$arts" ] || die "The fallback run saved no build file: $url"
+  mkdir -p "$dest"
+
+  # Artifacts are uploaded unzipped, so each download is the build file itself.
+  while IFS= read -r art; do
+    id="${art%% *}"
+    name="${art#* }"
+    gh api "repos/$slug/actions/artifacts/$id/zip" >"$dest/$name"
+    summary+=("$name: direct download link https://github.com/$slug/actions/runs/$run/artifacts/$id" "  File: $dest/$name")
+  done <<<"$arts"
+
+  finish done "${summary[@]}" "Post the links in the project thread first, then upload the files."
+}
+
+case "${1:-}" in
+  pc) build_pc ;;
+  ci) build_ci ;;
+  *) die "Usage: agent-build pc|ci" ;;
+esac

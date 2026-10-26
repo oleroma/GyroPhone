@@ -6,4 +6,7 @@ local.properties
 .DS_Store
 captures/
 .kotlin/
+bin/
+obj/
+/companion/out/
 /builds/

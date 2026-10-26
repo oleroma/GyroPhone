@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Builds GyroPhone and prints "build-file: <path> <version>" per build file.
+# Usage: build [apk|companion]
+#   no argument: the APK, plus the Windows companion when running on Windows
+#   apk / companion: only that one (the fallback workflow builds them on separate runners)
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+what="${1:-all}"
+
+# The version is the commit count, read by app/build.gradle.kts and stamped into the companion.
+GP_BUILD="$(git rev-list --count HEAD)"
+GP_COMMIT="$(git rev-parse --short=7 HEAD)"
+export GP_BUILD GP_COMMIT
+version="0.1.$GP_BUILD"
+
+if [ "$what" = all ] || [ "$what" = apk ]; then
+  ./gradlew :app:assembleDebug
+  apk="app/build/outputs/apk/debug/gyrophone-$version.apk"
+  cp app/build/outputs/apk/debug/app-debug.apk "$apk"
+  echo "build-file: $apk $version"
+fi
+
+if [ "$what" = companion ] || { [ "$what" = all ] && [ "${OS:-}" = Windows_NT ]; }; then
+  # Branch builds skip ReadyToRun: it only speeds up startup and makes the build much slower.
+  dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contained true \
+    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
+    -p:EnableCompressionInSingleFile=true -p:DebugType=none \
+    -p:Version="$version" -p:InformationalVersion="$version-$GP_COMMIT" \
+    -p:IncludeSourceRevisionInInformationalVersion=false -o companion/out
+  echo "build-file: companion/out/GyroPhoneCompanion.exe $version"
+fi
