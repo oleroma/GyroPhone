@@ -94,6 +94,7 @@ import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.Placement
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.StickZones
+import com.oleroma.gyrophone.core.model.SurfaceSettings
 import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
@@ -1256,6 +1257,7 @@ private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>)
             is InputSource.TouchRelease -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             is InputSource.TouchDoubleTap -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             is InputSource.TouchArea -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
+            is InputSource.Surface -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             else -> null
         }
     }
@@ -1503,20 +1505,26 @@ private fun ControlSettingsPanel(
                                 Column(Modifier.weight(1f)) {
                                     Text("Swipe", style = MaterialTheme.typography.labelLarge)
                                     Text(
-                                        "A small touchpad of its own: a tap presses it, a swipe does its swipe " +
-                                            "mappings below (mouse, scroll, a stick or keys per direction).",
+                                        "A small touchpad of its own: a tap presses it, and its touchpad mappings " +
+                                            "below (taps, moves, swipes, pinches with 1–4 fingers) work on it.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                                 Switch(
                                     checked = control.swipe,
-                                    onCheckedChange = { onControlChange(current.copy(swipe = it)) },
+                                    onCheckedChange = { on ->
+                                        val c = current
+                                        // A new swipe button follows the touchpad; an old one keeps its swipe settings.
+                                        onControlChange(
+                                            if (on && !c.swipe && c.surface == null) c.copy(swipe = true, surface = SurfaceSettings())
+                                            else c.copy(swipe = on),
+                                        )
+                                    },
                                 )
                             }
                             if (control.swipe) {
-                                SwipeSensSlider("Swipe X sensitivity", control.swipeSensX) { onControlChange(current.copy(swipeSensX = it)) }
-                                SwipeSensSlider("Swipe Y sensitivity", control.swipeSensY) { onControlChange(current.copy(swipeSensY = it)) }
+                                SurfaceSettingsEditor(control, workspace.touchpad) { onControlChange(it) }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Column(Modifier.weight(1f)) {
                                         Text("Press only on a tap", style = MaterialTheme.typography.labelLarge)
@@ -1622,7 +1630,27 @@ private fun ControlSettingsPanel(
                         }
                     }
                 }
-                TouchMappingList(mappings = workspace.mappings, inputs = inputs, onChange = onMappingsChange, runtime = runtime)
+                if (control.swipes) {
+                    TouchMappingList(mappings = workspace.mappings, inputs = inputs.take(5), onChange = onMappingsChange, runtime = runtime)
+                    var fingers by remember(control.id) { mutableIntStateOf(1) }
+                    Text("Touchpad mappings", style = MaterialTheme.typography.labelLarge)
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        for (n in 1..4) {
+                            SelectChip(if (n == 1) "1 finger" else "$n fingers", fingers == n) { fingers = n }
+                        }
+                    }
+                    TouchMappingList(
+                        mappings = workspace.mappings,
+                        inputs = Bindings.surfaceInputs(fingers, control.id),
+                        onChange = onMappingsChange,
+                        runtime = runtime,
+                    )
+                } else {
+                    TouchMappingList(mappings = workspace.mappings, inputs = inputs, onChange = onMappingsChange, runtime = runtime)
+                }
                 HorizontalDivider()
                 if (mappingOnly) {
                     TextButton(onClick = onMore) { Text("All settings…") }
@@ -1691,17 +1719,6 @@ private fun SizeSlider(title: String, value: Float, onChange: (Float) -> Unit) {
 }
 
 /** A swipe sensitivity of a button in swipe mode; 0 turns that direction off. */
-@Composable
-private fun SwipeSensSlider(title: String, value: Float, onChange: (Float) -> Unit) {
-    Column {
-        Text("$title %.1f".format(value), style = MaterialTheme.typography.labelLarge)
-        Slider(
-            value = value,
-            onValueChange = { onChange((it * 10).roundToInt() / 10f) },
-            valueRange = 0f..TouchControl.MAX_SWIPE_SENS,
-        )
-    }
-}
 
 /** A ratchet action (the old gyro hold works as one). */
 private fun isRatchet(t: OutputTarget): Boolean = t == OutputTarget.GyroPause || t == OutputTarget.GyroHold

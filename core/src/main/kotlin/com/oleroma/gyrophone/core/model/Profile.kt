@@ -62,7 +62,10 @@ data class TouchControl(
      * drives its swipe mappings ([InputSource.TouchSwipe]) instead.
      */
     val swipe: Boolean = false,
-    /** Swipe sensitivity across and down: mouse counts per dp of travel (0 = that axis is off). */
+    /**
+     * Before swipe buttons were touch surfaces: swipe sensitivity across and down (mouse counts
+     * per dp). Only read for a button with no [surface] settings yet ([surfaceSettings]).
+     */
     val swipeSensX: Float = 1.5f,
     val swipeSensY: Float = 1.5f,
     /** Swipe mode: press only on a still tap's release (else the press starts at touch-down). */
@@ -85,6 +88,11 @@ data class TouchControl(
     val zoneInterrupt: Boolean = false,
     /** With [zoneInterrupt]: the stopped job resumes when the finger leaves (off: stopped until it lifts). */
     val zoneResume: Boolean = false,
+    /**
+     * Swipe mode: the touch surface settings this button changes from the workspace touchpad's;
+     * null (a button from before) = its old swipe sensitivities, no acceleration, no inertia.
+     */
+    val surface: SurfaceSettings? = null,
 ) {
     /** In swipe mode: a button with [swipe] on and click-through off. */
     val swipes: Boolean get() = kind == TouchKind.BUTTON && swipe && !clickThrough
@@ -124,6 +132,44 @@ fun TouchControl.placeY(inPortrait: Boolean): Float =
 
 fun TouchControl.placeSize(inPortrait: Boolean): Float =
     if (!inPortrait) size else portraitOrBuiltin()?.size ?: (size * TouchControl.PORTRAIT_SIZE_SCALE)
+
+/**
+ * Touchpad settings a swipe-mode button sets for itself; null fields follow the workspace
+ * touchpad ([TouchpadSettings.with]).
+ */
+@Serializable
+data class SurfaceSettings(
+    val sensitivity: Float? = null,
+    val sensitivityY: Float? = null,
+    val acceleration: Float? = null,
+    val scrollSpeed: Float? = null,
+    val naturalScroll: Boolean? = null,
+    val inertia: Boolean? = null,
+    val releaseTapMs: Int? = null,
+    val cursorDeadzoneDp: Float? = null,
+    val catchUpMs: Int? = null,
+)
+
+/** These settings with [o]'s own values in place of theirs. */
+fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null) this else copy(
+    sensitivity = o.sensitivity ?: sensitivity,
+    sensitivityY = o.sensitivityY ?: sensitivityY,
+    acceleration = o.acceleration ?: acceleration,
+    scrollSpeed = o.scrollSpeed ?: scrollSpeed,
+    naturalScroll = o.naturalScroll ?: naturalScroll,
+    inertia = o.inertia ?: inertia,
+    releaseTapMs = o.releaseTapMs ?: releaseTapMs,
+    cursorDeadzoneDp = o.cursorDeadzoneDp ?: cursorDeadzoneDp,
+    catchUpMs = o.catchUpMs ?: catchUpMs,
+)
+
+/** A swipe button's own settings: [TouchControl.surface], or what its old swipe settings were. */
+val TouchControl.ownSurface: SurfaceSettings
+    get() = surface ?: SurfaceSettings(sensitivity = swipeSensX, sensitivityY = swipeSensY, acceleration = 0f, inertia = false)
+
+/** How a swipe button's surface works: the workspace touchpad [pad] with the button's own settings. */
+fun TouchControl.surfaceSettings(pad: TouchpadSettings): TouchpadSettings =
+    pad.copy(enabled = true, mapped = true).with(ownSurface)
 
 /** Height / width as drawn: [TouchControl.aspect] for a square button, else 1. */
 val TouchControl.heightRatio: Float

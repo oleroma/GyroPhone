@@ -74,16 +74,9 @@ object Bindings {
                 area(control, TouchAreaKind.OUTSIDE),
                 area(control, TouchAreaKind.ZONE),
             )
-            if (!control.swipes) events else {
-                fun s(axis: StickAxis, half: AxisHalf = AxisHalf.FULL) = listOf(InputSource.TouchSwipe(control.id, axis, half))
-                events + listOf(
-                    BindableInput("Swipe X", s(StickAxis.X), analog = true, swipe = true),
-                    BindableInput("Swipe Y", s(StickAxis.Y), analog = true, swipe = true),
-                    BindableInput("Swipe left", s(StickAxis.X, AxisHalf.NEGATIVE)),
-                    BindableInput("Swipe right", s(StickAxis.X, AxisHalf.POSITIVE)),
-                    BindableInput("Swipe up", s(StickAxis.Y, AxisHalf.NEGATIVE)),
-                    BindableInput("Swipe down", s(StickAxis.Y, AxisHalf.POSITIVE)),
-                )
+            // Swipe mode: a touch surface, with the touchpad's inputs per finger count.
+            if (!control.swipes) events else events + (1..4).flatMap { n ->
+                surfaceInputs(n, control.id).map { it.copy(label = "${n}f " + it.label) }
             }
         }
         TouchKind.STICK -> {
@@ -161,6 +154,24 @@ object Bindings {
             }
         }
     }
+
+    /**
+     * [m] with a swipe-button source from before touch surfaces ([InputSource.TouchSwipe]) as
+     * the surface input that does its job: an axis is Move X / Y, a half the held direction.
+     */
+    fun upgradeSwipe(m: Mapping): Mapping {
+        val s = m.source as? InputSource.TouchSwipe ?: return m
+        val input = when (s.half) {
+            AxisHalf.FULL -> if (s.axis == StickAxis.X) SurfaceInput.MOTION_X else SurfaceInput.MOTION_Y
+            AxisHalf.NEGATIVE -> if (s.axis == StickAxis.X) SurfaceInput.HOLD_LEFT else SurfaceInput.HOLD_UP
+            AxisHalf.POSITIVE -> if (s.axis == StickAxis.X) SurfaceInput.HOLD_RIGHT else SurfaceInput.HOLD_DOWN
+        }
+        return m.copy(source = InputSource.Surface(1, input, s.id))
+    }
+
+    /** [ms] with every old swipe source upgraded ([upgradeSwipe]), each mapping once. */
+    fun upgradeSwipes(ms: List<Mapping>): List<Mapping> =
+        if (ms.none { it.source is InputSource.TouchSwipe }) ms else ms.map(::upgradeSwipe).distinct()
 
     /** What a 3 / 4 finger [GestureAction] pressed: its keys (modifiers first) or mouse button. */
     fun gestureTargets(a: GestureAction): List<OutputTarget> = when (a) {

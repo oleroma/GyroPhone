@@ -60,7 +60,7 @@ class SwipeButtonsTest {
     fun swipeYScrollsNaturally() {
         val e = engine(listOf(Mapping(swipe(StickAxis.Y), OutputTarget.MouseAxis(MouseMotion.WHEEL))), sensY = 1.5f)
         e.buttonDown(1, "b", 100f, 100f)
-        e.buttonMove(1, 100f, 120f) // 20 dp down at 1.5: one notch up
+        e.buttonMove(1, 100f, 124f) // 24 dp down at the touchpad's scroll speed: one notch up
         assertEquals(MouseState.WHEEL_UNIT, e.snapshot().mouse.wheel)
     }
 
@@ -87,7 +87,7 @@ class SwipeButtonsTest {
             Mapping(InputSource.Touch("b"), OutputTarget.Key(A)),
         ), sensY = 1f)
         e.buttonDown(1, "b", 100f, 200f)
-        e.buttonMove(1, 100f, 180f) // 20 of the 36 dp to half
+        e.buttonMove(1, 100f, 185f) // 15 of the 20 dp to half
         assertTrue(e.snapshot().keyboard.keys.isEmpty())
         e.buttonMove(1, 100f, 150f)
         assertEquals(listOf(W), e.snapshot().keyboard.keys)
@@ -131,7 +131,8 @@ class SwipeButtonsTest {
     @Test
     fun clickThroughTurnsSwipeModeOff() {
         val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, swipe = true)
-        assertEquals(11, Bindings.touchInputs(b).size)
+        // Press, release, double tap, outside, zone, then the surface inputs for 1..4 fingers.
+        assertEquals(5 + (1..4).sumOf { Bindings.surfaceInputs(it).size }, Bindings.touchInputs(b).size)
         assertEquals(5, Bindings.touchInputs(b.copy(clickThrough = true)).size)
         assertEquals(5, Bindings.touchInputs(b.copy(swipe = false)).size)
     }

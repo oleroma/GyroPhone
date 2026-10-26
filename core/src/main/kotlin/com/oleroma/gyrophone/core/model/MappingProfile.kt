@@ -91,7 +91,7 @@ object MappingProfiles {
         val ids = w.touchControls.mapTo(HashSet()) { it.id }
         return w.copy(
             mappingProfileId = mapping.id,
-            mappings = mapping.touch.filter { touchId(it.source) in ids } + touchpadOf(mapping, w),
+            mappings = Bindings.upgradeSwipes(mapping.touch).filter { touchId(it.source) in ids } + touchpadOf(mapping, w),
             touchpad = w.touchpad.copy(mapped = true),
             keyboard = mapping.keyboard,
             pads = w.pads.map { it.copy(mappings = it.own ?: mapping.controller) },
@@ -127,9 +127,10 @@ object MappingProfiles {
             val mapping = of(w, result) ?: continue
             val old = before.workspaces.firstOrNull { it.id == w.id && it.mappingProfileId == w.mappingProfileId }
             val ids = w.touchControls.mapTo(HashSet()) { it.id }
-            val was = (old?.mappings ?: mapping.touch).filter { touchId(it.source) in ids }.toSet()
+            val base = Bindings.upgradeSwipes(mapping.touch)
+            val was = (old?.mappings ?: base).filter { touchId(it.source) in ids }.toSet()
             val now = w.mappings.filter { touchId(it.source) in ids }.toSet()
-            val touch = (mapping.touch.filterNot { it in was - now } + (now - was)).distinct()
+            val touch = (base.filterNot { it in was - now } + (now - was)).distinct()
             // The touchpad set is taken whole once it changed (it may only stand for the switches so far).
             val padNow = w.mappings.filter { it.source.isTouchpad }
             val padWas = old?.mappings?.filter { it.source.isTouchpad } ?: touchpadOf(mapping, w)
