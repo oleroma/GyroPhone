@@ -22,8 +22,8 @@ class ButtonEventsTest {
 
     private var t = 0L
 
-    private fun engine(waits: Boolean): MappingEngine {
-        val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, doubleTapWaits = waits)
+    private fun engine(waits: Boolean, releaseTapMs: Int = 0): MappingEngine {
+        val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, doubleTapWaits = waits, releaseTapMs = releaseTapMs)
         val p = single(Workspace(
             id = "w", name = "w", touchControls = listOf(b),
             mappings = listOf(
@@ -97,6 +97,23 @@ class ButtonEventsTest {
         t += 50 * MS
         e.buttonUp(1)
         repeat(5) { t += 100 * MS; assertTrue(A !in e.keys()) }
+    }
+
+    @Test
+    fun releaseTapTimeFiresOnlyAfterAQuickTap() {
+        val e = engine(waits = false, releaseTapMs = 200)
+        e.buttonDown(1, "b", 10f, 10f)
+        t += 150 * MS
+        e.buttonUp(1)
+        assertEquals(setOf(B), e.keys()) // quick: the release fires
+        t += 20 * MS
+        e.keys()
+        t += 500 * MS
+        e.buttonDown(1, "b", 10f, 10f)
+        e.keys()
+        t += 300 * MS
+        e.buttonUp(1)
+        assertEquals(emptySet<Int>(), e.keys()) // held too long: no release
     }
 
     @Test

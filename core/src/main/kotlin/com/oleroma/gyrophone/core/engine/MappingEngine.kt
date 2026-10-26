@@ -207,9 +207,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * Release and double tap of a touch button (one with such a mapping), driven by its press
      * edges ([controlDown] / [controlUp]). With [waits], its press waits out a possible double tap.
      */
-    private class TapState(val id: String, val waits: Boolean) {
+    private class TapState(val id: String, val waits: Boolean, val releaseTapNs: Long) {
         var state = TAP_IDLE
         var downNs = 0L
+        /** Start of the current press (downNs stays at the first tap of a waited double tap). */
+        var pressNs = 0L
         var upNs = 0L
         /** The last press was a short tap that a second one may turn into a double tap. */
         var tapped = false
@@ -308,7 +310,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val doubles = w.mappings.mapNotNullTo(HashSet()) { (it.source as? InputSource.TouchDoubleTap)?.id }
         for (c in w.touchControls) {
             if (c.kind != TouchKind.BUTTON || c.id !in withEvents) continue
-            val st = TapState(c.id, c.doubleTapWaits && c.id in doubles)
+            val releaseTap = c.releaseTapMs.coerceIn(0, TouchControl.MAX_RELEASE_TAP_MS) * 1_000_000L
+            val st = TapState(c.id, c.doubleTapWaits && c.id in doubles, releaseTap)
             tapStates[c.id] = st; tapList.add(st)
         }
         stickCfgs = w.touchControls.filter { it.kind == TouchKind.STICK }.associate { c ->
@@ -1021,6 +1024,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun controlDown(id: String, now: Long) {
         val t = tapStates[id] ?: return
         resolveTaps(now)
+        t.pressNs = now
         if (t.waits) {
             if (t.state == TAP_WAIT) { t.state = TAP_DOUBLE; t.double = true }
             else { t.state = TAP_PENDING; t.downNs = now }
@@ -1034,7 +1038,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun controlUp(id: String, now: Long) {
         val t = tapStates[id] ?: return
         resolveTaps(now)
-        t.releaseNs = now; t.releaseSeen = false
+        // With a release tap time only a quick tap's release fires.
+        if (t.releaseTapNs <= 0 || now - t.pressNs <= t.releaseTapNs) { t.releaseNs = now; t.releaseSeen = false }
         if (t.waits) {
             t.state = if (t.state == TAP_PENDING) TAP_WAIT else TAP_IDLE
             t.upNs = now

@@ -72,6 +72,11 @@ data class TouchControl(
      * then never presses). Off: the press is instant, and a double tap also presses twice.
      */
     val doubleTapWaits: Boolean = false,
+    /**
+     * Release mapping: fires only after a press shorter than this (ms), a quick tap; 0 = after
+     * every press.
+     */
+    val releaseTapMs: Int = 0,
 ) {
     /** In swipe mode: a button with [swipe] on and click-through off. */
     val swipes: Boolean get() = kind == TouchKind.BUTTON && swipe && !clickThrough
@@ -82,6 +87,7 @@ data class TouchControl(
         const val MAX_SIZE = 2.4f
         const val MAX_DEADZONE = 0.6f
         const val MAX_SWIPE_SENS = 12f
+        const val MAX_RELEASE_TAP_MS = 1000
         /**
          * Derived portrait layout: the landscape layout squeezed into the lower part (the top is
          * left for the touchpad), sizes scaled down, centres pulled in so nothing leaves the width.

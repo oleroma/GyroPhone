@@ -1360,6 +1360,22 @@ private fun ControlSettingsPanel(
                                 onCheckedChange = { onControlChange(current.copy(doubleTapWaits = it)) },
                             )
                         }
+                        Column {
+                            Text(
+                                if (control.releaseTapMs <= 0) "Release tap time: off" else "Release tap time ${control.releaseTapMs} ms",
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            Slider(
+                                value = control.releaseTapMs.toFloat(),
+                                onValueChange = { onControlChange(current.copy(releaseTapMs = (it / 10f).roundToInt() * 10)) },
+                                valueRange = 0f..TouchControl.MAX_RELEASE_TAP_MS.toFloat(),
+                            )
+                            Text(
+                                "The Release mapping fires only after a press shorter than this, a quick tap. Off: after every press.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         val input = inputs.first()
                         val targets = Bindings.targets(workspace.mappings, input)
                         Row(verticalAlignment = Alignment.CenterVertically) {
