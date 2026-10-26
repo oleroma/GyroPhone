@@ -41,6 +41,14 @@ enum class StickDiagonal(val label: String) {
 @Serializable
 enum class MouseButton(val bit: Int) { LEFT(0), RIGHT(1), MIDDLE(2), BACK(3), FORWARD(4) }
 
+/**
+ * When an [InputSource.TouchArea] is held. HELD (sticks): from touch-down on the stick until
+ * lift. OUTSIDE: while a finger that touched down on the control is outside its area. ZONE: while
+ * any finger is inside its area, wherever it touched down.
+ */
+@Serializable
+enum class TouchAreaKind(val label: String) { HELD("On touch"), OUTSIDE("Outside"), ZONE("Zone") }
+
 /** Something on the phone side that produces input. */
 @Serializable
 sealed interface InputSource {
@@ -79,6 +87,10 @@ sealed interface InputSource {
      */
     @Serializable @SerialName("touch_swipe")
     data class TouchSwipe(val id: String, val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL) : InputSource
+
+    /** Where fingers are relative to a touch control's area (see [TouchAreaKind]); the pad screen drives it. */
+    @Serializable @SerialName("touch_area")
+    data class TouchArea(val id: String, val kind: TouchAreaKind) : InputSource
 }
 
 /** Something the host PC receives. */

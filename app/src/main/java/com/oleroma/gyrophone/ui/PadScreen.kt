@@ -94,6 +94,7 @@ import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.Placement
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.StickZones
+import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchShape
@@ -134,6 +135,21 @@ private enum class EditGesture { PRESS, HELD, MOVE, PINCH, EMPTY, NONE }
 
 /** What edit mode shows for the selected control: its mapping picker or its context menu. */
 private enum class EditMenu { NONE, MAPPING, CONTEXT }
+
+/** What a play-mode finger was doing before an interrupting zone stopped it. */
+private enum class FingerJob { NONE, PAD, BUTTON, STICK }
+
+/**
+ * A play-mode finger's place relative to the controls' areas: the zones it is in, the control it
+ * took on touch-down ([origin], for Outside) and whether it is outside it, and a job an
+ * interrupting zone stopped ([stopped]), resumed on leaving when [resume].
+ */
+private class FingerAreas(var origin: TouchControl?) {
+    val zones = HashSet<String>()
+    var outside = false
+    var stopped = FingerJob.NONE
+    var resume = false
+}
 
 /**
  * The touch event being dispatched, as [MainActivity] saw it (main thread; Compose runs the pad's
@@ -262,6 +278,7 @@ fun PadScreen(
         heldSticks = emptySet()
         cornersHeld = emptySet()
         runtime.engine.touchpadCancel()
+        runtime.engine.touchAreasCancel()
         refreshHighlights()
     }
 
@@ -530,6 +547,32 @@ fun PadScreen(
                 val padOwner = HashSet<PointerId>()
                 val cornerOwner = HashMap<PointerId, String>()
 
+                // On touch, Outside and Zone mappings (TouchArea sources).
+                val areaMapped = workspace.mappings.mapNotNullTo(HashSet()) { it.source as? InputSource.TouchArea }
+                fun mapped(id: String, kind: TouchAreaKind) = InputSource.TouchArea(id, kind) in areaMapped
+                val zoneControls = controls.filter { mapped(it.id, TouchAreaKind.ZONE) }
+                // A button with only a Zone mapping holds nothing itself: a finger landing on it acts as
+                // if it landed on what is under it (the touchpad or another control).
+                val zoneOnly = zoneControls.filter { c ->
+                    c.kind == TouchKind.BUTTON && workspace.mappings.all { m ->
+                        MappingProfiles.touchId(m.source) != c.id || m.source == InputSource.TouchArea(c.id, TouchAreaKind.ZONE)
+                    }
+                }.mapTo(HashSet()) { it.id }
+                val landControls = controls.filter { it.id !in zoneOnly }
+                val fingers = HashMap<PointerId, FingerAreas>()
+                val zoneCount = HashMap<String, Int>()
+                val outsideCount = HashMap<String, Int>()
+
+                /** Counts fingers in a zone / outside their control; the area is held while there is one. */
+                fun count(counts: HashMap<String, Int>, id: String, kind: TouchAreaKind, by: Int) {
+                    val n = (counts[id] ?: 0) + by
+                    if (n <= 0) counts.remove(id) else counts[id] = n
+                    if (n == 1 && by > 0) runtime.engine.setTouchArea(id, kind, true)
+                    if (n <= 0) runtime.engine.setTouchArea(id, kind, false)
+                    // A finger sliding in or out changes no ownership, so the zone's highlight follows here.
+                    if (kind == TouchAreaKind.ZONE && (n <= 0 || (n == 1 && by > 0))) refreshHighlights()
+                }
+
                 /** A corner tapped on its own: previous / next workspace (nothing at an end). */
                 fun stepFrom(cornerId: String) {
                     val i = runtime.workspaceIndex.value
@@ -554,6 +597,112 @@ fun PadScreen(
                     if (len > 1f) d /= len
                     runtime.engine.setTouchStick(c.id, d.x, d.y)
                     stickPos[c.id] = d
+                }
+
+                /** Finger [pointer] takes stick [c] at [p]: its On touch is held until [dropStick]. */
+                fun grabStick(pointer: PointerId, c: TouchControl, p: Offset) {
+                    stickOwner[pointer] = c.id
+                    stickCenters[c.id] = center(c)
+                    heldSticks = heldSticks + c.id
+                    if (mapped(c.id, TouchAreaKind.HELD)) runtime.engine.setTouchArea(c.id, TouchAreaKind.HELD, true)
+                    // Deflect at once: a still thumb sends no MOVE.
+                    deflect(c, p)
+                }
+
+                fun dropStick(pointer: PointerId) {
+                    val id = stickOwner.remove(pointer) ?: return
+                    runtime.engine.setTouchStick(id, 0f, 0f)
+                    stickPos.remove(id)
+                    heldSticks = heldSticks - id
+                    if (mapped(id, TouchAreaKind.HELD)) runtime.engine.setTouchArea(id, TouchAreaKind.HELD, false)
+                }
+
+                /** Stops what finger [pointer] does (an interrupting zone). False if it does nothing to stop. */
+                fun stopJob(pointer: PointerId, f: FingerAreas): Boolean {
+                    val pid = pointer.value
+                    f.stopped = when {
+                        pointer in padOwner -> {
+                            padOwner.remove(pointer)
+                            runtime.engine.touchpadCancel(pid)
+                            FingerJob.PAD
+                        }
+                        pid in buttonFingers -> {
+                            buttonFingers.remove(pid)
+                            runtime.engine.buttonCancel(pid)
+                            FingerJob.BUTTON
+                        }
+                        pointer in stickOwner -> {
+                            dropStick(pointer)
+                            FingerJob.STICK
+                        }
+                        else -> return false
+                    }
+                    if (f.outside) {
+                        f.outside = false
+                        count(outsideCount, f.origin!!.id, TouchAreaKind.OUTSIDE, -1)
+                    }
+                    return true
+                }
+
+                /** Restarts the job a zone stopped, at [p], as a new touch-down there. */
+                fun resumeJob(pointer: PointerId, f: FingerAreas, p: Offset, at: Long) {
+                    val pid = pointer.value
+                    val origin = f.origin
+                    when (f.stopped) {
+                        FingerJob.PAD -> {
+                            padOwner.add(pointer)
+                            runtime.engine.touchpadDown(pid, p.x, p.y, at)
+                        }
+                        FingerJob.BUTTON -> if (origin != null) {
+                            buttonFingers.add(pid)
+                            runtime.engine.buttonDown(pid, origin.id, p.x, p.y, at)
+                        }
+                        // Another finger took the stick meanwhile: this one stays stopped.
+                        FingerJob.STICK -> if (origin == null || origin.id in stickOwner.values) return else grabStick(pointer, origin, p)
+                        FingerJob.NONE -> return
+                    }
+                    f.stopped = FingerJob.NONE
+                }
+
+                /**
+                 * Finger [pointer] is at [p]: updates its zones, the Outside of the control it took, and
+                 * interrupting zones. At touch-down ([landing]) a zone stops only a cursor finger, so a
+                 * button or stick under a zone still works.
+                 */
+                fun track(pointer: PointerId, f: FingerAreas, p: Offset, at: Long, landing: Boolean) {
+                    var interrupt = false
+                    var resume = true
+                    for (z in zoneControls) {
+                        if (z.contains(p.x, p.y, w, h, inPortrait = portrait)) {
+                            if (f.zones.add(z.id)) count(zoneCount, z.id, TouchAreaKind.ZONE, 1)
+                            if (z.zoneInterrupt && z.id != f.origin?.id) {
+                                interrupt = true
+                                resume = resume && z.zoneResume
+                            }
+                        } else if (f.zones.remove(z.id)) {
+                            count(zoneCount, z.id, TouchAreaKind.ZONE, -1)
+                        }
+                    }
+                    if (interrupt) {
+                        if (f.stopped != FingerJob.NONE) f.resume = f.resume && resume
+                        else if ((!landing || pointer in padOwner) && stopJob(pointer, f)) f.resume = resume
+                    } else if (f.stopped != FingerJob.NONE && f.resume) {
+                        resumeJob(pointer, f, p, at)
+                    }
+                    val o = f.origin ?: return
+                    if (f.stopped != FingerJob.NONE || !mapped(o.id, TouchAreaKind.OUTSIDE)) return
+                    val out = !o.contains(p.x, p.y, w, h, inPortrait = portrait)
+                    if (out != f.outside) {
+                        f.outside = out
+                        count(outsideCount, o.id, TouchAreaKind.OUTSIDE, if (out) 1 else -1)
+                    }
+                }
+
+                /** Finger [pointer] lifted: it leaves its zones and its control's outside. */
+                fun untrack(pointer: PointerId) {
+                    val f = fingers.remove(pointer) ?: return
+                    for (z in f.zones) count(zoneCount, z, TouchAreaKind.ZONE, -1)
+                    if (f.outside) count(outsideCount, f.origin!!.id, TouchAreaKind.OUTSIDE, -1)
                 }
 
                 awaitPointerEventScope {
@@ -586,7 +735,8 @@ fun PadScreen(
                                     revealTick++
                                 }
                                 val corner = hit(corners, ch.position)
-                                val c = if (corner == null) hit(controls, ch.position) else null
+                                val c = if (corner == null) hit(landControls, ch.position) else null
+                                var origin: TouchControl? = null
                                 if (corner != null) {
                                     // A corner belongs to the first finger on it until that finger lifts.
                                     if (corner.id !in cornerOwner.values) cornerOwner[ch.id] = corner.id
@@ -597,17 +747,18 @@ fun PadScreen(
                                     runtime.engine.touchpadDown(pid, ch.position.x, ch.position.y, at)
                                 } else if (c.kind == TouchKind.STICK) {
                                     if (c.id !in stickOwner.values) {
-                                        stickOwner[ch.id] = c.id
-                                        stickCenters[c.id] = center(c)
-                                        heldSticks = heldSticks + c.id
-                                        // Deflect at once: a still thumb sends no MOVE.
-                                        deflect(c, ch.position)
+                                        origin = c
+                                        grabStick(ch.id, c, ch.position)
                                     }
                                 } else if (c.kind == TouchKind.BUTTON) {
                                     // Every finger on a button goes to the engine (touchpad over buttons, sticky modifiers).
+                                    origin = c
                                     buttonFingers.add(pid)
                                     runtime.engine.buttonDown(pid, c.id, ch.position.x, ch.position.y, at)
                                 }
+                                val f = FingerAreas(origin)
+                                fingers[ch.id] = f
+                                track(ch.id, f, ch.position, at, landing = true)
                                 ch.consume()
                                 continue
                             }
@@ -639,15 +790,17 @@ fun PadScreen(
                                 val stickId = stickOwner[ch.id]
                                 if (stickId != null) {
                                     if (!ch.pressed) {
-                                        stickOwner.remove(ch.id)
-                                        runtime.engine.setTouchStick(stickId, 0f, 0f)
-                                        stickPos.remove(stickId)
-                                        heldSticks = heldSticks - stickId
+                                        dropStick(ch.id)
                                     } else if (ch.position != ch.previousPosition) {
                                         val c = controls.firstOrNull { it.id == stickId }
                                         if (c != null) deflect(c, ch.position)
                                     }
                                 }
+                            }
+                            if (!ch.pressed) {
+                                untrack(ch.id)
+                            } else if (ch.position != ch.previousPosition) {
+                                fingers[ch.id]?.let { track(ch.id, it, ch.position, at, landing = false) }
                             }
                             ch.consume()
                         }
@@ -1101,6 +1254,7 @@ private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>)
             is InputSource.TouchSwipe -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             is InputSource.TouchRelease -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             is InputSource.TouchDoubleTap -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
+            is InputSource.TouchArea -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             else -> null
         }
     }
@@ -1292,6 +1446,40 @@ private fun ControlSettingsPanel(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                        }
+                    }
+                    if (InputSource.TouchArea(control.id, TouchAreaKind.ZONE) in workspace.mappings.map { it.source }) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Zone interrupts", style = MaterialTheme.typography.labelLarge)
+                                Text(
+                                    "A finger that slides into the zone stops what it was doing (cursor, stick, " +
+                                        "another button). One landing on the zone but on no other control moves no cursor.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = control.zoneInterrupt,
+                                onCheckedChange = { onControlChange(current.copy(zoneInterrupt = it)) },
+                            )
+                        }
+                        if (control.zoneInterrupt) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Resume on exit", style = MaterialTheme.typography.labelLarge)
+                                    Text(
+                                        "Leaving the zone, the finger goes back to what it was doing. Off: it does " +
+                                            "nothing more until it lifts.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Switch(
+                                    checked = control.zoneResume,
+                                    onCheckedChange = { onControlChange(current.copy(zoneResume = it)) },
+                                )
+                            }
                         }
                     }
                     if (control.kind == TouchKind.BUTTON) {

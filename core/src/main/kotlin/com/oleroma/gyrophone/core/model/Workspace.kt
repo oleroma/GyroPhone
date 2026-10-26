@@ -90,4 +90,5 @@ data class AttachedPad(
 /** Touch-control sources live in a workspace; everything else belongs to an attached pad. */
 val InputSource.isTouch: Boolean
     get() = this is InputSource.Touch || this is InputSource.TouchStick || this is InputSource.TouchStickDiagonal ||
-        this is InputSource.TouchSwipe || this is InputSource.TouchRelease || this is InputSource.TouchDoubleTap
+            this is InputSource.TouchSwipe || this is InputSource.TouchRelease || this is InputSource.TouchDoubleTap ||
+            this is InputSource.TouchArea
