@@ -281,6 +281,16 @@ class GamepadRuntime(context: Context) {
         _capsuleOrder.value = order
     }
 
+    /** A small persisted editor UI state (pane split, card order, recent targets, open sections). */
+    fun uiPref(key: String): String? = prefs.getString(KEY_UI_PREFIX + key, null)
+
+    /** Stores [uiPref] [key]; null removes it. */
+    fun setUiPref(key: String, value: String?) {
+        val edit = prefs.edit()
+        if (value == null) edit.remove(KEY_UI_PREFIX + key) else edit.putString(KEY_UI_PREFIX + key, value)
+        edit.apply()
+    }
+
     /** Plays [feel] once on the phone, connected or not (the "Try" buttons). */
     fun previewHaptic(feel: HapticFeel, held: Boolean) = haptics.preview(feel, held)
 
@@ -647,6 +657,7 @@ class GamepadRuntime(context: Context) {
         private const val KEY_START_FULLSCREEN = "start_fullscreen"
         private const val KEY_CORNER_AUTO_HIDE = "corner_auto_hide"
         private const val KEY_CAPSULE_ORDER = "capsule_order"
+        private const val KEY_UI_PREFIX = "ui."
         private const val KEY_BIAS_X = "gyro_bias_x"
         private const val KEY_BIAS_Y = "gyro_bias_y"
         private const val KEY_BIAS_Z = "gyro_bias_z"

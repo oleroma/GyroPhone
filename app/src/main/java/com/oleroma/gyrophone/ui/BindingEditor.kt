@@ -301,7 +301,7 @@ fun TargetPickerDialog(
  * one of its own, and the step size. [onOk] gets the configured target; [onCancel] goes back.
  */
 @Composable
-private fun HapticTargetDialog(
+internal fun HapticTargetDialog(
     start: OutputTarget,
     runtime: GamepadRuntime,
     onOk: (OutputTarget) -> Unit,
@@ -534,7 +534,7 @@ private fun TargetCell(target: OutputTarget, mapped: Boolean, onClick: () -> Uni
  * forwards them to the same listener.
  */
 @Composable
-private fun KeyCapturePanel(
+internal fun KeyCapturePanel(
     runtime: GamepadRuntime,
     onKey: (OutputTarget) -> Unit,
     onCancel: () -> Unit,
