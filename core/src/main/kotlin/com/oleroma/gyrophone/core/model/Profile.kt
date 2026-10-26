@@ -303,6 +303,14 @@ data class TouchpadSettings(
     val mapped: Boolean = false,
     /** Release mappings fire only after a touch shorter than this (ms); 0 = after every touch. */
     val releaseTapMs: Int = 0,
+    /**
+     * One-finger cursor: travel from the touch-down point (along the one axis when only one is
+     * mapped to the cursor) before the cursor moves, in dp; 0 = off. Past it, the cursor makes up
+     * the travel it held back over [catchUpMs].
+     */
+    val cursorDeadzoneDp: Float = 0f,
+    /** How long the cursor takes to make up the deadzone's travel, in ms; 0 = in one jump. */
+    val catchUpMs: Int = 80,
 ) {
     fun gesturesFor(fingers: Int): FingerGestures = if (fingers >= 4) gestures4 else gestures3
 
@@ -312,6 +320,8 @@ data class TouchpadSettings(
         const val MIN_GLIDE_MS = 100f
         const val MAX_GLIDE_MS = 1000f
         const val MAX_RELEASE_TAP_MS = 1000
+        const val MAX_CURSOR_DEADZONE_DP = 80f
+        const val MAX_CATCH_UP_MS = 500
     }
 }
 

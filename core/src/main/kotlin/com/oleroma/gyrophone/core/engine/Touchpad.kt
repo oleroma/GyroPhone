@@ -134,6 +134,16 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     private var levelY = 0f
     private var swiped = false
     private var scrolled = false
+    // Cursor deadzone (one-finger MOVE): the cursor holds still until the travel passes it, then
+    // makes up the travel it held back ([catchX], [catchY] px) over the catch-up time.
+    private var dzHolding = false
+    private var catching = false
+    private var catchX = 0f
+    private var catchY = 0f
+    private var catchSent = 0f
+    private var catchT0 = 0L
+    private var catchLastNs = 0L
+    private var catchMotion: SurfaceMap.Motion? = null
     // Pinch: finger distance at its start (px) and the level (-1..1, apart = positive).
     private var pinchStart = 0f
     private var pinchLevel = 0f
@@ -491,6 +501,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         if (qSize > 0) d = visibleSince + minPulseNanos
         if (kSize > 0) d = min(d, max(kVisibleSince, lastZoomNs) + minPulseNanos)
         if (gliding) d = min(d, glideNs + GLIDE_STEP_NS)
+        if (catching) d = min(d, catchLastNs + GLIDE_STEP_NS)
         when (state) {
             State.TAP_WAIT -> d = min(d, tapDeadline)
             State.SCROLL_LIFT -> d = min(d, liftNs + LIFT_WINDOW_NS)
@@ -501,6 +512,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
 
     private fun advance(now: Long) {
         if (gliding) glide(now)
+        if (catching) catchUp(now)
         when (state) {
             State.TAP_WAIT -> if (now >= tapDeadline) { set(1, SurfaceInput.TAP_DRAG, false); state = State.IDLE }
             // Tap then hold without moving: drag, the button is already held.
@@ -581,6 +593,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         phaseN = n
         swiped = false; scrolled = false
         phaseX = downCentroidX(); phaseY = downCentroidY()
+        dzHolding = n == 1 && state == State.MOVE && settings.cursorDeadzoneDp > 0f && map.motion[0].cursor
         wheelRem = 0f; hwheelRem = 0f
         velX = 0f; velY = 0f; velAccX = 0f; velAccY = 0f; velSinceNs = eventNs
         route(n, centroidX() - phaseX, centroidY() - phaseY, now, eventNs)
@@ -595,6 +608,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
 
     /** The motion ends: its held directions let go, its levels go back to 0, app switching ends. */
     private fun endPhase() {
+        dzHolding = false
         val n = phaseN
         if (n in 1..4) for (i in DIR_HOLDS) set(n, i, false)
         phaseN = 0
@@ -610,7 +624,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     private fun route(n: Int, sdx: Float, sdy: Float, now: Long, eventNs: Long) {
         if (n !in 1..4) return
         val m = map.motion[n - 1]
-        if (m.cursor) emit(run, sdx, sdy, eventNs, m)
+        if (m.cursor) {
+            if (dzHolding) passDeadzone(m, now, eventNs) else emit(run, sdx, sdy, eventNs, m)
+        }
         if (m.scroll) scrollStep(sdx, sdy, now, eventNs, m)
         val tx = (centroidX() - phaseX) / pxPerDp
         val ty = (centroidY() - phaseY) / pxPerDp
@@ -640,6 +656,50 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         } else if (scrubbing) {
             scrub()
         }
+    }
+
+    /**
+     * Held in the cursor deadzone: once the travel from the touch-down point (along the one
+     * axis mapped to the cursor, else in any direction) passes it, the cursor starts following
+     * and makes up all the travel so far over the catch-up time.
+     */
+    private fun passDeadzone(m: SurfaceMap.Motion, now: Long, eventNs: Long) {
+        val tx = centroidX() - phaseX
+        val ty = centroidY() - phaseY
+        val usesX = m.cxx != 0f || m.cyx != 0f
+        val usesY = m.cxy != 0f || m.cyy != 0f
+        val d = when {
+            usesX && usesY -> sqrt(tx * tx + ty * ty)
+            usesX -> abs(tx)
+            else -> abs(ty)
+        }
+        if (d / pxPerDp < settings.cursorDeadzoneDp.coerceAtMost(TouchpadSettings.MAX_CURSOR_DEADZONE_DP)) return
+        dzHolding = false
+        run.start(eventNs)
+        catching = true
+        catchX = tx; catchY = ty; catchSent = 0f
+        catchT0 = now; catchLastNs = now
+        catchMotion = m
+        catchUp(now)
+    }
+
+    /** Sends the share of the held-back travel due by [now] (no acceleration: it is not finger speed). */
+    private fun catchUp(now: Long) {
+        val m = catchMotion ?: return
+        val dur = settings.catchUpMs.coerceIn(0, TouchpadSettings.MAX_CATCH_UP_MS) * 1_000_000L
+        val f = if (dur <= 0L) 1f else ((now - catchT0).toFloat() / dur).coerceIn(0f, 1f)
+        val step = f - catchSent
+        catchSent = f
+        catchLastNs = now
+        if (step > 0f) {
+            val inX = catchX * step / pxPerDp * settings.sensitivity
+            val inY = catchY * step / pxPerDp * settings.verticalSensitivity
+            val fx = m.cxx * inX + m.cxy * inY + run.remX
+            val ix = fx.toInt(); run.remX = fx - ix; dx += ix
+            val fy = m.cyx * inX + m.cyy * inY + run.remY
+            val iy = fy.toInt(); run.remY = fy - iy; dy += iy
+        }
+        if (f >= 1f) { catching = false; catchMotion = null }
     }
 
     /** One step of motion mapped to the wheel; the velocity (for a fling) is timed by [eventNs]. */
@@ -816,6 +876,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         want0 = vis0; want1 = vis1
         phaseN = 0; levelX = 0f; levelY = 0f; pinchLevel = 0f
         scrubbing = false; scrolled = false; touchMax = 0
+        dzHolding = false; catching = false; catchMotion = null
     }
 
     /**

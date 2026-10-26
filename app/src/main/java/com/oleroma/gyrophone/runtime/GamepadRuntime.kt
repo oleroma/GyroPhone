@@ -19,6 +19,7 @@ import com.oleroma.gyrophone.core.model.PadPreset
 import com.oleroma.gyrophone.core.model.PadPresets
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.GyroMode
+import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.WorkspaceSet
@@ -156,6 +157,9 @@ class GamepadRuntime(context: Context) {
     /** State of the active link. */
     val linkState: StateFlow<LinkState> = _linkState
 
+    /** Plays the engine's haptic mappings while a PC is connected. */
+    private val haptics = PhoneHaptics(appContext) { _linkState.value is LinkState.Connected }
+
     @Volatile private var running = false
 
     private val active: OutputLink get() = link(_transport.value)
@@ -214,6 +218,7 @@ class GamepadRuntime(context: Context) {
     @Volatile var keyLearnListener: ((androidKeyCode: Int) -> Unit)? = null
 
     init {
+        engine.hapticSink = haptics
         hid.reportProvider = { id ->
             when (id) {
                 HidDescriptor.REPORT_ID_GAMEPAD -> pump.lastGamepadReport
@@ -275,6 +280,9 @@ class GamepadRuntime(context: Context) {
         prefs.edit().putString(KEY_CAPSULE_ORDER, order).apply()
         _capsuleOrder.value = order
     }
+
+    /** Plays [feel] once on the phone, connected or not (the "Try" buttons). */
+    fun previewHaptic(feel: HapticFeel, held: Boolean) = haptics.preview(feel, held)
 
     fun setPadShown(shown: Boolean) { padShown = shown; updateInputAllowed() }
 

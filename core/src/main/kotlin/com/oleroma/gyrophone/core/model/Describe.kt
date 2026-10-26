@@ -38,6 +38,24 @@ object Describe {
         OutputTarget.GyroPause -> "Ratchet (flip gyro while held)"
         OutputTarget.SwitchApps -> "Switch apps (Alt+Tab)"
         OutputTarget.Zoom -> "Zoom (Ctrl + wheel)"
+        is OutputTarget.Haptic -> (if (t.held) "Haptic while held" else "Haptic tick") + feel(t.feel)
+        is OutputTarget.HapticStep -> "Haptic per ${t.percent} % step" + feel(t.feel)
+    }
+
+    fun isHaptic(t: OutputTarget): Boolean = t is OutputTarget.Haptic || t is OutputTarget.HapticStep
+
+    /** ", system strong", ", custom 120 · 20 ms" or "" for the workspace's feel. */
+    fun feel(f: HapticFeel?): String = when {
+        f == null -> ""
+        f.system -> ", system " + systemLevel(f.strength).lowercase()
+        else -> ", custom ${f.strength} · ${f.lengthMs} ms"
+    }
+
+    /** Light / Medium / Strong: the system click effect a strength picks. */
+    fun systemLevel(strength: Int): String = when {
+        strength < 86 -> "Light"
+        strength < 171 -> "Medium"
+        else -> "Strong"
     }
 
     private fun half(h: AxisHalf) = when (h) {
@@ -83,6 +101,8 @@ object Describe {
         OutputTarget.GyroPause -> "Ratchet"
         OutputTarget.SwitchApps -> "Alt+Tab"
         OutputTarget.Zoom -> "Zoom"
+        is OutputTarget.Haptic -> if (t.held) "Buzz held" else "Buzz"
+        is OutputTarget.HapticStep -> "Buzz ${t.percent}%"
     }
 
     private val keyboardOrder: List<Int> = buildList {
@@ -108,6 +128,7 @@ object Describe {
         "Mouse" to MouseButton.entries.map { OutputTarget.Mouse(it) } + listOf(OutputTarget.Wheel(1), OutputTarget.Wheel(-1)),
         "Mouse motion" to MouseMotion.entries.flatMap { listOf(OutputTarget.MouseAxis(it), OutputTarget.MouseAxis(it, -1f)) },
         "Gyro" to listOf(OutputTarget.GyroPause, OutputTarget.GyroToggle),
+        "Phone" to listOf(OutputTarget.Haptic(held = false), OutputTarget.Haptic(held = true), OutputTarget.HapticStep()),
         "Keyboard" to (keyboardOrder.filter { it in HidUsage.names } + HidUsage.names.keys.sorted())
             .distinct().map { OutputTarget.Key(it) },
     )
@@ -126,9 +147,10 @@ object Describe {
      * [extra]: targets only this input offers (switching apps, zoom), in a group of their own.
      */
     fun pickerGroups(analog: Boolean, swipe: Boolean, extra: List<OutputTarget> = emptyList()): List<Pair<String, List<OutputTarget>>> {
+        // Haptics follow any input.
         val allowed: (OutputTarget) -> Boolean = when {
-            swipe -> { t -> t is OutputTarget.MouseAxis || t is OutputTarget.PadAxis }
-            analog -> { t -> t is OutputTarget.PadAxis }
+            swipe -> { t -> t is OutputTarget.MouseAxis || t is OutputTarget.PadAxis || isHaptic(t) }
+            analog -> { t -> t is OutputTarget.PadAxis || isHaptic(t) }
             else -> { t -> t !is OutputTarget.MouseAxis }
         }
         val groups = targetGroups.map { (name, list) -> name to list.filter(allowed) }.filter { it.second.isNotEmpty() }

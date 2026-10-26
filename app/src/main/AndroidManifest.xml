@@ -25,6 +25,8 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <!-- WIFI_MODE_FULL_LOW_LATENCY lock while a Wi-Fi session is live. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Haptic mappings (OutputTarget.Haptic) buzz the phone. Normal permission. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- TODO(target 37 / Android 17): LAN access will need the local-network runtime permission,
          expected to be android.permission.ACCESS_LOCAL_NETWORK. Verify the name before targeting 37. -->
 

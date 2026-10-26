@@ -193,6 +193,19 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
     }
 
     HorizontalDivider()
+    Text("Haptics", style = MaterialTheme.typography.titleSmall)
+    Text(
+        "How haptic mappings without a feel of their own feel. They only play while a PC is connected.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    HapticFeelEditor(
+        ws.haptics,
+        held = false,
+        onChange = { f -> editWs { it.copy(haptics = f) } },
+        onTry = { runtime.previewHaptic(ws.haptics, false) },
+    )
+
+    HorizontalDivider()
     Text("Touchpad (empty pad area)", style = MaterialTheme.typography.titleSmall)
     val tp = ws.touchpad
     SwitchRow("Enabled", tp.enabled) { v -> editWs { it.copy(touchpad = it.touchpad.copy(enabled = v)) } }
@@ -250,6 +263,32 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
         "Touchpad Release mappings fire only after a touch shorter than this. Off: after every touch.",
         style = MaterialTheme.typography.bodySmall,
     )
+    var tpDeadzone by remember(key) { mutableStateOf(tp.cursorDeadzoneDp) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            if (tpDeadzone < 1f) "Cursor deadzone: off" else "Cursor deadzone %.0f dp".format(tpDeadzone),
+            Modifier.padding(end = 8.dp),
+        )
+        Slider(value = tpDeadzone, onValueChange = { tpDeadzone = it.roundToInt().toFloat() },
+            valueRange = 0f..TouchpadSettings.MAX_CURSOR_DEADZONE_DP,
+            onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(cursorDeadzoneDp = tpDeadzone)) } })
+    }
+    Text(
+        "One finger: the cursor stays still until the finger has moved this far, then catches up with it.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    if (tp.cursorDeadzoneDp > 0f) {
+        var tpCatchUp by remember(key) { mutableStateOf(tp.catchUpMs.toFloat()) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (tpCatchUp < 1f) "Catch-up: instant" else "Catch-up %.0f ms".format(tpCatchUp),
+                Modifier.padding(end = 8.dp),
+            )
+            Slider(value = tpCatchUp, onValueChange = { tpCatchUp = (it / 10f).roundToInt() * 10f },
+                valueRange = 0f..TouchpadSettings.MAX_CATCH_UP_MS.toFloat(),
+                onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(catchUpMs = tpCatchUp.roundToInt())) } })
+        }
+    }
 
     // Taps and gestures are mappings; edits go to the workspace's mapping profile.
     Text("Touchpad mappings", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp))

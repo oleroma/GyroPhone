@@ -13,6 +13,7 @@ import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.GamepadButton
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MouseMotion
@@ -289,6 +290,25 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private val eventsBefore = HashSet<OutputTarget>()
     private val eventsAfter = HashSet<OutputTarget>()
 
+    // Haptic mappings with their source's value (0..1) in the last snapshot and this one, the
+    // step each per-step one was at, and what [snapshot] hands the sink.
+    private var hapticWas = HashMap<Mapping, Float>()
+    private var hapticNow = HashMap<Mapping, Float>()
+    private val hapticSteps = HashMap<Mapping, Int>()
+    private val hapticTicks = ArrayList<HapticFeel>()
+    private var hapticHeld: HapticFeel? = null
+    private var hapticLevel = 0f
+    private var hapticDue = false
+
+    /**
+     * Gets the haptic targets ([OutputTarget.Haptic], [OutputTarget.HapticStep]) from each
+     * [snapshot], on the pump's thread and outside the engine lock: ticks since the last snapshot
+     * and the held feel (null = none) with its level (0..1, how far an axis is pushed). It is
+     * called while something is held (so it can keep vibrating), on a tick, and once when a hold
+     * ends. The list is reused: read it during the call only.
+     */
+    @Volatile var hapticSink: HapticSink? = null
+
     init { applyWorkspace() }
 
     /**
@@ -355,6 +375,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         anyDevice.clear()
         touches.clear(); setTouchHeld.clear(); touchSticks.clear(); swipeLevels.clear()
         for (a in areas) a.clear()
+        hapticWas.clear(); hapticNow.clear(); hapticSteps.clear()
         bpState.fill(BP_FREE); bpControl.fill(null)
         pulses.clear(); latches.clear(); chorded.clear()
         for (t in tapList) {
@@ -830,6 +851,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (i in pulses.indices) d = min(d, pulses[i].startNs + touchpad.minPulseNanos)
         for (i in tapList.indices) d = min(d, tapDeadline(tapList[i]))
         for (a in areas) for ((id, t) in a.late) if (id in a.seen) d = min(d, t + touchpad.minPulseNanos)
+        // A held haptic is renewed from snapshots, so they keep coming while it is held.
+        if (hapticHeld != null) d = min(d, clock() + HAPTIC_RENEW_NS)
         d
     }
 
@@ -890,7 +913,16 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * pressed or released since the last snapshot shows its edge here even if it already flipped
      * back, so only the pumps may call this (OutputLink).
      */
-    fun snapshot(): HidState = synchronized(lock) {
+    fun snapshot(): HidState {
+        val s = synchronized(lock) { snapshotLocked() }
+        if (hapticDue) {
+            hapticDue = false
+            hapticSink?.haptics(hapticTicks, hapticHeld, hapticLevel)
+        }
+        return s
+    }
+
+    private fun snapshotLocked(): HidState {
         val now = clock()
         resolveIfDue(now)
 
@@ -901,7 +933,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         // engages a wheel or gyro toggle fires it.
         var padButtons = 0
         if (touchpad.queued) firingEvents(now) { padButtons = touchpad.poll(now) } else padButtons = touchpad.poll(now)
+        hapticNow.clear()
         forEachGroup { ms, dev -> accumulate(ms, dev) }
+        collectHaptics()
         for (i in deviceList.indices) deviceList[i].shownInSnapshot()
         anyDevice.shownInSnapshot()
         for (i in pulses.indices) pulses[i].seen = true
@@ -950,7 +984,50 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         )
         mouseDx = 0; mouseDy = 0; wheel = 0; hwheel = 0
         touchpad.drainMotion()
-        HidState(gamepad, KeyboardState(modifiers, array), mouse, all ?: array)
+        return HidState(gamepad, KeyboardState(modifiers, array), mouse, all ?: array)
+    }
+
+    /**
+     * Haptics of this snapshot: a tick that crossed half since the last one, a per-step one that
+     * moved to another step, and the held one pushed furthest (by strength × level).
+     */
+    private fun collectHaptics() {
+        hapticTicks.clear()
+        var held: HapticFeel? = null
+        var level = 0f
+        for ((m, v) in hapticNow) {
+            when (val t = m.target) {
+                is OutputTarget.Haptic -> {
+                    val feel = t.feel ?: ws.haptics
+                    if (t.held) {
+                        if (held == null || feel.strength * v > held.strength * level) { held = feel; level = v }
+                    } else if (v >= PRESS_THRESHOLD && (hapticWas[m] ?: 0f) < PRESS_THRESHOLD) {
+                        hapticTicks.add(feel)
+                    }
+                }
+                is OutputTarget.HapticStep -> {
+                    val pct = t.percent.coerceIn(OutputTarget.HapticStep.MIN_STEP_PERCENT, OutputTarget.HapticStep.MAX_STEP_PERCENT)
+                    val step = (v * 100f / pct + 1e-3f).toInt()
+                    if (step != (hapticSteps.put(m, step) ?: 0)) hapticTicks.add(t.feel ?: ws.haptics)
+                }
+                else -> Unit
+            }
+        }
+        // Per-step ones back at 0 since the last snapshot tick on the way down too.
+        if (hapticSteps.isNotEmpty()) {
+            val it = hapticSteps.entries.iterator()
+            while (it.hasNext()) {
+                val e = it.next()
+                if (e.key !in hapticNow) {
+                    if (e.value != 0) hapticTicks.add((e.key.target as OutputTarget.HapticStep).feel ?: ws.haptics)
+                    it.remove()
+                }
+            }
+        }
+        hapticDue = hapticTicks.isNotEmpty() || held != null || hapticHeld != null
+        hapticHeld = held
+        hapticLevel = level
+        val w = hapticWas; hapticWas = hapticNow; hapticNow = w
     }
 
     /** Adds one source group's outputs; its stick axes sum, then merge by largest deflection. */
@@ -991,6 +1068,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 is OutputTarget.Wheel, is OutputTarget.MouseAxis,
                 OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause,
                 OutputTarget.SwitchApps, OutputTarget.Zoom -> Unit
+                is OutputTarget.Haptic, is OutputTarget.HapticStep -> {
+                    val a = min(1f, abs(v))
+                    if (a > HAPTIC_MIN_LEVEL) hapticNow[m] = max(a, hapticNow[m] ?: 0f)
+                }
             }
         }
         for (a in 0 until 4) if (abs(groupStick[a]) > abs(stick[a])) stick[a] = groupStick[a]
@@ -1307,6 +1388,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     companion object {
         const val PRESS_THRESHOLD = 0.5f
+        /** A held haptic is renewed at least this often (see [hapticSink]). */
+        const val HAPTIC_RENEW_NS = 100_000_000L
+        /** A source at or under this counts as not engaging its haptics (an axis at rest). */
+        const val HAPTIC_MIN_LEVEL = 0.02f
 
         private const val DIR_RIGHT = 1
         private const val DIR_DOWN = 2

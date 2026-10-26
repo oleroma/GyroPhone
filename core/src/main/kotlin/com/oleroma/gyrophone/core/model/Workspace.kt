@@ -40,6 +40,8 @@ data class Workspace(
     val mappingProfileId: String? = null,
     /** Physical keyboard mappings; like [mappings], only in a resolved set. */
     val keyboard: List<Mapping> = emptyList(),
+    /** How haptic targets without a feel of their own feel ([OutputTarget.Haptic]). */
+    val haptics: HapticFeel = HapticFeel(),
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =

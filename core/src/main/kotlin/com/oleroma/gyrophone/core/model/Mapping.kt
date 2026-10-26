@@ -173,7 +173,41 @@ sealed interface OutputTarget {
     /** Zoom from a surface's Pinch: Ctrl + wheel, spreading apart zooms in. */
     @Serializable @SerialName("zoom")
     data object Zoom : OutputTarget
+
+    /**
+     * The phone vibrates (only while a PC is connected): a tick when the source engages, or
+     * while it is [held] (an axis: stronger the further it is pushed). [feel] null = the
+     * workspace's ([Workspace.haptics]).
+     */
+    @Serializable @SerialName("haptic")
+    data class Haptic(val held: Boolean = false, val feel: HapticFeel? = null) : OutputTarget
+
+    /**
+     * A haptic tick each time the source's value crosses a step of [percent] % (detents along an
+     * axis; a button ticks on press and release). [feel] as in [Haptic].
+     */
+    @Serializable @SerialName("haptic_step")
+    data class HapticStep(val percent: Int = DEFAULT_STEP_PERCENT, val feel: HapticFeel? = null) : OutputTarget {
+        companion object {
+            const val DEFAULT_STEP_PERCENT = 10
+            const val MIN_STEP_PERCENT = 2
+            const val MAX_STEP_PERCENT = 50
+        }
+    }
 }
 
 @Serializable
 data class Mapping(val source: InputSource, val target: OutputTarget)
+
+/**
+ * How a haptic target feels. [system]: Android's own click effects (they follow the phone's
+ * touch feedback setting), [strength] picking light / medium / strong; else the motor at
+ * [strength] (1..255). [lengthMs]: a tick's length (custom only).
+ */
+@Serializable
+data class HapticFeel(val system: Boolean = true, val strength: Int = 160, val lengthMs: Int = 20) {
+    companion object {
+        const val MIN_LENGTH_MS = 5
+        const val MAX_LENGTH_MS = 200
+    }
+}
