@@ -72,6 +72,14 @@ data class TouchControl(
      * then never presses). Off: the press is instant, and a double tap also presses twice.
      */
     val doubleTapWaits: Boolean = false,
+    /**
+     * Zone mapping ([TouchAreaKind.ZONE]): a finger that slides in from elsewhere stops what it
+     * was doing (cursor, stick, another button) while it is in the zone, and one that lands on
+     * the zone but on no other control starts no cursor.
+     */
+    val zoneInterrupt: Boolean = false,
+    /** With [zoneInterrupt]: the stopped job resumes when the finger leaves (off: stopped until it lifts). */
+    val zoneResume: Boolean = false,
 ) {
     /** In swipe mode: a button with [swipe] on and click-through off. */
     val swipes: Boolean get() = kind == TouchKind.BUTTON && swipe && !clickThrough

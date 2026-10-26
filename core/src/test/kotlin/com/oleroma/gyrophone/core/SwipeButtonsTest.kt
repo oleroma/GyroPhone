@@ -131,9 +131,9 @@ class SwipeButtonsTest {
     @Test
     fun clickThroughTurnsSwipeModeOff() {
         val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, swipe = true)
-        assertEquals(9, Bindings.touchInputs(b).size)
-        assertEquals(3, Bindings.touchInputs(b.copy(clickThrough = true)).size)
-        assertEquals(3, Bindings.touchInputs(b.copy(swipe = false)).size)
+        assertEquals(11, Bindings.touchInputs(b).size)
+        assertEquals(5, Bindings.touchInputs(b.copy(clickThrough = true)).size)
+        assertEquals(5, Bindings.touchInputs(b.copy(swipe = false)).size)
     }
 
     @Test

@@ -22,6 +22,7 @@ import com.oleroma.gyrophone.core.model.RatchetAxes
 import com.oleroma.gyrophone.core.model.StickAxis
 import com.oleroma.gyrophone.core.model.StickDiagonal
 import com.oleroma.gyrophone.core.model.StickZones
+import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Workspace
@@ -237,6 +238,23 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private class Pulse(val id: String, val startNs: Long) { var seen = false }
     private val pulses = ArrayList<Pulse>()
 
+    /**
+     * Held [InputSource.TouchArea]s of one kind, set by the pad screen ([setTouchArea]). One let go
+     * before a snapshot showed it for the minimum pulse stays held in [late] until one has, so a
+     * finger sliding quickly across a zone still presses it.
+     */
+    private class AreaHolds {
+        /** Held ids with the time they went on. */
+        val since = HashMap<String, Long>()
+        /** Ids a snapshot has shown since they went on. */
+        val seen = HashSet<String>()
+        /** Let go too soon: id to the time it went on. */
+        val late = HashMap<String, Long>()
+        fun held(id: String) = since.containsKey(id) || late.containsKey(id)
+        fun clear() { since.clear(); seen.clear(); late.clear() }
+    }
+    private val areas = Array(TouchAreaKind.entries.size) { AreaHolds() }
+
     /** Sticky-modifier state of a modifier control. */
     private class Latch { var state = LATCH_NONE; var tapNs = 0L }
     private val latches = HashMap<String, Latch>()
@@ -331,6 +349,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (d in deviceList) d.clear()
         anyDevice.clear()
         touches.clear(); setTouchHeld.clear(); touchSticks.clear(); swipeLevels.clear()
+        for (a in areas) a.clear()
         bpState.fill(BP_FREE); bpControl.fill(null)
         pulses.clear(); latches.clear(); chorded.clear()
         for (t in tapList) {
@@ -623,10 +642,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         out
     }
 
-    /** Touch controls currently pressed (including by touchpad-over-buttons commits), for highlighting. */
+    /** Touch controls currently pressed (including by touchpad-over-buttons commits and zones), for highlighting. */
     fun pressedTouches(): Set<String> = synchronized(lock) {
         resolveIfDue(clock())
-        HashSet(touches.keys)
+        val out = HashSet(touches.keys)
+        val zone = areas[TouchAreaKind.ZONE.ordinal]
+        out.addAll(zone.since.keys); out.addAll(zone.late.keys)
+        out
     }
 
     /**
@@ -664,6 +686,34 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                     if (id in modifierIds) modifierUp(id, now - t < BUTTON_HOLD_NS, now)
                 }
             }
+        }
+        onChange?.run()
+    }
+
+    /**
+     * Holds or lets go [InputSource.TouchArea] ([id], [kind]): the pad screen tracks where fingers
+     * are and calls this on each change. A hold shorter than the minimum pulse is stretched.
+     */
+    fun setTouchArea(id: String, kind: TouchAreaKind, held: Boolean) {
+        synchronized(lock) {
+            val now = clock()
+            firingEvents(now) {
+                val a = areas[kind.ordinal]
+                if (held) {
+                    if (!a.since.containsKey(id)) a.since[id] = a.late.remove(id) ?: now
+                } else {
+                    val t = a.since.remove(id) ?: return@firingEvents
+                    if (id !in a.seen || now - t < touchpad.minPulseNanos) a.late[id] = t else a.seen.remove(id)
+                }
+            }
+        }
+        onChange?.run()
+    }
+
+    /** Lets go every [InputSource.TouchArea] at once (pad left, layout changed), without pulses. */
+    fun touchAreasCancel() {
+        synchronized(lock) {
+            firingEvents(clock()) { for (a in areas) a.clear() }
         }
         onChange?.run()
     }
@@ -774,6 +824,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         var d = touchpad.nextDeadline()
         for (i in pulses.indices) d = min(d, pulses[i].startNs + touchpad.minPulseNanos)
         for (i in tapList.indices) d = min(d, tapDeadline(tapList[i]))
+        for (a in areas) for ((id, t) in a.late) if (id in a.seen) d = min(d, t + touchpad.minPulseNanos)
         d
     }
 
@@ -845,6 +896,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (i in deviceList.indices) deviceList[i].shownInSnapshot()
         anyDevice.shownInSnapshot()
         for (i in pulses.indices) pulses[i].seen = true
+        for (a in areas) {
+            if (a.since.isNotEmpty()) a.seen.addAll(a.since.keys)
+            if (a.late.isNotEmpty()) a.seen.addAll(a.late.keys)
+        }
         for (i in tapList.indices) {
             val t = tapList[i]
             if (t.delayedNs >= 0) t.delayedSeen = true
@@ -986,8 +1041,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun buttonsDue(now: Long): Boolean {
         for (i in pulses.indices) if (pulseDone(pulses[i], now)) return true
         for (i in tapList.indices) if (now >= tapDeadline(tapList[i])) return true
+        for (a in areas) for ((id, t) in a.late) if (areaDone(a, id, t, now)) return true
         return false
     }
+
+    private fun areaDone(a: AreaHolds, id: String, t: Long, now: Long) = id in a.seen && now - t >= touchpad.minPulseNanos
 
     /** When [t] next changes without input: a waiting press decides, a pulse ends. */
     private fun tapDeadline(t: TapState): Long {
@@ -1054,6 +1112,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         while (i < pulses.size) {
             val p = pulses[i]
             if (pulseDone(p, now)) { pulses.removeAt(i); release(p.id) } else i++
+        }
+        for (a in areas) {
+            if (a.late.isEmpty()) continue
+            val iter = a.late.entries.iterator()
+            while (iter.hasNext()) {
+                val (id, t) = iter.next()
+                if (areaDone(a, id, t, now)) { iter.remove(); if (!a.since.containsKey(id)) a.seen.remove(id) }
+            }
         }
     }
 
@@ -1170,6 +1236,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         is InputSource.TouchRelease -> if ((tapStates[source.id]?.releaseNs ?: -1L) >= 0) 1f else 0f
         is InputSource.TouchDoubleTap -> if (tapStates[source.id]?.double == true) 1f else 0f
+        is InputSource.TouchArea -> if (areas[source.kind.ordinal].held(source.id)) 1f else 0f
         is InputSource.TouchStick -> {
             val v = touchSticks[source.id]
             when {

@@ -55,9 +55,10 @@ object Bindings {
         setTargets(mappings, input, targets(mappings, input) - target)
 
     /**
-     * Inputs a touch control exposes: BUTTON -> [Touch(id)] (its press), release and double tap, in swipe mode also the swipe X and Y
-     * axes and the four swipe directions; STICK -> X axis, Y axis (analog),
-     * Left, Right, Up, Down (halves), and with 8 zones the four diagonals; FULLSCREEN -> none.
+     * Inputs a touch control exposes: BUTTON -> [Touch(id)] (its press), release, double tap,
+     * outside and zone, in swipe mode also the swipe X and Y axes and the four swipe directions;
+     * STICK -> X axis, Y axis (analog), Left, Right, Up, Down (halves), with 8 zones the four
+     * diagonals, then on touch, outside and zone; FULLSCREEN -> none.
      */
     fun touchInputs(control: TouchControl): List<BindableInput> = when (control.kind) {
         TouchKind.BUTTON -> {
@@ -66,6 +67,8 @@ object Bindings {
                 press,
                 BindableInput("Release", listOf(InputSource.TouchRelease(control.id))),
                 BindableInput("Double tap", listOf(InputSource.TouchDoubleTap(control.id))),
+                area(control, TouchAreaKind.OUTSIDE),
+                area(control, TouchAreaKind.ZONE),
             )
             if (!control.swipes) events else {
                 fun s(axis: StickAxis, half: AxisHalf = AxisHalf.FULL) = listOf(InputSource.TouchSwipe(control.id, axis, half))
@@ -88,12 +91,15 @@ object Bindings {
                 BindableInput("Right", s(StickAxis.X, AxisHalf.POSITIVE)),
                 BindableInput("Up", s(StickAxis.Y, AxisHalf.NEGATIVE)),
                 BindableInput("Down", s(StickAxis.Y, AxisHalf.POSITIVE)),
-            ) + if (control.zones != StickZones.EIGHT) emptyList() else StickDiagonal.entries.map {
+            ) + (if (control.zones != StickZones.EIGHT) emptyList() else StickDiagonal.entries.map {
                 BindableInput(it.label, listOf(InputSource.TouchStickDiagonal(control.id, it)))
-            }
+            }) + TouchAreaKind.entries.map { area(control, it) }
         }
         TouchKind.FULLSCREEN -> emptyList()
     }
+
+    private fun area(control: TouchControl, kind: TouchAreaKind) =
+        BindableInput(kind.label, listOf(InputSource.TouchArea(control.id, kind)))
 
     /** Drops a touch control and all of its mappings (on delete). */
     fun removeTouchControl(workspace: Workspace, id: String): Workspace = workspace.copy(

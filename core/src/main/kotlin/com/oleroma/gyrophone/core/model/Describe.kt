@@ -21,6 +21,7 @@ object Describe {
         is InputSource.TouchSwipe -> "Swipe on ${s.id} ${s.axis}" + half(s.half)
         is InputSource.TouchRelease -> "Touch ${s.id} release"
         is InputSource.TouchDoubleTap -> "Touch ${s.id} double tap"
+        is InputSource.TouchArea -> "Touch ${s.id} ${s.kind.label.lowercase()}"
     }
 
     fun target(t: OutputTarget): String = when (t) {
