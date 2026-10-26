@@ -91,4 +91,16 @@ data class AttachedPad(
 val InputSource.isTouch: Boolean
     get() = this is InputSource.Touch || this is InputSource.TouchStick || this is InputSource.TouchStickDiagonal ||
             this is InputSource.TouchSwipe || this is InputSource.TouchRelease || this is InputSource.TouchDoubleTap ||
-            this is InputSource.TouchArea
+            this is InputSource.TouchArea || this is InputSource.Surface
+
+/** A source of the workspace touchpad ([InputSource.Surface] with no control id). */
+val InputSource.isTouchpad: Boolean
+    get() = this is InputSource.Surface && id.isEmpty()
+
+/**
+ * This workspace with its touchpad mappings: as it is once resolved ([TouchpadSettings.mapped]),
+ * else with the ones its touchpad switches stand for ([Bindings.defaultTouchpadMappings]).
+ */
+fun Workspace.withTouchpadMappings(): Workspace =
+    if (touchpad.mapped) this
+    else copy(mappings = mappings + Bindings.defaultTouchpadMappings(touchpad), touchpad = touchpad.copy(mapped = true))

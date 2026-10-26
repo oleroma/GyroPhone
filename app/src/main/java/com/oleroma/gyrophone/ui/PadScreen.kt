@@ -1134,6 +1134,7 @@ fun PadScreen(
                 val input = Bindings.touchInputs(sel).first()
                 TargetPickerDialog(
                     analog = false,
+                    extra = input.extra,
                     runtime = runtime,
                     current = Bindings.targets(ws.mappings, input),
                     onPick = { t: OutputTarget ->

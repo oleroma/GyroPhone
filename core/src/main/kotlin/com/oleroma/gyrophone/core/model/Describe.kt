@@ -22,6 +22,8 @@ object Describe {
         is InputSource.TouchRelease -> "Touch ${s.id} release"
         is InputSource.TouchDoubleTap -> "Touch ${s.id} double tap"
         is InputSource.TouchArea -> "Touch ${s.id} ${s.kind.label.lowercase()}"
+        is InputSource.Surface -> (if (s.id.isEmpty()) "Touchpad" else "Swipe on ${s.id}") +
+            " ${s.fingers} finger" + (if (s.fingers > 1) "s " else " ") + s.input.label.lowercase()
     }
 
     fun target(t: OutputTarget): String = when (t) {
@@ -34,6 +36,8 @@ object Describe {
         OutputTarget.GyroHold -> "Ratchet (flip gyro while held)"
         OutputTarget.GyroToggle -> "Toggle gyro (swap what a ratchet does)"
         OutputTarget.GyroPause -> "Ratchet (flip gyro while held)"
+        OutputTarget.SwitchApps -> "Switch apps (Alt+Tab)"
+        OutputTarget.Zoom -> "Zoom (Ctrl + wheel)"
     }
 
     private fun half(h: AxisHalf) = when (h) {
@@ -77,6 +81,8 @@ object Describe {
         OutputTarget.GyroHold -> "Ratchet"
         OutputTarget.GyroToggle -> "Gyro ⇄"
         OutputTarget.GyroPause -> "Ratchet"
+        OutputTarget.SwitchApps -> "Alt+Tab"
+        OutputTarget.Zoom -> "Zoom"
     }
 
     private val keyboardOrder: List<Int> = buildList {
@@ -115,13 +121,17 @@ object Describe {
     /** Targets of a swipe axis: mouse motion and scrolling, or a game pad axis (floating stick). */
     val swipeTargets: List<OutputTarget> = allTargets.filter { it is OutputTarget.MouseAxis || it is OutputTarget.PadAxis }
 
-    /** Targets of the picker for [analog] / [swipe] inputs; mouse motion only follows swipes. */
-    fun pickerGroups(analog: Boolean, swipe: Boolean): List<Pair<String, List<OutputTarget>>> {
+    /**
+     * Targets of the picker for [analog] / [swipe] inputs; mouse motion only follows swipes.
+     * [extra]: targets only this input offers (switching apps, zoom), in a group of their own.
+     */
+    fun pickerGroups(analog: Boolean, swipe: Boolean, extra: List<OutputTarget> = emptyList()): List<Pair<String, List<OutputTarget>>> {
         val allowed: (OutputTarget) -> Boolean = when {
             swipe -> { t -> t is OutputTarget.MouseAxis || t is OutputTarget.PadAxis }
             analog -> { t -> t is OutputTarget.PadAxis }
             else -> { t -> t !is OutputTarget.MouseAxis }
         }
-        return targetGroups.map { (name, list) -> name to list.filter(allowed) }.filter { it.second.isNotEmpty() }
+        val groups = targetGroups.map { (name, list) -> name to list.filter(allowed) }.filter { it.second.isNotEmpty() }
+        return if (extra.isEmpty()) groups else listOf("Touchpad" to extra) + groups
     }
 }

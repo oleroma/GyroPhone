@@ -26,6 +26,7 @@ import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Workspace
+import com.oleroma.gyrophone.core.model.withTouchpadMappings
 import java.util.BitSet
 import kotlin.math.PI
 import kotlin.math.abs
@@ -298,7 +299,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** Loads the active workspace and releases everything held. Under the lock. */
     private fun applyWorkspace() {
-        val w = profile.workspace(workspaceIndex)
+        val w = profile.workspace(workspaceIndex).withTouchpadMappings()
         ws = w
         touchMappings = w.mappings
         padMappings = Array(w.pads.size + 1) { if (it < w.pads.size) w.pads[it].mappings else w.keyboard }
@@ -343,6 +344,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         releaseHeld()
         for (d in deviceList) d.pad = resolvePad(d.device)
         touchpad.settings = w.touchpad
+        touchpad.map = SurfaceMap(w.mappings)
         padTouchIds.clear()
         touchpad.cancel(clock())
     }
@@ -895,6 +897,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         accButtons = 0; accMouse = 0
         accUp = false; accDown = false; accLeft = false; accRight = false
         stick.fill(0f); trigger.fill(0f); heldKeys.fill(false)
+        // The touchpad's next input change shows first, so its mappings read it below; one that
+        // engages a wheel or gyro toggle fires it.
+        var padButtons = 0
+        if (touchpad.queued) firingEvents(now) { padButtons = touchpad.poll(now) } else padButtons = touchpad.poll(now)
         forEachGroup { ms, dev -> accumulate(ms, dev) }
         for (i in deviceList.indices) deviceList[i].shownInSnapshot()
         anyDevice.shownInSnapshot()
@@ -910,7 +916,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
 
         // Touchpad gestures (Alt+Tab, Ctrl zoom, Win shortcuts) hold keys like any binding.
-        val padButtons = touchpad.poll(now)
         if (touchpad.key != 0) heldKeys[touchpad.key and 0xFF] = true
         var n = 0
         for (i in 0 until keyOrderSize) {
@@ -982,8 +987,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 is OutputTarget.Key -> if (v >= PRESS_THRESHOLD && t.usage in 0..255) heldKeys[t.usage] = true
                 is OutputTarget.Mouse -> if (v >= PRESS_THRESHOLD) accMouse = accMouse or (1 shl t.button.bit)
                 // Mouse motion follows swipe steps as they come (swipeMove).
+                // Surface motion, switching apps and zoom run in the touchpad (Touchpad.route).
                 is OutputTarget.Wheel, is OutputTarget.MouseAxis,
-                OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause -> Unit
+                OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause,
+                OutputTarget.SwitchApps, OutputTarget.Zoom -> Unit
             }
         }
         for (a in 0 until 4) if (abs(groupStick[a]) > abs(stick[a])) stick[a] = groupStick[a]
@@ -1242,6 +1249,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         is InputSource.TouchRelease -> if ((tapStates[source.id]?.releaseNs ?: -1L) >= 0) 1f else 0f
         is InputSource.TouchDoubleTap -> if (tapStates[source.id]?.double == true) 1f else 0f
         is InputSource.TouchArea -> if (areas[source.kind.ordinal].held(source.id)) 1f else 0f
+        is InputSource.Surface -> if (source.id.isEmpty()) touchpad.level(source.fingers, source.input) else 0f
         is InputSource.TouchStick -> {
             val v = touchSticks[source.id]
             when {

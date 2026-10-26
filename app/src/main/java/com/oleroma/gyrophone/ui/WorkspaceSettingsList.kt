@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.GyroAxes
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroOrientation
@@ -31,6 +32,8 @@ import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.RatchetAxes
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
+import com.oleroma.gyrophone.core.model.isTouchpad
+import com.oleroma.gyrophone.core.model.withTouchpadMappings
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.roundToInt
 
@@ -193,11 +196,6 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
     Text("Touchpad (empty pad area)", style = MaterialTheme.typography.titleSmall)
     val tp = ws.touchpad
     SwitchRow("Enabled", tp.enabled) { v -> editWs { it.copy(touchpad = it.touchpad.copy(enabled = v)) } }
-    SwitchRow("Tap to click", tp.tapToClick) { v -> editWs { it.copy(touchpad = it.touchpad.copy(tapToClick = v)) } }
-    SwitchRow("Tap and drag", tp.tapDrag) { v -> editWs { it.copy(touchpad = it.touchpad.copy(tapDrag = v)) } }
-    SwitchRow("Two-finger scroll", tp.twoFingerScroll) { v ->
-        editWs { it.copy(touchpad = it.touchpad.copy(twoFingerScroll = v)) }
-    }
     SwitchRow("Natural scrolling", tp.naturalScroll) { v ->
         editWs { it.copy(touchpad = it.touchpad.copy(naturalScroll = v)) }
     }
@@ -226,9 +224,6 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
         Slider(value = tpScroll, onValueChange = { tpScroll = it }, valueRange = 0.25f..3f,
             onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(scrollSpeed = tpScroll)) } })
     }
-    SwitchRow("Horizontal scrolling", tp.horizontalScroll) { v ->
-        editWs { it.copy(touchpad = it.touchpad.copy(horizontalScroll = v)) }
-    }
     SwitchRow("Inertia (keeps scrolling after a flick)", tp.inertia) { v ->
         editWs { it.copy(touchpad = it.touchpad.copy(inertia = v)) }
     }
@@ -241,15 +236,43 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
                 onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(inertiaGlideMs = tpGlide)) } })
         }
     }
-    SwitchRow("Pinch to zoom (Ctrl + wheel)", tp.pinchZoom) { v ->
-        editWs { it.copy(touchpad = it.touchpad.copy(pinchZoom = v)) }
+    var tpReleaseTap by remember(key) { mutableStateOf(tp.releaseTapMs.toFloat()) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            if (tpReleaseTap < 1f) "Release tap time: off" else "Release tap time %.0f ms".format(tpReleaseTap),
+            Modifier.padding(end = 8.dp),
+        )
+        Slider(value = tpReleaseTap, onValueChange = { tpReleaseTap = (it / 10f).roundToInt() * 10f },
+            valueRange = 0f..TouchpadSettings.MAX_RELEASE_TAP_MS.toFloat(),
+            onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(releaseTapMs = tpReleaseTap.roundToInt())) } })
     }
-    SwitchRow("3 and 4 finger gestures", tp.gestures) { v ->
-        editWs { it.copy(touchpad = it.touchpad.copy(gestures = v)) }
+    Text(
+        "Touchpad Release mappings fire only after a touch shorter than this. Off: after every touch.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+
+    // Taps and gestures are mappings; edits go to the workspace's mapping profile.
+    Text("Touchpad mappings", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp))
+    val tpMappings = ws.withTouchpadMappings().mappings
+    for (n in 1..4) {
+        Text(
+            if (n == 1) "1 finger" else "$n fingers",
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        TouchMappingList(
+            mappings = tpMappings,
+            inputs = Bindings.surfaceInputs(n),
+            onChange = { list -> editWs { it.copy(mappings = list, touchpad = it.touchpad.copy(mapped = true)) } },
+            runtime = runtime,
+        )
     }
-    if (tp.gestures) {
-        TouchpadGestureList(runtime, tp) { t -> editWs { it.copy(touchpad = t) } }
-    }
+    TextButton(onClick = {
+        editWs { w ->
+            val m = w.withTouchpadMappings()
+            m.copy(mappings = m.mappings.filterNot { it.source.isTouchpad } + Bindings.defaultTouchpadMappings(TouchpadSettings()))
+        }
+    }) { Text("Reset touchpad mappings") }
 }
 
 @Composable

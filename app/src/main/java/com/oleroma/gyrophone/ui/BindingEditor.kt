@@ -131,6 +131,7 @@ fun BindingList(
         TargetPickerDialog(
             analog = input.analog,
             swipe = input.swipe,
+            extra = input.extra,
             runtime = runtime,
             current = Bindings.targets(mappings, input),
             onPick = { picked ->
@@ -207,11 +208,12 @@ fun TargetPickerDialog(
     onDismiss: () -> Unit,
     current: List<OutputTarget> = emptyList(),
     swipe: Boolean = false,
+    extra: List<OutputTarget> = emptyList(),
 ) {
     var query by remember { mutableStateOf("") }
     var capturing by remember { mutableStateOf(false) }
 
-    val groups = remember(analog, swipe) { Describe.pickerGroups(analog, swipe) }
+    val groups = remember(analog, swipe, extra) { Describe.pickerGroups(analog, swipe, extra) }
     val entries = remember(groups, query) {
         val q = query.trim()
         buildList {

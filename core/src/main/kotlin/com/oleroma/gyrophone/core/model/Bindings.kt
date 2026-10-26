@@ -1,5 +1,7 @@
 package com.oleroma.gyrophone.core.model
 
+import com.oleroma.gyrophone.core.hid.HidUsage
+
 /** One remappable input as the editor shows it: a label and the phone-side sources it stands for. */
 data class BindableInput(
     val label: String,
@@ -9,6 +11,8 @@ data class BindableInput(
     val analog: Boolean = false,
     /** A swipe axis: mouse motion and scrolling make sense too ([Describe.swipeTargets]). */
     val swipe: Boolean = false,
+    /** Targets offered only for this input (switching apps, zoom), on top of the usual ones. */
+    val extra: List<OutputTarget> = emptyList(),
 )
 
 /**
@@ -100,6 +104,73 @@ object Bindings {
 
     private fun area(control: TouchControl, kind: TouchAreaKind) =
         BindableInput(kind.label, listOf(InputSource.TouchArea(control.id, kind)))
+
+    /** The surface inputs offered with [fingers] down: taps (double tap and tap-drag with one), moves, swipes, pinch with two. */
+    fun surfaceInputs(fingers: Int, id: String = ""): List<BindableInput> = SurfaceInput.entries.filter { i ->
+        when (i) {
+            SurfaceInput.DOUBLE_TAP, SurfaceInput.TAP_DRAG -> fingers == 1
+            SurfaceInput.PINCH, SurfaceInput.PINCH_IN, SurfaceInput.PINCH_OUT -> fingers == 2
+            else -> true
+        }
+    }.map { i ->
+        val extra = when (i) {
+            SurfaceInput.MOTION_X -> listOf(OutputTarget.SwitchApps)
+            SurfaceInput.PINCH -> listOf(OutputTarget.Zoom)
+            else -> emptyList()
+        }
+        BindableInput(i.label, listOf(InputSource.Surface(fingers, i, id)), analog = i.motion, swipe = i.motion && i != SurfaceInput.PINCH, extra = extra)
+    }
+
+    /**
+     * The touchpad mappings that do what [s]'s switches and 3 / 4 finger gestures did before
+     * touchpad mappings: tap = left click (tap-drag and double tap with tap and drag), one finger
+     * moves the cursor, two-finger tap = right click, two fingers scroll, pinch zooms.
+     */
+    fun defaultTouchpadMappings(s: TouchpadSettings): List<Mapping> = buildList {
+        fun add(n: Int, i: SurfaceInput, t: OutputTarget) = add(Mapping(InputSource.Surface(n, i), t))
+        val left = OutputTarget.Mouse(MouseButton.LEFT)
+        if (s.tapToClick) {
+            if (s.tapDrag) { add(1, SurfaceInput.TAP_DRAG, left); add(1, SurfaceInput.DOUBLE_TAP, left) }
+            else add(1, SurfaceInput.TAP, left)
+            add(2, SurfaceInput.TAP, OutputTarget.Mouse(MouseButton.RIGHT))
+        }
+        add(1, SurfaceInput.MOTION_X, OutputTarget.MouseAxis(MouseMotion.MOVE_X))
+        add(1, SurfaceInput.MOTION_Y, OutputTarget.MouseAxis(MouseMotion.MOVE_Y))
+        if (s.twoFingerScroll) {
+            add(2, SurfaceInput.MOTION_Y, OutputTarget.MouseAxis(MouseMotion.WHEEL))
+            if (s.horizontalScroll) add(2, SurfaceInput.MOTION_X, OutputTarget.MouseAxis(MouseMotion.HWHEEL))
+        }
+        if (s.pinchZoom) add(2, SurfaceInput.PINCH, OutputTarget.Zoom)
+        if (!s.gestures) {
+            // Without gestures, three and four fingers tapped a middle click.
+            if (s.tapToClick) for (n in 3..4) add(n, SurfaceInput.TAP, OutputTarget.Mouse(MouseButton.MIDDLE))
+            return@buildList
+        }
+        for (n in 3..4) {
+            val g = s.gesturesFor(n)
+            if (s.tapToClick) for (t in gestureTargets(g.tap)) add(n, SurfaceInput.TAP, t)
+            val switches = g.swipeLeft == GestureAction.SwitchApps || g.swipeRight == GestureAction.SwitchApps
+            if (switches) add(n, SurfaceInput.MOTION_X, OutputTarget.SwitchApps)
+            for ((input, action) in listOf(
+                SurfaceInput.SWIPE_UP to g.swipeUp, SurfaceInput.SWIPE_DOWN to g.swipeDown,
+                SurfaceInput.SWIPE_LEFT to g.swipeLeft, SurfaceInput.SWIPE_RIGHT to g.swipeRight,
+            )) {
+                val sideways = input == SurfaceInput.SWIPE_LEFT || input == SurfaceInput.SWIPE_RIGHT
+                if (sideways && action == GestureAction.SwitchApps) continue
+                for (t in gestureTargets(action)) add(n, input, t)
+            }
+        }
+    }
+
+    /** What a 3 / 4 finger [GestureAction] pressed: its keys (modifiers first) or mouse button. */
+    fun gestureTargets(a: GestureAction): List<OutputTarget> = when (a) {
+        GestureAction.None -> emptyList()
+        is GestureAction.Mouse -> listOf(OutputTarget.Mouse(a.button))
+        is GestureAction.Keys -> (0 until 8).filter { a.modifiers and (1 shl it) != 0 }
+            .map { OutputTarget.Key(HidUsage.LEFT_CTRL + it) } + listOfNotNull(a.key.takeIf { it != 0 }?.let { OutputTarget.Key(it) })
+        // An up / down swipe set to switch apps was one Alt+Tab.
+        GestureAction.SwitchApps -> listOf(OutputTarget.Key(HidUsage.LEFT_CTRL + 2), OutputTarget.Key(0x2B))
+    }
 
     /** Drops a touch control and all of its mappings (on delete). */
     fun removeTouchControl(workspace: Workspace, id: String): Workspace = workspace.copy(

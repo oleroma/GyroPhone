@@ -293,6 +293,16 @@ data class TouchpadSettings(
     val gestures: Boolean = true,
     val gestures3: FingerGestures = FingerGestures.WINDOWS_3,
     val gestures4: FingerGestures = FingerGestures.WINDOWS_4,
+    /**
+     * The touchpad's taps and gestures come from the workspace's touchpad mappings
+     * ([InputSource.Surface], put in by [MappingProfiles.resolve]). Off (a workspace not
+     * resolved): from [tapToClick], [tapDrag], [twoFingerScroll], [horizontalScroll], [pinchZoom]
+     * and [gestures], which are otherwise only read for a mapping profile saved before touchpad
+     * mappings ([Bindings.defaultTouchpadMappings]).
+     */
+    val mapped: Boolean = false,
+    /** Release mappings fire only after a touch shorter than this (ms); 0 = after every touch. */
+    val releaseTapMs: Int = 0,
 ) {
     fun gesturesFor(fingers: Int): FingerGestures = if (fingers >= 4) gestures4 else gestures3
 
@@ -301,6 +311,7 @@ data class TouchpadSettings(
     companion object {
         const val MIN_GLIDE_MS = 100f
         const val MAX_GLIDE_MS = 1000f
+        const val MAX_RELEASE_TAP_MS = 1000
     }
 }
 
