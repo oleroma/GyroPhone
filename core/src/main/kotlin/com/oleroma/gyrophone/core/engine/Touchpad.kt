@@ -5,6 +5,7 @@ import com.oleroma.gyrophone.core.model.GestureActions
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
@@ -128,8 +129,12 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     // The current motion (MOVE, DRAG, SCROLL, SWIPE): its finger count (0 = none), travel origin
     // (centroid, px), floating-stick levels (-1..1), whether its swipe fired and it scrolled.
     private var phaseN = 0
-    private var phaseX = 0f
-    private var phaseY = 0f
+    // Travel since the motion started (px), after the axis locks; and the recent travel that
+    // judges a step's direction for them (about [LOCK_WINDOW_DP] long).
+    private var trX = 0f
+    private var trY = 0f
+    private var winX = 0f
+    private var winY = 0f
     private var levelX = 0f
     private var levelY = 0f
     private var swiped = false
@@ -525,7 +530,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         if (rearmable && !dzHolding && !catching && phaseN == 1 && now - stillNs >= settings.deadzoneRearmMs * 1_000_000L) {
             // Stood still long enough: the cursor waits for the deadzone again, measured from here.
             dzHolding = true
-            dzX = centroidX(); dzY = centroidY()
+            dzX = trX; dzY = trY
         }
         when (state) {
             State.TAP_WAIT -> if (now >= tapDeadline) { set(1, SurfaceInput.TAP_DRAG, false); state = State.IDLE }
@@ -606,22 +611,46 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         endPhase()
         phaseN = n
         swiped = false; scrolled = false
-        phaseX = downCentroidX(); phaseY = downCentroidY()
+        trX = 0f; trY = 0f; winX = 0f; winY = 0f
         dzHolding = n == 1 && state == State.MOVE && settings.cursorDeadzoneDp > 0f && map.motion[0].cursor
         rearmable = dzHolding && settings.deadzoneRearmMs > 0
-        dzX = phaseX; dzY = phaseY
+        dzX = 0f; dzY = 0f
         stillX = centroidX(); stillY = centroidY(); stillNs = now
         wheelRem = 0f; hwheelRem = 0f
         velX = 0f; velY = 0f; velAccX = 0f; velAccY = 0f; velSinceNs = eventNs
-        route(n, centroidX() - phaseX, centroidY() - phaseY, now, eventNs)
+        route(n, centroidX() - downCentroidX(), centroidY() - downCentroidY(), now, eventNs)
     }
 
-    /** Fingers landed or lifted mid-motion: travel is measured from where they are now. */
+    /** Fingers landed or lifted mid-motion: travel goes on from here (steps are per finger, so the centroid's jump is not travel). */
     private fun restartTravel() {
-        phaseX = centroidX() - levelX * STICK_FULL_DP * pxPerDp
-        phaseY = centroidY() - levelY * STICK_FULL_DP * pxPerDp
         originX = centroidX()
     }
+
+    /**
+     * Axis locks: a step heading within the vertical lock's angle of straight up / down loses its
+     * X, one within the horizontal lock's angle of sideways its Y. The direction is that of the
+     * last [LOCK_WINDOW_DP] of travel, so jitter does not flip it. Writes the step to [lockX] / [lockY].
+     */
+    private fun lockAxes(sdx: Float, sdy: Float) {
+        lockX = sdx; lockY = sdy
+        val v = settings.verticalLockDeg.coerceIn(0f, TouchpadSettings.MAX_LOCK_DEG)
+        val hz = settings.horizontalLockDeg.coerceIn(0f, TouchpadSettings.MAX_LOCK_DEG)
+        if (v <= 0f && hz <= 0f) return
+        winX += sdx; winY += sdy
+        val len = sqrt(winX * winX + winY * winY)
+        val cap = LOCK_WINDOW_DP * pxPerDp
+        if (len > cap) { winX *= cap / len; winY *= cap / len }
+        if (len <= 0f) return
+        // Angle from vertical, 0..90.
+        val fromVertical = Math.toDegrees(atan2(abs(winX), abs(winY)).toDouble()).toFloat()
+        val fromHorizontal = 90f - fromVertical
+        when {
+            fromVertical < v && (fromVertical <= fromHorizontal || fromHorizontal >= hz) -> lockX = 0f
+            fromHorizontal < hz -> lockY = 0f
+        }
+    }
+    private var lockX = 0f
+    private var lockY = 0f
 
     /** The motion ends: its held directions let go, its levels go back to 0, app switching ends. */
     private fun endPhase() {
@@ -639,9 +668,12 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
      * mappings follow the step; held directions, swipes, the floating stick and app switching the
      * travel since the motion started.
      */
-    private fun route(n: Int, sdx: Float, sdy: Float, now: Long, eventNs: Long) {
+    private fun route(n: Int, rawX: Float, rawY: Float, now: Long, eventNs: Long) {
         if (n !in 1..4) return
         val m = map.motion[n - 1]
+        lockAxes(rawX, rawY)
+        val sdx = lockX; val sdy = lockY
+        trX += sdx; trY += sdy
         if (rearmable) {
             val sx = centroidX() - stillX; val sy = centroidY() - stillY
             val still = settings.deadzoneStillDp.coerceIn(0f, TouchpadSettings.MAX_STILL_DP) * pxPerDp
@@ -651,8 +683,8 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
             if (dzHolding) passDeadzone(m, now, eventNs) else emit(run, sdx, sdy, eventNs, m)
         }
         if (m.scroll) scrollStep(sdx, sdy, now, eventNs, m)
-        val tx = (centroidX() - phaseX) / pxPerDp
-        val ty = (centroidY() - phaseY) / pxPerDp
+        val tx = trX / pxPerDp
+        val ty = trY / pxPerDp
         levelX = (tx / STICK_FULL_DP).coerceIn(-1f, 1f)
         levelY = (ty / STICK_FULL_DP).coerceIn(-1f, 1f)
         set(n, SurfaceInput.HOLD_LEFT, levelX <= -0.5f)
@@ -687,8 +719,8 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
      * and makes up all the travel so far over the catch-up time.
      */
     private fun passDeadzone(m: SurfaceMap.Motion, now: Long, eventNs: Long) {
-        val tx = centroidX() - dzX
-        val ty = centroidY() - dzY
+        val tx = trX - dzX
+        val ty = trY - dzY
         val usesX = m.cxx != 0f || m.cyx != 0f
         val usesY = m.cxy != 0f || m.cyy != 0f
         val d = when {
@@ -1084,6 +1116,8 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         const val SWIPE_DP = 40f
         /** Travel (or pinch spread change) that is a full floating-stick level; held directions press at half of it. */
         const val STICK_FULL_DP = 40f
+        /** Axis locks judge a step's direction by about this much of the latest travel. */
+        const val LOCK_WINDOW_DP = 4f
         private val DIR_HOLDS = listOf(SurfaceInput.HOLD_LEFT, SurfaceInput.HOLD_RIGHT, SurfaceInput.HOLD_UP, SurfaceInput.HOLD_DOWN)
         const val SCRUB_STEP_DP = 80f
         /** A lift within this of the last scroll movement, faster than the minimum, flings. */
