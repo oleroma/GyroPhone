@@ -42,6 +42,8 @@ data class Workspace(
     val keyboard: List<Mapping> = emptyList(),
     /** How haptic targets without a feel of their own feel ([OutputTarget.Haptic]). */
     val haptics: HapticFeel = HapticFeel(),
+    /** When haptic ticks without an edge of their own play ([OutputTarget.Haptic.edge]). */
+    val hapticEdge: HapticEdge = HapticEdge.PRESS,
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =

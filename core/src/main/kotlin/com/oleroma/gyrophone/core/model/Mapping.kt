@@ -16,7 +16,9 @@ enum class GamepadButton(val bit: Int, val label: String) {
 }
 
 @Serializable
-enum class GamepadAxis { LX, LY, RX, RY, LT, RT;
+enum class GamepadAxis {
+    LX, LY, RX, RY, LT, RT;
+
     val isTrigger: Boolean get() = this == LT || this == RT
 }
 
@@ -72,31 +74,38 @@ enum class SurfaceInput(val label: String, val motion: Boolean = false) {
 @Serializable
 sealed interface InputSource {
     /** A key or button of any input device attached to the phone (GameSir X5, keyboard...). */
-    @Serializable @SerialName("key")
+    @Serializable
+    @SerialName("key")
     data class Key(val keyCode: Int) : InputSource
 
     /** An analog axis of an attached device. [half] picks one direction for axis-to-button use. */
-    @Serializable @SerialName("axis")
+    @Serializable
+    @SerialName("axis")
     data class Axis(val axis: Int, val half: AxisHalf = AxisHalf.FULL) : InputSource
 
     /** A virtual touchscreen button, by [TouchControl.id]. */
-    @Serializable @SerialName("touch")
+    @Serializable
+    @SerialName("touch")
     data class Touch(val id: String) : InputSource
 
     /** A touch button's release: a short press when the button lets go. */
-    @Serializable @SerialName("touch_release")
+    @Serializable
+    @SerialName("touch_release")
     data class TouchRelease(val id: String) : InputSource
 
     /** A touch button's double tap: held while the second press is held. */
-    @Serializable @SerialName("touch_double")
+    @Serializable
+    @SerialName("touch_double")
     data class TouchDoubleTap(val id: String) : InputSource
 
     /** One axis of a virtual touchscreen stick. */
-    @Serializable @SerialName("touch_stick")
+    @Serializable
+    @SerialName("touch_stick")
     data class TouchStick(val id: String, val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL) : InputSource
 
     /** A diagonal zone of a virtual touchscreen stick with 8 zones. */
-    @Serializable @SerialName("touch_stick_diagonal")
+    @Serializable
+    @SerialName("touch_stick_diagonal")
     data class TouchStickDiagonal(val id: String, val diagonal: StickDiagonal) : InputSource
 
     /**
@@ -104,33 +113,40 @@ sealed interface InputSource {
      * motion for [OutputTarget.MouseAxis] and as the distance from the touch-down point (a floating
      * stick) for everything else; a half: that direction of the distance, pressed past half of it.
      */
-    @Serializable @SerialName("touch_swipe")
+    @Serializable
+    @SerialName("touch_swipe")
     data class TouchSwipe(val id: String, val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL) : InputSource
 
     /** Where fingers are relative to a touch control's area (see [TouchAreaKind]); the pad screen drives it. */
-    @Serializable @SerialName("touch_area")
+    @Serializable
+    @SerialName("touch_area")
     data class TouchArea(val id: String, val kind: TouchAreaKind) : InputSource
 
     /** An input of a touch surface with [fingers] (1..4) down; [id] "" = the workspace touchpad. */
-    @Serializable @SerialName("surface")
+    @Serializable
+    @SerialName("surface")
     data class Surface(val fingers: Int, val input: SurfaceInput, val id: String = "") : InputSource
 }
 
 /** Something the host PC receives. */
 @Serializable
 sealed interface OutputTarget {
-    @Serializable @SerialName("pad")
+    @Serializable
+    @SerialName("pad")
     data class Pad(val button: GamepadButton) : OutputTarget
 
     /** Game pad axis; [scale] is applied to the source value (-1 inverts, digital sources give ±scale). */
-    @Serializable @SerialName("pad_axis")
+    @Serializable
+    @SerialName("pad_axis")
     data class PadAxis(val axis: GamepadAxis, val scale: Float = 1f) : OutputTarget
 
     /** Keyboard key by HID usage ID (see HidUsage). */
-    @Serializable @SerialName("key")
+    @Serializable
+    @SerialName("key")
     data class Key(val usage: Int) : OutputTarget
 
-    @Serializable @SerialName("mouse")
+    @Serializable
+    @SerialName("mouse")
     data class Mouse(val button: MouseButton) : OutputTarget
 
     /**
@@ -138,55 +154,66 @@ sealed interface OutputTarget {
      * by the button's swipe sensitivity. Scrolling is natural (the page follows the finger);
      * [scale] -1 reverses.
      */
-    @Serializable @SerialName("mouse_axis")
+    @Serializable
+    @SerialName("mouse_axis")
     data class MouseAxis(val motion: MouseMotion, val scale: Float = 1f) : OutputTarget
 
     /** Mouse wheel, +1 up / -1 down per press. */
-    @Serializable @SerialName("wheel")
+    @Serializable
+    @SerialName("wheel")
     data class Wheel(val step: Int) : OutputTarget
 
     /** From before the hold / toggle mode went: now works as a ratchet ([GyroPause]). */
-    @Serializable @SerialName("gyro_hold")
+    @Serializable
+    @SerialName("gyro_hold")
     data object GyroHold : OutputTarget
 
     /**
      * Toggle gyro: each press swaps "ratchet disables" and "ratchet enables" (until the workspace
      * changes). Does nothing while gyro is off ([GyroMode.SENSOR_OFF]).
      */
-    @Serializable @SerialName("gyro_toggle")
+    @Serializable
+    @SerialName("gyro_toggle")
     data object GyroToggle : OutputTarget
 
     /**
      * Ratchet: while the source is held, gyro in "ratchet disables" pauses (re-centre the phone) and
      * gyro in "ratchet enables" engages. See [GyroMode].
      */
-    @Serializable @SerialName("gyro_pause")
+    @Serializable
+    @SerialName("gyro_pause")
     data object GyroPause : OutputTarget
 
     /**
      * Windows app switching from a surface's Move X: Alt is held while the fingers stay down and
      * Tab (moving right) or Shift+Tab (moving left) is sent per step of travel.
      */
-    @Serializable @SerialName("switch_apps")
+    @Serializable
+    @SerialName("switch_apps")
     data object SwitchApps : OutputTarget
 
     /** Zoom from a surface's Pinch: Ctrl + wheel, spreading apart zooms in. */
-    @Serializable @SerialName("zoom")
+    @Serializable
+    @SerialName("zoom")
     data object Zoom : OutputTarget
 
     /**
-     * The phone vibrates (only while a PC is connected): a tick when the source engages, or
-     * while it is [held] (an axis: stronger the further it is pushed). [feel] null = the
-     * workspace's ([Workspace.haptics]).
+     * The phone vibrates (only while a PC is connected): a tick when the source engages and/or
+     * lets go (entering / leaving a zone) as [edge] says, or while it is [held] (an axis: stronger
+     * the further it is pushed). [feel] and [edge] null = the workspace's ([Workspace.haptics],
+     * [Workspace.hapticEdge]).
      */
-    @Serializable @SerialName("haptic")
-    data class Haptic(val held: Boolean = false, val feel: HapticFeel? = null) : OutputTarget
+    @Serializable
+    @SerialName("haptic")
+    data class Haptic(val held: Boolean = false, val feel: HapticFeel? = null, val edge: HapticEdge? = null) :
+        OutputTarget
 
     /**
      * A haptic tick each time the source's value crosses a step of [percent] % (detents along an
      * axis; a button ticks on press and release). [feel] as in [Haptic].
      */
-    @Serializable @SerialName("haptic_step")
+    @Serializable
+    @SerialName("haptic_step")
     data class HapticStep(val percent: Int = DEFAULT_STEP_PERCENT, val feel: HapticFeel? = null) : OutputTarget {
         companion object {
             const val DEFAULT_STEP_PERCENT = 10
@@ -204,6 +231,14 @@ data class Mapping(val source: InputSource, val target: OutputTarget)
  * touch feedback setting), [strength] picking light / medium / strong; else the motor at
  * [strength] (1..255). [lengthMs]: a tick's length (custom only).
  */
+/** When a haptic tick ([OutputTarget.Haptic]) plays: as its source engages, lets go, or both. */
+@Serializable
+enum class HapticEdge(val label: String) {
+    PRESS("On press / enter"),
+    RELEASE("On release / exit"),
+    BOTH("Both"),
+}
+
 @Serializable
 data class HapticFeel(val system: Boolean = true, val strength: Int = 160, val lengthMs: Int = 20) {
     companion object {

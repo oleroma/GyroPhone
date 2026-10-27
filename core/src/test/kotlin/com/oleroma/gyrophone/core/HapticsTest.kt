@@ -2,11 +2,13 @@ package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.Touchpad
+import com.oleroma.gyrophone.core.model.HapticEdge
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.StickAxis
+import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchpadSettings
@@ -29,10 +31,13 @@ class HapticsTest {
         var calls = 0
     }
 
-    private fun engine(vararg ms: Mapping): Pair<MappingEngine, Calls> {
+    private fun engine(vararg ms: Mapping, edge: HapticEdge = HapticEdge.PRESS): Pair<MappingEngine, Calls> {
         val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f)
         val s = TouchControl("s", TouchKind.STICK, "", 0.2f, 0.5f)
-        val w = Workspace(id = "w", name = "w", touchControls = listOf(b, s), mappings = ms.toList(), haptics = strong)
+        val w = Workspace(
+            id = "w", name = "w", touchControls = listOf(b, s), mappings = ms.toList(), haptics = strong,
+            hapticEdge = edge
+        )
         val e = MappingEngine(single(w)) { t }
         val c = Calls()
         e.hapticSink = com.oleroma.gyrophone.core.engine.HapticSink { ticks, held, level ->
@@ -63,6 +68,34 @@ class HapticsTest {
     }
 
     @Test
+    fun zoneTicksFollowTheWorkspaceEdgeOrTheirOwn() {
+        val (e, c) = engine(
+            Mapping(InputSource.TouchArea("b", TouchAreaKind.ZONE), OutputTarget.Haptic()),
+            Mapping(InputSource.TouchArea("s", TouchAreaKind.ZONE), OutputTarget.Haptic(edge = HapticEdge.BOTH)),
+            edge = HapticEdge.RELEASE,
+        )
+        e.snapshot()
+        e.setTouchArea("b", TouchAreaKind.ZONE, true)
+        e.snapshot()
+        assertEquals(0, c.ticks) // the workspace's: exit only
+        t += 50 * MS
+        e.setTouchArea("b", TouchAreaKind.ZONE, false)
+        e.snapshot()
+        assertEquals(1, c.ticks)
+        e.setTouchArea("s", TouchAreaKind.ZONE, true)
+        e.snapshot()
+        assertEquals(2, c.ticks)
+        e.snapshot()
+        assertEquals(2, c.ticks) // still inside
+        t += 50 * MS
+        e.setTouchArea("s", TouchAreaKind.ZONE, false)
+        e.snapshot()
+        assertEquals(3, c.ticks) // and on exit
+        e.snapshot()
+        assertEquals(3, c.ticks)
+    }
+
+    @Test
     fun heldFollowsAnAxisAndStepsTick() {
         val (e, c) = engine(
             Mapping(InputSource.TouchStick("s", StickAxis.X), OutputTarget.Haptic(held = true)),
@@ -86,7 +119,15 @@ class HapticsTest {
 
     @Test
     fun cursorDeadzoneHoldsThenCatchesUp() {
-        val p = Touchpad(TouchpadSettings(acceleration = 0f, tapToClick = false, cursorDeadzoneDp = 20f, catchUpMs = 0, sensitivity = 1f))
+        val p = Touchpad(
+            TouchpadSettings(
+                acceleration = 0f,
+                tapToClick = false,
+                cursorDeadzoneDp = 20f,
+                catchUpMs = 0,
+                sensitivity = 1f
+            )
+        )
             .apply { pxPerDp = 1f }
         p.down(1, 100f, 100f, t)
         p.move(1, 110f, 100f, t + 10 * MS)
@@ -103,8 +144,10 @@ class HapticsTest {
 
     @Test
     fun cursorDeadzoneRearmsAfterARest() {
-        val s = TouchpadSettings(acceleration = 0f, tapToClick = false, cursorDeadzoneDp = 20f, catchUpMs = 0, sensitivity = 1f,
-            deadzoneRearmMs = 200, deadzoneStillDp = 3f)
+        val s = TouchpadSettings(
+            acceleration = 0f, tapToClick = false, cursorDeadzoneDp = 20f, catchUpMs = 0, sensitivity = 1f,
+            deadzoneRearmMs = 200, deadzoneStillDp = 3f
+        )
         val p = Touchpad(s).apply { pxPerDp = 1f }
         p.down(1, 100f, 100f, 0)
         p.move(1, 130f, 100f, 10 * MS); p.poll(10 * MS)
@@ -120,23 +163,37 @@ class HapticsTest {
 
     @Test
     fun verticalLockDropsSidewaysPartOfASteepStroke() {
-        val p = Touchpad(TouchpadSettings(acceleration = 0f, tapToClick = false, sensitivity = 1f, verticalLockDeg = 30f))
-            .apply { pxPerDp = 1f }
+        val p =
+            Touchpad(TouchpadSettings(acceleration = 0f, tapToClick = false, sensitivity = 1f, verticalLockDeg = 30f))
+                .apply { pxPerDp = 1f }
         p.down(1, 100f, 100f, 0)
-        var x = 100f; var y = 100f
-        for (i in 1..10) { x += 1f; y += 5f; p.move(1, x, y, i * 5 * MS) } // about 11° from vertical
+        var x = 100f;
+        var y = 100f
+        for (i in 1..10) {
+            x += 1f; y += 5f; p.move(1, x, y, i * 5 * MS)
+        } // about 11° from vertical
         p.poll(60 * MS)
         assertEquals(0, p.dx)
         assertEquals(50, p.dy)
         p.drainMotion()
-        for (i in 1..10) { x += 5f; y += 1f; p.move(1, x, y, (60 + i * 5) * MS) } // mostly sideways
+        for (i in 1..10) {
+            x += 5f; y += 1f; p.move(1, x, y, (60 + i * 5) * MS)
+        } // mostly sideways
         p.poll(120 * MS)
         assertTrue("dx " + p.dx, p.dx >= 40)
     }
 
     @Test
     fun cursorCatchUpSpreadsOverTime() {
-        val p = Touchpad(TouchpadSettings(acceleration = 0f, tapToClick = false, cursorDeadzoneDp = 20f, catchUpMs = 100, sensitivity = 1f))
+        val p = Touchpad(
+            TouchpadSettings(
+                acceleration = 0f,
+                tapToClick = false,
+                cursorDeadzoneDp = 20f,
+                catchUpMs = 100,
+                sensitivity = 1f
+            )
+        )
             .apply { pxPerDp = 1f }
         p.down(1, 100f, 100f, 0)
         p.move(1, 140f, 100f, 10 * MS)
@@ -144,7 +201,9 @@ class HapticsTest {
         assertTrue(p.dx < 5)
         var total = p.dx
         p.drainMotion()
-        for (ms in 20L..200L step 10) { p.poll(ms * MS); total += p.dx; p.drainMotion() }
+        for (ms in 20L..200L step 10) {
+            p.poll(ms * MS); total += p.dx; p.drainMotion()
+        }
         assertEquals(40, total)
     }
 }

@@ -64,6 +64,7 @@ import com.oleroma.gyrophone.core.hid.AndroidKeyToHid
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
+import com.oleroma.gyrophone.core.model.HapticEdge
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
@@ -168,13 +169,18 @@ internal fun TargetChip(text: String, onClick: () -> Unit, onRemove: () -> Unit)
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
             maxLines = 1,
-            modifier = Modifier.clickable(onClick = onClick).padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            modifier = Modifier.clickable(onClick = onClick)
+                .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
         )
         Box(
             Modifier.size(32.dp).clickable(onClick = onRemove),
             contentAlignment = Alignment.Center,
         ) {
-            Text("✕", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            Text(
+                "✕",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
         }
     }
 }
@@ -227,7 +233,8 @@ fun TargetPickerDialog(
         buildList {
             for ((name, list) in groups) {
                 val shown = if (q.isEmpty()) list else list.filter {
-                    Describe.shortTarget(it).contains(q, ignoreCase = true) || Describe.target(it).contains(q, ignoreCase = true)
+                    Describe.shortTarget(it).contains(q, ignoreCase = true) || Describe.target(it)
+                        .contains(q, ignoreCase = true)
                 }
                 if (shown.isEmpty()) continue
                 add(PickerEntry.Header(name))
@@ -298,7 +305,8 @@ fun TargetPickerDialog(
 
 /**
  * Sets up a picked [OutputTarget.Haptic] or [OutputTarget.HapticStep]: the workspace's feel or
- * one of its own, and the step size. [onOk] gets the configured target; [onCancel] goes back.
+ * one of its own, when a tick plays (the workspace's or its own), and the step size. [onOk] gets
+ * the configured target; [onCancel] goes back.
  */
 @Composable
 internal fun HapticTargetDialog(
@@ -316,13 +324,16 @@ internal fun HapticTargetDialog(
     var own by remember { mutableStateOf(startFeel != null) }
     var feel by remember { mutableStateOf(startFeel ?: HapticFeel()) }
     var percent by remember {
-        mutableFloatStateOf(((start as? OutputTarget.HapticStep)?.percent ?: OutputTarget.HapticStep.DEFAULT_STEP_PERCENT).toFloat())
+        mutableFloatStateOf(
+            ((start as? OutputTarget.HapticStep)?.percent ?: OutputTarget.HapticStep.DEFAULT_STEP_PERCENT).toFloat()
+        )
     }
+    var edge by remember { mutableStateOf((start as? OutputTarget.Haptic)?.edge) }
     fun result(): OutputTarget {
         val f = if (own) feel else null
         return when (start) {
             is OutputTarget.HapticStep -> start.copy(percent = percent.toInt(), feel = f)
-            is OutputTarget.Haptic -> start.copy(feel = f)
+            is OutputTarget.Haptic -> start.copy(feel = f, edge = if (start.held) null else edge)
             else -> start
         }
     }
@@ -343,6 +354,11 @@ internal fun HapticTargetDialog(
                         )
                     }
                 }
+                if (start is OutputTarget.Haptic && !held) {
+                    val wsEdge = runtime.activeProfile.value.workspace(runtime.workspaceIndex.value).hapticEdge
+                    Text("Plays", style = MaterialTheme.typography.labelLarge)
+                    HapticEdgeChips(edge, onSelect = { edge = it }, workspaceEdge = wsEdge)
+                }
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()),
                     verticalAlignment = Alignment.CenterVertically,
@@ -358,7 +374,11 @@ internal fun HapticTargetDialog(
                     }
                 }
                 if (own) {
-                    HapticFeelEditor(feel, held, onChange = { feel = it }, onTry = { runtime.previewHaptic(feel, held) })
+                    HapticFeelEditor(
+                        feel,
+                        held,
+                        onChange = { feel = it },
+                        onTry = { runtime.previewHaptic(feel, held) })
                 } else {
                     Text(
                         "Feels like the workspace's Haptics setting.",
@@ -370,6 +390,34 @@ internal fun HapticTargetDialog(
         confirmButton = { TextButton(onClick = { onOk(result()) }) { Text("OK") } },
         dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
     )
+}
+
+/**
+ * Picks when a haptic tick plays. With [workspaceEdge], a first chip stands for the workspace's
+ * setting ([selected] null); without it, [selected] is never null.
+ */
+@Composable
+internal fun HapticEdgeChips(
+    selected: HapticEdge?,
+    onSelect: (HapticEdge?) -> Unit,
+    workspaceEdge: HapticEdge? = null
+) {
+    Row(
+        Modifier.horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (workspaceEdge != null) {
+            FilterChip(
+                selected = selected == null,
+                onClick = { onSelect(null) },
+                label = { Text("Workspace default (" + workspaceEdge.label.lowercase() + ")") },
+            )
+        }
+        for (e in HapticEdge.entries) {
+            FilterChip(selected = selected == e, onClick = { onSelect(e) }, label = { Text(e.label) })
+        }
+    }
 }
 
 @Composable
@@ -386,7 +434,8 @@ private fun PickerBody(
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     val headers = remember(entries) {
-        entries.withIndex().filter { it.value is PickerEntry.Header }.map { (it.value as PickerEntry.Header).title to it.index }
+        entries.withIndex().filter { it.value is PickerEntry.Header }
+            .map { (it.value as PickerEntry.Header).title to it.index }
     }
     val currentHeader by remember(headers) {
         derivedStateOf {
@@ -396,7 +445,10 @@ private fun PickerBody(
     }
     LaunchedEffect(entries) { gridState.scrollToItem(0) }
 
-    fun jump(index: Int) { scope.launch { gridState.animateScrollToItem(index) } }
+    fun jump(index: Int) {
+        scope.launch { gridState.animateScrollToItem(index) }
+    }
+
     val search: @Composable (Modifier) -> Unit = { m ->
         OutlinedTextField(
             value = query,
@@ -433,7 +485,11 @@ private fun PickerBody(
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
                         )
-                        is PickerEntry.Item -> TargetCell(e.target, mapped = e.target in current, onClick = { onPick(e.target) })
+
+                        is PickerEntry.Item -> TargetCell(
+                            e.target,
+                            mapped = e.target in current,
+                            onClick = { onPick(e.target) })
                     }
                 }
             }
@@ -445,15 +501,24 @@ private fun PickerBody(
             // Narrow (portrait): categories as a scrolling row of chips, search and key capture stacked.
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (headers.size > 1) {
-                    Row(Modifier.horizontalScroll(rememberScrollState()).padding(end = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()).padding(end = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         for ((title, index) in headers) {
-                            FilterChip(selected = title == currentHeader, onClick = { jump(index) }, label = { Text(title) })
+                            FilterChip(
+                                selected = title == currentHeader,
+                                onClick = { jump(index) },
+                                label = { Text(title) })
                         }
                     }
                 }
                 search(Modifier.fillMaxWidth().padding(end = 8.dp))
                 if (showCapture) {
-                    OutlinedButton(onClick = onCapture, modifier = Modifier.fillMaxWidth().padding(end = 8.dp)) { Text("Press a key on a keyboard") }
+                    OutlinedButton(
+                        onClick = onCapture,
+                        modifier = Modifier.fillMaxWidth().padding(end = 8.dp)
+                    ) { Text("Press a key on a keyboard") }
                 }
                 Box(Modifier.weight(1f).fillMaxWidth()) { grid() }
             }
@@ -479,7 +544,10 @@ private fun PickerBody(
                     }
                 }
                 Column(Modifier.weight(1f).fillMaxHeight()) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         search(Modifier.weight(1f))
                         if (showCapture) {
                             OutlinedButton(onClick = onCapture) { Text("Press a key on a keyboard") }
