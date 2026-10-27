@@ -12,6 +12,10 @@ enum class TouchKind { BUTTON, STICK, FULLSCREEN }
 @Serializable
 enum class TouchShape { CIRCLE, SQUARE }
 
+/** Where a control sits among overlapping ones: AUTO by size ([hitOrder]), or always in front / behind. */
+@Serializable
+enum class TouchLayer(val label: String) { AUTO("Auto"), FRONT("Front"), BACK("Back") }
+
 /**
  * How a touch stick turns into directions for its Left / Right / Up / Down mappings. OVERLAP:
  * each half on its own, so a diagonal presses two; FOUR: one of 4 zones at a time; EIGHT: 8 zones,
@@ -62,7 +66,10 @@ data class TouchControl(
      * drives its swipe mappings ([InputSource.TouchSwipe]) instead.
      */
     val swipe: Boolean = false,
-    /** Swipe sensitivity across and down: mouse counts per dp of travel (0 = that axis is off). */
+    /**
+     * Before swipe buttons were touch surfaces: swipe sensitivity across and down (mouse counts
+     * per dp). Only read for a button with no [surface] settings yet ([surfaceSettings]).
+     */
     val swipeSensX: Float = 1.5f,
     val swipeSensY: Float = 1.5f,
     /** Swipe mode: press only on a still tap's release (else the press starts at touch-down). */
@@ -72,6 +79,28 @@ data class TouchControl(
      * then never presses). Off: the press is instant, and a double tap also presses twice.
      */
     val doubleTapWaits: Boolean = false,
+    /**
+     * Release mapping: fires only after a press shorter than this (ms), a quick tap; 0 = after
+     * every press.
+     */
+    val releaseTapMs: Int = 0,
+    /**
+     * Zone mapping ([TouchAreaKind.ZONE]): a finger that slides in from elsewhere stops what it
+     * was doing (cursor, stick, another button) while it is in the zone, and one that lands on
+     * the zone but on no other control starts no cursor.
+     */
+    val zoneInterrupt: Boolean = false,
+    /** With [zoneInterrupt]: the stopped job resumes when the finger leaves (off: stopped until it lifts). */
+    val zoneResume: Boolean = false,
+    /**
+     * Swipe mode: the touch surface settings this button changes from the workspace touchpad's;
+     * null (a button from before) = its old swipe sensitivities, no acceleration, no inertia.
+     */
+    val surface: SurfaceSettings? = null,
+    /** Among overlapping controls ([hitOrder]). */
+    val layer: TouchLayer = TouchLayer.AUTO,
+    /** A finger landing here while another control is in front also works this control. */
+    val sharesTouches: Boolean = false,
 ) {
     /** In swipe mode: a button with [swipe] on and click-through off. */
     val swipes: Boolean get() = kind == TouchKind.BUTTON && swipe && !clickThrough
@@ -79,9 +108,10 @@ data class TouchControl(
     companion object {
         const val MIN_SIZE = 0.06f
         /** Fractions of the shorter side: over 1 a control can span the long side (and fill the screen). */
-        const val MAX_SIZE = 2.4f
+        const val MAX_SIZE = 3f
         const val MAX_DEADZONE = 0.6f
         const val MAX_SWIPE_SENS = 12f
+        const val MAX_RELEASE_TAP_MS = 1000
         /**
          * Derived portrait layout: the landscape layout squeezed into the lower part (the top is
          * left for the touchpad), sizes scaled down, centres pulled in so nothing leaves the width.
@@ -110,6 +140,48 @@ fun TouchControl.placeY(inPortrait: Boolean): Float =
 
 fun TouchControl.placeSize(inPortrait: Boolean): Float =
     if (!inPortrait) size else portraitOrBuiltin()?.size ?: (size * TouchControl.PORTRAIT_SIZE_SCALE)
+
+/**
+ * Touchpad settings a swipe-mode button sets for itself; null fields follow the workspace
+ * touchpad ([TouchpadSettings.with]).
+ */
+@Serializable
+data class SurfaceSettings(
+    val sensitivity: Float? = null,
+    val sensitivityY: Float? = null,
+    val acceleration: Float? = null,
+    val scrollSpeed: Float? = null,
+    val naturalScroll: Boolean? = null,
+    val inertia: Boolean? = null,
+    val releaseTapMs: Int? = null,
+    val cursorDeadzoneDp: Float? = null,
+    val catchUpMs: Int? = null,
+    val deadzoneRearmMs: Int? = null,
+    val deadzoneStillDp: Float? = null,
+)
+
+/** These settings with [o]'s own values in place of theirs. */
+fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null) this else copy(
+    sensitivity = o.sensitivity ?: sensitivity,
+    sensitivityY = o.sensitivityY ?: sensitivityY,
+    acceleration = o.acceleration ?: acceleration,
+    scrollSpeed = o.scrollSpeed ?: scrollSpeed,
+    naturalScroll = o.naturalScroll ?: naturalScroll,
+    inertia = o.inertia ?: inertia,
+    releaseTapMs = o.releaseTapMs ?: releaseTapMs,
+    cursorDeadzoneDp = o.cursorDeadzoneDp ?: cursorDeadzoneDp,
+    catchUpMs = o.catchUpMs ?: catchUpMs,
+    deadzoneRearmMs = o.deadzoneRearmMs ?: deadzoneRearmMs,
+    deadzoneStillDp = o.deadzoneStillDp ?: deadzoneStillDp,
+)
+
+/** A swipe button's own settings: [TouchControl.surface], or what its old swipe settings were. */
+val TouchControl.ownSurface: SurfaceSettings
+    get() = surface ?: SurfaceSettings(sensitivity = swipeSensX, sensitivityY = swipeSensY, acceleration = 0f, inertia = false)
+
+/** How a swipe button's surface works: the workspace touchpad [pad] with the button's own settings. */
+fun TouchControl.surfaceSettings(pad: TouchpadSettings): TouchpadSettings =
+    pad.copy(enabled = true, mapped = true).with(ownSurface)
 
 /** Height / width as drawn: [TouchControl.aspect] for a square button, else 1. */
 val TouchControl.heightRatio: Float
@@ -144,6 +216,40 @@ fun TouchControl.contains(
             abs(dx) <= half + margin && abs(dy) <= halfH + margin
         }
     }
+}
+
+/**
+ * [controls] front first, as touches see them: FRONT ones, then AUTO ones by size, then BACK
+ * ones. Size is the shortest side (a circle's diameter, a rectangle's narrower side), so a long
+ * thin strip counts as small; smaller is in front, then smaller area, then the one added later.
+ */
+fun hitOrder(controls: List<TouchControl>, inPortrait: Boolean): List<TouchControl> =
+    controls.withIndex().sortedWith(
+        compareBy<IndexedValue<TouchControl>> { it.value.layer.ordinal.let { l -> if (l == 0) 1 else if (l == 1) 0 else 2 } }
+            .thenBy { it.value.shortSide(inPortrait) }
+            .thenBy { it.value.area(inPortrait) }
+            .thenByDescending { it.index },
+    ).map { it.value }
+
+/** Shortest side as drawn, in fractions of the pad area's shorter side. */
+fun TouchControl.shortSide(inPortrait: Boolean): Float = placeSize(inPortrait) * min(1f, heightRatio)
+
+/** Area as drawn, in squared fractions of the pad area's shorter side. */
+fun TouchControl.area(inPortrait: Boolean): Float {
+    val s = placeSize(inPortrait)
+    return if (shape == TouchShape.CIRCLE) s * s * 0.7854f else s * s * heightRatio
+}
+
+/**
+ * The controls a finger landing at [px], [py] works: the front one under it, plus every
+ * [TouchControl.sharesTouches] one behind it. [ordered] comes from [hitOrder].
+ */
+fun touchedControls(
+    ordered: List<TouchControl>, px: Float, py: Float, screenW: Float, screenH: Float, inPortrait: Boolean,
+): List<TouchControl> {
+    val under = ordered.filter { it.contains(px, py, screenW, screenH, inPortrait = inPortrait) }
+    if (under.size <= 1) return under
+    return listOf(under[0]) + under.drop(1).filter { it.sharesTouches }
 }
 
 /**
@@ -279,6 +385,31 @@ data class TouchpadSettings(
     val gestures: Boolean = true,
     val gestures3: FingerGestures = FingerGestures.WINDOWS_3,
     val gestures4: FingerGestures = FingerGestures.WINDOWS_4,
+    /**
+     * The touchpad's taps and gestures come from the workspace's touchpad mappings
+     * ([InputSource.Surface], put in by [MappingProfiles.resolve]). Off (a workspace not
+     * resolved): from [tapToClick], [tapDrag], [twoFingerScroll], [horizontalScroll], [pinchZoom]
+     * and [gestures], which are otherwise only read for a mapping profile saved before touchpad
+     * mappings ([Bindings.defaultTouchpadMappings]).
+     */
+    val mapped: Boolean = false,
+    /** Release mappings fire only after a touch shorter than this (ms); 0 = after every touch. */
+    val releaseTapMs: Int = 0,
+    /**
+     * One-finger cursor: travel from the touch-down point (along the one axis when only one is
+     * mapped to the cursor) before the cursor moves, in dp; 0 = off. Past it, the cursor makes up
+     * the travel it held back over [catchUpMs].
+     */
+    val cursorDeadzoneDp: Float = 0f,
+    /** How long the cursor takes to make up the deadzone's travel, in ms; 0 = in one jump. */
+    val catchUpMs: Int = 80,
+    /**
+     * The cursor deadzone arms again once the finger has stood still this long (ms), measured
+     * from where it stopped; 0 = once per touch.
+     */
+    val deadzoneRearmMs: Int = 0,
+    /** Movement (dp) that still counts as standing still for [deadzoneRearmMs]. */
+    val deadzoneStillDp: Float = 2f,
 ) {
     fun gesturesFor(fingers: Int): FingerGestures = if (fingers >= 4) gestures4 else gestures3
 
@@ -287,6 +418,11 @@ data class TouchpadSettings(
     companion object {
         const val MIN_GLIDE_MS = 100f
         const val MAX_GLIDE_MS = 1000f
+        const val MAX_RELEASE_TAP_MS = 1000
+        const val MAX_CURSOR_DEADZONE_DP = 80f
+        const val MAX_CATCH_UP_MS = 500
+        const val MAX_REARM_MS = 1000
+        const val MAX_STILL_DP = 10f
     }
 }
 

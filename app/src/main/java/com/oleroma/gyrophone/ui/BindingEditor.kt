@@ -29,9 +29,11 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -40,6 +42,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,10 +64,12 @@ import com.oleroma.gyrophone.core.hid.AndroidKeyToHid
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
+import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * Lists inputs with their mapped targets as removable chips plus an Add button per input. Tapping
@@ -131,6 +136,7 @@ fun BindingList(
         TargetPickerDialog(
             analog = input.analog,
             swipe = input.swipe,
+            extra = input.extra,
             runtime = runtime,
             current = Bindings.targets(mappings, input),
             onPick = { picked ->
@@ -198,6 +204,7 @@ private sealed interface PickerEntry {
  * Grouped target picker dialog with a search field, a section list per group, and "Press a key on
  * a keyboard" capture (uses runtime.keyLearnListener + AndroidKeyToHid). analog=true -> only analog
  * targets; swipe=true -> analog and mouse motion targets. Picking calls [onPick] and then [onDismiss]; [current] targets are shown as mapped.
+ * A haptic target first opens [HapticTargetDialog] to set its feel (and step).
  */
 @Composable
 fun TargetPickerDialog(
@@ -207,11 +214,14 @@ fun TargetPickerDialog(
     onDismiss: () -> Unit,
     current: List<OutputTarget> = emptyList(),
     swipe: Boolean = false,
+    extra: List<OutputTarget> = emptyList(),
 ) {
     var query by remember { mutableStateOf("") }
     var capturing by remember { mutableStateOf(false) }
+    // A picked haptic target being configured before it is handed to onPick.
+    var hapticDraft by remember { mutableStateOf<OutputTarget?>(null) }
 
-    val groups = remember(analog, swipe) { Describe.pickerGroups(analog, swipe) }
+    val groups = remember(analog, swipe, extra) { Describe.pickerGroups(analog, swipe, extra) }
     val entries = remember(groups, query) {
         val q = query.trim()
         buildList {
@@ -226,8 +236,12 @@ fun TargetPickerDialog(
         }
     }
     val pick: (OutputTarget) -> Unit = { t ->
-        onPick(t)
-        onDismiss()
+        if (Describe.isHaptic(t)) {
+            hapticDraft = t
+        } else {
+            onPick(t)
+            onDismiss()
+        }
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -268,6 +282,94 @@ fun TargetPickerDialog(
             }
         }
     }
+
+    hapticDraft?.let { draft ->
+        HapticTargetDialog(
+            start = draft,
+            runtime = runtime,
+            onOk = { t ->
+                onPick(t)
+                onDismiss()
+            },
+            onCancel = { hapticDraft = null },
+        )
+    }
+}
+
+/**
+ * Sets up a picked [OutputTarget.Haptic] or [OutputTarget.HapticStep]: the workspace's feel or
+ * one of its own, and the step size. [onOk] gets the configured target; [onCancel] goes back.
+ */
+@Composable
+internal fun HapticTargetDialog(
+    start: OutputTarget,
+    runtime: GamepadRuntime,
+    onOk: (OutputTarget) -> Unit,
+    onCancel: () -> Unit,
+) {
+    val held = start is OutputTarget.Haptic && start.held
+    val startFeel = when (start) {
+        is OutputTarget.Haptic -> start.feel
+        is OutputTarget.HapticStep -> start.feel
+        else -> null
+    }
+    var own by remember { mutableStateOf(startFeel != null) }
+    var feel by remember { mutableStateOf(startFeel ?: HapticFeel()) }
+    var percent by remember {
+        mutableFloatStateOf(((start as? OutputTarget.HapticStep)?.percent ?: OutputTarget.HapticStep.DEFAULT_STEP_PERCENT).toFloat())
+    }
+    fun result(): OutputTarget {
+        val f = if (own) feel else null
+        return when (start) {
+            is OutputTarget.HapticStep -> start.copy(percent = percent.toInt(), feel = f)
+            is OutputTarget.Haptic -> start.copy(feel = f)
+            else -> start
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("Haptic") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(Describe.target(result()), style = MaterialTheme.typography.bodyMedium)
+                if (start is OutputTarget.HapticStep) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Step " + percent.toInt() + " %", Modifier.padding(end = 8.dp))
+                        Slider(
+                            value = percent,
+                            onValueChange = { percent = it.roundToInt().toFloat() },
+                            valueRange = OutputTarget.HapticStep.MIN_STEP_PERCENT.toFloat()..OutputTarget.HapticStep.MAX_STEP_PERCENT.toFloat(),
+                        )
+                    }
+                }
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    FilterChip(selected = !own, onClick = { own = false }, label = { Text("Workspace default") })
+                    FilterChip(selected = own, onClick = { own = true }, label = { Text("Own feel") })
+                    if (!own) {
+                        TextButton(onClick = {
+                            val ws = runtime.activeProfile.value.workspace(runtime.workspaceIndex.value)
+                            runtime.previewHaptic(ws.haptics, held)
+                        }) { Text("Try") }
+                    }
+                }
+                if (own) {
+                    HapticFeelEditor(feel, held, onChange = { feel = it }, onTry = { runtime.previewHaptic(feel, held) })
+                } else {
+                    Text(
+                        "Feels like the workspace's Haptics setting.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onOk(result()) }) { Text("OK") } },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+    )
 }
 
 @Composable
@@ -432,7 +534,7 @@ private fun TargetCell(target: OutputTarget, mapped: Boolean, onClick: () -> Uni
  * forwards them to the same listener.
  */
 @Composable
-private fun KeyCapturePanel(
+internal fun KeyCapturePanel(
     runtime: GamepadRuntime,
     onKey: (OutputTarget) -> Unit,
     onCancel: () -> Unit,

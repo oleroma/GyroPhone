@@ -15,6 +15,7 @@ import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Workspace
+import com.oleroma.gyrophone.core.model.isTouchpad
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -26,6 +27,10 @@ class MappingProfilesTest {
     private fun key(code: Int, t: OutputTarget) = Mapping(InputSource.Key(code), t)
     private fun button(id: String) = TouchControl(id, TouchKind.BUTTON, id, 0.5f, 0.5f)
     private fun pad(id: String, mappings: List<Mapping>) = AttachedPad(id, mappings = mappings)
+    /** A resolved workspace's mappings without its touchpad ones. */
+    private fun Workspace.controls() = mappings.filterNot { it.source.isTouchpad }
+    /** [m] plus [w]'s touchpad mappings, as an edit of the controls leaves them. */
+    private fun keepPad(w: Workspace, m: List<Mapping>) = m + w.mappings.filter { it.source.isTouchpad }
 
     private val ws1 = Workspace("ws1", "Main", listOf(button("btn1"), button("btn2")),
         mappings = listOf(touch("btn1", a), touch("btn2", b)), pads = listOf(pad("pad1", listOf(key(AndroidKey.BUTTON_A, a)))))
@@ -45,7 +50,7 @@ class MappingProfilesTest {
         // Resolving gives back what every workspace and pad had.
         val resolved = MappingProfiles.resolve(m.set, m.profiles)
         for ((old, new) in set.workspaces.zip(resolved.workspaces)) {
-            assertEquals(old.mappings.toSet(), new.mappings.toSet())
+            assertEquals(old.mappings.toSet(), new.controls().toSet())
             assertEquals(old.pads.map { it.mappings }, new.pads.map { it.mappings })
         }
         // Keyboards used to act through the first "any game pad" pad: its key mappings are the keyboard set.
@@ -66,7 +71,7 @@ class MappingProfilesTest {
         val m = MappingProfiles.migrate(set)
         val before = MappingProfiles.resolve(m.set, m.profiles)
         val after = before.updateWorkspace(0) { w ->
-            w.copy(mappings = listOf(touch("btn1", b), touch("btn2", b)), pads = w.pads.map { it.copy(mappings = listOf(key(AndroidKey.BUTTON_X, a))) })
+            w.copy(mappings = keepPad(w, listOf(touch("btn1", b), touch("btn2", b))), pads = w.pads.map { it.copy(mappings = listOf(key(AndroidKey.BUTTON_X, a))) })
         }
         val profiles = MappingProfiles.absorb(m.profiles, before, after)
         assertEquals(setOf(touch("btn1", b), touch("btn2", b)), profiles[0].touch.toSet())
@@ -74,15 +79,15 @@ class MappingProfilesTest {
         assertEquals(m.profiles[1], profiles[1])
         // ws2 shares the profile, so it changes too; ws3 does not.
         val again = MappingProfiles.resolve(MappingProfiles.strip(after), profiles)
-        assertEquals(setOf(touch("btn1", b), touch("btn2", b)), again.workspaces[1].mappings.toSet())
-        assertEquals(listOf(touch("btn1", b)), again.workspaces[2].mappings)
+        assertEquals(setOf(touch("btn1", b), touch("btn2", b)), again.workspaces[1].controls().toSet())
+        assertEquals(listOf(touch("btn1", b)), again.workspaces[2].controls())
     }
 
     @Test fun absorbKeepsMappingsOfADeletedControlAndIgnoresANewPad() {
         val m = MappingProfiles.migrate(set)
         val before = MappingProfiles.resolve(m.set, m.profiles)
         val after = before.updateWorkspace(0) { w ->
-            w.copy(touchControls = listOf(button("btn1")), mappings = listOf(touch("btn1", a)), pads = w.pads + pad("pad9", listOf(key(AndroidKey.BUTTON_Y, a))))
+            w.copy(touchControls = listOf(button("btn1")), mappings = keepPad(w, listOf(touch("btn1", a))), pads = w.pads + pad("pad9", listOf(key(AndroidKey.BUTTON_Y, a))))
         }
         assertEquals(m.profiles, MappingProfiles.absorb(m.profiles, before, after))
     }
@@ -92,7 +97,7 @@ class MappingProfilesTest {
         val w = Workspace("ws9", "New", listOf(button("btn1")))
         val resolved = MappingProfiles.resolve(Profile("s", "s", listOf(w)), profiles)
         assertEquals("map1", resolved.workspaces[0].mappingProfileId)
-        assertEquals(listOf(touch("btn1", a)), resolved.workspaces[0].mappings)
+        assertEquals(listOf(touch("btn1", a)), resolved.workspaces[0].controls())
     }
 
     @Test fun builtinWorkspacesEachGetAProfile() {

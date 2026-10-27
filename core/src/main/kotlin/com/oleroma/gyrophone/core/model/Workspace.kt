@@ -40,6 +40,8 @@ data class Workspace(
     val mappingProfileId: String? = null,
     /** Physical keyboard mappings; like [mappings], only in a resolved set. */
     val keyboard: List<Mapping> = emptyList(),
+    /** How haptic targets without a feel of their own feel ([OutputTarget.Haptic]). */
+    val haptics: HapticFeel = HapticFeel(),
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =
@@ -90,4 +92,17 @@ data class AttachedPad(
 /** Touch-control sources live in a workspace; everything else belongs to an attached pad. */
 val InputSource.isTouch: Boolean
     get() = this is InputSource.Touch || this is InputSource.TouchStick || this is InputSource.TouchStickDiagonal ||
-        this is InputSource.TouchSwipe || this is InputSource.TouchRelease || this is InputSource.TouchDoubleTap
+            this is InputSource.TouchSwipe || this is InputSource.TouchRelease || this is InputSource.TouchDoubleTap ||
+            this is InputSource.TouchArea || this is InputSource.Surface
+
+/** A source of the workspace touchpad ([InputSource.Surface] with no control id). */
+val InputSource.isTouchpad: Boolean
+    get() = this is InputSource.Surface && id.isEmpty()
+
+/**
+ * This workspace with its touchpad mappings: as it is once resolved ([TouchpadSettings.mapped]),
+ * else with the ones its touchpad switches stand for ([Bindings.defaultTouchpadMappings]).
+ */
+fun Workspace.withTouchpadMappings(): Workspace =
+    if (touchpad.mapped) this
+    else copy(mappings = mappings + Bindings.defaultTouchpadMappings(touchpad), touchpad = touchpad.copy(mapped = true))

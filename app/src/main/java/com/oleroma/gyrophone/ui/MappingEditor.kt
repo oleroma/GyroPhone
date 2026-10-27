@@ -55,16 +55,17 @@ import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.PadPresets
 import com.oleroma.gyrophone.core.model.PhysicalKind
 import com.oleroma.gyrophone.core.model.TouchKind
+import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.abs
 
 /*
- * The mapping profile editor: every remap of a profile in three categories (touch buttons,
- * keyboard, controller), each as two columns, button | mapping.
+ * The mapping profile editor: every remap of a profile in four categories (touch buttons,
+ * touchpad, keyboard, controller), each as two columns, button | mapping.
  */
 
 private enum class Category(val title: String) {
-    TOUCH("Touch buttons"), KEYBOARD("Keyboard"), CONTROLLER("Controller"),
+    TOUCH("Touch buttons"), TOUCHPAD("Touchpad"), KEYBOARD("Keyboard"), CONTROLLER("Controller"),
 }
 
 /** One line of the editor's table. */
@@ -94,6 +95,10 @@ private sealed interface EditorRow {
 
     data object PadPresetRow : EditorRow {
         override val key get() = "padPresets"
+    }
+
+    data object TouchpadReset : EditorRow {
+        override val key get() = "touchpadReset"
     }
 }
 
@@ -136,20 +141,25 @@ internal fun MappingProfileEditor(
     var touch by remember(profileId) { mutableStateOf(start.touch) }
     var keyboard by remember(profileId) { mutableStateOf(start.keyboard) }
     var controller by remember(profileId) { mutableStateOf(start.controller) }
+    val startTouchpad = remember(profileId) { start.touchpad ?: Bindings.defaultTouchpadMappings(ws.touchpad) }
+    var touchpad by remember(profileId) { mutableStateOf(startTouchpad) }
     fun get(c: Category): List<Mapping> = when (c) {
         Category.TOUCH -> touch
+        Category.TOUCHPAD -> touchpad
         Category.KEYBOARD -> keyboard
         Category.CONTROLLER -> controller
     }
     fun put(c: Category, m: List<Mapping>) {
         when (c) {
             Category.TOUCH -> touch = m
+            Category.TOUCHPAD -> touchpad = m
             Category.KEYBOARD -> keyboard = m
             Category.CONTROLLER -> controller = m
         }
     }
     val dirty = name != start.name || touch.toSet() != start.touch.toSet() ||
-        keyboard.toSet() != start.keyboard.toSet() || controller.toSet() != start.controller.toSet()
+        keyboard.toSet() != start.keyboard.toSet() || controller.toSet() != start.controller.toSet() ||
+        touchpad.toSet() != startTouchpad.toSet()
 
     var confirmDiscard by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -181,6 +191,15 @@ internal fun MappingProfileEditor(
                 for (i in inputs) add(EditorRow.Input(Category.TOUCH, c.id, label, if (inputs.size > 1) i.label else null, i))
             }
         }
+        add(EditorRow.Section(Category.TOUCHPAD, "4 finger counts"))
+        if (collapsed[Category.TOUCHPAD] != true) {
+            for (n in 1..4) {
+                for (input in Bindings.surfaceInputs(n)) {
+                    add(EditorRow.Input(Category.TOUCHPAD, "tp$n", if (n == 1) "1 finger" else "$n fingers", input.label, input))
+                }
+            }
+            add(EditorRow.TouchpadReset)
+        }
         val keys = keyboard.mapNotNull { (it.source as? InputSource.Key)?.keyCode }.distinct()
         add(EditorRow.Section(Category.KEYBOARD, "${keys.size} keys"))
         if (collapsed[Category.KEYBOARD] != true) {
@@ -209,7 +228,7 @@ internal fun MappingProfileEditor(
             withFrameMillis { }
             val now = HashSet<String>()
             for (r in latestRows) {
-                if (r !is EditorRow.Input || r.category == Category.TOUCH) continue
+                if (r !is EditorRow.Input || r.category == Category.TOUCH || r.category == Category.TOUCHPAD) continue
                 if (r.input.sources.maxOf { abs(runtime.sourceValue(it)) } >= 0.5f) now += r.key
             }
             if (now != pressed) {
@@ -239,9 +258,11 @@ internal fun MappingProfileEditor(
     fun save() {
         val trimmed = name.trim().ifEmpty { start.name }
         if (source != null) {
-            runtime.updateMappingProfile(source.copy(name = trimmed, touch = touch, keyboard = keyboard, controller = controller))
+            runtime.updateMappingProfile(
+                source.copy(name = trimmed, touch = touch, keyboard = keyboard, controller = controller, touchpad = touchpad),
+            )
         } else {
-            runtime.newMappingProfile(trimmed, MappingProfile("", trimmed, touch, keyboard, controller), wsIndex)
+            runtime.newMappingProfile(trimmed, MappingProfile("", trimmed, touch, keyboard, controller, touchpad), wsIndex)
         }
         onDone()
     }
@@ -290,13 +311,27 @@ internal fun MappingProfileEditor(
                         }
                         if (open) {
                             Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-                                Text(if (row.category == Category.KEYBOARD) "Key" else "Button", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(0.38f))
+                                Text(
+                                    when (row.category) {
+                                        Category.KEYBOARD -> "Key"
+                                        Category.TOUCHPAD -> "Gesture"
+                                        else -> "Button"
+                                    },
+                                    style = MaterialTheme.typography.labelLarge,
+                                    modifier = Modifier.weight(0.38f),
+                                )
                                 Text("Mapping", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(0.62f))
                             }
                         }
                         HorizontalDivider()
                     }
                     is EditorRow.Note -> Hint(row.text)
+                    is EditorRow.TouchpadReset -> {
+                        TextButton(onClick = { touchpad = Bindings.defaultTouchpadMappings(TouchpadSettings()) }) {
+                            Text("Reset touchpad to standard")
+                        }
+                        HorizontalDivider()
+                    }
                     is EditorRow.AddKey -> {
                         if (capturingKey) {
                             KeyLearn(runtime, onKey = { code ->
@@ -388,6 +423,7 @@ internal fun MappingProfileEditor(
         TargetPickerDialog(
             analog = input.analog,
             swipe = input.swipe,
+            extra = input.extra,
             runtime = runtime,
             current = Bindings.targets(get(category), input),
             onPick = { picked ->

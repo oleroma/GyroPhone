@@ -21,6 +21,11 @@ data class MappingProfile(
     val keyboard: List<Mapping> = emptyList(),
     /** [InputSource.Key] / [InputSource.Axis] sources from a game pad. */
     val controller: List<Mapping> = emptyList(),
+    /**
+     * The workspace touchpad's sources ([InputSource.isTouchpad]); null (saved before touchpad
+     * mappings) = what each workspace's touchpad switches stand for ([Bindings.defaultTouchpadMappings]).
+     */
+    val touchpad: List<Mapping>? = null,
 )
 
 object MappingProfiles {
@@ -48,8 +53,14 @@ object MappingProfiles {
         is InputSource.TouchSwipe -> source.id
         is InputSource.TouchRelease -> source.id
         is InputSource.TouchDoubleTap -> source.id
+        is InputSource.TouchArea -> source.id
+        is InputSource.Surface -> source.id.ifEmpty { null }
         else -> null
     }
+
+    /** [mapping]'s touchpad mappings, or the ones [w]'s touchpad switches stand for. */
+    fun touchpadOf(mapping: MappingProfile, w: Workspace): List<Mapping> =
+        mapping.touchpad ?: Bindings.defaultTouchpadMappings(w.touchpad)
 
     /**
      * A new profile: the builtin touch mappings for every control of [set] that has one, and the
@@ -80,7 +91,8 @@ object MappingProfiles {
         val ids = w.touchControls.mapTo(HashSet()) { it.id }
         return w.copy(
             mappingProfileId = mapping.id,
-            mappings = mapping.touch.filter { touchId(it.source) in ids },
+            mappings = Bindings.upgradeSwipes(mapping.touch).filter { touchId(it.source) in ids } + touchpadOf(mapping, w),
+            touchpad = w.touchpad.copy(mapped = true),
             keyboard = mapping.keyboard,
             pads = w.pads.map { it.copy(mappings = it.own ?: mapping.controller) },
         )
@@ -94,6 +106,7 @@ object MappingProfiles {
         workspaces = set.workspaces.map { w ->
             w.copy(
                 mappings = emptyList(),
+                touchpad = w.touchpad.copy(mapped = false),
                 keyboard = emptyList(),
                 pads = w.pads.map { it.copy(mappings = emptyList(), presetId = null, own = if (it.own != null) it.mappings else null) },
             )
@@ -114,9 +127,14 @@ object MappingProfiles {
             val mapping = of(w, result) ?: continue
             val old = before.workspaces.firstOrNull { it.id == w.id && it.mappingProfileId == w.mappingProfileId }
             val ids = w.touchControls.mapTo(HashSet()) { it.id }
-            val was = (old?.mappings ?: mapping.touch).filter { touchId(it.source) in ids }.toSet()
+            val base = Bindings.upgradeSwipes(mapping.touch)
+            val was = (old?.mappings ?: base).filter { touchId(it.source) in ids }.toSet()
             val now = w.mappings.filter { touchId(it.source) in ids }.toSet()
-            val touch = (mapping.touch.filterNot { it in was - now } + (now - was)).distinct()
+            val touch = (base.filterNot { it in was - now } + (now - was)).distinct()
+            // The touchpad set is taken whole once it changed (it may only stand for the switches so far).
+            val padNow = w.mappings.filter { it.source.isTouchpad }
+            val padWas = old?.mappings?.filter { it.source.isTouchpad } ?: touchpadOf(mapping, w)
+            val touchpad = if (w.touchpad.mapped && padNow.toSet() != padWas.toSet()) padNow else mapping.touchpad
             val changed = w.pads.firstOrNull { p ->
                 if (p.own != null) return@firstOrNull false
                 val oldPad = old?.pads?.firstOrNull { it.id == p.id }
@@ -124,8 +142,8 @@ object MappingProfiles {
                 else mapping.controller.isEmpty() && p.mappings.isNotEmpty()
             }
             val controller = changed?.mappings ?: mapping.controller
-            if (touch == mapping.touch && controller == mapping.controller) continue
-            val updated = mapping.copy(touch = touch, controller = controller)
+            if (touch == mapping.touch && controller == mapping.controller && touchpad == mapping.touchpad) continue
+            val updated = mapping.copy(touch = touch, controller = controller, touchpad = touchpad)
             result = result.map { if (it.id == mapping.id) updated else it }
         }
         return result
@@ -148,6 +166,7 @@ object MappingProfiles {
             val created = MappingProfile(
                 newId(all.map { it.id }), w.name, touch = touch, keyboard = w.keyboard,
                 controller = controller.ifEmpty { KnownLayouts.familyMappings(FaceLayout.XBOX) },
+                touchpad = if (w.touchpad.mapped) w.mappings.filter { it.source.isTouchpad } else null,
             )
             all += created
             w.copy(mappingProfileId = created.id)

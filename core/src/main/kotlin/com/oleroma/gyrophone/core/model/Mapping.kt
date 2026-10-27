@@ -41,6 +41,33 @@ enum class StickDiagonal(val label: String) {
 @Serializable
 enum class MouseButton(val bit: Int) { LEFT(0), RIGHT(1), MIDDLE(2), BACK(3), FORWARD(4) }
 
+/**
+ * When an [InputSource.TouchArea] is held. HELD (sticks): from touch-down on the stick until
+ * lift. OUTSIDE: while a finger that touched down on the control is outside its area. ZONE: while
+ * any finger is inside its area, wherever it touched down.
+ */
+@Serializable
+enum class TouchAreaKind(val label: String) { HELD("On touch"), OUTSIDE("Outside"), ZONE("Zone") }
+
+/**
+ * A mappable input of a touch surface (the workspace touchpad), per finger count
+ * ([InputSource.Surface]). TAP: a short pulse on a still, quick lift; DOUBLE_TAP: a second tap
+ * soon after; TAP_DRAG: held from a tap's lift while a second touch may follow, through that
+ * touch (a drag); HOLD: while exactly that many fingers are down; RELEASE: a pulse when the
+ * fingers all lift (only after a quick touch with [TouchpadSettings.releaseTapMs]). MOTION_X / Y:
+ * the fingers' travel (cursor, scroll, a stick from the touch-down point, switching apps);
+ * SWIPE_*: a pulse once per touch when the travel passes a distance; HOLD_*: held while past half
+ * of it in that direction. PINCH: the spread change (zoom); PINCH_IN / OUT: held while pinching.
+ */
+@Serializable
+enum class SurfaceInput(val label: String, val motion: Boolean = false) {
+    TAP("Tap"), DOUBLE_TAP("Double tap"), TAP_DRAG("Tap-drag"), HOLD("Hold"), RELEASE("Release"),
+    MOTION_X("Move X", motion = true), MOTION_Y("Move Y", motion = true),
+    SWIPE_LEFT("Swipe ←"), SWIPE_RIGHT("Swipe →"), SWIPE_UP("Swipe ↑"), SWIPE_DOWN("Swipe ↓"),
+    HOLD_LEFT("Hold ←"), HOLD_RIGHT("Hold →"), HOLD_UP("Hold ↑"), HOLD_DOWN("Hold ↓"),
+    PINCH("Pinch", motion = true), PINCH_IN("Pinch in"), PINCH_OUT("Pinch out"),
+}
+
 /** Something on the phone side that produces input. */
 @Serializable
 sealed interface InputSource {
@@ -79,6 +106,14 @@ sealed interface InputSource {
      */
     @Serializable @SerialName("touch_swipe")
     data class TouchSwipe(val id: String, val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL) : InputSource
+
+    /** Where fingers are relative to a touch control's area (see [TouchAreaKind]); the pad screen drives it. */
+    @Serializable @SerialName("touch_area")
+    data class TouchArea(val id: String, val kind: TouchAreaKind) : InputSource
+
+    /** An input of a touch surface with [fingers] (1..4) down; [id] "" = the workspace touchpad. */
+    @Serializable @SerialName("surface")
+    data class Surface(val fingers: Int, val input: SurfaceInput, val id: String = "") : InputSource
 }
 
 /** Something the host PC receives. */
@@ -127,7 +162,52 @@ sealed interface OutputTarget {
      */
     @Serializable @SerialName("gyro_pause")
     data object GyroPause : OutputTarget
+
+    /**
+     * Windows app switching from a surface's Move X: Alt is held while the fingers stay down and
+     * Tab (moving right) or Shift+Tab (moving left) is sent per step of travel.
+     */
+    @Serializable @SerialName("switch_apps")
+    data object SwitchApps : OutputTarget
+
+    /** Zoom from a surface's Pinch: Ctrl + wheel, spreading apart zooms in. */
+    @Serializable @SerialName("zoom")
+    data object Zoom : OutputTarget
+
+    /**
+     * The phone vibrates (only while a PC is connected): a tick when the source engages, or
+     * while it is [held] (an axis: stronger the further it is pushed). [feel] null = the
+     * workspace's ([Workspace.haptics]).
+     */
+    @Serializable @SerialName("haptic")
+    data class Haptic(val held: Boolean = false, val feel: HapticFeel? = null) : OutputTarget
+
+    /**
+     * A haptic tick each time the source's value crosses a step of [percent] % (detents along an
+     * axis; a button ticks on press and release). [feel] as in [Haptic].
+     */
+    @Serializable @SerialName("haptic_step")
+    data class HapticStep(val percent: Int = DEFAULT_STEP_PERCENT, val feel: HapticFeel? = null) : OutputTarget {
+        companion object {
+            const val DEFAULT_STEP_PERCENT = 10
+            const val MIN_STEP_PERCENT = 2
+            const val MAX_STEP_PERCENT = 50
+        }
+    }
 }
 
 @Serializable
 data class Mapping(val source: InputSource, val target: OutputTarget)
+
+/**
+ * How a haptic target feels. [system]: Android's own click effects (they follow the phone's
+ * touch feedback setting), [strength] picking light / medium / strong; else the motor at
+ * [strength] (1..255). [lengthMs]: a tick's length (custom only).
+ */
+@Serializable
+data class HapticFeel(val system: Boolean = true, val strength: Int = 160, val lengthMs: Int = 20) {
+    companion object {
+        const val MIN_LENGTH_MS = 5
+        const val MAX_LENGTH_MS = 200
+    }
+}

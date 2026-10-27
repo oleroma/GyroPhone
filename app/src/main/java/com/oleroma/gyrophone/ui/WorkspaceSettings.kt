@@ -102,6 +102,7 @@ internal fun TouchMappingList(
         TargetPickerDialog(
             analog = input.analog,
             swipe = input.swipe,
+            extra = input.extra,
             runtime = runtime,
             current = Bindings.targets(mappings, input),
             onPick = { picked ->
