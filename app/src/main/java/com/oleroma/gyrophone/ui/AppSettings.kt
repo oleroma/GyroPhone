@@ -25,6 +25,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.runtime.ScreenOrientation
+import kotlin.math.roundToInt
 
 /**
  * The Settings page (from the pad's Settings capsule): options of the whole app, the corners
@@ -40,6 +41,7 @@ fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
     val startFullscreen by runtime.startFullscreen.collectAsStateWithLifecycle()
     val autoHide by runtime.cornerAutoHide.collectAsStateWithLifecycle()
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
+    val visuals by runtime.touchVisuals.collectAsStateWithLifecycle()
     val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?" }
 
     Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -48,8 +50,43 @@ fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
         SwitchRow("Hide the ← / → corners after a few seconds", autoHide) { runtime.setCornerAutoHide(it) }
         Hint(
             "Tap the screen 4 times quickly to show them again. Hidden corners still work. " +
-                "Off: they are always shown.",
+                    "Off: they are always shown.",
         )
+
+        Text("Touch display", style = MaterialTheme.typography.titleSmall)
+        SwitchRow("Show touches", visuals.showTouches) { runtime.setTouchVisuals(visuals.copy(showTouches = it)) }
+        SwitchRow("Trail behind fingers", visuals.trail) { runtime.setTouchVisuals(visuals.copy(trail = it)) }
+        if (visuals.trail) {
+            MsSlider("Trail length", visuals.trailMs, TouchVisuals.MIN_TRAIL_MS..TouchVisuals.MAX_TRAIL_MS) {
+                runtime.setTouchVisuals(visuals.copy(trailMs = it))
+            }
+            var fadePart by remember(visuals.trailFade) { mutableStateOf(visuals.trailFade) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Trail fade %.0f%%".format(fadePart * 100), Modifier.padding(end = 8.dp))
+                Slider(
+                    value = fadePart,
+                    onValueChange = { fadePart = (it * 20).roundToInt() / 20f },
+                    onValueChangeFinished = { runtime.setTouchVisuals(visuals.copy(trailFade = fadePart)) },
+                )
+            }
+        }
+        if (visuals.showTouches || visuals.trail) {
+            MsSlider("Fade out after lift", visuals.fadeMs, 0..TouchVisuals.MAX_FADE_MS) {
+                runtime.setTouchVisuals(visuals.copy(fadeMs = it))
+            }
+        }
+        Hint(
+            "Trail length: how much of the finger's path (in time) the trail keeps. Trail fade: how much of " +
+                    "it, from its end, fades out. Fade out: how long a touch takes to disappear once the finger lifts.",
+        )
+        SwitchRow("Show live mappings on buttons", visuals.liveMappings) {
+            runtime.setTouchVisuals(
+                visuals.copy(
+                    liveMappings = it
+                )
+            )
+        }
+        Hint("A button's label briefly shows what it is sending, such as a tap, double tap or long press action.")
 
         Text("Corners", style = MaterialTheme.typography.titleSmall)
         var cornerOpacity by remember(profile.id) { mutableStateOf(profile.cornerOpacity) }
@@ -76,7 +113,10 @@ fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
         Text("Screen rotation", style = MaterialTheme.typography.titleSmall)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             ScreenOrientation.entries.forEach { o ->
-                FilterChip(selected = orientation == o, onClick = { runtime.setScreenOrientation(o) }, label = { Text(o.label) })
+                FilterChip(
+                    selected = orientation == o,
+                    onClick = { runtime.setScreenOrientation(o) },
+                    label = { Text(o.label) })
             }
         }
 
@@ -89,7 +129,25 @@ fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
         Text("About", style = MaterialTheme.typography.titleSmall)
         Text("GyroPhone $version", style = MaterialTheme.typography.bodySmall)
         Text("Gyro: ${gyro.source}", style = MaterialTheme.typography.bodySmall)
-        Text("Gyro rate: ${gyro.rateHz} Hz" + if (gyro.active) " · moving mouse" else "", style = MaterialTheme.typography.bodySmall)
+        Text(
+            "Gyro rate: ${gyro.rateHz} Hz" + if (gyro.active) " · moving mouse" else "",
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+/** A time setting in steps of 10 ms; [onChange] gets it once the drag ends. */
+@Composable
+private fun MsSlider(title: String, ms: Int, range: IntRange, onChange: (Int) -> Unit) {
+    var v by remember(ms) { mutableStateOf(ms.toFloat()) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("$title %.0f ms".format(v), Modifier.padding(end = 8.dp))
+        Slider(
+            value = v,
+            onValueChange = { v = (it / 10f).roundToInt() * 10f },
+            valueRange = range.first.toFloat()..range.last.toFloat(),
+            onValueChangeFinished = { onChange(v.roundToInt()) },
+        )
     }
 }
 

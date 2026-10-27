@@ -24,6 +24,7 @@ import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.WorkspaceSet
+import com.oleroma.gyrophone.ui.TouchVisuals
 import com.oleroma.gyrophone.data.ProfileStore
 import com.oleroma.gyrophone.core.net.ByeReason
 import com.oleroma.gyrophone.core.net.Wire
@@ -147,6 +148,20 @@ class GamepadRuntime(context: Context) {
 
     /** The ← / → corners fade out after a few seconds in play; four quick taps show them again. */
     val cornerAutoHide: StateFlow<Boolean> = _cornerAutoHide
+
+    private val _touchVisuals = MutableStateFlow(
+        prefs.getString(KEY_TOUCH_VISUALS, null)
+            ?.let { runCatching { visualsJson.decodeFromString(TouchVisuals.serializer(), it) }.getOrNull() }
+            ?: TouchVisuals(),
+    )
+
+    /** How the pad shows touches, trails and live mappings. */
+    val touchVisuals: StateFlow<TouchVisuals> = _touchVisuals
+
+    fun setTouchVisuals(v: TouchVisuals) {
+        prefs.edit().putString(KEY_TOUCH_VISUALS, visualsJson.encodeToString(TouchVisuals.serializer(), v)).apply()
+        _touchVisuals.value = v
+    }
 
     private val _capsuleOrder = MutableStateFlow(prefs.getString(KEY_CAPSULE_ORDER, "") ?: "")
 
@@ -721,6 +736,8 @@ class GamepadRuntime(context: Context) {
         private const val KEY_START_FULLSCREEN = "start_fullscreen"
         private const val KEY_CORNER_AUTO_HIDE = "corner_auto_hide"
         private const val KEY_CAPSULE_ORDER = "capsule_order"
+        private const val KEY_TOUCH_VISUALS = "touch_visuals"
+        private val visualsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
         private const val KEY_UI_PREFIX = "ui."
         private const val KEY_BIAS_X = "gyro_bias_x"
         private const val KEY_BIAS_Y = "gyro_bias_y"
