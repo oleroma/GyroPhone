@@ -125,8 +125,8 @@ private const val REVEAL_GAP_NS = 300_000_000L
 private const val PILL_MS = 1_000L
 /** Highlight refresh while a finger is on a button (holds and lift commits happen between events). */
 private const val HIGHLIGHT_POLL_MS = 50L
-/** Edit mode: how much of a control (all of a smaller one) must stay on screen, in dp. */
-private const val KEEP_ON_SCREEN_DP = 24f
+/** Edit mode: how much of a control (all of a smaller one) must stay on screen, in dp: about a fingertip. */
+private const val KEEP_ON_SCREEN_DP = 48f
 /** Edit mode: a second tap on overlapping controls within this picks the next one behind. */
 private const val EDIT_CYCLE_MS = 1_000L
 
@@ -358,35 +358,16 @@ fun PadScreen(
             controls.lastOrNull { it.contains(p.x, p.y, w, h, inPortrait = portrait) }
 
         /**
-         * A control larger than the screen on one axis only: when it would be on both, the axis
-         * it overflows less is cut to the screen, so two of its edges always show.
-         */
-        fun fitOneAxis(c: TouchControl): TouchControl {
-            val cw = 2f * half(c); val ch = 2f * halfH(c)
-            if (cw <= w || ch <= h) return c
-            val x = c.placeX(portrait); val y = c.placeY(portrait)
-            return when {
-                c.shape == TouchShape.CIRCLE || c.kind != TouchKind.BUTTON -> c.withPlacement(portrait, x, y, max(w, h) / unit)
-                cw / w >= ch / h -> c.copy(aspect = h / cw)
-                else -> c.withPlacement(portrait, x, y, w / unit).copy(aspect = ch / w)
-            }
-        }
-
-        /**
          * Sets the current orientation's centre, optionally snapped to the grid. A control may
-         * hang off the screen's edge, but at least [KEEP_ON_SCREEN_DP] of it (all of a smaller
-         * one) stays on screen. One larger than the screen on an axis stays whole on the other,
-         * so its outline shows.
+         * be larger than the screen and hang off its edges, but a fingertip of it
+         * ([KEEP_ON_SCREEN_DP], all of a smaller one) stays on screen on each axis.
          */
-        fun place(control: TouchControl, x: Float, y: Float, snapToGrid: Boolean): TouchControl {
-            val c = fitOneAxis(control)
+        fun place(c: TouchControl, x: Float, y: Float, snapToGrid: Boolean): TouchControl {
             val sx = if (snapToGrid) (x / GRID).roundToInt() * GRID else x
             val sy = if (snapToGrid) (y / GRID).roundToInt() * GRID else y
             val keep = KEEP_ON_SCREEN_DP * pxPerDp
             val hw = half(c); val hh = halfH(c)
-            var kx = min(2f * hw, keep); var ky = min(2f * hh, keep)
-            if (2f * hw > w) ky = 2f * hh
-            if (2f * hh > h) kx = 2f * hw
+            val kx = min(2f * hw, keep); val ky = min(2f * hh, keep)
             return c.withPlacement(
                 portrait,
                 sx.coerceIn((kx - hw) / w, 1f - (kx - hw) / w),
