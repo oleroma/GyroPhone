@@ -101,8 +101,10 @@ import com.oleroma.gyrophone.core.model.placeY
 import com.oleroma.gyrophone.core.model.placement
 import com.oleroma.gyrophone.core.model.withPlacement
 import com.oleroma.gyrophone.runtime.GamepadRuntime
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
@@ -122,6 +124,8 @@ private const val REVEAL_GAP_NS = 300_000_000L
 private const val PILL_MS = 1_000L
 /** Highlight refresh while a finger is on a button (holds and lift commits happen between events). */
 private const val HIGHLIGHT_POLL_MS = 50L
+/** Edit mode: how much of a control (all of a smaller one) must stay on screen, in dp. */
+private const val KEEP_ON_SCREEN_DP = 24f
 /** Edit mode: a second tap on overlapping controls within this picks the next one behind. */
 private const val EDIT_CYCLE_MS = 1_000L
 
@@ -353,15 +357,22 @@ fun PadScreen(
             controls.lastOrNull { it.contains(p.x, p.y, w, h, inPortrait = portrait) }
 
         /**
-         * Sets the current orientation's centre, keeping the whole control on screen and
-         * optionally snapping the centre to the grid.
+         * Sets the current orientation's centre, optionally snapped to the grid. A control may
+         * hang off the screen's edge, but at least [KEEP_ON_SCREEN_DP] of it (all of a smaller
+         * one) stays on screen.
          */
         fun place(c: TouchControl, x: Float, y: Float, snapToGrid: Boolean): TouchControl {
             val sx = if (snapToGrid) (x / GRID).roundToInt() * GRID else x
             val sy = if (snapToGrid) (y / GRID).roundToInt() * GRID else y
-            val hx = (half(c) / w).coerceAtMost(0.5f)
-            val hy = (halfH(c) / h).coerceAtMost(0.5f)
-            return c.withPlacement(portrait, sx.coerceIn(hx, 1f - hx), sy.coerceIn(hy, 1f - hy), c.placeSize(portrait))
+            val keep = KEEP_ON_SCREEN_DP * pxPerDp
+            val hw = half(c); val hh = halfH(c)
+            val kx = min(2f * hw, keep); val ky = min(2f * hh, keep)
+            return c.withPlacement(
+                portrait,
+                sx.coerceIn((kx - hw) / w, 1f - (kx - hw) / w),
+                sy.coerceIn((ky - hh) / h, 1f - (ky - hh) / h),
+                c.placeSize(portrait),
+            )
         }
 
         /** Applies [change] to the workspace being edited. */
@@ -424,6 +435,11 @@ fun PadScreen(
                         var grab = Offset.Zero
                         var startSize = 0f
                         var pinchStart = 0f
+                        // Pinch start: the control's width, height and centre (px), the fingers' midpoint and spread on each axis.
+                        var startW = 0f; var startH = 0f
+                        var startCenter = Offset.Zero
+                        var startMid = Offset.Zero
+                        var startDx = 0f; var startDy = 0f
                         var pinchA: PointerId? = null
                         var pinchB: PointerId? = null
                         // Overlapping controls: the front one; a tap on the same spot soon after picks the next one behind.
@@ -474,6 +490,11 @@ fun PadScreen(
                                     menu = EditMenu.NONE
                                     startSize = c.placeSize(portrait)
                                     pinchStart = dist
+                                    startW = 2f * half(c); startH = 2f * halfH(c)
+                                    startCenter = center(c)
+                                    startMid = (down[0].position + down[1].position) / 2f
+                                    startDx = abs(down[0].position.x - down[1].position.x)
+                                    startDy = abs(down[0].position.y - down[1].position.y)
                                     dragging = false
                                 } else {
                                     mode = EditGesture.NONE
@@ -514,7 +535,33 @@ fun PadScreen(
                                     } else {
                                         val id = target
                                         val dist = (a.position - b.position).getDistance()
-                                        if (id != null) resize(id, startSize * dist / pinchStart)
+                                        val d = draft
+                                        if (id != null && d != null && isCorner(d, id)) {
+                                            resize(id, startSize * dist / pinchStart)
+                                        } else if (id != null) {
+                                            // Linear: each edge follows its finger, and the point under the
+                                            // fingers' midpoint stays under it. A rectangle sizes on each axis apart.
+                                            val lo = TouchControl.MIN_SIZE * unit
+                                            val hi = TouchControl.MAX_SIZE * unit
+                                            updateControl(id) { c ->
+                                                val rect = c.kind == TouchKind.BUTTON && c.shape == TouchShape.SQUARE
+                                                val nw: Float
+                                                val nh: Float
+                                                if (rect) {
+                                                    nw = (startW + abs(a.position.x - b.position.x) - startDx).coerceIn(lo, hi)
+                                                    nh = (startH + abs(a.position.y - b.position.y) - startDy).coerceIn(lo, hi)
+                                                } else {
+                                                    nw = (startW + dist - pinchStart).coerceIn(lo, hi)
+                                                    nh = nw
+                                                }
+                                                val mid = (a.position + b.position) / 2f
+                                                val cx = mid.x + (startCenter.x - startMid.x) * nw / startW
+                                                val cy = mid.y + (startCenter.y - startMid.y) * nh / startH
+                                                val sized = c.withPlacement(portrait, c.placeX(portrait), c.placeY(portrait), nw / unit)
+                                                    .let { if (rect) it.copy(aspect = nh / nw) else it }
+                                                place(sized, cx / w, cy / h, false)
+                                            }
+                                        }
                                     }
                                 }
                                 else -> Unit
