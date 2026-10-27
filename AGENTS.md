@@ -2,9 +2,10 @@
 # Shared rules for all of Olex's repos
 
 ## How agents work
-- `main` is the only long-lived branch. Agents work only in cloud sessions, on a feature branch made from `main`. They never edit, commit or merge in the local checkouts in D:\dev; a session on the PC only builds and installs (step 3). Olex can work and change anything anywhere.
+- `main` is the only long-lived branch. Agents always work on a feature branch made from `main`.
+- By default agents work in cloud sessions, and a session on the PC only builds and installs (step 3). An agent works locally on the PC (edits, commits, merges) only when Olex asks for it, or when the work can't be done in the cloud. Then it follows the same steps, and says it's working locally and why. Olex can work and change anything anywhere.
 - Scripts in `.agents/` run the pipeline: branching, committing, pushing, building, installing and merging. The agent does only what needs judgment: writing code and commit messages, resolving conflicts, trying the PC before the fallback build, posting in the project thread, and talking to Olex.
-- Never do by hand what a script does. If a script is missing something or seems wrong, tell Olex instead of working around it. If the cloud session lacks something it really needs, ask Olex what to do.
+- Never do by hand what a script does. If a script is missing something or seems wrong, tell Olex instead of working around it. If the cloud session lacks something it really needs and working locally isn't possible either, ask Olex what to do.
 - Run the scripts with `bash`, as in the steps below. Each script ends with one line, `result: <word>`, followed by a short summary, and writes its full log to `build/logs/`. Read the log only when the result is `failed`.
 
 ## Results
@@ -57,7 +58,7 @@
 ## Destructive actions
 - Destructive actions are allowed only inside the repo's gitignored `build/` folder, and only what the task needs there, such as the scripts' build cleanup. Never wipe `build/` or remove anything in it the task doesn't need gone.
 - Everywhere else (the rest of the repo, other repos, the rest of the PC, the phone), never do anything that loses data git can't bring back: no deleting files or folders, `git reset --hard`, `git clean`, `git checkout`/`git restore` over uncommitted changes, `git stash drop`, force pushes, deleting branches or tags, rewriting pushed history, or uninstalling apps. If one is needed, ask Olex first.
-- Normal edits to files in a cloud session, as part of the task, are not destructive.
+- Normal edits to files, as part of the task, are not destructive.
 
 ## Agent instruction files
 - These shared rules sit at the top of every repo's `AGENTS.md`, between the "shared rules" marker lines, and are the same in every repo. Only the "rulesetter" thread changes them. Their master copy is `rules/AGENTS.md` in the DevDoctor project's files (`/mnt/project-files/rules/AGENTS.md` in a cloud session), with the shared scripts next to it in `rules/.agents/`; a cloud session runs `rules/sync-agents.sh` from there to copy both into every repo. `D:\dev\AGENTS.md` and `D:\dev\tools\sync-agents.ps1` are retired: don't use them.
