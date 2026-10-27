@@ -75,15 +75,20 @@ data class TouchControl(
     /** Swipe mode: press only on a still tap's release (else the press starts at touch-down). */
     val swipeTapOnRelease: Boolean = false,
     /**
-     * With a double tap mapping: the press waits to see if a second tap follows (a double tap
-     * then never presses). Off: the press is instant, and a double tap also presses twice.
+     * Before tap and long press mappings: with a double tap mapping, the press waited out a
+     * possible double tap. Only read by [ButtonActivators.upgrade], which turns it into tap and
+     * long press mappings.
      */
     val doubleTapWaits: Boolean = false,
     /**
-     * Release mapping: fires only after a press shorter than this (ms), a quick tap; 0 = after
-     * every press.
+     * Before tap mappings: the release mapping fired only after a press shorter than this (ms).
+     * Only read by [ButtonActivators.upgrade], which turns it into a tap mapping.
      */
     val releaseTapMs: Int = 0,
+    /** BUTTON: how long a press must be held to be a long press (ms); null = the workspace's. */
+    val longPressMs: Int? = null,
+    /** BUTTON: the longest gap between the taps of a double tap (ms); null = the workspace's. */
+    val doubleTapMs: Int? = null,
     /**
      * Zone mapping ([TouchAreaKind.ZONE]): a finger that slides in from elsewhere stops what it
      * was doing (cursor, stick, another button) while it is in the zone, and one that lands on
@@ -105,13 +110,23 @@ data class TouchControl(
     /** In swipe mode: a button with [swipe] on and click-through off. */
     val swipes: Boolean get() = kind == TouchKind.BUTTON && swipe && !clickThrough
 
+    /** The long-press time in effect (ms), its own or [w]'s. */
+    fun longPress(w: Workspace): Int =
+        (longPressMs ?: w.longPressMs).coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS)
+
+    /** The double-tap window in effect (ms), its own or [w]'s. */
+    fun doubleTap(w: Workspace): Int =
+        (doubleTapMs ?: w.doubleTapMs).coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS)
+
     companion object {
         const val MIN_SIZE = 0.06f
+
         /** Fractions of the shorter side: over 1 a control can span the long side (and fill the screen). */
         const val MAX_SIZE = 3f
         const val MAX_DEADZONE = 0.6f
         const val MAX_SWIPE_SENS = 12f
         const val MAX_RELEASE_TAP_MS = 1000
+
         /**
          * Derived portrait layout: the landscape layout squeezed into the lower part (the top is
          * left for the touchpad), sizes scaled down, centres pulled in so nothing leaves the width.
@@ -181,7 +196,12 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
 
 /** A swipe button's own settings: [TouchControl.surface], or what its old swipe settings were. */
 val TouchControl.ownSurface: SurfaceSettings
-    get() = surface ?: SurfaceSettings(sensitivity = swipeSensX, sensitivityY = swipeSensY, acceleration = 0f, inertia = false)
+    get() = surface ?: SurfaceSettings(
+        sensitivity = swipeSensX,
+        sensitivityY = swipeSensY,
+        acceleration = 0f,
+        inertia = false
+    )
 
 /** How a swipe button's surface works: the workspace touchpad [pad] with the button's own settings. */
 fun TouchControl.surfaceSettings(pad: TouchpadSettings): TouchpadSettings =
@@ -290,8 +310,10 @@ enum class GyroOrientation(val label: String) {
 enum class MotionAxis(val label: String) {
     /** Turning left/right around the vertical axis. */
     YAW("Yaw"),
+
     /** Tilting the far edge up/down. */
     PITCH("Pitch"),
+
     /** Tilting like a steering wheel. */
     ROLL("Roll"),
     NONE("None"),
@@ -341,8 +363,10 @@ data class GyroSettings(
     /** Returns a copy with [axes] as the mapping for that orientation. */
     fun withAxes(portrait: Boolean, axes: GyroAxes): GyroSettings =
         if (portrait) copy(portrait = axes)
-        else copy(mouseX = axes.mouseX, invertX = axes.invertX, scaleX = axes.scaleX,
-            mouseY = axes.mouseY, invertY = axes.invertY, scaleY = axes.scaleY)
+        else copy(
+            mouseX = axes.mouseX, invertX = axes.invertX, scaleX = axes.scaleX,
+            mouseY = axes.mouseY, invertY = axes.invertY, scaleY = axes.scaleY
+        )
 
     /** Copy with the portrait axes spelled out (the landscape ones when unset), so each orientation has its own. */
     fun withBothOrientations(): GyroSettings = if (portrait != null) this else copy(portrait = landscapeAxes)
@@ -397,7 +421,10 @@ data class TouchpadSettings(
      * mappings ([Bindings.defaultTouchpadMappings]).
      */
     val mapped: Boolean = false,
-    /** Release mappings fire only after a touch shorter than this (ms); 0 = after every touch. */
+    /**
+     * Before releases fired on every lift: release mappings fired only after a touch shorter than
+     * this (ms). Only read by [ButtonActivators.upgrade], which turns them into tap mappings.
+     */
     val releaseTapMs: Int = 0,
     /**
      * One-finger cursor: travel from the touch-down point (along the one axis when only one is
@@ -495,25 +522,29 @@ data class FingerGestures(
 /** What a touchpad gesture sends to the PC. */
 @Serializable
 sealed interface GestureAction {
-    @Serializable @SerialName("none")
+    @Serializable
+    @SerialName("none")
     data object None : GestureAction
 
     /**
      * Presses and releases a key combo. [modifiers] uses the HID modifier byte bits (LCtrl = 1,
      * LShift = 2, LAlt = 4, LWin = 8, ...); [key] is a HID usage, or 0 for modifiers alone.
      */
-    @Serializable @SerialName("keys")
+    @Serializable
+    @SerialName("keys")
     data class Keys(val modifiers: Int, val key: Int = 0) : GestureAction
 
     /** Clicks a mouse button. */
-    @Serializable @SerialName("mouse")
+    @Serializable
+    @SerialName("mouse")
     data class Mouse(val button: MouseButton) : GestureAction
 
     /**
      * Windows app switching: Alt is held while the fingers stay down and Tab (moving right) or
      * Shift+Tab (moving left) is sent per step of travel. On an up/down swipe it is one Alt+Tab.
      */
-    @Serializable @SerialName("switch_apps")
+    @Serializable
+    @SerialName("switch_apps")
     data object SwitchApps : GestureAction
 }
 
@@ -526,8 +557,8 @@ data class DeviceMatch(
 ) {
     fun matches(vendor: Int, product: Int, name: String): Boolean =
         (vendorId == null || vendorId == vendor) &&
-            (productId == null || productId == product) &&
-            (nameContains == null || name.contains(nameContains, ignoreCase = true))
+                (productId == null || productId == product) &&
+                (nameContains == null || name.contains(nameContains, ignoreCase = true))
 }
 
 /**

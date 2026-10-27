@@ -197,8 +197,29 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
         runtime,
         "workspace.Controls",
         "Controls & buttons",
-        subtitle = "Touchpad over buttons, sticky modifiers, opacity"
+        subtitle = "Long press and double tap times, touchpad over buttons, sticky modifiers, opacity"
     ) {
+        var longMs by remember(key) { mutableStateOf(ws.longPressMs.toFloat()) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Long press %.0f ms".format(longMs), Modifier.padding(end = 8.dp))
+            Slider(
+                value = longMs, onValueChange = { longMs = (it / 10f).roundToInt() * 10f },
+                valueRange = Workspace.MIN_LONG_PRESS_MS.toFloat()..Workspace.MAX_LONG_PRESS_MS.toFloat(),
+                onValueChangeFinished = { editWs { it.copy(longPressMs = longMs.roundToInt()) } })
+        }
+        var doubleMs by remember(key) { mutableStateOf(ws.doubleTapMs.toFloat()) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Double tap window %.0f ms".format(doubleMs), Modifier.padding(end = 8.dp))
+            Slider(
+                value = doubleMs, onValueChange = { doubleMs = (it / 10f).roundToInt() * 10f },
+                valueRange = Workspace.MIN_DOUBLE_TAP_MS.toFloat()..Workspace.MAX_DOUBLE_TAP_MS.toFloat(),
+                onValueChangeFinished = { editWs { it.copy(doubleTapMs = doubleMs.roundToInt()) } })
+        }
+        Text(
+            "For the Tap, Double tap and Long press mappings of touch buttons, controller buttons, keyboard keys " +
+                    "and the touchpad. A touch button can set its own.",
+            style = MaterialTheme.typography.bodySmall,
+        )
         SwitchRow(
             "Touchpad over buttons (a finger on a key moves the cursor; a quick tap presses it)",
             ws.touchpadOverButtons
@@ -309,21 +330,7 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
                     onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(inertiaGlideMs = tpGlide)) } })
             }
         }
-        var tpReleaseTap by remember(key) { mutableStateOf(tp.releaseTapMs.toFloat()) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (tpReleaseTap < 1f) "Release tap time: off" else "Release tap time %.0f ms".format(tpReleaseTap),
-                Modifier.padding(end = 8.dp),
-            )
-            Slider(
-                value = tpReleaseTap, onValueChange = { tpReleaseTap = (it / 10f).roundToInt() * 10f },
-                valueRange = 0f..TouchpadSettings.MAX_RELEASE_TAP_MS.toFloat(),
-                onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(releaseTapMs = tpReleaseTap.roundToInt())) } })
-        }
-        Text(
-            "Touchpad Release mappings fire only after a touch shorter than this. Off: after every touch.",
-            style = MaterialTheme.typography.bodySmall,
-        )
+
         var tpDeadzone by remember(key) { mutableStateOf(tp.cursorDeadzoneDp) }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(

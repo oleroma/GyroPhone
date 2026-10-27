@@ -10,6 +10,7 @@ import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.Touchpad
 import com.oleroma.gyrophone.core.hid.HidDescriptor
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
+import com.oleroma.gyrophone.core.model.ButtonActivators
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownController
 import com.oleroma.gyrophone.core.model.MappingProfile
@@ -71,10 +72,12 @@ class GamepadRuntime(context: Context) {
     val hid = HidDeviceManager(appContext)
 
     private val _padPresets = MutableStateFlow(store.padPresets())
+
     /** The user's own pad presets (the builtins come from [PadPresets.builtins]). */
     val padPresets: StateFlow<List<PadPreset>> = _padPresets
 
     private val _mappingProfiles = MutableStateFlow<List<MappingProfile>>(emptyList())
+
     /** Every mapping profile (touch, keyboard and controller mappings); never empty. */
     val mappingProfiles: StateFlow<List<MappingProfile>> = _mappingProfiles
 
@@ -82,13 +85,15 @@ class GamepadRuntime(context: Context) {
      * All workspaces live in one profile ([WorkspaceSet]), stored without mappings: each workspace
      * names its [MappingProfile]. See [loadWorkspaceSet] and [loadMappings].
      */
-    private var stored: Profile = loadMappings(loadWorkspaceSet())
+    private var stored: Profile = upgradeButtons(loadMappings(loadWorkspaceSet()))
 
     private val _activeProfile = MutableStateFlow(MappingProfiles.resolve(stored, _mappingProfiles.value))
+
     /** The workspace set with each workspace's mapping profile filled in ([MappingProfiles.resolve]). */
     val activeProfile: StateFlow<Profile> = _activeProfile
 
     private val _workspaceIndex = MutableStateFlow(rememberedWorkspace(_activeProfile.value))
+
     /** Index of the active workspace in [activeProfile] (always in range). */
     val workspaceIndex: StateFlow<Int> = _workspaceIndex
 
@@ -98,7 +103,8 @@ class GamepadRuntime(context: Context) {
     private val prefs = appContext.getSharedPreferences("gyrophone", Context.MODE_PRIVATE)
 
     private val _reportRateHz = MutableStateFlow(
-        prefs.getInt(KEY_RATE, ReportPump.DEFAULT_RATE_HZ).takeIf { it in ReportPump.RATES_HZ } ?: ReportPump.DEFAULT_RATE_HZ,
+        prefs.getInt(KEY_RATE, ReportPump.DEFAULT_RATE_HZ).takeIf { it in ReportPump.RATES_HZ }
+            ?: ReportPump.DEFAULT_RATE_HZ,
     )
     val reportRateHz: StateFlow<Int> = _reportRateHz
 
@@ -109,6 +115,7 @@ class GamepadRuntime(context: Context) {
         prefs.getString(KEY_TRANSPORT, null)?.let { name -> TransportKind.entries.firstOrNull { it.name == name } }
             ?: TransportKind.BLUETOOTH,
     )
+
     /** Which link carries input to the PC. Only one link runs at a time. */
     val transport: StateFlow<TransportKind> = _transport
 
@@ -118,30 +125,37 @@ class GamepadRuntime(context: Context) {
     val wifiRateHz: StateFlow<Int> = _wifiRateHz
 
     private val _screenOrientation = MutableStateFlow(
-        prefs.getString(KEY_ORIENTATION, null)?.let { name -> ScreenOrientation.entries.firstOrNull { it.name == name } }
+        prefs.getString(KEY_ORIENTATION, null)
+            ?.let { name -> ScreenOrientation.entries.firstOrNull { it.name == name } }
             ?: ScreenOrientation.AUTO,
     )
+
     /** How the activity may rotate; MainActivity applies it. */
     val screenOrientation: StateFlow<ScreenOrientation> = _screenOrientation
 
     private val _padOnlyInput = MutableStateFlow(prefs.getBoolean(KEY_PAD_ONLY_INPUT, true))
+
     /** When on (the default), controller, keyboard and gyro input reach the PC only while the pad is on screen. */
     val padOnlyInput: StateFlow<Boolean> = _padOnlyInput
 
     private val _startFullscreen = MutableStateFlow(prefs.getBoolean(KEY_START_FULLSCREEN, false))
+
     /** Open the pad in fullscreen when the app starts. */
     val startFullscreen: StateFlow<Boolean> = _startFullscreen
 
     private val _cornerAutoHide = MutableStateFlow(prefs.getBoolean(KEY_CORNER_AUTO_HIDE, false))
+
     /** The ← / → corners fade out after a few seconds in play; four quick taps show them again. */
     val cornerAutoHide: StateFlow<Boolean> = _cornerAutoHide
 
     private val _capsuleOrder = MutableStateFlow(prefs.getString(KEY_CAPSULE_ORDER, "") ?: "")
+
     /** Order of the pad's top capsules: 'W' per workspace slot, 'S' Settings, 'C' Connection (see ui.capsules). */
     val capsuleOrder: StateFlow<String> = _capsuleOrder
 
     /** The pad is shown in play mode (not the menu, the editor or the Connect tab); set by PadScreen. */
     private var padShown = false
+
     /** The activity is resumed; set by MainActivity. */
     private var foreground = false
 
@@ -149,18 +163,21 @@ class GamepadRuntime(context: Context) {
      * Whether controller, keyboard and gyro input go to the engine. False while [padOnlyInput] is on
      * and the pad is not on screen; the link stays up and sends nothing held.
      */
-    @Volatile var inputAllowed = !_padOnlyInput.value
+    @Volatile
+    var inputAllowed = !_padOnlyInput.value
         private set
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _linkState = MutableStateFlow<LinkState>(LinkState.Off)
+
     /** State of the active link. */
     val linkState: StateFlow<LinkState> = _linkState
 
     /** Plays the engine's haptic mappings while a PC is connected. */
     private val haptics = PhoneHaptics(appContext) { _linkState.value is LinkState.Connected }
 
-    @Volatile private var running = false
+    @Volatile
+    private var running = false
 
     private val active: OutputLink get() = link(_transport.value)
 
@@ -185,37 +202,50 @@ class GamepadRuntime(context: Context) {
         data object None : CalibrationState
         data object Running : CalibrationState
         data object Moved : CalibrationState
+
         /** Bias in deg/s, largest axis, for display. */
         data class Calibrated(val degPerSec: Float) : CalibrationState
     }
 
     // Constant bias (rad/s) subtracted from every gyro sample; set by rest calibration, kept per phone.
-    @Volatile private var biasX = prefs.getFloat(KEY_BIAS_X, 0f)
-    @Volatile private var biasY = prefs.getFloat(KEY_BIAS_Y, 0f)
-    @Volatile private var biasZ = prefs.getFloat(KEY_BIAS_Z, 0f)
-    @Volatile private var calibration: GyroCalibration? = null
+    @Volatile
+    private var biasX = prefs.getFloat(KEY_BIAS_X, 0f)
+
+    @Volatile
+    private var biasY = prefs.getFloat(KEY_BIAS_Y, 0f)
+
+    @Volatile
+    private var biasZ = prefs.getFloat(KEY_BIAS_Z, 0f)
+
+    @Volatile
+    private var calibration: GyroCalibration? = null
     private val _calibration = MutableStateFlow(storedCalibration())
     val calibrationState: StateFlow<CalibrationState> = _calibration
 
     /** Started, switched and stopped on the main thread only (under this object's lock). */
     private var gyro: GyroSource? = null
     private val main = Handler(Looper.getMainLooper())
+
     /**
      * The direct channel ran capped (the microphone privacy toggle caps it to ~50 Hz, a listener
      * to ~200 Hz): the listener runs instead until the next [start] or return to the foreground.
      */
     private var avoidDirect = false
+
     /** The rate the capped direct channel measured, shown while [avoidDirect]. */
     private var cappedHz = 0
+
     // Owned by the thread of the running source; reset before each source starts.
     private var lastGyroTs = 0L
     private val rateWindow = GyroRateWindow()
 
     /** When set, the next controller input is captured for the mapping editor instead of sent. */
-    @Volatile var learnListener: ((InputSource) -> Unit)? = null
+    @Volatile
+    var learnListener: ((InputSource) -> Unit)? = null
 
     /** When set, the next key-down of a physical keyboard or pad is delivered here as its raw Android keycode and swallowed. */
-    @Volatile var keyLearnListener: ((androidKeyCode: Int) -> Unit)? = null
+    @Volatile
+    var keyLearnListener: ((androidKeyCode: Int) -> Unit)? = null
 
     init {
         engine.hapticSink = haptics
@@ -294,9 +324,12 @@ class GamepadRuntime(context: Context) {
     /** Plays [feel] once on the phone, connected or not (the "Try" buttons). */
     fun previewHaptic(feel: HapticFeel, held: Boolean) = haptics.preview(feel, held)
 
-    fun setPadShown(shown: Boolean) { padShown = shown; updateInputAllowed() }
+    fun setPadShown(shown: Boolean) {
+        padShown = shown; updateInputAllowed()
+    }
 
-    @Synchronized fun setForeground(resumed: Boolean) {
+    @Synchronized
+    fun setForeground(resumed: Boolean) {
         foreground = resumed
         // Back in front: try the capped direct channel again (the toggle may be off by now).
         if (resumed && avoidDirect) {
@@ -310,7 +343,8 @@ class GamepadRuntime(context: Context) {
      * Leaving the pad releases everything held, so no key or button sticks on the PC, and pauses
      * the gyro sensor ([updateGyro]).
      */
-    @Synchronized private fun updateInputAllowed() {
+    @Synchronized
+    private fun updateInputAllowed() {
         val allowed = !_padOnlyInput.value || (padShown && foreground)
         if (allowed != inputAllowed) {
             inputAllowed = allowed
@@ -323,7 +357,8 @@ class GamepadRuntime(context: Context) {
      * Switches the output link: the old one stops (a Wi-Fi session says BYE first), the engine
      * releases everything, then the new one starts if the runtime is running.
      */
-    @Synchronized fun setTransport(kind: TransportKind) {
+    @Synchronized
+    fun setTransport(kind: TransportKind) {
         if (kind == _transport.value) return
         prefs.edit().putString(KEY_TRANSPORT, kind.name).apply()
         if (running) {
@@ -335,7 +370,8 @@ class GamepadRuntime(context: Context) {
         if (running) active.start()
     }
 
-    @Synchronized fun start() {
+    @Synchronized
+    fun start() {
         running = true
         // Nothing polls the engine while no link runs: drop touchpad taps queued meanwhile.
         engine.touchpadCancel()
@@ -344,10 +380,13 @@ class GamepadRuntime(context: Context) {
         updateGyro()
     }
 
-    @Synchronized fun stop() {
+    @Synchronized
+    fun stop() {
         stopGyro()
         // A calibration cut short must not start the sensor at the next start().
-        if (calibration != null) { calibration = null; _calibration.value = storedCalibration() }
+        if (calibration != null) {
+            calibration = null; _calibration.value = storedCalibration()
+        }
         _gyroInfo.value = GyroInfo()
         active.stop()
         engine.reset()
@@ -538,6 +577,23 @@ class GamepadRuntime(context: Context) {
         return migrateMappings(set)
     }
 
+    /**
+     * Turns the old touch button switches into tap and long press mappings ([ButtonActivators]),
+     * saving both files when anything changed. Skipped while the mapping file is unreadable, so
+     * the switches are kept for a build that can read it.
+     */
+    private fun upgradeButtons(set: Profile): Profile {
+        if (store.hasMappingFile() && store.mappingProfiles() == null) return set
+        val (upgraded, profiles) = ButtonActivators.upgrade(set, _mappingProfiles.value)
+        if (upgraded === set) return set
+        if (profiles !== _mappingProfiles.value) {
+            _mappingProfiles.value = profiles
+            store.saveMappingProfiles(profiles)
+        }
+        store.save(upgraded)
+        return upgraded
+    }
+
     private fun migrateMappings(set: Profile): Profile {
         val m = MappingProfiles.migrate(set)
         _mappingProfiles.value = m.profiles
@@ -551,15 +607,19 @@ class GamepadRuntime(context: Context) {
      * Measures the gyro's resting bias for 2 seconds; the phone must lie still meanwhile. A paused
      * gyro runs for it (the pad menu, where it is started, pauses the gyro).
      */
-    @Synchronized fun calibrateGyro() {
+    @Synchronized
+    fun calibrateGyro() {
         if (!running) return
         calibration = GyroCalibration()
         _calibration.value = CalibrationState.Running
         updateGyro()
-        if (gyro == null) { calibration = null; _calibration.value = storedCalibration() }
+        if (gyro == null) {
+            calibration = null; _calibration.value = storedCalibration()
+        }
     }
 
-    @Synchronized fun clearGyroCalibration() {
+    @Synchronized
+    fun clearGyroCalibration() {
         calibration = null
         setBias(0f, 0f, 0f)
         updateGyro()
@@ -573,7 +633,9 @@ class GamepadRuntime(context: Context) {
 
     private fun storedCalibration(): CalibrationState {
         val m = maxOf(abs(biasX), abs(biasY), abs(biasZ))
-        return if (m == 0f) CalibrationState.None else CalibrationState.Calibrated(Math.toDegrees(m.toDouble()).toFloat())
+        return if (m == 0f) CalibrationState.None else CalibrationState.Calibrated(
+            Math.toDegrees(m.toDouble()).toFloat()
+        )
     }
 
     /** Gyro settings follow the active workspace. */
@@ -593,7 +655,8 @@ class GamepadRuntime(context: Context) {
      * screen, or with the workspace's gyro off completely) it stops, to save CPU and battery. The
      * other gyro modes, toggle and ratchets never stop it, so aiming never waits for the sensor.
      */
-    @Synchronized private fun updateGyro() {
+    @Synchronized
+    private fun updateGyro() {
         if (running && ((inputAllowed && !gyroOff()) || calibration != null)) {
             startGyro()
         } else if (running) {
@@ -634,7 +697,8 @@ class GamepadRuntime(context: Context) {
     }
 
     /** The direct channel [source] stayed below the listener's rate: switch to the listener. */
-    @Synchronized private fun onDirectCapped(source: GyroSource, hz: Int) {
+    @Synchronized
+    private fun onDirectCapped(source: GyroSource, hz: Int) {
         // Already avoiding it: the direct channel runs only because the listener failed to start.
         if (gyro !== source || avoidDirect) return
         avoidDirect = true
@@ -661,6 +725,7 @@ class GamepadRuntime(context: Context) {
         private const val KEY_BIAS_X = "gyro_bias_x"
         private const val KEY_BIAS_Y = "gyro_bias_y"
         private const val KEY_BIAS_Z = "gyro_bias_z"
+
         /** Version of [MappingProfiles.migrate]'s rules; a phone that ran an older one redoes it from [BACKUP_TAG]. */
         private const val MAPPING_MIGRATION = 2
         private const val BACKUP_TAG = "pre-mappings"
@@ -675,7 +740,10 @@ class GamepadRuntime(context: Context) {
         calibration?.let { cal ->
             when (val r = cal.add(x, y, z, ts)) {
                 null -> Unit
-                is GyroCalibration.Result.Done -> { calibration = null; setBias(r.x, r.y, r.z); main.post { updateGyro() } }
+                is GyroCalibration.Result.Done -> {
+                    calibration = null; setBias(r.x, r.y, r.z); main.post { updateGyro() }
+                }
+
                 GyroCalibration.Result.Moved -> {
                     calibration = null; _calibration.value = CalibrationState.Moved; main.post { updateGyro() }
                 }

@@ -98,7 +98,7 @@ internal fun ControlSettingsScreen(
                         )
                         Text(
                             (if (control.kind == TouchKind.STICK) "Stick" else if (control.swipes) "Swipe button" else "Button") +
-                                " · " + control.id + " · settings",
+                                    " · " + control.id + " · settings",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -131,7 +131,13 @@ internal fun ControlSettingsScreen(
                         }
                     }
                     if (control.swipes) {
-                        RememberedSection(runtime, "control.Surface", "Surface", section, subtitle = "Speed, scrolling and gestures of this swipe button") {
+                        RememberedSection(
+                            runtime,
+                            "control.Surface",
+                            "Surface",
+                            section,
+                            subtitle = "Speed, scrolling and gestures of this swipe button"
+                        ) {
                             SurfaceSettingsEditor(control, workspace.touchpad) { onControlChange(it) }
                         }
                     }
@@ -176,12 +182,21 @@ internal fun LookSettings(
     )
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Shape", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(52.dp))
-        SelectChip("Circle", control.shape == TouchShape.CIRCLE) { onControlChange(current.copy(shape = TouchShape.CIRCLE)) }
-        SelectChip("Square", control.shape == TouchShape.SQUARE) { onControlChange(current.copy(shape = TouchShape.SQUARE)) }
+        SelectChip(
+            "Circle",
+            control.shape == TouchShape.CIRCLE
+        ) { onControlChange(current.copy(shape = TouchShape.CIRCLE)) }
+        SelectChip(
+            "Square",
+            control.shape == TouchShape.SQUARE
+        ) { onControlChange(current.copy(shape = TouchShape.SQUARE)) }
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Layer", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(52.dp))
-        for (l in TouchLayer.entries) SelectChip(l.label, control.layer == l) { onControlChange(current.copy(layer = l)) }
+        for (l in TouchLayer.entries) SelectChip(
+            l.label,
+            control.layer == l
+        ) { onControlChange(current.copy(layer = l)) }
     }
     Text(
         "Where controls overlap, the smaller one (by its shortest side) is in front. Front / Back override that.",
@@ -219,7 +234,34 @@ private fun SwitchSetting(title: String, hint: String, checked: Boolean, onChang
     }
 }
 
-/** A button's click-through, swipe, press timing, release tap time and ratchet. */
+/**
+ * A button timing ([title], ms): the workspace's ([workspaceMs], [own] null) or its own, set in
+ * [range] steps of 10 ms. [onChange] gets the own time, or null to follow the workspace.
+ */
+@Composable
+private fun ButtonTimingRow(title: String, own: Int?, workspaceMs: Int, range: IntRange, onChange: (Int?) -> Unit) {
+    val ms = (own ?: workspaceMs).coerceIn(range)
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("$title $ms ms", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+            Text(
+                "Workspace",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Switch(checked = own == null, onCheckedChange = { follow -> onChange(if (follow) null else ms) })
+        }
+        if (own != null) {
+            Slider(
+                value = ms.toFloat(),
+                onValueChange = { onChange((it / 10f).roundToInt() * 10) },
+                valueRange = range.first.toFloat()..range.last.toFloat(),
+            )
+        }
+    }
+}
+
+/** A button's click-through, swipe, tap timings and ratchet. */
 @Composable
 internal fun ButtonBehaviourSettings(
     control: TouchControl,
@@ -237,7 +279,7 @@ internal fun ButtonBehaviourSettings(
         SwitchSetting(
             "Swipe",
             "A small touchpad of its own: a tap presses it, and its touchpad mappings " +
-                "(taps, moves, swipes, pinches with 1–4 fingers, in Mappings) work on it.",
+                    "(taps, moves, swipes, pinches with 1–4 fingers, in Mappings) work on it.",
             control.swipe,
         ) { on ->
             val c = current
@@ -256,39 +298,41 @@ internal fun ButtonBehaviourSettings(
             ) { onControlChange(current.copy(swipeTapOnRelease = it)) }
         }
     }
-    SwitchSetting(
-        "Press waits for a double tap",
-        if (control.doubleTapWaits) "With a Double tap mapping, the press comes after a short wait, and a double tap does not press."
-        else "The press is instant; a double tap also presses twice. Map Double tap and Release in Mappings.",
-        control.doubleTapWaits,
-    ) { onControlChange(current.copy(doubleTapWaits = it)) }
-    Column {
-        Text(
-            if (control.releaseTapMs <= 0) "Release tap time: off" else "Release tap time " + control.releaseTapMs + " ms",
-            style = MaterialTheme.typography.labelLarge,
-        )
-        Slider(
-            value = control.releaseTapMs.toFloat(),
-            onValueChange = { onControlChange(current.copy(releaseTapMs = (it / 10f).roundToInt() * 10)) },
-            valueRange = 0f..TouchControl.MAX_RELEASE_TAP_MS.toFloat(),
-        )
-        Text(
-            "The Release mapping fires only after a press shorter than this, a quick tap. Off: after every press.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
+    Text(
+        "Press is on while the finger is down. Tap is a press shorter than the long press time; with a " +
+                "Double tap mapping it waits out the double tap window. Map them in Mappings.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    ButtonTimingRow(
+        "Long press",
+        own = control.longPressMs,
+        workspaceMs = workspace.longPressMs,
+        range = Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
+    ) { onControlChange(current.copy(longPressMs = it)) }
+    ButtonTimingRow(
+        "Double tap window",
+        own = control.doubleTapMs,
+        workspaceMs = workspace.doubleTapMs,
+        range = Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
+    ) { onControlChange(current.copy(doubleTapMs = it)) }
     val input = Bindings.touchInputs(control).first()
     val targets = Bindings.targets(workspace.mappings, input)
     SwitchSetting(
         "Ratchet",
         "While held it also flips gyro, besides its action: pauses it (Ratchet disables) " +
-            "or turns it on (Ratchet enables). With click-through, only this switch " +
-            "makes its finger a ratchet.",
+                "or turns it on (Ratchet enables). With click-through, only this switch " +
+                "makes its finger a ratchet.",
         targets.any(::isRatchet),
     ) { on ->
         val main = targets.filterNot(::isRatchet)
-        onMappingsChange(Bindings.setTargets(workspace.mappings, input, if (on) main + OutputTarget.GyroPause else main))
+        onMappingsChange(
+            Bindings.setTargets(
+                workspace.mappings,
+                input,
+                if (on) main + OutputTarget.GyroPause else main
+            )
+        )
     }
 }
 
@@ -341,7 +385,7 @@ internal fun ZoneSettings(
     if (InputSource.TouchArea(control.id, TouchAreaKind.ZONE) !in workspace.mappings.map { it.source }) {
         Text(
             "A zone acts while any finger is inside the control, wherever it touched down. " +
-                "Map its Zone action in Mappings to use it; its options show here then.",
+                    "Map its Zone action in Mappings to use it; its options show here then.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -351,14 +395,14 @@ internal fun ZoneSettings(
     SwitchSetting(
         "Zone interrupts",
         "A finger that slides into the zone stops what it was doing (cursor, stick, " +
-            "another button). One landing on the zone but on no other control moves no cursor.",
+                "another button). One landing on the zone but on no other control moves no cursor.",
         control.zoneInterrupt,
     ) { onControlChange(current.copy(zoneInterrupt = it)) }
     if (control.zoneInterrupt) {
         SwitchSetting(
             "Resume on exit",
             "Leaving the zone, the finger goes back to what it was doing. Off: it does " +
-                "nothing more until it lifts.",
+                    "nothing more until it lifts.",
             control.zoneResume,
         ) { onControlChange(current.copy(zoneResume = it)) }
     }
@@ -368,9 +412,14 @@ internal fun ZoneSettings(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun MappingsSummary(control: TouchControl, mappings: List<Mapping>, onEditMappings: () -> Unit) {
-    val mapped = Bindings.touchInputs(control).map { it to Bindings.targets(mappings, it) }.filter { it.second.isNotEmpty() }
+    val mapped =
+        Bindings.touchInputs(control).map { it to Bindings.targets(mappings, it) }.filter { it.second.isNotEmpty() }
     if (mapped.isEmpty()) {
-        Text("Nothing mapped yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "Nothing mapped yet.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
     for ((input, targets) in mapped) {
         Row(verticalAlignment = Alignment.CenterVertically) {

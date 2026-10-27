@@ -25,7 +25,8 @@ import org.junit.Test
 /** Buttons in swipe mode, and separate X / Y sensitivities. */
 class SwipeButtonsTest {
     private val MS = 1_000_000L
-    private val A = 0x04; private val W = 0x1A
+    private val A = 0x04;
+    private val W = 0x1A
 
     private fun engine(
         mappings: List<Mapping>,
@@ -82,10 +83,12 @@ class SwipeButtonsTest {
 
     @Test
     fun swipeDirectionsPressKeysPastHalfway() {
-        val e = engine(listOf(
-            Mapping(swipe(StickAxis.Y, AxisHalf.NEGATIVE), OutputTarget.Key(W)),
-            Mapping(InputSource.Touch("b"), OutputTarget.Key(A)),
-        ), sensY = 1f)
+        val e = engine(
+            listOf(
+                Mapping(swipe(StickAxis.Y, AxisHalf.NEGATIVE), OutputTarget.Key(W)),
+                Mapping(InputSource.Touch("b"), OutputTarget.Key(A)),
+            ), sensY = 1f
+        )
         e.buttonDown(1, "b", 100f, 200f)
         e.buttonMove(1, 100f, 185f) // 15 of the 20 dp to half
         assertTrue(e.snapshot().keyboard.keys.isEmpty())
@@ -131,15 +134,16 @@ class SwipeButtonsTest {
     @Test
     fun clickThroughTurnsSwipeModeOff() {
         val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, swipe = true)
-        // Press, release, double tap, outside, zone, then the surface inputs for 1..4 fingers.
-        assertEquals(5 + (1..4).sumOf { Bindings.surfaceInputs(it).size }, Bindings.touchInputs(b).size)
-        assertEquals(5, Bindings.touchInputs(b.copy(clickThrough = true)).size)
-        assertEquals(5, Bindings.touchInputs(b.copy(swipe = false)).size)
+        // Press, tap, double tap, long press, release, outside, zone, then the surface inputs for 1..4 fingers.
+        assertEquals(7 + (1..4).sumOf { Bindings.surfaceInputs(it).size }, Bindings.touchInputs(b).size)
+        assertEquals(7, Bindings.touchInputs(b.copy(clickThrough = true)).size)
+        assertEquals(7, Bindings.touchInputs(b.copy(swipe = false)).size)
     }
 
     @Test
     fun mouseMotionOnlyInTheSwipePicker() {
-        fun has(groups: List<Pair<String, List<OutputTarget>>>) = groups.any { g -> g.second.any { it is OutputTarget.MouseAxis } }
+        fun has(groups: List<Pair<String, List<OutputTarget>>>) =
+            groups.any { g -> g.second.any { it is OutputTarget.MouseAxis } }
         assertTrue(has(Describe.pickerGroups(analog = true, swipe = true)))
         assertFalse(has(Describe.pickerGroups(analog = true, swipe = false)))
         assertFalse(has(Describe.pickerGroups(analog = false, swipe = false)))
@@ -149,7 +153,8 @@ class SwipeButtonsTest {
     fun gyroHasItsOwnYSensitivity() {
         val g = GyroMouse(GyroSettings(sensitivity = 10f, sensitivityY = 0f))
         val rad = (90.0 * Math.PI / 180.0).toFloat()
-        var dx = 0; var dy = 0
+        var dx = 0;
+        var dy = 0
         repeat(1000) { val c = g.update(-rad, -rad, 0f, 0.001f); dx += c.dx; dy += c.dy }
         assertEquals(900, dx)
         assertEquals(0, dy)

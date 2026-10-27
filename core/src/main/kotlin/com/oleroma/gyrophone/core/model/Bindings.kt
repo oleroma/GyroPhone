@@ -27,7 +27,7 @@ object Bindings {
         if (a == b) return true
         if (a !is InputSource.Axis || b !is InputSource.Axis) return false
         return a.axis == b.axis && a.axis in triggerAxes &&
-            a.half != AxisHalf.NEGATIVE && b.half != AxisHalf.NEGATIVE
+                a.half != AxisHalf.NEGATIVE && b.half != AxisHalf.NEGATIVE
     }
 
     /** Whether [mapping] belongs to [input]. */
@@ -59,8 +59,8 @@ object Bindings {
         setTargets(mappings, input, targets(mappings, input) - target)
 
     /**
-     * Inputs a touch control exposes: BUTTON -> [Touch(id)] (its press), release, double tap,
-     * outside and zone, in swipe mode also the swipe X and Y axes and the four swipe directions;
+     * Inputs a touch control exposes: BUTTON -> [Touch(id)] (its press), tap, double tap, long
+     * press, release, outside and zone, in swipe mode also the swipe X and Y axes and the four swipe directions;
      * STICK -> X axis, Y axis (analog), Left, Right, Up, Down (halves), with 8 zones the four
      * diagonals, then on touch, outside and zone; FULLSCREEN -> none.
      */
@@ -69,8 +69,10 @@ object Bindings {
             val press = BindableInput(control.label.ifBlank { control.id }, listOf(InputSource.Touch(control.id)))
             val events = listOf(
                 press,
-                BindableInput("Release", listOf(InputSource.TouchRelease(control.id))),
+                BindableInput("Tap", listOf(InputSource.TouchTap(control.id))),
                 BindableInput("Double tap", listOf(InputSource.TouchDoubleTap(control.id))),
+                BindableInput("Long press", listOf(InputSource.TouchLongPress(control.id))),
+                BindableInput("Release", listOf(InputSource.TouchRelease(control.id))),
                 area(control, TouchAreaKind.OUTSIDE),
                 area(control, TouchAreaKind.ZONE),
             )
@@ -79,8 +81,10 @@ object Bindings {
                 surfaceInputs(n, control.id).map { it.copy(label = "${n}f " + it.label) }
             }
         }
+
         TouchKind.STICK -> {
-            fun s(axis: StickAxis, half: AxisHalf = AxisHalf.FULL) = listOf(InputSource.TouchStick(control.id, axis, half))
+            fun s(axis: StickAxis, half: AxisHalf = AxisHalf.FULL) =
+                listOf(InputSource.TouchStick(control.id, axis, half))
             listOf(
                 BindableInput("X axis", s(StickAxis.X), analog = true),
                 BindableInput("Y axis", s(StickAxis.Y), analog = true),
@@ -92,16 +96,29 @@ object Bindings {
                 BindableInput(it.label, listOf(InputSource.TouchStickDiagonal(control.id, it)))
             }) + TouchAreaKind.entries.map { area(control, it) }
         }
+
         TouchKind.FULLSCREEN -> emptyList()
+    }
+
+    /**
+     * The gesture inputs (tap, double tap, long press, release) of a key-based [input] (a
+     * controller button or keyboard key: its first source a [InputSource.Key]), labelled by the
+     * gesture; none for sticks, triggers and other axes.
+     */
+    fun gestureInputs(input: BindableInput): List<BindableInput> {
+        val key = input.sources.firstOrNull() as? InputSource.Key ?: return emptyList()
+        return ButtonGesture.entries.map { g ->
+            BindableInput(g.label, listOf(InputSource.KeyGesture(key.keyCode, g)))
+        }
     }
 
     private fun area(control: TouchControl, kind: TouchAreaKind) =
         BindableInput(kind.label, listOf(InputSource.TouchArea(control.id, kind)))
 
-    /** The surface inputs offered with [fingers] down: taps (double tap and tap-drag with one), moves, swipes, pinch with two. */
+    /** The surface inputs offered with [fingers] down: taps (tap-drag with one), moves, swipes, pinch with two. */
     fun surfaceInputs(fingers: Int, id: String = ""): List<BindableInput> = SurfaceInput.entries.filter { i ->
         when (i) {
-            SurfaceInput.DOUBLE_TAP, SurfaceInput.TAP_DRAG -> fingers == 1
+            SurfaceInput.TAP_DRAG -> fingers == 1
             SurfaceInput.PINCH, SurfaceInput.PINCH_IN, SurfaceInput.PINCH_OUT -> fingers == 2
             else -> true
         }
@@ -111,7 +128,13 @@ object Bindings {
             SurfaceInput.PINCH -> listOf(OutputTarget.Zoom)
             else -> emptyList()
         }
-        BindableInput(i.label, listOf(InputSource.Surface(fingers, i, id)), analog = i.motion, swipe = i.motion && i != SurfaceInput.PINCH, extra = extra)
+        BindableInput(
+            i.label,
+            listOf(InputSource.Surface(fingers, i, id)),
+            analog = i.motion,
+            swipe = i.motion && i != SurfaceInput.PINCH,
+            extra = extra
+        )
     }
 
     /**
@@ -123,8 +146,9 @@ object Bindings {
         fun add(n: Int, i: SurfaceInput, t: OutputTarget) = add(Mapping(InputSource.Surface(n, i), t))
         val left = OutputTarget.Mouse(MouseButton.LEFT)
         if (s.tapToClick) {
-            if (s.tapDrag) { add(1, SurfaceInput.TAP_DRAG, left); add(1, SurfaceInput.DOUBLE_TAP, left) }
-            else add(1, SurfaceInput.TAP, left)
+            if (s.tapDrag) {
+                add(1, SurfaceInput.TAP_DRAG, left); add(1, SurfaceInput.DOUBLE_TAP, left)
+            } else add(1, SurfaceInput.TAP, left)
             add(2, SurfaceInput.TAP, OutputTarget.Mouse(MouseButton.RIGHT))
         }
         add(1, SurfaceInput.MOTION_X, OutputTarget.MouseAxis(MouseMotion.MOVE_X))
@@ -178,7 +202,8 @@ object Bindings {
         GestureAction.None -> emptyList()
         is GestureAction.Mouse -> listOf(OutputTarget.Mouse(a.button))
         is GestureAction.Keys -> (0 until 8).filter { a.modifiers and (1 shl it) != 0 }
-            .map { OutputTarget.Key(HidUsage.LEFT_CTRL + it) } + listOfNotNull(a.key.takeIf { it != 0 }?.let { OutputTarget.Key(it) })
+            .map { OutputTarget.Key(HidUsage.LEFT_CTRL + it) } + listOfNotNull(a.key.takeIf { it != 0 }
+            ?.let { OutputTarget.Key(it) })
         // An up / down swipe set to switch apps was one Alt+Tab.
         GestureAction.SwitchApps -> listOf(OutputTarget.Key(HidUsage.LEFT_CTRL + 2), OutputTarget.Key(0x2B))
     }
@@ -206,15 +231,21 @@ object Bindings {
      * [touchInputs] or a physical stick's inputs) for a preset. Diagonals are cleared, so they
      * press both neighbours; other extra inputs (a stick's click) are left alone.
      */
-    fun applyStickPreset(mappings: List<Mapping>, stickInputs: List<BindableInput>, preset: StickPreset): List<Mapping> {
+    fun applyStickPreset(
+        mappings: List<Mapping>,
+        stickInputs: List<BindableInput>,
+        preset: StickPreset
+    ): List<Mapping> {
         require(stickInputs.size >= 6) { "Expected X, Y, Left, Right, Up, Down inputs" }
         fun axes(x: GamepadAxis, y: GamepadAxis) = listOf(
             listOf(OutputTarget.PadAxis(x)), listOf(OutputTarget.PadAxis(y)),
             emptyList(), emptyList(), emptyList(), emptyList(),
         )
+
         fun halves(left: OutputTarget, right: OutputTarget, up: OutputTarget, down: OutputTarget) = listOf(
             emptyList(), emptyList(), listOf(left), listOf(right), listOf(up), listOf(down),
         )
+
         fun key(usage: Int) = OutputTarget.Key(usage)
         fun pad(b: GamepadButton) = OutputTarget.Pad(b)
         val plan: List<List<OutputTarget>> = when (preset) {
@@ -226,6 +257,7 @@ object Bindings {
                 pad(GamepadButton.DPAD_LEFT), pad(GamepadButton.DPAD_RIGHT),
                 pad(GamepadButton.DPAD_UP), pad(GamepadButton.DPAD_DOWN),
             )
+
             StickPreset.NONE -> List(6) { emptyList() }
         }
         var m = mappings

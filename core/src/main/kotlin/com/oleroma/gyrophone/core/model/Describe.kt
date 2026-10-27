@@ -14,6 +14,9 @@ object Describe {
 
     fun source(s: InputSource): String = when (s) {
         is InputSource.Key -> "Controller " + (AndroidKey.names[s.keyCode] ?: "key ${s.keyCode}")
+        is InputSource.KeyGesture -> "Controller " + (AndroidKey.names[s.keyCode] ?: "key ${s.keyCode}") + " " +
+                s.gesture.label.lowercase()
+
         is InputSource.Axis -> (axisNames[s.axis] ?: "Axis ${s.axis}") + half(s.half)
         is InputSource.Touch -> "Touch ${s.id}"
         is InputSource.TouchStick -> "Touch stick ${s.id} ${s.axis}" + half(s.half)
@@ -21,6 +24,8 @@ object Describe {
         is InputSource.TouchSwipe -> "Swipe on ${s.id} ${s.axis}" + half(s.half)
         is InputSource.TouchRelease -> "Touch ${s.id} release"
         is InputSource.TouchDoubleTap -> "Touch ${s.id} double tap"
+        is InputSource.TouchTap -> "Touch ${s.id} tap"
+        is InputSource.TouchLongPress -> "Touch ${s.id} long press"
         is InputSource.TouchArea -> "Touch ${s.id} ${s.kind.label.lowercase()}"
         is InputSource.Surface -> (if (s.id.isEmpty()) "Touchpad" else "Swipe on ${s.id}") +
                 " ${s.fingers} finger" + (if (s.fingers > 1) "s " else " ") + s.input.label.lowercase()

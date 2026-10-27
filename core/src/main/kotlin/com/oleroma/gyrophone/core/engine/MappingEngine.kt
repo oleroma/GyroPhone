@@ -9,6 +9,7 @@ import com.oleroma.gyrophone.core.hid.MouseState
 import com.oleroma.gyrophone.core.model.AndroidAxis
 import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AxisHalf
+import com.oleroma.gyrophone.core.model.ButtonGesture
 import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.GamepadButton
 import com.oleroma.gyrophone.core.model.GyroMode
@@ -112,6 +113,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         /** Index into [padMappings]; -1 = not attached here (the device does nothing). */
         var pad = -1
         val keys = BitSet()
+
+        /** Gestures of its keys that have gesture mappings, by key code (also in [tapList]). */
+        val gestures = HashMap<Int, ButtonGestures>()
         val axes = FloatArray(AXIS_SLOTS)
         private var axisCount = 0
 
@@ -121,7 +125,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         private val shown = BitSet()
         private val scratch = BitSet()
 
-        val active: Boolean get() = axisCount > 0 || !keys.isEmpty || !pressedSince.isEmpty || !shown.isEmpty
+        val active: Boolean
+            get() = axisCount > 0 || !keys.isEmpty || !pressedSince.isEmpty || !shown.isEmpty ||
+                    (gestures.isNotEmpty() && gestures.values.any { it.anyOn })
         val hasAxes: Boolean get() = axisCount > 0
 
         fun key(code: Int): Boolean = code >= 0 && keys.get(code)
@@ -223,30 +229,18 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private var clickThroughIds: Set<String> = emptySet()
 
     /**
-     * Release and double tap of a touch button (one with such a mapping), driven by its press
-     * edges ([controlDown] / [controlUp]). With [waits], its press waits out a possible double tap.
+     * Gestures (tap, double tap, long press, release) of the touch buttons that map one, by id,
+     * and every gesture state in play: those and the keys' ([Dev.gestures]).
      */
-    private class TapState(val id: String, val waits: Boolean, val releaseTapNs: Long) {
-        var state = TAP_IDLE
-        var downNs = 0L
+    private val tapStates = HashMap<String, ButtonGestures>()
+    private val tapList = ArrayList<ButtonGestures>()
 
-        /** Start of the current press (downNs stays at the first tap of a waited double tap). */
-        var pressNs = 0L
-        var upNs = 0L
+    /** What a key with gesture mappings needs: whether it has a double tap and its tap waits. */
+    private class KeyGestureCfg(val hasDouble: Boolean, val tapWaits: Boolean)
 
-        /** The last press was a short tap that a second one may turn into a double tap. */
-        var tapped = false
-        var double = false
-
-        /** Start of a pulse of the waiting press / the release, or -1; shown once [..Seen]. */
-        var delayedNs = -1L;
-        var delayedSeen = false
-        var releaseNs = -1L;
-        var releaseSeen = false
-    }
-
-    private val tapStates = HashMap<String, TapState>()
-    private val tapList = ArrayList<TapState>()
+    /** Per pad of [padMappings]: the keys with gesture mappings; [anyKeyCfgs] for the "any device" source. */
+    private var keyCfgs: Array<Map<Int, KeyGestureCfg>> = emptyArray()
+    private var anyKeyCfgs: Map<Int, KeyGestureCfg> = emptyMap()
 
     /** Background fingers (with the touchpad on or off): a ratchet with touchpadRatchet. */
     private val padTouchIds = HashSet<Long>()
@@ -380,24 +374,36 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         surfaces = swipers.associate { c ->
             c.id to Touchpad(c.surfaceSettings(w.touchpad), SurfaceMap(w.mappings, c.id)).also {
                 it.pxPerDp = touchpad.pxPerDp; it.minPulseNanos = touchpad.minPulseNanos
+                it.doubleTapNanos = c.doubleTap(w) * 1_000_000L; it.longPressNanos = c.longPress(w) * 1_000_000L
             }
         }
         surfaceList = surfaces.values.toTypedArray()
         swipeTapOnRelease = swipers.filter { it.swipeTapOnRelease }.mapTo(HashSet()) { it.id }
         tapStates.clear(); tapList.clear()
+        for (d in deviceList) d.gestures.clear()
+        anyDevice.gestures.clear()
         val withEvents = HashSet<String>()
         for (m in w.mappings) {
-            val src = m.source
-            if (src is InputSource.TouchRelease) withEvents.add(src.id)
-            if (src is InputSource.TouchDoubleTap) withEvents.add(src.id)
+            when (val src = m.source) {
+                is InputSource.TouchTap -> withEvents.add(src.id)
+                is InputSource.TouchLongPress -> withEvents.add(src.id)
+                is InputSource.TouchRelease -> withEvents.add(src.id)
+                is InputSource.TouchDoubleTap -> withEvents.add(src.id)
+                else -> Unit
+            }
         }
-        val doubles = w.mappings.mapNotNullTo(HashSet()) { (it.source as? InputSource.TouchDoubleTap)?.id }
         for (c in w.touchControls) {
             if (c.kind != TouchKind.BUTTON || c.id !in withEvents) continue
-            val releaseTap = c.releaseTapMs.coerceIn(0, TouchControl.MAX_RELEASE_TAP_MS) * 1_000_000L
-            val st = TapState(c.id, c.doubleTapWaits && c.id in doubles, releaseTap)
+            val double = targetsOf(w.mappings, InputSource.TouchDoubleTap(c.id))
+            val st = ButtonGestures(
+                c.longPress(w) * 1_000_000L, c.doubleTap(w) * 1_000_000L,
+                hasDouble = double.isNotEmpty(),
+                tapWaits = double.isNotEmpty() && double != targetsOf(w.mappings, InputSource.TouchTap(c.id)),
+            )
             tapStates[c.id] = st; tapList.add(st)
         }
+        keyCfgs = Array(padMappings.size) { keyGestureCfgs(padMappings[it]) }
+        anyKeyCfgs = keyGestureCfgs(padMappings.flatMap { it })
         stickCfgs = w.touchControls.filter { it.kind == TouchKind.STICK }.associate { c ->
             val mapped = BooleanArray(StickDiagonal.entries.size)
             for (m in w.mappings) {
@@ -410,6 +416,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (d in deviceList) d.pad = resolvePad(d.device)
         touchpad.settings = w.touchpad
         touchpad.map = SurfaceMap(w.mappings)
+        touchpad.doubleTapNanos =
+            w.doubleTapMs.coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L
+        touchpad.longPressNanos =
+            w.longPressMs.coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
         padTouchIds.clear()
         touchpad.cancel(clock())
     }
@@ -424,9 +434,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         hapticWas.clear(); hapticNow.clear(); hapticSteps.clear()
         bpState.fill(BP_FREE); bpControl.fill(null)
         pulses.clear(); latches.clear(); chorded.clear()
-        for (t in tapList) {
-            t.state = TAP_IDLE; t.tapped = false; t.double = false; t.delayedNs = -1; t.releaseNs = -1
-        }
+        for (t in tapList) t.reset()
         gyroToggled = false
         keyOrderSize = 0; inKeyOrder.fill(false)
     }
@@ -449,6 +457,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (d.device != device) {
             // Another device under the same id: what the old one held does not carry over.
             d.clear()
+            dropGestures(d)
             d.device = device
             d.pad = resolvePad(device)
         }
@@ -463,12 +472,15 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     fun setKey(device: PadDevice, keyCode: Int, pressed: Boolean): Boolean {
         val mapped = synchronized(lock) {
             var pad = -1
-            firingEvents(clock()) {
+            val now = clock()
+            firingEvents(now) {
                 val d = deviceFor(device)
+                val was = d.key(keyCode)
                 d.setKey(keyCode, pressed)
+                if (was != pressed) keyEdge(d, keyCode, pressed, now)
                 pad = d.pad
             }
-            pad >= 0 && padMappings[pad].any { it.source == InputSource.Key(keyCode) }
+            pad >= 0 && padMappings[pad].any { mapsKey(it.source, keyCode) }
         }
         onChange?.run()
         return mapped
@@ -513,7 +525,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         synchronized(lock) {
             firingEvents(clock()) {
                 val d = devices.remove(deviceId)
-                if (d != null) deviceList.remove(d)
+                if (d != null) {
+                    deviceList.remove(d); dropGestures(d)
+                }
             }
         }
         onChange?.run()
@@ -706,9 +720,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     fun setKey(keyCode: Int, pressed: Boolean): Boolean {
         val mapped = synchronized(lock) {
-            firingEvents(clock()) { anyDevice.setKey(keyCode, pressed) }
-            val src = InputSource.Key(keyCode)
-            padMappings.any { ms -> ms.any { it.source == src } }
+            val now = clock()
+            firingEvents(now) {
+                val was = anyDevice.key(keyCode)
+                anyDevice.setKey(keyCode, pressed)
+                if (was != pressed) keyEdge(anyDevice, keyCode, pressed, now)
+            }
+            padMappings.any { ms -> ms.any { mapsKey(it.source, keyCode) } }
         }
         onChange?.run()
         return mapped
@@ -980,9 +998,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             if (a.late.isNotEmpty()) a.seen.addAll(a.late.keys)
         }
         for (i in tapList.indices) {
-            val t = tapList[i]
-            if (t.delayedNs >= 0) t.delayedSeen = true
-            if (t.releaseNs >= 0) t.releaseSeen = true
+            tapList[i].markSeen()
         }
 
         // Touchpad gestures (Alt+Tab, Ctrl zoom, Win shortcuts) hold keys like any binding.
@@ -1209,67 +1225,66 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun areaDone(a: AreaHolds, id: String, t: Long, now: Long) =
         id in a.seen && now - t >= touchpad.minPulseNanos
 
-    /** When [t] next changes without input: a waiting press decides, a pulse ends. */
-    private fun tapDeadline(t: TapState): Long {
-        var d = Long.MAX_VALUE
-        when (t.state) {
-            TAP_PENDING -> d = t.downNs + ws.buttonTapMs * 1_000_000L + 1
-            TAP_WAIT -> d = t.upNs + DOUBLE_TAP_NS + 1
-        }
-        if (t.delayedNs >= 0 && t.delayedSeen) d = min(d, t.delayedNs + touchpad.minPulseNanos)
-        if (t.releaseNs >= 0 && t.releaseSeen) d = min(d, t.releaseNs + touchpad.minPulseNanos)
-        return d
-    }
+    /** When [t] next changes without input: a press turns long, a waiting tap fires, a pulse ends. */
+    private fun tapDeadline(t: ButtonGestures): Long = t.deadline(touchpad.minPulseNanos)
 
-    /** Due waiting presses and release pulses. */
+    /** Due long presses, waiting taps and gesture pulses. */
     private fun resolveTaps(now: Long) {
-        for (i in tapList.indices) {
-            val t = tapList[i]
-            // Held past a tap: a plain press, held until it lets go.
-            if (t.state == TAP_PENDING && now - t.downNs > ws.buttonTapMs * 1_000_000L) t.state = TAP_HELD
-            // No second tap came: the first one presses now, as a short pulse.
-            if (t.state == TAP_WAIT && now - t.upNs > DOUBLE_TAP_NS) {
-                t.state = TAP_IDLE
-                t.delayedNs = now; t.delayedSeen = false
-            }
-            if (t.delayedNs >= 0 && t.delayedSeen && now - t.delayedNs >= touchpad.minPulseNanos) t.delayedNs = -1
-            if (t.releaseNs >= 0 && t.releaseSeen && now - t.releaseNs >= touchpad.minPulseNanos) t.releaseNs = -1
-        }
+        val minPulse = touchpad.minPulseNanos
+        for (i in tapList.indices) tapList[i].resolve(now, minPulse)
     }
 
     /** Touch button [id] went down (its press count left 0). */
     private fun controlDown(id: String, now: Long) {
-        val t = tapStates[id] ?: return
-        resolveTaps(now)
-        t.pressNs = now
-        if (t.waits) {
-            if (t.state == TAP_WAIT) {
-                t.state = TAP_DOUBLE; t.double = true
-            } else {
-                t.state = TAP_PENDING; t.downNs = now
-            }
-        } else {
-            t.double = t.tapped && now - t.upNs <= DOUBLE_TAP_NS
-            t.downNs = now
-        }
+        tapStates[id]?.down(now, touchpad.minPulseNanos)
     }
 
     /** Touch button [id] let go (its press count reached 0). */
     private fun controlUp(id: String, now: Long) {
-        val t = tapStates[id] ?: return
-        resolveTaps(now)
-        // With a release tap time only a quick tap's release fires.
-        if (t.releaseTapNs <= 0 || now - t.pressNs <= t.releaseTapNs) {
-            t.releaseNs = now; t.releaseSeen = false
+        tapStates[id]?.up(now, touchpad.minPulseNanos)
+    }
+
+    /** [source] is key [code], pressed or one of its gestures. */
+    private fun mapsKey(source: InputSource, code: Int): Boolean =
+        (source is InputSource.Key && source.keyCode == code) || (source is InputSource.KeyGesture && source.keyCode == code)
+
+    /** The distinct targets [source] maps to in [mappings]. */
+    private fun targetsOf(mappings: List<Mapping>, source: InputSource): Set<OutputTarget> =
+        mappings.filter { it.source == source }.mapTo(HashSet()) { it.target }
+
+    /** The keys of [mappings] with gesture mappings, and what each needs. */
+    private fun keyGestureCfgs(mappings: List<Mapping>): Map<Int, KeyGestureCfg> {
+        val codes = mappings.mapNotNullTo(HashSet()) { (it.source as? InputSource.KeyGesture)?.keyCode }
+        return codes.associateWith { code ->
+            val double = targetsOf(mappings, InputSource.KeyGesture(code, ButtonGesture.DOUBLE_TAP))
+            KeyGestureCfg(
+                hasDouble = double.isNotEmpty(),
+                tapWaits = double.isNotEmpty() && double != targetsOf(
+                    mappings,
+                    InputSource.KeyGesture(code, ButtonGesture.TAP)
+                ),
+            )
         }
-        if (t.waits) {
-            t.state = if (t.state == TAP_PENDING) TAP_WAIT else TAP_IDLE
-            t.upNs = now
-        } else {
-            t.tapped = !t.double && now - t.downNs <= ws.buttonTapMs * 1_000_000L
-            t.upNs = now
+    }
+
+    /** Key [code] of [d] went down or up: drives its gestures when it has gesture mappings. */
+    private fun keyEdge(d: Dev, code: Int, pressed: Boolean, now: Long) {
+        val cfg = (if (d === anyDevice) anyKeyCfgs else keyCfgs.getOrNull(d.pad))?.get(code) ?: return
+        val g = d.gestures.getOrPut(code) {
+            ButtonGestures(
+                ws.longPressMs.coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L,
+                ws.doubleTapMs.coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L,
+                cfg.hasDouble, cfg.tapWaits,
+            ).also { tapList.add(it) }
         }
-        t.double = false
+        if (pressed) g.down(now, touchpad.minPulseNanos) else g.up(now, touchpad.minPulseNanos)
+    }
+
+    /** Forgets [d]'s key gestures (it went away or became another device). */
+    private fun dropGestures(d: Dev) {
+        if (d.gestures.isEmpty()) return
+        tapList.removeAll(d.gestures.values.toSet())
+        d.gestures.clear()
     }
 
     private fun pulseDone(p: Pulse, now: Long) = p.seen && now - p.startNs >= touchpad.minPulseNanos
@@ -1389,7 +1404,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     fun sourceValue(source: InputSource): Float = synchronized(lock) {
         when (source) {
-            is InputSource.Key, is InputSource.Axis -> {
+            is InputSource.Key, is InputSource.KeyGesture, is InputSource.Axis -> {
                 var best = value(source, anyDevice)
                 for (d in deviceList) {
                     val v = value(source, d)
@@ -1408,16 +1423,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     private fun value(source: InputSource, dev: Dev?, output: Boolean = false): Float = when (source) {
         is InputSource.Key -> if (dev != null && (if (output) dev.keyForOutput(source.keyCode) else dev.key(source.keyCode))) 1f else 0f
+        is InputSource.KeyGesture -> if (dev?.gestures?.get(source.keyCode)?.on(source.gesture) == true) 1f else 0f
         is InputSource.Axis -> if (dev == null) 0f else half(dev.axis(source.axis), source.half)
-        is InputSource.Touch -> {
-            val t = if (tapList.isEmpty()) null else tapStates[source.id]
-            val down =
-                if (t != null && t.waits) t.state == TAP_HELD || t.delayedNs >= 0 else touches.containsKey(source.id)
-            if (down || latched(source.id)) 1f else 0f
-        }
-
-        is InputSource.TouchRelease -> if ((tapStates[source.id]?.releaseNs ?: -1L) >= 0) 1f else 0f
-        is InputSource.TouchDoubleTap -> if (tapStates[source.id]?.double == true) 1f else 0f
+        is InputSource.Touch -> if (touches.containsKey(source.id) || latched(source.id)) 1f else 0f
+        is InputSource.TouchTap -> if (tapStates[source.id]?.on(ButtonGesture.TAP) == true) 1f else 0f
+        is InputSource.TouchLongPress -> if (tapStates[source.id]?.on(ButtonGesture.LONG_PRESS) == true) 1f else 0f
+        is InputSource.TouchRelease -> if (tapStates[source.id]?.on(ButtonGesture.RELEASE) == true) 1f else 0f
+        is InputSource.TouchDoubleTap -> if (tapStates[source.id]?.on(ButtonGesture.DOUBLE_TAP) == true) 1f else 0f
         is InputSource.TouchArea -> if (areas[source.kind.ordinal].held(source.id)) 1f else 0f
         is InputSource.Surface ->
             if (source.id.isEmpty()) touchpad.level(source.fingers, source.input)
@@ -1527,21 +1539,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         const val GYRO_X = 1
         const val GYRO_Y = 2
 
-        /** Longest gap between the taps of a double tap. */
-        const val DOUBLE_TAP_NS = 300_000_000L
-        private const val TAP_IDLE = 0
-
-        /** Waiting press: down, still possibly a tap. */
-        private const val TAP_PENDING = 1
-
-        /** Waiting press: held past a tap, pressed. */
-        private const val TAP_HELD = 2
-
-        /** Waiting press: tapped once, waiting for a second tap. */
-        private const val TAP_WAIT = 3
-
-        /** Waiting press: the second tap of a double tap is down. */
-        private const val TAP_DOUBLE = 4
 
         /** Touchpad over buttons: a touchpad finger that is still a tap candidate. */
         private const val BP_PENDING = 1
