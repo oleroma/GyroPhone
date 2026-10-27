@@ -142,6 +142,9 @@ private val LIVE_LABEL_COLOR = Color(0xFFFFE08A)
 /** Edit mode: how much of a control (all of a smaller one) must stay on screen, in dp: about a fingertip. */
 private const val KEEP_ON_SCREEN_DP = 48f
 
+/** Edit mode: [selected] value for the touchpad (empty space), whose screens are open. */
+private const val TOUCHPAD_SELECTION = "\u0000touchpad"
+
 /** Edit mode: a second tap on overlapping controls within this picks the next one behind. */
 private const val EDIT_CYCLE_MS = 1_000L
 
@@ -544,6 +547,9 @@ fun PadScreen(
                         val c = hit(corners, downPos) ?: under.getOrNull(underIndex)
                         val pressedAt = first.uptimeMillis
                         var lastAt = pressedAt
+                        // Empty space: a tap opens the touchpad's mappings, a long press its settings;
+                        // with something selected, a tap there only closes it.
+                        val hadSelection = selected != null
                         if (c != null) {
                             mode = EditGesture.PRESS
                             target = c.id
@@ -554,16 +560,22 @@ fun PadScreen(
                         event.changes.forEach { it.consume() }
 
                         while (true) {
-                            // A still press on a control that lasts opens its context menu.
-                            val next = if (mode == EditGesture.PRESS) {
+                            // A still press that lasts opens the settings: of the control, or on empty space the touchpad's.
+                            val next = if (mode == EditGesture.PRESS || mode == EditGesture.EMPTY) {
                                 withTimeoutOrNull(max(1L, pressedAt + longPressMs - lastAt)) { awaitPointerEvent() }
                             } else {
                                 awaitPointerEvent()
                             }
                             if (next == null) {
-                                mode = EditGesture.HELD
-                                selected = target
-                                menu = EditMenu.CONTEXT
+                                if (mode == EditGesture.EMPTY) {
+                                    mode = EditGesture.NONE
+                                    selected = TOUCHPAD_SELECTION
+                                    menu = EditMenu.CONTEXT
+                                } else {
+                                    mode = EditGesture.HELD
+                                    selected = target
+                                    menu = EditMenu.CONTEXT
+                                }
                                 continue
                             }
                             event = next
@@ -692,8 +704,8 @@ fun PadScreen(
                             }
 
                             EditGesture.EMPTY -> {
-                                selected = null
-                                menu = EditMenu.NONE
+                                selected = if (hadSelection) null else TOUCHPAD_SELECTION
+                                menu = if (hadSelection) EditMenu.NONE else EditMenu.MAPPING
                             }
 
                             else -> Unit
@@ -1419,7 +1431,37 @@ fun PadScreen(
 
             val d = draft
             val sel = findControl(selected)
-            if (d != null && sel != null && !dragging && menu != EditMenu.NONE) {
+            if (d != null && selected == TOUCHPAD_SELECTION && !dragging && menu != EditMenu.NONE) {
+                val close = {
+                    selected = null
+                    menu = EditMenu.NONE
+                }
+                if (menu == EditMenu.MAPPING) {
+                    ControlMappingScreen(
+                        control = TOUCHPAD_STAND_IN,
+                        mappings = ws.mappings,
+                        runtime = runtime,
+                        onMappingsChange = { m ->
+                            editWorkspace {
+                                it.copy(
+                                    mappings = m,
+                                    touchpad = it.touchpad.copy(mapped = true)
+                                )
+                            }
+                        },
+                        onSettings = { menu = EditMenu.CONTEXT },
+                        onClose = close,
+                    )
+                } else {
+                    TouchpadSettingsScreen(
+                        workspace = ws,
+                        runtime = runtime,
+                        onWorkspaceChange = { change -> editWorkspace(change) },
+                        onEditMappings = { menu = EditMenu.MAPPING },
+                        onClose = close,
+                    )
+                }
+            } else if (d != null && sel != null && !dragging && menu != EditMenu.NONE) {
                 if (isCorner(d, sel.id)) {
                     // A corner (no mapping): a small menu right next to it.
                     NearControl(anchor = center(sel), anchorHalfW = half(sel), anchorHalfH = halfH(sel)) {

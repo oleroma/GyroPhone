@@ -22,26 +22,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
-import com.oleroma.gyrophone.core.model.Bindings
+
 import com.oleroma.gyrophone.core.model.GyroAxes
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroOrientation
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.RatchetAxes
-import com.oleroma.gyrophone.core.model.TouchpadSettings
+
 import com.oleroma.gyrophone.core.model.Workspace
-import com.oleroma.gyrophone.core.model.isTouchpad
-import com.oleroma.gyrophone.core.model.withTouchpadMappings
+
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.roundToInt
 
-/** Slider tops: higher than the old 60 and 5, for fast flicks and big screens. */
+/** Slider top: higher than the old 60, for fast flicks. */
 private const val MAX_GYRO_SENS = 150f
-private const val MAX_TOUCHPAD_SENS = 12f
 
 /**
- * Gyro and touchpad settings of the active profile's workspace [index]. Edits go
+ * Gyro, button and haptic settings of the active profile's workspace [index] (the touchpad's are
+ * in edit mode: [TouchpadSettingsScreen]). Edits go
  * through [GamepadRuntime.editActiveProfile], so a builtin becomes an active custom copy.
  */
 @Composable
@@ -270,183 +269,12 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
             style = MaterialTheme.typography.bodySmall,
         )
     }
-    RememberedSection(
-        runtime,
-        "workspace.Touchpad",
-        "Touchpad",
-        subtitle = "The empty pad area: speed, scrolling, taps"
-    ) {
-        val tp = ws.touchpad
-        SwitchRow("Enabled", tp.enabled) { v -> editWs { it.copy(touchpad = it.touchpad.copy(enabled = v)) } }
-        SwitchRow("Natural scrolling", tp.naturalScroll) { v ->
-            editWs { it.copy(touchpad = it.touchpad.copy(naturalScroll = v)) }
-        }
-        var tpSens by remember(key) { mutableStateOf(tp.sensitivity) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("X speed %.1f".format(tpSens), Modifier.padding(end = 8.dp))
-            Slider(
-                value = tpSens,
-                onValueChange = { tpSens = (it * 10).roundToInt() / 10f },
-                valueRange = 0f..MAX_TOUCHPAD_SENS,
-                onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(sensitivity = tpSens)) } })
-        }
-        var tpSensY by remember(key) { mutableStateOf(tp.verticalSensitivity) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Y speed %.1f".format(tpSensY), Modifier.padding(end = 8.dp))
-            Slider(
-                value = tpSensY,
-                onValueChange = { tpSensY = (it * 10).roundToInt() / 10f },
-                valueRange = 0f..MAX_TOUCHPAD_SENS,
-                onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(sensitivityY = tpSensY)) } })
-        }
-        Text(
-            "0 turns that direction off, e.g. X 0 for a touchpad that only moves up and down.",
-            style = MaterialTheme.typography.bodySmall
-        )
-        var tpAccel by remember(key) { mutableStateOf(tp.acceleration) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Acceleration %.1f".format(tpAccel), Modifier.padding(end = 8.dp))
-            Slider(
-                value = tpAccel, onValueChange = { tpAccel = it }, valueRange = 0f..2f,
-                onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(acceleration = tpAccel)) } })
-        }
-        var tpScroll by remember(key) { mutableStateOf(tp.scrollSpeed) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Scroll speed %.1f".format(tpScroll), Modifier.padding(end = 8.dp))
-            Slider(
-                value = tpScroll, onValueChange = { tpScroll = it }, valueRange = 0.25f..3f,
-                onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(scrollSpeed = tpScroll)) } })
-        }
-        SwitchRow("Inertia (keeps scrolling after a flick)", tp.inertia) { v ->
-            editWs { it.copy(touchpad = it.touchpad.copy(inertia = v)) }
-        }
-        if (tp.inertia) {
-            var tpGlide by remember(key) { mutableStateOf(tp.inertiaGlideMs) }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Glide %.0f ms".format(tpGlide), Modifier.padding(end = 8.dp))
-                Slider(
-                    value = tpGlide, onValueChange = { tpGlide = it },
-                    valueRange = TouchpadSettings.MIN_GLIDE_MS..TouchpadSettings.MAX_GLIDE_MS,
-                    onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(inertiaGlideMs = tpGlide)) } })
-            }
-        }
-
-        var tpDeadzone by remember(key) { mutableStateOf(tp.cursorDeadzoneDp) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (tpDeadzone < 1f) "Cursor deadzone: off" else "Cursor deadzone %.0f dp".format(tpDeadzone),
-                Modifier.padding(end = 8.dp),
-            )
-            Slider(
-                value = tpDeadzone, onValueChange = { tpDeadzone = it.roundToInt().toFloat() },
-                valueRange = 0f..TouchpadSettings.MAX_CURSOR_DEADZONE_DP,
-                onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(cursorDeadzoneDp = tpDeadzone)) } })
-        }
-        Text(
-            "One finger: the cursor stays still until the finger has moved this far, then catches up with it.",
-            style = MaterialTheme.typography.bodySmall,
-        )
-        if (tp.cursorDeadzoneDp > 0f) {
-            var tpCatchUp by remember(key) { mutableStateOf(tp.catchUpMs.toFloat()) }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (tpCatchUp < 1f) "Catch-up: instant" else "Catch-up %.0f ms".format(tpCatchUp),
-                    Modifier.padding(end = 8.dp),
-                )
-                Slider(
-                    value = tpCatchUp, onValueChange = { tpCatchUp = (it / 10f).roundToInt() * 10f },
-                    valueRange = 0f..TouchpadSettings.MAX_CATCH_UP_MS.toFloat(),
-                    onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(catchUpMs = tpCatchUp.roundToInt())) } })
-            }
-            var tpRearm by remember(key) { mutableStateOf(tp.deadzoneRearmMs.toFloat()) }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (tpRearm < 1f) "Re-arm: off" else "Re-arm after %.0f ms still".format(tpRearm),
-                    Modifier.padding(end = 8.dp),
-                )
-                Slider(
-                    value = tpRearm, onValueChange = { tpRearm = (it / 10f).roundToInt() * 10f },
-                    valueRange = 0f..TouchpadSettings.MAX_REARM_MS.toFloat(),
-                    onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(deadzoneRearmMs = tpRearm.roundToInt())) } })
-            }
-            Text(
-                "The deadzone arms again once the finger stands still this long. Off: once per touch.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            if (tp.deadzoneRearmMs > 0) {
-                var tpStill by remember(key) { mutableStateOf(tp.deadzoneStillDp) }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Still within %.1f dp".format(tpStill), Modifier.padding(end = 8.dp))
-                    Slider(
-                        value = tpStill, onValueChange = { tpStill = (it * 2f).roundToInt() / 2f },
-                        valueRange = 0f..TouchpadSettings.MAX_STILL_DP,
-                        onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(deadzoneStillDp = tpStill)) } })
-                }
-                Text(
-                    "Movement smaller than this still counts as standing still.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-        }
-        var tpVLock by remember(key) { mutableStateOf(tp.verticalLockDeg) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (tpVLock < 1f) "Vertical lock: off" else "Vertical lock %.0f°".format(tpVLock),
-                Modifier.padding(end = 8.dp),
-            )
-            Slider(
-                value = tpVLock, onValueChange = { tpVLock = it.roundToInt().toFloat() },
-                valueRange = 0f..TouchpadSettings.MAX_LOCK_DEG,
-                onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(verticalLockDeg = tpVLock)) } })
-        }
-        var tpHLock by remember(key) { mutableStateOf(tp.horizontalLockDeg) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (tpHLock < 1f) "Horizontal lock: off" else "Horizontal lock %.0f°".format(tpHLock),
-                Modifier.padding(end = 8.dp),
-            )
-            Slider(
-                value = tpHLock, onValueChange = { tpHLock = it.roundToInt().toFloat() },
-                valueRange = 0f..TouchpadSettings.MAX_LOCK_DEG,
-                onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(horizontalLockDeg = tpHLock)) } })
-        }
-        Text(
-            "Motion within this angle of straight up / down loses its sideways part (vertical lock), or within " +
-                    "this angle of sideways its up / down part (horizontal lock): cursor, scroll, sticks and held " +
-                    "directions alike. So a swipe down does not turn the camera.",
-            style = MaterialTheme.typography.bodySmall,
-        )
-    }
-    RememberedSection(
-        runtime,
-        "workspace.TouchpadMappings",
-        "Touchpad mappings",
-        subtitle = "Taps and gestures with 1–4 fingers"
-    ) {
-        // Taps and gestures are mappings; edits go to the workspace's mapping profile.
-        val tpMappings = ws.withTouchpadMappings().mappings
-        for (n in 1..4) {
-            Text(
-                if (n == 1) "1 finger" else "$n fingers",
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-            TouchMappingList(
-                mappings = tpMappings,
-                inputs = Bindings.surfaceInputs(n),
-                onChange = { list -> editWs { it.copy(mappings = list, touchpad = it.touchpad.copy(mapped = true)) } },
-                runtime = runtime,
-            )
-        }
-        TextButton(onClick = {
-            editWs { w ->
-                val m = w.withTouchpadMappings()
-                m.copy(mappings = m.mappings.filterNot { it.source.isTouchpad } + Bindings.defaultTouchpadMappings(
-                    TouchpadSettings()
-                ))
-            }
-        }) { Text("Reset touchpad mappings") }
-    }
+    Text(
+        "Touchpad: in Edit layout, tap empty space for its mappings, or long-press it for its settings.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+    )
 }
 
 @Composable

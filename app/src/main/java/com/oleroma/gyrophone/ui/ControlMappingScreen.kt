@@ -108,6 +108,7 @@ private sealed interface Dragged {
     /** A target from the library ([from] null) or a chip of action [from]. */
     data class Target(val target: OutputTarget, val from: BindableInput?) : Dragged
     data class Preset(val preset: MapPreset) : Dragged
+
     /** An action card moved within its [group] (0: the control's own actions, 1: its surface ones). */
     data class Card(val input: BindableInput, val group: Int) : Dragged
 }
@@ -120,7 +121,8 @@ private enum class LibraryTab(val label: String) {
     GYRO("Gyro"), PHONE("Phone"), TOUCHPAD("Touchpad"),
 }
 
-private fun group(name: String): List<OutputTarget> = Describe.targetGroups.firstOrNull { it.first == name }?.second.orEmpty()
+private fun group(name: String): List<OutputTarget> =
+    Describe.targetGroups.firstOrNull { it.first == name }?.second.orEmpty()
 
 private fun tabTargets(tab: LibraryTab, extras: List<OutputTarget>): List<OutputTarget> = when (tab) {
     LibraryTab.KEYBOARD -> group("Keyboard")
@@ -158,6 +160,7 @@ private fun actionTitle(control: TouchControl, input: BindableInput): String {
 
 /** Remembered card orders are per control kind. */
 private fun kindKey(c: TouchControl) = when {
+    c.isTouchpadStandIn -> "touchpad"
     c.kind == TouchKind.STICK -> "stick"
     c.swipes -> "swipe"
     else -> "button"
@@ -172,7 +175,8 @@ private fun sorted(control: TouchControl, inputs: List<BindableInput>, order: Li
     inputs.sortedBy { order.indexOf(orderKey(control, it)).let { i -> if (i < 0) Int.MAX_VALUE else i } }
 
 private fun loadRecent(runtime: GamepadRuntime): List<OutputTarget> =
-    runtime.uiPref(PREF_RECENT)?.let { runCatching { prefJson.decodeFromString(recentSerializer, it) }.getOrNull() }.orEmpty()
+    runtime.uiPref(PREF_RECENT)?.let { runCatching { prefJson.decodeFromString(recentSerializer, it) }.getOrNull() }
+        .orEmpty()
 
 /** Presets of [control]: stick presets, or common button actions (and touchpad set-ups for swipe buttons). */
 private fun presetsFor(control: TouchControl, inputs: List<BindableInput>): List<MapPreset> = buildList {
@@ -180,31 +184,48 @@ private fun presetsFor(control: TouchControl, inputs: List<BindableInput>): List
         for (p in Bindings.StickPreset.entries) add(MapPreset(p.label) { m -> Bindings.applyStickPreset(m, inputs, p) })
         return@buildList
     }
-    val press = inputs.firstOrNull() ?: return@buildList
-    // A preset replaces the press; a ratchet stays.
-    fun main(label: String, t: OutputTarget) = add(
-        MapPreset(label) { m -> Bindings.setTargets(m, press, listOf(t) + Bindings.targets(m, press).filter(::isRatchet)) },
-    )
-    main("Mouse left", OutputTarget.Mouse(MouseButton.LEFT))
-    main("Mouse right", OutputTarget.Mouse(MouseButton.RIGHT))
-    main("Space", OutputTarget.Key(0x2C))
-    main("Shift", OutputTarget.Key(HidUsage.LEFT_SHIFT))
-    main("Ctrl", OutputTarget.Key(HidUsage.LEFT_CTRL))
-    main("Esc", OutputTarget.Key(0x29))
-    main("Tab", OutputTarget.Key(0x2B))
-    main("Enter", OutputTarget.Key(0x28))
-    add(MapPreset("Ratchet") { m -> Bindings.setTargets(m, press, Bindings.targets(m, press).filterNot(::isRatchet) + OutputTarget.GyroPause) })
+    val press = inputs.firstOrNull { !isSurface(it) }
+    if (press != null) {
+        // A preset replaces the press; a ratchet stays.
+        fun main(label: String, t: OutputTarget) = add(
+            MapPreset(label) { m ->
+                Bindings.setTargets(
+                    m,
+                    press,
+                    listOf(t) + Bindings.targets(m, press).filter(::isRatchet)
+                )
+            },
+        )
+        main("Mouse left", OutputTarget.Mouse(MouseButton.LEFT))
+        main("Mouse right", OutputTarget.Mouse(MouseButton.RIGHT))
+        main("Space", OutputTarget.Key(0x2C))
+        main("Shift", OutputTarget.Key(HidUsage.LEFT_SHIFT))
+        main("Ctrl", OutputTarget.Key(HidUsage.LEFT_CTRL))
+        main("Esc", OutputTarget.Key(0x29))
+        main("Tab", OutputTarget.Key(0x2B))
+        main("Enter", OutputTarget.Key(0x28))
+        add(MapPreset("Ratchet") { m ->
+            Bindings.setTargets(
+                m,
+                press,
+                Bindings.targets(m, press).filterNot(::isRatchet) + OutputTarget.GyroPause
+            )
+        })
+    }
     if (control.swipes) {
         add(MapPreset("Windows touchpad") { m ->
             m.filterNot { (it.source as? InputSource.Surface)?.id == control.id } +
-                Bindings.defaultTouchpadMappings(TouchpadSettings()).map { d ->
-                    val s = d.source
-                    if (s is InputSource.Surface) d.copy(source = s.copy(id = control.id)) else d
-                }
+                    Bindings.defaultTouchpadMappings(TouchpadSettings()).map { d ->
+                        val s = d.source
+                        if (s is InputSource.Surface) d.copy(source = s.copy(id = control.id)) else d
+                    }
         })
         add(MapPreset("Mouse cursor") { m ->
-            fun move(i: SurfaceInput) = BindableInput(i.label, listOf(InputSource.Surface(1, i, control.id)), analog = true, swipe = true)
-            val x = Bindings.setTargets(m, move(SurfaceInput.MOTION_X), listOf(OutputTarget.MouseAxis(MouseMotion.MOVE_X)))
+            fun move(i: SurfaceInput) =
+                BindableInput(i.label, listOf(InputSource.Surface(1, i, control.id)), analog = true, swipe = true)
+
+            val x =
+                Bindings.setTargets(m, move(SurfaceInput.MOTION_X), listOf(OutputTarget.MouseAxis(MouseMotion.MOVE_X)))
             Bindings.setTargets(x, move(SurfaceInput.MOTION_Y), listOf(OutputTarget.MouseAxis(MouseMotion.MOVE_Y)))
         })
     }
@@ -233,7 +254,24 @@ private fun Modifier.dragSource(
     }
 
 /**
- * Full-screen mapping editor of a touch control (a tap on it in edit mode). Its actions (cards
+ * Stands for the workspace touchpad in the control screens: a tap or long press on empty space
+ * in edit mode opens them with it. Its surface inputs have the touchpad's id ("").
+ */
+internal val TOUCHPAD_STAND_IN = TouchControl("", TouchKind.BUTTON, "Touchpad", 0f, 0f, swipe = true)
+
+internal val TouchControl.isTouchpadStandIn: Boolean get() = id.isEmpty()
+
+/** "Stick", "Swipe button", "Button" or "Touchpad". */
+internal fun controlKindName(c: TouchControl): String = when {
+    c.isTouchpadStandIn -> "Touchpad"
+    c.kind == TouchKind.STICK -> "Stick"
+    c.swipes -> "Swipe button"
+    else -> "Button"
+}
+
+/**
+ * Full-screen mapping editor of a touch control (a tap on it in edit mode), or of the touchpad
+ * ([TOUCHPAD_STAND_IN], a tap on empty space). Its actions (cards
  * with their targets as chips) and a library of targets share the screen, split by a draggable
  * divider: tap a card to select it and a target to add it there, or long-press and drag a target
  * onto a card, a chip to another card (or off the cards to remove it), or a card to reorder it.
@@ -256,7 +294,9 @@ internal fun ControlMappingScreen(
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    val inputs = remember(control) { Bindings.touchInputs(control) }
+    val inputs = remember(control) {
+        if (control.isTouchpadStandIn) (1..4).flatMap { Bindings.surfaceInputs(it) } else Bindings.touchInputs(control)
+    }
     val presets = remember(control) { presetsFor(control, inputs) }
     val extras = remember(inputs) { inputs.flatMap { it.extra }.distinct() }
 
@@ -342,6 +382,7 @@ internal fun ControlMappingScreen(
     val chipBounds = remember { HashMap<Pair<InputSource, OutputTarget>, Rect>() }
     var actionsBounds by remember { mutableStateOf(Rect.Zero) }
     var origin by remember { mutableStateOf(Offset.Zero) }
+
     /** Card centres (y) when a card drag started: where the others sit while it moves. */
     val startCenters = remember { HashMap<InputSource, Float>() }
 
@@ -349,6 +390,7 @@ internal fun ControlMappingScreen(
         if (!actionsBounds.contains(p)) return null
         return shownNow.firstOrNull { cardBounds[it.sources.first()]?.contains(p) == true }
     }
+
     val hovered by remember { derivedStateOf { if (dragged is Dragged.Target) cardAt(dragPos) else null } }
 
     fun startDrag(d: Dragged, at: Offset) {
@@ -411,10 +453,12 @@ internal fun ControlMappingScreen(
                     done = true
                 }
             }
+
             is Dragged.Preset -> if (actionsBounds.contains(dragPos)) {
                 applyPreset(d.preset)
                 done = true
             }
+
             is Dragged.Card -> {
                 val keys = liveOrder.map { orderKey(currentControl, it) }
                 order = keys + order.filter { it !in keys }
@@ -452,16 +496,23 @@ internal fun ControlMappingScreen(
                 }
             }
             shownGroups.forEachIndexed { g, list ->
-                if (control.swipes) {
+                // The touchpad has no button actions: only its surface ones.
+                if (control.swipes && !(g == 0 && control.isTouchpadStandIn)) {
                     item(key = "header$g") {
-                        Column(Modifier.animateItem().padding(top = if (g == 0) 0.dp else 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Column(
+                            Modifier.animateItem().padding(top = if (g == 0) 0.dp else 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                             Text(
-                                if (g == 0) "Button" else "Touch surface",
+                                if (g == 0) "Button" else if (control.isTouchpadStandIn) "Touchpad" else "Touch surface",
                                 style = MaterialTheme.typography.labelLarge,
                                 color = colors.primary,
                             )
                             if (g == 1) {
-                                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    Modifier.horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
                                     for (n in 1..4) {
                                         FilterChip(
                                             selected = fingers == n,
@@ -523,8 +574,10 @@ internal fun ControlMappingScreen(
         }
         val shownTargets = when {
             q.isNotEmpty() -> (Describe.allTargets + extras).distinct().filter {
-                Describe.shortTarget(it).contains(q, ignoreCase = true) || Describe.target(it).contains(q, ignoreCase = true)
+                Describe.shortTarget(it).contains(q, ignoreCase = true) || Describe.target(it)
+                    .contains(q, ignoreCase = true)
             }
+
             tab == LibraryTab.RECENT -> recent
             else -> tabTargets(tab, extras)
         }
@@ -585,7 +638,8 @@ internal fun ControlMappingScreen(
                             text = "✦ " + p.label,
                             enabled = true,
                             mapped = control.kind == TouchKind.STICK &&
-                                Bindings.StickPreset.entries.getOrNull(presets.indexOf(p))?.let { presetMatches(mappings, inputs, it) } == true,
+                                    Bindings.StickPreset.entries.getOrNull(presets.indexOf(p))
+                                        ?.let { presetMatches(mappings, inputs, it) } == true,
                             preset = true,
                             dragKey = p.label,
                             onClick = { applyPreset(p) },
@@ -632,19 +686,24 @@ internal fun ControlMappingScreen(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                (if (control.kind == TouchKind.STICK) "Stick" else if (control.swipes) "Swipe button" else "Button") + " · mapping",
+                                controlKindName(control) + " · mapping",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.onSurfaceVariant,
                                 maxLines = 1,
                             )
                         }
                         TextButton(onClick = onSettings, contentPadding = compact) { Text("Settings") }
-                        TextButton(onClick = { undoLast() }, enabled = undo.isNotEmpty(), contentPadding = compact) { Text("↶ Undo") }
+                        TextButton(
+                            onClick = { undoLast() },
+                            enabled = undo.isNotEmpty(),
+                            contentPadding = compact
+                        ) { Text("↶ Undo") }
                         FilledTonalButton(onClick = onClose, contentPadding = compact) { Text("Done") }
                     }
                     BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                         val landscape = maxWidth > maxHeight
-                        val total = (if (landscape) constraints.maxWidth else constraints.maxHeight).toFloat().coerceAtLeast(1f)
+                        val total =
+                            (if (landscape) constraints.maxWidth else constraints.maxHeight).toFloat().coerceAtLeast(1f)
                         val handle: @Composable () -> Unit = {
                             SplitHandle(
                                 landscape = landscape,
@@ -826,7 +885,11 @@ private fun ActionCard(
                                 modifier = Modifier.padding(start = 10.dp, end = 2.dp),
                             )
                             Box(Modifier.size(32.dp).clickable { onRemove(t) }, contentAlignment = Alignment.Center) {
-                                Text("✕", style = MaterialTheme.typography.labelMedium, color = colors.onSecondaryContainer)
+                                Text(
+                                    "✕",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = colors.onSecondaryContainer
+                                )
                             }
                         }
                     }
