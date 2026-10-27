@@ -1011,6 +1011,9 @@ fun PadScreen(
                     knobRadiusPx = r * 0.6f,
                     modifier = Modifier
                         .offset { IntOffset((ctr.x - r).roundToInt(), (ctr.y - rh).roundToInt()) }
+                        // A control may be larger than the screen: measured unbounded from its top left,
+                        // before the opacity layer, which would otherwise cut it to the screen's size.
+                        .wrapContentSize(Alignment.TopStart, unbounded = true)
                         // While editing, faint controls stay findable.
                         .alpha(ws.controlOpacity.let { if (editing) max(it, MIN_EDIT_OPACITY) else it }),
                 )
@@ -1450,8 +1453,6 @@ private fun PadControl(
     val shape = shapeOf(control)
     Box(
         modifier
-            // A control may be larger than the screen: measure it unbounded, from its top left.
-            .wrapContentSize(Alignment.TopStart, unbounded = true)
             .size(widthDp, heightDp)
             .border(2.dp, tint, shape)
             .background(if (filled) tint.copy(alpha = 0.25f) else Color.Transparent, shape),
