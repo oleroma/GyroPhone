@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Step 3: build the feature branch.
+# Step 3: build the feature branch. A PC build then runs agent-install on it; a failed
+# install is reported in the summary but doesn't fail the build.
 # Usage:
 #   build/src/.agents/agent-build pc   on the PC, from the build/src worktree (AGENTS.md step 3)
 #   .agents/agent-build ci             in the cloud, on the feature branch
@@ -7,8 +8,6 @@ source "$(dirname "$0")/lib.sh"
 cd "$WORKTREE"
 
 HOOKS="$WORKTREE/.agents/hooks"
-INSTALL_NOTE=""
-NOTES=()
 
 build_pc() {
   [ "$WORKTREE" -ef "$BUILD_DIR/src" ] || die "Run this from the build/src worktree, as in AGENTS.md step 3."
@@ -60,86 +59,27 @@ build_pc() {
   fi
   cp "${files[@]}" "$BUILD_DIR/"
   printf '%s\n' "${names[@]}" >"$BUILD_DIR/.newest"
+  echo "$version-$commit" >"$BUILD_DIR/.newest-build"
 
   # Keep the last 4 builds. Old-style build folders may hold a worktree; prune forgets those.
   ls -1dt "$BUILD_DIR"/builds/*/ | tail -n +5 | while read -r old; do rm -rf "$old"; done
   git -C "$MAIN_REPO" worktree prune
 
-  local summary=("Built $version at $commit:") name paths=()
-  for name in "${names[@]}"; do
-    summary+=("File: $BUILD_DIR/$name")
-    paths+=("$BUILD_DIR/$name")
-    case "$name" in
-      *.apk)
-        install_apk "$BUILD_DIR/$name" "$name"
-        NOTES+=("$name: $INSTALL_NOTE")
-        ;;
-      *)
-        if [ ! -f "$HOOKS/install" ]; then NOTES+=("$name: not an APK, ask Olex whether to install it."); fi
-        ;;
-    esac
-  done
+  local summary=("Built $version-$commit:") name
+  for name in "${names[@]}"; do summary+=("File: $BUILD_DIR/$name"); done
 
-  # The repo's install hook installs the other build files and does any setup after an
-  # install. Its "note: <text>" lines go into the summary.
-  if [ -f "$HOOKS/install" ]; then
-    local hook_out="$BUILD_DIR/logs/install-output.txt" line
-    if ! bash "$HOOKS/install" "$version" "${paths[@]}" >"$hook_out"; then
-      NOTES+=("The install hook failed; see the log.")
-    fi
-    cat "$hook_out"
+  # Install it. agent-install prints its own result and summary; keep the summary lines.
+  local out
+  if out="$(bash "$AGENTS_DIR/agent-install" "$version-$commit")"; then
     while IFS= read -r line; do
-      case "$line" in "note: "*) NOTES+=("${line#note: }") ;; esac
-    done <"$hook_out"
-  fi
-
-  finish done "${summary[@]}" "${NOTES[@]}"
-}
-
-find_adb() { # adb comes from the PATH; prints nothing if it isn't there
-  if command -v adb >/dev/null 2>&1; then echo adb; fi
-  return 0
-}
-
-phone_notify() { # phone_notify <adb> <title> <text>
-  "$1" shell "cmd notification post -t '$2' agent-build '$3'" || true
-}
-
-install_apk() { # install_apk <apk> <name>; sets INSTALL_NOTE
-  local apk="$1" title="${2%.apk}" adb devices out
-  adb="$(find_adb)"
-  if [ -z "$adb" ]; then
-    INSTALL_NOTE="Not installed: adb not found."
-    return
-  fi
-  export MSYS_NO_PATHCONV=1
-
-  devices="$("$adb" devices | awk 'NR > 1 && $2 == "device"' | wc -l | tr -d ' ')"
-  if [ "$devices" = 0 ]; then
-    INSTALL_NOTE="Not installed: no phone connected."
-    return
-  fi
-  if [ "$devices" != 1 ]; then
-    INSTALL_NOTE="Not installed: more than one device connected."
-    return
-  fi
-
-  "$adb" shell cmd vibrator_manager synced oneshot 200 || true
-  phone_notify "$adb" "$title" "Installing now"
-  # -r keeps app data. Without -d, adb refuses a downgrade instead of wiping data.
-  if out="$("$adb" install -r "$apk" 2>&1)" && grep -q Success <<<"$out"; then
-    echo "$out"
-    phone_notify "$adb" "$title" "Install complete"
-    INSTALL_NOTE="Installed on the phone."
+      case "$line" in "result: "* | "log: "* | "Installed build "*) ;; *) summary+=("$line") ;; esac
+    done <<<"$out"
   else
-    echo "$out"
-    phone_notify "$adb" "$title" "Install failed"
-    if grep -q VERSION_DOWNGRADE <<<"$out"; then
-      INSTALL_NOTE="Not installed: it's a downgrade, which would wipe app data."
-    else
-      INSTALL_NOTE="Install failed: $(grep -m 1 -E 'Failure|Error' <<<"$out" || echo "see the log")"
-    fi
+    summary+=("Install failed: $(grep -v -e '^result: ' -e '^log: ' <<<"$out" | head -n 1)" "Install log: $(sed -n 's/^log: //p' <<<"$out")")
   fi
+  echo "$out"
+
+  finish done "${summary[@]}"
 }
 
 build_ci() {
