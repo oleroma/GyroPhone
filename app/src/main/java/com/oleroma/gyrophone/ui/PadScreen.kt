@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.ui
 
+import android.os.SystemClock
 import android.view.InputDevice
 import android.view.View
 import androidx.compose.animation.AnimatedVisibility
@@ -131,6 +132,13 @@ private const val PILL_MS = 1_000L
 /** Highlight refresh while a finger is on a button (holds and lift commits happen between events). */
 private const val HIGHLIGHT_POLL_MS = 50L
 
+/** With live mappings: refresh fast enough to catch a tap's short pulse. */
+private const val LIVE_POLL_MS = 16L
+
+/** How long a button keeps showing what it sent after it stops. */
+private const val LIVE_LINGER_MS = 700L
+private val LIVE_LABEL_COLOR = Color(0xFFFFE08A)
+
 /** Edit mode: how much of a control (all of a smaller one) must stay on screen, in dp: about a fingertip. */
 private const val KEEP_ON_SCREEN_DP = 48f
 
@@ -259,6 +267,10 @@ fun PadScreen(
     var systemTookTouch by remember { mutableIntStateOf(0) }
     val editing = draft != null
     val autoHide by runtime.cornerAutoHide.collectAsStateWithLifecycle()
+    val visuals by runtime.touchVisuals.collectAsStateWithLifecycle()
+    val trails = remember { TouchTrails() }
+    val showTouchVisuals = !editing && (visuals.showTouches || visuals.trail)
+    LaunchedEffect(showTouchVisuals) { if (!showTouchVisuals) trails.clear() }
 
     /** Bumped to show auto-hidden ← / → corners again: four quick taps, or a corner touched. */
     var revealTick by remember { mutableIntStateOf(0) }
@@ -288,11 +300,50 @@ fun PadScreen(
     val shownIndex = (if (editing) editIndex else wsIndex).coerceIn(0, shown.workspaces.lastIndex)
     val ws = shown.workspace(shownIndex)
 
+    // Live mappings: per control, its mappings (not haptics), what it sends now, and until when it
+    // stays shown; watched until [liveWatchUntil] after the last touch (a tap may wait out its window).
+    val controlMappings = remember(ws) {
+        ws.mappings.filterNot { Describe.isHaptic(it.target) }.groupBy { MappingProfiles.touchId(it.source) }
+    }
+    val liveLabels = remember { mutableStateMapOf<String, String>() }
+    val liveUntil = remember { HashMap<String, Long>() }
+    val liveWatchUntil = remember { LongArray(1) }
+    var liveWatching by remember { mutableStateOf(false) }
+
+    fun refreshLive() {
+        val now = SystemClock.uptimeMillis()
+        if (!visuals.liveMappings || editing) {
+            liveLabels.clear(); liveUntil.clear(); liveWatching = false
+            return
+        }
+        for ((id, ms) in controlMappings) {
+            if (id == null) continue
+            val text = ms.filter { abs(runtime.sourceValue(it.source)) >= 0.5f }
+                .map { Describe.shortTarget(it.target) }.distinct().joinToString(" + ")
+            if (text.isNotEmpty()) {
+                if (liveLabels[id] != text) liveLabels[id] = text
+                liveUntil[id] = now + LIVE_LINGER_MS
+            } else if ((liveUntil[id] ?: 0L) < now) {
+                liveUntil.remove(id)
+                if (id in liveLabels) liveLabels.remove(id)
+            }
+        }
+        if (liveWatching && now > liveWatchUntil[0] && liveLabels.isEmpty()) liveWatching = false
+    }
+
     fun refreshHighlights() {
         val p = runtime.engine.pressedTouches()
         if (p != pressedIds) pressedIds = p
         val l = runtime.engine.latchedTouches()
         if (l != latchedIds) latchedIds = l
+        refreshLive()
+    }
+
+    /** A touch began or ended: watch the live mappings for a while (gestures fire after lifts). */
+    fun watchLive() {
+        if (!visuals.liveMappings) return
+        liveWatchUntil[0] = SystemClock.uptimeMillis() + ws.doubleTapMs + LIVE_LINGER_MS
+        if (!liveWatching) liveWatching = true
     }
 
     fun releaseAll() {
@@ -339,11 +390,11 @@ fun PadScreen(
         }
     }
 
-    val pollHighlights = !editing && (fingersOnButtons > 0 || pressedIds.isNotEmpty())
-    LaunchedEffect(pollHighlights) {
+    val pollHighlights = !editing && (fingersOnButtons > 0 || pressedIds.isNotEmpty() || liveWatching)
+    LaunchedEffect(pollHighlights, visuals.liveMappings) {
         if (!pollHighlights) return@LaunchedEffect
         while (true) {
-            delay(HIGHLIGHT_POLL_MS)
+            delay(if (visuals.liveMappings) LIVE_POLL_MS else HIGHLIGHT_POLL_MS)
             refreshHighlights()
         }
     }
@@ -365,7 +416,12 @@ fun PadScreen(
         pillShown = false
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFF101318))) {
+    BoxWithConstraints(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xFF101318))
+            .recordTouches(trails, visuals, showTouchVisuals),
+    ) {
         val density = LocalDensity.current
         val w = constraints.maxWidth.toFloat()
         val h = constraints.maxHeight.toFloat()
@@ -1022,6 +1078,7 @@ fun PadScreen(
                                 chordFired[0] = false
                             }
                             if (fingersOnButtons != buttonFingers.size) fingersOnButtons = buttonFingers.size
+                            watchLive()
                             refreshHighlights()
                         }
                     }
@@ -1080,9 +1137,11 @@ fun PadScreen(
                     isLatched -> Color(0xFF8FE39A)
                     else -> Color(0x66FFFFFF)
                 }
+                val live = if (editing) null else liveLabels[c.id]
                 PadControl(
                     control = c,
-                    label = labels[c.id] ?: "",
+                    label = live ?: labels[c.id] ?: "",
+                    live = live != null,
                     widthDp = with(density) { (r * 2).toDp() },
                     heightDp = with(density) { (rh * 2).toDp() },
                     tint = tint,
@@ -1439,6 +1498,8 @@ fun PadScreen(
                 }
             }
         }
+        // Touches and trails: over everything, never taking a touch.
+        if (showTouchVisuals) TouchOverlay(trails, visuals, Modifier.fillMaxSize())
     }
 }
 
@@ -1574,6 +1635,8 @@ private fun PadControl(
     heightDp: Dp,
     tint: Color,
     filled: Boolean,
+    /** [label] is what the control sends right now (live mappings): shown highlighted. */
+    live: Boolean = false,
     /** Read while placing the knob only, so stick motion does not recompose the pad. */
     knob: () -> Offset,
     knobRadiusPx: Float,
@@ -1600,10 +1663,11 @@ private fun PadControl(
         }
         Text(
             label,
-            color = Color.White,
+            color = if (live) LIVE_LABEL_COLOR else Color.White,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (live) FontWeight.Bold else null,
             modifier = Modifier.padding(horizontal = 4.dp),
         )
     }
