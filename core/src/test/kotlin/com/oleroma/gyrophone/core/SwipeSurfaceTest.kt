@@ -43,6 +43,34 @@ class SwipeSurfaceTest {
     }
 
     @Test
+    fun cursorDeadzoneWorksOnASwipeButton() {
+        val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, swipe = true,
+            surface = SurfaceSettings(sensitivity = 1f, acceleration = 0f, cursorDeadzoneDp = 20f, catchUpMs = 0))
+        val w = Workspace(id = "w", name = "w", touchControls = listOf(b), mappings = listOf(
+            Mapping(InputSource.Surface(1, SurfaceInput.MOTION_X, "b"), OutputTarget.MouseAxis(MouseMotion.MOVE_X)),
+        ))
+        val e = MappingEngine(single(w)) { t }.apply { touchpadPxPerDp = 1f }
+        e.buttonDown(1, "b", 100f, 100f)
+        t += 10 * MS; e.buttonMove(1, 110f, 100f)
+        assertEquals(0, e.snapshot().mouse.dx)
+        t += 10 * MS; e.buttonMove(1, 125f, 100f)
+        assertEquals(25, e.snapshot().mouse.dx)
+    }
+
+    @Test
+    fun overlapOrderIsByShortestSide() {
+        val big = TouchControl("big", TouchKind.BUTTON, "", 0.5f, 0.5f, size = 0.4f)
+        val strip = TouchControl("strip", TouchKind.BUTTON, "", 0.5f, 0.5f, size = 1.2f, shape = com.oleroma.gyrophone.core.model.TouchShape.SQUARE, aspect = 0.1f)
+        val back = TouchControl("back", TouchKind.BUTTON, "", 0.5f, 0.5f, size = 0.1f, layer = com.oleroma.gyrophone.core.model.TouchLayer.BACK)
+        val order = com.oleroma.gyrophone.core.model.hitOrder(listOf(big, strip, back), false).map { it.id }
+        assertEquals(listOf("strip", "big", "back"), order)
+        val shared = com.oleroma.gyrophone.core.model.touchedControls(
+            com.oleroma.gyrophone.core.model.hitOrder(listOf(big.copy(sharesTouches = true), strip), false), 500f, 250f, 1000f, 500f, false,
+        ).map { it.id }
+        assertEquals(listOf("strip", "big"), shared)
+    }
+
+    @Test
     fun settingsFollowTheTouchpadUnlessSet() {
         val pad = TouchpadSettings(sensitivity = 3f, scrollSpeed = 2f)
         val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, swipe = true, surface = SurfaceSettings(scrollSpeed = 0.5f))

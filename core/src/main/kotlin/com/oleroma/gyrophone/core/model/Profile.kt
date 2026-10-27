@@ -12,6 +12,10 @@ enum class TouchKind { BUTTON, STICK, FULLSCREEN }
 @Serializable
 enum class TouchShape { CIRCLE, SQUARE }
 
+/** Where a control sits among overlapping ones: AUTO by size ([hitOrder]), or always in front / behind. */
+@Serializable
+enum class TouchLayer(val label: String) { AUTO("Auto"), FRONT("Front"), BACK("Back") }
+
 /**
  * How a touch stick turns into directions for its Left / Right / Up / Down mappings. OVERLAP:
  * each half on its own, so a diagonal presses two; FOUR: one of 4 zones at a time; EIGHT: 8 zones,
@@ -93,6 +97,10 @@ data class TouchControl(
      * null (a button from before) = its old swipe sensitivities, no acceleration, no inertia.
      */
     val surface: SurfaceSettings? = null,
+    /** Among overlapping controls ([hitOrder]). */
+    val layer: TouchLayer = TouchLayer.AUTO,
+    /** A finger landing here while another control is in front also works this control. */
+    val sharesTouches: Boolean = false,
 ) {
     /** In swipe mode: a button with [swipe] on and click-through off. */
     val swipes: Boolean get() = kind == TouchKind.BUTTON && swipe && !clickThrough
@@ -204,6 +212,40 @@ fun TouchControl.contains(
             abs(dx) <= half + margin && abs(dy) <= halfH + margin
         }
     }
+}
+
+/**
+ * [controls] front first, as touches see them: FRONT ones, then AUTO ones by size, then BACK
+ * ones. Size is the shortest side (a circle's diameter, a rectangle's narrower side), so a long
+ * thin strip counts as small; smaller is in front, then smaller area, then the one added later.
+ */
+fun hitOrder(controls: List<TouchControl>, inPortrait: Boolean): List<TouchControl> =
+    controls.withIndex().sortedWith(
+        compareBy<IndexedValue<TouchControl>> { it.value.layer.ordinal.let { l -> if (l == 0) 1 else if (l == 1) 0 else 2 } }
+            .thenBy { it.value.shortSide(inPortrait) }
+            .thenBy { it.value.area(inPortrait) }
+            .thenByDescending { it.index },
+    ).map { it.value }
+
+/** Shortest side as drawn, in fractions of the pad area's shorter side. */
+fun TouchControl.shortSide(inPortrait: Boolean): Float = placeSize(inPortrait) * min(1f, heightRatio)
+
+/** Area as drawn, in squared fractions of the pad area's shorter side. */
+fun TouchControl.area(inPortrait: Boolean): Float {
+    val s = placeSize(inPortrait)
+    return if (shape == TouchShape.CIRCLE) s * s * 0.7854f else s * s * heightRatio
+}
+
+/**
+ * The controls a finger landing at [px], [py] works: the front one under it, plus every
+ * [TouchControl.sharesTouches] one behind it. [ordered] comes from [hitOrder].
+ */
+fun touchedControls(
+    ordered: List<TouchControl>, px: Float, py: Float, screenW: Float, screenH: Float, inPortrait: Boolean,
+): List<TouchControl> {
+    val under = ordered.filter { it.contains(px, py, screenW, screenH, inPortrait = inPortrait) }
+    if (under.size <= 1) return under
+    return listOf(under[0]) + under.drop(1).filter { it.sharesTouches }
 }
 
 /**

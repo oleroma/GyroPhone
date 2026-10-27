@@ -53,6 +53,7 @@ import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchShape
+import com.oleroma.gyrophone.core.model.TouchLayer
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.placeSize
 import com.oleroma.gyrophone.core.model.placeX
@@ -178,6 +179,20 @@ internal fun LookSettings(
         SelectChip("Circle", control.shape == TouchShape.CIRCLE) { onControlChange(current.copy(shape = TouchShape.CIRCLE)) }
         SelectChip("Square", control.shape == TouchShape.SQUARE) { onControlChange(current.copy(shape = TouchShape.SQUARE)) }
     }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Layer", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(52.dp))
+        for (l in TouchLayer.entries) SelectChip(l.label, control.layer == l) { onControlChange(current.copy(layer = l)) }
+    }
+    Text(
+        "Where controls overlap, the smaller one (by its shortest side) is in front. Front / Back override that.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    SwitchSetting(
+        "Shares touches",
+        "Also works when a finger lands on a control in front of it, so both fire.",
+        control.sharesTouches,
+    ) { onControlChange(current.copy(sharesTouches = it)) }
     val size = control.placeSize(inPortrait)
     if (control.kind == TouchKind.BUTTON && control.shape == TouchShape.SQUARE) {
         // Width and height apart: each slider keeps the other side as it is.

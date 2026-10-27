@@ -92,6 +92,8 @@ import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.contains
+import com.oleroma.gyrophone.core.model.hitOrder
+import com.oleroma.gyrophone.core.model.touchedControls
 import com.oleroma.gyrophone.core.model.heightRatio
 import com.oleroma.gyrophone.core.model.placeSize
 import com.oleroma.gyrophone.core.model.placeX
@@ -120,6 +122,8 @@ private const val REVEAL_GAP_NS = 300_000_000L
 private const val PILL_MS = 1_000L
 /** Highlight refresh while a finger is on a button (holds and lift commits happen between events). */
 private const val HIGHLIGHT_POLL_MS = 50L
+/** Edit mode: a second tap on overlapping controls within this picks the next one behind. */
+private const val EDIT_CYCLE_MS = 1_000L
 
 /** PRESS: on a control, not yet moved; HELD: the same after a long press (settings screen open). */
 private enum class EditGesture { PRESS, HELD, MOVE, PINCH, EMPTY, NONE }
@@ -244,6 +248,9 @@ fun PadScreen(
     val arrowFade by animateFloatAsState(if (arrowsShown) 1f else 0f, label = "arrows")
     /** Quick-tap run for the reveal: last touch-down (event nanos) and taps so far. */
     val tapRun = remember { LongArray(2) }
+    /** Edit mode: the last tap on overlapping controls (x, y, which one) and its time, to cycle through them. */
+    val editCycle = remember { FloatArray(3) }
+    val editCycleAt = remember { LongArray(1) { Long.MIN_VALUE / 4 } }
     /**
      * Restarts the play touch handler on layout changes but not on gyro changes, so the gyro
      * corner switching the mode leaves held sticks and buttons alone.
@@ -419,7 +426,12 @@ fun PadScreen(
                         var pinchStart = 0f
                         var pinchA: PointerId? = null
                         var pinchB: PointerId? = null
-                        val c = hit(corners, downPos) ?: hit(controls, downPos)
+                        // Overlapping controls: the front one; a tap on the same spot soon after picks the next one behind.
+                        val under = hitOrder(controls, portrait).filter { it.contains(downPos.x, downPos.y, w, h, inPortrait = portrait) }
+                        val cycleAgain = under.size > 1 && first.uptimeMillis - editCycleAt[0] <= EDIT_CYCLE_MS &&
+                            (downPos - Offset(editCycle[0], editCycle[1])).getDistance() <= slop * 2
+                        val underIndex = if (cycleAgain) (editCycle[2].toInt() + 1) % under.size else 0
+                        val c = hit(corners, downPos) ?: under.getOrNull(underIndex)
                         val pressedAt = first.uptimeMillis
                         var lastAt = pressedAt
                         if (c != null) {
@@ -512,6 +524,8 @@ fun PadScreen(
 
                         when (mode) {
                             EditGesture.PRESS -> {
+                                editCycle[0] = downPos.x; editCycle[1] = downPos.y; editCycle[2] = underIndex.toFloat()
+                                editCycleAt[0] = lastAt
                                 // A tap: a control's mapping; a corner (no mapping) its menu.
                                 selected = target
                                 menu = if (target != null && d0 != null && isCorner(d0, target)) EditMenu.CONTEXT else EditMenu.MAPPING
@@ -549,7 +563,12 @@ fun PadScreen(
                         MappingProfiles.touchId(m.source) != c.id || m.source == InputSource.TouchArea(c.id, TouchAreaKind.ZONE)
                     }
                 }.mapTo(HashSet()) { it.id }
-                val landControls = controls.filter { it.id !in zoneOnly }
+                // Front first, as touches see them (size, layer); see hitOrder.
+                val landControls = hitOrder(controls.filter { it.id !in zoneOnly }, portrait)
+                /** Controls behind the front one that a finger also works (TouchControl.sharesTouches). */
+                class Extra(val control: TouchControl, val pointer: Long)
+                val extras = HashMap<PointerId, List<Extra>>()
+                val extraSticks = HashSet<String>()
                 val fingers = HashMap<PointerId, FingerAreas>()
                 val zoneCount = HashMap<String, Int>()
                 val outsideCount = HashMap<String, Int>()
@@ -649,7 +668,7 @@ fun PadScreen(
                             runtime.engine.buttonDown(pid, origin.id, p.x, p.y, at)
                         }
                         // Another finger took the stick meanwhile: this one stays stopped.
-                        FingerJob.STICK -> if (origin == null || origin.id in stickOwner.values) return else grabStick(pointer, origin, p)
+                        FingerJob.STICK -> if (origin == null || origin.id in stickOwner.values || origin.id in extraSticks) return else grabStick(pointer, origin, p)
                         FingerJob.NONE -> return
                     }
                     f.stopped = FingerJob.NONE
@@ -726,8 +745,29 @@ fun PadScreen(
                                     revealTick++
                                 }
                                 val corner = hit(corners, ch.position)
-                                val c = if (corner == null) hit(landControls, ch.position) else null
+                                val touched = if (corner == null) touchedControls(landControls, ch.position.x, ch.position.y, w, h, portrait) else emptyList()
+                                val c = touched.firstOrNull()
                                 var origin: TouchControl? = null
+                                // Sharing controls behind it: each with an engine finger of its own.
+                                if (touched.size > 1) {
+                                    val list = ArrayList<Extra>()
+                                    for ((k, x) in touched.drop(1).withIndex()) {
+                                        val sp = pid + ((k + 1).toLong() shl 40)
+                                        if (x.kind == TouchKind.BUTTON) {
+                                            buttonFingers.add(sp)
+                                            runtime.engine.buttonDown(sp, x.id, ch.position.x, ch.position.y, at)
+                                            list.add(Extra(x, sp))
+                                        } else if (x.kind == TouchKind.STICK && x.id !in stickOwner.values && x.id !in extraSticks) {
+                                            extraSticks.add(x.id)
+                                            stickCenters[x.id] = center(x)
+                                            heldSticks = heldSticks + x.id
+                                            if (mapped(x.id, TouchAreaKind.HELD)) runtime.engine.setTouchArea(x.id, TouchAreaKind.HELD, true)
+                                            deflect(x, ch.position)
+                                            list.add(Extra(x, sp))
+                                        }
+                                    }
+                                    if (list.isNotEmpty()) extras[ch.id] = list
+                                }
                                 if (corner != null) {
                                     // A corner belongs to the first finger on it until that finger lifts.
                                     if (corner.id !in cornerOwner.values) cornerOwner[ch.id] = corner.id
@@ -737,7 +777,7 @@ fun PadScreen(
                                     padOwner.add(ch.id)
                                     runtime.engine.touchpadDown(pid, ch.position.x, ch.position.y, at)
                                 } else if (c.kind == TouchKind.STICK) {
-                                    if (c.id !in stickOwner.values) {
+                                    if (c.id !in stickOwner.values && c.id !in extraSticks) {
                                         origin = c
                                         grabStick(ch.id, c, ch.position)
                                     }
@@ -752,6 +792,29 @@ fun PadScreen(
                                 track(ch.id, f, ch.position, at, landing = true)
                                 ch.consume()
                                 continue
+                            }
+                            extras[ch.id]?.let { list ->
+                                for (x in list) {
+                                    if (x.control.kind == TouchKind.BUTTON) {
+                                        if (x.pointer !in buttonFingers) continue
+                                        if (!ch.pressed) {
+                                            buttonFingers.remove(x.pointer)
+                                            if (pointerCancel) runtime.engine.buttonCancel(x.pointer) else runtime.engine.buttonUp(x.pointer)
+                                        } else if (ch.position != ch.previousPosition) {
+                                            runtime.engine.buttonMove(x.pointer, ch.position.x, ch.position.y, at)
+                                        }
+                                    } else if (!ch.pressed) {
+                                        val id = x.control.id
+                                        extraSticks.remove(id)
+                                        runtime.engine.setTouchStick(id, 0f, 0f)
+                                        stickPos.remove(id)
+                                        heldSticks = heldSticks - id
+                                        if (mapped(id, TouchAreaKind.HELD)) runtime.engine.setTouchArea(id, TouchAreaKind.HELD, false)
+                                    } else if (ch.position != ch.previousPosition) {
+                                        deflect(x.control, ch.position)
+                                    }
+                                }
+                                if (!ch.pressed) extras.remove(ch.id)
                             }
                             if (ch.id in padOwner) {
                                 if (!ch.pressed) {
@@ -856,7 +919,8 @@ fun PadScreen(
                 }
             }
             val labels = remember(ws, editing) { ws.touchControls.associate { it.id to controlLabel(ws, it, editing) } }
-            for (c in ws.touchControls) {
+            // Back first, so the front one (as touches see them) is drawn on top.
+            for (c in hitOrder(ws.touchControls, portrait).asReversed()) {
                 val r = half(c)
                 val rh = halfH(c)
                 val ctr = center(c)
