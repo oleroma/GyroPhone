@@ -157,6 +157,28 @@ internal fun SurfaceSettingsEditor(control: TouchControl, pad: TouchpadSettings,
             }
         }
     }
+    SurfaceSettingRow(
+        if (eff.verticalLockDeg < 1f) "Vertical lock: off" else "Vertical lock %.0f°".format(eff.verticalLockDeg),
+        own.verticalLockDeg == null,
+        { follow -> edit { s, e -> s.copy(verticalLockDeg = if (follow) null else e.verticalLockDeg) } },
+    ) {
+        Slider(
+            value = eff.verticalLockDeg,
+            onValueChange = { v -> edit { s, _ -> s.copy(verticalLockDeg = v.roundToInt().toFloat()) } },
+            valueRange = 0f..TouchpadSettings.MAX_LOCK_DEG,
+        )
+    }
+    SurfaceSettingRow(
+        if (eff.horizontalLockDeg < 1f) "Horizontal lock: off" else "Horizontal lock %.0f°".format(eff.horizontalLockDeg),
+        own.horizontalLockDeg == null,
+        { follow -> edit { s, e -> s.copy(horizontalLockDeg = if (follow) null else e.horizontalLockDeg) } },
+    ) {
+        Slider(
+            value = eff.horizontalLockDeg,
+            onValueChange = { v -> edit { s, _ -> s.copy(horizontalLockDeg = v.roundToInt().toFloat()) } },
+            valueRange = 0f..TouchpadSettings.MAX_LOCK_DEG,
+        )
+    }
 }
 
 /** A setting's name with its "Touchpad" switch ([follows]); its own [editor] shows when it doesn't follow. */

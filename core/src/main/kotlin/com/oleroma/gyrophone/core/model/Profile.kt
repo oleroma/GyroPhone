@@ -158,6 +158,8 @@ data class SurfaceSettings(
     val catchUpMs: Int? = null,
     val deadzoneRearmMs: Int? = null,
     val deadzoneStillDp: Float? = null,
+    val verticalLockDeg: Float? = null,
+    val horizontalLockDeg: Float? = null,
 )
 
 /** These settings with [o]'s own values in place of theirs. */
@@ -173,6 +175,8 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
     catchUpMs = o.catchUpMs ?: catchUpMs,
     deadzoneRearmMs = o.deadzoneRearmMs ?: deadzoneRearmMs,
     deadzoneStillDp = o.deadzoneStillDp ?: deadzoneStillDp,
+    verticalLockDeg = o.verticalLockDeg ?: verticalLockDeg,
+    horizontalLockDeg = o.horizontalLockDeg ?: horizontalLockDeg,
 )
 
 /** A swipe button's own settings: [TouchControl.surface], or what its old swipe settings were. */
@@ -410,6 +414,13 @@ data class TouchpadSettings(
     val deadzoneRearmMs: Int = 0,
     /** Movement (dp) that still counts as standing still for [deadzoneRearmMs]. */
     val deadzoneStillDp: Float = 2f,
+    /**
+     * Vertical lock: motion heading within this angle (degrees) of straight up or down loses its
+     * sideways part (cursor, scroll, stick, held directions alike); 0 = off.
+     */
+    val verticalLockDeg: Float = 0f,
+    /** Horizontal lock: motion within this angle of sideways loses its up / down part; 0 = off. */
+    val horizontalLockDeg: Float = 0f,
 ) {
     fun gesturesFor(fingers: Int): FingerGestures = if (fingers >= 4) gestures4 else gestures3
 
@@ -423,6 +434,7 @@ data class TouchpadSettings(
         const val MAX_CATCH_UP_MS = 500
         const val MAX_REARM_MS = 1000
         const val MAX_STILL_DP = 10f
+        const val MAX_LOCK_DEG = 45f
     }
 }
 

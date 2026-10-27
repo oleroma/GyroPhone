@@ -310,6 +310,32 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
                 Text("Movement smaller than this still counts as standing still.", style = MaterialTheme.typography.bodySmall)
             }
         }
+        var tpVLock by remember(key) { mutableStateOf(tp.verticalLockDeg) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (tpVLock < 1f) "Vertical lock: off" else "Vertical lock %.0f°".format(tpVLock),
+                Modifier.padding(end = 8.dp),
+            )
+            Slider(value = tpVLock, onValueChange = { tpVLock = it.roundToInt().toFloat() },
+                valueRange = 0f..TouchpadSettings.MAX_LOCK_DEG,
+                onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(verticalLockDeg = tpVLock)) } })
+        }
+        var tpHLock by remember(key) { mutableStateOf(tp.horizontalLockDeg) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (tpHLock < 1f) "Horizontal lock: off" else "Horizontal lock %.0f°".format(tpHLock),
+                Modifier.padding(end = 8.dp),
+            )
+            Slider(value = tpHLock, onValueChange = { tpHLock = it.roundToInt().toFloat() },
+                valueRange = 0f..TouchpadSettings.MAX_LOCK_DEG,
+                onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(horizontalLockDeg = tpHLock)) } })
+        }
+        Text(
+            "Motion within this angle of straight up / down loses its sideways part (vertical lock), or within " +
+                "this angle of sideways its up / down part (horizontal lock): cursor, scroll, sticks and held " +
+                "directions alike. So a swipe down does not turn the camera.",
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
     RememberedSection(runtime, "workspace.TouchpadMappings", "Touchpad mappings", subtitle = "Taps and gestures with 1–4 fingers") {
         // Taps and gestures are mappings; edits go to the workspace's mapping profile.

@@ -119,6 +119,22 @@ class HapticsTest {
     }
 
     @Test
+    fun verticalLockDropsSidewaysPartOfASteepStroke() {
+        val p = Touchpad(TouchpadSettings(acceleration = 0f, tapToClick = false, sensitivity = 1f, verticalLockDeg = 30f))
+            .apply { pxPerDp = 1f }
+        p.down(1, 100f, 100f, 0)
+        var x = 100f; var y = 100f
+        for (i in 1..10) { x += 1f; y += 5f; p.move(1, x, y, i * 5 * MS) } // about 11° from vertical
+        p.poll(60 * MS)
+        assertEquals(0, p.dx)
+        assertEquals(50, p.dy)
+        p.drainMotion()
+        for (i in 1..10) { x += 5f; y += 1f; p.move(1, x, y, (60 + i * 5) * MS) } // mostly sideways
+        p.poll(120 * MS)
+        assertTrue("dx " + p.dx, p.dx >= 40)
+    }
+
+    @Test
     fun cursorCatchUpSpreadsOverTime() {
         val p = Touchpad(TouchpadSettings(acceleration = 0f, tapToClick = false, cursorDeadzoneDp = 20f, catchUpMs = 100, sensitivity = 1f))
             .apply { pxPerDp = 1f }
