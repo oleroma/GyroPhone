@@ -113,20 +113,27 @@ private const val GRID = 0.02f
 private const val NEW_BUTTON_SIZE = 0.14f
 private const val NEW_STICK_SIZE = 0.3f
 private const val MIN_EDIT_OPACITY = 0.5f
+
 /** Opacity factor of a corner arrow that leads nowhere (first / last workspace, no wrap-around). */
 private const val END_CORNER_ALPHA = 0.35f
+
 /** Lowest opacity of a corner in play: the ← / → corners are the way out of fullscreen. */
 private const val MIN_CORNER_ALPHA = 0.25f
+
 /** With auto-hide on, how long the ← / → corners stay after a reveal. */
 private const val CORNER_SHOW_MS = 3_000L
+
 /** Quick taps in a row that show auto-hidden corners, each at most [REVEAL_GAP_NS] after the last. */
 private const val REVEAL_TAPS = 4
 private const val REVEAL_GAP_NS = 300_000_000L
 private const val PILL_MS = 1_000L
+
 /** Highlight refresh while a finger is on a button (holds and lift commits happen between events). */
 private const val HIGHLIGHT_POLL_MS = 50L
+
 /** Edit mode: how much of a control (all of a smaller one) must stay on screen, in dp: about a fingertip. */
 private const val KEEP_ON_SCREEN_DP = 48f
+
 /** Edit mode: a second tap on overlapping controls within this picks the next one behind. */
 private const val EDIT_CYCLE_MS = 1_000L
 
@@ -160,10 +167,13 @@ private class FingerAreas(var origin: TouchControl?) {
 internal object TouchStream {
     /** A system ACTION_CANCEL: the phone took every pointer. */
     var cancelled = false
+
     /** An ACTION_POINTER_UP with FLAG_CANCELED: the one pointer that lifted was unintended (e.g. a palm). */
     var pointerCancelled = false
+
     /** MotionEvent.getEventTimeNanos: CLOCK_MONOTONIC, the same base as System.nanoTime (the engine's clock). */
     var eventNanos = 0L
+
     /** The pad is in play mode: touch is unbuffered too. Menus and the editor keep batched, resampled touch. */
     private var playUnbuffered = false
 
@@ -210,37 +220,46 @@ fun PadScreen(
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
     val isFullscreen by rememberUpdatedState(fullscreen)
     val setFullscreen by rememberUpdatedState(onFullscreen)
+
     /**
      * Set once the fullscreen chord fired, cleared when every finger is up. Outside the
      * touch handler because the toggle resizes the pad, which restarts the handler mid-press.
      */
     val chordFired = remember { BooleanArray(1) }
     var draft by remember { mutableStateOf<Profile?>(null) }
+
     /** Workspace shown while editing (index into the draft). */
     var editIndex by remember { mutableIntStateOf(0) }
     var selected by remember { mutableStateOf<String?>(null) }
     var menu by remember { mutableStateOf(EditMenu.NONE) }
+
     /** The floating edit menu: drag offset from its top-centre home, size, folded. */
     var menuOffset by remember { mutableStateOf(Offset.Zero) }
     var menuSize by remember { mutableStateOf(IntSize.Zero) }
+
     /** Width the user dragged the edit menu to (px); null = fit its rows. */
     var panelWidthPx by remember { mutableStateOf<Float?>(null) }
     var dragging by remember { mutableStateOf(false) }
     var snap by remember { mutableStateOf(false) }
+
     /** Knob offsets; read only while placing the knobs, so stick motion re-places them without recomposing. */
     val stickPos = remember { mutableStateMapOf<String, Offset>() }
+
     /** Sticks with a finger on them (changes only on touch-down and lift). */
     var heldSticks by remember { mutableStateOf<Set<String>>(emptySet()) }
+
     /** Pointers currently routed to engine.buttonDown/Move/Up. */
     val buttonFingers = remember { HashSet<Long>() }
     var fingersOnButtons by remember { mutableIntStateOf(0) }
     var pressedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var latchedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var cornersHeld by remember { mutableStateOf<Set<String>>(emptySet()) }
+
     /** Counts multi-finger touches that Android cancelled (a phone gesture took them). */
     var systemTookTouch by remember { mutableIntStateOf(0) }
     val editing = draft != null
     val autoHide by runtime.cornerAutoHide.collectAsStateWithLifecycle()
+
     /** Bumped to show auto-hidden ← / → corners again: four quick taps, or a corner touched. */
     var revealTick by remember { mutableIntStateOf(0) }
     var arrowsShown by remember { mutableStateOf(true) }
@@ -251,16 +270,20 @@ fun PadScreen(
         arrowsShown = false
     }
     val arrowFade by animateFloatAsState(if (arrowsShown) 1f else 0f, label = "arrows")
+
     /** Quick-tap run for the reveal: last touch-down (event nanos) and taps so far. */
     val tapRun = remember { LongArray(2) }
+
     /** Edit mode: the last tap on overlapping controls (x, y, which one) and its time, to cycle through them. */
     val editCycle = remember { FloatArray(3) }
     val editCycleAt = remember { LongArray(1) { Long.MIN_VALUE / 4 } }
+
     /**
      * Restarts the play touch handler on layout changes but not on gyro changes, so the gyro
      * corner switching the mode leaves held sticks and buttons alone.
      */
-    val playKey = remember(profile) { profile.copy(workspaces = profile.workspaces.map { it.copy(gyro = GyroSettings()) }) }
+    val playKey =
+        remember(profile) { profile.copy(workspaces = profile.workspaces.map { it.copy(gyro = GyroSettings()) }) }
     val shown = draft ?: profile
     val shownIndex = (if (editing) editIndex else wsIndex).coerceIn(0, shown.workspaces.lastIndex)
     val ws = shown.workspace(shownIndex)
@@ -366,8 +389,10 @@ fun PadScreen(
             val sx = if (snapToGrid) (x / GRID).roundToInt() * GRID else x
             val sy = if (snapToGrid) (y / GRID).roundToInt() * GRID else y
             val keep = KEEP_ON_SCREEN_DP * pxPerDp
-            val hw = half(c); val hh = halfH(c)
-            val kx = min(2f * hw, keep); val ky = min(2f * hh, keep)
+            val hw = half(c);
+            val hh = halfH(c)
+            val kx = min(2f * hw, keep);
+            val ky = min(2f * hh, keep)
             return c.withPlacement(
                 portrait,
                 sx.coerceIn((kx - hw) / w, 1f - (kx - hw) / w),
@@ -388,7 +413,8 @@ fun PadScreen(
         fun findControl(id: String?): TouchControl? {
             val d = draft ?: return null
             if (id == null) return null
-            return d.corners.firstOrNull { it.id == id } ?: d.workspace(editIndex).touchControls.firstOrNull { it.id == id }
+            return d.corners.firstOrNull { it.id == id }
+                ?: d.workspace(editIndex).touchControls.firstOrNull { it.id == id }
         }
 
         fun updateControl(id: String, change: (TouchControl) -> TouchControl) {
@@ -411,7 +437,8 @@ fun PadScreen(
         /** Resizes a control; with [Profile.cornerSameSize], all corners follow. */
         fun resize(id: String, size: Float) {
             val d = draft ?: return
-            if (isCorner(d, id) && d.cornerSameSize) d.corners.map { it.id }.forEach { resizeOne(it, size) } else resizeOne(id, size)
+            if (isCorner(d, id) && d.cornerSameSize) d.corners.map { it.id }
+                .forEach { resizeOne(it, size) } else resizeOne(id, size)
         }
 
         val touchModifier = if (editing) {
@@ -437,16 +464,26 @@ fun PadScreen(
                         var startSize = 0f
                         var pinchStart = 0f
                         // Pinch start: the control's width, height and centre (px), the fingers' midpoint and spread on each axis.
-                        var startW = 0f; var startH = 0f
+                        var startW = 0f;
+                        var startH = 0f
                         var startCenter = Offset.Zero
                         var startMid = Offset.Zero
-                        var startDx = 0f; var startDy = 0f
+                        var startDx = 0f;
+                        var startDy = 0f
                         var pinchA: PointerId? = null
                         var pinchB: PointerId? = null
                         // Overlapping controls: the front one; a tap on the same spot soon after picks the next one behind.
-                        val under = hitOrder(controls, portrait).filter { it.contains(downPos.x, downPos.y, w, h, inPortrait = portrait) }
+                        val under = hitOrder(controls, portrait).filter {
+                            it.contains(
+                                downPos.x,
+                                downPos.y,
+                                w,
+                                h,
+                                inPortrait = portrait
+                            )
+                        }
                         val cycleAgain = under.size > 1 && first.uptimeMillis - editCycleAt[0] <= EDIT_CYCLE_MS &&
-                            (downPos - Offset(editCycle[0], editCycle[1])).getDistance() <= slop * 2
+                                (downPos - Offset(editCycle[0], editCycle[1])).getDistance() <= slop * 2
                         val underIndex = if (cycleAgain) (editCycle[2].toInt() + 1) % under.size else 0
                         val c = hit(corners, downPos) ?: under.getOrNull(underIndex)
                         val pressedAt = first.uptimeMillis
@@ -509,9 +546,11 @@ fun PadScreen(
                                     menu = EditMenu.NONE
                                     dragging = true
                                 }
+
                                 EditGesture.EMPTY -> if (main != null && (main.position - downPos).getDistance() > slop) {
                                     mode = EditGesture.NONE
                                 }
+
                                 else -> Unit
                             }
 
@@ -528,6 +567,7 @@ fun PadScreen(
                                         }
                                     }
                                 }
+
                                 EditGesture.PINCH -> {
                                     val a = down.firstOrNull { it.id == pinchA }
                                     val b = down.firstOrNull { it.id == pinchB }
@@ -549,8 +589,14 @@ fun PadScreen(
                                                 val nw: Float
                                                 val nh: Float
                                                 if (rect) {
-                                                    nw = (startW + abs(a.position.x - b.position.x) - startDx).coerceIn(lo, hi)
-                                                    nh = (startH + abs(a.position.y - b.position.y) - startDy).coerceIn(lo, hi)
+                                                    nw = (startW + abs(a.position.x - b.position.x) - startDx).coerceIn(
+                                                        lo,
+                                                        hi
+                                                    )
+                                                    nh = (startH + abs(a.position.y - b.position.y) - startDy).coerceIn(
+                                                        lo,
+                                                        hi
+                                                    )
                                                 } else {
                                                     nw = (startW + dist - pinchStart).coerceIn(lo, hi)
                                                     nh = nw
@@ -558,13 +604,19 @@ fun PadScreen(
                                                 val mid = (a.position + b.position) / 2f
                                                 val cx = mid.x + (startCenter.x - startMid.x) * nw / startW
                                                 val cy = mid.y + (startCenter.y - startMid.y) * nh / startH
-                                                val sized = c.withPlacement(portrait, c.placeX(portrait), c.placeY(portrait), nw / unit)
+                                                val sized = c.withPlacement(
+                                                    portrait,
+                                                    c.placeX(portrait),
+                                                    c.placeY(portrait),
+                                                    nw / unit
+                                                )
                                                     .let { if (rect) it.copy(aspect = nh / nw) else it }
                                                 place(sized, cx / w, cy / h, false)
                                             }
                                         }
                                     }
                                 }
+
                                 else -> Unit
                             }
                             event.changes.forEach { it.consume() }
@@ -576,12 +628,18 @@ fun PadScreen(
                                 editCycleAt[0] = lastAt
                                 // A tap: a control's mapping; a corner (no mapping) its menu.
                                 selected = target
-                                menu = if (target != null && d0 != null && isCorner(d0, target)) EditMenu.CONTEXT else EditMenu.MAPPING
+                                menu = if (target != null && d0 != null && isCorner(
+                                        d0,
+                                        target
+                                    )
+                                ) EditMenu.CONTEXT else EditMenu.MAPPING
                             }
+
                             EditGesture.EMPTY -> {
                                 selected = null
                                 menu = EditMenu.NONE
                             }
+
                             else -> Unit
                         }
                         dragging = false
@@ -608,13 +666,18 @@ fun PadScreen(
                 // if it landed on what is under it (the touchpad or another control).
                 val zoneOnly = zoneControls.filter { c ->
                     c.kind == TouchKind.BUTTON && workspace.mappings.all { m ->
-                        MappingProfiles.touchId(m.source) != c.id || m.source == InputSource.TouchArea(c.id, TouchAreaKind.ZONE)
+                        MappingProfiles.touchId(m.source) != c.id || m.source == InputSource.TouchArea(
+                            c.id,
+                            TouchAreaKind.ZONE
+                        )
                     }
                 }.mapTo(HashSet()) { it.id }
                 // Front first, as touches see them (size, layer); see hitOrder.
                 val landControls = hitOrder(controls.filter { it.id !in zoneOnly }, portrait)
+
                 /** Controls behind the front one that a finger also works (TouchControl.sharesTouches). */
                 class Extra(val control: TouchControl, val pointer: Long)
+
                 val extras = HashMap<PointerId, List<Extra>>()
                 val extraSticks = HashSet<String>()
                 val fingers = HashMap<PointerId, FingerAreas>()
@@ -645,7 +708,14 @@ fun PadScreen(
                 /** Still on corner [id]: its hit area plus the touch slop, so a slight drift still counts as a tap. */
                 fun onCorner(id: String, p: Offset): Boolean {
                     val c = corners.firstOrNull { it.id == id } ?: return false
-                    return c.contains(p.x, p.y, w, h, slop = 1.15f + viewConfiguration.touchSlop / half(c), inPortrait = portrait)
+                    return c.contains(
+                        p.x,
+                        p.y,
+                        w,
+                        h,
+                        slop = 1.15f + viewConfiguration.touchSlop / half(c),
+                        inPortrait = portrait
+                    )
                 }
 
                 /** Sends and shows the deflection of a finger at [p] on stick [c] (clamped to the unit circle). */
@@ -684,15 +754,18 @@ fun PadScreen(
                             runtime.engine.touchpadCancel(pid)
                             FingerJob.PAD
                         }
+
                         pid in buttonFingers -> {
                             buttonFingers.remove(pid)
                             runtime.engine.buttonCancel(pid)
                             FingerJob.BUTTON
                         }
+
                         pointer in stickOwner -> {
                             dropStick(pointer)
                             FingerJob.STICK
                         }
+
                         else -> return false
                     }
                     if (f.outside) {
@@ -711,12 +784,18 @@ fun PadScreen(
                             padOwner.add(pointer)
                             runtime.engine.touchpadDown(pid, p.x, p.y, at)
                         }
+
                         FingerJob.BUTTON -> if (origin != null) {
                             buttonFingers.add(pid)
                             runtime.engine.buttonDown(pid, origin.id, p.x, p.y, at)
                         }
                         // Another finger took the stick meanwhile: this one stays stopped.
-                        FingerJob.STICK -> if (origin == null || origin.id in stickOwner.values || origin.id in extraSticks) return else grabStick(pointer, origin, p)
+                        FingerJob.STICK -> if (origin == null || origin.id in stickOwner.values || origin.id in extraSticks) return else grabStick(
+                            pointer,
+                            origin,
+                            p
+                        )
+
                         FingerJob.NONE -> return
                     }
                     f.stopped = FingerJob.NONE
@@ -770,7 +849,8 @@ fun PadScreen(
                         val at = TouchStream.eventNanos
                         // The system took the touch (e.g. a three-finger screenshot gesture): Compose
                         // reports the cancel as every pointer lifting. That is not a tap.
-                        val systemCancel = TouchStream.cancelled && event.changes.any { !it.pressed && it.previousPressed }
+                        val systemCancel =
+                            TouchStream.cancelled && event.changes.any { !it.pressed && it.previousPressed }
                         // Android judged the one pointer that lifted unintended (e.g. a palm): not a tap either.
                         val pointerCancel = !systemCancel && TouchStream.pointerCancelled
                         if (systemCancel) {
@@ -793,7 +873,14 @@ fun PadScreen(
                                     revealTick++
                                 }
                                 val corner = hit(corners, ch.position)
-                                val touched = if (corner == null) touchedControls(landControls, ch.position.x, ch.position.y, w, h, portrait) else emptyList()
+                                val touched = if (corner == null) touchedControls(
+                                    landControls,
+                                    ch.position.x,
+                                    ch.position.y,
+                                    w,
+                                    h,
+                                    portrait
+                                ) else emptyList()
                                 val c = touched.firstOrNull()
                                 var origin: TouchControl? = null
                                 // Sharing controls behind it: each with an engine finger of its own.
@@ -809,7 +896,11 @@ fun PadScreen(
                                             extraSticks.add(x.id)
                                             stickCenters[x.id] = center(x)
                                             heldSticks = heldSticks + x.id
-                                            if (mapped(x.id, TouchAreaKind.HELD)) runtime.engine.setTouchArea(x.id, TouchAreaKind.HELD, true)
+                                            if (mapped(x.id, TouchAreaKind.HELD)) runtime.engine.setTouchArea(
+                                                x.id,
+                                                TouchAreaKind.HELD,
+                                                true
+                                            )
                                             deflect(x, ch.position)
                                             list.add(Extra(x, sp))
                                         }
@@ -847,7 +938,9 @@ fun PadScreen(
                                         if (x.pointer !in buttonFingers) continue
                                         if (!ch.pressed) {
                                             buttonFingers.remove(x.pointer)
-                                            if (pointerCancel) runtime.engine.buttonCancel(x.pointer) else runtime.engine.buttonUp(x.pointer)
+                                            if (pointerCancel) runtime.engine.buttonCancel(x.pointer) else runtime.engine.buttonUp(
+                                                x.pointer
+                                            )
                                         } else if (ch.position != ch.previousPosition) {
                                             runtime.engine.buttonMove(x.pointer, ch.position.x, ch.position.y, at)
                                         }
@@ -857,7 +950,11 @@ fun PadScreen(
                                         runtime.engine.setTouchStick(id, 0f, 0f)
                                         stickPos.remove(id)
                                         heldSticks = heldSticks - id
-                                        if (mapped(id, TouchAreaKind.HELD)) runtime.engine.setTouchArea(id, TouchAreaKind.HELD, false)
+                                        if (mapped(id, TouchAreaKind.HELD)) runtime.engine.setTouchArea(
+                                            id,
+                                            TouchAreaKind.HELD,
+                                            false
+                                        )
                                     } else if (ch.position != ch.previousPosition) {
                                         deflect(x.control, ch.position)
                                     }
@@ -867,7 +964,9 @@ fun PadScreen(
                             if (ch.id in padOwner) {
                                 if (!ch.pressed) {
                                     padOwner.remove(ch.id)
-                                    if (pointerCancel) runtime.engine.touchpadCancel(pid) else runtime.engine.touchpadUp(pid)
+                                    if (pointerCancel) runtime.engine.touchpadCancel(pid) else runtime.engine.touchpadUp(
+                                        pid
+                                    )
                                 } else if (ch.position != ch.previousPosition) {
                                     runtime.engine.touchpadMove(pid, ch.position.x, ch.position.y, at)
                                 }
@@ -1085,7 +1184,9 @@ fun PadScreen(
                 val mx = max(0f, (w - menuSize.width) / 2f)
                 return Offset(o.x.coerceIn(-mx, mx), o.y.coerceIn(0f, max(0f, h - menuSize.height)))
             }
+
             val menuAt = clampMenu(menuOffset)
+
             /** Saves the draft (a builtin becomes a custom copy) and shows the workspace being edited. */
             fun finishEditing() {
                 val d = draft ?: return
@@ -1096,6 +1197,7 @@ fun PadScreen(
                 selected = null
                 dragging = false
             }
+
             val minPanel = with(density) { 120.dp.toPx() }
             val maxPanel = with(density) { (maxWidth - 16.dp).toPx() }
             val panelWidth = panelWidthPx?.coerceIn(minPanel, maxPanel)
@@ -1161,7 +1263,9 @@ fun PadScreen(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                FilledTonalButton(contentPadding = compact, onClick = { finishEditing() }) { Text("Done") }
+                                FilledTonalButton(
+                                    contentPadding = compact,
+                                    onClick = { finishEditing() }) { Text("Done") }
                                 OutlinedButton(contentPadding = compact, onClick = cancel@{
                                     val d = draft ?: return@cancel
                                     // Stay on the workspace being looked at if the saved profile has it.
@@ -1176,7 +1280,16 @@ fun PadScreen(
                                     val wk = d.workspace(editIndex)
                                     val id = freshId(wk, "btn", takenIds(d, runtime))
                                     val c = newControl(wk, id, TouchKind.BUTTON, NEW_BUTTON_SIZE, portrait)
-                                    editWorkspace { it.copy(touchControls = it.touchControls + place(c, 0.5f, 0.5f, false)) }
+                                    editWorkspace {
+                                        it.copy(
+                                            touchControls = it.touchControls + place(
+                                                c,
+                                                0.5f,
+                                                0.5f,
+                                                false
+                                            )
+                                        )
+                                    }
                                     selected = id
                                     menu = EditMenu.MAPPING
                                 }) { Text("+ Button") }
@@ -1185,14 +1298,27 @@ fun PadScreen(
                                     val wk = d.workspace(editIndex)
                                     val id = freshId(wk, "stick", takenIds(d, runtime))
                                     val c = newControl(wk, id, TouchKind.STICK, NEW_STICK_SIZE, portrait)
-                                    editWorkspace { it.copy(touchControls = it.touchControls + place(c, 0.5f, 0.5f, false)) }
+                                    editWorkspace {
+                                        it.copy(
+                                            touchControls = it.touchControls + place(
+                                                c,
+                                                0.5f,
+                                                0.5f,
+                                                false
+                                            )
+                                        )
+                                    }
                                     selected = id
                                     menu = EditMenu.MAPPING
                                 }) { Text("+ Stick") }
                                 if (snap) {
-                                    FilledTonalButton(contentPadding = compact, onClick = { snap = false }) { Text("Snap: on") }
+                                    FilledTonalButton(
+                                        contentPadding = compact,
+                                        onClick = { snap = false }) { Text("Snap: on") }
                                 } else {
-                                    OutlinedButton(contentPadding = compact, onClick = { snap = true }) { Text("Snap: off") }
+                                    OutlinedButton(
+                                        contentPadding = compact,
+                                        onClick = { snap = true }) { Text("Snap: off") }
                                 }
                                 Text(
                                     ws.name + " · " + if (portrait) "portrait layout" else "landscape layout",
@@ -1273,7 +1399,14 @@ fun PadScreen(
                         runtime = runtime,
                         inPortrait = portrait,
                         onControlChange = { changed ->
-                            updateControl(sel.id) { place(changed, changed.placeX(portrait), changed.placeY(portrait), false) }
+                            updateControl(sel.id) {
+                                place(
+                                    changed,
+                                    changed.placeX(portrait),
+                                    changed.placeY(portrait),
+                                    false
+                                )
+                            }
                         },
                         onSize = { resize(sel.id, it) },
                         onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
@@ -1283,7 +1416,12 @@ fun PadScreen(
                             val copy = nw.touchControls.first { it.id == id }
                             editWorkspace {
                                 nw.copy(touchControls = nw.touchControls.map {
-                                    if (it.id == id) place(copy, copy.placeX(portrait), copy.placeY(portrait), false) else it
+                                    if (it.id == id) place(
+                                        copy,
+                                        copy.placeX(portrait),
+                                        copy.placeY(portrait),
+                                        false
+                                    ) else it
                                 })
                             }
                             selected = id
@@ -1323,7 +1461,8 @@ private fun takenIds(set: Profile, runtime: GamepadRuntime): Set<String> =
 
 /** Id not used by any control of the workspace, by its leftover mappings, nor in [taken]. */
 private fun freshId(workspace: Workspace, prefix: String, taken: Set<String>): String {
-    val orphans = workspace.mappings.mapNotNull { MappingProfiles.touchId(it.source) }.plus(taken).distinct().map { TouchControl(it, TouchKind.BUTTON, "", 0f, 0f) }
+    val orphans = workspace.mappings.mapNotNull { MappingProfiles.touchId(it.source) }.plus(taken).distinct()
+        .map { TouchControl(it, TouchKind.BUTTON, "", 0f, 0f) }
     return Bindings.newTouchId(workspace.touchControls + orphans, prefix)
 }
 
@@ -1338,7 +1477,13 @@ private val NEW_SPOTS = listOf(
  * orientation (which the user does not see while adding) it goes to the first candidate spot no
  * existing control covers, so it never silently sits on top of, say, the Gyro button there.
  */
-private fun newControl(workspace: Workspace, id: String, kind: TouchKind, size: Float, inPortrait: Boolean): TouchControl {
+private fun newControl(
+    workspace: Workspace,
+    id: String,
+    kind: TouchKind,
+    size: Float,
+    inPortrait: Boolean
+): TouchControl {
     val other = !inPortrait
     // Nominal pad box of the other orientation, short side 1000.
     val bw = if (other) 1000f else 2000f
@@ -1366,11 +1511,14 @@ private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>)
             is InputSource.TouchSwipe -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             is InputSource.TouchRelease -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             is InputSource.TouchDoubleTap -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
+            is InputSource.TouchTap -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
+            is InputSource.TouchLongPress -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             is InputSource.TouchArea -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             is InputSource.Surface -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
             else -> null
         }
     }
+
     // Offset towards the centre in both orientations, so the copy never hides under the original
     // and stays on screen in the layout not being edited (the edited one is clamped by place()).
     fun toCentre(v: Float, d: Float) = if (v < 0.5f) v + d else v - d
@@ -1519,8 +1667,8 @@ private fun CornerSettings(
     }
     Text(
         "Tap ← for the previous workspace and → for the next. Press both at the same time for " +
-            "fullscreen (the buttons at the top hide); press both again (or Back) to leave it. The corners are " +
-            "the same in every workspace; drag each one where you like.",
+                "fullscreen (the buttons at the top hide); press both again (or Back) to leave it. The corners are " +
+                "the same in every workspace; drag each one where you like.",
         style = MaterialTheme.typography.bodyMedium,
     )
     SizeSlider("Size", control.placeSize(inPortrait), onSize)

@@ -37,7 +37,8 @@ object MappingProfiles {
     fun encode(profiles: List<MappingProfile>): String = json.encodeToString(listSerializer, profiles)
 
     /** Reads a saved list; unreadable text gives null (the caller keeps the file). */
-    fun decode(text: String): List<MappingProfile>? = runCatching { json.decodeFromString(listSerializer, text) }.getOrNull()
+    fun decode(text: String): List<MappingProfile>? =
+        runCatching { json.decodeFromString(listSerializer, text) }.getOrNull()
 
     fun newId(taken: Collection<String>): String {
         var n = 1
@@ -53,6 +54,8 @@ object MappingProfiles {
         is InputSource.TouchSwipe -> source.id
         is InputSource.TouchRelease -> source.id
         is InputSource.TouchDoubleTap -> source.id
+        is InputSource.TouchTap -> source.id
+        is InputSource.TouchLongPress -> source.id
         is InputSource.TouchArea -> source.id
         is InputSource.Surface -> source.id.ifEmpty { null }
         else -> null
@@ -91,7 +94,10 @@ object MappingProfiles {
         val ids = w.touchControls.mapTo(HashSet()) { it.id }
         return w.copy(
             mappingProfileId = mapping.id,
-            mappings = Bindings.upgradeSwipes(mapping.touch).filter { touchId(it.source) in ids } + touchpadOf(mapping, w),
+            mappings = Bindings.upgradeSwipes(mapping.touch).filter { touchId(it.source) in ids } + touchpadOf(
+                mapping,
+                w
+            ),
             touchpad = w.touchpad.copy(mapped = true),
             keyboard = mapping.keyboard,
             pads = w.pads.map { it.copy(mappings = it.own ?: mapping.controller) },
@@ -108,7 +114,13 @@ object MappingProfiles {
                 mappings = emptyList(),
                 touchpad = w.touchpad.copy(mapped = false),
                 keyboard = emptyList(),
-                pads = w.pads.map { it.copy(mappings = emptyList(), presetId = null, own = if (it.own != null) it.mappings else null) },
+                pads = w.pads.map {
+                    it.copy(
+                        mappings = emptyList(),
+                        presetId = null,
+                        own = if (it.own != null) it.mappings else null
+                    )
+                },
             )
         },
     )
@@ -154,7 +166,11 @@ object MappingProfiles {
      * mappings (a builtin preset added) gets a new profile made of them, named after it; any other
      * (a blank one) uses [fallbackId]. Returns the set and the profiles with any new ones added.
      */
-    fun adopt(profiles: List<MappingProfile>, after: Profile, fallbackId: String?): Pair<Profile, List<MappingProfile>> {
+    fun adopt(
+        profiles: List<MappingProfile>,
+        after: Profile,
+        fallbackId: String?
+    ): Pair<Profile, List<MappingProfile>> {
         if (after.workspaces.none { it.mappingProfileId == null }) return after to profiles
         val all = ArrayList(profiles)
         val workspaces = after.workspaces.map { w ->
@@ -193,15 +209,23 @@ object MappingProfiles {
             val touch = w.mappings.filter { touchId(it.source) in ids }
             val first = w.pads.firstOrNull()
             val controller = first?.mappings ?: KnownLayouts.familyMappings(FaceLayout.XBOX)
-            val keyboard = w.pads.firstOrNull { it.match == null }?.mappings.orEmpty().filter { it.source is InputSource.Key }
+            val keyboard =
+                w.pads.firstOrNull { it.match == null }?.mappings.orEmpty().filter { it.source is InputSource.Key }
             val same = profiles.firstOrNull { p ->
                 p.controller.toSet() == controller.toSet() && p.keyboard.toSet() == keyboard.toSet() &&
-                    p.touch.filter { touchId(it.source) in ids }.toSet() == touch.toSet() &&
-                    // Sharing must not change what the earlier workspaces' controls do.
-                    touch.none { m -> p.touch.any { touchId(it.source) == touchId(m.source) && it !in touch } }
+                        p.touch.filter { touchId(it.source) in ids }.toSet() == touch.toSet() &&
+                        // Sharing must not change what the earlier workspaces' controls do.
+                        touch.none { m -> p.touch.any { touchId(it.source) == touchId(m.source) && it !in touch } }
             }
-            val mapping = same ?: MappingProfile(newId(profiles.map { it.id }), w.name, touch, keyboard, controller).also { profiles += it }
-            val pads = w.pads.map { p -> if (p !== first && p.mappings.toSet() != controller.toSet()) p.copy(own = p.mappings) else p }
+            val mapping = same ?: MappingProfile(
+                newId(profiles.map { it.id }),
+                w.name,
+                touch,
+                keyboard,
+                controller
+            ).also { profiles += it }
+            val pads =
+                w.pads.map { p -> if (p !== first && p.mappings.toSet() != controller.toSet()) p.copy(own = p.mappings) else p }
             w.copy(mappingProfileId = mapping.id, pads = pads)
         }
         return Migration(strip(set.copy(workspaces = workspaces)), profiles)
@@ -210,5 +234,5 @@ object MappingProfiles {
     /** Ids used by any control of [set] or any touch mapping of [profiles]: a new control must avoid them. */
     fun takenTouchIds(set: Profile, profiles: List<MappingProfile>): Set<String> =
         set.workspaces.flatMapTo(HashSet()) { w -> w.touchControls.map { it.id } } +
-            profiles.flatMap { p -> p.touch.mapNotNull { touchId(it.source) } }
+                profiles.flatMap { p -> p.touch.mapNotNull { touchId(it.source) } }
 }

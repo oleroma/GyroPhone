@@ -44,6 +44,10 @@ data class Workspace(
     val haptics: HapticFeel = HapticFeel(),
     /** When haptic ticks without an edge of their own play ([OutputTarget.Haptic.edge]). */
     val hapticEdge: HapticEdge = HapticEdge.PRESS,
+    /** Touch buttons: how long a press must be held to be a long press, in ms ([TouchControl.longPressMs]). */
+    val longPressMs: Int = DEFAULT_LONG_PRESS_MS,
+    /** Touch buttons: the longest gap between the taps of a double tap, in ms ([TouchControl.doubleTapMs]). */
+    val doubleTapMs: Int = DEFAULT_DOUBLE_TAP_MS,
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =
@@ -53,6 +57,12 @@ data class Workspace(
         const val DEFAULT_BUTTON_TAP_MS = 200
         const val MIN_BUTTON_TAP_MS = 80
         const val MAX_BUTTON_TAP_MS = 500
+        const val DEFAULT_LONG_PRESS_MS = 400
+        const val MIN_LONG_PRESS_MS = 100
+        const val MAX_LONG_PRESS_MS = 1500
+        const val DEFAULT_DOUBLE_TAP_MS = 300
+        const val MIN_DOUBLE_TAP_MS = 100
+        const val MAX_DOUBLE_TAP_MS = 800
     }
 }
 
@@ -95,6 +105,7 @@ data class AttachedPad(
 val InputSource.isTouch: Boolean
     get() = this is InputSource.Touch || this is InputSource.TouchStick || this is InputSource.TouchStickDiagonal ||
             this is InputSource.TouchSwipe || this is InputSource.TouchRelease || this is InputSource.TouchDoubleTap ||
+            this is InputSource.TouchTap || this is InputSource.TouchLongPress ||
             this is InputSource.TouchArea || this is InputSource.Surface
 
 /** A source of the workspace touchpad ([InputSource.Surface] with no control id). */

@@ -83,17 +83,34 @@ sealed interface InputSource {
     @SerialName("axis")
     data class Axis(val axis: Int, val half: AxisHalf = AxisHalf.FULL) : InputSource
 
-    /** A virtual touchscreen button, by [TouchControl.id]. */
+    /** A virtual touchscreen button, by [TouchControl.id]: held from touch-down to lift. */
     @Serializable
     @SerialName("touch")
     data class Touch(val id: String) : InputSource
 
-    /** A touch button's release: a short press when the button lets go. */
+    /**
+     * A touch button's tap: a press shorter than the long-press time ([TouchControl.longPress]),
+     * fired as a short press when it lifts. With a [TouchDoubleTap] mapping it waits out the
+     * double-tap window first, and the taps of a double tap are not taps.
+     */
+    @Serializable
+    @SerialName("touch_tap")
+    data class TouchTap(val id: String) : InputSource
+
+    /** A touch button's long press: on once held past the long-press time, until it lifts. */
+    @Serializable
+    @SerialName("touch_long")
+    data class TouchLongPress(val id: String) : InputSource
+
+    /** A touch button's release: a short press each time the button lets go. */
     @Serializable
     @SerialName("touch_release")
     data class TouchRelease(val id: String) : InputSource
 
-    /** A touch button's double tap: held while the second press is held. */
+    /**
+     * A touch button's double tap: a second press within the double-tap window
+     * ([TouchControl.doubleTap]) after a tap, held while that press is held.
+     */
     @Serializable
     @SerialName("touch_double")
     data class TouchDoubleTap(val id: String) : InputSource
