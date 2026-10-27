@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full checks, run on main after Olex lands dev. Not run on branches.
+# Full checks, run on every push to main. Not run on branches.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 

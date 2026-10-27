@@ -4,7 +4,7 @@ name: Fallback build
 #   gh workflow run fallback.yml --ref <branch>
 # It runs the quick tests and builds the APK (Linux) and the Windows companion (Windows),
 # saving each build file on the run, unzipped.
-# On a push to main (Olex landing dev) it runs the full checks only and builds nothing.
+# On a push to main (a feature merged after Olex's OK) it runs the full checks only and builds nothing.
 # Both use the repo's hooks in .agents/hooks/, the same ones PC builds run.
 on:
   push:

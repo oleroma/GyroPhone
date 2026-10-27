@@ -59,6 +59,6 @@ trap on_exit EXIT
 require_feature_branch() {
   BRANCH="$(git -C "$WORKTREE" symbolic-ref --quiet --short HEAD)" || die "Not on a branch."
   case "$BRANCH" in
-    main | dev) die "On $BRANCH: run this on a feature branch." ;;
+    main) die "On $BRANCH: run this on a feature branch." ;;
   esac
 }

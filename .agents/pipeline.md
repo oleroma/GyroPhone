@@ -11,7 +11,7 @@ graph TD
     WAIT --> B
     ASK -->|Continue| CONT[Script: agent-start --continue]
     CONT --> START
-    B -->|done| START[Branch from latest dev, draft PR open]
+    B -->|done| START[Branch from latest main, draft PR open]
     START --> EDIT[LLM: edit code, write commit message]
     EDIT --> COMMIT[Script: agent-commit]
     COMMIT --> MISS{LLM: cloud lacks something it needs?}
@@ -38,13 +38,12 @@ graph TD
     UP --> OK
     OK{Olex: feature works?} -->|Not yet| EDIT
     OK -->|Yes| M[Script: agent-merge]
-    M -->|done| DONE[Merged into dev, branch kept]
+    M -->|done| DONE[Merged into main, branch kept]
     M -->|conflicts| FIX[LLM: resolve conflicts]
     FIX --> M
     M -->|needs-testing| RC
     M -->|stuck| STUCK[LLM: show files, ask Olex]
     M -->|failed| ERR
-    DONE -.->|Only when Olex starts it| LAND[Olex: land dev on main]
-    LAND --> FULL[fallback.yml on main: full-check hook, no build]
+    DONE --> FULL[fallback.yml on main: full-check hook, no build]
     FULL -->|Fails| REP[LLM: report to Olex]
 ```

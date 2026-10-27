@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Step 5: bring the latest dev into the feature branch, then merge the branch into dev.
+# Step 5: bring the latest main into the feature branch, then merge the branch into main.
 # Usage: .agents/agent-merge   (run it again after resolving conflicts)
 source "$(dirname "$0")/lib.sh"
 cd "$WORKTREE"
@@ -11,14 +11,14 @@ attempts_file="$(git rev-parse --path-format=absolute --git-path "agent-merge-at
 files_file="$attempts_file.files"
 attempts="$(cat "$attempts_file" 2>/dev/null || echo 0)"
 
-merge_into_dev() {
+merge_into_main() {
   if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$BRANCH")" ]; then
     git push origin "$BRANCH"
   fi
   gh pr ready "$BRANCH" || true # already ready is fine
   gh pr merge "$BRANCH" --merge
   rm -f "$attempts_file" "$files_file"
-  finish done "Merged $BRANCH into dev: $(gh pr view "$BRANCH" --json url --jq .url)" "The feature branch is kept."
+  finish done "Merged $BRANCH into main: $(gh pr view "$BRANCH" --json url --jq .url)" "The feature branch is kept."
 }
 
 git fetch origin
@@ -45,23 +45,23 @@ if [ -f "$(git rev-parse --git-path MERGE_HEAD)" ]; then
     "Build again (step 3). Once Olex says it still works, run agent-merge again."
 fi
 
-# dev hasn't moved since the branch last took it in.
-if git merge-base --is-ancestor origin/dev HEAD; then
-  merge_into_dev
+# main hasn't moved since the branch last took it in.
+if git merge-base --is-ancestor origin/main HEAD; then
+  merge_into_main
 fi
 
-base="$(git merge-base HEAD origin/dev)"
+base="$(git merge-base HEAD origin/main)"
 overlap="$(comm -12 \
   <(git diff --name-only "$base" HEAD | sort) \
-  <(git diff --name-only "$base" origin/dev | sort) | grep -v '^$' || true)"
+  <(git diff --name-only "$base" origin/main | sort) | grep -v '^$' || true)"
 
-if git merge --no-edit origin/dev; then
+if git merge --no-edit origin/main; then
   git push origin "$BRANCH"
   if [ -n "$overlap" ]; then
-    finish needs-testing "Merged the latest dev. It changed files this feature also changed:" "$overlap" \
+    finish needs-testing "Merged the latest main. It changed files this feature also changed:" "$overlap" \
       "Build again (step 3). Once Olex says it still works, run agent-merge again."
   fi
-  merge_into_dev
+  merge_into_main
 fi
 
 unmerged="$(git diff --name-only --diff-filter=U)"
