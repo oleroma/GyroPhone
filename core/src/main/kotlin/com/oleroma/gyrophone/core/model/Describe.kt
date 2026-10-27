@@ -23,7 +23,7 @@ object Describe {
         is InputSource.TouchDoubleTap -> "Touch ${s.id} double tap"
         is InputSource.TouchArea -> "Touch ${s.id} ${s.kind.label.lowercase()}"
         is InputSource.Surface -> (if (s.id.isEmpty()) "Touchpad" else "Swipe on ${s.id}") +
-            " ${s.fingers} finger" + (if (s.fingers > 1) "s " else " ") + s.input.label.lowercase()
+                " ${s.fingers} finger" + (if (s.fingers > 1) "s " else " ") + s.input.label.lowercase()
     }
 
     fun target(t: OutputTarget): String = when (t) {
@@ -38,7 +38,12 @@ object Describe {
         OutputTarget.GyroPause -> "Ratchet (flip gyro while held)"
         OutputTarget.SwitchApps -> "Switch apps (Alt+Tab)"
         OutputTarget.Zoom -> "Zoom (Ctrl + wheel)"
-        is OutputTarget.Haptic -> (if (t.held) "Haptic while held" else "Haptic tick") + feel(t.feel)
+        is OutputTarget.Haptic -> when {
+            t.held -> "Haptic while held"
+            t.onRelease -> "Haptic tick on press and release"
+            else -> "Haptic tick"
+        } + feel(t.feel)
+
         is OutputTarget.HapticStep -> "Haptic per ${t.percent} % step" + feel(t.feel)
     }
 
@@ -73,6 +78,7 @@ object Describe {
             GamepadButton.DPAD_RIGHT -> "D-pad →"
             else -> t.button.label
         }
+
         is OutputTarget.PadAxis -> when (t.axis) {
             GamepadAxis.LX -> "LS X"
             GamepadAxis.LY -> "LS Y"
@@ -81,6 +87,7 @@ object Describe {
             GamepadAxis.LT -> "LT"
             GamepadAxis.RT -> "RT"
         } + if (t.scale < 0) " inv" else ""
+
         is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage))
         is OutputTarget.Mouse -> when (t.button) {
             MouseButton.LEFT -> "Mouse L"
@@ -89,6 +96,7 @@ object Describe {
             MouseButton.BACK -> "Mouse Back"
             MouseButton.FORWARD -> "Mouse Fwd"
         }
+
         is OutputTarget.Wheel -> if (t.step > 0) "Wheel ↑" else "Wheel ↓"
         is OutputTarget.MouseAxis -> when (t.motion) {
             MouseMotion.MOVE_X -> "Mouse X"
@@ -96,12 +104,13 @@ object Describe {
             MouseMotion.WHEEL -> "Scroll"
             MouseMotion.HWHEEL -> "Scroll ↔"
         } + if (t.scale < 0) " rev" else ""
+
         OutputTarget.GyroHold -> "Ratchet"
         OutputTarget.GyroToggle -> "Gyro ⇄"
         OutputTarget.GyroPause -> "Ratchet"
         OutputTarget.SwitchApps -> "Alt+Tab"
         OutputTarget.Zoom -> "Zoom"
-        is OutputTarget.Haptic -> if (t.held) "Buzz held" else "Buzz"
+        is OutputTarget.Haptic -> if (t.held) "Buzz held" else if (t.onRelease) "Buzz in/out" else "Buzz"
         is OutputTarget.HapticStep -> "Buzz ${t.percent}%"
     }
 
@@ -123,12 +132,27 @@ object Describe {
     val targetGroups: List<Pair<String, List<OutputTarget>>> = listOf(
         "Gamepad buttons" to GamepadButton.entries.map { OutputTarget.Pad(it) },
         "Gamepad sticks & triggers" to GamepadAxis.entries.flatMap {
-            if (it.isTrigger) listOf(OutputTarget.PadAxis(it)) else listOf(OutputTarget.PadAxis(it), OutputTarget.PadAxis(it, -1f))
+            if (it.isTrigger) listOf(OutputTarget.PadAxis(it)) else listOf(
+                OutputTarget.PadAxis(it),
+                OutputTarget.PadAxis(it, -1f)
+            )
         },
-        "Mouse" to MouseButton.entries.map { OutputTarget.Mouse(it) } + listOf(OutputTarget.Wheel(1), OutputTarget.Wheel(-1)),
-        "Mouse motion" to MouseMotion.entries.flatMap { listOf(OutputTarget.MouseAxis(it), OutputTarget.MouseAxis(it, -1f)) },
+        "Mouse" to MouseButton.entries.map { OutputTarget.Mouse(it) } + listOf(
+            OutputTarget.Wheel(1),
+            OutputTarget.Wheel(-1)
+        ),
+        "Mouse motion" to MouseMotion.entries.flatMap {
+            listOf(
+                OutputTarget.MouseAxis(it),
+                OutputTarget.MouseAxis(it, -1f)
+            )
+        },
         "Gyro" to listOf(OutputTarget.GyroPause, OutputTarget.GyroToggle),
-        "Phone" to listOf(OutputTarget.Haptic(held = false), OutputTarget.Haptic(held = true), OutputTarget.HapticStep()),
+        "Phone" to listOf(
+            OutputTarget.Haptic(held = false),
+            OutputTarget.Haptic(held = true),
+            OutputTarget.HapticStep()
+        ),
         "Keyboard" to (keyboardOrder.filter { it in HidUsage.names } + HidUsage.names.keys.sorted())
             .distinct().map { OutputTarget.Key(it) },
     )
@@ -140,13 +164,18 @@ object Describe {
     val analogTargets: List<OutputTarget> = allTargets.filterIsInstance<OutputTarget.PadAxis>()
 
     /** Targets of a swipe axis: mouse motion and scrolling, or a game pad axis (floating stick). */
-    val swipeTargets: List<OutputTarget> = allTargets.filter { it is OutputTarget.MouseAxis || it is OutputTarget.PadAxis }
+    val swipeTargets: List<OutputTarget> =
+        allTargets.filter { it is OutputTarget.MouseAxis || it is OutputTarget.PadAxis }
 
     /**
      * Targets of the picker for [analog] / [swipe] inputs; mouse motion only follows swipes.
      * [extra]: targets only this input offers (switching apps, zoom), in a group of their own.
      */
-    fun pickerGroups(analog: Boolean, swipe: Boolean, extra: List<OutputTarget> = emptyList()): List<Pair<String, List<OutputTarget>>> {
+    fun pickerGroups(
+        analog: Boolean,
+        swipe: Boolean,
+        extra: List<OutputTarget> = emptyList()
+    ): List<Pair<String, List<OutputTarget>>> {
         // Haptics follow any input.
         val allowed: (OutputTarget) -> Boolean = when {
             swipe -> { t -> t is OutputTarget.MouseAxis || t is OutputTarget.PadAxis || isHaptic(t) }
