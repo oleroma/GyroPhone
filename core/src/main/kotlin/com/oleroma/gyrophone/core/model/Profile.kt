@@ -156,6 +156,8 @@ data class SurfaceSettings(
     val releaseTapMs: Int? = null,
     val cursorDeadzoneDp: Float? = null,
     val catchUpMs: Int? = null,
+    val deadzoneRearmMs: Int? = null,
+    val deadzoneStillDp: Float? = null,
 )
 
 /** These settings with [o]'s own values in place of theirs. */
@@ -169,6 +171,8 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
     releaseTapMs = o.releaseTapMs ?: releaseTapMs,
     cursorDeadzoneDp = o.cursorDeadzoneDp ?: cursorDeadzoneDp,
     catchUpMs = o.catchUpMs ?: catchUpMs,
+    deadzoneRearmMs = o.deadzoneRearmMs ?: deadzoneRearmMs,
+    deadzoneStillDp = o.deadzoneStillDp ?: deadzoneStillDp,
 )
 
 /** A swipe button's own settings: [TouchControl.surface], or what its old swipe settings were. */
@@ -399,6 +403,13 @@ data class TouchpadSettings(
     val cursorDeadzoneDp: Float = 0f,
     /** How long the cursor takes to make up the deadzone's travel, in ms; 0 = in one jump. */
     val catchUpMs: Int = 80,
+    /**
+     * The cursor deadzone arms again once the finger has stood still this long (ms), measured
+     * from where it stopped; 0 = once per touch.
+     */
+    val deadzoneRearmMs: Int = 0,
+    /** Movement (dp) that still counts as standing still for [deadzoneRearmMs]. */
+    val deadzoneStillDp: Float = 2f,
 ) {
     fun gesturesFor(fingers: Int): FingerGestures = if (fingers >= 4) gestures4 else gestures3
 
@@ -410,6 +421,8 @@ data class TouchpadSettings(
         const val MAX_RELEASE_TAP_MS = 1000
         const val MAX_CURSOR_DEADZONE_DP = 80f
         const val MAX_CATCH_UP_MS = 500
+        const val MAX_REARM_MS = 1000
+        const val MAX_STILL_DP = 10f
     }
 }
 

@@ -132,6 +132,30 @@ internal fun SurfaceSettingsEditor(control: TouchControl, pad: TouchpadSettings,
                 valueRange = 0f..TouchpadSettings.MAX_CATCH_UP_MS.toFloat(),
             )
         }
+        SurfaceSettingRow(
+            if (eff.deadzoneRearmMs <= 0) "Re-arm: off" else "Re-arm after " + eff.deadzoneRearmMs + " ms still",
+            own.deadzoneRearmMs == null,
+            { follow -> edit { s, e -> s.copy(deadzoneRearmMs = if (follow) null else e.deadzoneRearmMs) } },
+        ) {
+            Slider(
+                value = eff.deadzoneRearmMs.toFloat(),
+                onValueChange = { v -> edit { s, _ -> s.copy(deadzoneRearmMs = (v / 10f).roundToInt() * 10) } },
+                valueRange = 0f..TouchpadSettings.MAX_REARM_MS.toFloat(),
+            )
+        }
+        if (eff.deadzoneRearmMs > 0) {
+            SurfaceSettingRow(
+                "Still within %.1f dp".format(eff.deadzoneStillDp),
+                own.deadzoneStillDp == null,
+                { follow -> edit { s, e -> s.copy(deadzoneStillDp = if (follow) null else e.deadzoneStillDp) } },
+            ) {
+                Slider(
+                    value = eff.deadzoneStillDp,
+                    onValueChange = { v -> edit { s, _ -> s.copy(deadzoneStillDp = (v * 2f).roundToInt() / 2f) } },
+                    valueRange = 0f..TouchpadSettings.MAX_STILL_DP,
+                )
+            }
+        }
     }
 }
 

@@ -102,6 +102,23 @@ class HapticsTest {
     }
 
     @Test
+    fun cursorDeadzoneRearmsAfterARest() {
+        val s = TouchpadSettings(acceleration = 0f, tapToClick = false, cursorDeadzoneDp = 20f, catchUpMs = 0, sensitivity = 1f,
+            deadzoneRearmMs = 200, deadzoneStillDp = 3f)
+        val p = Touchpad(s).apply { pxPerDp = 1f }
+        p.down(1, 100f, 100f, 0)
+        p.move(1, 130f, 100f, 10 * MS); p.poll(10 * MS)
+        assertEquals(30, p.dx); p.drainMotion()
+        p.move(1, 132f, 100f, 50 * MS) // within the still margin
+        p.poll(300 * MS) // rested 250 ms: armed again
+        p.drainMotion()
+        p.move(1, 142f, 100f, 310 * MS); p.poll(310 * MS)
+        assertEquals(0, p.dx) // 10 dp from the rest point: held
+        p.move(1, 155f, 100f, 320 * MS); p.poll(320 * MS)
+        assertEquals(23, p.dx) // past 20 dp from 132: all of it at once
+    }
+
+    @Test
     fun cursorCatchUpSpreadsOverTime() {
         val p = Touchpad(TouchpadSettings(acceleration = 0f, tapToClick = false, cursorDeadzoneDp = 20f, catchUpMs = 100, sensitivity = 1f))
             .apply { pxPerDp = 1f }

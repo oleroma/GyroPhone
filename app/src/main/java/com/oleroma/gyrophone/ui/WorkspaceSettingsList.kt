@@ -285,6 +285,30 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
                     valueRange = 0f..TouchpadSettings.MAX_CATCH_UP_MS.toFloat(),
                     onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(catchUpMs = tpCatchUp.roundToInt())) } })
             }
+            var tpRearm by remember(key) { mutableStateOf(tp.deadzoneRearmMs.toFloat()) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (tpRearm < 1f) "Re-arm: off" else "Re-arm after %.0f ms still".format(tpRearm),
+                    Modifier.padding(end = 8.dp),
+                )
+                Slider(value = tpRearm, onValueChange = { tpRearm = (it / 10f).roundToInt() * 10f },
+                    valueRange = 0f..TouchpadSettings.MAX_REARM_MS.toFloat(),
+                    onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(deadzoneRearmMs = tpRearm.roundToInt())) } })
+            }
+            Text(
+                "The deadzone arms again once the finger stands still this long. Off: once per touch.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (tp.deadzoneRearmMs > 0) {
+                var tpStill by remember(key) { mutableStateOf(tp.deadzoneStillDp) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Still within %.1f dp".format(tpStill), Modifier.padding(end = 8.dp))
+                    Slider(value = tpStill, onValueChange = { tpStill = (it * 2f).roundToInt() / 2f },
+                        valueRange = 0f..TouchpadSettings.MAX_STILL_DP,
+                        onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(deadzoneStillDp = tpStill)) } })
+                }
+                Text("Movement smaller than this still counts as standing still.", style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
     RememberedSection(runtime, "workspace.TouchpadMappings", "Touchpad mappings", subtitle = "Taps and gestures with 1–4 fingers") {
