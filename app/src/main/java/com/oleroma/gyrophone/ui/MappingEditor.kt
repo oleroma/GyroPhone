@@ -77,11 +77,18 @@ private sealed interface EditorRow {
     }
 
     /** The stick preset chips of a touch or controller stick ([inputs]: X, Y, Left, Right, Up, Down). */
-    data class Stick(val category: Category, val id: String, val label: String, val inputs: List<BindableInput>) : EditorRow {
+    data class Stick(val category: Category, val id: String, val label: String, val inputs: List<BindableInput>) :
+        EditorRow {
         override val key get() = "stick/$category/$id"
     }
 
-    data class Input(val category: Category, val id: String, val label: String, val sub: String?, val input: BindableInput) : EditorRow {
+    data class Input(
+        val category: Category,
+        val id: String,
+        val label: String,
+        val sub: String?,
+        val input: BindableInput
+    ) : EditorRow {
         override val key get() = "input/$category/$id/${input.label}"
     }
 
@@ -101,6 +108,9 @@ private sealed interface EditorRow {
         override val key get() = "touchpadReset"
     }
 }
+
+/** Which key row's gesture rows a toggle opens. */
+private fun gestureKey(category: Category, id: String, input: BindableInput) = "$category/$id/${input.label}"
 
 /**
  * Full settings of mapping profile [profileId] (null = a new profile, starting as a copy of the
@@ -149,6 +159,7 @@ internal fun MappingProfileEditor(
         Category.KEYBOARD -> keyboard
         Category.CONTROLLER -> controller
     }
+
     fun put(c: Category, m: List<Mapping>) {
         when (c) {
             Category.TOUCH -> touch = m
@@ -157,9 +168,10 @@ internal fun MappingProfileEditor(
             Category.CONTROLLER -> controller = m
         }
     }
+
     val dirty = name != start.name || touch.toSet() != start.touch.toSet() ||
-        keyboard.toSet() != start.keyboard.toSet() || controller.toSet() != start.controller.toSet() ||
-        touchpad.toSet() != startTouchpad.toSet()
+            keyboard.toSet() != start.keyboard.toSet() || controller.toSet() != start.controller.toSet() ||
+            touchpad.toSet() != startTouchpad.toSet()
 
     var confirmDiscard by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -169,6 +181,8 @@ internal fun MappingProfileEditor(
     // (category, input, target being replaced or null to add)
     var picking by remember { mutableStateOf<Triple<Category, BindableInput, OutputTarget?>?>(null) }
     val collapsed = remember { mutableStateMapOf<Category, Boolean>() }
+    // Keys whose gesture rows (tap, double tap, long press, release) are open, by [gestureKey].
+    val openGestures = remember { mutableStateMapOf<String, Boolean>() }
 
     val users = set.workspaces.filter { source != null && it.mappingProfileId == source.id }
     // Touch buttons of the workspaces that use it (this one first), each once.
@@ -181,6 +195,19 @@ internal fun MappingProfileEditor(
     val diagram = remember(pad.match, pad.family, device) { padDiagram(pad, device) }
 
     val rows = buildList {
+        // A key's row, then its gesture rows when open or one of them is mapped.
+        fun addKey(category: Category, id: String, label: String, sub: String?, input: BindableInput) {
+            add(EditorRow.Input(category, id, label, sub, input))
+            val gestures = Bindings.gestureInputs(input)
+            if (gestures.isEmpty()) return
+            val ms = get(category)
+            val open = openGestures[gestureKey(category, id, input)] == true ||
+                    gestures.any { Bindings.targets(ms, it).isNotEmpty() }
+            if (!open) return
+            for (g in gestures) {
+                add(EditorRow.Input(category, "$id/${input.label}", label, (sub?.let { "$it · " } ?: "") + g.label, g))
+            }
+        }
         add(EditorRow.Section(Category.TOUCH, "${controls.size} on screen"))
         if (collapsed[Category.TOUCH] != true) {
             if (controls.isEmpty()) add(EditorRow.Note(Category.TOUCH, "No touch buttons in this workspace's layout."))
@@ -188,14 +215,30 @@ internal fun MappingProfileEditor(
                 val label = c.label.ifBlank { c.id }
                 val inputs = Bindings.touchInputs(c)
                 if (c.kind == TouchKind.STICK) add(EditorRow.Stick(Category.TOUCH, c.id, label, inputs))
-                for (i in inputs) add(EditorRow.Input(Category.TOUCH, c.id, label, if (inputs.size > 1) i.label else null, i))
+                for (i in inputs) add(
+                    EditorRow.Input(
+                        Category.TOUCH,
+                        c.id,
+                        label,
+                        if (inputs.size > 1) i.label else null,
+                        i
+                    )
+                )
             }
         }
         add(EditorRow.Section(Category.TOUCHPAD, "4 finger counts"))
         if (collapsed[Category.TOUCHPAD] != true) {
             for (n in 1..4) {
                 for (input in Bindings.surfaceInputs(n)) {
-                    add(EditorRow.Input(Category.TOUCHPAD, "tp$n", if (n == 1) "1 finger" else "$n fingers", input.label, input))
+                    add(
+                        EditorRow.Input(
+                            Category.TOUCHPAD,
+                            "tp$n",
+                            if (n == 1) "1 finger" else "$n fingers",
+                            input.label,
+                            input
+                        )
+                    )
                 }
             }
             add(EditorRow.TouchpadReset)
@@ -205,7 +248,7 @@ internal fun MappingProfileEditor(
         if (collapsed[Category.KEYBOARD] != true) {
             for (code in keys) {
                 val input = BindableInput(keyName(code), listOf(InputSource.Key(code)))
-                add(EditorRow.Input(Category.KEYBOARD, "key$code", input.label, null, input))
+                addKey(Category.KEYBOARD, "key$code", input.label, null, input)
             }
             add(EditorRow.AddKey)
         }
@@ -213,8 +256,21 @@ internal fun MappingProfileEditor(
         if (collapsed[Category.CONTROLLER] != true) {
             add(EditorRow.PadPresetRow)
             for (c in diagram.controls) {
-                if (c.kind == PhysicalKind.STICK && c.inputs.size >= 6) add(EditorRow.Stick(Category.CONTROLLER, c.id, c.label, c.inputs))
-                for (i in c.inputs) add(EditorRow.Input(Category.CONTROLLER, c.id, c.label, if (c.inputs.size > 1) i.label else null, i))
+                if (c.kind == PhysicalKind.STICK && c.inputs.size >= 6) add(
+                    EditorRow.Stick(
+                        Category.CONTROLLER,
+                        c.id,
+                        c.label,
+                        c.inputs
+                    )
+                )
+                for (i in c.inputs) addKey(
+                    Category.CONTROLLER,
+                    c.id,
+                    c.label,
+                    if (c.inputs.size > 1) i.label else null,
+                    i
+                )
             }
         }
     }
@@ -259,10 +315,20 @@ internal fun MappingProfileEditor(
         val trimmed = name.trim().ifEmpty { start.name }
         if (source != null) {
             runtime.updateMappingProfile(
-                source.copy(name = trimmed, touch = touch, keyboard = keyboard, controller = controller, touchpad = touchpad),
+                source.copy(
+                    name = trimmed,
+                    touch = touch,
+                    keyboard = keyboard,
+                    controller = controller,
+                    touchpad = touchpad
+                ),
             )
         } else {
-            runtime.newMappingProfile(trimmed, MappingProfile("", trimmed, touch, keyboard, controller, touchpad), wsIndex)
+            runtime.newMappingProfile(
+                trimmed,
+                MappingProfile("", trimmed, touch, keyboard, controller, touchpad),
+                wsIndex
+            )
         }
         onDone()
     }
@@ -290,7 +356,12 @@ internal fun MappingProfileEditor(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         if (source != null && profiles.size > 1) {
-            TextButton(onClick = { confirmDelete = true }) { Text("Delete profile", color = MaterialTheme.colorScheme.error) }
+            TextButton(onClick = { confirmDelete = true }) {
+                Text(
+                    "Delete profile",
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
         }
 
         LazyColumn(Modifier.fillMaxWidth().weight(1f), state = listState) {
@@ -305,9 +376,23 @@ internal fun MappingProfileEditor(
                                 .padding(top = 14.dp, bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(if (open) "▾" else "▸", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(end = 8.dp))
-                            Text(row.category.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                            Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                            Text(
+                                if (open) "▾" else "▸",
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(end = 8.dp)
+                            )
+                            Text(
+                                row.category.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                row.detail,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
                         }
                         if (open) {
                             Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
@@ -320,11 +405,16 @@ internal fun MappingProfileEditor(
                                     style = MaterialTheme.typography.labelLarge,
                                     modifier = Modifier.weight(0.38f),
                                 )
-                                Text("Mapping", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(0.62f))
+                                Text(
+                                    "Mapping",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    modifier = Modifier.weight(0.62f)
+                                )
                             }
                         }
                         HorizontalDivider()
                     }
+
                     is EditorRow.Note -> Hint(row.text)
                     is EditorRow.TouchpadReset -> {
                         TextButton(onClick = { touchpad = Bindings.defaultTouchpadMappings(TouchpadSettings()) }) {
@@ -332,11 +422,16 @@ internal fun MappingProfileEditor(
                         }
                         HorizontalDivider()
                     }
+
                     is EditorRow.AddKey -> {
                         if (capturingKey) {
                             KeyLearn(runtime, onKey = { code ->
                                 capturingKey = false
-                                picking = Triple(Category.KEYBOARD, BindableInput(keyName(code), listOf(InputSource.Key(code))), null)
+                                picking = Triple(
+                                    Category.KEYBOARD,
+                                    BindableInput(keyName(code), listOf(InputSource.Key(code))),
+                                    null
+                                )
                             }, onCancel = { capturingKey = false })
                         } else {
                             Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -350,6 +445,7 @@ internal fun MappingProfileEditor(
                         }
                         HorizontalDivider()
                     }
+
                     is EditorRow.PadPresetRow -> {
                         Text(
                             "One set for every game pad of the workspaces that use this profile. Load a preset:",
@@ -375,6 +471,7 @@ internal fun MappingProfileEditor(
                         }
                         HorizontalDivider()
                     }
+
                     is EditorRow.Stick -> {
                         MappingLine(row.label, "Preset", highlight = false) {
                             val ms = get(row.category)
@@ -388,13 +485,18 @@ internal fun MappingProfileEditor(
                             }
                         }
                     }
+
                     is EditorRow.Input -> {
                         MappingLine(row.label, row.sub, highlight = row.key in pressed) {
                             val ms = get(row.category)
                             val input = row.input
                             val targets = Bindings.targets(ms, input)
                             if (targets.isEmpty()) {
-                                Text("Unmapped", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                                Text(
+                                    "Unmapped",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.outline
+                                )
                             }
                             for (t in targets) {
                                 TargetChip(
@@ -404,10 +506,29 @@ internal fun MappingProfileEditor(
                                 )
                             }
                             AddChip(onClick = { picking = Triple(row.category, input, null) })
-                            if (row.category == Category.CONTROLLER) {
+                            val gestures = Bindings.gestureInputs(input)
+                            if (gestures.isNotEmpty()) {
+                                val gk = gestureKey(row.category, row.id, input)
+                                val mapped = gestures.any { Bindings.targets(ms, it).isNotEmpty() }
+                                if (!mapped) {
+                                    val open = openGestures[gk] == true
+                                    TextButton(onClick = { openGestures[gk] = !open }) {
+                                        Text(
+                                            if (open) "Hide gestures" else "Gestures",
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    }
+                                }
+                            }
+                            if (row.category == Category.CONTROLLER && input.sources.first() !is InputSource.KeyGesture) {
                                 val standard = ControllerDiagrams.defaultTargets(input, pad.family)
                                 if (standard.toSet() != targets.toSet()) {
-                                    TextButton(onClick = { put(row.category, Bindings.setTargets(ms, input, standard)) }) {
+                                    TextButton(onClick = {
+                                        put(
+                                            row.category,
+                                            Bindings.setTargets(ms, input, standard)
+                                        )
+                                    }) {
                                         Text("Standard", style = MaterialTheme.typography.labelMedium)
                                     }
                                 }
@@ -446,7 +567,11 @@ internal fun MappingProfileEditor(
             onDismissRequest = { savingPreset = false },
             title = { Text("Save controller preset") },
             text = {
-                OutlinedTextField(value = presetName, onValueChange = { presetName = it }, singleLine = true, label = { Text("Preset name") })
+                OutlinedTextField(
+                    value = presetName,
+                    onValueChange = { presetName = it },
+                    singleLine = true,
+                    label = { Text("Preset name") })
             },
             confirmButton = {
                 TextButton(enabled = presetName.isNotBlank(), onClick = {
@@ -533,9 +658,21 @@ private fun MappingLine(label: String, sub: String?, highlight: Boolean, mapping
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(0.38f).padding(end = 8.dp)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
             if (sub != null) {
-                Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    sub,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
         Row(

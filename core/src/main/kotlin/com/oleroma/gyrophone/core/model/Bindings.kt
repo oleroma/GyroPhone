@@ -100,13 +100,25 @@ object Bindings {
         TouchKind.FULLSCREEN -> emptyList()
     }
 
+    /**
+     * The gesture inputs (tap, double tap, long press, release) of a key-based [input] (a
+     * controller button or keyboard key: its first source a [InputSource.Key]), labelled by the
+     * gesture; none for sticks, triggers and other axes.
+     */
+    fun gestureInputs(input: BindableInput): List<BindableInput> {
+        val key = input.sources.firstOrNull() as? InputSource.Key ?: return emptyList()
+        return ButtonGesture.entries.map { g ->
+            BindableInput(g.label, listOf(InputSource.KeyGesture(key.keyCode, g)))
+        }
+    }
+
     private fun area(control: TouchControl, kind: TouchAreaKind) =
         BindableInput(kind.label, listOf(InputSource.TouchArea(control.id, kind)))
 
-    /** The surface inputs offered with [fingers] down: taps (double tap and tap-drag with one), moves, swipes, pinch with two. */
+    /** The surface inputs offered with [fingers] down: taps (tap-drag with one), moves, swipes, pinch with two. */
     fun surfaceInputs(fingers: Int, id: String = ""): List<BindableInput> = SurfaceInput.entries.filter { i ->
         when (i) {
-            SurfaceInput.DOUBLE_TAP, SurfaceInput.TAP_DRAG -> fingers == 1
+            SurfaceInput.TAP_DRAG -> fingers == 1
             SurfaceInput.PINCH, SurfaceInput.PINCH_IN, SurfaceInput.PINCH_OUT -> fingers == 2
             else -> true
         }

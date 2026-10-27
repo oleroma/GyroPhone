@@ -3,7 +3,11 @@ package com.oleroma.gyrophone.core
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.core.engine.PadDevice
+import com.oleroma.gyrophone.core.model.AttachedPad
 import com.oleroma.gyrophone.core.model.ButtonActivators
+import com.oleroma.gyrophone.core.model.ButtonGesture
+import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.Profile
@@ -21,6 +25,7 @@ import org.junit.Test
 /** Press, tap, double tap, long press and release mappings of touch buttons, and the ratchet's axes. */
 class ButtonEventsTest {
     private val MS = 1_000_000L
+    private val KEY_A = 96 // KEYCODE_BUTTON_A
     private val A = 0x04;
     private val B = 0x05;
     private val C = 0x06;
@@ -151,6 +156,85 @@ class ButtonEventsTest {
         assertEquals(emptySet<Int>(), own.keys()) // its own 600 ms window, not the workspace's 150
         own.buttonDown(1, "b", 10f, 10f)
         assertEquals(setOf(C), own.keys())
+    }
+
+    private val dev = PadDevice(1, 0x45e, 0x2ea, "pad")
+
+    private fun keyEngine(vararg ms: Mapping): MappingEngine {
+        val w = Workspace(id = "w", name = "w", pads = listOf(AttachedPad(id = "p", mappings = ms.toList())))
+        return MappingEngine(single(w)) { t }.apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 10 * MS }
+    }
+
+    private fun key(g: ButtonGesture, usage: Int) = Mapping(InputSource.KeyGesture(KEY_A, g), OutputTarget.Key(usage))
+
+    @Test
+    fun controllerButtonsHaveTheSameGestures() {
+        val e = keyEngine(
+            Mapping(InputSource.Key(KEY_A), OutputTarget.Key(A)),
+            key(ButtonGesture.TAP, B), key(ButtonGesture.DOUBLE_TAP, C), key(ButtonGesture.LONG_PRESS, D),
+        )
+        // Long press.
+        e.setKey(dev, KEY_A, true)
+        assertEquals(setOf(A), e.keys())
+        t += 410 * MS
+        assertEquals(setOf(A, D), e.keys())
+        e.setKey(dev, KEY_A, false)
+        e.keys(); t += 20 * MS
+        assertEquals(emptySet<Int>(), e.keys())
+        // Tap: waits out the window (the double tap does something else).
+        e.setKey(dev, KEY_A, true); e.keys(); t += 50 * MS; e.setKey(dev, KEY_A, false)
+        assertEquals(emptySet<Int>(), e.keys())
+        t += 310 * MS
+        assertEquals(setOf(B), e.keys())
+        t += 20 * MS; e.keys()
+        // Double tap.
+        e.setKey(dev, KEY_A, true); e.keys(); t += 50 * MS; e.setKey(dev, KEY_A, false); e.keys()
+        t += 100 * MS
+        e.setKey(dev, KEY_A, true)
+        assertEquals(setOf(A, C), e.keys())
+        e.setKey(dev, KEY_A, false)
+        repeat(5) { t += 100 * MS; assertTrue(B !in e.keys()) }
+    }
+
+    @Test
+    fun aKeyWithOnlyGesturesIsStillConsumed() {
+        val e = keyEngine(key(ButtonGesture.TAP, B))
+        assertTrue(e.setKey(dev, KEY_A, true))
+        e.keys(); t += 50 * MS
+        e.setKey(dev, KEY_A, false)
+        assertEquals(setOf(B), e.keys()) // no double tap: at once
+    }
+
+    @Test
+    fun tapAndDoubleTapMappedAlikeStayInstant() {
+        val e = engine(
+            Mapping(InputSource.TouchTap("b"), OutputTarget.Key(B)),
+            Mapping(InputSource.TouchDoubleTap("b"), OutputTarget.Key(B))
+        )
+        e.buttonDown(1, "b", 10f, 10f); e.keys(); t += 50 * MS; e.buttonUp(1)
+        assertEquals(setOf(B), e.keys())
+    }
+
+    @Test
+    fun oldTouchpadReleaseTapTimeBecomesATap() {
+        val set = Profile(
+            id = "s", name = "s",
+            workspaces = listOf(
+                Workspace(
+                    id = "w",
+                    name = "w",
+                    touchpad = TouchpadSettings(releaseTapMs = 150),
+                    mappingProfileId = "m"
+                )
+            ),
+        )
+        val release = Mapping(InputSource.Surface(2, SurfaceInput.RELEASE), OutputTarget.Key(E))
+        val (s, ps) = ButtonActivators.upgrade(set, listOf(MappingProfile("m", "m", touchpad = listOf(release))))
+        assertEquals(
+            listOf(Mapping(InputSource.Surface(2, SurfaceInput.TAP), OutputTarget.Key(E))),
+            ps.single().touchpad
+        )
+        assertEquals(0, s.workspaces.single().touchpad.releaseTapMs)
     }
 
     @Test

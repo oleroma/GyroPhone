@@ -216,7 +216,8 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
                 onValueChangeFinished = { editWs { it.copy(doubleTapMs = doubleMs.roundToInt()) } })
         }
         Text(
-            "For the Tap, Double tap and Long press mappings of touch buttons; a button can set its own.",
+            "For the Tap, Double tap and Long press mappings of touch buttons, controller buttons, keyboard keys " +
+                    "and the touchpad. A touch button can set its own.",
             style = MaterialTheme.typography.bodySmall,
         )
         SwitchRow(
@@ -329,21 +330,7 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
                     onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(inertiaGlideMs = tpGlide)) } })
             }
         }
-        var tpReleaseTap by remember(key) { mutableStateOf(tp.releaseTapMs.toFloat()) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (tpReleaseTap < 1f) "Release tap time: off" else "Release tap time %.0f ms".format(tpReleaseTap),
-                Modifier.padding(end = 8.dp),
-            )
-            Slider(
-                value = tpReleaseTap, onValueChange = { tpReleaseTap = (it / 10f).roundToInt() * 10f },
-                valueRange = 0f..TouchpadSettings.MAX_RELEASE_TAP_MS.toFloat(),
-                onValueChangeFinished = { editWs { it.copy(touchpad = it.touchpad.copy(releaseTapMs = tpReleaseTap.roundToInt())) } })
-        }
-        Text(
-            "Touchpad Release mappings fire only after a touch shorter than this. Off: after every touch.",
-            style = MaterialTheme.typography.bodySmall,
-        )
+
         var tpDeadzone by remember(key) { mutableStateOf(tp.cursorDeadzoneDp) }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(

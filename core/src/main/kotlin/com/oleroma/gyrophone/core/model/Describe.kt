@@ -14,6 +14,9 @@ object Describe {
 
     fun source(s: InputSource): String = when (s) {
         is InputSource.Key -> "Controller " + (AndroidKey.names[s.keyCode] ?: "key ${s.keyCode}")
+        is InputSource.KeyGesture -> "Controller " + (AndroidKey.names[s.keyCode] ?: "key ${s.keyCode}") + " " +
+                s.gesture.label.lowercase()
+
         is InputSource.Axis -> (axisNames[s.axis] ?: "Axis ${s.axis}") + half(s.half)
         is InputSource.Touch -> "Touch ${s.id}"
         is InputSource.TouchStick -> "Touch stick ${s.id} ${s.axis}" + half(s.half)

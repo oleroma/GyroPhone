@@ -98,17 +98,7 @@ internal fun SurfaceSettingsEditor(control: TouchControl, pad: TouchpadSettings,
             eff.inertia,
         ) { v -> edit { s, _ -> s.copy(inertia = v) } }
     }
-    SurfaceSettingRow(
-        if (eff.releaseTapMs <= 0) "Release tap time: off" else "Release tap time " + eff.releaseTapMs + " ms",
-        own.releaseTapMs == null,
-        { follow -> edit { s, e -> s.copy(releaseTapMs = if (follow) null else e.releaseTapMs) } },
-    ) {
-        Slider(
-            value = eff.releaseTapMs.toFloat(),
-            onValueChange = { v -> edit { s, _ -> s.copy(releaseTapMs = (v / 10f).roundToInt() * 10) } },
-            valueRange = 0f..TouchpadSettings.MAX_RELEASE_TAP_MS.toFloat(),
-        )
-    }
+
     SurfaceSettingRow(
         if (eff.cursorDeadzoneDp < 1f) "Cursor deadzone: off" else "Cursor deadzone %.0f dp".format(eff.cursorDeadzoneDp),
         own.cursorDeadzoneDp == null,

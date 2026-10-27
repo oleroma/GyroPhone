@@ -54,20 +54,36 @@ enum class TouchAreaKind(val label: String) { HELD("On touch"), OUTSIDE("Outside
 /**
  * A mappable input of a touch surface (the workspace touchpad), per finger count
  * ([InputSource.Surface]). TAP: a short pulse on a still, quick lift; DOUBLE_TAP: a second tap
- * soon after; TAP_DRAG: held from a tap's lift while a second touch may follow, through that
- * touch (a drag); HOLD: while exactly that many fingers are down; RELEASE: a pulse when the
- * fingers all lift (only after a quick touch with [TouchpadSettings.releaseTapMs]). MOTION_X / Y:
+ * soon after (within the workspace's double-tap window); TAP_DRAG (one finger): held from a tap's
+ * lift while a second touch may follow, through that touch (a drag); HOLD: while exactly that
+ * many fingers are down; LONG_PRESS: once they have stayed still for the long-press time, until
+ * they lift; RELEASE: a pulse each time the fingers all lift. A tap waits out the double-tap
+ * window only when its double tap does something else (see [ButtonGesture]). MOTION_X / Y:
  * the fingers' travel (cursor, scroll, a stick from the touch-down point, switching apps);
  * SWIPE_*: a pulse once per touch when the travel passes a distance; HOLD_*: held while past half
  * of it in that direction. PINCH: the spread change (zoom); PINCH_IN / OUT: held while pinching.
  */
 @Serializable
 enum class SurfaceInput(val label: String, val motion: Boolean = false) {
-    TAP("Tap"), DOUBLE_TAP("Double tap"), TAP_DRAG("Tap-drag"), HOLD("Hold"), RELEASE("Release"),
+    TAP("Tap"), DOUBLE_TAP("Double tap"), TAP_DRAG("Tap-drag"), HOLD("Hold"), LONG_PRESS("Long press"),
+    RELEASE("Release"),
     MOTION_X("Move X", motion = true), MOTION_Y("Move Y", motion = true),
     SWIPE_LEFT("Swipe ←"), SWIPE_RIGHT("Swipe →"), SWIPE_UP("Swipe ↑"), SWIPE_DOWN("Swipe ↓"),
     HOLD_LEFT("Hold ←"), HOLD_RIGHT("Hold →"), HOLD_UP("Hold ↑"), HOLD_DOWN("Hold ↓"),
     PINCH("Pinch", motion = true), PINCH_IN("Pinch in"), PINCH_OUT("Pinch out"),
+}
+
+/**
+ * The gestures every button-like input offers (touch buttons, controller and keyboard keys, touch
+ * surfaces): a tap is a short press, fired on its lift; a double tap a second press within the
+ * double-tap window after a tap, held while that press is held (never a tap or long press too);
+ * a long press one held for the long-press time, until it lifts (never a tap); a release fires on
+ * every lift. A tap waits out the double-tap window only when the double tap does something else,
+ * so a tap and double tap mapped alike (a double click) stay instant.
+ */
+@Serializable
+enum class ButtonGesture(val label: String) {
+    TAP("Tap"), DOUBLE_TAP("Double tap"), LONG_PRESS("Long press"), RELEASE("Release"),
 }
 
 /** Something on the phone side that produces input. */
@@ -77,6 +93,11 @@ sealed interface InputSource {
     @Serializable
     @SerialName("key")
     data class Key(val keyCode: Int) : InputSource
+
+    /** A [ButtonGesture] of a key or button of an attached device (see [Key]). */
+    @Serializable
+    @SerialName("key_gesture")
+    data class KeyGesture(val keyCode: Int, val gesture: ButtonGesture) : InputSource
 
     /** An analog axis of an attached device. [half] picks one direction for axis-to-button use. */
     @Serializable

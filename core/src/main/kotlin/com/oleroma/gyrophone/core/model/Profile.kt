@@ -421,7 +421,10 @@ data class TouchpadSettings(
      * mappings ([Bindings.defaultTouchpadMappings]).
      */
     val mapped: Boolean = false,
-    /** Release mappings fire only after a touch shorter than this (ms); 0 = after every touch. */
+    /**
+     * Before releases fired on every lift: release mappings fired only after a touch shorter than
+     * this (ms). Only read by [ButtonActivators.upgrade], which turns them into tap mappings.
+     */
     val releaseTapMs: Int = 0,
     /**
      * One-finger cursor: travel from the touch-down point (along the one axis when only one is
