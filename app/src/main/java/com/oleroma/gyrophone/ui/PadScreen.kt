@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -1449,6 +1450,8 @@ private fun PadControl(
     val shape = shapeOf(control)
     Box(
         modifier
+            // A control may be larger than the screen: measure it unbounded, from its top left.
+            .wrapContentSize(Alignment.TopStart, unbounded = true)
             .size(widthDp, heightDp)
             .border(2.dp, tint, shape)
             .background(if (filled) tint.copy(alpha = 0.25f) else Color.Transparent, shape),
