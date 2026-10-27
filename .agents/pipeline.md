@@ -23,7 +23,8 @@ graph TD
     RC -->|Can't reach| CI[Script: agent-build ci]
     PC --> PCS[quick-test hook, build hook, copy, keep last 4]
     PCS -->|failed| ERR
-    PCS --> APK{Script: APK?}
+    PCS --> INSTALL[Script: build/src/.agents/agent-install]
+    INSTALL --> APK{Script: APK?}
     APK -->|No| ASKI[LLM: ask Olex whether to install]
     APK -->|Yes| PH{Script: one phone on adb?}
     PH -->|No| WHY[LLM: say why not installed]

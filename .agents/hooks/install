@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run by agent-build pc after each PC build (the APK is already on the phone):
-#   install <version> <build file>...
+# Run by agent-install (the APK is already on the phone):
+#   install <version>-<commit> <build file>...
 # 1. Installs the companion on this PC at %LOCALAPPDATA%\Programs\GyroPhone, one fixed path,
 #    so its firewall rule and Start with Windows entry survive updates. A running companion
 #    is swapped by renaming it to .old; it restarts into the new build by itself once no
@@ -16,9 +16,8 @@ export MSYS_NO_PATHCONV=1
 
 note() { echo "note: $*"; }
 
-version="$1"
+ver="$1"
 shift
-ver="$version-$(git rev-parse --short=7 HEAD)"
 exe=""
 for f in "$@"; do
   case "$f" in */GyroPhoneCompanion.exe) exe="$f" ;; esac
@@ -86,7 +85,7 @@ swap_keys() {
     "$app_exe" --init-keys || true
   fi
   if [ ! -f "$gp_data/host.pub" ]; then
-    note "Key pairing: the PC has no key yet. Start GyroPhone Companion once, then build again."
+    note "Key pairing: the PC has no key yet. Start GyroPhone Companion once, then run agent-install again."
     return
   fi
 
@@ -94,7 +93,7 @@ swap_keys() {
   tmp="$(mktemp)"
   if ! adb pull "$phone_keys/phone.pub" "$(cygpath -w "$tmp")" >/dev/null 2>&1 || [ ! -s "$tmp" ]; then
     rm -f "$tmp"
-    note "Key pairing: the phone has no key yet. Open GyroPhone once, then build again."
+    note "Key pairing: the phone has no key yet. Open GyroPhone once, then run agent-install again."
     return
   fi
 
