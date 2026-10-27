@@ -108,7 +108,7 @@ data class TouchControl(
     companion object {
         const val MIN_SIZE = 0.06f
         /** Fractions of the shorter side: over 1 a control can span the long side (and fill the screen). */
-        const val MAX_SIZE = 2.4f
+        const val MAX_SIZE = 3f
         const val MAX_DEADZONE = 0.6f
         const val MAX_SWIPE_SENS = 12f
         const val MAX_RELEASE_TAP_MS = 1000
