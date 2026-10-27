@@ -13,6 +13,7 @@ import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.GamepadButton
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.core.model.HapticEdge
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
@@ -1032,9 +1033,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     /**
-     * Haptics of this snapshot: a tick that crossed half since the last one (either way for an
-     * [OutputTarget.Haptic.onRelease] one), a per-step one that moved to another step, and the
-     * held one pushed furthest (by strength × level).
+     * Haptics of this snapshot: a tick that crossed half since the last one (up, down or either
+     * way by its [HapticEdge]), a per-step one that moved to another step, and the held one pushed
+     * furthest (by strength × level).
      */
     private fun collectHaptics() {
         hapticTicks.clear()
@@ -1048,7 +1049,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                         if (held == null || feel.strength * v > held.strength * level) {
                             held = feel; level = v
                         }
-                    } else if (v >= PRESS_THRESHOLD && (hapticWas[m] ?: 0f) < PRESS_THRESHOLD) {
+                    } else if (v >= PRESS_THRESHOLD && (hapticWas[m] ?: 0f) < PRESS_THRESHOLD &&
+                        (t.edge ?: ws.hapticEdge) != HapticEdge.RELEASE
+                    ) {
                         hapticTicks.add(feel)
                     }
                 }
@@ -1068,8 +1071,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         // Ticks on release that dropped under half since the last snapshot (gone from hapticNow when at rest).
         for ((m, was) in hapticWas) {
             val t = m.target
-            if (t is OutputTarget.Haptic && t.onRelease && !t.held && was >= PRESS_THRESHOLD && (hapticNow[m]
-                    ?: 0f) < PRESS_THRESHOLD
+            if (t is OutputTarget.Haptic && !t.held && was >= PRESS_THRESHOLD &&
+                (hapticNow[m] ?: 0f) < PRESS_THRESHOLD && (t.edge ?: ws.hapticEdge) != HapticEdge.PRESS
             ) {
                 hapticTicks.add(t.feel ?: ws.haptics)
             }

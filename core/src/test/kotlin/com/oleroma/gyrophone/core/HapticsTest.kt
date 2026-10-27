@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.Touchpad
+import com.oleroma.gyrophone.core.model.HapticEdge
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
@@ -30,10 +31,13 @@ class HapticsTest {
         var calls = 0
     }
 
-    private fun engine(vararg ms: Mapping): Pair<MappingEngine, Calls> {
+    private fun engine(vararg ms: Mapping, edge: HapticEdge = HapticEdge.PRESS): Pair<MappingEngine, Calls> {
         val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f)
         val s = TouchControl("s", TouchKind.STICK, "", 0.2f, 0.5f)
-        val w = Workspace(id = "w", name = "w", touchControls = listOf(b, s), mappings = ms.toList(), haptics = strong)
+        val w = Workspace(
+            id = "w", name = "w", touchControls = listOf(b, s), mappings = ms.toList(), haptics = strong,
+            hapticEdge = edge
+        )
         val e = MappingEngine(single(w)) { t }
         val c = Calls()
         e.hapticSink = com.oleroma.gyrophone.core.engine.HapticSink { ticks, held, level ->
@@ -64,19 +68,20 @@ class HapticsTest {
     }
 
     @Test
-    fun zoneTicksOnEnterAndOnExitWhenAsked() {
+    fun zoneTicksFollowTheWorkspaceEdgeOrTheirOwn() {
         val (e, c) = engine(
             Mapping(InputSource.TouchArea("b", TouchAreaKind.ZONE), OutputTarget.Haptic()),
-            Mapping(InputSource.TouchArea("s", TouchAreaKind.ZONE), OutputTarget.Haptic(onRelease = true)),
+            Mapping(InputSource.TouchArea("s", TouchAreaKind.ZONE), OutputTarget.Haptic(edge = HapticEdge.BOTH)),
+            edge = HapticEdge.RELEASE,
         )
         e.snapshot()
         e.setTouchArea("b", TouchAreaKind.ZONE, true)
         e.snapshot()
-        assertEquals(1, c.ticks)
+        assertEquals(0, c.ticks) // the workspace's: exit only
         t += 50 * MS
         e.setTouchArea("b", TouchAreaKind.ZONE, false)
         e.snapshot()
-        assertEquals(1, c.ticks) // enter only
+        assertEquals(1, c.ticks)
         e.setTouchArea("s", TouchAreaKind.ZONE, true)
         e.snapshot()
         assertEquals(2, c.ticks)

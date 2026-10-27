@@ -198,13 +198,14 @@ sealed interface OutputTarget {
     data object Zoom : OutputTarget
 
     /**
-     * The phone vibrates (only while a PC is connected): a tick when the source engages (and
-     * again when it lets go with [onRelease], such as leaving a zone), or while it is [held] (an
-     * axis: stronger the further it is pushed). [feel] null = the workspace's ([Workspace.haptics]).
+     * The phone vibrates (only while a PC is connected): a tick when the source engages and/or
+     * lets go (entering / leaving a zone) as [edge] says, or while it is [held] (an axis: stronger
+     * the further it is pushed). [feel] and [edge] null = the workspace's ([Workspace.haptics],
+     * [Workspace.hapticEdge]).
      */
     @Serializable
     @SerialName("haptic")
-    data class Haptic(val held: Boolean = false, val feel: HapticFeel? = null, val onRelease: Boolean = false) :
+    data class Haptic(val held: Boolean = false, val feel: HapticFeel? = null, val edge: HapticEdge? = null) :
         OutputTarget
 
     /**
@@ -230,6 +231,14 @@ data class Mapping(val source: InputSource, val target: OutputTarget)
  * touch feedback setting), [strength] picking light / medium / strong; else the motor at
  * [strength] (1..255). [lengthMs]: a tick's length (custom only).
  */
+/** When a haptic tick ([OutputTarget.Haptic]) plays: as its source engages, lets go, or both. */
+@Serializable
+enum class HapticEdge(val label: String) {
+    PRESS("On press / enter"),
+    RELEASE("On release / exit"),
+    BOTH("Both"),
+}
+
 @Serializable
 data class HapticFeel(val system: Boolean = true, val strength: Int = 160, val lengthMs: Int = 20) {
     companion object {

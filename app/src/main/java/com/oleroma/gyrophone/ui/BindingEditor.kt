@@ -64,6 +64,7 @@ import com.oleroma.gyrophone.core.hid.AndroidKeyToHid
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
+import com.oleroma.gyrophone.core.model.HapticEdge
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
@@ -304,7 +305,8 @@ fun TargetPickerDialog(
 
 /**
  * Sets up a picked [OutputTarget.Haptic] or [OutputTarget.HapticStep]: the workspace's feel or
- * one of its own, and the step size. [onOk] gets the configured target; [onCancel] goes back.
+ * one of its own, when a tick plays (the workspace's or its own), and the step size. [onOk] gets
+ * the configured target; [onCancel] goes back.
  */
 @Composable
 internal fun HapticTargetDialog(
@@ -326,12 +328,12 @@ internal fun HapticTargetDialog(
             ((start as? OutputTarget.HapticStep)?.percent ?: OutputTarget.HapticStep.DEFAULT_STEP_PERCENT).toFloat()
         )
     }
-    var onRelease by remember { mutableStateOf(start is OutputTarget.Haptic && start.onRelease) }
+    var edge by remember { mutableStateOf((start as? OutputTarget.Haptic)?.edge) }
     fun result(): OutputTarget {
         val f = if (own) feel else null
         return when (start) {
             is OutputTarget.HapticStep -> start.copy(percent = percent.toInt(), feel = f)
-            is OutputTarget.Haptic -> start.copy(feel = f, onRelease = onRelease && !start.held)
+            is OutputTarget.Haptic -> start.copy(feel = f, edge = if (start.held) null else edge)
             else -> start
         }
     }
@@ -353,20 +355,9 @@ internal fun HapticTargetDialog(
                     }
                 }
                 if (start is OutputTarget.Haptic && !held) {
-                    Row(
-                        Modifier.horizontalScroll(rememberScrollState()),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        FilterChip(
-                            selected = !onRelease,
-                            onClick = { onRelease = false },
-                            label = { Text("On press / enter") })
-                        FilterChip(
-                            selected = onRelease,
-                            onClick = { onRelease = true },
-                            label = { Text("Also on release / exit") })
-                    }
+                    val wsEdge = runtime.activeProfile.value.workspace(runtime.workspaceIndex.value).hapticEdge
+                    Text("Plays", style = MaterialTheme.typography.labelLarge)
+                    HapticEdgeChips(edge, onSelect = { edge = it }, workspaceEdge = wsEdge)
                 }
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()),
@@ -399,6 +390,34 @@ internal fun HapticTargetDialog(
         confirmButton = { TextButton(onClick = { onOk(result()) }) { Text("OK") } },
         dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
     )
+}
+
+/**
+ * Picks when a haptic tick plays. With [workspaceEdge], a first chip stands for the workspace's
+ * setting ([selected] null); without it, [selected] is never null.
+ */
+@Composable
+internal fun HapticEdgeChips(
+    selected: HapticEdge?,
+    onSelect: (HapticEdge?) -> Unit,
+    workspaceEdge: HapticEdge? = null
+) {
+    Row(
+        Modifier.horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (workspaceEdge != null) {
+            FilterChip(
+                selected = selected == null,
+                onClick = { onSelect(null) },
+                label = { Text("Workspace default (" + workspaceEdge.label.lowercase() + ")") },
+            )
+        }
+        for (e in HapticEdge.entries) {
+            FilterChip(selected = selected == e, onClick = { onSelect(e) }, label = { Text(e.label) })
+        }
+    }
 }
 
 @Composable

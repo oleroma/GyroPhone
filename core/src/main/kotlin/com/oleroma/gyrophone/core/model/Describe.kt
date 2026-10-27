@@ -40,8 +40,12 @@ object Describe {
         OutputTarget.Zoom -> "Zoom (Ctrl + wheel)"
         is OutputTarget.Haptic -> when {
             t.held -> "Haptic while held"
-            t.onRelease -> "Haptic tick on press and release"
-            else -> "Haptic tick"
+            else -> "Haptic tick" + when (t.edge) {
+                null -> ""
+                HapticEdge.PRESS -> " on press"
+                HapticEdge.RELEASE -> " on release"
+                HapticEdge.BOTH -> " on press and release"
+            }
         } + feel(t.feel)
 
         is OutputTarget.HapticStep -> "Haptic per ${t.percent} % step" + feel(t.feel)
@@ -110,7 +114,14 @@ object Describe {
         OutputTarget.GyroPause -> "Ratchet"
         OutputTarget.SwitchApps -> "Alt+Tab"
         OutputTarget.Zoom -> "Zoom"
-        is OutputTarget.Haptic -> if (t.held) "Buzz held" else if (t.onRelease) "Buzz in/out" else "Buzz"
+        is OutputTarget.Haptic -> when {
+            t.held -> "Buzz held"
+            t.edge == HapticEdge.PRESS -> "Buzz in"
+            t.edge == HapticEdge.RELEASE -> "Buzz out"
+            t.edge == HapticEdge.BOTH -> "Buzz in/out"
+            else -> "Buzz"
+        }
+
         is OutputTarget.HapticStep -> "Buzz ${t.percent}%"
     }
 
