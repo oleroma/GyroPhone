@@ -82,8 +82,9 @@ class TouchpadMappingsTest {
         assertTrue(waits.run(200).any { it shr 8 == D })
         // A second tap inside the window: the double tap only.
         waits.down(1, 100f, 100f, t); waits.run(30); waits.up(1, t); waits.run(60)
-        waits.down(1, 100f, 100f, t); waits.run(30); waits.up(1, t)
-        val after = waits.run(500)
+        waits.down(1, 100f, 100f, t);
+        val after = waits.run(30); waits.up(1, t)
+        waits.run(500, after)
         assertTrue(after.any { it shr 8 == Q })
         assertTrue(after.none { it shr 8 == D })
 
@@ -126,8 +127,29 @@ class TouchpadMappingsTest {
         val p = pad(m(1, SurfaceInput.DOUBLE_TAP, OutputTarget.Key(Q)))
         p.down(1, 100f, 100f, t); p.run(30); p.up(1, t)
         assertTrue(p.run(60).none { it shr 8 == Q })
-        p.down(1, 100f, 100f, t); p.run(30); p.up(1, t)
-        assertTrue(p.run(60).any { it shr 8 == Q })
+        p.down(1, 100f, 100f, t);
+        val second = p.run(30); p.up(1, t); p.run(60, second)
+        assertTrue(second.any { it shr 8 == Q })
+    }
+
+    @Test
+    fun doubleTapAndDragHoldsUntilTheLift() {
+        val l = 1 shl MouseButton.LEFT.bit
+        val p = pad(
+            m(1, SurfaceInput.TAP, OutputTarget.Key(D)),
+            m(1, SurfaceInput.DOUBLE_TAP, OutputTarget.Mouse(MouseButton.LEFT)),
+            m(1, SurfaceInput.MOTION_X, OutputTarget.MouseAxis(MouseMotion.MOVE_X)),
+        )
+        p.down(1, 100f, 100f, t); p.run(30); p.up(1, t); p.run(60)
+        p.down(1, 100f, 100f, t)
+        assertTrue(p.run(30).last() and l != 0) // held from the second touch down
+        p.move(1, 200f, 100f, t)
+        assertTrue(p.run(400).all { it and l != 0 }) // dragging: still held
+        assertTrue(p.dx > 0)
+        p.up(1, t)
+        val after = p.run(500)
+        assertEquals(0, after.last() and l)
+        assertTrue(after.none { it shr 8 == D }) // neither touch was a tap once it was a double tap
     }
 
     @Test

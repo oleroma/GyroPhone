@@ -54,7 +54,8 @@ enum class TouchAreaKind(val label: String) { HELD("On touch"), OUTSIDE("Outside
 /**
  * A mappable input of a touch surface (the workspace touchpad), per finger count
  * ([InputSource.Surface]). TAP: a short pulse on a still, quick lift; DOUBLE_TAP: a second tap
- * soon after (within the workspace's double-tap window); TAP_DRAG (one finger): held from a tap's
+ * soon after (within the workspace's double-tap window; with one finger it is held from that touch
+ * down until it lifts, so moving drags with it held); TAP_DRAG (one finger): held from a tap's
  * lift while a second touch may follow, through that touch (a drag); HOLD: while exactly that
  * many fingers are down; LONG_PRESS: once they have stayed still for the long-press time, until
  * they lift; RELEASE: a pulse each time the fingers all lift. A tap waits out the double-tap
