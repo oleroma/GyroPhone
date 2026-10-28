@@ -175,14 +175,14 @@ fun WifiPanel(runtime: GamepadRuntime, stats: LinkStats, modifier: Modifier = Mo
             )
         }
         Text(
-            if (stats.usb) "Over USB tethering (Wi-Fi takes over when the cable comes out)"
+            if (stats.usb) "Over " + (if (stats.usbDirect) "the USB cable" else "USB tethering") + " (Wi-Fi takes over when the cable comes out)"
             else "Low-latency Wi-Fi: " + (if (stats.lowLatencyLock == true) "on" else "off") + " (keep GyroPhone on screen)",
             style = MaterialTheme.typography.bodySmall,
         )
         if (!stats.usb) {
             Text(
-                "Faster by cable: plug the phone into the PC and turn on USB tethering. Developer options → " +
-                    "Default USB configuration → USB tethering turns it on by itself each time.",
+                "Faster by cable: plug the phone into the PC. With USB debugging on, the PC app switches it to a " +
+                    "direct link by itself (allow GyroPhone when the phone asks). USB tethering works too.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

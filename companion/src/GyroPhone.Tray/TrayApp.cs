@@ -32,6 +32,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private readonly Watchdog _watchdog;
     private readonly KeyFiles _keyFiles;
     private readonly AuthorizedPhonesWatcher? _authorized;
+    private readonly AoaUsbLink _usb;
     private IPadSink _pad;
     private string? _padError;
 
@@ -49,6 +50,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private readonly ToolStripMenuItem _networkItem;
     private readonly ToolStripMenuItem _firewallItem;
     private readonly ToolStripMenuItem _usbFirewallItem;
+    private readonly ToolStripMenuItem _usbDirectItem, _usbDriverItem, _usbTakeItem;
     private readonly ToolStripMenuItem _installDriverItem, _retryDriverItem;
     private readonly ToolStripMenuItem _restartAdminItem;
     private readonly System.Windows.Forms.Timer _uiTimer;
@@ -105,6 +107,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
                 PowerQos.TryDisableForThread(_log.Write);
             },
             log: _log.Write);
+        _usb = new AoaUsbLink(Wire.Port, settings.UsbDirect, _log.Write);
         _watchdog = new Watchdog(_engine, _clock, _marker, store,
             ElevationProbe.IsForegroundElevated, NetworkCategory.IsAnyConnectedPublic, _log.Write);
 
@@ -134,6 +137,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _networkItem = new ToolStripMenuItem("This network is Public: make it Private…", null, (_, _) => OpenNetworkSettings());
         _firewallItem = new ToolStripMenuItem("Allow through firewall…", null, (_, _) => AllowThroughFirewall());
         _usbFirewallItem = new ToolStripMenuItem("Allow the phone over a USB cable…", null, (_, _) => AllowUsb());
+        _usbDirectItem = new ToolStripMenuItem("Use the phone over the USB cable", null, (_, _) => ToggleUsbDirect());
+        _usbTakeItem = new ToolStripMenuItem("adb is holding the phone: stop adb and use the cable", null, (_, _) => _usb.TakeFromAdb());
+        _usbDriverItem = new ToolStripMenuItem("Direct USB needs a driver: how to install it…", null, (_, _) => ShowUsbDriverHelp());
         _installDriverItem = new ToolStripMenuItem("Install gamepad driver (ViGEmBus)…", null, (_, _) => OpenDriverDownload());
         _retryDriverItem = new ToolStripMenuItem("Retry driver", null, (_, _) => RetryDriver());
         _restartAdminItem = new ToolStripMenuItem("Restart as administrator", null, (_, _) => RestartAsAdmin());
@@ -154,12 +160,15 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _pauseItem,
             _autoStartItem,
             _watcherItem,
+            _usbDirectItem,
             trayClickItem,
             new ToolStripSeparator(),
             _uipiItem,
             _networkItem,
             _firewallItem,
             _usbFirewallItem,
+            _usbTakeItem,
+            _usbDriverItem,
             _installDriverItem,
             _retryDriverItem,
             _restartAdminItem,
@@ -187,7 +196,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
 
         _updater = new CompanionUpdater(_exePath, Application.ProductVersion, _log.Write,
-            isIdle: () => !_engine.Snapshot().Connected && (_pairForm == null || _pairForm.IsDisposed),
             exitForUpdate: ExitApp);
         _updater.Changed += Refresh;
 
@@ -201,6 +209,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             if (recovered > 0) _log.Write($"released {recovered} inputs left held by a previous run");
             _engine.Start(_clock.NowUs);
             _watchdog.Start();
+            _usb.Start();
             _log.Write($"listening on UDP {Wire.Port} as '{settings.HostName}'");
         }
         else
@@ -293,6 +302,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _pauseItem.Checked = s.Paused;
         _autoStartItem.Checked = IsAutoStartOn();
         _watcherItem.Checked = IsWatcherOn();
+        _usbDirectItem.Checked = _usb.Enabled;
+        _usbDirectItem.ToolTipText = UsbDirectText();
+        _usbDriverItem.Available = _usb.State == UsbDirectState.NeedsDriver;
+        _usbTakeItem.Available = _usb.State == UsbDirectState.AdbBusy;
         _uipiItem.Available = s.ElevatedForeground && !ElevationProbe.IsSelfElevated;
         _networkItem.Available = s.NetworkPublic;
         _firewallItem.Available = _firewallOk == false;
@@ -305,7 +318,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         RebuildPhones(s.PairedPhones);
         _hostKeyItem.Text = s.HostKeyFingerprint is { } fp ? $"This PC's key: {fp}" : "This PC's key: unavailable (see Status)";
         _versionItem.Text = _updater.Pending is { } pending
-            ? $"{Program.AppName} {Application.ProductVersion} · {pending} starts when the phone disconnects"
+            ? $"{Program.AppName} {Application.ProductVersion} · restarting into {pending}"
             : $"{Program.AppName} {Application.ProductVersion}";
         if (_mainForm != null && !_mainForm.IsDisposed)
         {
@@ -313,7 +326,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
                 _autoStartItem.Checked, _watcherItem.Checked, _uipiItem.Available, _networkItem.Available,
                 _firewallOk == false, _usbFirewallItem.Available, _installDriverItem.Available, _restartAdminItem.Available));
         }
-        if (!s.Connected) _updater.TryRestart();
 
         if (s.ElevatedForeground && !ElevationProbe.IsSelfElevated && s.Connected && !_uipiHintShown)
         {
@@ -423,10 +435,12 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         {
             string band = l.Band == 0 ? "unknown band" : $"{l.Band} GHz";
             string lockState = (l.Flags & LinkInfoFlags.LowLatencyLockHeld) != 0 ? "on" : "off";
-            if ((l.Flags & LinkInfoFlags.Usb) != 0) b.AppendLine("Phone link:   USB cable (tethering)");
+            if ((l.Flags & LinkInfoFlags.Usb) != 0)
+                b.AppendLine((l.Flags & LinkInfoFlags.UsbDirect) != 0 ? "Phone link:   USB cable (direct)" : "Phone link:   USB cable (tethering)");
             else b.AppendLine($"Phone Wi-Fi:  {band}, {l.FreqMhz} MHz, {l.LinkMbps} Mbps, {l.RssiDbm} dBm");
             b.AppendLine($"Phone sends:  {l.SendRateHz} Hz, RTT min {l.RttMinUs / 1000.0:0.0} ms, low-latency Wi-Fi {lockState}");
         }
+        b.AppendLine($"USB direct:   {UsbDirectText()}");
         b.AppendLine($"Output:       {OutputName(s.OutputMode)}, pad {(s.PadPlugged ? "plugged" : "not plugged")}");
         b.AppendLine($"Gamepad driver: {(s.DriverOk ? "ViGEmBus ok" : _padError ?? "missing")}");
         b.AppendLine($"Input:        {(s.Paused ? "paused" : "active")}{(s.ElevatedForeground ? ", window in front runs as administrator" : "")}");
@@ -500,6 +514,45 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             if (_server.State != ServerState.PortInUse) return false;
         }
         return false;
+    }
+
+    internal void ToggleUsbDirect()
+    {
+        bool on = !_usb.Enabled;
+        _usb.Enabled = on;
+        _engine.SetUsbDirect(on);
+        _log.Write($"usb direct {(on ? "on" : "off")}");
+        Refresh();
+    }
+
+    private string UsbDirectText()
+    {
+        string detail = _usb.Detail.Length > 0 ? $" ({_usb.Detail})" : "";
+        return _usb.State switch
+        {
+            UsbDirectState.Off => "off",
+            UsbDirectState.NoPhone => "on, no phone with USB debugging on the cable",
+            UsbDirectState.AdbBusy => "adb is holding the phone: choose \"stop adb and use the cable\" in the menu",
+            UsbDirectState.Switching => $"switching the phone to accessory mode{detail}",
+            UsbDirectState.WrongUsbMode => "set the phone's USB to No data transfer (tethering and file transfer block the switch), then replug",
+            UsbDirectState.NeedsDriver => $"the phone is in accessory mode but needs the WinUSB driver{detail}",
+            UsbDirectState.Connected => $"connected{detail}",
+            _ => $"failed{detail}",
+        };
+    }
+
+    /// <summary>The accessory interface has no driver in Windows: the user installs WinUSB once with Zadig.</summary>
+    internal void ShowUsbDriverHelp()
+    {
+        var r = MessageBox.Show(
+            "Windows needs the WinUSB driver for the phone's accessory mode, once:\n\n"
+            + "1. Keep the phone plugged in (it is in accessory mode now).\n"
+            + "2. Download and run Zadig (zadig.akeo.ie).\n"
+            + "3. Pick \"Android Accessory Interface\" (USB ID 18D1 2D00, or 18D1 2D01 interface 0). If it is not listed, choose Options > List All Devices.\n"
+            + "4. Driver: WinUSB, then Install Driver.\n\n"
+            + "Leave the adb interface (interface 1) alone. Open the Zadig website now?",
+            Program.AppName, MessageBoxButtons.OKCancel, MessageBoxIcon.Information);
+        if (r == DialogResult.OK) Open("https://zadig.akeo.ie");
     }
 
     internal void ToggleAutoStart()
@@ -773,6 +826,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _watchdog.Dispose();
             _engine.Shutdown();
             _server.Stop();
+            _usb.Dispose();
             _watchdog.SaveSettings();
             var held = new byte[StateFrame.KeyBitmapSize];
             int version = _engine.HeldSnapshot(held, out byte mb);
