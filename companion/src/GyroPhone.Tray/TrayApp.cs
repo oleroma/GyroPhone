@@ -531,6 +531,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             UsbDirectState.NoPhone => "on, no phone with USB debugging on the cable",
             UsbDirectState.AdbBusy => "adb is holding the phone: replug the cable while adb is idle",
             UsbDirectState.Switching => $"switching the phone to accessory mode{detail}",
+            UsbDirectState.WrongUsbMode => "set the phone's USB to No data transfer (tethering and file transfer block the switch), then replug",
             UsbDirectState.NeedsDriver => $"the phone is in accessory mode but needs the WinUSB driver{detail}",
             UsbDirectState.Connected => $"connected{detail}",
             _ => $"failed{detail}",

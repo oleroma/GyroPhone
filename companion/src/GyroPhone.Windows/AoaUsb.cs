@@ -21,6 +21,11 @@ public enum UsbDirectState
     AdbBusy,
     /// <summary>The phone was asked to switch to accessory mode and should come back as one.</summary>
     Switching,
+    /// <summary>
+    /// adb is not the phone's first USB function (USB tethering or file transfer is on), and Windows
+    /// only passes device requests from the first one, so the switch is refused.
+    /// </summary>
+    WrongUsbMode,
     /// <summary>The phone is in accessory mode but Windows has no WinUSB driver for it.</summary>
     NeedsDriver,
     Connected,
@@ -46,7 +51,7 @@ public sealed class AoaUsbLink : IDisposable
     private readonly int _serverPort;
     private readonly Action<string> _log;
     private readonly ManualResetEventSlim _wake = new(false);
-    private readonly Dictionary<string, (DateTime At, TimeSpan Wait)> _tried = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (DateTime At, TimeSpan Wait, bool WrongMode)> _tried = new(StringComparer.OrdinalIgnoreCase);
     private Thread? _thread;
     private volatile bool _stopping;
     private UsbBridge? _bridge;
@@ -126,13 +131,14 @@ public sealed class AoaUsbLink : IDisposable
             return;
         }
 
-        bool busy = false, waiting = false;
+        bool busy = false, waiting = false, wrongMode = false;
         var now = DateTime.UtcNow;
         foreach (var n in nodes.Where(n => n.IsAdb))
         {
             if (_tried.TryGetValue(n.InstanceId, out var t) && now - t.At < t.Wait)
             {
-                waiting |= t.Wait == RetrySwitch;
+                waiting |= !t.WrongMode && t.Wait == RetrySwitch;
+                wrongMode |= t.WrongMode;
                 continue;
             }
             var path = UsbDevices.InterfacePath(n);
@@ -145,15 +151,19 @@ public sealed class AoaUsbLink : IDisposable
             }
             if (Aoa.TrySwitch(dev, out string why))
             {
-                _tried[n.InstanceId] = (now, RetrySwitch);
+                _tried[n.InstanceId] = (now, RetrySwitch, false);
                 _log($"usb: asked {n.Name} to switch to accessory mode");
                 Set(UsbDirectState.Switching, n.Name);
                 return;
             }
-            _tried[n.InstanceId] = (now, RetryNoAoa);
+            // Windows hands device requests only from a composite device's first interface to it.
+            bool notFirst = n.Interface is { } mi && mi != 0;
+            _tried[n.InstanceId] = (now, notFirst ? RetrySwitch : RetryNoAoa, notFirst);
+            wrongMode |= notFirst;
             _log($"usb: {n.Name} did not switch: {why}");
         }
         if (waiting) Set(UsbDirectState.Switching, "");
+        else if (wrongMode) Set(UsbDirectState.WrongUsbMode, "");
         else if (busy) Set(UsbDirectState.AdbBusy, "");
         else Set(UsbDirectState.NoPhone, "");
     }
@@ -265,6 +275,16 @@ internal static class Aoa
 internal sealed record UsbNode(uint DevInst, string InstanceId, string HardwareId, string[] CompatibleIds, string[] InterfaceGuids)
 {
     private static readonly Regex Ids = new(@"VID_([0-9A-F]{4})&PID_([0-9A-F]{4})(?:&.*?MI_([0-9A-F]{2}))?", RegexOptions.IgnoreCase);
+
+    /// <summary>The interface number of a composite device's function (MI_xx), or null for a whole device.</summary>
+    public int? Interface
+    {
+        get
+        {
+            var m = Ids.Match(HardwareId);
+            return m.Success && m.Groups[3].Success ? Convert.ToInt32(m.Groups[3].Value, 16) : null;
+        }
+    }
 
     public string Name => HardwareId.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase) ? HardwareId[4..] : HardwareId;
 
