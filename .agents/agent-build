@@ -88,15 +88,14 @@ build_ci() {
   [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$BRANCH")" ] ||
     die "HEAD isn't what's pushed on origin/$BRANCH. Run agent-commit first."
 
-  local sha slug since run="" i
+  local sha slug="$SLUG" since run="" i
   sha="$(git rev-parse HEAD)"
-  slug="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
   since="$(date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:%SZ)"
-  gh workflow run fallback.yml --ref "$BRANCH"
+  gh workflow run fallback.yml -R "$slug" --ref "$BRANCH"
 
   for i in $(seq 1 30); do
     sleep 4
-    run="$(gh run list --workflow fallback.yml --branch "$BRANCH" --event workflow_dispatch --limit 10 \
+    run="$(gh run list -R "$slug" --workflow fallback.yml --branch "$BRANCH" --event workflow_dispatch --limit 10 \
       --json databaseId,headSha,createdAt \
       --jq "[.[] | select(.headSha == \"$sha\" and .createdAt >= \"$since\")][0].databaseId // empty")"
     if [ -n "$run" ]; then break; fi
@@ -104,7 +103,7 @@ build_ci() {
   [ -n "$run" ] || die "Started the fallback workflow but couldn't find its run."
 
   local url="https://github.com/$slug/actions/runs/$run"
-  gh run watch "$run" --exit-status --interval 15 || die "The fallback run failed: $url"
+  gh run watch -R "$slug" "$run" --exit-status --interval 15 || die "The fallback run failed: $url"
 
   local arts art id name dest="$BUILD_DIR/ci/$run" summary=("Built on GitHub: $url")
   arts="$(gh api "repos/$slug/actions/runs/$run/artifacts" --jq '.artifacts[] | "\(.id) \(.name)"')"

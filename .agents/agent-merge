@@ -15,10 +15,13 @@ merge_into_main() {
   if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$BRANCH")" ]; then
     git push origin "$BRANCH"
   fi
-  gh pr ready "$BRANCH" || true # already ready is fine
-  gh pr merge "$BRANCH" --merge
+  local n
+  n="$(pr_number "$BRANCH")"
+  [ -n "$n" ] || die "No open PR from $BRANCH into main."
+  pr_ready "$n"
+  gh api -X PUT "repos/$SLUG/pulls/$n/merge" -f merge_method=merge >/dev/null
   rm -f "$attempts_file" "$files_file"
-  finish done "Merged $BRANCH into main: $(gh pr view "$BRANCH" --json url --jq .url)" "The feature branch is kept."
+  finish done "Merged $BRANCH into main: https://github.com/$SLUG/pull/$n" "The feature branch is kept."
 }
 
 git fetch origin

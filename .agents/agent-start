@@ -21,8 +21,8 @@ esac
 git fetch origin --prune
 
 if [ "$skip_check" = 0 ]; then
-  drafts="$(gh pr list --base main --state open --draft --json number,headRefName,url \
-    --jq '.[] | "#\(.number) \(.headRefName) \(.url)"')"
+  drafts="$(gh api "repos/$SLUG/pulls?base=main&state=open&per_page=100" \
+    --jq '.[] | select(.draft) | "#\(.number) \(.head.ref) \(.html_url)"')"
   if [ -n "$drafts" ]; then
     finish other-agent "Open draft PRs into main:" "$drafts"
   fi
@@ -37,6 +37,7 @@ git switch --no-track -c "$name" origin/main
 # GitHub won't open a PR without a commit, so the branch starts with an empty one.
 git commit --allow-empty -m "Start $name"
 git push -u origin "$name"
-url="$(gh pr create --draft --base main --head "$name" --title "$name" --body "Work in progress by an agent.")"
+url="$(gh api -X POST "repos/$SLUG/pulls" -f base=main -f head="$name" -f title="$name" \
+  -f body="Work in progress by an agent." -F draft=true --jq .html_url)"
 
 finish done "Branch $name made from main at $(git rev-parse --short origin/main)." "Draft PR: $url"
