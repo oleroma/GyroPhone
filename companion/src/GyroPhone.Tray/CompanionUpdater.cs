@@ -7,8 +7,8 @@ namespace GyroPhone.Tray;
 /// <summary>
 /// Restarts into a newer build that update.cmd put at this exe's path. update.cmd renames the running
 /// exe to "&lt;exe&gt;.old" (Windows allows renaming a running image) and copies the new one in its place;
-/// this notices the file's version changed and, once no phone is connected, starts the new exe and
-/// exits. The path never changes, so the firewall rule and the Start with Windows entry stay valid,
+/// this notices the file's version changed within a few seconds and starts the new exe and exits,
+/// even with a phone connected (Olex: always restart on update); the phone reconnects by itself. The path never changes, so the firewall rule and the Start with Windows entry stay valid,
 /// and settings and pairing live in %APPDATA%\GyroPhone. Local builds (no CI version) never restart.
 /// Runs on the UI thread.
 /// </summary>
@@ -19,23 +19,21 @@ internal sealed class CompanionUpdater : IDisposable
     private readonly string _exePath, _oldPath;
     private readonly string _version;
     private readonly Action<string> _log;
-    private readonly Func<bool> _isIdle;
     private readonly Action _exitForUpdate;
     private readonly System.Windows.Forms.Timer _timer;
     private bool _restarting, _disposed;
 
-    /// <summary>The build waiting at this exe's path for the phone to disconnect, or null.</summary>
+    /// <summary>The newer build at this exe's path that this instance is about to restart into, or null.</summary>
     public string? Pending { get; private set; }
 
     public event Action? Changed;
 
-    public CompanionUpdater(string exePath, string version, Action<string> log, Func<bool> isIdle, Action exitForUpdate)
+    public CompanionUpdater(string exePath, string version, Action<string> log, Action exitForUpdate)
     {
         _exePath = exePath;
         _oldPath = exePath + ".old";
         _version = version;
         _log = log;
-        _isIdle = isIdle;
         _exitForUpdate = exitForUpdate;
         _timer = new System.Windows.Forms.Timer { Interval = TickMs };
         _timer.Tick += (_, _) => Tick();
@@ -52,11 +50,11 @@ internal sealed class CompanionUpdater : IDisposable
         Tick();
     }
 
-    /// <summary>Restarts now if a new build is waiting and no phone is connected.</summary>
+    /// <summary>Restarts now if a new build is waiting.</summary>
     public void TryRestart()
     {
         var pending = Pending;
-        if (pending == null || _restarting || _disposed || !_isIdle()) return;
+        if (pending == null || _restarting || _disposed) return;
         _restarting = true;
         _timer.Stop();
         _log($"new build {pending} at {_exePath}, restarting");
@@ -86,7 +84,7 @@ internal sealed class CompanionUpdater : IDisposable
         if (pending != Pending)
         {
             Pending = pending;
-            if (pending != null) _log($"new build {pending} installed, restarting when no phone is connected");
+            if (pending != null) _log($"new build {pending} installed, restarting");
             Changed?.Invoke();
         }
         TryRestart();

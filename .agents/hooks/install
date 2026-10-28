@@ -3,8 +3,8 @@
 #   install <version>-<commit> <build file>...
 # 1. Installs the companion on this PC at %LOCALAPPDATA%\Programs\GyroPhone, one fixed path,
 #    so its firewall rule and Start with Windows entry survive updates. A running companion
-#    is swapped by renaming it to .old; it restarts into the new build by itself once no
-#    phone is connected (pairing and settings live in %APPDATA%\GyroPhone).
+#    is swapped by renaming it to .old; it restarts into the new build by itself within a
+#    few seconds, even with a phone connected (pairing and settings live in %APPDATA%\GyroPhone).
 # 2. Swaps the key files over adb, so the phone connects over Wi-Fi without a code: the
 #    phone's phone.pub goes to %APPDATA%\GyroPhone\authorized_phones and the PC's host.pub
 #    to the phone's keys/trusted_hosts. Only public keys are copied.
@@ -59,7 +59,7 @@ install_companion() {
     fi
     mv "$app_exe.tmp" "$app_exe"
     printf '%s\r\n' "$ver" >"$app/VERSION.txt"
-    note "Companion $ver installed on the PC. A running companion switches to it when no phone is connected."
+    note "Companion $ver installed on the PC. A running companion restarts into it within a few seconds."
   fi
   powershell -NoProfile -Command '$s = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath("Programs") + "\GyroPhone Companion.lnk"); $s.TargetPath = $env:APP_EXE_W; $s.WorkingDirectory = $env:APP_W; $s.Save()' ||
     note "Couldn't create the Start menu shortcut."

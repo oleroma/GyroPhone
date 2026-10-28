@@ -194,7 +194,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
 
         _updater = new CompanionUpdater(_exePath, Application.ProductVersion, _log.Write,
-            isIdle: () => !_engine.Snapshot().Connected && (_pairForm == null || _pairForm.IsDisposed),
             exitForUpdate: ExitApp);
         _updater.Changed += Refresh;
 
@@ -316,7 +315,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         RebuildPhones(s.PairedPhones);
         _hostKeyItem.Text = s.HostKeyFingerprint is { } fp ? $"This PC's key: {fp}" : "This PC's key: unavailable (see Status)";
         _versionItem.Text = _updater.Pending is { } pending
-            ? $"{Program.AppName} {Application.ProductVersion} · {pending} starts when the phone disconnects"
+            ? $"{Program.AppName} {Application.ProductVersion} · restarting into {pending}"
             : $"{Program.AppName} {Application.ProductVersion}";
         if (_mainForm != null && !_mainForm.IsDisposed)
         {
@@ -324,7 +323,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
                 _autoStartItem.Checked, _watcherItem.Checked, _uipiItem.Available, _networkItem.Available,
                 _firewallOk == false, _usbFirewallItem.Available, _installDriverItem.Available, _restartAdminItem.Available));
         }
-        if (!s.Connected) _updater.TryRestart();
 
         if (s.ElevatedForeground && !ElevationProbe.IsSelfElevated && s.Connected && !_uipiHintShown)
         {
