@@ -1,6 +1,7 @@
 package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.engine.SurfaceMap
+import com.oleroma.gyrophone.core.engine.SwipeGuide
 import com.oleroma.gyrophone.core.engine.Touchpad
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Direction
@@ -233,5 +234,29 @@ class HoldZonesTest {
         assertEquals(z3, f.now) // the zones passed on the way each showed and let go
         assertEquals(1, f.presses(z1))
         assertEquals(1, f.presses(z2))
+    }
+
+    @Test
+    fun swipeGuideShowsTheZoneEdgesOfTheWayTheFingerGoes() {
+        val g = Touchpad(TouchpadSettings(), map).guide()!!
+        val out = FloatArray(SwipeGuide.MAX_EDGES)
+        // Straight up: the first zone starts at the hold distance, each ends 20 dp on.
+        assertEquals(4, g.edges(0f, -5f, out))
+        assertEquals(listOf(20f, 40f, 60f, 80f), out.take(4))
+        // Slanted 60° off up: twice as far along the line.
+        assertEquals(4, g.edges(0.866f * 10f, -5f, out))
+        assertEquals(40f, out[0], 0.1f)
+        // Down has no Hold mapped.
+        assertEquals(0, g.edges(0f, 5f, out))
+    }
+
+    @Test
+    fun swipeGuideNeedsHoldFromWhereTheFingerLanded() {
+        assertEquals(null, Touchpad(TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE), map).guide())
+        assertEquals(null, Touchpad(TouchpadSettings(dragStart = true), map).guide())
+        assertEquals(null, Touchpad(TouchpadSettings(), SurfaceMap(emptyList())).guide())
+        // One zone: only where it starts.
+        val one = Touchpad(TouchpadSettings(), SurfaceMap(listOf(m(0, MouseButton.LEFT)))).guide()!!
+        assertEquals(1, one.edges(0f, -5f, FloatArray(SwipeGuide.MAX_EDGES)))
     }
 }

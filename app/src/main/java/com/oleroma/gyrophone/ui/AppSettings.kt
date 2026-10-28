@@ -86,6 +86,13 @@ fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
             )
         }
         Hint("A button's label briefly shows what it is sending, such as a tap, double tap or long press action.")
+        SwitchRow("Show the swipe line on swipe buttons", visuals.swipeLine) {
+            runtime.setTouchVisuals(visuals.copy(swipeLine = it))
+        }
+        Hint(
+            "A finger on a swipe button with Hold directions draws a line from where it landed, through it, to the " +
+                    "end of that direction's last zone. A dot marks where each zone starts and ends; the dots it passed fill in.",
+        )
 
         Text("Corners", style = MaterialTheme.typography.titleSmall)
         var cornerOpacity by remember(profile.id) { mutableStateOf(profile.cornerOpacity) }

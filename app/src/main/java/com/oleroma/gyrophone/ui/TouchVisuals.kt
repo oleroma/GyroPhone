@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -14,17 +15,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import com.oleroma.gyrophone.core.engine.SwipeGuide
 import kotlinx.serialization.Serializable
+import kotlin.math.hypot
 
 /**
  * How the pad shows touches (app-wide, [com.oleroma.gyrophone.runtime.GamepadRuntime.touchVisuals]).
  * [showTouches]: a dot under each finger that fades out over [fadeMs] once it lifts. [trail]: a
  * line behind each finger, [trailMs] of its path long, whose oldest [trailFade] (0..1) fades out
  * towards its end; it shrinks back to the finger as it ages. [liveMappings]: a button's label
- * briefly shows what it is sending right now.
+ * briefly shows what it is sending right now. [swipeLine]: a finger on a swipe button with Hold
+ * directions mapped shows a line from where it landed, through it, to the end of its direction's
+ * last zone, with a dot at each zone edge ([SwipeLines]).
  */
 @Serializable
 data class TouchVisuals(
@@ -34,6 +40,7 @@ data class TouchVisuals(
     val trailFade: Float = 0.6f,
     val fadeMs: Int = 400,
     val liveMappings: Boolean = true,
+    val swipeLine: Boolean = true,
 ) {
     companion object {
         const val MIN_TRAIL_MS = 50
@@ -172,3 +179,82 @@ fun TouchOverlay(trails: TouchTrails, visuals: TouchVisuals, modifier: Modifier 
 }
 
 private const val DOT_DP = 18f
+
+/**
+ * Swipe lines for [SwipeLineOverlay]: per finger on a swipe button, where it landed, where it is
+ * and its [SwipeGuide]. Main thread only; cheap to keep and draw (no allocation per move).
+ */
+class SwipeLines {
+    private class Line(val guide: SwipeGuide, val x0: Float, val y0: Float) {
+        var x = x0
+        var y = y0
+    }
+
+    private val lines = HashMap<Long, Line>()
+    private val edges = FloatArray(SwipeGuide.MAX_EDGES)
+
+    /** Bumped on every change; only the overlay's drawing reads it, so a move redraws without recomposing. */
+    private var version by mutableIntStateOf(0)
+
+    fun down(id: Long, guide: SwipeGuide, p: Offset) {
+        lines[id] = Line(guide, p.x, p.y)
+        version++
+    }
+
+    fun move(id: Long, p: Offset) {
+        val l = lines[id] ?: return
+        l.x = p.x; l.y = p.y
+        version++
+    }
+
+    fun up(id: Long) {
+        if (lines.remove(id) != null) version++
+    }
+
+    fun clear() {
+        if (lines.isEmpty()) return
+        lines.clear()
+        version++
+    }
+
+    /** Draws every line ([pxPerDp]: display density); edges the finger has passed are filled. */
+    fun draw(scope: DrawScope, pxPerDp: Float) {
+        @Suppress("UNUSED_EXPRESSION") version // redraw on every change
+        if (lines.isEmpty()) return
+        val stroke = LINE_DP * pxPerDp
+        val r = EDGE_DP * pxPerDp
+        for (l in lines.values) {
+            val dx = l.x - l.x0
+            val dy = l.y - l.y0
+            val len = hypot(dx, dy)
+            if (len < stroke) continue
+            val n = l.guide.edges(dx / pxPerDp, dy / pxPerDp, edges)
+            val ux = dx / len
+            val uy = dy / len
+            val end = if (n == 0) len else maxOf(len, edges[n - 1] * pxPerDp)
+            val start = Offset(l.x0, l.y0)
+            scope.drawLine(LINE_COLOR, start, Offset(l.x0 + ux * end, l.y0 + uy * end), stroke, StrokeCap.Round)
+            scope.drawLine(PASSED_COLOR, start, Offset(l.x, l.y), stroke, StrokeCap.Round)
+            for (i in 0 until n) {
+                val at = edges[i] * pxPerDp
+                val c = Offset(l.x0 + ux * at, l.y0 + uy * at)
+                if (at <= len) scope.drawCircle(PASSED_COLOR, r, c)
+                else scope.drawCircle(EDGE_COLOR, r, c, style = Stroke(stroke))
+            }
+        }
+    }
+
+    private companion object {
+        const val LINE_DP = 2f
+        const val EDGE_DP = 5f
+        val LINE_COLOR = Color.White.copy(alpha = 0.25f)
+        val PASSED_COLOR = Color.White.copy(alpha = 0.7f)
+        val EDGE_COLOR = Color.White.copy(alpha = 0.55f)
+    }
+}
+
+/** Draws [lines] over the pad; redraws only when a line changes. */
+@Composable
+fun SwipeLineOverlay(lines: SwipeLines, modifier: Modifier = Modifier) {
+    Canvas(modifier) { lines.draw(this, density) }
+}
