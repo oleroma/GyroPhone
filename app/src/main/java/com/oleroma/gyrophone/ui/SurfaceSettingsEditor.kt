@@ -169,7 +169,6 @@ internal fun SurfaceSettingsEditor(control: TouchControl, pad: TouchpadSettings,
             valueRange = 0f..TouchpadSettings.MAX_LOCK_DEG,
         )
     }
-    SurfaceDirectionSettings(own, eff, control.id) { o -> onChange(current.copy(surface = o)) }
 }
 
 /** A setting's name with its "Touchpad" switch ([follows]); its own [editor] shows when it doesn't follow. */

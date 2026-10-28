@@ -56,9 +56,11 @@ import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.TouchLayer
 import com.oleroma.gyrophone.core.model.Workspace
+import com.oleroma.gyrophone.core.model.ownSurface
 import com.oleroma.gyrophone.core.model.placeSize
 import com.oleroma.gyrophone.core.model.placeX
 import com.oleroma.gyrophone.core.model.placeY
+import com.oleroma.gyrophone.core.model.surfaceSettings
 import com.oleroma.gyrophone.core.model.withPlacement
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.roundToInt
@@ -140,6 +142,18 @@ internal fun ControlSettingsScreen(
                             subtitle = "Speed, scrolling and gestures of this swipe button"
                         ) {
                             SurfaceSettingsEditor(control, workspace.touchpad) { onControlChange(it) }
+                        }
+                        RememberedSection(
+                            runtime,
+                            "control.Directions",
+                            "Directions",
+                            section,
+                            defaultOpen = true,
+                            subtitle = "Swipe and held-direction pies, lengths and latch"
+                        ) {
+                            SurfaceDirectionSettings(control.ownSurface, control.surfaceSettings(workspace.touchpad), control.id) { o ->
+                                onControlChange(control.copy(surface = o))
+                            }
                         }
                     }
                     RememberedSection(runtime, "control.Zone", "Zone", section) {

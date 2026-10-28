@@ -93,6 +93,16 @@ internal fun TouchpadSettingsScreen(
                             }
                         }
                     }
+                    RememberedSection(
+                        runtime,
+                        "touchpad.Directions",
+                        "Directions",
+                        section,
+                        defaultOpen = true,
+                        subtitle = "Swipe and held-direction pies, lengths and latch"
+                    ) {
+                        DirectionSettings(workspace.touchpad, workspace.id) { tp -> onWorkspaceChange { it.copy(touchpad = tp) } }
+                    }
                     RememberedSection(runtime, "touchpad.Gyro", "Gyro", section) {
                         TouchpadSwitch(
                             "Touchpad is a ratchet (a finger on the empty pad flips gyro while it is down, even with the touchpad off)",
@@ -216,8 +226,6 @@ internal fun TouchpadSettingsEditor(tp: TouchpadSettings, key: String, onChange:
                 "this angle of sideways its up / down part (horizontal lock): cursor, scroll, sticks and held " +
                 "directions alike. So a swipe down does not turn the camera.",
     )
-    Text("Directions", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
-    DirectionSettings(tp, key) { t -> onChange(t) }
 }
 
 /**
