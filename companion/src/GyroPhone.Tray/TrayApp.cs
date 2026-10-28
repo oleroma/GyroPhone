@@ -50,7 +50,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private readonly ToolStripMenuItem _networkItem;
     private readonly ToolStripMenuItem _firewallItem;
     private readonly ToolStripMenuItem _usbFirewallItem;
-    private readonly ToolStripMenuItem _usbDirectItem, _usbDriverItem;
+    private readonly ToolStripMenuItem _usbDirectItem, _usbDriverItem, _usbTakeItem;
     private readonly ToolStripMenuItem _installDriverItem, _retryDriverItem;
     private readonly ToolStripMenuItem _restartAdminItem;
     private readonly System.Windows.Forms.Timer _uiTimer;
@@ -138,6 +138,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _firewallItem = new ToolStripMenuItem("Allow through firewall…", null, (_, _) => AllowThroughFirewall());
         _usbFirewallItem = new ToolStripMenuItem("Allow the phone over a USB cable…", null, (_, _) => AllowUsb());
         _usbDirectItem = new ToolStripMenuItem("Use the phone over the USB cable", null, (_, _) => ToggleUsbDirect());
+        _usbTakeItem = new ToolStripMenuItem("adb is holding the phone: stop adb and use the cable", null, (_, _) => _usb.TakeFromAdb());
         _usbDriverItem = new ToolStripMenuItem("Direct USB needs a driver: how to install it…", null, (_, _) => ShowUsbDriverHelp());
         _installDriverItem = new ToolStripMenuItem("Install gamepad driver (ViGEmBus)…", null, (_, _) => OpenDriverDownload());
         _retryDriverItem = new ToolStripMenuItem("Retry driver", null, (_, _) => RetryDriver());
@@ -166,6 +167,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _networkItem,
             _firewallItem,
             _usbFirewallItem,
+            _usbTakeItem,
             _usbDriverItem,
             _installDriverItem,
             _retryDriverItem,
@@ -303,6 +305,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _usbDirectItem.Checked = _usb.Enabled;
         _usbDirectItem.ToolTipText = UsbDirectText();
         _usbDriverItem.Available = _usb.State == UsbDirectState.NeedsDriver;
+        _usbTakeItem.Available = _usb.State == UsbDirectState.AdbBusy;
         _uipiItem.Available = s.ElevatedForeground && !ElevationProbe.IsSelfElevated;
         _networkItem.Available = s.NetworkPublic;
         _firewallItem.Available = _firewallOk == false;
@@ -529,7 +532,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         {
             UsbDirectState.Off => "off",
             UsbDirectState.NoPhone => "on, no phone with USB debugging on the cable",
-            UsbDirectState.AdbBusy => "adb is holding the phone: replug the cable while adb is idle",
+            UsbDirectState.AdbBusy => "adb is holding the phone: choose \"stop adb and use the cable\" in the menu",
             UsbDirectState.Switching => $"switching the phone to accessory mode{detail}",
             UsbDirectState.WrongUsbMode => "set the phone's USB to No data transfer (tethering and file transfer block the switch), then replug",
             UsbDirectState.NeedsDriver => $"the phone is in accessory mode but needs the WinUSB driver{detail}",

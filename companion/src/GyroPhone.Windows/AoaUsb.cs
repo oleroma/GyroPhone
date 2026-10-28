@@ -56,6 +56,7 @@ public sealed class AoaUsbLink : IDisposable
     private volatile bool _stopping;
     private UsbBridge? _bridge;
     private string _lastLogged = "";
+    private volatile bool _stopAdb;
 
     public AoaUsbLink(int serverPort, bool enabled, Action<string> log)
     {
@@ -80,6 +81,16 @@ public sealed class AoaUsbLink : IDisposable
 
     /// <summary>More about State: the error, or the bridge's counters.</summary>
     public string Detail { get; private set; } = "";
+
+    /// <summary>
+    /// The user asked to take the phone from adb: stops the adb server (it starts again on its next
+    /// use, and finds the phone on the accessory's own adb interface) and switches the phone.
+    /// </summary>
+    public void TakeFromAdb()
+    {
+        _stopAdb = true;
+        _wake.Set();
+    }
 
     public void Start()
     {
@@ -107,6 +118,12 @@ public sealed class AoaUsbLink : IDisposable
 
     private void Scan()
     {
+        if (_stopAdb)
+        {
+            _stopAdb = false;
+            StopAdbServer();
+            _tried.Clear();
+        }
         if (!_enabled)
         {
             CloseBridge();
@@ -166,6 +183,25 @@ public sealed class AoaUsbLink : IDisposable
         else if (wrongMode) Set(UsbDirectState.WrongUsbMode, "");
         else if (busy) Set(UsbDirectState.AdbBusy, "");
         else Set(UsbDirectState.NoPhone, "");
+    }
+
+    private void StopAdbServer()
+    {
+        try
+        {
+            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("adb", "kill-server")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+            bool done = p?.WaitForExit(5000) ?? false;
+            _log($"usb: adb kill-server {(done ? $"exit {p!.ExitCode}" : "did not finish")}");
+            Thread.Sleep(500); // let Windows close adb's handle
+        }
+        catch (Win32Exception e)
+        {
+            _log($"usb: adb not found on PATH ({e.NativeErrorCode})");
+        }
     }
 
     private void OpenAccessory(UsbNode n)
