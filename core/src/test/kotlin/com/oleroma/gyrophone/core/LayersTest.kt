@@ -262,4 +262,43 @@ class LayersTest {
         assertEquals(emptyList<Any>(), p2.sets)
         assertEquals(listOf(touch("b", pad(GamepadButton.A))), p2.touch)
     }
+
+    @Test
+    fun aStickHeldThroughASetChangeFollowsTheNewSetAtOnce() {
+        val lx = OutputTarget.PadAxis(com.oleroma.gyrophone.core.model.GamepadAxis.LX)
+        val rx = OutputTarget.PadAxis(com.oleroma.gyrophone.core.model.GamepadAxis.RX)
+        val e = engine(
+            listOf(touch("s", layer(1))),
+            listOf(
+                Mapping(InputSource.Axis(com.oleroma.gyrophone.core.model.AndroidAxis.X), lx),
+                Mapping(InputSource.Axis(com.oleroma.gyrophone.core.model.AndroidAxis.X), rx, 1),
+            ),
+        )
+        e.setAxis(xbox, com.oleroma.gyrophone.core.model.AndroidAxis.X, 0.8f)
+        assertEquals(true, e.snapshot().gamepad.lx > 0)
+        e.tap("s")
+        val g = e.snapshot().gamepad
+        assertEquals(0, g.lx)
+        assertEquals(true, g.rx > 0) // the stick moves what set 1 maps it to, not nothing
+    }
+
+    @Test
+    fun overlappingHoldsLetGoInAnyOrderEndBackInBase() {
+        val e = engine(listOf(touch("p", layer(1, held = true)), touch("q", layer(2, held = true), set = 1)))
+        e.setTouch("p", true); assertEquals(1, e.layers.set)
+        e.setTouch("q", true); assertEquals(2, e.layers.set)
+        e.setTouch("p", false); assertEquals(2, e.layers.set) // q still holds set 2
+        e.setTouch("q", false)
+        assertEquals(0, e.layers.set) // not set 1: p, which brought it, was let go already
+    }
+
+    @Test
+    fun twoHoldsOfTheSameLayerStayUntilBothLetGo() {
+        val e = engine(listOf(touch("p", layer(1, held = true)), touch("q", layer(1, held = true), set = 1)))
+        e.setTouch("p", true); e.setTouch("q", true)
+        e.setTouch("p", false)
+        assertEquals(1, e.layers.set) // q still holds Layer 1
+        e.setTouch("q", false)
+        assertEquals(0, e.layers.set)
+    }
 }

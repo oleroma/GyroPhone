@@ -101,4 +101,10 @@ class StickZonesTest {
 
     private fun assertNear(expected: Int, actual: Int, tolerance: Int) =
         assertTrue("expected $expected ± $tolerance, was $actual", kotlin.math.abs(expected - actual) <= tolerance)
+
+    @Test
+    fun aDiagonalMappedOnlyInAnotherSetLeavesTheTwoHalvesInThisOne() {
+        val e = wasd(StickZones.EIGHT, extra = listOf(Mapping(InputSource.TouchStickDiagonal("move", StickDiagonal.UP_RIGHT), OutputTarget.Key(Q), set = 1)))
+        assertEquals(setOf(W, D), e.keysAt(diag, -diag)) // Base maps no diagonal: up-right is W + D
+    }
 }

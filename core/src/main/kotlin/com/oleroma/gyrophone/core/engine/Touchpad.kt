@@ -217,21 +217,22 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     private var longT0 = 0L
     private var longOn = false
 
-    // Input queue: sets of active inputs (three words of [SurfaceMap] bits) waiting to become
-    // visible, oldest first; [want0] / [want1] / [want2] are the inputs as they should be now.
-    private val q0 = LongArray(QUEUE_CAP)
-    private val q1 = LongArray(QUEUE_CAP)
-    private val q2 = LongArray(QUEUE_CAP)
-    private var qHead = 0
-    private var qSize = 0
+    // Inputs (three words of [SurfaceMap] bits): [want0] / [want1] / [want2] as they should be
+    // now, [vis0] / [vis1] / [vis2] as the last [poll] showed them. Each change of an input waits
+    // in [flips] (input bits, oldest first) until it may show: once that input and those that share
+    // a target with it ([SurfaceMap.peers]) have shown their last change for the minimum pulse
+    // ([shownSince]) and have no older change waiting. So a quick press is never lost and one
+    // output never merges two presses, while inputs that press other things change at once.
     private var want0 = 0L
     private var want1 = 0L
     private var want2 = 0L
     private var vis0 = 0L
     private var vis1 = 0L
     private var vis2 = 0L
-    private var visibleSince = Long.MIN_VALUE / 4
-    private var seen = true
+    private val flips = IntArray(FLIP_CAP)
+    private var flipCount = 0
+    private val shownSince = LongArray(SurfaceMap.BITS) { Long.MIN_VALUE / 4 }
+    private val blocked = LongArray(3)
 
     // Key queue: packed (modifiers shl 8 | usage) states, same rules as the button queue.
     private val kQueue = IntArray(KEY_QUEUE_CAP)
@@ -258,7 +259,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     val padFingers: Int get() = count
 
     /** Input changes wait to be shown by [poll]. */
-    val queued: Boolean get() = qSize > 0
+    val queued: Boolean get() = flipCount > 0
 
     /** Held directions are latched (kept after the fingers lifted). */
     val latched: Boolean get() = latchMask != 0
@@ -542,8 +543,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     fun cancel(now: Long) {
         advance(now)
         clearGesture()
-        want0 = 0L; want1 = 0L; want2 = 0L
-        enqueue()
+        for (b in 0 until SurfaceMap.BITS) if (shown(b)) set(b, false)
         if (kVisible != 0) enqueueKey(0)
     }
 
@@ -619,8 +619,8 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     fun reset() {
         clearGesture()
         want0 = 0L; want1 = 0L; want2 = 0L; vis0 = 0L; vis1 = 0L; vis2 = 0L
-        visibleSince = Long.MIN_VALUE / 4
-        seen = true
+        flipCount = 0
+        shownSince.fill(Long.MIN_VALUE / 4)
         kVisible = 0
         kVisibleSince = Long.MIN_VALUE / 4
         kSeen = true
@@ -636,14 +636,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
      */
     fun poll(now: Long): Int {
         advance(now)
-        if (qSize > 0 && seen && now - visibleSince >= minPulseNanos) {
-            vis0 = q0[qHead]; vis1 = q1[qHead]; vis2 = q2[qHead]
-            qHead = (qHead + 1) % QUEUE_CAP
-            qSize--
-            visibleSince = now
-            seen = false
-        }
-        seen = true
+        if (flipCount > 0) showDue(now)
 
         // Zoom wheel goes out only while Ctrl is visible, and a key change waits a pulse after the
         // last of it, so no zoom step reaches the PC as a plain scroll.
@@ -690,7 +683,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     /** Earliest time [poll] may change something without new input, or Long.MAX_VALUE. */
     fun nextDeadline(): Long {
         var d = Long.MAX_VALUE
-        if (qSize > 0) d = visibleSince + minPulseNanos
+        for (i in 0 until flipCount) d = min(d, dueAt(flips[i]))
         if (kSize > 0) d = min(d, max(kVisibleSince, lastZoomNs) + minPulseNanos)
         if (gliding) d = min(d, glideNs + GLIDE_STEP_NS)
         if (latchMask != 0) d = min(d, latchUntil)
@@ -1157,7 +1150,11 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
      */
     private fun set(n: Int, input: SurfaceInput, on: Boolean, zone: Int = 0) {
         if (on && !map.has(n, input, zone)) return
-        val b = SurfaceMap.bit(n, input, zone)
+        set(SurfaceMap.bit(n, input, zone), on)
+    }
+
+    /** Input bit [b] should be [on]: its change waits its turn to show. */
+    private fun set(b: Int, on: Boolean) {
         val m = 1L shl (b and 63)
         if (b < 64) {
             val w = if (on) want0 or m else want0 and m.inv()
@@ -1172,7 +1169,63 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
             if (w == want2) return
             want2 = w
         }
-        enqueue()
+        if (flipCount == FLIP_CAP) {
+            // Never expected: the oldest change shows now, early, rather than one being lost.
+            flipShown(flips[0], nowNs)
+            System.arraycopy(flips, 1, flips, 0, --flipCount)
+        }
+        flips[flipCount++] = b
+    }
+
+    private fun shown(b: Int): Boolean {
+        val w = when {
+            b < 64 -> vis0
+            b < 128 -> vis1
+            else -> vis2
+        }
+        return w and (1L shl (b and 63)) != 0L
+    }
+
+    private fun flipShown(b: Int, now: Long) {
+        val m = 1L shl (b and 63)
+        when {
+            b < 64 -> vis0 = vis0 xor m
+            b < 128 -> vis1 = vis1 xor m
+            else -> vis2 = vis2 xor m
+        }
+        shownSince[b] = now
+    }
+
+    /** When input [b]'s next change may show: its own and its peers' last change have shown the minimum pulse. */
+    private fun dueAt(b: Int): Long {
+        var t = shownSince[b]
+        val p = map.peers[b]
+        if (p != null) for (k in 0 until 3) {
+            var w = p[k]
+            while (w != 0L) {
+                val i = java.lang.Long.numberOfTrailingZeros(w); w = w and (w - 1)
+                t = max(t, shownSince[(k shl 6) + i])
+            }
+        }
+        return t + minPulseNanos
+    }
+
+    /** Shows every waiting change that is due, in order: one that waits holds back its input's and its peers' later ones. */
+    private fun showDue(now: Long) {
+        blocked[0] = 0L; blocked[1] = 0L; blocked[2] = 0L
+        var kept = 0
+        for (i in 0 until flipCount) {
+            val b = flips[i]
+            if (blocked[b shr 6] and (1L shl (b and 63)) == 0L && dueAt(b) <= now) {
+                flipShown(b, now)
+                continue
+            }
+            flips[kept++] = b
+            blocked[b shr 6] = blocked[b shr 6] or (1L shl (b and 63))
+            val p = map.peers[b]
+            if (p != null) for (k in 0 until 3) blocked[k] = blocked[k] or p[k]
+        }
+        flipCount = kept
     }
 
     /** A short press of [input], visible for at least the minimum pulse. */
@@ -1206,7 +1259,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         run.remX = 0f; run.remY = 0f; wheelRem = 0f; hwheelRem = 0f
         gliding = false
         zoomRem = 0f; zoomPending = 0
-        qSize = 0
+        flipCount = 0
         kSize = 0
         // What is shown stays until [cancel] / [reset] let it go.
         want0 = vis0; want1 = vis1; want2 = vis2
@@ -1268,21 +1321,6 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         }
         longN = if (n in 1..4) n else 0
         longT0 = now
-    }
-
-    /** Queues [want0] / [want1] / [want2] to become visible after what is queued, unless that already is. */
-    private fun enqueue() {
-        val i = (qHead + qSize - 1 + QUEUE_CAP) % QUEUE_CAP
-        val l0 = if (qSize > 0) q0[i] else vis0
-        val l1 = if (qSize > 0) q1[i] else vis1
-        val l2 = if (qSize > 0) q2[i] else vis2
-        if (want0 == l0 && want1 == l1 && want2 == l2) return
-        if (qSize == QUEUE_CAP) {
-            q0[i] = want0; q1[i] = want1; q2[i] = want2
-        } else {
-            val j = (qHead + qSize) % QUEUE_CAP
-            q0[j] = want0; q1[j] = want1; q2[j] = want2; qSize++
-        }
     }
 
     private fun enqueueKey(packed: Int) {
@@ -1496,7 +1534,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         const val DEFAULT_DOUBLE_TAP_NS = Workspace.DEFAULT_DOUBLE_TAP_MS * 1_000_000L
         const val DEFAULT_LONG_PRESS_NS = Workspace.DEFAULT_LONG_PRESS_MS * 1_000_000L
         const val MAX_FINGERS = 4
-        private const val QUEUE_CAP = 8
+
+        /** Input changes that may wait to show at once. */
+        private const val FLIP_CAP = 64
         private const val KEY_QUEUE_CAP = 16
         private const val KEY_TAB = 0x2B
 

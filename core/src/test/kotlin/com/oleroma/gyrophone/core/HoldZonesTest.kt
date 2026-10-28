@@ -218,4 +218,20 @@ class HoldZonesTest {
             listOf(it[Direction.RIGHT.ordinal], it[Direction.DOWN.ordinal], it[Direction.UP.ordinal], it[Direction.LEFT.ordinal])
         })
     }
+
+    @Test
+    fun aQuickSwipeReachesTheFarZoneAtOnceWithARealPulse() {
+        // The real minimum pulse (40 ms): one input's change waits for its own last change to have
+        // shown that long, not for every other input's.
+        val f = Finger(TouchpadSettings())
+        f.pad.minPulseNanos = 40 * ms
+        f.down()
+        repeat(14) { f.t += 2 * ms; f.y -= 5f; f.pad.move(1, f.x, f.y, f.t); f.poll() } // 70 dp up in 28 ms
+        f.t += 2 * ms
+        assertEquals(true, f.poll() and z3 != 0)
+        f.settle(60)
+        assertEquals(z3, f.now) // the zones passed on the way each showed and let go
+        assertEquals(1, f.presses(z1))
+        assertEquals(1, f.presses(z2))
+    }
 }

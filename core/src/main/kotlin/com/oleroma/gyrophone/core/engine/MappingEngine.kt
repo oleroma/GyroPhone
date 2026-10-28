@@ -126,6 +126,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private var mapsLeftTriggerAxis = BooleanArray(0)
     private var mapsRightTriggerAxis = BooleanArray(0)
 
+    /** Some mapping in use is a gyro ratchet ([gyroAxes] runs per gyro sample: no search without one). */
+    private var ratchetMapped = false
+
     /** Touch controls whose mappings are all keyboard modifiers, when sticky modifiers are on. */
     private var modifierIds: Set<String> = emptySet()
 
@@ -431,12 +434,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             tapStates[c.id] = st; tapList.add(st)
         }
         stickCfgs = w.touchControls.filter { it.kind == TouchKind.STICK }.associate { c ->
-            val mapped = BooleanArray(StickDiagonal.entries.size)
-            for (m in w.mappings) {
-                val src = m.source
-                if (src is InputSource.TouchStickDiagonal && src.id == c.id) mapped[src.diagonal.ordinal] = true
-            }
-            c.id to StickCfg(c.deadzone.coerceIn(0f, TouchControl.MAX_DEADZONE), c.zones, mapped)
+            c.id to StickCfg(c.deadzone.coerceIn(0f, TouchControl.MAX_DEADZONE), c.zones, BooleanArray(StickDiagonal.entries.size))
         }
         releaseHeld()
         for (d in deviceList) d.pad = resolvePad(d.device)
@@ -961,7 +959,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val g = ws.gyro
             if (g.mode == GyroMode.SENSOR_OFF) return@synchronized 0
             val ratchet = (g.touchpadRatchet && padTouchIds.isNotEmpty()) ||
-                    engaged(OutputTarget.GyroPause) || engaged(OutputTarget.GyroHold)
+                    (ratchetMapped && (engaged(OutputTarget.GyroPause) || engaged(OutputTarget.GyroHold)))
             // On without a ratchet: "ratchet disables" (ALWAYS) unless toggled, "ratchet enables" only toggled.
             val base = if (g.mode == GyroMode.ALWAYS) !gyroToggled else gyroToggled
             val flipped = base != ratchet
@@ -1414,9 +1412,19 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         carryHeld(t)
         if (t.override) {
             if (h.added) layerOverrides.remove(t.set)
-        } else if (layerSet == t.set) {
-            layerSet = h.set
-            layerOverrides.clear(); layerOverrides.addAll(h.overrides)
+        } else {
+            // Holds made in this one's set (a later hold, or one to the same set) go back to where this one came from.
+            var sameSetHeld = false
+            for (e in layerHolds.entries) {
+                val o = e.value
+                if (e.key.override || o.set != t.set) continue
+                e.setValue(LayerHold(h.set, h.overrides, o.added))
+                if (e.key.set == t.set) sameSetHeld = true
+            }
+            if (layerSet == t.set && !sameSetHeld) {
+                layerSet = h.set
+                layerOverrides.clear(); layerOverrides.addAll(h.overrides)
+            }
         }
         applyLayers()
     }
@@ -1442,7 +1450,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val holder = list.any { it.target == t }
                 val keep = holder || MappingProfiles.touchId(src) !in followLayerIds
                 val kept = list.filter { carries(it, keep) }
-                if (kept.isEmpty() && !keep) continue
+                // A stick or trigger axis (or touch motion) held past half keeps nothing: it follows the new set.
+                if (kept.isEmpty() && (!keep || continuous(src))) continue
                 val before = was[src]
                 val layersOnly = holder && t.whileHeld && (before == null || before.holdsLayers)
                 now[src] = Carried(kept, keep || before?.holdsBack == true, layersOnly)
@@ -1517,6 +1526,15 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             BooleanArray(padMappings.size) { mapsTriggerAxis(padMappings[it], AndroidAxis.LTRIGGER, AndroidAxis.BRAKE) }
         mapsRightTriggerAxis =
             BooleanArray(padMappings.size) { mapsTriggerAxis(padMappings[it], AndroidAxis.RTRIGGER, AndroidAxis.GAS) }
+        // A diagonal zone only where the set in use maps it; else that zone presses its two halves.
+        for (c in stickCfgs.values) c.diagonalMapped.fill(false)
+        for (m in touchMappings) {
+            val src = m.source
+            if (src is InputSource.TouchStickDiagonal) stickCfgs[src.id]?.diagonalMapped?.set(src.diagonal.ordinal, true)
+        }
+        ratchetMapped = (padMappings.asSequence() + sequenceOf(touchMappings)).any { ms ->
+            ms.any { it.target == OutputTarget.GyroPause || it.target == OutputTarget.GyroHold }
+        }
         touchpad.map = SurfaceMap(touchMappings)
         for ((id, s) in surfaces) s.map = SurfaceMap(touchMappings, id)
         for ((id, st) in tapStates) {
