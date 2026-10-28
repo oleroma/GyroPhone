@@ -107,6 +107,8 @@ import com.oleroma.gyrophone.core.model.placeY
 import com.oleroma.gyrophone.core.model.placement
 import com.oleroma.gyrophone.core.model.withPlacement
 import com.oleroma.gyrophone.core.model.withSets
+import com.oleroma.gyrophone.core.model.ownSurface
+import com.oleroma.gyrophone.core.model.surfaceSettings
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -1506,6 +1508,10 @@ fun PadScreen(
                         editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
                         onEditSet = { mapSet = it },
                         onSetsChange = { sets, removed -> editWorkspace { it.withSets(sets, removed) } },
+                        zoneSettings = ws.touchpad,
+                        onZoneSettings = { a, b ->
+                            editWorkspace { it.copy(touchpad = it.touchpad.copy(holdZones = a, dirHoldZones = b)) }
+                        },
                     )
                 } else {
                     TouchpadSettingsScreen(
@@ -1550,6 +1556,10 @@ fun PadScreen(
                         editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
                         onEditSet = { mapSet = it },
                         onSetsChange = { sets, removed -> editWorkspace { it.withSets(sets, removed) } },
+                        zoneSettings = if (sel.swipes) sel.surfaceSettings(ws.touchpad) else null,
+                        onZoneSettings = { a, b ->
+                            updateControl(sel.id) { it.copy(surface = it.ownSurface.copy(holdZones = a, dirHoldZones = b)) }
+                        },
                     )
                 } else {
                     // A long press: all of the control's settings.

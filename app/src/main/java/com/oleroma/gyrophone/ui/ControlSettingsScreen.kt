@@ -150,7 +150,12 @@ internal fun ControlSettingsScreen(
                             defaultOpen = true,
                             subtitle = "Swipe and held-direction pies, lengths and latch"
                         ) {
-                            SurfaceDirectionSettings(control.ownSurface, control.surfaceSettings(workspace.touchpad), control.id) { o ->
+                            SurfaceDirectionSettings(
+                                control.ownSurface,
+                                control.surfaceSettings(workspace.touchpad),
+                                control.id,
+                                Bindings.holdZoneCounts(workspace.mappings, control.id),
+                            ) { o ->
                                 onControlChange(control.copy(surface = o))
                             }
                         }
