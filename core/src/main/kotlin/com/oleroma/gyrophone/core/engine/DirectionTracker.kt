@@ -4,6 +4,7 @@ import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.HoldZone
 import com.oleroma.gyrophone.core.model.TouchpadSettings
+import com.oleroma.gyrophone.core.model.ZoneKeep
 import com.oleroma.gyrophone.core.model.directionsAt
 import com.oleroma.gyrophone.core.model.inPie
 import kotlin.math.sqrt
@@ -39,6 +40,9 @@ internal class DirectionTracker {
     /** Per direction: DIRECTION_CHANGE travel since it was held (dp). */
     private val travel = FloatArray(4)
 
+    /** Per direction: zones reached this motion that stay held until the lift ([ZoneKeep.UNTIL_LIFT]). */
+    private val untilLift = IntArray(4)
+
     /** The pies the recent travel points into (0 = none yet, or a gap between pies). */
     var current = 0
         private set
@@ -70,7 +74,7 @@ internal class DirectionTracker {
         for (i in 0 until 4) {
             val z = if (latched and (1 shl i) != 0) latchedZones?.get(i) ?: 1 else 0
             carryZones[i] = z; zoneMask[i] = z
-            at[i] = -1; travel[i] = 0f
+            at[i] = -1; travel[i] = 0f; untilLift[i] = 0
         }
     }
 
@@ -145,7 +149,11 @@ internal class DirectionTracker {
         pressed = mask
         if (mask != 0) carry = 0
         held = if (carry != 0) carry else mask
-        for (i in 0 until 4) zoneMask[i] = if (carry != 0) carryZones[i] else heldZones(Direction.entries[i], at[i], s)
+        for (d in Direction.entries) {
+            val i = d.ordinal
+            reach(d, at[i], s)
+            zoneMask[i] = (if (carry != 0) carryZones[i] else heldZones(d, at[i], s)) or untilLift[i]
+        }
     }
 
     /**
@@ -165,13 +173,14 @@ internal class DirectionTracker {
         for (d in Direction.entries) {
             val i = d.ordinal
             if (held and (1 shl i) == 0) {
-                at[i] = -1; zoneMask[i] = 0; continue
+                at[i] = -1; zoneMask[i] = untilLift[i]; continue
             }
             val z = zoneOf(travel[i], d, s)
             // A latched direction keeps its zones until this motion reaches one.
             if (z > at[i]) {
                 at[i] = z
-                zoneMask[i] = heldZones(d, z, s)
+                reach(d, z, s)
+                zoneMask[i] = heldZones(d, z, s) or untilLift[i]
             }
         }
     }
@@ -195,9 +204,17 @@ internal class DirectionTracker {
         for (i in 0..z) {
             val zone = zone(d, i, s)
             if (zone.onRelease) continue
-            if (i == z || zone.keepPressed) m = m or (1 shl i)
+            if (i == z || zone.keep != ZoneKeep.OFF) m = m or (1 shl i)
         }
         return m
+    }
+
+    /** The finger got to zone [z] of [d]: it and the zones before it that stay until the lift are held from now on. */
+    private fun reach(d: Direction, z: Int, s: TouchpadSettings) {
+        for (i in 0..z) {
+            val zone = zone(d, i, s)
+            if (!zone.onRelease && zone.keep == ZoneKeep.UNTIL_LIFT) untilLift[d.ordinal] = untilLift[d.ordinal] or (1 shl i)
+        }
     }
 
     /** Zone [i] of [d]; with one zone only it is a plain held direction, whatever its settings say. */

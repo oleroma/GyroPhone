@@ -30,6 +30,7 @@ import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.HoldZone
 import com.oleroma.gyrophone.core.model.SurfaceSettings
 import com.oleroma.gyrophone.core.model.TouchpadSettings
+import com.oleroma.gyrophone.core.model.ZoneKeep
 import com.oleroma.gyrophone.core.model.directionsAt
 import kotlin.math.roundToInt
 
@@ -129,9 +130,9 @@ internal fun DirectionSettings(
 
 /**
  * The length zones of held directions ([TouchpadSettings.holdZone]) for the [zones] each
- * direction has mapped: only directions with two or more show. [only]: just that direction's
- * (the mapping editor's zone dividers). [onChange] gets the shared zones and the per-direction
- * ones (null = the same for every direction).
+ * direction has mapped: only directions with two or more show. [only]: just that direction's,
+ * every zone it can have, mapped or not (the mapping editor's zone dividers). [onChange] gets the
+ * shared zones and the per-direction ones (null = the same for every direction).
  */
 @Composable
 internal fun HoldZoneSettings(
@@ -142,7 +143,9 @@ internal fun HoldZoneSettings(
     onChange: (List<HoldZone>, List<List<HoldZone>>?) -> Unit,
 ) {
     val current by rememberUpdatedState(s)
-    val shown = Direction.entries.filter { (only == null || it == only) && zones[it.ordinal] > 1 }
+    val shown = if (only != null) listOf(only) else Direction.entries.filter { zones[it.ordinal] > 1 }
+    // The dividers' panel shows every zone; elsewhere only the mapped ones.
+    fun count(d: Direction) = if (only != null) TouchpadSettings.MAX_HOLD_ZONES else zones[d.ordinal]
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Length zones", style = MaterialTheme.typography.labelLarge)
         if (shown.isEmpty()) {
@@ -152,6 +155,9 @@ internal fun HoldZoneSettings(
         if (s.dragStart && s.holdMode == HoldMode.FROM_START) {
             DirNote("Drag start point is on, so only the first zone works. Turn it off to use the zones.")
             return@Column
+        }
+        if (only != null && zones[only.ordinal] < 2) {
+            DirNote("These settings work once a second zone has mappings: drag one past the ┃ divider.")
         }
         val same = s.dirHoldZones == null
         DirSwitch("Same zones for every direction", "Off: each direction has its own zone lengths and modes.", same) { on ->
@@ -167,10 +173,10 @@ internal fun HoldZoneSettings(
         )
         if (same) {
             val d = shown.first()
-            ZoneList(current, d, shown.maxOf { zones[it.ordinal] }, key + "zones") { list -> onChange(list, null) }
+            ZoneList(current, d, shown.maxOf { count(it) }, shown.maxOf { zones[it.ordinal] }, key + "zones") { list -> onChange(list, null) }
         } else for (d in shown) {
             Text(d.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-            ZoneList(current, d, zones[d.ordinal], key + "zones" + d.name) { list ->
+            ZoneList(current, d, count(d), zones[d.ordinal], key + "zones" + d.name) { list ->
                 val t = current
                 val all = (t.dirHoldZones ?: List(4) { t.holdZones }).toMutableList()
                 all[d.ordinal] = list
@@ -180,9 +186,12 @@ internal fun HoldZoneSettings(
     }
 }
 
-/** The [n] zones of [d]: where each starts, on reach or on release, keep pressed and length. */
+/**
+ * The [n] zones of [d] ([mapped] of them have mappings): where each starts, on reach or on
+ * release, how long it stays held, and its length.
+ */
 @Composable
-private fun ZoneList(s: TouchpadSettings, d: Direction, n: Int, key: String, onChange: (List<HoldZone>) -> Unit) {
+private fun ZoneList(s: TouchpadSettings, d: Direction, n: Int, mapped: Int, key: String, onChange: (List<HoldZone>) -> Unit) {
     val list = s.dirHoldZones?.getOrNull(d.ordinal) ?: s.holdZones
     fun set(i: Int, z: HoldZone) =
         onChange(List(maxOf(list.size, i + 1)) { j -> if (j == i) z else list.getOrNull(j) ?: HoldZone() })
@@ -191,18 +200,31 @@ private fun ZoneList(s: TouchpadSettings, d: Direction, n: Int, key: String, onC
         val z = s.holdZone(d, i)
         val last = i == n - 1
         Text(
-            "Zone ${i + 1} · from %.0f dp".format(start) + if (last) " on" else "",
+            "Zone ${i + 1} · from %.0f dp".format(start) + (if (last) " on" else "") +
+                    if (i >= mapped) " · no mappings yet" else "",
             style = MaterialTheme.typography.bodyMedium,
+            color = if (i >= mapped) MaterialTheme.colorScheme.onSurfaceVariant else Color.Unspecified,
             modifier = Modifier.padding(top = 6.dp),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SelectChip("On reach", !z.onRelease) { set(i, z.copy(onRelease = false)) }
-            SelectChip("On release", z.onRelease) { set(i, z.copy(onRelease = true, keepPressed = false)) }
+            SelectChip("On release", z.onRelease) { set(i, z.copy(onRelease = true, keep = ZoneKeep.OFF)) }
         }
         DirNote(if (z.onRelease) "Fires once when the finger lifts in this zone." else "Held while the finger is in this zone.")
-        if (!last && !z.onRelease) {
-            DirSwitch("Keep pressed", "Stays held while the finger goes on into the next zones.", z.keepPressed) { v ->
-                set(i, z.copy(keepPressed = v))
+        if (!z.onRelease) {
+            Text("Keep pressed", style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (k in ZoneKeep.entries) {
+                    // Going on needs a zone after it.
+                    if (k == ZoneKeep.GOING_ON && last && z.keep != k) continue
+                    SelectChip(k.label, z.keep == k) { set(i, z.copy(keep = k)) }
+                }
+            }
+            if (z.keep != ZoneKeep.OFF) {
+                DirNote(
+                    if (z.keep == ZoneKeep.GOING_ON) "Also held while the finger goes on into the next zones; sliding back below it lets go."
+                    else "Once reached, held wherever the finger goes until it lifts."
+                )
             }
         }
         if (!last) {

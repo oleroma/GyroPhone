@@ -12,6 +12,7 @@ import com.oleroma.gyrophone.core.model.MouseButton
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchpadSettings
+import com.oleroma.gyrophone.core.model.ZoneKeep
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -85,7 +86,7 @@ class HoldZonesTest {
 
     @Test
     fun keepPressedHoldsOnlyGoingForward() {
-        val s = TouchpadSettings(holdZones = listOf(HoldZone(keepPressed = true), HoldZone(keepPressed = true)))
+        val s = TouchpadSettings(holdZones = listOf(HoldZone(keep = ZoneKeep.GOING_ON), HoldZone(keep = ZoneKeep.GOING_ON)))
         val f = Finger(s)
         f.down()
         f.go(0f, -30f); assertEquals(z1, f.now)
@@ -93,6 +94,30 @@ class HoldZonesTest {
         f.go(0f, -20f); assertEquals(all, f.now)
         f.go(0f, 20f); assertEquals(z1 or z2, f.now)
         f.go(0f, 20f); assertEquals(z1, f.now)
+        f.up(); assertEquals(0, f.now)
+    }
+
+    @Test
+    fun untilLiftStaysHeldWhereverTheFingerGoes() {
+        val s = TouchpadSettings(holdZones = listOf(HoldZone(), HoldZone(keep = ZoneKeep.UNTIL_LIFT)))
+        val f = Finger(s)
+        f.down()
+        f.go(0f, -50f); assertEquals(z2, f.now)
+        f.go(0f, -20f); assertEquals(z2 or z3, f.now)
+        f.go(0f, 40f); assertEquals(z1 or z2, f.now) // back in zone 1: zone 2 stays
+        f.go(0f, 40f); assertEquals(z2, f.now) // back at the start
+        f.go(-40f, 0f); assertEquals(z2, f.now)
+        f.up(); assertEquals(0, f.now)
+    }
+
+    @Test
+    fun untilLiftStaysThroughADirectionChange() {
+        val s = TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE, holdZones = listOf(HoldZone(), HoldZone(keep = ZoneKeep.UNTIL_LIFT)))
+        val f = Finger(s)
+        f.down()
+        f.go(0f, -50f); assertEquals(z2, f.now)
+        f.go(0f, 40f) // down takes over
+        assertEquals(z2, f.now)
         f.up(); assertEquals(0, f.now)
     }
 
@@ -153,7 +178,7 @@ class HoldZonesTest {
 
     @Test
     fun latchKeepsTheHeldZonesUntilATap() {
-        val s = TouchpadSettings(latch = true, holdZones = listOf(HoldZone(keepPressed = true)))
+        val s = TouchpadSettings(latch = true, holdZones = listOf(HoldZone(keep = ZoneKeep.GOING_ON)))
         val f = Finger(s)
         f.down(); f.go(0f, -50f); f.up()
         assertEquals(z1 or z2, f.now)

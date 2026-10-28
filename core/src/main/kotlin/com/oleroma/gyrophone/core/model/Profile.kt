@@ -563,15 +563,23 @@ data class TouchpadSettings(
  * One length zone of a held direction ([TouchpadSettings.holdZone]). [lengthDp]: how far it goes
  * before the next zone starts (null = the first zone's length, or for the first the hold
  * distance). On reach (default): its mappings are held while the finger is in it; [onRelease]:
- * they fire once as the finger lifts in it instead. [keepPressed] (on reach only): they stay held
- * while the finger goes on into the zones after it.
+ * they fire once as the finger lifts in it instead. [keep] (on reach only): whether they stay held
+ * once the finger leaves it ([ZoneKeep]).
  */
 @Serializable
 data class HoldZone(
     val lengthDp: Float? = null,
     val onRelease: Boolean = false,
-    val keepPressed: Boolean = false,
+    val keep: ZoneKeep = ZoneKeep.OFF,
 )
+
+/**
+ * How long a reached zone stays held ([HoldZone.keep]). OFF: while the finger is in it. GOING_ON:
+ * also while it is in the zones after it (sliding back below it lets go). UNTIL_LIFT: from the
+ * moment it is reached until the fingers lift, wherever they go.
+ */
+@Serializable
+enum class ZoneKeep(val label: String) { OFF("Off"), GOING_ON("Going on"), UNTIL_LIFT("Until lift") }
 
 /** A swipe direction, clockwise from up; [deg] is its centre, clockwise from straight up. */
 @Serializable
