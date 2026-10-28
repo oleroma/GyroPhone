@@ -105,7 +105,6 @@ internal sealed class MainForm : Form
             IntegralHeight = false,
             Margin = new Padding(3, 6, 3, 3),
         };
-        _phones.SelectedIndexChanged += (_, _) => _forget.Enabled = _phones.SelectedIndex >= 0 && _phoneList.Count > 0;
         phones.Controls.Add(_phones);
         var phoneButtons = Row();
         _forget = NewButton("Forget…", () =>
@@ -114,6 +113,7 @@ internal sealed class MainForm : Form
             if (i >= 0 && i < _phoneList.Count) _app.Forget(_phoneList[i]);
         });
         _forget.Enabled = false;
+        _phones.SelectedIndexChanged += (_, _) => _forget.Enabled = _phones.SelectedIndex >= 0 && _phoneList.Count > 0;
         phoneButtons.Controls.Add(_forget);
         phoneButtons.Controls.Add(NewButton("Open keys folder", () => _app.OpenKeysFolder()));
         phones.Controls.Add(phoneButtons);
