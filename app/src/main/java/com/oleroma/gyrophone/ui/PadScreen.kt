@@ -1624,10 +1624,8 @@ fun PadScreen(
                             inPortrait = portrait,
                             onProfileChange = { draft = it },
                             onSize = { resize(sel.id, it) },
-                            onClose = {
-                                selected = null
-                                menu = EditMenu.NONE
-                            },
+                            // The control stays selected (ready to pinch); a tap on empty space clears it.
+                            onClose = { menu = EditMenu.NONE },
                             modifier = Modifier.heightIn(max = maxHeight - 16.dp),
                         )
                     }
@@ -1639,10 +1637,8 @@ fun PadScreen(
                         runtime = runtime,
                         onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
                         onSettings = { menu = EditMenu.CONTEXT },
-                        onClose = {
-                            selected = null
-                            menu = EditMenu.NONE
-                        },
+                        // The control stays selected (ready to pinch); a tap on empty space clears it.
+                        onClose = { menu = EditMenu.NONE },
                         sets = ws.sets,
                         editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
                         onEditSet = { mapSet = it },
@@ -1692,10 +1688,8 @@ fun PadScreen(
                             selected = null
                             menu = EditMenu.NONE
                         },
-                        onClose = {
-                            selected = null
-                            menu = EditMenu.NONE
-                        },
+                        // The control stays selected (ready to pinch); a tap on empty space clears it.
+                        onClose = { menu = EditMenu.NONE },
                     )
                 }
             }
