@@ -112,7 +112,7 @@ internal fun TouchpadSettingsScreen(
                         TouchpadMappingsSummary(workspace, onEditMappings) {
                             onWorkspaceChange { w ->
                                 w.copy(
-                                    mappings = w.mappings.filterNot { it.source.isTouchpad } + Bindings.defaultTouchpadMappings(
+                                    mappings = w.mappings.filterNot { it.source.isTouchpad && it.set == 0 } + Bindings.defaultTouchpadMappings(
                                         TouchpadSettings()
                                     ),
                                     touchpad = w.touchpad.copy(mapped = true),

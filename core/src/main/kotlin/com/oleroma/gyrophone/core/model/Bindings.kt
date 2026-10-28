@@ -38,20 +38,22 @@ object Bindings {
      * Edits set [set] of [mappings] with the Base-only helpers: [edit] sees that set's mappings as
      * Base (and Base's as set [set]), and gets them back in their own sets, new ones in [set].
      */
-    fun inSet(mappings: List<Mapping>, set: Int, edit: (List<Mapping>) -> List<Mapping>): List<Mapping> {
-        if (set == MappingSet.BASE) return edit(mappings)
-        fun swap(ms: List<Mapping>) = ms.map {
+    fun inSet(mappings: List<Mapping>, set: Int, edit: (List<Mapping>) -> List<Mapping>): List<Mapping> =
+        viewSet(edit(viewSet(mappings, set)), set)
+
+    /** [mappings] with sets [set] and Base swapped: applied twice, the list as it was. */
+    fun viewSet(mappings: List<Mapping>, set: Int): List<Mapping> =
+        if (set == MappingSet.BASE) mappings else mappings.map {
             when (it.set) {
                 set -> it.copy(set = MappingSet.BASE)
                 MappingSet.BASE -> it.copy(set = set)
                 else -> it
             }
         }
-        return swap(edit(swap(mappings)))
-    }
 
-    /** [mappings] without set [set]'s; sets above it keep their numbers. */
-    fun dropSet(mappings: List<Mapping>, set: Int): List<Mapping> = mappings.filterNot { it.set == set }
+    /** [mappings] without set [set]'s, and without the layer actions that use it. */
+    fun dropSet(mappings: List<Mapping>, set: Int): List<Mapping> =
+        mappings.filterNot { it.set == set || (it.target as? OutputTarget.Layer)?.set == set }
 
     /** Distinct targets mapped from any of input.sources, in list order. */
     fun targets(mappings: List<Mapping>, input: BindableInput): List<OutputTarget> =

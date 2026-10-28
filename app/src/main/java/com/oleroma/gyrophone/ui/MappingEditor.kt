@@ -6,6 +6,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -51,6 +55,7 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.MappingProfiles
+import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.PadPresets
 import com.oleroma.gyrophone.core.model.PhysicalKind
@@ -153,14 +158,17 @@ internal fun MappingProfileEditor(
     var controller by remember(profileId) { mutableStateOf(start.controller) }
     val startTouchpad = remember(profileId) { start.touchpad ?: Bindings.defaultTouchpadMappings(ws.touchpad) }
     var touchpad by remember(profileId) { mutableStateOf(startTouchpad) }
-    fun get(c: Category): List<Mapping> = when (c) {
+    var sets by remember(profileId) { mutableStateOf(start.sets) }
+    // The mapping set being edited (0 = Base): the editor sees it as Base (Bindings.viewSet).
+    var editSet by remember(profileId) { mutableStateOf(MappingSet.BASE) }
+    fun raw(c: Category): List<Mapping> = when (c) {
         Category.TOUCH -> touch
         Category.TOUCHPAD -> touchpad
         Category.KEYBOARD -> keyboard
         Category.CONTROLLER -> controller
     }
 
-    fun put(c: Category, m: List<Mapping>) {
+    fun rawPut(c: Category, m: List<Mapping>) {
         when (c) {
             Category.TOUCH -> touch = m
             Category.TOUCHPAD -> touchpad = m
@@ -169,13 +177,26 @@ internal fun MappingProfileEditor(
         }
     }
 
+    fun get(c: Category): List<Mapping> = Bindings.viewSet(raw(c), editSet)
+    fun put(c: Category, m: List<Mapping>) = rawPut(c, Bindings.viewSet(m, editSet))
+
+    /** Category [c]'s mappings with the edited set's replaced by [base] (Base-set mappings). */
+    fun replaceSet(c: Category, base: List<Mapping>) = put(c, get(c).filter { it.set != MappingSet.BASE } + base)
+
+    fun addSet(): MappingSet {
+        val id = (1..MappingSet.MAX).first { n -> sets.none { it.id == n } }
+        return MappingSet(id).also { sets = (sets + it).sortedBy { s -> s.id } }
+    }
+
     val dirty = name != start.name || touch.toSet() != start.touch.toSet() ||
             keyboard.toSet() != start.keyboard.toSet() || controller.toSet() != start.controller.toSet() ||
-            touchpad.toSet() != startTouchpad.toSet()
+            touchpad.toSet() != startTouchpad.toSet() || sets != start.sets
 
     var confirmDiscard by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
+    var renamingSet by remember { mutableStateOf<MappingSet?>(null) }
+    var deletingSet by remember { mutableStateOf<MappingSet?>(null) }
     var savingPreset by remember { mutableStateOf(false) }
     var capturingKey by remember { mutableStateOf(false) }
     // (category, input, target being replaced or null to add)
@@ -320,13 +341,14 @@ internal fun MappingProfileEditor(
                     touch = touch,
                     keyboard = keyboard,
                     controller = controller,
-                    touchpad = touchpad
+                    touchpad = touchpad,
+                    sets = sets,
                 ),
             )
         } else {
             runtime.newMappingProfile(
                 trimmed,
-                MappingProfile("", trimmed, touch, keyboard, controller, touchpad),
+                MappingProfile("", trimmed, touch, keyboard, controller, touchpad, sets),
                 wsIndex
             )
         }
@@ -362,6 +384,38 @@ internal fun MappingProfileEditor(
                     color = MaterialTheme.colorScheme.error
                 )
             }
+        }
+
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Set", style = MaterialTheme.typography.labelLarge)
+            FilterChip(
+                selected = editSet == MappingSet.BASE,
+                onClick = { editSet = MappingSet.BASE },
+                label = { Text("Base") },
+            )
+            for (st in sets) {
+                FilterChip(
+                    selected = editSet == st.id,
+                    onClick = { editSet = st.id },
+                    label = { Text(st.label, maxLines = 1) },
+                    leadingIcon = { SetDot(st.id) },
+                )
+            }
+            if (sets.size < MappingSet.MAX) TextButton(onClick = { editSet = addSet().id }) { Text("+ Set") }
+            sets.firstOrNull { it.id == editSet }?.let { st ->
+                TextButton(onClick = { renamingSet = st }) { Text("Rename") }
+                TextButton(onClick = { deletingSet = st }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            }
+        }
+        if (editSet != MappingSet.BASE) {
+            Hint(
+                "Editing \"${sets.firstOrNull { it.id == editSet }?.label}\". Inputs it doesn't map show Base's mapping greyed: " +
+                        "as a mapping set they do nothing, as an override they keep the set below. Use Layers in the picker to switch sets.",
+            )
         }
 
         LazyColumn(Modifier.fillMaxWidth().weight(1f), state = listState) {
@@ -417,7 +471,9 @@ internal fun MappingProfileEditor(
 
                     is EditorRow.Note -> Hint(row.text)
                     is EditorRow.TouchpadReset -> {
-                        TextButton(onClick = { touchpad = Bindings.defaultTouchpadMappings(TouchpadSettings()) }) {
+                        TextButton(onClick = {
+                            replaceSet(Category.TOUCHPAD, Bindings.defaultTouchpadMappings(TouchpadSettings()))
+                        }) {
                             Text("Reset touchpad to standard")
                         }
                         HorizontalDivider()
@@ -458,11 +514,11 @@ internal fun MappingProfileEditor(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            val now = controller.toSet()
+                            val now = get(Category.CONTROLLER).filter { it.set == MappingSet.BASE }.toSet()
                             for (preset in PadPresets.all(pad.family, userPresets)) {
                                 FilterChip(
                                     selected = preset.mappings.toSet() == now,
-                                    onClick = { controller = preset.mappings },
+                                    onClick = { replaceSet(Category.CONTROLLER, preset.mappings) },
                                     label = { Text(preset.name, maxLines = 1) },
                                 )
                             }
@@ -492,8 +548,9 @@ internal fun MappingProfileEditor(
                             val input = row.input
                             val targets = Bindings.targets(ms, input)
                             if (targets.isEmpty()) {
+                                val base = if (editSet == MappingSet.BASE) emptyList() else Bindings.targets(raw(row.category), input)
                                 Text(
-                                    "Unmapped",
+                                    if (base.isEmpty()) "Unmapped" else "Base: " + base.joinToString(" + ") { Describe.shortTarget(it) },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.outline
                                 )
@@ -547,6 +604,9 @@ internal fun MappingProfileEditor(
             extra = input.extra,
             runtime = runtime,
             current = Bindings.targets(get(category), input),
+            sets = sets,
+            onAddSet = { addSet() },
+            editing = replacing as? OutputTarget.Layer,
             onPick = { picked ->
                 val ms = get(category)
                 val current = Bindings.targets(ms, input)
@@ -576,7 +636,7 @@ internal fun MappingProfileEditor(
             confirmButton = {
                 TextButton(enabled = presetName.isNotBlank(), onClick = {
                     savingPreset = false
-                    runtime.savePadPreset(presetName, controller)
+                    runtime.savePadPreset(presetName, get(Category.CONTROLLER).filter { it.set == MappingSet.BASE })
                 }) { Text("Save") }
             },
             dismissButton = { TextButton(onClick = { savingPreset = false }) { Text("Cancel") } },
@@ -591,10 +651,50 @@ internal fun MappingProfileEditor(
             confirmButton = {
                 TextButton(onClick = {
                     confirmReset = false
-                    controller = ControllerDiagrams.resetAll(controller, diagram, pad.family)
+                    put(Category.CONTROLLER, ControllerDiagrams.resetAll(get(Category.CONTROLLER), diagram, pad.family))
                 }) { Text("Reset") }
             },
             dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Cancel") } },
+        )
+    }
+
+    renamingSet?.let { st ->
+        var setName by remember(st.id) { mutableStateOf(st.name) }
+        AlertDialog(
+            onDismissRequest = { renamingSet = null },
+            title = { Text("Rename set ${st.id}") },
+            text = {
+                OutlinedTextField(
+                    value = setName,
+                    onValueChange = { setName = it },
+                    singleLine = true,
+                    label = { Text("Name") },
+                    placeholder = { Text("Set ${st.id}") })
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    renamingSet = null
+                    sets = sets.map { if (it.id == st.id) it.copy(name = setName.trim()) else it }
+                }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { renamingSet = null }) { Text("Cancel") } },
+        )
+    }
+
+    deletingSet?.let { st ->
+        AlertDialog(
+            onDismissRequest = { deletingSet = null },
+            title = { Text("Delete \"${st.label}\"?") },
+            text = { Text("Its mappings go too, and so do the layer actions that switch to it. Nothing is saved until Save.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    deletingSet = null
+                    for (c in Category.entries) rawPut(c, Bindings.dropSet(raw(c), st.id))
+                    sets = sets.filterNot { it.id == st.id }
+                    editSet = MappingSet.BASE
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { deletingSet = null }) { Text("Cancel") } },
         )
     }
 
@@ -644,6 +744,19 @@ internal fun MappingProfileEditor(
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
         )
     }
+}
+
+/** A mapping set's colour (sets have no colour of their own: picked from a palette by id). */
+internal fun setColor(id: Int): Color = SET_COLORS[(id - 1).mod(SET_COLORS.size)]
+
+private val SET_COLORS = listOf(
+    Color(0xFF42A5F5), Color(0xFFFFA726), Color(0xFF66BB6A), Color(0xFFAB47BC), Color(0xFFEF5350),
+    Color(0xFF26C6DA), Color(0xFFD4E157), Color(0xFFEC407A), Color(0xFF8D6E63),
+)
+
+@Composable
+private fun SetDot(id: Int) {
+    Box(Modifier.size(10.dp).background(setColor(id), CircleShape))
 }
 
 /** One row of the table: [label] (and [sub]) in the left column, [mapping] scrolling in the right. */

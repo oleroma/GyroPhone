@@ -1377,6 +1377,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     val layers: Layers get() = synchronized(lock) { Layers(layerSet, layerOverrides.toList()) }
 
     private fun layerPressed(t: OutputTarget.Layer) {
+        if (t.set !in MappingSet.BASE..MappingSet.MAX) return
         carryHeld(t)
         when {
             t.override && t.whileHeld -> {
