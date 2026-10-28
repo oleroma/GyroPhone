@@ -34,7 +34,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -348,7 +347,9 @@ internal fun LayerTargetDialog(
     onOk: (OutputTarget) -> Unit,
     onCancel: () -> Unit,
 ) {
-    var t by remember { mutableStateOf(if (start.set < 0) start.copy(set = sets.firstOrNull()?.id ?: MappingSet.BASE) else start) }
+    var t by remember {
+        mutableStateOf((if (start.set < 0) start.copy(set = sets.firstOrNull()?.id ?: MappingSet.BASE) else start).copy(switchHeld = false))
+    }
     var known by remember { mutableStateOf(sets) }
     AlertDialog(
         onDismissRequest = onCancel,
@@ -385,18 +386,11 @@ internal fun LayerTargetDialog(
                         }) { Text("+ New set") }
                     }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f).padding(end = 8.dp)) {
-                        Text("Switch held buttons", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            if (t.switchHeld) "Buttons held at the change let go and take the new set's mapping at once."
-                            else "Buttons held at the change keep pressing what they pressed until released.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(checked = t.switchHeld, onCheckedChange = { t = t.copy(switchHeld = it) })
-                }
+                Text(
+                    "Buttons held at the change keep pressing what they pressed until released, unless their \"Follows layers while held\" is on.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         },
         confirmButton = { TextButton(onClick = { onOk(t) }) { Text("OK") } },

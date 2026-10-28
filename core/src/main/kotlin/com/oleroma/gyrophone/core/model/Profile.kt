@@ -99,6 +99,11 @@ data class TouchControl(
     /** With [zoneInterrupt]: the stopped job resumes when the finger leaves (off: stopped until it lifts). */
     val zoneResume: Boolean = false,
     /**
+     * Held while the mapping set changes ([OutputTarget.Layer]), the control lets go of what it
+     * pressed and takes the new set's mapping at once; off: it keeps pressing it until released.
+     */
+    val followLayers: Boolean = false,
+    /**
      * Swipe mode: the touch surface settings this button changes from the workspace touchpad's;
      * null (a button from before) = its old swipe sensitivities, no acceleration, no inertia.
      */

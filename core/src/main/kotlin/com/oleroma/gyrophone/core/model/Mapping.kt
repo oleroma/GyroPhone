@@ -281,9 +281,9 @@ sealed interface OutputTarget {
      * input does what set [set] maps, and nothing if it maps nothing; it clears the overrides.
      * [override]: set [set] is laid over the current set — inputs it maps do that, every other
      * input keeps the current set's; pressed again (or any mapping set) it goes. [whileHeld]: only
-     * while the source is held; on release things go back. [switchHeld]: inputs held at the change
-     * let go of their old outputs and take the new set's at once; else (keep) they keep pressing
-     * what they pressed until released. The source that holds the action always keeps it; with
+     * while the source is held; on release things go back. Inputs held at the change keep pressing
+     * what they pressed until released, unless they follow layers ([TouchControl.followLayers]);
+     * [switchHeld] is no longer used (it was this per action). The source that holds the action always keeps it; with
      * [whileHeld] it also presses what the new set maps it to (not that set's layer actions).
      */
     @Serializable

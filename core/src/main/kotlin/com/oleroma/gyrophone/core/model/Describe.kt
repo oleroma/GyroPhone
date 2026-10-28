@@ -55,7 +55,7 @@ object Describe {
         } + feel(t.feel)
 
         is OutputTarget.HapticStep -> "Haptic per ${t.percent} % step" + feel(t.feel)
-        is OutputTarget.Layer -> layer(t) + if (t.set < 0) "" else " → " + setName(t.set) + if (t.switchHeld) ", switch held" else ""
+        is OutputTarget.Layer -> layer(t) + if (t.set < 0) "" else " → " + setName(t.set)
         OutputTarget.NoOutput -> "Nothing (blocks the set below)"
     }
 

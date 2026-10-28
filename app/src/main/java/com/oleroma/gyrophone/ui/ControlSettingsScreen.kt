@@ -160,6 +160,16 @@ internal fun ControlSettingsScreen(
                             }
                         }
                     }
+                    if (workspace.sets.isNotEmpty()) {
+                        RememberedSection(runtime, "control.Layers", "Layers", section) {
+                            SwitchSetting(
+                                "Follows layers while held",
+                                "When the mapping set changes while this is held, it lets go of what it pressed and does the new set's mapping at once. " +
+                                        "Off: it keeps pressing it until released.",
+                                control.followLayers,
+                            ) { onControlChange(control.copy(followLayers = it)) }
+                        }
+                    }
                     RememberedSection(runtime, "control.Zone", "Area", section) {
                         AreaSettings(control, workspace, onControlChange, onEditMappings)
                     }

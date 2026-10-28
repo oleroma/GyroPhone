@@ -33,6 +33,7 @@ import com.oleroma.gyrophone.core.model.withTouchpadMappings
 import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.Bindings
+import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.surfaceSettings
 import java.util.BitSet
 import kotlin.math.PI
@@ -253,6 +254,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Click-through touch buttons of the workspace: pressed and driving the touchpad at once. */
     private var clickThroughIds: Set<String> = emptySet()
 
+    /** Touch controls that take the new set's mappings at once when it changes while they are held. */
+    private var followLayerIds: Set<String> = emptySet()
+
     /**
      * Gestures (tap, double tap, long press, release) of the touch buttons that map one, by id,
      * and every gesture state in play: those and the keys' ([Dev.gestures]).
@@ -393,6 +397,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         modifierIds = if (w.stickyModifiers) modifierControls(layered(w.mappings, MappingSet.BASE, emptyList())) else emptySet()
         clickThroughIds =
             w.touchControls.filter { it.kind == TouchKind.BUTTON && it.clickThrough }.mapTo(HashSet()) { it.id }
+        followLayerIds = w.touchControls.filter { it.followLayers }.mapTo(HashSet()) { it.id }
         val swipers = w.touchControls.filter { it.swipes }
         surfaces = swipers.associate { c ->
             c.id to Touchpad(c.surfaceSettings(w.touchpad), SurfaceMap(w.mappings, c.id)).also {
@@ -1418,8 +1423,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /**
      * Before a set change by [t]: every held input remembers what it presses now. Its layer actions
-     * always stay until it is released; its buttons, keys and clicks too unless [t] switches held
-     * inputs, and then the new set's mappings for it wait for its release. The inputs holding [t]
+     * always stay until it is released; its buttons, keys and clicks too, and the new set's mappings
+     * for it wait for its release, unless it is a touch control that follows layers. The inputs holding [t]
      * itself always keep everything; holding a "... hold" action they also press what the new set
      * maps them to at once (all but its layer actions, which wait, so nothing flips back and forth).
      */
@@ -1435,7 +1440,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val now = HashMap<InputSource, Carried>()
             for ((src, list) in bySource) {
                 val holder = list.any { it.target == t }
-                val keep = !t.switchHeld || holder
+                val keep = holder || MappingProfiles.touchId(src) !in followLayerIds
                 val kept = list.filter { carries(it, keep) }
                 if (kept.isEmpty() && !keep) continue
                 val before = was[src]
