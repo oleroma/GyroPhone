@@ -83,6 +83,11 @@ class WifiPump(private val engine: MappingEngine) {
         }
     }
 
+    /** Sends on [socket] from now on (the link moved between USB and Wi-Fi). */
+    fun useSocket(socket: DatagramSocket) {
+        if (running) this.socket = socket
+    }
+
     /** Stops the loop; a live session gets one neutral STATE and BYE([byeReason]) x3 first. */
     fun stop(byeReason: Int = ByeReason.SHUTDOWN) {
         val t = thread ?: return

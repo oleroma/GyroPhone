@@ -130,6 +130,21 @@ class PhoneSessionFlow(
         return out
     }
 
+    /**
+     * The phone moved to another link (USB tethering, back to Wi-Fi): a fresh HELLO attempt to
+     * [addr], the PC's address on that link, or DISCOVER at once when it is null. Like [reconnect],
+     * a live session stays until the new WELCOME replaces it. The address is not reported as the
+     * host's to remember: the link may come and go.
+     */
+    fun moveTo(addr: InetSocketAddress?, nowMs: Long): List<Out> {
+        if (!running) return emptyList()
+        hostAddr = addr
+        val out = ArrayList<Out>()
+        startAttempt(nowMs, out)
+        tickAttempt(nowMs, out)
+        return out
+    }
+
     /** Stops everything. The caller sends the neutral STATE and BYE itself after its pump stops. */
     fun disconnect(): List<Out> {
         val out = ArrayList<Out>()
