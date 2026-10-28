@@ -105,13 +105,11 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
     internal val peers = arrayOfNulls<LongArray>(BITS)
 
     init {
-        for (b in 0 until BITS) {
-            val tb = targets[b] ?: continue
+        val bits = (0 until BITS).filter { targets[it] != null }
+        for (b in bits) {
+            val tb = targets[b]!!
             val w = LongArray(3)
-            for (c in 0 until BITS) {
-                val tc = targets[c] ?: continue
-                if (c == b || tc.any { it in tb }) w[c shr 6] = w[c shr 6] or (1L shl (c and 63))
-            }
+            for (c in bits) if (c == b || targets[c]!!.any { it in tb }) w[c shr 6] = w[c shr 6] or (1L shl (c and 63))
             peers[b] = w
         }
     }
