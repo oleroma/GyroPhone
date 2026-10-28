@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write # check mode marks the commit checked, so agent-merge can skip a second run
 
 # A newer push to main cancels the older check still running; runs started by hand are never cancelled.
 concurrency:
@@ -70,6 +71,15 @@ jobs:
       - name: Full checks
         if: github.event_name == 'push' || inputs.mode == 'check'
         run: bash .agents/hooks/full-check
+
+      - name: Mark the commit checked
+        if: inputs.mode == 'check'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
+          -f state=success -f context=full-check -f description="Passed in CI"
+          -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
       # Saved on the run as the plain file, not a zip, so the download link gives the file itself.
       - uses: actions/upload-artifact@v7
