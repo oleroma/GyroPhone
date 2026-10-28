@@ -22,6 +22,7 @@ internal sealed class CompanionUpdater : IDisposable
     private readonly Action _exitForUpdate;
     private readonly System.Windows.Forms.Timer _timer;
     private bool _restarting, _disposed;
+    private string? _lastDisk = "";
 
     /// <summary>The newer build at this exe's path that this instance is about to restart into, or null.</summary>
     public string? Pending { get; private set; }
@@ -46,6 +47,7 @@ internal sealed class CompanionUpdater : IDisposable
             _log($"self-restart off: {_version} is not a CI build");
             return;
         }
+        _log($"self-restart on: {_version} watches {_exePath}");
         _timer.Start();
         Tick();
     }
@@ -80,6 +82,11 @@ internal sealed class CompanionUpdater : IDisposable
     {
         if (File.Exists(_oldPath)) TryDelete(_oldPath); // fails while an instance still runs from it
         string? onDisk = DiskVersion();
+        if (onDisk != _lastDisk)
+        {
+            _lastDisk = onDisk;
+            if (onDisk != _version) _log($"self-restart: the exe on disk is {onDisk ?? "unreadable"}");
+        }
         string? pending = UpdateInfo.IsReplaced(_version, onDisk) ? onDisk : null;
         if (pending != Pending)
         {
