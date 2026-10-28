@@ -264,7 +264,7 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, profile: Profile, index:
         Text("Ticks play", style = MaterialTheme.typography.labelLarge)
         HapticEdgeChips(ws.hapticEdge, onSelect = { e -> if (e != null) editWs { it.copy(hapticEdge = e) } })
         Text(
-            "When a source presses or lets go; for a zone, when a finger enters or leaves it. A tick mapping can set its own.",
+            "When a source presses or lets go; for an area, when a finger enters or leaves it. A tick mapping can set its own.",
             style = MaterialTheme.typography.bodySmall,
         )
     }

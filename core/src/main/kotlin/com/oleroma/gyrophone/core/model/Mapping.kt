@@ -45,11 +45,11 @@ enum class MouseButton(val bit: Int) { LEFT(0), RIGHT(1), MIDDLE(2), BACK(3), FO
 
 /**
  * When an [InputSource.TouchArea] is held. HELD (sticks): from touch-down on the stick until
- * lift. OUTSIDE: while a finger that touched down on the control is outside its area. ZONE: while
+ * lift. OUTSIDE: while a finger that touched down on the control is outside its area. ZONE (shown as Area): while
  * any finger is inside its area, wherever it touched down.
  */
 @Serializable
-enum class TouchAreaKind(val label: String) { HELD("On touch"), OUTSIDE("Outside"), ZONE("Zone") }
+enum class TouchAreaKind(val label: String) { HELD("On touch"), OUTSIDE("Outside"), ZONE("Area") }
 
 /**
  * A mappable input of a touch surface (the workspace touchpad), per finger count
