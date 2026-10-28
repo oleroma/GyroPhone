@@ -93,6 +93,20 @@ run_fallback() {
   gh run watch -R "$SLUG" "$RUN" --exit-status --interval 15
 }
 
+# The full checks that passed on a commit are recorded on it as a GitHub commit status named
+# full-check, by PC builds and by fallback.yml's check mode, so agent-merge can skip them.
+
+# checked <sha>: true if the full checks already passed on <sha>.
+checked() {
+  [ -n "$(gh api "repos/$SLUG/commits/$1/status" \
+    --jq '.statuses[] | select(.context == "full-check" and .state == "success") | .context')" ]
+}
+
+# mark_checked <sha> <description>: records that the full checks passed on <sha>.
+mark_checked() {
+  gh api -X POST "repos/$SLUG/statuses/$1" -f state=success -f context=full-check -f description="$2" >/dev/null
+}
+
 # main_red: prints the link of the latest finished fallback run on main if it failed, else nothing.
 main_red() {
   gh api "repos/$SLUG/actions/workflows/fallback.yml/runs?branch=main&event=push&status=completed&per_page=1" \
