@@ -1465,7 +1465,8 @@ fun PadScreen(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(
-                        Modifier.weight(1f, fill = false).padding(top = 6.dp, bottom = 6.dp),
+                        // A set width fills the panel, so the resize handle stays on its right edge.
+                        Modifier.weight(1f, fill = panelWidth != null).padding(top = 6.dp, bottom = 6.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         // Dots (move), ⚙ (this workspace's settings), Done, then the layout tools.
