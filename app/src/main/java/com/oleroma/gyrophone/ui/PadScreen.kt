@@ -319,6 +319,9 @@ fun PadScreen(
     val editCycle = remember { FloatArray(3) }
     val editCycleAt = remember { LongArray(1) { Long.MIN_VALUE / 4 } }
 
+    /** Edit mode: the control the last tap selected, so a second tap soon after opens its mappings. */
+    val editTapId = remember { arrayOfNulls<String>(1) }
+
     /**
      * Restarts the play touch handler on layout changes but not on gyro changes, so the gyro
      * corner switching the mode leaves held sticks and buttons alone.
@@ -581,6 +584,7 @@ fun PadScreen(
             Modifier.pointerInput("edit", w, h) {
                 val slop = viewConfiguration.touchSlop
                 val longPressMs = viewConfiguration.longPressTimeoutMillis
+                val doubleTapMs = viewConfiguration.doubleTapTimeoutMillis
                 awaitPointerEventScope {
                     while (true) {
                         var event = awaitPointerEvent()
@@ -622,9 +626,15 @@ fun PadScreen(
                                 inPortrait = portrait
                             )
                         }
-                        val cycleAgain = under.size > 1 && first.uptimeMillis - editCycleAt[0] <= EDIT_CYCLE_MS &&
+                        // A quick second tap (a double tap) keeps the same one; a slower one cycles.
+                        val sinceTap = first.uptimeMillis - editCycleAt[0]
+                        val sameSpot = under.size > 1 &&
                                 (downPos - Offset(editCycle[0], editCycle[1])).getDistance() <= slop * 2
-                        val underIndex = if (cycleAgain) (editCycle[2].toInt() + 1) % under.size else 0
+                        val underIndex = when {
+                            sameSpot && sinceTap <= doubleTapMs -> editCycle[2].toInt() % under.size
+                            sameSpot && sinceTap <= EDIT_CYCLE_MS -> (editCycle[2].toInt() + 1) % under.size
+                            else -> 0
+                        }
                         val c = hit(corners, downPos) ?: under.getOrNull(underIndex)
                         val pressedAt = first.uptimeMillis
                         var lastAt = pressedAt
@@ -787,15 +797,17 @@ fun PadScreen(
 
                         when (mode) {
                             EditGesture.PRESS -> {
+                                // A tap selects; a double tap opens the mapping (a corner, with none: its menu).
+                                val double = target != null && target == editTapId[0] && pressedAt - editCycleAt[0] <= doubleTapMs
                                 editCycle[0] = downPos.x; editCycle[1] = downPos.y; editCycle[2] = underIndex.toFloat()
                                 editCycleAt[0] = lastAt
-                                // A tap: a control's mapping; a corner (no mapping) its menu.
+                                editTapId[0] = if (double) null else target
                                 selected = target
-                                menu = if (target != null && d0 != null && isCorner(
-                                        d0,
-                                        target
-                                    )
-                                ) EditMenu.CONTEXT else EditMenu.MAPPING
+                                menu = when {
+                                    !double -> EditMenu.NONE
+                                    d0 != null && isCorner(d0, target!!) -> EditMenu.CONTEXT
+                                    else -> EditMenu.MAPPING
+                                }
                             }
 
                             EditGesture.TWO -> {
@@ -1478,6 +1490,19 @@ fun PadScreen(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                // The selected control's settings and mappings (also a long press and a double tap).
+                                val picked = findControl(selected)
+                                if (picked != null) {
+                                    FilledTonalButton(
+                                        contentPadding = compact,
+                                        onClick = { menu = EditMenu.CONTEXT }) { Text("Configure") }
+                                    val d = draft
+                                    if (d != null && !isCorner(d, picked.id)) {
+                                        FilledTonalButton(
+                                            contentPadding = compact,
+                                            onClick = { menu = EditMenu.MAPPING }) { Text("Map") }
+                                    }
+                                }
                                 FilledTonalButton(
                                     contentPadding = compact,
                                     onClick = { finishEditing() }) { Text("Done") }
