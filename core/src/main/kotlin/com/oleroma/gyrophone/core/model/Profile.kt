@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.core.model
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.min
 
 @Serializable
@@ -175,6 +176,17 @@ data class SurfaceSettings(
     val deadzoneStillDp: Float? = null,
     val verticalLockDeg: Float? = null,
     val horizontalLockDeg: Float? = null,
+    val dirSampleDp: Float? = null,
+    val swipeDp: Float? = null,
+    val holdDp: Float? = null,
+    val holdMode: HoldMode? = null,
+    val dragStart: Boolean? = null,
+    val releaseDp: Float? = null,
+    val pies: List<Float>? = null,
+    /** True = classic directions (clears [pies] in [with]); null = follow. */
+    val classicPies: Boolean? = null,
+    val latch: Boolean? = null,
+    val latchReleaseMs: Int? = null,
 )
 
 /** These settings with [o]'s own values in place of theirs. */
@@ -192,6 +204,15 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
     deadzoneStillDp = o.deadzoneStillDp ?: deadzoneStillDp,
     verticalLockDeg = o.verticalLockDeg ?: verticalLockDeg,
     horizontalLockDeg = o.horizontalLockDeg ?: horizontalLockDeg,
+    dirSampleDp = o.dirSampleDp ?: dirSampleDp,
+    swipeDp = o.swipeDp ?: swipeDp,
+    holdDp = o.holdDp ?: holdDp,
+    holdMode = o.holdMode ?: holdMode,
+    dragStart = o.dragStart ?: dragStart,
+    releaseDp = o.releaseDp ?: releaseDp,
+    pies = if (o.classicPies == true) null else o.pies ?: pies,
+    latch = o.latch ?: latch,
+    latchReleaseMs = o.latchReleaseMs ?: latchReleaseMs,
 )
 
 /** A swipe button's own settings: [TouchControl.surface], or what its old swipe settings were. */
@@ -448,7 +469,39 @@ data class TouchpadSettings(
     val verticalLockDeg: Float = 0f,
     /** Horizontal lock: motion within this angle of sideways loses its up / down part; 0 = off. */
     val horizontalLockDeg: Float = 0f,
+    /**
+     * Directions (swipes and held directions): a step's direction is that of about the last this
+     * many dp of travel, and there is none until the motion has travelled it.
+     */
+    val dirSampleDp: Float = DEFAULT_DIR_SAMPLE_DP,
+    /** A swipe fires once the travel since the direction last changed reaches this (dp). */
+    val swipeDp: Float = DEFAULT_SWIPE_DP,
+    /** Held directions: the travel that presses one (see [holdMode]), in dp. */
+    val holdDp: Float = DEFAULT_HOLD_DP,
+    val holdMode: HoldMode = HoldMode.FROM_START,
+    /**
+     * [HoldMode.FROM_START]: the start point is dragged along so it never trails the finger by
+     * more than [holdDp] + [releaseDp]. Sliding back [releaseDp] lets go and re-centres the start
+     * point on the finger, so the opposite direction presses [holdDp] further on.
+     */
+    val dragStart: Boolean = false,
+    val releaseDp: Float = DEFAULT_RELEASE_DP,
+    /**
+     * Width in degrees of each direction's pie ([Direction] order: up, right, down, left): wider
+     * ones overlap (both directions count there), narrower ones leave gaps. null = classic: a swipe
+     * goes the way of the larger axis, and a held direction from the start point is held per axis
+     * (as if each pie were 180° wide).
+     */
+    val pies: List<Float>? = null,
+    /** Held directions stay held after the fingers lift, until a tap or another direction. */
+    val latch: Boolean = false,
+    /** A latch lets go by itself this long after the lift (ms); 0 = never. */
+    val latchReleaseMs: Int = 0,
 ) {
+    /** Pie width of [d] in degrees: its own, or 90 (classic quadrants). */
+    fun pieDeg(d: Direction): Float =
+        (pies?.getOrNull(d.ordinal) ?: CLASSIC_PIE_DEG).coerceIn(MIN_PIE_DEG, MAX_PIE_DEG)
+
     fun gesturesFor(fingers: Int): FingerGestures = if (fingers >= 4) gestures4 else gestures3
 
     val verticalSensitivity: Float get() = sensitivityY ?: sensitivity
@@ -462,7 +515,63 @@ data class TouchpadSettings(
         const val MAX_REARM_MS = 1000
         const val MAX_STILL_DP = 10f
         const val MAX_LOCK_DEG = 45f
+        const val DEFAULT_DIR_SAMPLE_DP = 4f
+        const val MIN_DIR_SAMPLE_DP = 1f
+        const val MAX_DIR_SAMPLE_DP = 20f
+        const val DEFAULT_SWIPE_DP = 40f
+        const val DEFAULT_HOLD_DP = 20f
+        const val MIN_ACTIVATE_DP = 2f
+        const val MAX_ACTIVATE_DP = 120f
+        const val DEFAULT_RELEASE_DP = 10f
+        const val MAX_RELEASE_DP = 60f
+        const val CLASSIC_PIE_DEG = 90f
+        const val MIN_PIE_DEG = 10f
+        const val MAX_PIE_DEG = 180f
+        const val MAX_LATCH_RELEASE_MS = 10_000
     }
+}
+
+/** A swipe direction, clockwise from up; [deg] is its centre, clockwise from straight up. */
+@Serializable
+enum class Direction(val deg: Float, val label: String) {
+    UP(0f, "Up"), RIGHT(90f, "Right"), DOWN(180f, "Down"), LEFT(270f, "Left"),
+}
+
+/**
+ * The direction pies vector ([x], [y]) (screen axes, y down) points into, as a mask of
+ * 1 shl [Direction.ordinal]; classic ([TouchpadSettings.pies] null): the way of its larger axis.
+ */
+fun TouchpadSettings.directionsAt(x: Float, y: Float): Int {
+    if (x == 0f && y == 0f) return 0
+    if (pies == null) {
+        val d = when {
+            abs(x) >= abs(y) -> if (x > 0f) Direction.RIGHT else Direction.LEFT
+            y > 0f -> Direction.DOWN
+            else -> Direction.UP
+        }
+        return 1 shl d.ordinal
+    }
+    var mask = 0
+    for (d in Direction.entries) if (inPie(x, y, d)) mask = mask or (1 shl d.ordinal)
+    return mask
+}
+
+/** Whether vector ([x], [y]) (screen axes, y down) lies inside [d]'s pie. */
+fun TouchpadSettings.inPie(x: Float, y: Float, d: Direction): Boolean {
+    val deg = Math.toDegrees(atan2(x.toDouble(), (-y).toDouble())).toFloat()
+    val off = abs(((deg - d.deg) % 360f + 540f) % 360f - 180f)
+    return off <= pieDeg(d) / 2f
+}
+
+/**
+ * How held directions (Hold ←→↑↓) work. FROM_START: held while the finger is past the hold
+ * distance from where the motion started (a floating stick; sliding back lets go). DIRECTION_CHANGE:
+ * one is held once the finger has travelled the hold distance since turning that way, until another
+ * direction takes over or the fingers lift.
+ */
+@Serializable
+enum class HoldMode(val label: String) {
+    FROM_START("From start point"), DIRECTION_CHANGE("Direction change"),
 }
 
 /** Swipe directions and tap of a three- or four-finger touchpad gesture. */

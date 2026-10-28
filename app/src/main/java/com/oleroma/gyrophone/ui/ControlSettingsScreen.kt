@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -21,11 +20,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -44,6 +41,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
+import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
@@ -55,9 +53,11 @@ import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.TouchLayer
 import com.oleroma.gyrophone.core.model.Workspace
+import com.oleroma.gyrophone.core.model.ownSurface
 import com.oleroma.gyrophone.core.model.placeSize
 import com.oleroma.gyrophone.core.model.placeX
 import com.oleroma.gyrophone.core.model.placeY
+import com.oleroma.gyrophone.core.model.surfaceSettings
 import com.oleroma.gyrophone.core.model.withPlacement
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.roundToInt
@@ -86,13 +86,13 @@ internal fun ControlSettingsScreen(
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.fillMaxSize()) {
                 Row(
-                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+                    Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(
                             control.label.ifBlank { control.id },
-                            style = MaterialTheme.typography.titleLarge,
+                            style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -103,6 +103,8 @@ internal fun ControlSettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    TextButton(onClick = onDuplicate) { Text("Duplicate") }
+                    TextButton(onClick = onDelete) { Text("Delete", color = MaterialTheme.colorScheme.error) }
                     OutlinedButton(onClick = onEditMappings) { Text("Mappings") }
                     TextButton(onClick = onClose) { Text("Done") }
                 }
@@ -112,8 +114,8 @@ internal fun ControlSettingsScreen(
                         .fillMaxWidth()
                         .imePadding()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     val section = Modifier.widthIn(max = 720.dp)
@@ -140,6 +142,18 @@ internal fun ControlSettingsScreen(
                         ) {
                             SurfaceSettingsEditor(control, workspace.touchpad) { onControlChange(it) }
                         }
+                        RememberedSection(
+                            runtime,
+                            "control.Directions",
+                            "Directions",
+                            section,
+                            defaultOpen = true,
+                            subtitle = "Swipe and held-direction pies, lengths and latch"
+                        ) {
+                            SurfaceDirectionSettings(control.ownSurface, control.surfaceSettings(workspace.touchpad), control.id) { o ->
+                                onControlChange(control.copy(surface = o))
+                            }
+                        }
                     }
                     RememberedSection(runtime, "control.Zone", "Zone", section) {
                         ZoneSettings(control, workspace, onControlChange, onEditMappings)
@@ -147,16 +161,6 @@ internal fun ControlSettingsScreen(
                     RememberedSection(runtime, "control.Mappings", "Mappings", section, defaultOpen = true) {
                         MappingsSummary(control, workspace.mappings, onEditMappings)
                     }
-                }
-                HorizontalDivider()
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedButton(onClick = onDuplicate) { Text("Duplicate") }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onDelete) { Text("Delete", color = MaterialTheme.colorScheme.error) }
                 }
             }
         }
@@ -285,7 +289,7 @@ internal fun ButtonBehaviourSettings(
             val c = current
             // A new swipe button follows the touchpad; an old one keeps its swipe settings.
             onControlChange(
-                if (on && !c.swipe && c.surface == null) c.copy(swipe = true, surface = SurfaceSettings())
+                if (on && !c.swipe && c.surface == null) c.copy(swipe = true, surface = SurfaceSettings(holdMode = HoldMode.DIRECTION_CHANGE))
                 else c.copy(swipe = on),
             )
         }

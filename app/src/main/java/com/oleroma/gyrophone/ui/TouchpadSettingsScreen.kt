@@ -11,7 +11,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -54,11 +53,11 @@ internal fun TouchpadSettingsScreen(
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.fillMaxSize()) {
                 Row(
-                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+                    Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Touchpad", style = MaterialTheme.typography.titleLarge)
+                        Text("Touchpad", style = MaterialTheme.typography.titleMedium)
                         Text(
                             "The empty pad area · " + workspace.name + " · settings",
                             style = MaterialTheme.typography.bodySmall,
@@ -73,8 +72,8 @@ internal fun TouchpadSettingsScreen(
                         .weight(1f)
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     val section = Modifier.widthIn(max = 720.dp)
@@ -92,6 +91,16 @@ internal fun TouchpadSettingsScreen(
                                 )
                             }
                         }
+                    }
+                    RememberedSection(
+                        runtime,
+                        "touchpad.Directions",
+                        "Directions",
+                        section,
+                        defaultOpen = true,
+                        subtitle = "Swipe and held-direction pies, lengths and latch"
+                    ) {
+                        DirectionSettings(workspace.touchpad, workspace.id) { tp -> onWorkspaceChange { it.copy(touchpad = tp) } }
                     }
                     RememberedSection(runtime, "touchpad.Gyro", "Gyro", section) {
                         TouchpadSwitch(

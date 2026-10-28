@@ -61,8 +61,9 @@ enum class TouchAreaKind(val label: String) { HELD("On touch"), OUTSIDE("Outside
  * they lift; RELEASE: a pulse each time the fingers all lift. A tap waits out the double-tap
  * window only when its double tap does something else (see [ButtonGesture]). MOTION_X / Y:
  * the fingers' travel (cursor, scroll, a stick from the touch-down point, switching apps);
- * SWIPE_*: a pulse once per touch when the travel passes a distance; HOLD_*: held while past half
- * of it in that direction. PINCH: the spread change (zoom); PINCH_IN / OUT: held while pinching.
+ * SWIPE_*: a pulse each time the fingers have travelled a distance since turning that way; HOLD_*:
+ * held as [TouchpadSettings.holdMode] says (direction pies, distances and the latch are in
+ * [TouchpadSettings]). PINCH: the spread change (zoom); PINCH_IN / OUT: held while pinching.
  */
 @Serializable
 enum class SurfaceInput(val label: String, val motion: Boolean = false) {
