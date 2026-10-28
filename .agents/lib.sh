@@ -55,6 +55,24 @@ on_exit() {
 }
 trap on_exit EXIT
 
+# GitHub calls go through the REST API (gh api): cloud sessions can't reach GitHub's
+# GraphQL API, which gh pr, gh repo view and most other gh commands use.
+
+# owner/repo of origin, read from its URL.
+SLUG="$(git -C "$WORKTREE" remote get-url origin | sed -E 's#\.git$##; s#.*[:/]([^/]+/[^/]+)$#\1#')"
+
+# pr_number <branch>: the open PR from <branch> into main, empty if there is none.
+pr_number() {
+  gh api "repos/$SLUG/pulls?head=${SLUG%%/*}:$1&base=main&state=open" --jq '.[0].number // empty'
+}
+
+# pr_ready <number>: marks a draft PR ready for review. REST has no call for this; cloud
+# sessions have their own route for it, and on the PC gh pr ready works.
+pr_ready() {
+  [ "$(gh api "repos/$SLUG/pulls/$1" --jq .draft)" = true ] || return 0
+  gh api -X POST "repos/$SLUG/pulls/$1/ccr/ready_for_review" >/dev/null || gh pr ready "$1" -R "$SLUG"
+}
+
 # Sets BRANCH to the current branch, or stops if it isn't a feature branch.
 require_feature_branch() {
   BRANCH="$(git -C "$WORKTREE" symbolic-ref --quiet --short HEAD)" || die "Not on a branch."
