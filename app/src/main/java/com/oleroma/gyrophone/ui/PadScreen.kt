@@ -567,14 +567,12 @@ fun PadScreen(
                         var target: String? = null
                         var grab = Offset.Zero
                         var startSize = 0f
-                        var pinchStart = 0f
-                        // Pinch start: the control's width, height and centre (px), the fingers' midpoint and spread on each axis.
-                        var startW = 0f;
-                        var startH = 0f
+                        // Pinch anchor: the control's width and centre (px), the fingers' midpoint and spread.
+                        // Taken again whenever the pair of fingers changes, so nothing jumps.
+                        var startDist = 0f
+                        var startW = 0f
                         var startCenter = Offset.Zero
                         var startMid = Offset.Zero
-                        var startDx = 0f;
-                        var startDy = 0f
                         var pinchA: PointerId? = null
                         var pinchB: PointerId? = null
                         // Overlapping controls: the front one; a tap on the same spot soon after picks the next one behind.
@@ -630,26 +628,34 @@ fun PadScreen(
                             if (down.isEmpty()) break
                             val main = event.changes.firstOrNull { it.id == pointer }
 
-                            if (down.size >= 2 && mode != EditGesture.PINCH && mode != EditGesture.NONE) {
-                                val c = findControl(target ?: selected)
-                                val dist = (down[0].position - down[1].position).getDistance()
-                                if (c != null && dist > 1f) {
+                            // Two fingers anywhere resize the selected control (else the one under the first finger).
+                            if (down.size >= 2 && mode != EditGesture.PINCH) {
+                                val c = findControl(selected) ?: findControl(target)
+                                if (c != null) {
                                     mode = EditGesture.PINCH
-                                    pinchA = down[0].id
-                                    pinchB = down[1].id
                                     target = c.id
                                     selected = c.id
                                     menu = EditMenu.NONE
-                                    startSize = c.placeSize(portrait)
-                                    pinchStart = dist
-                                    startW = 2f * half(c); startH = 2f * halfH(c)
-                                    startCenter = center(c)
-                                    startMid = (down[0].position + down[1].position) / 2f
-                                    startDx = abs(down[0].position.x - down[1].position.x)
-                                    startDy = abs(down[0].position.y - down[1].position.y)
                                     dragging = false
                                 } else {
                                     mode = EditGesture.NONE
+                                }
+                            }
+                            if (mode == EditGesture.PINCH && down.size >= 2 &&
+                                (down.none { it.id == pinchA } || down.none { it.id == pinchB })
+                            ) {
+                                val c = findControl(target)
+                                val pa = down.firstOrNull { it.id == pinchA } ?: down.first { it.id != pinchB }
+                                val pb = down.firstOrNull { it.id == pinchB && it.id != pa.id } ?: down.first { it.id != pa.id }
+                                val dist = (pa.position - pb.position).getDistance()
+                                if (c != null && dist > 1f) {
+                                    pinchA = pa.id
+                                    pinchB = pb.id
+                                    startDist = dist
+                                    startSize = c.placeSize(portrait)
+                                    startW = 2f * half(c)
+                                    startCenter = center(c)
+                                    startMid = (pa.position + pb.position) / 2f
                                 }
                             }
 
@@ -683,49 +689,26 @@ fun PadScreen(
                                 }
 
                                 EditGesture.PINCH -> {
+                                    // One finger up: hold still until a second one lands again.
                                     val a = down.firstOrNull { it.id == pinchA }
                                     val b = down.firstOrNull { it.id == pinchB }
-                                    if (a == null || b == null) {
-                                        mode = EditGesture.NONE
-                                    } else {
-                                        val id = target
-                                        val dist = (a.position - b.position).getDistance()
-                                        val d = draft
-                                        if (id != null && d != null && isCorner(d, id)) {
-                                            resize(id, startSize * dist / pinchStart)
-                                        } else if (id != null) {
-                                            // Linear: each edge follows its finger, and the point under the
-                                            // fingers' midpoint stays under it. A rectangle sizes on each axis apart.
-                                            val lo = TouchControl.MIN_SIZE * unit
-                                            val hi = TouchControl.MAX_SIZE * unit
+                                    val id = target
+                                    val d = draft
+                                    if (a != null && b != null && id != null && d != null && startDist > 1f) {
+                                        val scale = (a.position - b.position).getDistance() / startDist
+                                        if (isCorner(d, id)) {
+                                            resize(id, startSize * scale)
+                                        } else {
+                                            // Pinch to zoom: the size follows the fingers' spread, and the point of the
+                                            // control under the fingers' midpoint stays under it (moving both fingers
+                                            // moves the control). A rectangle keeps its shape.
+                                            val size = (startSize * scale).coerceIn(TouchControl.MIN_SIZE, TouchControl.MAX_SIZE)
+                                            val k = size * unit / startW
+                                            val mid = (a.position + b.position) / 2f
+                                            val p = mid + (startCenter - startMid) * k
                                             updateControl(id) { c ->
-                                                val rect = c.kind == TouchKind.BUTTON && c.shape == TouchShape.SQUARE
-                                                val nw: Float
-                                                val nh: Float
-                                                if (rect) {
-                                                    nw = (startW + abs(a.position.x - b.position.x) - startDx).coerceIn(
-                                                        lo,
-                                                        hi
-                                                    )
-                                                    nh = (startH + abs(a.position.y - b.position.y) - startDy).coerceIn(
-                                                        lo,
-                                                        hi
-                                                    )
-                                                } else {
-                                                    nw = (startW + dist - pinchStart).coerceIn(lo, hi)
-                                                    nh = nw
-                                                }
-                                                val mid = (a.position + b.position) / 2f
-                                                val cx = mid.x + (startCenter.x - startMid.x) * nw / startW
-                                                val cy = mid.y + (startCenter.y - startMid.y) * nh / startH
-                                                val sized = c.withPlacement(
-                                                    portrait,
-                                                    c.placeX(portrait),
-                                                    c.placeY(portrait),
-                                                    nw / unit
-                                                )
-                                                    .let { if (rect) it.copy(aspect = nh / nw) else it }
-                                                place(sized, cx / w, cy / h, false)
+                                                val sized = c.withPlacement(portrait, c.placeX(portrait), c.placeY(portrait), size)
+                                                place(sized, p.x / w, p.y / h, false)
                                             }
                                         }
                                     }
