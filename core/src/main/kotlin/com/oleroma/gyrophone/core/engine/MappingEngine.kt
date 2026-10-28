@@ -1417,6 +1417,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         } else if (layerSet == t.set) {
             layerSet = h.set
             layerOverrides.clear(); layerOverrides.addAll(h.overrides)
+        } else {
+            // Let go while a later hold is on: that hold, made in this one's set, goes back to where this one came from.
+            for (e in layerHolds.entries) {
+                val o = e.value
+                if (!e.key.override && o.set == t.set) e.setValue(LayerHold(h.set, h.overrides, o.added))
+            }
         }
         applyLayers()
     }
@@ -1442,7 +1448,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val holder = list.any { it.target == t }
                 val keep = holder || MappingProfiles.touchId(src) !in followLayerIds
                 val kept = list.filter { carries(it, keep) }
-                if (kept.isEmpty() && !keep) continue
+                // A stick or trigger axis (or touch motion) held past half keeps nothing: it follows the new set.
+                if (kept.isEmpty() && (!keep || continuous(src))) continue
                 val before = was[src]
                 val layersOnly = holder && t.whileHeld && (before == null || before.holdsLayers)
                 now[src] = Carried(kept, keep || before?.holdsBack == true, layersOnly)
