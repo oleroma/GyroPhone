@@ -97,6 +97,25 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
         }
     }
 
+    /**
+     * Per input bit: the bits that share a target with it, itself included, as three words (null
+     * when it maps nothing). Their changes show in order and a pulse apart ([Touchpad.poll]), so
+     * one output never merges two presses; other inputs change at once.
+     */
+    internal val peers = arrayOfNulls<LongArray>(BITS)
+
+    init {
+        for (b in 0 until BITS) {
+            val tb = targets[b] ?: continue
+            val w = LongArray(3)
+            for (c in 0 until BITS) {
+                val tc = targets[c] ?: continue
+                if (c == b || tc.any { it in tb }) w[c shr 6] = w[c shr 6] or (1L shl (c and 63))
+            }
+            peers[b] = w
+        }
+    }
+
     fun has(fingers: Int, input: SurfaceInput, zone: Int = 0): Boolean =
         fingers in 1..4 && zone in 0 until TouchpadSettings.MAX_HOLD_ZONES && mapped[bit(fingers, input, zone)]
 

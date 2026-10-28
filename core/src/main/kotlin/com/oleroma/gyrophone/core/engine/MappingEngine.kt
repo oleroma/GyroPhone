@@ -126,6 +126,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private var mapsLeftTriggerAxis = BooleanArray(0)
     private var mapsRightTriggerAxis = BooleanArray(0)
 
+    /** Some mapping in use is a gyro ratchet ([gyroAxes] runs per gyro sample: no search without one). */
+    private var ratchetMapped = false
+
     /** Touch controls whose mappings are all keyboard modifiers, when sticky modifiers are on. */
     private var modifierIds: Set<String> = emptySet()
 
@@ -961,7 +964,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val g = ws.gyro
             if (g.mode == GyroMode.SENSOR_OFF) return@synchronized 0
             val ratchet = (g.touchpadRatchet && padTouchIds.isNotEmpty()) ||
-                    engaged(OutputTarget.GyroPause) || engaged(OutputTarget.GyroHold)
+                    (ratchetMapped && (engaged(OutputTarget.GyroPause) || engaged(OutputTarget.GyroHold)))
             // On without a ratchet: "ratchet disables" (ALWAYS) unless toggled, "ratchet enables" only toggled.
             val base = if (g.mode == GyroMode.ALWAYS) !gyroToggled else gyroToggled
             val flipped = base != ratchet
@@ -1524,6 +1527,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             BooleanArray(padMappings.size) { mapsTriggerAxis(padMappings[it], AndroidAxis.LTRIGGER, AndroidAxis.BRAKE) }
         mapsRightTriggerAxis =
             BooleanArray(padMappings.size) { mapsTriggerAxis(padMappings[it], AndroidAxis.RTRIGGER, AndroidAxis.GAS) }
+        ratchetMapped = (padMappings.asSequence() + sequenceOf(touchMappings)).any { ms ->
+            ms.any { it.target == OutputTarget.GyroPause || it.target == OutputTarget.GyroHold }
+        }
         touchpad.map = SurfaceMap(touchMappings)
         for ((id, s) in surfaces) s.map = SurfaceMap(touchMappings, id)
         for ((id, st) in tapStates) {
