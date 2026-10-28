@@ -159,8 +159,20 @@ private const val TOUCHPAD_SELECTION = "\u0000touchpad"
 /** Edit mode: a second tap on overlapping controls within this picks the next one behind. */
 private const val EDIT_CYCLE_MS = 1_000L
 
-/** PRESS: on a control, not yet moved; HELD: the same after a long press (settings screen open). */
-private enum class EditGesture { PRESS, HELD, MOVE, PINCH, EMPTY, NONE }
+/**
+ * PRESS: on a control, not yet moved; HELD: the same after a long press (settings screen open);
+ * TWO: two fingers down and still (lifted: a two-finger tap; moved: a PINCH).
+ */
+private enum class EditGesture { PRESS, HELD, MOVE, TWO, PINCH, EMPTY, NONE }
+
+/** Below this spread (dp) on one axis, a pinch sizes that axis by distance rather than by ratio. */
+private const val PINCH_AXIS_FLOOR_DP = 48f
+
+/** Pinch scale on one axis: the spread [now] over the spread at the start, with [floor] as the least start. */
+private fun axisScale(start: Float, now: Float, floor: Float): Float {
+    val base = max(start, floor)
+    return ((base + now - start) / base).coerceAtLeast(0.01f)
+}
 
 /** What edit mode shows for the selected control: its mapping screen or its settings screen (a corner: its menu). */
 private enum class EditMenu { NONE, MAPPING, CONTEXT }
@@ -306,6 +318,9 @@ fun PadScreen(
     /** Edit mode: the last tap on overlapping controls (x, y, which one) and its time, to cycle through them. */
     val editCycle = remember { FloatArray(3) }
     val editCycleAt = remember { LongArray(1) { Long.MIN_VALUE / 4 } }
+
+    /** Edit mode: the control the last tap selected, so a second tap soon after opens its mappings. */
+    val editTapId = remember { arrayOfNulls<String>(1) }
 
     /**
      * Restarts the play touch handler on layout changes but not on gyro changes, so the gyro
@@ -491,11 +506,12 @@ fun PadScreen(
          * ([KEEP_ON_SCREEN_DP], all of a smaller one) stays on screen on each axis.
          */
         fun place(c: TouchControl, x: Float, y: Float, snapToGrid: Boolean): TouchControl {
-            val sx = if (snapToGrid) (x / GRID).roundToInt() * GRID else x
-            val sy = if (snapToGrid) (y / GRID).roundToInt() * GRID else y
-            val keep = KEEP_ON_SCREEN_DP * pxPerDp
             val hw = half(c);
             val hh = halfH(c)
+            // Snapping puts the left and top edges on grid lines (a control sized by the grid then fills whole cells).
+            val sx = if (snapToGrid) (((x * w - hw) / (GRID * w)).roundToInt() * GRID * w + hw) / w else x
+            val sy = if (snapToGrid) (((y * h - hh) / (GRID * h)).roundToInt() * GRID * h + hh) / h else y
+            val keep = KEEP_ON_SCREEN_DP * pxPerDp
             val kx = min(2f * hw, keep);
             val ky = min(2f * hh, keep)
             return c.withPlacement(
@@ -546,10 +562,29 @@ fun PadScreen(
                 .forEach { resizeOne(it, size) } else resizeOne(id, size)
         }
 
+        /** Puts a control's edges on grid lines: a rectangle's four, a round one's left, right and top (it stays round). */
+        fun snapEdges(id: String) = updateControl(id) { c ->
+            val gx = GRID * w
+            val gy = GRID * h
+            val o = center(c)
+            val hw = half(c)
+            val hh = halfH(c)
+            val rect = c.kind == TouchKind.BUTTON && c.shape == TouchShape.SQUARE
+            val l = ((o.x - hw) / gx).roundToInt() * gx
+            val r = max(((o.x + hw) / gx).roundToInt() * gx, l + gx)
+            val t = ((o.y - hh) / gy).roundToInt() * gy
+            val b = if (rect) max(((o.y + hh) / gy).roundToInt() * gy, t + gy) else t + (r - l)
+            val size = ((r - l) / unit).coerceIn(TouchControl.MIN_SIZE, TouchControl.MAX_SIZE)
+            val sized = c.withPlacement(portrait, c.placeX(portrait), c.placeY(portrait), size)
+                .let { if (rect) it.copy(aspect = (b - t) / (r - l)) else it }
+            place(sized, (l + r) / 2f / w, (t + b) / 2f / h, false)
+        }
+
         val touchModifier = if (editing) {
             Modifier.pointerInput("edit", w, h) {
                 val slop = viewConfiguration.touchSlop
                 val longPressMs = viewConfiguration.longPressTimeoutMillis
+                val doubleTapMs = viewConfiguration.doubleTapTimeoutMillis
                 awaitPointerEventScope {
                     while (true) {
                         var event = awaitPointerEvent()
@@ -567,16 +602,20 @@ fun PadScreen(
                         var target: String? = null
                         var grab = Offset.Zero
                         var startSize = 0f
-                        var pinchStart = 0f
-                        // Pinch start: the control's width, height and centre (px), the fingers' midpoint and spread on each axis.
-                        var startW = 0f;
+                        // Pinch anchor: the control's width and centre (px), the fingers' midpoint and spread.
+                        // Taken again whenever the pair of fingers changes, so nothing jumps.
+                        var startDist = 0f
+                        var startW = 0f
                         var startH = 0f
+                        var startDx = 0f
+                        var startDy = 0f
                         var startCenter = Offset.Zero
                         var startMid = Offset.Zero
-                        var startDx = 0f;
-                        var startDy = 0f
                         var pinchA: PointerId? = null
                         var pinchB: PointerId? = null
+                        // Two-finger tap: where each finger landed, and the control under them.
+                        val tapStart = HashMap<PointerId, Offset>()
+                        var tapTarget: String? = null
                         // Overlapping controls: the front one; a tap on the same spot soon after picks the next one behind.
                         val under = hitOrder(controls, portrait).filter {
                             it.contains(
@@ -587,9 +626,15 @@ fun PadScreen(
                                 inPortrait = portrait
                             )
                         }
-                        val cycleAgain = under.size > 1 && first.uptimeMillis - editCycleAt[0] <= EDIT_CYCLE_MS &&
+                        // A quick second tap (a double tap) keeps the same one; a slower one cycles.
+                        val sinceTap = first.uptimeMillis - editCycleAt[0]
+                        val sameSpot = under.size > 1 &&
                                 (downPos - Offset(editCycle[0], editCycle[1])).getDistance() <= slop * 2
-                        val underIndex = if (cycleAgain) (editCycle[2].toInt() + 1) % under.size else 0
+                        val underIndex = when {
+                            sameSpot && sinceTap <= doubleTapMs -> editCycle[2].toInt() % under.size
+                            sameSpot && sinceTap <= EDIT_CYCLE_MS -> (editCycle[2].toInt() + 1) % under.size
+                            else -> 0
+                        }
                         val c = hit(corners, downPos) ?: under.getOrNull(underIndex)
                         val pressedAt = first.uptimeMillis
                         var lastAt = pressedAt
@@ -630,26 +675,49 @@ fun PadScreen(
                             if (down.isEmpty()) break
                             val main = event.changes.firstOrNull { it.id == pointer }
 
-                            if (down.size >= 2 && mode != EditGesture.PINCH && mode != EditGesture.NONE) {
-                                val c = findControl(target ?: selected)
-                                val dist = (down[0].position - down[1].position).getDistance()
+                            // Two fingers: lifted still, they select the control under them; moved, they
+                            // pinch-resize the selected control, wherever they are (nothing when none is selected).
+                            if (down.size >= 2 && tapStart.isEmpty() && mode != EditGesture.PINCH) {
+                                mode = EditGesture.TWO
+                                dragging = false
+                                val second = down.firstOrNull { it.id != pointer }?.position
+                                tapTarget = target ?: second?.let { p ->
+                                    (hit(corners, p) ?: hitOrder(controls, portrait).firstOrNull {
+                                        it.contains(p.x, p.y, w, h, inPortrait = portrait)
+                                    })?.id
+                                }
+                            }
+                            if (mode == EditGesture.TWO) {
+                                down.forEach { tapStart.getOrPut(it.id) { it.position } }
+                                if (down.any { (it.position - tapStart.getValue(it.id)).getDistance() > slop }) {
+                                    val c = findControl(selected)
+                                    if (c != null) {
+                                        mode = EditGesture.PINCH
+                                        target = c.id
+                                        menu = EditMenu.NONE
+                                    } else {
+                                        mode = EditGesture.NONE
+                                    }
+                                }
+                            }
+                            if (mode == EditGesture.PINCH && down.size >= 2 &&
+                                (down.none { it.id == pinchA } || down.none { it.id == pinchB })
+                            ) {
+                                val c = findControl(target)
+                                val pa = down.firstOrNull { it.id == pinchA } ?: down.first { it.id != pinchB }
+                                val pb = down.firstOrNull { it.id == pinchB && it.id != pa.id } ?: down.first { it.id != pa.id }
+                                val dist = (pa.position - pb.position).getDistance()
                                 if (c != null && dist > 1f) {
-                                    mode = EditGesture.PINCH
-                                    pinchA = down[0].id
-                                    pinchB = down[1].id
-                                    target = c.id
-                                    selected = c.id
-                                    menu = EditMenu.NONE
+                                    pinchA = pa.id
+                                    pinchB = pb.id
+                                    startDist = dist
                                     startSize = c.placeSize(portrait)
-                                    pinchStart = dist
-                                    startW = 2f * half(c); startH = 2f * halfH(c)
+                                    startW = 2f * half(c)
+                                    startH = 2f * halfH(c)
+                                    startDx = abs(pa.position.x - pb.position.x)
+                                    startDy = abs(pa.position.y - pb.position.y)
                                     startCenter = center(c)
-                                    startMid = (down[0].position + down[1].position) / 2f
-                                    startDx = abs(down[0].position.x - down[1].position.x)
-                                    startDy = abs(down[0].position.y - down[1].position.y)
-                                    dragging = false
-                                } else {
-                                    mode = EditGesture.NONE
+                                    startMid = (pa.position + pb.position) / 2f
                                 }
                             }
 
@@ -683,47 +751,38 @@ fun PadScreen(
                                 }
 
                                 EditGesture.PINCH -> {
+                                    // One finger up: hold still until a second one lands again.
                                     val a = down.firstOrNull { it.id == pinchA }
                                     val b = down.firstOrNull { it.id == pinchB }
-                                    if (a == null || b == null) {
-                                        mode = EditGesture.NONE
-                                    } else {
-                                        val id = target
+                                    val id = target
+                                    val d = draft
+                                    if (a != null && b != null && id != null && d != null && startDist > 1f) {
                                         val dist = (a.position - b.position).getDistance()
-                                        val d = draft
-                                        if (id != null && d != null && isCorner(d, id)) {
-                                            resize(id, startSize * dist / pinchStart)
-                                        } else if (id != null) {
-                                            // Linear: each edge follows its finger, and the point under the
-                                            // fingers' midpoint stays under it. A rectangle sizes on each axis apart.
+                                        if (isCorner(d, id)) {
+                                            resize(id, startSize * dist / startDist)
+                                        } else {
+                                            // Pinch to zoom: the size follows the fingers' spread, and the point of the
+                                            // control under the fingers' midpoint stays under it (moving both fingers
+                                            // moves the control). A rectangle's width follows the spread across, its
+                                            // height the spread down.
                                             val lo = TouchControl.MIN_SIZE * unit
                                             val hi = TouchControl.MAX_SIZE * unit
+                                            val floor = PINCH_AXIS_FLOOR_DP * pxPerDp
+                                            val mid = (a.position + b.position) / 2f
                                             updateControl(id) { c ->
                                                 val rect = c.kind == TouchKind.BUTTON && c.shape == TouchShape.SQUARE
                                                 val nw: Float
                                                 val nh: Float
                                                 if (rect) {
-                                                    nw = (startW + abs(a.position.x - b.position.x) - startDx).coerceIn(
-                                                        lo,
-                                                        hi
-                                                    )
-                                                    nh = (startH + abs(a.position.y - b.position.y) - startDy).coerceIn(
-                                                        lo,
-                                                        hi
-                                                    )
+                                                    nw = (startW * axisScale(startDx, abs(a.position.x - b.position.x), floor)).coerceIn(lo, hi)
+                                                    nh = (startH * axisScale(startDy, abs(a.position.y - b.position.y), floor)).coerceIn(lo, hi)
                                                 } else {
-                                                    nw = (startW + dist - pinchStart).coerceIn(lo, hi)
+                                                    nw = (startW * dist / startDist).coerceIn(lo, hi)
                                                     nh = nw
                                                 }
-                                                val mid = (a.position + b.position) / 2f
                                                 val cx = mid.x + (startCenter.x - startMid.x) * nw / startW
                                                 val cy = mid.y + (startCenter.y - startMid.y) * nh / startH
-                                                val sized = c.withPlacement(
-                                                    portrait,
-                                                    c.placeX(portrait),
-                                                    c.placeY(portrait),
-                                                    nw / unit
-                                                )
+                                                val sized = c.withPlacement(portrait, c.placeX(portrait), c.placeY(portrait), nw / unit)
                                                     .let { if (rect) it.copy(aspect = nh / nw) else it }
                                                 place(sized, cx / w, cy / h, false)
                                             }
@@ -738,15 +797,29 @@ fun PadScreen(
 
                         when (mode) {
                             EditGesture.PRESS -> {
+                                // A tap selects; a double tap opens the mapping (a corner, with none: its menu).
+                                val double = target != null && target == editTapId[0] && pressedAt - editCycleAt[0] <= doubleTapMs
                                 editCycle[0] = downPos.x; editCycle[1] = downPos.y; editCycle[2] = underIndex.toFloat()
                                 editCycleAt[0] = lastAt
-                                // A tap: a control's mapping; a corner (no mapping) its menu.
+                                editTapId[0] = if (double) null else target
                                 selected = target
-                                menu = if (target != null && d0 != null && isCorner(
-                                        d0,
-                                        target
-                                    )
-                                ) EditMenu.CONTEXT else EditMenu.MAPPING
+                                menu = when {
+                                    !double -> EditMenu.NONE
+                                    d0 != null && isCorner(d0, target!!) -> EditMenu.CONTEXT
+                                    else -> EditMenu.MAPPING
+                                }
+                            }
+
+                            EditGesture.TWO -> {
+                                // A two-finger tap selects without opening anything (a long press is for settings).
+                                selected = tapTarget
+                                menu = EditMenu.NONE
+                            }
+
+                            EditGesture.PINCH -> {
+                                val id = target
+                                val d = draft
+                                if (snap && id != null && d != null && !isCorner(d, id)) snapEdges(id)
                             }
 
                             EditGesture.EMPTY -> {
@@ -1392,7 +1465,8 @@ fun PadScreen(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(
-                        Modifier.weight(1f, fill = false).padding(top = 6.dp, bottom = 6.dp),
+                        // A set width fills the panel, so the resize handle stays on its right edge.
+                        Modifier.weight(1f, fill = panelWidth != null).padding(top = 6.dp, bottom = 6.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         // Dots (move), ⚙ (this workspace's settings), Done, then the layout tools.
@@ -1417,6 +1491,19 @@ fun PadScreen(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                // The selected control's settings and mappings (also a long press and a double tap).
+                                val picked = findControl(selected)
+                                if (picked != null) {
+                                    FilledTonalButton(
+                                        contentPadding = compact,
+                                        onClick = { menu = EditMenu.CONTEXT }) { Text("Configure") }
+                                    val d = draft
+                                    if (d != null && !isCorner(d, picked.id)) {
+                                        FilledTonalButton(
+                                            contentPadding = compact,
+                                            onClick = { menu = EditMenu.MAPPING }) { Text("Map") }
+                                    }
+                                }
                                 FilledTonalButton(
                                     contentPadding = compact,
                                     onClick = { finishEditing() }) { Text("Done") }
@@ -1563,10 +1650,8 @@ fun PadScreen(
                             inPortrait = portrait,
                             onProfileChange = { draft = it },
                             onSize = { resize(sel.id, it) },
-                            onClose = {
-                                selected = null
-                                menu = EditMenu.NONE
-                            },
+                            // The control stays selected (ready to pinch); a tap on empty space clears it.
+                            onClose = { menu = EditMenu.NONE },
                             modifier = Modifier.heightIn(max = maxHeight - 16.dp),
                         )
                     }
@@ -1578,10 +1663,8 @@ fun PadScreen(
                         runtime = runtime,
                         onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
                         onSettings = { menu = EditMenu.CONTEXT },
-                        onClose = {
-                            selected = null
-                            menu = EditMenu.NONE
-                        },
+                        // The control stays selected (ready to pinch); a tap on empty space clears it.
+                        onClose = { menu = EditMenu.NONE },
                         sets = ws.sets,
                         editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
                         onEditSet = { mapSet = it },
@@ -1631,10 +1714,8 @@ fun PadScreen(
                             selected = null
                             menu = EditMenu.NONE
                         },
-                        onClose = {
-                            selected = null
-                            menu = EditMenu.NONE
-                        },
+                        // The control stays selected (ready to pinch); a tap on empty space clears it.
+                        onClose = { menu = EditMenu.NONE },
                     )
                 }
             }
