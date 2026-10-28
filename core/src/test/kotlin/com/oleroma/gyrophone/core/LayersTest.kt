@@ -66,6 +66,40 @@ class LayersTest {
     }
 
     @Test
+    fun theInputHoldingALayerAlsoPressesWhatTheNewSetMapsIt() {
+        val e = engine(listOf(
+            touch("s", layer(1, held = true)), touch("s", pad(GamepadButton.A)),
+            touch("s", pad(GamepadButton.B), set = 1), touch("s", layer(0), set = 1),
+        ))
+        e.setTouch("s", true)
+        assertEquals(1, e.layers.set) // set 1's layer action on s waits: no flipping back
+        assertEquals(a or b, e.buttons())
+        e.setTouch("s", false)
+        assertEquals(0, e.layers.set)
+        assertEquals(0, e.buttons())
+    }
+
+    @Test
+    fun aHeldDirectionZoneHoldingALayerPressesTheNewSetsMappingForIt() {
+        fun h(zone: Int, t: OutputTarget, set: Int = 0) = Mapping(InputSource.Surface(1, SurfaceInput.HOLD_UP, zone = zone), t, set)
+        val e = MappingEngine(
+            single(
+                Workspace(
+                    id = "w", name = "w", touchpad = com.oleroma.gyrophone.core.model.TouchpadSettings(mapped = true, acceleration = 0f),
+                    sets = listOf(com.oleroma.gyrophone.core.model.MappingSet(1)),
+                    mappings = listOf(h(0, pad(GamepadButton.A)), h(1, layer(1, held = true)), h(1, pad(GamepadButton.B), set = 1)),
+                ),
+            ),
+        ) { now }.apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 4 * ms }
+        var y = 300f
+        e.touchpadDown(1, 100f, y); e.snapshot()
+        repeat(50) { now += 2 * ms; y -= 1f; e.touchpadMove(1, 100f, y); e.snapshot() }
+        repeat(10) { now += 2 * ms; e.snapshot() }
+        assertEquals(1, e.layers.set)
+        assertEquals(b, e.buttons())
+    }
+
+    @Test
     fun mappingHoldGoesBackOnRelease() {
         val e = engine(listOf(
             touch("s", layer(1, held = true)),

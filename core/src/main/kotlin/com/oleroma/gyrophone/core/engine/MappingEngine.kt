@@ -110,9 +110,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /**
      * Inputs held through a set change, per group (0 = touch, then 1 + pad index), by source: the
-     * old mappings they keep until released, and whether the new set's are held back meanwhile.
+     * old mappings they keep until released, and whether the new set's are held back meanwhile
+     * ([holdsLayers]: only its layer actions, for the input holding a "... hold" action).
      */
-    private class Carried(val mappings: List<Mapping>, val holdsBack: Boolean)
+    private class Carried(val mappings: List<Mapping>, val holdsBack: Boolean, val holdsLayers: Boolean = false)
 
     private var carried: Array<HashMap<InputSource, Carried>> = emptyArray()
     private var anyCarried = false
@@ -1413,7 +1414,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * Before a set change by [t]: every held input remembers what it presses now. Its layer actions
      * always stay until it is released; its buttons, keys and clicks too unless [t] switches held
      * inputs, and then the new set's mappings for it wait for its release. The inputs holding [t]
-     * itself always keep everything.
+     * itself always keep everything; holding a "... hold" action they also press what the new set
+     * maps them to at once (all but its layer actions, which wait, so nothing flips back and forth).
      */
     private fun carryHeld(t: OutputTarget.Layer) {
         for (g in carried.indices) {
@@ -1426,10 +1428,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val was = carried[g]
             val now = HashMap<InputSource, Carried>()
             for ((src, list) in bySource) {
-                val keep = !t.switchHeld || list.any { it.target == t }
+                val holder = list.any { it.target == t }
+                val keep = !t.switchHeld || holder
                 val kept = list.filter { carries(it, keep) }
                 if (kept.isEmpty() && !keep) continue
-                now[src] = Carried(kept, keep || was[src]?.holdsBack == true)
+                val before = was[src]
+                val layersOnly = holder && t.whileHeld && (before == null || before.holdsLayers)
+                now[src] = Carried(kept, keep || before?.holdsBack == true, layersOnly)
             }
             carried[g] = now
         }
@@ -1488,7 +1493,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         fun inUse(all: List<Mapping>, c: HashMap<InputSource, Carried>?): List<Mapping> {
             val ms = layered(all, layerSet, layerOverrides)
             if (c.isNullOrEmpty()) return ms
-            return ms.filterNot { c[it.source]?.holdsBack == true } + c.values.flatMap { it.mappings }
+            val out = ms.filterNot { m ->
+                val k = c[m.source] ?: return@filterNot false
+                if (k.holdsLayers) m.target is OutputTarget.Layer else k.holdsBack
+            } + c.values.flatMap { it.mappings }
+            // A mapping the holder keeps and the new set also has (an override falling through) counts once.
+            return if (c.values.any { it.holdsLayers }) out.distinct() else out
         }
         touchMappings = inUse(allTouch, carried.getOrNull(0))
         padMappings = Array(allPads.size) { inUse(allPads[it], carried.getOrNull(it + 1)) }

@@ -283,7 +283,8 @@ sealed interface OutputTarget {
      * input keeps the current set's; pressed again (or any mapping set) it goes. [whileHeld]: only
      * while the source is held; on release things go back. [switchHeld]: inputs held at the change
      * let go of their old outputs and take the new set's at once; else (keep) they keep pressing
-     * what they pressed until released. The source that holds the action always keeps it.
+     * what they pressed until released. The source that holds the action always keeps it; with
+     * [whileHeld] it also presses what the new set maps it to (not that set's layer actions).
      */
     @Serializable
     @SerialName("layer")
