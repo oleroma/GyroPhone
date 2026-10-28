@@ -48,6 +48,8 @@ data class Workspace(
     val longPressMs: Int = DEFAULT_LONG_PRESS_MS,
     /** Touch buttons: the longest gap between the taps of a double tap, in ms ([TouchControl.doubleTapMs]). */
     val doubleTapMs: Int = DEFAULT_DOUBLE_TAP_MS,
+    /** The mapping profile's named sets ([MappingProfile.sets]); like [mappings], only in a resolved set. */
+    val sets: List<MappingSet> = emptyList(),
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =

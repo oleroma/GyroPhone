@@ -79,12 +79,16 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.MappingProfiles
+import com.oleroma.gyrophone.core.model.MappingSet
+import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.Placement
 import com.oleroma.gyrophone.core.model.Profile
@@ -102,6 +106,7 @@ import com.oleroma.gyrophone.core.model.placeX
 import com.oleroma.gyrophone.core.model.placeY
 import com.oleroma.gyrophone.core.model.placement
 import com.oleroma.gyrophone.core.model.withPlacement
+import com.oleroma.gyrophone.core.model.withSets
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -134,6 +139,9 @@ private const val HIGHLIGHT_POLL_MS = 50L
 
 /** With live mappings: refresh fast enough to catch a tap's short pulse. */
 private const val LIVE_POLL_MS = 16L
+
+/** How often the pad screen checks the mapping set in use (for its pill and live labels). */
+private const val LAYER_POLL_MS = 100L
 
 /** How long a button keeps showing what it sent after it stops. */
 private const val LIVE_LINGER_MS = 700L
@@ -305,8 +313,27 @@ fun PadScreen(
 
     // Live mappings: per control, its mappings (not haptics), what it sends now, and until when it
     // stays shown; watched until [liveWatchUntil] after the last touch (a tap may wait out its window).
-    val controlMappings = remember(ws) {
-        ws.mappings.filterNot { Describe.isHaptic(it.target) }.groupBy { MappingProfiles.touchId(it.source) }
+    // The mapping set the control mapping screen edits (kept while edit mode lasts).
+    var mapSet by remember { mutableStateOf(MappingSet.BASE) }
+    // Mapping sets: the set in use and its overrides, watched while this workspace has layer actions.
+    var layers by remember { mutableStateOf(MappingEngine.Layers(MappingSet.BASE, emptyList())) }
+    val hasLayers = remember(ws) {
+        (ws.mappings + ws.keyboard + ws.pads.flatMap { it.mappings }).any { it.target is OutputTarget.Layer }
+    }
+    LaunchedEffect(hasLayers, editing) {
+        if (!hasLayers || editing) {
+            layers = MappingEngine.Layers(MappingSet.BASE, emptyList())
+            return@LaunchedEffect
+        }
+        while (true) {
+            val l = runtime.engine.layers
+            if (l != layers) layers = l
+            delay(LAYER_POLL_MS)
+        }
+    }
+    val controlMappings = remember(ws, layers) {
+        layered(ws.mappings, layers.set, layers.overrides).filterNot { Describe.isHaptic(it.target) }
+            .groupBy { MappingProfiles.touchId(it.source) }
     }
     val liveLabels = remember { mutableStateMapOf<String, String>() }
     val liveUntil = remember { HashMap<String, Long>() }
@@ -1229,6 +1256,30 @@ fun PadScreen(
             }
         }
 
+        val layerText = if (layers.set == MappingSet.BASE && layers.overrides.isEmpty()) null else {
+            fun name(id: Int) = if (id == MappingSet.BASE) "Base" else ws.sets.firstOrNull { it.id == id }?.label ?: "Set $id"
+            (listOf(name(layers.set)) + layers.overrides.map { "+ " + name(it) }).joinToString(" ")
+        }
+        if (!editing && layerText != null) {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = Color(0xE01E232B),
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
+            ) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val top = layers.overrides.lastOrNull() ?: layers.set
+                    if (top != MappingSet.BASE) Box(Modifier.size(8.dp).background(setColor(top), CircleShape))
+                    Text(
+                        layerText,
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1,
+                        modifier = Modifier.padding(start = 6.dp),
+                    )
+                }
+            }
+        }
+
         if (!editing) {
             if (!fullscreen) {
                 CapsuleRow(
@@ -1451,6 +1502,10 @@ fun PadScreen(
                         },
                         onSettings = { menu = EditMenu.CONTEXT },
                         onClose = close,
+                        sets = ws.sets,
+                        editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
+                        onEditSet = { mapSet = it },
+                        onSetsChange = { sets, removed -> editWorkspace { it.withSets(sets, removed) } },
                     )
                 } else {
                     TouchpadSettingsScreen(
@@ -1491,6 +1546,10 @@ fun PadScreen(
                             selected = null
                             menu = EditMenu.NONE
                         },
+                        sets = ws.sets,
+                        editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
+                        onEditSet = { mapSet = it },
+                        onSetsChange = { sets, removed -> editWorkspace { it.withSets(sets, removed) } },
                     )
                 } else {
                     // A long press: all of the control's settings.

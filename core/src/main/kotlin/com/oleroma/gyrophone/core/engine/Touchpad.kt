@@ -1112,9 +1112,12 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         if (n >= 1) pulse(n, SurfaceInput.RELEASE)
     }
 
-    /** Turns input [input] with [n] fingers on or off (nothing if it is not mapped). */
+    /**
+     * Turns input [input] with [n] fingers on or off (on only if it is mapped: one on stays
+     * free to go off after a mapping set change unmapped it).
+     */
     private fun set(n: Int, input: SurfaceInput, on: Boolean) {
-        if (!map.has(n, input)) return
+        if (on && !map.has(n, input)) return
         val b = SurfaceMap.bit(n, input)
         val m = 1L shl (b and 63)
         if (b < 64) {

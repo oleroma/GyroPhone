@@ -14,8 +14,8 @@ import kotlin.math.min
 internal class ButtonGestures(
     val longNs: Long,
     val doubleNs: Long,
-    val hasDouble: Boolean,
-    val tapWaits: Boolean,
+    var hasDouble: Boolean,
+    var tapWaits: Boolean,
 ) {
     /** One gesture: on from [startNs], held while [holding], then on for the minimum pulse once seen. */
     class Gesture {

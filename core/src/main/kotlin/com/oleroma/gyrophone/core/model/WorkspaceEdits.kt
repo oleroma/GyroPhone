@@ -41,3 +41,15 @@ object WorkspaceEdits {
         else -> active
     }
 }
+
+/**
+ * This workspace with mapping [sets]; set [removed] (if any) goes with its mappings and the layer
+ * actions that switch to it, on the controls, the touchpad, the keyboard and every pad.
+ */
+fun Workspace.withSets(sets: List<MappingSet>, removed: Int?): Workspace =
+    if (removed == null) copy(sets = sets) else copy(
+        sets = sets,
+        mappings = Bindings.dropSet(mappings, removed),
+        keyboard = Bindings.dropSet(keyboard, removed),
+        pads = pads.map { it.copy(mappings = Bindings.dropSet(it.mappings, removed)) },
+    )

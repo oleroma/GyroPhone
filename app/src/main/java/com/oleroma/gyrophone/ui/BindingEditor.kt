@@ -34,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -68,6 +69,7 @@ import com.oleroma.gyrophone.core.model.HapticEdge
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -87,6 +89,9 @@ fun BindingList(
 ) {
     // (input, target being replaced or null to add)
     var picking by remember { mutableStateOf<Pair<BindableInput, OutputTarget?>?>(null) }
+    // Layer actions pick from the workspace profile's sets (new sets are made in the profile editor).
+    val active by runtime.activeProfile.collectAsStateWithLifecycle()
+    val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         for (input in inputs) {
@@ -140,6 +145,8 @@ fun BindingList(
             extra = input.extra,
             runtime = runtime,
             current = Bindings.targets(mappings, input),
+            sets = active.workspace(wsIndex).sets,
+            editing = replacing as? OutputTarget.Layer,
             onPick = { picked ->
                 val current = Bindings.targets(mappings, input)
                 val next = if (replacing != null && replacing in current) {
@@ -221,13 +228,24 @@ fun TargetPickerDialog(
     current: List<OutputTarget> = emptyList(),
     swipe: Boolean = false,
     extra: List<OutputTarget> = emptyList(),
+    /** The profile's mapping sets: offers the "Layers" group (null = not offered). */
+    sets: List<MappingSet>? = null,
+    /** Adds a set to the profile and gives it ("+ New set" in the layer dialog). */
+    onAddSet: (() -> MappingSet)? = null,
+    /** A layer target being changed: its dialog opens at once. */
+    editing: OutputTarget? = null,
 ) {
     var query by remember { mutableStateOf("") }
     var capturing by remember { mutableStateOf(false) }
     // A picked haptic target being configured before it is handed to onPick.
     var hapticDraft by remember { mutableStateOf<OutputTarget?>(null) }
+    // A picked layer action, its set and option being chosen.
+    var layerDraft by remember { mutableStateOf(editing as? OutputTarget.Layer) }
 
-    val groups = remember(analog, swipe, extra) { Describe.pickerGroups(analog, swipe, extra) }
+    val groups = remember(analog, swipe, extra, sets != null) {
+        val g = Describe.pickerGroups(analog, swipe, extra)
+        if (sets == null || analog) g else g + ("Layers" to Describe.layerTargets)
+    }
     val entries = remember(groups, query) {
         val q = query.trim()
         buildList {
@@ -245,6 +263,8 @@ fun TargetPickerDialog(
     val pick: (OutputTarget) -> Unit = { t ->
         if (Describe.isHaptic(t)) {
             hapticDraft = t
+        } else if (t is OutputTarget.Layer) {
+            layerDraft = t
         } else {
             onPick(t)
             onDismiss()
@@ -301,6 +321,87 @@ fun TargetPickerDialog(
             onCancel = { hapticDraft = null },
         )
     }
+
+    layerDraft?.let { draft ->
+        LayerTargetDialog(
+            start = draft,
+            sets = sets.orEmpty(),
+            onAddSet = onAddSet,
+            onOk = { t ->
+                onPick(t)
+                onDismiss()
+            },
+            onCancel = { if (editing != null) onDismiss() else layerDraft = null },
+        )
+    }
+}
+
+/**
+ * Sets up a picked [OutputTarget.Layer]: which action, which set (Base, the profile's [sets], or a
+ * new one through [onAddSet]) and what held buttons do. [onOk] gets the target.
+ */
+@Composable
+internal fun LayerTargetDialog(
+    start: OutputTarget.Layer,
+    sets: List<MappingSet>,
+    onAddSet: (() -> MappingSet)?,
+    onOk: (OutputTarget) -> Unit,
+    onCancel: () -> Unit,
+) {
+    var t by remember { mutableStateOf(if (start.set < 0) start.copy(set = sets.firstOrNull()?.id ?: MappingSet.BASE) else start) }
+    var known by remember { mutableStateOf(sets) }
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("Layer action") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (kind in Describe.layerTargets.filterIsInstance<OutputTarget.Layer>()) {
+                        val k = t.copy(override = kind.override, whileHeld = kind.whileHeld)
+                        FilterChip(selected = k == t, onClick = { t = k }, label = { Text(Describe.layer(kind), maxLines = 1) })
+                    }
+                }
+                Text(
+                    when {
+                        t.override && t.whileHeld -> "While held, the set's mappings are laid over the current set; inputs it doesn't map keep theirs."
+                        t.override -> "Lays the set over the current set until pressed again or a mapping set changes everything; inputs it doesn't map keep theirs."
+                        t.whileHeld -> "While held, everything does what the set maps (and nothing it doesn't); on release it goes back."
+                        else -> "Everything does what the set maps from now on (nothing it doesn't). Map a \"Mapping set → Base\" in that set to get back."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text("Set", style = MaterialTheme.typography.labelLarge)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(selected = t.set == MappingSet.BASE, onClick = { t = t.copy(set = MappingSet.BASE) }, label = { Text("Base") })
+                    for (s in known) {
+                        FilterChip(selected = t.set == s.id, onClick = { t = t.copy(set = s.id) }, label = { Text(s.label, maxLines = 1) })
+                    }
+                    if (onAddSet != null && known.size < MappingSet.MAX) {
+                        TextButton(onClick = {
+                            val n = onAddSet()
+                            known = known + n
+                            t = t.copy(set = n.id)
+                        }) { Text("+ New set") }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text("Switch held buttons", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            if (t.switchHeld) "Buttons held at the change let go and take the new set's mapping at once."
+                            else "Buttons held at the change keep pressing what they pressed until released.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = t.switchHeld, onCheckedChange = { t = t.copy(switchHeld = it) })
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onOk(t) }) { Text("OK") } },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+    )
 }
 
 /**

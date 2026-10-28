@@ -261,10 +261,64 @@ sealed interface OutputTarget {
             const val MAX_STEP_PERCENT = 50
         }
     }
+
+    /**
+     * A layer action on the mapping sets ([Mapping.set]). Not [override]: the mapping set — every
+     * input does what set [set] maps, and nothing if it maps nothing; it clears the overrides.
+     * [override]: set [set] is laid over the current set — inputs it maps do that, every other
+     * input keeps the current set's; pressed again (or any mapping set) it goes. [whileHeld]: only
+     * while the source is held; on release things go back. [switchHeld]: inputs held at the change
+     * let go of their old outputs and take the new set's at once; else (keep) they keep pressing
+     * what they pressed until released. The source that holds the action always keeps it.
+     */
+    @Serializable
+    @SerialName("layer")
+    data class Layer(
+        val set: Int,
+        val override: Boolean = false,
+        val whileHeld: Boolean = false,
+        val switchHeld: Boolean = false,
+    ) : OutputTarget
+
+    /** Does nothing: in a set used as an override, it stops an input falling through to the set below. */
+    @Serializable
+    @SerialName("nothing")
+    data object NoOutput : OutputTarget
 }
 
+/** [source] presses [target] while mapping set [set] (0 = Base) is in use ([OutputTarget.Layer]). */
 @Serializable
-data class Mapping(val source: InputSource, val target: OutputTarget)
+data class Mapping(val source: InputSource, val target: OutputTarget, val set: Int = 0)
+
+/** A named mapping set of a [MappingProfile] (set 0, Base, needs none). */
+@Serializable
+data class MappingSet(val id: Int, val name: String = "") {
+    val label: String get() = name.ifBlank { "Set $id" }
+
+    companion object {
+        const val BASE = 0
+        const val MAX = 9
+    }
+}
+
+/**
+ * Which mappings are in use: those of [full] with each of [overrides] (bottom to top) laid over
+ * it. For each input the topmost override that maps it wins, else [full]'s mappings. Mappings to
+ * [OutputTarget.NoOutput] are dropped. Base with no overrides on a list with no other sets is
+ * [ms] itself.
+ */
+fun layered(ms: List<Mapping>, full: Int, overrides: List<Int>): List<Mapping> {
+    if (full == MappingSet.BASE && overrides.isEmpty() && ms.none { it.set != 0 || it.target == OutputTarget.NoOutput }) return ms
+    var out = ms.filter { it.set == full }
+    for (o in overrides) {
+        if (o == full) continue
+        val top = ms.filter { it.set == o }
+        if (top.isEmpty()) continue
+        val sources = top.mapTo(HashSet()) { it.source }
+        out = out.filterNot { it.source in sources } + top
+    }
+    return out.filter { it.target != OutputTarget.NoOutput }
+}
 
 /**
  * How a haptic target feels. [system]: Android's own click effects (they follow the phone's

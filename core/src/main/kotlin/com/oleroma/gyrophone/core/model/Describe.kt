@@ -54,7 +54,27 @@ object Describe {
         } + feel(t.feel)
 
         is OutputTarget.HapticStep -> "Haptic per ${t.percent} % step" + feel(t.feel)
+        is OutputTarget.Layer -> layer(t) + if (t.set < 0) "" else " → " + setName(t.set) + if (t.switchHeld) ", switch held" else ""
+        OutputTarget.NoOutput -> "Nothing (blocks the set below)"
     }
+
+    /** The "Layers" picker group: each action with no set yet (set -1, picked next), and Nothing. */
+    val layerTargets: List<OutputTarget> = listOf(
+        OutputTarget.Layer(-1), OutputTarget.Layer(-1, whileHeld = true),
+        OutputTarget.Layer(-1, override = true), OutputTarget.Layer(-1, override = true, whileHeld = true),
+        OutputTarget.NoOutput,
+    )
+
+    /** "Mapping set", "Mapping hold", "Mapping override" or "Override hold". */
+    fun layer(t: OutputTarget.Layer): String = when {
+        t.override && t.whileHeld -> "Override hold"
+        t.override -> "Mapping override"
+        t.whileHeld -> "Mapping hold"
+        else -> "Mapping set"
+    }
+
+    /** A set's name where no profile is at hand: "Base" or "Set 2". */
+    fun setName(set: Int): String = if (set == MappingSet.BASE) "Base" else "Set $set"
 
     fun isHaptic(t: OutputTarget): Boolean = t is OutputTarget.Haptic || t is OutputTarget.HapticStep
 
@@ -128,6 +148,14 @@ object Describe {
         }
 
         is OutputTarget.HapticStep -> "Buzz ${t.percent}%"
+        is OutputTarget.Layer -> if (t.set < 0) layer(t) else when {
+            t.override && t.whileHeld -> "Ovr hold"
+            t.override -> "Override"
+            t.whileHeld -> "Set hold"
+            else -> "Set"
+        } + " " + (if (t.set == MappingSet.BASE) "Base" else t.set.toString())
+
+        OutputTarget.NoOutput -> "Nothing"
     }
 
     private val keyboardOrder: List<Int> = buildList {
