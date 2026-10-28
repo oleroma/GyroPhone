@@ -87,6 +87,7 @@ import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.MappingSet
+import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.model.NavCorners
@@ -107,6 +108,8 @@ import com.oleroma.gyrophone.core.model.placeY
 import com.oleroma.gyrophone.core.model.placement
 import com.oleroma.gyrophone.core.model.withPlacement
 import com.oleroma.gyrophone.core.model.withSets
+import com.oleroma.gyrophone.core.model.ownSurface
+import com.oleroma.gyrophone.core.model.surfaceSettings
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -331,10 +334,14 @@ fun PadScreen(
             delay(LAYER_POLL_MS)
         }
     }
+    // What each control maps in the set in use (labels), and what it really presses now (live
+    // labels: the engine's mappings in use, held inputs carrying their old set's included).
     val controlMappings = remember(ws, layers) {
         layered(ws.mappings, layers.set, layers.overrides).filterNot { Describe.isHaptic(it.target) }
             .groupBy { MappingProfiles.touchId(it.source) }
     }
+    val inUseCache = remember { arrayOfNulls<List<Mapping>>(1) }
+    val inUseGroups = remember { arrayOf<Map<String?, List<Mapping>>>(emptyMap()) }
     val liveLabels = remember { mutableStateMapOf<String, String>() }
     val liveUntil = remember { HashMap<String, Long>() }
     val liveWatchUntil = remember { LongArray(1) }
@@ -346,8 +353,16 @@ fun PadScreen(
             liveLabels.clear(); liveUntil.clear(); liveWatching = false
             return
         }
-        for ((id, ms) in controlMappings) {
+        val inUse = runtime.engine.touchMappingsInUse
+        if (inUse !== inUseCache[0]) {
+            inUseCache[0] = inUse
+            inUseGroups[0] = inUse.filterNot { Describe.isHaptic(it.target) || it.target == OutputTarget.NoOutput }
+                .groupBy { MappingProfiles.touchId(it.source) }
+        }
+        val groups = inUseGroups[0]
+        for (id in groups.keys + liveLabels.keys.toList()) {
             if (id == null) continue
+            val ms = groups[id].orEmpty()
             val text = ms.filter { abs(runtime.sourceValue(it.source)) >= 0.5f }
                 .map { Describe.shortTarget(it.target) }.distinct().joinToString(" + ")
             if (text.isNotEmpty()) {
@@ -1161,7 +1176,9 @@ fun PadScreen(
                     }
                 }
             }
-            val labels = remember(ws, editing) { ws.touchControls.associate { it.id to controlLabel(ws, it, editing) } }
+            val labels = remember(ws, editing, controlMappings) {
+                ws.touchControls.associate { it.id to controlLabel(ws, it, editing, controlMappings[it.id]) }
+            }
             // Back first, so the front one (as touches see them) is drawn on top.
             for (c in hitOrder(ws.touchControls, portrait).asReversed()) {
                 val r = half(c)
@@ -1257,7 +1274,7 @@ fun PadScreen(
         }
 
         val layerText = if (layers.set == MappingSet.BASE && layers.overrides.isEmpty()) null else {
-            fun name(id: Int) = if (id == MappingSet.BASE) "Base" else ws.sets.firstOrNull { it.id == id }?.label ?: "Set $id"
+            fun name(id: Int) = if (id == MappingSet.BASE) "Base" else ws.sets.firstOrNull { it.id == id }?.label ?: "Layer $id"
             (listOf(name(layers.set)) + layers.overrides.map { "+ " + name(it) }).joinToString(" ")
         }
         if (!editing && layerText != null) {
@@ -1506,6 +1523,10 @@ fun PadScreen(
                         editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
                         onEditSet = { mapSet = it },
                         onSetsChange = { sets, removed -> editWorkspace { it.withSets(sets, removed) } },
+                        zoneSettings = ws.touchpad,
+                        onZoneSettings = { a, b ->
+                            editWorkspace { it.copy(touchpad = it.touchpad.copy(holdZones = a, dirHoldZones = b)) }
+                        },
                     )
                 } else {
                     TouchpadSettingsScreen(
@@ -1550,6 +1571,10 @@ fun PadScreen(
                         editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
                         onEditSet = { mapSet = it },
                         onSetsChange = { sets, removed -> editWorkspace { it.withSets(sets, removed) } },
+                        zoneSettings = if (sel.swipes) sel.surfaceSettings(ws.touchpad) else null,
+                        onZoneSettings = { a, b ->
+                            updateControl(sel.id) { it.copy(surface = it.ownSurface.copy(holdZones = a, dirHoldZones = b)) }
+                        },
                     )
                 } else {
                     // A long press: all of the control's settings.
@@ -1604,10 +1629,20 @@ fun PadScreen(
     }
 }
 
-/** Label shown on a control: its own, else its first mapping's short name. */
-private fun controlLabel(workspace: Workspace, c: TouchControl, editing: Boolean): String {
+/**
+ * Label shown on a control: its own, else its first mapping's short name: in play mode from
+ * [inUse] (its mappings in the set in use), while editing from Base.
+ */
+private fun controlLabel(workspace: Workspace, c: TouchControl, editing: Boolean, inUse: List<Mapping>?): String {
     if (c.label.isNotBlank()) return c.label
-    val first = Bindings.touchInputs(c).firstNotNullOfOrNull { Bindings.targets(workspace.mappings, it).firstOrNull() }
+    val first = if (editing) {
+        Bindings.touchInputs(c).firstNotNullOfOrNull { Bindings.targets(workspace.mappings, it).firstOrNull() }
+    } else {
+        val ms = inUse.orEmpty().filter { it.target != OutputTarget.NoOutput }
+        Bindings.touchInputs(c).firstNotNullOfOrNull { input ->
+            ms.firstOrNull { m -> input.sources.any { Bindings.sameSource(it, m.source) } }?.target
+        }
+    }
     return first?.let { Describe.shortTarget(it) } ?: if (editing) "?" else ""
 }
 

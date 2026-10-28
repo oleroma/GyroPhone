@@ -65,7 +65,7 @@ import kotlin.math.sqrt
 
 /**
  * Full-screen settings of a touch control (a long press in edit mode): collapsible sections for
- * its look, behaviour, zone, stick, surface and a summary of its mappings ([onEditMappings]
+ * its look, behaviour, area, stick, surface and a summary of its mappings ([onEditMappings]
  * opens the mapping screen). [workspace] holds its mappings; edits go through the callbacks.
  */
 @Composable
@@ -150,13 +150,28 @@ internal fun ControlSettingsScreen(
                             defaultOpen = true,
                             subtitle = "Swipe and held-direction pies, lengths and latch"
                         ) {
-                            SurfaceDirectionSettings(control.ownSurface, control.surfaceSettings(workspace.touchpad), control.id) { o ->
+                            SurfaceDirectionSettings(
+                                control.ownSurface,
+                                control.surfaceSettings(workspace.touchpad),
+                                control.id,
+                                Bindings.holdZoneCounts(workspace.mappings, control.id),
+                            ) { o ->
                                 onControlChange(control.copy(surface = o))
                             }
                         }
                     }
-                    RememberedSection(runtime, "control.Zone", "Zone", section) {
-                        ZoneSettings(control, workspace, onControlChange, onEditMappings)
+                    if (workspace.sets.isNotEmpty()) {
+                        RememberedSection(runtime, "control.Layers", "Layers", section) {
+                            SwitchSetting(
+                                "Follows layers while held",
+                                "When the layer changes while this is held, it lets go of what it pressed and does the new layer's mapping at once. " +
+                                        "Off: it keeps pressing it until released.",
+                                control.followLayers,
+                            ) { onControlChange(control.copy(followLayers = it)) }
+                        }
+                    }
+                    RememberedSection(runtime, "control.Zone", "Area", section) {
+                        AreaSettings(control, workspace, onControlChange, onEditMappings)
                     }
                     RememberedSection(runtime, "control.Mappings", "Mappings", section, defaultOpen = true) {
                         MappingsSummary(control, workspace.mappings, onEditMappings)
@@ -377,9 +392,9 @@ internal fun StickSettings(control: TouchControl, onControlChange: (TouchControl
     )
 }
 
-/** Zone interrupts / resume on exit, shown once the control has a Zone mapping. */
+/** Area interrupts / resume on exit, shown once the control has an Area mapping. */
 @Composable
-internal fun ZoneSettings(
+internal fun AreaSettings(
     control: TouchControl,
     workspace: Workspace,
     onControlChange: (TouchControl) -> Unit,
@@ -388,8 +403,8 @@ internal fun ZoneSettings(
     val current by rememberUpdatedState(control)
     if (InputSource.TouchArea(control.id, TouchAreaKind.ZONE) !in workspace.mappings.map { it.source }) {
         Text(
-            "A zone acts while any finger is inside the control, wherever it touched down. " +
-                    "Map its Zone action in Mappings to use it; its options show here then.",
+            "An area acts while any finger is inside the control, wherever it touched down. " +
+                    "Map its Area action in Mappings to use it; its options show here then.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -397,15 +412,15 @@ internal fun ZoneSettings(
         return
     }
     SwitchSetting(
-        "Zone interrupts",
-        "A finger that slides into the zone stops what it was doing (cursor, stick, " +
-                "another button). One landing on the zone but on no other control moves no cursor.",
+        "Area interrupts",
+        "A finger that slides into the area stops what it was doing (cursor, stick, " +
+                "another button). One landing on the area but on no other control moves no cursor.",
         control.zoneInterrupt,
     ) { onControlChange(current.copy(zoneInterrupt = it)) }
     if (control.zoneInterrupt) {
         SwitchSetting(
             "Resume on exit",
-            "Leaving the zone, the finger goes back to what it was doing. Off: it does " +
+            "Leaving the area, the finger goes back to what it was doing. Off: it does " +
                     "nothing more until it lifts.",
             control.zoneResume,
         ) { onControlChange(current.copy(zoneResume = it)) }

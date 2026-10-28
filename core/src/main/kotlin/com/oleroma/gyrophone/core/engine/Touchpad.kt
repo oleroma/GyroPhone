@@ -167,6 +167,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     // finger count, and when they let go by themselves (Long.MAX_VALUE = not timed now).
     private var latchN = 0
     private var latchMask = 0
+    private val latchZones = IntArray(4)
     private var latchUntil = Long.MAX_VALUE
 
     /** A finger the system cancelled is being removed: its motion never latches. */
@@ -216,16 +217,19 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     private var longT0 = 0L
     private var longOn = false
 
-    // Input queue: sets of active inputs (two words of [SurfaceMap] bits) waiting to become
-    // visible, oldest first; [want0] / [want1] are the inputs as they should be now.
+    // Input queue: sets of active inputs (three words of [SurfaceMap] bits) waiting to become
+    // visible, oldest first; [want0] / [want1] / [want2] are the inputs as they should be now.
     private val q0 = LongArray(QUEUE_CAP)
     private val q1 = LongArray(QUEUE_CAP)
+    private val q2 = LongArray(QUEUE_CAP)
     private var qHead = 0
     private var qSize = 0
     private var want0 = 0L
     private var want1 = 0L
+    private var want2 = 0L
     private var vis0 = 0L
     private var vis1 = 0L
+    private var vis2 = 0L
     private var visibleSince = Long.MIN_VALUE / 4
     private var seen = true
 
@@ -262,16 +266,21 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     /**
      * An input's value as of the last [poll]: 1 / 0, or for Move X / Y and Pinch their level now
      * (-1..1: the travel from where the motion started, a floating stick; the spread change).
+     * [zone]: a held direction's length zone.
      */
-    fun level(fingers: Int, input: SurfaceInput): Float {
-        if (fingers !in 1..4) return 0f
+    fun level(fingers: Int, input: SurfaceInput, zone: Int = 0): Float {
+        if (fingers !in 1..4 || zone !in 0 until TouchpadSettings.MAX_HOLD_ZONES) return 0f
         return when (input) {
             SurfaceInput.MOTION_X -> if (phaseN == fingers) levelX else 0f
             SurfaceInput.MOTION_Y -> if (phaseN == fingers) levelY else 0f
             SurfaceInput.PINCH -> if (fingers == 2 && state == State.PINCH) pinchLevel else 0f
             else -> {
-                val b = SurfaceMap.bit(fingers, input)
-                val w = if (b < 64) vis0 else vis1
+                val b = SurfaceMap.bit(fingers, input, zone)
+                val w = when {
+                    b < 64 -> vis0
+                    b < 128 -> vis1
+                    else -> vis2
+                }
                 if (w and (1L shl (b and 63)) != 0L) 1f else 0f
             }
         }
@@ -533,7 +542,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     fun cancel(now: Long) {
         advance(now)
         clearGesture()
-        want0 = 0L; want1 = 0L
+        want0 = 0L; want1 = 0L; want2 = 0L
         enqueue()
         if (kVisible != 0) enqueueKey(0)
     }
@@ -609,7 +618,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     /** Hard reset: everything released and cleared immediately (host disconnect, transport switch). */
     fun reset() {
         clearGesture()
-        want0 = 0L; want1 = 0L; vis0 = 0L; vis1 = 0L
+        want0 = 0L; want1 = 0L; want2 = 0L; vis0 = 0L; vis1 = 0L; vis2 = 0L
         visibleSince = Long.MIN_VALUE / 4
         seen = true
         kVisible = 0
@@ -628,7 +637,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     fun poll(now: Long): Int {
         advance(now)
         if (qSize > 0 && seen && now - visibleSince >= minPulseNanos) {
-            vis0 = q0[qHead]; vis1 = q1[qHead]
+            vis0 = q0[qHead]; vis1 = q1[qHead]; vis2 = q2[qHead]
             qHead = (qHead + 1) % QUEUE_CAP
             qSize--
             visibleSince = now
@@ -662,6 +671,11 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         w = vis1
         while (w != 0L) {
             val b = 64 + java.lang.Long.numberOfTrailingZeros(w); w = w and (w - 1)
+            mouse = mouse or map.mouse[b]; mods = mods or map.mods[b]; if (mapped == 0) mapped = map.key[b]
+        }
+        w = vis2
+        while (w != 0L) {
+            val b = 128 + java.lang.Long.numberOfTrailingZeros(w); w = w and (w - 1)
             mouse = mouse or map.mouse[b]; mods = mods or map.mods[b]; if (mapped == 0) mapped = map.key[b]
         }
         keyModifiers = ((kVisible shr 8) and 0xFF) or mods
@@ -806,7 +820,8 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
                 latchN = 0; latchMask = 0; latchUntil = Long.MAX_VALUE
             } else releaseLatch()
         }
-        dirs.start(carried)
+        dirs.start(carried, latchZones)
+        zoneCounts(n)
         swiped = false; scrolled = false
         trX = 0f; trY = 0f; winX = 0f; winY = 0f
         dzHolding = n == 1 && state == State.MOVE && settings.cursorDeadzoneDp > 0f && map.motion[0].cursor
@@ -854,18 +869,25 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
 
     /**
      * The motion ends: its held directions let go (or, as the last finger lifts with the latch
-     * on, stay held: [latchMask]), its levels go back to 0, app switching ends.
+     * on, stay held: [latchMask]), zones that fire on release fire as the last finger lifts, its
+     * levels go back to 0, app switching ends.
      */
     private fun endPhase() {
         dzHolding = false
         rearmable = false
         val n = phaseN
         if (n in 1..4) {
-            val keep = if (settings.latch && count == 0 && !cancelling) dirs.held else 0
+            val lift = count == 0 && !cancelling
+            var keep = 0
+            if (lift && settings.latch) for (d in Direction.entries) if (dirs.zones(d) != 0) keep = keep or (1 shl d.ordinal)
             if (keep != 0) {
+                for (d in Direction.entries) latchZones[d.ordinal] = dirs.zones(d)
                 latchN = n; latchMask = keep; latchUntil = Long.MAX_VALUE
             }
-            holds(n, keep)
+            holds(n, if (keep != 0) latchZones else null)
+            if (lift) for (d in Direction.entries) {
+                if (dirs.firesOnRelease(d, settings)) pulse(n, HOLDS[d.ordinal], dirs.zoneAt(d))
+            }
         }
         dirs.start()
         phaseN = 0
@@ -903,8 +925,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         val ty = trY / pxPerDp
         levelX = (tx / STICK_FULL_DP).coerceIn(-1f, 1f)
         levelY = (ty / STICK_FULL_DP).coerceIn(-1f, 1f)
+        zoneCounts(n)
         val fired = dirs.step(sdx / pxPerDp, sdy / pxPerDp, settings)
-        holds(n, dirs.held)
+        holdZones(n)
         for (d in Direction.entries) if (fired and (1 shl d.ordinal) != 0) pulse(n, SWIPES[d.ordinal])
         val sideways = fired and (RIGHT_BIT or LEFT_BIT)
         if (fired != 0 && !swiped) {
@@ -922,15 +945,31 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         }
     }
 
-    /** Held directions of [n] fingers: exactly those in [mask]. */
-    private fun holds(n: Int, mask: Int) {
-        for (d in Direction.entries) set(n, HOLDS[d.ordinal], mask and (1 shl d.ordinal) != 0)
+    /** Held directions of [n] fingers: exactly the zones in [zones] (by [Direction.ordinal], masks of 1 shl zone); null = none. */
+    private fun holds(n: Int, zones: IntArray?) {
+        for (d in Direction.entries) {
+            val m = zones?.get(d.ordinal) ?: 0
+            for (z in 0 until TouchpadSettings.MAX_HOLD_ZONES) set(n, HOLDS[d.ordinal], m and (1 shl z) != 0, z)
+        }
+    }
+
+    /** Held directions of [n] fingers: the zones the motion holds now. */
+    private fun holdZones(n: Int) {
+        for (d in Direction.entries) {
+            val m = dirs.zones(d)
+            for (z in 0 until TouchpadSettings.MAX_HOLD_ZONES) set(n, HOLDS[d.ordinal], m and (1 shl z) != 0, z)
+        }
+    }
+
+    /** The motion's directions have the zones [n] fingers have mapped. */
+    private fun zoneCounts(n: Int) {
+        for (d in Direction.entries) dirs.zoneCount[d.ordinal] = map.zoneCount(n, d)
     }
 
     /** The latched directions let go. */
     private fun releaseLatch() {
         if (latchMask == 0) return
-        holds(latchN, 0)
+        holds(latchN, null)
         latchN = 0; latchMask = 0; latchUntil = Long.MAX_VALUE
     }
 
@@ -1116,26 +1155,30 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
      * Turns input [input] with [n] fingers on or off (on only if it is mapped: one on stays
      * free to go off after a mapping set change unmapped it).
      */
-    private fun set(n: Int, input: SurfaceInput, on: Boolean) {
-        if (on && !map.has(n, input)) return
-        val b = SurfaceMap.bit(n, input)
+    private fun set(n: Int, input: SurfaceInput, on: Boolean, zone: Int = 0) {
+        if (on && !map.has(n, input, zone)) return
+        val b = SurfaceMap.bit(n, input, zone)
         val m = 1L shl (b and 63)
         if (b < 64) {
             val w = if (on) want0 or m else want0 and m.inv()
             if (w == want0) return
             want0 = w
-        } else {
+        } else if (b < 128) {
             val w = if (on) want1 or m else want1 and m.inv()
             if (w == want1) return
             want1 = w
+        } else {
+            val w = if (on) want2 or m else want2 and m.inv()
+            if (w == want2) return
+            want2 = w
         }
         enqueue()
     }
 
     /** A short press of [input], visible for at least the minimum pulse. */
-    private fun pulse(n: Int, input: SurfaceInput) {
-        set(n, input, true)
-        set(n, input, false)
+    private fun pulse(n: Int, input: SurfaceInput, zone: Int = 0) {
+        set(n, input, true, zone)
+        set(n, input, false, zone)
     }
 
     /** Releases every key a gesture holds, after anything still queued. */
@@ -1166,7 +1209,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         qSize = 0
         kSize = 0
         // What is shown stays until [cancel] / [reset] let it go.
-        want0 = vis0; want1 = vis1
+        want0 = vis0; want1 = vis1; want2 = vis2
         phaseN = 0; levelX = 0f; levelY = 0f; pinchLevel = 0f
         scrubbing = false; scrolled = false; touchMax = 0
         dzHolding = false; catching = false; catchMotion = null; rearmable = false
@@ -1227,17 +1270,18 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         longT0 = now
     }
 
-    /** Queues [want0] / [want1] to become visible after what is queued, unless that already is. */
+    /** Queues [want0] / [want1] / [want2] to become visible after what is queued, unless that already is. */
     private fun enqueue() {
         val i = (qHead + qSize - 1 + QUEUE_CAP) % QUEUE_CAP
         val l0 = if (qSize > 0) q0[i] else vis0
         val l1 = if (qSize > 0) q1[i] else vis1
-        if (want0 == l0 && want1 == l1) return
+        val l2 = if (qSize > 0) q2[i] else vis2
+        if (want0 == l0 && want1 == l1 && want2 == l2) return
         if (qSize == QUEUE_CAP) {
-            q0[i] = want0; q1[i] = want1
+            q0[i] = want0; q1[i] = want1; q2[i] = want2
         } else {
             val j = (qHead + qSize) % QUEUE_CAP
-            q0[j] = want0; q1[j] = want1; qSize++
+            q0[j] = want0; q1[j] = want1; q2[j] = want2; qSize++
         }
     }
 

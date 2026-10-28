@@ -12,6 +12,8 @@ import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.SurfaceInput
+import com.oleroma.gyrophone.core.model.TouchControl
+import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.model.withSets
@@ -34,10 +36,11 @@ class LayersTest {
 
     private var now = 0L
 
-    private fun engine(touch: List<Mapping>, padMappings: List<Mapping> = emptyList()) = MappingEngine(
+    private fun engine(touch: List<Mapping>, padMappings: List<Mapping> = emptyList(), follow: Set<String> = emptySet()) = MappingEngine(
         single(
             Workspace(
                 id = "w", name = "w", mappings = touch,
+                touchControls = follow.map { TouchControl(it, TouchKind.BUTTON, "", 0.5f, 0.5f, followLayers = true) },
                 pads = listOf(AttachedPad(id = "xb", match = DeviceMatch(vendorId = 0x045E, productId = 0x0B13), mappings = padMappings)),
             ),
         ),
@@ -63,6 +66,40 @@ class LayersTest {
         e.tap("s")
         assertEquals(0, e.layers.set)
         e.setTouch("b", true); assertEquals(a, e.buttons())
+    }
+
+    @Test
+    fun theInputHoldingALayerAlsoPressesWhatTheNewSetMapsIt() {
+        val e = engine(listOf(
+            touch("s", layer(1, held = true)), touch("s", pad(GamepadButton.A)),
+            touch("s", pad(GamepadButton.B), set = 1), touch("s", layer(0), set = 1),
+        ))
+        e.setTouch("s", true)
+        assertEquals(1, e.layers.set) // set 1's layer action on s waits: no flipping back
+        assertEquals(a or b, e.buttons())
+        e.setTouch("s", false)
+        assertEquals(0, e.layers.set)
+        assertEquals(0, e.buttons())
+    }
+
+    @Test
+    fun aHeldDirectionZoneHoldingALayerPressesTheNewSetsMappingForIt() {
+        fun h(zone: Int, t: OutputTarget, set: Int = 0) = Mapping(InputSource.Surface(1, SurfaceInput.HOLD_UP, zone = zone), t, set)
+        val e = MappingEngine(
+            single(
+                Workspace(
+                    id = "w", name = "w", touchpad = com.oleroma.gyrophone.core.model.TouchpadSettings(mapped = true, acceleration = 0f),
+                    sets = listOf(com.oleroma.gyrophone.core.model.MappingSet(1)),
+                    mappings = listOf(h(0, pad(GamepadButton.A)), h(1, layer(1, held = true)), h(1, pad(GamepadButton.B), set = 1)),
+                ),
+            ),
+        ) { now }.apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 4 * ms }
+        var y = 300f
+        e.touchpadDown(1, 100f, y); e.snapshot()
+        repeat(50) { now += 2 * ms; y -= 1f; e.touchpadMove(1, 100f, y); e.snapshot() }
+        repeat(10) { now += 2 * ms; e.snapshot() }
+        assertEquals(1, e.layers.set)
+        assertEquals(b, e.buttons())
     }
 
     @Test
@@ -136,11 +173,11 @@ class LayersTest {
     }
 
     @Test
-    fun switchHeldButtonsTakeTheNewSetAtOnce() {
+    fun buttonsThatFollowLayersTakeTheNewSetAtOnce() {
         val e = engine(listOf(
-            touch("s", layer(1, switch = true)),
+            touch("s", layer(1)),
             touch("b", pad(GamepadButton.A)), touch("b", pad(GamepadButton.B), set = 1),
-        ))
+        ), follow = setOf("b"))
         e.setTouch("b", true)
         e.tap("s")
         assertEquals(b, e.buttons())
@@ -149,7 +186,7 @@ class LayersTest {
     @Test
     fun theSourceOfASetChangeDoesNotBounceBack() {
         // s maps to "set 0" in set 1: the press that switched to 1 must not also switch back.
-        val e = engine(listOf(touch("s", layer(1, switch = true)), touch("s", layer(0), set = 1)))
+        val e = engine(listOf(touch("s", layer(1)), touch("s", layer(0), set = 1)), follow = setOf("s"))
         e.setTouch("s", true)
         e.buttons()
         assertEquals(1, e.layers.set)

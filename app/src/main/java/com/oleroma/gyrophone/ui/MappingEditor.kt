@@ -391,7 +391,7 @@ internal fun MappingProfileEditor(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Set", style = MaterialTheme.typography.labelLarge)
+            Text("Layer", style = MaterialTheme.typography.labelLarge)
             FilterChip(
                 selected = editSet == MappingSet.BASE,
                 onClick = { editSet = MappingSet.BASE },
@@ -405,7 +405,7 @@ internal fun MappingProfileEditor(
                     leadingIcon = { SetDot(st.id) },
                 )
             }
-            if (sets.size < MappingSet.MAX) TextButton(onClick = { editSet = addSet().id }) { Text("+ Set") }
+            if (sets.size < MappingSet.MAX) TextButton(onClick = { editSet = addSet().id }) { Text("+ Layer") }
             sets.firstOrNull { it.id == editSet }?.let { st ->
                 TextButton(onClick = { renamingSet = st }) { Text("Rename") }
                 TextButton(onClick = { deletingSet = st }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
@@ -414,7 +414,7 @@ internal fun MappingProfileEditor(
         if (editSet != MappingSet.BASE) {
             Hint(
                 "Editing \"${sets.firstOrNull { it.id == editSet }?.label}\". Inputs it doesn't map show Base's mapping greyed: " +
-                        "as a mapping set they do nothing, as an override they keep the set below. Use Layers in the picker to switch sets.",
+                        "with a layer set or hold they do nothing, with an override layer set or hold they keep the layer below. Use Layers in the picker to switch layers.",
             )
         }
 
@@ -662,14 +662,14 @@ internal fun MappingProfileEditor(
         var setName by remember(st.id) { mutableStateOf(st.name) }
         AlertDialog(
             onDismissRequest = { renamingSet = null },
-            title = { Text("Rename set ${st.id}") },
+            title = { Text("Rename layer ${st.id}") },
             text = {
                 OutlinedTextField(
                     value = setName,
                     onValueChange = { setName = it },
                     singleLine = true,
                     label = { Text("Name") },
-                    placeholder = { Text("Set ${st.id}") })
+                    placeholder = { Text("Layer ${st.id}") })
             },
             confirmButton = {
                 TextButton(onClick = {

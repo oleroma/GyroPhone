@@ -100,7 +100,12 @@ internal fun TouchpadSettingsScreen(
                         defaultOpen = true,
                         subtitle = "Swipe and held-direction pies, lengths and latch"
                     ) {
-                        DirectionSettings(workspace.touchpad, workspace.id) { tp -> onWorkspaceChange { it.copy(touchpad = tp) } }
+                        DirectionSettings(
+                            workspace.touchpad,
+                            workspace.id,
+                            Bindings.holdZoneCounts(workspace.mappings, ""),
+                            ownZones = true,
+                        ) { tp -> onWorkspaceChange { it.copy(touchpad = tp) } }
                     }
                     RememberedSection(runtime, "touchpad.Gyro", "Gyro", section) {
                         TouchpadSwitch(

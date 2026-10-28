@@ -28,7 +28,8 @@ object Describe {
         is InputSource.TouchLongPress -> "Touch ${s.id} long press"
         is InputSource.TouchArea -> "Touch ${s.id} ${s.kind.label.lowercase()}"
         is InputSource.Surface -> (if (s.id.isEmpty()) "Touchpad" else "Swipe on ${s.id}") +
-                " ${s.fingers} finger" + (if (s.fingers > 1) "s " else " ") + s.input.label.lowercase()
+                " ${s.fingers} finger" + (if (s.fingers > 1) "s " else " ") + s.input.label.lowercase() +
+                if (s.zone > 0) " zone ${s.zone + 1}" else ""
     }
 
     fun target(t: OutputTarget): String = when (t) {
@@ -54,8 +55,8 @@ object Describe {
         } + feel(t.feel)
 
         is OutputTarget.HapticStep -> "Haptic per ${t.percent} % step" + feel(t.feel)
-        is OutputTarget.Layer -> layer(t) + if (t.set < 0) "" else " → " + setName(t.set) + if (t.switchHeld) ", switch held" else ""
-        OutputTarget.NoOutput -> "Nothing (blocks the set below)"
+        is OutputTarget.Layer -> layer(t) + if (t.set < 0) "" else " → " + setName(t.set)
+        OutputTarget.NoOutput -> "Nothing (blocks the layer below)"
     }
 
     /** The "Layers" picker group: each action with no set yet (set -1, picked next), and Nothing. */
@@ -65,16 +66,16 @@ object Describe {
         OutputTarget.NoOutput,
     )
 
-    /** "Mapping set", "Mapping hold", "Mapping override" or "Override hold". */
+    /** "Layer set", "Layer hold", "Override layer set" or "Override layer hold". */
     fun layer(t: OutputTarget.Layer): String = when {
-        t.override && t.whileHeld -> "Override hold"
-        t.override -> "Mapping override"
-        t.whileHeld -> "Mapping hold"
-        else -> "Mapping set"
+        t.override && t.whileHeld -> "Override layer hold"
+        t.override -> "Override layer set"
+        t.whileHeld -> "Layer hold"
+        else -> "Layer set"
     }
 
-    /** A set's name where no profile is at hand: "Base" or "Set 2". */
-    fun setName(set: Int): String = if (set == MappingSet.BASE) "Base" else "Set $set"
+    /** A layer's name where no profile is at hand: "Base" or "Layer 2". */
+    fun setName(set: Int): String = if (set == MappingSet.BASE) "Base" else "Layer $set"
 
     fun isHaptic(t: OutputTarget): Boolean = t is OutputTarget.Haptic || t is OutputTarget.HapticStep
 
@@ -148,12 +149,7 @@ object Describe {
         }
 
         is OutputTarget.HapticStep -> "Buzz ${t.percent}%"
-        is OutputTarget.Layer -> if (t.set < 0) layer(t) else when {
-            t.override && t.whileHeld -> "Ovr hold"
-            t.override -> "Override"
-            t.whileHeld -> "Set hold"
-            else -> "Set"
-        } + " " + (if (t.set == MappingSet.BASE) "Base" else t.set.toString())
+        is OutputTarget.Layer -> layer(t) + if (t.set < 0) "" else " " + (if (t.set == MappingSet.BASE) "Base" else t.set.toString())
 
         OutputTarget.NoOutput -> "Nothing"
     }

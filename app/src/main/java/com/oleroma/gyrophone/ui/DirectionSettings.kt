@@ -27,18 +27,27 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.HoldMode
+import com.oleroma.gyrophone.core.model.HoldZone
 import com.oleroma.gyrophone.core.model.SurfaceSettings
 import com.oleroma.gyrophone.core.model.TouchpadSettings
+import com.oleroma.gyrophone.core.model.ZoneKeep
 import com.oleroma.gyrophone.core.model.directionsAt
 import kotlin.math.roundToInt
 
 /**
  * Swipe directions of a touch surface ([TouchpadSettings] direction settings): the direction pies,
  * how far a swipe and a held direction take, how held directions work, and the latch.
- * [s] is the settings in effect; [onChange] gets them changed.
+ * [s] is the settings in effect; [onChange] gets them changed. [zones]: how many length zones
+ * each direction has mapped; with [ownZones] their settings show here too.
  */
 @Composable
-internal fun DirectionSettings(s: TouchpadSettings, key: String, onChange: (TouchpadSettings) -> Unit) {
+internal fun DirectionSettings(
+    s: TouchpadSettings,
+    key: String,
+    zones: IntArray = IntArray(4) { 1 },
+    ownZones: Boolean = false,
+    onChange: (TouchpadSettings) -> Unit,
+) {
     val current by rememberUpdatedState(s)
     fun edit(change: (TouchpadSettings) -> TouchpadSettings) = onChange(change(current))
 
@@ -90,10 +99,13 @@ internal fun DirectionSettings(s: TouchpadSettings, key: String, onChange: (Touc
             TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f,
         ) { v -> edit { it.copy(holdDp = v) } }
         if (s.holdMode == HoldMode.FROM_START) {
+            val zoned = zones.any { it > 1 }
             DirSwitch(
                 "Drag start point",
-                "The start point follows the finger, so sliding back only the release travel lets go, wherever the finger is.",
+                if (zoned && !s.dragStart) "Off while held directions have length zones: they need the start point to stay put."
+                else "The start point follows the finger, so sliding back only the release travel lets go, wherever the finger is.",
                 s.dragStart,
+                enabled = s.dragStart || !zoned,
             ) { v -> edit { it.copy(dragStart = v) } }
             if (s.dragStart) {
                 DirSlider(key + "release", "Release after %.0f dp back", s.releaseDp, 0f..TouchpadSettings.MAX_RELEASE_DP, 1f) { v ->
@@ -112,19 +124,137 @@ internal fun DirectionSettings(s: TouchpadSettings, key: String, onChange: (Touc
                 s.latchReleaseMs / 1000f, 0f..TouchpadSettings.MAX_LATCH_RELEASE_MS / 1000f, 0.1f,
             ) { v -> edit { it.copy(latchReleaseMs = (v * 1000).roundToInt()) } }
         }
+        if (ownZones) HoldZoneSettings(s, zones, key) { a, b -> edit { it.copy(holdZones = a, dirHoldZones = b) } }
+    }
+}
+
+/**
+ * The length zones of held directions ([TouchpadSettings.holdZone]) for the [zones] each
+ * direction has mapped: only directions with two or more show. [only]: just that direction's,
+ * every zone it can have, mapped or not (the mapping editor's zone dividers). [onChange] gets the
+ * shared zones and the per-direction ones (null = the same for every direction).
+ */
+@Composable
+internal fun HoldZoneSettings(
+    s: TouchpadSettings,
+    zones: IntArray,
+    key: String,
+    only: Direction? = null,
+    onChange: (List<HoldZone>, List<List<HoldZone>>?) -> Unit,
+) {
+    val current by rememberUpdatedState(s)
+    val shown = if (only != null) listOf(only) else Direction.entries.filter { zones[it.ordinal] > 1 }
+    // The dividers' panel shows every zone; elsewhere only the mapped ones.
+    fun count(d: Direction) = if (only != null) TouchpadSettings.MAX_HOLD_ZONES else zones[d.ordinal]
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Length zones", style = MaterialTheme.typography.labelLarge)
+        if (shown.isEmpty()) {
+            DirNote("None yet. In the mapping editor, drag a mapping past the ┃ divider at the end of a Hold row: it then fires further along, in a second zone.")
+            return@Column
+        }
+        if (s.dragStart && s.holdMode == HoldMode.FROM_START) {
+            DirNote("Drag start point is on, so only the first zone works. Turn it off to use the zones.")
+            return@Column
+        }
+        if (only != null && zones[only.ordinal] < 2) {
+            DirNote("These settings work once a second zone has mappings: drag one past the ┃ divider.")
+        }
+        val same = s.dirHoldZones == null
+        DirSwitch("Same zones for every direction", "Off: each direction has its own zone lengths and modes.", same) { on ->
+            val t = current
+            if (on) {
+                val from = shown.firstOrNull() ?: Direction.UP
+                onChange(t.dirHoldZones?.getOrNull(from.ordinal) ?: t.holdZones, null)
+            } else onChange(t.holdZones, List(4) { t.holdZones })
+        }
+        DirNote(
+            if (s.holdMode == HoldMode.FROM_START) "The first zone starts at the hold distance. The finger's distance from the start point picks the zone, so sliding back goes back a zone."
+            else "The first zone starts at the hold distance. A zone counts the travel since the direction was held and never goes back."
+        )
+        if (same) {
+            val d = shown.first()
+            ZoneList(current, d, shown.maxOf { count(it) }, shown.maxOf { zones[it.ordinal] }, key + "zones") { list -> onChange(list, null) }
+        } else for (d in shown) {
+            Text(d.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            ZoneList(current, d, count(d), zones[d.ordinal], key + "zones" + d.name) { list ->
+                val t = current
+                val all = (t.dirHoldZones ?: List(4) { t.holdZones }).toMutableList()
+                all[d.ordinal] = list
+                onChange(t.holdZones, all)
+            }
+        }
+    }
+}
+
+/**
+ * The [n] zones of [d] ([mapped] of them have mappings): where each starts, on reach or on
+ * release, how long it stays held, and its length.
+ */
+@Composable
+private fun ZoneList(s: TouchpadSettings, d: Direction, n: Int, mapped: Int, key: String, onChange: (List<HoldZone>) -> Unit) {
+    val list = s.dirHoldZones?.getOrNull(d.ordinal) ?: s.holdZones
+    fun set(i: Int, z: HoldZone) =
+        onChange(List(maxOf(list.size, i + 1)) { j -> if (j == i) z else list.getOrNull(j) ?: HoldZone() })
+    var start = s.holdDp.coerceIn(TouchpadSettings.MIN_ACTIVATE_DP, TouchpadSettings.MAX_ACTIVATE_DP)
+    for (i in 0 until n) {
+        val z = s.holdZone(d, i)
+        val last = i == n - 1
+        Text(
+            "Zone ${i + 1} · from %.0f dp".format(start) + (if (last) " on" else "") +
+                    if (i >= mapped) " · no mappings yet" else "",
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (i >= mapped) MaterialTheme.colorScheme.onSurfaceVariant else Color.Unspecified,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SelectChip("On reach", !z.onRelease) { set(i, z.copy(onRelease = false)) }
+            SelectChip("On release", z.onRelease) { set(i, z.copy(onRelease = true, keep = ZoneKeep.OFF)) }
+        }
+        DirNote(if (z.onRelease) "Fires once when the finger lifts in this zone." else "Held while the finger is in this zone.")
+        if (!z.onRelease) {
+            Text("Keep pressed", style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (k in ZoneKeep.entries) {
+                    // Going on needs a zone after it.
+                    if (k == ZoneKeep.GOING_ON && last && z.keep != k) continue
+                    SelectChip(k.label, z.keep == k) { set(i, z.copy(keep = k)) }
+                }
+            }
+            if (z.keep != ZoneKeep.OFF) {
+                DirNote(
+                    if (z.keep == ZoneKeep.GOING_ON) "Also held while the finger goes on into the next zones; sliding back below it lets go."
+                    else "Once reached, held wherever the finger goes until it lifts."
+                )
+            }
+        }
+        if (!last) {
+            val len = s.holdZoneDp(d, i)
+            DirSlider(key + i, "Length %.0f dp", len, TouchpadSettings.MIN_ZONE_DP..TouchpadSettings.MAX_ZONE_DP, 1f) { v ->
+                set(i, z.copy(lengthDp = v))
+            }
+            start += len
+        }
     }
 }
 
 /** A swipe button's direction settings: the touchpad's until its "Touchpad" switch goes off. */
 @Composable
-internal fun SurfaceDirectionSettings(own: SurfaceSettings, eff: TouchpadSettings, key: String, onChange: (SurfaceSettings) -> Unit) {
+internal fun SurfaceDirectionSettings(
+    own: SurfaceSettings,
+    eff: TouchpadSettings,
+    key: String,
+    zones: IntArray,
+    onChange: (SurfaceSettings) -> Unit,
+) {
     val follows = own.directionsFollow
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Directions", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
         Text("Touchpad", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Switch(checked = follows, onCheckedChange = { f -> onChange(if (f) own.followDirections() else own.withDirections(eff)) })
     }
-    if (!follows) DirectionSettings(eff, key) { onChange(own.withDirections(it)) }
+    if (!follows) DirectionSettings(eff, key, zones) { onChange(own.withDirections(it)) }
+    // Length zones are always the button's own: they go with its own mappings.
+    HoldZoneSettings(eff, zones, key) { a, b -> onChange(own.copy(holdZones = a, dirHoldZones = b)) }
 }
 
 /** No direction setting of its own: all follow the touchpad. */
@@ -234,13 +364,13 @@ private fun DirSlider(
 }
 
 @Composable
-private fun DirSwitch(title: String, hint: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun DirSwitch(title: String, hint: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).padding(end = 8.dp)) {
             Text(title, style = MaterialTheme.typography.bodyMedium)
             DirNote(hint)
         }
-        Switch(checked = checked, onCheckedChange = onChange)
+        Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
     }
 }
 

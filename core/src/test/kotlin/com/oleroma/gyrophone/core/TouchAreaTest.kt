@@ -14,7 +14,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** On touch, Outside and Zone mappings ([InputSource.TouchArea]) of touch controls. */
+/** On touch, Outside and Area mappings ([InputSource.TouchArea]) of touch controls. */
 class TouchAreaTest {
     private val MS = 1_000_000L
     private val H = 0x0B; private val Z = 0x1D; private val O = 0x12
@@ -77,7 +77,7 @@ class TouchAreaTest {
     fun inputsAndSources() {
         val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f)
         val labels = Bindings.touchInputs(b).map { it.label }
-        assertTrue(labels.containsAll(listOf("Outside", "Zone")))
+        assertTrue(labels.containsAll(listOf("Outside", "Area")))
         assertTrue(InputSource.TouchArea("b", TouchAreaKind.ZONE).isTouch)
     }
 }

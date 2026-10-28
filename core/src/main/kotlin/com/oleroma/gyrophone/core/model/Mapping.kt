@@ -45,11 +45,11 @@ enum class MouseButton(val bit: Int) { LEFT(0), RIGHT(1), MIDDLE(2), BACK(3), FO
 
 /**
  * When an [InputSource.TouchArea] is held. HELD (sticks): from touch-down on the stick until
- * lift. OUTSIDE: while a finger that touched down on the control is outside its area. ZONE: while
+ * lift. OUTSIDE: while a finger that touched down on the control is outside its area. ZONE (shown as Area): while
  * any finger is inside its area, wherever it touched down.
  */
 @Serializable
-enum class TouchAreaKind(val label: String) { HELD("On touch"), OUTSIDE("Outside"), ZONE("Zone") }
+enum class TouchAreaKind(val label: String) { HELD("On touch"), OUTSIDE("Outside"), ZONE("Area") }
 
 /**
  * A mappable input of a touch surface (the workspace touchpad), per finger count
@@ -74,6 +74,16 @@ enum class SurfaceInput(val label: String, val motion: Boolean = false) {
     HOLD_LEFT("Hold ←"), HOLD_RIGHT("Hold →"), HOLD_UP("Hold ↑"), HOLD_DOWN("Hold ↓"),
     PINCH("Pinch", motion = true), PINCH_IN("Pinch in"), PINCH_OUT("Pinch out"),
 }
+
+/** The direction of a held direction input (Hold ←→↑↓), else null. */
+val SurfaceInput.holdDirection: Direction?
+    get() = when (this) {
+        SurfaceInput.HOLD_UP -> Direction.UP
+        SurfaceInput.HOLD_RIGHT -> Direction.RIGHT
+        SurfaceInput.HOLD_DOWN -> Direction.DOWN
+        SurfaceInput.HOLD_LEFT -> Direction.LEFT
+        else -> null
+    }
 
 /**
  * The gestures every button-like input offers (touch buttons, controller and keyboard keys, touch
@@ -162,10 +172,14 @@ sealed interface InputSource {
     @SerialName("touch_area")
     data class TouchArea(val id: String, val kind: TouchAreaKind) : InputSource
 
-    /** An input of a touch surface with [fingers] (1..4) down; [id] "" = the workspace touchpad. */
+    /**
+     * An input of a touch surface with [fingers] (1..4) down; [id] "" = the workspace touchpad.
+     * [zone]: for a held direction (Hold ←→↑↓), its length zone from 0 (the first, from the hold
+     * distance on; see [TouchpadSettings.holdZone]); 0 for every other input.
+     */
     @Serializable
     @SerialName("surface")
-    data class Surface(val fingers: Int, val input: SurfaceInput, val id: String = "") : InputSource
+    data class Surface(val fingers: Int, val input: SurfaceInput, val id: String = "", val zone: Int = 0) : InputSource
 }
 
 /** Something the host PC receives. */
@@ -267,9 +281,10 @@ sealed interface OutputTarget {
      * input does what set [set] maps, and nothing if it maps nothing; it clears the overrides.
      * [override]: set [set] is laid over the current set — inputs it maps do that, every other
      * input keeps the current set's; pressed again (or any mapping set) it goes. [whileHeld]: only
-     * while the source is held; on release things go back. [switchHeld]: inputs held at the change
-     * let go of their old outputs and take the new set's at once; else (keep) they keep pressing
-     * what they pressed until released. The source that holds the action always keeps it.
+     * while the source is held; on release things go back. Inputs held at the change keep pressing
+     * what they pressed until released, unless they follow layers ([TouchControl.followLayers]);
+     * [switchHeld] is no longer used (it was this per action). The source that holds the action always keeps it; with
+     * [whileHeld] it also presses what the new set maps it to (not that set's layer actions).
      */
     @Serializable
     @SerialName("layer")
@@ -293,7 +308,7 @@ data class Mapping(val source: InputSource, val target: OutputTarget, val set: I
 /** A named mapping set of a [MappingProfile] (set 0, Base, needs none). */
 @Serializable
 data class MappingSet(val id: Int, val name: String = "") {
-    val label: String get() = name.ifBlank { "Set $id" }
+    val label: String get() = name.ifBlank { "Layer $id" }
 
     companion object {
         const val BASE = 0
