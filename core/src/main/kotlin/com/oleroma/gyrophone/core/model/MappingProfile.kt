@@ -26,6 +26,8 @@ data class MappingProfile(
      * mappings) = what each workspace's touchpad switches stand for ([Bindings.defaultTouchpadMappings]).
      */
     val touchpad: List<Mapping>? = null,
+    /** The named mapping sets above Base ([Mapping.set], [OutputTarget.Layer]), by id. */
+    val sets: List<MappingSet> = emptyList(),
 )
 
 object MappingProfiles {
@@ -101,6 +103,7 @@ object MappingProfiles {
             touchpad = w.touchpad.copy(mapped = true),
             keyboard = mapping.keyboard,
             pads = w.pads.map { it.copy(mappings = it.own ?: mapping.controller) },
+            sets = mapping.sets,
         )
     }
 
@@ -114,6 +117,7 @@ object MappingProfiles {
                 mappings = emptyList(),
                 touchpad = w.touchpad.copy(mapped = false),
                 keyboard = emptyList(),
+                sets = emptyList(),
                 pads = w.pads.map {
                     it.copy(
                         mappings = emptyList(),

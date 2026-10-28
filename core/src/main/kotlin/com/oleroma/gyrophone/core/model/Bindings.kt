@@ -30,9 +30,28 @@ object Bindings {
                 a.half != AxisHalf.NEGATIVE && b.half != AxisHalf.NEGATIVE
     }
 
-    /** Whether [mapping] belongs to [input]. */
+    /** Whether [mapping] belongs to [input] in Base (other sets are edited through [inSet]). */
     fun belongs(mapping: Mapping, input: BindableInput): Boolean =
-        input.sources.any { sameSource(it, mapping.source) }
+        mapping.set == MappingSet.BASE && input.sources.any { sameSource(it, mapping.source) }
+
+    /**
+     * Edits set [set] of [mappings] with the Base-only helpers: [edit] sees that set's mappings as
+     * Base (and Base's as set [set]), and gets them back in their own sets, new ones in [set].
+     */
+    fun inSet(mappings: List<Mapping>, set: Int, edit: (List<Mapping>) -> List<Mapping>): List<Mapping> {
+        if (set == MappingSet.BASE) return edit(mappings)
+        fun swap(ms: List<Mapping>) = ms.map {
+            when (it.set) {
+                set -> it.copy(set = MappingSet.BASE)
+                MappingSet.BASE -> it.copy(set = set)
+                else -> it
+            }
+        }
+        return swap(edit(swap(mappings)))
+    }
+
+    /** [mappings] without set [set]'s; sets above it keep their numbers. */
+    fun dropSet(mappings: List<Mapping>, set: Int): List<Mapping> = mappings.filterNot { it.set == set }
 
     /** Distinct targets mapped from any of input.sources, in list order. */
     fun targets(mappings: List<Mapping>, input: BindableInput): List<OutputTarget> =

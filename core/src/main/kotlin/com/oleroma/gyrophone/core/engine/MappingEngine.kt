@@ -30,6 +30,8 @@ import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.withTouchpadMappings
+import com.oleroma.gyrophone.core.model.layered
+import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.surfaceSettings
 import java.util.BitSet
@@ -87,11 +89,33 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     private var ws: Workspace = profile.workspace(0)
 
-    /** Touch mappings of the active workspace (the touch source group). */
+    /** Touch mappings of the active workspace in use (the touch source group): see [applyLayers]. */
     private var touchMappings: List<Mapping> = emptyList()
 
-    /** Mappings of each attached pad of the active workspace, by pad index, then the keyboard's. */
+    /** Mappings in use of each attached pad of the active workspace, by pad index, then the keyboard's. */
     private var padMappings: Array<List<Mapping>> = emptyArray()
+
+    /** Every set's mappings: the touch group's, then each pad's like [padMappings]. */
+    private var allTouch: List<Mapping> = emptyList()
+    private var allPads: Array<List<Mapping>> = emptyArray()
+
+    // Mapping sets ([OutputTarget.Layer]): the set in use, the overrides laid over it (bottom to
+    // top), and what each held "... hold" action goes back to on release.
+    private var layerSet = MappingSet.BASE
+    private val layerOverrides = ArrayList<Int>()
+
+    private class LayerHold(val set: Int, val overrides: List<Int>, val added: Boolean)
+
+    private val layerHolds = HashMap<OutputTarget.Layer, LayerHold>()
+
+    /**
+     * Inputs held through a set change, per group (0 = touch, then 1 + pad index), by source: the
+     * old mappings they keep until released, and whether the new set's are held back meanwhile.
+     */
+    private class Carried(val mappings: List<Mapping>, val holdsBack: Boolean)
+
+    private var carried: Array<HashMap<InputSource, Carried>> = emptyArray()
+    private var anyCarried = false
 
     /**
      * By [padMappings] index: the list maps a left (LTRIGGER / BRAKE) or right (RTRIGGER / GAS)
@@ -361,13 +385,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val loaded = profile.workspace(workspaceIndex).withTouchpadMappings()
         val w = loaded.copy(mappings = Bindings.upgradeSwipes(loaded.mappings))
         ws = w
-        touchMappings = w.mappings
-        padMappings = Array(w.pads.size + 1) { if (it < w.pads.size) w.pads[it].mappings else w.keyboard }
-        mapsLeftTriggerAxis =
-            BooleanArray(padMappings.size) { mapsTriggerAxis(padMappings[it], AndroidAxis.LTRIGGER, AndroidAxis.BRAKE) }
-        mapsRightTriggerAxis =
-            BooleanArray(padMappings.size) { mapsTriggerAxis(padMappings[it], AndroidAxis.RTRIGGER, AndroidAxis.GAS) }
-        modifierIds = if (w.stickyModifiers) modifierControls(w.mappings) else emptySet()
+        allTouch = w.mappings
+        allPads = Array(w.pads.size + 1) { if (it < w.pads.size) w.pads[it].mappings else w.keyboard }
+        touchMappings = allTouch
+        padMappings = allPads
+        modifierIds = if (w.stickyModifiers) modifierControls(layered(w.mappings, MappingSet.BASE, emptyList())) else emptySet()
         clickThroughIds =
             w.touchControls.filter { it.kind == TouchKind.BUTTON && it.clickThrough }.mapTo(HashSet()) { it.id }
         val swipers = w.touchControls.filter { it.swipes }
@@ -402,8 +424,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             )
             tapStates[c.id] = st; tapList.add(st)
         }
-        keyCfgs = Array(padMappings.size) { keyGestureCfgs(padMappings[it]) }
-        anyKeyCfgs = keyGestureCfgs(padMappings.flatMap { it })
         stickCfgs = w.touchControls.filter { it.kind == TouchKind.STICK }.associate { c ->
             val mapped = BooleanArray(StickDiagonal.entries.size)
             for (m in w.mappings) {
@@ -415,7 +435,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         releaseHeld()
         for (d in deviceList) d.pad = resolvePad(d.device)
         touchpad.settings = w.touchpad
-        touchpad.map = SurfaceMap(w.mappings)
+        layerSet = MappingSet.BASE; layerOverrides.clear(); layerHolds.clear()
+        carried = Array(allPads.size + 1) { HashMap() }; anyCarried = false
+        applyLayers()
         touchpad.doubleTapNanos =
             w.doubleTapMs.coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L
         touchpad.longPressNanos =
@@ -480,7 +502,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (was != pressed) keyEdge(d, keyCode, pressed, now)
                 pad = d.pad
             }
-            pad >= 0 && padMappings[pad].any { mapsKey(it.source, keyCode) }
+            pad >= 0 && allPads[pad].any { mapsKey(it.source, keyCode) }
         }
         onChange?.run()
         return mapped
@@ -730,7 +752,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 anyDevice.setKey(keyCode, pressed)
                 if (was != pressed) keyEdge(anyDevice, keyCode, pressed, now)
             }
-            padMappings.any { ms -> ms.any { mapsKey(it.source, keyCode) } }
+            allPads.any { ms -> ms.any { mapsKey(it.source, keyCode) } }
         }
         onChange?.run()
         return mapped
@@ -950,10 +972,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         onChange?.run()
     }
 
-    /** Releases everything, e.g. when the profile changes or the host disconnects. */
+    /** Releases everything and goes back to Base, e.g. when the profile changes or the host disconnects. */
     fun reset() {
         synchronized(lock) {
             releaseHeld()
+            layerSet = MappingSet.BASE; layerOverrides.clear(); layerHolds.clear()
+            for (c in carried) c.clear()
+            anyCarried = false
+            applyLayers()
             mouseDx = 0; mouseDy = 0; wheel = 0; hwheel = 0
             touchpad.reset()
             for (s in surfaceList) s.reset()
@@ -991,6 +1017,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 var b = 0; firingEvents(now) { b = s.poll(now) }; b
             } else s.poll(now)
         }
+        if (anyCarried) pruneCarried()
         hapticNow.clear()
         forEachGroup { ms, dev -> accumulate(ms, dev) }
         collectHaptics()
@@ -1154,7 +1181,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 // Surface motion, switching apps and zoom run in the touchpad (Touchpad.route).
                 is OutputTarget.Wheel, is OutputTarget.MouseAxis,
                 OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause,
-                OutputTarget.SwitchApps, OutputTarget.Zoom -> Unit
+                OutputTarget.SwitchApps, OutputTarget.Zoom, is OutputTarget.Layer, OutputTarget.NoOutput -> Unit
 
                 is OutputTarget.Haptic, is OutputTarget.HapticStep -> {
                     val a = min(1f, abs(v))
@@ -1212,6 +1239,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         change()
         engagedEvents(eventsAfter)
         for (t in eventsAfter) if (t !in eventsBefore) onPress(t)
+        for (t in eventsBefore) if (t is OutputTarget.Layer && t !in eventsAfter) layerReleased(t)
+        if (anyCarried) pruneCarried()
     }
 
     /** Resolves due holds and tap releases outside an input change (snapshot, touchpad input). */
@@ -1321,7 +1350,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             for (i in ms.indices) {
                 val m = ms[i]
                 val t = m.target
-                if ((t is OutputTarget.Wheel || t == OutputTarget.GyroToggle) && value(
+                if ((t is OutputTarget.Wheel || t == OutputTarget.GyroToggle || t is OutputTarget.Layer) && value(
                         m.source,
                         dev
                     ) >= PRESS_THRESHOLD
@@ -1334,7 +1363,154 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         when (t) {
             OutputTarget.GyroToggle -> gyroToggled = !gyroToggled
             is OutputTarget.Wheel -> wheel += t.step * MouseState.WHEEL_UNIT
+            is OutputTarget.Layer -> layerPressed(t)
             else -> Unit
+        }
+    }
+
+    // ---- Mapping sets ----
+
+    /** The mapping set in use and the overrides laid over it, bottom to top. */
+    data class Layers(val set: Int, val overrides: List<Int>)
+
+    /** The mapping set in use and its overrides (Base with none until a layer action). */
+    val layers: Layers get() = synchronized(lock) { Layers(layerSet, layerOverrides.toList()) }
+
+    private fun layerPressed(t: OutputTarget.Layer) {
+        carryHeld(t)
+        when {
+            t.override && t.whileHeld -> {
+                val added = t.set !in layerOverrides
+                if (added) layerOverrides.add(t.set)
+                layerHolds[t] = LayerHold(layerSet, layerOverrides.toList(), added)
+            }
+
+            t.override -> if (!layerOverrides.remove(t.set)) layerOverrides.add(t.set)
+            else -> {
+                if (t.whileHeld) layerHolds[t] = LayerHold(layerSet, layerOverrides.toList(), false)
+                layerSet = t.set
+                layerOverrides.clear()
+            }
+        }
+        applyLayers()
+    }
+
+    /** A "... hold" action let go: back to where it came from, unless a set change came since. */
+    private fun layerReleased(t: OutputTarget.Layer) {
+        val h = layerHolds.remove(t) ?: return
+        carryHeld(t)
+        if (t.override) {
+            if (h.added) layerOverrides.remove(t.set)
+        } else if (layerSet == t.set) {
+            layerSet = h.set
+            layerOverrides.clear(); layerOverrides.addAll(h.overrides)
+        }
+        applyLayers()
+    }
+
+    /**
+     * Before a set change by [t]: every held input remembers what it presses now. Its layer actions
+     * always stay until it is released; its buttons, keys and clicks too unless [t] switches held
+     * inputs, and then the new set's mappings for it wait for its release. The inputs holding [t]
+     * itself always keep everything.
+     */
+    private fun carryHeld(t: OutputTarget.Layer) {
+        for (g in carried.indices) {
+            val ms = if (g == 0) touchMappings else padMappings[g - 1]
+            val bySource = HashMap<InputSource, ArrayList<Mapping>>()
+            for (i in ms.indices) {
+                val m = ms[i]
+                if (groupHolds(g, m.source)) bySource.getOrPut(m.source) { ArrayList() }.add(m)
+            }
+            val was = carried[g]
+            val now = HashMap<InputSource, Carried>()
+            for ((src, list) in bySource) {
+                val keep = !t.switchHeld || list.any { it.target == t }
+                val kept = list.filter { carries(it, keep) }
+                if (kept.isEmpty() && !keep) continue
+                now[src] = Carried(kept, keep || was[src]?.holdsBack == true)
+            }
+            carried[g] = now
+        }
+        anyCarried = carried.any { it.isNotEmpty() }
+    }
+
+    /** A held input keeps [m] through a set change: its layer action always, a button-like output when it [keep]s. */
+    private fun carries(m: Mapping, keep: Boolean): Boolean {
+        val t = m.target
+        if (t is OutputTarget.Layer) return true
+        if (!keep || continuous(m.source)) return false
+        return t is OutputTarget.Pad || t is OutputTarget.Key || t is OutputTarget.Mouse ||
+                t is OutputTarget.PadAxis || t == OutputTarget.GyroPause || t == OutputTarget.GyroHold
+    }
+
+    /** An input whose value follows a motion (a full stick or trigger axis, touch motion): it follows the new set at once. */
+    private fun continuous(s: InputSource): Boolean = when (s) {
+        is InputSource.Axis -> s.half == AxisHalf.FULL
+        is InputSource.TouchStick -> s.half == AxisHalf.FULL
+        is InputSource.Surface -> s.input.motion
+        else -> false
+    }
+
+    /** Whether source [s] is held in group [g] (0 = touch, else 1 + pad index). */
+    private fun groupHolds(g: Int, s: InputSource): Boolean {
+        if (g == 0) return value(s, null) >= PRESS_THRESHOLD
+        for (i in deviceList.indices) {
+            val d = deviceList[i]
+            if (d.pad == g - 1 && value(s, d) >= PRESS_THRESHOLD) return true
+        }
+        return value(s, anyDevice) >= PRESS_THRESHOLD
+    }
+
+    /** Carried inputs that let go take the set in use again. */
+    private fun pruneCarried() {
+        var changed = false
+        for (g in carried.indices) {
+            val c = carried[g]
+            if (c.isEmpty()) continue
+            val it = c.keys.iterator()
+            while (it.hasNext()) if (!groupHolds(g, it.next())) {
+                it.remove(); changed = true
+            }
+        }
+        if (!changed) return
+        anyCarried = carried.any { it.isNotEmpty() }
+        applyLayers()
+    }
+
+    /**
+     * Puts the mappings in use into every group: the set in use with its overrides, without the
+     * carried inputs' new mappings they hold back, plus what they carry. Rebuilds what is compiled
+     * from them: the touch surfaces, trigger duplicates and gesture waits.
+     */
+    private fun applyLayers() {
+        fun inUse(all: List<Mapping>, c: HashMap<InputSource, Carried>?): List<Mapping> {
+            val ms = layered(all, layerSet, layerOverrides)
+            if (c.isNullOrEmpty()) return ms
+            return ms.filterNot { c[it.source]?.holdsBack == true } + c.values.flatMap { it.mappings }
+        }
+        touchMappings = inUse(allTouch, carried.getOrNull(0))
+        padMappings = Array(allPads.size) { inUse(allPads[it], carried.getOrNull(it + 1)) }
+        mapsLeftTriggerAxis =
+            BooleanArray(padMappings.size) { mapsTriggerAxis(padMappings[it], AndroidAxis.LTRIGGER, AndroidAxis.BRAKE) }
+        mapsRightTriggerAxis =
+            BooleanArray(padMappings.size) { mapsTriggerAxis(padMappings[it], AndroidAxis.RTRIGGER, AndroidAxis.GAS) }
+        touchpad.map = SurfaceMap(touchMappings)
+        for ((id, s) in surfaces) s.map = SurfaceMap(touchMappings, id)
+        for ((id, st) in tapStates) {
+            val double = targetsOf(touchMappings, InputSource.TouchDoubleTap(id))
+            st.hasDouble = double.isNotEmpty()
+            st.tapWaits = double.isNotEmpty() && double != targetsOf(touchMappings, InputSource.TouchTap(id))
+        }
+        keyCfgs = Array(padMappings.size) { keyGestureCfgs(padMappings[it]) }
+        anyKeyCfgs = keyGestureCfgs(padMappings.flatMap { it })
+        for (d in deviceList) for ((code, g) in d.gestures) {
+            val cfg = keyCfgs.getOrNull(d.pad)?.get(code) ?: continue
+            g.hasDouble = cfg.hasDouble; g.tapWaits = cfg.tapWaits
+        }
+        for ((code, g) in anyDevice.gestures) {
+            val cfg = anyKeyCfgs[code] ?: continue
+            g.hasDouble = cfg.hasDouble; g.tapWaits = cfg.tapWaits
         }
     }
 
