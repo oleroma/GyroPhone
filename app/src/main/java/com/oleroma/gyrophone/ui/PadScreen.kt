@@ -859,9 +859,9 @@ fun PadScreen(
                     if (mapped(id, TouchAreaKind.HELD)) runtime.engine.setTouchArea(id, TouchAreaKind.HELD, false)
                 }
 
-                /** Finger [pointer] landed on swipe button [c] at [p]: its swipe line, when it has Hold directions mapped. */
+                /** Finger [pointer] landed on swipe button [c] at [p]: its swipe line, when it has swipes or holds mapped. */
                 fun swipeLine(pointer: Long, c: TouchControl, p: Offset) {
-                    if (swipeLineOn && c.swipes) runtime.engine.swipeGuide(c.id)?.let { swipeLines.down(pointer, it, p) }
+                    if (swipeLineOn && c.swipes) runtime.engine.swipeGuide(c.id)?.let { swipeLines.down(pointer, it, p, pxPerDp) }
                 }
 
                 /** Stops what finger [pointer] does (an interrupting zone). False if it does nothing to stop. */
@@ -1100,7 +1100,7 @@ fun PadScreen(
                                     if (pointerCancel) runtime.engine.buttonCancel(pid) else runtime.engine.buttonUp(pid)
                                 } else if (ch.position != ch.previousPosition) {
                                     runtime.engine.buttonMove(pid, ch.position.x, ch.position.y, at)
-                                    swipeLines.move(pid, ch.position)
+                                    swipeLines.move(pid, ch.position, pxPerDp)
                                 }
                             } else if (ch.id in cornerOwner) {
                                 if (!ch.pressed) {

@@ -1,60 +1,105 @@
 package com.oleroma.gyrophone.core.engine
 
 import com.oleroma.gyrophone.core.model.Direction
+import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.inPie
 import kotlin.math.max
 import kotlin.math.sqrt
 
 /**
- * Where a swipe surface's held directions and their length zones lie for one finger, for the
- * pad's swipe line ([MappingEngine.swipeGuide]). [zones]: per direction ([Direction.ordinal]) how
- * many zones are mapped, 0 = no Hold mapped. Hold mode From start only, without drag start (the
- * start point is then where the finger landed).
+ * Where a swipe surface's activation lengths lie for one finger, for the pad's swipe line
+ * ([MappingEngine.swipeGuide]): Swipe after, Hold after and the ends of the length zones, per
+ * direction as mapped. [zones]: per direction ([Direction.ordinal]) how many zones its Hold has, 0 =
+ * no Hold mapped; [swipes]: the directions with a Swipe mapped (mask of 1 shl ordinal).
  */
-class SwipeGuide(val settings: TouchpadSettings, private val zones: IntArray) {
+class SwipeGuide(val settings: TouchpadSettings, private val zones: IntArray, private val swipes: Int) {
+    /** Hold mode From start: zones count the travel along their direction, from the start point. */
+    private val fromStart = settings.holdMode == HoldMode.FROM_START
+
+    /** The start point is dragged along ([TouchpadSettings.dragStart]); see [drag]. */
+    val dragsStart = fromStart && settings.dragStart
+
+    private val holdDp = activate(settings.holdDp)
+
     /**
-     * A finger [dx], [dy] dp from where it landed: writes to [out] how far along the line through
-     * it (dp from where it landed) the edges of its direction's zones are: where the first zone
-     * starts, then where each mapped zone ends (with one zone, only where it starts). Returns how
-     * many it wrote; 0 = no mapped direction that way. A zone is reached by the travel along its
-     * direction, so on a slanted line the edges sit further out ([MIN_COS] at most).
+     * A finger [dx], [dy] dp from the start point: writes to [out] how far along the line through it
+     * (dp from the start point) its direction's marks are, and their [kinds] ([SWIPE], [HOLD],
+     * [ZONE_END]: the ends of the zones, with 2+ zones). Returns how many; 0 = nothing mapped that way.
+     * From start, a zone is reached by the travel along its direction, so on a slanted line its
+     * marks sit further out ([MIN_COS] at most); a swipe and Direction change holds count the travel itself.
      */
-    fun edges(dx: Float, dy: Float, out: FloatArray): Int {
+    fun marks(dx: Float, dy: Float, out: FloatArray, kinds: IntArray): Int {
         val len = sqrt(dx * dx + dy * dy)
         if (len <= 0f) return 0
         val s = settings
         var best: Direction? = null
         var bestAlong = 0f
         for (d in Direction.entries) {
-            if (zones[d.ordinal] == 0) continue
-            val along = when (d) {
-                Direction.UP -> -dy
-                Direction.RIGHT -> dx
-                Direction.DOWN -> dy
-                Direction.LEFT -> -dx
-            }
+            if (zones[d.ordinal] == 0 && swipes and (1 shl d.ordinal) == 0) continue
+            val along = along(d, dx, dy)
             if (along <= bestAlong || (s.pies != null && !s.inPie(dx, dy, d))) continue
             best = d; bestAlong = along
         }
         val d = best ?: return 0
-        val cos = max(bestAlong / len, MIN_COS)
-        val n = zones[d.ordinal].coerceIn(1, TouchpadSettings.MAX_HOLD_ZONES)
-        var edge = s.holdDp.coerceIn(TouchpadSettings.MIN_ACTIVATE_DP, TouchpadSettings.MAX_ACTIVATE_DP)
-        out[0] = edge / cos
-        if (n < 2) return 1
-        for (i in 0 until n) {
-            edge += s.holdZoneDp(d, i)
-            out[i + 1] = edge / cos
+        var n = 0
+        if (swipes and (1 shl d.ordinal) != 0) {
+            out[n] = activate(s.swipeDp); kinds[n++] = SWIPE
         }
-        return n + 1
+        val count = zones[d.ordinal]
+        if (count == 0) return n
+        val cos = if (fromStart) max(bestAlong / len, MIN_COS) else 1f
+        var edge = holdDp
+        out[n] = edge / cos; kinds[n++] = HOLD
+        if (dragsStart || count < 2) return n
+        for (i in 0 until count.coerceAtMost(TouchpadSettings.MAX_HOLD_ZONES)) {
+            edge += s.holdZoneDp(d, i)
+            out[n] = edge / cos; kinds[n++] = ZONE_END
+        }
+        return n
+    }
+
+    /**
+     * With [dragsStart]: the start point ([start]: x, y dp) follows the finger at [fx], [fy] so it
+     * never trails by more than Hold after + the release distance; once no direction is held after
+     * one was ([held]), it jumps to the finger. Returns whether a direction is held now.
+     */
+    fun drag(start: FloatArray, fx: Float, fy: Float, held: Boolean): Boolean {
+        val s = settings
+        var ox = fx - start[0]
+        var oy = fy - start[1]
+        val most = holdDp + s.releaseDp.coerceIn(0f, TouchpadSettings.MAX_RELEASE_DP)
+        val dist = sqrt(ox * ox + oy * oy)
+        if (dist > most) {
+            ox *= most / dist; oy *= most / dist
+            start[0] = fx - ox; start[1] = fy - oy
+        }
+        val now = Direction.entries.any { along(it, ox, oy) >= holdDp && (s.pies == null || s.inPie(ox, oy, it)) }
+        if (!now && held) {
+            start[0] = fx; start[1] = fy
+        }
+        return now
+    }
+
+    private fun along(d: Direction, dx: Float, dy: Float) = when (d) {
+        Direction.UP -> -dy
+        Direction.RIGHT -> dx
+        Direction.DOWN -> dy
+        Direction.LEFT -> -dx
     }
 
     companion object {
-        /** The most edges [edges] writes. */
-        const val MAX_EDGES = TouchpadSettings.MAX_HOLD_ZONES + 1
+        /** Mark kinds ([marks]). */
+        const val SWIPE = 0
+        const val HOLD = 1
+        const val ZONE_END = 2
 
-        /** Lines slanted further than this from their direction (cosine) draw their edges as at this slant. */
+        /** The most marks [marks] writes. */
+        const val MAX_MARKS = TouchpadSettings.MAX_HOLD_ZONES + 2
+
+        /** Lines slanted further than this from their direction (cosine) draw their marks as at this slant. */
         const val MIN_COS = 0.25f
+
+        private fun activate(dp: Float) = dp.coerceIn(TouchpadSettings.MIN_ACTIVATE_DP, TouchpadSettings.MAX_ACTIVATE_DP)
     }
 }

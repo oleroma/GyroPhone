@@ -90,8 +90,9 @@ fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
             runtime.setTouchVisuals(visuals.copy(swipeLine = it))
         }
         Hint(
-            "A finger on a swipe button with Hold directions draws a line from where it landed, through it, to the " +
-                    "end of that direction's last zone. A dot marks where each zone starts and ends; the dots it passed fill in.",
+            "A finger on a swipe button draws a line from its start point, through it, to the last activation length " +
+                    "of that direction: a bar at Swipe after, dots at Hold after and each zone's end, a ring on a dragged " +
+                    "start point. The marks it passed fill in.",
         )
 
         Text("Corners", style = MaterialTheme.typography.titleSmall)

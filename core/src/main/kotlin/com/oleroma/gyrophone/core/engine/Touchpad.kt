@@ -3,7 +3,6 @@ package com.oleroma.gyrophone.core.engine
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.GestureActions
-import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
@@ -617,19 +616,18 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     }
 
     /**
-     * One finger's held directions and zones, for the pad's swipe line; null when none is mapped or
-     * the hold mode measures from elsewhere than where the finger landed.
+     * One finger's swipes, held directions and zones, for the pad's swipe line; null when none is mapped.
      */
     fun guide(): SwipeGuide? {
-        val s = settings
-        if (s.holdMode != HoldMode.FROM_START || s.dragStart) return null
         val m = map
         val zones = IntArray(4) { i ->
             val d = Direction.entries[i]
             val any = (0 until m.zoneCount(1, d)).any { z -> m.has(1, HOLDS[i], z) }
             if (any) m.zoneCount(1, d) else 0
         }
-        return if (zones.all { it == 0 }) null else SwipeGuide(s, zones)
+        var swipes = 0
+        for (i in 0 until 4) if (m.has(1, SWIPES[i])) swipes = swipes or (1 shl i)
+        return if (swipes == 0 && zones.all { it == 0 }) null else SwipeGuide(settings, zones, swipes)
     }
 
     /** Hard reset: everything released and cleared immediately (host disconnect, transport switch). */
