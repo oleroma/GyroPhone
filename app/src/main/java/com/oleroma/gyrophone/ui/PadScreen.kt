@@ -1274,7 +1274,7 @@ fun PadScreen(
         }
 
         val layerText = if (layers.set == MappingSet.BASE && layers.overrides.isEmpty()) null else {
-            fun name(id: Int) = if (id == MappingSet.BASE) "Base" else ws.sets.firstOrNull { it.id == id }?.label ?: "Set $id"
+            fun name(id: Int) = if (id == MappingSet.BASE) "Base" else ws.sets.firstOrNull { it.id == id }?.label ?: "Layer $id"
             (listOf(name(layers.set)) + layers.overrides.map { "+ " + name(it) }).joinToString(" ")
         }
         if (!editing && layerText != null) {

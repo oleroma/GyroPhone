@@ -229,7 +229,7 @@ fun TargetPickerDialog(
     extra: List<OutputTarget> = emptyList(),
     /** The profile's mapping sets: offers the "Layers" group (null = not offered). */
     sets: List<MappingSet>? = null,
-    /** Adds a set to the profile and gives it ("+ New set" in the layer dialog). */
+    /** Adds a set to the profile and gives it ("+ New layer" in the layer dialog). */
     onAddSet: (() -> MappingSet)? = null,
     /** A layer target being changed: its dialog opens at once. */
     editing: OutputTarget? = null,
@@ -364,15 +364,15 @@ internal fun LayerTargetDialog(
                 }
                 Text(
                     when {
-                        t.override && t.whileHeld -> "While held, the set's mappings are laid over the current set; inputs it doesn't map keep theirs."
-                        t.override -> "Lays the set over the current set until pressed again or a mapping set changes everything; inputs it doesn't map keep theirs."
-                        t.whileHeld -> "While held, everything does what the set maps (and nothing it doesn't); on release it goes back."
-                        else -> "Everything does what the set maps from now on (nothing it doesn't). Map a \"Mapping set → Base\" in that set to get back."
+                        t.override && t.whileHeld -> "While held, the layer's mappings are laid over the current layer; inputs it doesn't map keep theirs."
+                        t.override -> "Lays the layer over the current layer until pressed again or a layer set changes everything; inputs it doesn't map keep theirs."
+                        t.whileHeld -> "While held, everything does what the layer maps (and nothing it doesn't); on release it goes back."
+                        else -> "Everything does what the layer maps from now on (nothing it doesn't). Map a \"Layer set → Base\" in that layer to get back."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text("Set", style = MaterialTheme.typography.labelLarge)
+                Text("Layer", style = MaterialTheme.typography.labelLarge)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     FilterChip(selected = t.set == MappingSet.BASE, onClick = { t = t.copy(set = MappingSet.BASE) }, label = { Text("Base") })
                     for (s in known) {
@@ -383,11 +383,11 @@ internal fun LayerTargetDialog(
                             val n = onAddSet()
                             known = known + n
                             t = t.copy(set = n.id)
-                        }) { Text("+ New set") }
+                        }) { Text("+ New layer") }
                     }
                 }
                 Text(
-                    "Buttons held at the change keep pressing what they pressed until released, unless their \"Follows layers while held\" is on.",
+                    "Buttons held when the layer changes keep pressing what they pressed until released, unless their \"Follows layers while held\" is on.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

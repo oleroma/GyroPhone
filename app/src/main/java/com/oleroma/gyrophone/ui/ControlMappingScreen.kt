@@ -869,7 +869,7 @@ internal fun ControlMappingScreen(
                                     val id = (1..MappingSet.MAX).first { n -> sets.none { it.id == n } }
                                     onSetsChange((sets + MappingSet(id)).sortedBy { it.id }, null)
                                     onEditSet(id)
-                                }, contentPadding = compact) { Text("+ Set") }
+                                }, contentPadding = compact) { Text("+ Layer") }
                             }
                             Spacer(Modifier.width(8.dp))
                         }
@@ -979,7 +979,7 @@ internal fun ControlMappingScreen(
         var deleting by remember(st.id) { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { setMenu = null },
-            title = { Text(if (deleting) "Delete \"" + st.label + "\"?" else "Set " + st.id) },
+            title = { Text(if (deleting) "Delete \"" + st.label + "\"?" else "Layer " + st.id) },
             text = {
                 if (deleting) {
                     Text("Its mappings go too (every control, the touchpad and the controller), and so do the layer actions that switch to it.")
@@ -989,7 +989,7 @@ internal fun ControlMappingScreen(
                         onValueChange = { setName = it },
                         singleLine = true,
                         label = { Text("Name") },
-                        placeholder = { Text("Set " + st.id) },
+                        placeholder = { Text("Layer " + st.id) },
                     )
                 }
             },
@@ -1009,7 +1009,7 @@ internal fun ControlMappingScreen(
             },
             dismissButton = {
                 Row {
-                    if (!deleting) TextButton(onClick = { deleting = true }) { Text("Delete set", color = colors.error) }
+                    if (!deleting) TextButton(onClick = { deleting = true }) { Text("Delete layer", color = colors.error) }
                     TextButton(onClick = { setMenu = null }) { Text("Cancel") }
                 }
             },

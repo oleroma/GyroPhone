@@ -164,7 +164,7 @@ internal fun ControlSettingsScreen(
                         RememberedSection(runtime, "control.Layers", "Layers", section) {
                             SwitchSetting(
                                 "Follows layers while held",
-                                "When the mapping set changes while this is held, it lets go of what it pressed and does the new set's mapping at once. " +
+                                "When the layer changes while this is held, it lets go of what it pressed and does the new layer's mapping at once. " +
                                         "Off: it keeps pressing it until released.",
                                 control.followLayers,
                             ) { onControlChange(control.copy(followLayers = it)) }
