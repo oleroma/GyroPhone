@@ -28,7 +28,8 @@ object Describe {
         is InputSource.TouchLongPress -> "Touch ${s.id} long press"
         is InputSource.TouchArea -> "Touch ${s.id} ${s.kind.label.lowercase()}"
         is InputSource.Surface -> (if (s.id.isEmpty()) "Touchpad" else "Swipe on ${s.id}") +
-                " ${s.fingers} finger" + (if (s.fingers > 1) "s " else " ") + s.input.label.lowercase()
+                " ${s.fingers} finger" + (if (s.fingers > 1) "s " else " ") + s.input.label.lowercase() +
+                if (s.zone > 0) " zone ${s.zone + 1}" else ""
     }
 
     fun target(t: OutputTarget): String = when (t) {

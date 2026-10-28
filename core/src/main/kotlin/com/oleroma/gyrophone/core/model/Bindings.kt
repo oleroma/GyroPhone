@@ -51,6 +51,45 @@ object Bindings {
             }
         }
 
+    /** [input] (a held direction of a surface) in length zone [zone] ([InputSource.Surface.zone]). */
+    fun zoneInput(input: BindableInput, zone: Int): BindableInput =
+        input.copy(sources = input.sources.map { s -> if (s is InputSource.Surface) s.copy(zone = zone) else s })
+
+    /**
+     * How many length zones each held direction of surface [id] has mapped ([Direction.ordinal];
+     * at least 1), with any finger count, in any set.
+     */
+    fun holdZoneCounts(mappings: List<Mapping>, id: String): IntArray {
+        val n = IntArray(4) { 1 }
+        for (m in mappings) {
+            val s = m.source as? InputSource.Surface ?: continue
+            if (s.id != id) continue
+            val d = s.input.holdDirection ?: continue
+            n[d.ordinal] = maxOf(n[d.ordinal], (s.zone + 1).coerceAtMost(TouchpadSettings.MAX_HOLD_ZONES))
+        }
+        return n
+    }
+
+    /**
+     * [mappings] with no empty length zone before a used one: per surface, finger count and held
+     * direction, the zones mapped in any set are numbered again from 0 in order.
+     */
+    fun compactZones(mappings: List<Mapping>): List<Mapping> {
+        val used = HashMap<InputSource.Surface, java.util.TreeSet<Int>>()
+        for (m in mappings) {
+            val s = m.source as? InputSource.Surface ?: continue
+            if (s.input.holdDirection == null) continue
+            used.getOrPut(s.copy(zone = 0)) { java.util.TreeSet() }.add(s.zone)
+        }
+        if (used.values.all { it.last() == it.size - 1 }) return mappings
+        return mappings.map { m ->
+            val s = m.source as? InputSource.Surface ?: return@map m
+            val zones = used[s.copy(zone = 0)] ?: return@map m
+            val z = zones.headSet(s.zone).size
+            if (z == s.zone) m else m.copy(source = s.copy(zone = z))
+        }
+    }
+
     /** [mappings] without set [set]'s, and without the layer actions that use it. */
     fun dropSet(mappings: List<Mapping>, set: Int): List<Mapping> =
         mappings.filterNot { it.set == set || (it.target as? OutputTarget.Layer)?.set == set }

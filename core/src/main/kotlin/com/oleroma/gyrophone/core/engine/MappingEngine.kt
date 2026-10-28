@@ -1613,8 +1613,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         is InputSource.TouchDoubleTap -> if (tapStates[source.id]?.on(ButtonGesture.DOUBLE_TAP) == true) 1f else 0f
         is InputSource.TouchArea -> if (areas[source.kind.ordinal].held(source.id)) 1f else 0f
         is InputSource.Surface ->
-            if (source.id.isEmpty()) touchpad.level(source.fingers, source.input)
-            else surfaces[source.id]?.level(source.fingers, source.input) ?: 0f
+            if (source.id.isEmpty()) touchpad.level(source.fingers, source.input, source.zone)
+            else surfaces[source.id]?.level(source.fingers, source.input, source.zone) ?: 0f
 
         is InputSource.TouchStick -> {
             val v = touchSticks[source.id]

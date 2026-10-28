@@ -75,6 +75,16 @@ enum class SurfaceInput(val label: String, val motion: Boolean = false) {
     PINCH("Pinch", motion = true), PINCH_IN("Pinch in"), PINCH_OUT("Pinch out"),
 }
 
+/** The direction of a held direction input (Hold ←→↑↓), else null. */
+val SurfaceInput.holdDirection: Direction?
+    get() = when (this) {
+        SurfaceInput.HOLD_UP -> Direction.UP
+        SurfaceInput.HOLD_RIGHT -> Direction.RIGHT
+        SurfaceInput.HOLD_DOWN -> Direction.DOWN
+        SurfaceInput.HOLD_LEFT -> Direction.LEFT
+        else -> null
+    }
+
 /**
  * The gestures every button-like input offers (touch buttons, controller and keyboard keys, touch
  * surfaces): a tap is a short press, fired on its lift; a double tap a second press within the
@@ -162,10 +172,14 @@ sealed interface InputSource {
     @SerialName("touch_area")
     data class TouchArea(val id: String, val kind: TouchAreaKind) : InputSource
 
-    /** An input of a touch surface with [fingers] (1..4) down; [id] "" = the workspace touchpad. */
+    /**
+     * An input of a touch surface with [fingers] (1..4) down; [id] "" = the workspace touchpad.
+     * [zone]: for a held direction (Hold ←→↑↓), its length zone from 0 (the first, from the hold
+     * distance on; see [TouchpadSettings.holdZone]); 0 for every other input.
+     */
     @Serializable
     @SerialName("surface")
-    data class Surface(val fingers: Int, val input: SurfaceInput, val id: String = "") : InputSource
+    data class Surface(val fingers: Int, val input: SurfaceInput, val id: String = "", val zone: Int = 0) : InputSource
 }
 
 /** Something the host PC receives. */

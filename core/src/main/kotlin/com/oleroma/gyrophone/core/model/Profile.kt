@@ -187,9 +187,12 @@ data class SurfaceSettings(
     val classicPies: Boolean? = null,
     val latch: Boolean? = null,
     val latchReleaseMs: Int? = null,
+    /** The button's own length zones (never the touchpad's: they go with its own mappings). */
+    val holdZones: List<HoldZone>? = null,
+    val dirHoldZones: List<List<HoldZone>>? = null,
 )
 
-/** These settings with [o]'s own values in place of theirs. */
+/** These settings with [o]'s own values in place of theirs; length zones are only [o]'s. */
 fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null) this else copy(
     sensitivity = o.sensitivity ?: sensitivity,
     sensitivityY = o.sensitivityY ?: sensitivityY,
@@ -213,6 +216,8 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
     pies = if (o.classicPies == true) null else o.pies ?: pies,
     latch = o.latch ?: latch,
     latchReleaseMs = o.latchReleaseMs ?: latchReleaseMs,
+    holdZones = o.holdZones.orEmpty(),
+    dirHoldZones = o.dirHoldZones,
 )
 
 /** A swipe button's own settings: [TouchControl.surface], or what its old swipe settings were. */
@@ -497,7 +502,27 @@ data class TouchpadSettings(
     val latch: Boolean = false,
     /** A latch lets go by itself this long after the lift (ms); 0 = never. */
     val latchReleaseMs: Int = 0,
+    /**
+     * Length zones of held directions, from the first (see [holdZone]); the same for every
+     * direction unless [dirHoldZones] (by [Direction.ordinal]) gives each its own.
+     */
+    val holdZones: List<HoldZone> = emptyList(),
+    val dirHoldZones: List<List<HoldZone>>? = null,
 ) {
+    /**
+     * Zone [i] (from 0) of held direction [d]. A held direction's mappings are split into up to
+     * [MAX_HOLD_ZONES] zones by how far the finger travelled: the first starts at the hold
+     * distance, each next one where the one before it ends ([HoldZone.lengthDp]); the last goes
+     * on to the edge. Not with [dragStart] (the start point never trails far enough).
+     */
+    fun holdZone(d: Direction, i: Int): HoldZone =
+        (dirHoldZones?.getOrNull(d.ordinal) ?: holdZones).getOrNull(i) ?: HoldZone()
+
+    /** How long zone [i] of [d] is (dp): its own length, else the first zone's, else the hold distance. */
+    fun holdZoneDp(d: Direction, i: Int): Float =
+        (holdZone(d, i).lengthDp ?: holdZone(d, 0).lengthDp ?: holdDp).coerceIn(MIN_ZONE_DP, MAX_ZONE_DP)
+
+
     /** Pie width of [d] in degrees: its own, or 90 (classic quadrants). */
     fun pieDeg(d: Direction): Float =
         (pies?.getOrNull(d.ordinal) ?: CLASSIC_PIE_DEG).coerceIn(MIN_PIE_DEG, MAX_PIE_DEG)
@@ -528,8 +553,25 @@ data class TouchpadSettings(
         const val MIN_PIE_DEG = 10f
         const val MAX_PIE_DEG = 180f
         const val MAX_LATCH_RELEASE_MS = 10_000
+        const val MAX_HOLD_ZONES = 4
+        const val MIN_ZONE_DP = 4f
+        const val MAX_ZONE_DP = 200f
     }
 }
+
+/**
+ * One length zone of a held direction ([TouchpadSettings.holdZone]). [lengthDp]: how far it goes
+ * before the next zone starts (null = the first zone's length, or for the first the hold
+ * distance). On reach (default): its mappings are held while the finger is in it; [onRelease]:
+ * they fire once as the finger lifts in it instead. [keepPressed] (on reach only): they stay held
+ * while the finger goes on into the zones after it.
+ */
+@Serializable
+data class HoldZone(
+    val lengthDp: Float? = null,
+    val onRelease: Boolean = false,
+    val keepPressed: Boolean = false,
+)
 
 /** A swipe direction, clockwise from up; [deg] is its centre, clockwise from straight up. */
 @Serializable
