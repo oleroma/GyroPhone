@@ -735,6 +735,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         out
     }
 
+    /** Swipe button [id]'s held directions and zones as mapped in the set in use, for its swipe line ([Touchpad.guide]). */
+    fun swipeGuide(id: String): SwipeGuide? = synchronized(lock) { surfaces[id]?.guide() }
+
     /**
      * The touch mappings in use now: the mapping set and overrides in use, with what inputs held
      * through a set change still press instead (for labels that show what is really active).

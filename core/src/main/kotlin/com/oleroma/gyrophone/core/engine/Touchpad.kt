@@ -615,6 +615,21 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         }
     }
 
+    /**
+     * One finger's swipes, held directions and zones, for the pad's swipe line; null when none is mapped.
+     */
+    fun guide(): SwipeGuide? {
+        val m = map
+        val zones = IntArray(4) { i ->
+            val d = Direction.entries[i]
+            val any = (0 until m.zoneCount(1, d)).any { z -> m.has(1, HOLDS[i], z) }
+            if (any) m.zoneCount(1, d) else 0
+        }
+        var swipes = 0
+        for (i in 0 until 4) if (m.has(1, SWIPES[i])) swipes = swipes or (1 shl i)
+        return if (swipes == 0 && zones.all { it == 0 }) null else SwipeGuide(settings, zones, swipes)
+    }
+
     /** Hard reset: everything released and cleared immediately (host disconnect, transport switch). */
     fun reset() {
         clearGesture()

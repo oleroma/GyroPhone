@@ -285,6 +285,9 @@ fun PadScreen(
     val trails = remember { TouchTrails() }
     val showTouchVisuals = !editing && (visuals.showTouches || visuals.trail)
     LaunchedEffect(showTouchVisuals) { if (!showTouchVisuals) trails.clear() }
+    val swipeLines = remember { SwipeLines() }
+    val swipeLineOn by rememberUpdatedState(visuals.swipeLine)
+    LaunchedEffect(swipeLineOn) { if (!swipeLineOn) swipeLines.clear() }
 
     /** Bumped to show auto-hidden ← / → corners again: four quick taps, or a corner touched. */
     var revealTick by remember { mutableIntStateOf(0) }
@@ -394,6 +397,7 @@ fun PadScreen(
     fun releaseAll() {
         for (p in buttonFingers) runtime.engine.buttonCancel(p)
         buttonFingers.clear()
+        swipeLines.clear()
         fingersOnButtons = 0
         for (id in stickPos.keys.toList()) runtime.engine.setTouchStick(id, 0f, 0f)
         stickPos.clear()
@@ -855,6 +859,11 @@ fun PadScreen(
                     if (mapped(id, TouchAreaKind.HELD)) runtime.engine.setTouchArea(id, TouchAreaKind.HELD, false)
                 }
 
+                /** Finger [pointer] landed on swipe button [c] at [p]: its swipe line, when it has swipes or holds mapped. */
+                fun swipeLine(pointer: Long, c: TouchControl, p: Offset) {
+                    if (swipeLineOn && c.swipes) runtime.engine.swipeGuide(c.id)?.let { swipeLines.down(pointer, it, p, pxPerDp) }
+                }
+
                 /** Stops what finger [pointer] does (an interrupting zone). False if it does nothing to stop. */
                 fun stopJob(pointer: PointerId, f: FingerAreas): Boolean {
                     val pid = pointer.value
@@ -867,6 +876,7 @@ fun PadScreen(
 
                         pid in buttonFingers -> {
                             buttonFingers.remove(pid)
+                            swipeLines.up(pid)
                             runtime.engine.buttonCancel(pid)
                             FingerJob.BUTTON
                         }
@@ -898,6 +908,7 @@ fun PadScreen(
                         FingerJob.BUTTON -> if (origin != null) {
                             buttonFingers.add(pid)
                             runtime.engine.buttonDown(pid, origin.id, p.x, p.y, at)
+                            swipeLine(pid, origin, p)
                         }
                         // Another finger took the stick meanwhile: this one stays stopped.
                         FingerJob.STICK -> if (origin == null || origin.id in stickOwner.values || origin.id in extraSticks) return else grabStick(
@@ -971,6 +982,7 @@ fun PadScreen(
                             }
                             for (p in buttonFingers) runtime.engine.buttonCancel(p)
                             buttonFingers.clear()
+                            swipeLines.clear()
                             cornerOwner.clear()
                         }
                         for (ch in event.changes) {
@@ -1035,6 +1047,7 @@ fun PadScreen(
                                     origin = c
                                     buttonFingers.add(pid)
                                     runtime.engine.buttonDown(pid, c.id, ch.position.x, ch.position.y, at)
+                                    swipeLine(pid, c, ch.position)
                                 }
                                 val f = FingerAreas(origin)
                                 fingers[ch.id] = f
@@ -1083,9 +1096,11 @@ fun PadScreen(
                             } else if (pid in buttonFingers) {
                                 if (!ch.pressed) {
                                     buttonFingers.remove(pid)
+                                    swipeLines.up(pid)
                                     if (pointerCancel) runtime.engine.buttonCancel(pid) else runtime.engine.buttonUp(pid)
                                 } else if (ch.position != ch.previousPosition) {
                                     runtime.engine.buttonMove(pid, ch.position.x, ch.position.y, at)
+                                    swipeLines.move(pid, ch.position, pxPerDp)
                                 }
                             } else if (ch.id in cornerOwner) {
                                 if (!ch.pressed) {
@@ -1626,6 +1641,7 @@ fun PadScreen(
         }
         // Touches and trails: over everything, never taking a touch.
         if (showTouchVisuals) TouchOverlay(trails, visuals, Modifier.fillMaxSize())
+        if (!editing && visuals.swipeLine) SwipeLineOverlay(swipeLines, Modifier.fillMaxSize())
     }
 }
 

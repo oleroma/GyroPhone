@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -14,17 +15,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import com.oleroma.gyrophone.core.engine.SwipeGuide
 import kotlinx.serialization.Serializable
+import kotlin.math.hypot
 
 /**
  * How the pad shows touches (app-wide, [com.oleroma.gyrophone.runtime.GamepadRuntime.touchVisuals]).
  * [showTouches]: a dot under each finger that fades out over [fadeMs] once it lifts. [trail]: a
  * line behind each finger, [trailMs] of its path long, whose oldest [trailFade] (0..1) fades out
  * towards its end; it shrinks back to the finger as it ages. [liveMappings]: a button's label
- * briefly shows what it is sending right now.
+ * briefly shows what it is sending right now. [swipeLine]: a finger on a swipe button with swipes
+ * or holds mapped shows a line from its start point, through it, to its direction's furthest
+ * activation length, marking each ([SwipeLines]).
  */
 @Serializable
 data class TouchVisuals(
@@ -34,6 +40,7 @@ data class TouchVisuals(
     val trailFade: Float = 0.6f,
     val fadeMs: Int = 400,
     val liveMappings: Boolean = true,
+    val swipeLine: Boolean = true,
 ) {
     companion object {
         const val MIN_TRAIL_MS = 50
@@ -172,3 +179,105 @@ fun TouchOverlay(trails: TouchTrails, visuals: TouchVisuals, modifier: Modifier 
 }
 
 private const val DOT_DP = 18f
+
+/**
+ * Swipe lines for [SwipeLineOverlay]: per finger on a swipe button, its start point (where it
+ * landed, or dragged along with [SwipeGuide.dragsStart]), where it is and its [SwipeGuide]. Main
+ * thread only; cheap to keep and draw (no allocation per move).
+ */
+class SwipeLines {
+    private class Line(val guide: SwipeGuide, p: Offset) {
+        /** Start point and finger, dp. */
+        val start = floatArrayOf(p.x, p.y)
+        var x = p.x
+        var y = p.y
+        var held = false
+    }
+
+    private val lines = HashMap<Long, Line>()
+    private val marks = FloatArray(SwipeGuide.MAX_MARKS)
+    private val kinds = IntArray(SwipeGuide.MAX_MARKS)
+
+    /** Bumped on every change; only the overlay's drawing reads it, so a move redraws without recomposing. */
+    private var version by mutableIntStateOf(0)
+
+    /** Finger [id] landed at [p] (px; [pxPerDp]: display density). */
+    fun down(id: Long, guide: SwipeGuide, p: Offset, pxPerDp: Float) {
+        lines[id] = Line(guide, p / pxPerDp)
+        version++
+    }
+
+    fun move(id: Long, p: Offset, pxPerDp: Float) {
+        val l = lines[id] ?: return
+        l.x = p.x / pxPerDp; l.y = p.y / pxPerDp
+        if (l.guide.dragsStart) l.held = l.guide.drag(l.start, l.x, l.y, l.held)
+        version++
+    }
+
+    fun up(id: Long) {
+        if (lines.remove(id) != null) version++
+    }
+
+    fun clear() {
+        if (lines.isEmpty()) return
+        lines.clear()
+        version++
+    }
+
+    /**
+     * Draws every line: from the start point through the finger to its direction's furthest mark.
+     * Marks: Hold after and the zone ends as dots, Swipe after as a bar across the line; the ones
+     * the finger passed are filled.
+     */
+    fun draw(scope: DrawScope, pxPerDp: Float) {
+        @Suppress("UNUSED_EXPRESSION") version // redraw on every change
+        if (lines.isEmpty()) return
+        val stroke = LINE_DP * pxPerDp
+        val r = MARK_DP * pxPerDp
+        for (l in lines.values) {
+            val sx = l.start[0] * pxPerDp
+            val sy = l.start[1] * pxPerDp
+            val start = Offset(sx, sy)
+            if (l.guide.dragsStart) scope.drawCircle(EDGE_COLOR, r * 1.4f, start, style = Stroke(stroke))
+            val dx = l.x - l.start[0]
+            val dy = l.y - l.start[1]
+            val len = hypot(dx, dy)
+            if (len * pxPerDp < stroke) continue
+            val n = l.guide.marks(dx, dy, marks, kinds)
+            val ux = dx / len
+            val uy = dy / len
+            var end = len
+            for (i in 0 until n) end = maxOf(end, marks[i])
+            val finger = Offset(l.x * pxPerDp, l.y * pxPerDp)
+            scope.drawLine(LINE_COLOR, start, Offset(sx + ux * end * pxPerDp, sy + uy * end * pxPerDp), stroke, StrokeCap.Round)
+            scope.drawLine(PASSED_COLOR, start, finger, stroke, StrokeCap.Round)
+            for (i in 0 until n) {
+                val at = marks[i] * pxPerDp
+                val c = Offset(sx + ux * at, sy + uy * at)
+                val passed = marks[i] <= len
+                if (kinds[i] == SwipeGuide.SWIPE) {
+                    val across = Offset(-uy * r * 1.6f, ux * r * 1.6f)
+                    scope.drawLine(if (passed) PASSED_COLOR else EDGE_COLOR, c - across, c + across, stroke * 1.5f, StrokeCap.Round)
+                } else if (passed) {
+                    scope.drawCircle(PASSED_COLOR, r, c)
+                } else {
+                    scope.drawCircle(EDGE_COLOR, r, c, style = Stroke(stroke))
+                }
+            }
+        }
+    }
+
+    private companion object {
+        const val LINE_DP = 2f
+        const val MARK_DP = 5f
+        val LINE_COLOR = Color.White.copy(alpha = 0.25f)
+        val PASSED_COLOR = Color.White.copy(alpha = 0.7f)
+        val EDGE_COLOR = Color.White.copy(alpha = 0.55f)
+    }
+}
+
+/** Draws [lines] over the pad; redraws only when a line changes. */
+@Composable
+fun SwipeLineOverlay(lines: SwipeLines, modifier: Modifier = Modifier) {
+    Canvas(modifier) { lines.draw(this, density) }
+}

@@ -1,6 +1,7 @@
 package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.engine.SurfaceMap
+import com.oleroma.gyrophone.core.engine.SwipeGuide
 import com.oleroma.gyrophone.core.engine.Touchpad
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Direction
@@ -233,5 +234,41 @@ class HoldZonesTest {
         assertEquals(z3, f.now) // the zones passed on the way each showed and let go
         assertEquals(1, f.presses(z1))
         assertEquals(1, f.presses(z2))
+    }
+
+    @Test
+    fun swipeGuideMarksSwipeHoldAndZoneEnds() {
+        val swipeUp = Mapping(InputSource.Surface(1, SurfaceInput.SWIPE_UP), OutputTarget.Mouse(MouseButton.BACK))
+        val g = Touchpad(TouchpadSettings(), SurfaceMap(listOf(m(0, MouseButton.LEFT), m(1, MouseButton.RIGHT), m(2, MouseButton.MIDDLE), swipeUp))).guide()!!
+        val out = FloatArray(SwipeGuide.MAX_MARKS)
+        val kinds = IntArray(SwipeGuide.MAX_MARKS)
+        // Straight up: Swipe after 40, Hold after 20, then each zone ends 20 dp on.
+        assertEquals(5, g.marks(0f, -5f, out, kinds))
+        assertEquals(listOf(40f, 20f, 40f, 60f, 80f), out.take(5))
+        assertEquals(listOf(SwipeGuide.SWIPE, SwipeGuide.HOLD, SwipeGuide.ZONE_END, SwipeGuide.ZONE_END, SwipeGuide.ZONE_END), kinds.take(5))
+        // Slanted 60° off up: holds twice as far along the line, the swipe not.
+        assertEquals(5, g.marks(0.866f * 10f, -5f, out, kinds))
+        assertEquals(40f, out[0], 0.1f)
+        assertEquals(40f, out[1], 0.1f)
+        // Down has nothing mapped.
+        assertEquals(0, g.marks(0f, 5f, out, kinds))
+    }
+
+    @Test
+    fun swipeGuideSingleZoneAndDragStart() {
+        val out = FloatArray(SwipeGuide.MAX_MARKS)
+        val kinds = IntArray(SwipeGuide.MAX_MARKS)
+        assertEquals(null, Touchpad(TouchpadSettings(), SurfaceMap(emptyList())).guide())
+        // One zone: only Hold after.
+        val one = Touchpad(TouchpadSettings(), SurfaceMap(listOf(m(0, MouseButton.LEFT)))).guide()!!
+        assertEquals(1, one.marks(0f, -5f, out, kinds))
+        assertEquals(SwipeGuide.HOLD, kinds[0])
+        // Drag start: the start point trails by Hold after + release (20 + 10) at most, and jumps to the finger once let go.
+        val drag = Touchpad(TouchpadSettings(dragStart = true), SurfaceMap(listOf(m(0, MouseButton.LEFT)))).guide()!!
+        val start = floatArrayOf(0f, 0f)
+        assertEquals(true, drag.drag(start, 0f, -50f, false))
+        assertEquals(-20f, start[1], 0.01f)
+        assertEquals(false, drag.drag(start, 0f, -5f, true))
+        assertEquals(-5f, start[1], 0.01f)
     }
 }
