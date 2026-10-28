@@ -1,6 +1,7 @@
 package com.oleroma.gyrophone.core.engine
 
 import com.oleroma.gyrophone.core.model.Bindings
+import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.GestureActions
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchpadSettings
@@ -157,7 +158,22 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     private var winY = 0f
     private var levelX = 0f
     private var levelY = 0f
+
+    /** The motion's swipe directions and held directions; [swiped]: one of its swipes fired. */
+    private val dirs = DirectionTracker()
     private var swiped = false
+
+    // Latch ([TouchpadSettings.latch]): held directions kept after the fingers lifted, their
+    // finger count, and when they let go by themselves (Long.MAX_VALUE = not timed now).
+    private var latchN = 0
+    private var latchMask = 0
+    private var latchUntil = Long.MAX_VALUE
+
+    /** A finger the system cancelled is being removed: its motion never latches. */
+    private var cancelling = false
+
+    /** The time of the latest event or poll. */
+    private var nowNs = 0L
     private var scrolled = false
 
     // Cursor deadzone (one-finger MOVE): the cursor holds still until the travel passes it, then
@@ -240,6 +256,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     /** Input changes wait to be shown by [poll]. */
     val queued: Boolean get() = qSize > 0
 
+    /** Held directions are latched (kept after the fingers lifted). */
+    val latched: Boolean get() = latchMask != 0
+
     /**
      * An input's value as of the last [poll]: 1 / 0, or for Move X / Y and Pinch their level now
      * (-1..1: the travel from where the motion started, a floating stick; the spread change).
@@ -281,6 +300,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         downX[slot] = x; downY[slot] = y; lastX[slot] = x; lastY[slot] = y
         baseEventNs[slot] = eventNs; lastEventNs[slot] = eventNs
         count++
+        latchUntil = Long.MAX_VALUE // a latch never times out under a finger
         touchMax = if (count == 1) 1 else max(touchMax, count)
         holdCount()
         armLong(if (state == State.TAP_WAIT) 0 else count, now)
@@ -289,7 +309,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
                 state = State.TOUCH; primary = slot; t0 = now
                 // A touch soon after a one-finger tap: the double tap, held while it stays down
                 // (moving drags with it held). With tap-drag mapped, its own states do this.
-                if (!map.has(1, SurfaceInput.TAP_DRAG) && map.has(1, SurfaceInput.DOUBLE_TAP) &&
+                if (latchMask == 0 && !map.has(1, SurfaceInput.TAP_DRAG) && map.has(1, SurfaceInput.DOUBLE_TAP) &&
                     lastTapN == 1 && now - lastTapNs <= doubleTapNanos
                 ) {
                     doubleHeld = true
@@ -354,7 +374,8 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         if (longN > 0 && !longOn && pastSlop(slot)) longN = 0
         when (state) {
             // With tap-to-click off there is no tap to wait for: the cursor moves from the first motion.
-            State.TOUCH -> if (slot == primary && (!map.taps(1) || pastSlop(slot) || now - t0 > TAP_MAX_NS)) {
+            // A latch waits for a tap too: the tap lets it go.
+            State.TOUCH -> if (slot == primary && ((!map.taps(1) && latchMask == 0) || pastSlop(slot) || now - t0 > TAP_MAX_NS)) {
                 state = State.MOVE
                 startRun(slot)
             }
@@ -421,7 +442,11 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         }
         when (state) {
             State.TOUCH -> {
-                state = State.IDLE; if (!endedDouble && now - t0 <= TAP_MAX_NS && map.taps(1)) tapped(1, now)
+                state = State.IDLE
+                if (!endedDouble && now - t0 <= TAP_MAX_NS) {
+                    // A tap on a latch lets it go, and is used up by that.
+                    if (latchMask != 0) releaseLatch() else if (map.taps(1)) tapped(1, now)
+                }
             }
 
             State.MOVE -> if (slot == primary) {
@@ -451,7 +476,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
                 count == 0 -> {
                     val tap = multiTapOpen(now) && !endedDouble
                     state = State.IDLE
-                    if (tap) tapped(min(maxFingers, 4), now)
+                    if (tap) {
+                        if (latchMask != 0) releaseLatch() else tapped(min(maxFingers, 4), now)
+                    }
                 }
                 // Travel that stayed under the scroll and pinch thresholds is not cursor motion.
                 count == 1 && !multiTapOpen(now) -> {
@@ -496,7 +523,10 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
             State.IGNORE -> if (count == 0) state = State.IDLE
             State.IDLE, State.TAP_WAIT -> Unit
         }
-        if (count == 0) touchEnded(now)
+        if (count == 0) {
+            touchEnded(now)
+            armLatchTimer(now)
+        }
     }
 
     /** Ends the gesture (rotation, profile change, leaving the pad). A visible press still gets a visible release. */
@@ -520,11 +550,21 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         }
         val slot = slotOf(pointer)
         if (slot < 0) return
+        cancelling = true
+        try {
+            cancelFingerSlot(slot)
+        } finally {
+            cancelling = false
+        }
+        if (count == 0) armLatchTimer(now)
+    }
+
+    private fun cancelFingerSlot(slot: Int) {
         used[slot] = false
         count--
         movedMask = 0
         holdCount()
-        armLong(0, now)
+        armLong(0, nowNs)
         if (doubleHeld && count == 0) {
             doubleHeld = false
             set(1, SurfaceInput.DOUBLE_TAP, false)
@@ -639,6 +679,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         if (qSize > 0) d = visibleSince + minPulseNanos
         if (kSize > 0) d = min(d, max(kVisibleSince, lastZoomNs) + minPulseNanos)
         if (gliding) d = min(d, glideNs + GLIDE_STEP_NS)
+        if (latchMask != 0) d = min(d, latchUntil)
         if (catching) d = min(d, catchLastNs + GLIDE_STEP_NS)
         if (rearmable && !dzHolding && phaseN == 1) d = min(d, stillNs + settings.deadzoneRearmMs * 1_000_000L)
         if (longN > 0 && !longOn && map.has(longN, SurfaceInput.LONG_PRESS)) d = min(d, longT0 + longPressNanos)
@@ -655,6 +696,8 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     }
 
     private fun advance(now: Long) {
+        nowNs = now
+        if (latchMask != 0 && now >= latchUntil) releaseLatch()
         if (gliding) glide(now)
         if (catching) catchUp(now)
         if (rearmable && !dzHolding && !catching && phaseN == 1 && now - stillNs >= settings.deadzoneRearmMs * 1_000_000L) {
@@ -755,6 +798,15 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     private fun startPhase(n: Int, now: Long, eventNs: Long) {
         endPhase()
         phaseN = n
+        // A latch of the same finger count goes on as this motion's held directions; another one lets go.
+        var carried = 0
+        if (latchMask != 0) {
+            if (latchN == n) {
+                carried = latchMask
+                latchN = 0; latchMask = 0; latchUntil = Long.MAX_VALUE
+            } else releaseLatch()
+        }
+        dirs.start(carried)
         swiped = false; scrolled = false
         trX = 0f; trY = 0f; winX = 0f; winY = 0f
         dzHolding = n == 1 && state == State.MOVE && settings.cursorDeadzoneDp > 0f && map.motion[0].cursor
@@ -800,12 +852,22 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     private var lockX = 0f
     private var lockY = 0f
 
-    /** The motion ends: its held directions let go, its levels go back to 0, app switching ends. */
+    /**
+     * The motion ends: its held directions let go (or, as the last finger lifts with the latch
+     * on, stay held: [latchMask]), its levels go back to 0, app switching ends.
+     */
     private fun endPhase() {
         dzHolding = false
         rearmable = false
         val n = phaseN
-        if (n in 1..4) for (i in DIR_HOLDS) set(n, i, false)
+        if (n in 1..4) {
+            val keep = if (settings.latch && count == 0 && !cancelling) dirs.held else 0
+            if (keep != 0) {
+                latchN = n; latchMask = keep; latchUntil = Long.MAX_VALUE
+            }
+            holds(n, keep)
+        }
+        dirs.start()
         phaseN = 0
         levelX = 0f; levelY = 0f
         if (scrubbing) {
@@ -841,32 +903,42 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         val ty = trY / pxPerDp
         levelX = (tx / STICK_FULL_DP).coerceIn(-1f, 1f)
         levelY = (ty / STICK_FULL_DP).coerceIn(-1f, 1f)
-        set(n, SurfaceInput.HOLD_LEFT, levelX <= -0.5f)
-        set(n, SurfaceInput.HOLD_RIGHT, levelX >= 0.5f)
-        set(n, SurfaceInput.HOLD_UP, levelY <= -0.5f)
-        set(n, SurfaceInput.HOLD_DOWN, levelY >= 0.5f)
-        if (!swiped && max(abs(tx), abs(ty)) >= SWIPE_DP) {
+        val fired = dirs.step(sdx / pxPerDp, sdy / pxPerDp, settings)
+        holds(n, dirs.held)
+        for (d in Direction.entries) if (fired and (1 shl d.ordinal) != 0) pulse(n, SWIPES[d.ordinal])
+        val sideways = fired and (RIGHT_BIT or LEFT_BIT)
+        if (fired != 0 && !swiped) {
             swiped = true
-            val horizontal = abs(tx) >= abs(ty)
-            pulse(
-                n, when {
-                    horizontal && tx > 0 -> SurfaceInput.SWIPE_RIGHT
-                    horizontal -> SurfaceInput.SWIPE_LEFT
-                    ty > 0 -> SurfaceInput.SWIPE_DOWN
-                    else -> SurfaceInput.SWIPE_UP
-                }
-            )
-            if (horizontal && m.switchApps) {
+            if (sideways != 0 && m.switchApps) {
                 // Alt held, first step now; every further step of travel moves the selection.
                 scrubbing = true
                 scrubBase = GestureActions.ALT shl 8
                 enqueueKey(scrubBase)
-                scrubStep(tx > 0)
+                scrubStep(sideways and RIGHT_BIT != 0)
                 originX = centroidX()
             }
         } else if (scrubbing) {
             scrub()
         }
+    }
+
+    /** Held directions of [n] fingers: exactly those in [mask]. */
+    private fun holds(n: Int, mask: Int) {
+        for (d in Direction.entries) set(n, HOLDS[d.ordinal], mask and (1 shl d.ordinal) != 0)
+    }
+
+    /** The latched directions let go. */
+    private fun releaseLatch() {
+        if (latchMask == 0) return
+        holds(latchN, 0)
+        latchN = 0; latchMask = 0; latchUntil = Long.MAX_VALUE
+    }
+
+    /** The fingers all lifted with a latch on: it lets go by itself after [TouchpadSettings.latchReleaseMs]. */
+    private fun armLatchTimer(now: Long) {
+        if (latchMask == 0 || latchUntil != Long.MAX_VALUE) return
+        val ms = settings.latchReleaseMs.coerceIn(0, TouchpadSettings.MAX_LATCH_RELEASE_MS)
+        if (ms > 0) latchUntil = now + ms * 1_000_000L
     }
 
     /**
@@ -1096,6 +1168,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         scrubbing = false; scrolled = false; touchMax = 0
         dzHolding = false; catching = false; catchMotion = null; rearmable = false
         pendingTapN = 0; lastTapN = 0; longN = 0; longOn = false; doubleHeld = false
+        dirs.start(); latchN = 0; latchMask = 0; latchUntil = Long.MAX_VALUE
     }
 
     /**
@@ -1336,16 +1409,21 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         const val ZOOM_DP_PER_NOTCH = 40f
         const val ZOOM_UNITS_PER_DP = WHEEL_UNIT / ZOOM_DP_PER_NOTCH
 
-        /** Three/four-finger centroid travel that fires a swipe, and each further Alt+Tab step. */
-        const val SWIPE_DP = 40f
+        /** Three/four-finger centroid travel per further Alt+Tab step after the first. */
 
-        /** Travel (or pinch spread change) that is a full floating-stick level; held directions press at half of it. */
+        /** Travel (or pinch spread change) that is a full floating-stick level; pinch in / out press at half of it. */
         const val STICK_FULL_DP = 40f
 
         /** Axis locks judge a step's direction by about this much of the latest travel. */
         const val LOCK_WINDOW_DP = 4f
-        private val DIR_HOLDS =
-            listOf(SurfaceInput.HOLD_LEFT, SurfaceInput.HOLD_RIGHT, SurfaceInput.HOLD_UP, SurfaceInput.HOLD_DOWN)
+
+        /** Held directions and swipes by [Direction.ordinal]. */
+        private val HOLDS =
+            arrayOf(SurfaceInput.HOLD_UP, SurfaceInput.HOLD_RIGHT, SurfaceInput.HOLD_DOWN, SurfaceInput.HOLD_LEFT)
+        private val SWIPES =
+            arrayOf(SurfaceInput.SWIPE_UP, SurfaceInput.SWIPE_RIGHT, SurfaceInput.SWIPE_DOWN, SurfaceInput.SWIPE_LEFT)
+        private val RIGHT_BIT = 1 shl Direction.RIGHT.ordinal
+        private val LEFT_BIT = 1 shl Direction.LEFT.ordinal
         const val SCRUB_STEP_DP = 80f
 
         /** A lift within this of the last scroll movement, faster than the minimum, flings. */

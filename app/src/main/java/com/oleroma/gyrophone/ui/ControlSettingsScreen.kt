@@ -44,6 +44,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
+import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
@@ -285,7 +286,7 @@ internal fun ButtonBehaviourSettings(
             val c = current
             // A new swipe button follows the touchpad; an old one keeps its swipe settings.
             onControlChange(
-                if (on && !c.swipe && c.surface == null) c.copy(swipe = true, surface = SurfaceSettings())
+                if (on && !c.swipe && c.surface == null) c.copy(swipe = true, surface = SurfaceSettings(holdMode = HoldMode.DIRECTION_CHANGE))
                 else c.copy(swipe = on),
             )
         }

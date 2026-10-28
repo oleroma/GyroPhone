@@ -215,7 +215,8 @@ internal fun TouchpadSettingsEditor(tp: TouchpadSettings, key: String, onChange:
         "Motion within this angle of straight up / down loses its sideways part (vertical lock), or within " +
                 "this angle of sideways its up / down part (horizontal lock): cursor, scroll, sticks and held " +
                 "directions alike. So a swipe down does not turn the camera.",
-    )
+    )    Text("Directions", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+    DirectionSettings(tp, key) { t -> onChange(t) }
 }
 
 /**

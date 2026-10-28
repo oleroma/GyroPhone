@@ -698,10 +698,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         onChange?.run()
     }
 
-    /** Touch controls whose modifier is latched or locked (sticky modifiers), for highlighting. */
+    /**
+     * Touch controls whose modifier is latched or locked (sticky modifiers), or whose swipe holds
+     * are latched, for highlighting.
+     */
     fun latchedTouches(): Set<String> = synchronized(lock) {
         val out = HashSet<String>()
         for ((id, l) in latches) if (l.state != LATCH_NONE) out.add(id)
+        for ((id, s) in surfaces) if (s.latched) out.add(id)
         out
     }
 
