@@ -732,6 +732,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         out
     }
 
+    /**
+     * The touch mappings in use now: the mapping set and overrides in use, with what inputs held
+     * through a set change still press instead (for labels that show what is really active).
+     */
+    val touchMappingsInUse: List<Mapping> get() = synchronized(lock) { touchMappings }
+
     /** Touch controls currently pressed (including by touchpad-over-buttons commits and zones), for highlighting. */
     fun pressedTouches(): Set<String> = synchronized(lock) {
         resolveIfDue(clock())
