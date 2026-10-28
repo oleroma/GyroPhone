@@ -35,6 +35,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -51,6 +53,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -66,15 +71,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -97,6 +105,7 @@ import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.roundToInt
+import kotlin.math.abs
 import kotlinx.coroutines.launch
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -242,26 +251,25 @@ private fun presetsFor(control: TouchControl, inputs: List<BindableInput>): List
     }
 }
 
-/** Starts a long-press drag on this element; positions are in root coordinates, [onMove] gets deltas. */
+/**
+ * Starts a drag on this element, after a long press or, for a handle ([longPress] false), at once;
+ * [onStart] gets the root position. The screen follows the finger from there, so the drag goes on
+ * when this element scrolls out of its list or moves under the finger.
+ */
 private fun Modifier.dragSource(
     key: Any?,
     coords: Array<LayoutCoordinates?>,
+    longPress: Boolean = true,
     onStart: (Offset) -> Unit,
-    onMove: (Offset) -> Unit,
-    onEnd: () -> Unit,
-    onCancel: () -> Unit,
 ): Modifier = this
     .onGloballyPositioned { coords[0] = it }
-    .pointerInput(key) {
-        detectDragGesturesAfterLongPress(
-            onDragStart = { p -> coords[0]?.let { onStart(it.localToRoot(p)) } },
-            onDrag = { change, amount ->
-                change.consume()
-                onMove(amount)
-            },
-            onDragEnd = onEnd,
-            onDragCancel = onCancel,
-        )
+    .pointerInput(key, longPress) {
+        val begin = { p: Offset -> coords[0]?.let { onStart(it.localToRoot(p)) }; Unit }
+        if (longPress) {
+            detectDragGesturesAfterLongPress(onDragStart = begin) { change, _ -> change.consume() }
+        } else {
+            detectDragGestures(onDragStart = begin) { change, _ -> change.consume() }
+        }
     }
 
 /**
@@ -285,7 +293,8 @@ internal fun controlKindName(c: TouchControl): String = when {
  * ([TOUCHPAD_STAND_IN], a tap on empty space). Its actions (cards
  * with their targets as chips) and a library of targets share the screen, split by a draggable
  * divider: tap a card to select it and a target to add it there, or long-press and drag a target
- * onto a card, a chip to another card (or off the cards to remove it), or a card to reorder it.
+ * onto a card, or a chip to another card (or out of the actions pane to remove it). A card is
+ * reordered by its ⠿ handle. Near the pane's top or bottom edge a drag scrolls the cards.
  * Every change goes to [onMappingsChange] and can be undone.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -409,12 +418,10 @@ internal fun ControlMappingScreen(
 
     // Drag & drop geometry, in root coordinates.
     val cardBounds = remember { mutableStateMapOf<InputSource, Rect>() }
-    val chipBounds = remember { HashMap<Pair<InputSource, OutputTarget>, Rect>() }
     var actionsBounds by remember { mutableStateOf(Rect.Zero) }
     var origin by remember { mutableStateOf(Offset.Zero) }
-
-    /** Card centres (y) when a card drag started: where the others sit while it moves. */
-    val startCenters = remember { HashMap<InputSource, Float>() }
+    val listState = rememberLazyListState()
+    val density = LocalDensity.current
 
     fun cardAt(p: Offset): BindableInput? {
         if (!actionsBounds.contains(p)) return null
@@ -429,32 +436,38 @@ internal fun ControlMappingScreen(
         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
     }
 
-    /** A long press on a card: drags the chip under the finger, else the card. */
-    fun startOnCard(input: BindableInput, at: Offset) {
+    /** The ⠿ handle of a card: drags the card within its group. */
+    fun startCardDrag(input: BindableInput, at: Offset) {
         val src = input.sources.first()
-        val chip = Bindings.targets(currentMappings, input).firstOrNull { chipBounds[src to it]?.contains(at) == true }
-        if (chip != null) {
-            startDrag(Dragged.Target(chip, input), at)
-            return
-        }
         val g = groupsNow.indexOfFirst { list -> list.any { it.sources.first() == src } }
         if (g < 0) return
-        startCenters.clear()
-        for (i in groupsNow[g]) cardBounds[i.sources.first()]?.let { startCenters[i.sources.first()] = it.center.y }
         liveOrder = groupsNow[g]
         startDrag(Dragged.Card(input, g), at)
     }
 
-    fun moveDrag(delta: Offset) {
-        dragPos += delta
+    /**
+     * Puts the dragged card after every card of its group whose centre is above the finger. Only
+     * cards on screen count: one scrolled away stays on its side until auto-scroll brings it back.
+     */
+    fun reorder() {
         val d = dragged as? Dragged.Card ?: return
+        val at = liveOrder.indexOf(d.input)
+        if (at < 0) return
         val others = liveOrder.filter { it != d.input }
-        val at = others.count { (startCenters[it.sources.first()] ?: Float.MAX_VALUE) < dragPos.y }
-        val next = others.toMutableList().apply { add(at, d.input) }
-        if (next != liveOrder) {
-            liveOrder = next
-            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        val to = others.withIndex().count { (i, o) ->
+            val c = cardBounds[o.sources.first()]?.takeIf { b -> b.overlaps(actionsBounds) }?.center?.y
+            if (c == null) i < at else c < dragPos.y
         }
+        if (to == at) return
+        // Keeps the list where it is: by default it follows a moved first visible card.
+        listState.requestScrollToItem(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
+        liveOrder = others.toMutableList().apply { add(to, d.input) }
+        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+    }
+
+    fun moveDrag(to: Offset) {
+        dragPos = to
+        reorder()
     }
 
     fun cancelDrag() {
@@ -476,8 +489,11 @@ internal fun ControlMappingScreen(
                         done = true
                     }
                 } else if (over == null) {
-                    remove(from, d.target)
-                    done = true
+                    // Dropped between cards it stays; out of the pane it goes.
+                    if (!actionsBounds.contains(dragPos)) {
+                        remove(from, d.target)
+                        done = true
+                    }
                 } else if (over.sources.first() != from.sources.first() && fits) {
                     move(from, over, d.target)
                     done = true
@@ -499,10 +515,37 @@ internal fun ControlMappingScreen(
         cancelDrag()
     }
 
+    val trackMove by rememberUpdatedState<(Offset) -> Unit> { moveDrag(it) }
+    val trackEnd by rememberUpdatedState<() -> Unit> { endDrag() }
+
+    // While dragging near the top or bottom of the actions pane, scroll it; faster closer to the edge.
+    // A card may be pulled past the edge (full speed); targets and chips scroll only inside the pane.
+    val dragging = dragged != null
+    LaunchedEffect(dragging) {
+        if (!dragging) return@LaunchedEffect
+        val edge = with(density) { 64.dp.toPx() }
+        val maxStep = with(density) { 18.dp.toPx() }
+        while (true) {
+            withFrameNanos { }
+            val b = actionsBounds
+            val p = dragPos
+            val card = dragged is Dragged.Card
+            if (p.x !in b.left..b.right || (!card && !b.contains(p))) continue
+            val f = when {
+                p.y < b.top + edge -> -((b.top + edge - p.y) / edge).coerceAtMost(1f)
+                p.y > b.bottom - edge -> ((p.y - (b.bottom - edge)) / edge).coerceAtMost(1f)
+                else -> 0f
+            }
+            if (f != 0f) listState.scrollBy(f * abs(f) * maxStep)
+            reorder()
+        }
+    }
+
     val colors = MaterialTheme.colorScheme
     val actionsPane: @Composable () -> Unit = {
         LazyColumn(
-            Modifier.fillMaxSize().onGloballyPositioned { c ->
+            state = listState,
+            modifier = Modifier.fillMaxSize().onGloballyPositioned { c ->
                 val b = c.boundsInRoot()
                 if (b != actionsBounds) actionsBounds = b
             },
@@ -573,15 +616,12 @@ internal fun ControlMappingScreen(
                         hover = dragTarget != null && fits && hovered == input,
                         blocked = !fits,
                         lifted = cardDrag?.input == input,
-                        dragKey = src,
+                        draggingChip = (d as? Dragged.Target)?.takeIf { it.from == input }?.target,
                         onBounds = { b -> if (cardBounds[src] != b) cardBounds[src] = b },
-                        onChipBounds = { t, b -> chipBounds[src to t] = b },
                         onClick = { selectedSrc = src },
                         onRemove = { t -> remove(input, t) },
-                        onDragStart = { at -> startOnCard(input, at) },
-                        onDragMove = { moveDrag(it) },
-                        onDragEnd = { endDrag() },
-                        onDragCancel = { cancelDrag() },
+                        onChipDrag = { t, at -> startDrag(Dragged.Target(t, input), at) },
+                        onHandleDrag = { at -> startCardDrag(input, at) },
                         modifier = Modifier.animateItem(),
                     )
                 }
@@ -676,12 +716,10 @@ internal fun ControlMappingScreen(
                                     Bindings.StickPreset.entries.getOrNull(presets.indexOf(p))
                                         ?.let { presetMatches(view, inputs, it) } == true,
                             preset = true,
+                            dragging = (dragged as? Dragged.Preset)?.preset == p,
                             dragKey = p.label,
                             onClick = { applyPreset(p) },
                             onDragStart = { at -> startDrag(Dragged.Preset(p), at) },
-                            onDragMove = { moveDrag(it) },
-                            onDragEnd = { endDrag() },
-                            onDragCancel = { cancelDrag() },
                         )
                     }
                     for (t in shownTargets) {
@@ -690,12 +728,10 @@ internal fun ControlMappingScreen(
                             enabled = selected != null && allows(selectedAllowed, t),
                             mapped = t in current,
                             preset = false,
+                            dragging = (dragged as? Dragged.Target)?.let { it.from == null && it.target == t } == true,
                             dragKey = t,
                             onClick = { selected?.let { pick(it, t) } },
                             onDragStart = { at -> startDrag(Dragged.Target(t, null), at) },
-                            onDragMove = { moveDrag(it) },
-                            onDragEnd = { endDrag() },
-                            onDragCancel = { cancelDrag() },
                         )
                     }
                 }
@@ -705,7 +741,27 @@ internal fun ControlMappingScreen(
 
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = colors.surface) {
-            Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInRoot() }) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onGloballyPositioned { origin = it.positionInRoot() }
+                    .pointerInput(Unit) {
+                        // Once a source starts a drag, the finger is followed here, before the panes see it.
+                        awaitPointerEventScope {
+                            while (true) {
+                                val e = awaitPointerEvent(PointerEventPass.Initial)
+                                if (dragged == null) continue
+                                val c = e.changes.firstOrNull { it.pressed }
+                                if (c == null) {
+                                    trackEnd()
+                                    continue
+                                }
+                                e.changes.forEach { it.consume() }
+                                trackMove(origin + c.position)
+                            }
+                        }
+                    },
+            ) {
                 Column(Modifier.fillMaxSize()) {
                     val compact = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                     Row(
@@ -779,7 +835,7 @@ internal fun ControlMappingScreen(
                 SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(12.dp))
                 val d = dragged
                 if (d != null) {
-                    val removing = d is Dragged.Target && d.from != null && hovered == null
+                    val removing = d is Dragged.Target && d.from != null && !actionsBounds.contains(dragPos)
                     val label = when (d) {
                         is Dragged.Target -> Describe.shortTarget(d.target)
                         is Dragged.Preset -> d.preset.label
@@ -909,24 +965,23 @@ private fun ActionCard(
     selected: Boolean,
     hover: Boolean,
     blocked: Boolean,
+    /** This card is being moved by its handle: it is raised and outlined where it will land. */
     lifted: Boolean,
-    dragKey: Any,
+    /** This card's chip being dragged, highlighted. */
+    draggingChip: OutputTarget?,
     onBounds: (Rect) -> Unit,
-    onChipBounds: (OutputTarget, Rect) -> Unit,
     onClick: () -> Unit,
     onRemove: (OutputTarget) -> Unit,
-    onDragStart: (Offset) -> Unit,
-    onDragMove: (Offset) -> Unit,
-    onDragEnd: () -> Unit,
-    onDragCancel: () -> Unit,
+    /** A long press on a chip starts dragging it. */
+    onChipDrag: (OutputTarget, Offset) -> Unit,
+    /** The ⠿ handle starts moving the card. */
+    onHandleDrag: (Offset) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
-    val coords = remember { arrayOfNulls<LayoutCoordinates>(1) }
-    val start by rememberUpdatedState(onDragStart)
-    val move by rememberUpdatedState(onDragMove)
-    val end by rememberUpdatedState(onDragEnd)
-    val cancel by rememberUpdatedState(onDragCancel)
+    val handleCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    val chipDrag by rememberUpdatedState(onChipDrag)
+    val handleDrag by rememberUpdatedState(onHandleDrag)
     val empty = targets.isEmpty()
     Surface(
         onClick = onClick,
@@ -934,25 +989,25 @@ private fun ActionCard(
             .fillMaxWidth()
             .alpha(
                 when {
-                    lifted -> 0.4f
                     blocked -> 0.45f
                     empty && !selected && !hover -> 0.7f
                     else -> 1f
                 },
             )
-            .onGloballyPositioned { onBounds(it.boundsInRoot()) }
-            .dragSource(dragKey, coords, { start(it) }, { move(it) }, { end() }, { cancel() }),
+            .onGloballyPositioned { onBounds(it.boundsInRoot()) },
         shape = RoundedCornerShape(16.dp),
         color = when {
             hover -> colors.tertiaryContainer
-            selected -> colors.primaryContainer
+            lifted || selected -> colors.primaryContainer
             else -> colors.surfaceContainerHigh
         },
         border = when {
             hover -> BorderStroke(2.dp, colors.tertiary)
+            lifted -> BorderStroke(2.dp, colors.primary)
             selected -> BorderStroke(1.dp, colors.primary)
             else -> null
         },
+        shadowElevation = if (lifted) 8.dp else 0.dp,
     ) {
         Column(
             Modifier.animateContentSize().padding(horizontal = 14.dp, vertical = 10.dp),
@@ -968,7 +1023,18 @@ private fun ActionCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                Text("⠿", color = colors.onSurfaceVariant, style = MaterialTheme.typography.titleMedium)
+                Box(
+                    Modifier
+                        .size(40.dp)
+                        .dragSource("handle", handleCoords, longPress = false) { handleDrag(it) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "⠿",
+                        color = if (lifted) colors.primary else colors.onSurfaceVariant,
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                }
             }
             if (empty && others.isEmpty()) {
                 Text(
@@ -981,12 +1047,22 @@ private fun ActionCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    for (t in targets) {
+                    for (t in targets) key(t) {
+                        val chipCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+                        val dragging = t == draggingChip
+                        val fg = if (dragging) colors.onPrimary else colors.onSecondaryContainer
                         Row(
                             Modifier
-                                .onGloballyPositioned { onChipBounds(t, it.boundsInRoot()) }
+                                .dragSource(t, chipCoords) { chipDrag(t, it) }
+                                .shadow(if (dragging) 6.dp else 0.dp, RoundedCornerShape(8.dp))
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(if (setId == MappingSet.BASE) colors.secondaryContainer else setColor(setId).copy(alpha = 0.35f))
+                                .background(
+                                    when {
+                                        dragging -> colors.primary
+                                        setId == MappingSet.BASE -> colors.secondaryContainer
+                                        else -> setColor(setId).copy(alpha = 0.35f)
+                                    },
+                                )
                                 .heightIn(min = 32.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -994,7 +1070,7 @@ private fun ActionCard(
                             Text(
                                 Describe.shortTarget(t),
                                 style = MaterialTheme.typography.labelLarge,
-                                color = colors.onSecondaryContainer,
+                                color = fg,
                                 maxLines = 1,
                                 modifier = Modifier.padding(start = if (setId == MappingSet.BASE) 10.dp else 6.dp, end = 2.dp),
                             )
@@ -1002,7 +1078,7 @@ private fun ActionCard(
                                 Text(
                                     "✕",
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = colors.onSecondaryContainer
+                                    color = fg
                                 )
                             }
                         }
@@ -1073,28 +1149,26 @@ private fun LibraryChip(
     enabled: Boolean,
     mapped: Boolean,
     preset: Boolean,
+    /** Being dragged: highlighted. */
+    dragging: Boolean,
     dragKey: Any,
     onClick: () -> Unit,
     onDragStart: (Offset) -> Unit,
-    onDragMove: (Offset) -> Unit,
-    onDragEnd: () -> Unit,
-    onDragCancel: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     val coords = remember { arrayOfNulls<LayoutCoordinates>(1) }
     val start by rememberUpdatedState(onDragStart)
-    val move by rememberUpdatedState(onDragMove)
-    val end by rememberUpdatedState(onDragEnd)
-    val cancel by rememberUpdatedState(onDragCancel)
     val (bg, fg) = when {
+        dragging -> colors.primary to colors.onPrimary
         mapped -> colors.primaryContainer to colors.onPrimaryContainer
         preset -> colors.tertiaryContainer to colors.onTertiaryContainer
         else -> colors.surfaceContainerHighest to colors.onSurface
     }
     Box(
         Modifier
-            .alpha(if (enabled) 1f else 0.38f)
-            .dragSource(dragKey, coords, { start(it) }, { move(it) }, { end() }, { cancel() })
+            .alpha(if (enabled || dragging) 1f else 0.38f)
+            .dragSource(dragKey, coords) { start(it) }
+            .shadow(if (dragging) 6.dp else 0.dp, RoundedCornerShape(10.dp))
             .clip(RoundedCornerShape(10.dp))
             .background(bg)
             .clickable(enabled = enabled, onClick = onClick)
