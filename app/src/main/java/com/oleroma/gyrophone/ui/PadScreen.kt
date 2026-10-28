@@ -40,6 +40,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -167,6 +168,9 @@ private enum class EditGesture { PRESS, HELD, MOVE, TWO, PINCH, EMPTY, NONE }
 
 /** Below this spread (dp) on one axis, a pinch sizes that axis by distance rather than by ratio. */
 private const val PINCH_AXIS_FLOOR_DP = 48f
+
+/** Edit mode: the selected control, and the panel buttons that act on it. */
+private val SELECTED_COLOR = Color(0xFFFFC857)
 
 /** Pinch scale on one axis: the spread [now] over the spread at the start, with [floor] as the least start. */
 private fun axisScale(start: Float, now: Float, floor: Float): Float {
@@ -1276,7 +1280,7 @@ fun PadScreen(
                 val isPressed = !editing && (c.id in pressedIds || c.id in heldSticks)
                 val isLatched = !editing && c.id in latchedIds
                 val tint = when {
-                    isSelected -> Color(0xFFFFC857)
+                    isSelected -> SELECTED_COLOR
                     isPressed -> Color(0xFF7CC4FF)
                     isLatched -> Color(0xFF8FE39A)
                     else -> Color(0x66FFFFFF)
@@ -1314,7 +1318,7 @@ fun PadScreen(
                     else -> false
                 }
                 val tint = when {
-                    isSelected -> Color(0xFFFFC857)
+                    isSelected -> SELECTED_COLOR
                     isPressed -> Color(0xFF7CC4FF)
                     else -> Color(0x66FFFFFF)
                 }
@@ -1491,19 +1495,6 @@ fun PadScreen(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                // The selected control's settings and mappings (also a long press and a double tap).
-                                val picked = findControl(selected)
-                                if (picked != null) {
-                                    FilledTonalButton(
-                                        contentPadding = compact,
-                                        onClick = { menu = EditMenu.CONTEXT }) { Text("Configure") }
-                                    val d = draft
-                                    if (d != null && !isCorner(d, picked.id)) {
-                                        FilledTonalButton(
-                                            contentPadding = compact,
-                                            onClick = { menu = EditMenu.MAPPING }) { Text("Map") }
-                                    }
-                                }
                                 FilledTonalButton(
                                     contentPadding = compact,
                                     onClick = { finishEditing() }) { Text("Done") }
@@ -1516,6 +1507,25 @@ fun PadScreen(
                                     dragging = false
                                     if (i >= 0 && i != runtime.workspaceIndex.value) runtime.switchWorkspace(i)
                                 }) { Text("Cancel") }
+                                // The selected control's settings and mappings (also a long press and a double tap).
+                                val picked = findControl(selected)
+                                if (picked != null) {
+                                    val selColors = ButtonDefaults.filledTonalButtonColors(
+                                        containerColor = SELECTED_COLOR,
+                                        contentColor = Color.Black,
+                                    )
+                                    FilledTonalButton(
+                                        contentPadding = compact,
+                                        colors = selColors,
+                                        onClick = { menu = EditMenu.CONTEXT }) { Text("Configure") }
+                                    val d = draft
+                                    if (d != null && !isCorner(d, picked.id)) {
+                                        FilledTonalButton(
+                                            contentPadding = compact,
+                                            colors = selColors,
+                                            onClick = { menu = EditMenu.MAPPING }) { Text("Map") }
+                                    }
+                                }
                                 FilledTonalButton(contentPadding = compact, onClick = addButton@{
                                     val d = draft ?: return@addButton
                                     val wk = d.workspace(editIndex)
