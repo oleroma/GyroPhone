@@ -291,4 +291,14 @@ class LayersTest {
         e.setTouch("q", false)
         assertEquals(0, e.layers.set) // not set 1: p, which brought it, was let go already
     }
+
+    @Test
+    fun twoHoldsOfTheSameLayerStayUntilBothLetGo() {
+        val e = engine(listOf(touch("p", layer(1, held = true)), touch("q", layer(1, held = true), set = 1)))
+        e.setTouch("p", true); e.setTouch("q", true)
+        e.setTouch("p", false)
+        assertEquals(1, e.layers.set) // q still holds Layer 1
+        e.setTouch("q", false)
+        assertEquals(0, e.layers.set)
+    }
 }

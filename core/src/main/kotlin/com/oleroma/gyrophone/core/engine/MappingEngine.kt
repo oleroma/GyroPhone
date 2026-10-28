@@ -1412,14 +1412,18 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         carryHeld(t)
         if (t.override) {
             if (h.added) layerOverrides.remove(t.set)
-        } else if (layerSet == t.set) {
-            layerSet = h.set
-            layerOverrides.clear(); layerOverrides.addAll(h.overrides)
         } else {
-            // Let go while a later hold is on: that hold, made in this one's set, goes back to where this one came from.
+            // Holds made in this one's set (a later hold, or one to the same set) go back to where this one came from.
+            var sameSetHeld = false
             for (e in layerHolds.entries) {
                 val o = e.value
-                if (!e.key.override && o.set == t.set) e.setValue(LayerHold(h.set, h.overrides, o.added))
+                if (e.key.override || o.set != t.set) continue
+                e.setValue(LayerHold(h.set, h.overrides, o.added))
+                if (e.key.set == t.set) sameSetHeld = true
+            }
+            if (layerSet == t.set && !sameSetHeld) {
+                layerSet = h.set
+                layerOverrides.clear(); layerOverrides.addAll(h.overrides)
             }
         }
         applyLayers()
