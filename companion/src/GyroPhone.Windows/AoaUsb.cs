@@ -147,6 +147,12 @@ public sealed class AoaUsbLink : IDisposable
             OpenAccessory(accessory);
             return;
         }
+        if (nodes.Any(n => n.InAccessoryMode))
+        {
+            // Switched, but its accessory interface isn't listed (yet): still enumerating.
+            Set(UsbDirectState.Switching, "");
+            return;
+        }
 
         bool busy = false, waiting = false, wrongMode = false;
         var now = DateTime.UtcNow;
@@ -310,36 +316,44 @@ internal static class Aoa
 /// <summary>A USB device node (a device, or one interface of a composite device).</summary>
 internal sealed record UsbNode(uint DevInst, string InstanceId, string HardwareId, string[] CompatibleIds, string[] InterfaceGuids)
 {
-    private static readonly Regex Ids = new(@"VID_([0-9A-F]{4})&PID_([0-9A-F]{4})(?:&.*?MI_([0-9A-F]{2}))?", RegexOptions.IgnoreCase);
+    // Instance ids of USB nodes: USB\VID_xxxx&PID_xxxx\<serial> for a device, USB\VID_xxxx&PID_xxxx&MI_xx\... for
+    // one interface of a composite device. (Hardware ids vary: an adb interface may be ...&REV_0612&ADB.)
+    private static readonly Regex Ids = new(@"^USB\\VID_([0-9A-F]{4})&PID_([0-9A-F]{4})(?:&MI_([0-9A-F]{2}))?\\", RegexOptions.IgnoreCase);
+
+    private Match Parsed => Ids.Match(InstanceId);
 
     /// <summary>The interface number of a composite device's function (MI_xx), or null for a whole device.</summary>
-    public int? Interface
-    {
-        get
-        {
-            var m = Ids.Match(HardwareId);
-            return m.Success && m.Groups[3].Success ? Convert.ToInt32(m.Groups[3].Value, 16) : null;
-        }
-    }
+    public int? Interface => Parsed is { Success: true } m && m.Groups[3].Success ? Convert.ToInt32(m.Groups[3].Value, 16) : null;
 
     public string Name => HardwareId.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase) ? HardwareId[4..] : HardwareId;
 
-    /// <summary>A phone in accessory mode: 18D1:2D00, or interface 0 of 18D1:2D01 (accessory + adb).</summary>
+    /// <summary>Any node of a phone in accessory mode (18D1:2D00 to 2D05): never asked to switch again.</summary>
+    public bool InAccessoryMode
+    {
+        get
+        {
+            var m = Parsed;
+            if (!m.Success || !m.Groups[1].Value.Equals("18D1", StringComparison.OrdinalIgnoreCase)) return false;
+            int pid = Convert.ToInt32(m.Groups[2].Value, 16);
+            return pid is >= 0x2D00 and <= 0x2D05;
+        }
+    }
+
+    /// <summary>The accessory interface: 18D1:2D00 itself, or interface 0 of 18D1:2D01 (accessory + adb).</summary>
     public bool IsAccessory
     {
         get
         {
-            var m = Ids.Match(HardwareId);
-            if (!m.Success || !m.Groups[1].Value.Equals("18D1", StringComparison.OrdinalIgnoreCase)) return false;
-            string pid = m.Groups[2].Value.ToUpperInvariant();
-            string? mi = m.Groups[3].Success ? m.Groups[3].Value : null;
-            return (pid == "2D00" && mi == null) || (pid == "2D01" && mi == "00");
+            if (!InAccessoryMode) return false;
+            int pid = Convert.ToInt32(Parsed.Groups[2].Value, 16);
+            int? mi = Interface;
+            return (pid == 0x2D00 && mi == null) || (pid == 0x2D01 && mi == 0);
         }
     }
 
     /// <summary>An adb interface (class FF, subclass 42, protocol 1) of a phone not in accessory mode.</summary>
     public bool IsAdb =>
-        !IsAccessory && InterfaceGuids.Length > 0 &&
+        !InAccessoryMode && InterfaceGuids.Length > 0 &&
         CompatibleIds.Any(c => c.Contains("Class_ff&SubClass_42&Prot_01", StringComparison.OrdinalIgnoreCase));
 }
 
