@@ -73,6 +73,32 @@ pr_ready() {
   gh api -X POST "repos/$SLUG/pulls/$1/ccr/ready_for_review" >/dev/null || gh pr ready "$1" -R "$SLUG"
 }
 
+# run_fallback <mode>: runs fallback.yml on BRANCH in mode build or check and waits for it.
+# Sets RUN (the run id) and RUN_URL. Returns 1 if the run failed; stops if it can't be found.
+run_fallback() {
+  local mode="$1" sha since i
+  sha="$(git -C "$WORKTREE" rev-parse HEAD)"
+  since="$(date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:%SZ)"
+  gh workflow run fallback.yml -R "$SLUG" --ref "$BRANCH" -f mode="$mode"
+  RUN=""
+  for i in $(seq 1 30); do
+    sleep 4
+    RUN="$(gh run list -R "$SLUG" --workflow fallback.yml --branch "$BRANCH" --event workflow_dispatch --limit 10 \
+      --json databaseId,headSha,createdAt \
+      --jq "[.[] | select(.headSha == \"$sha\" and .createdAt >= \"$since\")][0].databaseId // empty")"
+    if [ -n "$RUN" ]; then break; fi
+  done
+  [ -n "$RUN" ] || die "Started the fallback workflow ($mode) but couldn't find its run."
+  RUN_URL="https://github.com/$SLUG/actions/runs/$RUN"
+  gh run watch -R "$SLUG" "$RUN" --exit-status --interval 15
+}
+
+# main_red: prints the link of the latest finished fallback run on main if it failed, else nothing.
+main_red() {
+  gh api "repos/$SLUG/actions/workflows/fallback.yml/runs?branch=main&event=push&status=completed&per_page=1" \
+    --jq '.workflow_runs[0] | select(.conclusion == "failure") | .html_url'
+}
+
 # Sets BRANCH to the current branch, or stops if it isn't a feature branch.
 require_feature_branch() {
   BRANCH="$(git -C "$WORKTREE" symbolic-ref --quiet --short HEAD)" || die "Not on a branch."
