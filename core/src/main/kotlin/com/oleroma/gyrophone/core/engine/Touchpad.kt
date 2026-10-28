@@ -191,6 +191,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     private var lastTapNs = Long.MIN_VALUE / 4
     private var pendingTapN = 0
 
+    /** One finger's double tap is held: from its second touch down until every finger lifts (double tap and drag). */
+    private var doubleHeld = false
+
     // Long press: the finger count armed (0 = none: moved, or a double tap's second touch), since
     // when, and whether it fired.
     private var longN = 0
@@ -284,6 +287,16 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         when (state) {
             State.IDLE -> {
                 state = State.TOUCH; primary = slot; t0 = now
+                // A touch soon after a one-finger tap: the double tap, held while it stays down
+                // (moving drags with it held). With tap-drag mapped, its own states do this.
+                if (!map.has(1, SurfaceInput.TAP_DRAG) && map.has(1, SurfaceInput.DOUBLE_TAP) &&
+                    lastTapN == 1 && now - lastTapNs <= doubleTapNanos
+                ) {
+                    doubleHeld = true
+                    pendingTapN = 0; lastTapN = 0
+                    longN = 0 // never a long press too
+                    set(1, SurfaceInput.DOUBLE_TAP, true)
+                }
             }
 
             State.TOUCH -> {
@@ -393,6 +406,12 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         movedMask = 0
         holdCount()
         armLong(0, now)
+        // The double tap's touch lifted: it ends, and is not a tap too.
+        val endedDouble = doubleHeld && count == 0
+        if (endedDouble) {
+            doubleHeld = false
+            set(1, SurfaceInput.DOUBLE_TAP, false)
+        }
         if (scrubbing) {
             // Lifting ends the switch (Alt released, the picked window comes to the front).
             endPhase()
@@ -402,7 +421,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         }
         when (state) {
             State.TOUCH -> {
-                state = State.IDLE; if (now - t0 <= TAP_MAX_NS && map.taps(1)) tapped(1, now)
+                state = State.IDLE; if (!endedDouble && now - t0 <= TAP_MAX_NS && map.taps(1)) tapped(1, now)
             }
 
             State.MOVE -> if (slot == primary) {
@@ -430,7 +449,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
 
             State.MULTI -> when {
                 count == 0 -> {
-                    val tap = multiTapOpen(now)
+                    val tap = multiTapOpen(now) && !endedDouble
                     state = State.IDLE
                     if (tap) tapped(min(maxFingers, 4), now)
                 }
@@ -506,6 +525,10 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         movedMask = 0
         holdCount()
         armLong(0, now)
+        if (doubleHeld && count == 0) {
+            doubleHeld = false
+            set(1, SurfaceInput.DOUBLE_TAP, false)
+        }
         if (count == 0) touchMax = 0 // a cancelled touch never releases
         if (scrubbing) {
             scrubbing = false; dropKeys()
@@ -1072,7 +1095,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         phaseN = 0; levelX = 0f; levelY = 0f; pinchLevel = 0f
         scrubbing = false; scrolled = false; touchMax = 0
         dzHolding = false; catching = false; catchMotion = null; rearmable = false
-        pendingTapN = 0; lastTapN = 0; longN = 0; longOn = false
+        pendingTapN = 0; lastTapN = 0; longN = 0; longOn = false; doubleHeld = false
     }
 
     /**
