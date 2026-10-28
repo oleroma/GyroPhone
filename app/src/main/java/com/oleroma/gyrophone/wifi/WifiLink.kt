@@ -69,6 +69,8 @@ data class DiscoveredHost(
     val paired: Boolean,
     /** Key file pairing with it, from this phone's key DISCOVERs. */
     val keyStatus: KeyStatus = KeyStatus.NONE,
+    /** Seen only on the USB cable so far: [address] is the cable's, not the PC's on Wi-Fi. */
+    val viaUsb: Boolean = false,
 ) {
     val pairingOpen: Boolean get() = flags and AnnounceFlags.PAIRING_OPEN != 0
     val vigemOk: Boolean get() = flags and AnnounceFlags.VIGEM_OK != 0
@@ -99,6 +101,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     private val locks = WifiLocks(appContext)
     private val binder = WifiNetworkBinder(appContext) { post { onNetworkChanged() } }
     private val pump = WifiPump(engine)
+    private val accessory = AccessoryBridge(appContext)
 
     private val _state = MutableStateFlow<LinkState>(LinkState.Off)
     override val state: StateFlow<LinkState> = _state
@@ -157,8 +160,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     @Volatile private var socket: DatagramSocket? = null
     private var wifiSocket: DatagramSocket? = null
 
-    // USB tethering (rx thread): the tether found, a non-blocking probe that looks for the PC on
-    // it while the session runs over Wi-Fi, the PC's address there, and the socket once it is in use.
+    // USB (rx thread): the direct cable or the tether found, a non-blocking probe that looks for the
+    // PC on it, the PC's address there, and the socket once the session uses it.
     private var usb: UsbTetherInfo? = null
     private var usbProbe: DatagramChannel? = null
     private val usbProbeBuf: ByteBuffer = ByteBuffer.allocate(Wire.MAX_DATAGRAM)
@@ -166,6 +169,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     private var usbHostAddr: InetSocketAddress? = null
     private var usbSocket: DatagramSocket? = null
     @Volatile private var usbActive = false
+    /** The session runs over the direct cable (accessory mode), not tethering. */
+    @Volatile private var usbDirect = false
     private var nextUsbCheckMs = 0L
     private var nextUsbProbeMs = 0L
     private var usbSilentSinceMs = 0L
@@ -283,6 +288,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         binder.unregister()
         closeUsb()
         usb = null
+        accessory.close()
         wifiSocket?.close()
         wifiSocket = null
         socket = null
@@ -315,6 +321,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             linkMbps = info.linkMbps,
             lowLatencyLock = locks.held,
             usb = usbActive,
+            usbDirect = usbDirect,
             vigemOk = hs?.let { it.flags and HostStatusFlags.VIGEM_OK != 0 }
                 ?: welcomeHostFlags?.let { it and HostFlags.VIGEM_OK != 0 },
         )
@@ -537,24 +544,28 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             val hostKeyId = t?.key?.keyId ?: ByteArray(Wire.KEY_ID_SIZE)
             val n = WireCodec.encodeDiscover(Discover(reqId, store.phoneId, 0, hostKeyId, phoneKeyId), txBuf)
             for (target in targets) send(txBuf, n, target)
+            if (!usbActive) probeSend(txBuf, n) // a PC only on the cable is found too, by key
         }
     }
 
-    private fun onAnnounce(a: Announce, from: InetSocketAddress, nowMs: Long) {
+    /** An ANNOUNCE; [viaUsb] when it came over the USB probe (it never replaces a Wi-Fi address). */
+    private fun onAnnounce(a: Announce, from: InetSocketAddress, nowMs: Long, viaUsb: Boolean = false) {
         val id = a.hostId.toHex()
         lastAnnounceMs = nowMs
         foundSeen[id] = nowMs
         (keyReqs[a.reqId] ?: lastKeyReqs[a.reqId])?.let { keyId ->
             keyAnswers.getOrPut(id) { HashMap() }[keyId] = KeyPairing.status(a.flags)
         }
+        val wifiSeen = foundMap[id]?.takeIf { viaUsb && !it.viaUsb }
         val host = DiscoveredHost(
             hostIdHex = id,
             name = a.name.ifBlank { "PC" },
-            address = from.address?.hostAddress ?: from.hostString,
-            port = from.port,
+            address = wifiSeen?.address ?: from.address?.hostAddress ?: from.hostString,
+            port = wifiSeen?.port ?: from.port,
             flags = a.flags,
             paired = store.find(id) != null,
             keyStatus = keyStatusOf(id),
+            viaUsb = viaUsb && wifiSeen == null,
         )
         if (foundMap[id] != host) {
             foundMap[id] = host
@@ -630,7 +641,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         val list = ArrayList<InetSocketAddress>(4)
         val u = usb
         if (usbActive && u != null) {
-            list.add(InetSocketAddress(u.broadcast, Wire.PORT))
+            list.add(u.target)
             list.addAll(manualTargets)
             return list
         }
@@ -864,18 +875,18 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     }
 
 
-    // ---- USB tethering ----
+    // ---- USB: the direct cable (accessory mode) or USB tethering ----
 
     /**
-     * Once a second: notices USB tethering come and go. While the session runs over Wi-Fi, a probe
-     * sends DISCOVER on the tether; when the session's PC answers there, the link moves to USB
-     * ([useUsb]). Pulling the cable (the tether goes) or the PC going silent on USB moves it back.
+     * Once a second: notices the direct cable or USB tethering come and go. While the session runs
+     * over Wi-Fi, a probe sends DISCOVER on it; when the session's PC answers there, the link moves
+     * to USB ([useUsb]). Pulling the cable or the PC going silent on USB moves it back.
      */
     private fun usbTick(nowMs: Long) {
         if (nowMs >= nextUsbCheckMs) {
             nextUsbCheckMs = nowMs + USB_CHECK_MS
-            val t = UsbTether.find()
-            if (t?.address != usb?.address) {
+            val t = accessory.poll() ?: UsbTether.find()
+            if (t != usb) {
                 if (usbActive) useWifi()
                 closeUsb()
                 usb = t
@@ -895,8 +906,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             } else usbSilentSinceMs = 0L
             return
         }
-        val probe = usbProbe ?: return
-        val u = usb ?: return
+        if (usbProbe == null || usb == null) return
         if (f == null || !f.isRunning || nowMs < usbBackoffUntilMs) return
         val host = sessionHostId
         val addr = usbHostAddr
@@ -907,11 +917,17 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         if (nowMs >= nextUsbProbeMs) {
             nextUsbProbeMs = nowMs + USB_PROBE_MS
             val n = WireCodec.encodeDiscover(Discover(Crypto.randomBytes(4).getI32(0), store.phoneId), txBuf)
-            try {
-                probe.send(ByteBuffer.wrap(txBuf, 0, n), InetSocketAddress(u.broadcast, Wire.PORT))
-            } catch (e: IOException) {
-                Log.d(TAG, "USB probe failed: ${e.message}")
-            }
+            probeSend(txBuf, n)
+        }
+    }
+
+    private fun probeSend(bytes: ByteArray, len: Int) {
+        val probe = usbProbe ?: return
+        val u = usb ?: return
+        try {
+            probe.send(ByteBuffer.wrap(bytes, 0, len), u.target)
+        } catch (e: IOException) {
+            Log.d(TAG, "USB probe failed: ${e.message}")
         }
     }
 
@@ -931,6 +947,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     /** Reads the probe's ANNOUNCEs without waiting: the PC that answered and its USB address. */
     private fun pollUsbProbe() {
+        val nowMs = SystemClock.elapsedRealtime()
         val probe = usbProbe ?: return
         while (true) {
             usbProbeBuf.clear()
@@ -943,6 +960,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             val a = WireCodec.decodePlain(usbProbeBuf.array(), len) as? Announce ?: continue
             usbHostId = a.hostId.toHex()
             usbHostAddr = from
+            onAnnounce(a, from, nowMs, viaUsb = true)
         }
     }
 
@@ -965,6 +983,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbProbe = null
         usbSocket = s
         usbActive = true
+        usbDirect = u.direct
         usbSilentSinceMs = 0L
         socket = s
         pump.useSocket(s)
@@ -976,13 +995,14 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     private fun useWifi() {
         val w = wifiSocket ?: return
         usbActive = false
+        usbDirect = false
         socket = w
         pump.useSocket(w)
         usbSocket?.close()
         usbSocket = null
         usbHostId = null
         usbHostAddr = null
-        val addr = sessionHostId?.let { foundMap[it] }?.let {
+        val addr = sessionHostId?.let { foundMap[it] }?.takeIf { !it.viaUsb }?.let {
             runCatching { InetSocketAddress(InetAddress.getByName(it.address), it.port) }.getOrNull()
         }
         session?.let { handleSessionOuts(it.moveTo(addr, SystemClock.elapsedRealtime())) }
@@ -996,6 +1016,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbSocket?.close()
         usbSocket = null
         usbActive = false
+        usbDirect = false
         usbHostId = null
         usbHostAddr = null
     }
@@ -1021,7 +1042,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             band = info.band,
             linkMbps = (info.linkMbps ?: 0).coerceIn(0, 0xFFFF),
             freqMhz = (info.freqMhz ?: 0).coerceIn(0, 0xFFFF),
-            flags = (if (locks.held) LinkInfoFlags.LOW_LATENCY_LOCK_HELD else 0) or (if (usbNow) LinkInfoFlags.USB else 0),
+            flags = (if (locks.held) LinkInfoFlags.LOW_LATENCY_LOCK_HELD else 0) or (if (usbNow) LinkInfoFlags.USB else 0) or
+                (if (usbNow && usbDirect) LinkInfoFlags.USB_DIRECT else 0),
         )
     }
 
@@ -1045,7 +1067,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 SessionStatus.IDLE, SessionStatus.CONNECTING, SessionStatus.DISCOVERING, SessionStatus.HOST_EXITED ->
                     LinkState.Connecting(sessionHostName)
             }
-            binder.network == null && usb == null -> LinkState.Failed("Not connected to Wi-Fi or USB tethering")
+            binder.network == null && usb == null -> LinkState.Failed("Not connected to Wi-Fi or a USB cable")
             else -> LinkState.Searching
         }
     }
@@ -1059,7 +1081,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     /** "5 GHz · 1201 Mbps · −51 dBm", leaving out what is unknown. */
     private fun radioDetail(): String {
-        if (usbActive) return "USB"
+        if (usbActive) return if (usbDirect) "USB cable" else "USB tethering"
         val info = binder.info
         val parts = ArrayList<String>(3)
         if (info.band != 0) parts.add("${info.band} GHz")

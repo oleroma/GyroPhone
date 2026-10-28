@@ -184,6 +184,9 @@ public static class LinkInfoFlags
 
     /// <summary>The phone sends over USB tethering (the Wi-Fi fields are then not this link's).</summary>
     public const byte Usb = 1 << 1;
+
+    /// <summary>With Usb: the cable runs in accessory mode (direct USB), not tethering.</summary>
+    public const byte UsbDirect = 1 << 2;
 }
 
 /// <summary>HOST_STATUS flags.</summary>
