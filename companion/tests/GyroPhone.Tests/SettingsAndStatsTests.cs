@@ -15,6 +15,7 @@ public sealed class SettingsAndStatsTests : IDisposable
         var s = store.Load("PC");
         Assert.Equal(16, s.HostId.Length);
         s.OutputMode = OutputMode.DualShock4;
+        s.TrayClick = TrayClickAction.PairNewPhone;
         s.PairedPhones.Add(new PairedPhone { PhoneId = Hex.Range(0, 16), Name = "OnePlus 15", ProtectedKey = [1, 2, 3] });
         store.Save(s);
         store.Save(s);
@@ -23,6 +24,8 @@ public sealed class SettingsAndStatsTests : IDisposable
         var back = new SettingsStore(store.Path).Load("other");
         Assert.Equal(s.HostId, back.HostId);
         Assert.Equal(OutputMode.DualShock4, back.OutputMode);
+        Assert.Equal(TrayClickAction.PairNewPhone, back.TrayClick);
+        Assert.Contains("\"PairNewPhone\"", File.ReadAllText(store.Path));
         Assert.Equal("PC", back.HostName);
         Assert.Equal([1, 2, 3], Assert.Single(back.PairedPhones).ProtectedKey);
     }

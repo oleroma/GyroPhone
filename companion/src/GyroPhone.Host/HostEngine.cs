@@ -789,6 +789,17 @@ public sealed class HostEngine
         }
     }
 
+    /// <summary>What a left click on the tray icon does; the tray reads it from <see cref="Settings"/>.</summary>
+    public void SetTrayClick(TrayClickAction action)
+    {
+        lock (_lock)
+        {
+            if (action == _settings.TrayClick) return;
+            _settings.TrayClick = action;
+            _settingsDirty = true;
+        }
+    }
+
     /// <summary>Replaces the pad sink (e.g. "Retry driver" after installing ViGEmBus).</summary>
     public void SetPadSink(IPadSink pad)
     {

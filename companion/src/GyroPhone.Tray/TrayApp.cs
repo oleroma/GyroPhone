@@ -13,7 +13,7 @@ namespace GyroPhone.Tray;
 
 /// <summary>
 /// The tray application: owns the engine, UDP server and watchdog, the notification-area icon and
-/// menu, and the pair and status windows. Engine callbacks (IHostEvents, IPairPrompt) arrive on the
+/// menu, and the pair and main windows. Engine callbacks (IHostEvents, IPairPrompt) arrive on the
 /// rx or watchdog thread under the engine lock, so they only post to the UI thread.
 /// </summary>
 internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
@@ -54,9 +54,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private readonly System.Windows.Forms.Timer _uiTimer;
     private readonly CompanionUpdater _updater;
     private readonly ToolStripMenuItem _versionItem;
+    private readonly ToolStripMenuItem _clickMainItem, _clickPairItem;
 
     private PairForm? _pairForm;
-    private StatusForm? _statusForm;
+    private MainForm? _mainForm;
     private int _refreshQueued;
     private bool? _firewallOk;
     private bool? _usbRuleOk;
@@ -121,16 +122,19 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _phonesItem = new ToolStripMenuItem("Paired phones");
         _hostKeyItem = new ToolStripMenuItem("This PC's key: none") { Enabled = false };
         var keysFolderItem = new ToolStripMenuItem("Open keys folder", null, (_, _) => OpenKeysFolder());
-        var statusFormItem = new ToolStripMenuItem("Status…", null, (_, _) => ShowStatusForm());
-        _pauseItem = new ToolStripMenuItem("Pause input");
-        _pauseItem.Click += (_, _) => _engine.SetPaused(!_pauseItem.Checked);
+        var mainFormItem = new ToolStripMenuItem("Open main window", null, (_, _) => ShowMainForm());
+        _pauseItem = new ToolStripMenuItem("Pause input", null, (_, _) => TogglePaused());
+        _clickMainItem = new ToolStripMenuItem("Opens the main window", null, (_, _) => SetTrayClick(TrayClickAction.OpenMainWindow));
+        _clickPairItem = new ToolStripMenuItem("Pairs a new phone", null, (_, _) => SetTrayClick(TrayClickAction.PairNewPhone));
+        var trayClickItem = new ToolStripMenuItem("Clicking the tray icon");
+        trayClickItem.DropDownItems.AddRange(new ToolStripItem[] { _clickMainItem, _clickPairItem });
         _autoStartItem = new ToolStripMenuItem("Start with Windows", null, (_, _) => ToggleAutoStart());
         _watcherItem = new ToolStripMenuItem("Start when my phone appears", null, (_, _) => ToggleWatcher());
         _uipiItem = new ToolStripMenuItem("The game runs as administrator: restart as administrator", null, (_, _) => RestartAsAdmin());
-        _networkItem = new ToolStripMenuItem("This network is Public: make it Private…", null, (_, _) => Open(NetworkCategory.SettingsUri));
+        _networkItem = new ToolStripMenuItem("This network is Public: make it Private…", null, (_, _) => OpenNetworkSettings());
         _firewallItem = new ToolStripMenuItem("Allow through firewall…", null, (_, _) => AllowThroughFirewall());
         _usbFirewallItem = new ToolStripMenuItem("Allow the phone over a USB cable…", null, (_, _) => AllowUsb());
-        _installDriverItem = new ToolStripMenuItem("Install gamepad driver (ViGEmBus)…", null, (_, _) => Open(ViGEmPadSink.DriverDownloadUrl));
+        _installDriverItem = new ToolStripMenuItem("Install gamepad driver (ViGEmBus)…", null, (_, _) => OpenDriverDownload());
         _retryDriverItem = new ToolStripMenuItem("Retry driver", null, (_, _) => RetryDriver());
         _restartAdminItem = new ToolStripMenuItem("Restart as administrator", null, (_, _) => RestartAsAdmin());
         var logItem = new ToolStripMenuItem("Open log folder", null, (_, _) => OpenLogFolder());
@@ -141,15 +145,16 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _versionItem,
             _statusItem,
             new ToolStripSeparator(),
+            mainFormItem,
             outputItem,
             pairItem,
             _phonesItem,
             keysFolderItem,
             _hostKeyItem,
-            statusFormItem,
             _pauseItem,
             _autoStartItem,
             _watcherItem,
+            trayClickItem,
             new ToolStripSeparator(),
             _uipiItem,
             _networkItem,
@@ -171,7 +176,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             ContextMenuStrip = _menu,
             Visible = true,
         };
-        _tray.DoubleClick += (_, _) => ShowStatusForm();
+        _tray.MouseClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left) TrayClicked();
+        };
 
         SystemEvents.SessionSwitch += OnSessionSwitch;
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
@@ -292,11 +300,19 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _installDriverItem.Available = !s.DriverOk;
         _retryDriverItem.Available = !s.DriverOk;
         _restartAdminItem.Available = !ElevationProbe.IsSelfElevated;
+        _clickMainItem.Checked = TrayClick == TrayClickAction.OpenMainWindow;
+        _clickPairItem.Checked = TrayClick == TrayClickAction.PairNewPhone;
         RebuildPhones(s.PairedPhones);
         _hostKeyItem.Text = s.HostKeyFingerprint is { } fp ? $"This PC's key: {fp}" : "This PC's key: unavailable (see Status)";
         _versionItem.Text = _updater.Pending is { } pending
             ? $"{Program.AppName} {Application.ProductVersion} · {pending} starts when the phone disconnects"
             : $"{Program.AppName} {Application.ProductVersion}";
+        if (_mainForm != null && !_mainForm.IsDisposed)
+        {
+            _mainForm.RefreshNow(new MainView(s, $"{_versionItem.Text}\n{status}", _hostKeyItem.Text,
+                _autoStartItem.Checked, _watcherItem.Checked, _uipiItem.Available, _networkItem.Available,
+                _firewallOk == false, _usbFirewallItem.Available, _installDriverItem.Available, _restartAdminItem.Available));
+        }
         if (!s.Connected) _updater.TryRestart();
 
         if (s.ElevatedForeground && !ElevationProbe.IsSelfElevated && s.Connected && !_uipiHintShown)
@@ -339,7 +355,26 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         }
     }
 
-    private void PairNewPhone()
+    /// <summary>A left click on the tray icon: what the "Clicking the tray icon" setting says.</summary>
+    private void TrayClicked()
+    {
+        if (TrayClick == TrayClickAction.PairNewPhone) PairNewPhone();
+        else ShowMainForm();
+    }
+
+    internal TrayClickAction TrayClick => _engine.Settings.TrayClick;
+
+    internal void SetTrayClick(TrayClickAction action)
+    {
+        _engine.SetTrayClick(action);
+        Refresh();
+    }
+
+    internal void SetOutputMode(OutputMode mode) => _engine.SetOutputMode(mode);
+
+    internal void TogglePaused() => _engine.SetPaused(!_engine.Snapshot().Paused);
+
+    internal void PairNewPhone()
     {
         _engine.OpenPairingWindow();
         OpenPairForm();
@@ -360,19 +395,21 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _pairForm.Activate();
     }
 
-    private void ShowStatusForm()
+    private void ShowMainForm()
     {
-        if (_statusForm == null || _statusForm.IsDisposed)
+        if (_mainForm == null || _mainForm.IsDisposed)
         {
-            var form = new StatusForm(StatusText);
+            var form = new MainForm(this, StatusText);
             form.FormClosed += (_, _) =>
             {
-                if (ReferenceEquals(_statusForm, form)) _statusForm = null;
+                if (ReferenceEquals(_mainForm, form)) _mainForm = null;
             };
-            _statusForm = form;
+            _mainForm = form;
         }
-        _statusForm.Show();
-        _statusForm.Activate();
+        Refresh();
+        _mainForm.Show();
+        if (_mainForm.WindowState == FormWindowState.Minimized) _mainForm.WindowState = FormWindowState.Normal;
+        _mainForm.Activate();
     }
 
     private string StatusText()
@@ -411,7 +448,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         return b.ToString();
     }
 
-    private void Forget(PairedPhoneInfo phone)
+    internal void Forget(PairedPhoneInfo phone)
     {
         var text = phone.ByKey
             ? $"Forget {phone.Name}? This deletes its key file {Path.GetFileName(phone.KeyFile)}; run update.cmd or pair with a code to connect again."
@@ -434,7 +471,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _authorized?.Reload();
     }
 
-    private void OpenKeysFolder()
+    internal void OpenKeysFolder()
     {
         try
         {
@@ -465,7 +502,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         return false;
     }
 
-    private void ToggleAutoStart()
+    internal void ToggleAutoStart()
     {
         bool enable = !IsAutoStartOn();
         if (TrySetAutoStart(enable)) _engine.SetStartWithWindows(enable);
@@ -488,7 +525,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     /// "Start when my phone appears": a per-user Run entry for the installed exe with --watch, started
     /// now too. Off removes the entry and stops the running watcher.
     /// </summary>
-    private void ToggleWatcher()
+    internal void ToggleWatcher()
     {
         bool enable = !IsWatcherOn();
         if (enable && !File.Exists(Watcher.InstalledExe))
@@ -559,7 +596,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         });
     });
 
-    private void AllowUsb() => Task.Run(() =>
+    internal void AllowUsb() => Task.Run(() =>
     {
         bool added = FirewallHelper.AddUsbRuleElevated(_exePath);
         bool ok = FirewallHelper.UsbRuleExists(_exePath);
@@ -573,7 +610,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         });
     });
 
-    private void AllowThroughFirewall() => Task.Run(() =>
+    internal void AllowThroughFirewall() => Task.Run(() =>
     {
         bool added = FirewallHelper.AddRuleElevated(_exePath);
         bool ok = FirewallHelper.RuleExists(_exePath);
@@ -587,7 +624,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         });
     });
 
-    private void RetryDriver()
+    internal void RetryDriver()
     {
         var pad = ViGEmPadSink.Create(_log.Write, out var error);
         if (error != null)
@@ -607,7 +644,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         Refresh();
     }
 
-    private void RestartAsAdmin()
+    internal void RestartAsAdmin()
     {
         try
         {
@@ -622,7 +659,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         ExitApp();
     }
 
-    private void OpenLogFolder()
+    internal void OpenLogFolder()
     {
         try
         {
@@ -634,6 +671,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _log.Write($"open log folder failed: {e.GetType().Name}");
         }
     }
+
+    internal void OpenNetworkSettings() => Open(NetworkCategory.SettingsUri);
+
+    internal void OpenDriverDownload() => Open(ViGEmPadSink.DriverDownloadUrl);
 
     private void Open(string target)
     {
@@ -712,7 +753,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private void ExitApp()
     {
         _pairForm?.Close();
-        _statusForm?.Close();
+        _mainForm?.Close();
         Shutdown();
         ExitThread();
     }
@@ -754,7 +795,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             AppDomain.CurrentDomain.ProcessExit -= OnProcessExit;
             _uiTimer.Dispose();
             _pairForm?.Dispose();
-            _statusForm?.Dispose();
+            _mainForm?.Dispose();
             _tray.Dispose();
             _menu.Dispose();
             _icons.Dispose();
