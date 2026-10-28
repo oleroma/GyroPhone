@@ -341,7 +341,7 @@ fun TargetPickerDialog(
  * new one through [onAddSet]) and what held buttons do. [onOk] gets the target.
  */
 @Composable
-private fun LayerTargetDialog(
+internal fun LayerTargetDialog(
     start: OutputTarget.Layer,
     sets: List<MappingSet>,
     onAddSet: (() -> MappingSet)?,

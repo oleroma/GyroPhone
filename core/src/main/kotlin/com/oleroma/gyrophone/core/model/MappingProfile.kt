@@ -158,8 +158,12 @@ object MappingProfiles {
                 else mapping.controller.isEmpty() && p.mappings.isNotEmpty()
             }
             val controller = changed?.mappings ?: mapping.controller
-            if (touch == mapping.touch && controller == mapping.controller && touchpad == mapping.touchpad) continue
-            val updated = mapping.copy(touch = touch, controller = controller, touchpad = touchpad)
+            // Sets added, renamed or removed in the workspace (the pad's mapping screen).
+            val sets = if (old != null && w.sets != old.sets) w.sets else mapping.sets
+            if (touch == mapping.touch && controller == mapping.controller && touchpad == mapping.touchpad &&
+                sets == mapping.sets
+            ) continue
+            val updated = mapping.copy(touch = touch, controller = controller, touchpad = touchpad, sets = sets)
             result = result.map { if (it.id == mapping.id) updated else it }
         }
         return result

@@ -4,7 +4,14 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.horizontalScroll
@@ -80,6 +87,7 @@ import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
+import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.MouseButton
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
@@ -118,7 +126,7 @@ private class MapPreset(val label: String, val apply: (List<Mapping>) -> List<Ma
 
 private enum class LibraryTab(val label: String) {
     RECENT("Recent"), PRESETS("Presets"), KEYBOARD("Keyboard"), MOUSE("Mouse"), GAMEPAD("Gamepad"),
-    GYRO("Gyro"), PHONE("Phone"), TOUCHPAD("Touchpad"),
+    GYRO("Gyro"), PHONE("Phone"), TOUCHPAD("Touchpad"), LAYERS("Layers"),
 }
 
 private fun group(name: String): List<OutputTarget> =
@@ -131,6 +139,7 @@ private fun tabTargets(tab: LibraryTab, extras: List<OutputTarget>): List<Output
     LibraryTab.GYRO -> group("Gyro")
     LibraryTab.PHONE -> group("Phone")
     LibraryTab.TOUCHPAD -> extras
+    LibraryTab.LAYERS -> Describe.layerTargets
     LibraryTab.RECENT, LibraryTab.PRESETS -> emptyList()
 }
 
@@ -146,6 +155,8 @@ private fun allows(allowed: Set<OutputTarget>, t: OutputTarget): Boolean {
         is OutputTarget.MouseAxis -> allowed.any { it is OutputTarget.MouseAxis && it.motion == t.motion }
         is OutputTarget.Key -> allowed.any { it is OutputTarget.Key }
         OutputTarget.GyroHold -> OutputTarget.GyroPause in allowed
+        // Layer actions and Nothing go where button outputs do.
+        is OutputTarget.Layer, OutputTarget.NoOutput -> allowed.any { it is OutputTarget.Key }
         else -> false
     }
 }
@@ -286,9 +297,20 @@ internal fun ControlMappingScreen(
     onMappingsChange: (List<Mapping>) -> Unit,
     onSettings: () -> Unit,
     onClose: () -> Unit,
+    /** The profile's mapping sets, shown in the top bar. */
+    sets: List<MappingSet> = emptyList(),
+    /** The set being edited (0 = Base): new mappings go into it, other sets' show greyed. */
+    editSet: Int = MappingSet.BASE,
+    onEditSet: (Int) -> Unit = {},
+    /** The sets changed: added, renamed, or [removed] (with its mappings and the actions using it). */
+    onSetsChange: ((sets: List<MappingSet>, removed: Int?) -> Unit)? = null,
 ) {
+    // The edited set seen as Base, so the Base-only Bindings helpers edit it.
+    val view = remember(mappings, editSet) { Bindings.viewSet(mappings, editSet) }
     // Drag callbacks outlive a composition: everything they read goes through state.
-    val currentMappings by rememberUpdatedState(mappings)
+    val currentMappings by rememberUpdatedState(view)
+    val allMappings by rememberUpdatedState(mappings)
+    val currentSet by rememberUpdatedState(editSet)
     val currentControl by rememberUpdatedState(control)
     val emit by rememberUpdatedState(onMappingsChange)
     val haptic = LocalHapticFeedback.current
@@ -323,6 +345,8 @@ internal fun ControlMappingScreen(
     val undo = remember(control.id) { mutableStateListOf<List<Mapping>>() }
     var recent by remember { mutableStateOf(loadRecent(runtime)) }
     var hapticDraft by remember { mutableStateOf<Pair<BindableInput, OutputTarget>?>(null) }
+    var layerDraft by remember { mutableStateOf<Pair<BindableInput, OutputTarget.Layer>?>(null) }
+    var setMenu by remember { mutableStateOf<MappingSet?>(null) }
     var capturing by remember { mutableStateOf(false) }
     var split by remember {
         mutableFloatStateOf(runtime.uiPref(PREF_SPLIT)?.toFloatOrNull()?.coerceIn(MIN_SPLIT, MAX_SPLIT) ?: 0.5f)
@@ -333,12 +357,14 @@ internal fun ControlMappingScreen(
         emit(prev)
     }
 
+    /** [next] is the edited set's view; undo keeps every set as it was. */
     fun change(next: List<Mapping>, message: String) {
-        val prev = currentMappings
-        if (next == prev) return
+        val prev = allMappings
+        val all = Bindings.viewSet(next, currentSet)
+        if (all == prev) return
         undo.add(prev)
         if (undo.size > MAX_UNDO) undo.removeAt(0)
-        emit(next)
+        emit(all)
         scope.launch {
             snackbar.currentSnackbarData?.dismiss()
             val result = snackbar.showSnackbar(message, actionLabel = "Undo", duration = SnackbarDuration.Short)
@@ -360,9 +386,13 @@ internal fun ControlMappingScreen(
         )
     }
 
-    /** Adds [t] to [input]; a haptic target is set up first. */
+    /** Adds [t] to [input]; a haptic target or a layer action is set up first. */
     fun pick(input: BindableInput, t: OutputTarget) {
-        if (Describe.isHaptic(t)) hapticDraft = input to t else assign(input, t)
+        when {
+            Describe.isHaptic(t) -> hapticDraft = input to t
+            t is OutputTarget.Layer && t.set < 0 -> layerDraft = input to t
+            else -> assign(input, t)
+        }
     }
 
     fun remove(input: BindableInput, t: OutputTarget) = change(
@@ -487,7 +517,7 @@ internal fun ControlMappingScreen(
                     ) {
                         for (p in Bindings.StickPreset.entries) {
                             FilterChip(
-                                selected = presetMatches(mappings, inputs, p),
+                                selected = presetMatches(view, inputs, p),
                                 onClick = { presets.getOrNull(p.ordinal)?.let { applyPreset(it) } },
                                 label = { Text(p.label) },
                             )
@@ -533,7 +563,12 @@ internal fun ControlMappingScreen(
                     DisposableEffect(src) { onDispose { cardBounds.remove(src) } }
                     ActionCard(
                         title = if (isSurface(input)) input.label else actionLabel(control, input),
-                        targets = Bindings.targets(mappings, input),
+                        targets = Bindings.targets(view, input),
+                        setId = editSet,
+                        others = (listOf(MappingSet.BASE) + sets.map { it.id }).filter { it != editSet }.flatMap { n ->
+                            Bindings.targets(Bindings.viewSet(mappings, n), input).map { n to it }
+                        },
+                        onOther = onEditSet,
                         selected = input == selected,
                         hover = dragTarget != null && fits && hovered == input,
                         blocked = !fits,
@@ -581,7 +616,7 @@ internal fun ControlMappingScreen(
             tab == LibraryTab.RECENT -> recent
             else -> tabTargets(tab, extras)
         }
-        val current = selected?.let { Bindings.targets(mappings, it) }.orEmpty()
+        val current = selected?.let { Bindings.targets(view, it) }.orEmpty()
         Column(Modifier.fillMaxSize().background(colors.surfaceContainerLow).imePadding().padding(top = 8.dp)) {
             OutlinedTextField(
                 value = query,
@@ -639,7 +674,7 @@ internal fun ControlMappingScreen(
                             enabled = true,
                             mapped = control.kind == TouchKind.STICK &&
                                     Bindings.StickPreset.entries.getOrNull(presets.indexOf(p))
-                                        ?.let { presetMatches(mappings, inputs, it) } == true,
+                                        ?.let { presetMatches(view, inputs, it) } == true,
                             preset = true,
                             dragKey = p.label,
                             onClick = { applyPreset(p) },
@@ -674,11 +709,12 @@ internal fun ControlMappingScreen(
                 Column(Modifier.fillMaxSize()) {
                     val compact = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                     Row(
-                        Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                            .padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        Column(Modifier.weight(1f)) {
+                        Column(Modifier.widthIn(max = 180.dp).padding(end = 8.dp)) {
                             Text(
                                 control.label.ifBlank { control.id },
                                 style = MaterialTheme.typography.titleLarge,
@@ -691,6 +727,20 @@ internal fun ControlMappingScreen(
                                 color = colors.onSurfaceVariant,
                                 maxLines = 1,
                             )
+                        }
+                        if (onSetsChange != null) {
+                            SetChip("Base", MappingSet.BASE, editSet == MappingSet.BASE, { onEditSet(MappingSet.BASE) }, null)
+                            for (st in sets) {
+                                SetChip(st.label, st.id, editSet == st.id, { onEditSet(st.id) }, { setMenu = st })
+                            }
+                            if (sets.size < MappingSet.MAX) {
+                                TextButton(onClick = {
+                                    val id = (1..MappingSet.MAX).first { n -> sets.none { it.id == n } }
+                                    onSetsChange((sets + MappingSet(id)).sortedBy { it.id }, null)
+                                    onEditSet(id)
+                                }, contentPadding = compact) { Text("+ Set") }
+                            }
+                            Spacer(Modifier.width(8.dp))
                         }
                         TextButton(onClick = onSettings, contentPadding = compact) { Text("Settings") }
                         TextButton(
@@ -759,6 +809,64 @@ internal fun ControlMappingScreen(
         }
     }
 
+    layerDraft?.let { (input, t) ->
+        LayerTargetDialog(
+            start = t,
+            sets = sets,
+            onAddSet = onSetsChange?.let { setsChange ->
+                {
+                    val id = (1..MappingSet.MAX).first { n -> sets.none { it.id == n } }
+                    MappingSet(id).also { setsChange((sets + it).sortedBy { s -> s.id }, null) }
+                }
+            },
+            onOk = { configured ->
+                layerDraft = null
+                assign(input, configured)
+            },
+            onCancel = { layerDraft = null },
+        )
+    }
+    setMenu?.let { st ->
+        var setName by remember(st.id) { mutableStateOf(st.name) }
+        var deleting by remember(st.id) { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { setMenu = null },
+            title = { Text(if (deleting) "Delete \"" + st.label + "\"?" else "Set " + st.id) },
+            text = {
+                if (deleting) {
+                    Text("Its mappings go too (every control, the touchpad and the controller), and so do the layer actions that switch to it.")
+                } else {
+                    OutlinedTextField(
+                        value = setName,
+                        onValueChange = { setName = it },
+                        singleLine = true,
+                        label = { Text("Name") },
+                        placeholder = { Text("Set " + st.id) },
+                    )
+                }
+            },
+            confirmButton = {
+                if (deleting) {
+                    TextButton(onClick = {
+                        setMenu = null
+                        if (editSet == st.id) onEditSet(MappingSet.BASE)
+                        onSetsChange?.invoke(sets.filterNot { it.id == st.id }, st.id)
+                    }) { Text("Delete", color = colors.error) }
+                } else {
+                    TextButton(onClick = {
+                        setMenu = null
+                        onSetsChange?.invoke(sets.map { if (it.id == st.id) it.copy(name = setName.trim()) else it }, null)
+                    }) { Text("Rename") }
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (!deleting) TextButton(onClick = { deleting = true }) { Text("Delete set", color = colors.error) }
+                    TextButton(onClick = { setMenu = null }) { Text("Cancel") }
+                }
+            },
+        )
+    }
     hapticDraft?.let { (input, t) ->
         HapticTargetDialog(
             start = t,
@@ -793,6 +901,11 @@ internal fun ControlMappingScreen(
 private fun ActionCard(
     title: String,
     targets: List<OutputTarget>,
+    /** The set [targets] are in (0 = Base: plain chips, else its colour and number). */
+    setId: Int,
+    /** Other sets' targets of this action, greyed after the own ones; a tap goes to that set. */
+    others: List<Pair<Int, OutputTarget>>,
+    onOther: (Int) -> Unit,
     selected: Boolean,
     hover: Boolean,
     blocked: Boolean,
@@ -857,7 +970,7 @@ private fun ActionCard(
                 )
                 Text("⠿", color = colors.onSurfaceVariant, style = MaterialTheme.typography.titleMedium)
             }
-            if (empty) {
+            if (empty && others.isEmpty()) {
                 Text(
                     if (hover) "Release to map" else "Drop here",
                     style = MaterialTheme.typography.bodySmall,
@@ -873,16 +986,17 @@ private fun ActionCard(
                             Modifier
                                 .onGloballyPositioned { onChipBounds(t, it.boundsInRoot()) }
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(colors.secondaryContainer)
+                                .background(if (setId == MappingSet.BASE) colors.secondaryContainer else setColor(setId).copy(alpha = 0.35f))
                                 .heightIn(min = 32.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            if (setId != MappingSet.BASE) SetNumber(setId, Modifier.padding(start = 6.dp))
                             Text(
                                 Describe.shortTarget(t),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = colors.onSecondaryContainer,
                                 maxLines = 1,
-                                modifier = Modifier.padding(start = 10.dp, end = 2.dp),
+                                modifier = Modifier.padding(start = if (setId == MappingSet.BASE) 10.dp else 6.dp, end = 2.dp),
                             )
                             Box(Modifier.size(32.dp).clickable { onRemove(t) }, contentAlignment = Alignment.Center) {
                                 Text(
@@ -893,9 +1007,62 @@ private fun ActionCard(
                             }
                         }
                     }
+                    for ((n, t) in others) {
+                        Row(
+                            Modifier
+                                .alpha(0.5f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(colors.surfaceVariant)
+                                .clickable { onOther(n) }
+                                .heightIn(min = 32.dp)
+                                .padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (n == MappingSet.BASE) {
+                                Text("Base", style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+                            } else SetNumber(n)
+                            Text(
+                                Describe.shortTarget(t),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = colors.onSurfaceVariant,
+                                maxLines = 1,
+                                modifier = Modifier.padding(start = 6.dp),
+                            )
+                        }
+                    }
                 }
             }
         }
+    }
+}
+
+/** A mapping set's number in a circle of its colour. */
+@Composable
+private fun SetNumber(id: Int, modifier: Modifier = Modifier) {
+    Box(modifier.size(18.dp).background(setColor(id), CircleShape), contentAlignment = Alignment.Center) {
+        Text(id.toString(), style = MaterialTheme.typography.labelSmall, color = Color.White, fontWeight = FontWeight.Bold)
+    }
+}
+
+/** A set in the top bar: tap to edit it, long-press ([onLongClick]) to rename or delete it. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SetChip(label: String, id: Int, selected: Boolean, onClick: () -> Unit, onLongClick: (() -> Unit)?) {
+    val colors = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(8.dp)
+    Row(
+        Modifier
+            .padding(horizontal = 2.dp)
+            .clip(shape)
+            .background(if (selected) colors.secondaryContainer else colors.surface)
+            .border(1.dp, if (selected) colors.secondary else colors.outlineVariant, shape)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .heightIn(min = 32.dp)
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (id != MappingSet.BASE) SetNumber(id, Modifier.padding(end = 6.dp))
+        Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
     }
 }
 

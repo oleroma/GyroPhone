@@ -106,6 +106,7 @@ import com.oleroma.gyrophone.core.model.placeX
 import com.oleroma.gyrophone.core.model.placeY
 import com.oleroma.gyrophone.core.model.placement
 import com.oleroma.gyrophone.core.model.withPlacement
+import com.oleroma.gyrophone.core.model.withSets
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -312,6 +313,8 @@ fun PadScreen(
 
     // Live mappings: per control, its mappings (not haptics), what it sends now, and until when it
     // stays shown; watched until [liveWatchUntil] after the last touch (a tap may wait out its window).
+    // The mapping set the control mapping screen edits (kept while edit mode lasts).
+    var mapSet by remember { mutableStateOf(MappingSet.BASE) }
     // Mapping sets: the set in use and its overrides, watched while this workspace has layer actions.
     var layers by remember { mutableStateOf(MappingEngine.Layers(MappingSet.BASE, emptyList())) }
     val hasLayers = remember(ws) {
@@ -1499,6 +1502,10 @@ fun PadScreen(
                         },
                         onSettings = { menu = EditMenu.CONTEXT },
                         onClose = close,
+                        sets = ws.sets,
+                        editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
+                        onEditSet = { mapSet = it },
+                        onSetsChange = { sets, removed -> editWorkspace { it.withSets(sets, removed) } },
                     )
                 } else {
                     TouchpadSettingsScreen(
@@ -1539,6 +1546,10 @@ fun PadScreen(
                             selected = null
                             menu = EditMenu.NONE
                         },
+                        sets = ws.sets,
+                        editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
+                        onEditSet = { mapSet = it },
+                        onSetsChange = { sets, removed -> editWorkspace { it.withSets(sets, removed) } },
                     )
                 } else {
                     // A long press: all of the control's settings.

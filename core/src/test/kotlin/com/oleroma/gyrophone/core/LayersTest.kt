@@ -14,6 +14,7 @@ import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.layered
+import com.oleroma.gyrophone.core.model.withSets
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -207,5 +208,21 @@ class LayersTest {
         val p: List<MappingProfile> = MappingProfiles.decode(text)!!
         assertEquals(0, p[0].touch[0].set)
         assertEquals(emptyList<Any>(), p[0].sets)
+    }
+
+    @Test
+    fun setsMadeInTheWorkspaceGoToItsProfile() {
+        val profile = MappingProfile("m", "m", touch = listOf(touch("b", pad(GamepadButton.A))))
+        val before = MappingProfiles.resolve(single(Workspace(id = "w", name = "w", mappingProfileId = "m")), listOf(profile))
+        val added = before.copy(workspaces = before.workspaces.map {
+            it.withSets(listOf(com.oleroma.gyrophone.core.model.MappingSet(1, "Aim")), null)
+                .copy(mappings = it.mappings + touch("b", pad(GamepadButton.B), set = 1))
+        })
+        val p1 = MappingProfiles.absorb(listOf(profile), before, added).single()
+        assertEquals(listOf(com.oleroma.gyrophone.core.model.MappingSet(1, "Aim")), p1.sets)
+        val removed = added.copy(workspaces = added.workspaces.map { it.withSets(emptyList(), 1) })
+        val p2 = MappingProfiles.absorb(listOf(p1), MappingProfiles.resolve(added, listOf(p1)), removed).single()
+        assertEquals(emptyList<Any>(), p2.sets)
+        assertEquals(listOf(touch("b", pad(GamepadButton.A))), p2.touch)
     }
 }
