@@ -305,7 +305,7 @@ sealed interface OutputTarget {
 @Serializable
 data class Mapping(val source: InputSource, val target: OutputTarget, val set: Int = 0)
 
-/** A named mapping set of a [MappingProfile] (set 0, Base, needs none). */
+/** A named mapping set of a [Workspace] (set 0, Base, needs none). */
 @Serializable
 data class MappingSet(val id: Int, val name: String = "") {
     val label: String get() = name.ifBlank { "Layer $id" }

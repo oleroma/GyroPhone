@@ -88,7 +88,7 @@ fun BindingList(
 ) {
     // (input, target being replaced or null to add)
     var picking by remember { mutableStateOf<Pair<BindableInput, OutputTarget?>?>(null) }
-    // Layer actions pick from the workspace profile's sets (new sets are made in the profile editor).
+    // Layer actions pick from the workspace's sets (new sets are made in the mapping editors).
     val active by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
 
@@ -227,7 +227,7 @@ fun TargetPickerDialog(
     current: List<OutputTarget> = emptyList(),
     swipe: Boolean = false,
     extra: List<OutputTarget> = emptyList(),
-    /** The profile's mapping sets: offers the "Layers" group (null = not offered). */
+    /** The workspace's mapping sets: offers the "Layers" group (null = not offered). */
     sets: List<MappingSet>? = null,
     /** Adds a set to the profile and gives it ("+ New layer" in the layer dialog). */
     onAddSet: (() -> MappingSet)? = null,
@@ -336,7 +336,7 @@ fun TargetPickerDialog(
 }
 
 /**
- * Sets up a picked [OutputTarget.Layer]: which action, which set (Base, the profile's [sets], or a
+ * Sets up a picked [OutputTarget.Layer]: which action, which set (Base, the workspace's [sets], or a
  * new one through [onAddSet]) and what held buttons do. [onOk] gets the target.
  */
 @Composable

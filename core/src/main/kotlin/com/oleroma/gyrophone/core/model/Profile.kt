@@ -446,7 +446,7 @@ data class TouchpadSettings(
     val gestures4: FingerGestures = FingerGestures.WINDOWS_4,
     /**
      * The touchpad's taps and gestures come from the workspace's touchpad mappings
-     * ([InputSource.Surface], put in by [MappingProfiles.resolve]). Off (a workspace not
+     * ([InputSource.Surface], put in by [WorkspaceMappings.resolve]). Off (a workspace not
      * resolved): from [tapToClick], [tapDrag], [twoFingerScroll], [horizontalScroll], [pinchZoom]
      * and [gestures], which are otherwise only read for a mapping profile saved before touchpad
      * mappings ([Bindings.defaultTouchpadMappings]).

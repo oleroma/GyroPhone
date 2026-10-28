@@ -13,6 +13,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.WindowInsets
@@ -40,6 +41,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
@@ -82,14 +84,17 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.model.Bindings
+import com.oleroma.gyrophone.core.model.ButtonLibrary
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.LibraryButton
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.WorkspaceMappings
 import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.Placement
@@ -256,6 +261,9 @@ fun PadScreen(
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
+    val library by runtime.buttonLibrary.collectAsStateWithLifecycle()
+    /** A library button being removed (asks first). */
+    var removingLib by remember { mutableStateOf<LibraryButton?>(null) }
     val isFullscreen by rememberUpdatedState(fullscreen)
     val setFullscreen by rememberUpdatedState(onFullscreen)
 
@@ -1529,7 +1537,7 @@ fun PadScreen(
                                 FilledTonalButton(contentPadding = compact, onClick = addButton@{
                                     val d = draft ?: return@addButton
                                     val wk = d.workspace(editIndex)
-                                    val id = freshId(wk, "btn", takenIds(d, runtime))
+                                    val id = freshId(wk, "btn", takenIds(d))
                                     val c = newControl(wk, id, TouchKind.BUTTON, NEW_BUTTON_SIZE, portrait)
                                     editWorkspace {
                                         it.copy(
@@ -1541,13 +1549,13 @@ fun PadScreen(
                                             )
                                         )
                                     }
+                                    // Only added (and selected): Map opens its mappings.
                                     selected = id
-                                    menu = EditMenu.MAPPING
                                 }) { Text("+ Button") }
                                 FilledTonalButton(contentPadding = compact, onClick = addStick@{
                                     val d = draft ?: return@addStick
                                     val wk = d.workspace(editIndex)
-                                    val id = freshId(wk, "stick", takenIds(d, runtime))
+                                    val id = freshId(wk, "stick", takenIds(d))
                                     val c = newControl(wk, id, TouchKind.STICK, NEW_STICK_SIZE, portrait)
                                     editWorkspace {
                                         it.copy(
@@ -1560,7 +1568,6 @@ fun PadScreen(
                                         )
                                     }
                                     selected = id
-                                    menu = EditMenu.MAPPING
                                 }) { Text("+ Stick") }
                                 if (snap) {
                                     FilledTonalButton(
@@ -1577,6 +1584,48 @@ fun PadScreen(
                                     style = MaterialTheme.typography.labelLarge,
                                     modifier = Modifier.padding(end = 4.dp),
                                 )
+                            }
+                        }
+                        // The button library: tap one to add it here, long-press to remove it from the library.
+                        if (library.isNotEmpty()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "Library",
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    modifier = Modifier.padding(start = 12.dp, end = 8.dp),
+                                )
+                                Row(
+                                    Modifier.horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    for (b in library) {
+                                        Text(
+                                            ButtonLibrary.name(b),
+                                            color = Color.White,
+                                            style = MaterialTheme.typography.labelLarge,
+                                            maxLines = 1,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(50))
+                                                .border(1.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(50))
+                                                .pointerInput(b.id, w, h) {
+                                                    detectTapGestures(
+                                                        onTap = addLib@{
+                                                            val d = draft ?: return@addLib
+                                                            val wk = d.workspace(editIndex)
+                                                            val prefix = if (b.control.kind == TouchKind.STICK) "stick" else "btn"
+                                                            val id = freshId(wk, prefix, takenIds(d))
+                                                            editWorkspace { ButtonLibrary.addTo(it, b, id) { c -> place(c, 0.5f, 0.5f, false) } }
+                                                            selected = id
+                                                        },
+                                                        onLongPress = { removingLib = b },
+                                                    )
+                                                }
+                                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -1705,7 +1754,7 @@ fun PadScreen(
                         onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
                         onEditMappings = { menu = EditMenu.MAPPING },
                         onDuplicate = {
-                            val (nw, id) = duplicate(ws, sel, takenIds(draft ?: profile, runtime))
+                            val (nw, id) = duplicate(ws, sel, takenIds(draft ?: profile))
                             val copy = nw.touchControls.first { it.id == id }
                             editWorkspace {
                                 nw.copy(touchControls = nw.touchControls.map {
@@ -1729,6 +1778,20 @@ fun PadScreen(
                     )
                 }
             }
+        }
+        removingLib?.let { b ->
+            AlertDialog(
+                onDismissRequest = { removingLib = null },
+                title = { Text("Remove \"${ButtonLibrary.name(b)}\" from the library?") },
+                text = { Text("Buttons already added from it stay where they are.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        removingLib = null
+                        runtime.removeFromLibrary(b.id)
+                    }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+                },
+                dismissButton = { TextButton(onClick = { removingLib = null }) { Text("Cancel") } },
+            )
         }
         // Touches and trails: over everything, never taking a touch.
         if (showTouchVisuals) TouchOverlay(trails, visuals, Modifier.fillMaxSize())
@@ -1757,11 +1820,10 @@ private fun shapeOf(c: TouchControl): Shape =
     if (c.shape == TouchShape.SQUARE) RoundedCornerShape(percent = 12) else CircleShape
 
 /**
- * Ids a new control must not take: any control's in [set] or any mapping profile's, so it never
- * picks up the mappings of a button in another workspace or of a deleted one.
+ * Ids a new control must not take: any control's or touch mapping's in [set], so it never picks
+ * up the mappings of a deleted button.
  */
-private fun takenIds(set: Profile, runtime: GamepadRuntime): Set<String> =
-    MappingProfiles.takenTouchIds(set, runtime.mappingProfiles.value)
+private fun takenIds(set: Profile): Set<String> = WorkspaceMappings.takenTouchIds(set)
 
 /** Id not used by any control of the workspace, by its leftover mappings, nor in [taken]. */
 private fun freshId(workspace: Workspace, prefix: String, taken: Set<String>): String {
@@ -1807,21 +1869,7 @@ private fun newControl(
 /** Copies a control and its mappings next to the original; returns the workspace and the new id. */
 private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>): Pair<Workspace, String> {
     val id = freshId(workspace, if (c.kind == TouchKind.STICK) "stick" else "btn", taken)
-    val copies = workspace.mappings.mapNotNull { m ->
-        when (val s = m.source) {
-            is InputSource.Touch -> if (s.id == c.id) m.copy(source = InputSource.Touch(id)) else null
-            is InputSource.TouchStick -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
-            is InputSource.TouchStickDiagonal -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
-            is InputSource.TouchSwipe -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
-            is InputSource.TouchRelease -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
-            is InputSource.TouchDoubleTap -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
-            is InputSource.TouchTap -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
-            is InputSource.TouchLongPress -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
-            is InputSource.TouchArea -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
-            is InputSource.Surface -> if (s.id == c.id) m.copy(source = s.copy(id = id)) else null
-            else -> null
-        }
-    }
+    val copies = WorkspaceMappings.rekeyAll(workspace.mappings, c.id, id)
 
     // Offset towards the centre in both orientations, so the copy never hides under the original
     // and stays on screen in the layout not being edited (the edited one is clamped by place()).

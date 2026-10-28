@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -29,7 +30,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,8 +42,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
+import com.oleroma.gyrophone.core.model.ButtonLibrary
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.InputSource
@@ -50,8 +56,8 @@ import com.oleroma.gyrophone.core.model.SurfaceSettings
 import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
-import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.TouchLayer
+import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.ownSurface
 import com.oleroma.gyrophone.core.model.placeSize
@@ -82,6 +88,10 @@ internal fun ControlSettingsScreen(
     onDelete: () -> Unit,
     onClose: () -> Unit,
 ) {
+    var confirmDelete by remember { mutableStateOf(false) }
+    val library by runtime.buttonLibrary.collectAsStateWithLifecycle()
+    // Saved to the library during this visit: the button says so instead of saving it twice.
+    var savedTo by remember(control.id) { mutableStateOf<String?>(null) }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.fillMaxSize()) {
@@ -104,7 +114,15 @@ internal fun ControlSettingsScreen(
                         )
                     }
                     TextButton(onClick = onDuplicate) { Text("Duplicate") }
-                    TextButton(onClick = onDelete) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                    if (control.kind != TouchKind.FULLSCREEN) {
+                        val saved = savedTo != null && library.any { it.id == savedTo }
+                        TextButton(enabled = !saved, onClick = {
+                            val b = ButtonLibrary.save(workspace, control, library.map { it.id })
+                            runtime.addToLibrary(b)
+                            savedTo = b.id
+                        }) { Text(if (saved) "In library" else "Save to library") }
+                    }
+                    TextButton(onClick = { confirmDelete = true }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
                     OutlinedButton(onClick = onEditMappings) { Text("Mappings") }
                     TextButton(onClick = onClose) { Text("Done") }
                 }
@@ -179,6 +197,20 @@ internal fun ControlSettingsScreen(
                 }
             }
         }
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete \"${control.label.ifBlank { control.id }}\"?") },
+            text = { Text("The ${if (control.kind == TouchKind.STICK) "stick" else "button"} and its mappings are removed from this layout.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    onDelete()
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
     }
 }
 

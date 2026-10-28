@@ -13,8 +13,8 @@ data class Workspace(
     val name: String,
     val touchControls: List<TouchControl> = emptyList(),
     /**
-     * Mappings of the touch controls ([InputSource.Touch] / [InputSource.TouchStick] sources). Only
-     * in a resolved set ([MappingProfiles.resolve]); stored sets keep them in the mapping profile.
+     * Mappings of the touch controls ([InputSource.Touch] / [InputSource.TouchStick] sources) and,
+     * once [TouchpadSettings.mapped], of the touchpad ([InputSource.isTouchpad]).
      */
     val mappings: List<Mapping> = emptyList(),
     val touchpad: TouchpadSettings = TouchpadSettings(),
@@ -36,9 +36,12 @@ data class Workspace(
     val stickyModifiers: Boolean = false,
     /** Physical game pads that act in this workspace; a connected pad not listed does nothing here. */
     val pads: List<AttachedPad> = emptyList(),
-    /** The [MappingProfile] this workspace uses; null = the first one (sets saved before them). */
+    /**
+     * The [MappingProfile] a set saved before workspaces owned their mappings used; only read when
+     * moving its mappings in ([WorkspaceMappings.fromProfiles]), null since.
+     */
     val mappingProfileId: String? = null,
-    /** Physical keyboard mappings; like [mappings], only in a resolved set. */
+    /** Physical keyboard mappings. */
     val keyboard: List<Mapping> = emptyList(),
     /** How haptic targets without a feel of their own feel ([OutputTarget.Haptic]). */
     val haptics: HapticFeel = HapticFeel(),
@@ -48,8 +51,13 @@ data class Workspace(
     val longPressMs: Int = DEFAULT_LONG_PRESS_MS,
     /** Touch buttons: the longest gap between the taps of a double tap, in ms ([TouchControl.doubleTapMs]). */
     val doubleTapMs: Int = DEFAULT_DOUBLE_TAP_MS,
-    /** The mapping profile's named sets ([MappingProfile.sets]); like [mappings], only in a resolved set. */
+    /** The named mapping sets above Base ([Mapping.set], [OutputTarget.Layer]), by id. */
     val sets: List<MappingSet> = emptyList(),
+    /**
+     * Controller mappings ([InputSource.Key] / [InputSource.Axis] sources): what every attached pad
+     * without [AttachedPad.own] mappings acts with ([WorkspaceMappings]).
+     */
+    val controller: List<Mapping> = emptyList(),
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =
@@ -79,8 +87,8 @@ data class AttachedPad(
     /** Face-button convention the mapping started from; see [KnownLayouts.familyMappings]. */
     val family: FaceLayout = FaceLayout.XBOX,
     /**
-     * Android key / axis sources ([InputSource.Key], [InputSource.Axis]) to PC outputs: the
-     * workspace's mapping profile's controller set in a resolved set, empty when stored.
+     * Android key / axis sources ([InputSource.Key], [InputSource.Axis]) to PC outputs: its
+     * [own] or the workspace's [Workspace.controller] set in a resolved set, empty when stored.
      */
     val mappings: List<Mapping> = emptyList(),
     /**
@@ -89,8 +97,8 @@ data class AttachedPad(
      */
     val presetId: String? = null,
     /**
-     * This pad's own mappings, used instead of the mapping profile's controller set; null = the
-     * profile's. Only pads that mapped differently from the first pad of their workspace before
+     * This pad's own mappings, used instead of the workspace's controller set; null = the
+     * workspace's. Only pads that mapped differently from the first pad of their workspace before
      * mapping profiles have them, so nothing changed for them on update.
      */
     val own: List<Mapping>? = null,

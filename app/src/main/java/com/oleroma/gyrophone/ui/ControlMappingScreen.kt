@@ -309,7 +309,7 @@ internal fun ControlMappingScreen(
     onMappingsChange: (List<Mapping>) -> Unit,
     onSettings: () -> Unit,
     onClose: () -> Unit,
-    /** The profile's mapping sets, shown in the top bar. */
+    /** The workspace's mapping sets, shown in the top bar. */
     sets: List<MappingSet> = emptyList(),
     /** The set being edited (0 = Base): new mappings go into it, other sets' show greyed. */
     editSet: Int = MappingSet.BASE,

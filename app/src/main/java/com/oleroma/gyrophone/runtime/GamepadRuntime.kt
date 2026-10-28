@@ -15,6 +15,8 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownController
 import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.MappingProfiles
+import com.oleroma.gyrophone.core.model.LibraryButton
+import com.oleroma.gyrophone.core.model.WorkspaceMappings
 import com.oleroma.gyrophone.core.model.PadDevice
 import com.oleroma.gyrophone.core.model.PadPreset
 import com.oleroma.gyrophone.core.model.PadPresets
@@ -77,21 +79,24 @@ class GamepadRuntime(context: Context) {
     /** The user's own pad presets (the builtins come from [PadPresets.builtins]). */
     val padPresets: StateFlow<List<PadPreset>> = _padPresets
 
-    private val _mappingProfiles = MutableStateFlow<List<MappingProfile>>(emptyList())
-
-    /** Every mapping profile (touch, keyboard and controller mappings); never empty. */
-    val mappingProfiles: StateFlow<List<MappingProfile>> = _mappingProfiles
+    /** The mapping profiles of a set saved before workspaces owned their mappings; only read by [loadOwnMappings]. */
+    private var legacyProfiles: List<MappingProfile> = emptyList()
 
     /**
-     * All workspaces live in one profile ([WorkspaceSet]), stored without mappings: each workspace
-     * names its [MappingProfile]. See [loadWorkspaceSet] and [loadMappings].
+     * All workspaces live in one profile ([WorkspaceSet]), each with its own mappings, stored as
+     * [WorkspaceMappings.store] keeps them. See [loadWorkspaceSet] and [loadOwnMappings].
      */
-    private var stored: Profile = upgradeButtons(loadMappings(loadWorkspaceSet()))
+    private var stored: Profile = loadOwnMappings(loadWorkspaceSet())
 
-    private val _activeProfile = MutableStateFlow(MappingProfiles.resolve(stored, _mappingProfiles.value))
+    private val _activeProfile = MutableStateFlow(WorkspaceMappings.resolve(stored))
 
-    /** The workspace set with each workspace's mapping profile filled in ([MappingProfiles.resolve]). */
+    /** The workspace set as the engine and editors see it ([WorkspaceMappings.resolve]). */
     val activeProfile: StateFlow<Profile> = _activeProfile
+
+    private val _buttonLibrary = MutableStateFlow(store.buttonLibrary())
+
+    /** Buttons saved to reuse in any workspace, with their look and mappings. */
+    val buttonLibrary: StateFlow<List<LibraryButton>> = _buttonLibrary
 
     private val _workspaceIndex = MutableStateFlow(rememberedWorkspace(_activeProfile.value))
 
@@ -444,75 +449,38 @@ class GamepadRuntime(context: Context) {
         store.workspaceIndex(profile.id).coerceIn(0, profile.workspaces.lastIndex)
 
     /**
-     * Applies [change] to the active (resolved) workspace set and saves it: layout, device and
-     * settings edits go to the set, mapping edits to each workspace's mapping profile
-     * ([MappingProfiles.adopt], [MappingProfiles.absorb]). The current workspace stays active (clamped if the edit removed
-     * it). Returns the new resolved set.
+     * Applies [change] to the active (resolved) workspace set and saves it in the background, each
+     * workspace with its own mappings ([WorkspaceMappings.settle]: a pad's mapping edit becomes its
+     * workspace's controller set; a new blank workspace starts with the current one's keyboard,
+     * controller and touchpad mappings). The current workspace stays active (clamped if the edit
+     * removed it). Returns the new resolved set.
      */
     fun editActiveProfile(change: (Profile) -> Profile): Profile {
         val before = _activeProfile.value
         val changed = change(before)
         if (changed == before) return before
-        // An added workspace gets a profile of its own mappings, or the current workspace's.
-        val fallback = before.workspace(_workspaceIndex.value).mappingProfileId
-        val (after, withNew) = MappingProfiles.adopt(_mappingProfiles.value, changed, fallback)
-        commit(MappingProfiles.strip(after), MappingProfiles.absorb(withNew, before, after))
-        return _activeProfile.value
-    }
-
-    /**
-     * Saves [set] (without mappings; in the background, like every save of the set after start)
-     * and [profiles], and makes the resolved set active.
-     */
-    private fun commit(set: Profile, profiles: List<MappingProfile>) {
-        if (profiles != _mappingProfiles.value) {
-            _mappingProfiles.value = profiles
-            store.saveMappingProfiles(profiles)
-        }
+        val current = before.workspaces.getOrNull(_workspaceIndex.value)
+        val set = WorkspaceMappings.store(WorkspaceMappings.settle(before, changed, current))
         if (set != stored) {
             stored = set
             store.saveLater(set)
             store.setWorkspaceIndex(set.id, _workspaceIndex.value.coerceIn(0, set.workspaces.lastIndex))
         }
-        activate(MappingProfiles.resolve(stored, _mappingProfiles.value))
+        activate(WorkspaceMappings.resolve(stored))
+        return _activeProfile.value
     }
 
-    /** Replaces the mapping profile with [profile]'s id (name and mappings); every workspace using it follows. */
-    fun updateMappingProfile(profile: MappingProfile) {
-        if (_mappingProfiles.value.none { it.id == profile.id }) return
-        commit(stored, _mappingProfiles.value.map { if (it.id == profile.id) profile else it })
+    /** Adds [button] to the button library. */
+    fun addToLibrary(button: LibraryButton) {
+        _buttonLibrary.value = _buttonLibrary.value + button
+        store.saveButtonLibrary(_buttonLibrary.value)
     }
 
-    /**
-     * Adds a mapping profile named [name] with [from]'s mappings (none: the builtin touch mappings
-     * and the standard controller set) and makes workspace [wsIndex] use it. Returns it.
-     */
-    fun newMappingProfile(name: String, from: MappingProfile?, wsIndex: Int = workspaceIndex.value): MappingProfile {
-        val id = MappingProfiles.newId(_mappingProfiles.value.map { it.id })
-        val trimmed = name.trim().ifBlank { "Profile" }
-        val created = from?.copy(id = id, name = trimmed) ?: MappingProfiles.fresh(id, trimmed, stored)
-        commit(useMapping(stored, wsIndex, id), _mappingProfiles.value + created)
-        return created
+    /** Removes library button [id] (buttons already added from it stay). */
+    fun removeFromLibrary(id: String) {
+        _buttonLibrary.value = _buttonLibrary.value.filterNot { it.id == id }
+        store.saveButtonLibrary(_buttonLibrary.value)
     }
-
-    /** Makes workspace [wsIndex] use mapping profile [id]. */
-    fun selectMappingProfile(id: String, wsIndex: Int = workspaceIndex.value) {
-        if (_mappingProfiles.value.none { it.id == id }) return
-        commit(useMapping(stored, wsIndex, id), _mappingProfiles.value)
-    }
-
-    /** Deletes mapping profile [id] unless it is the last; workspaces that used it switch to the first left. */
-    fun deleteMappingProfile(id: String) {
-        val left = _mappingProfiles.value.filterNot { it.id == id }
-        if (left.isEmpty() || left.size == _mappingProfiles.value.size) return
-        val set = stored.copy(workspaces = stored.workspaces.map { w ->
-            if (w.mappingProfileId == id || w.mappingProfileId == null) w.copy(mappingProfileId = left.first().id) else w
-        })
-        commit(set, left)
-    }
-
-    private fun useMapping(set: Profile, wsIndex: Int, id: String): Profile =
-        set.updateWorkspace(wsIndex) { it.copy(mappingProfileId = id) }
 
     /** Saves [mappings] as a new user pad preset named [name], attached to [device]; returns it. */
     fun savePadPreset(name: String, mappings: List<Mapping>, device: PadDevice? = null): PadPreset {
@@ -566,17 +534,34 @@ class GamepadRuntime(context: Context) {
     }
 
     /**
+     * The stored set, each workspace with its own mappings. On the first start after workspaces
+     * got them, each one gets a copy of the mapping profile it used ([WorkspaceMappings.fromProfiles];
+     * the profile file is left on disk untouched and a copy of the set as it was is kept beside
+     * it). An unreadable mapping file is left alone and the set is used as it is, to try again
+     * next start.
+     */
+    private fun loadOwnMappings(set: Profile): Profile {
+        if (store.ownMappings) return upgradeButtons(set)
+        if (store.hasMappingFile() && store.mappingProfiles() == null) return set
+        val legacy = upgradeLegacyButtons(loadMappings(set))
+        store.backup(legacy, OWN_BACKUP_TAG)
+        val own = WorkspaceMappings.store(WorkspaceMappings.fromProfiles(legacy, legacyProfiles))
+        store.save(own)
+        store.ownMappings = true
+        return own
+    }
+
+    /**
      * The mapping profiles, or on the first start after they were added, profiles made from the
-     * mappings [set] still holds ([MappingProfiles.migrate]); the set is then saved without them
-     * (a copy as it was is kept beside it). Returns the stored set. An unreadable mapping file is
-     * left alone and the set is used as it is, with its own mappings.
+     * mappings [set] still holds ([MappingProfiles.migrate]). Returns the set as it was stored with
+     * them; [loadOwnMappings] then moves them into the workspaces.
      */
     private fun loadMappings(set: Profile): Profile {
         store.mappingProfiles()?.takeIf { it.isNotEmpty() }?.let {
             val before = if (store.mappingMigration < MAPPING_MIGRATION) store.readBackup(set.id, BACKUP_TAG) else null
             if (before == null) {
                 store.mappingMigration = MAPPING_MIGRATION
-                _mappingProfiles.value = it
+                legacyProfiles = it
                 return set
             }
             // The first move (build 0.1.61) lost keyboard and extra-pad mappings: redo it once from
@@ -584,36 +569,28 @@ class GamepadRuntime(context: Context) {
             store.backupMappings("v1")
             return migrateMappings(before)
         }
-        if (store.hasMappingFile()) {
-            _mappingProfiles.value = listOf(MappingProfile("map1", MappingProfiles.DEFAULT_NAME))
-            return set
-        }
         store.backup(set, BACKUP_TAG)
         return migrateMappings(set)
     }
 
-    /**
-     * Turns the old touch button switches into tap and long press mappings ([ButtonActivators]),
-     * saving both files when anything changed. Skipped while the mapping file is unreadable, so
-     * the switches are kept for a build that can read it.
-     */
+    /** Turns the old touch button switches into tap and long press mappings ([ButtonActivators]), in profile form. */
+    private fun upgradeLegacyButtons(set: Profile): Profile {
+        val (upgraded, profiles) = ButtonActivators.upgrade(set, legacyProfiles)
+        legacyProfiles = profiles
+        return upgraded
+    }
+
+    /** Turns any old touch button switches into tap and long press mappings ([ButtonActivators]), saving the set if anything changed. */
     private fun upgradeButtons(set: Profile): Profile {
-        if (store.hasMappingFile() && store.mappingProfiles() == null) return set
-        val (upgraded, profiles) = ButtonActivators.upgrade(set, _mappingProfiles.value)
+        val (upgraded, _) = ButtonActivators.upgrade(set, emptyList())
         if (upgraded === set) return set
-        if (profiles !== _mappingProfiles.value) {
-            _mappingProfiles.value = profiles
-            store.saveMappingProfiles(profiles)
-        }
         store.save(upgraded)
         return upgraded
     }
 
     private fun migrateMappings(set: Profile): Profile {
         val m = MappingProfiles.migrate(set)
-        _mappingProfiles.value = m.profiles
-        store.saveMappingProfiles(m.profiles)
-        store.save(m.set)
+        legacyProfiles = m.profiles
         store.mappingMigration = MAPPING_MIGRATION
         return m.set
     }
@@ -746,6 +723,7 @@ class GamepadRuntime(context: Context) {
         /** Version of [MappingProfiles.migrate]'s rules; a phone that ran an older one redoes it from [BACKUP_TAG]. */
         private const val MAPPING_MIGRATION = 2
         private const val BACKUP_TAG = "pre-mappings"
+        private const val OWN_BACKUP_TAG = "pre-own-mappings"
         private const val PAUSED = "Paused while the pad is not open"
         private const val GYRO_OFF = "Off in this workspace"
         private const val UNAVAILABLE = "Unavailable"
