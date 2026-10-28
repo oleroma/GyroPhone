@@ -314,16 +314,31 @@ internal static class Aoa
 }
 
 /// <summary>A USB device node (a device, or one interface of a composite device).</summary>
-internal sealed record UsbNode(uint DevInst, string InstanceId, string HardwareId, string[] CompatibleIds, string[] InterfaceGuids)
+internal sealed record UsbNode(uint DevInst, string InstanceId, string[] HardwareIds, string[] CompatibleIds, string[] InterfaceGuids)
 {
-    // Instance ids of USB nodes: USB\VID_xxxx&PID_xxxx\<serial> for a device, USB\VID_xxxx&PID_xxxx&MI_xx\... for
-    // one interface of a composite device. (Hardware ids vary: an adb interface may be ...&REV_0612&ADB.)
-    private static readonly Regex Ids = new(@"^USB\\VID_([0-9A-F]{4})&PID_([0-9A-F]{4})(?:&MI_([0-9A-F]{2}))?\\", RegexOptions.IgnoreCase);
+    // VID and PID come from the instance id (USB\VID_xxxx&PID_xxxx...). The interface number does not
+    // always: a vendor's composite driver (e.g. Samsung's) names interfaces ...&ADB or ...&MS_COMP_MTP,
+    // so it is read from any id that has &MI_xx.
+    private static readonly Regex VidPid = new(@"^USB\\VID_([0-9A-F]{4})&PID_([0-9A-F]{4})", RegexOptions.IgnoreCase);
+    private static readonly Regex Mi = new(@"&MI_([0-9A-F]{2})", RegexOptions.IgnoreCase);
 
-    private Match Parsed => Ids.Match(InstanceId);
+    private Match Parsed => VidPid.Match(InstanceId);
+
+    public string HardwareId => HardwareIds[0];
 
     /// <summary>The interface number of a composite device's function (MI_xx), or null for a whole device.</summary>
-    public int? Interface => Parsed is { Success: true } m && m.Groups[3].Success ? Convert.ToInt32(m.Groups[3].Value, 16) : null;
+    public int? Interface
+    {
+        get
+        {
+            foreach (var id in HardwareIds.Prepend(InstanceId))
+            {
+                var m = Mi.Match(id);
+                if (m.Success) return Convert.ToInt32(m.Groups[1].Value, 16);
+            }
+            return null;
+        }
+    }
 
     public string Name => HardwareId.StartsWith(@"USB\", StringComparison.OrdinalIgnoreCase) ? HardwareId[4..] : HardwareId;
 
@@ -372,7 +387,7 @@ internal static unsafe class UsbDevices
             {
                 var hw = MultiSz(set, ref d, SpdrpHardwareId);
                 if (hw.Length == 0) continue;
-                list.Add(new UsbNode(d.DevInst, InstanceId(set, ref d), hw[0], MultiSz(set, ref d, SpdrpCompatibleIds), InterfaceGuids(set, ref d)));
+                list.Add(new UsbNode(d.DevInst, InstanceId(set, ref d), hw, MultiSz(set, ref d, SpdrpCompatibleIds), InterfaceGuids(set, ref d)));
             }
         }
         finally
