@@ -60,6 +60,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.hid.AndroidKeyToHid
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
@@ -329,6 +330,8 @@ internal fun HapticTargetDialog(
         )
     }
     var edge by remember { mutableStateOf((start as? OutputTarget.Haptic)?.edge) }
+    val profile by runtime.activeProfile.collectAsStateWithLifecycle()
+    val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
     fun result(): OutputTarget {
         val f = if (own) feel else null
         return when (start) {
@@ -355,7 +358,7 @@ internal fun HapticTargetDialog(
                     }
                 }
                 if (start is OutputTarget.Haptic && !held) {
-                    val wsEdge = runtime.activeProfile.value.workspace(runtime.workspaceIndex.value).hapticEdge
+                    val wsEdge = profile.workspace(wsIndex).hapticEdge
                     Text("Plays", style = MaterialTheme.typography.labelLarge)
                     HapticEdgeChips(edge, onSelect = { edge = it }, workspaceEdge = wsEdge)
                 }
