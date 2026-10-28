@@ -6,6 +6,7 @@ Diagram of the steps in the shared rules at the top of `AGENTS.md`. The rules ar
 graph TD
     A[LLM: pick feature name] --> B[Script: agent-start]
     B -->|failed| ERR[LLM: read log, explain to Olex]
+    B -->|main-red| ASK
     B -->|other-agent| ASK{Olex: wait or continue?}
     ASK -->|Wait| WAIT[Wait until it finishes]
     WAIT --> B
@@ -38,13 +39,14 @@ graph TD
     INST -->|Installed| OK
     UP --> OK
     OK{Olex: feature works?} -->|Not yet| EDIT
-    OK -->|Yes| M[Script: agent-merge]
+    OK -->|Yes| M[Script: agent-merge: merge main in, full checks on the branch in CI]
     M -->|done| DONE[Merged into main, branch kept]
     M -->|conflicts| FIX[LLM: resolve conflicts]
     FIX --> M
     M -->|needs-testing| RC
+    M -->|checks-failed| EDIT
     M -->|stuck| STUCK[LLM: show files, ask Olex]
     M -->|failed| ERR
     DONE --> FULL[fallback.yml on main: full-check hook, no build]
-    FULL -->|Fails| REP[LLM: report to Olex]
+    FULL -->|Fails| REP[Next agent-start: main-red, report to Olex]
 ```

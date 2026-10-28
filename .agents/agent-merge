@@ -15,13 +15,17 @@ merge_into_main() {
   if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$BRANCH")" ]; then
     git push origin "$BRANCH"
   fi
+  # The full checks main runs after a merge, run on the branch first so main stays green.
+  run_fallback check || finish checks-failed "The full checks failed on $BRANCH: $RUN_URL" \
+    "Fix it on the branch with agent-commit, then build again (step 3)."
   local n
   n="$(pr_number "$BRANCH")"
   [ -n "$n" ] || die "No open PR from $BRANCH into main."
   pr_ready "$n"
   gh api -X PUT "repos/$SLUG/pulls/$n/merge" -f merge_method=merge >/dev/null
   rm -f "$attempts_file" "$files_file"
-  finish done "Merged $BRANCH into main: https://github.com/$SLUG/pull/$n" "The feature branch is kept."
+  finish done "Merged $BRANCH into main: https://github.com/$SLUG/pull/$n" "The feature branch is kept." \
+    "Checks passed on the branch: $RUN_URL"
 }
 
 git fetch origin
