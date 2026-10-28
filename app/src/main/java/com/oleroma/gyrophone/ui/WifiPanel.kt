@@ -175,9 +175,18 @@ fun WifiPanel(runtime: GamepadRuntime, stats: LinkStats, modifier: Modifier = Mo
             )
         }
         Text(
-            "Low-latency Wi-Fi: " + (if (stats.lowLatencyLock == true) "on" else "off") + " (keep GyroPhone on screen)",
+            if (stats.usb) "Over USB tethering (Wi-Fi takes over when the cable comes out)"
+            else "Low-latency Wi-Fi: " + (if (stats.lowLatencyLock == true) "on" else "off") + " (keep GyroPhone on screen)",
             style = MaterialTheme.typography.bodySmall,
         )
+        if (!stats.usb) {
+            Text(
+                "Faster by cable: plug the phone into the PC and turn on USB tethering. Developer options → " +
+                    "Default USB configuration → USB tethering turns it on by itself each time.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 
     pairing?.let { view ->
@@ -203,7 +212,7 @@ private fun statusLine(state: LinkState): String = when (state) {
 }
 
 private fun warnings(stats: LinkStats): List<String> = listOfNotNull(
-    if (stats.band == 2) "2.4 GHz Wi-Fi adds lag: use the router's 5 GHz network if it has one" else null,
+    if (stats.band == 2 && !stats.usb) "2.4 GHz Wi-Fi adds lag: use the router's 5 GHz network if it has one" else null,
     if ((stats.lossPercent ?: 0f) > 2f) "Loss above 2 %: move closer to the router or pick a lower rate" else null,
     if (stats.vigemOk == false) {
         "The PC has no gamepad driver (ViGEmBus): pad input is dropped, keyboard and mouse still work"

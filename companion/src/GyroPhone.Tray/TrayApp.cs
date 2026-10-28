@@ -48,6 +48,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private readonly ToolStripMenuItem _uipiItem;
     private readonly ToolStripMenuItem _networkItem;
     private readonly ToolStripMenuItem _firewallItem;
+    private readonly ToolStripMenuItem _usbFirewallItem;
     private readonly ToolStripMenuItem _installDriverItem, _retryDriverItem;
     private readonly ToolStripMenuItem _restartAdminItem;
     private readonly System.Windows.Forms.Timer _uiTimer;
@@ -58,6 +59,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private StatusForm? _statusForm;
     private int _refreshQueued;
     private bool? _firewallOk;
+    private bool? _usbRuleOk;
     /// <summary>Why key file pairing is off (the host key could not be loaded), or null.</summary>
     private readonly string? _keyError;
     private bool _firewallHintShown, _uipiHintShown, _publicHintShown;
@@ -127,6 +129,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _uipiItem = new ToolStripMenuItem("The game runs as administrator: restart as administrator", null, (_, _) => RestartAsAdmin());
         _networkItem = new ToolStripMenuItem("This network is Public: make it Private…", null, (_, _) => Open(NetworkCategory.SettingsUri));
         _firewallItem = new ToolStripMenuItem("Allow through firewall…", null, (_, _) => AllowThroughFirewall());
+        _usbFirewallItem = new ToolStripMenuItem("Allow the phone over a USB cable…", null, (_, _) => AllowUsb());
         _installDriverItem = new ToolStripMenuItem("Install gamepad driver (ViGEmBus)…", null, (_, _) => Open(ViGEmPadSink.DriverDownloadUrl));
         _retryDriverItem = new ToolStripMenuItem("Retry driver", null, (_, _) => RetryDriver());
         _restartAdminItem = new ToolStripMenuItem("Restart as administrator", null, (_, _) => RestartAsAdmin());
@@ -151,6 +154,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _uipiItem,
             _networkItem,
             _firewallItem,
+            _usbFirewallItem,
             _installDriverItem,
             _retryDriverItem,
             _restartAdminItem,
@@ -284,6 +288,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _uipiItem.Available = s.ElevatedForeground && !ElevationProbe.IsSelfElevated;
         _networkItem.Available = s.NetworkPublic;
         _firewallItem.Available = _firewallOk == false;
+        _usbFirewallItem.Available = _usbRuleOk == false;
         _installDriverItem.Available = !s.DriverOk;
         _retryDriverItem.Available = !s.DriverOk;
         _restartAdminItem.Available = !ElevationProbe.IsSelfElevated;
@@ -381,14 +386,16 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         {
             string band = l.Band == 0 ? "unknown band" : $"{l.Band} GHz";
             string lockState = (l.Flags & LinkInfoFlags.LowLatencyLockHeld) != 0 ? "on" : "off";
-            b.AppendLine($"Phone Wi-Fi:  {band}, {l.FreqMhz} MHz, {l.LinkMbps} Mbps, {l.RssiDbm} dBm");
+            if ((l.Flags & LinkInfoFlags.Usb) != 0) b.AppendLine("Phone link:   USB cable (tethering)");
+            else b.AppendLine($"Phone Wi-Fi:  {band}, {l.FreqMhz} MHz, {l.LinkMbps} Mbps, {l.RssiDbm} dBm");
             b.AppendLine($"Phone sends:  {l.SendRateHz} Hz, RTT min {l.RttMinUs / 1000.0:0.0} ms, low-latency Wi-Fi {lockState}");
         }
         b.AppendLine($"Output:       {OutputName(s.OutputMode)}, pad {(s.PadPlugged ? "plugged" : "not plugged")}");
         b.AppendLine($"Gamepad driver: {(s.DriverOk ? "ViGEmBus ok" : _padError ?? "missing")}");
         b.AppendLine($"Input:        {(s.Paused ? "paused" : "active")}{(s.ElevatedForeground ? ", window in front runs as administrator" : "")}");
         b.AppendLine($"Network:      {(s.NetworkPublic ? "Public (set it to Private)" : "Private or Domain")}, firewall rule "
-            + (_firewallOk switch { true => "present", false => "missing", null => "checking" }));
+            + (_firewallOk switch { true => "present", false => "missing", null => "checking" })
+            + ", USB rule " + (_usbRuleOk switch { true => "present", false => "missing", null => "checking" }));
         b.AppendLine($"Server:       {(_server.State == ServerState.Running ? $"UDP {Wire.Port}" : _server.State.ToString())}, "
             + $"this app {(ElevationProbe.IsSelfElevated ? "elevated" : "not elevated")}");
         b.AppendLine($"Pairing:      {(s.PairingWindowS > 0 ? $"open, {s.PairingWindowS} s left" : "closed")}, {s.PairedPhones.Count} paired phone(s)"
@@ -543,10 +550,26 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private void CheckFirewallAsync() => Task.Run(() =>
     {
         bool ok = FirewallHelper.RuleExists(_exePath);
+        bool usb = FirewallHelper.UsbRuleExists(_exePath);
         Post(() =>
         {
             _firewallOk = ok;
+            _usbRuleOk = usb;
             Refresh();
+        });
+    });
+
+    private void AllowUsb() => Task.Run(() =>
+    {
+        bool added = FirewallHelper.AddUsbRuleElevated(_exePath);
+        bool ok = FirewallHelper.UsbRuleExists(_exePath);
+        _log.Write($"USB firewall rule add {(added ? "ok" : "failed or declined")}, present {ok}");
+        Post(() =>
+        {
+            _usbRuleOk = ok;
+            Refresh();
+            if (!ok)
+                Balloon("USB rule not added", "Windows did not add the rule (the prompt was declined or failed).", ToolTipIcon.Warning);
         });
     });
 

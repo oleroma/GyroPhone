@@ -95,6 +95,66 @@ public static class FirewallHelper
         return p.ExitCode == 0 && output.Contains(exePath, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>The rule that lets the phone in over a USB cable (see <see cref="AddUsbRuleArguments"/>).</summary>
+    public const string UsbRuleName = "GyroPhone Companion (USB)";
+
+    /// <summary>
+    /// The netsh arguments for the USB rule. Windows puts the phone's USB tethering adapter on a Public
+    /// network, which the main rule leaves closed; this one opens the companion's port on Public wired
+    /// adapters only, and only to their own subnet (the phone), never to Wi-Fi.
+    /// </summary>
+    public static string AddUsbRuleArguments(string exePath) =>
+        $"advfirewall firewall add rule name=\"{UsbRuleName}\" dir=in action=allow program=\"{exePath}\" "
+        + $"protocol=UDP localport={Wire.Port} profile=public interfacetype=lan remoteip=localsubnet";
+
+    /// <summary>True when the USB rule exists for this executable (netsh by its name).</summary>
+    public static bool UsbRuleExists(string exePath)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo("netsh", $"advfirewall firewall show rule name=\"{UsbRuleName}\" verbose")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using var p = Process.Start(psi);
+            if (p == null) return false;
+            string output = p.StandardOutput.ReadToEnd();
+            p.StandardError.ReadToEnd();
+            if (!p.WaitForExit(10_000)) return false;
+            return p.ExitCode == 0 && output.Contains(exePath, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Win32Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Adds the USB rule (replacing an old one by that name) through one elevated cmd (UAC prompt).</summary>
+    public static bool AddUsbRuleElevated(string exePath)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo("cmd.exe",
+                $"/c \"netsh advfirewall firewall delete rule name=\"{UsbRuleName}\" & netsh {AddUsbRuleArguments(exePath)}\"")
+            {
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden,
+            };
+            using var p = Process.Start(psi);
+            if (p == null) return false;
+            if (!p.WaitForExit(30_000)) return false;
+            return p.ExitCode == 0;
+        }
+        catch (Win32Exception)
+        {
+            return false; // UAC declined (ERROR_CANCELLED)
+        }
+    }
+
     /// <summary>The netsh arguments that add the rule for this executable.</summary>
     public static string AddRuleArguments(string exePath) =>
         $"advfirewall firewall add rule name=\"{RuleName}\" dir=in action=allow program=\"{exePath}\" "

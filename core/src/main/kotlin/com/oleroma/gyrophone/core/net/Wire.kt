@@ -243,6 +243,9 @@ object StateFlags {
 /** LINK_INFO flags. */
 object LinkInfoFlags {
     const val LOW_LATENCY_LOCK_HELD = 1
+
+    /** The phone sends over USB tethering (the Wi-Fi fields are then not this link's). */
+    const val USB = 2
 }
 
 /** HOST_STATUS flags. */

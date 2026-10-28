@@ -181,6 +181,9 @@ public static class StateFlags
 public static class LinkInfoFlags
 {
     public const byte LowLatencyLockHeld = 1 << 0;
+
+    /// <summary>The phone sends over USB tethering (the Wi-Fi fields are then not this link's).</summary>
+    public const byte Usb = 1 << 1;
 }
 
 /// <summary>HOST_STATUS flags.</summary>

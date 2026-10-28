@@ -184,6 +184,29 @@ class PhoneSessionFlowTest {
         assertTrue(flow().reconnect(0).isEmpty()) // not running: nothing to do
     }
 
+    @Test fun movingToUsbHellosThereWithoutRememberingTheAddress() {
+        val f = flow()
+        val old = goLive(f)
+        val usb = InetSocketAddress("192.168.42.129", Wire.PORT)
+        val out = f.moveTo(usb, 100)
+        val send = sends(out).single()
+        assertEquals(usb, send.addr)
+        assertTrue(out.none { it is PhoneSessionFlow.Out.HostAddress })
+        assertSame(old, f.live)
+        lastNp = hellos(out).single().nP
+        val next = f.deliver(welcome(lastNp!!, 0x0A0B0C0D), 105, from = usb)
+        assertTrue(next.none { it is PhoneSessionFlow.Out.HostAddress })
+        assertEquals(usb, next.filterIsInstance<PhoneSessionFlow.Out.Live>().single().session!!.hostAddr)
+    }
+
+    @Test fun movingBackWithNoAddressDiscoversAtOnce() {
+        val f = flow()
+        goLive(f)
+        val out = f.moveTo(null, 100)
+        assertTrue(hellos(out).isEmpty())
+        assertEquals(bcast.size, discovers(out).size)
+    }
+
     @Test fun hostSilentStartsANewHelloAndStatusRecovers() {
         val f = flow()
         val live = goLive(f)
