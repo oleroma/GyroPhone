@@ -1,10 +1,11 @@
 package com.oleroma.gyrophone.core.model
 
 /**
- * One touch surface setting that a level sets over its parent: a swipe button's own
- * ([SurfaceSettings], null = the workspace touchpad's) or the touchpad's (over the built-in
- * values). [button]: a swipe button can set it ([SurfaceSettings] has it); the others are the
- * touchpad's only. Length zones are no field: they are always the surface's own.
+ * One shared touch surface setting that a level sets over its parent: a swipe button's or the
+ * touchpad's own ([SurfaceSettings], null = the workspace's), or the workspace's and the defaults'
+ * ([WorkspaceDefaults] keys, over the parent's values). [button]: a swipe button has it; the others
+ * are the touchpad's only. Length zones are no field: they are always the surface's own. Each
+ * direction's own settings over these are [DirField]s.
  */
 enum class SurfaceField(val button: Boolean = true) {
     ENABLED(button = false),
@@ -71,7 +72,8 @@ enum class SurfaceField(val button: Boolean = true) {
 
     /** A swipe button's [s] sets this itself. */
     fun isOwn(s: SurfaceSettings): Boolean = when (this) {
-        ENABLED, INERTIA_GLIDE -> false
+        ENABLED -> s.enabled != null
+        INERTIA_GLIDE -> s.inertiaGlideMs != null
         SENSITIVITY -> s.sensitivity != null
         SENSITIVITY_Y -> s.sensitivityY != null
         ACCELERATION -> s.acceleration != null
@@ -97,7 +99,8 @@ enum class SurfaceField(val button: Boolean = true) {
 
     /** [s] setting this itself, to [from]'s value. */
     fun own(s: SurfaceSettings, from: TouchpadSettings): SurfaceSettings = when (this) {
-        ENABLED, INERTIA_GLIDE -> s
+        ENABLED -> s.copy(enabled = from.enabled)
+        INERTIA_GLIDE -> s.copy(inertiaGlideMs = from.inertiaGlideMs)
         SENSITIVITY -> s.copy(sensitivity = from.sensitivity)
         SENSITIVITY_Y -> s.copy(sensitivityY = from.verticalSensitivity)
         ACCELERATION -> s.copy(acceleration = from.acceleration)
@@ -123,7 +126,8 @@ enum class SurfaceField(val button: Boolean = true) {
 
     /** [s] following the parent for this again. */
     fun drop(s: SurfaceSettings): SurfaceSettings = when (this) {
-        ENABLED, INERTIA_GLIDE -> s
+        ENABLED -> s.copy(enabled = null)
+        INERTIA_GLIDE -> s.copy(inertiaGlideMs = null)
         SENSITIVITY -> s.copy(sensitivity = null)
         SENSITIVITY_Y -> s.copy(sensitivityY = null)
         ACCELERATION -> s.copy(acceleration = null)
@@ -148,16 +152,68 @@ enum class SurfaceField(val button: Boolean = true) {
     }
 
     companion object {
-        /** A swipe button's own settings after its settings in effect went from [was] to [now]: the changed ones become its own. */
-        fun edited(own: SurfaceSettings, was: TouchpadSettings, now: TouchpadSettings): SurfaceSettings =
-            entries.filter { it.button && !it.same(was, now) }.fold(own) { s, f -> f.own(s, now) }
+        /**
+         * Surface settings [own] after the settings in effect went from [was] to [now]: the changed
+         * ones, shared and per direction, become its own ([button]: only what a swipe button has).
+         */
+        fun edited(own: SurfaceSettings, was: TouchpadSettings, now: TouchpadSettings, button: Boolean = true): SurfaceSettings {
+            var o = entries.filter { (!button || it.button) && !it.same(was, now) }.fold(own) { s, f -> f.own(s, now) }
+            for (d in Direction.entries) for (f in DirField.entries) {
+                if (!f.same(was.dir(d), now.dir(d))) o = f.own(o, d, now.dir(d))
+            }
+            return o
+        }
 
         /** [s] following the parent for every setting; its length zones stay. */
         fun dropAll(s: SurfaceSettings): SurfaceSettings =
             SurfaceSettings(holdZones = s.holdZones, dirHoldZones = s.dirHoldZones, releaseTapMs = s.releaseTapMs)
 
-        /** [t] with [parent]'s value of every setting; everything else (mappings, zones) stays. */
+        /** [t] with [parent]'s value of every setting, per direction too; everything else (mappings, zones) stays. */
         fun takeAll(t: TouchpadSettings, parent: TouchpadSettings): TouchpadSettings =
-            entries.fold(t) { r, f -> f.take(r, parent) }
+            entries.fold(t) { r, f -> f.take(r, parent) }.copy(dirs = parent.dirs)
     }
+}
+
+/**
+ * One direction's own setting ([DirSettings]) over its surface's shared [shared] one: the pie
+ * width and distance of its Swipe, the pie width, hold distance and latch of its Swipe hold.
+ */
+enum class DirField(val shared: SurfaceField, val hold: Boolean) {
+    SWIPE_PIE(SurfaceField.PIES, false), SWIPE(SurfaceField.SWIPE, false),
+    HOLD_PIE(SurfaceField.PIES, true), HOLD(SurfaceField.HOLD, true), LATCH(SurfaceField.LATCH, true);
+
+    fun get(s: DirSettings): Any? = when (this) {
+        SWIPE_PIE -> s.swipePie
+        SWIPE -> s.swipeDp
+        HOLD_PIE -> s.holdPie
+        HOLD -> s.holdDp
+        LATCH -> s.latch
+    }
+
+    fun same(a: DirSettings, b: DirSettings): Boolean = get(a) == get(b)
+
+    /** [to] with [from]'s value. */
+    fun take(to: DirSettings, from: DirSettings): DirSettings = when (this) {
+        SWIPE_PIE -> to.copy(swipePie = from.swipePie)
+        SWIPE -> to.copy(swipeDp = from.swipeDp)
+        HOLD_PIE -> to.copy(holdPie = from.holdPie)
+        HOLD -> to.copy(holdDp = from.holdDp)
+        LATCH -> to.copy(latch = from.latch)
+    }
+
+    /** A level's own [s] sets this for [d]. */
+    fun isOwn(s: SurfaceSettings, d: Direction): Boolean = get(s.dirs?.getOrNull(d.ordinal) ?: DirSettings.NONE) != null
+
+    /** [s] setting this for [d] to [from]'s value (null: following again). */
+    fun own(s: SurfaceSettings, d: Direction, from: DirSettings): SurfaceSettings {
+        val list = List(4) { s.dirs?.getOrNull(it) ?: DirSettings.NONE }.toMutableList()
+        list[d.ordinal] = take(list[d.ordinal], from)
+        return s.copy(dirs = list.takeUnless { l -> l.all { it.isEmpty } })
+    }
+
+    fun drop(s: SurfaceSettings, d: Direction): SurfaceSettings = own(s, d, DirSettings.NONE)
+
+    /** [t] with [from]'s value of this for [d]. */
+    fun take(t: TouchpadSettings, d: Direction, from: TouchpadSettings): TouchpadSettings =
+        t.withDir(d) { take(it, from.dir(d)) }
 }

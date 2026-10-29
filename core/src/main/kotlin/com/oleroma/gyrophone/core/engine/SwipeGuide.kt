@@ -26,7 +26,10 @@ class SwipeGuide(val settings: TouchpadSettings, private val zones: IntArray, pr
      */
     val onAxis = fromStart && !dragsStart
 
-    private val holdDp = activate(settings.holdDp)
+    private fun holdDp(d: Direction) = activate(settings.holdDpOf(d))
+
+    /** The farthest hold distance: where a dragged start point stops trailing. */
+    private val maxHoldDp = Direction.entries.maxOf { holdDp(it) }
 
     /** The direction a finger [dx], [dy] dp from the start point is in for the line; null = none mapped that way. */
     fun direction(dx: Float, dy: Float): Direction? {
@@ -35,7 +38,9 @@ class SwipeGuide(val settings: TouchpadSettings, private val zones: IntArray, pr
         for (d in Direction.entries) {
             if (zones[d.ordinal] == 0 && swipes and (1 shl d.ordinal) == 0) continue
             val along = along(d, dx, dy)
-            if (along <= bestAlong || (settings.pies != null && !settings.inPie(dx, dy, d))) continue
+            // A direction with a Swipe hold uses its hold pie, one with only a Swipe its swipe pie.
+            val hold = zones[d.ordinal] != 0
+            if (along <= bestAlong || (settings.pies != null && !settings.inPie(dx, dy, d, hold))) continue
             best = d; bestAlong = along
         }
         return best
@@ -56,12 +61,12 @@ class SwipeGuide(val settings: TouchpadSettings, private val zones: IntArray, pr
         val bestAlong = along(d, dx, dy)
         var n = 0
         if (swipes and (1 shl d.ordinal) != 0) {
-            out[n] = activate(s.swipeDp); kinds[n++] = SWIPE
+            out[n] = activate(s.swipeDpOf(d)); kinds[n++] = SWIPE
         }
         val count = zones[d.ordinal]
         if (count == 0) return n
         val cos = if (fromStart) max(bestAlong / len, MIN_COS) else 1f
-        var edge = holdDp
+        var edge = holdDp(d)
         out[n] = edge / cos; kinds[n++] = HOLD
         if (dragsStart || count < 2) return n
         for (i in 0 until count.coerceAtMost(TouchpadSettings.MAX_HOLD_ZONES)) {
@@ -80,13 +85,13 @@ class SwipeGuide(val settings: TouchpadSettings, private val zones: IntArray, pr
         val s = settings
         var ox = fx - start[0]
         var oy = fy - start[1]
-        val most = holdDp + s.releaseDp.coerceIn(0f, TouchpadSettings.MAX_RELEASE_DP)
+        val most = maxHoldDp + s.releaseDp.coerceIn(0f, TouchpadSettings.MAX_RELEASE_DP)
         val dist = sqrt(ox * ox + oy * oy)
         if (dist > most) {
             ox *= most / dist; oy *= most / dist
             start[0] = fx - ox; start[1] = fy - oy
         }
-        val now = Direction.entries.any { along(it, ox, oy) >= holdDp && (s.pies == null || s.inPie(ox, oy, it)) }
+        val now = Direction.entries.any { along(it, ox, oy) >= holdDp(it) && (s.pies == null || s.inPie(ox, oy, it, hold = true)) }
         if (!now && held) {
             start[0] = fx; start[1] = fy
         }

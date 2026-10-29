@@ -19,8 +19,19 @@ object WorkspaceMappings {
      * settings it doesn't set itself ([WorkspaceDefaults.apply]), its pinned preset's device
      * mappings, and touch buttons' gestures where their mode reads them ([Bindings.matchSwipeModes]).
      */
-    fun resolve(set: Profile): Profile =
-        set.copy(workspaces = set.workspaces.map { resolve(WorkspaceDefaults.apply(it, set.defaults), set.devicePresets) })
+    fun resolve(set: Profile): Profile {
+        val defaults = set.defaults.copy(touchpad = set.defaults.touchpad.evenPies())
+        return set.copy(
+            defaults = defaults,
+            workspaces = set.workspaces.map { resolve(WorkspaceDefaults.apply(evenPies(it), defaults), set.devicePresets) },
+        )
+    }
+
+    /** [w] with pies of different widths turned into a shared width and directions' own ([TouchpadSettings.evenPies]). */
+    private fun evenPies(w: Workspace): Workspace = w.copy(
+        touchpad = w.touchpad.evenPies(),
+        touchControls = w.touchControls.map { c -> c.surface?.let { c.copy(surface = it.evenPies()) } ?: c },
+    )
 
     fun resolve(w: Workspace, presets: List<DevicePreset> = emptyList()): Workspace =
         Bindings.matchSwipeModes(w.withTouchpadMappings()).let { r ->
