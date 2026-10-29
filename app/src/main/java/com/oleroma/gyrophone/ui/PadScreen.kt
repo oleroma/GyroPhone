@@ -88,7 +88,9 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
@@ -304,8 +306,8 @@ fun PadScreen(
     /** The pad's top-left in the window, to turn a drop from the edit menu into a place on the pad. */
     var padOrigin by remember { mutableStateOf(Offset.Zero) }
 
-    /** Something being dragged out of the edit menu: its label and where the finger is (window). */
-    var dropping by remember { mutableStateOf<Pair<String, Offset>?>(null) }
+    /** Something being dragged out of the edit menu: its label, where the finger is (window), and whether it is out on the pad. */
+    var dropping by remember { mutableStateOf<Triple<String, Offset, Boolean>?>(null) }
     val isFullscreen by rememberUpdatedState(fullscreen)
     val setFullscreen by rememberUpdatedState(onFullscreen)
 
@@ -1701,6 +1703,8 @@ fun PadScreen(
                             onAdd: (Offset?) -> Unit,
                         ) {
                             val coords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+                            val haptic = LocalHapticFeedback.current
+                            val held = dropping?.first == label
                             val add by rememberUpdatedState(onAdd)
                             val longPress by rememberUpdatedState(onLongPress)
                             val shape = RoundedCornerShape(50)
@@ -1713,8 +1717,13 @@ fun PadScreen(
                                     .onGloballyPositioned { coords[0] = it }
                                     .clip(shape)
                                     .then(
-                                        if (outlined) Modifier.border(1.dp, Color.White.copy(alpha = 0.6f), shape)
-                                        else Modifier.background(Color.White.copy(alpha = 0.18f), shape),
+                                        when {
+                                            // Being dragged out: lit up in the selection amber.
+                                            held -> Modifier.background(SELECTED_COLOR.copy(alpha = 0.5f), shape)
+                                                .border(1.dp, SELECTED_COLOR, shape)
+                                            outlined -> Modifier.border(1.dp, Color.White.copy(alpha = 0.6f), shape)
+                                            else -> Modifier.background(Color.White.copy(alpha = 0.18f), shape)
+                                        },
                                     )
                                     .pointerInput(label, w, h) {
                                         val slop = viewConfiguration.touchSlop
@@ -1725,6 +1734,7 @@ fun PadScreen(
                                             var dragged = false
                                             var total = Offset.Zero
                                             var lastWindow = Offset.Zero
+                                            var out = false
                                             while (true) {
                                                 val event = if (dragged || longPress == null) awaitPointerEvent()
                                                 else withTimeoutOrNull(max(1L, startAt + EDIT_LONG_PRESS_MS - lastAt)) {
@@ -1740,10 +1750,7 @@ fun PadScreen(
                                                 if (!change.pressed) {
                                                     if (dragged) {
                                                         // Dropped on the pad, not back on the menu: add it there.
-                                                        val p = lastWindow - padOrigin
-                                                        if (!panelBounds.contains(lastWindow) &&
-                                                            p.x in 0f..w && p.y in 0f..h
-                                                        ) add(p)
+                                                        if (out) add(lastWindow - padOrigin)
                                                         dropping = null
                                                     } else if (total.getDistance() <= slop) {
                                                         change.consume()
@@ -1754,13 +1761,23 @@ fun PadScreen(
                                                 total += change.positionChange()
                                                 if (!dragged && total.getDistance() > slop) {
                                                     // Mostly down (or up): drag it out; mostly sideways: let the strip scroll.
-                                                    if (abs(total.y) > abs(total.x)) dragged = true else break
+                                                    if (abs(total.y) > abs(total.x)) {
+                                                        dragged = true
+                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    } else break
                                                 }
                                                 if (dragged) {
                                                     change.consume()
                                                     val c = coords[0]
                                                     if (c != null) lastWindow = c.positionInWindow() + change.position
-                                                    dropping = label to lastWindow
+                                                    val p = lastWindow - padOrigin
+                                                    val nowOut = !panelBounds.contains(lastWindow) && p.x in 0f..w && p.y in 0f..h
+                                                    // Out of the menu onto the pad: a firm tick (a light one going back).
+                                                    if (nowOut != out) haptic.performHapticFeedback(
+                                                        if (nowOut) HapticFeedbackType.LongPress else HapticFeedbackType.TextHandleMove,
+                                                    )
+                                                    out = nowOut
+                                                    dropping = Triple(label, lastWindow, out)
                                                 }
                                             }
                                             if (dragged) dropping = null
@@ -1965,14 +1982,16 @@ fun PadScreen(
             }
 
             // What is being dragged out of the edit menu, under the finger until it is dropped.
-            dropping?.let { (label, at) ->
+            // Out on the pad (where a drop adds it) it is lit up and larger; over the menu, faint.
+            dropping?.let { (label, at, out) ->
                 val p = at - padOrigin
-                val r = with(density) { 28.dp.toPx() }
+                val r = with(density) { (if (out) 32.dp else 28.dp).toPx() }
                 Box(
                     Modifier
                         .offset { IntOffset((p.x - r).roundToInt(), (p.y - r).roundToInt()) }
-                        .size(56.dp)
-                        .background(SELECTED_COLOR.copy(alpha = 0.7f), CircleShape),
+                        .size(if (out) 64.dp else 56.dp)
+                        .background(SELECTED_COLOR.copy(alpha = if (out) 0.95f else 0.4f), CircleShape)
+                        .then(if (out) Modifier.border(2.dp, Color.White, CircleShape) else Modifier),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
