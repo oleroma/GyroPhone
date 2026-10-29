@@ -31,8 +31,8 @@ import kotlin.math.roundToInt
 
 /**
  * The Settings page (from the pad's Settings capsule): the App tab, options of the whole app with
- * the corners, and the Defaults tab, what every workspace uses unless its Workspace defaults (its
- * settings page, ⚙ in edit mode) set their own.
+ * the corners, and the Defaults tab, what every workspace uses unless it sets its own (its
+ * settings page, ⚙ in edit mode).
  */
 @Composable
 fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
@@ -47,7 +47,7 @@ fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
 }
 
 /**
- * The Defaults: every workspace's settings unless its Workspace defaults set them. Each shows its
+ * The Defaults: every workspace's settings unless it sets them itself. Each shows its
  * value, highlighted with a ↺ where it differs from the built-in one.
  */
 @Composable
@@ -55,7 +55,7 @@ private fun DefaultsTab(runtime: GamepadRuntime) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Hint(
-            "Every workspace uses these, except where its Workspace defaults set their own: those show highlighted " +
+            "Every workspace uses these, except where it sets its own (its settings): those show highlighted " +
                     "there, with ↺ to follow these again.",
         )
         WorkspaceSettings(runtime, defaultsLevel(runtime, profile), profile.id + "/defaults")

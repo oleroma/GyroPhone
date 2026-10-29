@@ -12,8 +12,8 @@ import kotlin.math.min
  * snapshot has shown it for the minimum pulse ([markSeen]). Not thread-safe.
  */
 internal class ButtonGestures(
-    val longNs: Long,
-    val doubleNs: Long,
+    var longNs: Long,
+    var doubleNs: Long,
     var hasDouble: Boolean,
     var tapWaits: Boolean,
 ) {

@@ -37,7 +37,7 @@ object ButtonLibrary {
     fun save(w: Workspace, c: TouchControl, taken: Collection<String>): LibraryButton {
         val mappings = w.mappings.filter { MappingProfiles.touchId(it.source) == c.id }
         val used = setsOf(mappings)
-        return LibraryButton(newId(taken), c, mappings, w.sets.filter { it.id in used })
+        return LibraryButton(newId(taken), c, mappings, w.sets.filter { it.id in used }.map { it.copy(settings = null) })
     }
 
     private fun setsOf(mappings: List<Mapping>): Set<Int> =

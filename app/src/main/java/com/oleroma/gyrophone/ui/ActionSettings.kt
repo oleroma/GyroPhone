@@ -116,13 +116,13 @@ internal fun touchControlSettings(
 }
 
 /**
- * The ⚙ and Settings of the workspace touchpad: its settings are the workspace's Workspace defaults
+ * The ⚙ and Settings of the workspace touchpad: its settings are the workspace's own
  * ([level]), so Settings shows those, and an action's ⚙ edits them (gesture times, a direction's
  * own settings), each over the defaults.
  */
 internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): MappingSettings {
     val ws = level.ws
-    val key = ws.id + "touchpad"
+    val key = level.key + "touchpad"
     val surface = workspaceSurfaceLevel(level)
     val zones = Bindings.holdZoneCounts(ws.mappings, "")
     return MappingSettings(
@@ -175,7 +175,7 @@ internal fun physicalSettings(
                     Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
                     overridden = own?.longPressMs != null,
                     onReset = { update { p -> p.withTiming(src.keyCode) { it.copy(longPressMs = null) } } },
-                    hint = "$LONG_HINT Kept in the preset. Without a time of its own it uses the Workspace defaults'.",
+                    hint = "$LONG_HINT Kept in the preset. Without a time of its own it uses the workspace's.",
                 ) { ms -> update { p -> p.withTiming(src.keyCode) { it.copy(longPressMs = ms) } } }
             }
 
@@ -185,7 +185,7 @@ internal fun physicalSettings(
                     Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
                     overridden = own?.doubleTapMs != null,
                     onReset = { update { p -> p.withTiming(src.keyCode) { it.copy(doubleTapMs = null) } } },
-                    hint = "Kept in the preset. Without a window of its own it uses the Workspace defaults'.",
+                    hint = "Kept in the preset. Without a window of its own it uses the workspace's.",
                 ) { ms -> update { p -> p.withTiming(src.keyCode) { it.copy(doubleTapMs = ms) } } }
             }
 

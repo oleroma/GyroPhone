@@ -51,6 +51,15 @@ object WorkspaceDefaults {
     val keys: List<String> = top + gyroProps.map(::gyroKey) + SurfaceField.entries.map(::touchpadKey) +
         Direction.entries.flatMap { d -> DirField.entries.map { f -> dirKey(d, f) } }
 
+    /**
+     * The keys a layer ([MappingSet.settings]) may set: all but the gyro filters (smoothing and
+     * jitter, calibrated for the phone) and the look and button switches of the whole workspace.
+     */
+    val layerKeys: List<String> = keys - setOf(
+        gyroKey("tighteningThreshold"), gyroKey("smoothingThreshold"),
+        CONTROL_OPACITY, TOUCHPAD_OVER_BUTTONS, BUTTON_TAP, STICKY_MODIFIERS,
+    )
+
     /** The touchpad's keys: shared and per direction. */
     val touchpadKeys: List<String> = keys.filter { it.startsWith(TOUCHPAD) }
 
@@ -154,4 +163,53 @@ object WorkspaceDefaults {
             before.workspaces.firstOrNull { it.id == w.id }?.let { markOwn(it, w) } ?: w
         },
     )
+
+    /** The keys layer [set] sets itself. */
+    fun layerOwn(set: MappingSet?): Set<String> = set?.settings?.ownSettings.orEmpty()
+
+    /**
+     * [base] with layer [set]'s own settings laid over. A shared touchpad value the layer sets
+     * hides the direction values of it the layer does not set, as for a workspace.
+     */
+    fun overlay(base: Workspace, set: MappingSet?): Workspace {
+        val layer = set?.settings ?: return base
+        val own = layer.ownSettings.orEmpty()
+        if (own.isEmpty()) return base
+        val r = own.fold(base) { acc, k -> take(k, acc, layer) }
+        return keys.filter { k -> k !in own && dirOf(k)?.second?.shared?.let(::touchpadKey) in own }
+            .fold(r) { acc, k -> follow(k, acc, own, acc) }
+    }
+
+    /**
+     * The settings in effect in [w] while mapping set [full] is in use with [overrides] (bottom to
+     * top) laid over it, as the mappings are ([layered]): each layer's own settings over the one below.
+     */
+    fun layered(w: Workspace, full: Int, overrides: List<Int>): Workspace {
+        if (w.sets.none { it.settings != null }) return w
+        fun set(id: Int) = if (id == MappingSet.BASE) null else w.sets.firstOrNull { it.id == id }
+        var r = overlay(w, set(full))
+        for (o in overrides) if (o != full) r = overlay(r, set(o))
+        return r
+    }
+
+    /** Only [w]'s settings (every key), none of its layout or mappings: what a layer stores. */
+    private fun settingsOf(w: Workspace, own: Set<String>): Workspace =
+        keys.fold(Workspace("", "")) { r, k -> take(k, r, w) }.copy(ownSettings = own)
+
+    /**
+     * Layer [set] after an edit that turned the settings in effect in it from [before] to [after]:
+     * the keys the edit changed become its own.
+     */
+    fun editLayer(set: MappingSet, before: Workspace, after: Workspace): MappingSet {
+        val own = layerOwn(set) + layerKeys.filter { k -> !same(k, before, after) }
+        if (own.isEmpty()) return set.copy(settings = null)
+        return set.copy(settings = settingsOf(after, own))
+    }
+
+    /** Layer [set] following the settings below it again for [key]. */
+    fun resetLayer(set: MappingSet, key: String): MappingSet {
+        val layer = set.settings ?: return set
+        val own = layer.ownSettings.orEmpty() - key
+        return set.copy(settings = if (own.isEmpty()) null else layer.copy(ownSettings = own))
+    }
 }

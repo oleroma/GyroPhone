@@ -1758,7 +1758,8 @@ fun PadScreen(
                         onZoneSettings = { a, b ->
                             editWorkspace { it.copy(touchpad = it.touchpad.copy(holdZones = a, dirHoldZones = b)) }
                         },
-                        settings = touchpadSettings(runtime, workspaceLevel(ws, d.defaults) { change -> editWorkspace(change) }),
+                        // ⚙ edits the settings of the layer picked in the set bar.
+                        settings = touchpadSettings(runtime, setLevel(ws, d.defaults, mapSet) { change -> editWorkspace(change) }),
                     )
                 } else {
                     TouchpadSettingsScreen(

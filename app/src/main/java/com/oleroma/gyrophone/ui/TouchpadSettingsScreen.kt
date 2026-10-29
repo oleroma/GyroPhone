@@ -49,7 +49,7 @@ internal fun TouchpadSettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Touchpad", style = MaterialTheme.typography.titleMedium)
+                        Text("Workspace", style = MaterialTheme.typography.titleMedium)
                         Text(
                             "The empty pad area · " + workspace.name + " · settings",
                             style = MaterialTheme.typography.bodySmall,
@@ -104,7 +104,7 @@ private fun TouchpadMappingsSummary(workspace: Workspace, onEdit: () -> Unit, on
         )
     }
     Text(
-        "The touchpad's speed, scrolling, directions, timings and zones are this workspace's Workspace defaults: " +
+        "The touchpad's speed, scrolling, directions, timings and zones are this workspace's settings: " +
                 "set them in Mappings (⚙ Settings at the top, or the ⚙ before an action) or in the workspace's settings.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,

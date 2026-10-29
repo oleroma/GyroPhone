@@ -309,7 +309,7 @@ private fun Modifier.dragSource(
  * Stands for the workspace touchpad in the control screens: a tap or long press on empty space
  * in edit mode opens them with it. Its surface inputs have the touchpad's id ("").
  */
-internal val TOUCHPAD_STAND_IN = TouchControl("", TouchKind.BUTTON, "Touchpad", 0f, 0f, swipe = true)
+internal val TOUCHPAD_STAND_IN = TouchControl("", TouchKind.BUTTON, "Workspace", 0f, 0f, swipe = true)
 
 internal val TouchControl.isTouchpadStandIn: Boolean get() = id.isEmpty()
 
@@ -327,9 +327,9 @@ internal val TouchControl.physicalDevice: PhysicalDevice?
     get() = if (!id.startsWith(PHYSICAL_PREFIX)) null
     else PhysicalDevice.entries.firstOrNull { it.name == id.removePrefix(PHYSICAL_PREFIX).substringBefore(':') }
 
-/** "Stick", "Touchpad button", "Button", "Touchpad", or a physical device's "Controller", "Keyboard", "Mouse". */
+/** "Stick", "Touchpad button", "Button", "Workspace" (the touchpad), or a physical device's "Controller", "Keyboard", "Mouse". */
 internal fun controlKindName(c: TouchControl): String = when {
-    c.isTouchpadStandIn -> "Touchpad"
+    c.isTouchpadStandIn -> "Workspace"
     c.physicalDevice != null -> c.physicalDevice!!.label
     c.kind == TouchKind.STICK -> "Stick"
     c.swipes -> "Touchpad button"
@@ -1258,7 +1258,7 @@ internal fun ControlMappingScreen(
                         Column(Modifier.weight(1f)) {
                             Text(control.label.ifBlank { control.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
-                                if (control.isTouchpadStandIn) "Touchpad · this workspace's Workspace defaults"
+                                if (control.isTouchpadStandIn) "The empty pad area · this workspace's settings"
                                 else controlKindName(control) + " · settings its actions share",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.onSurfaceVariant,

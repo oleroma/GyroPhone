@@ -29,6 +29,7 @@ import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Workspace
+import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.withTouchpadMappings
 import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.model.MappingSet
@@ -89,6 +90,16 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     val workspace: Workspace get() = synchronized(lock) { ws }
 
     private var ws: Workspace = profile.workspace(0)
+
+    /**
+     * The settings in effect: [ws]'s with the own settings of the layers in use laid over
+     * ([WorkspaceDefaults.layered]); set by [applyLayers].
+     */
+    @Volatile
+    private var eff: Workspace = ws
+
+    /** The gyro settings in effect now: the workspace's, or a layer's in use. */
+    val gyroSettings: GyroSettings get() = eff.gyro
 
     /** Touch mappings of the active workspace in use (the touch source group): see [applyLayers]. */
     private var touchMappings: List<Mapping> = emptyList()
@@ -444,14 +455,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         releaseHeld()
         for (d in deviceList) d.pad = resolvePad(d.device)
-        touchpad.settings = w.touchpad
         layerSet = MappingSet.BASE; layerOverrides.clear(); layerHolds.clear()
         carried = Array(allPads.size + 1) { HashMap() }; anyCarried = false
         applyLayers()
-        touchpad.doubleTapNanos =
-            w.doubleTapMs.coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L
-        touchpad.longPressNanos =
-            w.longPressMs.coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
         padTouchIds.clear()
         touchpad.cancel(clock())
     }
@@ -987,7 +993,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     val gyroAxes: Int
         get() = synchronized(lock) {
-            val g = ws.gyro
+            val g = eff.gyro
             if (g.mode == GyroMode.SENSOR_OFF) return@synchronized 0
             val ratchet = (g.touchpadRatchet && padTouchIds.isNotEmpty()) ||
                     (ratchetMapped && (engaged(OutputTarget.GyroPause) || engaged(OutputTarget.GyroHold)))
@@ -1009,6 +1015,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             ws = ws.copy(gyro = settings)
             current = current.updateWorkspace(workspaceIndex) { it.copy(gyro = settings) }
             gyroToggled = false
+            applyLayerSettings()
         }
         onChange?.run()
     }
@@ -1132,13 +1139,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for ((m, v) in hapticNow) {
             when (val t = m.target) {
                 is OutputTarget.Haptic -> {
-                    val feel = t.feel ?: ws.haptics
+                    val feel = t.feel ?: eff.haptics
                     if (t.held) {
                         if (held == null || feel.strength * v > held.strength * level) {
                             held = feel; level = v
                         }
                     } else if (v >= PRESS_THRESHOLD && (hapticWas[m] ?: 0f) < PRESS_THRESHOLD &&
-                        (t.edge ?: ws.hapticEdge) != HapticEdge.RELEASE
+                        (t.edge ?: eff.hapticEdge) != HapticEdge.RELEASE
                     ) {
                         hapticTicks.add(feel)
                     }
@@ -1150,7 +1157,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                         OutputTarget.HapticStep.MAX_STEP_PERCENT
                     )
                     val step = (v * 100f / pct + 1e-3f).toInt()
-                    if (step != (hapticSteps.put(m, step) ?: 0)) hapticTicks.add(t.feel ?: ws.haptics)
+                    if (step != (hapticSteps.put(m, step) ?: 0)) hapticTicks.add(t.feel ?: eff.haptics)
                 }
 
                 else -> Unit
@@ -1160,9 +1167,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for ((m, was) in hapticWas) {
             val t = m.target
             if (t is OutputTarget.Haptic && !t.held && was >= PRESS_THRESHOLD &&
-                (hapticNow[m] ?: 0f) < PRESS_THRESHOLD && (t.edge ?: ws.hapticEdge) != HapticEdge.PRESS
+                (hapticNow[m] ?: 0f) < PRESS_THRESHOLD && (t.edge ?: eff.hapticEdge) != HapticEdge.PRESS
             ) {
-                hapticTicks.add(t.feel ?: ws.haptics)
+                hapticTicks.add(t.feel ?: eff.haptics)
             }
         }
         // Per-step ones back at 0 since the last snapshot tick on the way down too.
@@ -1171,7 +1178,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             while (it.hasNext()) {
                 val e = it.next()
                 if (e.key !in hapticNow) {
-                    if (e.value != 0) hapticTicks.add((e.key.target as OutputTarget.HapticStep).feel ?: ws.haptics)
+                    if (e.value != 0) hapticTicks.add((e.key.target as OutputTarget.HapticStep).feel ?: eff.haptics)
                     it.remove()
                 }
             }
@@ -1345,13 +1352,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun keyEdge(d: Dev, code: Int, pressed: Boolean, now: Long) {
         val cfg = (if (d === anyDevice) anyKeyCfgs else keyCfgs.getOrNull(d.pad))?.get(code) ?: return
         val g = d.gestures.getOrPut(code) {
-            // The key's own timings from the pinned preset, else the workspace's.
-            val own = ws.keyTimings.firstOrNull { it.keyCode == code }
-            ButtonGestures(
-                (own?.longPressMs ?: ws.longPressMs).coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L,
-                (own?.doubleTapMs ?: ws.doubleTapMs).coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L,
-                cfg.hasDouble, cfg.tapWaits,
-            ).also { tapList.add(it) }
+            ButtonGestures(0, 0, cfg.hasDouble, cfg.tapWaits).also { keyTimes(code, it); tapList.add(it) }
         }
         if (pressed) g.down(now, touchpad.minPulseNanos) else g.up(now, touchpad.minPulseNanos)
     }
@@ -1585,6 +1586,35 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val cfg = anyKeyCfgs[code] ?: continue
             g.hasDouble = cfg.hasDouble; g.tapWaits = cfg.tapWaits
         }
+        applyLayerSettings()
+    }
+
+    /**
+     * Puts the settings of the layers in use ([eff]) into effect: the touchpad's and the touchpad
+     * buttons' surfaces, and the gesture times of touch buttons and keys without their own.
+     */
+    private fun applyLayerSettings() {
+        val e = WorkspaceDefaults.layered(ws, layerSet, layerOverrides)
+        eff = e
+        touchpad.settings = e.touchpad
+        touchpad.doubleTapNanos = e.doubleTapMs.coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L
+        touchpad.longPressNanos = e.longPressMs.coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
+        for (c in ws.touchControls) {
+            surfaces[c.id]?.let { s ->
+                s.settings = c.surfaceSettings(e.touchpad)
+                s.doubleTapNanos = c.doubleTap(e) * 1_000_000L; s.longPressNanos = c.longPress(e) * 1_000_000L
+            }
+            tapStates[c.id]?.let { st -> st.longNs = c.longPress(e) * 1_000_000L; st.doubleNs = c.doubleTap(e) * 1_000_000L }
+        }
+        for (d in deviceList) for ((code, g) in d.gestures) keyTimes(code, g)
+        for ((code, g) in anyDevice.gestures) keyTimes(code, g)
+    }
+
+    /** Key [code]'s gesture times: its own from the pinned preset, else those in effect ([eff]). */
+    private fun keyTimes(code: Int, g: ButtonGestures) {
+        val own = ws.keyTimings.firstOrNull { it.keyCode == code }
+        g.longNs = (own?.longPressMs ?: eff.longPressMs).coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
+        g.doubleNs = (own?.doubleTapMs ?: eff.doubleTapMs).coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L
     }
 
     // ---- Touch presses and sticky modifiers ----

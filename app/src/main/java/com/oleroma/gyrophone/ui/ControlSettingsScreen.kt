@@ -269,7 +269,7 @@ internal fun ButtonBehaviourSettings(
             "Touchpad",
             "A small touchpad of its own: its mappings are the touchpad's (hold, taps, moves, " +
                     "swipes, pinches with 1–4 fingers, in Mappings), and a swipe is never a tap. " +
-                    "Its settings follow the Workspace defaults unless it sets its own (Mappings, ⚙ Settings).",
+                    "Its settings follow the workspace unless it sets its own (Mappings, ⚙ Settings).",
             control.swipe,
         ) { on -> onControlChange(current.copy(swipe = on)) }
     }

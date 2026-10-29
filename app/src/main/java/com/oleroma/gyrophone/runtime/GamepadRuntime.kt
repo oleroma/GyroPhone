@@ -629,8 +629,13 @@ class GamepadRuntime(context: Context) {
     }
 
     /** The active workspace's gyro is off completely ([GyroMode.SENSOR_OFF]): the sensor need not run. */
-    private fun gyroOff(): Boolean =
-        _activeProfile.value.workspace(_workspaceIndex.value).gyro.mode == GyroMode.SENSOR_OFF
+    private fun gyroOff(): Boolean {
+        val ws = _activeProfile.value.workspace(_workspaceIndex.value)
+        // A layer that turns gyro on needs the sensor running before it is used.
+        return ws.gyro.mode == GyroMode.SENSOR_OFF && ws.sets.none { s ->
+            WorkspaceDefaults.gyroKey("mode") in WorkspaceDefaults.layerOwn(s) && s.settings?.gyro?.mode != GyroMode.SENSOR_OFF
+        }
+    }
 
     /**
      * Runs the gyro sensor while its samples are used: input is allowed or a calibration runs.
@@ -738,6 +743,9 @@ class GamepadRuntime(context: Context) {
         val axes = if (inputAllowed) engine.gyroAxes else 0
         val active = axes != 0
         if (active) {
+            // A layer in use may set gyro settings of its own.
+            val gs = engine.gyroSettings
+            if (gs !== gyroMouse.settings) gyroMouse.settings = gs
             val c = gyroMouse.update(x - biasX, y - biasY, z - biasZ, dt)
             // A ratchet on one axis leaves the other moving.
             val dx = if (axes and MappingEngine.GYRO_X != 0) c.dx else 0

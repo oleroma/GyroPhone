@@ -66,7 +66,7 @@ internal fun buttonSurfaceLevel(
     val own = control.ownSurface
     return SurfaceLevel(
         eff = control.surfaceSettings(pad),
-        parentName = "Workspace defaults",
+        parentName = "Workspace",
         isOwn = { it.button && it.isOwn(own) },
         isDirOwn = { d, f -> f.isOwn(own, d) },
         edit = { change ->

@@ -315,9 +315,13 @@ sealed interface OutputTarget {
 @Serializable
 data class Mapping(val source: InputSource, val target: OutputTarget, val set: Int = 0)
 
-/** A named mapping set of a [Workspace] (set 0, Base, needs none). */
+/**
+ * A named mapping set of a [Workspace] (set 0, Base, needs none). [settings]: the workspace
+ * settings this layer sets itself while it is in use ([Workspace.ownSettings] of it names them,
+ * [WorkspaceDefaults.layerKeys] only); every other one follows the workspace. Null: none.
+ */
 @Serializable
-data class MappingSet(val id: Int, val name: String = "") {
+data class MappingSet(val id: Int, val name: String = "", val settings: Workspace? = null) {
     val label: String get() = name.ifBlank { "Layer $id" }
 
     companion object {
