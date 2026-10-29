@@ -385,12 +385,14 @@ internal fun ControlMappingScreen(
             runtime.setUiPref(PREF_CUSTOM + kindKey(control), next.joinToString("\n"))
         }
     }
-    // A swipe button: one list per finger count (hold, taps, moves, swipes...) with its outside and area.
+    // A swipe button: one list per finger count (hold, taps, moves, swipes...); the button's own
+    // outside and area (any fingers) go with one finger's, beside its hold.
     val groups = listOf(
         sorted(
             control,
-            if (control.swipes) Bindings.swipeInputs(control, fingers) + inputs.filter { it.sources.first() is InputSource.TouchArea }
-            else inputs,
+            if (!control.swipes) inputs
+            else Bindings.swipeInputs(control, fingers) +
+                    if (fingers == 1) inputs.filter { it.sources.first() is InputSource.TouchArea } else emptyList(),
             order,
         ),
     )
