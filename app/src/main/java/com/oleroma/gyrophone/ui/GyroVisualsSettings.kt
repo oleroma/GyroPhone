@@ -4,18 +4,21 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,12 +41,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -215,8 +221,9 @@ private fun Swatch(c: Color, size: Int = 32) {
 }
 
 /**
- * Picks a colour: a saturation / brightness square, hue and opacity sliders, and an ARGB hex
- * field. [onPick] gets the result.
+ * Picks a colour: a saturation / brightness square, a hue bar and an opacity bar side by side
+ * (so it fits a landscape screen), the old and new colour, an ARGB hex field and a few presets.
+ * [onPick] gets the result.
  */
 @Composable
 private fun ColorPickerDialog(title: String, initial: Color, onPick: (Color) -> Unit, onDismiss: () -> Unit) {
@@ -232,76 +239,149 @@ private fun ColorPickerDialog(title: String, initial: Color, onPick: (Color) -> 
     fun sync() {
         hex = hexOf(current())
     }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Saturation across, brightness down.
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(160.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .pointerInput(Unit) {
-                            fun at(p: Offset) {
-                                sat = (p.x / size.width).coerceIn(0f, 1f)
-                                value = 1f - (p.y / size.height).coerceIn(0f, 1f)
+    fun set(c: Color) {
+        val h = FloatArray(3)
+        android.graphics.Color.colorToHSV(c.toArgb(), h)
+        // Keep the hue on greys, where it is undefined.
+        if (h[1] > 0f && h[2] > 0f) hue = h[0]
+        sat = h[1]; value = h[2]; alpha = c.alpha
+    }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            Modifier.padding(16.dp).widthIn(max = 680.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Row(Modifier.height(200.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // Saturation across, brightness down.
+                    Canvas(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(8.dp))
+                            .pickDrag { p, sz ->
+                                sat = (p.x / sz.width).coerceIn(0f, 1f)
+                                value = 1f - (p.y / sz.height).coerceIn(0f, 1f)
                                 sync()
-                            }
-                            detectTapGestures { at(it) }
-                        }
-                        .pointerInput(Unit) {
-                            detectDragGestures { change, _ ->
-                                change.consume()
-                                sat = (change.position.x / size.width).coerceIn(0f, 1f)
-                                value = 1f - (change.position.y / size.height).coerceIn(0f, 1f)
-                                sync()
-                            }
-                        },
-                ) {
-                    Canvas(Modifier.fillMaxSize()) {
+                            },
+                    ) {
                         drawRect(Brush.horizontalGradient(listOf(Color.White, Color.hsv(hue, 1f, 1f))))
                         drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black)))
                         val p = Offset(sat * size.width, (1f - value) * size.height)
                         drawCircle(Color.White, 9.dp.toPx(), p, style = Stroke(2.dp.toPx()))
                         drawCircle(Color.Black, 11.dp.toPx(), p, style = Stroke(1.dp.toPx()))
                     }
-                }
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(10.dp)
-                        .clip(RoundedCornerShape(5.dp))
-                        .background(Brush.horizontalGradient((0..6).map { Color.hsv(it * 60f % 360f, 1f, 1f) })),
-                )
-                Slider(value = hue, onValueChange = { hue = it; sync() }, valueRange = 0f..360f)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Opacity %.0f%%".format(alpha * 100), Modifier.padding(end = 8.dp))
-                    Slider(value = alpha, onValueChange = { alpha = it; sync() })
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Swatch(current(), 44)
-                    OutlinedTextField(
-                        value = hex,
-                        onValueChange = { t ->
-                            hex = t
-                            parseHex(t)?.let { c ->
-                                val h = FloatArray(3)
-                                android.graphics.Color.colorToHSV(c.toArgb(), h)
-                                hue = h[0]; sat = h[1]; value = h[2]; alpha = c.alpha
+                    // Hue, top to bottom.
+                    Canvas(
+                        Modifier
+                            .width(32.dp)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(8.dp))
+                            .pickDrag { p, sz ->
+                                hue = (p.y / sz.height).coerceIn(0f, 1f) * 360f
+                                sync()
+                            },
+                    ) {
+                        drawRect(Brush.verticalGradient((0..6).map { Color.hsv(it * 60f % 360f, 1f, 1f) }))
+                        barMark(hue / 360f)
+                    }
+                    // Opacity, opaque at the top.
+                    Canvas(
+                        Modifier
+                            .width(32.dp)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(8.dp))
+                            .pickDrag { p, sz ->
+                                alpha = 1f - (p.y / sz.height).coerceIn(0f, 1f)
+                                sync()
+                            },
+                    ) {
+                        checkers(8.dp.toPx())
+                        val solid = Color.hsv(hue, sat, value)
+                        drawRect(Brush.verticalGradient(listOf(solid, solid.copy(alpha = 0f))))
+                        barMark(1f - alpha)
+                    }
+                    Column(Modifier.width(150.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // Old above new; tap the old one to go back to it.
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.clickable { set(initial); sync() }) { Swatch(initial, 40) }
+                            Swatch(current(), 40)
+                            Text("%.0f%%".format(alpha * 100), style = MaterialTheme.typography.bodySmall)
+                        }
+                        OutlinedTextField(
+                            value = hex,
+                            onValueChange = { t ->
+                                hex = t
+                                parseHex(t)?.let { set(it) }
+                            },
+                            label = { Text("ARGB hex") },
+                            singleLine = true,
+                        )
+                        for (row in PRESETS.chunked(5)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                for (argb in row) {
+                                    val c = Color(argb.toInt())
+                                    Box(Modifier.clickable { set(c.copy(alpha = alpha)); sync() }) { Swatch(c, 24) }
+                                }
                             }
-                        },
-                        label = { Text("ARGB hex") },
-                        singleLine = true,
-                    )
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    TextButton(onClick = { onPick(current()) }) { Text("OK") }
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = { onPick(current()) }) { Text("OK") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
+        }
+    }
 }
+
+/** Calls [at] with the finger's spot and the element's size on touch down and while dragging. */
+private fun Modifier.pickDrag(at: (Offset, IntSize) -> Unit) = pointerInput(Unit) {
+    awaitEachGesture {
+        val down = awaitFirstDown()
+        down.consume()
+        at(down.position, size)
+        drag(down.id) {
+            it.consume()
+            at(it.position, size)
+        }
+    }
+}
+
+/** A light / grey checkerboard, so transparency shows. */
+private fun DrawScope.checkers(cell: Float) {
+    var y = 0f
+    var j = 0
+    while (y < size.height) {
+        var x = 0f
+        var i = 0
+        while (x < size.width) {
+            drawRect(if ((i + j) % 2 == 0) Color.LightGray else Color.White, Offset(x, y), Size(cell, cell))
+            x += cell; i++
+        }
+        y += cell; j++
+    }
+}
+
+/** The marker across a vertical bar at [f] (0 top, 1 bottom). */
+private fun DrawScope.barMark(f: Float) {
+    val y = f * size.height
+    drawRect(Color.White, Offset(0f, y - 3.dp.toPx()), Size(size.width, 6.dp.toPx()), style = Stroke(2.dp.toPx()))
+    drawRect(Color.Black, Offset(0f, y - 4.dp.toPx()), Size(size.width, 8.dp.toPx()), style = Stroke(1.dp.toPx()))
+}
+
+/** Quick picks: greys, then bright and soft hues. */
+private val PRESETS = listOf(
+    0xFFFFFFFFL, 0xFFBDBDBDL, 0xFF757575L, 0xFF303030L, 0xFF000000L,
+    0xFFF44336L, 0xFFFF9800L, 0xFFFFEB3BL, 0xFF4CAF50L, 0xFF2196F3L,
+    0xFFE91E63L, 0xFF9C27B0L, 0xFF00BCD4L, 0xFF8BC34AL, 0xFFFFC857L,
+)
 
 private fun hexOf(c: Color) = "%08X".format(c.toArgb())
 
