@@ -52,7 +52,8 @@ install_companion() {
   # VERSION.txt names the build at app_exe (comparing the big exes byte by byte is slow).
   local have="" f
   if [ -f "$app_exe" ] && [ -f "$app/VERSION.txt" ]; then have="$(head -n 1 "$app/VERSION.txt" | tr -d '\r')"; fi
-  if [ "$have" = "$ver" ]; then
+  # A build still waiting as .new isn't in place yet (its update failed): installing it again retries it.
+  if [ "$have" = "$ver" ] && [ ! -e "$app_exe.new" ]; then
     note "Companion $ver is already installed on the PC."
   else
     # .old files are left by builds that renamed the running exe; any still in use go next time.

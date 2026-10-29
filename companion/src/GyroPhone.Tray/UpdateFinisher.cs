@@ -10,7 +10,7 @@ namespace GyroPhone.Tray;
 /// replaces. Waits for that instance (and a watcher told to stop) to exit, copies itself over the exe, then
 /// starts the companion and/or the watcher from the exe's usual path. The finisher only copies its own file,
 /// so nothing it reads is ever moved under it. If the copy fails, it starts the old build again with
-/// <see cref="FailedArg"/>, which then doesn't retry this .new until it changes.
+/// <see cref="FailedArg"/>, which then doesn't retry this .new until it is installed again.
 /// </summary>
 internal static class UpdateFinisher
 {
@@ -33,6 +33,24 @@ internal static class UpdateFinisher
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return null; // being copied
+        }
+    }
+
+    /// <summary>
+    /// The waiting build's version and write time, or null. A failed update isn't retried until this changes,
+    /// so installing the same build again retries it.
+    /// </summary>
+    public static string? StampOf(string path)
+    {
+        string? version = VersionOf(path);
+        if (version == null) return null;
+        try
+        {
+            return $"{version}@{File.GetLastWriteTimeUtc(path).Ticks}";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 

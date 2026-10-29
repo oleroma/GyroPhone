@@ -208,10 +208,12 @@ internal static class Watcher
                 }
                 return false;
             }
-            if (!UpdateInfo.IsReplaced(Application.ProductVersion, version) || version == _failed) return false;
+            if (!UpdateInfo.IsReplaced(Application.ProductVersion, version)) return false;
+            string? stamp = UpdateFinisher.StampOf(_newPath);
+            if (stamp == null || stamp == _failed) return false;
             log.Write($"watcher: new build {version} at {_newPath}, restarting");
             if (UpdateFinisher.Launch(_newPath, tray: false, watch: true, log.Write)) return true;
-            _failed = version;
+            _failed = stamp;
             return false;
         }
     }

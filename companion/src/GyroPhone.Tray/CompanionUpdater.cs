@@ -24,8 +24,8 @@ internal sealed class CompanionUpdater : IDisposable
     private readonly System.Windows.Forms.Timer _timer;
     private bool _restarting, _disposed;
     private string? _lastNew = "";
-    /// <summary>The .new build a failed update came back from: not tried again this run.</summary>
-    private readonly string? _failedVersion;
+    /// <summary>The .new build (<see cref="UpdateFinisher.StampOf"/>) a failed update came back from: not tried again until reinstalled.</summary>
+    private readonly string? _failedStamp;
 
     /// <summary>The newer build next to this exe that this instance is about to restart into, or null.</summary>
     public string? Pending { get; private set; }
@@ -42,7 +42,7 @@ internal sealed class CompanionUpdater : IDisposable
         _exitForUpdate = exitForUpdate;
         _timer = new System.Windows.Forms.Timer { Interval = TickMs };
         _timer.Tick += (_, _) => Tick();
-        if (updateFailed) _failedVersion = NewVersion();
+        if (updateFailed) _failedStamp = UpdateFinisher.StampOf(_newPath);
     }
 
     public void Start()
@@ -53,7 +53,7 @@ internal sealed class CompanionUpdater : IDisposable
             return;
         }
         _log($"self-restart on: {_version} watches {_newPath}");
-        if (_failedVersion != null) _log($"update to {_failedVersion} failed; not retrying it until it changes");
+        if (_failedStamp != null) _log($"update to {_failedStamp} failed; not retrying it until it is installed again");
         _timer.Start();
         Tick();
     }
@@ -91,7 +91,8 @@ internal sealed class CompanionUpdater : IDisposable
             TryDelete(_newPath); // the finisher this build came from; it may still be exiting
             onDisk = null;
         }
-        string? pending = UpdateInfo.IsReplaced(_version, onDisk) && onDisk != _failedVersion ? onDisk : null;
+        string? pending = UpdateInfo.IsReplaced(_version, onDisk)
+            && (_failedStamp == null || UpdateFinisher.StampOf(_newPath) != _failedStamp) ? onDisk : null;
         if (pending != Pending)
         {
             Pending = pending;
