@@ -1,23 +1,27 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <!-- GameSir X5 Lite grip with the phone in it, drawn in 108-unit space and scaled into the safe zone. -->
-    <group android:scaleX="0.84" android:scaleY="0.84"
-        android:translateX="8.64" android:translateY="6.96">
-        <!-- Grip outline -->
+    <!-- A phone held between two controller handles, drawn in 108-unit space and scaled into the safe zone. -->
+    <group android:scaleX="0.76" android:scaleY="0.76"
+        android:translateX="12.96" android:translateY="11.44">
+        <!-- Phone screen, lightly tinted -->
+        <path android:fillColor="#7CC4FF" android:fillAlpha="0.18"
+            android:pathData="M34.5,38h39a4.5,4.5 0 0 1 4.5,4.5v14a4.5,4.5 0 0 1 -4.5,4.5h-39a4.5,4.5 0 0 1 -4.5,-4.5v-14a4.5,4.5 0 0 1 4.5,-4.5z" />
+        <!-- Phone body with thin bezels and a punch-hole camera -->
         <path android:strokeColor="#7CC4FF" android:strokeWidth="3"
-            android:strokeLineCap="round" android:strokeLineJoin="round"
-            android:pathData="M30,39H78a9,9 0 0 1 9,9V60c0,7 -2,13 -6,13c-3.5,0 -5,-3 -6.5,-7H33.5c-1.5,4 -3,7 -6.5,7c-4,0 -6,-6 -6,-13V48a9,9 0 0 1 9,-9z" />
-        <!-- Phone -->
-        <path android:strokeColor="#7CC4FF" android:strokeWidth="3"
-            android:pathData="M36.5,42.5h35a3,3 0 0 1 3,3v17.5a3,3 0 0 1 -3,3h-35a3,3 0 0 1 -3,-3v-17.5a3,3 0 0 1 3,-3z" />
-        <!-- Left stick and D-pad -->
-        <path android:strokeColor="#7CC4FF" android:strokeWidth="3" android:strokeLineCap="round"
-            android:pathData="M24.3,48.5a3.2,3.2 0 1 0 6.4,0a3.2,3.2 0 1 0 -6.4,0M27.5,56v6.5M24.25,59.25h6.5" />
-        <!-- Right stick and face buttons -->
-        <path android:strokeColor="#7CC4FF" android:strokeWidth="3"
-            android:pathData="M77.3,59.25a3.2,3.2 0 1 0 6.4,0a3.2,3.2 0 1 0 -6.4,0" />
+            android:pathData="M34.5,38h39a4.5,4.5 0 0 1 4.5,4.5v14a4.5,4.5 0 0 1 -4.5,4.5h-39a4.5,4.5 0 0 1 -4.5,-4.5v-14a4.5,4.5 0 0 1 4.5,-4.5z" />
         <path android:fillColor="#7CC4FF"
-            android:pathData="M79.25,45.3a1.25,1.25 0 1 0 2.5,0a1.25,1.25 0 1 0 -2.5,0M79.25,51.7a1.25,1.25 0 1 0 2.5,0a1.25,1.25 0 1 0 -2.5,0M76.05,48.5a1.25,1.25 0 1 0 2.5,0a1.25,1.25 0 1 0 -2.5,0M82.45,48.5a1.25,1.25 0 1 0 2.5,0a1.25,1.25 0 1 0 -2.5,0" />
+            android:pathData="M33.4,49.5a1.6,1.6 0 1 0 3.2,0a1.6,1.6 0 1 0 -3.2,0" />
+        <!-- Controller handles clipped to the phone's sides -->
+        <path android:strokeColor="#7CC4FF" android:strokeWidth="3" android:strokeLineJoin="round"
+            android:pathData="M26.5,42H21.5a6,6 0 0 0 -6,6V65c0,5.5 2,9 5.5,9c3.5,0 5.5,-4 5.5,-9zM81.5,42H86.5a6,6 0 0 1 6,6V65c0,5.5 -2,9 -5.5,9c-3.5,0 -5.5,-4 -5.5,-9z" />
+        <!-- Left stick and D-pad -->
+        <path android:strokeColor="#7CC4FF" android:strokeWidth="2.5" android:strokeLineCap="round"
+            android:pathData="M18.5,50a2.5,2.5 0 1 0 5,0a2.5,2.5 0 1 0 -5,0M21,57.5v6M18,60.5h6" />
+        <!-- Right stick and face buttons -->
+        <path android:strokeColor="#7CC4FF" android:strokeWidth="2.5"
+            android:pathData="M84.5,60.5a2.5,2.5 0 1 0 5,0a2.5,2.5 0 1 0 -5,0" />
+        <path android:fillColor="#7CC4FF"
+            android:pathData="M85.9,47.2a1.1,1.1 0 1 0 2.2,0a1.1,1.1 0 1 0 -2.2,0M85.9,52.8a1.1,1.1 0 1 0 2.2,0a1.1,1.1 0 1 0 -2.2,0M83.1,50a1.1,1.1 0 1 0 2.2,0a1.1,1.1 0 1 0 -2.2,0M88.7,50a1.1,1.1 0 1 0 2.2,0a1.1,1.1 0 1 0 -2.2,0" />
     </group>
 </vector>
