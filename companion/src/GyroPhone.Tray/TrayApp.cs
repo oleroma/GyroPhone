@@ -196,7 +196,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
 
         _updater = new CompanionUpdater(_exePath, Application.ProductVersion, _log.Write,
-            exitForUpdate: ExitApp);
+            exitForUpdate: ExitApp, updateFailed: Program.UpdateFailed);
         _updater.Changed += Refresh;
 
         _uiTimer = new System.Windows.Forms.Timer { Interval = 1000 };

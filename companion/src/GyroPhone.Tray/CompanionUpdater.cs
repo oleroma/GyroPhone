@@ -1,43 +1,48 @@
-using System.ComponentModel;
-using System.Diagnostics;
 using GyroPhone.Host.Update;
 
 namespace GyroPhone.Tray;
 
 /// <summary>
-/// Restarts into a newer build that update.cmd put at this exe's path. update.cmd renames the running
-/// exe to "&lt;exe&gt;.old" (Windows allows renaming a running image) and copies the new one in its place;
-/// this notices the file's version changed within a few seconds and starts the new exe and exits,
-/// even with a phone connected (Olex: always restart on update); the phone reconnects by itself. The path never changes, so the firewall rule and the Start with Windows entry stay valid,
-/// and settings and pairing live in %APPDATA%\GyroPhone. Local builds (no CI version) never restart.
+/// Shuts down, updates and starts again when a newer build waits next to this exe. The install hook never
+/// touches a running exe: it puts the new build at "&lt;exe&gt;.new". This notices it within a few seconds,
+/// stops the watcher, starts the .new file as an <see cref="UpdateFinisher"/> and exits cleanly (release-all,
+/// bye). The finisher copies itself over this exe once it has exited and starts it again, even with a phone
+/// connected (Olex: always restart on update); the phone reconnects by itself. The exe is single-file and
+/// reads parts of itself by path while it runs, which is why it must never be renamed or replaced under a
+/// running instance. The path never changes, so the firewall rule and the Start with Windows entry stay
+/// valid, and settings and pairing live in %APPDATA%\GyroPhone. Local builds (no CI version) never update.
 /// Runs on the UI thread.
 /// </summary>
 internal sealed class CompanionUpdater : IDisposable
 {
     private const int TickMs = 5_000;
 
-    private readonly string _exePath, _oldPath;
+    private readonly string _exePath, _newPath, _oldPath;
     private readonly string _version;
     private readonly Action<string> _log;
     private readonly Action _exitForUpdate;
     private readonly System.Windows.Forms.Timer _timer;
     private bool _restarting, _disposed;
-    private string? _lastDisk = "";
+    private string? _lastNew = "";
+    /// <summary>The .new build (<see cref="UpdateFinisher.StampOf"/>) a failed update came back from: not tried again until reinstalled.</summary>
+    private readonly string? _failedStamp;
 
-    /// <summary>The newer build at this exe's path that this instance is about to restart into, or null.</summary>
+    /// <summary>The newer build next to this exe that this instance is about to restart into, or null.</summary>
     public string? Pending { get; private set; }
 
     public event Action? Changed;
 
-    public CompanionUpdater(string exePath, string version, Action<string> log, Action exitForUpdate)
+    public CompanionUpdater(string exePath, string version, Action<string> log, Action exitForUpdate, bool updateFailed)
     {
         _exePath = exePath;
+        _newPath = exePath + UpdateFinisher.NewSuffix;
         _oldPath = exePath + ".old";
         _version = version;
         _log = log;
         _exitForUpdate = exitForUpdate;
         _timer = new System.Windows.Forms.Timer { Interval = TickMs };
         _timer.Tick += (_, _) => Tick();
+        if (updateFailed) _failedStamp = UpdateFinisher.StampOf(_newPath);
     }
 
     public void Start()
@@ -47,7 +52,8 @@ internal sealed class CompanionUpdater : IDisposable
             _log($"self-restart off: {_version} is not a CI build");
             return;
         }
-        _log($"self-restart on: {_version} watches {_exePath}");
+        _log($"self-restart on: {_version} watches {_newPath}");
+        if (_failedStamp != null) _log($"update to {_failedStamp} failed; not retrying it until it is installed again");
         _timer.Start();
         Tick();
     }
@@ -59,35 +65,34 @@ internal sealed class CompanionUpdater : IDisposable
         if (pending == null || _restarting || _disposed) return;
         _restarting = true;
         _timer.Stop();
-        _log($"new build {pending} at {_exePath}, restarting");
-        try
+        bool watcher = Watcher.IsRunning();
+        if (watcher) Watcher.SignalStop();
+        _log($"new build {pending} at {_newPath}, restarting{(watcher ? " with the watcher" : "")}");
+        if (!UpdateFinisher.Launch(_newPath, tray: true, watch: watcher, _log))
         {
-            using var p = Process.Start(new ProcessStartInfo(_exePath, $"{Program.RestartedArg} {Program.UpdatedArg}")
-            {
-                UseShellExecute = false, // keeps this instance's elevation
-                WorkingDirectory = Path.GetDirectoryName(_exePath) ?? "",
-            });
-        }
-        catch (Win32Exception e)
-        {
-            _log($"restart into {pending} failed: {e.NativeErrorCode}");
             Pending = null;
             Changed?.Invoke();
-            return; // keep running this build; the new one starts next time
+            return; // keep running this build; the update is tried again when .new changes
         }
         _exitForUpdate();
     }
 
     private void Tick()
     {
-        if (File.Exists(_oldPath)) TryDelete(_oldPath); // fails while an instance still runs from it
-        string? onDisk = DiskVersion();
-        if (onDisk != _lastDisk)
+        if (File.Exists(_oldPath)) TryDelete(_oldPath); // left by builds that swapped the running exe
+        string? onDisk = NewVersion();
+        if (onDisk != _lastNew)
         {
-            _lastDisk = onDisk;
-            if (onDisk != _version) _log($"self-restart: the exe on disk is {onDisk ?? "unreadable"}");
+            _lastNew = onDisk;
+            if (onDisk != null) _log($"self-restart: {_newPath} is {onDisk}");
         }
-        string? pending = UpdateInfo.IsReplaced(_version, onDisk) ? onDisk : null;
+        if (onDisk != null && string.Equals(onDisk, _version, StringComparison.OrdinalIgnoreCase))
+        {
+            TryDelete(_newPath); // the finisher this build came from; it may still be exiting
+            onDisk = null;
+        }
+        string? pending = UpdateInfo.IsReplaced(_version, onDisk)
+            && (_failedStamp == null || UpdateFinisher.StampOf(_newPath) != _failedStamp) ? onDisk : null;
         if (pending != Pending)
         {
             Pending = pending;
@@ -97,17 +102,8 @@ internal sealed class CompanionUpdater : IDisposable
         TryRestart();
     }
 
-    private string? DiskVersion()
-    {
-        try
-        {
-            return File.Exists(_exePath) ? FileVersionInfo.GetVersionInfo(_exePath).ProductVersion : null;
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            return null; // being copied
-        }
-    }
+    /// <summary>The version of the waiting .new build, or null when there is none (or it can't be read yet).</summary>
+    private string? NewVersion() => UpdateFinisher.VersionOf(_newPath);
 
     private static void TryDelete(string path)
     {

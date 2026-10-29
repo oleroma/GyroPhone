@@ -10,6 +10,21 @@ internal static class Program
     public const string AppName = "GyroPhone Companion";
     private const string MutexName = @"Local\GyroPhoneCompanion";
 
+    /// <summary>True while a companion (not the watcher) runs in this session.</summary>
+    public static bool IsRunning()
+    {
+        try
+        {
+            if (!Mutex.TryOpenExisting(MutexName, out var m)) return false;
+            m.Dispose();
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true; // an elevated instance owns it
+        }
+    }
+
     /// <summary>Passed by "Restart as administrator": wait for the old instance to exit instead of bowing out.</summary>
     public const string RestartedArg = "--restarted";
 
@@ -18,6 +33,9 @@ internal static class Program
 
     public static bool JustUpdated { get; private set; }
 
+    /// <summary>Started again on the old build because an update couldn't replace the exe.</summary>
+    public static bool UpdateFailed { get; private set; }
+
     /// <summary>update.cmd: make host.key and host.pub if missing, then exit. No window, no tray, no server.</summary>
     public const string InitKeysArg = "--init-keys";
 
@@ -25,6 +43,7 @@ internal static class Program
     private static int Main(string[] args)
     {
         if (args.Contains(InitKeysArg)) return InitKeys();
+        if (args.Contains(UpdateFinisher.Arg)) return UpdateFinisher.Run(args);
         if (args.Contains(Watcher.Arg)) return Watcher.Run();
 
         Application.EnableVisualStyles();
@@ -62,6 +81,7 @@ internal static class Program
         }
 
         JustUpdated = args.Contains(UpdatedArg);
+        UpdateFailed = args.Contains(UpdateFinisher.FailedArg);
         GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
         try
         {

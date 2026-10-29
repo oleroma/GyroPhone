@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using GyroPhone.Host;
+using GyroPhone.Host.Update;
 using GyroPhone.Host.Settings;
 using GyroPhone.Protocol;
 using GyroPhone.Windows;
@@ -47,17 +48,22 @@ internal static class Watcher
         using var yieldPort = new EventWaitHandle(false, EventResetMode.AutoReset, YieldEventName);
         using var log = new FileLog();
         log.Write($"watcher {Application.ProductVersion} started");
+        var update = new UpdateCheck(Environment.ProcessPath ?? Application.ExecutablePath, log);
+        bool stopped = false;
+        // The stop event resets when a wait sees it, so remember it once seen.
+        bool Stopped(int waitMs) => stopped || (stopped = stop.WaitOne(waitMs));
         var keyFiles = new KeyFiles(KeyFiles.DefaultDirectory());
         var settingsPath = SettingsStore.DefaultPath();
         long lastLaunch = -RelaunchGapMs;
         var clock = Stopwatch.StartNew();
 
-        while (!stop.WaitOne(0))
+        while (!Stopped(0))
         {
+            if (update.HandOff()) break;
             using var s = TryBind();
             if (s == null)
             {
-                if (stop.WaitOne(BindRetryMs)) break; // the companion (or something else) has the port
+                if (Stopped(BindRetryMs)) break; // the companion (or something else) has the port
                 continue;
             }
             var known = PhoneWatch.Load(settingsPath, keyFiles);
@@ -65,8 +71,13 @@ internal static class Watcher
             var buf = new byte[Wire.MaxDatagram];
             EndPoint from = new IPEndPoint(IPAddress.Any, 0);
             bool yielded = false;
-            while (!stop.WaitOne(0))
+            while (!Stopped(0))
             {
+                if (update.HandOff())
+                {
+                    stopped = true;
+                    break;
+                }
                 if (yieldPort.WaitOne(0))
                 {
                     s.Close();
@@ -92,16 +103,32 @@ internal static class Watcher
                 if (clock.ElapsedMilliseconds - lastLaunch < RelaunchGapMs) continue;
                 lastLaunch = clock.ElapsedMilliseconds;
                 s.Close(); // the companion binds next; the phone repeats DISCOVER every second
-                Launch(log);
+                if (Program.IsRunning()) log.Write("known phone seen: the companion is already starting");
+                else Launch(log);
                 break;
             }
-            if (stop.WaitOne(yielded ? YieldMs : BindRetryMs)) break;
+            if (Stopped(yielded ? YieldMs : BindRetryMs)) break;
         }
         log.Write("watcher stopped");
         return 0;
     }
 
-    /// <summary>Asks a running watcher to exit (the tray's switch was turned off).</summary>
+    /// <summary>True while a watcher runs in this session.</summary>
+    public static bool IsRunning()
+    {
+        try
+        {
+            if (!Mutex.TryOpenExisting(MutexName, out var m)) return false;
+            m.Dispose();
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
+        }
+    }
+
+    /// <summary>Asks a running watcher to exit (the tray's switch was turned off, or the companion is updating).</summary>
     public static void SignalStop()
     {
         if (EventWaitHandle.TryOpenExisting(StopEventName, out var e))
@@ -153,6 +180,41 @@ internal static class Watcher
         catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException)
         {
             log.Write($"could not start the companion: {e.GetType().Name}");
+        }
+    }
+
+    /// <summary>
+    /// While the companion is off, the watcher does the companion's update itself: when a newer build waits
+    /// at "&lt;exe&gt;.new", it starts that build as an <see cref="UpdateFinisher"/> and exits, and the finisher
+    /// starts the watcher again from the updated exe. While the companion runs, the companion does it.
+    /// </summary>
+    private sealed class UpdateCheck(string exe, FileLog log)
+    {
+        private readonly string _newPath = exe + UpdateFinisher.NewSuffix;
+        private string? _failed;
+
+        public bool HandOff()
+        {
+            if (UpdateInfo.BuildNumber(Application.ProductVersion) == null || !File.Exists(_newPath) || Program.IsRunning()) return false;
+            string? version = UpdateFinisher.VersionOf(_newPath);
+            if (string.Equals(version, Application.ProductVersion, StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    File.Delete(_newPath); // the finisher this build came from; it may still be exiting
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                }
+                return false;
+            }
+            if (!UpdateInfo.IsReplaced(Application.ProductVersion, version)) return false;
+            string? stamp = UpdateFinisher.StampOf(_newPath);
+            if (stamp == null || stamp == _failed) return false;
+            log.Write($"watcher: new build {version} at {_newPath}, restarting");
+            if (UpdateFinisher.Launch(_newPath, tray: false, watch: true, log.Write)) return true;
+            _failed = stamp;
+            return false;
         }
     }
 }
