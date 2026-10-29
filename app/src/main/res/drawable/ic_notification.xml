@@ -1,7 +1,7 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="84" android:viewportHeight="84">
-    <group android:translateX="-12" android:translateY="-14">
+    <group android:translateX="-12" android:translateY="-10">
         <!-- Phone body with thin bezels and a punch-hole camera -->
         <path android:strokeColor="#FFFFFF" android:strokeWidth="4"
             android:pathData="M34.5,38h39a4.5,4.5 0 0 1 4.5,4.5v14a4.5,4.5 0 0 1 -4.5,4.5h-39a4.5,4.5 0 0 1 -4.5,-4.5v-14a4.5,4.5 0 0 1 4.5,-4.5z" />
@@ -9,14 +9,14 @@
             android:pathData="M33.4,49.5a1.6,1.6 0 1 0 3.2,0a1.6,1.6 0 1 0 -3.2,0" />
         <!-- Controller handles clipped to the phone's sides -->
         <path android:strokeColor="#FFFFFF" android:strokeWidth="4" android:strokeLineJoin="round"
-            android:pathData="M26.5,42H21.5a6,6 0 0 0 -6,6V65c0,5.5 2,9 5.5,9c3.5,0 5.5,-4 5.5,-9zM81.5,42H86.5a6,6 0 0 1 6,6V65c0,5.5 -2,9 -5.5,9c-3.5,0 -5.5,-4 -5.5,-9z" />
+            android:pathData="M26.5,38H20a4.5,4.5 0 0 0 -4.5,4.5V61c0,3.5 2,5.5 5.5,5.5c3.5,0 5.5,-2 5.5,-5.5zM81.5,38H88a4.5,4.5 0 0 1 4.5,4.5V61c0,3.5 -2,5.5 -5.5,5.5c-3.5,0 -5.5,-2 -5.5,-5.5z" />
         <!-- Left stick and D-pad -->
         <path android:strokeColor="#FFFFFF" android:strokeWidth="3.5" android:strokeLineCap="round"
-            android:pathData="M18.5,50a2.5,2.5 0 1 0 5,0a2.5,2.5 0 1 0 -5,0M21,57.5v6M18,60.5h6" />
+            android:pathData="M18.5,45.5a2.5,2.5 0 1 0 5,0a2.5,2.5 0 1 0 -5,0M21,52v6M18,55h6" />
         <!-- Right stick and face buttons -->
         <path android:strokeColor="#FFFFFF" android:strokeWidth="3.5"
-            android:pathData="M84.5,60.5a2.5,2.5 0 1 0 5,0a2.5,2.5 0 1 0 -5,0" />
+            android:pathData="M84.5,55a2.5,2.5 0 1 0 5,0a2.5,2.5 0 1 0 -5,0" />
         <path android:fillColor="#FFFFFF"
-            android:pathData="M85.9,47.2a1.1,1.1 0 1 0 2.2,0a1.1,1.1 0 1 0 -2.2,0M85.9,52.8a1.1,1.1 0 1 0 2.2,0a1.1,1.1 0 1 0 -2.2,0M83.1,50a1.1,1.1 0 1 0 2.2,0a1.1,1.1 0 1 0 -2.2,0M88.7,50a1.1,1.1 0 1 0 2.2,0a1.1,1.1 0 1 0 -2.2,0" />
+            android:pathData="M85.9,42.7a1.1,1.1 0 1 0 2.2,0a1.1,1.1 0 1 0 -2.2,0M85.9,48.3a1.1,1.1 0 1 0 2.2,0a1.1,1.1 0 1 0 -2.2,0M83.1,45.5a1.1,1.1 0 1 0 2.2,0a1.1,1.1 0 1 0 -2.2,0M88.7,45.5a1.1,1.1 0 1 0 2.2,0a1.1,1.1 0 1 0 -2.2,0" />
     </group>
 </vector>
