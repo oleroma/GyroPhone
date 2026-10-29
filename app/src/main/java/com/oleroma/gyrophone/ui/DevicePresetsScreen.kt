@@ -246,7 +246,7 @@ private fun PresetTab(name: String, selected: Boolean, usedHere: Boolean, onClic
 /** A long press on a preset's tab: its name, the workspaces that use it, Duplicate and Delete. */
 @Composable
 private fun PresetMenu(runtime: GamepadRuntime, preset: DevicePreset, onPick: (String) -> Unit, onDismiss: () -> Unit) {
-    val profile = runtime.activeProfile.value
+    val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     var name by remember(preset.id) { mutableStateOf(preset.name) }
     var using by remember(preset.id) { mutableStateOf(DevicePresets.pinnedBy(profile, preset.id).toSet()) }
     var deleting by remember(preset.id) { mutableStateOf(false) }
