@@ -3,6 +3,8 @@ package com.oleroma.gyrophone.data
 import android.content.Context
 import android.util.Log
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
+import com.oleroma.gyrophone.core.model.ButtonLibrary
+import com.oleroma.gyrophone.core.model.LibraryButton
 import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.PadPreset
@@ -125,12 +127,6 @@ class ProfileStore(context: Context) {
     /** True when a mapping profile file exists, readable or not. */
     fun hasMappingFile(): Boolean = mappingFile.exists()
 
-    /** Saves the mapping profiles; refuses to replace a file that exists but cannot be read. */
-    @Synchronized fun saveMappingProfiles(profiles: List<MappingProfile>) {
-        if (mappingFile.exists() && MappingProfiles.decode(mappingFile.readText()) == null) return
-        replaceFile(mappingFile, MappingProfiles.encode(profiles))
-    }
-
     /**
      * Keeps a copy of [profile] as it is now in "<file>.<tag>.bak" beside the profiles (not listed
      * as a profile); an existing copy is never overwritten.
@@ -151,6 +147,24 @@ class ProfileStore(context: Context) {
         val bak = File(mappingFile.path + ".$tag.bak")
         if (mappingFile.exists() && !bak.exists()) mappingFile.copyTo(bak)
     }
+
+    private val libraryFile = File(context.filesDir, "button_library.json")
+
+    /** The button library (empty if none saved, or if the file cannot be read: it is then left alone). */
+    @Synchronized fun buttonLibrary(): List<LibraryButton> =
+        if (!libraryFile.exists()) emptyList()
+        else ButtonLibrary.decode(libraryFile.readText()).orEmpty()
+
+    /** Saves the button library; refuses to replace a file that exists but cannot be read. */
+    @Synchronized fun saveButtonLibrary(buttons: List<LibraryButton>) {
+        if (libraryFile.exists() && ButtonLibrary.decode(libraryFile.readText()) == null) return
+        replaceFile(libraryFile, ButtonLibrary.encode(buttons))
+    }
+
+    /** True once each workspace holds its own mappings (moved out of the mapping profiles). */
+    var ownMappings: Boolean
+        get() = prefs.getBoolean(KEY_OWN_MAPPINGS, false)
+        set(value) { prefs.edit().putBoolean(KEY_OWN_MAPPINGS, value).apply() }
 
     /** Which version of the move to mapping profiles last ran (0 = none recorded). */
     var mappingMigration: Int
@@ -175,5 +189,6 @@ class ProfileStore(context: Context) {
         private const val KEY_ACTIVE = "active_profile"
         private const val KEY_WORKSPACE_PREFIX = "workspace_"
         private const val KEY_MAPPING_MIGRATION = "mapping_migration"
+        private const val KEY_OWN_MAPPINGS = "own_mappings"
     }
 }

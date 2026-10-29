@@ -1,7 +1,6 @@
 package com.oleroma.gyrophone.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,35 +16,32 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.AttachedPad
 import com.oleroma.gyrophone.core.model.FaceLayout
-import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.PadDevice
 import com.oleroma.gyrophone.core.model.PadDevices
+import com.oleroma.gyrophone.core.model.isTouchpad
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
 /** A page of the pad menu. Encoded as text so the open page survives the activity being recreated. */
 sealed interface PadMenuPage {
     /** The menu of the current workspace: one list with collapsible categories. */
     data object Root : PadMenuPage
-    /** Full settings of mapping profile [profileId]; null = a new profile for the current workspace. */
-    data class EditMapping(val profileId: String?) : PadMenuPage
+    /** Every mapping of the current workspace. */
+    data object Mappings : PadMenuPage
     /** The PC link (the pad's Connection capsule). */
     data object Connection : PadMenuPage
     /** Options of the whole app (the pad's Settings capsule). */
@@ -57,7 +53,7 @@ sealed interface PadMenuPage {
         fun encode(stack: List<PadMenuPage>): String = stack.joinToString(SEP) { p ->
             when (p) {
                 Root -> "root"
-                is EditMapping -> "mapping\t" + (p.profileId ?: "")
+                Mappings -> "mapping"
                 Connection -> "connection"
                 AppSettings -> "settings"
             }
@@ -67,7 +63,7 @@ sealed interface PadMenuPage {
             val f = line.split("\t")
             when (f[0]) {
                 "root" -> Root
-                "mapping" -> EditMapping(f.getOrNull(1)?.ifEmpty { null })
+                "mapping" -> Mappings
                 "connection" -> Connection
                 "settings" -> AppSettings
                 else -> null
@@ -78,9 +74,9 @@ sealed interface PadMenuPage {
 
 /**
  * The whole app: the pad itself, or one of its pages in its place. The pad's capsules open
- * Connection and Settings; a workspace's full settings (its mapping profile, its devices, then its
- * settings, as collapsible categories) open from that workspace in edit mode. Editing a mapping
- * profile opens its own page. Back steps out one page at a time.
+ * Connection and Settings; a workspace's full settings (one list of collapsible sections) open
+ * from that workspace in edit mode. Its mappings open on their own page. Back steps out one page
+ * at a time.
  */
 @Composable
 fun PadTab(runtime: GamepadRuntime, fullscreen: Boolean, onFullscreen: (Boolean) -> Unit, onRetry: () -> Unit) {
@@ -144,7 +140,7 @@ private fun PadMenu(
             TextButton(onClick = { leave(back) }) { Text(if (stack.size > 1) "← Back" else "← Pad") }
             Text(
                 when (page) {
-                    is PadMenuPage.EditMapping -> if (page.profileId == null) "New mapping profile" else "Mapping profile"
+                    PadMenuPage.Mappings -> "Mappings"
                     PadMenuPage.Root -> "Workspace settings"
                     PadMenuPage.Connection -> "Connection"
                     PadMenuPage.AppSettings -> "Settings"
@@ -161,9 +157,8 @@ private fun PadMenu(
             PadMenuPage.Root -> MenuList(runtime, content, onOpen = { open(it) }, onDeleted = onWorkspaceDeleted)
             PadMenuPage.Connection -> ConnectScreen(runtime, onRetry)
             PadMenuPage.AppSettings -> AppSettingsScreen(runtime, content)
-            is PadMenuPage.EditMapping -> MappingProfileEditor(
+            PadMenuPage.Mappings -> WorkspaceMappingEditor(
                 runtime,
-                page.profileId,
                 content,
                 onDone = back,
                 onLeaveGuard = { leaveGuard = it },
@@ -173,93 +168,77 @@ private fun PadMenu(
 }
 
 /**
- * All settings of the current workspace (⚙ in edit mode): rename / duplicate / delete, which
- * mapping profile it uses (pick, edit or make a new one), its devices, then its settings.
- * Settings of the whole app are on the Settings page instead.
+ * All settings of the current workspace (⚙ in edit mode), as one list of collapsible sections:
+ * the workspace itself (rename / duplicate / delete), its mappings, its devices, then its gyro,
+ * controls and haptics. Settings of the whole app are on the Settings page instead.
  */
 @Composable
 private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onOpen: (PadMenuPage) -> Unit, onDeleted: () -> Unit) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
-    val mappings by runtime.mappingProfiles.collectAsStateWithLifecycle()
     val current = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
     val ws = profile.workspace(current)
-    val using = MappingProfiles.of(ws, mappings)
     val devices = menuDevices(profile, controllers)
-    val open = MenuOpenState.open
-    fun isOpen(key: String, default: Boolean = false) = open[key] ?: default
-    fun toggle(key: String, default: Boolean = false) { open[key] = !isOpen(key, default) }
     var removing by remember { mutableStateOf<AttachedPad?>(null) }
+    var copying by remember { mutableStateOf(false) }
 
-    Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(
-            "Workspace ${current + 1}/${profile.workspaces.size} · ${ws.name}",
-            style = MaterialTheme.typography.titleLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
-        WorkspaceActions(profile, current) { p, _ ->
-            val deleted = p.workspaces.size < profile.workspaces.size
-            runtime.editActiveProfile { p }
-            if (deleted) onDeleted()
+    Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        RememberedSection(
+            runtime,
+            "workspace.Workspace",
+            "Workspace",
+            defaultOpen = true,
+            subtitle = "${ws.name} · ${current + 1} of ${profile.workspaces.size}",
+        ) {
+            WorkspaceActions(profile, current) { p, _ ->
+                val deleted = p.workspaces.size < profile.workspaces.size
+                runtime.editActiveProfile { p }
+                if (deleted) onDeleted()
+            }
+            Hint("Duplicate copies everything, mappings included; the copy can then be changed on its own.")
         }
 
-        // ── Mapping profile of this workspace ───────────────────────────────
-        CategoryHeader("Mapping profile", using?.name, isOpen("mapping", true)) { toggle("mapping", true) }
-        if (isOpen("mapping", true)) {
-            Indented {
-                Hint("Touch buttons, keyboard and controller mappings. Tap one to use it in this workspace.")
-                for (m in mappings) {
-                    val selected = m.id == using?.id
-                    val users = profile.workspaces.filter { it.mappingProfileId == m.id }
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable { if (!selected) runtime.selectMappingProfile(m.id, current) }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = selected, onClick = null, modifier = Modifier.padding(end = 8.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(m.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                (if (users.isEmpty()) "Not used" else "Used by " + users.joinToString { it.name }) +
-                                    " · ${m.touch.size + m.keyboard.size + m.controller.size} mappings",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        TextButton(onClick = { onOpen(PadMenuPage.EditMapping(m.id)) }) { Text("Edit") }
-                    }
+        val touchCount = ws.mappings.count { !it.source.isTouchpad }
+        RememberedSection(
+            runtime,
+            "workspace.Mappings",
+            "Mappings",
+            defaultOpen = true,
+            subtitle = "$touchCount touch · ${ws.keyboard.size} keyboard · ${ws.controller.size} controller" +
+                if (ws.sets.isEmpty()) "" else " · ${ws.sets.size} layers",
+        ) {
+            Hint("Touch buttons, touchpad, keyboard and controller mappings of this workspace only.")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { onOpen(PadMenuPage.Mappings) }) { Text("Edit mappings") }
+                if (profile.workspaces.size > 1) {
+                    OutlinedButton(onClick = { copying = true }) { Text("Copy from…") }
                 }
-                OutlinedButton(onClick = { onOpen(PadMenuPage.EditMapping(null)) }) { Text("+ New profile") }
             }
         }
 
-        // ── Devices of this workspace ───────────────────────────────────────
-        CategoryHeader("Devices", "${ws.pads.size}", isOpen("devices", true)) { toggle("devices", true) }
-        if (isOpen("devices", true)) {
+        RememberedSection(
+            runtime,
+            "workspace.Devices",
+            "Devices",
+            subtitle = if (ws.pads.isEmpty()) "Touch screen only" else ws.pads.joinToString { it.name },
+        ) {
             if (ws.pads.isEmpty()) Hint("No game pads in this workspace: only the touch screen (and a keyboard, if one is connected).")
             for (pad in ws.pads) {
                 val device = devices.firstOrNull { it.match == pad.match } ?: PadDevice(pad.match, pad.name, pad.family)
-                val key = "pad/" + ws.id + "/" + pad.id
-                ItemHeader(
-                    title = pad.name,
-                    subtitle = if (isConnected(device, controllers)) "Connected" else if (pad.match == null) "Any game pad" else "Not connected",
-                    expanded = isOpen(key),
-                ) { toggle(key) }
-                if (isOpen(key)) {
-                    Indented { DeviceItem(runtime, current, pad, onRemove = { removing = pad }) }
-                }
+                Text(pad.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    if (isConnected(device, controllers)) "Connected" else if (pad.match == null) "Any game pad" else "Not connected",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                DeviceItem(runtime, current, pad, onRemove = { removing = pad })
+                HorizontalDivider()
             }
             val addable = devices.filter { d -> ws.pads.none { it.match == d.match } }
             if (addable.isNotEmpty()) {
                 Row(
-                    Modifier.horizontalScroll(rememberScrollState()).padding(start = 16.dp, top = 4.dp),
+                    Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -274,18 +253,18 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onOpen: (PadMe
             }
         }
 
-        // ── This workspace's settings ───────────────────────────────────────
-        CategoryHeader("Gyro, touchpad, touch keys", null, isOpen("wsSettings")) { toggle("wsSettings") }
-        if (isOpen("wsSettings")) {
-            Indented { WorkspaceSettings(runtime, profile, current) }
-        }
+        WorkspaceSettings(runtime, profile, current)
+    }
+
+    if (copying) {
+        CopyMappingsDialog(runtime, current, discards = false, onDismiss = { copying = false }, onCopied = { copying = false })
     }
 
     removing?.let { pad ->
         AlertDialog(
             onDismissRequest = { removing = null },
             title = { Text("Remove ${pad.name}?") },
-            text = { Text("It stops acting in \"${ws.name}\". The mapping profile is kept.") },
+            text = { Text("It stops acting in \"${ws.name}\". The workspace's controller mappings are kept.") },
             confirmButton = {
                 TextButton(onClick = {
                     removing = null
@@ -301,8 +280,8 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onOpen: (PadMe
 
 /**
  * One device of workspace [wsIndex]: its button layout (how its buttons are named and drawn) and
- * Remove. Its mappings are the controller category of the workspace's mapping profile, unless it
- * kept its own from before mapping profiles.
+ * Remove. Its mappings are the workspace's controller mappings, unless it kept its own from
+ * before mapping profiles.
  */
 @Composable
 private fun DeviceItem(runtime: GamepadRuntime, wsIndex: Int, pad: AttachedPad, onRemove: () -> Unit) {
@@ -322,71 +301,14 @@ private fun DeviceItem(runtime: GamepadRuntime, wsIndex: Int, pad: AttachedPad, 
         }
     }
     pad.own?.let { own ->
-        Hint("This pad keeps the mappings it had before mapping profiles (${own.size}), instead of the profile's Controller set.")
+        Hint("This pad keeps the mappings it had before mapping profiles (${own.size}), instead of the workspace's controller mappings.")
         OutlinedButton(onClick = {
             runtime.editActiveProfile { p ->
                 p.updateWorkspace(wsIndex) { w -> w.copy(pads = w.pads.map { if (it.id == pad.id) it.copy(own = null) else it }) }
             }
-        }) { Text("Use the profile's Controller mappings") }
+        }) { Text("Use the workspace's controller mappings") }
     }
     TextButton(onClick = onRemove) { Text("Remove device", color = MaterialTheme.colorScheme.error) }
-}
-
-/** Which menu categories and items are expanded; kept for as long as the app runs. */
-private object MenuOpenState {
-    val open = mutableStateMapOf<String, Boolean>()
-}
-
-@Composable
-private fun CategoryHeader(title: String, detail: String?, expanded: Boolean, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 4.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(if (expanded) "▾" else "▸", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(end = 8.dp))
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-        if (detail != null) {
-            Text(
-                detail,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-        }
-    }
-    HorizontalDivider()
-}
-
-@Composable
-private fun ItemHeader(title: String, subtitle: String?, expanded: Boolean, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(if (expanded) "▾" else "▸", modifier = Modifier.padding(end = 8.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (subtitle != null) {
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun Indented(content: @Composable () -> Unit) {
-    Column(
-        Modifier.fillMaxWidth().padding(start = 32.dp, end = 4.dp, bottom = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) { content() }
 }
 
 @Composable

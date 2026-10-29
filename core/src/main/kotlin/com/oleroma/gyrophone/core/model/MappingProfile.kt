@@ -7,9 +7,9 @@ import kotlinx.serialization.json.Json
 /**
  * Every remap in one place, in three categories: the on-screen [touch] buttons (keyed by control
  * id), physical [keyboard] keys, and [controller] buttons and sticks (one set for every attached
- * game pad). Each workspace names the profile it uses ([Workspace.mappingProfileId]) and keeps only
- * its layout, devices and gyro / touchpad settings; [MappingProfiles.resolve] puts its profile's
- * mappings into it for the engine.
+ * game pad). Builds before workspaces owned their mappings ([WorkspaceMappings]) kept them here,
+ * shared by the workspaces naming the profile ([Workspace.mappingProfileId]); only read now to move
+ * them into the workspaces ([WorkspaceMappings.fromProfiles]).
  */
 @Serializable
 data class MappingProfile(

@@ -7,18 +7,17 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
@@ -32,15 +31,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -53,19 +53,19 @@ import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.FaceLayout
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
-import com.oleroma.gyrophone.core.model.MappingProfile
-import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.PadPresets
 import com.oleroma.gyrophone.core.model.PhysicalKind
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchpadSettings
+import com.oleroma.gyrophone.core.model.isTouchpad
+import com.oleroma.gyrophone.core.model.withTouchpadMappings
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.abs
 
 /*
- * The mapping profile editor: every remap of a profile in four categories (touch buttons,
+ * The workspace mapping editor: every remap of a workspace in four categories (touch buttons,
  * touchpad, keyboard, controller), each as two columns, button | mapping.
  */
 
@@ -118,15 +118,14 @@ private sealed interface EditorRow {
 private fun gestureKey(category: Category, id: String, input: BindableInput) = "$category/$id/${input.label}"
 
 /**
- * Full settings of mapping profile [profileId] (null = a new profile, starting as a copy of the
- * current workspace's): its name, then its touch, keyboard and controller mappings. Works on a
- * draft: Save stores it (every workspace using it follows); a new profile is used by the current
- * workspace. Pressing a key or button highlights its row and scrolls to it.
+ * All mappings of the current workspace: its touch buttons, touchpad, keyboard and controller,
+ * with its layers. Works on a draft: Save stores it in the workspace (no other workspace changes).
+ * "Copy from…" brings another workspace's mappings in ([CopyMappingsDialog]). Pressing a key or
+ * button highlights its row and scrolls to it.
  */
 @Composable
-internal fun MappingProfileEditor(
+internal fun WorkspaceMappingEditor(
     runtime: GamepadRuntime,
-    profileId: String?,
     modifier: Modifier,
     onDone: () -> Unit,
     /** Gets a guard while there are unsaved changes (null otherwise); the menu leaves through it. */
@@ -134,33 +133,26 @@ internal fun MappingProfileEditor(
 ) {
     val set by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
-    val profiles by runtime.mappingProfiles.collectAsStateWithLifecycle()
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
     val userPresets by runtime.padPresets.collectAsStateWithLifecycle()
     val ws = set.workspace(wsIndex)
-    val currentProfile = MappingProfiles.of(ws, profiles)
-    val source = profileId?.let { id -> profiles.firstOrNull { it.id == id } }
-    // Keep the start once found, so a profile renamed elsewhere does not reset the draft.
-    val start = remember(profileId) {
-        source ?: currentProfile?.let { it.copy(id = "", name = it.name + " copy") } ?: MappingProfile("", "Profile")
-    }
-    if (profileId != null && source == null) {
-        Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("This profile no longer exists.")
-            OutlinedButton(onClick = onDone) { Text("Back") }
-        }
-        return
+    /** Bumped by a copy from another workspace, so the draft starts again from what was copied. */
+    var revision by remember { mutableIntStateOf(0) }
+    val draftKey = ws.id + "/" + revision
+    // Keep the start once found, so a save elsewhere does not reset the draft.
+    val start = remember(draftKey) { ws }
+    val startTouchpad = remember(draftKey) {
+        start.withTouchpadMappings().mappings.filter { it.source.isTouchpad }
     }
 
-    var name by rememberSaveable(profileId) { mutableStateOf(start.name) }
-    var touch by remember(profileId) { mutableStateOf(start.touch) }
-    var keyboard by remember(profileId) { mutableStateOf(start.keyboard) }
-    var controller by remember(profileId) { mutableStateOf(start.controller) }
-    val startTouchpad = remember(profileId) { start.touchpad ?: Bindings.defaultTouchpadMappings(ws.touchpad) }
-    var touchpad by remember(profileId) { mutableStateOf(startTouchpad) }
-    var sets by remember(profileId) { mutableStateOf(start.sets) }
+    val startTouch = remember(draftKey) { start.mappings.filterNot { it.source.isTouchpad } }
+    var touch by remember(draftKey) { mutableStateOf(startTouch) }
+    var keyboard by remember(draftKey) { mutableStateOf(start.keyboard) }
+    var controller by remember(draftKey) { mutableStateOf(start.controller) }
+    var touchpad by remember(draftKey) { mutableStateOf(startTouchpad) }
+    var sets by remember(draftKey) { mutableStateOf(start.sets) }
     // The mapping set being edited (0 = Base): the editor sees it as Base (Bindings.viewSet).
-    var editSet by remember(profileId) { mutableStateOf(MappingSet.BASE) }
+    var editSet by remember(draftKey) { mutableStateOf(MappingSet.BASE) }
     fun raw(c: Category): List<Mapping> = when (c) {
         Category.TOUCH -> touch
         Category.TOUCHPAD -> touchpad
@@ -188,12 +180,12 @@ internal fun MappingProfileEditor(
         return MappingSet(id).also { sets = (sets + it).sortedBy { s -> s.id } }
     }
 
-    val dirty = name != start.name || touch.toSet() != start.touch.toSet() ||
+    val dirty = touch.toSet() != startTouch.toSet() ||
             keyboard.toSet() != start.keyboard.toSet() || controller.toSet() != start.controller.toSet() ||
             touchpad.toSet() != startTouchpad.toSet() || sets != start.sets
 
     var confirmDiscard by remember { mutableStateOf(false) }
-    var confirmDelete by remember { mutableStateOf(false) }
+    var copying by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
     var renamingSet by remember { mutableStateOf<MappingSet?>(null) }
     var deletingSet by remember { mutableStateOf<MappingSet?>(null) }
@@ -205,11 +197,7 @@ internal fun MappingProfileEditor(
     // Keys whose gesture rows (tap, double tap, long press, release) are open, by [gestureKey].
     val openGestures = remember { mutableStateMapOf<String, Boolean>() }
 
-    val users = set.workspaces.filter { source != null && it.mappingProfileId == source.id }
-    // Touch buttons of the workspaces that use it (this one first), each once.
-    val controls = (listOf(ws) + users.filter { it.id != ws.id })
-        .flatMap { w -> w.touchControls.filter { it.kind != TouchKind.FULLSCREEN } }
-        .distinctBy { it.id }
+    val controls = ws.touchControls.filter { it.kind != TouchKind.FULLSCREEN }
     // The controller drawn: this workspace's first pad, else a stand-in of the standard layout.
     val pad = ws.pads.firstOrNull() ?: AttachedPad(id = "", family = FaceLayout.XBOX)
     val device = connectedDevice(pad, controllers)
@@ -333,58 +321,42 @@ internal fun MappingProfileEditor(
     }
 
     fun save() {
-        val trimmed = name.trim().ifEmpty { start.name }
-        if (source != null) {
-            runtime.updateMappingProfile(
-                source.copy(
-                    name = trimmed,
-                    touch = touch,
+        val id = start.id
+        runtime.editActiveProfile { p ->
+            val i = p.indexOfWorkspace(id)
+            if (i < 0) p else p.updateWorkspace(i) { w ->
+                w.copy(
+                    mappings = touch + touchpad,
+                    touchpad = w.touchpad.copy(mapped = true),
                     keyboard = keyboard,
                     controller = controller,
-                    touchpad = touchpad,
                     sets = sets,
-                ),
-            )
-        } else {
-            runtime.newMappingProfile(
-                trimmed,
-                MappingProfile("", trimmed, touch, keyboard, controller, touchpad, sets),
-                wsIndex
-            )
+                )
+            }
         }
         onDone()
     }
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                singleLine = true,
-                label = { Text("Profile name") },
+            Text(
+                ws.name,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            if (set.workspaces.size > 1) {
+                TextButton(onClick = { copying = true }) { Text("Copy from…") }
+            }
             OutlinedButton(onClick = { if (dirty) confirmDiscard = true else onDone() }) { Text("Cancel") }
-            Button(onClick = { save() }, enabled = name.isNotBlank()) { Text("Save") }
+            Button(onClick = { save() }) { Text("Save") }
         }
         Text(
-            when {
-                source == null -> "Saving adds this profile and uses it in \"${ws.name}\"."
-                users.size > 1 -> "Used by ${users.size} workspaces: ${users.joinToString { it.name }}. Saving changes all of them."
-                users.size == 1 -> "Used by \"${users[0].name}\"."
-                else -> "No workspace uses it yet."
-            },
+            "Only this workspace's mappings. Saving changes no other workspace.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (source != null && profiles.size > 1) {
-            TextButton(onClick = { confirmDelete = true }) {
-                Text(
-                    "Delete profile",
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
-        }
 
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -622,7 +594,7 @@ internal fun MappingProfileEditor(
     }
 
     if (savingPreset) {
-        var presetName by remember { mutableStateOf("${name.trim()} controller") }
+        var presetName by remember { mutableStateOf("${ws.name.trim()} controller") }
         AlertDialog(
             onDismissRequest = { savingPreset = false },
             title = { Text("Save controller preset") },
@@ -705,7 +677,7 @@ internal fun MappingProfileEditor(
                 pendingLeave = null
             },
             title = { Text("Discard changes?") },
-            text = { Text("The changes to \"${start.name}\" are not saved.") },
+            text = { Text("The changes to the mappings of \"${start.name}\" are not saved.") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDiscard = false
@@ -723,25 +695,16 @@ internal fun MappingProfileEditor(
         )
     }
 
-    if (confirmDelete && source != null) {
-        val fallback = profiles.firstOrNull { it.id != source.id }
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete profile \"${source.name}\"?") },
-            text = {
-                Text(
-                    if (users.isEmpty()) "It is removed from the saved profiles."
-                    else "Workspaces that use it (${users.joinToString { it.name }}) switch to \"${fallback?.name}\".",
-                )
+    if (copying) {
+        CopyMappingsDialog(
+            runtime,
+            wsIndex,
+            discards = dirty,
+            onDismiss = { copying = false },
+            onCopied = {
+                copying = false
+                revision++
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDelete = false
-                    runtime.deleteMappingProfile(source.id)
-                    onDone()
-                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
         )
     }
 }
