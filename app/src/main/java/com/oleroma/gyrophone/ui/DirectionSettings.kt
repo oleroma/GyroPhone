@@ -31,6 +31,7 @@ import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.HoldZone
 import com.oleroma.gyrophone.core.model.MoveField
+import com.oleroma.gyrophone.core.model.MoveMode
 import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.SurfaceField
 import com.oleroma.gyrophone.core.model.TouchpadSettings
@@ -114,16 +115,29 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
                 ) { v -> edit { it.copy(deadzoneStillDp = v) } }
             }
         }
+        OverrideRow(
+            "Move direction", own(SurfaceField.MOVE_MODE), reset(SurfaceField.MOVE_MODE),
+            hint = moveModeHint(s.moveMode) + " Each Move's ⚙ can set its own.",
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (mode in MoveMode.entries) SelectChip(mode.label, s.moveMode == mode) { edit { it.copy(moveMode = mode) } }
+            }
+        }
         OverrideSlider(
-            key + "vlock", if (s.verticalLockDeg < 1f) "Vertical lock: off" else "Vertical lock %.0f°",
-            s.verticalLockDeg, 0f..TouchpadSettings.MAX_LOCK_DEG, 1f, own(SurfaceField.VERTICAL_LOCK), reset(SurfaceField.VERTICAL_LOCK),
-            hint = "Motion within this angle of straight up / down loses its sideways part.",
-        ) { v -> edit { it.copy(verticalLockDeg = v) } }
+            key + "mpx", "Move X pie %.0f°", s.movePieX, TouchpadSettings.MIN_MOVE_PIE_DEG..TouchpadSettings.MAX_MOVE_PIE_DEG, 5f,
+            own(SurfaceField.MOVE_PIE_X), reset(SurfaceField.MOVE_PIE_X),
+            hint = "With Pie: Move X moves while the finger heads within this pie, left and right alike.",
+        ) { v -> edit { it.copy(movePieX = v) } }
         OverrideSlider(
-            key + "hlock", if (s.horizontalLockDeg < 1f) "Horizontal lock: off" else "Horizontal lock %.0f°",
-            s.horizontalLockDeg, 0f..TouchpadSettings.MAX_LOCK_DEG, 1f, own(SurfaceField.HORIZONTAL_LOCK), reset(SurfaceField.HORIZONTAL_LOCK),
-            hint = "Motion within this angle of sideways loses its up / down part. Cursor, scroll, sticks and held directions alike.",
-        ) { v -> edit { it.copy(horizontalLockDeg = v) } }
+            key + "mpy", "Move Y pie %.0f°", s.movePieY, TouchpadSettings.MIN_MOVE_PIE_DEG..TouchpadSettings.MAX_MOVE_PIE_DEG, 5f,
+            own(SurfaceField.MOVE_PIE_Y), reset(SurfaceField.MOVE_PIE_Y),
+            hint = "With Pie: Move Y moves while the finger heads within this pie, up and down alike.",
+        ) { v -> edit { it.copy(movePieY = v) } }
+        OverrideSlider(
+            key + "msample", "Move sample %.1f dp", s.moveSampleDp, TouchpadSettings.MIN_MOVE_SAMPLE_DP..TouchpadSettings.MAX_MOVE_SAMPLE_DP, 0.5f,
+            own(SurfaceField.MOVE_SAMPLE), reset(SurfaceField.MOVE_SAMPLE),
+            hint = "Not with Free: a Move's heading is that of about the last this much travel. A stroke's first this much waits for it, then goes on at once.",
+        ) { v -> edit { it.copy(moveSampleDp = v) } }
 
         SectionTitle("Directions")
         DirectionPies(s)
@@ -295,12 +309,26 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
             k + "acc", "Acceleration %.1f", if (x) f.accelerationX else f.accelerationY, 0f..2f, 0.1f,
             own(MoveField.ACCELERATION), reset(MoveField.ACCELERATION),
         ) { v -> edit(MoveField.ACCELERATION) { it.copy(acceleration = v) } }
-        val lock = if (x) f.verticalLockDeg else f.horizontalLockDeg
-        OverrideSlider(
-            k + "lock", if (lock < 1f) (if (x) "Vertical lock: off" else "Horizontal lock: off") else if (x) "Vertical lock %.0f°" else "Horizontal lock %.0f°",
-            lock, 0f..TouchpadSettings.MAX_LOCK_DEG, 1f, own(MoveField.LOCK), reset(MoveField.LOCK),
-            hint = if (x) "Motion within this angle of straight up / down moves nothing sideways." else "Motion within this angle of sideways moves nothing up or down.",
-        ) { v -> edit(MoveField.LOCK) { it.copy(lock = v) } }
+        val mode = if (x) f.modeX else f.modeY
+        OverrideRow("Direction", own(MoveField.MODE), reset(MoveField.MODE), hint = moveModeHint(mode)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (md in MoveMode.entries) SelectChip(md.label, mode == md) { edit(MoveField.MODE) { it.copy(mode = md) } }
+            }
+        }
+        if (mode == MoveMode.PIE) {
+            OverrideSlider(
+                k + "pie", "Pie %.0f°", if (x) f.pieX else f.pieY, TouchpadSettings.MIN_MOVE_PIE_DEG..TouchpadSettings.MAX_MOVE_PIE_DEG, 5f,
+                own(MoveField.PIE), reset(MoveField.PIE),
+                hint = "It moves while the finger heads within this pie, " + if (x) "left and right alike." else "up and down alike.",
+            ) { v -> edit(MoveField.PIE) { it.copy(pie = v) } }
+        }
+        if (mode != MoveMode.FREE) {
+            OverrideSlider(
+                k + "sample", "Sample %.1f dp", f.moveSampleDp, TouchpadSettings.MIN_MOVE_SAMPLE_DP..TouchpadSettings.MAX_MOVE_SAMPLE_DP, 0.5f,
+                own(MoveField.SAMPLE), reset(MoveField.SAMPLE),
+                hint = "The heading is that of about the last this much travel; a stroke's first this much waits for it. For Move X and Y alike.",
+            ) { v -> edit(MoveField.SAMPLE) { it.copy(sample = v) } }
+        }
         if (m.fingers == 1) {
             OverrideSlider(
                 k + "dz", if (f.cursorDeadzoneDp < 1f) "Cursor deadzone: off" else "Cursor deadzone %.0f dp",
@@ -344,6 +372,13 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
         ) { v -> edit(MoveField.INERTIA) { it.copy(inertia = v) } }
         DirNote("Highlighted: set for ${m.label} only. The rest is the Settings' value, shared by every Move X and Y.")
     }
+}
+
+/** What Move direction [mode] does. */
+private fun moveModeHint(mode: MoveMode): String = when (mode) {
+    MoveMode.FREE -> "Free: the finger moves both ways at once, with no delay."
+    MoveMode.LARGER_AXIS -> "Larger axis: only the way the finger mostly goes moves, so motion snaps straight."
+    MoveMode.PIE -> "Pie: each Move moves while the finger heads within its pie; wide pies overlap at diagonals."
 }
 
 @Composable

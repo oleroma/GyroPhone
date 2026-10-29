@@ -197,8 +197,10 @@ data class SurfaceSettings(
     val catchUpMs: Int? = null,
     val deadzoneRearmMs: Int? = null,
     val deadzoneStillDp: Float? = null,
-    val verticalLockDeg: Float? = null,
-    val horizontalLockDeg: Float? = null,
+    val moveMode: MoveMode? = null,
+    val movePieX: Float? = null,
+    val movePieY: Float? = null,
+    val moveSampleDp: Float? = null,
     val dirSampleDp: Float? = null,
     val swipeDp: Float? = null,
     val holdDp: Float? = null,
@@ -263,8 +265,10 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
     catchUpMs = o.catchUpMs ?: catchUpMs,
     deadzoneRearmMs = o.deadzoneRearmMs ?: deadzoneRearmMs,
     deadzoneStillDp = o.deadzoneStillDp ?: deadzoneStillDp,
-    verticalLockDeg = o.verticalLockDeg ?: verticalLockDeg,
-    horizontalLockDeg = o.horizontalLockDeg ?: horizontalLockDeg,
+    moveMode = o.moveMode ?: moveMode,
+    movePieX = o.movePieX ?: movePieX,
+    movePieY = o.movePieY ?: movePieY,
+    moveSampleDp = o.moveSampleDp ?: moveSampleDp,
     dirSampleDp = o.dirSampleDp ?: dirSampleDp,
     swipeDp = o.swipeDp ?: swipeDp,
     holdDp = o.holdDp ?: holdDp,
@@ -298,7 +302,9 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
                 acceleration = m.acceleration.takeIf { o.acceleration == null },
                 scrollSpeed = m.scrollSpeed.takeIf { o.scrollSpeed == null },
                 naturalScroll = m.naturalScroll.takeIf { o.naturalScroll == null },
-                lock = m.lock.takeIf { (if (x) o.verticalLockDeg else o.horizontalLockDeg) == null },
+                mode = m.mode.takeIf { o.moveMode == null },
+                pie = m.pie.takeIf { (if (x) o.movePieX else o.movePieY) == null },
+                sample = m.sample.takeIf { o.moveSampleDp == null },
                 cursorDeadzoneDp = m.cursorDeadzoneDp.takeIf { o.cursorDeadzoneDp == null },
                 catchUpMs = m.catchUpMs.takeIf { o.catchUpMs == null },
                 deadzoneRearmMs = m.deadzoneRearmMs.takeIf { o.deadzoneRearmMs == null },
@@ -328,10 +334,17 @@ enum class MoveSlot(val fingers: Int, val x: Boolean) {
 }
 
 /**
+ * When a Move X / Y moves: [FREE] always, [LARGER_AXIS] only while the travel is more its way
+ * than the other (two 90° pies), [PIE] only while it heads within its pie ([TouchpadSettings.movePieX]).
+ */
+@Serializable
+enum class MoveMode(val label: String) { FREE("Free"), LARGER_AXIS("Larger axis"), PIE("Pie") }
+
+/**
  * One Move X / Y's own settings ([MoveSlot]) over the shared ones of its surface (null = the
- * shared value). [lock]: Move X's is the vertical lock (it loses X near straight up and down),
- * Move Y's the horizontal one. The cursor deadzone with its catch-up and re-arm, and inertia, go
- * for the whole motion of a finger count: its Move X holds them ([MoveField.whole]).
+ * shared value). [mode] and [pie]: when it moves ([MoveMode]). The cursor deadzone with its
+ * catch-up and re-arm, inertia and the move sample go for the whole motion of a finger count:
+ * its Move X holds them ([MoveField.whole]).
  */
 @Serializable
 data class MoveSettings(
@@ -339,19 +352,21 @@ data class MoveSettings(
     val acceleration: Float? = null,
     val scrollSpeed: Float? = null,
     val naturalScroll: Boolean? = null,
-    val lock: Float? = null,
+    val mode: MoveMode? = null,
+    val pie: Float? = null,
     val cursorDeadzoneDp: Float? = null,
     val catchUpMs: Int? = null,
     val deadzoneRearmMs: Int? = null,
     val deadzoneStillDp: Float? = null,
     val inertia: Boolean? = null,
+    val sample: Float? = null,
 ) {
     /** These with [over]'s own values in place of theirs. */
     fun under(over: MoveSettings?): MoveSettings = if (over == null) this else MoveSettings(
         over.sensitivity ?: sensitivity, over.acceleration ?: acceleration, over.scrollSpeed ?: scrollSpeed,
-        over.naturalScroll ?: naturalScroll, over.lock ?: lock, over.cursorDeadzoneDp ?: cursorDeadzoneDp,
+        over.naturalScroll ?: naturalScroll, over.mode ?: mode, over.pie ?: pie, over.cursorDeadzoneDp ?: cursorDeadzoneDp,
         over.catchUpMs ?: catchUpMs, over.deadzoneRearmMs ?: deadzoneRearmMs, over.deadzoneStillDp ?: deadzoneStillDp,
-        over.inertia ?: inertia,
+        over.inertia ?: inertia, over.sample ?: sample,
     )
 
     val isEmpty: Boolean get() = this == NONE
@@ -375,10 +390,15 @@ data class MotionFeel(
     val accelerationX: Float, val accelerationY: Float,
     val scrollSpeedX: Float, val scrollSpeedY: Float,
     val naturalScrollX: Boolean, val naturalScrollY: Boolean,
-    val verticalLockDeg: Float, val horizontalLockDeg: Float,
+    val modeX: MoveMode, val modeY: MoveMode,
+    val pieX: Float, val pieY: Float,
     val cursorDeadzoneDp: Float, val catchUpMs: Int, val deadzoneRearmMs: Int, val deadzoneStillDp: Float,
     val inertia: Boolean,
-)
+    val moveSampleDp: Float,
+) {
+    /** Every Move moves freely: nothing to judge. */
+    val free: Boolean get() = modeX == MoveMode.FREE && modeY == MoveMode.FREE
+}
 
 /** [dirs] with [d]'s swipe and hold pies set to [deg] where [deg] is not [shared]. */
 private fun piesInto(dirs: List<DirSettings>?, pies: List<Float>, shared: Float): List<DirSettings>? =
@@ -739,13 +759,13 @@ data class TouchpadSettings(
     val deadzoneRearmMs: Int = 0,
     /** Movement (dp) that still counts as standing still for [deadzoneRearmMs]. */
     val deadzoneStillDp: Float = 2f,
-    /**
-     * Vertical lock: motion heading within this angle (degrees) of straight up or down loses its
-     * sideways part (cursor, scroll, stick, held directions alike); 0 = off.
-     */
-    val verticalLockDeg: Float = 0f,
-    /** Horizontal lock: motion within this angle of sideways loses its up / down part; 0 = off. */
-    val horizontalLockDeg: Float = 0f,
+    /** When Move X and Y move ([MoveMode]): every Move without its own. */
+    val moveMode: MoveMode = MoveMode.FREE,
+    /** With [MoveMode.PIE]: Move X's pie (degrees), left and right alike, and Move Y's, up and down. */
+    val movePieX: Float = DEFAULT_MOVE_PIE_DEG,
+    val movePieY: Float = DEFAULT_MOVE_PIE_DEG,
+    /** A Move's heading is that of about the last this many dp of travel; a motion's first this many wait for it. */
+    val moveSampleDp: Float = DEFAULT_MOVE_SAMPLE_DP,
     /**
      * Directions (swipes and held directions): a step's direction is that of about the last this
      * many dp of travel, and there is none until the motion has travelled it.
@@ -803,10 +823,11 @@ data class TouchpadSettings(
             x.acceleration ?: acceleration, y.acceleration ?: acceleration,
             x.scrollSpeed ?: scrollSpeed, y.scrollSpeed ?: scrollSpeed,
             x.naturalScroll ?: naturalScroll, y.naturalScroll ?: naturalScroll,
-            x.lock ?: verticalLockDeg, y.lock ?: horizontalLockDeg,
+            x.mode ?: moveMode, y.mode ?: moveMode,
+            x.pie ?: movePieX, y.pie ?: movePieY,
             x.cursorDeadzoneDp ?: cursorDeadzoneDp, x.catchUpMs ?: catchUpMs,
             x.deadzoneRearmMs ?: deadzoneRearmMs, x.deadzoneStillDp ?: deadzoneStillDp,
-            x.inertia ?: inertia,
+            x.inertia ?: inertia, x.sample ?: moveSampleDp,
         )
     }
 
@@ -858,7 +879,12 @@ data class TouchpadSettings(
         const val MAX_CATCH_UP_MS = 500
         const val MAX_REARM_MS = 1000
         const val MAX_STILL_DP = 10f
-        const val MAX_LOCK_DEG = 45f
+        const val DEFAULT_MOVE_PIE_DEG = 120f
+        const val MIN_MOVE_PIE_DEG = 10f
+        const val MAX_MOVE_PIE_DEG = 180f
+        const val DEFAULT_MOVE_SAMPLE_DP = 2f
+        const val MIN_MOVE_SAMPLE_DP = 0.5f
+        const val MAX_MOVE_SAMPLE_DP = 20f
         const val DEFAULT_DIR_SAMPLE_DP = 4f
         const val MIN_DIR_SAMPLE_DP = 1f
         const val MAX_DIR_SAMPLE_DP = 20f

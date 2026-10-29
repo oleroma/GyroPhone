@@ -4,6 +4,7 @@ import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.GestureActions
 import com.oleroma.gyrophone.core.model.MotionFeel
+import com.oleroma.gyrophone.core.model.MoveMode
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
@@ -168,8 +169,8 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     // (centroid, px), floating-stick levels (-1..1), whether its swipe fired and it scrolled.
     private var phaseN = 0
 
-    // Travel since the motion started (px), after the axis locks; and the recent travel that
-    // judges a step's direction for them (about [LOCK_WINDOW_DP] long).
+    // Travel since the motion started (px), as Move X / Y take it; and the recent travel that
+    // judges its heading for them (about [MotionFeel.moveSampleDp] long, [gateMoves]).
     private var trX = 0f
     private var trY = 0f
     private var winX = 0f
@@ -850,6 +851,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         zoneCounts(n)
         swiped = false; scrolled = false
         trX = 0f; trY = 0f; winX = 0f; winY = 0f
+        headed = false; waitX = 0f; waitY = 0f
         motionN = n
         dzHolding = n == 1 && state == State.MOVE && feel(n).cursorDeadzoneDp > 0f && map.motion[0].cursor
         rearmable = dzHolding && feel(n).deadzoneRearmMs > 0
@@ -866,34 +868,60 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     }
 
     /**
-     * Axis locks: a step heading within the vertical lock's angle of straight up / down loses its
-     * X, one within the horizontal lock's angle of sideways its Y. The direction is that of the
-     * last [LOCK_WINDOW_DP] of travel, so jitter does not flip it. Writes the step to [lockX] / [lockY].
+     * Which of the step goes on to Move X and Y ([MotionFeel.modeX], [MoveMode]): a Move moves
+     * while the heading of the last [MotionFeel.moveSampleDp] of travel is its way, always when
+     * free. A motion's first sample waits for its heading, then goes to the Moves it heads for at
+     * once, so none of it is lost. Writes the step to [moveX] / [moveY].
      */
-    private fun lockAxes(sdx: Float, sdy: Float) {
-        lockX = sdx; lockY = sdy
+    private fun gateMoves(sdx: Float, sdy: Float) {
+        moveX = sdx; moveY = sdy
         val f = feel()
-        val v = f.verticalLockDeg.coerceIn(0f, TouchpadSettings.MAX_LOCK_DEG)
-        val hz = f.horizontalLockDeg.coerceIn(0f, TouchpadSettings.MAX_LOCK_DEG)
-        if (v <= 0f && hz <= 0f) return
+        if (f.free) return
         winX += sdx; winY += sdy
         val len = sqrt(winX * winX + winY * winY)
-        val cap = LOCK_WINDOW_DP * pxPerDp
+        val cap = f.moveSampleDp.coerceIn(TouchpadSettings.MIN_MOVE_SAMPLE_DP, TouchpadSettings.MAX_MOVE_SAMPLE_DP) * pxPerDp
+        val known = headed || len >= cap
         if (len > cap) {
             winX *= cap / len; winY *= cap / len
         }
-        if (len <= 0f) return
-        // Angle from vertical, 0..90.
-        val fromVertical = Math.toDegrees(atan2(abs(winX), abs(winY)).toDouble()).toFloat()
-        val fromHorizontal = 90f - fromVertical
-        when {
-            fromVertical < v && (fromVertical <= fromHorizontal || fromHorizontal >= hz) -> lockX = 0f
-            fromHorizontal < hz -> lockY = 0f
+        if (!known) {
+            // A free Move goes on at once; the others wait for the heading.
+            if (f.modeX != MoveMode.FREE) { waitX += sdx; moveX = 0f }
+            if (f.modeY != MoveMode.FREE) { waitY += sdy; moveY = 0f }
+            return
+        }
+        if (!headed) {
+            headed = true
+            moveX += waitX; moveY += waitY
+            waitX = 0f; waitY = 0f
+        }
+        if (!heads(f, true)) moveX = 0f
+        if (!heads(f, false)) moveY = 0f
+    }
+
+    /** The recent travel ([winX], [winY]) heads Move X's way ([x]) or Move Y's, as its mode has it. */
+    private fun heads(f: MotionFeel, x: Boolean): Boolean {
+        val ax = abs(winX)
+        val ay = abs(winY)
+        return when (if (x) f.modeX else f.modeY) {
+            MoveMode.FREE -> true
+            MoveMode.LARGER_AXIS -> if (x) ax >= ay else ay > ax
+            MoveMode.PIE -> {
+                // Off its axis, 0..90 degrees.
+                val off = Math.toDegrees(atan2(if (x) ay else ax, if (x) ax else ay).toDouble()).toFloat()
+                val pie = (if (x) f.pieX else f.pieY).coerceIn(TouchpadSettings.MIN_MOVE_PIE_DEG, TouchpadSettings.MAX_MOVE_PIE_DEG)
+                off <= pie / 2f
+            }
         }
     }
 
-    private var lockX = 0f
-    private var lockY = 0f
+    private var moveX = 0f
+    private var moveY = 0f
+
+    // The motion's heading is known ([gateMoves]); until then, the travel Move X / Y wait with.
+    private var headed = false
+    private var waitX = 0f
+    private var waitY = 0f
 
     /**
      * The motion ends: its held directions let go (or, as the last finger lifts with the latch
@@ -933,9 +961,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     private fun route(n: Int, rawX: Float, rawY: Float, now: Long, eventNs: Long) {
         if (n !in 1..4) return
         val m = map.motion[n - 1]
-        lockAxes(rawX, rawY)
-        val sdx = lockX;
-        val sdy = lockY
+        gateMoves(rawX, rawY)
+        val sdx = moveX
+        val sdy = moveY
         trX += sdx; trY += sdy
         if (rearmable) {
             val sx = centroidX() - stillX;
@@ -954,7 +982,8 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         levelX = (tx / STICK_FULL_DP).coerceIn(-1f, 1f)
         levelY = (ty / STICK_FULL_DP).coerceIn(-1f, 1f)
         zoneCounts(n)
-        val fired = dirs.step(sdx / pxPerDp, sdy / pxPerDp, settings)
+        // Swipes and held directions judge their own way, by their pies.
+        val fired = dirs.step(rawX / pxPerDp, rawY / pxPerDp, settings)
         holdZones(n)
         for (d in Direction.entries) if (fired and (1 shl d.ordinal) != 0) pulse(n, SWIPES[d.ordinal])
         val sideways = fired and (RIGHT_BIT or LEFT_BIT)
@@ -1534,7 +1563,6 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         const val STICK_FULL_DP = 40f
 
         /** Axis locks judge a step's direction by about this much of the latest travel. */
-        const val LOCK_WINDOW_DP = 4f
 
         /** Held directions and swipes by [Direction.ordinal]. */
         private val HOLDS =
