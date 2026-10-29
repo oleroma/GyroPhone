@@ -1,7 +1,6 @@
 package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.engine.GyroMouse
-import com.oleroma.gyrophone.core.model.GyroOrientation
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.sensor.DirectReportParser
@@ -127,12 +126,13 @@ class GyroOrientationTest {
     }
 
     @Test fun landscapeLeftAimUpMovesCursorUp() {
-        val g = GyroMouse(direct(GyroSettings(orientation = GyroOrientation.LANDSCAPE_LEFT)))
+        val g = GyroMouse(direct(GyroSettings()))
+        g.displayRotation = 90
         // Nose up in landscape-left is negative rotation about device Y.
         assertEquals(0 to -90, run(g, 0f, -rad, 0f))
     }
 
-    @Test fun autoFollowsDisplayRotation() {
+    @Test fun followsDisplayRotation() {
         val g = GyroMouse(direct(GyroSettings()))
         g.displayRotation = 270
         // Turning right with the top on the right is positive rotation about device X.
@@ -140,15 +140,11 @@ class GyroOrientationTest {
     }
 
     @Test fun rollCanDriveHorizontalAndAxesInvert() {
-        val g = GyroMouse(direct(GyroSettings(orientation = GyroOrientation.LANDSCAPE_LEFT)))
+        val g = GyroMouse(direct(GyroSettings()))
+        g.displayRotation = 90
         // Clockwise roll as seen by the player is negative rotation about device Z.
         assertEquals(90 to 0, run(g, 0f, 0f, -rad, MotionAxis.ROLL, MotionAxis.NONE))
         // Reversed: the mapping's scale is -1.
         assertEquals(-90 to 0, run(g, 0f, 0f, -rad, MotionAxis.ROLL, MotionAxis.NONE, -1f))
-    }
-
-    @Test fun flatYawIsRotationAboutScreenNormal() {
-        val g = GyroMouse(direct(GyroSettings(orientation = GyroOrientation.FLAT)))
-        assertEquals(90 to 0, run(g, 0f, 0f, -rad))
     }
 }

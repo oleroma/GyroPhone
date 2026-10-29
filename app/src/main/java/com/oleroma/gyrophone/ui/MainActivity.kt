@@ -3,10 +3,12 @@ package com.oleroma.gyrophone.ui
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.hardware.display.DisplayManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.Surface
@@ -40,6 +42,17 @@ class MainActivity : ComponentActivity() {
     private lateinit var controllerInput: ControllerInput
 
     private var lastRotation = -1
+
+    /** The system's auto-rotate (rotation lock off), which the screen rotation setting follows. */
+    private var rotationOn by mutableStateOf(true)
+    private val rotationObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            rotationOn = readRotationOn()
+        }
+    }
+
+    private fun readRotationOn() =
+        Settings.System.getInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 1) == 1
     /** 180-degree flips change no Configuration, so onConfigurationChanged alone misses them. */
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = Unit
@@ -83,7 +96,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 val orientation by runtime.screenOrientation.collectAsStateWithLifecycle()
-                LaunchedEffect(orientation) { requestedOrientation = orientation.activityValue }
+                LaunchedEffect(orientation, rotationOn) {
+                    requestedOrientation = orientation.activityValue(rotationOn, displayDegrees())
+                }
                 Surface(Modifier.fillMaxSize()) {
                     // No tabs: the app opens on the pad; Connection and Settings open from its capsules.
                     // Full-screen pad: the ← and → corners pressed together; Back also leaves.
@@ -116,12 +131,17 @@ class MainActivity : ComponentActivity() {
             .registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
         lastRotation = -1
         updateRotation()
+        contentResolver.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.ACCELEROMETER_ROTATION), false, rotationObserver,
+        )
+        rotationOn = readRotationOn()
     }
 
     override fun onPause() {
         runtime.setForeground(false)
         controllerInput.unregister()
         getSystemService(DisplayManager::class.java).unregisterDisplayListener(displayListener)
+        contentResolver.unregisterContentObserver(rotationObserver)
         super.onPause()
     }
 
@@ -168,13 +188,15 @@ class MainActivity : ComponentActivity() {
         if (hasFocus) TouchStream.requestUnbuffered(window.decorView)
     }
 
+    private fun displayDegrees() = when (display?.rotation) {
+        Surface.ROTATION_0 -> 0
+        Surface.ROTATION_180 -> 180
+        Surface.ROTATION_270 -> 270
+        else -> 90
+    }
+
     private fun updateRotation() {
-        val degrees = when (display?.rotation) {
-            Surface.ROTATION_0 -> 0
-            Surface.ROTATION_180 -> 180
-            Surface.ROTATION_270 -> 270
-            else -> 90
-        }
+        val degrees = displayDegrees()
         // onDisplayChanged also fires on refresh-rate changes: only a real rotation resets the gyro filters.
         if (degrees == lastRotation) return
         lastRotation = degrees

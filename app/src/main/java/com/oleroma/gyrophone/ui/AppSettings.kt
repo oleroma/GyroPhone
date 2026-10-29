@@ -192,6 +192,11 @@ private fun AppTab(runtime: GamepadRuntime) {
                     label = { Text(o.label) })
             }
         }
+        Hint(
+            "Auto, Landscape and Portrait follow the phone's rotation lock: unlocked they turn with the phone " +
+                    "(Landscape and Portrait only between their two sides), locked they stay as they are. The forced " +
+                    "ones never turn. The gyro always follows the way the screen is turned.",
+        )
 
         Text("Controllers on phone", style = MaterialTheme.typography.titleSmall)
         if (controllers.isEmpty()) Text("None. Attach a GameSir X5 or any gamepad.")
