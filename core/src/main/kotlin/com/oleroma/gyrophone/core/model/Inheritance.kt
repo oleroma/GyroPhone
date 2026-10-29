@@ -20,7 +20,8 @@ object Inheritance {
     }
 
     /** Which input of its level [s] is, for a workspace's own input ([isWorkspaceInput]). */
-    private fun levelKey(s: InputSource): Any? = if (s is InputSource.Gyro) s else inputOf(s)
+    private fun levelKey(s: InputSource): Any? =
+        if (s is InputSource.Gyro || s is InputSource.Tilt || s is InputSource.Shake) s else inputOf(s)
 
     /** The touchpad's mappings every level starts from: what a laptop touchpad does. */
     val builtin: List<Mapping> = Bindings.defaultTouchpadMappings(TouchpadSettings())

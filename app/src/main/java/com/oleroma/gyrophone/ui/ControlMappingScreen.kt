@@ -398,7 +398,7 @@ internal fun ControlMappingScreen(
     val inputs = remember(control, physicalInputs) {
         when {
             physicalInputs != null -> physicalInputs
-            control.isTouchpadStandIn -> (1..4).flatMap { Bindings.surfaceInputs(it) } + Bindings.gyroInputs()
+            control.isTouchpadStandIn -> (1..4).flatMap { Bindings.surfaceInputs(it) } + Bindings.gyroInputs() + Bindings.motionInputs()
             else -> Bindings.touchInputs(control)
         }
     }
@@ -430,7 +430,7 @@ internal fun ControlMappingScreen(
         sorted(
             control,
             if (!control.swipes) inputs
-            else if (fingers == 0) Bindings.gyroInputs(control.id)
+            else if (fingers == 0) Bindings.gyroInputs(control.id) + Bindings.motionInputs(control.id)
             else Bindings.swipeInputs(control, fingers) +
                     if (fingers == 1) inputs.filter { it.sources.first() is InputSource.TouchArea } else emptyList(),
             order,
@@ -876,16 +876,18 @@ internal fun ControlMappingScreen(
                                     )
                                 }
                                 if (physicalInputs == null) {
-                                    FilterChip(selected = fingers == 0, onClick = { fingers = 0 }, label = { Text("Gyro") })
+                                    FilterChip(selected = fingers == 0, onClick = { fingers = 0 }, label = { Text("Motion") })
                                 }
                             }
                             if (fingers == 0) {
                                 Text(
                                     if (control.isTouchpadStandIn) {
-                                        "What turning the phone does while gyro is on. With no gyro mapping anywhere, " +
-                                                "gyro moves the mouse as the gyro settings' Axes say."
+                                        "Gyro: what turning the phone does while gyro is on. With no gyro mapping anywhere, " +
+                                                "gyro moves the mouse as the gyro settings' Axes say. Tilt: how far it leans " +
+                                                "(sideways from upright, forward and back from where it was when tilt started); full at 30°."
                                     } else {
-                                        "While this is pressed, an axis it maps does that instead of what the workspace maps it to."
+                                        "While this is pressed: a gyro axis it maps does that instead of what the workspace maps it to; " +
+                                                "its tilt and shake work only meanwhile."
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant,

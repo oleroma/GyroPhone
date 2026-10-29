@@ -144,7 +144,7 @@ object Bindings {
                     (1..4).flatMap { n ->
                         surfaceInputs(n, control.id).filterNot { n == 1 && isOneFingerHold(it) }
                             .map { it.copy(label = "${n}f " + it.label) }
-                    } + gyroInputs(control.id)
+                    } + gyroInputs(control.id) + motionInputs(control.id)
         }
 
         TouchKind.STICK -> {
@@ -176,6 +176,20 @@ object Bindings {
     fun gyroInputs(id: String = ""): List<BindableInput> = MotionAxis.entries.filter { it != MotionAxis.NONE }.map { a ->
         BindableInput("Gyro " + a.label.lowercase(), listOf(InputSource.Gyro(a, id)), swipe = true)
     }
+
+    /**
+     * The phone's tilt and shake for touch control [id] ("" = the workspace's): a full tilt axis
+     * drives a game pad axis, each direction and a shake press anything.
+     */
+    fun motionInputs(id: String = ""): List<BindableInput> = listOf(
+        BindableInput("Tilt sideways", listOf(InputSource.Tilt(StickAxis.X, AxisHalf.FULL, id)), analog = true),
+        BindableInput("Tilt forward and back", listOf(InputSource.Tilt(StickAxis.Y, AxisHalf.FULL, id)), analog = true),
+        BindableInput("Tilt left", listOf(InputSource.Tilt(StickAxis.X, AxisHalf.NEGATIVE, id))),
+        BindableInput("Tilt right", listOf(InputSource.Tilt(StickAxis.X, AxisHalf.POSITIVE, id))),
+        BindableInput("Tilt forward", listOf(InputSource.Tilt(StickAxis.Y, AxisHalf.NEGATIVE, id))),
+        BindableInput("Tilt back", listOf(InputSource.Tilt(StickAxis.Y, AxisHalf.POSITIVE, id))),
+        BindableInput("Shake", listOf(InputSource.Shake(id))),
+    )
 
     fun swipeInputs(control: TouchControl, fingers: Int): List<BindableInput> {
         val surface = surfaceInputs(fingers, control.id)

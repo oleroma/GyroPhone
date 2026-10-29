@@ -147,6 +147,18 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Game pad axes the gyro deflects ([setGyroAxes]), by [GamepadAxis] ordinal. */
     private val gyroPad = FloatArray(GamepadAxis.entries.size)
 
+    /** The phone's tilt ([setTilt]), -1..1: sideways (+ right) and forward / back (+ back). */
+    private var tiltX = 0f
+    private var tiltY = 0f
+
+    /** When the last shake came ([shake]); it shows at least [SHAKE_PULSE_NS] and in one snapshot. */
+    private var shakeAt = Long.MIN_VALUE
+    private var shakeShown = true
+
+    /** Some tilt or shake mapping is in any set of the workspace: the runtime reads the accelerometer. */
+    @Volatile var motionMapped = false
+        private set
+
     /**
      * Input state of one device: its keys, its axes and the pad of the workspace it acts as.
      * [keys] is the real level (events, gyro hold); HID output reads [keyForOutput], which makes
@@ -407,6 +419,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val w = loaded.copy(mappings = Bindings.upgradeSwipes(Inheritance.workspace(loaded, profile.defaults)))
         ws = w
         allTouch = w.mappings
+        motionMapped = w.mappings.any { it.source is InputSource.Tilt || it.source is InputSource.Shake }
         allPads = Array(w.pads.size + 2) {
             when {
                 it < w.pads.size -> w.pads[it].mappings
@@ -834,6 +847,23 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Some gyro mapping is in use ([gyroRoutes]); without one gyro moves the mouse by its settings' axes. */
     val gyroMapped: Boolean get() = gyroInUse.isNotEmpty()
 
+    /** How far the phone is tilted: [x] sideways (+ right), [y] forward and back (+ back), each -1..1. */
+    fun setTilt(x: Float, y: Float) {
+        synchronized(lock) {
+            if (x == tiltX && y == tiltY) return
+            firingEvents(clock()) { tiltX = x; tiltY = y }
+        }
+        onChange?.run()
+    }
+
+    /** The phone was shaken: shake mappings press once. */
+    fun shake() {
+        synchronized(lock) {
+            firingEvents(clock()) { shakeAt = clock(); shakeShown = false }
+        }
+        onChange?.run()
+    }
+
     /** How far the gyro deflects each game pad axis now (by [GamepadAxis] ordinal, -1..1; triggers 0..1). */
     fun setGyroAxes(values: FloatArray) {
         synchronized(lock) {
@@ -1009,6 +1039,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (anyCarried) pruneCarried()
         hapticNow.clear()
         forEachGroup { ms, dev -> accumulate(ms, dev) }
+        shakeShown = true
         for (a in 0 until 4) if (abs(gyroPad[a]) > abs(stick[a])) stick[a] = gyroPad[a]
         trigger[0] = max(trigger[0], abs(gyroPad[GamepadAxis.LT.ordinal]))
         trigger[1] = max(trigger[1], abs(gyroPad[GamepadAxis.RT.ordinal]))
@@ -1493,6 +1524,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         is InputSource.TouchStick -> s.half == AxisHalf.FULL
         is InputSource.Surface -> s.input.motion
         is InputSource.Gyro -> true
+        is InputSource.Tilt -> s.half == AxisHalf.FULL
         else -> false
     }
 
@@ -1684,6 +1716,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         is InputSource.TouchSwipe -> 0f
         // Gyro motion goes out through gyroRoutes, not the snapshot's sources.
         is InputSource.Gyro -> 0f
+        is InputSource.Tilt ->
+            if (source.id.isNotEmpty() && !touches.containsKey(source.id)) 0f
+            else half(if (source.axis == StickAxis.X) tiltX else tiltY, source.half)
+
+        is InputSource.Shake ->
+            if (source.id.isNotEmpty() && !touches.containsKey(source.id)) 0f
+            else if (shakeAt != Long.MIN_VALUE && (!shakeShown || clock() - shakeAt < SHAKE_PULSE_NS)) 1f else 0f
         is InputSource.TouchStickDiagonal -> {
             val v = touchSticks[source.id]
             if (v != null && v.dirs and (DIR_DIAGONAL shl source.diagonal.ordinal) != 0) v.mag else 0f
@@ -1717,6 +1756,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     companion object {
         const val PRESS_THRESHOLD = 0.5f
+
+        /** How long a shake presses at least. */
+        const val SHAKE_PULSE_NS = 120_000_000L
 
         /** A physical mouse mapped to scrolling: this many counts of movement make one wheel notch. */
         const val MOUSE_COUNTS_PER_NOTCH = 20f

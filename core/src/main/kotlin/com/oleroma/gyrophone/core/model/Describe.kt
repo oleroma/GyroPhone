@@ -31,6 +31,21 @@ object Describe {
                 " ${s.fingers} finger" + (if (s.fingers > 1) "s " else " ") + s.input.label.lowercase() +
                 if (s.zone > 0) " zone ${s.zone + 1}" else ""
         is InputSource.Gyro -> "Gyro " + s.axis.label.lowercase() + if (s.id.isEmpty()) "" else " on ${s.id}"
+        is InputSource.Tilt -> "Tilt " + when (s.axis) {
+            StickAxis.X -> when (s.half) {
+                AxisHalf.FULL -> "sideways"
+                AxisHalf.POSITIVE -> "right"
+                AxisHalf.NEGATIVE -> "left"
+            }
+
+            StickAxis.Y -> when (s.half) {
+                AxisHalf.FULL -> "forward and back"
+                AxisHalf.POSITIVE -> "back"
+                AxisHalf.NEGATIVE -> "forward"
+            }
+        } + if (s.id.isEmpty()) "" else " on ${s.id}"
+
+        is InputSource.Shake -> "Shake" + if (s.id.isEmpty()) "" else " on ${s.id}"
     }
 
     fun target(t: OutputTarget): String = when (t) {

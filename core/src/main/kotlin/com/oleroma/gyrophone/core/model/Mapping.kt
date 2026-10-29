@@ -200,6 +200,21 @@ sealed interface InputSource {
     @Serializable
     @SerialName("gyro")
     data class Gyro(val axis: MotionAxis, val id: String = "") : InputSource
+
+    /**
+     * How far the phone is tilted ([com.oleroma.gyrophone.core.engine.TiltShake]): X sideways
+     * (+ right, turning it like a wheel), Y forward and back (+ back, the top edge toward you;
+     * forward pushes a stick up), full at the tilt range. [half] as for an [Axis]. [id] "" = the
+     * workspace's, always; else touch button [id]'s, only while it is pressed.
+     */
+    @Serializable
+    @SerialName("tilt")
+    data class Tilt(val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL, val id: String = "") : InputSource
+
+    /** A shake of the phone: a short press. [id] as for [Tilt]. */
+    @Serializable
+    @SerialName("shake")
+    data class Shake(val id: String = "") : InputSource
 }
 
 /** Something the host PC receives. */
