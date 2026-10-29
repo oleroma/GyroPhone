@@ -14,6 +14,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -131,6 +132,21 @@ private sealed interface Dragged {
 
     /** An action card moved within its [group] (0: the control's own actions, 1: its surface ones). */
     data class Card(val input: BindableInput, val group: Int) : Dragged
+
+    /** Zone divider [k] of held-direction card [card] (zone 0's input), moved within its row. */
+    data class Divider(val card: BindableInput, val k: Int) : Dragged
+}
+
+/**
+ * One item in an action card's row, in reading order: a [Chip] of the edited set in its length
+ * [Chip.zone], a [Divider] ending zone k - 1 (before zone k), the [End] divider after the last
+ * zone (a held direction with mappings), and while dragging the [Landing] spot where the drag goes.
+ */
+private sealed interface RowItem {
+    data class Chip(val zone: Int, val target: OutputTarget) : RowItem
+    data class Divider(val k: Int) : RowItem
+    data object End : RowItem
+    data object Landing : RowItem
 }
 
 /** A ready-made mapping of one or more actions; [apply] rewrites the mapping list. */
@@ -263,6 +279,8 @@ private fun Modifier.dragSource(
     key: Any?,
     coords: Array<LayoutCoordinates?>,
     longPress: Boolean = true,
+    /** Also a plain sideways drag starts it (up and down still scroll). */
+    sideways: Boolean = false,
     onStart: (Offset) -> Unit,
 ): Modifier = this
     .onGloballyPositioned { coords[0] = it }
@@ -274,6 +292,11 @@ private fun Modifier.dragSource(
             detectDragGestures(onDragStart = begin) { change, _ -> change.consume() }
         }
     }
+    .then(
+        if (!sideways) Modifier else Modifier.pointerInput(key) {
+            detectHorizontalDragGestures(onDragStart = { p -> coords[0]?.let { onStart(it.localToRoot(p)) } }) { change, _ -> change.consume() }
+        },
+    )
 
 /**
  * Stands for the workspace touchpad in the control screens: a tap or long press on empty space
@@ -417,17 +440,12 @@ internal fun ControlMappingScreen(
         "Removed " + Describe.shortTarget(t) + " from " + actionTitle(currentControl, input),
     )
 
-    fun move(from: BindableInput, to: BindableInput, t: OutputTarget) = change(
-        Bindings.addTarget(Bindings.removeTarget(currentMappings, from, t), to, t),
-        "Moved " + Describe.shortTarget(t) + " to " + actionTitle(currentControl, to),
-    )
-
     fun applyPreset(p: MapPreset) = change(p.apply(currentMappings), "Applied " + p.label)
 
     // Drag & drop geometry, in root coordinates.
     val cardBounds = remember { mutableStateMapOf<InputSource, Rect>() }
-    // Zone dividers of held-direction cards, by the source of the zone they start.
-    val dividerBounds = remember { mutableStateMapOf<InputSource, Rect>() }
+    // Each card's row items (chips and dividers), by the card's source; read only by drag code.
+    val itemBounds = remember { HashMap<Pair<InputSource, RowItem>, Rect>() }
     val zonesWork = zoneSettings != null && !(zoneSettings.dragStart && zoneSettings.holdMode == HoldMode.FROM_START)
     val zonesNow by rememberUpdatedState(zonesWork)
     var actionsBounds by remember { mutableStateOf(Rect.Zero) }
@@ -458,27 +476,105 @@ internal fun ControlMappingScreen(
                 allMappings.any { (it.source as? InputSource.Surface)?.copy(zone = 0) == src }
     }
 
-    /** The zone of [card] a drop at [p] goes to: how many of its dividers come before it, in reading order. */
-    fun zoneAt(card: BindableInput, p: Offset): Int {
-        val src = card.sources.first() as? InputSource.Surface ?: return 0
-        if (src.input.holdDirection == null) return 0
-        val last = zonesOf(card) - 1 + if (addsZone(card)) 1 else 0
-        return (1..last).count { z ->
-            val r = dividerBounds[src.copy(zone = z)] ?: return@count false
+    /** A held direction with something mapped (any set): its row ends in a divider that opens the last zone's settings. */
+    fun hasEnd(input: BindableInput): Boolean {
+        val src = input.sources.first() as? InputSource.Surface ?: return false
+        if (zoneSettings == null || src.input.holdDirection == null) return false
+        return allMappings.any { (it.source as? InputSource.Surface)?.copy(zone = 0) == src }
+    }
+
+    /** [input]'s row as mapped: each zone's chips of the edited set, divided, then the end divider. */
+    fun rowOf(input: BindableInput): List<RowItem> = buildList {
+        for (z in 0 until zonesOf(input)) {
+            if (z > 0) add(RowItem.Divider(z))
+            val zi = if (z == 0) input else Bindings.zoneInput(input, z)
+            for (t in Bindings.targets(currentMappings, zi)) add(RowItem.Chip(z, t))
+        }
+        if (hasEnd(input)) add(RowItem.End)
+    }
+
+    /** The dragged chip or divider, if it is in [input]'s row: left out of it while carried. */
+    fun carried(input: BindableInput): RowItem? = when (val d = dragged) {
+        is Dragged.Target -> d.from?.let { f ->
+            val s = f.sources.first() as? InputSource.Surface
+            val zone = s?.zone ?: 0
+            val base = if (s != null) Bindings.zoneInput(f, 0) else f
+            if (base.sources.first() == input.sources.first()) RowItem.Chip(zone, d.target) else null
+        }
+
+        is Dragged.Divider -> if (d.card.sources.first() == input.sources.first()) RowItem.Divider(d.k) else null
+        else -> null
+    }
+
+    /** Where a chip or divider being dragged lands: a card and the index in its row (without the carried item). */
+    var landing by remember { mutableStateOf<Pair<BindableInput, Int>?>(null) }
+
+    /** Zone of index [at] in [row]: how many dividers come before it. */
+    fun zoneIn(row: List<RowItem>, at: Int) = row.take(at).count { it is RowItem.Divider || it is RowItem.End }
+
+    /**
+     * Updates [landing] from the finger: in the card under it, after every row item that comes
+     * before the finger in reading order (above its line, or on its line and left of it). Past
+     * the end divider is a new zone, while there is room for one.
+     */
+    fun place() {
+        val d = dragged
+        val card = when (d) {
+            is Dragged.Target -> cardAt(dragPos)?.takeIf { allows(allowedTargets(it), d.target) }
+            is Dragged.Divider -> cardAt(dragPos)?.takeIf { it.sources.first() == d.card.sources.first() }
+            else -> null
+        }
+        if (card == null) {
+            landing = null
+            return
+        }
+        val src = card.sources.first()
+        val c = carried(card)
+        val row = rowOf(card).filter { it != c }
+        val p = dragPos
+        var at = row.count { item ->
+            val r = itemBounds[src to item] ?: return@count false
             r.bottom < p.y || (p.y >= r.top && r.center.x < p.x)
+        }
+        val end = row.indexOf(RowItem.End)
+        if (end >= 0) at = at.coerceAtMost(if (d is Dragged.Target && addsZone(card)) end + 1 else end)
+        val next = card to at
+        if (next != landing) {
+            if (landing != null) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            landing = next
         }
     }
 
-    /** The action a drop at [p] maps to: a card, in the zone the drop is in. */
-    fun dropAt(p: Offset): BindableInput? {
-        val card = cardAt(p) ?: return null
-        val z = zoneAt(card, p)
-        return if (z == 0) card else Bindings.zoneInput(card, z)
+    /** [card]'s row as it shows now: without the carried item, with the landing spot. */
+    fun liveRow(card: BindableInput): List<RowItem> {
+        val c = carried(card)
+        val row = rowOf(card).filter { it != c }
+        val l = landing
+        if (l == null || l.first.sources.first() != card.sources.first()) return row
+        return row.toMutableList().apply { add(l.second.coerceIn(0, size), RowItem.Landing) }
+    }
+
+    /**
+     * [m] (the edited set's view) with [card]'s chips as [row] has them: each in the zone of the
+     * dividers before it, in its order. Zones left empty close up in [change].
+     */
+    fun withRow(m: List<Mapping>, card: BindableInput, row: List<RowItem>): List<Mapping> {
+        val lists = mutableListOf(mutableListOf<OutputTarget>())
+        for (item in row) when (item) {
+            is RowItem.Chip -> lists.last().add(item.target)
+            is RowItem.Divider, RowItem.End -> lists.add(mutableListOf())
+            RowItem.Landing -> {}
+        }
+        var out = m
+        for (z in 0 until maxOf(lists.size, zonesOf(card)).coerceAtMost(TouchpadSettings.MAX_HOLD_ZONES)) {
+            val zi = if (z == 0) card else Bindings.zoneInput(card, z)
+            out = Bindings.setTargets(out, zi, lists.getOrNull(z).orEmpty())
+        }
+        return out
     }
 
     val hovered by remember { derivedStateOf { if (dragged is Dragged.Target) cardAt(dragPos) else null } }
-    val hoverZone by remember { derivedStateOf { hovered?.let { zoneAt(it, dragPos) } ?: -1 } }
-    var zoneDialog by remember { mutableStateOf<BindableInput?>(null) }
+    var zoneDialog by remember { mutableStateOf<Pair<BindableInput, Int>?>(null) }
 
     fun startDrag(d: Dragged, at: Offset) {
         dragged = d
@@ -518,36 +614,57 @@ internal fun ControlMappingScreen(
     fun moveDrag(to: Offset) {
         dragPos = to
         reorder()
+        place()
     }
 
     fun cancelDrag() {
         dragged = null
+        landing = null
         liveOrder = emptyList()
     }
 
     fun endDrag() {
         val d = dragged ?: return
-        val over = dropAt(dragPos)
+        place()
+        val l = landing
         var done = false
         when (d) {
             is Dragged.Target -> {
                 val from = d.from
-                val fits = over != null && allows(allowedTargets(over), d.target)
-                if (from == null) {
-                    if (over != null && fits) {
-                        pick(over, d.target)
-                        done = true
+                if (l != null) {
+                    val (card, at) = l
+                    val c = carried(card)
+                    val row = rowOf(card).filter { it != c }.toMutableList()
+                    val i = at.coerceIn(0, row.size)
+                    val zone = zoneIn(row, i)
+                    val zi = if (zone == 0) card else Bindings.zoneInput(card, zone)
+                    if (from == null && (Describe.isHaptic(d.target) || (d.target as? OutputTarget.Layer)?.set?.let { it < 0 } == true)) {
+                        pick(zi, d.target)
+                    } else {
+                        if (from == null) addRecent(d.target)
+                        row.add(i, RowItem.Chip(zone, d.target))
+                        val base = if (from == null || c != null) currentMappings else Bindings.removeTarget(currentMappings, from, d.target)
+                        // Already in the zone it lands in: just moved there, not twice.
+                        val cleaned = if (c == null) row.filterIndexed { j, it -> j == i || !(it is RowItem.Chip && it.target == d.target && zoneIn(row, j) == zone) } else row
+                        change(
+                            withRow(base, card, cleaned),
+                            (if (from == null) "Mapped " else "Moved ") + Describe.shortTarget(d.target) + " to " + actionTitle(currentControl, zi),
+                        )
                     }
-                } else if (over == null) {
+                    done = true
+                } else if (from != null && !actionsBounds.contains(dragPos)) {
                     // Dropped between cards it stays; out of the pane it goes.
-                    if (!actionsBounds.contains(dragPos)) {
-                        remove(from, d.target)
-                        done = true
-                    }
-                } else if (over.sources.first() != from.sources.first() && fits) {
-                    move(from, over, d.target)
+                    remove(from, d.target)
                     done = true
                 }
+            }
+
+            is Dragged.Divider -> if (l != null) {
+                val (card, at) = l
+                val row = rowOf(card).filter { it != carried(card) }.toMutableList()
+                row.add(at.coerceIn(0, row.size), RowItem.Divider(d.k))
+                change(withRow(currentMappings, card, row), "Moved a zone divider of " + actionTitle(currentControl, card))
+                done = true
             }
 
             is Dragged.Preset -> if (actionsBounds.contains(dragPos)) {
@@ -588,6 +705,7 @@ internal fun ControlMappingScreen(
             }
             if (f != 0f) listState.scrollBy(f * abs(f) * maxStep)
             reorder()
+            place()
         }
     }
 
@@ -655,44 +773,42 @@ internal fun ControlMappingScreen(
                     val fits = dragTarget == null || allows(allowedTargets(input), dragTarget)
                     val zoneCount = zonesOf(input)
                     val zoneInputs = List(zoneCount) { z -> if (z == 0) input else Bindings.zoneInput(input, z) }
-                    val dragFrom = (d as? Dragged.Target)?.from
-                    val fromZone = zoneInputs.indexOfFirst { it == dragFrom }
+                    val row = liveRow(input)
+                    val l = landing
+                    val landsHere = l != null && l.first.sources.first() == src
                     DisposableEffect(src) {
                         onDispose {
                             cardBounds.remove(src)
-                            if (src is InputSource.Surface) for (z in 1 until TouchpadSettings.MAX_HOLD_ZONES) dividerBounds.remove(src.copy(zone = z))
+                            itemBounds.keys.removeAll { it.first == src }
                         }
                     }
                     ActionCard(
                         title = if (isSurface(input)) input.label else actionLabel(control, input),
-                        zones = zoneInputs.map { zi ->
-                            ZoneChips(
-                                Bindings.targets(view, zi),
-                                (listOf(MappingSet.BASE) + sets.map { it.id }).filter { it != editSet }.flatMap { n ->
-                                    Bindings.targets(Bindings.viewSet(mappings, n), zi).map { n to it }
-                                },
-                            )
+                        row = row,
+                        others = zoneInputs.map { zi ->
+                            (listOf(MappingSet.BASE) + sets.map { it.id }).filter { it != editSet }.flatMap { n ->
+                                Bindings.targets(Bindings.viewSet(mappings, n), zi).map { n to it }
+                            }
                         },
                         setId = editSet,
                         onOther = onEditSet,
                         selected = input == selected,
                         hover = dragTarget != null && fits && hovered == input,
-                        hoverZone = if (dragTarget != null && fits && hovered == input && (zoneCount > 1 || addsZone(input))) hoverZone else -1,
+                        landingLabel = when (d) {
+                            is Dragged.Target -> Describe.shortTarget(d.target)
+                            else -> null
+                        },
+                        landingZone = if (landsHere && (zoneCount > 1 || row.any { it == RowItem.End })) zoneIn(row, row.indexOf(RowItem.Landing)) else -1,
                         blocked = !fits,
                         lifted = cardDrag?.input == input,
-                        draggingChip = if (fromZone >= 0 && dragTarget != null) fromZone to dragTarget else null,
                         addZone = addsZone(input),
                         note = if (zoneCount > 1 && !zonesWork) {
                             if (zoneSettings == null) null else "Drag start point is on, so only zone 1 works."
                         } else null,
                         onBounds = { b -> if (cardBounds[src] != b) cardBounds[src] = b },
-                        onDividerBounds = { z, b ->
-                            if (src is InputSource.Surface) {
-                                val k = src.copy(zone = z)
-                                if (dividerBounds[k] != b) dividerBounds[k] = b
-                            }
-                        },
-                        onDivider = { if (onZoneSettings != null) zoneDialog = input },
+                        onItemBounds = { item, b -> itemBounds[src to item] = b },
+                        onDivider = { k -> if (onZoneSettings != null) zoneDialog = input to k - 1 },
+                        onDividerDrag = { k, at -> startDrag(Dragged.Divider(input, k), at) },
                         onClick = { selectedSrc = src },
                         onRemove = { z, t -> remove(zoneInputs[z], t) },
                         onChipDrag = { z, t, at -> startDrag(Dragged.Target(t, zoneInputs[z]), at) },
@@ -915,6 +1031,7 @@ internal fun ControlMappingScreen(
                         is Dragged.Target -> Describe.shortTarget(d.target)
                         is Dragged.Preset -> d.preset.label
                         is Dragged.Card -> actionTitle(control, d.input)
+                        is Dragged.Divider -> "┃ Zone divider"
                     }
                     Surface(
                         Modifier.offset {
@@ -940,17 +1057,17 @@ internal fun ControlMappingScreen(
         }
     }
 
-    zoneDialog?.let { input ->
+    zoneDialog?.let { (input, zone) ->
         val src = input.sources.first() as? InputSource.Surface
         val dir = src?.input?.holdDirection
         val zs = zoneSettings
         if (src != null && dir != null && zs != null && onZoneSettings != null) {
             AlertDialog(
                 onDismissRequest = { zoneDialog = null },
-                title = { Text(actionTitle(control, input) + " zones") },
+                title = { Text(actionTitle(control, input) + " · zone " + (zone + 1)) },
                 text = {
                     Column(Modifier.verticalScroll(rememberScrollState())) {
-                        HoldZoneSettings(zs, Bindings.holdZoneCounts(mappings, src.id), control.id + "dlg", only = dir, onChange = onZoneSettings)
+                        HoldZoneSettings(zs, Bindings.holdZoneCounts(mappings, src.id), control.id + "dlg", only = dir, zone = zone, onChange = onZoneSettings)
                     }
                 },
                 confirmButton = { TextButton(onClick = { zoneDialog = null }) { Text("Done") } },
@@ -1043,41 +1160,44 @@ internal fun ControlMappingScreen(
     }
 }
 
-/** One length zone's chips on an action card: the edited set's [targets], then [others] (other sets', greyed). */
-private class ZoneChips(val targets: List<OutputTarget>, val others: List<Pair<Int, OutputTarget>>)
-
 /**
  * One action of the control: its title and mapped targets; [hover] a fitting drag over it, [blocked] one it can't take.
- * A held direction's card shows its length zones in a row: [zones] (at least one), each after a ┃ divider.
+ * Its [row] lays out the edited set's chips; a held direction's is split into length zones by ┃
+ * dividers, each closing the zone before it, and ends in a divider while anything is mapped.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ActionCard(
     title: String,
-    zones: List<ZoneChips>,
+    row: List<RowItem>,
+    /** Per zone, other sets' targets (set, target): greyed at the end of that zone. */
+    others: List<List<Pair<Int, OutputTarget>>>,
     /** The set the targets are in (0 = Base: plain chips, else its colour and number). */
     setId: Int,
     onOther: (Int) -> Unit,
     selected: Boolean,
     hover: Boolean,
-    /** The zone a fitting drag would land in (-1 = none), its divider highlighted. */
-    hoverZone: Int,
+    /** What the drag landing in [row] ([RowItem.Landing]) shows: a target, else a divider. */
+    landingLabel: String?,
+    /** The zone the drag lands in, shown by the title (-1 = none, or no zones). */
+    landingZone: Int,
     blocked: Boolean,
     /** This card is being moved by its handle: it is raised and outlined where it will land. */
     lifted: Boolean,
-    /** This card's chip being dragged (zone, target), highlighted. */
-    draggingChip: Pair<Int, OutputTarget>?,
-    /** A held direction: a last divider opens the next zone. */
+    /** A held direction with room for another zone: its end divider takes drops after it. */
     addZone: Boolean,
     /** A line under the chips (zones that don't work now). */
     note: String?,
     onBounds: (Rect) -> Unit,
-    /** Where the divider before zone (index) is. */
-    onDividerBounds: (Int, Rect) -> Unit,
-    onDivider: () -> Unit,
+    /** Where each row item is, for placing drags. */
+    onItemBounds: (RowItem, Rect) -> Unit,
+    /** A tap on the divider ending zone k - 1 (k from 1): its settings. */
+    onDivider: (Int) -> Unit,
+    /** A divider (not the end one) starts moving. */
+    onDividerDrag: (Int, Offset) -> Unit,
     onClick: () -> Unit,
     onRemove: (Int, OutputTarget) -> Unit,
-    /** A long press on a chip starts dragging it. */
+    /** A long press or sideways drag on a chip starts dragging it. */
     onChipDrag: (Int, OutputTarget, Offset) -> Unit,
     /** The ⠿ handle starts moving the card. */
     onHandleDrag: (Offset) -> Unit,
@@ -1087,8 +1207,9 @@ private fun ActionCard(
     val handleCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
     val chipDrag by rememberUpdatedState(onChipDrag)
     val handleDrag by rememberUpdatedState(onHandleDrag)
-    val empty = zones.all { it.targets.isEmpty() }
-    val nothing = zones.all { it.targets.isEmpty() && it.others.isEmpty() }
+    val dividerDrag by rememberUpdatedState(onDividerDrag)
+    val empty = row.none { it is RowItem.Chip }
+    val nothing = row.isEmpty() && others.all { it.isEmpty() }
     Surface(
         onClick = onClick,
         modifier = modifier
@@ -1129,6 +1250,15 @@ private fun ActionCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                if (landingZone >= 0) {
+                    Text(
+                        "→ Zone " + (landingZone + 1) + if (landingZone >= others.size) " (new)" else "",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.tertiary,
+                        modifier = Modifier.padding(horizontal = 6.dp),
+                    )
+                }
                 Box(
                     Modifier
                         .size(40.dp)
@@ -1153,45 +1283,9 @@ private fun ActionCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    zones.forEachIndexed { z, chips ->
-                        if (z > 0) ZoneDivider(z, false, hoverZone == z, { onDividerBounds(z, it) }, onDivider)
-                        for (t in chips.targets) key(z, t) {
-                            val chipCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
-                            val dragging = draggingChip == (z to t)
-                            val fg = if (dragging) colors.onPrimary else colors.onSecondaryContainer
-                            Row(
-                                Modifier
-                                    .dragSource(z to t, chipCoords) { chipDrag(z, t, it) }
-                                    .shadow(if (dragging) 6.dp else 0.dp, RoundedCornerShape(8.dp))
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(
-                                        when {
-                                            dragging -> colors.primary
-                                            setId == MappingSet.BASE -> colors.secondaryContainer
-                                            else -> setColor(setId).copy(alpha = 0.35f)
-                                        },
-                                    )
-                                    .heightIn(min = 32.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                if (setId != MappingSet.BASE) SetNumber(setId, Modifier.padding(start = 6.dp))
-                                Text(
-                                    Describe.shortTarget(t),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = fg,
-                                    maxLines = 1,
-                                    modifier = Modifier.padding(start = if (setId == MappingSet.BASE) 10.dp else 6.dp, end = 2.dp),
-                                )
-                                Box(Modifier.size(32.dp).clickable { onRemove(z, t) }, contentAlignment = Alignment.Center) {
-                                    Text(
-                                        "✕",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = fg
-                                    )
-                                }
-                            }
-                        }
-                        for ((n, t) in chips.others) {
+                    @Composable
+                    fun othersOf(z: Int) {
+                        for ((n, t) in others.getOrNull(z).orEmpty()) key("o", z, n, t) {
                             Row(
                                 Modifier
                                     .alpha(0.5f)
@@ -1215,10 +1309,88 @@ private fun ActionCard(
                             }
                         }
                     }
-                    if (addZone) {
-                        val z = zones.size
-                        ZoneDivider(z, true, hoverZone == z, { onDividerBounds(z, it) }, onDivider)
+                    var zone = 0
+                    for (item in row) when (item) {
+                        is RowItem.Chip -> key(item) {
+                            val z = item.zone
+                            val t = item.target
+                            val chipCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+                            val fg = colors.onSecondaryContainer
+                            Row(
+                                Modifier
+                                    .onGloballyPositioned { onItemBounds(item, it.boundsInRoot()) }
+                                    .dragSource(z to t, chipCoords, sideways = true) { chipDrag(z, t, it) }
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (setId == MappingSet.BASE) colors.secondaryContainer else setColor(setId).copy(alpha = 0.35f),
+                                    )
+                                    .heightIn(min = 32.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (setId != MappingSet.BASE) SetNumber(setId, Modifier.padding(start = 6.dp))
+                                Text(
+                                    Describe.shortTarget(t),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = fg,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(start = if (setId == MappingSet.BASE) 10.dp else 6.dp, end = 2.dp),
+                                )
+                                Box(Modifier.size(32.dp).clickable { onRemove(z, t) }, contentAlignment = Alignment.Center) {
+                                    Text(
+                                        "✕",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = fg
+                                    )
+                                }
+                            }
+                        }
+
+                        is RowItem.Divider -> {
+                            othersOf(zone)
+                            zone++
+                            val k = zone
+                            key(item) {
+                                val coords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+                                ZoneDivider(
+                                    k, end = false, addZone = false,
+                                    Modifier
+                                        .onGloballyPositioned { onItemBounds(item, it.boundsInRoot()) }
+                                        .dragSource(item, coords, sideways = true) { dividerDrag(item.k, it) },
+                                ) { onDivider(k) }
+                            }
+                        }
+
+                        RowItem.End -> {
+                            othersOf(zone)
+                            zone++
+                            val k = zone
+                            key(item) {
+                                ZoneDivider(
+                                    k, end = true, addZone = addZone,
+                                    Modifier.onGloballyPositioned { onItemBounds(item, it.boundsInRoot()) },
+                                ) { onDivider(k) }
+                            }
+                        }
+
+                        RowItem.Landing -> key(item) {
+                            if (landingLabel != null) {
+                                Box(
+                                    Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(colors.tertiary.copy(alpha = 0.18f))
+                                        .border(2.dp, colors.tertiary, RoundedCornerShape(8.dp))
+                                        .heightIn(min = 32.dp)
+                                        .padding(horizontal = 12.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(landingLabel, style = MaterialTheme.typography.labelLarge, color = colors.tertiary, maxLines = 1)
+                                }
+                            } else {
+                                ZoneDivider(0, end = false, addZone = false, landing = true) {}
+                            }
+                        }
                     }
+                    for (z in zone until others.size) othersOf(z)
                 }
             }
             if (note != null) Text(note, style = MaterialTheme.typography.bodySmall, color = colors.error)
@@ -1227,33 +1399,41 @@ private fun ActionCard(
 }
 
 /**
- * The ┃ divider before length zone [zone] (from 0) of a held direction: chips after it fire in
- * that zone. [open]: the last one, with no zone after it yet. A tap opens the zone settings.
+ * A ┃ divider ending length zone [k] (from 1) of a held direction: chips after it fire further
+ * along. [end]: the one after the last zone ([addZone]: a drop after it opens a new zone).
+ * [landing]: where a dragged divider goes. A tap opens zone [k]'s settings.
  */
 @Composable
-private fun ZoneDivider(zone: Int, open: Boolean, hover: Boolean, onBounds: (Rect) -> Unit, onClick: () -> Unit) {
+private fun ZoneDivider(
+    k: Int,
+    end: Boolean,
+    addZone: Boolean,
+    modifier: Modifier = Modifier,
+    landing: Boolean = false,
+    onClick: () -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
-    val c = when {
-        hover -> colors.tertiary
-        open -> colors.outline
-        else -> colors.primary
-    }
+    val c = if (landing) colors.tertiary else colors.primary
     Row(
-        Modifier
-            .onGloballyPositioned { onBounds(it.boundsInRoot()) }
+        modifier
             .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
+            .then(if (landing) Modifier.background(colors.tertiary.copy(alpha = 0.18f)) else Modifier.clickable(onClick = onClick))
             .heightIn(min = 32.dp)
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.width(if (hover) 4.dp else 3.dp).height(28.dp).clip(RoundedCornerShape(2.dp)).background(c.copy(alpha = if (open && !hover) 0.5f else 1f)))
-        Text(
-            if (open) "+" + (zone + 1) else (zone + 1).toString(),
-            style = MaterialTheme.typography.labelMedium,
-            color = c,
-            modifier = Modifier.padding(start = 4.dp),
-        )
+        if (!landing) {
+            Text(
+                k.toString(),
+                style = MaterialTheme.typography.labelMedium,
+                color = c,
+                modifier = Modifier.padding(end = 4.dp),
+            )
+        }
+        Box(Modifier.width(if (landing) 4.dp else 3.dp).height(28.dp).clip(RoundedCornerShape(2.dp)).background(c))
+        if (end && addZone) {
+            Text("+", style = MaterialTheme.typography.labelLarge, color = c, modifier = Modifier.padding(start = 4.dp))
+        }
     }
 }
 

@@ -20,7 +20,26 @@ class SwipeGuide(val settings: TouchpadSettings, private val zones: IntArray, pr
     /** The start point is dragged along ([TouchpadSettings.dragStart]); see [drag]. */
     val dragsStart = fromStart && settings.dragStart
 
+    /**
+     * From start without [dragsStart]: the line runs along its direction ([direction]), the finger
+     * projected onto it, since that is the travel its zones count.
+     */
+    val onAxis = fromStart && !dragsStart
+
     private val holdDp = activate(settings.holdDp)
+
+    /** The direction a finger [dx], [dy] dp from the start point is in for the line; null = none mapped that way. */
+    fun direction(dx: Float, dy: Float): Direction? {
+        var best: Direction? = null
+        var bestAlong = 0f
+        for (d in Direction.entries) {
+            if (zones[d.ordinal] == 0 && swipes and (1 shl d.ordinal) == 0) continue
+            val along = along(d, dx, dy)
+            if (along <= bestAlong || (settings.pies != null && !settings.inPie(dx, dy, d))) continue
+            best = d; bestAlong = along
+        }
+        return best
+    }
 
     /**
      * A finger [dx], [dy] dp from the start point: writes to [out] how far along the line through it
@@ -33,15 +52,8 @@ class SwipeGuide(val settings: TouchpadSettings, private val zones: IntArray, pr
         val len = sqrt(dx * dx + dy * dy)
         if (len <= 0f) return 0
         val s = settings
-        var best: Direction? = null
-        var bestAlong = 0f
-        for (d in Direction.entries) {
-            if (zones[d.ordinal] == 0 && swipes and (1 shl d.ordinal) == 0) continue
-            val along = along(d, dx, dy)
-            if (along <= bestAlong || (s.pies != null && !s.inPie(dx, dy, d))) continue
-            best = d; bestAlong = along
-        }
-        val d = best ?: return 0
+        val d = direction(dx, dy) ?: return 0
+        val bestAlong = along(d, dx, dy)
         var n = 0
         if (swipes and (1 shl d.ordinal) != 0) {
             out[n] = activate(s.swipeDp); kinds[n++] = SWIPE
@@ -81,7 +93,8 @@ class SwipeGuide(val settings: TouchpadSettings, private val zones: IntArray, pr
         return now
     }
 
-    private fun along(d: Direction, dx: Float, dy: Float) = when (d) {
+    /** How far [dx], [dy] goes along [d]. */
+    fun along(d: Direction, dx: Float, dy: Float) = when (d) {
         Direction.UP -> -dy
         Direction.RIGHT -> dx
         Direction.DOWN -> dy
