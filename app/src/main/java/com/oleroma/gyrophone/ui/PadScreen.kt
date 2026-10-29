@@ -175,9 +175,6 @@ private const val KEEP_ON_SCREEN_DP = 48f
 /** Edit mode: [selected] value for the touchpad (empty space), whose screens are open. */
 private const val TOUCHPAD_SELECTION = "\u0000touchpad"
 
-/** Edit mode: a second tap on overlapping controls within this picks the next one behind. */
-private const val EDIT_CYCLE_MS = 1_000L
-
 /**
  * PRESS: on a control, not yet moved; HELD: the same after a long press (settings screen open);
  * TWO: two fingers down and still (lifted: a two-finger tap; moved: a PINCH).
@@ -253,10 +250,11 @@ internal object TouchStream {
  * are always shown: tap ← / → for the previous / next workspace, both together for fullscreen.
  * Controls have separate landscape and portrait placements; the pad box's shape picks one.
  * Edit mode works on the current workspace in a draft profile. Its menu floats and can be dragged
- * out of the way or resized; its ⚙ saves and opens the workspace's settings page. Tap a control for its full-screen
- * mapping screen, long-press it for its full-screen settings (tap a corner for a menu next to it), drag to move,
- * pinch or use the size slider to resize. Edits change the current orientation's placement. Done
- * saves (a builtin becomes a custom copy) and switches to the workspace being edited.
+ * out of the way or resized; its ⚙ saves and opens the workspace's settings page. Tap a control to select it
+ * (taps on overlapping controls cycle through them), double-tap it for its full-screen mapping screen, long-press
+ * it for its full-screen settings (a corner: a menu next to it). A drag anywhere moves the selected control
+ * (with none selected, the one under the finger); a pinch or the size slider resizes it. Edits change the
+ * current orientation's placement. Done saves (a builtin becomes a custom copy) and switches to the workspace being edited.
  * In play mode the top row ([CapsuleRow]) switches and adds workspaces (tap the current one to edit
  * it) and opens Connection and Settings ([PadTab]) through [onOpenMenu]. With [GamepadRuntime.cornerAutoHide]
  * the ← / → corners fade out after a few seconds; four quick taps (or touching a corner) show them again.
@@ -360,6 +358,9 @@ fun PadScreen(
 
     /** Edit mode: the control the last tap selected, so a second tap soon after opens its mappings. */
     val editTapId = remember { arrayOfNulls<String>(1) }
+
+    /** Edit mode: what was selected before the last tap, so a double tap on overlapping controls opens that one. */
+    val editTapBefore = remember { arrayOfNulls<String>(1) }
 
     /**
      * Restarts the play touch handler on layout changes but not on gyro changes, so the gyro
@@ -680,7 +681,8 @@ fun PadScreen(
                         // Two-finger tap: where each finger landed, and the control under them.
                         val tapStart = HashMap<PointerId, Offset>()
                         var tapTarget: String? = null
-                        // Overlapping controls: the front one; a tap on the same spot soon after picks the next one behind.
+                        // Overlapping controls: a tap picks the one after the selected one (the front one when
+                        // none of them is selected), so repeated taps cycle through them.
                         val under = hitOrder(controls, portrait).filter {
                             it.contains(
                                 downPos.x,
@@ -690,13 +692,18 @@ fun PadScreen(
                                 inPortrait = portrait
                             )
                         }
-                        // A quick second tap (a double tap) keeps the same one; a slower one cycles.
+                        // A quick second tap (a double tap) goes back to what was selected before the first
+                        // one, so double-tapping the selected control opens it rather than the one behind.
                         val sinceTap = first.uptimeMillis - editCycleAt[0]
-                        val sameSpot = under.size > 1 &&
+                        val quickSecond = sinceTap <= doubleTapMs &&
                                 (downPos - Offset(editCycle[0], editCycle[1])).getDistance() <= slop * 2
+                        val selectedUnder = under.indexOfFirst { it.id == selected }
+                        val beforeUnder = under.indexOfFirst { it.id == editTapBefore[0] }
                         val underIndex = when {
-                            sameSpot && sinceTap <= doubleTapMs -> editCycle[2].toInt() % under.size
-                            sameSpot && sinceTap <= EDIT_CYCLE_MS -> (editCycle[2].toInt() + 1) % under.size
+                            under.size <= 1 -> 0
+                            quickSecond && beforeUnder >= 0 -> beforeUnder
+                            quickSecond -> editCycle[2].toInt() % under.size
+                            selectedUnder >= 0 -> (selectedUnder + 1) % under.size
                             else -> 0
                         }
                         val c = hit(corners, downPos) ?: under.getOrNull(underIndex)
@@ -705,6 +712,9 @@ fun PadScreen(
                         // Empty space: a tap opens the touchpad's mappings, a long press its settings;
                         // with something selected, a tap there only closes it.
                         val hadSelection = selected != null
+                        // A drag moves the selected control from wherever it starts, never what is under the finger.
+                        val sel = findControl(selected)
+                        val selGrab = if (sel != null) downPos - center(sel) else Offset.Zero
                         if (c != null) {
                             mode = EditGesture.PRESS
                             target = c.id
@@ -786,16 +796,21 @@ fun PadScreen(
                             }
 
                             when (mode) {
-                                EditGesture.PRESS, EditGesture.HELD -> if (main != null && (main.position - downPos).getDistance() > slop) {
-                                    mode = EditGesture.MOVE
-                                    selected = target
-                                    menu = EditMenu.NONE
-                                    dragging = true
-                                }
-
-                                EditGesture.EMPTY -> if (main != null && (main.position - downPos).getDistance() > slop) {
-                                    mode = EditGesture.NONE
-                                }
+                                EditGesture.PRESS, EditGesture.HELD, EditGesture.EMPTY ->
+                                    if (main != null && (main.position - downPos).getDistance() > slop) {
+                                        if (mode != EditGesture.HELD && sel != null) {
+                                            target = sel.id
+                                            grab = selGrab
+                                        }
+                                        if (mode == EditGesture.EMPTY && sel == null) {
+                                            mode = EditGesture.NONE
+                                        } else {
+                                            mode = EditGesture.MOVE
+                                            selected = target
+                                            menu = EditMenu.NONE
+                                            dragging = true
+                                        }
+                                    }
 
                                 else -> Unit
                             }
@@ -862,9 +877,11 @@ fun PadScreen(
                         when (mode) {
                             EditGesture.PRESS -> {
                                 // A tap selects; a double tap opens the mapping (a corner, with none: its menu).
-                                val double = target != null && target == editTapId[0] && pressedAt - editCycleAt[0] <= doubleTapMs
+                                val double = target != null && quickSecond &&
+                                        (target == editTapId[0] || target == editTapBefore[0])
                                 editCycle[0] = downPos.x; editCycle[1] = downPos.y; editCycle[2] = underIndex.toFloat()
                                 editCycleAt[0] = lastAt
+                                editTapBefore[0] = if (double) null else selected
                                 editTapId[0] = if (double) null else target
                                 selected = target
                                 menu = when {
