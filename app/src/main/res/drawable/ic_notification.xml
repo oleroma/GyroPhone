@@ -7,6 +7,11 @@
             android:pathData="M34.5,38h39a4.5,4.5 0 0 1 4.5,4.5v14a4.5,4.5 0 0 1 -4.5,4.5h-39a4.5,4.5 0 0 1 -4.5,-4.5v-14a4.5,4.5 0 0 1 4.5,-4.5z" />
         <path android:fillColor="#FFFFFF"
             android:pathData="M33.4,49.5a1.6,1.6 0 1 0 3.2,0a1.6,1.6 0 1 0 -3.2,0" />
+        <!-- Gyroscope in the middle of the screen -->
+        <path android:strokeColor="#FFFFFF" android:strokeWidth="2.5" android:strokeLineCap="round"
+            android:pathData="M47,49.5a7,7 0 1 0 14,0a7,7 0 1 0 -14,0M54,41v17M47,49.5a7,2.6 0 1 0 14,0a7,2.6 0 1 0 -14,0" />
+        <path android:fillColor="#FFFFFF"
+            android:pathData="M52.6,41a1.4,1.4 0 1 0 2.8,0a1.4,1.4 0 1 0 -2.8,0M52.6,58a1.4,1.4 0 1 0 2.8,0a1.4,1.4 0 1 0 -2.8,0" />
         <!-- Controller handles clipped to the phone's sides -->
         <path android:strokeColor="#FFFFFF" android:strokeWidth="4" android:strokeLineJoin="round"
             android:pathData="M26.5,38H20a4.5,4.5 0 0 0 -4.5,4.5V61c0,3.5 2,5.5 5.5,5.5c3.5,0 5.5,-2 5.5,-5.5zM81.5,38H88a4.5,4.5 0 0 1 4.5,4.5V61c0,3.5 -2,5.5 -5.5,5.5c-3.5,0 -5.5,-2 -5.5,-5.5z" />
