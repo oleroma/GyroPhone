@@ -69,6 +69,8 @@ data class Workspace(
      * which sets each that differs from the built-in values ([WorkspaceDefaults.own]).
      */
     val ownSettings: Set<String>? = null,
+    /** Physical keys' own gesture timings: filled from [devicePreset] when resolved, like [keyboard]. */
+    val keyTimings: List<KeyTiming> = emptyList(),
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =

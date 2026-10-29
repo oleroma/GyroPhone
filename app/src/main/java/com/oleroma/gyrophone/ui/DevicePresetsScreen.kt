@@ -203,6 +203,12 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
             onEditSet = { mapSet = it },
             onSetsChange = { sets, removed -> runtime.editActiveProfile { p -> p.updateWorkspace(current) { it.withSets(sets, removed) } } },
             physicalInputs = e.inputs,
+            settings = physicalSettings(preset, ws) { change ->
+                runtime.editActiveProfile { p ->
+                    val now = p.devicePresets.firstOrNull { it.id == preset.id } ?: return@editActiveProfile p
+                    DevicePresets.put(p, change(now))
+                }
+            },
         )
     }
 
@@ -229,7 +235,7 @@ private fun PresetTab(name: String, selected: Boolean, onClick: () -> Unit, onLo
     }
 }
 
-/** A long press on a preset's tab: its name, Duplicate and Delete. */
+/** A long press on a preset's tab: its name, Reset all (its keys' own timings), Duplicate and Delete. */
 @Composable
 private fun PresetMenu(runtime: GamepadRuntime, preset: DevicePreset, onPick: (String) -> Unit, onDismiss: () -> Unit) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
@@ -256,6 +262,14 @@ private fun PresetMenu(runtime: GamepadRuntime, preset: DevicePreset, onPick: (S
                         color = colors.onSurfaceVariant,
                         modifier = Modifier.padding(top = 8.dp),
                     )
+                    // Keys' own long press / double tap times (their ⚙): all back to the workspace's.
+                    val timed = profile.devicePresets.firstOrNull { it.id == preset.id }?.timings.orEmpty().size
+                    ResetAllButton("workspace" + if (timed > 0) " ($timed keys)" else "", timed > 0) {
+                        runtime.editActiveProfile { p ->
+                            val now = p.devicePresets.firstOrNull { it.id == preset.id } ?: return@editActiveProfile p
+                            DevicePresets.put(p, now.copy(timings = emptyList()))
+                        }
+                    }
                 }
             }
         },
@@ -267,7 +281,10 @@ private fun PresetMenu(runtime: GamepadRuntime, preset: DevicePreset, onPick: (S
                 }) { Text("Delete", color = colors.error) }
             } else {
                 TextButton(onClick = {
-                    runtime.editActiveProfile { p -> DevicePresets.put(p, preset.copy(name = name.trim().ifBlank { preset.name })) }
+                    runtime.editActiveProfile { p ->
+                        val now = p.devicePresets.firstOrNull { it.id == preset.id } ?: preset
+                        DevicePresets.put(p, now.copy(name = name.trim().ifBlank { preset.name }))
+                    }
                     onDismiss()
                 }) { Text("Done") }
             }

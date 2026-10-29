@@ -188,7 +188,7 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () 
             }
         }
 
-        WorkspaceSettings(runtime, profile, current)
+        WorkspaceSettings(runtime, workspaceLevel(runtime, profile, current), profile.id + "/" + ws.id)
     }
 
     if (copying) {

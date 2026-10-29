@@ -30,13 +30,14 @@ object WorkspaceMappings {
                 pads = if (p == null) emptyList() else listOf(AttachedPad(PRESET_PAD, mappings = p.controller)),
                 keyboard = p?.keyboard.orEmpty(),
                 mouse = p?.mouse.orEmpty(),
+                keyTimings = p?.timings.orEmpty(),
             )
         }
 
     /** [set] as it is stored: the device mappings stay in the presets only. */
     fun store(set: Profile): Profile = set.copy(
         workspaces = set.workspaces.map { w ->
-            w.copy(mappingProfileId = null, pads = emptyList(), keyboard = emptyList(), mouse = emptyList())
+            w.copy(mappingProfileId = null, pads = emptyList(), keyboard = emptyList(), mouse = emptyList(), keyTimings = emptyList())
         },
     )
 

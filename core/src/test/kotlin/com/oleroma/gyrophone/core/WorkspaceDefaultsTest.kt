@@ -1,8 +1,10 @@
 package com.oleroma.gyrophone.core
 
+import com.oleroma.gyrophone.core.model.DevicePreset
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.HoldMode
+import com.oleroma.gyrophone.core.model.KeyTiming
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.ProfileJson
 import com.oleroma.gyrophone.core.model.SurfaceField
@@ -79,5 +81,17 @@ class WorkspaceDefaultsTest {
         val classic = SurfaceField.edited(edited, pad.copy(pies = List(4) { 60f }).with(edited), pad.with(edited).copy(pies = null))
         assertNull(pad.copy(pies = List(4) { 60f }).with(classic).pies)
         assertEquals(HoldMode.FROM_START, pad.with(SurfaceField.dropAll(classic)).holdMode)
+    }
+
+    @Test
+    fun keyTimingsComeFromThePinnedPreset() {
+        val preset = DevicePreset("d", "D").withTiming(96) { it.copy(longPressMs = 700) }
+        assertEquals(listOf(KeyTiming(96, longPressMs = 700)), preset.timings)
+        val set = Profile("p", "P", listOf(Workspace("a", "A", devicePreset = "d")), devicePresets = listOf(preset))
+        val resolved = WorkspaceMappings.resolve(set)
+        assertEquals(preset.timings, resolved.workspaces[0].keyTimings)
+        assertEquals(emptyList<KeyTiming>(), WorkspaceMappings.store(resolved).workspaces[0].keyTimings)
+        // No own time left: the key is dropped.
+        assertEquals(emptyList<KeyTiming>(), preset.withTiming(96) { it.copy(longPressMs = null) }.timings)
     }
 }

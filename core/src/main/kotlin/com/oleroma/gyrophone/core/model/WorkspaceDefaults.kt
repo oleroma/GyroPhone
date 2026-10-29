@@ -106,16 +106,20 @@ object WorkspaceDefaults {
         keys.fold(w) { r, k -> take(k, r, defaults) }.copy(ownSettings = emptySet())
 
     /**
-     * [after] (an edit of [before]) with each workspace setting the keys the edit changed itself.
-     * A key whose ownership the edit changed (a reset) stays as the edit has it.
+     * [after] (an edit of [before]) setting the keys the edit changed itself. A key whose
+     * ownership the edit changed (a reset) stays as the edit has it.
      */
+    fun markOwn(before: Workspace, after: Workspace): Workspace {
+        val ownB = own(before)
+        val ownA = own(after)
+        val changed = keys.filter { k -> k !in ownA && k !in ownB && !same(k, before, after) }
+        return if (changed.isEmpty()) after else after.copy(ownSettings = ownA + changed)
+    }
+
+    /** [after] (an edit of [before]) with each workspace setting the keys the edit changed itself ([markOwn]). */
     fun markOwn(before: Profile, after: Profile): Profile = after.copy(
         workspaces = after.workspaces.map { w ->
-            val b = before.workspaces.firstOrNull { it.id == w.id } ?: return@map w
-            val ownB = own(b)
-            val ownA = own(w)
-            val changed = keys.filter { k -> (k in ownB) == (k in ownA) && k !in ownA && !same(k, b, w) }
-            if (changed.isEmpty()) w else w.copy(ownSettings = ownA + changed)
+            before.workspaces.firstOrNull { it.id == w.id }?.let { markOwn(it, w) } ?: w
         },
     )
 }

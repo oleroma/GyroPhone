@@ -42,10 +42,10 @@ private const val MAX_SURFACE_SENS = 12f
  * scrolling, then the swipe directions (pies, how far a swipe and a held direction take, how held
  * directions work, the latch). Each shows [level]'s value, highlighted with a ↺ where it differs
  * from the parent. [touchpad]: the workspace touchpad, with its own on / off and glide.
- * [zones]: how many length zones each direction has mapped.
+ * [zones]: how many length zones each direction has mapped. [resetAll]: with its own Reset all.
  */
 @Composable
-internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntArray, touchpad: Boolean) {
+internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntArray, touchpad: Boolean, resetAll: Boolean = true) {
     val current by rememberUpdatedState(level)
     val s = level.eff
     fun edit(change: (TouchpadSettings) -> TouchpadSettings) = current.edit(change)
@@ -53,7 +53,7 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
     fun reset(f: SurfaceField): () -> Unit = { current.reset(f) }
 
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        ResetAllButton(level.parentName, level.anyOwn) { current.resetAll() }
+        if (resetAll) ResetAllButton(level.parentName, level.anyOwn) { current.resetAll() }
         SectionTitle("Movement & scrolling")
         if (touchpad) {
             OverrideSwitch("Enabled", null, s.enabled, own(SurfaceField.ENABLED), reset(SurfaceField.ENABLED)) { v ->

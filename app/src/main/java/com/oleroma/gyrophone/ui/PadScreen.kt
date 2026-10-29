@@ -110,10 +110,10 @@ import com.oleroma.gyrophone.core.model.Placement
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
-import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.Workspace
+import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.WorkspaceMappings
 import com.oleroma.gyrophone.core.model.contains
 import com.oleroma.gyrophone.core.model.heightRatio
@@ -587,7 +587,8 @@ fun PadScreen(
         /** Applies [change] to the workspace being edited; a button switched in or out of swipe mode takes its gestures along. */
         fun editWorkspace(change: (Workspace) -> Workspace) {
             val d = draft ?: return
-            draft = d.updateWorkspace(editIndex) { Bindings.matchSwipeModes(change(it)) }
+            // A setting changed here stops following the workspace defaults (shown at once).
+            draft = d.updateWorkspace(editIndex) { WorkspaceDefaults.markOwn(it, Bindings.matchSwipeModes(change(it))) }
         }
 
         fun isCorner(d: Profile, id: String) = d.corners.any { it.id == id }
@@ -1757,7 +1758,7 @@ fun PadScreen(
                         onZoneSettings = { a, b ->
                             editWorkspace { it.copy(touchpad = it.touchpad.copy(holdZones = a, dirHoldZones = b)) }
                         },
-                        settings = touchpadSettings(ws, TouchpadSettings()) { change -> editWorkspace(change) },
+                        settings = touchpadSettings(ws, d.defaults) { change -> editWorkspace(change) },
                     )
                 } else {
                     TouchpadSettingsScreen(

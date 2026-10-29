@@ -17,7 +17,19 @@ data class DevicePreset(
     val controller: List<Mapping> = emptyList(),
     val keyboard: List<Mapping> = emptyList(),
     val mouse: List<Mapping> = emptyList(),
+    /** Keys and buttons (controller, keyboard, mouse) with gesture timings of their own. */
+    val timings: List<KeyTiming> = emptyList(),
 ) {
+    /** [keyCode]'s own timings, or null: the workspace's. */
+    fun timing(keyCode: Int): KeyTiming? = timings.firstOrNull { it.keyCode == keyCode }
+
+    /** [keyCode] with its timings [change]d; one left with none of its own is dropped. */
+    fun withTiming(keyCode: Int, change: (KeyTiming) -> KeyTiming): DevicePreset {
+        val t = change(timing(keyCode) ?: KeyTiming(keyCode))
+        val rest = timings.filter { it.keyCode != keyCode }
+        return copy(timings = if (t.longPressMs == null && t.doubleTapMs == null) rest else rest + t)
+    }
+
     fun mappings(device: PhysicalDevice): List<Mapping> = when (device) {
         PhysicalDevice.CONTROLLER -> controller
         PhysicalDevice.KEYBOARD -> keyboard
@@ -30,6 +42,13 @@ data class DevicePreset(
         PhysicalDevice.MOUSE -> copy(mouse = m)
     }
 }
+
+/**
+ * A physical key's or button's own gesture timings ([InputSource.KeyGesture]); null = the
+ * workspace's ([Workspace.longPressMs], [Workspace.doubleTapMs]).
+ */
+@Serializable
+data class KeyTiming(val keyCode: Int, val longPressMs: Int? = null, val doubleTapMs: Int? = null)
 
 /** The kinds of physical device a [DevicePreset] maps. */
 enum class PhysicalDevice(val label: String) { CONTROLLER("Controller"), KEYBOARD("Keyboard"), MOUSE("Mouse") }

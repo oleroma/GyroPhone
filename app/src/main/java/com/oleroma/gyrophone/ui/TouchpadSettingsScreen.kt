@@ -12,7 +12,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -31,7 +30,7 @@ import com.oleroma.gyrophone.runtime.GamepadRuntime
 
 /**
  * Full-screen settings of the workspace touchpad (a long press on empty space in edit mode): the
- * touchpad ratchet and a summary of its mappings
+ * summary of its mappings
  * ([onEditMappings] opens their screen). Edits go to [onWorkspaceChange].
  */
 @Composable
@@ -70,12 +69,6 @@ internal fun TouchpadSettingsScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     val section = Modifier.widthIn(max = 720.dp)
-                    RememberedSection(runtime, "touchpad.Gyro", "Gyro", section) {
-                        TouchpadSwitch(
-                            "Touchpad is a ratchet (a finger on the empty pad flips gyro while it is down, even with the touchpad off)",
-                            workspace.gyro.touchpadRatchet,
-                        ) { v -> onWorkspaceChange { it.copy(gyro = it.gyro.copy(touchpadRatchet = v)) } }
-                    }
                     RememberedSection(runtime, "touchpad.Mappings", "Mappings", section, defaultOpen = true) {
                         TouchpadMappingsSummary(workspace, onEditMappings) {
                             onWorkspaceChange { w ->
@@ -118,13 +111,5 @@ private fun TouchpadMappingsSummary(workspace: Workspace, onEdit: () -> Unit, on
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = onEdit) { Text("Edit mappings") }
         TextButton(onClick = onReset) { Text("Reset to defaults") }
-    }
-}
-
-@Composable
-private fun TouchpadSwitch(title: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(title, Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onChange)
     }
 }
