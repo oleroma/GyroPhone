@@ -69,9 +69,9 @@ class LayerSettingsTest {
     }
 
     @Test
-    fun theGyroFiltersAreNeverALayers() {
+    fun aLayerHasGyroFiltersOfItsOwn() {
         val w = edit(base, 1) { it.copy(gyro = it.gyro.copy(smoothingThreshold = 3f)) }
-        assertNull(w.sets.first { it.id == 1 }.settings)
+        assertEquals(3f, WorkspaceDefaults.layered(w, 1, emptyList()).gyro.smoothingThreshold)
     }
 
     @Test

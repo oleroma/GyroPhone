@@ -6,12 +6,13 @@ import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AttachedPad
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.GamepadButton
-import com.oleroma.gyrophone.core.model.GyroAxes
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
+import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
@@ -181,26 +182,22 @@ class GyroModesTest {
         assertTrue(hidden.workspaces.all { it.touchControls.isEmpty() })
     }
 
-    @Test fun presetsHaveRollAndPitchGyroAxesForBothOrientations() {
-        for (w in BuiltinProfiles.presets + BuiltinProfiles.blankWorkspace()) {
-            assertNotNull("${w.name} portrait axes", w.gyro.portrait)
-            assertEquals(w.gyro.landscapeAxes, w.gyro.axesFor(portrait = true))
-            assertEquals(MotionAxis.ROLL, w.gyro.axesFor(portrait = true).mouseX)
-            assertEquals(MotionAxis.PITCH, w.gyro.axesFor(portrait = true).mouseY)
-            assertEquals(MotionAxis.ROLL, w.gyro.landscapeAxes.mouseX)
-        }
+    @Test fun gyroMovesTheMouseByRollAndPitchFromTheBuiltInMappings() {
+        val gyro = Inheritance.builtin.filter { it.source is InputSource.Gyro }.associate { (it.source as InputSource.Gyro).axis to it.target }
+        assertEquals(mapOf(
+            MotionAxis.ROLL to OutputTarget.MouseAxis(MouseMotion.MOVE_X),
+            MotionAxis.PITCH to OutputTarget.MouseAxis(MouseMotion.MOVE_Y),
+        ), gyro)
     }
 
-    @Test fun loadingSpellsOutPortraitAxes() {
-        val custom = GyroSettings(mode = GyroMode.ALWAYS, mouseX = MotionAxis.ROLL, invertY = true)
+    @Test fun loadingKeepsTheGyroSettings() {
+        val custom = GyroSettings(mode = GyroMode.ALWAYS, sensitivity = 20f, rollSensitivity = 8f)
         val old = Profile(
             id = "p", name = "P",
             workspaces = listOf(Workspace(id = "w", name = "w", gyro = custom)),
         )
         val p = ProfileJson.decode(ProfileJson.encode(old))
-        val g = p.workspaces.single().gyro
-        assertEquals(GyroAxes(mouseX = MotionAxis.ROLL, invertY = true), g.portrait)
-        assertEquals(custom.landscapeAxes, g.landscapeAxes)
+        assertEquals(custom, p.workspaces.single().gyro)
         assertEquals(listOf(NavCorners.PREV, NavCorners.NEXT), p.corners.map { it.id })
         // Saved again it reads back the same.
         assertEquals(p, ProfileJson.decode(ProfileJson.encode(p)))

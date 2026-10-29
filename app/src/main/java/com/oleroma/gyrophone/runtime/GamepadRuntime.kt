@@ -794,19 +794,10 @@ class GamepadRuntime(context: Context) {
             val moveX = axes and MappingEngine.GYRO_X != 0
             val moveY = axes and MappingEngine.GYRO_Y != 0
             val routes = engine.gyroRoutes()
-            if (routes.isEmpty() && !engine.gyroMapped) {
-                // No gyro mappings: the mouse moves as the gyro settings' axes say.
-                val c = gyroMouse.update(x - biasX, y - biasY, z - biasZ, dt)
-                val dx = if (moveX) c.dx else 0
-                val dy = if (moveY) c.dy else 0
-                if (dx != 0 || dy != 0) engine.addMouseMotion(dx, dy)
-                if (gyroPadSet) clearGyroPad()
-            } else {
-                val r = gyroMouse.route(x - biasX, y - biasY, z - biasZ, dt, routes, moveX, moveY)
-                if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel)
-                engine.setGyroAxes(r.pad)
-                gyroPadSet = true
-            }
+            val r = gyroMouse.route(x - biasX, y - biasY, z - biasZ, dt, routes, moveX, moveY)
+            if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel)
+            engine.setGyroAxes(r.pad)
+            gyroPadSet = true
         } else {
             gyroMouse.reset()
             if (gyroPadSet) clearGyroPad()

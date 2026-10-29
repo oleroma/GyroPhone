@@ -828,8 +828,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /**
      * Where gyro motion goes now: the workspace's gyro mappings in use, each axis a held button
-     * maps taken over by that button's (the last pressed of several). Empty with no gyro mapping
-     * in use at all ([gyroMapped] false): gyro then moves the mouse as its settings' axes say.
+     * maps taken over by that button's (the last pressed of several).
      */
     fun gyroRoutes(): List<Mapping> = synchronized(lock) {
         val ms = gyroInUse
@@ -843,9 +842,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         out.filter { it.target != OutputTarget.NoOutput }
     }
-
-    /** Some gyro mapping is in use ([gyroRoutes]); without one gyro moves the mouse by its settings' axes. */
-    val gyroMapped: Boolean get() = gyroInUse.isNotEmpty()
 
     /** How far the phone is tilted: [x] sideways (+ right), [y] forward and back (+ back), each -1..1. */
     fun setTilt(x: Float, y: Float) {

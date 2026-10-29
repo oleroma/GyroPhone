@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -174,7 +175,6 @@ internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, item
     val tops = remember { mutableStateMapOf<String, Float>() }
     val heights = remember { mutableStateMapOf<String, Int>() }
     val headers = remember { HashMap<String, Int>() }
-    val coords = remember { HashMap<String, LayoutCoordinates>() }
     val shown = if (dragged == null) ordered() else row.toList()
     val byId = items.associateBy { it.id }
 
@@ -198,42 +198,53 @@ internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, item
         }
     }
 
+    // The gesture lives on the column, which never moves: a category's own node moves as the
+    // row reorders, and a gesture on it would end at the first move.
+    val ids by rememberUpdatedState(items.map { it.id })
+    var column by remember { mutableStateOf<LayoutCoordinates?>(null) }
     CompositionLocalProvider(LocalSectionsCollapsed provides (dragged != null)) {
-        Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+        Column(
+            Modifier
+                .onGloballyPositioned { column = it }
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val col = column ?: return@awaitEachGesture
+                        val y = col.localToRoot(down.position).y
+                        val id = ids.firstOrNull { i ->
+                            val top = tops[i] ?: return@firstOrNull false
+                            y >= top && y <= top + (headers[i] ?: 0)
+                        } ?: return@awaitEachGesture
+                        val long = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                        fingerY = col.localToRoot(long.position).y
+                        grab = fingerY - (tops[id] ?: 0f)
+                        row.clear(); row.addAll(ordered())
+                        dragged = id
+                        // Ahead of the header's own click and the scrolling list: the finger is ours now.
+                        while (true) {
+                            val e = awaitPointerEvent(PointerEventPass.Initial)
+                            val ch = e.changes.firstOrNull { it.id == long.id } ?: break
+                            e.changes.forEach { it.consume() }
+                            if (!ch.pressed) break
+                            column?.let { fingerY = it.localToRoot(ch.position).y }
+                            reorder(id)
+                        }
+                        drop()
+                    }
+                },
+            verticalArrangement = Arrangement.spacedBy(gap),
+        ) {
             for (id in shown) {
                 val item = byId[id] ?: continue
                 key(id) {
                     val isDragged = dragged == id
-                    // The wrapper stays where the layout puts it and follows the finger; only the card moves.
+                    // The wrapper stays where the layout puts it; only the card follows the finger.
                     Box(
                         Modifier
                             .zIndex(if (isDragged) 1f else 0f)
                             .onGloballyPositioned {
-                                coords[id] = it
                                 tops[id] = it.positionInRoot().y
                                 heights[id] = it.size.height
-                            }
-                            .pointerInput(id) {
-                                awaitEachGesture {
-                                    val down = awaitFirstDown(requireUnconsumed = false)
-                                    if (down.position.y > (headers[id] ?: 0)) return@awaitEachGesture
-                                    val long = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
-                                    val c = coords[id] ?: return@awaitEachGesture
-                                    fingerY = c.localToRoot(long.position).y
-                                    grab = long.position.y
-                                    row.clear(); row.addAll(ordered())
-                                    dragged = id
-                                    // Ahead of the header's own click and the scrolling list: the finger is ours now.
-                                    while (true) {
-                                        val e = awaitPointerEvent(PointerEventPass.Initial)
-                                        val ch = e.changes.firstOrNull { it.id == long.id } ?: break
-                                        e.changes.forEach { it.consume() }
-                                        if (!ch.pressed) break
-                                        coords[id]?.let { fingerY = it.localToRoot(ch.position).y }
-                                        reorder(id)
-                                    }
-                                    drop()
-                                }
                             },
                     ) {
                         val card = Modifier.graphicsLayer {

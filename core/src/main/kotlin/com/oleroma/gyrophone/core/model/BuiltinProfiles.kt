@@ -69,12 +69,8 @@ object BuiltinProfiles {
 
     private fun anyPad(mappings: List<Mapping>) = AttachedPad(id = "pad1", mappings = mappings)
 
-    /**
-     * Gyro in [mode] with roll (steering-wheel tilt) on mouse left/right and pitch on up/down, set
-     * for landscape and portrait alike.
-     */
-    private fun gyro(mode: GyroMode) =
-        GyroSettings(mode = mode, mouseX = MotionAxis.ROLL, mouseY = MotionAxis.PITCH).withBothOrientations()
+    /** Gyro in [mode]; where it goes is the Defaults' gyro mappings (roll left/right, pitch up/down). */
+    private fun gyro(mode: GyroMode) = GyroSettings(mode = mode)
 
     // Controller
 

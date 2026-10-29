@@ -1,6 +1,5 @@
 package com.oleroma.gyrophone.ui
 
-import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.horizontalScroll
@@ -8,24 +7,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 
-import com.oleroma.gyrophone.core.model.GyroAxes
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroOrientation
-import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.RatchetAxes
 
@@ -37,7 +29,7 @@ import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
 /** Slider top: higher than the old 60, for fast flicks. */
-private const val MAX_GYRO_SENS = 150f
+internal const val MAX_GYRO_SENS = 150f
 
 /**
  * One level of workspace settings ([WorkspaceDefaults.keys]): [ws] in effect over [parent], which
@@ -120,7 +112,6 @@ internal fun defaultsLevel(runtime: GamepadRuntime, profile: Profile): Workspace
 }
 
 private fun g(p: String) = WorkspaceDefaults.gyroKey(p)
-private val AXES = listOf("mouseX", "invertX", "scaleX", "mouseY", "invertY", "scaleY", "portrait").map(::g)
 
 /**
  * Every setting of one [level] (a workspace, one of its layers, or the Defaults): gyro, buttons,
@@ -178,14 +169,10 @@ internal fun WorkspaceSettings(
                     }
                 }
             }
-            OverrideSlider(key + "gx", "X sensitivity %.0f", ws.gyro.sensitivity, 0f..MAX_GYRO_SENS, 1f, own(g("sensitivity")), reset(g("sensitivity"))) { v ->
-                editWs { it.copy(gyro = it.gyro.copy(sensitivity = v)) }
-            }
             OverrideSlider(
-                key + "gy", "Y sensitivity %.0f", ws.gyro.verticalSensitivity, 0f..MAX_GYRO_SENS, 1f,
-                own(g("sensitivityY")) || own(g("verticalRatio")), level.resetKeys(listOf(g("sensitivityY"), g("verticalRatio"))),
-                hint = "Mouse counts per degree, sideways (X) and up and down (Y). 0 turns that direction off.",
-            ) { v -> editWs { it.copy(gyro = it.gyro.copy(sensitivityY = v)) } }
+                key + "gs", "Sensitivity %.0f", ws.gyro.sensitivity, 0f..MAX_GYRO_SENS, 1f, own(g("sensitivity")), reset(g("sensitivity")),
+                hint = "Mouse counts per degree turned. Yaw, pitch and roll each follow it unless their ⚙ in the mapping editor sets their own; scrolling and sticks go faster or slower with it too.",
+            ) { v -> editWs { it.copy(gyro = it.gyro.copy(sensitivity = v)) } }
             OverrideRow("Held as", own(g("orientation")), reset(g("orientation"))) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     GyroOrientation.entries.forEach { o ->
@@ -196,38 +183,9 @@ internal fun WorkspaceSettings(
                     }
                 }
             }
-            // Landscape and portrait each have their own axis mapping; start on the way the phone is held.
-            val heldPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
-            var axesPortrait by remember(heldPortrait) { mutableStateOf(heldPortrait) }
-            val axes = ws.gyro.axesFor(axesPortrait)
-            fun editAxes(change: (GyroAxes) -> GyroAxes) =
-                editWs { it.copy(gyro = it.gyro.withAxes(axesPortrait, change(it.gyro.axesFor(axesPortrait)))) }
-            OverrideRow("Axes", level.ownAny(AXES), level.resetKeys(AXES)) {
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text("Axes for", Modifier.padding(end = 4.dp))
-                    FilterChip(selected = !axesPortrait, onClick = { axesPortrait = false }, label = { Text("Landscape") })
-                    FilterChip(selected = axesPortrait, onClick = { axesPortrait = true }, label = { Text("Portrait") })
-                    if (axesPortrait && ws.gyro.axesFor(true) != ws.gyro.landscapeAxes) {
-                        TextButton(onClick = { editWs { it.copy(gyro = it.gyro.copy(portrait = it.gyro.landscapeAxes)) } }) {
-                            Text("Copy landscape")
-                        }
-                    }
-                }
-                AxisRow(
-                    "Mouse left/right", axes.mouseX, axes.invertX,
-                    onAxis = { a -> editAxes { it.copy(mouseX = a) } },
-                    onInvert = { inv -> editAxes { it.copy(invertX = inv) } })
-                AxisRow(
-                    "Mouse up/down", axes.mouseY, axes.invertY,
-                    onAxis = { a -> editAxes { it.copy(mouseY = a) } },
-                    onInvert = { inv -> editAxes { it.copy(invertY = inv) } })
-            }
-            // Both filters default to off: raw gyro. Calibration only subtracts a fixed resting bias.
-            // They suit the phone, not a layer: set for the whole workspace only.
-            if (!layer) {
+            // Both filters default to off: raw gyro. Calibration only subtracts a fixed resting bias
+            // and suits the phone, not a layer: the whole workspace's only.
+            run {
                 val tight = ws.gyro.tighteningThreshold
                 OverrideSlider(
                     key + "tight", if (tight < 0.05f) "Jitter cutoff off" else "Jitter cutoff %.1f°/s", tight, 0f..5f, 0.1f,
@@ -238,6 +196,8 @@ internal fun WorkspaceSettings(
                     key + "smooth", if (smooth < 0.05f) "Smoothing off" else "Smoothing below %.1f°/s", smooth, 0f..10f, 0.1f,
                     own(g("smoothingThreshold")), reset(g("smoothingThreshold")),
                 ) { v -> editWs { it.copy(gyro = it.gyro.copy(smoothingThreshold = if (v < 0.05f) 0f else v)) } }
+            }
+            if (!layer) {
                 val cal by runtime.calibrationState.collectAsState()
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -358,27 +318,5 @@ private fun TouchpadSection(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
         )
-    }
-}
-
-@Composable
-private fun AxisRow(
-    title: String,
-    axis: MotionAxis,
-    inverted: Boolean,
-    onAxis: (MotionAxis) -> Unit,
-    onInvert: (Boolean) -> Unit,
-) {
-    Row(
-        Modifier.horizontalScroll(rememberScrollState()),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(title, Modifier.padding(end = 4.dp))
-        MotionAxis.entries.forEach { a ->
-            FilterChip(selected = axis == a, onClick = { onAxis(a) }, label = { Text(a.label) })
-        }
-        Text("Invert", Modifier.padding(start = 8.dp))
-        Switch(checked = inverted, onCheckedChange = onInvert)
     }
 }

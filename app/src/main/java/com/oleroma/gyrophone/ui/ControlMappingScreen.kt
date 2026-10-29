@@ -882,8 +882,8 @@ internal fun ControlMappingScreen(
                             if (fingers == 0) {
                                 Text(
                                     if (control.isTouchpadStandIn) {
-                                        "Gyro: what turning the phone does while gyro is on. With no gyro mapping anywhere, " +
-                                                "gyro moves the mouse as the gyro settings' Axes say. Tilt: how far it leans " +
+                                        "Gyro: what turning the phone does while gyro is on (roll and pitch move the mouse unless " +
+                                                "mapped otherwise; ⚙ sets an axis's own sensitivity). Tilt: how far it leans " +
                                                 "(sideways from upright, forward and back from where it was when tilt started); full at 30°."
                                     } else {
                                         "While this is pressed: a gyro axis it maps does that instead of what the workspace maps it to; " +

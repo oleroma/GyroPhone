@@ -44,3 +44,18 @@ val Profile.main: Workspace get() = workspaces.first()
 fun Profile.noTouchpadDefaults(): Profile = copy(
     defaults = WorkspaceDefaults.builtin.copy(mappings = Inheritance.builtin.map { it.copy(target = OutputTarget.NoOutput) }),
 )
+
+/** One gyro sample routed with [x] on mouse left/right and [y] on up/down (yaw and pitch, as tests had them). */
+fun com.oleroma.gyrophone.core.engine.GyroMouse.update(
+    gx: Float, gy: Float, gz: Float, dt: Float,
+    x: com.oleroma.gyrophone.core.model.MotionAxis = com.oleroma.gyrophone.core.model.MotionAxis.YAW,
+    y: com.oleroma.gyrophone.core.model.MotionAxis = com.oleroma.gyrophone.core.model.MotionAxis.PITCH,
+    scaleX: Float = 1f,
+): com.oleroma.gyrophone.core.engine.GyroMouse.Counts {
+    val routes = listOf(
+        Mapping(com.oleroma.gyrophone.core.model.InputSource.Gyro(x), OutputTarget.MouseAxis(com.oleroma.gyrophone.core.model.MouseMotion.MOVE_X, scaleX)),
+        Mapping(com.oleroma.gyrophone.core.model.InputSource.Gyro(y), OutputTarget.MouseAxis(com.oleroma.gyrophone.core.model.MouseMotion.MOVE_Y)),
+    )
+    val r = route(gx, gy, gz, dt, routes, moveX = true, moveY = true)
+    return com.oleroma.gyrophone.core.engine.GyroMouse.Counts(r.dx, r.dy)
+}

@@ -23,8 +23,14 @@ object Inheritance {
     private fun levelKey(s: InputSource): Any? =
         if (s is InputSource.Gyro || s is InputSource.Tilt || s is InputSource.Shake) s else inputOf(s)
 
-    /** The touchpad's mappings every level starts from: what a laptop touchpad does. */
-    val builtin: List<Mapping> = Bindings.defaultTouchpadMappings(TouchpadSettings())
+    /**
+     * The mappings every level starts from: what a laptop touchpad does, and gyro roll (turning it
+     * like a wheel) moving the mouse left and right, pitch up and down.
+     */
+    val builtin: List<Mapping> = Bindings.defaultTouchpadMappings(TouchpadSettings()) + listOf(
+        Mapping(InputSource.Gyro(MotionAxis.ROLL), OutputTarget.MouseAxis(MouseMotion.MOVE_X)),
+        Mapping(InputSource.Gyro(MotionAxis.PITCH), OutputTarget.MouseAxis(MouseMotion.MOVE_Y)),
+    )
 
     /**
      * [own] with [parent]'s Base mappings of the workspace's own inputs (touchpad and gyro,

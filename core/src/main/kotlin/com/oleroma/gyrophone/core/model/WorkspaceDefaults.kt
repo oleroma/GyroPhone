@@ -48,14 +48,8 @@ object WorkspaceDefaults {
     val keys: List<String> = top + gyroProps.map(::gyroKey) + SurfaceField.entries.map(::touchpadKey) +
         Direction.entries.flatMap { d -> DirField.entries.map { f -> dirKey(d, f) } }
 
-    /**
-     * The keys a layer ([MappingSet.settings]) may set: all but the gyro filters (smoothing and
-     * jitter, calibrated for the phone) and the controls' opacity.
-     */
-    val layerKeys: List<String> = keys - setOf(
-        gyroKey("tighteningThreshold"), gyroKey("smoothingThreshold"),
-        CONTROL_OPACITY,
-    )
+    /** The keys a layer ([MappingSet.settings]) may set: all but the controls' opacity. */
+    val layerKeys: List<String> = keys - setOf(CONTROL_OPACITY)
 
     /** The touchpad's keys: shared and per direction. */
     val touchpadKeys: List<String> = keys.filter { it.startsWith(TOUCHPAD) }

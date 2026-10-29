@@ -11,6 +11,7 @@ import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.ButtonGesture
 import com.oleroma.gyrophone.core.model.DevicePreset
 import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
@@ -127,7 +128,9 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
     val zones = Bindings.holdZoneCounts(ws.mappings, "")
     return MappingSettings(
         action = { input ->
-            directionGear(surface, key, input, zones) ?: when (timingOf(input)) {
+            val gyro = input.sources.firstOrNull() as? InputSource.Gyro
+            if (gyro != null) gyroGear(level, key, gyro.axis)
+            else directionGear(surface, key, input, zones) ?: when (timingOf(input)) {
                 Timing.LONG_PRESS -> ui {
                     MsOverride(
                         key + "long", "Long press after", ws.longPressMs,
@@ -153,6 +156,21 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
         },
         shared = { WorkspaceSettings(runtime, level, key, touchpadOpen = true) },
     )
+}
+
+/**
+ * The ⚙ of gyro [axis] at [level]: its sensitivity, its own or the level's shared Sensitivity
+ * (↺ follows that again).
+ */
+private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Composable () -> Unit = ui {
+    val g = level.ws.gyro
+    OverrideSlider(
+        key + "sens" + axis.name, "${axis.label} sensitivity %.0f", g.sensitivityOf(axis), 0f..MAX_GYRO_SENS, 1f,
+        overridden = g.ownSensitivity(axis) != null,
+        onReset = { level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, null)) } },
+        hint = "Mouse counts per degree of ${axis.label.lowercase()}; scrolling and sticks go faster or slower with it too. " +
+            "Unset, it follows the shared Sensitivity (${"%.0f".format(g.sensitivity)}) in Settings.",
+    ) { v -> level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, v)) } }
 }
 
 /**

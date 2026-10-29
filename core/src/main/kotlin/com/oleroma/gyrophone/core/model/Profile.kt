@@ -423,61 +423,54 @@ enum class MotionAxis(val label: String) {
 @Serializable
 data class GyroSettings(
     val mode: GyroMode = GyroMode.OFF,
-    /** Horizontal mouse counts per degree of rotation (0 = the cursor never moves sideways). */
-    val sensitivity: Float = 16f,
-    /** Vertical mouse counts per degree; null (older files) = [sensitivity] × [verticalRatio]. */
-    val sensitivityY: Float? = null,
+    /**
+     * Mouse counts per degree of rotation, for every gyro axis without its own: also how strongly
+     * gyro scrolls and moves sticks, relative to [DEFAULT_SENSITIVITY].
+     */
+    val sensitivity: Float = DEFAULT_SENSITIVITY,
+    /** Yaw's, pitch's and roll's own sensitivity; null = [sensitivity]. */
+    val yawSensitivity: Float? = null,
+    val pitchSensitivity: Float? = null,
+    val rollSensitivity: Float? = null,
     val orientation: GyroOrientation = GyroOrientation.AUTO,
-    /** Motion that moves the cursor horizontally: yaw right / pitch up / roll clockwise = right. */
-    val mouseX: MotionAxis = MotionAxis.YAW,
-    val invertX: Boolean = false,
-    val scaleX: Float = 1f,
-    /** Motion that moves the cursor vertically: pitch up / yaw right / roll clockwise = up. */
-    val mouseY: MotionAxis = MotionAxis.PITCH,
-    val invertY: Boolean = false,
-    val scaleY: Float = 1f,
-    /** Only read from older files, through [verticalSensitivity]. */
-    val verticalRatio: Float = 1f,
     /** Below this speed (deg/s) motion is scaled down, killing hand jitter. 0 (default, raw gyro) disables. */
     val tighteningThreshold: Float = 0f,
     /** Below this speed (deg/s) motion is averaged over a short window. 0 (default, raw gyro) disables. */
     val smoothingThreshold: Float = 0f,
-    /**
-     * Axis mapping used while the phone is held in portrait. Null = same as the fields above,
-     * which are the landscape mapping (and the only one in profiles saved before this existed).
-     */
-    val portrait: GyroAxes? = null,
     /** Which cursor axes a ratchet flips; the other one stays as the mode has it without a ratchet. */
     val ratchetAxes: RatchetAxes = RatchetAxes.BOTH,
 ) {
-    val verticalSensitivity: Float get() = sensitivityY ?: (sensitivity * verticalRatio)
+    /** Axis [a]'s own sensitivity, null when it uses [sensitivity]. */
+    fun ownSensitivity(a: MotionAxis): Float? = when (a) {
+        MotionAxis.YAW -> yawSensitivity
+        MotionAxis.PITCH -> pitchSensitivity
+        MotionAxis.ROLL -> rollSensitivity
+        MotionAxis.NONE -> null
+    }
 
-    val landscapeAxes: GyroAxes get() = GyroAxes(mouseX, invertX, scaleX, mouseY, invertY, scaleY)
+    /** Axis [a]'s sensitivity in effect. */
+    fun sensitivityOf(a: MotionAxis): Float = ownSensitivity(a) ?: sensitivity
 
-    fun axesFor(portrait: Boolean): GyroAxes = (if (portrait) this.portrait else null) ?: landscapeAxes
+    /** Copy with axis [a]'s own sensitivity [v] (null: it uses [sensitivity]). */
+    fun withSensitivity(a: MotionAxis, v: Float?): GyroSettings = when (a) {
+        MotionAxis.YAW -> copy(yawSensitivity = v)
+        MotionAxis.PITCH -> copy(pitchSensitivity = v)
+        MotionAxis.ROLL -> copy(rollSensitivity = v)
+        MotionAxis.NONE -> this
+    }
 
-    /** Returns a copy with [axes] as the mapping for that orientation. */
-    fun withAxes(portrait: Boolean, axes: GyroAxes): GyroSettings =
-        if (portrait) copy(portrait = axes)
-        else copy(
-            mouseX = axes.mouseX, invertX = axes.invertX, scaleX = axes.scaleX,
-            mouseY = axes.mouseY, invertY = axes.invertY, scaleY = axes.scaleY
-        )
+    companion object {
+        const val DEFAULT_SENSITIVITY = 16f
 
-    /** Copy with the portrait axes spelled out (the landscape ones when unset), so each orientation has its own. */
-    fun withBothOrientations(): GyroSettings = if (portrait != null) this else copy(portrait = landscapeAxes)
+        /** The property of axis [a]'s own sensitivity ([WorkspaceDefaults.gyroKey]). */
+        fun sensitivityProp(a: MotionAxis): String? = when (a) {
+            MotionAxis.YAW -> "yawSensitivity"
+            MotionAxis.PITCH -> "pitchSensitivity"
+            MotionAxis.ROLL -> "rollSensitivity"
+            MotionAxis.NONE -> null
+        }
+    }
 }
-
-/** Which motion drives each mouse axis; see [GyroSettings.mouseX] and [GyroSettings.mouseY]. */
-@Serializable
-data class GyroAxes(
-    val mouseX: MotionAxis = MotionAxis.YAW,
-    val invertX: Boolean = false,
-    val scaleX: Float = 1f,
-    val mouseY: MotionAxis = MotionAxis.PITCH,
-    val invertY: Boolean = false,
-    val scaleY: Float = 1f,
-)
 
 /** The pad screen's empty background as a laptop touchpad. */
 @Serializable
