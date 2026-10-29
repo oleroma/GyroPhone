@@ -30,6 +30,8 @@ import com.oleroma.gyrophone.core.model.DirSettings
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.HoldZone
+import com.oleroma.gyrophone.core.model.MoveField
+import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.SurfaceField
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.ZoneKeep
@@ -62,13 +64,11 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
                 edit { it.copy(enabled = v) }
             }
         }
-        OverrideSlider(key + "sx", "X speed %.1f", s.sensitivity, 0f..MAX_SURFACE_SENS, 0.1f, own(SurfaceField.SENSITIVITY), reset(SurfaceField.SENSITIVITY)) { v ->
-            edit { it.copy(sensitivity = v) }
-        }
+        DirNote("Every Move X and Move Y uses these unless its ⚙ sets its own, for each finger count.")
         OverrideSlider(
-            key + "sy", "Y speed %.1f", s.verticalSensitivity, 0f..MAX_SURFACE_SENS, 0.1f, own(SurfaceField.SENSITIVITY_Y), reset(SurfaceField.SENSITIVITY_Y),
-            hint = "0 turns that direction off, e.g. X 0 for one that only moves up and down.",
-        ) { v -> edit { it.copy(sensitivityY = v) } }
+            key + "sx", "Sensitivity %.1f", s.sensitivity, 0f..MAX_SURFACE_SENS, 0.1f, own(SurfaceField.SENSITIVITY), reset(SurfaceField.SENSITIVITY),
+            hint = "Counts per dp of finger travel. A Move X or Y's ⚙ can set its own: 0 turns that direction off.",
+        ) { v -> edit { it.copy(sensitivity = v) } }
         OverrideSlider(key + "acc", "Acceleration %.1f", s.acceleration, 0f..2f, 0.1f, own(SurfaceField.ACCELERATION), reset(SurfaceField.ACCELERATION)) { v ->
             edit { it.copy(acceleration = v) }
         }
@@ -258,6 +258,91 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
             HoldZoneSettings(s, zones, k, only = d, zone = null, onChange = current.setZones)
         }
         DirNote("Highlighted: set for ${d.label} only. The rest is the Settings' value, shared by every direction.")
+    }
+}
+
+/**
+ * The ⚙ of Move X or Y [m]: the cursor and scrolling settings it uses, each its own over [level]'s
+ * shared one (the Settings), highlighted with a ↺ where it sets its own. The cursor deadzone and
+ * inertia go for the whole motion of its finger count: Move X and Y show the same ones.
+ */
+@Composable
+internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, touchpad: Boolean) {
+    val current by rememberUpdatedState(level)
+    val s = level.eff
+    val f = s.feel(m.fingers)
+    val k = key + m.name
+    val whole = MoveSlot.of(m.fingers, true)
+    /** The slot that keeps [field]: the Move X of the finger count for the whole motion's. */
+    fun slot(field: MoveField) = if (field.whole) whole else m
+    fun edit(field: MoveField, change: (com.oleroma.gyrophone.core.model.MoveSettings) -> com.oleroma.gyrophone.core.model.MoveSettings) =
+        current.edit { it.withMove(slot(field), change) }
+    fun own(field: MoveField) = level.isMoveOwn(slot(field), field)
+    fun reset(field: MoveField): () -> Unit = { current.resetMove(slot(field), field) }
+    val fields = MoveField.entries
+    val x = m.x
+    val axis = if (x) "sideways" else "up and down"
+
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        ResetAllButton("Settings", fields.any(::own)) { fields.forEach { reset(it)() } }
+        SectionTitle("Cursor and sticks")
+        OverrideSlider(
+            k + "sens", "Sensitivity %.1f", if (x) f.sensitivityX else f.sensitivityY, 0f..MAX_SURFACE_SENS, 0.1f,
+            own(MoveField.SENSITIVITY), reset(MoveField.SENSITIVITY),
+            hint = "Counts per dp of travel $axis. 0 turns it off.",
+        ) { v -> edit(MoveField.SENSITIVITY) { it.copy(sensitivity = v) } }
+        OverrideSlider(
+            k + "acc", "Acceleration %.1f", if (x) f.accelerationX else f.accelerationY, 0f..2f, 0.1f,
+            own(MoveField.ACCELERATION), reset(MoveField.ACCELERATION),
+        ) { v -> edit(MoveField.ACCELERATION) { it.copy(acceleration = v) } }
+        val lock = if (x) f.verticalLockDeg else f.horizontalLockDeg
+        OverrideSlider(
+            k + "lock", if (lock < 1f) (if (x) "Vertical lock: off" else "Horizontal lock: off") else if (x) "Vertical lock %.0f°" else "Horizontal lock %.0f°",
+            lock, 0f..TouchpadSettings.MAX_LOCK_DEG, 1f, own(MoveField.LOCK), reset(MoveField.LOCK),
+            hint = if (x) "Motion within this angle of straight up / down moves nothing sideways." else "Motion within this angle of sideways moves nothing up or down.",
+        ) { v -> edit(MoveField.LOCK) { it.copy(lock = v) } }
+        if (m.fingers == 1) {
+            OverrideSlider(
+                k + "dz", if (f.cursorDeadzoneDp < 1f) "Cursor deadzone: off" else "Cursor deadzone %.0f dp",
+                f.cursorDeadzoneDp, 0f..TouchpadSettings.MAX_CURSOR_DEADZONE_DP, 1f, own(MoveField.CURSOR_DEADZONE), reset(MoveField.CURSOR_DEADZONE),
+                hint = "The cursor stays still until the finger has moved this far, then catches up with it. For Move X and Y alike.",
+            ) { v -> edit(MoveField.CURSOR_DEADZONE) { it.copy(cursorDeadzoneDp = v) } }
+            if (f.cursorDeadzoneDp > 0f) {
+                OverrideSlider(
+                    k + "catch", if (f.catchUpMs < 1) "Catch-up: instant" else "Catch-up %.0f ms",
+                    f.catchUpMs.toFloat(), 0f..TouchpadSettings.MAX_CATCH_UP_MS.toFloat(), 10f, own(MoveField.CATCH_UP), reset(MoveField.CATCH_UP),
+                ) { v -> edit(MoveField.CATCH_UP) { it.copy(catchUpMs = v.roundToInt()) } }
+                OverrideSlider(
+                    k + "rearm", if (f.deadzoneRearmMs < 1) "Re-arm: off" else "Re-arm after %.0f ms still",
+                    f.deadzoneRearmMs.toFloat(), 0f..TouchpadSettings.MAX_REARM_MS.toFloat(), 10f, own(MoveField.REARM), reset(MoveField.REARM),
+                    hint = "The deadzone arms again once the finger stands still this long. Off: once per touch.",
+                ) { v -> edit(MoveField.REARM) { it.copy(deadzoneRearmMs = v.roundToInt()) } }
+                if (f.deadzoneRearmMs > 0) {
+                    OverrideSlider(
+                        k + "still", "Still within %.1f dp", f.deadzoneStillDp, 0f..TouchpadSettings.MAX_STILL_DP, 0.5f,
+                        own(MoveField.STILL), reset(MoveField.STILL),
+                    ) { v -> edit(MoveField.STILL) { it.copy(deadzoneStillDp = v) } }
+                }
+            }
+        }
+        SectionTitle("Scrolling")
+        OverrideSlider(
+            k + "scroll", "Scroll speed %.2f", if (x) f.scrollSpeedX else f.scrollSpeedY, 0.25f..3f, 0.05f,
+            own(MoveField.SCROLL_SPEED), reset(MoveField.SCROLL_SPEED),
+        ) { v -> edit(MoveField.SCROLL_SPEED) { it.copy(scrollSpeed = v) } }
+        val natural = if (x) f.naturalScrollX else f.naturalScrollY
+        OverrideSwitch(
+            "Natural scrolling",
+            if (natural) "Content follows the fingers." else "Content moves against the fingers.",
+            natural, own(MoveField.NATURAL_SCROLL), reset(MoveField.NATURAL_SCROLL),
+        ) { v -> edit(MoveField.NATURAL_SCROLL) { it.copy(naturalScroll = v) } }
+        OverrideSwitch(
+            "Inertia",
+            (if (f.inertia) "Keeps scrolling after a flick." else "Scrolling stops when the fingers lift.") +
+                    " For Move X and Y alike" + if (touchpad) "; the glide is in Settings." else ".",
+            f.inertia, own(MoveField.INERTIA), reset(MoveField.INERTIA),
+        ) { v -> edit(MoveField.INERTIA) { it.copy(inertia = v) } }
+        DirNote("Highlighted: set for ${m.label} only. The rest is the Settings' value, shared by every Move X and Y.")
     }
 }
 

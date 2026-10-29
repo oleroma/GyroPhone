@@ -5,11 +5,11 @@ package com.oleroma.gyrophone.core.model
  * touchpad's own ([SurfaceSettings], null = the workspace's), or the workspace's and the defaults'
  * ([WorkspaceDefaults] keys, over the parent's values). [button]: a swipe button has it; the others
  * are the touchpad's only. Length zones are no field: they are always the surface's own. Each
- * direction's own settings over these are [DirField]s.
+ * direction's own settings over these are [DirField]s, each Move X / Y's [MoveField]s.
  */
 enum class SurfaceField(val button: Boolean = true) {
     ENABLED(button = false),
-    SENSITIVITY, SENSITIVITY_Y, ACCELERATION, SCROLL_SPEED, NATURAL_SCROLL, INERTIA,
+    SENSITIVITY, ACCELERATION, SCROLL_SPEED, NATURAL_SCROLL, INERTIA,
     INERTIA_GLIDE(button = false),
     CURSOR_DEADZONE, CATCH_UP, REARM, STILL, VERTICAL_LOCK, HORIZONTAL_LOCK,
     DIR_SAMPLE, SWIPE, HOLD, HOLD_MODE, DRAG_START, RELEASE, PIES, LATCH, LATCH_RELEASE;
@@ -17,7 +17,6 @@ enum class SurfaceField(val button: Boolean = true) {
     private fun value(t: TouchpadSettings): Any? = when (this) {
         ENABLED -> t.enabled
         SENSITIVITY -> t.sensitivity
-        SENSITIVITY_Y -> t.sensitivityY
         ACCELERATION -> t.acceleration
         SCROLL_SPEED -> t.scrollSpeed
         NATURAL_SCROLL -> t.naturalScroll
@@ -47,7 +46,6 @@ enum class SurfaceField(val button: Boolean = true) {
     fun take(to: TouchpadSettings, from: TouchpadSettings): TouchpadSettings = when (this) {
         ENABLED -> to.copy(enabled = from.enabled)
         SENSITIVITY -> to.copy(sensitivity = from.sensitivity)
-        SENSITIVITY_Y -> to.copy(sensitivityY = from.sensitivityY)
         ACCELERATION -> to.copy(acceleration = from.acceleration)
         SCROLL_SPEED -> to.copy(scrollSpeed = from.scrollSpeed)
         NATURAL_SCROLL -> to.copy(naturalScroll = from.naturalScroll)
@@ -75,7 +73,6 @@ enum class SurfaceField(val button: Boolean = true) {
         ENABLED -> s.enabled != null
         INERTIA_GLIDE -> s.inertiaGlideMs != null
         SENSITIVITY -> s.sensitivity != null
-        SENSITIVITY_Y -> s.sensitivityY != null
         ACCELERATION -> s.acceleration != null
         SCROLL_SPEED -> s.scrollSpeed != null
         NATURAL_SCROLL -> s.naturalScroll != null
@@ -102,7 +99,6 @@ enum class SurfaceField(val button: Boolean = true) {
         ENABLED -> s.copy(enabled = from.enabled)
         INERTIA_GLIDE -> s.copy(inertiaGlideMs = from.inertiaGlideMs)
         SENSITIVITY -> s.copy(sensitivity = from.sensitivity)
-        SENSITIVITY_Y -> s.copy(sensitivityY = from.verticalSensitivity)
         ACCELERATION -> s.copy(acceleration = from.acceleration)
         SCROLL_SPEED -> s.copy(scrollSpeed = from.scrollSpeed)
         NATURAL_SCROLL -> s.copy(naturalScroll = from.naturalScroll)
@@ -129,7 +125,6 @@ enum class SurfaceField(val button: Boolean = true) {
         ENABLED -> s.copy(enabled = null)
         INERTIA_GLIDE -> s.copy(inertiaGlideMs = null)
         SENSITIVITY -> s.copy(sensitivity = null)
-        SENSITIVITY_Y -> s.copy(sensitivityY = null)
         ACCELERATION -> s.copy(acceleration = null)
         SCROLL_SPEED -> s.copy(scrollSpeed = null)
         NATURAL_SCROLL -> s.copy(naturalScroll = null)
@@ -161,6 +156,9 @@ enum class SurfaceField(val button: Boolean = true) {
             for (d in Direction.entries) for (f in DirField.entries) {
                 if (!f.same(was.dir(d), now.dir(d))) o = f.own(o, d, now.dir(d))
             }
+            for (m in MoveSlot.entries) for (f in MoveField.of(m)) {
+                if (!f.same(was.move(m), now.move(m))) o = f.own(o, m, now.move(m))
+            }
             return o
         }
 
@@ -170,7 +168,7 @@ enum class SurfaceField(val button: Boolean = true) {
 
         /** [t] with [parent]'s value of every setting, per direction too; everything else (mappings, zones) stays. */
         fun takeAll(t: TouchpadSettings, parent: TouchpadSettings): TouchpadSettings =
-            entries.fold(t) { r, f -> f.take(r, parent) }.copy(dirs = parent.dirs)
+            entries.fold(t) { r, f -> f.take(r, parent) }.copy(dirs = parent.dirs, moves = parent.moves)
     }
 }
 
@@ -216,4 +214,77 @@ enum class DirField(val shared: SurfaceField, val hold: Boolean) {
     /** [t] with [from]'s value of this for [d]. */
     fun take(t: TouchpadSettings, d: Direction, from: TouchpadSettings): TouchpadSettings =
         t.withDir(d) { take(it, from.dir(d)) }
+}
+
+/**
+ * One Move X / Y's own setting ([MoveSettings], [MoveSlot]) over its surface's shared one
+ * ([sharedOf]). [whole]: it goes for the whole motion of a finger count, kept on its Move X.
+ */
+enum class MoveField(val whole: Boolean = false) {
+    SENSITIVITY, ACCELERATION, SCROLL_SPEED, NATURAL_SCROLL, LOCK,
+    CURSOR_DEADZONE(true), CATCH_UP(true), REARM(true), STILL(true), INERTIA(true);
+
+    /** The shared setting of [m] this sets over. */
+    fun sharedOf(m: MoveSlot): SurfaceField = when (this) {
+        SENSITIVITY -> SurfaceField.SENSITIVITY
+        ACCELERATION -> SurfaceField.ACCELERATION
+        SCROLL_SPEED -> SurfaceField.SCROLL_SPEED
+        NATURAL_SCROLL -> SurfaceField.NATURAL_SCROLL
+        LOCK -> if (m.x) SurfaceField.VERTICAL_LOCK else SurfaceField.HORIZONTAL_LOCK
+        CURSOR_DEADZONE -> SurfaceField.CURSOR_DEADZONE
+        CATCH_UP -> SurfaceField.CATCH_UP
+        REARM -> SurfaceField.REARM
+        STILL -> SurfaceField.STILL
+        INERTIA -> SurfaceField.INERTIA
+    }
+
+    fun get(s: MoveSettings): Any? = when (this) {
+        SENSITIVITY -> s.sensitivity
+        ACCELERATION -> s.acceleration
+        SCROLL_SPEED -> s.scrollSpeed
+        NATURAL_SCROLL -> s.naturalScroll
+        LOCK -> s.lock
+        CURSOR_DEADZONE -> s.cursorDeadzoneDp
+        CATCH_UP -> s.catchUpMs
+        REARM -> s.deadzoneRearmMs
+        STILL -> s.deadzoneStillDp
+        INERTIA -> s.inertia
+    }
+
+    fun same(a: MoveSettings, b: MoveSettings): Boolean = get(a) == get(b)
+
+    /** [to] with [from]'s value. */
+    fun take(to: MoveSettings, from: MoveSettings): MoveSettings = when (this) {
+        SENSITIVITY -> to.copy(sensitivity = from.sensitivity)
+        ACCELERATION -> to.copy(acceleration = from.acceleration)
+        SCROLL_SPEED -> to.copy(scrollSpeed = from.scrollSpeed)
+        NATURAL_SCROLL -> to.copy(naturalScroll = from.naturalScroll)
+        LOCK -> to.copy(lock = from.lock)
+        CURSOR_DEADZONE -> to.copy(cursorDeadzoneDp = from.cursorDeadzoneDp)
+        CATCH_UP -> to.copy(catchUpMs = from.catchUpMs)
+        REARM -> to.copy(deadzoneRearmMs = from.deadzoneRearmMs)
+        STILL -> to.copy(deadzoneStillDp = from.deadzoneStillDp)
+        INERTIA -> to.copy(inertia = from.inertia)
+    }
+
+    /** A level's own [s] sets this for [m]. */
+    fun isOwn(s: SurfaceSettings, m: MoveSlot): Boolean = get(s.moves?.getOrNull(m.ordinal) ?: MoveSettings.NONE) != null
+
+    /** [s] setting this for [m] to [from]'s value (null: following again). */
+    fun own(s: SurfaceSettings, m: MoveSlot, from: MoveSettings): SurfaceSettings {
+        val list = List(MoveSlot.entries.size) { s.moves?.getOrNull(it) ?: MoveSettings.NONE }.toMutableList()
+        list[m.ordinal] = take(list[m.ordinal], from)
+        return s.copy(moves = list.takeUnless { l -> l.all { it.isEmpty } })
+    }
+
+    fun drop(s: SurfaceSettings, m: MoveSlot): SurfaceSettings = own(s, m, MoveSettings.NONE)
+
+    /** [t] with [from]'s value of this for [m]. */
+    fun take(t: TouchpadSettings, m: MoveSlot, from: TouchpadSettings): TouchpadSettings =
+        t.withMove(m) { take(it, from.move(m)) }
+
+    companion object {
+        /** The fields [m] has: a Move Y not those of the whole motion. */
+        fun of(m: MoveSlot): List<MoveField> = if (m.x) entries else entries.filter { !it.whole }
+    }
 }

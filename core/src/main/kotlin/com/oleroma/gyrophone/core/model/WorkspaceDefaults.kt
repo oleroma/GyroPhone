@@ -44,9 +44,23 @@ object WorkspaceDefaults {
         return Direction.valueOf(d) to DirField.valueOf(f)
     }
 
+    fun moveKey(m: MoveSlot, f: MoveField) = TOUCHPAD + MOVE + m.name + "." + f.name
+    private const val MOVE = "move."
+
+    private fun moveOf(key: String): Pair<MoveSlot, MoveField>? {
+        if (!key.startsWith(TOUCHPAD + MOVE)) return null
+        val (m, f) = key.removePrefix(TOUCHPAD + MOVE).split('.')
+        return MoveSlot.valueOf(m) to MoveField.valueOf(f)
+    }
+
+    /** The shared touchpad key [key] (a direction's or a Move X / Y's own) sets over, else null. */
+    private fun sharedOf(key: String): String? =
+        dirOf(key)?.second?.shared?.let(::touchpadKey) ?: moveOf(key)?.let { (m, f) -> touchpadKey(f.sharedOf(m)) }
+
     /** Every key a workspace can set over the defaults. */
     val keys: List<String> = top + gyroProps.map(::gyroKey) + SurfaceField.entries.map(::touchpadKey) +
-        Direction.entries.flatMap { d -> DirField.entries.map { f -> dirKey(d, f) } }
+        Direction.entries.flatMap { d -> DirField.entries.map { f -> dirKey(d, f) } } +
+        MoveSlot.entries.flatMap { m -> MoveField.of(m).map { f -> moveKey(m, f) } }
 
     /** The keys a layer ([MappingSet.settings]) may set: all but the controls' opacity. */
     val layerKeys: List<String> = keys - setOf(CONTROL_OPACITY)
@@ -58,6 +72,7 @@ object WorkspaceDefaults {
     fun same(key: String, a: Workspace, b: Workspace): Boolean = when {
         key.startsWith(GYRO) -> key.removePrefix(GYRO).let { p -> gyroJson(a.gyro)[p] == gyroJson(b.gyro)[p] }
         dirOf(key) != null -> dirOf(key)!!.let { (d, f) -> f.same(a.touchpad.dir(d), b.touchpad.dir(d)) }
+        moveOf(key) != null -> moveOf(key)!!.let { (m, f) -> f.same(a.touchpad.move(m), b.touchpad.move(m)) }
         key.startsWith(TOUCHPAD) -> SurfaceField.valueOf(key.removePrefix(TOUCHPAD)).same(a.touchpad, b.touchpad)
         else -> when (key) {
             LONG_PRESS -> a.longPressMs == b.longPressMs
@@ -79,6 +94,7 @@ object WorkspaceDefaults {
         }
 
         dirOf(key) != null -> dirOf(key)!!.let { (d, f) -> to.copy(touchpad = f.take(to.touchpad, d, from.touchpad)) }
+        moveOf(key) != null -> moveOf(key)!!.let { (m, f) -> to.copy(touchpad = f.take(to.touchpad, m, from.touchpad)) }
         key.startsWith(TOUCHPAD) -> to.copy(touchpad = SurfaceField.valueOf(key.removePrefix(TOUCHPAD)).take(to.touchpad, from.touchpad))
         else -> when (key) {
             LONG_PRESS -> to.copy(longPressMs = from.longPressMs)
@@ -106,20 +122,17 @@ object WorkspaceDefaults {
     }
 
     /**
-     * [w] (setting [own] itself) with [defaults]' value of [key]. A direction's own value of the
-     * defaults gives way to a shared one the workspace sets: every direction of it uses that.
+     * [w] (setting [own] itself) with [defaults]' value of [key]. A direction's or Move X / Y's
+     * own value of the defaults gives way to a shared one the workspace sets: every one uses that.
      */
-    private fun follow(key: String, w: Workspace, own: Set<String>, defaults: Workspace): Workspace {
-        val dir = dirOf(key)
-        return if (dir != null && touchpadKey(dir.second.shared) in own) w.copy(touchpad = dir.second.take(w.touchpad, dir.first, TouchpadSettings()))
-        else take(key, w, defaults)
-    }
+    private fun follow(key: String, w: Workspace, own: Set<String>, defaults: Workspace): Workspace =
+        if (sharedOf(key) in own) take(key, w, Workspace("", "")) else take(key, w, defaults)
 
     /** [w] following [defaults] for [key] again. */
     fun reset(w: Workspace, key: String, defaults: Workspace): Workspace {
         val own = own(w) - key
         // A shared touchpad value back to the defaults' brings their direction values back too.
-        val then = keys.filter { k -> k !in own && dirOf(k)?.second?.shared?.let(::touchpadKey) == key }
+        val then = keys.filter { k -> k !in own && sharedOf(k) == key }
         return (listOf(key) + then).fold(w.copy(ownSettings = own)) { r, k -> follow(k, r, own, defaults) }
     }
 
@@ -138,7 +151,7 @@ object WorkspaceDefaults {
         if (changed.isEmpty()) return after
         val own = ownA + changed
         // A shared touchpad value set here hides the defaults' direction values of it.
-        return keys.filter { k -> k !in own && dirOf(k)?.second?.shared?.let(::touchpadKey) in changed }
+        return keys.filter { k -> k !in own && sharedOf(k) in changed }
             .fold(after.copy(ownSettings = own)) { r, k -> follow(k, r, own, r) }
     }
 
@@ -161,7 +174,7 @@ object WorkspaceDefaults {
         val own = layer.ownSettings.orEmpty()
         if (own.isEmpty()) return base
         val r = own.fold(base) { acc, k -> take(k, acc, layer) }
-        return keys.filter { k -> k !in own && dirOf(k)?.second?.shared?.let(::touchpadKey) in own }
+        return keys.filter { k -> k !in own && sharedOf(k) in own }
             .fold(r) { acc, k -> follow(k, acc, own, acc) }
     }
 

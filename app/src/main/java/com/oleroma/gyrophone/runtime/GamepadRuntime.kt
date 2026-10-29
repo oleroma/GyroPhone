@@ -455,6 +455,9 @@ class GamepadRuntime(context: Context) {
     }
 
     private fun onAccelSample(x: Float, y: Float, z: Float, ts: Long) {
+        // A layer or a held button may have tilt and shake settings of its own.
+        val gs = engine.gyroSettings
+        if (gs !== tiltShake.settings) tiltShake.settings = gs
         if (tiltShake.update(x, y, z, ts)) engine.shake()
         engine.setTilt(tiltShake.x, tiltShake.y)
     }

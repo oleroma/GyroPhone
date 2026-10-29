@@ -18,6 +18,8 @@ import com.oleroma.gyrophone.core.model.ButtonGesture
 import com.oleroma.gyrophone.core.model.DevicePreset
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.MotionAxis
+import com.oleroma.gyrophone.core.model.MoveSlot
+import com.oleroma.gyrophone.core.model.StickAxis
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
@@ -58,9 +60,17 @@ private fun timingOf(input: BindableInput): Timing? = when (val s = input.source
     else -> null
 }
 
-/** The ⚙ of a Swipe or Swipe hold [input] of a surface at [level] ([zones]: as mapped), else null. */
-private fun directionGear(level: SurfaceLevel, key: String, input: BindableInput, zones: IntArray): (@Composable () -> Unit)? {
-    val s = (input.sources.firstOrNull() as? InputSource.Surface)?.input ?: return null
+/**
+ * The ⚙ of a Swipe or Swipe hold [input] of a surface at [level] ([zones]: as mapped), or of a
+ * Move X / Y ([touchpad]: the workspace's), else null.
+ */
+private fun directionGear(level: SurfaceLevel, key: String, input: BindableInput, zones: IntArray, touchpad: Boolean = false): (@Composable () -> Unit)? {
+    val src = input.sources.firstOrNull() as? InputSource.Surface ?: return null
+    val s = src.input
+    if (s == SurfaceInput.MOTION_X || s == SurfaceInput.MOTION_Y) {
+        val m = MoveSlot.of(src.fingers, s == SurfaceInput.MOTION_X)
+        return ui { MoveGearSettings(level, key, m, touchpad) }
+    }
     s.swipeDirection?.let { d -> return ui { DirectionSettings(level, key, d, hold = false, zones) } }
     s.holdDirection?.let { d -> return ui { DirectionSettings(level, key, d, hold = true, zones) } }
     return null
@@ -187,9 +197,12 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
     val zones = Bindings.holdZoneCounts(ws.mappings, "")
     return MappingSettings(
         action = { input ->
-            val gyro = input.sources.firstOrNull() as? InputSource.Gyro
-            if (gyro != null) gyroGear(level, key, gyro.axis)
-            else directionGear(surface, key, input, zones) ?: when (timingOf(input)) {
+            when (val src = input.sources.firstOrNull()) {
+                is InputSource.Gyro -> gyroGear(level, key, src.axis)
+                is InputSource.Tilt -> tiltGear(level, key, src.axis == StickAxis.X)
+                is InputSource.Shake -> shakeGear(level, key)
+                else -> null
+            } ?: directionGear(surface, key, input, zones, touchpad = true) ?: when (timingOf(input)) {
                 Timing.LONG_PRESS -> ui {
                     MsOverride(
                         key + "long", "Long press after", ws.longPressMs,
@@ -237,6 +250,40 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
                 "Unset, it follows the shared Sensitivity (${"%.0f".format(g.sensitivity)}) in Settings.",
         ) { v -> level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, v)) } }
     }
+}
+
+/** The ⚙ of sideways ([x]) or forward and back tilt at [level]: its range and deadzone, its own or the shared ones. */
+private fun tiltGear(level: WorkspaceLevel, key: String, x: Boolean): @Composable () -> Unit = ui {
+    val g = level.ws.gyro
+    val what = if (x) "Sideways tilt" else "Forward and back tilt"
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OverrideSlider(
+            key + "tiltRange" + x, "$what: full at %.0f°", g.tiltRangeOf(x),
+            GyroSettings.MIN_TILT_RANGE_DEG..GyroSettings.MAX_TILT_RANGE_DEG, 1f,
+            overridden = (if (x) g.tiltXRangeDeg else g.tiltYRangeDeg) != null,
+            onReset = { level.edit { it.copy(gyro = if (x) it.gyro.copy(tiltXRangeDeg = null) else it.gyro.copy(tiltYRangeDeg = null)) } },
+            hint = "How far it leans for a full push. Unset, the shared Tilt range in Settings (%.0f°).".format(g.tiltRangeDeg),
+        ) { v -> level.edit { it.copy(gyro = if (x) it.gyro.copy(tiltXRangeDeg = v) else it.gyro.copy(tiltYRangeDeg = v)) } }
+        val dz = g.tiltDeadzoneOf(x)
+        OverrideSlider(
+            key + "tiltDz" + x, if (dz < 0.5f) "$what deadzone: off" else "$what deadzone %.0f°", dz,
+            0f..GyroSettings.MAX_TILT_DEADZONE_DEG, 1f,
+            overridden = (if (x) g.tiltXDeadzoneDeg else g.tiltYDeadzoneDeg) != null,
+            onReset = { level.edit { it.copy(gyro = if (x) it.gyro.copy(tiltXDeadzoneDeg = null) else it.gyro.copy(tiltYDeadzoneDeg = null)) } },
+            hint = "Leaning less than this counts as level. Unset, the shared Tilt deadzone in Settings.",
+        ) { v -> level.edit { it.copy(gyro = if (x) it.gyro.copy(tiltXDeadzoneDeg = v) else it.gyro.copy(tiltYDeadzoneDeg = v)) } }
+    }
+}
+
+/** The ⚙ of Shake at [level]: how hard a shake must be (the level's, over its parent's). */
+private fun shakeGear(level: WorkspaceLevel, key: String): @Composable () -> Unit = ui {
+    val k = WorkspaceDefaults.gyroKey("shakeStrength")
+    OverrideSlider(
+        key + "shake", "Shake at %.0f m/s²", level.ws.gyro.shakeStrength,
+        GyroSettings.MIN_SHAKE_STRENGTH..GyroSettings.MAX_SHAKE_STRENGTH, 1f,
+        overridden = level.isOwn(k), onReset = { level.reset(k) },
+        hint = "How hard a jolt counts as a shake: higher needs a harder shake.",
+    ) { v -> level.edit { it.copy(gyro = it.gyro.copy(shakeStrength = v)) } }
 }
 
 /** Whether a ratchet disables or enables gyro [axis] ([mode]), with ↺ ([onReset]) when [overridden]. */

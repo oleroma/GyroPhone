@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.core.engine
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.GestureActions
+import com.oleroma.gyrophone.core.model.MotionFeel
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
@@ -37,6 +38,23 @@ import kotlin.math.sqrt
  */
 class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap? = null) {
     var settings: TouchpadSettings = settings
+
+    // How the motion of each finger count works ([TouchpadSettings.feel]), worked out once per settings.
+    private var feelOf: TouchpadSettings? = null
+    private val feels = arrayOfNulls<MotionFeel>(4)
+
+    /** The finger count of the motion now or last (for a glide after the lift). */
+    private var motionN = 1
+
+    /** How the motion of [n] fingers works: the shared settings with its Move X's and Y's own. */
+    private fun feel(n: Int = motionN): MotionFeel {
+        val s = settings
+        if (s !== feelOf) {
+            feelOf = s; feels.fill(null)
+        }
+        val i = n.coerceIn(1, 4) - 1
+        return feels[i] ?: s.feel(i + 1).also { feels[i] = it }
+    }
 
     /** What is mapped; by default what [settings]' touchpad switches stand for. */
     var map: SurfaceMap = map ?: SurfaceMap(Bindings.defaultTouchpadMappings(settings))
@@ -703,7 +721,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         if (gliding) d = min(d, glideNs + GLIDE_STEP_NS)
         if (latchMask != 0) d = min(d, latchUntil)
         if (catching) d = min(d, catchLastNs + GLIDE_STEP_NS)
-        if (rearmable && !dzHolding && phaseN == 1) d = min(d, stillNs + settings.deadzoneRearmMs * 1_000_000L)
+        if (rearmable && !dzHolding && phaseN == 1) d = min(d, stillNs + feel().deadzoneRearmMs * 1_000_000L)
         if (longN > 0 && !longOn && map.has(longN, SurfaceInput.LONG_PRESS)) d = min(d, longT0 + longPressNanos)
         if (pendingTapN != 0) {
             d = min(d, lastTapNs + doubleTapNanos + 1)
@@ -722,7 +740,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         if (latchMask != 0 && now >= latchUntil) releaseLatch()
         if (gliding) glide(now)
         if (catching) catchUp(now)
-        if (rearmable && !dzHolding && !catching && phaseN == 1 && now - stillNs >= settings.deadzoneRearmMs * 1_000_000L) {
+        if (rearmable && !dzHolding && !catching && phaseN == 1 && now - stillNs >= feel().deadzoneRearmMs * 1_000_000L) {
             // Stood still long enough: the cursor waits for the deadzone again, measured from here.
             dzHolding = true
             dzX = trX; dzY = trY
@@ -832,8 +850,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         zoneCounts(n)
         swiped = false; scrolled = false
         trX = 0f; trY = 0f; winX = 0f; winY = 0f
-        dzHolding = n == 1 && state == State.MOVE && settings.cursorDeadzoneDp > 0f && map.motion[0].cursor
-        rearmable = dzHolding && settings.deadzoneRearmMs > 0
+        motionN = n
+        dzHolding = n == 1 && state == State.MOVE && feel(n).cursorDeadzoneDp > 0f && map.motion[0].cursor
+        rearmable = dzHolding && feel(n).deadzoneRearmMs > 0
         dzX = 0f; dzY = 0f
         stillX = centroidX(); stillY = centroidY(); stillNs = now
         wheelRem = 0f; hwheelRem = 0f
@@ -853,8 +872,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
      */
     private fun lockAxes(sdx: Float, sdy: Float) {
         lockX = sdx; lockY = sdy
-        val v = settings.verticalLockDeg.coerceIn(0f, TouchpadSettings.MAX_LOCK_DEG)
-        val hz = settings.horizontalLockDeg.coerceIn(0f, TouchpadSettings.MAX_LOCK_DEG)
+        val f = feel()
+        val v = f.verticalLockDeg.coerceIn(0f, TouchpadSettings.MAX_LOCK_DEG)
+        val hz = f.horizontalLockDeg.coerceIn(0f, TouchpadSettings.MAX_LOCK_DEG)
         if (v <= 0f && hz <= 0f) return
         winX += sdx; winY += sdy
         val len = sqrt(winX * winX + winY * winY)
@@ -920,7 +940,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         if (rearmable) {
             val sx = centroidX() - stillX;
             val sy = centroidY() - stillY
-            val still = settings.deadzoneStillDp.coerceIn(0f, TouchpadSettings.MAX_STILL_DP) * pxPerDp
+            val still = feel().deadzoneStillDp.coerceIn(0f, TouchpadSettings.MAX_STILL_DP) * pxPerDp
             if (sx * sx + sy * sy > still * still) {
                 stillX = centroidX(); stillY = centroidY(); stillNs = now
             }
@@ -1003,7 +1023,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
             usesX -> abs(tx)
             else -> abs(ty)
         }
-        if (d / pxPerDp < settings.cursorDeadzoneDp.coerceAtMost(TouchpadSettings.MAX_CURSOR_DEADZONE_DP)) return
+        if (d / pxPerDp < feel().cursorDeadzoneDp.coerceAtMost(TouchpadSettings.MAX_CURSOR_DEADZONE_DP)) return
         dzHolding = false
         run.start(eventNs)
         catching = true
@@ -1016,14 +1036,14 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     /** Sends the share of the held-back travel due by [now] (no acceleration: it is not finger speed). */
     private fun catchUp(now: Long) {
         val m = catchMotion ?: return
-        val dur = settings.catchUpMs.coerceIn(0, TouchpadSettings.MAX_CATCH_UP_MS) * 1_000_000L
+        val dur = feel().catchUpMs.coerceIn(0, TouchpadSettings.MAX_CATCH_UP_MS) * 1_000_000L
         val f = if (dur <= 0L) 1f else ((now - catchT0).toFloat() / dur).coerceIn(0f, 1f)
         val step = f - catchSent
         catchSent = f
         catchLastNs = now
         if (step > 0f) {
-            val inX = catchX * step / pxPerDp * settings.sensitivity
-            val inY = catchY * step / pxPerDp * settings.verticalSensitivity
+            val inX = catchX * step / pxPerDp * feel().sensitivityX
+            val inY = catchY * step / pxPerDp * feel().sensitivityY
             val fx = m.cxx * inX + m.cxy * inY + run.remX
             val ix = fx.toInt(); run.remX = fx - ix; dx += ix
             val fy = m.cyx * inX + m.cyy * inY + run.remY
@@ -1036,11 +1056,10 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
 
     /** One step of motion mapped to the wheel; the velocity (for a fling) is timed by [eventNs]. */
     private fun scrollStep(sdxPx: Float, sdyPx: Float, now: Long, eventNs: Long, m: SurfaceMap.Motion) {
-        val k = settings.scrollSpeed * UNITS_PER_DP / pxPerDp
+        val f = feel()
         // Natural: content follows the fingers (finger down = wheel up, finger right = pan left).
-        val sign = if (settings.naturalScroll) 1f else -1f
-        val sx = sdxPx * k * sign
-        val sy = sdyPx * k * sign
+        val sx = sdxPx * f.scrollSpeedX * UNITS_PER_DP / pxPerDp * if (f.naturalScrollX) 1f else -1f
+        val sy = sdyPx * f.scrollSpeedY * UNITS_PER_DP / pxPerDp * if (f.naturalScrollY) 1f else -1f
         val uy = m.wx * sx + m.wy * sy
         val ux = m.hx * sx + m.hy * sy
         addScroll(ux, uy)
@@ -1071,8 +1090,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
 
     /** Starts the glide, from [startNs], if the fingers lifted (at [at]) while still moving fast. */
     private fun fling(at: Long, startNs: Long = at) {
-        if (!settings.inertia || at - lastScrollNs > FLING_MAX_PAUSE_NS) return
-        val speedDp = sqrt(velX * velX + velY * velY) / UNITS_PER_DP / settings.scrollSpeed.coerceAtLeast(0.05f)
+        val f = feel()
+        if (!f.inertia || at - lastScrollNs > FLING_MAX_PAUSE_NS) return
+        val speedDp = sqrt(velX * velX + velY * velY) / UNITS_PER_DP / max(f.scrollSpeedX, f.scrollSpeedY).coerceAtLeast(0.05f)
         if (speedDp < FLING_MIN_DP_PER_MS) return
         gliding = true
         glideVx = velX; glideVy = velY
@@ -1381,11 +1401,10 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         r.speed =
             if (r.fresh || raw > MAX_STEP_NS) inst else r.speed + (1f - exp(-dtMs / SPEED_TAU_MS)) * (inst - r.speed)
         r.fresh = false
-        val s = settings
-        val gain = 1f + s.acceleration *
-                ((r.speed - ACCEL_LOW_DP_PER_MS) / (ACCEL_HIGH_DP_PER_MS - ACCEL_LOW_DP_PER_MS)).coerceIn(0f, 1f)
-        val inX = ddx * s.sensitivity * gain
-        val inY = ddy * s.verticalSensitivity * gain
+        val f = feel()
+        val fast = ((r.speed - ACCEL_LOW_DP_PER_MS) / (ACCEL_HIGH_DP_PER_MS - ACCEL_LOW_DP_PER_MS)).coerceIn(0f, 1f)
+        val inX = ddx * f.sensitivityX * (1f + f.accelerationX * fast)
+        val inY = ddy * f.sensitivityY * (1f + f.accelerationY * fast)
         val fx = (if (m == null) inX else m.cxx * inX + m.cxy * inY) + r.remX
         val ix = fx.toInt()
         r.remX = fx - ix

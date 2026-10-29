@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroOrientation
+import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.Profile
 
 import com.oleroma.gyrophone.core.model.Bindings
@@ -158,6 +159,21 @@ internal fun WorkspaceSettings(
                 key + "gs", "Sensitivity %.0f", ws.gyro.sensitivity, 0f..MAX_GYRO_SENS, 1f, own(g("sensitivity")), reset(g("sensitivity")),
                 hint = "Mouse counts per degree turned. Yaw, pitch and roll each follow it unless their ⚙ in the mapping editor sets their own; scrolling and sticks go faster or slower with it too.",
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(sensitivity = v)) } }
+            OverrideSlider(
+                key + "tiltRange", "Tilt range %.0f°", ws.gyro.tiltRangeDeg,
+                GyroSettings.MIN_TILT_RANGE_DEG..GyroSettings.MAX_TILT_RANGE_DEG, 1f, own(g("tiltRangeDeg")), reset(g("tiltRangeDeg")),
+                hint = "How far the phone leans for a full tilt. Sideways and forward-and-back tilt follow it unless their ⚙ sets their own.",
+            ) { v -> editWs { it.copy(gyro = it.gyro.copy(tiltRangeDeg = v)) } }
+            OverrideSlider(
+                key + "tiltDz", if (ws.gyro.tiltDeadzoneDeg < 0.5f) "Tilt deadzone: off" else "Tilt deadzone %.0f°", ws.gyro.tiltDeadzoneDeg,
+                0f..GyroSettings.MAX_TILT_DEADZONE_DEG, 1f, own(g("tiltDeadzoneDeg")), reset(g("tiltDeadzoneDeg")),
+                hint = "Leaning less than this counts as level.",
+            ) { v -> editWs { it.copy(gyro = it.gyro.copy(tiltDeadzoneDeg = v)) } }
+            OverrideSlider(
+                key + "shake", "Shake at %.0f m/s²", ws.gyro.shakeStrength,
+                GyroSettings.MIN_SHAKE_STRENGTH..GyroSettings.MAX_SHAKE_STRENGTH, 1f, own(g("shakeStrength")), reset(g("shakeStrength")),
+                hint = "How hard a jolt counts as a shake.",
+            ) { v -> editWs { it.copy(gyro = it.gyro.copy(shakeStrength = v)) } }
             OverrideRow("Held as", own(g("orientation")), reset(g("orientation"))) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     GyroOrientation.entries.forEach { o ->

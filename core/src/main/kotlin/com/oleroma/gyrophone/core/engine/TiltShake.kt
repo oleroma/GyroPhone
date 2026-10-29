@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.core.engine
 
+import com.oleroma.gyrophone.core.model.GyroSettings
 import kotlin.math.atan2
 import kotlin.math.sqrt
 
@@ -8,15 +9,15 @@ import kotlin.math.sqrt
  * reading low-passed; turned to the screen as it is shown ([displayRotation]). Sideways tilt is
  * the turn in the screen's plane from upright (+ clockwise: right, like a wheel); forward and back
  * is the lean from where it was held when tilt started (+ back: the top edge toward the player).
- * Both are -1..1, full at [rangeDeg]. A shake is the reading jumping [SHAKE_MS2] from gravity, at
- * most once per [SHAKE_GAP_NS].
+ * Both are -1..1: 0 within the axis's deadzone, full at its range ([GyroSettings.tiltRangeOf]). A
+ * shake is the reading jumping [GyroSettings.shakeStrength] from gravity, at most once per [SHAKE_GAP_NS].
  */
 class TiltShake {
     /** Screen rotation in degrees (0/90/180/270). */
     @Volatile var displayRotation: Int = 90
 
-    /** Tilt for a full deflection, degrees. */
-    @Volatile var rangeDeg: Float = DEFAULT_RANGE_DEG
+    /** The tilt ranges and deadzones and the shake strength; replaced whole from another thread. */
+    @Volatile var settings: GyroSettings = GyroSettings()
 
     var x = 0f
         private set
@@ -58,23 +59,29 @@ class TiltShake {
             neutral = lean
             started = true
         }
-        val r = rangeDeg.coerceAtLeast(1f)
-        x = (side / r).coerceIn(-1f, 1f)
+        val s = settings
+        x = level(side, s.tiltRangeOf(true), s.tiltDeadzoneOf(true))
         // Leaning back toward flat (more gravity on z) is the top edge going away: forward, -.
-        y = (-(lean - neutral) / r).coerceIn(-1f, 1f)
+        y = level(-(lean - neutral), s.tiltRangeOf(false), s.tiltDeadzoneOf(false))
 
         val lx = ax - gx; val ly = ay - gy; val lz = az - gz
         val jolt = sqrt(lx * lx + ly * ly + lz * lz)
-        if (jolt > SHAKE_MS2 && timestampNs - lastShakeNs > SHAKE_GAP_NS) {
+        if (jolt > s.shakeStrength && timestampNs - lastShakeNs > SHAKE_GAP_NS) {
             lastShakeNs = timestampNs
             return true
         }
         return false
     }
 
+    /** [deg] of tilt as -1..1: 0 within [deadzone], full at [range]. */
+    private fun level(deg: Float, range: Float, deadzone: Float): Float {
+        val dz = deadzone.coerceIn(0f, range - 1f)
+        val a = kotlin.math.abs(deg)
+        if (a <= dz) return 0f
+        return (kotlin.math.sign(deg) * (a - dz) / (range.coerceAtLeast(1f) - dz)).coerceIn(-1f, 1f)
+    }
+
     companion object {
-        const val DEFAULT_RANGE_DEG = 30f
-        const val SHAKE_MS2 = 14f
         const val SHAKE_GAP_NS = 500_000_000L
 
         /** Share of each sample that reaches gravity (about 0.1 s at 50 Hz). */
