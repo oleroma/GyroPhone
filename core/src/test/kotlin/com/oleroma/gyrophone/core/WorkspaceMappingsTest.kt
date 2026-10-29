@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.core
 import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AttachedPad
 import com.oleroma.gyrophone.core.model.ButtonLibrary
+import com.oleroma.gyrophone.core.model.DevicePresets
 import com.oleroma.gyrophone.core.model.GamepadButton
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
@@ -51,10 +52,8 @@ class WorkspaceMappingsTest {
         val resolved = live()
         for ((old, new) in set.workspaces.zip(resolved.workspaces)) {
             assertEquals(old.mappings.toSet(), new.controls().toSet())
-            assertEquals(old.pads.map { it.mappings }, new.pads.map { it.mappings })
             assertEquals(null, new.mappingProfileId)
         }
-        assertEquals(listOf(key(AndroidKey.BUTTON_A, a)), resolved.workspaces[0].controller)
     }
 
     @Test fun workspacesSharingAProfileGetTheirOwnCopies() {
@@ -62,36 +61,39 @@ class WorkspaceMappingsTest {
         val m = MappingProfiles.migrate(same)
         assertEquals(1, m.profiles.size)
         val before = WorkspaceMappings.resolve(WorkspaceMappings.fromProfiles(m.set, m.profiles))
-        val after = before.updateWorkspace(0) { w ->
-            w.copy(mappings = listOf(touch("btn1", x)), pads = w.pads.map { it.copy(mappings = listOf(key(AndroidKey.BUTTON_Y, a))) })
-        }
+        val after = before.updateWorkspace(0) { w -> w.copy(mappings = listOf(touch("btn1", x))) }
         val settled = WorkspaceMappings.resolve(WorkspaceMappings.store(WorkspaceMappings.settle(before, after, null)))
         assertEquals(listOf(touch("btn1", x)), settled.workspaces[0].controls())
-        assertEquals(listOf(key(AndroidKey.BUTTON_Y, a)), settled.workspaces[0].controller)
         // The other workspace is untouched.
         assertEquals(before.workspaces[1], settled.workspaces[1])
     }
 
-    @Test fun aPadEditBecomesTheWorkspacesControllerSetForEveryPad() {
-        val base = live()
-        val two = base.updateWorkspace(0) { it.copy(pads = it.pads + AttachedPad("pad2")) }
-        val before = WorkspaceMappings.resolve(WorkspaceMappings.store(WorkspaceMappings.settle(base, two, null)))
-        assertEquals(before.workspaces[0].pads[0].mappings, before.workspaces[0].pads[1].mappings)
-        val after = before.updateWorkspace(0) { w ->
-            w.copy(pads = w.pads.map { if (it.id == "pad2") it.copy(mappings = listOf(key(AndroidKey.BUTTON_X, x))) else it })
-        }
-        val settled = WorkspaceMappings.settle(before, after, null)
-        assertEquals(listOf(key(AndroidKey.BUTTON_X, x)), settled.workspaces[0].controller)
-        assertTrue(settled.workspaces[0].pads.all { it.mappings == listOf(key(AndroidKey.BUTTON_X, x)) })
+    @Test fun workspacesPinningAPresetGetItsDevicesAndOthersNone() {
+        val preset = DevicePresets.standard("preset1", "Preset 1").copy(controller = listOf(key(AndroidKey.BUTTON_A, x)))
+        val stored = WorkspaceMappings.store(live())
+        val pinned = DevicePresets.pin(DevicePresets.put(stored, preset), "preset1", setOf("ws2"))
+        val resolved = WorkspaceMappings.resolve(pinned)
+        assertTrue(resolved.workspaces[0].pads.isEmpty())
+        assertTrue(resolved.workspaces[0].keyboard.isEmpty())
+        assertEquals(listOf(listOf(key(AndroidKey.BUTTON_A, x))), resolved.workspaces[1].pads.map { it.mappings })
+        assertEquals(preset.keyboard, resolved.workspaces[1].keyboard)
+        assertEquals(preset.mouse, resolved.workspaces[1].mouse)
+        // Stored, the device mappings stay in the preset only.
+        val again = WorkspaceMappings.store(resolved)
+        assertTrue(again.workspaces.all { it.pads.isEmpty() && it.keyboard.isEmpty() && it.mouse.isEmpty() })
+        assertEquals(listOf(preset), again.devicePresets)
+        // Removing the preset unpins it.
+        val removed = DevicePresets.remove(pinned, "preset1")
+        assertTrue(removed.workspaces.all { it.devicePreset == null })
     }
 
-    @Test fun aBlankNewWorkspaceStartsWithTheCurrentOnesKeyboardAndController() {
+    @Test fun aBlankNewWorkspaceStartsWithTheCurrentOnesTouchpadAndNoPreset() {
         val before = live()
         val (after, _) = WorkspaceEdits.add(before, Workspace("", "New"))
         val settled = WorkspaceMappings.resolve(WorkspaceMappings.settle(before, after, before.workspaces[1]))
         val fresh = settled.workspaces.last()
-        assertEquals(before.workspaces[1].controller, fresh.controller)
-        assertEquals(before.workspaces[1].keyboard, fresh.keyboard)
+        assertEquals(null, fresh.devicePreset)
+        assertTrue(fresh.pads.isEmpty())
         assertTrue(fresh.controls().isEmpty())
     }
 
@@ -100,7 +102,6 @@ class WorkspaceMappingsTest {
         val (dup, at) = WorkspaceEdits.duplicate(before, 0)
         val withCopy = WorkspaceMappings.resolve(WorkspaceMappings.settle(before, dup, before.workspaces[0]))
         assertEquals(before.workspaces[0].controls(), withCopy.workspaces[at].controls())
-        assertEquals(before.workspaces[0].controller, withCopy.workspaces[at].controller)
         val edited = withCopy.updateWorkspace(at) { it.copy(mappings = listOf(touch("btn1", x))) }
         val settled = WorkspaceMappings.settle(withCopy, edited, null)
         assertEquals(before.workspaces[0].controls(), settled.workspaces[0].controls())
@@ -111,7 +112,6 @@ class WorkspaceMappingsTest {
         val c = WorkspaceMappings.copy(resolved.workspaces[1], resolved.workspaces[0], withButtons = true)
         assertEquals(resolved.workspaces[0].touchControls, c.workspace.touchControls)
         assertEquals(resolved.workspaces[0].controls().toSet(), c.workspace.controls().toSet())
-        assertEquals(resolved.workspaces[0].controller, c.workspace.controller)
         assertEquals("ws2", c.workspace.id)
         assertTrue(c.unmatched.isEmpty())
     }
@@ -123,7 +123,6 @@ class WorkspaceMappingsTest {
         assertEquals(resolved.workspaces[1].touchControls, c.workspace.touchControls)
         assertEquals(setOf(touch("btn1", b), touch("btn9", x)), c.workspace.controls().toSet())
         assertEquals(listOf("btn9"), c.unmatched.map { it.id })
-        assertEquals(listOf(key(AndroidKey.BUTTON_A, a)), c.workspace.pads[0].mappings)
     }
 
     @Test fun libraryButtonsKeepTheirMappingsAndLayers() {

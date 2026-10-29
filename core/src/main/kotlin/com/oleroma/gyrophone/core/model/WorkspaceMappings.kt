@@ -1,80 +1,59 @@
 package com.oleroma.gyrophone.core.model
 
 /**
- * Each workspace owns its mappings: its touch buttons' and touchpad's ([Workspace.mappings]), its
- * keyboard's ([Workspace.keyboard]), its controller set ([Workspace.controller]) and its mapping
- * sets ([Workspace.sets]). Nothing is shared between workspaces, so a duplicate can change freely.
+ * Each workspace owns its touch mappings: its touch buttons' and touchpad's ([Workspace.mappings])
+ * and its mapping sets ([Workspace.sets]). Nothing is shared between workspaces, so a duplicate
+ * can change freely. Physical devices are mapped by the set's [DevicePreset]s instead, each
+ * workspace pinning one ([Workspace.devicePreset]).
  *
- * A set is kept in two forms: stored ([store]), where pads hold only their [AttachedPad.own]
- * mappings, and resolved ([resolve]), where every pad holds the mappings it acts with, as the
- * engine and the editors see it.
+ * A set is kept in two forms: stored ([store]), where workspaces hold no device mappings, and
+ * resolved ([resolve]), where each holds its pinned preset's as one pad for any game pad
+ * ([Workspace.pads]), [Workspace.keyboard] and [Workspace.mouse], as the engine sees it.
  */
 object WorkspaceMappings {
+    /** The one pad of a resolved workspace that pins a preset: any game pad. */
+    const val PRESET_PAD = "preset"
+
     /**
-     * [set] as the engine and editors see it: every pad without its own mappings has its
-     * workspace's controller set, and touch buttons' gestures are where their mode reads them
-     * ([Bindings.matchSwipeModes]).
+     * [set] as the engine and editors see it: each workspace with its pinned preset's device
+     * mappings, and touch buttons' gestures where their mode reads them ([Bindings.matchSwipeModes]).
      */
-    fun resolve(set: Profile): Profile = set.copy(workspaces = set.workspaces.map(::resolve))
+    fun resolve(set: Profile): Profile = set.copy(workspaces = set.workspaces.map { resolve(it, set.devicePresets) })
 
-    fun resolve(w: Workspace): Workspace = Bindings.matchSwipeModes(w.withTouchpadMappings()).let { r ->
-        r.copy(
-            mappings = Bindings.upgradeSwipes(r.mappings),
-            pads = r.pads.map { it.copy(mappings = it.own ?: r.controller) },
-        )
-    }
+    fun resolve(w: Workspace, presets: List<DevicePreset> = emptyList()): Workspace =
+        Bindings.matchSwipeModes(w.withTouchpadMappings()).let { r ->
+            val p = presets.firstOrNull { it.id == w.devicePreset }
+            r.copy(
+                mappings = Bindings.upgradeSwipes(r.mappings),
+                pads = if (p == null) emptyList() else listOf(AttachedPad(PRESET_PAD, mappings = p.controller)),
+                keyboard = p?.keyboard.orEmpty(),
+                mouse = p?.mouse.orEmpty(),
+            )
+        }
 
-    /** [set] as it is stored: pads keep only their own mappings. */
+    /** [set] as it is stored: the device mappings stay in the presets only. */
     fun store(set: Profile): Profile = set.copy(
         workspaces = set.workspaces.map { w ->
-            w.copy(mappingProfileId = null, pads = w.pads.map { it.copy(mappings = emptyList(), presetId = null) })
+            w.copy(mappingProfileId = null, pads = emptyList(), keyboard = emptyList(), mouse = emptyList())
         },
     )
 
     /**
-     * [after] (an edit of the resolved [before]) with each workspace's controller set brought up to
-     * date: a set changed in the workspace stays; else the mappings of a pad that changed since
-     * [before] (not one with its own) become it, so every pad of the workspace follows; a newly
-     * attached pad only gives its mappings when the set is empty. A workspace new in [after] with no
-     * mappings of its own (a blank one) starts with a copy of [current]'s keyboard, controller and
-     * touchpad mappings and its sets; one that comes with mappings (a builtin preset) keeps them.
+     * [after] (an edit of the resolved [before]) with each workspace new in it and holding no
+     * mappings of its own (a blank one) starting with a copy of [current]'s touchpad mappings and
+     * sets; one that comes with mappings (a builtin preset) keeps them.
      */
     fun settle(before: Profile, after: Profile, current: Workspace?): Profile = after.copy(
         workspaces = after.workspaces.map { w ->
-            val old = before.workspaces.firstOrNull { it.id == w.id }
-            val fresh = if (old == null) startFrom(w, current) else w
-            val controller = when {
-                old != null && fresh.controller != old.controller -> fresh.controller
-                else -> {
-                    val changed = fresh.pads.firstOrNull { p ->
-                        if (p.own != null) return@firstOrNull false
-                        val oldPad = old?.pads?.firstOrNull { it.id == p.id }
-                        if (oldPad != null) p.mappings.toSet() != oldPad.mappings.toSet()
-                        else fresh.controller.isEmpty() && p.mappings.isNotEmpty()
-                    }
-                    changed?.mappings ?: fresh.controller
-                }
-            }
-            fresh.copy(controller = controller, pads = fresh.pads.map { it.copy(mappings = it.own ?: controller) })
+            if (before.workspaces.any { it.id == w.id }) w else startFrom(w, current)
         },
     )
 
     private fun startFrom(w: Workspace, current: Workspace?): Workspace {
-        val own = w.mappings.any { !it.source.isTouchpad } || w.keyboard.isNotEmpty() ||
-                w.controller.isNotEmpty() || w.pads.any { it.mappings.isNotEmpty() }
-        if (own) {
-            return if (w.controller.isNotEmpty()) w
-            else w.copy(
-                controller = w.pads.firstOrNull { it.own == null && it.mappings.isNotEmpty() }?.mappings
-                    ?: KnownLayouts.familyMappings(FaceLayout.XBOX),
-            )
-        }
-        if (current == null) return w.copy(controller = KnownLayouts.familyMappings(FaceLayout.XBOX))
+        if (current == null || w.mappings.any { !it.source.isTouchpad }) return w
         return w.copy(
             mappings = w.mappings.filterNot { it.source.isTouchpad } + current.mappings.filter { it.source.isTouchpad },
             touchpad = w.touchpad.copy(mapped = current.touchpad.mapped),
-            keyboard = current.keyboard,
-            controller = current.controller,
             sets = current.sets,
         )
     }
@@ -88,7 +67,7 @@ object WorkspaceMappings {
     fun fromProfiles(set: Profile, profiles: List<MappingProfile>): Profile = set.copy(
         workspaces = set.workspaces.map { w ->
             val p = MappingProfiles.of(w, profiles) ?: return@map w
-            MappingProfiles.resolve(w, p).copy(mappingProfileId = null, controller = p.controller)
+            MappingProfiles.resolve(w, p).copy(mappingProfileId = null)
         },
     )
 
@@ -133,8 +112,8 @@ object WorkspaceMappings {
     }
 
     /**
-     * [target] with [source]'s mappings. Keyboard, controller and touchpad mappings are copied as
-     * they are, and [source]'s sets join [target]'s (a set id both have takes [source]'s name).
+     * [target] with [source]'s touch mappings. Touchpad mappings are copied as they are, and
+     * [source]'s sets join [target]'s (a set id both have takes [source]'s name).
      * [withButtons]: [target]'s buttons are replaced by [source]'s, with their places and mappings.
      * Else [target] keeps its buttons; each takes the mappings of the [source] button of the same
      * kind and name ([buttonName], ignoring case), and one with no match keeps its own.
@@ -142,11 +121,7 @@ object WorkspaceMappings {
     fun copy(target: Workspace, source: Workspace, withButtons: Boolean): Copied {
         val src = resolve(source)
         val sets = (src.sets + target.sets.filter { t -> src.sets.none { it.id == t.id } }).sortedBy { it.id }
-        val pads = target.pads.map { it.copy(own = null, mappings = src.controller) }
         val base = target.copy(
-            keyboard = src.keyboard,
-            controller = src.controller,
-            pads = pads,
             sets = sets,
             touchpad = target.touchpad.copy(mapped = true),
         )

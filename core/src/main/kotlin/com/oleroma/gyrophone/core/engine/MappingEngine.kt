@@ -328,6 +328,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private var mouseDx = 0
     private var mouseDy = 0
 
+    /** A physical mouse's movement not yet whole counts (or wheel units), carried to the next. */
+    private val mouseRest = FloatArray(4)
+
     /** Wheel from bindings, in 1/120 notch. */
     private var wheel = 0
 
@@ -392,7 +395,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val w = loaded.copy(mappings = Bindings.upgradeSwipes(loaded.mappings))
         ws = w
         allTouch = w.mappings
-        allPads = Array(w.pads.size + 1) { if (it < w.pads.size) w.pads[it].mappings else w.keyboard }
+        allPads = Array(w.pads.size + 2) {
+            when {
+                it < w.pads.size -> w.pads[it].mappings
+                it == w.pads.size -> w.keyboard
+                else -> w.mouse
+            }
+        }
         touchMappings = allTouch
         padMappings = allPads
         modifierIds = if (w.stickyModifiers) modifierControls(layered(w.mappings, MappingSet.BASE, emptyList())) else emptySet()
@@ -465,6 +474,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun resolvePad(device: PadDevice?): Int {
         if (device == null) return -1
         if (device.keyboard) return ws.pads.size
+        if (device.mouse) return ws.pads.size + 1
         return ws.pads.indexOfFirst { it.matches(device.vendorId, device.productId, device.name) }
     }
 
@@ -817,6 +827,46 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 v.mag = mag
                 v.zoned = cfg != null && cfg.zones != StickZones.OVERLAP
                 v.dirs = if (!v.zoned || mag == 0f) 0 else zoneDirs(v.x, v.y, cfg!!)
+            }
+        }
+        onChange?.run()
+    }
+
+    /**
+     * A physical mouse ([PadDevice.mouse]) moved [dx], [dy] counts: its Move X / Move Y mappings
+     * ([AndroidAxis.MOUSE_X], [AndroidAxis.MOUSE_Y] axis sources) in the set in use move the PC
+     * mouse or scroll ([OutputTarget.MouseAxis], times its scale; scrolling a notch per
+     * [MOUSE_COUNTS_PER_NOTCH] counts). Unmapped, it does nothing.
+     */
+    fun mouseMove(device: PadDevice, dx: Float, dy: Float) {
+        synchronized(lock) {
+            val pad = deviceFor(device).pad
+            val ms = padMappings.getOrNull(pad) ?: return
+            for (i in ms.indices) {
+                val m = ms[i]
+                val src = m.source as? InputSource.Axis ?: continue
+                val t = m.target as? OutputTarget.MouseAxis ?: continue
+                val v = when (src.axis) {
+                    AndroidAxis.MOUSE_X -> dx
+                    AndroidAxis.MOUSE_Y -> dy
+                    else -> continue
+                } * t.scale
+                val k = t.motion.ordinal
+                // Scrolling goes the way the mouse does: moving it up scrolls up, like the wheel.
+                val add = when (t.motion) {
+                    MouseMotion.MOVE_X, MouseMotion.MOVE_Y -> v
+                    MouseMotion.WHEEL -> -v * MouseState.WHEEL_UNIT / MOUSE_COUNTS_PER_NOTCH
+                    MouseMotion.HWHEEL -> v * MouseState.WHEEL_UNIT / MOUSE_COUNTS_PER_NOTCH
+                }
+                val total = mouseRest[k] + add
+                val whole = total.toInt()
+                mouseRest[k] = total - whole
+                when (t.motion) {
+                    MouseMotion.MOVE_X -> mouseDx += whole
+                    MouseMotion.MOVE_Y -> mouseDy += whole
+                    MouseMotion.WHEEL -> wheel += whole
+                    MouseMotion.HWHEEL -> hwheel += whole
+                }
             }
         }
         onChange?.run()
@@ -1692,6 +1742,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     companion object {
         const val PRESS_THRESHOLD = 0.5f
+
+        /** A physical mouse mapped to scrolling: this many counts of movement make one wheel notch. */
+        const val MOUSE_COUNTS_PER_NOTCH = 20f
 
         /** A held haptic is renewed at least this often (see [hapticSink]). */
         const val HAPTIC_RENEW_NS = 100_000_000L
