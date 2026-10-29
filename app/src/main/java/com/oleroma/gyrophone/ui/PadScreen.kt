@@ -534,10 +534,10 @@ fun PadScreen(
             )
         }
 
-        /** Applies [change] to the workspace being edited. */
+        /** Applies [change] to the workspace being edited; a button switched in or out of swipe mode takes its gestures along. */
         fun editWorkspace(change: (Workspace) -> Workspace) {
             val d = draft ?: return
-            draft = d.updateWorkspace(editIndex, change)
+            draft = d.updateWorkspace(editIndex) { Bindings.matchSwipeModes(change(it)) }
         }
 
         fun isCorner(d: Profile, id: String) = d.corners.any { it.id == id }

@@ -10,10 +10,14 @@ package com.oleroma.gyrophone.core.model
  * engine and the editors see it.
  */
 object WorkspaceMappings {
-    /** [set] as the engine and editors see it: every pad without its own mappings has its workspace's controller set. */
+    /**
+     * [set] as the engine and editors see it: every pad without its own mappings has its
+     * workspace's controller set, and touch buttons' gestures are where their mode reads them
+     * ([Bindings.matchSwipeModes]).
+     */
     fun resolve(set: Profile): Profile = set.copy(workspaces = set.workspaces.map(::resolve))
 
-    fun resolve(w: Workspace): Workspace = w.withTouchpadMappings().let { r ->
+    fun resolve(w: Workspace): Workspace = Bindings.matchSwipeModes(w.withTouchpadMappings()).let { r ->
         r.copy(
             mappings = Bindings.upgradeSwipes(r.mappings),
             pads = r.pads.map { it.copy(mappings = it.own ?: r.controller) },

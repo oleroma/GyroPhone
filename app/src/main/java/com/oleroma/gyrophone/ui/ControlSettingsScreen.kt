@@ -329,8 +329,8 @@ internal fun ButtonBehaviourSettings(
     if (!control.clickThrough) {
         SwitchSetting(
             "Swipe",
-            "A small touchpad of its own: a tap presses it, and its touchpad mappings " +
-                    "(taps, moves, swipes, pinches with 1–4 fingers, in Mappings) work on it.",
+            "A small touchpad of its own: its mappings are the touchpad's (hold, taps, moves, " +
+                    "swipes, pinches with 1–4 fingers, in Mappings), and a swipe is never a tap.",
             control.swipe,
         ) { on ->
             val c = current
@@ -339,14 +339,6 @@ internal fun ButtonBehaviourSettings(
                 if (on && !c.swipe && c.surface == null) c.copy(swipe = true, surface = SurfaceSettings(holdMode = HoldMode.DIRECTION_CHANGE))
                 else c.copy(swipe = on),
             )
-        }
-        if (control.swipe) {
-            SwitchSetting(
-                "Press only on a tap",
-                if (control.swipeTapOnRelease) "Presses when a still, short tap lifts; a swipe never presses."
-                else "Presses as soon as the finger touches, and stays pressed while it swipes.",
-                control.swipeTapOnRelease,
-            ) { onControlChange(current.copy(swipeTapOnRelease = it)) }
         }
     }
     Text(
@@ -505,8 +497,12 @@ internal fun MappingsSummary(control: TouchControl, mappings: List<Mapping>, onE
 }
 
 /** What the editor calls an action: a button's own press is "Press" (its input is named after the button). */
-internal fun actionLabel(control: TouchControl, input: BindableInput): String =
-    if (control.kind == TouchKind.BUTTON && input.sources.firstOrNull() is InputSource.Touch) "Press" else input.label
+internal fun actionLabel(control: TouchControl, input: BindableInput): String = when {
+    control.kind != TouchKind.BUTTON || input.sources.firstOrNull() !is InputSource.Touch -> input.label
+    // In swipe mode the press is one finger's hold.
+    control.swipes -> "Hold"
+    else -> "Press"
+}
 
 /**
  * A control size slider, in % of the pad's shorter side. The track is squared, so the usual
