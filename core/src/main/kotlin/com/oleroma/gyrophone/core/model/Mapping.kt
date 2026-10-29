@@ -273,6 +273,11 @@ sealed interface OutputTarget {
     @SerialName("gyro_pause")
     data object GyroPause : OutputTarget
 
+    /** A ratchet ([GyroPause]) of gyro [axis] only, as that axis's ratchet mode says ([GyroSettings.modeOf]). */
+    @Serializable
+    @SerialName("gyro_pause_axis")
+    data class GyroPauseAxis(val axis: MotionAxis) : OutputTarget
+
     /**
      * Windows app switching from a surface's Move X: Alt is held while the fingers stay down and
      * Tab (moving right) or Shift+Tab (moving left) is sent per step of travel.

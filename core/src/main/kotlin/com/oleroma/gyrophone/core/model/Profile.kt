@@ -395,7 +395,7 @@ fun touchedControls(
 
 /**
  * When gyro moves the mouse. ALWAYS = on, a held ratchet ([OutputTarget.GyroPause]) pauses it; OFF = off, a held ratchet engages it;
- * [OutputTarget.GyroToggle] swaps the two. SENSOR_OFF = gyro off completely (the sensor is not
+ * each gyro axis may have its own of the two ([GyroSettings.modeOf]). [OutputTarget.GyroToggle] swaps them. SENSOR_OFF = gyro off completely (the sensor is not
  * read, saving battery; ratchets and toggle do nothing). HOLD_OR_TOGGLE is only read from old
  * files and loads as OFF ([ProfileJson.normalize]).
  */
@@ -407,9 +407,6 @@ enum class GyroMode(val label: String) {
     HOLD_OR_TOGGLE("Ratchet enables"),
 }
 
-/** The cursor axes a gyro ratchet acts on. */
-@Serializable
-enum class RatchetAxes(val label: String) { BOTH("Both"), X("Only X"), Y("Only Y") }
 
 /** How the phone is held. AUTO follows the screen rotation. */
 @Serializable
@@ -433,9 +430,30 @@ data class ButtonGyro(
     val yaw: Float? = null,
     val pitch: Float? = null,
     val roll: Float? = null,
+    /** Yaw's, pitch's and roll's ratchet mode while held ([GyroSettings.yawMode]); null = the workspace's. */
+    val yawMode: GyroMode? = null,
+    val pitchMode: GyroMode? = null,
+    val rollMode: GyroMode? = null,
 ) {
     /** It sets something. */
-    val any: Boolean get() = sensitivity != null || yaw != null || pitch != null || roll != null
+    val any: Boolean get() = sensitivity != null || yaw != null || pitch != null || roll != null ||
+        yawMode != null || pitchMode != null || rollMode != null
+
+    /** Axis [a]'s own ratchet mode. */
+    fun ownMode(a: MotionAxis): GyroMode? = when (a) {
+        MotionAxis.YAW -> yawMode
+        MotionAxis.PITCH -> pitchMode
+        MotionAxis.ROLL -> rollMode
+        MotionAxis.NONE -> null
+    }
+
+    /** Copy with axis [a]'s own ratchet mode [m]. */
+    fun withMode(a: MotionAxis, m: GyroMode?): ButtonGyro = when (a) {
+        MotionAxis.YAW -> copy(yawMode = m)
+        MotionAxis.PITCH -> copy(pitchMode = m)
+        MotionAxis.ROLL -> copy(rollMode = m)
+        MotionAxis.NONE -> this
+    }
 
     /** Axis [a]'s own sensitivity. */
     fun own(a: MotionAxis): Float? = when (a) {
@@ -456,14 +474,18 @@ data class ButtonGyro(
     /** [o]'s values over these (a layer over the ones below). */
     fun under(o: ButtonGyro) = ButtonGyro(
         set, o.sensitivity ?: sensitivity, o.yaw ?: yaw, o.pitch ?: pitch, o.roll ?: roll,
+        o.yawMode ?: yawMode, o.pitchMode ?: pitchMode, o.rollMode ?: rollMode,
     )
 
     /** Axis [a]'s sensitivity with these over [g]: its own, these' shared, then [g]'s. */
     fun sensitivityOf(a: MotionAxis, g: GyroSettings): Float = own(a) ?: sensitivity ?: g.sensitivityOf(a)
 
     /** [g] with these over it. */
-    fun over(g: GyroSettings): GyroSettings = if (!any) g else
-        g.copy(yawSensitivity = sensitivityOf(MotionAxis.YAW, g), pitchSensitivity = sensitivityOf(MotionAxis.PITCH, g), rollSensitivity = sensitivityOf(MotionAxis.ROLL, g))
+    fun over(g: GyroSettings): GyroSettings = if (!any) g else g.copy(
+        yawSensitivity = sensitivityOf(MotionAxis.YAW, g), pitchSensitivity = sensitivityOf(MotionAxis.PITCH, g),
+        rollSensitivity = sensitivityOf(MotionAxis.ROLL, g),
+        yawMode = yawMode ?: g.yawMode, pitchMode = pitchMode ?: g.pitchMode, rollMode = rollMode ?: g.rollMode,
+    )
 }
 
 /** Rotation of the phone in the player's frame. */
@@ -497,9 +519,33 @@ data class GyroSettings(
     val tighteningThreshold: Float = 0f,
     /** Below this speed (deg/s) motion is averaged over a short window. 0 (default, raw gyro) disables. */
     val smoothingThreshold: Float = 0f,
-    /** Which cursor axes a ratchet flips; the other one stays as the mode has it without a ratchet. */
-    val ratchetAxes: RatchetAxes = RatchetAxes.BOTH,
+    /**
+     * Yaw's, pitch's and roll's own ratchet mode ([GyroMode.ALWAYS]: a ratchet disables it,
+     * [GyroMode.OFF]: enables it); null = [mode]'s. [GyroMode.SENSOR_OFF] is the whole gyro's only.
+     */
+    val yawMode: GyroMode? = null,
+    val pitchMode: GyroMode? = null,
+    val rollMode: GyroMode? = null,
 ) {
+    /** Axis [a]'s own ratchet mode, null when it follows [mode]. */
+    fun ownMode(a: MotionAxis): GyroMode? = when (a) {
+        MotionAxis.YAW -> yawMode
+        MotionAxis.PITCH -> pitchMode
+        MotionAxis.ROLL -> rollMode
+        MotionAxis.NONE -> null
+    }
+
+    /** Axis [a]'s ratchet mode in effect: [GyroMode.SENSOR_OFF] whenever the whole gyro is off. */
+    fun modeOf(a: MotionAxis): GyroMode = if (mode == GyroMode.SENSOR_OFF) mode else ownMode(a) ?: mode
+
+    /** Copy with axis [a]'s own ratchet mode [m] (null: it follows [mode]). */
+    fun withMode(a: MotionAxis, m: GyroMode?): GyroSettings = when (a) {
+        MotionAxis.YAW -> copy(yawMode = m)
+        MotionAxis.PITCH -> copy(pitchMode = m)
+        MotionAxis.ROLL -> copy(rollMode = m)
+        MotionAxis.NONE -> this
+    }
+
     /** Axis [a]'s own sensitivity, null when it uses [sensitivity]. */
     fun ownSensitivity(a: MotionAxis): Float? = when (a) {
         MotionAxis.YAW -> yawSensitivity

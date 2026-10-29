@@ -57,6 +57,6 @@ fun com.oleroma.gyrophone.core.engine.GyroMouse.update(
         Mapping(com.oleroma.gyrophone.core.model.InputSource.Gyro(x), OutputTarget.MouseAxis(com.oleroma.gyrophone.core.model.MouseMotion.MOVE_X, scaleX)),
         Mapping(com.oleroma.gyrophone.core.model.InputSource.Gyro(y), OutputTarget.MouseAxis(com.oleroma.gyrophone.core.model.MouseMotion.MOVE_Y)),
     )
-    val r = route(gx, gy, gz, dt, routes, moveX = true, moveY = true)
+    val r = route(gx, gy, gz, dt, routes)
     return com.oleroma.gyrophone.core.engine.GyroMouse.Counts(r.dx, r.dy)
 }

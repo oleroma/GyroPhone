@@ -45,7 +45,7 @@ class GyroAndSensorTest {
         fun notches(sens: Float): Int {
             val g = GyroMouse(GyroSettings(sensitivity = sens))
             var w = 0
-            repeat(1000) { w += g.route(-rad, 0f, 0f, 0.001f, wheel, true, true).wheel }
+            repeat(1000) { w += g.route(-rad, 0f, 0f, 0.001f, wheel).wheel }
             return w
         }
         val unit = com.oleroma.gyrophone.core.hid.MouseState.WHEEL_UNIT

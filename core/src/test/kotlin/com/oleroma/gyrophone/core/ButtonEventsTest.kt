@@ -12,8 +12,8 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.Mapping
+import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.OutputTarget
-import com.oleroma.gyrophone.core.model.RatchetAxes
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchpadSettings
@@ -276,33 +276,49 @@ class ButtonEventsTest {
         assertTrue(again.first === s && again.second === ps)
     }
 
-    private fun gyroEngine(mode: GyroMode, axes: RatchetAxes, touchpadOn: Boolean = true) = MappingEngine(
+    private fun gyroEngine(gyro: GyroSettings, ratchet: OutputTarget = OutputTarget.GyroPause, touchpadOn: Boolean = true) = MappingEngine(
         single(
             Workspace(
                 id = "w", name = "w",
-                gyro = GyroSettings(mode = mode, ratchetAxes = axes),
+                gyro = gyro,
                 touchpad = TouchpadSettings(enabled = touchpadOn),
-                mappings = listOf(Mapping(InputSource.Surface(1, SurfaceInput.HOLD), OutputTarget.GyroPause)),
+                mappings = listOf(Mapping(InputSource.Surface(1, SurfaceInput.HOLD), ratchet)),
             )
         )
     )
 
+    private val yaw = MappingEngine.gyroBit(MotionAxis.YAW)
+    private val pitch = MappingEngine.gyroBit(MotionAxis.PITCH)
+    private val roll = MappingEngine.gyroBit(MotionAxis.ROLL)
+
     @Test
     fun ratchetOnOneAxis() {
-        val e = gyroEngine(GyroMode.ALWAYS, RatchetAxes.X)
-        assertEquals(MappingEngine.GYRO_X or MappingEngine.GYRO_Y, e.gyroAxes)
+        val e = gyroEngine(GyroSettings(mode = GyroMode.ALWAYS), OutputTarget.GyroPauseAxis(MotionAxis.ROLL))
+        assertEquals(MappingEngine.ALL_GYRO, e.gyroAxes)
         e.touchpadDown(1, 10f, 10f); e.snapshot()
-        assertEquals(MappingEngine.GYRO_Y, e.gyroAxes)
+        assertEquals(yaw or pitch, e.gyroAxes)
         e.touchpadUp(1)
-        val en = gyroEngine(GyroMode.OFF, RatchetAxes.Y)
+        val en = gyroEngine(GyroSettings(mode = GyroMode.OFF), OutputTarget.GyroPauseAxis(MotionAxis.PITCH))
         assertEquals(0, en.gyroAxes)
         en.touchpadDown(1, 10f, 10f); en.snapshot()
-        assertEquals(MappingEngine.GYRO_Y, en.gyroAxes)
+        assertEquals(pitch, en.gyroAxes)
+    }
+
+    @Test
+    fun eachAxisHasItsOwnRatchetModeOrTheWorkspaces() {
+        // Pitch: ratchet enables; yaw and roll follow the workspace's "ratchet disables".
+        val e = gyroEngine(GyroSettings(mode = GyroMode.ALWAYS, pitchMode = GyroMode.OFF))
+        assertEquals(yaw or roll, e.gyroAxes)
+        e.touchpadDown(1, 10f, 10f); e.snapshot()
+        assertEquals(pitch, e.gyroAxes)
+        e.touchpadUp(1)
+        // Gyro off is the whole gyro's.
+        assertEquals(0, gyroEngine(GyroSettings(mode = GyroMode.SENSOR_OFF, pitchMode = GyroMode.ALWAYS)).gyroAxes)
     }
 
     @Test
     fun touchpadRatchetFollowsTheTouchpad() {
-        val e = gyroEngine(GyroMode.OFF, RatchetAxes.BOTH, touchpadOn = false)
+        val e = gyroEngine(GyroSettings(mode = GyroMode.OFF), touchpadOn = false)
         e.touchpadDown(1, 10f, 10f); e.snapshot()
         assertEquals(0, e.gyroAxes)
         e.touchpadUp(1)

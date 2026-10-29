@@ -19,10 +19,10 @@ import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KeyMode
 import com.oleroma.gyrophone.core.model.Mapping
+import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
-import com.oleroma.gyrophone.core.model.RatchetAxes
 import com.oleroma.gyrophone.core.model.StickAxis
 import com.oleroma.gyrophone.core.model.StickDiagonal
 import com.oleroma.gyrophone.core.model.StickZones
@@ -973,28 +973,45 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     /**
-     * Whether gyro motion should currently move the mouse. A ratchet (a held [OutputTarget.GyroPause]
-     * or old [OutputTarget.GyroHold] source) pauses ALWAYS and engages OFF while held. A
+     * Whether gyro moves anything now. A ratchet (a held [OutputTarget.GyroPause], old
+     * [OutputTarget.GyroHold] or one axis's [OutputTarget.GyroPauseAxis]) pauses an axis in
+     * "ratchet disables" (ALWAYS) and engages one in "ratchet enables" (OFF) while held. A
      * [OutputTarget.GyroToggle] press swaps the two until the workspace changes. SENSOR_OFF: never.
      */
     val gyroActive: Boolean get() = gyroAxes != 0
 
-    /**
-     * The cursor axes gyro moves now: bit 1 = X, bit 2 = Y. A ratchet flips only its
-     * [GyroSettings.ratchetAxes]; the other axis stays as the mode has it without one.
-     */
+    /** The gyro axes that move now: [gyroBit] of each [MotionAxis]. */
     val gyroAxes: Int
         get() = synchronized(lock) {
-            val g = eff.gyro
+            val g = gyroNow
             if (g.mode == GyroMode.SENSOR_OFF) return@synchronized 0
-            val ratchet = ratchetMapped && (engaged(OutputTarget.GyroPause) || engaged(OutputTarget.GyroHold))
-            // On without a ratchet: "ratchet disables" (ALWAYS) unless toggled, "ratchet enables" only toggled.
-            val base = if (g.mode == GyroMode.ALWAYS) !gyroToggled else gyroToggled
-            val flipped = base != ratchet
-            val x = if (g.ratchetAxes == RatchetAxes.Y) base else flipped
-            val y = if (g.ratchetAxes == RatchetAxes.X) base else flipped
-            (if (x) GYRO_X else 0) or (if (y) GYRO_Y else 0)
+            val ratchets = if (ratchetMapped) ratchetedAxes() else 0
+            var out = 0
+            for (a in MOTION_AXES) {
+                // On without a ratchet: "ratchet disables" (ALWAYS) unless toggled, "ratchet enables" only toggled.
+                val base = if (g.modeOf(a) == GyroMode.ALWAYS) !gyroToggled else gyroToggled
+                if (base != (ratchets and gyroBit(a) != 0)) out = out or gyroBit(a)
+            }
+            out
         }
+
+    /** The [gyroBit]s of the axes a held ratchet acts on. */
+    private fun ratchetedAxes(): Int {
+        var bits = 0
+        forEachGroup { ms, dev ->
+            for (i in ms.indices) {
+                val m = ms[i]
+                val t = m.target
+                val b = when (t) {
+                    OutputTarget.GyroPause, OutputTarget.GyroHold -> ALL_GYRO
+                    is OutputTarget.GyroPauseAxis -> gyroBit(t.axis)
+                    else -> continue
+                }
+                if (bits and b != b && value(m.source, dev) >= PRESS_THRESHOLD) bits = bits or b
+            }
+        }
+        return bits
+    }
 
     /**
      * Replaces the active workspace's gyro settings (the gyro corner switching its mode) without
@@ -1229,7 +1246,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 // Mouse motion follows swipe steps as they come (swipeMove).
                 // Surface motion, switching apps and zoom run in the touchpad (Touchpad.route).
                 is OutputTarget.Wheel, is OutputTarget.MouseAxis,
-                OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause,
+                OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause, is OutputTarget.GyroPauseAxis,
                 OutputTarget.SwitchApps, OutputTarget.Zoom, is OutputTarget.Layer, OutputTarget.NoOutput -> Unit
 
                 is OutputTarget.Haptic, is OutputTarget.HapticStep -> {
@@ -1536,7 +1553,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (t is OutputTarget.Layer) return true
         if (!keep || continuous(m.source)) return false
         return t is OutputTarget.Pad || t is OutputTarget.Key || t is OutputTarget.Mouse ||
-                t is OutputTarget.PadAxis || t == OutputTarget.GyroPause || t == OutputTarget.GyroHold
+                t is OutputTarget.PadAxis || t == OutputTarget.GyroPause || t == OutputTarget.GyroHold || t is OutputTarget.GyroPauseAxis
     }
 
     /** An input whose value follows a motion (a full stick or trigger axis, touch motion): it follows the new set at once. */
@@ -1607,7 +1624,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             if (src is InputSource.TouchStickDiagonal) stickCfgs[src.id]?.diagonalMapped?.set(src.diagonal.ordinal, true)
         }
         ratchetMapped = (padMappings.asSequence() + sequenceOf(touchMappings)).any { ms ->
-            ms.any { it.target == OutputTarget.GyroPause || it.target == OutputTarget.GyroHold }
+            ms.any { it.target == OutputTarget.GyroPause || it.target == OutputTarget.GyroHold || it.target is OutputTarget.GyroPauseAxis }
         }
         touchpad.map = SurfaceMap(touchMappings)
         for ((id, s) in surfaces) s.map = SurfaceMap(touchMappings, id)
@@ -1823,9 +1840,18 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
         private const val BP_FREE = 0
 
-        /** [gyroAxes] bits. */
-        const val GYRO_X = 1
-        const val GYRO_Y = 2
+        private val MOTION_AXES = listOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL)
+
+        /** Axis [a]'s bit of [gyroAxes]. */
+        fun gyroBit(a: MotionAxis): Int = when (a) {
+            MotionAxis.YAW -> 1
+            MotionAxis.PITCH -> 2
+            MotionAxis.ROLL -> 4
+            MotionAxis.NONE -> 0
+        }
+
+        /** Every gyro axis's [gyroBit]. */
+        const val ALL_GYRO = 7
 
 
         /** Pressed: a finger on a control without a surface. */

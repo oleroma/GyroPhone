@@ -58,6 +58,7 @@ object Describe {
         OutputTarget.GyroHold -> "Ratchet (flip gyro while held)"
         OutputTarget.GyroToggle -> "Toggle gyro (swap what a ratchet does)"
         OutputTarget.GyroPause -> "Ratchet (flip gyro while held)"
+        is OutputTarget.GyroPauseAxis -> "Ratchet ${t.axis.label.lowercase()} (flip it while held)"
         OutputTarget.SwitchApps -> "Switch apps (Alt+Tab)"
         OutputTarget.Zoom -> "Zoom (Ctrl + wheel)"
         is OutputTarget.Haptic -> when {
@@ -154,6 +155,7 @@ object Describe {
         OutputTarget.GyroHold -> "Ratchet"
         OutputTarget.GyroToggle -> "Gyro ⇄"
         OutputTarget.GyroPause -> "Ratchet"
+        is OutputTarget.GyroPauseAxis -> "Ratchet " + t.axis.label.lowercase()
         OutputTarget.SwitchApps -> "Alt+Tab"
         OutputTarget.Zoom -> "Zoom"
         is OutputTarget.Haptic -> when {
@@ -203,7 +205,9 @@ object Describe {
                 OutputTarget.MouseAxis(it, -1f)
             )
         },
-        "Gyro" to listOf(OutputTarget.GyroPause, OutputTarget.GyroToggle),
+        "Gyro" to listOf(OutputTarget.GyroPause) +
+            listOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL).map { OutputTarget.GyroPauseAxis(it) } +
+            OutputTarget.GyroToggle,
         "Phone" to listOf(
             OutputTarget.Haptic(held = false),
             OutputTarget.Haptic(held = true),

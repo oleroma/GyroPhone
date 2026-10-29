@@ -19,7 +19,6 @@ import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroOrientation
 import com.oleroma.gyrophone.core.model.Profile
-import com.oleroma.gyrophone.core.model.RatchetAxes
 
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.MappingSet
@@ -152,20 +151,6 @@ internal fun WorkspaceSettings(
                         FilterChip(selected = ws.gyro.mode == mode, onClick = {
                             editWs { it.copy(gyro = it.gyro.copy(mode = mode)) }
                         }, label = { Text(mode.label) })
-                    }
-                }
-            }
-            OverrideRow(
-                "Ratchet acts on", own(g("ratchetAxes")), reset(g("ratchetAxes")),
-                hint = "Only X: a ratchet stops or starts only the sideways motion (re-centre left and right while up and down keeps going).",
-            ) {
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    RatchetAxes.entries.forEach { a ->
-                        FilterChip(
-                            selected = ws.gyro.ratchetAxes == a,
-                            onClick = { editWs { it.copy(gyro = it.gyro.copy(ratchetAxes = a)) } },
-                            label = { Text(a.label) },
-                        )
                     }
                 }
             }

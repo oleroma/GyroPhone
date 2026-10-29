@@ -79,13 +79,13 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
     /**
      * One sample (angular velocity [gx], [gy], [gz] in rad/s, Android sensor frame) sent where gyro
      * mappings [routes] ([InputSource.Gyro] sources) say: mouse motion at the axis's sensitivity
-     * ([GyroSettings.sensitivityOf], counts per degree) through the filters (the X / Y one only
-     * when [moveX] / [moveY]: a ratchet on one axis), scrolling at [DEG_PER_NOTCH] and game pad
+     * ([GyroSettings.sensitivityOf], counts per degree) through the filters, of the gyro axes
+     * [axes] says move ([MappingEngine.gyroAxes]: a ratchet stops or starts one), scrolling at [DEG_PER_NOTCH] and game pad
      * axes full at [STICK_FULL_DEG_PER_S] at the default sensitivity, faster or slower with the
      * axis's (pitching up pushes a stick up). A target's scale multiplies.
      * The result is reused by the next call.
      */
-    fun route(gx: Float, gy: Float, gz: Float, dtSeconds: Float, routes: List<Mapping>, moveX: Boolean, moveY: Boolean): Routed {
+    fun route(gx: Float, gy: Float, gz: Float, dtSeconds: Float, routes: List<Mapping>, axes: Int = MappingEngine.ALL_GYRO): Routed {
         val s = settings
         val m = motion(gx, gy, gz, resolvedOrientation())
         var vx = 0f; var vy = 0f; var w = 0f; var hw = 0f
@@ -94,6 +94,7 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
         for (i in routes.indices) {
             val r = routes[i]
             val src = r.source as? InputSource.Gyro ?: continue
+            if (axes and MappingEngine.gyroBit(src.axis) == 0) continue
             val k = s.sensitivityOf(src.axis)
             val v = m[src.axis]
             when (val t = r.target) {
@@ -116,7 +117,7 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
         for (a in pad.indices) {
             pad[a] = if (GamepadAxis.entries[a].isTrigger) kotlin.math.abs(pad[a]).coerceAtMost(1f) else pad[a].coerceIn(-1f, 1f)
         }
-        val c = counts(if (moveX) vx else 0f, if (moveY) vy else 0f, dtSeconds)
+        val c = counts(vx, vy, dtSeconds)
         routed.dx = c.dx; routed.dy = c.dy
         val fw = w * dtSeconds * MouseState.WHEEL_UNIT / DEG_PER_NOTCH + remWheel
         val fh = hw * dtSeconds * MouseState.WHEEL_UNIT / DEG_PER_NOTCH + remHWheel

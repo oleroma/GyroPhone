@@ -81,12 +81,12 @@ class GyroMappingsTest {
             gyro(MotionAxis.YAW, lx),
             gyro(MotionAxis.PITCH, OutputTarget.PadAxis(GamepadAxis.LY)),
         )
-        val r = g.route(45f * rad, 30f * rad, 0f, 0.5f, routes, moveX = true, moveY = true)
+        val r = g.route(45f * rad, 30f * rad, 0f, 0.5f, routes)
         assertEquals(360, r.dx) // 45°/s × 0.5 s × 16
         assertEquals(MouseState.WHEEL_UNIT, r.wheel) // 15° up: one notch up
         assertEquals(0.5f, r.pad[GamepadAxis.LX.ordinal], 1e-4f)
         assertEquals(-1f / 3f, r.pad[GamepadAxis.LY.ordinal], 1e-4f) // pitching up pushes the stick up
-        assertEquals(0, g.route(45f * rad, 0f, 0f, 0.5f, routes, moveX = false, moveY = true).dx) // ratchet on X
+        assertEquals(0, g.route(45f * rad, 0f, 0f, 0.5f, routes, MappingEngine.ALL_GYRO and MappingEngine.gyroBit(MotionAxis.YAW).inv()).dx) // yaw ratcheted
     }
 
     @Test fun aHeldButtonsSensitivityIsTheGyrosLastPressedWinsAndLayersOverride() {

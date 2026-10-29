@@ -790,11 +790,8 @@ class GamepadRuntime(context: Context) {
             // A layer in use may set gyro settings of its own.
             val gs = engine.gyroSettings
             if (gs !== gyroMouse.settings) gyroMouse.settings = gs
-            // A ratchet on one axis leaves the other moving.
-            val moveX = axes and MappingEngine.GYRO_X != 0
-            val moveY = axes and MappingEngine.GYRO_Y != 0
             val routes = engine.gyroRoutes()
-            val r = gyroMouse.route(x - biasX, y - biasY, z - biasZ, dt, routes, moveX, moveY)
+            val r = gyroMouse.route(x - biasX, y - biasY, z - biasZ, dt, routes, axes)
             if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel)
             engine.setGyroAxes(r.pad)
             gyroPadSet = true

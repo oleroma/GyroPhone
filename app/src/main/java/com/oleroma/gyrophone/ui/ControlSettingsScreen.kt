@@ -352,7 +352,7 @@ internal fun SizeSlider(title: String, value: Float, onChange: (Float) -> Unit) 
 }
 
 /** A ratchet action (the old gyro hold works as one). */
-internal fun isRatchet(t: OutputTarget): Boolean = t == OutputTarget.GyroPause || t == OutputTarget.GyroHold
+internal fun isRatchet(t: OutputTarget): Boolean = t == OutputTarget.GyroPause || t == OutputTarget.GyroHold || t is OutputTarget.GyroPauseAxis
 
 /** True when the stick's mappings equal what [preset] would write. */
 internal fun presetMatches(

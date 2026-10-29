@@ -2,12 +2,15 @@ package com.oleroma.gyrophone.ui
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.ButtonGyro
+import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.Bindings
@@ -90,15 +93,22 @@ private fun ButtonGyroSensitivity(g: ButtonGyroLevel, key: String) {
     ) { v -> g.edit { it.copy(sensitivity = v) } }
 }
 
-/** The ⚙ of gyro [axis] of a button: its own sensitivity, else the button's Sensitivity, else the workspace's. */
+/** The ⚙ of gyro [axis] of a button: its ratchet mode and sensitivity while held, its own or else the workspace's. */
 private fun buttonGyroGear(g: ButtonGyroLevel, key: String, axis: MotionAxis): @Composable () -> Unit = ui {
-    OverrideSlider(
-        key + "gyro" + g.set + axis.name, "${axis.label} sensitivity %.0f", g.inUse.sensitivityOf(axis, g.parent), 0f..MAX_GYRO_SENS, 1f,
-        overridden = g.own.own(axis) != null,
-        onReset = { g.edit { it.with(axis, null) } },
-        hint = "While this is held: mouse counts per degree of ${axis.label.lowercase()}${g.where}. Unset, it follows this button's " +
-            "Gyro sensitivity (in Settings), else the workspace's.",
-    ) { v -> g.edit { it.with(axis, v) } }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        RatchetModeRow(
+            axis, g.inUse.ownMode(axis) ?: g.parent.ownMode(axis) ?: g.parent.mode, g.own.ownMode(axis) != null,
+            onReset = { g.edit { it.withMode(axis, null) } },
+            hint = "While this is held${g.where}. Unset, the workspace's.",
+        ) { m -> g.edit { it.withMode(axis, m) } }
+        OverrideSlider(
+            key + "gyro" + g.set + axis.name, "${axis.label} sensitivity %.0f", g.inUse.sensitivityOf(axis, g.parent), 0f..MAX_GYRO_SENS, 1f,
+            overridden = g.own.own(axis) != null,
+            onReset = { g.edit { it.with(axis, null) } },
+            hint = "While this is held: mouse counts per degree of ${axis.label.lowercase()}${g.where}. Unset, it follows this button's " +
+                "Gyro sensitivity (in Settings), else the workspace's.",
+        ) { v -> g.edit { it.with(axis, v) } }
+    }
 }
 
 /**
@@ -213,13 +223,39 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
  */
 private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Composable () -> Unit = ui {
     val g = level.ws.gyro
-    OverrideSlider(
-        key + "sens" + axis.name, "${axis.label} sensitivity %.0f", g.sensitivityOf(axis), 0f..MAX_GYRO_SENS, 1f,
-        overridden = g.ownSensitivity(axis) != null,
-        onReset = { level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, null)) } },
-        hint = "Mouse counts per degree of ${axis.label.lowercase()}; scrolling and sticks go faster or slower with it too. " +
-            "Unset, it follows the shared Sensitivity (${"%.0f".format(g.sensitivity)}) in Settings.",
-    ) { v -> level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, v)) } }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        RatchetModeRow(
+            axis, g.ownMode(axis) ?: g.mode, g.ownMode(axis) != null,
+            onReset = { level.edit { it.copy(gyro = it.gyro.withMode(axis, null)) } },
+            hint = "Unset, it follows the gyro mode in Settings." + if (g.mode == GyroMode.SENSOR_OFF) " Gyro is off there now." else "",
+        ) { m -> level.edit { it.copy(gyro = it.gyro.withMode(axis, m)) } }
+        OverrideSlider(
+            key + "sens" + axis.name, "${axis.label} sensitivity %.0f", g.sensitivityOf(axis), 0f..MAX_GYRO_SENS, 1f,
+            overridden = g.ownSensitivity(axis) != null,
+            onReset = { level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, null)) } },
+            hint = "Mouse counts per degree of ${axis.label.lowercase()}; scrolling and sticks go faster or slower with it too. " +
+                "Unset, it follows the shared Sensitivity (${"%.0f".format(g.sensitivity)}) in Settings.",
+        ) { v -> level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, v)) } }
+    }
+}
+
+/** Whether a ratchet disables or enables gyro [axis] ([mode]), with ↺ ([onReset]) when [overridden]. */
+@Composable
+private fun RatchetModeRow(
+    axis: MotionAxis,
+    mode: GyroMode,
+    overridden: Boolean,
+    onReset: () -> Unit,
+    hint: String,
+    onSet: (GyroMode) -> Unit,
+) {
+    OverrideRow("${axis.label}: a ratchet", overridden, onReset, hint) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (m in listOf(GyroMode.ALWAYS, GyroMode.OFF)) {
+                FilterChip(selected = mode == m, onClick = { onSet(m) }, label = { Text(if (m == GyroMode.ALWAYS) "Disables it" else "Enables it") })
+            }
+        }
+    }
 }
 
 /**
