@@ -283,7 +283,8 @@ internal object TouchStream {
  * (taps on overlapping controls cycle through them), double-tap it for its full-screen mapping screen, long-press
  * it for its full-screen settings (a corner: a menu next to it). A drag anywhere moves the selected control
  * (with none selected, the one under the finger); a pinch or the size slider resizes it. The menu's 🔒 stops
- * drags and pinches from moving or resizing anything; ↶ / ↷ undo and redo. Edits change the
+ * drags and pinches from moving or resizing what was there when edit mode opened (what is added
+ * meanwhile stays free until edit mode opens again); ↶ / ↷ undo and redo. Edits change the
  * current orientation's placement. Done saves (a builtin becomes a custom copy) and switches to the workspace being edited.
  * In play mode the top row ([CapsuleRow]) switches and adds workspaces (tap the current one to edit
  * it) and opens Connection and Settings ([PadTab]) through [onOpenMenu]. With [GamepadRuntime.cornerAutoHide]
@@ -349,6 +350,15 @@ fun PadScreen(
     }
     var snap by remember { mutableStateOf(false) }
     val layoutLocked by runtime.editLayoutLocked.collectAsStateWithLifecycle()
+
+    /**
+     * The controls (and corners) there were when edit mode opened: the only ones the lock holds, so
+     * what is added in this session can still be moved and sized until edit mode opens again.
+     */
+    val lockableIds = remember { arrayOf<Set<String>>(emptySet()) }
+
+    /** Whether the lock keeps [id] from being moved or sized. */
+    fun lockedOut(id: String?) = layoutLocked && id != null && id in lockableIds[0]
 
     /** Edit mode undo: earlier drafts (newest last), drafts undone, and the draft the last step ended on. */
     val undoSteps = remember { mutableStateListOf<Profile>() }
@@ -588,6 +598,8 @@ fun PadScreen(
         selected = null
         dragging = false
         editIndex = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
+        lockableIds[0] = profile.corners.mapTo(HashSet()) { it.id } +
+            profile.workspaces.flatMap { w -> w.touchControls.map { it.id } }
         draft = profile
     }
 
@@ -857,7 +869,7 @@ fun PadScreen(
                                 down.forEach { tapStart.getOrPut(it.id) { it.position } }
                                 if (down.any { (it.position - tapStart.getValue(it.id)).getDistance() > slop }) {
                                     val c = findControl(selected)
-                                    if (c != null && !layoutLocked) {
+                                    if (c != null && !lockedOut(c.id)) {
                                         mode = EditGesture.PINCH
                                         target = c.id
                                         menu = EditMenu.NONE
@@ -896,8 +908,8 @@ fun PadScreen(
                                             target = sel.id
                                             grab = selGrab
                                         }
-                                        // Locked: a drag moves nothing (and isn't a tap).
-                                        if (layoutLocked || (mode == EditGesture.EMPTY && sel == null)) {
+                                        // Locked (and there before this session): a drag moves nothing (and isn't a tap).
+                                        if (lockedOut(target) || (mode == EditGesture.EMPTY && sel == null)) {
                                             mode = EditGesture.NONE
                                         } else {
                                             mode = EditGesture.MOVE
