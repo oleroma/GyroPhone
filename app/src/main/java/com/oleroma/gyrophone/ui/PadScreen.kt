@@ -299,6 +299,18 @@ fun PadScreen(
     /** Width the user dragged the edit menu to (px); null = fit its rows. */
     var panelWidthPx by remember { mutableStateOf<Float?>(null) }
     var dragging by remember { mutableStateOf(false) }
+    /** Cancel was tapped with unsaved changes: asking whether to throw them away. */
+    var confirmingCancel by remember { mutableStateOf(false) }
+
+    /** Leaves edit mode without saving, on the workspace being looked at if the saved profile has it. */
+    fun discardEdits() {
+        val d = draft ?: return
+        val i = profile.indexOfWorkspace(d.workspace(editIndex).id)
+        draft = null
+        selected = null
+        dragging = false
+        if (i >= 0 && i != runtime.workspaceIndex.value) runtime.switchWorkspace(i)
+    }
     var snap by remember { mutableStateOf(false) }
 
     /** Knob offsets; read only while placing the knobs, so stick motion re-places them without recomposing. */
@@ -1548,14 +1560,9 @@ fun PadScreen(
                                 FilledTonalButton(
                                     contentPadding = compact,
                                     onClick = { finishEditing() }) { Text("Done") }
-                                OutlinedButton(contentPadding = compact, onClick = cancel@{
-                                    val d = draft ?: return@cancel
-                                    // Stay on the workspace being looked at if the saved profile has it.
-                                    val i = profile.indexOfWorkspace(d.workspace(editIndex).id)
-                                    draft = null
-                                    selected = null
-                                    dragging = false
-                                    if (i >= 0 && i != runtime.workspaceIndex.value) runtime.switchWorkspace(i)
+                                OutlinedButton(contentPadding = compact, onClick = {
+                                    // Nothing changed: leave at once; else ask first.
+                                    if (draft == profile) discardEdits() else confirmingCancel = true
                                 }) { Text("Cancel") }
                                 // The selected control's settings and mappings (also a long press and a double tap).
                                 val picked = findControl(selected)
@@ -1839,6 +1846,20 @@ fun PadScreen(
                     )
                 }
             }
+        }
+        if (confirmingCancel) {
+            AlertDialog(
+                onDismissRequest = { confirmingCancel = false },
+                title = { Text("Discard your changes?") },
+                text = { Text("Everything changed since edit mode opened is undone.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmingCancel = false
+                        discardEdits()
+                    }) { Text("Discard", color = MaterialTheme.colorScheme.error) }
+                },
+                dismissButton = { TextButton(onClick = { confirmingCancel = false }) { Text("Keep editing") } },
+            )
         }
         removingLib?.let { b ->
             AlertDialog(
