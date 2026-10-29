@@ -26,6 +26,8 @@ import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.model.DirField
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.HoldZone
+import com.oleroma.gyrophone.core.model.MoveField
+import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.SurfaceField
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchpadSettings
@@ -51,8 +53,12 @@ internal class SurfaceLevel(
     val resetDir: (Direction, DirField) -> Unit,
     val resetAll: () -> Unit,
     val setZones: (List<HoldZone>, List<List<HoldZone>>?) -> Unit,
+    val isMoveOwn: (MoveSlot, MoveField) -> Boolean,
+    val resetMove: (MoveSlot, MoveField) -> Unit,
 ) {
-    val anyOwn: Boolean get() = SurfaceField.entries.any(isOwn) || Direction.entries.any(::anyDirOwn)
+    val anyOwn: Boolean
+        get() = SurfaceField.entries.any(isOwn) || Direction.entries.any(::anyDirOwn) ||
+            MoveSlot.entries.any { m -> MoveField.of(m).any { isMoveOwn(m, it) } }
 
     /** Direction [d] sets any of its own settings. */
     fun anyDirOwn(d: Direction) = DirField.entries.any { isDirOwn(d, it) }
@@ -80,6 +86,8 @@ internal fun buttonSurfaceLevel(
         resetDir = { d, f -> update { c -> c.copy(surface = f.drop(c.ownSurface, d)) } },
         resetAll = { update { c -> c.copy(surface = SurfaceField.dropAll(c.ownSurface)) } },
         setZones = { a, b -> update { c -> c.copy(surface = c.ownSurface.copy(holdZones = a, dirHoldZones = b)) } },
+        isMoveOwn = { m, f -> f.isOwn(own, m) },
+        resetMove = { m, f -> update { c -> c.copy(surface = f.drop(c.ownSurface, m)) } },
     )
 }
 
@@ -94,6 +102,8 @@ internal fun workspaceSurfaceLevel(level: WorkspaceLevel) = SurfaceLevel(
     resetDir = { d, f -> level.reset(WorkspaceDefaults.dirKey(d, f)) },
     resetAll = { level.resetKeys(WorkspaceDefaults.touchpadKeys)() },
     setZones = { a, b -> level.edit { it.copy(touchpad = it.touchpad.copy(holdZones = a, dirHoldZones = b)) } },
+    isMoveOwn = { m, f -> level.isOwn(WorkspaceDefaults.moveKey(m, f)) },
+    resetMove = { m, f -> level.reset(WorkspaceDefaults.moveKey(m, f)) },
 )
 
 /**

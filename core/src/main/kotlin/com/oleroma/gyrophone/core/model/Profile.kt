@@ -182,7 +182,6 @@ fun TouchControl.placeSize(inPortrait: Boolean): Float =
 @Serializable
 data class SurfaceSettings(
     val sensitivity: Float? = null,
-    val sensitivityY: Float? = null,
     val acceleration: Float? = null,
     val scrollSpeed: Float? = null,
     val naturalScroll: Boolean? = null,
@@ -210,6 +209,8 @@ data class SurfaceSettings(
     val dirHoldZones: List<List<HoldZone>>? = null,
     /** Per direction ([Direction.ordinal]), what it sets over the parent's direction settings. */
     val dirs: List<DirSettings>? = null,
+    /** Per Move X / Y of each finger count ([MoveSlot.ordinal]), what it sets over the parent's. */
+    val moves: List<MoveSettings>? = null,
     /** The workspace touchpad's own on / off and glide (a swipe button is always on and never glides). */
     val enabled: Boolean? = null,
     val inertiaGlideMs: Float? = null,
@@ -247,7 +248,6 @@ data class DirSettings(
 /** These settings with [o]'s own values in place of theirs; length zones are only [o]'s. */
 fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null) this else copy(
     sensitivity = o.sensitivity ?: sensitivity,
-    sensitivityY = o.sensitivityY ?: sensitivityY,
     acceleration = o.acceleration ?: acceleration,
     scrollSpeed = o.scrollSpeed ?: scrollSpeed,
     naturalScroll = o.naturalScroll ?: naturalScroll,
@@ -283,8 +283,95 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
         },
         o.dirs,
     ),
+    // A Move X / Y keeps the parent's own value unless this sets its own, or the shared one.
+    moves = MoveSettings.merge(
+        moves?.mapIndexed { i, m ->
+            val x = MoveSlot.entries[i].x
+            MoveSettings(
+                sensitivity = m.sensitivity.takeIf { o.sensitivity == null },
+                acceleration = m.acceleration.takeIf { o.acceleration == null },
+                scrollSpeed = m.scrollSpeed.takeIf { o.scrollSpeed == null },
+                naturalScroll = m.naturalScroll.takeIf { o.naturalScroll == null },
+                lock = m.lock.takeIf { (if (x) o.verticalLockDeg else o.horizontalLockDeg) == null },
+                cursorDeadzoneDp = m.cursorDeadzoneDp.takeIf { o.cursorDeadzoneDp == null },
+                catchUpMs = m.catchUpMs.takeIf { o.catchUpMs == null },
+                deadzoneRearmMs = m.deadzoneRearmMs.takeIf { o.deadzoneRearmMs == null },
+                deadzoneStillDp = m.deadzoneStillDp.takeIf { o.deadzoneStillDp == null },
+                inertia = m.inertia.takeIf { o.inertia == null },
+            )
+        },
+        o.moves,
+    ),
     enabled = o.enabled ?: enabled,
     inertiaGlideMs = o.inertiaGlideMs ?: inertiaGlideMs,
+)
+
+/**
+ * Move X ([x]) or Move Y of [fingers] fingers: one of the touch surface's motion actions, whose
+ * own settings ([MoveSettings]) are [TouchpadSettings.moves] at its ordinal.
+ */
+enum class MoveSlot(val fingers: Int, val x: Boolean) {
+    X1(1, true), Y1(1, false), X2(2, true), Y2(2, false), X3(3, true), Y3(3, false), X4(4, true), Y4(4, false);
+
+    val label: String get() = (if (fingers == 1) "" else "$fingers-finger ") + if (x) "Move X" else "Move Y"
+
+    companion object {
+        /** Move X or Y of [fingers] fingers (1..4). */
+        fun of(fingers: Int, x: Boolean): MoveSlot = entries[(fingers.coerceIn(1, 4) - 1) * 2 + if (x) 0 else 1]
+    }
+}
+
+/**
+ * One Move X / Y's own settings ([MoveSlot]) over the shared ones of its surface (null = the
+ * shared value). [lock]: Move X's is the vertical lock (it loses X near straight up and down),
+ * Move Y's the horizontal one. The cursor deadzone with its catch-up and re-arm, and inertia, go
+ * for the whole motion of a finger count: its Move X holds them ([MoveField.whole]).
+ */
+@Serializable
+data class MoveSettings(
+    val sensitivity: Float? = null,
+    val acceleration: Float? = null,
+    val scrollSpeed: Float? = null,
+    val naturalScroll: Boolean? = null,
+    val lock: Float? = null,
+    val cursorDeadzoneDp: Float? = null,
+    val catchUpMs: Int? = null,
+    val deadzoneRearmMs: Int? = null,
+    val deadzoneStillDp: Float? = null,
+    val inertia: Boolean? = null,
+) {
+    /** These with [over]'s own values in place of theirs. */
+    fun under(over: MoveSettings?): MoveSettings = if (over == null) this else MoveSettings(
+        over.sensitivity ?: sensitivity, over.acceleration ?: acceleration, over.scrollSpeed ?: scrollSpeed,
+        over.naturalScroll ?: naturalScroll, over.lock ?: lock, over.cursorDeadzoneDp ?: cursorDeadzoneDp,
+        over.catchUpMs ?: catchUpMs, over.deadzoneRearmMs ?: deadzoneRearmMs, over.deadzoneStillDp ?: deadzoneStillDp,
+        over.inertia ?: inertia,
+    )
+
+    val isEmpty: Boolean get() = this == NONE
+
+    companion object {
+        val NONE = MoveSettings()
+
+        /** [base] with [over] on top, per slot; null when neither has any. */
+        fun merge(base: List<MoveSettings>?, over: List<MoveSettings>?): List<MoveSettings>? =
+            if (base == null && over == null) null
+            else List(MoveSlot.entries.size) { (base?.getOrNull(it) ?: NONE).under(over?.getOrNull(it)) }.takeUnless { l -> l.all { it.isEmpty } }
+    }
+}
+
+/**
+ * How the motion of one finger count works ([TouchpadSettings.feel]): the shared settings with
+ * its Move X's and Move Y's own over them.
+ */
+data class MotionFeel(
+    val sensitivityX: Float, val sensitivityY: Float,
+    val accelerationX: Float, val accelerationY: Float,
+    val scrollSpeedX: Float, val scrollSpeedY: Float,
+    val naturalScrollX: Boolean, val naturalScrollY: Boolean,
+    val verticalLockDeg: Float, val horizontalLockDeg: Float,
+    val cursorDeadzoneDp: Float, val catchUpMs: Int, val deadzoneRearmMs: Int, val deadzoneStillDp: Float,
+    val inertia: Boolean,
 )
 
 /** [dirs] with [d]'s swipe and hold pies set to [deg] where [deg] is not [shared]. */
@@ -315,7 +402,6 @@ fun SurfaceSettings.evenPies(): SurfaceSettings {
 val TouchControl.ownSurface: SurfaceSettings
     get() = surface ?: SurfaceSettings(
         sensitivity = swipeSensX,
-        sensitivityY = swipeSensY,
         acceleration = 0f,
         inertia = false
     )
@@ -526,7 +612,24 @@ data class GyroSettings(
     val yawMode: GyroMode? = null,
     val pitchMode: GyroMode? = null,
     val rollMode: GyroMode? = null,
+    /** Tilt for a full deflection, degrees, for both tilt axes without their own. */
+    val tiltRangeDeg: Float = DEFAULT_TILT_RANGE_DEG,
+    /** Tilt that still counts as level, degrees, for both tilt axes without their own. */
+    val tiltDeadzoneDeg: Float = 0f,
+    /** Sideways ([tiltRangeOf] x) and forward and back tilt's own range and deadzone; null = the shared one. */
+    val tiltXRangeDeg: Float? = null,
+    val tiltYRangeDeg: Float? = null,
+    val tiltXDeadzoneDeg: Float? = null,
+    val tiltYDeadzoneDeg: Float? = null,
+    /** How hard a jolt (m/s² off gravity) counts as a shake. */
+    val shakeStrength: Float = DEFAULT_SHAKE_STRENGTH,
 ) {
+    /** Sideways ([x]) or forward and back tilt's range in effect. */
+    fun tiltRangeOf(x: Boolean): Float = (if (x) tiltXRangeDeg else tiltYRangeDeg) ?: tiltRangeDeg
+
+    /** Sideways ([x]) or forward and back tilt's deadzone in effect. */
+    fun tiltDeadzoneOf(x: Boolean): Float = (if (x) tiltXDeadzoneDeg else tiltYDeadzoneDeg) ?: tiltDeadzoneDeg
+
     /** Axis [a]'s own ratchet mode, null when it follows [mode]. */
     fun ownMode(a: MotionAxis): GyroMode? = when (a) {
         MotionAxis.YAW -> yawMode
@@ -567,6 +670,13 @@ data class GyroSettings(
 
     companion object {
         const val DEFAULT_SENSITIVITY = 16f
+        const val DEFAULT_TILT_RANGE_DEG = 30f
+        const val MIN_TILT_RANGE_DEG = 5f
+        const val MAX_TILT_RANGE_DEG = 90f
+        const val MAX_TILT_DEADZONE_DEG = 30f
+        const val DEFAULT_SHAKE_STRENGTH = 14f
+        const val MIN_SHAKE_STRENGTH = 5f
+        const val MAX_SHAKE_STRENGTH = 40f
 
         /** The property of axis [a]'s own sensitivity ([WorkspaceDefaults.gyroKey]). */
         fun sensitivityProp(a: MotionAxis): String? = when (a) {
@@ -584,8 +694,6 @@ data class TouchpadSettings(
     val enabled: Boolean = true,
     /** Horizontal mouse counts per dp of finger travel at low speed (0 = no sideways motion). */
     val sensitivity: Float = 1.5f,
-    /** Vertical counts per dp; null (older files) = [sensitivity]. */
-    val sensitivityY: Float? = null,
     /** Extra gain for fast swipes: up to 1 + this. 0 = linear. */
     val acceleration: Float = 1f,
     val tapToClick: Boolean = true,
@@ -679,7 +787,34 @@ data class TouchpadSettings(
     val dirHoldZones: List<List<HoldZone>>? = null,
     /** Per direction ([Direction.ordinal]), its own settings over the shared ones above ([DirSettings]). */
     val dirs: List<DirSettings>? = null,
+    /** Per Move X / Y of each finger count ([MoveSlot.ordinal]), its own settings over the shared ones ([MoveSettings]). */
+    val moves: List<MoveSettings>? = null,
 ) {
+    /** [m]'s own settings (empty: all shared). */
+    fun move(m: MoveSlot): MoveSettings = moves?.getOrNull(m.ordinal) ?: MoveSettings.NONE
+
+    /** These with [m]'s own settings [change]d. */
+    fun withMove(m: MoveSlot, change: (MoveSettings) -> MoveSettings): TouchpadSettings = copy(
+        moves = List(MoveSlot.entries.size) { if (it == m.ordinal) change(move(m)) else move(MoveSlot.entries[it]) }
+            .takeUnless { l -> l.all { it.isEmpty } },
+    )
+
+    /** How the motion of [fingers] fingers works: the shared settings with its Move X's and Y's own. */
+    fun feel(fingers: Int): MotionFeel {
+        val x = move(MoveSlot.of(fingers, true))
+        val y = move(MoveSlot.of(fingers, false))
+        return MotionFeel(
+            x.sensitivity ?: sensitivity, y.sensitivity ?: sensitivity,
+            x.acceleration ?: acceleration, y.acceleration ?: acceleration,
+            x.scrollSpeed ?: scrollSpeed, y.scrollSpeed ?: scrollSpeed,
+            x.naturalScroll ?: naturalScroll, y.naturalScroll ?: naturalScroll,
+            x.lock ?: verticalLockDeg, y.lock ?: horizontalLockDeg,
+            x.cursorDeadzoneDp ?: cursorDeadzoneDp, x.catchUpMs ?: catchUpMs,
+            x.deadzoneRearmMs ?: deadzoneRearmMs, x.deadzoneStillDp ?: deadzoneStillDp,
+            x.inertia ?: inertia,
+        )
+    }
+
     /** [d]'s own settings (empty: all shared). */
     fun dir(d: Direction): DirSettings = dirs?.getOrNull(d.ordinal) ?: DirSettings.NONE
 
@@ -719,8 +854,6 @@ data class TouchpadSettings(
         (dir(d).let { if (hold) it.holdPie else it.swipePie } ?: pieDeg(d)).coerceIn(MIN_PIE_DEG, MAX_PIE_DEG)
 
     fun gesturesFor(fingers: Int): FingerGestures = if (fingers >= 4) gestures4 else gestures3
-
-    val verticalSensitivity: Float get() = sensitivityY ?: sensitivity
 
     companion object {
         const val MIN_GLIDE_MS = 100f

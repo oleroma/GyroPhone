@@ -14,8 +14,11 @@ import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.StickAxis
 import com.oleroma.gyrophone.core.model.SurfaceInput
+import com.oleroma.gyrophone.core.model.SurfaceSettings
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
+import com.oleroma.gyrophone.core.model.MoveSettings
+import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
 import org.junit.Assert.assertEquals
@@ -37,7 +40,14 @@ class SwipeButtonsTest {
     ): MappingEngine {
         val b = TouchControl(
             "b", TouchKind.BUTTON, "", 0.5f, 0.5f,
-            swipe = true, swipeSensX = sensX, swipeSensY = sensY,
+            swipe = true,
+            // One finger's Move Y with a sensitivity of its own.
+            surface = SurfaceSettings(
+                sensitivity = sensX, acceleration = 0f, inertia = false,
+                moves = if (sensY == sensX) null else List(MoveSlot.entries.size) {
+                    if (it == MoveSlot.Y1.ordinal) MoveSettings(sensitivity = sensY) else MoveSettings.NONE
+                },
+            ),
         )
         // The touchpad's mappings cleared, so the button takes none of them.
         val p = single(Workspace(id = "w", name = "w", touchControls = listOf(b), mappings = mappings))
@@ -151,9 +161,17 @@ class SwipeButtonsTest {
     }
 
     @Test
-    fun olderFilesKeepTheirVerticalRatio() {
-        assertEquals(2f, TouchpadSettings(sensitivity = 2f).verticalSensitivity)
-        assertEquals(0f, TouchpadSettings(sensitivity = 2f, sensitivityY = 0f).verticalSensitivity)
+    fun eachMoveTakesTheSharedSettingsUnlessItHasItsOwn() {
+        val t = TouchpadSettings(sensitivity = 2f, scrollSpeed = 1.5f)
+            .withMove(MoveSlot.Y1) { it.copy(sensitivity = 0f) }
+            .withMove(MoveSlot.X2) { it.copy(scrollSpeed = 3f, inertia = false) }
+        assertEquals(2f, t.feel(1).sensitivityX)
+        assertEquals(0f, t.feel(1).sensitivityY)
+        assertEquals(2f, t.feel(2).sensitivityY)
+        assertEquals(3f, t.feel(2).scrollSpeedX)
+        assertEquals(1.5f, t.feel(2).scrollSpeedY)
+        assertFalse(t.feel(2).inertia)
+        assertTrue(t.feel(1).inertia)
     }
 
     @Test

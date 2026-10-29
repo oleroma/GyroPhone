@@ -80,7 +80,6 @@ class SwipeSurfaceTest {
         // A button from before keeps its old swipe feel.
         val old = b.copy(surface = null, swipeSensX = 2f, swipeSensY = 1f).surfaceSettings(pad)
         assertEquals(2f, old.sensitivity, 0f)
-        assertEquals(1f, old.verticalSensitivity, 0f)
         assertEquals(0f, old.acceleration, 0f)
     }
 

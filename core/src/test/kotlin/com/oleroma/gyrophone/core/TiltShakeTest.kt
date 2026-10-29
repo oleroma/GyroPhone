@@ -27,7 +27,7 @@ class TiltShakeTest {
     private fun upright(deg: Double) = floatArrayOf((-G * sin(Math.toRadians(deg))).toFloat(), (G * cos(Math.toRadians(deg))).toFloat(), 0f)
 
     @Test fun sidewaysTiltIsTheTurnFromUpright() {
-        val t = TiltShake().apply { displayRotation = 0; rangeDeg = 30f }
+        val t = TiltShake().apply { displayRotation = 0 }
         var g = upright(0.0)
         t.update(g[0], g[1], g[2], 0)
         assertEquals(0f, t.x, 1e-3f)
@@ -40,7 +40,7 @@ class TiltShakeTest {
     }
 
     @Test fun forwardIsLeaningFromWhereItStarted() {
-        val t = TiltShake().apply { displayRotation = 0; rangeDeg = 30f }
+        val t = TiltShake().apply { displayRotation = 0 }
         fun lean(deg: Double) = floatArrayOf(0f, (G * cos(Math.toRadians(deg))).toFloat(), (G * sin(Math.toRadians(deg))).toFloat())
         var g = lean(40.0) // held leaning back 40°: the rest point
         t.update(g[0], g[1], g[2], 0)
@@ -48,6 +48,21 @@ class TiltShakeTest {
         g = lean(55.0) // top edge 15° further away: half forward
         repeat(60) { t.update(g[0], g[1], g[2], it * 20 * MS) }
         assertEquals(-0.5f, t.y, 0.02f)
+    }
+
+    @Test fun eachTiltAxisHasItsOwnRangeAndDeadzoneOrTheShared() {
+        val t = TiltShake().apply {
+            displayRotation = 0
+            settings = com.oleroma.gyrophone.core.model.GyroSettings(tiltRangeDeg = 60f, tiltXDeadzoneDeg = 10f)
+        }
+        var g = upright(0.0)
+        t.update(g[0], g[1], g[2], 0)
+        g = upright(8.0) // inside the deadzone
+        repeat(60) { t.update(g[0], g[1], g[2], it * 20 * MS) }
+        assertEquals(0f, t.x, 1e-3f)
+        g = upright(35.0) // (35 - 10) / (60 - 10)
+        repeat(60) { t.update(g[0], g[1], g[2], it * 20 * MS) }
+        assertEquals(0.5f, t.x, 0.02f)
     }
 
     @Test fun aJoltIsOneShake() {
