@@ -138,7 +138,7 @@ private sealed interface Dragged {
     data class Target(val target: OutputTarget, val from: BindableInput?) : Dragged
     data class Preset(val preset: MapPreset) : Dragged
 
-    /** An action card moved within its [group] (0: the control's actions, or a swipe button's with the chosen fingers; 1: its outside and zone). */
+    /** An action card moved within its [group] (the one list: the control's actions, a swipe button's with the chosen fingers). */
     data class Card(val input: BindableInput, val group: Int) : Dragged
 
     /** Zone divider [k] of held-direction card [card] (zone 0's input), moved within its row. */
@@ -385,11 +385,15 @@ internal fun ControlMappingScreen(
             runtime.setUiPref(PREF_CUSTOM + kindKey(control), next.joinToString("\n"))
         }
     }
-    // A swipe button: one list per finger count (hold, taps, moves, swipes...), then its outside and zone.
-    val groups = if (control.swipes) listOf(
-        sorted(control, Bindings.swipeInputs(control, fingers), order),
-        sorted(control, inputs.filter { it.sources.first() is InputSource.TouchArea }, order),
-    ) else listOf(sorted(control, inputs, order), emptyList())
+    // A swipe button: one list per finger count (hold, taps, moves, swipes...) with its outside and area.
+    val groups = listOf(
+        sorted(
+            control,
+            if (control.swipes) Bindings.swipeInputs(control, fingers) + inputs.filter { it.sources.first() is InputSource.TouchArea }
+            else inputs,
+            order,
+        ),
+    )
     var dragged by remember { mutableStateOf<Dragged?>(null) }
     var dragPos by remember { mutableStateOf(Offset.Zero) }
     var liveOrder by remember { mutableStateOf<List<BindableInput>>(emptyList()) }
@@ -773,27 +777,22 @@ internal fun ControlMappingScreen(
                 }
             }
             shownGroups.forEachIndexed { g, list ->
-                if (control.swipes && list.isNotEmpty()) {
+                if (control.swipes) {
                     item(key = "header$g") {
                         Column(
                             Modifier.animateItem().padding(top = if (g == 0) 0.dp else 8.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            if (g == 1) {
-                                Text("Around the button", style = MaterialTheme.typography.labelLarge, color = colors.primary)
-                            }
-                            if (g == 0) {
-                                Row(
-                                    Modifier.horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    for (n in 1..4) {
-                                        FilterChip(
-                                            selected = fingers == n,
-                                            onClick = { fingers = n },
-                                            label = { Text(if (n == 1) "1 finger" else n.toString() + " fingers") },
-                                        )
-                                    }
+                            Row(
+                                Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                for (n in 1..4) {
+                                    FilterChip(
+                                        selected = fingers == n,
+                                        onClick = { fingers = n },
+                                        label = { Text(if (n == 1) "1 finger" else n.toString() + " fingers") },
+                                    )
                                 }
                             }
                         }
