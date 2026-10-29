@@ -46,6 +46,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -1615,23 +1616,30 @@ fun PadScreen(
                                     val presets = (draft ?: profile).devicePresets
                                     val pinned = presets.firstOrNull { it.id == ws.devicePreset }
                                     OutlinedButton(contentPadding = compact, onClick = { picking = true }) {
-                                        Text("Devices: " + (pinned?.name ?: "None") + " ▾")
+                                        Text("Devices: " + (pinned?.name ?: "None"))
                                     }
-                                    DropdownMenu(expanded = picking, onDismissRequest = { picking = false }) {
-                                        DropdownMenuItem(
-                                            text = { Text("None") },
-                                            onClick = {
-                                                picking = false
-                                                editWorkspace { it.copy(devicePreset = null) }
-                                            },
-                                        )
-                                        for (preset in presets) {
+                                    DropdownMenu(
+                                        expanded = picking,
+                                        onDismissRequest = { picking = false },
+                                        shape = RoundedCornerShape(16.dp),
+                                        containerColor = Color(0xE01E232B),
+                                        shadowElevation = 8.dp,
+                                    ) {
+                                        for (preset in listOf(null) + presets) {
+                                            val chosen = preset?.id == pinned?.id
                                             DropdownMenuItem(
-                                                text = { Text(preset.name) },
+                                                text = { Text(preset?.name ?: "None", style = MaterialTheme.typography.labelLarge) },
                                                 onClick = {
                                                     picking = false
-                                                    editWorkspace { it.copy(devicePreset = preset.id) }
+                                                    editWorkspace { it.copy(devicePreset = preset?.id) }
                                                 },
+                                                colors = MenuDefaults.itemColors(
+                                                    textColor = if (chosen) MaterialTheme.colorScheme.onPrimaryContainer else Color.White,
+                                                ),
+                                                modifier = Modifier
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    .clip(RoundedCornerShape(50))
+                                                    .then(if (chosen) Modifier.background(MaterialTheme.colorScheme.primaryContainer) else Modifier),
                                             )
                                         }
                                     }
