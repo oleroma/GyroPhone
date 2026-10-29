@@ -61,3 +61,36 @@ class GyroPoseTest {
         assertArrayEquals(top, apply(p, top), 1e-6f)
     }
 }
+
+class GyroPoseGravityTest {
+    private fun up(p: GyroPose): FloatArray {
+        val m = FloatArray(9)
+        p.matrix(m)
+        return floatArrayOf(m[3], m[4], m[5]) // world up in the phone's frame
+    }
+
+    @Test fun tiltSettlesToGravityWithoutGyro() {
+        val p = GyroPose()
+        // Lying flat, screen up: up is the phone's +z.
+        p.setUp(0f, 0f, 9.8f, 9.8f)
+        repeat(2000) { p.fuse(0f, 0f, 0f, 0.005f, 0.5f) }
+        assertArrayEquals(floatArrayOf(0f, 0f, 1f), up(p), 1e-2f)
+    }
+
+    @Test fun shakesAreNotTakenForGravity() {
+        val p = GyroPose()
+        p.setUp(0f, 30f, 0f, 9.8f)
+        repeat(200) { p.fuse(0f, 0f, 0f, 0.005f, 0.5f) }
+        assertArrayEquals(floatArrayOf(0f, 1f, 0f), up(p), 1e-6f)
+    }
+
+    @Test fun headingEasesBackToFacing() {
+        val p = GyroPose()
+        p.setUp(0f, 9.8f, 0f, 9.8f)
+        repeat(200) { p.fuse(90f, 0f, 0f, 0.005f, 0.5f) } // 90° right in 1 s
+        repeat(2000) { p.fuse(0f, 0f, 0f, 0.005f, 0.5f) }
+        val m = FloatArray(9)
+        p.matrix(m)
+        assertEquals(1f, m[8], 1e-2f) // screen faces the player again
+    }
+}
