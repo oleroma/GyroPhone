@@ -193,6 +193,9 @@ class SwipeLines {
         var x = p.x
         var y = p.y
         var held = false
+
+        /** Hold after was reached: the line shows from then until the finger lifts. */
+        var shown = false
     }
 
     private val lines = HashMap<Long, Line>()
@@ -227,7 +230,8 @@ class SwipeLines {
 
     /**
      * Draws every line: from the start point through the finger to its direction's furthest mark
- * ([SwipeGuide.onAxis]: along the direction, through the finger's travel that way).
+ * ([SwipeGuide.onAxis]: along the direction, through the finger's travel that way), once the
+ * finger has reached Hold after.
      * Marks: Hold after and the zone ends as dots, Swipe after as a bar across the line; the ones
      * the finger passed are filled.
      */
@@ -240,7 +244,6 @@ class SwipeLines {
             val sx = l.start[0] * pxPerDp
             val sy = l.start[1] * pxPerDp
             val start = Offset(sx, sy)
-            if (l.guide.dragsStart) scope.drawCircle(EDGE_COLOR, r * 1.4f, start, style = Stroke(stroke))
             var dx = l.x - l.start[0]
             var dy = l.y - l.start[1]
             // Along its direction's axis: the finger as far along as it went that way.
@@ -253,6 +256,15 @@ class SwipeLines {
             val len = hypot(dx, dy)
             if (len * pxPerDp < stroke) continue
             val n = l.guide.marks(dx, dy, marks, kinds)
+            if (!l.shown) {
+                // Only once Hold after is reached (else the first mark), so short touches don't flicker.
+                var at = Float.MAX_VALUE
+                for (i in 0 until n) if (kinds[i] == SwipeGuide.HOLD) at = marks[i]
+                if (at == Float.MAX_VALUE) for (i in 0 until n) at = minOf(at, marks[i])
+                if (n == 0 || len < at) continue
+                l.shown = true
+            }
+            if (l.guide.dragsStart) scope.drawCircle(EDGE_COLOR, r * 1.4f, start, style = Stroke(stroke))
             val ux = dx / len
             val uy = dy / len
             var end = len
