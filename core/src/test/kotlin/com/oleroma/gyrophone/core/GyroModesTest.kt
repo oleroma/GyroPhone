@@ -21,6 +21,7 @@ import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Workspace
+import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -182,12 +183,16 @@ class GyroModesTest {
         assertTrue(hidden.workspaces.all { it.touchControls.isEmpty() })
     }
 
-    @Test fun gyroMovesTheMouseByRollAndPitchFromTheBuiltInMappings() {
-        val gyro = Inheritance.builtin.filter { it.source is InputSource.Gyro }.associate { (it.source as InputSource.Gyro).axis to it.target }
-        assertEquals(mapOf(
-            MotionAxis.ROLL to OutputTarget.MouseAxis(MouseMotion.MOVE_X),
-            MotionAxis.PITCH to OutputTarget.MouseAxis(MouseMotion.MOVE_Y),
-        ), gyro)
+    @Test fun presetWorkspacesMoveTheMouseByTouchpadAndGyroWhileTheDefaultsMapNothing() {
+        assertTrue(Inheritance.defaults(WorkspaceDefaults.builtin).isEmpty())
+        for (w in BuiltinProfiles.presets) {
+            val gyro = w.mappings.filter { it.source is InputSource.Gyro }.associate { (it.source as InputSource.Gyro).axis to it.target }
+            assertEquals(w.name, mapOf(
+                MotionAxis.ROLL to OutputTarget.MouseAxis(MouseMotion.MOVE_X),
+                MotionAxis.PITCH to OutputTarget.MouseAxis(MouseMotion.MOVE_Y),
+            ), gyro)
+            assertTrue(w.name, w.mappings.any { it.source == InputSource.Surface(1, SurfaceInput.MOTION_X) })
+        }
     }
 
     @Test fun loadingKeepsTheGyroSettings() {

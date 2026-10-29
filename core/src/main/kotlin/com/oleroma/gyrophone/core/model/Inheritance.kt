@@ -1,7 +1,7 @@
 package com.oleroma.gyrophone.core.model
 
 /**
- * How touch mappings pass down the levels: built-in → Defaults ([Profile.defaults]) → workspace
+ * How touch mappings pass down the levels: Defaults ([Profile.defaults]) → workspace
  * → button. A level maps each touch input itself or takes its parent's mapping of it, one input
  * at a time; a level that maps an input to [OutputTarget.NoOutput] has cleared it. An input is a
  * finger count, a [SurfaceInput] and a hold zone, whoever's surface it is; a button's one-finger
@@ -24,15 +24,6 @@ object Inheritance {
         if (s is InputSource.Gyro || s is InputSource.Tilt || s is InputSource.Shake) s else inputOf(s)
 
     /**
-     * The mappings every level starts from: what a laptop touchpad does, and gyro roll (turning it
-     * like a wheel) moving the mouse left and right, pitch up and down.
-     */
-    val builtin: List<Mapping> = Bindings.defaultTouchpadMappings(TouchpadSettings()) + listOf(
-        Mapping(InputSource.Gyro(MotionAxis.ROLL), OutputTarget.MouseAxis(MouseMotion.MOVE_X)),
-        Mapping(InputSource.Gyro(MotionAxis.PITCH), OutputTarget.MouseAxis(MouseMotion.MOVE_Y)),
-    )
-
-    /**
      * [own] with [parent]'s Base mappings of the workspace's own inputs (touchpad and gyro,
      * [isWorkspaceInput]) of each such input [own] does not map in Base.
      */
@@ -43,8 +34,8 @@ object Inheritance {
         return if (taken.isEmpty()) own else own + taken
     }
 
-    /** The Defaults' touchpad and gyro mappings in effect: their own, and the built-in ones of the rest. */
-    fun defaults(d: Workspace): List<Mapping> = fill(d.mappings.filter { it.source.isWorkspaceInput }, builtin)
+    /** The Defaults' touchpad and gyro mappings: nothing is mapped until they map it. */
+    fun defaults(d: Workspace): List<Mapping> = d.mappings.filter { it.source.isWorkspaceInput }
 
     /** Workspace [w]'s mappings with the touchpad and gyro mappings it takes from [defaults] ([Profile.defaults]). */
     fun workspace(w: Workspace, defaults: Workspace): List<Mapping> = fill(w.mappings, defaults(defaults))

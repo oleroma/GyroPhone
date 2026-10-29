@@ -17,6 +17,7 @@ import com.oleroma.gyrophone.core.model.placeY
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.min
+import com.oleroma.gyrophone.core.model.isWorkspaceInput
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -94,6 +95,7 @@ class PresetsTest {
             }
             // No mapping points at a control that does not exist.
             for (m in w.mappings) {
+                if (m.source.isWorkspaceInput) continue // the workspace's own touchpad and gyro
                 val id = when (val s = m.source) {
                     is InputSource.Touch -> s.id
                     is InputSource.TouchStick -> s.id

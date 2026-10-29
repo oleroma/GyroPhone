@@ -4,7 +4,6 @@ import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MouseButton
-import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.Workspace
@@ -31,8 +30,8 @@ class InheritanceTest {
         val out = Inheritance.workspace(w, d)
         assertEquals(listOf(right), targetOf(out, InputSource.Surface(1, SurfaceInput.TAP_DRAG)))
         assertEquals(listOf(left), targetOf(out, InputSource.Surface(2, SurfaceInput.TAP))) // the Defaults' own
-        // Built-in for what neither maps.
-        assertEquals(listOf<OutputTarget>(OutputTarget.MouseAxis(MouseMotion.MOVE_X)), targetOf(out, InputSource.Surface(1, SurfaceInput.MOTION_X)))
+        // Nothing built in for what neither maps.
+        assertEquals(emptyList<OutputTarget>(), targetOf(out, InputSource.Surface(1, SurfaceInput.MOTION_X)))
     }
 
     @Test fun aClearedInputStaysCleared() {

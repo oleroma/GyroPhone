@@ -308,8 +308,13 @@ object BuiltinProfiles {
         gyro = gyro(GyroMode.OFF),
     )
 
-    /** Workspaces offered by "Add workspace" and put in every new profile. */
-    val presets: List<Workspace> get() = listOf(controllerWorkspace, wasdWorkspace, keyboardWorkspace)
+    /**
+     * Workspaces offered by "Add workspace" and put in every new profile, each with the "Windows
+     * touchpad" and "Gyro mouse" presets where it maps nothing else (the Defaults map nothing).
+     */
+    val presets: List<Workspace> get() = listOf(controllerWorkspace, wasdWorkspace, keyboardWorkspace).map { w ->
+        w.copy(mappings = Inheritance.fill(w.mappings, Bindings.defaultTouchpadMappings(TouchpadSettings()) + Bindings.gyroMouseMappings()))
+    }
 
     /** An empty workspace: touchpad only, no controls, no pads. */
     fun blankWorkspace(name: String = "Workspace") = Workspace(id = "ws", name = name, gyro = gyro(GyroMode.OFF))

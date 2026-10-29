@@ -25,9 +25,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.Profile
-import com.oleroma.gyrophone.core.model.isTouchpad
+import com.oleroma.gyrophone.core.model.isWorkspaceInput
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.runtime.ScreenOrientation
 import kotlin.math.roundToInt
@@ -64,31 +63,29 @@ private fun DefaultsTab(runtime: GamepadRuntime) {
         var mapping by remember { mutableStateOf(false) }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "The touchpad's mappings every workspace starts from: what each finger count does. " +
-                        "A workspace maps an action itself to override one.",
+                "The touchpad and motion mappings every workspace starts from (none until you map them; " +
+                        "Presets has Windows touchpad and Gyro mouse). A workspace maps an action itself to override one.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f).padding(4.dp),
             )
-            OutlinedButton(onClick = { mapping = true }) { Text("Touchpad mappings") }
+            OutlinedButton(onClick = { mapping = true }) { Text("Mappings") }
         }
         val level = defaultsLevel(runtime, profile)
         WorkspaceSettings(runtime, level, profile.id + "/defaults")
         if (mapping) {
             ControlMappingScreen(
                 control = TOUCHPAD_STAND_IN,
-                mappings = profile.defaults.mappings.filter { it.source.isTouchpad },
+                mappings = profile.defaults.mappings.filter { it.source.isWorkspaceInput },
                 runtime = runtime,
                 onMappingsChange = { m ->
                     runtime.editActiveProfile { p ->
-                        p.copy(defaults = p.defaults.copy(mappings = p.defaults.mappings.filterNot { it.source.isTouchpad } + m))
+                        p.copy(defaults = p.defaults.copy(mappings = p.defaults.mappings.filterNot { it.source.isWorkspaceInput } + m))
                     }
                 },
                 onSettings = null,
                 onClose = { mapping = false },
                 settings = touchpadSettings(runtime, level),
-                inherited = Inheritance.builtin,
-                parentName = "Built-in",
             )
         }
     }

@@ -177,6 +177,12 @@ object Bindings {
         BindableInput("Gyro " + a.label.lowercase(), listOf(InputSource.Gyro(a, id)), swipe = true)
     }
 
+    /** The "Gyro mouse" preset of touch control [id] ("" = the workspace's): roll moves the mouse left and right, pitch up and down. */
+    fun gyroMouseMappings(id: String = ""): List<Mapping> = listOf(
+        Mapping(InputSource.Gyro(MotionAxis.ROLL, id), OutputTarget.MouseAxis(MouseMotion.MOVE_X)),
+        Mapping(InputSource.Gyro(MotionAxis.PITCH, id), OutputTarget.MouseAxis(MouseMotion.MOVE_Y)),
+    )
+
     /**
      * The phone's tilt and shake for touch control [id] ("" = the workspace's): a full tilt axis
      * drives a game pad axis, each direction and a shake press anything.

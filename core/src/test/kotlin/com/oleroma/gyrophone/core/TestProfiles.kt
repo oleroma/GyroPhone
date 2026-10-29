@@ -3,7 +3,7 @@ package com.oleroma.gyrophone.core
 import com.oleroma.gyrophone.core.model.AttachedPad
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.GyroSettings
-import com.oleroma.gyrophone.core.model.Inheritance
+import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
@@ -30,7 +30,10 @@ fun profileOf(
     )
 }
 
-fun single(w: Workspace) = Profile(id = "t", name = "t", workspaces = listOf(w))
+fun single(w: Workspace) = Profile(id = "t", name = "t", workspaces = listOf(w), defaults = WorkspaceDefaults.builtin.copy(mappings = mouseDefaults))
+
+/** The Defaults most tests assume: the "Windows touchpad" and "Gyro mouse" presets (built in, the Defaults map nothing). */
+val mouseDefaults: List<Mapping> = Bindings.defaultTouchpadMappings(TouchpadSettings()) + Bindings.gyroMouseMappings()
 
 /** The builtin workspaces as one-workspace profiles. */
 val controllerProfile get() = single(BuiltinProfiles.controllerWorkspace)
@@ -40,10 +43,8 @@ val wasdProfile get() = single(BuiltinProfiles.wasdWorkspace)
 val Profile.allMappings: List<Mapping> get() = workspaces.flatMap { w -> w.mappings + w.pads.flatMap { it.mappings } }
 val Profile.main: Workspace get() = workspaces.first()
 
-/** This profile with every touchpad mapping of the Defaults cleared, so the levels below inherit none. */
-fun Profile.noTouchpadDefaults(): Profile = copy(
-    defaults = WorkspaceDefaults.builtin.copy(mappings = Inheritance.builtin.map { it.copy(target = OutputTarget.NoOutput) }),
-)
+/** This profile with Defaults that map nothing, so the levels below inherit none. */
+fun Profile.noTouchpadDefaults(): Profile = copy(defaults = WorkspaceDefaults.builtin)
 
 /** One gyro sample routed with [x] on mouse left/right and [y] on up/down (yaw and pitch, as tests had them). */
 fun com.oleroma.gyrophone.core.engine.GyroMouse.update(

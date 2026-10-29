@@ -50,7 +50,7 @@ class GyroMappingsTest {
     @Test fun theWorkspaceTakesTheDefaultsGyroMappings() {
         val p = single(Workspace("w", "w")).copy(defaults = WorkspaceDefaults.builtin.copy(mappings = listOf(gyro(MotionAxis.YAW, moveX))))
         val e = MappingEngine(p)
-        assertEquals(setOf(gyro(MotionAxis.YAW, moveX), gyro(MotionAxis.ROLL, moveX), gyro(MotionAxis.PITCH, OutputTarget.MouseAxis(MouseMotion.MOVE_Y))), e.gyroRoutes().toSet())
+        assertEquals(listOf(gyro(MotionAxis.YAW, moveX)), e.gyroRoutes())
     }
 
     @Test fun aHeldButtonTakesItsAxesOverLastPressedWins() {

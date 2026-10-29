@@ -284,6 +284,13 @@ private fun presetsFor(control: TouchControl, inputs: List<BindableInput>): List
             Bindings.setTargets(x, move(SurfaceInput.MOTION_Y), listOf(OutputTarget.MouseAxis(MouseMotion.MOVE_Y)))
         })
     }
+    // Sets roll and pitch only; the other gyro axes stay.
+    add(MapPreset("Gyro mouse") { m ->
+        Bindings.gyroMouseMappings(control.id).fold(m) { r, g ->
+            val input = Bindings.gyroInputs(control.id).first { it.sources.single() == g.source }
+            Bindings.setTargets(r, input, listOf(g.target))
+        }
+    })
 }
 
 /**
