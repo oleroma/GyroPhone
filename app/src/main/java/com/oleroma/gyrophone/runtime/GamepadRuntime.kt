@@ -9,6 +9,7 @@ import com.oleroma.gyrophone.core.engine.GyroMouse
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.Touchpad
 import com.oleroma.gyrophone.core.hid.HidDescriptor
+import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.ButtonActivators
 import com.oleroma.gyrophone.core.model.InputSource
@@ -725,6 +726,14 @@ class GamepadRuntime(context: Context) {
         private const val UNAVAILABLE = "Unavailable"
     }
 
+    /** The gyro deflects game pad axes now ([MappingEngine.setGyroAxes]): they go back to rest when it stops. */
+    private var gyroPadSet = false
+
+    private fun clearGyroPad() {
+        engine.setGyroAxes(FloatArray(GamepadAxis.entries.size))
+        gyroPadSet = false
+    }
+
     private fun onGyroSample(source: GyroSource, x: Float, y: Float, z: Float, ts: Long) {
         val dt = if (lastGyroTs == 0L) 0f else ((ts - lastGyroTs) / 1e9f).coerceIn(0f, 0.05f)
         lastGyroTs = ts
@@ -746,13 +755,26 @@ class GamepadRuntime(context: Context) {
             // A layer in use may set gyro settings of its own.
             val gs = engine.gyroSettings
             if (gs !== gyroMouse.settings) gyroMouse.settings = gs
-            val c = gyroMouse.update(x - biasX, y - biasY, z - biasZ, dt)
             // A ratchet on one axis leaves the other moving.
-            val dx = if (axes and MappingEngine.GYRO_X != 0) c.dx else 0
-            val dy = if (axes and MappingEngine.GYRO_Y != 0) c.dy else 0
-            if (dx != 0 || dy != 0) engine.addMouseMotion(dx, dy)
+            val moveX = axes and MappingEngine.GYRO_X != 0
+            val moveY = axes and MappingEngine.GYRO_Y != 0
+            val routes = engine.gyroRoutes()
+            if (routes.isEmpty() && !engine.gyroMapped) {
+                // No gyro mappings: the mouse moves as the gyro settings' axes say.
+                val c = gyroMouse.update(x - biasX, y - biasY, z - biasZ, dt)
+                val dx = if (moveX) c.dx else 0
+                val dy = if (moveY) c.dy else 0
+                if (dx != 0 || dy != 0) engine.addMouseMotion(dx, dy)
+                if (gyroPadSet) clearGyroPad()
+            } else {
+                val r = gyroMouse.route(x - biasX, y - biasY, z - biasZ, dt, routes, moveX, moveY)
+                if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel)
+                engine.setGyroAxes(r.pad)
+                gyroPadSet = true
+            }
         } else {
             gyroMouse.reset()
+            if (gyroPadSet) clearGyroPad()
         }
         if (rateWindow.add(ts)) {
             _gyroInfo.value = _gyroInfo.value.copy(rateHz = rateWindow.rateHz, active = active)

@@ -7,7 +7,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -19,6 +22,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
@@ -31,8 +36,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -116,7 +125,7 @@ internal fun RememberedSection(
     }
     CollapsibleSection(
         title = title,
-        expanded = open,
+        expanded = open && !LocalSectionsCollapsed.current,
         onToggle = {
             open = !open
             runtime.setUiPref("section." + prefKey, if (open) "1" else "0")
@@ -134,9 +143,13 @@ internal fun RememberedSection(
  */
 internal class SectionItem(val id: String, val content: @Composable (card: Modifier, header: Modifier) -> Unit)
 
+/** While a category is dragged ([ReorderableSections]), every section shows closed, so they are easy to move past. */
+internal val LocalSectionsCollapsed = compositionLocalOf { false }
+
 /**
  * [items] in the order kept in the UI prefs under [orderKey] (new ones where [items] has them).
- * Long press a category's header and drag it up or down to move it; the order is kept on drop.
+ * Long press a category's header and drag it up or down to move it; while dragging every
+ * category shows closed, and the order is kept on drop.
  */
 @Composable
 internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, items: List<SectionItem>) {
@@ -154,8 +167,14 @@ internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, item
     }
     val row = remember { mutableStateListOf<String>() }
     var dragged by remember { mutableStateOf<String?>(null) }
-    var dragY by remember { mutableFloatStateOf(0f) }
+    // The finger, in root coordinates, and where it holds the dragged card (from its top).
+    var fingerY by remember { mutableFloatStateOf(0f) }
+    var grab by remember { mutableFloatStateOf(0f) }
+    // Each category's place as laid out (root top) and size, and its header's height.
+    val tops = remember { mutableStateMapOf<String, Float>() }
     val heights = remember { mutableStateMapOf<String, Int>() }
+    val headers = remember { HashMap<String, Int>() }
+    val coords = remember { HashMap<String, LayoutCoordinates>() }
     val shown = if (dragged == null) ordered() else row.toList()
     val byId = items.associateBy { it.id }
 
@@ -164,56 +183,71 @@ internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, item
         val rest = kept().filter { it !in row }
         runtime.setUiPref("order.$orderKey", (row + rest).joinToString(","))
         dragged = null
-        dragY = 0f
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(gap)) {
-        for (id in shown) {
-            val item = byId[id] ?: continue
-            key(id) {
-                val isDragged = dragged == id
-                val card = Modifier
-                    .onSizeChanged { heights[id] = it.height }
-                    .zIndex(if (isDragged) 1f else 0f)
-                    .graphicsLayer {
-                        if (isDragged) {
-                            translationY = dragY
-                            scaleX = 1.02f
-                            scaleY = 1.02f
-                            shadowElevation = 8f
-                        }
-                    }
-                val header = Modifier.pointerInput(id) {
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = {
-                            row.clear(); row.addAll(ordered())
-                            dragged = id
-                            dragY = 0f
-                        },
-                        onDragEnd = { drop() },
-                        onDragCancel = { drop() },
-                    ) { change, drag ->
-                        change.consume()
-                        dragY += drag.y
-                        // Swap with a neighbour once the category is past half of it.
-                        val at = row.indexOf(id)
-                        val step = gap.toPx()
-                        if (dragY > 0 && at < row.lastIndex) {
-                            val next = heights[row[at + 1]] ?: 0
-                            if (dragY > next / 2f + step) {
-                                row.removeAt(at); row.add(at + 1, id)
-                                dragY -= next + step
+    /** Moves the dragged [id] past a neighbour once its middle is past the neighbour's. */
+    fun reorder(id: String) {
+        val at = row.indexOf(id)
+        if (at < 0) return
+        val mid = fingerY - grab + (heights[id] ?: 0) / 2f
+        fun middle(other: String) = (tops[other] ?: 0f) + (heights[other] ?: 0) / 2f
+        if (at < row.lastIndex && mid > middle(row[at + 1])) {
+            row.removeAt(at); row.add(at + 1, id)
+        } else if (at > 0 && mid < middle(row[at - 1])) {
+            row.removeAt(at); row.add(at - 1, id)
+        }
+    }
+
+    CompositionLocalProvider(LocalSectionsCollapsed provides (dragged != null)) {
+        Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+            for (id in shown) {
+                val item = byId[id] ?: continue
+                key(id) {
+                    val isDragged = dragged == id
+                    // The wrapper stays where the layout puts it and follows the finger; only the card moves.
+                    Box(
+                        Modifier
+                            .zIndex(if (isDragged) 1f else 0f)
+                            .onGloballyPositioned {
+                                coords[id] = it
+                                tops[id] = it.positionInRoot().y
+                                heights[id] = it.size.height
                             }
-                        } else if (dragY < 0 && at > 0) {
-                            val prev = heights[row[at - 1]] ?: 0
-                            if (-dragY > prev / 2f + step) {
-                                row.removeAt(at); row.add(at - 1, id)
-                                dragY += prev + step
+                            .pointerInput(id) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    if (down.position.y > (headers[id] ?: 0)) return@awaitEachGesture
+                                    val long = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                                    val c = coords[id] ?: return@awaitEachGesture
+                                    fingerY = c.localToRoot(long.position).y
+                                    grab = long.position.y
+                                    row.clear(); row.addAll(ordered())
+                                    dragged = id
+                                    // Ahead of the header's own click and the scrolling list: the finger is ours now.
+                                    while (true) {
+                                        val e = awaitPointerEvent(PointerEventPass.Initial)
+                                        val ch = e.changes.firstOrNull { it.id == long.id } ?: break
+                                        e.changes.forEach { it.consume() }
+                                        if (!ch.pressed) break
+                                        coords[id]?.let { fingerY = it.localToRoot(ch.position).y }
+                                        reorder(id)
+                                    }
+                                    drop()
+                                }
+                            },
+                    ) {
+                        val card = Modifier.graphicsLayer {
+                            if (isDragged) {
+                                translationY = fingerY - grab - (tops[id] ?: 0f)
+                                scaleX = 1.02f
+                                scaleY = 1.02f
+                                shadowElevation = 8f
                             }
                         }
+                        val header = Modifier.onSizeChanged { headers[id] = it.height }
+                        item.content(card, header)
                     }
                 }
-                item.content(card, header)
             }
         }
     }

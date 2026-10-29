@@ -398,7 +398,7 @@ internal fun ControlMappingScreen(
     val inputs = remember(control, physicalInputs) {
         when {
             physicalInputs != null -> physicalInputs
-            control.isTouchpadStandIn -> (1..4).flatMap { Bindings.surfaceInputs(it) }
+            control.isTouchpadStandIn -> (1..4).flatMap { Bindings.surfaceInputs(it) } + Bindings.gyroInputs()
             else -> Bindings.touchInputs(control)
         }
     }
@@ -430,6 +430,7 @@ internal fun ControlMappingScreen(
         sorted(
             control,
             if (!control.swipes) inputs
+            else if (fingers == 0) Bindings.gyroInputs(control.id)
             else Bindings.swipeInputs(control, fingers) +
                     if (fingers == 1) inputs.filter { it.sources.first() is InputSource.TouchArea } else emptyList(),
             order,
@@ -874,6 +875,21 @@ internal fun ControlMappingScreen(
                                         label = { Text(if (n == 1) "1 finger" else n.toString() + " fingers") },
                                     )
                                 }
+                                if (physicalInputs == null) {
+                                    FilterChip(selected = fingers == 0, onClick = { fingers = 0 }, label = { Text("Gyro") })
+                                }
+                            }
+                            if (fingers == 0) {
+                                Text(
+                                    if (control.isTouchpadStandIn) {
+                                        "What turning the phone does while gyro is on. With no gyro mapping anywhere, " +
+                                                "gyro moves the mouse as the gyro settings' Axes say."
+                                    } else {
+                                        "While this is pressed, an axis it maps does that instead of what the workspace maps it to."
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.onSurfaceVariant,
+                                )
                             }
                         }
                     }

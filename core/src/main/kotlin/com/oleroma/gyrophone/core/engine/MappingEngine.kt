@@ -141,6 +141,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Some mapping in use is a gyro ratchet ([gyroAxes] runs per gyro sample: no search without one). */
     private var ratchetMapped = false
 
+    /** The gyro mappings in use ([InputSource.Gyro]), [OutputTarget.NoOutput] kept: the workspace's and every button's. */
+    private var gyroInUse: List<Mapping> = emptyList()
+
+    /** Game pad axes the gyro deflects ([setGyroAxes]), by [GamepadAxis] ordinal. */
+    private val gyroPad = FloatArray(GamepadAxis.entries.size)
+
     /**
      * Input state of one device: its keys, its axes and the pad of the workspace it acts as.
      * [keys] is the real level (events, gyro hold); HID output reads [keyForOutput], which makes
@@ -230,6 +236,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** Pressed touch controls with a press count (setTouch, button fingers, tap pulses). */
     private val touches = HashMap<String, Int>()
+
+    /** Touch controls held, first pressed first: the last one's gyro mappings win ([gyroRoutes]). */
+    private val pressOrder = LinkedHashSet<String>()
 
     /** Controls held through [setTouch], with their press time. */
     private val setTouchHeld = HashMap<String, Long>()
@@ -455,7 +464,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun releaseHeld() {
         for (d in deviceList) d.clear()
         anyDevice.clear()
-        touches.clear(); setTouchHeld.clear(); touchSticks.clear()
+        touches.clear(); pressOrder.clear(); setTouchHeld.clear(); touchSticks.clear()
         for (s in surfaceList) s.reset()
         for (a in areas) a.clear()
         hapticWas.clear(); hapticNow.clear(); hapticSteps.clear()
@@ -793,11 +802,43 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         onChange?.run()
     }
 
-    /** Relative mouse motion from the gyro, already in mouse counts (touchpad motion has its own path). */
-    fun addMouseMotion(dx: Int, dy: Int) {
+    /** Relative mouse motion and scrolling from the gyro, already in mouse counts and wheel units (touchpad motion has its own path). */
+    fun addMouseMotion(dx: Int, dy: Int, wheel: Int = 0, hwheel: Int = 0) {
         synchronized(lock) {
             mouseDx += dx
             mouseDy += dy
+            this.wheel += wheel
+            this.hwheel += hwheel
+        }
+        onChange?.run()
+    }
+
+    /**
+     * Where gyro motion goes now: the workspace's gyro mappings in use, each axis a held button
+     * maps taken over by that button's (the last pressed of several). Empty with no gyro mapping
+     * in use at all ([gyroMapped] false): gyro then moves the mouse as its settings' axes say.
+     */
+    fun gyroRoutes(): List<Mapping> = synchronized(lock) {
+        val ms = gyroInUse
+        if (ms.isEmpty()) return@synchronized emptyList()
+        var out = ms.filter { (it.source as InputSource.Gyro).id.isEmpty() }
+        for (id in pressOrder) {
+            val own = ms.filter { (it.source as InputSource.Gyro).id == id }
+            if (own.isEmpty()) continue
+            val axes = own.mapTo(HashSet()) { (it.source as InputSource.Gyro).axis }
+            out = out.filterNot { (it.source as InputSource.Gyro).axis in axes } + own
+        }
+        out.filter { it.target != OutputTarget.NoOutput }
+    }
+
+    /** Some gyro mapping is in use ([gyroRoutes]); without one gyro moves the mouse by its settings' axes. */
+    val gyroMapped: Boolean get() = gyroInUse.isNotEmpty()
+
+    /** How far the gyro deflects each game pad axis now (by [GamepadAxis] ordinal, -1..1; triggers 0..1). */
+    fun setGyroAxes(values: FloatArray) {
+        synchronized(lock) {
+            if (values.contentEquals(gyroPad)) return
+            values.copyInto(gyroPad, endIndex = minOf(values.size, gyroPad.size))
         }
         onChange?.run()
     }
@@ -928,6 +969,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             anyCarried = false
             applyLayers()
             mouseDx = 0; mouseDy = 0; wheel = 0; hwheel = 0
+            gyroPad.fill(0f)
             touchpad.reset()
             for (s in surfaceList) s.reset()
         }
@@ -967,6 +1009,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (anyCarried) pruneCarried()
         hapticNow.clear()
         forEachGroup { ms, dev -> accumulate(ms, dev) }
+        for (a in 0 until 4) if (abs(gyroPad[a]) > abs(stick[a])) stick[a] = gyroPad[a]
+        trigger[0] = max(trigger[0], abs(gyroPad[GamepadAxis.LT.ordinal]))
+        trigger[1] = max(trigger[1], abs(gyroPad[GamepadAxis.RT.ordinal]))
         holdModeKeys()
         collectHaptics()
         for (i in deviceList.indices) deviceList[i].shownInSnapshot()
@@ -1447,6 +1492,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         is InputSource.Axis -> s.half == AxisHalf.FULL
         is InputSource.TouchStick -> s.half == AxisHalf.FULL
         is InputSource.Surface -> s.input.motion
+        is InputSource.Gyro -> true
         else -> false
     }
 
@@ -1493,8 +1539,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             return if (c.values.any { it.holdsLayers }) out.distinct() else out
         }
         // Buttons take the touchpad's mappings in use of the inputs they map in none of the layers in use.
-        touchMappings = Inheritance.toButtons(inUse(allTouch, carried.getOrNull(0), keepNothing = true), buttonIds)
-            .filter { it.target != OutputTarget.NoOutput }
+        val touchInUse = inUse(allTouch, carried.getOrNull(0), keepNothing = true)
+        gyroInUse = touchInUse.filter { it.source is InputSource.Gyro }
+        touchMappings = Inheritance.toButtons(touchInUse, buttonIds).filter { it.target != OutputTarget.NoOutput }
         padMappings = Array(allPads.size) { inUse(allPads[it], carried.getOrNull(it + 1)) }
         mapsLeftTriggerAxis =
             BooleanArray(padMappings.size) { mapsTriggerAxis(padMappings[it], AndroidAxis.LTRIGGER, AndroidAxis.BRAKE) }
@@ -1562,6 +1609,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun press(id: String) {
         val n = touches[id] ?: 0
         touches[id] = n + 1
+        if (n == 0) pressOrder.add(id)
         if (n == 0 && tapList.isNotEmpty()) controlDown(id, clock())
     }
 
@@ -1571,6 +1619,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             touches[id] = n - 1; return
         }
         touches.remove(id)
+        pressOrder.remove(id)
         if (tapList.isNotEmpty()) controlUp(id, clock())
     }
 
@@ -1633,6 +1682,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         // Upgraded to surface inputs when the workspace loads (Bindings.upgradeSwipes).
         is InputSource.TouchSwipe -> 0f
+        // Gyro motion goes out through gyroRoutes, not the snapshot's sources.
+        is InputSource.Gyro -> 0f
         is InputSource.TouchStickDiagonal -> {
             val v = touchSticks[source.id]
             if (v != null && v.dirs and (DIR_DIAGONAL shl source.diagonal.ordinal) != 0) v.mag else 0f

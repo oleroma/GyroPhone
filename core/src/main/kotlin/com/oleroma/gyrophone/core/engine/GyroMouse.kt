@@ -1,8 +1,14 @@
 package com.oleroma.gyrophone.core.engine
 
+import com.oleroma.gyrophone.core.hid.MouseState
+import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.GyroOrientation
 import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
+import com.oleroma.gyrophone.core.model.MouseMotion
+import com.oleroma.gyrophone.core.model.OutputTarget
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -68,11 +74,76 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
         // Portrait has its own axis mapping when set; read fields directly to avoid allocating.
         val p = if (resolved == Resolved.PORTRAIT || resolved == Resolved.PORTRAIT_UPSIDE_DOWN) s.portrait else null
         // Cursor X right = +, cursor Y: up = + here, flipped to HID (down = +) at the end.
-        var vx = if (p != null) m[p.mouseX] * p.scaleX * (if (p.invertX) -1f else 1f)
+        val vx = if (p != null) m[p.mouseX] * p.scaleX * (if (p.invertX) -1f else 1f)
         else m[s.mouseX] * s.scaleX * (if (s.invertX) -1f else 1f)
-        var vy = if (p != null) m[p.mouseY] * p.scaleY * (if (p.invertY) -1f else 1f)
+        val vy = if (p != null) m[p.mouseY] * p.scaleY * (if (p.invertY) -1f else 1f)
         else m[s.mouseY] * s.scaleY * (if (s.invertY) -1f else 1f)
+        return counts(vx, vy, dtSeconds)
+    }
 
+    /** Where [route] sent one sample: mouse counts, wheel units and game pad axes (by [GamepadAxis] ordinal). */
+    class Routed {
+        var dx = 0
+        var dy = 0
+        var wheel = 0
+        var hwheel = 0
+        val pad = FloatArray(GamepadAxis.entries.size)
+    }
+
+    private val routed = Routed()
+    private var remWheel = 0f
+    private var remHWheel = 0f
+
+    /**
+     * One sample sent where gyro mappings [routes] ([InputSource.Gyro] sources) say: mouse motion
+     * through the same filters and sensitivities as [update] (the X / Y one only when [moveX] /
+     * [moveY]: a ratchet on one axis), scrolling at [DEG_PER_NOTCH], game pad axes full at
+     * [STICK_FULL_DEG_PER_S] (pitching up pushes a stick up). A target's scale multiplies.
+     * The result is reused by the next call.
+     */
+    fun route(gx: Float, gy: Float, gz: Float, dtSeconds: Float, routes: List<Mapping>, moveX: Boolean, moveY: Boolean): Routed {
+        val m = motion(gx, gy, gz, resolvedOrientation())
+        var vx = 0f; var vy = 0f; var w = 0f; var hw = 0f
+        val pad = routed.pad
+        pad.fill(0f)
+        for (i in routes.indices) {
+            val r = routes[i]
+            val src = r.source as? InputSource.Gyro ?: continue
+            val v = m[src.axis]
+            when (val t = r.target) {
+                is OutputTarget.MouseAxis -> when (t.motion) {
+                    MouseMotion.MOVE_X -> vx += v * t.scale
+                    MouseMotion.MOVE_Y -> vy += v * t.scale
+                    MouseMotion.WHEEL -> w += v * t.scale
+                    MouseMotion.HWHEEL -> hw += v * t.scale
+                }
+
+                is OutputTarget.PadAxis -> {
+                    // Stick Y is + down: pitching up pushes it up.
+                    val up = if (t.axis == GamepadAxis.LY || t.axis == GamepadAxis.RY) -1f else 1f
+                    pad[t.axis.ordinal] += up * v * t.scale / STICK_FULL_DEG_PER_S
+                }
+
+                else -> Unit
+            }
+        }
+        for (a in pad.indices) {
+            pad[a] = if (GamepadAxis.entries[a].isTrigger) kotlin.math.abs(pad[a]).coerceAtMost(1f) else pad[a].coerceIn(-1f, 1f)
+        }
+        val c = counts(if (moveX) vx else 0f, if (moveY) vy else 0f, dtSeconds)
+        routed.dx = c.dx; routed.dy = c.dy
+        val fw = w * dtSeconds * MouseState.WHEEL_UNIT / DEG_PER_NOTCH + remWheel
+        val fh = hw * dtSeconds * MouseState.WHEEL_UNIT / DEG_PER_NOTCH + remHWheel
+        routed.wheel = fw.toInt(); remWheel = fw - routed.wheel
+        routed.hwheel = fh.toInt(); remHWheel = fh - routed.hwheel
+        return routed
+    }
+
+    /** Mouse counts of cursor velocity [vx] (right +) and [vy] (up +) in °/s over [dtSeconds]: filtered, scaled, the remainder kept. */
+    private fun counts(vx0: Float, vy0: Float, dtSeconds: Float): Counts {
+        val s = settings
+        var vx = vx0
+        var vy = vy0
         val speed = sqrt(vx * vx + vy * vy)
         if (s.tighteningThreshold > 0f && speed < s.tighteningThreshold) {
             val k = speed / s.tighteningThreshold
@@ -100,7 +171,7 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
     }
 
     fun reset() {
-        remX = 0f; remY = 0f
+        remX = 0f; remY = 0f; remWheel = 0f; remHWheel = 0f
         bufX.fill(0f); bufY.fill(0f)
     }
 
@@ -122,5 +193,11 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
     companion object {
         private const val RAD_TO_DEG = (180.0 / Math.PI).toFloat()
         private const val SMOOTHING_WINDOW = 8
+
+        /** Degrees of turn per wheel notch when gyro scrolls. */
+        const val DEG_PER_NOTCH = 15f
+
+        /** Turning this fast (°/s) deflects a game pad axis fully. */
+        const val STICK_FULL_DEG_PER_S = 90f
     }
 }

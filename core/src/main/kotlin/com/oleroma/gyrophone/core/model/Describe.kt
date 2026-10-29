@@ -30,6 +30,7 @@ object Describe {
         is InputSource.Surface -> (if (s.id.isEmpty()) "Touchpad" else "Swipe on ${s.id}") +
                 " ${s.fingers} finger" + (if (s.fingers > 1) "s " else " ") + s.input.label.lowercase() +
                 if (s.zone > 0) " zone ${s.zone + 1}" else ""
+        is InputSource.Gyro -> "Gyro " + s.axis.label.lowercase() + if (s.id.isEmpty()) "" else " on ${s.id}"
     }
 
     fun target(t: OutputTarget): String = when (t) {

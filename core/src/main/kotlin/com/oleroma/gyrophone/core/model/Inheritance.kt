@@ -19,24 +19,27 @@ object Inheritance {
         else -> null
     }
 
+    /** Which input of its level [s] is, for a workspace's own input ([isWorkspaceInput]). */
+    private fun levelKey(s: InputSource): Any? = if (s is InputSource.Gyro) s else inputOf(s)
+
     /** The touchpad's mappings every level starts from: what a laptop touchpad does. */
     val builtin: List<Mapping> = Bindings.defaultTouchpadMappings(TouchpadSettings())
 
     /**
-     * [own] with [parent]'s Base touchpad mappings ([InputSource.isTouchpad]) of each input [own]
-     * maps in none of its Base touchpad mappings.
+     * [own] with [parent]'s Base mappings of the workspace's own inputs (touchpad and gyro,
+     * [isWorkspaceInput]) of each such input [own] does not map in Base.
      */
     fun fill(own: List<Mapping>, parent: List<Mapping>): List<Mapping> {
-        val mapped = HashSet<Triple<Int, SurfaceInput, Int>>()
-        for (m in own) if (m.set == MappingSet.BASE && m.source.isTouchpad) inputOf(m.source)?.let(mapped::add)
-        val taken = parent.filter { m -> m.set == MappingSet.BASE && m.source.isTouchpad && inputOf(m.source) !in mapped }
+        val mapped = HashSet<Any>()
+        for (m in own) if (m.set == MappingSet.BASE && m.source.isWorkspaceInput) levelKey(m.source)?.let(mapped::add)
+        val taken = parent.filter { m -> m.set == MappingSet.BASE && m.source.isWorkspaceInput && levelKey(m.source) !in mapped }
         return if (taken.isEmpty()) own else own + taken
     }
 
-    /** The Defaults' touchpad mappings in effect: their own, and the built-in ones of the rest. */
-    fun defaults(d: Workspace): List<Mapping> = fill(d.mappings.filter { it.source.isTouchpad }, builtin)
+    /** The Defaults' touchpad and gyro mappings in effect: their own, and the built-in ones of the rest. */
+    fun defaults(d: Workspace): List<Mapping> = fill(d.mappings.filter { it.source.isWorkspaceInput }, builtin)
 
-    /** Workspace [w]'s mappings with the touchpad mappings it takes from [defaults] ([Profile.defaults]). */
+    /** Workspace [w]'s mappings with the touchpad and gyro mappings it takes from [defaults] ([Profile.defaults]). */
     fun workspace(w: Workspace, defaults: Workspace): List<Mapping> = fill(w.mappings, defaults(defaults))
 
     /** Which of [inputOf] the mappings of [id] in [ms] cover. */

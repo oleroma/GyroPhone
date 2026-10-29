@@ -144,7 +144,7 @@ object Bindings {
                     (1..4).flatMap { n ->
                         surfaceInputs(n, control.id).filterNot { n == 1 && isOneFingerHold(it) }
                             .map { it.copy(label = "${n}f " + it.label) }
-                    }
+                    } + gyroInputs(control.id)
         }
 
         TouchKind.STICK -> {
@@ -169,6 +169,14 @@ object Bindings {
      * A swipe button's inputs with [fingers] down: its surface's, one finger's hold being the
      * button's press ([InputSource.Touch], labelled Hold). The touchpad ([id] "") keeps its own hold.
      */
+    /**
+     * The gyro axes of touch control [id] ("" = the workspace's): what yaw, pitch and roll do (a
+     * button's only while it is pressed). Mouse motion, scrolling and game pad axes make sense.
+     */
+    fun gyroInputs(id: String = ""): List<BindableInput> = MotionAxis.entries.filter { it != MotionAxis.NONE }.map { a ->
+        BindableInput("Gyro " + a.label.lowercase(), listOf(InputSource.Gyro(a, id)), swipe = true)
+    }
+
     fun swipeInputs(control: TouchControl, fingers: Int): List<BindableInput> {
         val surface = surfaceInputs(fingers, control.id)
         if (fingers != 1 || control.id.isEmpty()) return surface
@@ -181,10 +189,10 @@ object Bindings {
 
     /** A touch button's gestures and its surface's one-finger ones, which do their job in swipe mode. */
     private val gesturePairs: List<Pair<(String) -> InputSource, SurfaceInput>> = listOf(
-        InputSource::TouchTap to SurfaceInput.TAP,
-        InputSource::TouchDoubleTap to SurfaceInput.DOUBLE_TAP,
-        InputSource::TouchLongPress to SurfaceInput.LONG_PRESS,
-        InputSource::TouchRelease to SurfaceInput.RELEASE,
+        { id: String -> InputSource.TouchTap(id) } to SurfaceInput.TAP,
+        { id: String -> InputSource.TouchDoubleTap(id) } to SurfaceInput.DOUBLE_TAP,
+        { id: String -> InputSource.TouchLongPress(id) } to SurfaceInput.LONG_PRESS,
+        { id: String -> InputSource.TouchRelease(id) } to SurfaceInput.RELEASE,
     )
 
     /**

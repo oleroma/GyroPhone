@@ -137,8 +137,8 @@ class SwipeButtonsTest {
     @Test
     fun everyButtonIsATouchSurface() {
         val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f)
-        // Press (one finger's hold), outside, zone, then the other surface inputs for 1..4 fingers.
-        assertEquals(3 - 1 + (1..4).sumOf { Bindings.surfaceInputs(it).size }, Bindings.touchInputs(b).size)
+        // Press (one finger's hold), outside, zone, the other surface inputs for 1..4 fingers, then its gyro axes.
+        assertEquals(3 - 1 + (1..4).sumOf { Bindings.surfaceInputs(it).size } + 3, Bindings.touchInputs(b).size)
     }
 
     @Test

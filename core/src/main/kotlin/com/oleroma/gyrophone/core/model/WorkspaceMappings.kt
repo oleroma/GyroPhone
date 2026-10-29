@@ -122,6 +122,7 @@ object WorkspaceMappings {
             is InputSource.TouchLongPress -> s.copy(id = to)
             is InputSource.TouchArea -> s.copy(id = to)
             is InputSource.Surface -> s.copy(id = to)
+            is InputSource.Gyro -> if (s.id.isEmpty()) return null else s.copy(id = to)
             else -> return null
         }
         return m.copy(source = moved)

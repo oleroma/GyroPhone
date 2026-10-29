@@ -190,6 +190,16 @@ sealed interface InputSource {
     @Serializable
     @SerialName("surface")
     data class Surface(val fingers: Int, val input: SurfaceInput, val id: String = "", val zone: Int = 0) : InputSource
+
+    /**
+     * The phone turning about gyro [axis] (yaw right, pitch up, roll clockwise as the player sees
+     * it are +), in °/s, while gyro is on. [id] "" = the workspace's, always; else touch button
+     * [id]'s, only while it is pressed: it then takes that axis over from the workspace (of
+     * several, the last pressed).
+     */
+    @Serializable
+    @SerialName("gyro")
+    data class Gyro(val axis: MotionAxis, val id: String = "") : InputSource
 }
 
 /** Something the host PC receives. */

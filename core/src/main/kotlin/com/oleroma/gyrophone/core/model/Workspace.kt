@@ -113,11 +113,19 @@ val InputSource.isTouch: Boolean
     get() = this is InputSource.Touch || this is InputSource.TouchStick || this is InputSource.TouchStickDiagonal ||
             this is InputSource.TouchSwipe || this is InputSource.TouchRelease || this is InputSource.TouchDoubleTap ||
             this is InputSource.TouchTap || this is InputSource.TouchLongPress ||
-            this is InputSource.TouchArea || this is InputSource.Surface
+            this is InputSource.TouchArea || this is InputSource.Surface || this is InputSource.Gyro
 
 /** A source of the workspace touchpad ([InputSource.Surface] with no control id). */
 val InputSource.isTouchpad: Boolean
     get() = this is InputSource.Surface && id.isEmpty()
+
+/** A gyro axis of the workspace itself ([InputSource.Gyro] with no control id). */
+val InputSource.isWorkspaceGyro: Boolean
+    get() = this is InputSource.Gyro && id.isEmpty()
+
+/** An input of the workspace itself, which it takes from the Defaults unless it maps it: touchpad or gyro. */
+val InputSource.isWorkspaceInput: Boolean
+    get() = isTouchpad || isWorkspaceGyro
 
 /**
  * This workspace with its touchpad mappings: as it is once resolved ([TouchpadSettings.mapped]),
