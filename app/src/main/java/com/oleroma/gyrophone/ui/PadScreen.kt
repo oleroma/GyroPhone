@@ -186,6 +186,13 @@ private const val KEEP_ON_SCREEN_DP = 48f
 /** Edit mode: [selected] value for the touchpad (empty space), whose screens are open. */
 private const val TOUCHPAD_SELECTION = "\u0000touchpad"
 
+/**
+ * Edit mode's own touch timings (not the workspace's): a tap selects once no second tap followed
+ * within [EDIT_DOUBLE_TAP_MS]; a press held [EDIT_LONG_PRESS_MS] opens settings.
+ */
+private const val EDIT_DOUBLE_TAP_MS = 250L
+private const val EDIT_LONG_PRESS_MS = 450L
+
 /** Edit mode undo: changes this close together (a slider being dragged, say) make one step. */
 private const val UNDO_SETTLE_MS = 400L
 
@@ -423,15 +430,12 @@ fun PadScreen(
     /** Quick-tap run for the reveal: last touch-down (event nanos) and taps so far. */
     val tapRun = remember { LongArray(2) }
 
-    /** Edit mode: the last tap on overlapping controls (x, y, which one) and its time, to cycle through them. */
-    val editCycle = remember { FloatArray(3) }
-    val editCycleAt = remember { LongArray(1) { Long.MIN_VALUE / 4 } }
+    /** Edit mode: where (x, y) and when the last single tap lifted, so a second tap there makes a double tap. */
+    val editTapAt = remember { FloatArray(2) }
+    val editTapTime = remember { LongArray(1) { Long.MIN_VALUE / 4 } }
 
-    /** Edit mode: the control the last tap selected, so a second tap soon after opens its mappings. */
-    val editTapId = remember { arrayOfNulls<String>(1) }
-
-    /** Edit mode: what was selected before the last tap, so a double tap on overlapping controls opens that one. */
-    val editTapBefore = remember { arrayOfNulls<String>(1) }
+    /** Edit mode: what the last single tap selects once no second tap follows it. */
+    val editPending = remember { arrayOfNulls<String>(1) }
 
     /**
      * Restarts the play touch handler on layout changes but not on gyro changes, so the gyro
@@ -575,6 +579,7 @@ fun PadScreen(
 
     fun startEditing() {
         releaseAll()
+        editPending[0] = null
         selected = null
         dragging = false
         editIndex = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
@@ -720,11 +725,25 @@ fun PadScreen(
         val touchModifier = if (editing) {
             Modifier.pointerInput("edit", w, h) {
                 val slop = viewConfiguration.touchSlop
-                val longPressMs = viewConfiguration.longPressTimeoutMillis
-                val doubleTapMs = viewConfiguration.doubleTapTimeoutMillis
+                /** Selects what the last single tap picked (no second tap came). */
+                fun commitPendingTap() {
+                    val id = editPending[0] ?: return
+                    editPending[0] = null
+                    selected = id
+                    menu = EditMenu.NONE
+                }
                 awaitPointerEventScope {
                     while (true) {
-                        var event = awaitPointerEvent()
+                        val waited = if (editPending[0] == null) awaitPointerEvent() else {
+                            withTimeoutOrNull(max(1L, editTapTime[0] + EDIT_DOUBLE_TAP_MS - SystemClock.uptimeMillis())) {
+                                awaitPointerEvent()
+                            }
+                        }
+                        if (waited == null) {
+                            commitPendingTap()
+                            continue
+                        }
+                        var event = waited
                         val first = event.changes.firstOrNull { it.pressed && !it.previousPressed }
                         if (first == null) {
                             event.changes.forEach { it.consume() }
@@ -753,8 +772,6 @@ fun PadScreen(
                         // Two-finger tap: where each finger landed, and the control under them.
                         val tapStart = HashMap<PointerId, Offset>()
                         var tapTarget: String? = null
-                        // Overlapping controls: a tap picks the one after the selected one (the front one when
-                        // none of them is selected), so repeated taps cycle through them.
                         val under = hitOrder(controls, portrait).filter {
                             it.contains(
                                 downPos.x,
@@ -764,28 +781,26 @@ fun PadScreen(
                                 inPortrait = portrait
                             )
                         }
-                        // A quick second tap (a double tap) goes back to what was selected before the first
-                        // one, so double-tapping the selected control opens it rather than the one behind.
-                        val sinceTap = first.uptimeMillis - editCycleAt[0]
-                        val quickSecond = sinceTap <= doubleTapMs &&
-                                (downPos - Offset(editCycle[0], editCycle[1])).getDistance() <= slop * 2
+                        // A second tap on the same spot soon after the first makes a double tap; anything
+                        // else first selects what the earlier tap picked.
+                        val quickSecond = editPending[0] != null &&
+                                first.uptimeMillis - editTapTime[0] <= EDIT_DOUBLE_TAP_MS &&
+                                (downPos - Offset(editTapAt[0], editTapAt[1])).getDistance() <= slop * 2
+                        if (!quickSecond) commitPendingTap()
+                        // Overlapping controls: a long press, a double tap and a drag with nothing selected act
+                        // on the selected one when it is under the finger (else the front one); a single tap
+                        // picks the one after it, so taps cycle through them.
+                        val cornerHit = hit(corners, downPos)
                         val selectedUnder = under.indexOfFirst { it.id == selected }
-                        val beforeUnder = under.indexOfFirst { it.id == editTapBefore[0] }
-                        val underIndex = when {
-                            under.size <= 1 -> 0
-                            quickSecond && beforeUnder >= 0 -> beforeUnder
-                            quickSecond -> editCycle[2].toInt() % under.size
-                            selectedUnder >= 0 -> (selectedUnder + 1) % under.size
-                            else -> 0
-                        }
-                        val c = hit(corners, downPos) ?: under.getOrNull(underIndex)
+                        val c = cornerHit ?: under.getOrNull(max(0, selectedUnder))
+                        val tapPick = cornerHit ?: under.getOrNull(if (selectedUnder >= 0) (selectedUnder + 1) % under.size else 0)
                         val pressedAt = first.uptimeMillis
                         var lastAt = pressedAt
                         // Empty space: a tap opens the touchpad's mappings, a long press its settings;
                         // with something selected, a tap there only closes it.
                         val hadSelection = selected != null
                         // A drag moves the selected control from wherever it starts, never what is under the finger.
-                        val sel = findControl(selected)
+                        val sel = findControl(editPending[0] ?: selected)
                         val selGrab = if (sel != null) downPos - center(sel) else Offset.Zero
                         if (c != null) {
                             mode = EditGesture.PRESS
@@ -799,7 +814,7 @@ fun PadScreen(
                         while (true) {
                             // A still press that lasts opens the settings: of the control, or on empty space the touchpad's.
                             val next = if (mode == EditGesture.PRESS || mode == EditGesture.EMPTY) {
-                                withTimeoutOrNull(max(1L, pressedAt + longPressMs - lastAt)) { awaitPointerEvent() }
+                                withTimeoutOrNull(max(1L, pressedAt + EDIT_LONG_PRESS_MS - lastAt)) { awaitPointerEvent() }
                             } else {
                                 awaitPointerEvent()
                             }
@@ -949,21 +964,20 @@ fun PadScreen(
                             event.changes.forEach { it.consume() }
                         }
 
+                        // Anything but a tap sets the selection itself: the first tap's pick is dropped.
+                        if (mode != EditGesture.PRESS) editPending[0] = null
                         when (mode) {
-                            EditGesture.PRESS -> {
-                                // A tap selects; a double tap opens the mapping (a corner, with none: its menu).
-                                val double = target != null && quickSecond &&
-                                        (target == editTapId[0] || target == editTapBefore[0])
-                                editCycle[0] = downPos.x; editCycle[1] = downPos.y; editCycle[2] = underIndex.toFloat()
-                                editCycleAt[0] = lastAt
-                                editTapBefore[0] = if (double) null else selected
-                                editTapId[0] = if (double) null else target
+                            EditGesture.PRESS -> if (quickSecond) {
+                                // A double tap opens the mapping (a corner: its menu).
+                                editPending[0] = null
+                                editTapTime[0] = Long.MIN_VALUE / 4
                                 selected = target
-                                menu = when {
-                                    !double -> EditMenu.NONE
-                                    d0 != null && isCorner(d0, target!!) -> EditMenu.CONTEXT
-                                    else -> EditMenu.MAPPING
-                                }
+                                menu = if (d0 != null && isCorner(d0, target!!)) EditMenu.CONTEXT else EditMenu.MAPPING
+                            } else {
+                                // A tap selects, once no second tap follows.
+                                editTapAt[0] = downPos.x; editTapAt[1] = downPos.y
+                                editTapTime[0] = lastAt
+                                editPending[0] = tapPick?.id
                             }
 
                             EditGesture.TWO -> {
@@ -1704,7 +1718,6 @@ fun PadScreen(
                                     )
                                     .pointerInput(label, w, h) {
                                         val slop = viewConfiguration.touchSlop
-                                        val longPressMs = viewConfiguration.longPressTimeoutMillis
                                         awaitEachGesture {
                                             val down = awaitFirstDown()
                                             val startAt = down.uptimeMillis
@@ -1714,7 +1727,7 @@ fun PadScreen(
                                             var lastWindow = Offset.Zero
                                             while (true) {
                                                 val event = if (dragged || longPress == null) awaitPointerEvent()
-                                                else withTimeoutOrNull(max(1L, startAt + longPressMs - lastAt)) {
+                                                else withTimeoutOrNull(max(1L, startAt + EDIT_LONG_PRESS_MS - lastAt)) {
                                                     awaitPointerEvent()
                                                 }
                                                 if (event == null) {
