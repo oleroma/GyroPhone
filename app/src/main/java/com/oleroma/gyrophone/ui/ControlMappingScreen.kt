@@ -947,6 +947,7 @@ internal fun ControlMappingScreen(
                                 Bindings.targets(Bindings.viewSet(mappings, n), zi).map { n to it }
                             }
                         },
+                        setOrder = sets.map { it.id },
                         setId = editSet,
                         onOther = onEditSet,
                         // Only one card stands out: while a target is over another card, that one does.
@@ -1494,6 +1495,8 @@ private fun ActionCard(
     onFollow: (() -> Unit)?,
     /** Per zone, other sets' targets (set, target): greyed at the end of that zone. */
     others: List<List<Pair<Int, OutputTarget>>>,
+    /** The layers in their order (Base comes first): the row keeps every set's mappings in it. */
+    setOrder: List<Int>,
     /** The set the targets are in (0 = Base: plain chips, else its colour and number). */
     setId: Int,
     onOther: (Int) -> Unit,
@@ -1649,9 +1652,13 @@ private fun ActionCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // Every set keeps its place in the row (Base, then the layers in order), whichever is edited.
+                    val rank = (listOf(MappingSet.BASE) + setOrder).let { o -> { n: Int -> o.indexOf(n) } }
+
+                    /** Zone [z]'s mappings in the other sets ranked before the one edited ([before]) or after it. */
                     @Composable
-                    fun othersOf(z: Int) {
-                        for ((n, t) in others.getOrNull(z).orEmpty()) key("o", z, n, t) {
+                    fun othersOf(z: Int, before: Boolean) {
+                        for ((n, t) in others.getOrNull(z).orEmpty()) if ((rank(n) < rank(setId)) == before) key("o", z, n, t) {
                             Row(
                                 Modifier
                                     .alpha(0.5f)
@@ -1697,6 +1704,7 @@ private fun ActionCard(
                         }
                     }
                     var zone = 0
+                    othersOf(0, true)
                     for (item in row) when (item) {
                         is RowItem.Chip -> key(item) {
                             val z = item.zone
@@ -1726,7 +1734,7 @@ private fun ActionCard(
                         }
 
                         is RowItem.Divider -> {
-                            othersOf(zone)
+                            othersOf(zone, false)
                             zone++
                             val k = zone
                             key(item) {
@@ -1738,10 +1746,11 @@ private fun ActionCard(
                                         .dragSource(item, coords) { dividerDrag(item.k, it) },
                                 ) { onDivider(k) }
                             }
+                            othersOf(zone, true)
                         }
 
                         RowItem.End -> {
-                            othersOf(zone)
+                            othersOf(zone, false)
                             zone++
                             val k = zone
                             key(item) {
@@ -1750,6 +1759,7 @@ private fun ActionCard(
                                     Modifier.onGloballyPositioned { onItemBounds(item, Rect(it.positionInRoot(), it.size.toSize())) },
                                 ) { onDivider(k) }
                             }
+                            othersOf(zone, true)
                         }
 
                         RowItem.Landing -> key(item) {
@@ -1770,7 +1780,10 @@ private fun ActionCard(
                             }
                         }
                     }
-                    for (z in zone until others.size) othersOf(z)
+                    othersOf(zone, false)
+                    for (z in zone + 1 until others.size) {
+                        othersOf(z, true); othersOf(z, false)
+                    }
                 }
             }
             if (note != null) Text(note, style = MaterialTheme.typography.bodySmall, color = colors.error)
