@@ -155,6 +155,11 @@ private fun AppTab(runtime: GamepadRuntime) {
                     "of that direction: a bar at Swipe after, dots at Hold after and each zone's end, a ring on a dragged " +
                     "start point. The marks it passed fill in.",
         )
+        SwitchRow("Show the gyro phone", visuals.gyroPhone) { runtime.setTouchVisuals(visuals.copy(gyroPhone = it)) }
+        Hint(
+            "A small 3D phone in the middle of the touchpad turns the way the gyro moves the mouse. Each ratchet " +
+                    "press sets it straight again, so it shows how far you turned since then.",
+        )
 
         Text("Corners", style = MaterialTheme.typography.titleSmall)
         var cornerOpacity by remember(profile.id) { mutableStateOf(profile.cornerOpacity) }

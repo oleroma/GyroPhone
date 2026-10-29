@@ -31,7 +31,8 @@ import kotlin.math.hypot
  * towards its end; it shrinks back to the finger as it ages. [liveMappings]: a button's label
  * briefly shows what it is sending right now. [swipeLine]: a finger on a swipe button with swipes
  * or holds mapped shows a line from its start point, through it, to its direction's furthest
- * activation length, marking each ([SwipeLines]).
+ * activation length, marking each ([SwipeLines]). [gyroPhone]: a small 3D phone in the middle of
+ * the pad turns as the gyro does, back to neutral on each ratchet press ([GyroPhoneView]).
  */
 @Serializable
 data class TouchVisuals(
@@ -42,6 +43,7 @@ data class TouchVisuals(
     val fadeMs: Int = 400,
     val liveMappings: Boolean = true,
     val swipeLine: Boolean = true,
+    val gyroPhone: Boolean = false,
 ) {
     companion object {
         const val MIN_TRAIL_MS = 50

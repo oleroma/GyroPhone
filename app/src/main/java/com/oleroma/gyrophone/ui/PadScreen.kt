@@ -1292,13 +1292,15 @@ fun PadScreen(
             }
         }
 
+        if (!editing && visuals.gyroPhone) GyroPhoneView(runtime.gyroPose, Modifier.fillMaxSize())
         if (!editing && ws.touchpad.enabled && (ws.touchControls.isEmpty() || portrait)) {
             Text(
                 "Touchpad",
                 color = Color.White.copy(alpha = 0.18f),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.align(
-                    if (ws.touchControls.isEmpty()) Alignment.Center else BiasAlignment(0f, -0.35f),
+                    // Above the gyro phone when that is shown in the middle.
+                    if (ws.touchControls.isEmpty() && !visuals.gyroPhone) Alignment.Center else BiasAlignment(0f, -0.35f),
                 ),
             )
         }
