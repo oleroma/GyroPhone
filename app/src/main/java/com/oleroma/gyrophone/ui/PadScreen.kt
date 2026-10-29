@@ -16,37 +16,36 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.displayCutout
-import androidx.compose.foundation.layout.only
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -69,11 +68,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -82,9 +84,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.model.Bindings
@@ -94,13 +101,11 @@ import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.LibraryButton
+import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.MappingSet
-import com.oleroma.gyrophone.core.model.Mapping
-import com.oleroma.gyrophone.core.model.OutputTarget
-import com.oleroma.gyrophone.core.model.WorkspaceMappings
-import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.model.NavCorners
+import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Placement
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchAreaKind
@@ -108,18 +113,20 @@ import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.Workspace
+import com.oleroma.gyrophone.core.model.WorkspaceMappings
 import com.oleroma.gyrophone.core.model.contains
-import com.oleroma.gyrophone.core.model.hitOrder
-import com.oleroma.gyrophone.core.model.touchedControls
 import com.oleroma.gyrophone.core.model.heightRatio
+import com.oleroma.gyrophone.core.model.hitOrder
+import com.oleroma.gyrophone.core.model.layered
+import com.oleroma.gyrophone.core.model.ownSurface
 import com.oleroma.gyrophone.core.model.placeSize
 import com.oleroma.gyrophone.core.model.placeX
 import com.oleroma.gyrophone.core.model.placeY
 import com.oleroma.gyrophone.core.model.placement
+import com.oleroma.gyrophone.core.model.surfaceSettings
+import com.oleroma.gyrophone.core.model.touchedControls
 import com.oleroma.gyrophone.core.model.withPlacement
 import com.oleroma.gyrophone.core.model.withSets
-import com.oleroma.gyrophone.core.model.ownSurface
-import com.oleroma.gyrophone.core.model.surfaceSettings
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -286,6 +293,8 @@ fun PadScreen(
     /** The floating edit menu: drag offset from its top-centre home, size, folded. */
     var menuOffset by remember { mutableStateOf(Offset.Zero) }
     var menuSize by remember { mutableStateOf(IntSize.Zero) }
+    /** The edit panel's visible bounds in the window, for menus that open beside it. */
+    var panelBounds by remember { mutableStateOf(Rect.Zero) }
 
     /** Width the user dragged the edit menu to (px); null = fit its rows. */
     var panelWidthPx by remember { mutableStateOf<Float?>(null) }
@@ -1499,12 +1508,13 @@ fun PadScreen(
                     .offset { IntOffset(menuAt.x.roundToInt(), menuAt.y.roundToInt()) }
                     .onSizeChanged { menuSize = it }
                     .padding(8.dp)
+                    .onGloballyPositioned { panelBounds = it.boundsInWindow() }
                     .then(
                         if (panelWidth != null) Modifier.width(with(density) { panelWidth.toDp() })
                         else Modifier.widthIn(max = maxWidth - 16.dp),
                     ),
                 shape = RoundedCornerShape(16.dp),
-                color = Color(0xE01E232B),
+                color = PANEL_COLOR,
                 shadowElevation = 8.dp,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1618,29 +1628,14 @@ fun PadScreen(
                                     OutlinedButton(contentPadding = compact, onClick = { picking = true }) {
                                         Text("Devices: " + (pinned?.name ?: "None"))
                                     }
-                                    DropdownMenu(
-                                        expanded = picking,
-                                        onDismissRequest = { picking = false },
-                                        shape = RoundedCornerShape(16.dp),
-                                        containerColor = Color(0xE01E232B),
-                                        shadowElevation = 8.dp,
-                                    ) {
-                                        for (preset in listOf(null) + presets) {
-                                            val chosen = preset?.id == pinned?.id
-                                            DropdownMenuItem(
-                                                text = { Text(preset?.name ?: "None", style = MaterialTheme.typography.labelLarge) },
-                                                onClick = {
+                                    if (picking) {
+                                        PanelMenu(panelBounds, onDismiss = { picking = false }) {
+                                            for (preset in listOf(null) + presets) {
+                                                PanelMenuItem(preset?.name ?: "None", chosen = preset?.id == pinned?.id) {
                                                     picking = false
                                                     editWorkspace { it.copy(devicePreset = preset?.id) }
-                                                },
-                                                colors = MenuDefaults.itemColors(
-                                                    textColor = if (chosen) MaterialTheme.colorScheme.onPrimaryContainer else Color.White,
-                                                ),
-                                                modifier = Modifier
-                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                                                    .clip(RoundedCornerShape(50))
-                                                    .then(if (chosen) Modifier.background(MaterialTheme.colorScheme.primaryContainer) else Modifier),
-                                            )
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -2102,4 +2097,64 @@ private fun CornerSettings(
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+/** The edit panel's colour, shared by the menus that open from it. */
+private val PANEL_COLOR = Color(0xE01E232B)
+
+/** The gap between the edit panel and a menu it opens, and around and between the menu's items. */
+private val PANEL_MENU_GAP = 6.dp
+
+/**
+ * A menu opened from the edit panel: a rounded card of the panel's colour that opens below [panel]
+ * (its window bounds), or above it when there is no room below, never over it.
+ */
+@Composable
+private fun PanelMenu(panel: Rect, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    val gap = with(LocalDensity.current) { PANEL_MENU_GAP.roundToPx() }
+    val position = remember(panel, gap) {
+        object : PopupPositionProvider {
+            override fun calculatePosition(
+                anchorBounds: IntRect,
+                windowSize: IntSize,
+                layoutDirection: LayoutDirection,
+                popupContentSize: IntSize,
+            ): IntOffset {
+                val x = anchorBounds.left.coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
+                val below = panel.bottom.roundToInt() + gap
+                val y = if (below + popupContentSize.height <= windowSize.height) below
+                else (panel.top.roundToInt() - gap - popupContentSize.height).coerceAtLeast(0)
+                return IntOffset(x, y)
+            }
+        }
+    }
+    Popup(popupPositionProvider = position, onDismissRequest = onDismiss, properties = PopupProperties(focusable = true)) {
+        Surface(shape = RoundedCornerShape(24.dp), color = PANEL_COLOR, shadowElevation = 8.dp) {
+            Column(
+                Modifier.width(IntrinsicSize.Max).padding(PANEL_MENU_GAP),
+                verticalArrangement = Arrangement.spacedBy(PANEL_MENU_GAP),
+                content = content,
+            )
+        }
+    }
+}
+
+/** A capsule in a [PanelMenu]; the [chosen] one is filled. */
+@Composable
+private fun PanelMenuItem(text: String, chosen: Boolean, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        color = if (chosen) colors.primaryContainer else Color.Transparent,
+        modifier = Modifier.fillMaxWidth().widthIn(min = 96.dp),
+    ) {
+        Text(
+            text,
+            color = if (chosen) colors.onPrimaryContainer else Color.White,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+        )
+    }
 }
