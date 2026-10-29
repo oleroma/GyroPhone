@@ -97,6 +97,18 @@ class WorkspaceMappingsTest {
         assertTrue(fresh.controls().isEmpty())
     }
 
+    @Test fun aBuiltinWorkspaceBringsItsPadMappingsAsAPresetItUses() {
+        val before = live()
+        val builtin = com.oleroma.gyrophone.core.model.BuiltinProfiles.wasdWorkspace
+        val (after, _) = WorkspaceEdits.add(before, builtin)
+        val settled = WorkspaceMappings.resolve(WorkspaceMappings.store(WorkspaceMappings.settle(before, after, before.workspaces[0])))
+        val added = settled.workspaces.last()
+        val preset = settled.devicePresets.single()
+        assertEquals(preset.id, added.devicePreset)
+        assertEquals(builtin.pads.first().mappings, preset.controller)
+        assertEquals(listOf(preset.controller), added.pads.map { it.mappings })
+    }
+
     @Test fun duplicateCopiesMappingsThatThenChangeOnTheirOwn() {
         val before = live()
         val (dup, at) = WorkspaceEdits.duplicate(before, 0)

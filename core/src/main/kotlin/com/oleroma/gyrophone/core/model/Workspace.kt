@@ -97,7 +97,7 @@ data class AttachedPad(
      */
     val mappings: List<Mapping> = emptyList(),
     /**
-     * The pad profile ([PadPreset]) last loaded into [mappings]; null on pads attached before pad
+     * The pad profile last loaded into [mappings] (pad profiles are gone); null on pads attached before pad
      * profiles were stored. Saving that profile again updates every pad that names it.
      */
     val presetId: String? = null,

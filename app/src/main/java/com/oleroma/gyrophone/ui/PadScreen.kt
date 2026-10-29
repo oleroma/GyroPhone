@@ -74,6 +74,7 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -351,7 +352,7 @@ fun PadScreen(
     // Mapping sets: the set in use and its overrides, watched while this workspace has layer actions.
     var layers by remember { mutableStateOf(MappingEngine.Layers(MappingSet.BASE, emptyList())) }
     val hasLayers = remember(ws) {
-        (ws.mappings + ws.keyboard + ws.pads.flatMap { it.mappings }).any { it.target is OutputTarget.Layer }
+        (ws.mappings + ws.keyboard + ws.mouse + ws.pads.flatMap { it.mappings }).any { it.target is OutputTarget.Layer }
     }
     LaunchedEffect(hasLayers, editing) {
         if (!hasLayers || editing) {
@@ -448,6 +449,30 @@ fun PadScreen(
         val decor = view.rootView
         if (!editing) TouchStream.setPlayUnbuffered(decor, true)
         onDispose { TouchStream.setPlayUnbuffered(decor, false) }
+    }
+
+    // A mouse attached to the phone is the workspace's in play while it maps one (pointer capture:
+    // no phone cursor, raw moves and buttons). Edit mode, other pages and other apps get it back.
+    val mouseAttached by runtime.mouseAttached.collectAsStateWithLifecycle()
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    val captureMouse = !editing && mouseAttached && windowFocused && ws.mouse.isNotEmpty()
+    DisposableEffect(view) {
+        view.setOnCapturedPointerListener { _, e -> runtime.capturedPointer?.invoke(e) ?: false }
+        onDispose {
+            view.setOnCapturedPointerListener(null)
+            view.releasePointerCapture()
+            runtime.mouseCaptured = false
+        }
+    }
+    LaunchedEffect(view, captureMouse) {
+        if (captureMouse) {
+            view.isFocusable = true
+            view.requestFocus()
+            view.requestPointerCapture()
+        } else {
+            view.releasePointerCapture()
+        }
+        runtime.mouseCaptured = captureMouse
     }
 
     fun startEditing() {
@@ -1402,6 +1427,10 @@ fun PadScreen(
                 CapsuleRow(
                     runtime,
                     onEdit = { startEditing() },
+                    onDevices = {
+                        releaseAll()
+                        onOpenMenu(PadMenuPage.Devices)
+                    },
                     onSettings = {
                         releaseAll()
                         onOpenMenu(PadMenuPage.AppSettings)

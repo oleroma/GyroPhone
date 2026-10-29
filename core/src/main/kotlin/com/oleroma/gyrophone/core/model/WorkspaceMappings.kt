@@ -41,13 +41,29 @@ object WorkspaceMappings {
     /**
      * [after] (an edit of the resolved [before]) with each workspace new in it and holding no
      * mappings of its own (a blank one) starting with a copy of [current]'s touchpad mappings and
-     * sets; one that comes with mappings (a builtin preset) keeps them.
+     * sets; one that comes with mappings (a builtin preset) keeps them, and its pad and keyboard
+     * mappings, if any, become a device preset of its own that it uses.
      */
-    fun settle(before: Profile, after: Profile, current: Workspace?): Profile = after.copy(
-        workspaces = after.workspaces.map { w ->
-            if (before.workspaces.any { it.id == w.id }) w else startFrom(w, current)
-        },
-    )
+    fun settle(before: Profile, after: Profile, current: Workspace?): Profile {
+        var set = after
+        for (w in after.workspaces) {
+            if (before.workspaces.any { it.id == w.id }) continue
+            val padMappings = w.pads.firstOrNull()?.mappings.orEmpty()
+            val fresh = startFrom(w, current)
+            if (w.devicePreset != null || (padMappings.isEmpty() && w.keyboard.isEmpty())) {
+                set = set.copy(workspaces = set.workspaces.map { if (it.id == w.id) fresh else it })
+                continue
+            }
+            val id = DevicePresets.newId(set.devicePresets.map { it.id })
+            val preset = DevicePresets.standard(id, w.name).let { p ->
+                p.copy(controller = padMappings.ifEmpty { p.controller }, keyboard = w.keyboard.ifEmpty { p.keyboard })
+            }
+            set = DevicePresets.put(set, preset).copy(
+                workspaces = set.workspaces.map { if (it.id == w.id) fresh.copy(devicePreset = id) else it },
+            )
+        }
+        return set
+    }
 
     private fun startFrom(w: Workspace, current: Workspace?): Workspace {
         if (current == null || w.mappings.any { !it.source.isTouchpad }) return w

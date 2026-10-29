@@ -76,7 +76,7 @@ internal fun CopyMappingsDialog(
                     selected = !withButtons,
                 ) { withButtons = false }
                 Hint(
-                    "Keyboard, controller and touchpad mappings and the layers are copied as they are. " +
+                    "Touchpad mappings and the layers are copied as they are. " +
                         "Gyro and touchpad settings stay.",
                 )
                 val unmatched = copied?.unmatched.orEmpty()

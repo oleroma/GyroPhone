@@ -108,6 +108,7 @@ import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.MouseButton
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.PhysicalDevice
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
@@ -181,7 +182,7 @@ private fun tabTargets(tab: LibraryTab, extras: List<OutputTarget>): List<Output
 
 /** The targets [input]'s picker offers ([Describe.pickerGroups]). */
 private fun allowedTargets(input: BindableInput): Set<OutputTarget> =
-    Describe.pickerGroups(input.analog, input.swipe, input.extra).flatMapTo(HashSet()) { it.second }
+    Describe.pickerGroups(input.analog, input.swipe, input.extra, input.mouseMotion).flatMapTo(HashSet()) { it.second }
 
 /** Whether [t] may be mapped to an input offering [allowed]: haptics always, variants of an offered kind too. */
 private fun allows(allowed: Set<OutputTarget>, t: OutputTarget): Boolean {
@@ -208,6 +209,7 @@ private fun actionTitle(control: TouchControl, input: BindableInput): String {
 /** Remembered card orders are per control kind. */
 private fun kindKey(c: TouchControl) = when {
     c.isTouchpadStandIn -> "touchpad"
+    c.physicalDevice != null -> "device." + if (c.kind == TouchKind.STICK) "stick" else "button"
     c.kind == TouchKind.STICK -> "stick"
     c.swipes -> "swipe"
     else -> "button"
@@ -236,7 +238,7 @@ private fun presetsFor(control: TouchControl, inputs: List<BindableInput>): List
         return@buildList
     }
     val press = inputs.firstOrNull { !isSurface(it) }
-    if (press != null) {
+    if (press != null && !press.mouseMotion) {
         // A preset replaces the press; a ratchet stays.
         fun main(label: String, t: OutputTarget) = add(
             MapPreset(label) { m ->
@@ -311,9 +313,24 @@ internal val TOUCHPAD_STAND_IN = TouchControl("", TouchKind.BUTTON, "Touchpad", 
 
 internal val TouchControl.isTouchpadStandIn: Boolean get() = id.isEmpty()
 
-/** "Stick", "Swipe button", "Button" or "Touchpad". */
+private const val PHYSICAL_PREFIX = "dev:"
+
+/**
+ * Stands for control [id] of a physical [device] in the control screens (a tap on it in the device
+ * screens), named [label]; its inputs are given to [ControlMappingScreen] as they are.
+ */
+internal fun physicalStandIn(device: PhysicalDevice, id: String, label: String, stick: Boolean) =
+    TouchControl(PHYSICAL_PREFIX + device.name + ":" + id, if (stick) TouchKind.STICK else TouchKind.BUTTON, label, 0f, 0f)
+
+/** The physical device a [physicalStandIn] stands in for; null for touch controls. */
+internal val TouchControl.physicalDevice: PhysicalDevice?
+    get() = if (!id.startsWith(PHYSICAL_PREFIX)) null
+    else PhysicalDevice.entries.firstOrNull { it.name == id.removePrefix(PHYSICAL_PREFIX).substringBefore(':') }
+
+/** "Stick", "Swipe button", "Button", "Touchpad", or a physical device's "Controller", "Keyboard", "Mouse". */
 internal fun controlKindName(c: TouchControl): String = when {
     c.isTouchpadStandIn -> "Touchpad"
+    c.physicalDevice != null -> c.physicalDevice!!.label
     c.kind == TouchKind.STICK -> "Stick"
     c.swipes -> "Swipe button"
     else -> "Button"
@@ -335,7 +352,8 @@ internal fun ControlMappingScreen(
     mappings: List<Mapping>,
     runtime: GamepadRuntime,
     onMappingsChange: (List<Mapping>) -> Unit,
-    onSettings: () -> Unit,
+    /** The control's settings; null = none (a physical control). */
+    onSettings: (() -> Unit)?,
     onClose: () -> Unit,
     /** The workspace's mapping sets, shown in the top bar. */
     sets: List<MappingSet> = emptyList(),
@@ -348,6 +366,8 @@ internal fun ControlMappingScreen(
     zoneSettings: TouchpadSettings? = null,
     /** Its zones changed (shared, per direction or null), from a zone divider's settings. */
     onZoneSettings: ((List<HoldZone>, List<List<HoldZone>>?) -> Unit)? = null,
+    /** A physical control's inputs ([physicalStandIn]): its cards, instead of the touch control's. */
+    physicalInputs: List<BindableInput>? = null,
 ) {
     // The edited set seen as Base, so the Base-only Bindings helpers edit it.
     val view = remember(mappings, editSet) { Bindings.viewSet(mappings, editSet) }
@@ -360,10 +380,14 @@ internal fun ControlMappingScreen(
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    val inputs = remember(control) {
-        if (control.isTouchpadStandIn) (1..4).flatMap { Bindings.surfaceInputs(it) } else Bindings.touchInputs(control)
+    val inputs = remember(control, physicalInputs) {
+        when {
+            physicalInputs != null -> physicalInputs
+            control.isTouchpadStandIn -> (1..4).flatMap { Bindings.surfaceInputs(it) }
+            else -> Bindings.touchInputs(control)
+        }
     }
-    val presets = remember(control) { presetsFor(control, inputs) }
+    val presets = remember(control, inputs) { presetsFor(control, inputs) }
     val extras = remember(inputs) { inputs.flatMap { it.extra }.distinct() }
 
     var fingers by remember(control.id) { mutableIntStateOf(1) }
@@ -1092,7 +1116,7 @@ internal fun ControlMappingScreen(
                                 )
                             }
                         }
-                        TextButton(onClick = onSettings, contentPadding = compact) { Text("Settings") }
+                        if (onSettings != null) TextButton(onClick = onSettings, contentPadding = compact) { Text("Settings") }
                         TextButton(
                             onClick = { undoLast() },
                             enabled = undo.isNotEmpty(),
@@ -1582,6 +1606,14 @@ private fun ZoneDivider(
 private const val ROW_SHADE_DP = 20
 
 /** A mapping set's number in a circle of its colour. */
+/** A mapping set's colour (sets have no colour of their own: picked from a palette by id). */
+internal fun setColor(id: Int): Color = SET_COLORS[(id - 1).mod(SET_COLORS.size)]
+
+private val SET_COLORS = listOf(
+    Color(0xFF42A5F5), Color(0xFFFFA726), Color(0xFF66BB6A), Color(0xFFAB47BC), Color(0xFFEF5350),
+    Color(0xFF26C6DA), Color(0xFFD4E157), Color(0xFFEC407A), Color(0xFF8D6E63),
+)
+
 @Composable
 private fun SetNumber(id: Int, modifier: Modifier = Modifier) {
     Box(modifier.size(18.dp).background(setColor(id), CircleShape), contentAlignment = Alignment.Center) {

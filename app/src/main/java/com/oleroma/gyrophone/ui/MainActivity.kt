@@ -75,6 +75,7 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         controllerInput = ControllerInput(this, runtime)
+        runtime.capturedPointer = controllerInput::onCapturedPointerEvent
 
         // Wi-Fi needs no runtime permission; Bluetooth HID needs BLUETOOTH_CONNECT first.
         if (canStartService()) GamepadService.start(this) else permissionRequest.launch(permissions)

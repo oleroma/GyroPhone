@@ -42,21 +42,25 @@ import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.WorkspaceEdits
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
-/** One capsule of the pad's top row: a workspace (by index in the profile), Settings or Connection. */
+/** One capsule of the pad's top row: a workspace (by index in the profile), Controller, Settings or Connection. */
 internal sealed interface Capsule {
     data class Ws(val index: Int) : Capsule
+    /** The device screens: what physical devices do ([com.oleroma.gyrophone.core.model.DevicePreset]). */
+    data object Devices : Capsule
     data object Settings : Capsule
     data object Connection : Capsule
 }
 
 /**
- * The capsules in row order from the saved [order] ('W' = a workspace slot, 'S', 'C'), filled with
+ * The capsules in row order from the saved [order] ('W' = a workspace slot, 'D', 'S', 'C'), filled with
  * [count] workspaces in profile order. Workspaces beyond the saved slots are new ones: they were
  * added at the front, so their slots go first; missing ones drop the last slots.
  */
 internal fun capsules(order: String, count: Int): List<Capsule> {
     val seen = HashSet<Char>()
-    val t = order.filter { it == 'W' || (it in "SC" && seen.add(it)) }.toMutableList()
+    val t = order.filter { it == 'W' || (it in "DSC" && seen.add(it)) }.toMutableList()
+    // New since the order was saved: right before Settings.
+    if ('D' !in t) t.add(t.indexOf('S').takeIf { it >= 0 } ?: t.size, 'D')
     if ('S' !in t) t.add('S')
     if ('C' !in t) t.add('C')
     var w = t.count { it == 'W' }
@@ -66,6 +70,7 @@ internal fun capsules(order: String, count: Int): List<Capsule> {
     return t.map {
         when (it) {
             'W' -> Capsule.Ws(next++)
+            'D' -> Capsule.Devices
             'S' -> Capsule.Settings
             else -> Capsule.Connection
         }
@@ -75,20 +80,22 @@ internal fun capsules(order: String, count: Int): List<Capsule> {
 private fun encode(row: List<Capsule>): String = row.joinToString("") {
     when (it) {
         is Capsule.Ws -> "W"
+        Capsule.Devices -> "D"
         Capsule.Settings -> "S"
         Capsule.Connection -> "C"
     }
 }
 
 /**
- * The pad's top row in play: + (add a workspace at the front), then the workspaces, Settings and
- * Connection in the saved order. It scrolls; long-press a capsule and drag it to reorder (moving
+ * The pad's top row in play: + (add a workspace at the front), then the workspaces, Controller,
+ * Settings and Connection in the saved order. It scrolls; long-press a capsule and drag it to reorder (moving
  * workspaces reorders them). Tap a workspace to switch to it, the current one to edit its layout.
  */
 @Composable
 internal fun CapsuleRow(
     runtime: GamepadRuntime,
     onEdit: () -> Unit,
+    onDevices: () -> Unit,
     onSettings: () -> Unit,
     onConnection: () -> Unit,
     modifier: Modifier = Modifier,
@@ -129,6 +136,7 @@ internal fun CapsuleRow(
         for (c in shown) key(c) {
             val label = when (c) {
                 is Capsule.Ws -> profile.workspaces.getOrNull(c.index)?.name.orEmpty() + if (c.index == wsIndex) " ✎" else ""
+                Capsule.Devices -> "Controller"
                 Capsule.Settings -> "Settings"
                 Capsule.Connection -> "Connection"
             }
@@ -180,6 +188,7 @@ internal fun CapsuleRow(
                 onTap = {
                     when (c) {
                         is Capsule.Ws -> if (c.index == wsIndex) onEdit() else runtime.switchWorkspace(c.index)
+                        Capsule.Devices -> onDevices()
                         Capsule.Settings -> onSettings()
                         Capsule.Connection -> onConnection()
                     }
