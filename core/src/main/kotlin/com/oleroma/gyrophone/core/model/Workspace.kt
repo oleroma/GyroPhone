@@ -63,6 +63,14 @@ data class Workspace(
     val devicePreset: String? = null,
     /** A mouse's mappings: like [pads] and [keyboard], filled from [devicePreset] when resolved ([WorkspaceMappings.resolve]). */
     val mouse: List<Mapping> = emptyList(),
+    /**
+     * The settings ([WorkspaceDefaults.keys]) this workspace sets itself; the others follow the
+     * workspace defaults ([Profile.defaults]) when resolved. Null: one from before the defaults,
+     * which sets each that differs from the built-in values ([WorkspaceDefaults.own]).
+     */
+    val ownSettings: Set<String>? = null,
+    /** Physical keys' own gesture timings: filled from [devicePreset] when resolved, like [keyboard]. */
+    val keyTimings: List<KeyTiming> = emptyList(),
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =

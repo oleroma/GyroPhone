@@ -75,6 +75,16 @@ enum class SurfaceInput(val label: String, val motion: Boolean = false) {
     PINCH("Pinch", motion = true), PINCH_IN("Pinch in"), PINCH_OUT("Pinch out"),
 }
 
+/** The direction of a swipe input (Swipe ←→↑↓), else null. */
+val SurfaceInput.swipeDirection: Direction?
+    get() = when (this) {
+        SurfaceInput.SWIPE_UP -> Direction.UP
+        SurfaceInput.SWIPE_RIGHT -> Direction.RIGHT
+        SurfaceInput.SWIPE_DOWN -> Direction.DOWN
+        SurfaceInput.SWIPE_LEFT -> Direction.LEFT
+        else -> null
+    }
+
 /** The direction of a held direction input (Hold ←→↑↓), else null. */
 val SurfaceInput.holdDirection: Direction?
     get() = when (this) {

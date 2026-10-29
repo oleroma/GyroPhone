@@ -16,6 +16,7 @@ import com.oleroma.gyrophone.core.model.KnownController
 import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.LibraryButton
+import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.WorkspaceMappings
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.GyroMode
@@ -462,7 +463,8 @@ class GamepadRuntime(context: Context) {
      */
     fun editActiveProfile(change: (Profile) -> Profile): Profile {
         val before = _activeProfile.value
-        val changed = change(before)
+        // A workspace setting changed by hand stops following the workspace defaults.
+        val changed = WorkspaceDefaults.markOwn(before, change(before))
         if (changed == before) return before
         val current = before.workspaces.getOrNull(_workspaceIndex.value)
         val set = WorkspaceMappings.store(WorkspaceMappings.settle(before, changed, current))

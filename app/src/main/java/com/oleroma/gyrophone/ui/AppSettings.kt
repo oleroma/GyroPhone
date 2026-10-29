@@ -4,6 +4,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -13,8 +14,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,11 +30,40 @@ import com.oleroma.gyrophone.runtime.ScreenOrientation
 import kotlin.math.roundToInt
 
 /**
- * The Settings page (from the pad's Settings capsule): options of the whole app, the corners
- * included. Everything about one workspace is on its settings page (⚙ in edit mode).
+ * The Settings page (from the pad's Settings capsule): the App tab, options of the whole app with
+ * the corners, and the Defaults tab, what every workspace uses unless its Workspace defaults (its
+ * settings page, ⚙ in edit mode) set their own.
  */
 @Composable
 fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
+    var tab by rememberSaveable { mutableIntStateOf(0) }
+    Column(modifier) {
+        Row(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("App") })
+            FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("Defaults") })
+        }
+        if (tab == 0) AppTab(runtime) else DefaultsTab(runtime)
+    }
+}
+
+/**
+ * The Defaults: every workspace's settings unless its Workspace defaults set them. Each shows its
+ * value, highlighted with a ↺ where it differs from the built-in one.
+ */
+@Composable
+private fun DefaultsTab(runtime: GamepadRuntime) {
+    val profile by runtime.activeProfile.collectAsStateWithLifecycle()
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Hint(
+            "Every workspace uses these, except where its Workspace defaults set their own: those show highlighted " +
+                    "there, with ↺ to follow these again.",
+        )
+        WorkspaceSettings(runtime, defaultsLevel(runtime, profile), profile.id + "/defaults")
+    }
+}
+
+@Composable
+private fun AppTab(runtime: GamepadRuntime) {
     val context = LocalContext.current
     val gyro by runtime.gyroInfo.collectAsStateWithLifecycle()
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
@@ -43,7 +75,7 @@ fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
     val visuals by runtime.touchVisuals.collectAsStateWithLifecycle()
     val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?" }
 
-    Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SwitchRow("Start in fullscreen", startFullscreen) { runtime.setStartFullscreen(it) }
         Hint("The pad opens in fullscreen when the app starts. Press ← and → together (or Back) to leave it.")
         SwitchRow("Hide the ← / → corners after a few seconds", autoHide) { runtime.setCornerAutoHide(it) }
@@ -86,11 +118,11 @@ fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
             )
         }
         Hint("A button's label briefly shows what it is sending, such as a tap, double tap or long press action.")
-        SwitchRow("Show the swipe line on swipe buttons", visuals.swipeLine) {
+        SwitchRow("Show the swipe line on touchpad buttons", visuals.swipeLine) {
             runtime.setTouchVisuals(visuals.copy(swipeLine = it))
         }
         Hint(
-            "A finger on a swipe button draws a line from its start point, through it, to the last activation length " +
+            "A finger on a touchpad button draws a line from its start point, through it, to the last activation length " +
                     "of that direction: a bar at Swipe after, dots at Hold after and each zone's end, a ring on a dragged " +
                     "start point. The marks it passed fill in.",
         )

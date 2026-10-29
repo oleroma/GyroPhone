@@ -47,23 +47,18 @@ import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.ButtonLibrary
 import com.oleroma.gyrophone.core.model.Describe
-import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.StickZones
-import com.oleroma.gyrophone.core.model.SurfaceSettings
-import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchLayer
 import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.Workspace
-import com.oleroma.gyrophone.core.model.ownSurface
 import com.oleroma.gyrophone.core.model.placeSize
 import com.oleroma.gyrophone.core.model.placeX
 import com.oleroma.gyrophone.core.model.placeY
-import com.oleroma.gyrophone.core.model.surfaceSettings
 import com.oleroma.gyrophone.core.model.withPlacement
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.roundToInt
@@ -107,7 +102,7 @@ internal fun ControlSettingsScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            (if (control.kind == TouchKind.STICK) "Stick" else if (control.swipes) "Swipe button" else "Button") +
+                            (if (control.kind == TouchKind.STICK) "Stick" else if (control.swipes) "Touchpad button" else "Button") +
                                     " · " + control.id + " · settings",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -145,39 +140,6 @@ internal fun ControlSettingsScreen(
                             ButtonBehaviourSettings(control, workspace, onControlChange, onMappingsChange)
                         }
                     }
-                    if (control.kind == TouchKind.STICK) {
-                        RememberedSection(runtime, "control.Stick", "Stick", section, defaultOpen = true) {
-                            StickSettings(control, onControlChange)
-                        }
-                    }
-                    if (control.swipes) {
-                        RememberedSection(
-                            runtime,
-                            "control.Surface",
-                            "Surface",
-                            section,
-                            subtitle = "Speed, scrolling and gestures of this swipe button"
-                        ) {
-                            SurfaceSettingsEditor(control, workspace.touchpad) { onControlChange(it) }
-                        }
-                        RememberedSection(
-                            runtime,
-                            "control.Directions",
-                            "Directions",
-                            section,
-                            defaultOpen = true,
-                            subtitle = "Swipe and held-direction pies, lengths and latch"
-                        ) {
-                            SurfaceDirectionSettings(
-                                control.ownSurface,
-                                control.surfaceSettings(workspace.touchpad),
-                                control.id,
-                                Bindings.holdZoneCounts(workspace.mappings, control.id),
-                            ) { o ->
-                                onControlChange(control.copy(surface = o))
-                            }
-                        }
-                    }
                     if (workspace.sets.isNotEmpty()) {
                         RememberedSection(runtime, "control.Layers", "Layers", section) {
                             SwitchSetting(
@@ -188,11 +150,14 @@ internal fun ControlSettingsScreen(
                             ) { onControlChange(control.copy(followLayers = it)) }
                         }
                     }
-                    RememberedSection(runtime, "control.Zone", "Area", section) {
-                        AreaSettings(control, workspace, onControlChange, onEditMappings)
-                    }
                     RememberedSection(runtime, "control.Mappings", "Mappings", section, defaultOpen = true) {
                         MappingsSummary(control, workspace.mappings, onEditMappings)
+                        Text(
+                            "Timings, areas" + (if (control.swipes) ", speed and directions" else if (control.kind == TouchKind.STICK) ", deadzone and directions" else "") +
+                                    " are set in Mappings: the ⚙ before an action, or Settings at the top.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
@@ -285,34 +250,7 @@ private fun SwitchSetting(title: String, hint: String, checked: Boolean, onChang
     }
 }
 
-/**
- * A button timing ([title], ms): the workspace's ([workspaceMs], [own] null) or its own, set in
- * [range] steps of 10 ms. [onChange] gets the own time, or null to follow the workspace.
- */
-@Composable
-private fun ButtonTimingRow(title: String, own: Int?, workspaceMs: Int, range: IntRange, onChange: (Int?) -> Unit) {
-    val ms = (own ?: workspaceMs).coerceIn(range)
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("$title $ms ms", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-            Text(
-                "Workspace",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Switch(checked = own == null, onCheckedChange = { follow -> onChange(if (follow) null else ms) })
-        }
-        if (own != null) {
-            Slider(
-                value = ms.toFloat(),
-                onValueChange = { onChange((it / 10f).roundToInt() * 10) },
-                valueRange = range.first.toFloat()..range.last.toFloat(),
-            )
-        }
-    }
-}
-
-/** A button's click-through, swipe, tap timings and ratchet. */
+/** A button's click-through, swipe and ratchet. */
 @Composable
 internal fun ButtonBehaviourSettings(
     control: TouchControl,
@@ -328,37 +266,13 @@ internal fun ButtonBehaviourSettings(
     ) { onControlChange(current.copy(clickThrough = it)) }
     if (!control.clickThrough) {
         SwitchSetting(
-            "Swipe",
+            "Touchpad",
             "A small touchpad of its own: its mappings are the touchpad's (hold, taps, moves, " +
-                    "swipes, pinches with 1–4 fingers, in Mappings), and a swipe is never a tap.",
+                    "swipes, pinches with 1–4 fingers, in Mappings), and a swipe is never a tap. " +
+                    "Its settings follow the Workspace defaults unless it sets its own (Mappings, ⚙ Settings).",
             control.swipe,
-        ) { on ->
-            val c = current
-            // A new swipe button follows the touchpad; an old one keeps its swipe settings.
-            onControlChange(
-                if (on && !c.swipe && c.surface == null) c.copy(swipe = true, surface = SurfaceSettings(holdMode = HoldMode.DIRECTION_CHANGE))
-                else c.copy(swipe = on),
-            )
-        }
+        ) { on -> onControlChange(current.copy(swipe = on)) }
     }
-    Text(
-        "Press is on while the finger is down. Tap is a press shorter than the long press time; with a " +
-                "Double tap mapping it waits out the double tap window. Map them in Mappings.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    ButtonTimingRow(
-        "Long press",
-        own = control.longPressMs,
-        workspaceMs = workspace.longPressMs,
-        range = Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
-    ) { onControlChange(current.copy(longPressMs = it)) }
-    ButtonTimingRow(
-        "Double tap window",
-        own = control.doubleTapMs,
-        workspaceMs = workspace.doubleTapMs,
-        range = Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
-    ) { onControlChange(current.copy(doubleTapMs = it)) }
     val input = Bindings.touchInputs(control).first()
     val targets = Bindings.targets(workspace.mappings, input)
     SwitchSetting(
@@ -414,41 +328,6 @@ internal fun StickSettings(control: TouchControl, onControlChange: (TouchControl
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-}
-
-/** Area interrupts / resume on exit, shown once the control has an Area mapping. */
-@Composable
-internal fun AreaSettings(
-    control: TouchControl,
-    workspace: Workspace,
-    onControlChange: (TouchControl) -> Unit,
-    onEditMappings: () -> Unit,
-) {
-    val current by rememberUpdatedState(control)
-    if (InputSource.TouchArea(control.id, TouchAreaKind.ZONE) !in workspace.mappings.map { it.source }) {
-        Text(
-            "An area acts while any finger is inside the control, wherever it touched down. " +
-                    "Map its Area action in Mappings to use it; its options show here then.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        TextButton(onClick = onEditMappings) { Text("Edit mappings") }
-        return
-    }
-    SwitchSetting(
-        "Area interrupts",
-        "A finger that slides into the area stops what it was doing (cursor, stick, " +
-                "another button). One landing on the area but on no other control moves no cursor.",
-        control.zoneInterrupt,
-    ) { onControlChange(current.copy(zoneInterrupt = it)) }
-    if (control.zoneInterrupt) {
-        SwitchSetting(
-            "Resume on exit",
-            "Leaving the area, the finger goes back to what it was doing. Off: it does " +
-                    "nothing more until it lifts.",
-            control.zoneResume,
-        ) { onControlChange(current.copy(zoneResume = it)) }
-    }
 }
 
 /** Each mapped action of [control] with its targets, and a way into the mapping screen. */

@@ -887,7 +887,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         if (n in 1..4) {
             val lift = count == 0 && !cancelling
             var keep = 0
-            if (lift && settings.latch) for (d in Direction.entries) if (dirs.zones(d) != 0) keep = keep or (1 shl d.ordinal)
+            if (lift) for (d in Direction.entries) if (settings.latchOf(d) && dirs.zones(d) != 0) keep = keep or (1 shl d.ordinal)
             if (keep != 0) {
                 for (d in Direction.entries) latchZones[d.ordinal] = dirs.zones(d)
                 latchN = n; latchMask = keep; latchUntil = Long.MAX_VALUE

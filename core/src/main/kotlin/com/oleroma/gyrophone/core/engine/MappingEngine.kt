@@ -1345,9 +1345,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun keyEdge(d: Dev, code: Int, pressed: Boolean, now: Long) {
         val cfg = (if (d === anyDevice) anyKeyCfgs else keyCfgs.getOrNull(d.pad))?.get(code) ?: return
         val g = d.gestures.getOrPut(code) {
+            // The key's own timings from the pinned preset, else the workspace's.
+            val own = ws.keyTimings.firstOrNull { it.keyCode == code }
             ButtonGestures(
-                ws.longPressMs.coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L,
-                ws.doubleTapMs.coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L,
+                (own?.longPressMs ?: ws.longPressMs).coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L,
+                (own?.doubleTapMs ?: ws.doubleTapMs).coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L,
                 cfg.hasDouble, cfg.tapWaits,
             ).also { tapList.add(it) }
         }
