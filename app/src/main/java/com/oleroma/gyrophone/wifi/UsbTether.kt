@@ -1,12 +1,18 @@
 package com.oleroma.gyrophone.wifi
 
+import com.oleroma.gyrophone.core.net.Wire
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.SocketException
 
-/** The phone's USB tethering link: its own IPv4 address there and that subnet's broadcast address. */
-data class UsbTetherInfo(val name: String, val address: InetAddress, val broadcast: InetAddress)
+/**
+ * A USB link to the PC: the address the phone's sockets bind to there and where DISCOVER goes.
+ * For USB tethering that is the phone's IPv4 address on the tether and the subnet's broadcast;
+ * for the direct cable ([direct], [AccessoryBridge]) loopback and the bridge's socket.
+ */
+data class UsbTetherInfo(val name: String, val address: InetAddress, val target: InetSocketAddress, val direct: Boolean = false)
 
 /**
  * Finds USB tethering (Settings → Hotspot & tethering → USB tethering, or the developer option
@@ -35,7 +41,7 @@ object UsbTether {
             for (ia in ni.interfaceAddresses) {
                 val a = ia.address as? Inet4Address ?: continue
                 val bc = ia.broadcast ?: directed(a, ia.networkPrefixLength.toInt()) ?: continue
-                return UsbTetherInfo(ni.name, a, bc)
+                return UsbTetherInfo(ni.name, a, InetSocketAddress(bc, Wire.PORT))
             }
         }
         return null

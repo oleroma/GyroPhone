@@ -46,8 +46,10 @@ data class LinkStats(
     val rssi: Int? = null,
     val linkMbps: Int? = null,
     val lowLatencyLock: Boolean? = null,
-    /** Sending over USB tethering (the Wi-Fi fields are then not the link's). */
+    /** Sending over USB (the Wi-Fi fields are then not the link's). */
     val usb: Boolean = false,
+    /** With [usb]: over the direct cable (accessory mode), not tethering. */
+    val usbDirect: Boolean = false,
     /** False when the PC has no virtual gamepad driver (pad input is dropped there). */
     val vigemOk: Boolean? = null,
 )

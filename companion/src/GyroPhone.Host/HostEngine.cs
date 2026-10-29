@@ -800,6 +800,16 @@ public sealed class HostEngine
         }
     }
 
+    public void SetUsbDirect(bool on)
+    {
+        lock (_lock)
+        {
+            if (on == _settings.UsbDirect) return;
+            _settings.UsbDirect = on;
+            _settingsDirty = true;
+        }
+    }
+
     /// <summary>Replaces the pad sink (e.g. "Retry driver" after installing ViGEmBus).</summary>
     public void SetPadSink(IPadSink pad)
     {

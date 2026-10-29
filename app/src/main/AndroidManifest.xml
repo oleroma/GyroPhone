@@ -6,6 +6,8 @@
     <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="true" />
     <!-- QR code pairing scans with the camera; the app works without one. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- The direct USB cable to the PC companion (Android Open Accessory); Wi-Fi works without it. -->
+    <uses-feature android:name="android.hardware.usb.accessory" android:required="false" />
 
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
@@ -47,6 +49,21 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+
+        <!-- The PC companion switched the phone to accessory mode: the system offers GyroPhone for it. -->
+        <activity
+            android:name=".ui.UsbAccessoryActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED"
+                android:resource="@xml/accessory_filter" />
         </activity>
 
         <!-- The QR scanner (zxing-android-embedded) follows the phone's orientation instead of forcing landscape. -->

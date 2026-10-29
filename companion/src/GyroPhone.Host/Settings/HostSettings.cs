@@ -14,6 +14,8 @@ public sealed class HostSettings
     public OutputMode OutputMode { get; set; } = OutputMode.Xbox360;
     public bool StartWithWindows { get; set; }
     public TrayClickAction TrayClick { get; set; } = TrayClickAction.OpenMainWindow;
+    /// <summary>Switch a phone on the USB cable to accessory mode and use it as a link (Windows only).</summary>
+    public bool UsbDirect { get; set; } = true;
     public List<PairedPhone> PairedPhones { get; set; } = [];
 
     public static HostSettings CreateDefault(string hostName)

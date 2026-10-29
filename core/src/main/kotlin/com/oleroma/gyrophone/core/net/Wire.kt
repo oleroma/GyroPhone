@@ -246,6 +246,9 @@ object LinkInfoFlags {
 
     /** The phone sends over USB tethering (the Wi-Fi fields are then not this link's). */
     const val USB = 2
+
+    /** With [USB]: the cable runs in accessory mode (direct USB), not tethering. */
+    const val USB_DIRECT = 4
 }
 
 /** HOST_STATUS flags. */
