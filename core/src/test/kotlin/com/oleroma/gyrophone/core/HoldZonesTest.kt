@@ -252,6 +252,11 @@ class HoldZonesTest {
         assertEquals(40f, out[1], 0.1f)
         // Down has nothing mapped.
         assertEquals(0, g.marks(0f, 5f, out, kinds))
+        // From start the line follows its direction: a slanted finger counts as its travel up.
+        assertEquals(true, g.onAxis)
+        assertEquals(Direction.UP, g.direction(0.866f * 10f, -5f))
+        assertEquals(5f, g.along(Direction.UP, 0.866f * 10f, -5f), 0.001f)
+        assertEquals(null, g.direction(0f, 5f))
     }
 
     @Test
