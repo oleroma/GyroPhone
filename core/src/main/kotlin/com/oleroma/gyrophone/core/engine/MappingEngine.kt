@@ -986,6 +986,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val g = gyroNow
             if (g.mode == GyroMode.SENSOR_OFF) return@synchronized 0
             val ratchets = if (ratchetMapped) ratchetedAxes() else 0
+            ratchetsHeld = ratchets
             var out = 0
             for (a in MOTION_AXES) {
                 // On without a ratchet: "ratchet disables" (ALWAYS) unless toggled, "ratchet enables" only toggled.
@@ -994,6 +995,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
             out
         }
+
+    /** The [gyroBit]s of the axes a held ratchet acts on, as of the last [gyroAxes] read. */
+    @Volatile var ratchetsHeld: Int = 0
+        private set
 
     /** The [gyroBit]s of the axes a held ratchet acts on. */
     private fun ratchetedAxes(): Int {

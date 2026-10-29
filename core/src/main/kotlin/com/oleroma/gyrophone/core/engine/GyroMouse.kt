@@ -2,7 +2,6 @@ package com.oleroma.gyrophone.core.engine
 
 import com.oleroma.gyrophone.core.hid.MouseState
 import com.oleroma.gyrophone.core.model.GamepadAxis
-import com.oleroma.gyrophone.core.model.GyroOrientation
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
@@ -14,7 +13,7 @@ import kotlin.math.sqrt
 
 /**
  * Gyro-to-mouse conversion (Alpakka / JoyShockMapper style). Converts the sensor's angular
- * velocity into yaw / pitch / roll for the chosen [GyroOrientation], routes each where the gyro
+ * velocity into yaw / pitch / roll for the way the screen is turned ([displayRotation]), routes each where the gyro
  * mappings say, optionally applies soft tightening and tiered smoothing at low speeds (both off
  * by default: raw gyro), scales to mouse counts and keeps the sub-count remainder so slow motion
  * is not lost.
@@ -24,7 +23,7 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
     /** Replaced whole from another thread (the UI); [route] reads it once per sample. */
     @Volatile var settings: GyroSettings = settings
 
-    /** Screen rotation in degrees (0/90/180/270), used when orientation is AUTO. */
+    /** Screen rotation in degrees (0/90/180/270): how the phone is held. */
     @Volatile var displayRotation: Int = 90
 
     private var remX = 0f
@@ -59,7 +58,6 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
             Resolved.LANDSCAPE_RIGHT -> Motion(yaw = x, pitch = y, roll = -z)
             Resolved.PORTRAIT -> Motion(yaw = -y, pitch = x, roll = -z)
             Resolved.PORTRAIT_UPSIDE_DOWN -> Motion(yaw = y, pitch = -x, roll = -z)
-            Resolved.FLAT -> Motion(yaw = -z, pitch = x, roll = y)
         }
     }
 
@@ -166,19 +164,13 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
         bufX.fill(0f); bufY.fill(0f)
     }
 
-    private enum class Resolved { LANDSCAPE_LEFT, LANDSCAPE_RIGHT, PORTRAIT, PORTRAIT_UPSIDE_DOWN, FLAT }
+    private enum class Resolved { LANDSCAPE_LEFT, LANDSCAPE_RIGHT, PORTRAIT, PORTRAIT_UPSIDE_DOWN }
 
-    private fun resolvedOrientation(): Resolved = when (settings.orientation) {
-        GyroOrientation.LANDSCAPE_LEFT -> Resolved.LANDSCAPE_LEFT
-        GyroOrientation.LANDSCAPE_RIGHT -> Resolved.LANDSCAPE_RIGHT
-        GyroOrientation.PORTRAIT -> Resolved.PORTRAIT
-        GyroOrientation.FLAT -> Resolved.FLAT
-        GyroOrientation.AUTO -> when (displayRotation) {
-            0 -> Resolved.PORTRAIT
-            180 -> Resolved.PORTRAIT_UPSIDE_DOWN
-            270 -> Resolved.LANDSCAPE_RIGHT
-            else -> Resolved.LANDSCAPE_LEFT
-        }
+    private fun resolvedOrientation(): Resolved = when (displayRotation) {
+        0 -> Resolved.PORTRAIT
+        180 -> Resolved.PORTRAIT_UPSIDE_DOWN
+        270 -> Resolved.LANDSCAPE_RIGHT
+        else -> Resolved.LANDSCAPE_LEFT
     }
 
     companion object {

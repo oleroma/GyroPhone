@@ -494,16 +494,6 @@ enum class GyroMode(val label: String) {
 }
 
 
-/** How the phone is held. AUTO follows the screen rotation. */
-@Serializable
-enum class GyroOrientation(val label: String) {
-    AUTO("Auto (screen rotation)"),
-    LANDSCAPE_LEFT("Landscape, top on the left"),
-    LANDSCAPE_RIGHT("Landscape, top on the right"),
-    PORTRAIT("Portrait"),
-    FLAT("Flat, screen up"),
-}
-
 /**
  * A button's own gyro sensitivities in mapping set [set] ([TouchControl.gyro]), null = not its
  * own: [sensitivity] for every axis, or an axis's own. While the button is held (the last pressed
@@ -600,7 +590,6 @@ data class GyroSettings(
     val yawSensitivity: Float? = null,
     val pitchSensitivity: Float? = null,
     val rollSensitivity: Float? = null,
-    val orientation: GyroOrientation = GyroOrientation.AUTO,
     /** Below this speed (deg/s) motion is scaled down, killing hand jitter. 0 (default, raw gyro) disables. */
     val tighteningThreshold: Float = 0f,
     /** Below this speed (deg/s) motion is averaged over a short window. 0 (default, raw gyro) disables. */

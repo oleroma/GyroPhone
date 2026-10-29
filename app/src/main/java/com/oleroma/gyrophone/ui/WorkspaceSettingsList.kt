@@ -17,7 +17,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 import com.oleroma.gyrophone.core.model.GyroMode
-import com.oleroma.gyrophone.core.model.GyroOrientation
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.Profile
 
@@ -174,16 +173,6 @@ internal fun WorkspaceSettings(
                 GyroSettings.MIN_SHAKE_STRENGTH..GyroSettings.MAX_SHAKE_STRENGTH, 1f, own(g("shakeStrength")), reset(g("shakeStrength")),
                 hint = "How hard a jolt counts as a shake.",
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(shakeStrength = v)) } }
-            OverrideRow("Held as", own(g("orientation")), reset(g("orientation"))) {
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    GyroOrientation.entries.forEach { o ->
-                        FilterChip(
-                            selected = ws.gyro.orientation == o,
-                            onClick = { editWs { it.copy(gyro = it.gyro.copy(orientation = o)) } },
-                            label = { Text(o.label) })
-                    }
-                }
-            }
             // Both filters default to off: raw gyro. Calibration only subtracts a fixed resting bias
             // and suits the phone, not a layer: the whole workspace's only.
             run {

@@ -5,7 +5,6 @@ import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.hid.MouseState
 import com.oleroma.gyrophone.core.model.ButtonGyro
 import com.oleroma.gyrophone.core.model.GamepadAxis
-import com.oleroma.gyrophone.core.model.GyroOrientation
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
@@ -72,7 +71,8 @@ class GyroMappingsTest {
     }
 
     @Test fun routingSendsMouseScrollAndSticks() {
-        val g = GyroMouse(GyroSettings(orientation = GyroOrientation.LANDSCAPE_RIGHT, sensitivity = GyroSettings.DEFAULT_SENSITIVITY))
+        val g = GyroMouse(GyroSettings(sensitivity = GyroSettings.DEFAULT_SENSITIVITY))
+        g.displayRotation = 270
         // Landscape right: yaw = x, pitch = y (rad/s).
         val rad = (Math.PI / 180).toFloat()
         val routes = listOf(

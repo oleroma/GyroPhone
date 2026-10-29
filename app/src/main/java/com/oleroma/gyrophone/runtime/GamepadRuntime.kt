@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import com.oleroma.gyrophone.core.engine.GyroCalibration
 import com.oleroma.gyrophone.core.engine.GyroMouse
+import com.oleroma.gyrophone.core.engine.GyroPose
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.TiltShake
 import com.oleroma.gyrophone.core.engine.Touchpad
@@ -21,6 +22,7 @@ import com.oleroma.gyrophone.core.model.LibraryButton
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.WorkspaceMappings
 import com.oleroma.gyrophone.core.model.Mapping
+import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.NavCorners
@@ -161,8 +163,19 @@ class GamepadRuntime(context: Context) {
 
     fun setTouchVisuals(v: TouchVisuals) {
         prefs.edit().putString(KEY_TOUCH_VISUALS, visualsJson.encodeToString(TouchVisuals.serializer(), v)).apply()
+        if (v.gyroPhone && !poseOn) gyroPose.reset()
+        poseOn = v.gyroPhone
         _touchVisuals.value = v
     }
+
+    /** The pad's gyro phone view ([TouchVisuals.gyroPhone]): turned by the gyro axes that move, back to neutral on each ratchet press. */
+    val gyroPose = GyroPose()
+
+    /** [gyroPose] is shown: only then do gyro samples turn it. */
+    @Volatile private var poseOn = _touchVisuals.value.gyroPhone
+
+    /** Ratchets held at the last gyro sample: a new one resets [gyroPose]. */
+    private var poseRatchets = 0
 
     private val _capsuleOrder = MutableStateFlow(prefs.getString(KEY_CAPSULE_ORDER, "") ?: "")
 
@@ -764,6 +777,21 @@ class GamepadRuntime(context: Context) {
         private const val UNAVAILABLE = "Unavailable"
     }
 
+    /** Turns [gyroPose] by the gyro [axes] that move, after a reset if a ratchet was just pressed. */
+    private fun turnPose(x: Float, y: Float, z: Float, dt: Float, axes: Int) {
+        val ratchets = if (inputAllowed) engine.ratchetsHeld else 0
+        if (ratchets and poseRatchets.inv() != 0) gyroPose.reset()
+        poseRatchets = ratchets
+        if (axes == 0 || dt == 0f) return
+        val m = gyroMouse.motion(x, y, z)
+        gyroPose.rotate(
+            if (axes and MappingEngine.gyroBit(MotionAxis.YAW) != 0) m.yaw else 0f,
+            if (axes and MappingEngine.gyroBit(MotionAxis.PITCH) != 0) m.pitch else 0f,
+            if (axes and MappingEngine.gyroBit(MotionAxis.ROLL) != 0) m.roll else 0f,
+            dt,
+        )
+    }
+
     /** The gyro deflects game pad axes now ([MappingEngine.setGyroAxes]): they go back to rest when it stops. */
     private var gyroPadSet = false
 
@@ -789,6 +817,7 @@ class GamepadRuntime(context: Context) {
         }
         val axes = if (inputAllowed) engine.gyroAxes else 0
         val active = axes != 0
+        if (poseOn) turnPose(x - biasX, y - biasY, z - biasZ, dt, axes)
         if (active) {
             // A layer in use may set gyro settings of its own.
             val gs = engine.gyroSettings

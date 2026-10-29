@@ -155,6 +155,11 @@ private fun AppTab(runtime: GamepadRuntime) {
                     "of that direction: a bar at Swipe after, dots at Hold after and each zone's end, a ring on a dragged " +
                     "start point. The marks it passed fill in.",
         )
+        SwitchRow("Show the gyro phone", visuals.gyroPhone) { runtime.setTouchVisuals(visuals.copy(gyroPhone = it)) }
+        Hint(
+            "A small 3D phone in the middle of the touchpad turns the way the gyro moves the mouse. Each ratchet " +
+                    "press sets it straight again, so it shows how far you turned since then.",
+        )
 
         Text("Corners", style = MaterialTheme.typography.titleSmall)
         var cornerOpacity by remember(profile.id) { mutableStateOf(profile.cornerOpacity) }
@@ -187,6 +192,11 @@ private fun AppTab(runtime: GamepadRuntime) {
                     label = { Text(o.label) })
             }
         }
+        Hint(
+            "Auto, Landscape and Portrait follow the phone's rotation lock: unlocked they turn with the phone " +
+                    "(Landscape and Portrait only between their two sides), locked they stay as they are. The forced " +
+                    "ones never turn. The gyro always follows the way the screen is turned.",
+        )
 
         Text("Controllers on phone", style = MaterialTheme.typography.titleSmall)
         if (controllers.isEmpty()) Text("None. Attach a GameSir X5 or any gamepad.")
