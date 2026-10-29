@@ -107,12 +107,27 @@ data class TouchControl(
     val layer: TouchLayer = TouchLayer.AUTO,
     /** A finger landing here while another control is in front also works this control. */
     val sharesTouches: Boolean = false,
+    /** BUTTON: its own gyro sensitivities while held, per mapping set ([gyroIn]); none = the workspace's. */
+    val gyro: List<ButtonGyro> = emptyList(),
 ) {
     /**
      * Every button is a touch surface: its fingers drive the touch inputs ([InputSource.Surface]
      * with its id) it maps or inherits from the workspace, its one-finger hold being its press.
      */
     val swipes: Boolean get() = kind == TouchKind.BUTTON
+
+    /**
+     * Its gyro sensitivities with mapping sets [sets] in use (bottom to top, Base first): each
+     * set's own over the ones below.
+     */
+    fun gyroIn(sets: List<Int>): ButtonGyro =
+        sets.fold(ButtonGyro()) { r, id -> gyro.firstOrNull { it.set == id }?.let { r.under(it) } ?: r }
+
+    /** Copy with set [set]'s gyro sensitivities changed by [change] (one that sets nothing goes). */
+    fun withGyro(set: Int, change: (ButtonGyro) -> ButtonGyro): TouchControl {
+        val g = change(gyro.firstOrNull { it.set == set } ?: ButtonGyro(set))
+        return copy(gyro = gyro.filterNot { it.set == set } + listOfNotNull(g.takeIf { it.any }))
+    }
 
     /** The long-press time in effect (ms), its own or [w]'s. */
     fun longPress(w: Workspace): Int =
@@ -404,6 +419,51 @@ enum class GyroOrientation(val label: String) {
     LANDSCAPE_RIGHT("Landscape, top on the right"),
     PORTRAIT("Portrait"),
     FLAT("Flat, screen up"),
+}
+
+/**
+ * A button's own gyro sensitivities in mapping set [set] ([TouchControl.gyro]), null = not its
+ * own: [sensitivity] for every axis, or an axis's own. While the button is held (the last pressed
+ * of several) they are the gyro's, over the workspace's, whatever the button maps.
+ */
+@Serializable
+data class ButtonGyro(
+    val set: Int = MappingSet.BASE,
+    val sensitivity: Float? = null,
+    val yaw: Float? = null,
+    val pitch: Float? = null,
+    val roll: Float? = null,
+) {
+    /** It sets something. */
+    val any: Boolean get() = sensitivity != null || yaw != null || pitch != null || roll != null
+
+    /** Axis [a]'s own sensitivity. */
+    fun own(a: MotionAxis): Float? = when (a) {
+        MotionAxis.YAW -> yaw
+        MotionAxis.PITCH -> pitch
+        MotionAxis.ROLL -> roll
+        MotionAxis.NONE -> null
+    }
+
+    /** Copy with axis [a]'s own sensitivity [v]. */
+    fun with(a: MotionAxis, v: Float?): ButtonGyro = when (a) {
+        MotionAxis.YAW -> copy(yaw = v)
+        MotionAxis.PITCH -> copy(pitch = v)
+        MotionAxis.ROLL -> copy(roll = v)
+        MotionAxis.NONE -> this
+    }
+
+    /** [o]'s values over these (a layer over the ones below). */
+    fun under(o: ButtonGyro) = ButtonGyro(
+        set, o.sensitivity ?: sensitivity, o.yaw ?: yaw, o.pitch ?: pitch, o.roll ?: roll,
+    )
+
+    /** Axis [a]'s sensitivity with these over [g]: its own, these' shared, then [g]'s. */
+    fun sensitivityOf(a: MotionAxis, g: GyroSettings): Float = own(a) ?: sensitivity ?: g.sensitivityOf(a)
+
+    /** [g] with these over it. */
+    fun over(g: GyroSettings): GyroSettings = if (!any) g else
+        g.copy(yawSensitivity = sensitivityOf(MotionAxis.YAW, g), pitchSensitivity = sensitivityOf(MotionAxis.PITCH, g), rollSensitivity = sensitivityOf(MotionAxis.ROLL, g))
 }
 
 /** Rotation of the phone in the player's frame. */

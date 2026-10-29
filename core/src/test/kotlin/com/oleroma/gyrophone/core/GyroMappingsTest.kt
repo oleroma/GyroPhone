@@ -3,11 +3,13 @@ package com.oleroma.gyrophone.core
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.hid.MouseState
+import com.oleroma.gyrophone.core.model.ButtonGyro
 import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.GyroOrientation
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
+import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
@@ -85,5 +87,44 @@ class GyroMappingsTest {
         assertEquals(0.5f, r.pad[GamepadAxis.LX.ordinal], 1e-4f)
         assertEquals(-1f / 3f, r.pad[GamepadAxis.LY.ordinal], 1e-4f) // pitching up pushes the stick up
         assertEquals(0, g.route(45f * rad, 0f, 0f, 0.5f, routes, moveX = false, moveY = true).dx) // ratchet on X
+    }
+
+    @Test fun aHeldButtonsSensitivityIsTheGyrosLastPressedWinsAndLayersOverride() {
+        val ws = Workspace(
+            "w", "w",
+            touchControls = listOf(
+                TouchControl("aim", TouchKind.BUTTON, "aim", 0.5f, 0.5f, gyro = listOf(ButtonGyro(sensitivity = 4f), ButtonGyro(1, sensitivity = 2f))),
+                TouchControl("roll", TouchKind.BUTTON, "roll", 0.5f, 0.5f, gyro = listOf(ButtonGyro(roll = 40f))),
+                TouchControl("plain", TouchKind.BUTTON, "plain", 0.5f, 0.5f),
+            ),
+            gyro = GyroSettings(sensitivity = 10f, yawSensitivity = 12f),
+            sets = listOf(MappingSet(1)),
+            mappings = listOf(Mapping(InputSource.Touch("plain"), OutputTarget.Layer(1, whileHeld = true))),
+        )
+        val e = MappingEngine(single(ws))
+        assertEquals(12f, e.gyroSettings.sensitivityOf(MotionAxis.YAW))
+        e.setTouch("aim", true)
+        // The button's own Sensitivity beats the workspace's per-axis one.
+        assertEquals(4f, e.gyroSettings.sensitivityOf(MotionAxis.YAW))
+        assertEquals(4f, e.gyroSettings.sensitivityOf(MotionAxis.ROLL))
+        e.setTouch("roll", true)
+        // Last pressed wins: roll its own, the rest the workspace's.
+        assertEquals(40f, e.gyroSettings.sensitivityOf(MotionAxis.ROLL))
+        assertEquals(12f, e.gyroSettings.sensitivityOf(MotionAxis.YAW))
+        assertEquals(10f, e.gyroSettings.sensitivityOf(MotionAxis.PITCH))
+        e.setTouch("roll", false)
+        e.setTouch("plain", true) // layer 1: aim's layer value
+        assertEquals(2f, e.gyroSettings.sensitivityOf(MotionAxis.PITCH))
+        e.setTouch("plain", false)
+        e.setTouch("aim", false)
+        assertEquals(10f, e.gyroSettings.sensitivityOf(MotionAxis.PITCH))
+    }
+
+    @Test fun aButtonsGyroSettingsGoWhenEmpty() {
+        val c = TouchControl("a", TouchKind.BUTTON, "a", 0.5f, 0.5f).withGyro(1) { it.copy(yaw = 3f) }
+        assertEquals(listOf(ButtonGyro(1, yaw = 3f)), c.gyro)
+        assertEquals(3f, c.gyroIn(listOf(MappingSet.BASE, 1)).yaw)
+        assertEquals(null, c.gyroIn(listOf(MappingSet.BASE)).yaw)
+        assertTrue(c.withGyro(1) { it.copy(yaw = null) }.gyro.isEmpty())
     }
 }

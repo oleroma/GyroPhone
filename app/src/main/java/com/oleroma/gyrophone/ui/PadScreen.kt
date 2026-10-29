@@ -1806,7 +1806,7 @@ fun PadScreen(
                         onZoneSettings = { a, b ->
                             updateControl(sel.id) { it.copy(surface = it.ownSurface.copy(holdZones = a, dirHoldZones = b)) }
                         },
-                        settings = touchControlSettings(sel, ws) { change -> updateControl(sel.id, change) },
+                        settings = touchControlSettings(sel, ws, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE) { change -> updateControl(sel.id, change) },
                         inherited = if (sel.kind == TouchKind.BUTTON) {
                             Inheritance.inherited(Inheritance.workspace(ws, d.defaults), emptyList(), sel.id, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE)
                         } else emptyList(),

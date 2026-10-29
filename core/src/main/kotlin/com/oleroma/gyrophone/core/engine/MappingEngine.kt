@@ -33,6 +33,7 @@ import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.layered
+import com.oleroma.gyrophone.core.model.ButtonGyro
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.MappingProfiles
@@ -99,8 +100,31 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     @Volatile
     private var eff: Workspace = ws
 
-    /** The gyro settings in effect now: the workspace's, or a layer's in use. */
-    val gyroSettings: GyroSettings get() = eff.gyro
+    /**
+     * The gyro settings in effect now: the workspace's, or a layer's in use, with the sensitivities
+     * of the last pressed button held that has its own ([TouchControl.gyro]) over them.
+     */
+    val gyroSettings: GyroSettings get() = gyroNow
+
+    @Volatile
+    private var gyroNow: GyroSettings = ws.gyro
+
+    /** Sets [gyroNow] for the settings in effect and the buttons held. */
+    private fun updateGyroNow() {
+        val sets = buildList {
+            add(MappingSet.BASE)
+            if (layerSet != MappingSet.BASE) add(layerSet)
+            for (o in layerOverrides) if (o != layerSet && o != MappingSet.BASE) add(o)
+        }
+        var held: ButtonGyro? = null
+        if (ws.touchControls.any { it.gyro.isNotEmpty() }) for (id in pressOrder) {
+            val c = ws.touchControls.firstOrNull { it.id == id } ?: continue
+            if (c.gyro.isEmpty()) continue
+            val g = c.gyroIn(sets)
+            if (g.any) held = g
+        }
+        gyroNow = held?.over(eff.gyro) ?: eff.gyro
+    }
 
     /** Touch mappings of the active workspace in use (the touch source group): see [applyLayers]. */
     private var touchMappings: List<Mapping> = emptyList()
@@ -478,6 +502,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (d in deviceList) d.clear()
         anyDevice.clear()
         touches.clear(); pressOrder.clear(); setTouchHeld.clear(); touchSticks.clear()
+        updateGyroNow()
         for (s in surfaceList) s.reset()
         for (a in areas) a.clear()
         hapticWas.clear(); hapticNow.clear(); hapticSteps.clear()
@@ -1623,6 +1648,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         for (d in deviceList) for ((code, g) in d.gestures) keyTimes(code, g)
         for ((code, g) in anyDevice.gestures) keyTimes(code, g)
+        updateGyroNow()
     }
 
     /** Key [code]'s gesture times: its own from the pinned preset, else those in effect ([eff]). */
@@ -1637,7 +1663,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun press(id: String) {
         val n = touches[id] ?: 0
         touches[id] = n + 1
-        if (n == 0) pressOrder.add(id)
+        if (n == 0) {
+            pressOrder.add(id); updateGyroNow()
+        }
         if (n == 0 && tapList.isNotEmpty()) controlDown(id, clock())
     }
 
@@ -1648,6 +1676,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         touches.remove(id)
         pressOrder.remove(id)
+        updateGyroNow()
         if (tapList.isNotEmpty()) controlUp(id, clock())
     }
 
