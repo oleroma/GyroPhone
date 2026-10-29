@@ -14,7 +14,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,6 +37,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -88,6 +88,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.oleroma.gyrophone.core.hid.HidUsage
@@ -279,8 +280,6 @@ private fun Modifier.dragSource(
     key: Any?,
     coords: Array<LayoutCoordinates?>,
     longPress: Boolean = true,
-    /** Also a plain sideways drag starts it (up and down still scroll). */
-    sideways: Boolean = false,
     onStart: (Offset) -> Unit,
 ): Modifier = this
     .onGloballyPositioned { coords[0] = it }
@@ -292,11 +291,6 @@ private fun Modifier.dragSource(
             detectDragGestures(onDragStart = begin) { change, _ -> change.consume() }
         }
     }
-    .then(
-        if (!sideways) Modifier else Modifier.pointerInput(key) {
-            detectHorizontalDragGestures(onDragStart = { p -> coords[0]?.let { onStart(it.localToRoot(p)) } }) { change, _ -> change.consume() }
-        },
-    )
 
 /**
  * Stands for the workspace touchpad in the control screens: a tap or long press on empty space
@@ -446,6 +440,9 @@ internal fun ControlMappingScreen(
     val cardBounds = remember { mutableStateMapOf<InputSource, Rect>() }
     // Each card's row items (chips and dividers), by the card's source; read only by drag code.
     val itemBounds = remember { HashMap<Pair<InputSource, RowItem>, Rect>() }
+    // Each card's sideways scrolling row and where it is, for scrolling it while dragging.
+    val rowScrolls = remember { HashMap<InputSource, ScrollState>() }
+    val rowBounds = remember { HashMap<InputSource, Rect>() }
     val zonesWork = zoneSettings != null && !(zoneSettings.dragStart && zoneSettings.holdMode == HoldMode.FROM_START)
     val zonesNow by rememberUpdatedState(zonesWork)
     var actionsBounds by remember { mutableStateOf(Rect.Zero) }
@@ -513,8 +510,8 @@ internal fun ControlMappingScreen(
     fun zoneIn(row: List<RowItem>, at: Int) = row.take(at).count { it is RowItem.Divider || it is RowItem.End }
 
     /**
-     * Updates [landing] from the finger: in the card under it, after every row item that comes
-     * before the finger in reading order (above its line, or on its line and left of it). Past
+     * Updates [landing] from the finger: in the card under it, after every row item whose centre
+     * is left of it (scrolled away ones too). Past
      * the end divider is a new zone, while there is room for one.
      */
     fun place() {
@@ -534,7 +531,7 @@ internal fun ControlMappingScreen(
         val p = dragPos
         var at = row.count { item ->
             val r = itemBounds[src to item] ?: return@count false
-            r.bottom < p.y || (p.y >= r.top && r.center.x < p.x)
+            r.center.x < p.x
         }
         val end = row.indexOf(RowItem.End)
         if (end >= 0) at = at.coerceAtMost(if (d is Dragged.Target && addsZone(card)) end + 1 else end)
@@ -692,6 +689,7 @@ internal fun ControlMappingScreen(
         if (!dragging) return@LaunchedEffect
         val edge = with(density) { 64.dp.toPx() }
         val maxStep = with(density) { 18.dp.toPx() }
+        val rowEdge = with(density) { 48.dp.toPx() }
         while (true) {
             withFrameNanos { }
             val b = actionsBounds
@@ -704,6 +702,17 @@ internal fun ControlMappingScreen(
                 else -> 0f
             }
             if (f != 0f) listState.scrollBy(f * abs(f) * maxStep)
+            // Near the left or right end of the row it lands in, scroll that row.
+            landing?.first?.sources?.first()?.let { src ->
+                val rb = rowBounds[src] ?: return@let
+                val sc = rowScrolls[src] ?: return@let
+                val h = when {
+                    p.x < rb.left + rowEdge -> -((rb.left + rowEdge - p.x) / rowEdge).coerceAtMost(1f)
+                    p.x > rb.right - rowEdge -> ((p.x - (rb.right - rowEdge)) / rowEdge).coerceAtMost(1f)
+                    else -> 0f
+                }
+                if (h != 0f) sc.scrollBy(h * abs(h) * maxStep)
+            }
             reorder()
             place()
         }
@@ -776,10 +785,14 @@ internal fun ControlMappingScreen(
                     val row = liveRow(input)
                     val l = landing
                     val landsHere = l != null && l.first.sources.first() == src
+                    val rowScroll = rememberScrollState()
+                    rowScrolls[src] = rowScroll
                     DisposableEffect(src) {
                         onDispose {
                             cardBounds.remove(src)
                             itemBounds.keys.removeAll { it.first == src }
+                            rowScrolls.remove(src)
+                            rowBounds.remove(src)
                         }
                     }
                     ActionCard(
@@ -806,6 +819,8 @@ internal fun ControlMappingScreen(
                             if (zoneSettings == null) null else "Drag start point is on, so only zone 1 works."
                         } else null,
                         onBounds = { b -> if (cardBounds[src] != b) cardBounds[src] = b },
+                        rowScroll = rowScroll,
+                        onRowBounds = { b -> rowBounds[src] = b },
                         onItemBounds = { item, b -> itemBounds[src to item] = b },
                         onDivider = { k -> if (onZoneSettings != null) zoneDialog = input to k - 1 },
                         onDividerDrag = { k, at -> startDrag(Dragged.Divider(input, k), at) },
@@ -1191,13 +1206,16 @@ private fun ActionCard(
     onBounds: (Rect) -> Unit,
     /** Where each row item is, for placing drags. */
     onItemBounds: (RowItem, Rect) -> Unit,
+    /** The row scrolls sideways instead of wrapping. */
+    rowScroll: ScrollState,
+    onRowBounds: (Rect) -> Unit,
     /** A tap on the divider ending zone k - 1 (k from 1): its settings. */
     onDivider: (Int) -> Unit,
-    /** A divider (not the end one) starts moving. */
+    /** A long press on a divider (not the end one) starts moving it. */
     onDividerDrag: (Int, Offset) -> Unit,
     onClick: () -> Unit,
     onRemove: (Int, OutputTarget) -> Unit,
-    /** A long press or sideways drag on a chip starts dragging it. */
+    /** A long press on a chip starts dragging it. */
     onChipDrag: (Int, OutputTarget, Offset) -> Unit,
     /** The ⠿ handle starts moving the card. */
     onHandleDrag: (Offset) -> Unit,
@@ -1279,9 +1297,13 @@ private fun ActionCard(
                     color = colors.onSurfaceVariant,
                 )
             } else {
-                FlowRow(
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .onGloballyPositioned { onRowBounds(it.boundsInRoot()) }
+                        .horizontalScroll(rowScroll),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     @Composable
                     fun othersOf(z: Int) {
@@ -1318,8 +1340,8 @@ private fun ActionCard(
                             val fg = colors.onSecondaryContainer
                             Row(
                                 Modifier
-                                    .onGloballyPositioned { onItemBounds(item, it.boundsInRoot()) }
-                                    .dragSource(z to t, chipCoords, sideways = true) { chipDrag(z, t, it) }
+                                    .onGloballyPositioned { onItemBounds(item, Rect(it.positionInRoot(), it.size.toSize())) }
+                                    .dragSource(z to t, chipCoords) { chipDrag(z, t, it) }
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(
                                         if (setId == MappingSet.BASE) colors.secondaryContainer else setColor(setId).copy(alpha = 0.35f),
@@ -1354,8 +1376,8 @@ private fun ActionCard(
                                 ZoneDivider(
                                     k, end = false, addZone = false,
                                     Modifier
-                                        .onGloballyPositioned { onItemBounds(item, it.boundsInRoot()) }
-                                        .dragSource(item, coords, sideways = true) { dividerDrag(item.k, it) },
+                                        .onGloballyPositioned { onItemBounds(item, Rect(it.positionInRoot(), it.size.toSize())) }
+                                        .dragSource(item, coords) { dividerDrag(item.k, it) },
                                 ) { onDivider(k) }
                             }
                         }
@@ -1367,7 +1389,7 @@ private fun ActionCard(
                             key(item) {
                                 ZoneDivider(
                                     k, end = true, addZone = addZone,
-                                    Modifier.onGloballyPositioned { onItemBounds(item, it.boundsInRoot()) },
+                                    Modifier.onGloballyPositioned { onItemBounds(item, Rect(it.positionInRoot(), it.size.toSize())) },
                                 ) { onDivider(k) }
                             }
                         }
