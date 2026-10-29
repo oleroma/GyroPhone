@@ -1,7 +1,6 @@
 package com.oleroma.gyrophone.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -118,7 +116,6 @@ private fun PadMenu(
     onWorkspaceDeleted: () -> Unit,
 ) {
     val page = stack.last()
-    fun open(p: PadMenuPage) = onNavigate(stack + p)
     val back = { onNavigate(stack.dropLast(1)) }
     /** Set by a page with unsaved changes: it asks before running the given way out. */
     var leaveGuard by remember { mutableStateOf<((() -> Unit) -> Unit)?>(null) }
@@ -151,7 +148,7 @@ private fun PadMenu(
         HorizontalDivider()
         val content = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)
         when (page) {
-            PadMenuPage.Root -> MenuList(runtime, content, onOpen = { open(it) }, onDeleted = onWorkspaceDeleted)
+            PadMenuPage.Root -> MenuList(runtime, content, onDeleted = onWorkspaceDeleted)
             PadMenuPage.Connection -> ConnectScreen(runtime, onRetry)
             PadMenuPage.AppSettings -> AppSettingsScreen(runtime, content)
             PadMenuPage.Devices -> Unit
@@ -165,7 +162,7 @@ private fun PadMenu(
  * then its gyro, controls and haptics. Settings of the whole app are on the Settings page instead.
  */
 @Composable
-private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onOpen: (PadMenuPage) -> Unit, onDeleted: () -> Unit) {
+private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () -> Unit) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
     val current = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
@@ -189,32 +186,6 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onOpen: (PadMe
             if (profile.workspaces.size > 1) {
                 OutlinedButton(onClick = { copying = true }) { Text("Copy mappings from…") }
             }
-        }
-
-        val pinned = profile.devicePresets.firstOrNull { it.id == ws.devicePreset }
-        RememberedSection(
-            runtime,
-            "workspace.DevicePreset",
-            "Controller, keyboard and mouse",
-            defaultOpen = true,
-            subtitle = pinned?.name ?: "No preset: they do nothing here",
-        ) {
-            Hint("The device preset this workspace uses. Presets are made and mapped from the Controller capsule.")
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = pinned == null,
-                    onClick = { runtime.editActiveProfile { p -> p.updateWorkspace(current) { it.copy(devicePreset = null) } } },
-                    label = { Text("None") },
-                )
-                for (preset in profile.devicePresets) {
-                    FilterChip(
-                        selected = preset.id == pinned?.id,
-                        onClick = { runtime.editActiveProfile { p -> p.updateWorkspace(current) { it.copy(devicePreset = preset.id) } } },
-                        label = { Text(preset.name, maxLines = 1) },
-                    )
-                }
-            }
-            OutlinedButton(onClick = { onOpen(PadMenuPage.Devices) }) { Text("Open Controller") }
         }
 
         WorkspaceSettings(runtime, profile, current)

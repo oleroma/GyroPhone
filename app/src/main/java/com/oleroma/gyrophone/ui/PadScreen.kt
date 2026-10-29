@@ -43,6 +43,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -1606,6 +1608,33 @@ fun PadScreen(
                                     OutlinedButton(
                                         contentPadding = compact,
                                         onClick = { snap = true }) { Text("Snap: off") }
+                                }
+                                // The controller, keyboard and mouse preset this workspace uses, or none.
+                                Box {
+                                    var picking by remember { mutableStateOf(false) }
+                                    val presets = (draft ?: profile).devicePresets
+                                    val pinned = presets.firstOrNull { it.id == ws.devicePreset }
+                                    OutlinedButton(contentPadding = compact, onClick = { picking = true }) {
+                                        Text("Devices: " + (pinned?.name ?: "None") + " ▾")
+                                    }
+                                    DropdownMenu(expanded = picking, onDismissRequest = { picking = false }) {
+                                        DropdownMenuItem(
+                                            text = { Text("None") },
+                                            onClick = {
+                                                picking = false
+                                                editWorkspace { it.copy(devicePreset = null) }
+                                            },
+                                        )
+                                        for (preset in presets) {
+                                            DropdownMenuItem(
+                                                text = { Text(preset.name) },
+                                                onClick = {
+                                                    picking = false
+                                                    editWorkspace { it.copy(devicePreset = preset.id) }
+                                                },
+                                            )
+                                        }
+                                    }
                                 }
                                 Text(
                                     ws.name + " · " + if (portrait) "portrait layout" else "landscape layout",

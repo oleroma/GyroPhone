@@ -128,57 +128,79 @@ object PhysicalLayouts {
         BindableInput("Down", listOf(InputSource.Axis(y, AxisHalf.POSITIVE))),
     ) + buttonInputs(listOf(click), "Click").let { b -> b.map { if (it.label == "Click") it else it.copy(label = "Click " + it.label.lowercase()) } }
 
-    private val dpadInputs = listOf(
-        BindableInput("Up", listOf(InputSource.Key(AndroidKey.DPAD_UP), InputSource.Axis(AndroidAxis.HAT_Y, AxisHalf.NEGATIVE))),
-        BindableInput("Down", listOf(InputSource.Key(AndroidKey.DPAD_DOWN), InputSource.Axis(AndroidAxis.HAT_Y, AxisHalf.POSITIVE))),
-        BindableInput("Left", listOf(InputSource.Key(AndroidKey.DPAD_LEFT), InputSource.Axis(AndroidAxis.HAT_X, AxisHalf.NEGATIVE))),
-        BindableInput("Right", listOf(InputSource.Key(AndroidKey.DPAD_RIGHT), InputSource.Axis(AndroidAxis.HAT_X, AxisHalf.POSITIVE))),
+    /** A D-pad direction: its key (with gestures) and the hat axis half some pads report instead. */
+    private fun dpad(label: String, code: Int, hat: Int, half: AxisHalf): List<BindableInput> {
+        val b = buttonInputs(listOf(code))
+        return listOf(b[0].copy(sources = b[0].sources + InputSource.Axis(hat, half))) + b.drop(1)
+    }
+
+    /** The back buttons (P1 and P2 on the right grip, P3 and P4 on the left) and the keys each may come as. */
+    val paddles: Map<String, List<Int>> = mapOf(
+        "p1" to listOf(AndroidKey.BUTTON_C, AndroidKey.BUTTON_1),
+        "p2" to listOf(AndroidKey.BUTTON_Z, AndroidKey.BUTTON_1 + 1),
+        "p3" to listOf(AndroidKey.BUTTON_1 + 2),
+        "p4" to listOf(AndroidKey.BUTTON_1 + 3),
     )
 
-    /** Keys a controller may report for its back buttons ([paddle1], [paddle2]). */
-    val paddleKeys: Set<Int> = setOf(AndroidKey.BUTTON_C, AndroidKey.BUTTON_1, AndroidKey.BUTTON_Z, AndroidKey.BUTTON_1 + 1)
+    /** The controller drawings' box: width / height (a DualSense seen from above). */
+    const val CONTROLLER_ASPECT = 1.5f
 
-    /** The controller's top: sticks, D-pad, face and system buttons ([aspect] 1.45, Xbox-like). */
+    /** The top view's touchpad, drawn but not mapped: left, top, right, bottom. */
+    val TOUCHPAD = listOf(0.335f, 0.06f, 0.665f, 0.40f)
+
+    /** The controller's top, laid out as a DualSense: D-pad and face buttons high, both sticks low. */
     val controllerFront: ControllerDiagram = run {
-        val a = 1.45f
+        val a = CONTROLLER_ASPECT
         fun round(id: String, label: String, kind: PhysicalKind, x: Float, y: Float, d: Float, inputs: List<BindableInput>) =
             PhysicalControl(id, label, kind, x, y, d / a, d, inputs)
         fun face(id: String, label: String, code: Int, dx: Float, dy: Float) =
-            round(id, label, PhysicalKind.FACE, 0.73f + dx * 0.105f / a, 0.42f + dy * 0.105f, 0.095f, buttonInputs(listOf(code)))
+            round(id, label, PhysicalKind.FACE, 0.80f + dx * 0.065f, 0.34f + dy * 0.065f * a, 0.088f, buttonInputs(listOf(code)))
+        // D-pad: four keys around its centre, each a square of side [k].
+        val (cx, cy, k) = Triple(0.20f, 0.34f, 0.088f)
+        fun pad(id: String, label: String, code: Int, dx: Float, dy: Float, hat: Int, half: AxisHalf) = PhysicalControl(
+            id, label, PhysicalKind.DPAD, cx + dx * k / a, cy + dy * k, k / a, k, dpad(label, code, hat, half),
+        )
         ControllerDiagram(
-            "Controller · top", DiagramStyle.XBOX, a,
+            "Top", DiagramStyle.XBOX, a,
             listOf(
                 face("a", "A", AndroidKey.BUTTON_A, 0f, 1f),
                 face("b", "B", AndroidKey.BUTTON_B, 1f, 0f),
                 face("x", "X", AndroidKey.BUTTON_X, -1f, 0f),
                 face("y", "Y", AndroidKey.BUTTON_Y, 0f, -1f),
-                round("ls", "LS", PhysicalKind.STICK, 0.27f, 0.42f, 0.21f, stickInputs(AndroidAxis.X, AndroidAxis.Y, AndroidKey.BUTTON_THUMBL)),
-                round("rs", "RS", PhysicalKind.STICK, 0.62f, 0.66f, 0.21f, stickInputs(AndroidAxis.Z, AndroidAxis.RZ, AndroidKey.BUTTON_THUMBR)),
-                round("dpad", "D-pad", PhysicalKind.DPAD, 0.38f, 0.66f, 0.20f, dpadInputs),
-                round("select", "View", PhysicalKind.SYSTEM, 0.43f, 0.42f, 0.065f, buttonInputs(listOf(AndroidKey.BUTTON_SELECT))),
-                round("start", "Menu", PhysicalKind.SYSTEM, 0.57f, 0.42f, 0.065f, buttonInputs(listOf(AndroidKey.BUTTON_START))),
-                round("home", "Home", PhysicalKind.SYSTEM, 0.5f, 0.27f, 0.10f, buttonInputs(listOf(AndroidKey.BUTTON_MODE))),
+                round("ls", "LS", PhysicalKind.STICK, 0.35f, 0.56f, 0.20f, stickInputs(AndroidAxis.X, AndroidAxis.Y, AndroidKey.BUTTON_THUMBL)),
+                round("rs", "RS", PhysicalKind.STICK, 0.65f, 0.56f, 0.20f, stickInputs(AndroidAxis.Z, AndroidAxis.RZ, AndroidKey.BUTTON_THUMBR)),
+                pad("up", "↑", AndroidKey.DPAD_UP, 0f, -1f, AndroidAxis.HAT_Y, AxisHalf.NEGATIVE),
+                pad("down", "↓", AndroidKey.DPAD_DOWN, 0f, 1f, AndroidAxis.HAT_Y, AxisHalf.POSITIVE),
+                pad("left", "←", AndroidKey.DPAD_LEFT, -1f, 0f, AndroidAxis.HAT_X, AxisHalf.NEGATIVE),
+                pad("right", "→", AndroidKey.DPAD_RIGHT, 1f, 0f, AndroidAxis.HAT_X, AxisHalf.POSITIVE),
+                round("select", "View", PhysicalKind.SYSTEM, 0.29f, 0.14f, 0.08f, buttonInputs(listOf(AndroidKey.BUTTON_SELECT))),
+                round("start", "Menu", PhysicalKind.SYSTEM, 0.71f, 0.14f, 0.08f, buttonInputs(listOf(AndroidKey.BUTTON_START))),
+                round("home", "Home", PhysicalKind.SYSTEM, 0.5f, 0.56f, 0.085f, buttonInputs(listOf(AndroidKey.BUTTON_MODE))),
             ),
         )
     }
 
-    /** The controller's underside, as held: bumpers and triggers along the top edge, two back buttons on the grips. */
+    /** The controller's underside, as held: triggers and bumpers along the top edge, four back buttons on the grips. */
     val controllerBack: ControllerDiagram = run {
-        val a = 1.45f
+        val a = CONTROLLER_ASPECT
         fun rect(id: String, label: String, kind: PhysicalKind, x: Float, y: Float, w: Float, h: Float, inputs: List<BindableInput>) =
             PhysicalControl(id, label, kind, x, y, w / a, h, inputs)
         fun trigger(code: Int, axis: Int, alt: Int) = listOf(
             BindableInput("Pull", listOf(InputSource.Axis(axis), InputSource.Axis(alt), InputSource.Key(code))),
         ) + ButtonGesture.entries.map { g -> BindableInput(g.label, listOf(InputSource.KeyGesture(code, g))) }
+        fun paddle(id: String, x: Float, y: Float) =
+            rect(id, id.uppercase(), PhysicalKind.FACE, x, y, 0.15f, 0.15f, buttonInputs(paddles.getValue(id)))
         ControllerDiagram(
-            "Controller · back", DiagramStyle.XBOX, a,
+            "Back", DiagramStyle.XBOX, a,
             listOf(
-                rect("lt", "LT", PhysicalKind.TRIGGER, 0.24f, 0.13f, 0.16f, 0.16f, trigger(AndroidKey.BUTTON_L2, AndroidAxis.LTRIGGER, AndroidAxis.BRAKE)),
-                rect("rt", "RT", PhysicalKind.TRIGGER, 0.76f, 0.13f, 0.16f, 0.16f, trigger(AndroidKey.BUTTON_R2, AndroidAxis.RTRIGGER, AndroidAxis.GAS)),
-                rect("lb", "LB", PhysicalKind.SHOULDER, 0.24f, 0.31f, 0.30f, 0.09f, buttonInputs(listOf(AndroidKey.BUTTON_L1))),
-                rect("rb", "RB", PhysicalKind.SHOULDER, 0.76f, 0.31f, 0.30f, 0.09f, buttonInputs(listOf(AndroidKey.BUTTON_R1))),
-                rect("p1", "P1", PhysicalKind.FACE, 0.33f, 0.68f, 0.10f, 0.22f, buttonInputs(listOf(AndroidKey.BUTTON_C, AndroidKey.BUTTON_1))),
-                rect("p2", "P2", PhysicalKind.FACE, 0.67f, 0.68f, 0.10f, 0.22f, buttonInputs(listOf(AndroidKey.BUTTON_Z, AndroidKey.BUTTON_1 + 1))),
+                rect("lt", "LT", PhysicalKind.TRIGGER, 0.20f, 0.14f, 0.27f, 0.14f, trigger(AndroidKey.BUTTON_L2, AndroidAxis.LTRIGGER, AndroidAxis.BRAKE)),
+                rect("rt", "RT", PhysicalKind.TRIGGER, 0.80f, 0.14f, 0.27f, 0.14f, trigger(AndroidKey.BUTTON_R2, AndroidAxis.RTRIGGER, AndroidAxis.GAS)),
+                rect("lb", "LB", PhysicalKind.SHOULDER, 0.22f, 0.30f, 0.33f, 0.08f, buttonInputs(listOf(AndroidKey.BUTTON_L1))),
+                rect("rb", "RB", PhysicalKind.SHOULDER, 0.78f, 0.30f, 0.33f, 0.08f, buttonInputs(listOf(AndroidKey.BUTTON_R1))),
+                paddle("p3", 0.11f, 0.56f),
+                paddle("p4", 0.15f, 0.80f),
+                paddle("p1", 0.89f, 0.56f),
+                paddle("p2", 0.85f, 0.80f),
             ),
         )
     }
