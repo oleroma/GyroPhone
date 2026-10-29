@@ -42,6 +42,8 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -125,6 +127,8 @@ private const val MAX_SPLIT = 0.75f
 private const val PREF_SPLIT = "map.split"
 private const val PREF_RECENT = "map.recent"
 private const val PREF_ORDER = "map.order."
+/** The card order last arranged by hand, per control kind: Sort > Custom brings it back. */
+private const val PREF_CUSTOM = "map.custom."
 private val recentSerializer = ListSerializer(OutputTarget.serializer())
 private val prefJson = Json { ignoreUnknownKeys = true }
 
@@ -134,7 +138,7 @@ private sealed interface Dragged {
     data class Target(val target: OutputTarget, val from: BindableInput?) : Dragged
     data class Preset(val preset: MapPreset) : Dragged
 
-    /** An action card moved within its [group] (0: the control's own actions, 1: its surface ones). */
+    /** An action card moved within its [group] (0: the control's actions, or a swipe button's with the chosen fingers; 1: its outside and zone). */
     data class Card(val input: BindableInput, val group: Int) : Dragged
 
     /** Zone divider [k] of held-direction card [card] (zone 0's input), moved within its row. */
@@ -209,9 +213,13 @@ private fun kindKey(c: TouchControl) = when {
     else -> "button"
 }
 
-/** A card's key in the remembered order: its label, surface ones without the finger count. */
+/** A card's key in the remembered order: its label, surface ones (and a swipe button's hold) without the finger count. */
 private fun orderKey(control: TouchControl, input: BindableInput): String =
-    if (isSurface(input)) "f:" + input.label.replace(Regex("^[0-9]f "), "") else actionLabel(control, input)
+    when {
+        isSurface(input) -> "f:" + input.label.replace(Regex("^[0-9]f "), "")
+        control.swipes && input.sources.first() is InputSource.Touch -> "f:" + SurfaceInput.HOLD.label
+        else -> actionLabel(control, input)
+    }
 
 /** [inputs] in the remembered [order]; unknown ones last, in their own order. */
 private fun sorted(control: TouchControl, inputs: List<BindableInput>, order: List<String>): List<BindableInput> =
@@ -316,7 +324,7 @@ internal fun controlKindName(c: TouchControl): String = when {
  * ([TOUCHPAD_STAND_IN], a tap on empty space). Its actions (cards
  * with their targets as chips) and a library of targets share the screen, split by a draggable
  * divider: tap a card to select it and a target to add it there, or long-press and drag a target
- * onto a card, or a chip to another card (or out of the actions pane to remove it). A card is
+ * onto a card, or a chip to another card (or back onto the library to remove it). A card is
  * reordered by its ⠿ handle. Near the pane's top or bottom edge a drag scrolls the cards.
  * Every change goes to [onMappingsChange] and can be undone.
  */
@@ -362,10 +370,26 @@ internal fun ControlMappingScreen(
     var order by remember(control.id) {
         mutableStateOf(runtime.uiPref(PREF_ORDER + kindKey(control))?.split("\n").orEmpty())
     }
-    val groups = listOf(
-        sorted(control, inputs.filterNot(::isSurface), order),
-        if (control.swipes) sorted(control, Bindings.surfaceInputs(fingers, control.id), order) else emptyList(),
-    )
+    var custom by remember(control.id) {
+        mutableStateOf(runtime.uiPref(PREF_CUSTOM + kindKey(control))?.split("\n").orEmpty())
+    }
+    var sortMenu by remember { mutableStateOf(false) }
+    var confirmDefault by remember { mutableStateOf(false) }
+
+    /** Saves [next] as the card order of this kind of control (and, [byHand], as its custom order). */
+    fun saveOrder(next: List<String>, byHand: Boolean = false) {
+        order = next
+        runtime.setUiPref(PREF_ORDER + kindKey(control), next.joinToString("\n"))
+        if (byHand) {
+            custom = next
+            runtime.setUiPref(PREF_CUSTOM + kindKey(control), next.joinToString("\n"))
+        }
+    }
+    // A swipe button: one list per finger count (hold, taps, moves, swipes...), then its outside and zone.
+    val groups = if (control.swipes) listOf(
+        sorted(control, Bindings.swipeInputs(control, fingers), order),
+        sorted(control, inputs.filter { it.sources.first() is InputSource.TouchArea }, order),
+    ) else listOf(sorted(control, inputs, order), emptyList())
     var dragged by remember { mutableStateOf<Dragged?>(null) }
     var dragPos by remember { mutableStateOf(Offset.Zero) }
     var liveOrder by remember { mutableStateOf<List<BindableInput>>(emptyList()) }
@@ -449,6 +473,7 @@ internal fun ControlMappingScreen(
     val zonesWork = zoneSettings != null && !(zoneSettings.dragStart && zoneSettings.holdMode == HoldMode.FROM_START)
     val zonesNow by rememberUpdatedState(zonesWork)
     var actionsBounds by remember { mutableStateOf(Rect.Zero) }
+    var libraryBounds by remember { mutableStateOf(Rect.Zero) }
     var origin by remember { mutableStateOf(Offset.Zero) }
     val listState = rememberLazyListState()
     val density = LocalDensity.current
@@ -652,8 +677,8 @@ internal fun ControlMappingScreen(
                         )
                     }
                     done = true
-                } else if (from != null && !actionsBounds.contains(dragPos)) {
-                    // Dropped between cards it stays; out of the pane it goes.
+                } else if (from != null && libraryBounds.contains(dragPos)) {
+                    // Dropped back on the library it goes; anywhere else it stays.
                     remove(from, d.target)
                     done = true
                 }
@@ -674,8 +699,7 @@ internal fun ControlMappingScreen(
 
             is Dragged.Card -> {
                 val keys = liveOrder.map { orderKey(currentControl, it) }
-                order = keys + order.filter { it !in keys }
-                runtime.setUiPref(PREF_ORDER + kindKey(currentControl), order.joinToString("\n"))
+                saveOrder(keys + order.filter { it !in keys }, byHand = true)
             }
         }
         if (done) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -749,19 +773,16 @@ internal fun ControlMappingScreen(
                 }
             }
             shownGroups.forEachIndexed { g, list ->
-                // The touchpad has no button actions: only its surface ones.
-                if (control.swipes && !(g == 0 && control.isTouchpadStandIn)) {
+                if (control.swipes && list.isNotEmpty()) {
                     item(key = "header$g") {
                         Column(
                             Modifier.animateItem().padding(top = if (g == 0) 0.dp else 8.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text(
-                                if (g == 0) "Button" else if (control.isTouchpadStandIn) "Touchpad" else "Touch surface",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = colors.primary,
-                            )
                             if (g == 1) {
+                                Text("Around the button", style = MaterialTheme.typography.labelLarge, color = colors.primary)
+                            }
+                            if (g == 0) {
                                 Row(
                                     Modifier.horizontalScroll(rememberScrollState()),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -828,7 +849,6 @@ internal fun ControlMappingScreen(
                         onDivider = { k -> if (onZoneSettings != null) zoneDialog = input to k - 1 },
                         onDividerDrag = { k, at -> startDrag(Dragged.Divider(input, k), at) },
                         onClick = { selectedSrc = src },
-                        onRemove = { z, t -> remove(zoneInputs[z], t) },
                         onChipDrag = { z, t, at -> startDrag(Dragged.Target(t, zoneInputs[z]), at) },
                         onHandleDrag = { at -> startCardDrag(input, at) },
                         modifier = Modifier.animateItem(),
@@ -849,6 +869,8 @@ internal fun ControlMappingScreen(
             },
         )
     }
+    val chipCarried = (dragged as? Dragged.Target)?.from != null
+    val overLibrary = chipCarried && libraryBounds.contains(dragPos)
     val libraryPane: @Composable () -> Unit = {
         val q = query.trim()
         val shownPresets = when {
@@ -866,81 +888,108 @@ internal fun ControlMappingScreen(
             else -> tabTargets(tab, extras)
         }
         val current = selected?.let { Bindings.targets(view, it) }.orEmpty()
-        Column(Modifier.fillMaxSize().background(colors.surfaceContainerLow).imePadding().padding(top = 8.dp)) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                singleLine = true,
-                placeholder = { Text("Search, e.g. W, LT, wheel") },
-                trailingIcon = { if (query.isNotEmpty()) TextButton(onClick = { query = "" }) { Text("✕") } },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            )
-            Row(
-                Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                FilterChip(
-                    selected = false,
-                    enabled = selected != null && allows(selectedAllowed, OutputTarget.Key(0x04)),
-                    onClick = { capturing = true },
-                    label = { Text("⌨ Press a key") },
+        Box(Modifier.fillMaxSize().onGloballyPositioned { c ->
+            val b = c.boundsInRoot()
+            if (b != libraryBounds) libraryBounds = b
+        }) {
+            Column(Modifier.fillMaxSize().background(colors.surfaceContainerLow).imePadding().padding(top = 8.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    placeholder = { Text("Search, e.g. W, LT, wheel") },
+                    trailingIcon = { if (query.isNotEmpty()) TextButton(onClick = { query = "" }) { Text("✕") } },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                 )
-                if (q.isEmpty()) {
-                    for (t in tabs) FilterChip(selected = tab == t, onClick = { tab = t }, label = { Text(t.label) })
-                }
-            }
-            Text(
-                if (selected == null) "Long-press a target to drag it onto an action."
-                else "Tap to add to " + actionTitle(control, selected) + " · long-press to drag",
-                style = MaterialTheme.typography.bodySmall,
-                color = colors.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
-            Column(
-                Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp),
-            ) {
-                if (shownPresets.isEmpty() && shownTargets.isEmpty()) {
-                    Text(
-                        when {
-                            q.isNotEmpty() -> "Nothing matches \"" + q + "\""
-                            tab == LibraryTab.RECENT -> "Targets you map show here."
-                            else -> "Nothing here for this control."
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.outline,
-                    )
-                }
-                FlowRow(
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    for (p in shownPresets) {
-                        LibraryChip(
-                            text = "✦ " + p.label,
-                            enabled = true,
-                            mapped = control.kind == TouchKind.STICK &&
-                                    Bindings.StickPreset.entries.getOrNull(presets.indexOf(p))
-                                        ?.let { presetMatches(view, inputs, it) } == true,
-                            preset = true,
-                            dragging = (dragged as? Dragged.Preset)?.preset == p,
-                            dragKey = p.label,
-                            onClick = { applyPreset(p) },
-                            onDragStart = { at -> startDrag(Dragged.Preset(p), at) },
+                    FilterChip(
+                        selected = false,
+                        enabled = selected != null && allows(selectedAllowed, OutputTarget.Key(0x04)),
+                        onClick = { capturing = true },
+                        label = { Text("⌨ Press a key") },
+                    )
+                    if (q.isEmpty()) {
+                        for (t in tabs) FilterChip(selected = tab == t, onClick = { tab = t }, label = { Text(t.label) })
+                    }
+                }
+                Text(
+                    if (selected == null) "Long-press a target to drag it onto an action."
+                    else "Tap to add to " + actionTitle(control, selected) + " · long-press to drag",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+                Column(
+                    Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp),
+                ) {
+                    if (shownPresets.isEmpty() && shownTargets.isEmpty()) {
+                        Text(
+                            when {
+                                q.isNotEmpty() -> "Nothing matches \"" + q + "\""
+                                tab == LibraryTab.RECENT -> "Targets you map show here."
+                                else -> "Nothing here for this control."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.outline,
                         )
                     }
-                    for (t in shownTargets) {
-                        LibraryChip(
-                            text = Describe.shortTarget(t),
-                            enabled = selected != null && allows(selectedAllowed, t),
-                            mapped = t in current,
-                            preset = false,
-                            dragging = (dragged as? Dragged.Target)?.let { it.from == null && it.target == t } == true,
-                            dragKey = t,
-                            onClick = { selected?.let { pick(it, t) } },
-                            onDragStart = { at -> startDrag(Dragged.Target(t, null), at) },
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        for (p in shownPresets) {
+                            LibraryChip(
+                                text = "✦ " + p.label,
+                                enabled = true,
+                                mapped = control.kind == TouchKind.STICK &&
+                                        Bindings.StickPreset.entries.getOrNull(presets.indexOf(p))
+                                            ?.let { presetMatches(view, inputs, it) } == true,
+                                preset = true,
+                                dragging = (dragged as? Dragged.Preset)?.preset == p,
+                                dragKey = p.label,
+                                onClick = { applyPreset(p) },
+                                onDragStart = { at -> startDrag(Dragged.Preset(p), at) },
+                            )
+                        }
+                        for (t in shownTargets) {
+                            LibraryChip(
+                                text = Describe.shortTarget(t),
+                                enabled = selected != null && allows(selectedAllowed, t),
+                                mapped = t in current,
+                                preset = false,
+                                dragging = (dragged as? Dragged.Target)?.let { it.from == null && it.target == t } == true,
+                                dragKey = t,
+                                onClick = { selected?.let { pick(it, t) } },
+                                onDragStart = { at -> startDrag(Dragged.Target(t, null), at) },
+                            )
+                        }
+                    }
+                }
+            }
+            // A chip carried from an action: dropped here, it is removed.
+            if (chipCarried) {
+                Box(
+                    Modifier.fillMaxSize().background(
+                        if (overLibrary) colors.errorContainer.copy(alpha = 0.92f) else colors.surfaceContainerLow.copy(alpha = 0.85f),
+                    ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            "🗑  🗑  🗑",
+                            style = MaterialTheme.typography.displaySmall,
+                            color = if (overLibrary) colors.onErrorContainer else colors.outline,
+                        )
+                        Text(
+                            if (overLibrary) "Release to remove" else "Drop here to remove",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = if (overLibrary) colors.onErrorContainer else colors.onSurfaceVariant,
                         )
                     }
                 }
@@ -1007,6 +1056,34 @@ internal fun ControlMappingScreen(
                             }
                             Spacer(Modifier.width(8.dp))
                         }
+                        Box {
+                            TextButton(onClick = { sortMenu = true }, contentPadding = compact) { Text("Sort ▾") }
+                            DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("Default") },
+                                    onClick = { sortMenu = false; confirmDefault = true },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Custom") },
+                                    enabled = custom.isNotEmpty() && custom != order,
+                                    onClick = { sortMenu = false; saveOrder(custom) },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Mapped first") },
+                                    onClick = {
+                                        sortMenu = false
+                                        // Every action of the control in the order shown, the ones mapped in any layer first.
+                                        val all = sorted(control, inputs, order)
+                                        val keys = all.map { orderKey(control, it) }.distinct()
+                                        val mapped = all.filter { input ->
+                                            val zones = (0 until zonesOf(input)).map { z -> if (z == 0) input else Bindings.zoneInput(input, z) }
+                                            zones.any { zi -> mappings.any { m -> zi.sources.any { it == m.source } } }
+                                        }.mapTo(HashSet()) { orderKey(control, it) }
+                                        saveOrder(keys.filter { it in mapped } + keys.filter { it !in mapped } + order.filter { it !in keys })
+                                    },
+                                )
+                            }
+                        }
                         TextButton(onClick = onSettings, contentPadding = compact) { Text("Settings") }
                         TextButton(
                             onClick = { undoLast() },
@@ -1044,7 +1121,7 @@ internal fun ControlMappingScreen(
                 SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(12.dp))
                 val d = dragged
                 if (d != null) {
-                    val removing = d is Dragged.Target && d.from != null && !actionsBounds.contains(dragPos)
+                    val removing = overLibrary
                     val label = when (d) {
                         is Dragged.Target -> Describe.shortTarget(d.target)
                         is Dragged.Preset -> d.preset.label
@@ -1063,7 +1140,7 @@ internal fun ControlMappingScreen(
                         shadowElevation = 8.dp,
                     ) {
                         Text(
-                            if (removing) "✕ Remove " + label else label,
+                            if (removing) "🗑 Remove " + label else label,
                             style = MaterialTheme.typography.labelLarge,
                             color = if (removing) colors.onErrorContainer else colors.inverseOnSurface,
                             maxLines = 1,
@@ -1075,6 +1152,25 @@ internal fun ControlMappingScreen(
         }
     }
 
+    if (confirmDefault) {
+        AlertDialog(
+            onDismissRequest = { confirmDefault = false },
+            title = { Text("Default order?") },
+            text = {
+                Text(
+                    "Every action of every " + controlKindName(control).lowercase() +
+                            " goes back to its default place. The order you arranged by hand is lost.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDefault = false
+                    saveOrder(emptyList(), byHand = true)
+                }) { Text("Reorder", color = colors.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDefault = false }) { Text("Cancel") } },
+        )
+    }
     zoneDialog?.let { (input, zone) ->
         val src = input.sources.first() as? InputSource.Surface
         val dir = src?.input?.holdDirection
@@ -1217,8 +1313,7 @@ private fun ActionCard(
     /** A long press on a divider (not the end one) starts moving it. */
     onDividerDrag: (Int, Offset) -> Unit,
     onClick: () -> Unit,
-    onRemove: (Int, OutputTarget) -> Unit,
-    /** A long press on a chip starts dragging it. */
+    /** A long press on a chip starts dragging it (back onto the library to remove it). */
     onChipDrag: (Int, OutputTarget, Offset) -> Unit,
     /** The ⠿ handle starts moving the card. */
     onHandleDrag: (Offset) -> Unit,
@@ -1378,15 +1473,8 @@ private fun ActionCard(
                                     style = MaterialTheme.typography.labelLarge,
                                     color = fg,
                                     maxLines = 1,
-                                    modifier = Modifier.padding(start = if (setId == MappingSet.BASE) 10.dp else 6.dp, end = 2.dp),
+                                    modifier = Modifier.padding(start = if (setId == MappingSet.BASE) 10.dp else 6.dp, end = 10.dp),
                                 )
-                                Box(Modifier.size(32.dp).clickable { onRemove(z, t) }, contentAlignment = Alignment.Center) {
-                                    Text(
-                                        "✕",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = fg
-                                    )
-                                }
                             }
                         }
 

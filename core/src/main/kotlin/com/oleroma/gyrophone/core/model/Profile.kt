@@ -73,7 +73,10 @@ data class TouchControl(
      */
     val swipeSensX: Float = 1.5f,
     val swipeSensY: Float = 1.5f,
-    /** Swipe mode: press only on a still tap's release (else the press starts at touch-down). */
+    /**
+     * Before one gesture set per swipe button: in swipe mode the press waited for a still tap's
+     * lift. Only read by [Bindings.matchSwipeModes], which turns it into one-finger tap mappings.
+     */
     val swipeTapOnRelease: Boolean = false,
     /**
      * Before tap and long press mappings: with a double tap mapping, the press waited out a

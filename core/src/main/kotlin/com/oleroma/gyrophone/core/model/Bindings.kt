@@ -120,7 +120,8 @@ object Bindings {
 
     /**
      * Inputs a touch control exposes: BUTTON -> [Touch(id)] (its press), tap, double tap, long
-     * press, release, outside and zone, in swipe mode also the swipe X and Y axes and the four swipe directions;
+     * press, release, outside and zone; in swipe mode its press, outside and zone, then its
+     * surface's inputs for 1–4 fingers, one finger's hold being the press ([swipeInputs]);
      * STICK -> X axis, Y axis (analog), Left, Right, Up, Down (halves), with 8 zones the four
      * diagonals, then on touch, outside and zone; FULLSCREEN -> none.
      */
@@ -137,9 +138,11 @@ object Bindings {
                 area(control, TouchAreaKind.ZONE),
             )
             // Swipe mode: a touch surface, with the touchpad's inputs per finger count.
-            if (!control.swipes) events else events + (1..4).flatMap { n ->
-                surfaceInputs(n, control.id).map { it.copy(label = "${n}f " + it.label) }
-            }
+            if (!control.swipes) events else listOf(press) + events.filter { it.sources.first() is InputSource.TouchArea } +
+                    (1..4).flatMap { n ->
+                        surfaceInputs(n, control.id).filterNot { n == 1 && isOneFingerHold(it) }
+                            .map { it.copy(label = "${n}f " + it.label) }
+                    }
         }
 
         TouchKind.STICK -> {
@@ -158,6 +161,74 @@ object Bindings {
         }
 
         TouchKind.FULLSCREEN -> emptyList()
+    }
+
+    /**
+     * A swipe button's inputs with [fingers] down: its surface's, one finger's hold being the
+     * button's press ([InputSource.Touch], labelled Hold). The touchpad ([id] "") keeps its own hold.
+     */
+    fun swipeInputs(control: TouchControl, fingers: Int): List<BindableInput> {
+        val surface = surfaceInputs(fingers, control.id)
+        if (fingers != 1 || control.id.isEmpty()) return surface
+        val press = BindableInput(SurfaceInput.HOLD.label, listOf(InputSource.Touch(control.id)))
+        return surface.map { if (isOneFingerHold(it)) press else it }
+    }
+
+    private fun isOneFingerHold(input: BindableInput): Boolean =
+        (input.sources.first() as? InputSource.Surface)?.let { it.fingers == 1 && it.input == SurfaceInput.HOLD } == true
+
+    /** A touch button's gestures and its surface's one-finger ones, which do their job in swipe mode. */
+    private val gesturePairs: List<Pair<(String) -> InputSource, SurfaceInput>> = listOf(
+        InputSource::TouchTap to SurfaceInput.TAP,
+        InputSource::TouchDoubleTap to SurfaceInput.DOUBLE_TAP,
+        InputSource::TouchLongPress to SurfaceInput.LONG_PRESS,
+        InputSource::TouchRelease to SurfaceInput.RELEASE,
+    )
+
+    /**
+     * [w] with each touch button's mappings where its mode reads them, so a button has one tap,
+     * double tap, long press, release and hold. In swipe mode those are its surface's one-finger
+     * ones (a swipe is never a tap there) and its press is the hold: its own gestures move to the
+     * surface, the surface's one-finger hold to the press, and with "press only on a tap" (then
+     * cleared) the press to a one-finger tap. Out of swipe mode the one-finger gestures move back,
+     * each unless the button has its own of that kind. The same instance when nothing changes.
+     */
+    fun matchSwipeModes(w: Workspace): Workspace {
+        val buttons = w.touchControls.filter { it.kind == TouchKind.BUTTON }.associateBy { it.id }
+        if (buttons.isEmpty()) return w
+        val own = w.mappings.mapTo(HashSet()) { it.source }
+        fun moved(s: InputSource): InputSource? {
+            when (s) {
+                is InputSource.Touch -> {
+                    val c = buttons[s.id] ?: return null
+                    return if (c.swipes && c.swipeTapOnRelease) InputSource.Surface(1, SurfaceInput.TAP, s.id) else null
+                }
+
+                is InputSource.Surface -> {
+                    val c = buttons[s.id] ?: return null
+                    if (s.id.isEmpty() || s.fingers != 1 || s.zone != 0) return null
+                    if (c.swipes) return if (s.input == SurfaceInput.HOLD) InputSource.Touch(s.id) else null
+                    val back = gesturePairs.firstOrNull { it.second == s.input }?.first?.invoke(s.id) ?: return null
+                    return back.takeIf { it !in own }
+                }
+
+                else -> {
+                    val id = MappingProfiles.touchId(s) ?: return null
+                    if (buttons[id]?.swipes != true) return null
+                    val pair = gesturePairs.firstOrNull { it.first(id) == s } ?: return null
+                    return InputSource.Surface(1, pair.second, id)
+                }
+            }
+        }
+        var changed = false
+        val mappings = w.mappings.map { m ->
+            val to = moved(m.source)
+            if (to == null) m else m.copy(source = to).also { changed = true }
+        }.distinct()
+        val controls = w.touchControls.map { c ->
+            if (c.swipes && c.swipeTapOnRelease) c.copy(swipeTapOnRelease = false).also { changed = true } else c
+        }
+        return if (changed) w.copy(touchControls = controls, mappings = mappings) else w
     }
 
     /**

@@ -279,12 +279,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /**
      * Swipe-mode buttons: a touch surface each, a touchpad of their own that every finger on the
-     * button feeds ([InputSource.Surface] with the button's id); their press waits for a still
-     * tap's lift when in [swipeTapOnRelease].
+     * button feeds ([InputSource.Surface] with the button's id).
      */
     private var surfaces: Map<String, Touchpad> = emptyMap()
     private var surfaceList: Array<Touchpad> = emptyArray()
-    private var swipeTapOnRelease: Set<String> = emptySet()
 
     /** A still tap committed on lift: pressed until a snapshot has shown it for the minimum pulse. */
     private class Pulse(val id: String, val startNs: Long) {
@@ -409,7 +407,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
         }
         surfaceList = surfaces.values.toTypedArray()
-        swipeTapOnRelease = swipers.filter { it.swipeTapOnRelease }.mapTo(HashSet()) { it.id }
         tapStates.clear(); tapList.clear()
         for (d in deviceList) d.gestures.clear()
         anyDevice.gestures.clear()
@@ -579,10 +576,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 bpImmediate[slot] = id in clickThroughIds || !ws.touchpadOverButtons
                 val surface = surfaces[id]
                 if (surface != null) {
-                    // A touchpad of its own: pressed at once (or by a still tap's lift), its fingers drive its surface mappings.
+                    // A touchpad of its own: pressed at once (one finger's hold), its fingers drive its surface mappings.
                     bpState[slot] = BP_SWIPE
-                    bpImmediate[slot] = id !in swipeTapOnRelease
-                    if (bpImmediate[slot]) press(id)
+                    bpImmediate[slot] = true
+                    press(id)
                     surface.down(pointer, x, y, now, eventNs = eventNanos)
                 } else if (id in clickThroughIds) {
                     bpState[slot] = BP_THROUGH
@@ -619,14 +616,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                     }
 
                     BP_TOUCHPAD, BP_THROUGH -> touchpad.move(pointer, x, y, now, eventNanos)
-                    BP_SWIPE, BP_SWIPING -> {
-                        val ddx = x - bpDownX[slot];
-                        val ddy = y - bpDownY[slot]
-                        val slop = BUTTON_SLOP_DP * touchpad.pxPerDp
-                        // Past the slop it can no longer tap.
-                        if (bpState[slot] == BP_SWIPE && ddx * ddx + ddy * ddy > slop * slop) bpState[slot] = BP_SWIPING
-                        surfaces[bpControl[slot]]?.move(pointer, x, y, now, eventNanos)
-                    }
+                    BP_SWIPE -> surfaces[bpControl[slot]]?.move(pointer, x, y, now, eventNanos)
 
                     else -> Unit
                 }
@@ -670,21 +660,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                     }
 
                     BP_TOUCHPAD -> touchpad.up(pointer, now)
-                    BP_SWIPE, BP_SWIPING -> {
+                    BP_SWIPE -> {
                         surfaces[id]?.up(pointer, now)
-                        if (bpImmediate[slot]) {
-                            if (now - bpDownNs[slot] < touchpad.minPulseNanos) pulses.add(
-                                Pulse(
-                                    id,
-                                    bpDownNs[slot]
-                                )
-                            ) else release(id)
-                        } else if (bpState[slot] == BP_SWIPE && now - bpDownNs[slot] <= ws.buttonTapMs * 1_000_000L) {
-                            if (id in modifierIds) modifierTap(id, now) else {
-                                pulses.add(Pulse(id, now))
-                                press(id)
-                            }
-                        }
+                        if (now - bpDownNs[slot] < touchpad.minPulseNanos) pulses.add(Pulse(id, bpDownNs[slot])) else release(id)
                     }
                 }
                 bpState[slot] = BP_FREE; bpControl[slot] = null
@@ -706,9 +684,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val id = bpControl[slot]!!
                 when (bpState[slot]) {
                     BP_PENDING, BP_TOUCHPAD -> touchpad.cancelFinger(pointer, now)
-                    BP_SWIPE, BP_SWIPING -> {
+                    BP_SWIPE -> {
                         surfaces[id]?.cancelFinger(pointer, now)
-                        if (bpImmediate[slot]) release(id)
+                        release(id)
                     }
 
                     BP_PRESSED, BP_THROUGH -> {
@@ -1771,11 +1749,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         /** Click-through: pressed and a touchpad finger. */
         private const val BP_THROUGH = 4
 
-        /** Swipe mode: still a tap candidate. */
+        /** Swipe mode: pressed, and a finger of the button's own surface. */
         private const val BP_SWIPE = 5
-
-        /** Swipe mode: moved past the slop, only swiping now. */
-        private const val BP_SWIPING = 6
 
         /** Swipe distance (dp × sensitivity) that deflects a swipe axis fully as a floating stick. */
         const val SWIPE_FULL = 72f
