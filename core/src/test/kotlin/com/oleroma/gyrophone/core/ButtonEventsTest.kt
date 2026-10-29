@@ -248,7 +248,6 @@ class ButtonEventsTest {
                     id = "w",
                     name = "w",
                     touchControls = listOf(waited, timed),
-                    buttonTapMs = 200,
                     mappingProfileId = "m"
                 )
             ),
@@ -281,8 +280,9 @@ class ButtonEventsTest {
         single(
             Workspace(
                 id = "w", name = "w",
-                gyro = GyroSettings(mode = mode, ratchetAxes = axes, touchpadRatchet = true),
+                gyro = GyroSettings(mode = mode, ratchetAxes = axes),
                 touchpad = TouchpadSettings(enabled = touchpadOn),
+                mappings = listOf(Mapping(InputSource.Surface(1, SurfaceInput.HOLD), OutputTarget.GyroPause)),
             )
         )
     )
@@ -291,23 +291,20 @@ class ButtonEventsTest {
     fun ratchetOnOneAxis() {
         val e = gyroEngine(GyroMode.ALWAYS, RatchetAxes.X)
         assertEquals(MappingEngine.GYRO_X or MappingEngine.GYRO_Y, e.gyroAxes)
-        e.touchpadDown(1, 10f, 10f)
+        e.touchpadDown(1, 10f, 10f); e.snapshot()
         assertEquals(MappingEngine.GYRO_Y, e.gyroAxes)
         e.touchpadUp(1)
         val en = gyroEngine(GyroMode.OFF, RatchetAxes.Y)
         assertEquals(0, en.gyroAxes)
-        en.touchpadDown(1, 10f, 10f)
+        en.touchpadDown(1, 10f, 10f); en.snapshot()
         assertEquals(MappingEngine.GYRO_Y, en.gyroAxes)
     }
 
     @Test
-    fun touchpadRatchetWorksWithTheTouchpadOff() {
+    fun touchpadRatchetFollowsTheTouchpad() {
         val e = gyroEngine(GyroMode.OFF, RatchetAxes.BOTH, touchpadOn = false)
-        e.touchpadDown(1, 10f, 10f)
-        assertTrue(e.gyroActive)
-        e.touchpadMove(1, 300f, 10f)
-        assertEquals(0, e.snapshot().mouse.dx)
-        e.touchpadUp(1)
+        e.touchpadDown(1, 10f, 10f); e.snapshot()
         assertEquals(0, e.gyroAxes)
+        e.touchpadUp(1)
     }
 }

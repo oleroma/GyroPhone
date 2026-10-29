@@ -35,7 +35,7 @@ object Describe {
     fun target(t: OutputTarget): String = when (t) {
         is OutputTarget.Pad -> "Gamepad ${t.button.label}"
         is OutputTarget.PadAxis -> "Gamepad ${t.axis}" + if (t.scale < 0) " (inverted)" else ""
-        is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage))
+        is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage)) + keyMode(t.mode)
         is OutputTarget.Mouse -> "Mouse ${t.button.name.lowercase()}"
         is OutputTarget.Wheel -> if (t.step > 0) "Wheel up" else "Wheel down"
         is OutputTarget.MouseAxis -> t.motion.label + if (t.scale < 0) ", reversed" else ""
@@ -118,7 +118,7 @@ object Describe {
             GamepadAxis.RT -> "RT"
         } + if (t.scale < 0) " inv" else ""
 
-        is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage))
+        is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage)) + keyMode(t.mode)
         is OutputTarget.Mouse -> when (t.button) {
             MouseButton.LEFT -> "Mouse L"
             MouseButton.RIGHT -> "Mouse R"
@@ -226,5 +226,12 @@ object Describe {
         }
         val groups = targetGroups.map { (name, list) -> name to list.filter(allowed) }.filter { it.second.isNotEmpty() }
         return if (extra.isEmpty()) groups else listOf("Touchpad" to extra) + groups
+    }
+
+    /** How a key target's [mode] reads after its name; nothing for a plain held key. */
+    private fun keyMode(mode: KeyMode): String = when (mode) {
+        KeyMode.HOLD -> ""
+        KeyMode.TOGGLE -> " (toggle)"
+        KeyMode.NEXT_KEY -> " (next key)"
     }
 }

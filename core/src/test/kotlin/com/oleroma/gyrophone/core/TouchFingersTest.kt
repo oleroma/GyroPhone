@@ -6,8 +6,12 @@ import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.KeyMode
 import com.oleroma.gyrophone.core.model.Mapping
+import com.oleroma.gyrophone.core.model.MappingProfiles
+import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Workspace
@@ -23,23 +27,35 @@ class TouchFingersTest {
     private val FRAME = 8_333_333L
     private val A = 0x04
 
+    /**
+     * Buttons "a" (A on its press) and "shift" over a touchpad that only moves the cursor (the
+     * Defaults' mappings cleared). The buttons take its Move, so a finger on them aims, unless
+     * [aimButton] is off (their Move cleared). [tapA]: "a" types on a still tap instead of its
+     * press; [nextShift]: "shift" holds Shift for the next key on a tap.
+     */
     private fun engine(
-        overButtons: Boolean = false,
-        clickThrough: Boolean = false,
-        sticky: Boolean = false,
+        aimButton: Boolean = true,
+        tapA: Boolean = false,
+        nextShift: Boolean = false,
         gyro: GyroSettings = GyroSettings(),
         now: () -> Long,
     ): MappingEngine {
+        fun m(s: InputSource, t: OutputTarget) = Mapping(s, t)
+        val moves = listOf(SurfaceInput.MOTION_X, SurfaceInput.MOTION_Y)
         val p = single(Workspace(
-            id = "w", name = "w", touchpadOverButtons = overButtons, stickyModifiers = sticky, gyro = gyro,
-            touchControls = listOf("a", "shift").map {
-                TouchControl(it, TouchKind.BUTTON, it, 0.5f, 0.5f, clickThrough = clickThrough && it == "a")
-            },
+            id = "w", name = "w", gyro = gyro,
+            touchControls = listOf("a", "shift").map { TouchControl(it, TouchKind.BUTTON, it, 0.5f, 0.5f) },
             mappings = listOf(
-                Mapping(InputSource.Touch("a"), OutputTarget.Key(A)),
-                Mapping(InputSource.Touch("shift"), OutputTarget.Key(HidUsage.LEFT_SHIFT)),
-            ),
-        ))
+                m(InputSource.Surface(1, SurfaceInput.MOTION_X), OutputTarget.MouseAxis(MouseMotion.MOVE_X)),
+                m(InputSource.Surface(1, SurfaceInput.MOTION_Y), OutputTarget.MouseAxis(MouseMotion.MOVE_Y)),
+                if (tapA) m(InputSource.Surface(1, SurfaceInput.TAP, "a"), OutputTarget.Key(A))
+                else m(InputSource.Touch("a"), OutputTarget.Key(A)),
+                if (nextShift) m(InputSource.Surface(1, SurfaceInput.TAP, "shift"), OutputTarget.Key(HidUsage.LEFT_SHIFT, KeyMode.NEXT_KEY))
+                else m(InputSource.Touch("shift"), OutputTarget.Key(HidUsage.LEFT_SHIFT)),
+            ) + if (aimButton) emptyList() else listOf("a", "shift").flatMap { id ->
+                moves.map { m(InputSource.Surface(1, it, id), OutputTarget.NoOutput) }
+            },
+        )).noTouchpadDefaults()
         return MappingEngine(p, now).apply { touchpadPxPerDp = 3f; touchpadMinPulseNanos = 40 * MS }
     }
 
@@ -59,9 +75,9 @@ class TouchFingersTest {
     // ---- Aiming on the touchpad while a button finger is down ----
 
     /** A thumb aims on the background at 0.6 dp/ms; another finger presses "a" mid-aim when [press]. */
-    private fun aimWhilePressing(overButtons: Boolean, clickThrough: Boolean, press: Boolean): Out {
+    private fun aimWhilePressing(aimButton: Boolean, press: Boolean): Out {
         var now = 0L
-        val e = engine(overButtons, clickThrough) { now }
+        val e = engine(aimButton) { now }
         val o = Out()
         e.touchpadDown(7, 1500f, 600f)
         var x = 1500f; var y = 600f
@@ -72,11 +88,11 @@ class TouchFingersTest {
     }
 
     @Test fun aimingKeepsItsMotionWhileAButtonIsHeld() {
-        for ((over, ct) in listOf(false to true, true to false)) {
-            val solo = aimWhilePressing(over, ct, press = false)
-            val pressing = aimWhilePressing(over, ct, press = true)
+        for (aim in listOf(true, false)) {
+            val solo = aimWhilePressing(aim, press = false)
+            val pressing = aimWhilePressing(aim, press = true)
             assertTrue(solo.dx > 200)
-            assertEquals("over=$over clickThrough=$ct", solo.dx, pressing.dx)
+            assertEquals("aimButton=$aim", solo.dx, pressing.dx)
             assertEquals(solo.dy, pressing.dy)
             assertEquals(0, pressing.wheel); assertEquals(0, pressing.hwheel)
             assertEquals(0, pressing.mods) // no Ctrl of a pinch
@@ -84,10 +100,10 @@ class TouchFingersTest {
         }
     }
 
-    /** The right thumb aims with a click-through button; with [brush] the left thumb brushes the background. */
+    /** The right thumb aims with a button; with [brush] the left thumb brushes the background. */
     private fun aimAfterBrush(brush: Boolean): Pair<Int, Out> {
         var now = 0L
-        val e = engine(clickThrough = true) { now }
+        val e = engine { now }
         val o = Out()
         var fx = 1600f
         e.buttonDown(1, "a", fx, 500f)
@@ -117,7 +133,7 @@ class TouchFingersTest {
     @Test fun thumbRestingOnAKeyDoesNotTurnTheCursorIntoAScroll() {
         fun run(rest: Boolean): Out {
             var now = 0L
-            val e = engine(overButtons = true) { now }
+            val e = engine(tapA = true) { now }
             val o = Out()
             if (rest) e.buttonDown(1, "a", 400f, 500f)
             now = 300 * MS; e.snap(o)
@@ -137,7 +153,7 @@ class TouchFingersTest {
     @Test fun overlappingKeyTapsOnTheKeyboardWorkspaceTypeBothAndNeverScroll() {
         var now = 0L
         val kb = BuiltinProfiles.keyboardWorkspace
-        fun idOf(usage: Int) = (kb.mappings.first { (it.target as? OutputTarget.Key)?.usage == usage }.source as InputSource.Touch).id
+        fun idOf(usage: Int) = MappingProfiles.touchId(kb.mappings.first { (it.target as? OutputTarget.Key)?.usage == usage }.source)!!
         val k1 = idOf(0x04); val k2 = idOf(0x16) // A, S
         val e = MappingEngine(single(kb)) { now }.apply { touchpadPxPerDp = 3f; touchpadMinPulseNanos = 40 * MS }
         val o = Out()
@@ -151,18 +167,6 @@ class TouchFingersTest {
         for (i in 1..20) { now = (100 + 10 * i) * MS; e.snap(o) }
         assertEquals(setOf(0x04, 0x16), o.keys)
         assertEquals(0, o.wheel); assertEquals(0, o.hwheel)
-    }
-
-    /** The touchpad ratchet is for background fingers; a click-through button ratchets only with its own Ratchet. */
-    @Test fun aimingFingersDoNotCountForTheTouchpadRatchet() {
-        var now = 0L
-        val e = engine(clickThrough = true, gyro = GyroSettings(mode = GyroMode.ALWAYS, touchpadRatchet = true)) { now }
-        assertTrue(e.gyroActive)
-        e.buttonDown(1, "a", 100f, 100f)
-        assertTrue(e.gyroActive)
-        now = 50 * MS
-        e.buttonUp(1)
-        assertTrue(e.gyroActive)
     }
 
     // ---- Event times ----
@@ -215,7 +219,7 @@ class TouchFingersTest {
 
     @Test fun longerButtonPressReleasesAtOnce() {
         var now = 0L
-        val e = engine(clickThrough = true) { now }
+        val e = engine { now }
         e.buttonDown(1, "a", 100f, 100f)
         assertEquals(listOf(A), e.snapshot().keyboard.keys)
         now = 60 * MS
@@ -223,9 +227,9 @@ class TouchFingersTest {
         assertTrue(e.snapshot().keyboard.keys.isEmpty())
     }
 
-    @Test fun cancelledOverButtonsFingerNeverTaps() {
+    @Test fun cancelledTapButtonFingerNeverTaps() {
         var now = 0L
-        val e = engine(overButtons = true) { now }
+        val e = engine(tapA = true) { now }
         e.buttonDown(1, "a", 100f, 100f)
         now = 50 * MS
         e.buttonCancel(1)
@@ -237,15 +241,15 @@ class TouchFingersTest {
         assertEquals(Long.MAX_VALUE, e.touchpadDeadlineNanos())
     }
 
-    @Test fun cancelReleasesAPressedButtonAndEndsAClickThroughCursor() {
+    @Test fun cancelReleasesAPressedButtonAndEndsItsCursor() {
         var now = 0L
-        val plain = engine { now }
+        val plain = engine(aimButton = false) { now }
         plain.buttonDown(1, "a", 100f, 100f)
         assertEquals(listOf(A), plain.snapshot().keyboard.keys)
         plain.buttonCancel(1)
         assertTrue(plain.snapshot().keyboard.keys.isEmpty())
 
-        val through = engine(clickThrough = true) { now }
+        val through = engine { now }
         through.buttonDown(1, "a", 100f, 100f)
         now = 10 * MS
         through.buttonMove(1, 130f, 100f)
@@ -259,9 +263,9 @@ class TouchFingersTest {
         through.buttonCancel(9) // unknown finger: nothing
     }
 
-    @Test fun cancelledStickyModifierDoesNotLatch() {
+    @Test fun cancelledNextKeyModifierDoesNotLatch() {
         var now = 0L
-        val e = engine(sticky = true) { now }
+        val e = engine(nextShift = true) { now }
         e.buttonDown(1, "shift", 0f, 0f)
         now = 100 * MS
         e.buttonCancel(1) // a quick lift would latch Shift for the next key
@@ -270,7 +274,6 @@ class TouchFingersTest {
         val s = e.snapshot()
         assertEquals(listOf(A), s.keyboard.keys)
         assertEquals(0, s.keyboard.modifiers)
-        assertTrue(e.latchedTouches().isEmpty())
     }
 
     @Test fun cancelledTouchpadFingerNeverClicks() {

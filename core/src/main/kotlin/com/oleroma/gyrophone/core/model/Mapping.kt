@@ -204,10 +204,10 @@ sealed interface OutputTarget {
     @SerialName("pad_axis")
     data class PadAxis(val axis: GamepadAxis, val scale: Float = 1f) : OutputTarget
 
-    /** Keyboard key by HID usage ID (see HidUsage). */
+    /** Keyboard key by HID usage ID (see HidUsage), held as [mode] says. */
     @Serializable
     @SerialName("key")
-    data class Key(val usage: Int) : OutputTarget
+    data class Key(val usage: Int, val mode: KeyMode = KeyMode.HOLD) : OutputTarget
 
     @Serializable
     @SerialName("mouse")
@@ -311,6 +311,14 @@ sealed interface OutputTarget {
     data object NoOutput : OutputTarget
 }
 
+/**
+ * How a key target ([OutputTarget.Key]) holds its key. HOLD: while the source is held. TOGGLE:
+ * each press turns it on or off. NEXT_KEY: a press holds it until the next other key has been
+ * pressed and let go (a sticky Shift); pressed again before that, it lets go.
+ */
+@Serializable
+enum class KeyMode(val label: String) { HOLD("Hold"), TOGGLE("Toggle"), NEXT_KEY("Next key only") }
+
 /** [source] presses [target] while mapping set [set] (0 = Base) is in use ([OutputTarget.Layer]). */
 @Serializable
 data class Mapping(val source: InputSource, val target: OutputTarget, val set: Int = 0)
@@ -333,11 +341,11 @@ data class MappingSet(val id: Int, val name: String = "", val settings: Workspac
 /**
  * Which mappings are in use: those of [full] with each of [overrides] (bottom to top) laid over
  * it. For each input the topmost override that maps it wins, else [full]'s mappings. Mappings to
- * [OutputTarget.NoOutput] are dropped. Base with no overrides on a list with no other sets is
- * [ms] itself.
+ * [OutputTarget.NoOutput] are dropped unless [keepNothing]. Base with no overrides on a list with
+ * no other sets is [ms] itself.
  */
-fun layered(ms: List<Mapping>, full: Int, overrides: List<Int>): List<Mapping> {
-    if (full == MappingSet.BASE && overrides.isEmpty() && ms.none { it.set != 0 || it.target == OutputTarget.NoOutput }) return ms
+fun layered(ms: List<Mapping>, full: Int, overrides: List<Int>, keepNothing: Boolean = false): List<Mapping> {
+    if (full == MappingSet.BASE && overrides.isEmpty() && ms.none { it.set != 0 || (!keepNothing && it.target == OutputTarget.NoOutput) }) return ms
     var out = ms.filter { it.set == full }
     for (o in overrides) {
         if (o == full) continue
@@ -346,7 +354,7 @@ fun layered(ms: List<Mapping>, full: Int, overrides: List<Int>): List<Mapping> {
         val sources = top.mapTo(HashSet()) { it.source }
         out = out.filterNot { it.source in sources } + top
     }
-    return out.filter { it.target != OutputTarget.NoOutput }
+    return if (keepNothing) out else out.filter { it.target != OutputTarget.NoOutput }
 }
 
 /**

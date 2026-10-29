@@ -14,9 +14,6 @@ object WorkspaceDefaults {
     const val ID = "defaults"
     const val LONG_PRESS = "longPressMs"
     const val DOUBLE_TAP = "doubleTapMs"
-    const val TOUCHPAD_OVER_BUTTONS = "touchpadOverButtons"
-    const val BUTTON_TAP = "buttonTapMs"
-    const val STICKY_MODIFIERS = "stickyModifiers"
     const val CONTROL_OPACITY = "controlOpacity"
     const val HAPTICS = "haptics"
     const val HAPTIC_EDGE = "hapticEdge"
@@ -29,7 +26,7 @@ object WorkspaceDefaults {
     val builtin = Workspace(ID, "Workspace defaults")
 
     private val top = listOf(
-        LONG_PRESS, DOUBLE_TAP, TOUCHPAD_OVER_BUTTONS, BUTTON_TAP, STICKY_MODIFIERS, CONTROL_OPACITY, HAPTICS, HAPTIC_EDGE,
+        LONG_PRESS, DOUBLE_TAP, CONTROL_OPACITY, HAPTICS, HAPTIC_EDGE,
     )
 
     private fun gyroJson(g: GyroSettings): JsonObject = json.encodeToJsonElement(GyroSettings.serializer(), g).jsonObject
@@ -53,11 +50,11 @@ object WorkspaceDefaults {
 
     /**
      * The keys a layer ([MappingSet.settings]) may set: all but the gyro filters (smoothing and
-     * jitter, calibrated for the phone) and the look and button switches of the whole workspace.
+     * jitter, calibrated for the phone) and the controls' opacity.
      */
     val layerKeys: List<String> = keys - setOf(
         gyroKey("tighteningThreshold"), gyroKey("smoothingThreshold"),
-        CONTROL_OPACITY, TOUCHPAD_OVER_BUTTONS, BUTTON_TAP, STICKY_MODIFIERS,
+        CONTROL_OPACITY,
     )
 
     /** The touchpad's keys: shared and per direction. */
@@ -71,9 +68,6 @@ object WorkspaceDefaults {
         else -> when (key) {
             LONG_PRESS -> a.longPressMs == b.longPressMs
             DOUBLE_TAP -> a.doubleTapMs == b.doubleTapMs
-            TOUCHPAD_OVER_BUTTONS -> a.touchpadOverButtons == b.touchpadOverButtons
-            BUTTON_TAP -> a.buttonTapMs == b.buttonTapMs
-            STICKY_MODIFIERS -> a.stickyModifiers == b.stickyModifiers
             CONTROL_OPACITY -> a.controlOpacity == b.controlOpacity
             HAPTICS -> a.haptics == b.haptics
             HAPTIC_EDGE -> a.hapticEdge == b.hapticEdge
@@ -95,9 +89,6 @@ object WorkspaceDefaults {
         else -> when (key) {
             LONG_PRESS -> to.copy(longPressMs = from.longPressMs)
             DOUBLE_TAP -> to.copy(doubleTapMs = from.doubleTapMs)
-            TOUCHPAD_OVER_BUTTONS -> to.copy(touchpadOverButtons = from.touchpadOverButtons)
-            BUTTON_TAP -> to.copy(buttonTapMs = from.buttonTapMs)
-            STICKY_MODIFIERS -> to.copy(stickyModifiers = from.stickyModifiers)
             CONTROL_OPACITY -> to.copy(controlOpacity = from.controlOpacity)
             HAPTICS -> to.copy(haptics = from.haptics)
             HAPTIC_EDGE -> to.copy(hapticEdge = from.hapticEdge)

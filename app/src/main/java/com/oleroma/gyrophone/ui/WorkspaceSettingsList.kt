@@ -154,7 +154,7 @@ internal fun WorkspaceSettings(
                     GyroMode.SENSOR_OFF -> "Gyro is off completely: the sensor is not read (saves battery), and ratchets and Toggle gyro do nothing."
                     else -> "Gyro is off; a ratchet turns it on while held."
                 } + if (ws.gyro.mode == GyroMode.SENSOR_OFF) "" else
-                    " Turn on Ratchet on any touch button (or map Ratchet to a controller button); Toggle gyro swaps the two modes.",
+                    " Map Ratchet to a touch button, the workspace's one-finger Hold or a controller button; Toggle gyro swaps the two modes.",
             ) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(GyroMode.ALWAYS, GyroMode.OFF, GyroMode.SENSOR_OFF).forEach { mode ->
@@ -164,11 +164,6 @@ internal fun WorkspaceSettings(
                     }
                 }
             }
-            OverrideSwitch(
-                "Touchpad is a ratchet",
-                "A finger on the empty pad flips gyro while it is down, even with the touchpad off.",
-                ws.gyro.touchpadRatchet, own(g("touchpadRatchet")), reset(g("touchpadRatchet")),
-            ) { v -> editWs { it.copy(gyro = it.gyro.copy(touchpadRatchet = v)) } }
             OverrideRow(
                 "Ratchet acts on", own(g("ratchetAxes")), reset(g("ratchetAxes")),
                 hint = "Only X: a ratchet stops or starts only the sideways motion (re-centre left and right while up and down keeps going).",
@@ -271,27 +266,11 @@ internal fun WorkspaceSettings(
         RememberedSection(
             runtime,
             "workspace.Controls",
-            "Controls & buttons",
+            "Controls",
             card,
-            subtitle = "Touchpad over buttons, sticky modifiers, opacity",
+            subtitle = "How visible the touch controls are",
             headerModifier = header,
         ) {
-            OverrideSwitch(
-                "Touchpad over buttons",
-                "A finger on a key moves the cursor; a quick tap presses it.",
-                ws.touchpadOverButtons, own(WorkspaceDefaults.TOUCHPAD_OVER_BUTTONS), reset(WorkspaceDefaults.TOUCHPAD_OVER_BUTTONS),
-            ) { v -> editWs { it.copy(touchpadOverButtons = v) } }
-            if (ws.touchpadOverButtons) {
-                MsOverride(
-                    key + "tap", "Tap up to", ws.buttonTapMs, Workspace.MIN_BUTTON_TAP_MS..Workspace.MAX_BUTTON_TAP_MS,
-                    own(WorkspaceDefaults.BUTTON_TAP), reset(WorkspaceDefaults.BUTTON_TAP),
-                ) { ms -> editWs { it.copy(buttonTapMs = ms) } }
-            }
-            OverrideSwitch(
-                "Sticky modifiers",
-                "Tap Shift, Ctrl… for the next key; double tap locks.",
-                ws.stickyModifiers, own(WorkspaceDefaults.STICKY_MODIFIERS), reset(WorkspaceDefaults.STICKY_MODIFIERS),
-            ) { v -> editWs { it.copy(stickyModifiers = v) } }
             OverrideSlider(
                 key + "opacity", "Control opacity %.0f%%", ws.controlOpacity * 100, Profile.MIN_CONTROL_OPACITY * 100..100f, 1f,
                 own(WorkspaceDefaults.CONTROL_OPACITY), reset(WorkspaceDefaults.CONTROL_OPACITY),

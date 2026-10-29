@@ -87,7 +87,8 @@ class PresetsTest {
             for (c in w.touchControls) {
                 assertTrue("${w.name}/${c.id} unmapped", w.mappings.any { m ->
                     val s = m.source
-                    (s is InputSource.Touch && s.id == c.id) || (s is InputSource.TouchStick && s.id == c.id)
+                    (s is InputSource.Touch && s.id == c.id) || (s is InputSource.TouchStick && s.id == c.id) ||
+                        (s is InputSource.Surface && s.id == c.id)
                 })
                 assertTrue("${w.name}/${c.id} has no label", c.label.isNotBlank())
             }
@@ -96,6 +97,7 @@ class PresetsTest {
                 val id = when (val s = m.source) {
                     is InputSource.Touch -> s.id
                     is InputSource.TouchStick -> s.id
+                    is InputSource.Surface -> s.id
                     else -> error("non-touch source in workspace mappings: $s")
                 }
                 assertTrue("${w.name}: mapping for missing $id", id in ids)
@@ -112,7 +114,6 @@ class PresetsTest {
         assertEquals(GyroMode.OFF, w.gyro.mode)
         assertEquals(1, w.pads.size)
         assertEquals(null, w.pads[0].match)
-        assertFalse(w.touchpadOverButtons)
     }
 
     @Test fun wasdStickPressesKeysAndRatchetPausesGyro() {
@@ -137,11 +138,9 @@ class PresetsTest {
 
     @Test fun keyboardIsAFullK380() {
         val w = BuiltinProfiles.keyboardWorkspace
-        assertTrue(w.touchpadOverButtons)
-        assertTrue(w.stickyModifiers)
         assertTrue(w.pads.isEmpty())
         assertTrue(w.touchControls.all { it.shape == TouchShape.SQUARE && it.kind == TouchKind.BUTTON })
-        val usages = w.mappings.map { (it.target as OutputTarget.Key).usage }.toSet()
+        val usages = w.mappings.mapNotNull { (it.target as? OutputTarget.Key)?.usage }.toSet()
         val expected = (0x04..0x1D) + (0x1E..0x27) + (0x3A..0x45) + listOf(0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x39) +
             listOf(0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38) + listOf(0x4F, 0x50, 0x51, 0x52) +
             listOf(HidUsage.LEFT_CTRL, HidUsage.LEFT_SHIFT, HidUsage.LEFT_ALT, HidUsage.LEFT_GUI,

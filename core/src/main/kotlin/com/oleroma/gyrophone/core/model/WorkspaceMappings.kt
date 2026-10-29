@@ -34,7 +34,7 @@ object WorkspaceMappings {
     )
 
     fun resolve(w: Workspace, presets: List<DevicePreset> = emptyList()): Workspace =
-        Bindings.matchSwipeModes(w.withTouchpadMappings()).let { r ->
+        Bindings.matchSwipeModes(w).let { r ->
             val p = presets.firstOrNull { it.id == w.devicePreset }
             r.copy(
                 mappings = Bindings.upgradeSwipes(r.mappings),

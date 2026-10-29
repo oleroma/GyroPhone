@@ -51,21 +51,13 @@ data class TouchControl(
     val shape: TouchShape = TouchShape.CIRCLE,
     /** Portrait placement; null = derived from the landscape one. Keep last (positional callers). */
     val portrait: Placement? = null,
-    /**
-     * Click-through (BUTTON kind): the finger presses at once and also moves the cursor like a
-     * touchpad finger until it lifts, like a fire button you aim with in mobile shooters.
-     */
-    val clickThrough: Boolean = false,
     /** Height / width of a SQUARE button (circles and sticks stay even), in both orientations. */
     val aspect: Float = 1f,
     /** STICK: deflection (0..1 of the radius) that counts as centred; the rest is rescaled to 0..1. */
     val deadzone: Float = 0f,
     /** STICK: how deflection becomes directions. */
     val zones: StickZones = StickZones.OVERLAP,
-    /**
-     * BUTTON without click-through: a small touchpad of its own. A still tap presses it; a swipe
-     * drives its swipe mappings ([InputSource.TouchSwipe]) instead.
-     */
+    /** Before every button was a touch surface: this one was. No longer read. */
     val swipe: Boolean = false,
     /**
      * Before swipe buttons were touch surfaces: swipe sensitivity across and down (mouse counts
@@ -116,8 +108,11 @@ data class TouchControl(
     /** A finger landing here while another control is in front also works this control. */
     val sharesTouches: Boolean = false,
 ) {
-    /** In swipe mode: a button with [swipe] on and click-through off. */
-    val swipes: Boolean get() = kind == TouchKind.BUTTON && swipe && !clickThrough
+    /**
+     * Every button is a touch surface: its fingers drive the touch inputs ([InputSource.Surface]
+     * with its id) it maps or inherits from the workspace, its one-finger hold being its press.
+     */
+    val swipes: Boolean get() = kind == TouchKind.BUTTON
 
     /** The long-press time in effect (ms), its own or [w]'s. */
     fun longPress(w: Workspace): Int =
@@ -384,8 +379,7 @@ fun touchedControls(
 }
 
 /**
- * When gyro moves the mouse. ALWAYS = on, a held ratchet ([OutputTarget.GyroPause], or a touchpad
- * finger with [GyroSettings.touchpadRatchet]) pauses it; OFF = off, a held ratchet engages it;
+ * When gyro moves the mouse. ALWAYS = on, a held ratchet ([OutputTarget.GyroPause]) pauses it; OFF = off, a held ratchet engages it;
  * [OutputTarget.GyroToggle] swaps the two. SENSOR_OFF = gyro off completely (the sensor is not
  * read, saving battery; ratchets and toggle do nothing). HOLD_OR_TOGGLE is only read from old
  * files and loads as OFF ([ProfileJson.normalize]).
@@ -453,11 +447,6 @@ data class GyroSettings(
      * which are the landscape mapping (and the only one in profiles saved before this existed).
      */
     val portrait: GyroAxes? = null,
-    /**
-     * A finger on the empty touchpad is a ratchet: gyro pauses (ALWAYS) or engages (OFF) meanwhile.
-     * A click-through button's finger counts only through the button's own ratchet mapping.
-     */
-    val touchpadRatchet: Boolean = false,
     /** Which cursor axes a ratchet flips; the other one stays as the mode has it without a ratchet. */
     val ratchetAxes: RatchetAxes = RatchetAxes.BOTH,
 ) {

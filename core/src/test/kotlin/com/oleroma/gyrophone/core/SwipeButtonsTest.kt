@@ -33,14 +33,15 @@ class SwipeButtonsTest {
         mappings: List<Mapping>,
         sensX: Float = 1f,
         sensY: Float = 1f,
-        clickThrough: Boolean = false,
         now: () -> Long = { 0L },
     ): MappingEngine {
         val b = TouchControl(
             "b", TouchKind.BUTTON, "", 0.5f, 0.5f,
-            clickThrough = clickThrough, swipe = true, swipeSensX = sensX, swipeSensY = sensY,
+            swipe = true, swipeSensX = sensX, swipeSensY = sensY,
         )
+        // The touchpad's mappings cleared, so the button takes none of them.
         val p = single(Workspace(id = "w", name = "w", touchControls = listOf(b), mappings = mappings))
+            .noTouchpadDefaults()
         return MappingEngine(p, now).apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 0 }
     }
 
@@ -134,12 +135,10 @@ class SwipeButtonsTest {
     }
 
     @Test
-    fun clickThroughTurnsSwipeModeOff() {
-        val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, swipe = true)
+    fun everyButtonIsATouchSurface() {
+        val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f)
         // Press (one finger's hold), outside, zone, then the other surface inputs for 1..4 fingers.
         assertEquals(3 - 1 + (1..4).sumOf { Bindings.surfaceInputs(it).size }, Bindings.touchInputs(b).size)
-        assertEquals(7, Bindings.touchInputs(b.copy(clickThrough = true)).size)
-        assertEquals(7, Bindings.touchInputs(b.copy(swipe = false)).size)
     }
 
     @Test
@@ -194,17 +193,6 @@ class SwipeButtonsTest {
             swiped.mappings,
         )
         assertTrue(Bindings.matchSwipeModes(swiped) === swiped)
-        // Out of swipe mode the taps go back; the hold stays the press.
-        val plain = Bindings.matchSwipeModes(swiped.copy(touchControls = listOf(b.copy(swipe = false))))
-        assertEquals(
-            listOf(
-                m(InputSource.TouchTap("b")),
-                m(InputSource.TouchLongPress("b"), W),
-                m(InputSource.Touch("b"), W),
-                m(InputSource.Surface(2, SurfaceInput.HOLD, "b"), W),
-            ),
-            plain.mappings,
-        )
     }
 
     @Test

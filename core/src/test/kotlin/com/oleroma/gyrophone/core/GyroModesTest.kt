@@ -16,6 +16,7 @@ import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.ProfileJson
+import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Workspace
@@ -28,6 +29,11 @@ import org.junit.Test
 class GyroModesTest {
     private val pad = PadDevice(id = 1, vendorId = 0x045E, productId = 0x0B13, name = "Xbox Wireless Controller")
 
+    private var now = 0L
+
+    /** Lets the touchpad's queued input changes show: a later frame's snapshot. */
+    private fun MappingEngine.frame() { now += 100_000_000L; snapshot() }
+
     private fun engine(mode: GyroMode, touchpadRatchet: Boolean = false): MappingEngine {
         val ws = Workspace(
             id = "w", name = "w",
@@ -39,9 +45,12 @@ class GyroModesTest {
                 Mapping(InputSource.Key(AndroidKey.BUTTON_L1), OutputTarget.GyroPause),
                 Mapping(InputSource.Key(AndroidKey.BUTTON_Y), OutputTarget.GyroToggle),
             ))),
-            gyro = GyroSettings(mode = mode, touchpadRatchet = touchpadRatchet),
-        )
-        return MappingEngine(single(ws))
+            gyro = GyroSettings(mode = mode),
+        ).let { w ->
+            // A touchpad ratchet is the workspace's one-finger hold mapped to Ratchet.
+            if (!touchpadRatchet) w else w.copy(mappings = w.mappings + Mapping(InputSource.Surface(1, SurfaceInput.HOLD), OutputTarget.GyroPause))
+        }
+        return MappingEngine(single(ws)) { now }
     }
 
     @Test fun ratchetPausesAlwaysOn() {
@@ -68,19 +77,19 @@ class GyroModesTest {
 
     @Test fun touchpadIsARatchetInBothModesWhenOn() {
         val on = engine(GyroMode.ALWAYS, touchpadRatchet = true)
-        on.touchpadDown(1, 10f, 10f)
+        on.touchpadDown(1, 10f, 10f); on.frame()
         assertFalse(on.gyroActive)
-        on.touchpadUp(1)
+        on.touchpadUp(1); on.frame()
         assertTrue(on.gyroActive)
 
         val off = engine(GyroMode.OFF, touchpadRatchet = true)
-        off.touchpadDown(1, 10f, 10f)
+        off.touchpadDown(1, 10f, 10f); off.frame()
         assertTrue(off.gyroActive)
-        off.touchpadUp(1)
+        off.touchpadUp(1); off.frame()
         assertFalse(off.gyroActive)
 
         val plain = engine(GyroMode.ALWAYS)
-        plain.touchpadDown(1, 10f, 10f)
+        plain.touchpadDown(1, 10f, 10f); plain.frame()
         assertTrue(plain.gyroActive)
     }
 
@@ -124,21 +133,19 @@ class GyroModesTest {
         assertEquals(GyroMode.OFF, GyroSettings().mode)
     }
 
-    @Test fun clickThroughFingerRatchetsOnlyThroughItsButton() {
+    @Test fun buttonsTakeTheTouchpadRatchetUnlessTheyMapTheirHold() {
         val ws = Workspace(
             id = "w", name = "w",
             touchControls = listOf(
-                TouchControl("plain", TouchKind.BUTTON, "p", 0.2f, 0.5f, clickThrough = true),
-                TouchControl("rat", TouchKind.BUTTON, "r", 0.8f, 0.5f, clickThrough = true),
+                TouchControl("plain", TouchKind.BUTTON, "p", 0.2f, 0.5f),
+                TouchControl("rat", TouchKind.BUTTON, "r", 0.8f, 0.5f),
             ),
             mappings = listOf(
+                Mapping(InputSource.Surface(1, SurfaceInput.HOLD), OutputTarget.GyroPause),
                 Mapping(InputSource.Touch("plain"), OutputTarget.Pad(GamepadButton.A)),
-                Mapping(InputSource.Touch("rat"), OutputTarget.Pad(GamepadButton.B)),
-                Mapping(InputSource.Touch("rat"), OutputTarget.GyroPause),
             ),
-            gyro = GyroSettings(mode = GyroMode.ALWAYS, touchpadRatchet = true),
+            gyro = GyroSettings(mode = GyroMode.ALWAYS),
         )
-        var now = 0L
         val e = MappingEngine(single(ws)) { now }
         e.buttonDown(1, "plain", 10f, 10f)
         assertTrue(e.gyroActive)
@@ -149,8 +156,7 @@ class GyroModesTest {
         now += 100_000_000L // past the shortest press, so the lift releases at once
         e.buttonUp(2)
         assertTrue(e.gyroActive)
-        // A background finger is still the touchpad ratchet.
-        e.touchpadDown(3, 10f, 10f)
+        e.touchpadDown(3, 10f, 10f); e.frame()
         assertFalse(e.gyroActive)
     }
 

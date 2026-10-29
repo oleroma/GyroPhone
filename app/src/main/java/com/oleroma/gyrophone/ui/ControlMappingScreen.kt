@@ -102,7 +102,9 @@ import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.HoldZone
+import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.KeyMode
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.MouseButton
@@ -370,9 +372,20 @@ internal fun ControlMappingScreen(
     physicalInputs: List<BindableInput>? = null,
     /** The actions' own settings (their ⚙) and the shared ones (Settings); null = none. */
     settings: MappingSettings? = null,
+    /**
+     * What the level above maps each of the control's actions to in the edited set (in the control's
+     * own sources): an action mapped in neither the edited set nor Base does that, shown faded.
+     */
+    inherited: List<Mapping> = emptyList(),
+    /** The level above, as the faded chips name it ("Workspace", "Defaults"). */
+    parentName: String = "",
 ) {
     // The edited set seen as Base, so the Base-only Bindings helpers edit it.
     val view = remember(mappings, editSet) { Bindings.viewSet(mappings, editSet) }
+    val parentView = remember(inherited) { inherited.map { it.copy(set = MappingSet.BASE) }.distinct() }
+
+    /** What the level above maps [input] to (cleared ones left out). */
+    fun parentOf(input: BindableInput) = Bindings.targets(parentView, input).filter { it != OutputTarget.NoOutput }
     // Drag callbacks outlive a composition: everything they read goes through state.
     val currentMappings by rememberUpdatedState(view)
     val allMappings by rememberUpdatedState(mappings)
@@ -453,7 +466,8 @@ internal fun ControlMappingScreen(
     fun change(next: List<Mapping>, message: String) {
         val prev = allMappings
         // A zone left empty closes up: the ones after it move down.
-        val all = Bindings.compactZones(Bindings.viewSet(next, currentSet))
+        // Mapping something to a cleared action replaces the clear.
+        val all = Inheritance.tidy(Bindings.compactZones(Bindings.viewSet(next, currentSet)))
         if (all == prev) return
         undo.add(prev)
         if (undo.size > MAX_UNDO) undo.removeAt(0)
@@ -494,6 +508,27 @@ internal fun ControlMappingScreen(
     )
 
     fun applyPreset(p: MapPreset) = change(p.apply(currentMappings), "Applied " + p.label)
+
+    /** [input] maps nothing here, so it does not do what the level above maps it to. */
+    fun clear(input: BindableInput) = change(
+        Bindings.setTargets(currentMappings, input, listOf(OutputTarget.NoOutput)),
+        "Cleared " + actionTitle(currentControl, input),
+    )
+
+    /** [input] follows the level above again: its own mappings here go. */
+    fun follow(input: BindableInput) = change(
+        Bindings.setTargets(currentMappings, input, emptyList()),
+        actionTitle(currentControl, input) + " follows " + parentName,
+    )
+
+    /** Every action the level above maps follows it again. */
+    fun followAll() {
+        val overridden = inputs.filter { parentOf(it).isNotEmpty() && Bindings.targets(currentMappings, it).isNotEmpty() }
+        change(
+            overridden.fold(currentMappings) { m, input -> Bindings.setTargets(m, input, emptyList()) },
+            "Every action follows " + parentName,
+        )
+    }
 
     // Drag & drop geometry, in root coordinates.
     val cardBounds = remember { mutableStateMapOf<InputSource, Rect>() }
@@ -638,6 +673,7 @@ internal fun ControlMappingScreen(
     /** What [input]'s ⚙ opens: its own settings, or a held direction's zones; null = no ⚙. */
     fun gearOf(input: BindableInput): (() -> Unit)? {
         if (settings?.action?.invoke(input) != null) return { actionDialog = input }
+        if (Bindings.targets(view, input).any { it is OutputTarget.Key }) return { actionDialog = input }
         val src = input.sources.first() as? InputSource.Surface
         if (src?.input?.holdDirection != null && onZoneSettings != null && zonesNow && zonesOf(input) > 1) {
             return { zoneDialog = input to null }
@@ -862,9 +898,17 @@ internal fun ControlMappingScreen(
                             rowBounds.remove(src)
                         }
                     }
+                    val own = Bindings.targets(view, input)
+                    val parent = parentOf(input)
+                    // Mapped in Base, a layer's action does that: the level above shows only where Base maps nothing.
+                    val ownBase = editSet != MappingSet.BASE && Bindings.targets(mappings, input).isNotEmpty()
                     ActionCard(
                         title = if (isSurface(input)) input.label else actionLabel(control, input),
                         row = row,
+                        inherited = if (own.isEmpty() && !ownBase) parent else emptyList(),
+                        parentName = parentName,
+                        onClear = if (parent.isNotEmpty() && own != listOf(OutputTarget.NoOutput)) ({ clear(input) }) else null,
+                        onFollow = if (parent.isNotEmpty() && own.isNotEmpty()) ({ follow(input) }) else null,
                         others = zoneInputs.map { zi ->
                             (listOf(MappingSet.BASE) + sets.map { it.id }).filter { it != editSet }.flatMap { n ->
                                 Bindings.targets(Bindings.viewSet(mappings, n), zi).map { n to it }
@@ -1131,6 +1175,9 @@ internal fun ControlMappingScreen(
                                 )
                             }
                         }
+                        if (inputs.any { parentOf(it).isNotEmpty() && Bindings.targets(view, it).isNotEmpty() }) {
+                            TextButton(onClick = { followAll() }, contentPadding = compact) { Text("↺ Reset all") }
+                        }
                         val shared = settings?.shared
                         if (shared != null) TextButton(onClick = { sharedOpen = true }, contentPadding = compact) { Text("⚙ Settings") }
                         else if (onSettings != null) TextButton(onClick = onSettings, contentPadding = compact) { Text("Settings") }
@@ -1239,10 +1286,35 @@ internal fun ControlMappingScreen(
     }
     actionDialog?.let { input ->
         val content = settings?.action?.invoke(input)
-        if (content != null) AlertDialog(
+        val keys = Bindings.targets(view, input).filterIsInstance<OutputTarget.Key>()
+        if (content != null || keys.isNotEmpty()) AlertDialog(
             onDismissRequest = { actionDialog = null },
             title = { Text("⚙ " + actionTitle(control, input)) },
-            text = { Column(Modifier.verticalScroll(rememberScrollState())) { content() } },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    // How each key it presses holds: while held, toggled, or for the next key only.
+                    for (k in keys) {
+                        Text(Describe.shortTarget(k.copy(mode = KeyMode.HOLD)), style = MaterialTheme.typography.labelLarge)
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            for (mode in KeyMode.entries) FilterChip(
+                                selected = k.mode == mode,
+                                onClick = {
+                                    val next = Bindings.targets(view, input).map { if (it == k) k.copy(mode = mode) else it }
+                                    change(Bindings.setTargets(view, input, next), Describe.shortTarget(k.copy(mode = KeyMode.HOLD)) + ": " + mode.label)
+                                },
+                                label = { Text(mode.label) },
+                            )
+                        }
+                    }
+                    if (keys.isNotEmpty()) Text(
+                        "Toggle: pressed once it stays down until pressed again. Next key only: it stays down until the next other key is let go.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    content?.invoke()
+                }
+            },
             confirmButton = { TextButton(onClick = { actionDialog = null }) { Text("Done") } },
         )
     }
@@ -1372,6 +1444,13 @@ internal fun ControlMappingScreen(
 private fun ActionCard(
     title: String,
     row: List<RowItem>,
+    /** What the level above maps this action to, while it maps nothing itself: faded chips. */
+    inherited: List<OutputTarget>,
+    parentName: String,
+    /** ✕: it maps nothing, overriding the level above; null = no ✕. */
+    onClear: (() -> Unit)?,
+    /** ↺: it follows the level above again; null = no ↺. */
+    onFollow: (() -> Unit)?,
     /** Per zone, other sets' targets (set, target): greyed at the end of that zone. */
     others: List<List<Pair<Int, OutputTarget>>>,
     /** The set the targets are in (0 = Base: plain chips, else its colour and number). */
@@ -1415,7 +1494,7 @@ private fun ActionCard(
     val handleDrag by rememberUpdatedState(onHandleDrag)
     val dividerDrag by rememberUpdatedState(onDividerDrag)
     val empty = row.none { it is RowItem.Chip }
-    val nothing = row.isEmpty() && others.all { it.isEmpty() }
+    val nothing = row.isEmpty() && others.all { it.isEmpty() } && inherited.isEmpty()
     Surface(
         onClick = onClick,
         modifier = modifier
@@ -1464,6 +1543,14 @@ private fun ActionCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                for ((label, action) in listOf("✕" to onClear, "↺" to onFollow)) if (action != null) {
+                    Box(
+                        Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = action),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(label, style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant)
+                    }
+                }
                 if (landingZone >= 0) {
                     Text(
                         "→ Zone " + (landingZone + 1) + if (landingZone >= others.size) " (new)" else "",
@@ -1545,6 +1632,27 @@ private fun ActionCard(
                                     modifier = Modifier.padding(start = 6.dp),
                                 )
                             }
+                        }
+                    }
+                    // Faded: what the level above does here.
+                    for (t in inherited) key("p", t) {
+                        Row(
+                            Modifier
+                                .alpha(0.5f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(1.dp, colors.outline, RoundedCornerShape(8.dp))
+                                .heightIn(min = 32.dp)
+                                .padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(parentName, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+                            Text(
+                                Describe.shortTarget(t),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = colors.onSurfaceVariant,
+                                maxLines = 1,
+                                modifier = Modifier.padding(start = 6.dp),
+                            )
                         }
                     }
                     var zone = 0

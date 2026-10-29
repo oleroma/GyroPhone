@@ -10,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,7 +25,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.isTouchpad
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.runtime.ScreenOrientation
 import kotlin.math.roundToInt
@@ -58,7 +61,36 @@ private fun DefaultsTab(runtime: GamepadRuntime) {
             "Every workspace uses these, except where it sets its own (its settings): those show highlighted " +
                     "there, with ↺ to follow these again.",
         )
-        WorkspaceSettings(runtime, defaultsLevel(runtime, profile), profile.id + "/defaults")
+        var mapping by remember { mutableStateOf(false) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "The touchpad's mappings every workspace starts from: what each finger count does. " +
+                        "A workspace maps an action itself to override one.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f).padding(4.dp),
+            )
+            OutlinedButton(onClick = { mapping = true }) { Text("Touchpad mappings") }
+        }
+        val level = defaultsLevel(runtime, profile)
+        WorkspaceSettings(runtime, level, profile.id + "/defaults")
+        if (mapping) {
+            ControlMappingScreen(
+                control = TOUCHPAD_STAND_IN,
+                mappings = profile.defaults.mappings.filter { it.source.isTouchpad },
+                runtime = runtime,
+                onMappingsChange = { m ->
+                    runtime.editActiveProfile { p ->
+                        p.copy(defaults = p.defaults.copy(mappings = p.defaults.mappings.filterNot { it.source.isTouchpad } + m))
+                    }
+                },
+                onSettings = null,
+                onClose = { mapping = false },
+                settings = touchpadSettings(runtime, level),
+                inherited = Inheritance.builtin,
+                parentName = "Built-in",
+            )
+        }
     }
 }
 

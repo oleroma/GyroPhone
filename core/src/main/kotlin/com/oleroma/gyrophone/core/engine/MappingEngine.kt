@@ -17,6 +17,7 @@ import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.HapticEdge
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.KeyMode
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
@@ -30,7 +31,7 @@ import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
-import com.oleroma.gyrophone.core.model.withTouchpadMappings
+import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.Bindings
@@ -139,9 +140,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** Some mapping in use is a gyro ratchet ([gyroAxes] runs per gyro sample: no search without one). */
     private var ratchetMapped = false
-
-    /** Touch controls whose mappings are all keyboard modifiers, when sticky modifiers are on. */
-    private var modifierIds: Set<String> = emptySet()
 
     /**
      * Input state of one device: its keys, its axes and the pad of the workspace it acts as.
@@ -262,11 +260,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private val bpDownY = FloatArray(MAX_BUTTON_FINGERS)
     private val bpDownNs = LongArray(MAX_BUTTON_FINGERS)
 
-    /** Pressed at once on touch-down (touchpadOverButtons off), so a quick release is a tap. */
-    private val bpImmediate = BooleanArray(MAX_BUTTON_FINGERS)
-
-    /** Click-through touch buttons of the workspace: pressed and driving the touchpad at once. */
-    private var clickThroughIds: Set<String> = emptySet()
+    /** The workspace's touch buttons: each takes the touchpad's mappings it does not map itself. */
+    private var buttonIds: List<String> = emptyList()
 
     /** Touch controls that take the new set's mappings at once when it changes while they are held. */
     private var followLayerIds: Set<String> = emptySet()
@@ -285,11 +280,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private var keyCfgs: Array<Map<Int, KeyGestureCfg>> = emptyArray()
     private var anyKeyCfgs: Map<Int, KeyGestureCfg> = emptyMap()
 
-    /** Background fingers (with the touchpad on or off): a ratchet with touchpadRatchet. */
-    private val padTouchIds = HashSet<Long>()
-
     /**
-     * Swipe-mode buttons: a touch surface each, a touchpad of their own that every finger on the
+     * The touch buttons: a touch surface each, a touchpad of their own that every finger on the
      * button feeds ([InputSource.Surface] with the button's id).
      */
     private var surfaces: Map<String, Touchpad> = emptyMap()
@@ -301,6 +293,15 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     private val pulses = ArrayList<Pulse>()
+
+    /** Toggle / next-key key mappings whose source was held at the last snapshot ([keyModePress]). */
+    private val keyModeHeld = HashSet<Mapping>()
+
+    /** Keys a toggle mapping has turned on. */
+    private val toggledKeys = LinkedHashSet<Int>()
+
+    /** Keys held for the next other key: true once one was pressed (let go with it). */
+    private val nextKeys = LinkedHashMap<Int, Boolean>()
 
     /**
      * Held [InputSource.TouchArea]s of one kind, set by the pad screen ([setTouchArea]). One let go
@@ -324,16 +325,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     private val areas = Array(TouchAreaKind.entries.size) { AreaHolds() }
 
-    /** Sticky-modifier state of a modifier control. */
-    private class Latch {
-        var state = LATCH_NONE;
-        var tapNs = 0L
-    }
-
-    private val latches = HashMap<String, Latch>()
-
-    /** Modifier controls held while a non-modifier key was pressed (a chord, not a tap). */
-    private val chorded = HashSet<String>()
 
     private var gyroToggled = false
     private var mouseDx = 0
@@ -402,8 +393,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** Loads the active workspace and releases everything held. Under the lock. */
     private fun applyWorkspace() {
-        val loaded = profile.workspace(workspaceIndex).withTouchpadMappings()
-        val w = loaded.copy(mappings = Bindings.upgradeSwipes(loaded.mappings))
+        val loaded = profile.workspace(workspaceIndex)
+        // The touchpad mappings it does not set come from the Defaults.
+        val w = loaded.copy(mappings = Bindings.upgradeSwipes(Inheritance.workspace(loaded, profile.defaults)))
         ws = w
         allTouch = w.mappings
         allPads = Array(w.pads.size + 2) {
@@ -415,9 +407,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         touchMappings = allTouch
         padMappings = allPads
-        modifierIds = if (w.stickyModifiers) modifierControls(layered(w.mappings, MappingSet.BASE, emptyList())) else emptySet()
-        clickThroughIds =
-            w.touchControls.filter { it.kind == TouchKind.BUTTON && it.clickThrough }.mapTo(HashSet()) { it.id }
+        buttonIds = w.touchControls.filter { it.kind == TouchKind.BUTTON }.map { it.id }
         followLayerIds = w.touchControls.filter { it.followLayers }.mapTo(HashSet()) { it.id }
         val swipers = w.touchControls.filter { it.swipes }
         surfaces = swipers.associate { c ->
@@ -458,7 +448,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         layerSet = MappingSet.BASE; layerOverrides.clear(); layerHolds.clear()
         carried = Array(allPads.size + 1) { HashMap() }; anyCarried = false
         applyLayers()
-        padTouchIds.clear()
         touchpad.cancel(clock())
     }
 
@@ -471,7 +460,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (a in areas) a.clear()
         hapticWas.clear(); hapticNow.clear(); hapticSteps.clear()
         bpState.fill(BP_FREE); bpControl.fill(null)
-        pulses.clear(); latches.clear(); chorded.clear()
+        pulses.clear()
+        keyModeHeld.clear(); toggledKeys.clear(); nextKeys.clear()
         for (t in tapList) t.reset()
         gyroToggled = false
         keyOrderSize = 0; inKeyOrder.fill(false)
@@ -573,12 +563,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     /**
-     * A finger landed on touch control [id] (BUTTON kind) at [x], [y] px of the pad area. With
-     * the workspace's touchpadOverButtons off it presses at once; on, it moves the cursor at once
-     * and presses the button only as a tap (a still lift within the workspace's buttonTapMs). A
-     * click-through control presses at once and its finger also moves the cursor until it lifts.
-     * [pointer] is the finger id; [eventNanos] is the touch's event time (same clock as [clock]),
-     * used only for cursor speed.
+     * A finger landed on touch control [id] (BUTTON kind) at [x], [y] px of the pad area: a finger
+     * of the button's own surface, which presses it at once (its one-finger hold) and drives the
+     * touch inputs it maps or takes from the touchpad until it lifts. [pointer] is the finger id;
+     * [eventNanos] is the touch's event time (same clock as [clock]), used only for cursor speed.
      */
     fun buttonDown(pointer: Long, id: String, x: Float, y: Float, eventNanos: Long = clock()) {
         synchronized(lock) {
@@ -589,26 +577,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (slot < 0) return@firingEvents
                 bpPointer[slot] = pointer; bpControl[slot] = id
                 bpDownX[slot] = x; bpDownY[slot] = y; bpDownNs[slot] = now
-                bpImmediate[slot] = id in clickThroughIds || !ws.touchpadOverButtons
+                press(id)
                 val surface = surfaces[id]
                 if (surface != null) {
-                    // A touchpad of its own: pressed at once (one finger's hold), its fingers drive its surface mappings.
                     bpState[slot] = BP_SWIPE
-                    bpImmediate[slot] = true
-                    press(id)
                     surface.down(pointer, x, y, now, eventNs = eventNanos)
-                } else if (id in clickThroughIds) {
-                    bpState[slot] = BP_THROUGH
-                    press(id)
-                    touchpad.down(pointer, x, y, now, aiming = true, eventNs = eventNanos)
-                } else if (bpImmediate[slot]) {
-                    bpState[slot] = BP_PRESSED
-                    press(id)
-                } else {
-                    // Touchpad over buttons: a cursor finger at once, a key only if it taps.
-                    bpState[slot] = BP_PENDING
-                    touchpad.down(pointer, x, y, now, aiming = true, eventNs = eventNanos)
-                }
+                } else bpState[slot] = BP_PRESSED
             }
         }
         onChange?.run()
@@ -620,22 +594,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val now = clock()
             firingEvents(now) {
                 val slot = slotOf(pointer)
-                if (slot < 0) return@firingEvents
-                when (bpState[slot]) {
-                    BP_PENDING -> {
-                        touchpad.move(pointer, x, y, now, eventNanos)
-                        val ddx = x - bpDownX[slot];
-                        val ddy = y - bpDownY[slot]
-                        val slop = BUTTON_SLOP_DP * touchpad.pxPerDp
-                        // Moved too far to be a tap: only a touchpad finger now.
-                        if (ddx * ddx + ddy * ddy > slop * slop) bpState[slot] = BP_TOUCHPAD
-                    }
-
-                    BP_TOUCHPAD, BP_THROUGH -> touchpad.move(pointer, x, y, now, eventNanos)
-                    BP_SWIPE -> surfaces[bpControl[slot]]?.move(pointer, x, y, now, eventNanos)
-
-                    else -> Unit
-                }
+                if (slot < 0 || bpState[slot] != BP_SWIPE) return@firingEvents
+                surfaces[bpControl[slot]]?.move(pointer, x, y, now, eventNanos)
             }
         }
         onChange?.run()
@@ -649,38 +609,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val slot = slotOf(pointer)
                 if (slot < 0) return@firingEvents
                 val id = bpControl[slot]!!
-                when (bpState[slot]) {
-                    // Still and short: the tap commits now. Longer is only a touchpad touch.
-                    BP_PENDING -> {
-                        touchpad.up(pointer, now)
-                        if (now - bpDownNs[slot] <= ws.buttonTapMs * 1_000_000L) {
-                            if (id in modifierIds) modifierTap(id, now) else {
-                                pulses.add(Pulse(id, now))
-                                press(id)
-                            }
-                        }
-                    }
-
-                    BP_PRESSED, BP_THROUGH -> {
-                        if (bpState[slot] == BP_THROUGH) touchpad.up(pointer, now)
-                        if (id in modifierIds) {
-                            release(id)
-                            modifierUp(id, bpImmediate[slot] && now - bpDownNs[slot] < BUTTON_HOLD_NS, now)
-                        } else if (now - bpDownNs[slot] < touchpad.minPulseNanos) {
-                            // A quick tap stays pressed until a snapshot has shown it for the
-                            // minimum pulse, so a pump that ticks between its down and up still sends it.
-                            pulses.add(Pulse(id, bpDownNs[slot]))
-                        } else {
-                            release(id)
-                        }
-                    }
-
-                    BP_TOUCHPAD -> touchpad.up(pointer, now)
-                    BP_SWIPE -> {
-                        surfaces[id]?.up(pointer, now)
-                        if (now - bpDownNs[slot] < touchpad.minPulseNanos) pulses.add(Pulse(id, bpDownNs[slot])) else release(id)
-                    }
-                }
+                if (bpState[slot] == BP_SWIPE) surfaces[id]?.up(pointer, now)
+                // A quick tap stays pressed until a snapshot has shown it for the minimum pulse,
+                // so a pump that ticks between its down and up still sends it.
+                if (now - bpDownNs[slot] < touchpad.minPulseNanos) pulses.add(Pulse(id, bpDownNs[slot])) else release(id)
                 bpState[slot] = BP_FREE; bpControl[slot] = null
             }
         }
@@ -689,7 +621,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /**
      * A finger that went down through [buttonDown] was cancelled by the system: what it pressed is
-     * released and its cursor part ends, but it never taps a key or latches a sticky modifier.
+     * released and its surface finger ends without a tap.
      */
     fun buttonCancel(pointer: Long) {
         synchronized(lock) {
@@ -698,33 +630,17 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val slot = slotOf(pointer)
                 if (slot < 0) return@firingEvents
                 val id = bpControl[slot]!!
-                when (bpState[slot]) {
-                    BP_PENDING, BP_TOUCHPAD -> touchpad.cancelFinger(pointer, now)
-                    BP_SWIPE -> {
-                        surfaces[id]?.cancelFinger(pointer, now)
-                        release(id)
-                    }
-
-                    BP_PRESSED, BP_THROUGH -> {
-                        if (bpState[slot] == BP_THROUGH) touchpad.cancelFinger(pointer, now)
-                        release(id)
-                        // Not a tap: the modifier only leaves its chord, a latch stays as it was.
-                        if (id in modifierIds && !touches.containsKey(id)) chorded.remove(id)
-                    }
-                }
+                if (bpState[slot] == BP_SWIPE) surfaces[id]?.cancelFinger(pointer, now)
+                release(id)
                 bpState[slot] = BP_FREE; bpControl[slot] = null
             }
         }
         onChange?.run()
     }
 
-    /**
-     * Touch controls whose modifier is latched or locked (sticky modifiers), or whose swipe holds
-     * are latched, for highlighting.
-     */
+    /** Touch controls whose swipe holds are latched, for highlighting. */
     fun latchedTouches(): Set<String> = synchronized(lock) {
         val out = HashSet<String>()
-        for ((id, l) in latches) if (l.state != LATCH_NONE) out.add(id)
         for ((id, s) in surfaces) if (s.latched) out.add(id)
         out
     }
@@ -781,9 +697,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (pressed) {
                     if (setTouchHeld.put(id, now) == null) press(id)
                 } else {
-                    val t = setTouchHeld.remove(id) ?: return@firingEvents
+                    setTouchHeld.remove(id) ?: return@firingEvents
                     release(id)
-                    if (id in modifierIds) modifierUp(id, now - t < BUTTON_HOLD_NS, now)
                 }
             }
         }
@@ -895,7 +810,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         synchronized(lock) {
             val now = clock()
             resolveIfDue(now)
-            padTouchIds.add(pointer)
             touchpad.down(pointer, x, y, now, eventNs = eventNanos)
         }
         onChange?.run()
@@ -914,7 +828,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         synchronized(lock) {
             val now = clock()
             resolveIfDue(now)
-            padTouchIds.remove(pointer)
             touchpad.up(pointer, now)
         }
         onChange?.run()
@@ -923,15 +836,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Ends any touchpad gesture (pad left, rotated, profile changed). */
     fun touchpadCancel() {
         synchronized(lock) {
-            // Button fingers that became touchpad fingers are gone with the gesture.
-            for (i in 0 until MAX_BUTTON_FINGERS) {
-                if (bpState[i] == BP_TOUCHPAD || bpState[i] == BP_PENDING) {
-                    bpState[i] = BP_FREE; bpControl[i] = null
-                }
-            }
-            // Click-through fingers keep their button; only the cursor part ends.
-            for (i in 0 until MAX_BUTTON_FINGERS) if (bpState[i] == BP_THROUGH) bpState[i] = BP_PRESSED
-            padTouchIds.clear()
             touchpad.cancel(clock())
         }
         onChange?.run()
@@ -942,7 +846,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         synchronized(lock) {
             val now = clock()
             resolveIfDue(now)
-            padTouchIds.remove(pointer)
             touchpad.cancelFinger(pointer, now)
         }
         onChange?.run()
@@ -979,24 +882,20 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /**
      * Whether gyro motion should currently move the mouse. A ratchet (a held [OutputTarget.GyroPause]
-     * or old [OutputTarget.GyroHold] source, or a background touchpad finger with
-     * [com.oleroma.gyrophone.core.model.GyroSettings.touchpadRatchet]; a click-through button's
-     * finger only through its button's own ratchet) pauses ALWAYS and engages OFF while held. A
+     * or old [OutputTarget.GyroHold] source) pauses ALWAYS and engages OFF while held. A
      * [OutputTarget.GyroToggle] press swaps the two until the workspace changes. SENSOR_OFF: never.
      */
     val gyroActive: Boolean get() = gyroAxes != 0
 
     /**
      * The cursor axes gyro moves now: bit 1 = X, bit 2 = Y. A ratchet flips only its
-     * [GyroSettings.ratchetAxes]; the other axis stays as the mode has it without one. A touchpad
-     * ratchet counts every background finger, with the touchpad itself on or off.
+     * [GyroSettings.ratchetAxes]; the other axis stays as the mode has it without one.
      */
     val gyroAxes: Int
         get() = synchronized(lock) {
             val g = eff.gyro
             if (g.mode == GyroMode.SENSOR_OFF) return@synchronized 0
-            val ratchet = (g.touchpadRatchet && padTouchIds.isNotEmpty()) ||
-                    (ratchetMapped && (engaged(OutputTarget.GyroPause) || engaged(OutputTarget.GyroHold)))
+            val ratchet = ratchetMapped && (engaged(OutputTarget.GyroPause) || engaged(OutputTarget.GyroHold))
             // On without a ratchet: "ratchet disables" (ALWAYS) unless toggled, "ratchet enables" only toggled.
             val base = if (g.mode == GyroMode.ALWAYS) !gyroToggled else gyroToggled
             val flipped = base != ratchet
@@ -1068,6 +967,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (anyCarried) pruneCarried()
         hapticNow.clear()
         forEachGroup { ms, dev -> accumulate(ms, dev) }
+        holdModeKeys()
         collectHaptics()
         for (i in deviceList.indices) deviceList[i].shownInSnapshot()
         anyDevice.shownInSnapshot()
@@ -1223,7 +1123,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                     }
                 }
 
-                is OutputTarget.Key -> if (v >= PRESS_THRESHOLD && t.usage in 0..255) heldKeys[t.usage] = true
+                is OutputTarget.Key -> if (t.usage in 0..255) {
+                    if (t.mode == KeyMode.HOLD) {
+                        if (v >= PRESS_THRESHOLD) heldKeys[t.usage] = true
+                    } else keyModePress(m, t, v >= PRESS_THRESHOLD)
+                }
                 is OutputTarget.Mouse -> if (v >= PRESS_THRESHOLD) accMouse = accMouse or (1 shl t.button.bit)
                 // Mouse motion follows swipe steps as they come (swipeMove).
                 // Surface motion, switching apps and zoom run in the touchpad (Touchpad.route).
@@ -1238,6 +1142,40 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
         }
         for (a in 0 until 4) if (abs(groupStick[a]) > abs(stick[a])) stick[a] = groupStick[a]
+    }
+
+    /** A toggle or next-key [t] of mapping [m] seen [pressed] in a snapshot: a press flips it. */
+    private fun keyModePress(m: Mapping, t: OutputTarget.Key, pressed: Boolean) {
+        if (!pressed) {
+            keyModeHeld.remove(m); return
+        }
+        if (!keyModeHeld.add(m)) return // still the same press
+        when (t.mode) {
+            KeyMode.TOGGLE -> if (!toggledKeys.remove(t.usage)) toggledKeys.add(t.usage)
+            // Pressed again before it was used: it lets go.
+            else -> if (nextKeys.remove(t.usage) == null) nextKeys[t.usage] = false
+        }
+    }
+
+    /**
+     * Holds the toggled keys and the next-key ones: one is held until another key that is neither
+     * has been pressed, then until all of those are let go.
+     */
+    private fun holdModeKeys() {
+        for (u in toggledKeys) heldKeys[u] = true
+        if (nextKeys.isEmpty()) return
+        var other = false
+        for (u in 0 until 256) if (heldKeys[u] && u !in nextKeys && !HidUsage.isModifier(u)) {
+            other = true; break
+        }
+        val it = nextKeys.entries.iterator()
+        while (it.hasNext()) {
+            val e = it.next()
+            if (other) e.setValue(true) else if (e.value) {
+                it.remove(); continue
+            }
+            heldKeys[e.key] = true
+        }
     }
 
     /** Whether [ms] maps analog axis [a] or [b] to a game pad trigger. */
@@ -1544,8 +1482,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * from them: the touch surfaces, trigger duplicates and gesture waits.
      */
     private fun applyLayers() {
-        fun inUse(all: List<Mapping>, c: HashMap<InputSource, Carried>?): List<Mapping> {
-            val ms = layered(all, layerSet, layerOverrides)
+        fun inUse(all: List<Mapping>, c: HashMap<InputSource, Carried>?, keepNothing: Boolean = false): List<Mapping> {
+            val ms = layered(all, layerSet, layerOverrides, keepNothing)
             if (c.isNullOrEmpty()) return ms
             val out = ms.filterNot { m ->
                 val k = c[m.source] ?: return@filterNot false
@@ -1554,7 +1492,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             // A mapping the holder keeps and the new set also has (an override falling through) counts once.
             return if (c.values.any { it.holdsLayers }) out.distinct() else out
         }
-        touchMappings = inUse(allTouch, carried.getOrNull(0))
+        // Buttons take the touchpad's mappings in use of the inputs they map in none of the layers in use.
+        touchMappings = Inheritance.toButtons(inUse(allTouch, carried.getOrNull(0), keepNothing = true), buttonIds)
+            .filter { it.target != OutputTarget.NoOutput }
         padMappings = Array(allPads.size) { inUse(allPads[it], carried.getOrNull(it + 1)) }
         mapsLeftTriggerAxis =
             BooleanArray(padMappings.size) { mapsTriggerAxis(padMappings[it], AndroidAxis.LTRIGGER, AndroidAxis.BRAKE) }
@@ -1617,13 +1557,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         g.doubleNs = (own?.doubleTapMs ?: eff.doubleTapMs).coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L
     }
 
-    // ---- Touch presses and sticky modifiers ----
+    // ---- Touch presses ----
 
     private fun press(id: String) {
         val n = touches[id] ?: 0
         touches[id] = n + 1
         if (n == 0 && tapList.isNotEmpty()) controlDown(id, clock())
-        if (n == 0 && modifierIds.isNotEmpty() && id !in modifierIds) nonModifierPressed()
     }
 
     private fun release(id: String) {
@@ -1633,47 +1572,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         touches.remove(id)
         if (tapList.isNotEmpty()) controlUp(id, clock())
-        if (modifierIds.isNotEmpty() && id !in modifierIds) nonModifierReleased()
-    }
-
-    /** A latched modifier now applies to this key; held modifiers are being used as a chord. */
-    private fun nonModifierPressed() {
-        for (l in latches.values) if (l.state == LATCH_ON) l.state = LATCH_USED
-        // A modifier finger that could still be a tap is part of this chord: held now, and still
-        // moving the cursor.
-        for (i in 0 until MAX_BUTTON_FINGERS) {
-            val c = bpControl[i]
-            if (bpState[i] == BP_PENDING && c != null && c in modifierIds) {
-                bpState[i] = BP_THROUGH
-                press(c)
-            }
-        }
-        for (m in modifierIds) if (touches.containsKey(m)) chorded.add(m)
-    }
-
-    /** Once no non-modifier key is down any more, latches that were used are spent. */
-    private fun nonModifierReleased() {
-        for (id in touches.keys) if (id !in modifierIds) return
-        for (l in latches.values) if (l.state == LATCH_USED) l.state = LATCH_NONE
-    }
-
-    /** Modifier control [id] was released after a press; [tap] = short and nothing else was pressed meanwhile. */
-    private fun modifierUp(id: String, tap: Boolean, now: Long) {
-        if (touches.containsKey(id)) return // another finger still holds it
-        val wasChord = chorded.remove(id)
-        if (tap && !wasChord) modifierTap(id, now)
-        else latches[id]?.let { if (it.state == LATCH_ON || it.state == LATCH_USED) it.state = LATCH_NONE }
-    }
-
-    /** Tap = latch for the next key; a second tap soon after = lock; a tap on a locked or latched one = off. */
-    private fun modifierTap(id: String, now: Long) {
-        val l = latches.getOrPut(id) { Latch() }
-        l.state = when (l.state) {
-            LATCH_LOCKED -> LATCH_NONE
-            LATCH_ON -> if (now - l.tapNs <= STICKY_DOUBLE_TAP_NS) LATCH_LOCKED else LATCH_NONE
-            else -> LATCH_ON
-        }
-        l.tapNs = now
     }
 
     private fun slotOf(pointer: Long): Int {
@@ -1708,7 +1606,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         is InputSource.Key -> if (dev != null && (if (output) dev.keyForOutput(source.keyCode) else dev.key(source.keyCode))) 1f else 0f
         is InputSource.KeyGesture -> if (dev?.gestures?.get(source.keyCode)?.on(source.gesture) == true) 1f else 0f
         is InputSource.Axis -> if (dev == null) 0f else half(dev.axis(source.axis), source.half)
-        is InputSource.Touch -> if (touches.containsKey(source.id) || latched(source.id)) 1f else 0f
+        is InputSource.Touch -> if (touches.containsKey(source.id)) 1f else 0f
         is InputSource.TouchTap -> if (tapStates[source.id]?.on(ButtonGesture.TAP) == true) 1f else 0f
         is InputSource.TouchLongPress -> if (tapStates[source.id]?.on(ButtonGesture.LONG_PRESS) == true) 1f else 0f
         is InputSource.TouchRelease -> if (tapStates[source.id]?.on(ButtonGesture.RELEASE) == true) 1f else 0f
@@ -1757,12 +1655,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
     }
 
-    private fun latched(id: String): Boolean {
-        if (latches.isEmpty()) return false
-        val l = latches[id] ?: return false
-        return l.state != LATCH_NONE
-    }
-
     private fun half(v: Float, half: AxisHalf): Float = when (half) {
         AxisHalf.FULL -> v
         AxisHalf.POSITIVE -> max(v, 0f)
@@ -1809,14 +1701,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         /** Android axis ids are 0..47 (MotionEvent.AXIS_GENERIC_16). */
         private const val AXIS_SLOTS = 64
 
-        /** Touchpad over buttons: a finger that moves further than this becomes a touchpad finger. */
-        const val BUTTON_SLOP_DP = 10f
-
-        /** The longest sticky-modifier tap of a key that presses at once. */
-        const val BUTTON_HOLD_NS = 300_000_000L
-
-        /** Sticky modifiers: a second tap within this of the first locks the modifier. */
-        const val STICKY_DOUBLE_TAP_NS = 400_000_000L
         private const val MAX_BUTTON_FINGERS = 10
 
         private const val BP_FREE = 0
@@ -1826,15 +1710,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         const val GYRO_Y = 2
 
 
-        /** Touchpad over buttons: a touchpad finger that is still a tap candidate. */
-        private const val BP_PENDING = 1
+        /** Pressed: a finger on a control without a surface. */
         private const val BP_PRESSED = 2
-        private const val BP_TOUCHPAD = 3
 
-        /** Click-through: pressed and a touchpad finger. */
-        private const val BP_THROUGH = 4
-
-        /** Swipe mode: pressed, and a finger of the button's own surface. */
+        /** Pressed, and a finger of the button's own surface. */
         private const val BP_SWIPE = 5
 
         /** Swipe distance (dp × sensitivity) that deflects a swipe axis fully as a floating stick. */
@@ -1843,26 +1722,5 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         /** Wheel units (1/120 notch) per mouse count of swipe: a notch every 20 dp at sensitivity 1.5. */
         const val SWIPE_WHEEL_PER_COUNT = 4f
 
-        private const val LATCH_NONE = 0
-
-        /** Latched for the next non-modifier key. */
-        private const val LATCH_ON = 1
-
-        /** Latched and applied to a key that is still down; spent when it lifts. */
-        private const val LATCH_USED = 2
-        private const val LATCH_LOCKED = 3
-
-        /** Touch controls whose mappings are all keyboard modifiers. */
-        private fun modifierControls(mappings: List<Mapping>): Set<String> {
-            val all = HashSet<String>()
-            val not = HashSet<String>()
-            for (m in mappings) {
-                val s = m.source as? InputSource.Touch ?: continue
-                val t = m.target
-                if (t is OutputTarget.Key && HidUsage.isModifier(t.usage)) all.add(s.id) else not.add(s.id)
-            }
-            all.removeAll(not)
-            return all
-        }
     }
 }
