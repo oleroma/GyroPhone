@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -72,9 +73,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -1297,11 +1300,29 @@ private fun ActionCard(
                     color = colors.onSurfaceVariant,
                 )
             } else {
+                // A framed row; a shadow at an end that has more to scroll to.
+                val shade = colors.scrim.copy(alpha = 0.28f)
                 Row(
                     Modifier
                         .fillMaxWidth()
                         .onGloballyPositioned { onRowBounds(it.boundsInRoot()) }
-                        .horizontalScroll(rowScroll),
+                        .clip(RoundedCornerShape(12.dp))
+                        .border(1.dp, colors.outlineVariant, RoundedCornerShape(12.dp))
+                        .drawWithContent {
+                            drawContent()
+                            val w = ROW_SHADE_DP.dp.toPx()
+                            if (rowScroll.canScrollBackward) {
+                                drawRect(Brush.horizontalGradient(listOf(shade, Color.Transparent), 0f, w), size = Size(w, size.height))
+                            }
+                            if (rowScroll.canScrollForward) {
+                                drawRect(
+                                    Brush.horizontalGradient(listOf(Color.Transparent, shade), size.width - w, size.width),
+                                    topLeft = Offset(size.width - w, 0f), size = Size(w, size.height),
+                                )
+                            }
+                        }
+                        .horizontalScroll(rowScroll)
+                        .padding(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -1458,6 +1479,9 @@ private fun ZoneDivider(
         }
     }
 }
+
+/** How wide the shadow at a mapping row's scrollable end is. */
+private const val ROW_SHADE_DP = 20
 
 /** A mapping set's number in a circle of its colour. */
 @Composable
