@@ -13,12 +13,18 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import com.oleroma.gyrophone.core.engine.GyroPose
+import kotlin.math.cos
+import kotlin.math.hypot
+import kotlin.math.sin
 
 /**
- * A small 3D phone, centred in the pad, turned by [pose]: a box of 8 corners, its faces seen from
- * the front drawn flat (no 3D library). It redraws only on frames where the pose changed.
+ * A small 3D phone, centred in the pad, turned by [pose]: a rounded slab (front and back outlines
+ * joined by a band of flat strips), with thin bezels round an unfilled display and a front camera
+ * dot, drawn flat with no 3D library. Only the parts facing the player are drawn, and it redraws
+ * only on frames where the pose changed.
  */
 @Composable
 fun GyroPhoneView(pose: GyroPose, modifier: Modifier = Modifier) {
@@ -26,96 +32,156 @@ fun GyroPhoneView(pose: GyroPose, modifier: Modifier = Modifier) {
     LaunchedEffect(pose) {
         while (true) withFrameMillis { pose.version.let { if (it != shown) shown = it } }
     }
+    val portrait = remember { PhoneModel(landscape = false) }
+    val landscape = remember { PhoneModel(landscape = true) }
     val m = remember { FloatArray(9) }
-    val px = remember { FloatArray(CORNERS * 2) }
-    val nz = remember { FloatArray(FACES.size) }
     val path = remember { Path() }
     Canvas(modifier) {
         @Suppress("UNUSED_EXPRESSION") shown // redraw when the pose changes
         pose.matrix(m)
-        val landscape = size.width >= size.height
-        // Half sizes in model units: the long side follows the screen's.
-        val hx = if (landscape) 1f else 0.5f
-        val hy = if (landscape) 0.5f else 1f
-        val unit = minOf(size.width, size.height) * SIZE
-        val cx = size.width / 2
-        val cy = size.height / 2
-        for (i in 0 until CORNERS) {
-            val x = if (i and 1 != 0) hx else -hx
-            val y = if (i and 2 != 0) hy else -hy
-            val z = if (i and 4 != 0) DEPTH else -DEPTH
-            val rx = m[0] * x + m[1] * y + m[2] * z
-            val ry = m[3] * x + m[4] * y + m[5] * z
-            val rz = m[6] * x + m[7] * y + m[8] * z
-            val k = unit * CAMERA / (CAMERA - rz)
-            px[i * 2] = cx + rx * k
-            px[i * 2 + 1] = cy - ry * k
+        val model = if (size.width >= size.height) landscape else portrait
+        model.draw(this, m, path)
+    }
+}
+
+/** The phone's points in model units (long side 2) and the screen points they were last projected to. */
+private class PhoneModel(landscape: Boolean) {
+    private val hx = if (landscape) 1f else WIDTH
+    private val hy = if (landscape) WIDTH else 1f
+
+    /** Outline corners, anticlockwise; the same outline makes the body (front and back) and, inset, the display. */
+    private val body = roundedRect(hx, hy, RADIUS)
+    private val display = roundedRect(hx - BEZEL, hy - BEZEL, RADIUS - BEZEL)
+    private val n = body.size / 2
+
+    /** Each band strip's outward normal in the phone's plane. */
+    private val normals = FloatArray(n * 2).also { out ->
+        for (i in 0 until n) {
+            val j = (i + 1) % n
+            val dx = body[j * 2] - body[i * 2]
+            val dy = body[j * 2 + 1] - body[i * 2 + 1]
+            val l = hypot(dx, dy)
+            out[i * 2] = dy / l
+            out[i * 2 + 1] = -dx / l
         }
-        // Each face's normal toward the player (z of its rotated outward axis); only those facing them are drawn.
-        for (f in FACES.indices) {
-            val a = FACE_AXIS[f]
-            nz[f] = m[6 + (a shr 1)] * (if (a and 1 == 0) 1f else -1f)
+    }
+
+    /** The front camera: in the middle of the top edge, which lies to the left in landscape. */
+    private val camX = if (landscape) -hx + BEZEL * 1.6f else 0f
+    private val camY = if (landscape) 0f else hy - BEZEL * 1.6f
+    private val bumpX = if (landscape) hx - 0.28f else -hx + 0.2f
+    private val bumpY = if (landscape) hy - 0.2f else hy - 0.28f
+
+    private val front = FloatArray(n * 2)
+    private val back = FloatArray(n * 2)
+    private val screen = FloatArray(n * 2)
+    private val p = FloatArray(3)
+
+    private var cx = 0f
+    private var cy = 0f
+    private var unit = 0f
+
+    /** Projects (x, y, z) turned by [m] into [p]: screen x, y and the scale there. */
+    private fun project(m: FloatArray, x: Float, y: Float, z: Float) {
+        val rx = m[0] * x + m[1] * y + m[2] * z
+        val ry = m[3] * x + m[4] * y + m[5] * z
+        val rz = m[6] * x + m[7] * y + m[8] * z
+        val k = unit * CAMERA / (CAMERA - rz)
+        p[0] = cx + rx * k
+        p[1] = cy - ry * k
+        p[2] = k
+    }
+
+    private fun ring(m: FloatArray, src: FloatArray, z: Float, out: FloatArray) {
+        for (i in 0 until n) {
+            project(m, src[i * 2], src[i * 2 + 1], z)
+            out[i * 2] = p[0]; out[i * 2 + 1] = p[1]
         }
-        val stroke = Stroke(width = density * 1.5f, join = StrokeJoin.Round)
-        for (f in FACES.indices) {
-            if (nz[f] <= 0.01f) continue
-            val c = FACES[f]
+    }
+
+    private fun Path.outline(pts: FloatArray) {
+        reset()
+        moveTo(pts[0], pts[1])
+        for (i in 1 until n) lineTo(pts[i * 2], pts[i * 2 + 1])
+        close()
+    }
+
+    fun draw(scope: DrawScope, m: FloatArray, path: Path) = with(scope) {
+        cx = size.width / 2
+        cy = size.height / 2
+        unit = minOf(size.width, size.height) * SIZE
+        ring(m, body, DEPTH, front)
+        ring(m, body, -DEPTH, back)
+        val line = Stroke(width = density * 1.5f, join = StrokeJoin.Round)
+        val thin = Stroke(width = density * 1f, join = StrokeJoin.Round)
+        // How squarely the front faces the player (the screen normal's z); the back's is minus it.
+        val facing = m[8]
+        if (-facing > 0.01f) {
+            path.outline(back)
+            drawPath(path, BACK.copy(alpha = ALPHA * (0.45f + 0.55f * -facing)))
+            drawPath(path, EDGE, style = line)
+            project(m, bumpX, bumpY, -DEPTH)
+            drawCircle(EDGE, 0.1f * p[2] * -facing, Offset(p[0], p[1]), style = line)
+        }
+        // The band round the sides: the strips facing the player, shaded by how squarely they do.
+        for (i in 0 until n) {
+            val f = m[6] * normals[i * 2] + m[7] * normals[i * 2 + 1]
+            if (f <= 0f) continue
+            val j = (i + 1) % n
             path.reset()
-            path.moveTo(px[c[0] * 2], px[c[0] * 2 + 1])
-            for (j in 1 until 4) path.lineTo(px[c[j] * 2], px[c[j] * 2 + 1])
+            path.moveTo(front[i * 2], front[i * 2 + 1])
+            path.lineTo(front[j * 2], front[j * 2 + 1])
+            path.lineTo(back[j * 2], back[j * 2 + 1])
+            path.lineTo(back[i * 2], back[i * 2 + 1])
             path.close()
-            val fill = when (f) {
-                SCREEN -> Color(0xFF1B2330)
-                BACK -> Color(0xFF3A4352)
-                else -> Color(0xFF59647A)
-            }
-            drawPath(path, fill.copy(alpha = ALPHA * (0.45f + 0.55f * nz[f])))
-            drawPath(path, Color.White.copy(alpha = ALPHA * 0.8f), style = stroke)
-            if (f == SCREEN) {
-                // The display, inset from the frame.
-                path.reset()
-                for (j in 0 until 4) {
-                    val p = inset(px, c[j], c[(j + 2) % 4], 0.08f)
-                    if (j == 0) path.moveTo(p.x, p.y) else path.lineTo(p.x, p.y)
-                }
-                path.close()
-                drawPath(path, Color(0xFF4F7DBF).copy(alpha = ALPHA * 0.5f * nz[f]))
-            }
-            if (f == BACK) {
-                // Camera bump near one corner, so the back reads as the back.
-                val p = inset(px, c[0], c[2], 0.2f)
-                drawCircle(Color.White.copy(alpha = ALPHA * 0.7f), unit * 0.09f * nz[f], p, style = stroke)
-            }
+            drawPath(path, SIDE.copy(alpha = ALPHA * (0.45f + 0.55f * f)))
+        }
+        if (facing > 0.01f) {
+            path.outline(front)
+            drawPath(path, BODY.copy(alpha = ALPHA * (0.45f + 0.55f * facing)))
+            drawPath(path, EDGE, style = line)
+            // The display: only its edge, inside thin bezels.
+            ring(m, display, DEPTH, screen)
+            path.outline(screen)
+            drawPath(path, EDGE.copy(alpha = EDGE.alpha * 0.7f * facing), style = thin)
+            project(m, camX, camY, DEPTH)
+            drawCircle(EDGE.copy(alpha = EDGE.alpha * facing), CAMERA_DOT * p[2], Offset(p[0], p[1]))
+        } else {
+            // Seen from behind, the body's front edge still outlines the band.
+            path.outline(front)
+            drawPath(path, EDGE.copy(alpha = EDGE.alpha * 0.5f), style = thin)
         }
     }
 }
 
-/** Corner [a] of the projected [px], moved [t] of the way toward the opposite corner [b]. */
-private fun inset(px: FloatArray, a: Int, b: Int, t: Float) = Offset(
-    px[a * 2] + (px[b * 2] - px[a * 2]) * t,
-    px[a * 2 + 1] + (px[b * 2 + 1] - px[a * 2 + 1]) * t,
-)
+/** An anticlockwise rounded rectangle of half sizes [hx], [hy] and corner radius [r], as x, y pairs. */
+private fun roundedRect(hx: Float, hy: Float, r: Float): FloatArray {
+    val out = FloatArray(4 * ARC * 2)
+    var o = 0
+    // Corner centres from top right, anticlockwise; each arc sweeps its quarter.
+    val cxs = floatArrayOf(hx - r, -hx + r, -hx + r, hx - r)
+    val cys = floatArrayOf(hy - r, hy - r, -hy + r, -hy + r)
+    for (c in 0 until 4) {
+        for (s in 0 until ARC) {
+            val a = (c + s / (ARC - 1f)) * (Math.PI / 2).toFloat()
+            out[o++] = cxs[c] + r * cos(a)
+            out[o++] = cys[c] + r * sin(a)
+        }
+    }
+    return out
+}
 
-private const val CORNERS = 8
+/** Points per rounded corner. */
+private const val ARC = 6
 
-/** Corner index bits: 1 = +x, 2 = +y, 4 = +z. Each face lists its corners around its edge. */
-private val FACES = arrayOf(
-    intArrayOf(4, 5, 7, 6), // +z: the screen
-    intArrayOf(0, 2, 3, 1), // -z: the back
-    intArrayOf(1, 3, 7, 5), // +x
-    intArrayOf(0, 4, 6, 2), // -x
-    intArrayOf(2, 6, 7, 3), // +y
-    intArrayOf(0, 1, 5, 4), // -y
-)
+/** Half the short side, against half the long side 1: a modern 20:9 phone. */
+private const val WIDTH = 0.46f
+private const val RADIUS = 0.13f
+private const val BEZEL = 0.035f
 
-/** Each face's outward axis: (axis index shl 1) or (1 when negative); the axis index picks the matrix column. */
-private val FACE_AXIS = intArrayOf(2 shl 1, (2 shl 1) or 1, 0, 1, 1 shl 1, (1 shl 1) or 1)
-
-private const val SCREEN = 0
-private const val BACK = 1
-
-/** Half thickness, against half sizes of 1 and 0.5. */
-private const val DEPTH = 0.07f
+/** Half thickness. */
+private const val DEPTH = 0.04f
+private const val CAMERA_DOT = 0.022f
 
 /** Camera distance in model units: enough perspective to read the turn, little distortion. */
 private const val CAMERA = 6f
@@ -124,3 +190,7 @@ private const val CAMERA = 6f
 private const val SIZE = 0.2f
 
 private const val ALPHA = 0.55f
+private val BODY = Color(0xFF1B2330)
+private val BACK = Color(0xFF3A4352)
+private val SIDE = Color(0xFF59647A)
+private val EDGE = Color.White.copy(alpha = 0.45f)
