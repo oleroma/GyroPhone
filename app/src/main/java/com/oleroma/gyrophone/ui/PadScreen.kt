@@ -57,6 +57,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -175,6 +176,12 @@ private const val KEEP_ON_SCREEN_DP = 48f
 /** Edit mode: [selected] value for the touchpad (empty space), whose screens are open. */
 private const val TOUCHPAD_SELECTION = "\u0000touchpad"
 
+/** Edit mode undo: changes this close together (a slider being dragged, say) make one step. */
+private const val UNDO_SETTLE_MS = 400L
+
+/** Edit mode undo: the most steps kept. */
+private const val UNDO_MAX = 100
+
 /**
  * PRESS: on a control, not yet moved; HELD: the same after a long press (settings screen open);
  * TWO: two fingers down and still (lifted: a two-finger tap; moved: a PINCH).
@@ -253,7 +260,8 @@ internal object TouchStream {
  * out of the way or resized; its ⚙ saves and opens the workspace's settings page. Tap a control to select it
  * (taps on overlapping controls cycle through them), double-tap it for its full-screen mapping screen, long-press
  * it for its full-screen settings (a corner: a menu next to it). A drag anywhere moves the selected control
- * (with none selected, the one under the finger); a pinch or the size slider resizes it. Edits change the
+ * (with none selected, the one under the finger); a pinch or the size slider resizes it. The menu's 🔒 stops
+ * drags and pinches from moving or resizing anything; ↶ / ↷ undo and redo. Edits change the
  * current orientation's placement. Done saves (a builtin becomes a custom copy) and switches to the workspace being edited.
  * In play mode the top row ([CapsuleRow]) switches and adds workspaces (tap the current one to edit
  * it) and opens Connection and Settings ([PadTab]) through [onOpenMenu]. With [GamepadRuntime.cornerAutoHide]
@@ -312,6 +320,53 @@ fun PadScreen(
         if (i >= 0 && i != runtime.workspaceIndex.value) runtime.switchWorkspace(i)
     }
     var snap by remember { mutableStateOf(false) }
+    val layoutLocked by runtime.editLayoutLocked.collectAsStateWithLifecycle()
+
+    /** Edit mode undo: earlier drafts (newest last), drafts undone, and the draft the last step ended on. */
+    val undoSteps = remember { mutableStateListOf<Profile>() }
+    val redoSteps = remember { mutableStateListOf<Profile>() }
+    val undoBase = remember { arrayOfNulls<Profile>(1) }
+
+    // A change becomes an undo step once the draft has been still for a moment and no finger is
+    // moving or resizing a control, so one drag or pinch is one step.
+    LaunchedEffect(draft, dragging) {
+        val d = draft
+        val base = undoBase[0]
+        if (d == null) {
+            undoSteps.clear()
+            redoSteps.clear()
+            undoBase[0] = null
+            return@LaunchedEffect
+        }
+        if (base == null) {
+            undoBase[0] = d
+            return@LaunchedEffect
+        }
+        if (dragging || d == base) return@LaunchedEffect
+        delay(UNDO_SETTLE_MS)
+        undoSteps.add(base)
+        if (undoSteps.size > UNDO_MAX) undoSteps.removeAt(0)
+        redoSteps.clear()
+        undoBase[0] = d
+    }
+
+    /** Goes back one step (first dropping a change that hasn't become a step yet). */
+    fun undoEdit() {
+        val d = draft ?: return
+        val base = undoBase[0] ?: return
+        val back = if (d != base) base else undoSteps.removeLastOrNull() ?: return
+        redoSteps.add(d)
+        undoBase[0] = back
+        draft = back
+    }
+
+    fun redoEdit() {
+        val d = draft ?: return
+        val next = redoSteps.removeLastOrNull() ?: return
+        undoSteps.add(undoBase[0] ?: d)
+        undoBase[0] = next
+        draft = next
+    }
 
     /** Knob offsets; read only while placing the knobs, so stick motion re-places them without recomposing. */
     val stickPos = remember { mutableStateMapOf<String, Offset>() }
@@ -765,10 +820,12 @@ fun PadScreen(
                                 down.forEach { tapStart.getOrPut(it.id) { it.position } }
                                 if (down.any { (it.position - tapStart.getValue(it.id)).getDistance() > slop }) {
                                     val c = findControl(selected)
-                                    if (c != null) {
+                                    if (c != null && !layoutLocked) {
                                         mode = EditGesture.PINCH
                                         target = c.id
                                         menu = EditMenu.NONE
+                                        // Holds the undo step until the pinch ends.
+                                        dragging = true
                                     } else {
                                         mode = EditGesture.NONE
                                     }
@@ -802,7 +859,8 @@ fun PadScreen(
                                             target = sel.id
                                             grab = selGrab
                                         }
-                                        if (mode == EditGesture.EMPTY && sel == null) {
+                                        // Locked: a drag moves nothing (and isn't a tap).
+                                        if (layoutLocked || (mode == EditGesture.EMPTY && sel == null)) {
                                             mode = EditGesture.NONE
                                         } else {
                                             mode = EditGesture.MOVE
@@ -1557,7 +1615,7 @@ fun PadScreen(
                         Modifier.weight(1f, fill = panelWidth != null).padding(top = 6.dp, bottom = 6.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        // Dots (move), ⚙ (this workspace's settings), Done, then the layout tools.
+                        // Dots (move), ⚙ (this workspace's settings), ↶ ↷ 🔒, Done, then the layout tools.
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             DragDots()
                             Text(
@@ -1574,6 +1632,22 @@ fun PadScreen(
                                     }
                                     .padding(horizontal = 8.dp, vertical = 2.dp),
                             )
+                            // Undo, redo, and the lock that keeps drags and pinches from changing the layout.
+                            @Composable
+                            fun IconText(icon: String, enabled: Boolean, onClick: () -> Unit) = Text(
+                                icon,
+                                color = if (enabled) Color.White else Color.White.copy(alpha = 0.35f),
+                                style = MaterialTheme.typography.titleLarge,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .clickable(enabled = enabled, onClick = onClick)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
+                            IconText("↶", undoSteps.isNotEmpty() || (undoBase[0] != null && draft !== undoBase[0])) { undoEdit() }
+                            IconText("↷", redoSteps.isNotEmpty()) { redoEdit() }
+                            IconText(if (layoutLocked) "🔒" else "🔓", true) {
+                                runtime.setEditLayoutLocked(!layoutLocked)
+                            }
                             Row(
                                 Modifier.horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),

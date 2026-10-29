@@ -154,6 +154,11 @@ class GamepadRuntime(context: Context) {
     /** The ← / → corners fade out after a few seconds in play; four quick taps show them again. */
     val cornerAutoHide: StateFlow<Boolean> = _cornerAutoHide
 
+    private val _editLayoutLocked = MutableStateFlow(prefs.getBoolean(KEY_EDIT_LAYOUT_LOCKED, false))
+
+    /** Edit mode's lock: drags and pinches on the pad don't move or resize controls. */
+    val editLayoutLocked: StateFlow<Boolean> = _editLayoutLocked
+
     private val _touchVisuals = MutableStateFlow(
         prefs.getString(KEY_TOUCH_VISUALS, null)
             ?.let { runCatching { visualsJson.decodeFromString(TouchVisuals.serializer(), it) }.getOrNull() }
@@ -372,6 +377,11 @@ class GamepadRuntime(context: Context) {
     fun setCornerAutoHide(on: Boolean) {
         prefs.edit().putBoolean(KEY_CORNER_AUTO_HIDE, on).apply()
         _cornerAutoHide.value = on
+    }
+
+    fun setEditLayoutLocked(on: Boolean) {
+        prefs.edit().putBoolean(KEY_EDIT_LAYOUT_LOCKED, on).apply()
+        _editLayoutLocked.value = on
     }
 
     fun setCapsuleOrder(order: String) {
@@ -795,6 +805,7 @@ class GamepadRuntime(context: Context) {
         private const val KEY_PAD_ONLY_INPUT = "pad_only_input"
         private const val KEY_START_FULLSCREEN = "start_fullscreen"
         private const val KEY_CORNER_AUTO_HIDE = "corner_auto_hide"
+        private const val KEY_EDIT_LAYOUT_LOCKED = "edit_layout_locked"
         private const val KEY_CAPSULE_ORDER = "capsule_order"
         private const val KEY_TOUCH_VISUALS = "touch_visuals"
         private val visualsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
