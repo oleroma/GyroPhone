@@ -125,3 +125,35 @@ class GyroSwayTest {
         assertEquals(0f, s.x, 0.01f)
     }
 }
+
+class GyroDisplayTest {
+    private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+    @Test fun displayControlRoundTripsAndHasNoInputs() {
+        val d = com.oleroma.gyrophone.core.model.GyroDisplay(com.oleroma.gyrophone.core.model.GyroDisplayKind.HORIZON)
+            .withColor(com.oleroma.gyrophone.core.model.GyroDisplayColor.HORIZON_SKY, 0x80112233)
+        val c = com.oleroma.gyrophone.core.model.TouchControl(
+            "disp1", com.oleroma.gyrophone.core.model.TouchKind.DISPLAY, "", 0.5f, 0.5f, display = d,
+        )
+        val back = json.decodeFromString(
+            com.oleroma.gyrophone.core.model.TouchControl.serializer(),
+            json.encodeToString(com.oleroma.gyrophone.core.model.TouchControl.serializer(), c),
+        )
+        assertEquals(c, back)
+        assertEquals(0x80112233, back.display!!.color(com.oleroma.gyrophone.core.model.GyroDisplayColor.HORIZON_SKY))
+        assertEquals(true, com.oleroma.gyrophone.core.model.Bindings.touchInputs(c).isEmpty())
+    }
+
+    @Test fun ratchetPressResetsTheGyroPhoneOnlyWhenSetTo() {
+        val kind = com.oleroma.gyrophone.core.model.GyroDisplayKind.PHONE
+        val on = com.oleroma.gyrophone.core.engine.GyroDisplayFeed("a", com.oleroma.gyrophone.core.model.GyroDisplay(kind))
+        val off = com.oleroma.gyrophone.core.engine.GyroDisplayFeed("b", com.oleroma.gyrophone.core.model.GyroDisplay(kind, resetOnRatchet = false))
+        val m = FloatArray(9)
+        for (f in listOf(on, off)) {
+            repeat(100) { f.feed(90f, 0f, 0f, 0.01f, 7, pressed = false, held = false) }
+            f.feed(0f, 0f, 0f, 0.01f, 7, pressed = true, held = true)
+        }
+        on.pose.matrix(m); assertEquals(1f, m[8], 1e-4f)
+        off.pose.matrix(m); assertEquals(0f, m[8], 1e-2f)
+    }
+}

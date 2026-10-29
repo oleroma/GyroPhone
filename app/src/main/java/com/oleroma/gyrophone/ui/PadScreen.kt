@@ -110,6 +110,8 @@ import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.ButtonLibrary
 import com.oleroma.gyrophone.core.model.Describe
+import com.oleroma.gyrophone.core.model.GyroDisplay
+import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.Inheritance
@@ -125,6 +127,7 @@ import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
+import com.oleroma.gyrophone.core.model.TouchLayer
 import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
@@ -717,7 +720,7 @@ fun PadScreen(
             val l = ((o.x - hw) / gx).roundToInt() * gx
             val r = max(((o.x + hw) / gx).roundToInt() * gx, l + gx)
             val t = ((o.y - hh) / gy).roundToInt() * gy
-            val b = if (rect) max(((o.y + hh) / gy).roundToInt() * gy, t + gy) else t + (r - l)
+            val b = if (rect) max(((o.y + hh) / gy).roundToInt() * gy, t + gy) else t + (r - l) * c.heightRatio
             val size = ((r - l) / unit).coerceIn(TouchControl.MIN_SIZE, TouchControl.MAX_SIZE)
             val sized = c.withPlacement(portrait, c.placeX(portrait), c.placeY(portrait), size)
                 .let { if (rect) it.copy(aspect = (b - t) / (r - l)) else it }
@@ -974,7 +977,9 @@ fun PadScreen(
                                 editPending[0] = null
                                 editTapTime[0] = Long.MIN_VALUE / 4
                                 selected = target
-                                menu = if (d0 != null && isCorner(d0, target!!)) EditMenu.CONTEXT else EditMenu.MAPPING
+                                menu = if (d0 != null && (isCorner(d0, target!!) || findControl(target)?.kind == TouchKind.DISPLAY)) {
+                                    EditMenu.CONTEXT
+                                } else EditMenu.MAPPING
                             } else {
                                 // A tap selects, once no second tap follows.
                                 editTapAt[0] = downPos.x; editTapAt[1] = downPos.y
@@ -1009,7 +1014,8 @@ fun PadScreen(
             Modifier.pointerInput("play", playKey, wsIndex, w, h, pxPerDp) {
                 releaseAll()
                 val workspace = profile.workspace(wsIndex)
-                val controls = workspace.touchControls
+                // Gyro displays are only drawn: they take no touches.
+                val controls = workspace.touchControls.filterNot { it.kind == TouchKind.DISPLAY }
                 val corners = profile.shownCorners
                 runtime.engine.touchpadPxPerDp = pxPerDp
                 val stickOwner = HashMap<PointerId, String>()
@@ -1400,15 +1406,28 @@ fun PadScreen(
             }
         }
 
-        if (!editing && visuals.anyGyro) GyroVisualsLayer(runtime, visuals, Modifier.fillMaxSize())
-        if (!editing && ws.touchpad.enabled && (ws.touchControls.isEmpty() || portrait)) {
+        // Gyro displays: under everything, only drawn. The runtime gathers data for the ones shown.
+        val displays = ws.touchControls.filter { it.kind == TouchKind.DISPLAY }
+        DisposableEffect(displays) {
+            runtime.setGyroDisplays(displays)
+            onDispose { runtime.setGyroDisplays(emptyList()) }
+        }
+        if (displays.isNotEmpty()) {
+            val boxes = displays.map { c ->
+                val o = center(c)
+                DisplayBox(c, Rect(o.x - half(c), o.y - halfH(c), o.x + half(c), o.y + halfH(c)))
+            }
+            GyroDisplaysLayer(runtime, boxes, editing, selected, Modifier.fillMaxSize())
+        }
+        if (!editing && visuals.gyroEdge) GyroEdgeLayer(runtime, visuals, Modifier.fillMaxSize())
+        val noButtons = ws.touchControls.all { it.kind == TouchKind.DISPLAY }
+        if (!editing && ws.touchpad.enabled && (noButtons || portrait)) {
             Text(
                 "Touchpad",
                 color = Color.White.copy(alpha = 0.18f),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.align(
-                    // Above the gyro phone when that is shown in the middle.
-                    if (ws.touchControls.isEmpty() && !(visuals.gyroPhone && visuals.gyroPhonePlace == VisPlace.CENTER)) Alignment.Center else BiasAlignment(0f, -0.35f),
+                    if (ws.touchControls.isEmpty()) Alignment.Center else BiasAlignment(0f, -0.35f),
                 ),
             )
         }
@@ -1443,6 +1462,7 @@ fun PadScreen(
             }
             // Back first, so the front one (as touches see them) is drawn on top.
             for (c in hitOrder(ws.touchControls, portrait).asReversed()) {
+                if (c.kind == TouchKind.DISPLAY) continue
                 val r = half(c)
                 val rh = halfH(c)
                 val ctr = center(c)
@@ -1858,7 +1878,7 @@ fun PadScreen(
                                         colors = selColors,
                                         onClick = { menu = EditMenu.CONTEXT }) { Text("Configure") }
                                     val d = draft
-                                    if (d != null && !isCorner(d, picked.id)) {
+                                    if (d != null && !isCorner(d, picked.id) && picked.kind != TouchKind.DISPLAY) {
                                         FilledTonalButton(
                                             contentPadding = compact,
                                             colors = selColors,
@@ -1890,6 +1910,23 @@ fun PadScreen(
                                     val c = newControl(wk, id, TouchKind.STICK, NEW_STICK_SIZE, portrait)
                                     editWorkspace { it.copy(touchControls = it.touchControls + addAt(at, c)) }
                                     selected = id
+                                }
+                                // Gyro displays: placed and sized like buttons, drawn under everything in play.
+                                for (kind in GyroDisplayKind.entries) {
+                                    AddChip("+ " + kind.label, false) addDisplay@{ at ->
+                                        val d = draft ?: return@addDisplay
+                                        val wk = d.workspace(editIndex)
+                                        val id = freshId(wk, "disp", takenIds(d))
+                                        val (size, aspect) = GyroDisplay.newSize(kind)
+                                        val c = newControl(wk, id, TouchKind.DISPLAY, size, portrait).copy(
+                                            shape = TouchShape.SQUARE,
+                                            aspect = aspect,
+                                            layer = TouchLayer.BACK,
+                                            display = GyroDisplay(kind),
+                                        )
+                                        editWorkspace { it.copy(touchControls = it.touchControls + addAt(at, c)) }
+                                        selected = id
+                                    }
                                 }
                                 if (snap) {
                                     FilledTonalButton(
@@ -2063,6 +2100,28 @@ fun PadScreen(
                             modifier = Modifier.heightIn(max = maxHeight - 16.dp),
                         )
                     }
+                } else if (sel.kind == TouchKind.DISPLAY) {
+                    // A gyro display: what it shows, how, and its colours.
+                    GyroDisplaySettingsScreen(
+                        control = sel,
+                        onChange = { changed -> updateControl(sel.id) { changed } },
+                        onDuplicate = {
+                            val (nw, id) = duplicate(ws, sel, takenIds(draft ?: profile))
+                            val copy = nw.touchControls.first { it.id == id }
+                            editWorkspace {
+                                nw.copy(touchControls = nw.touchControls.map {
+                                    if (it.id == id) place(copy, copy.placeX(portrait), copy.placeY(portrait), false) else it
+                                })
+                            }
+                            selected = id
+                        },
+                        onDelete = {
+                            editWorkspace { Bindings.removeTouchControl(it, sel.id) }
+                            selected = null
+                            menu = EditMenu.NONE
+                        },
+                        onClose = { menu = EditMenu.NONE },
+                    )
                 } else if (menu == EditMenu.MAPPING) {
                     // A tap: the control's mapping screen.
                     ControlMappingScreen(
@@ -2236,7 +2295,11 @@ private fun newControl(
 
 /** Copies a control and its mappings next to the original; returns the workspace and the new id. */
 private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>): Pair<Workspace, String> {
-    val id = freshId(workspace, if (c.kind == TouchKind.STICK) "stick" else "btn", taken)
+    val id = freshId(workspace, when (c.kind) {
+        TouchKind.STICK -> "stick"
+        TouchKind.DISPLAY -> "disp"
+        else -> "btn"
+    }, taken)
     val copies = WorkspaceMappings.rekeyAll(workspace.mappings, c.id, id)
 
     // Offset towards the centre in both orientations, so the copy never hides under the original

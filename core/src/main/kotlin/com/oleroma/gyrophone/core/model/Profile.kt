@@ -7,8 +7,12 @@ import kotlin.math.atan2
 import kotlin.math.min
 
 @Serializable
-/** FULLSCREEN: a workspace corner (see [NavCorners]); it lives in [Profile.corners], never in a workspace. */
-enum class TouchKind { BUTTON, STICK, FULLSCREEN }
+/**
+ * FULLSCREEN: a workspace corner (see [NavCorners]); it lives in [Profile.corners], never in a
+ * workspace. DISPLAY: a gyro display ([TouchControl.display]): placed like a button in edit mode,
+ * drawn under everything in play, never touched.
+ */
+enum class TouchKind { BUTTON, STICK, FULLSCREEN, DISPLAY }
 
 @Serializable
 enum class TouchShape { CIRCLE, SQUARE }
@@ -109,6 +113,8 @@ data class TouchControl(
     val sharesTouches: Boolean = false,
     /** BUTTON: its own gyro sensitivities while held, per mapping set ([gyroIn]); none = the workspace's. */
     val gyro: List<ButtonGyro> = emptyList(),
+    /** DISPLAY: what it shows and how. */
+    val display: GyroDisplay? = null,
 ) {
     /**
      * Every button is a touch surface: its fingers drive the touch inputs ([InputSource.Surface]
@@ -412,7 +418,7 @@ fun TouchControl.surfaceSettings(pad: TouchpadSettings): TouchpadSettings =
 
 /** Height / width as drawn: [TouchControl.aspect] for a square button, else 1. */
 val TouchControl.heightRatio: Float
-    get() = if (shape == TouchShape.SQUARE && kind == TouchKind.BUTTON) aspect else 1f
+    get() = if (shape == TouchShape.SQUARE && (kind == TouchKind.BUTTON || kind == TouchKind.DISPLAY)) aspect else 1f
 
 /** Resolved placement (allocates; editor use). */
 fun TouchControl.placement(inPortrait: Boolean): Placement =

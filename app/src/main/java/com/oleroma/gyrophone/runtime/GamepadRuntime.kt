@@ -6,9 +6,9 @@ import android.os.Handler
 import android.os.Looper
 import com.oleroma.gyrophone.core.engine.GyroCalibration
 import com.oleroma.gyrophone.core.engine.GyroMouse
+import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
 import com.oleroma.gyrophone.core.engine.GyroPose
 import com.oleroma.gyrophone.core.engine.GyroSway
-import com.oleroma.gyrophone.core.engine.GyroTrace
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.TiltShake
 import com.oleroma.gyrophone.core.engine.Touchpad
@@ -24,7 +24,7 @@ import com.oleroma.gyrophone.core.model.LibraryButton
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.WorkspaceMappings
 import com.oleroma.gyrophone.core.model.Mapping
-import com.oleroma.gyrophone.core.model.MotionAxis
+import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.NavCorners
@@ -171,10 +171,7 @@ class GamepadRuntime(context: Context) {
     fun setTouchVisuals(v: TouchVisuals) {
         prefs.edit().putString(KEY_TOUCH_VISUALS, visualsJson.encodeToString(TouchVisuals.serializer(), v)).apply()
         val old = vis
-        if (v.gyroPhone && !(old.gyroPhone && !old.gyroPhoneGravity)) gyroPose.reset()
         if (v.gyroNeedsGravity && !old.gyroNeedsGravity) worldPose.reset()
-        if (v.gyroGraph && !old.gyroGraph) gyroTrace.clear()
-        if (v.gyroHorizon && !old.gyroHorizon) gyroHeading = 0f
         if (v.gyroEdge && !old.gyroEdge) gyroSway.reset()
         vis = v
         _touchVisuals.value = v
@@ -182,24 +179,39 @@ class GamepadRuntime(context: Context) {
         synchronized(this) { updateMotion() }
     }
 
-    /** The pad's gyro displays' data ([TouchVisuals]), fed by gyro samples only while a display needs it. */
+    /** The parallax edge's settings ([TouchVisuals]): its data is fed by gyro samples only while it is on. */
     @Volatile private var vis = _touchVisuals.value
 
-    /** The 3D phone in gyro mode: turned by the gyro axes that move, back to neutral on a ratchet press (when set to). */
-    val gyroPose = GyroPose()
-
-    /** The pose against the world ([GyroPose.fuse]): the 3D phone in gravity mode, the attitude indicator, the tilting edge. */
+    /** The pose against the world ([GyroPose.fuse]) for the parallax edge in tilt mode. */
     val worldPose = GyroPose()
-
-    /** The gyro graph's speeds. */
-    val gyroTrace = GyroTrace()
 
     /** The parallax edge's swing. */
     val gyroSway = GyroSway()
 
-    /** The attitude indicator's heading in degrees (right +), gathered from yaw. */
-    @Volatile var gyroHeading = 0f
-        private set
+    /** The data of the gyro displays on the pad now ([setGyroDisplays]). */
+    @Volatile private var gyroFeeds: Array<GyroDisplayFeed> = emptyArray()
+
+    /** Gyro display [id]'s data, or null when it is not on the pad. */
+    fun gyroFeed(id: String): GyroDisplayFeed? = gyroFeeds.firstOrNull { it.id == id }
+
+    /**
+     * The gyro displays ([TouchKind.DISPLAY] controls) on the pad now, or none when it is not shown:
+     * only theirs is gathered. One that stays keeps its data.
+     */
+    fun setGyroDisplays(controls: List<TouchControl>) {
+        val old = gyroFeeds
+        val next = controls.mapNotNull { c ->
+            val d = c.display ?: return@mapNotNull null
+            old.firstOrNull { it.id == c.id && it.display.kind == d.kind }?.also { it.display = d }
+                ?: GyroDisplayFeed(c.id, d)
+        }
+        if (next.size == old.size && next.indices.all { next[it] === old[it] }) return
+        gyroFeeds = next.toTypedArray()
+        synchronized(this) { updateMotion() }
+    }
+
+    /** Some gyro display holds its pose to gravity (and so needs the accelerometer). */
+    private val needsGravity: Boolean get() = vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity }
 
     /** The gyro axes moving the mouse now ([MappingEngine.gyroAxes]), for the ratchet ring and the edge's tint. */
     @Volatile var gyroLiveAxes = 0
@@ -487,7 +499,7 @@ class GamepadRuntime(context: Context) {
      * gyro display holds its pose to gravity.
      */
     private fun updateMotion() {
-        if (running && inputAllowed && (engine.motionMapped || vis.gyroNeedsGravity)) startMotion() else stopMotion()
+        if (running && inputAllowed && (engine.motionMapped || needsGravity)) startMotion() else stopMotion()
     }
 
     private fun startMotion() {
@@ -507,10 +519,13 @@ class GamepadRuntime(context: Context) {
     }
 
     private fun onAccelSample(x: Float, y: Float, z: Float, ts: Long) {
-        if (vis.gyroNeedsGravity) {
+        val feeds = gyroFeeds
+        if (vis.gyroNeedsGravity || feeds.isNotEmpty()) {
             // The same axes as the gyro's: right, up and toward the player in the phone's frame.
             val m = gyroMouse.motion(x, y, z)
-            worldPose.setUp(m.pitch, -m.yaw, -m.roll, SensorManager.GRAVITY_EARTH * RAD_TO_DEG)
+            val g = SensorManager.GRAVITY_EARTH * RAD_TO_DEG
+            if (vis.gyroNeedsGravity) worldPose.setUp(m.pitch, -m.yaw, -m.roll, g)
+            for (f in feeds) f.up(m.pitch, -m.yaw, -m.roll, g)
         }
         if (!engine.motionMapped) return
         // A layer or a held button may have tilt and shake settings of its own.
@@ -822,37 +837,21 @@ class GamepadRuntime(context: Context) {
         private const val GYRO_OFF = "Off in this workspace"
         private const val UNAVAILABLE = "Unavailable"
 
-        /** How fast the world pose's heading eases back to facing the player. */
-        private const val HEADING_EASE_S = 0.5f
-
         /** [GyroMouse.motion] scales by this (it takes rad/s): gravity in its units. */
         private const val RAD_TO_DEG = (180.0 / Math.PI).toFloat()
     }
 
-    /** Feeds one bias-corrected gyro sample to the gyro displays that are on ([vis]); [axes] move the mouse now. */
-    private fun feedVisuals(v: TouchVisuals, x: Float, y: Float, z: Float, dt: Float, axes: Int) {
+    /** Feeds one bias-corrected gyro sample to the gyro displays and the parallax edge; [axes] move the mouse now. */
+    private fun feedVisuals(v: TouchVisuals, feeds: Array<GyroDisplayFeed>, x: Float, y: Float, z: Float, dt: Float, axes: Int) {
         val ratchets = if (inputAllowed) engine.ratchetsHeld else 0
         val pressed = ratchets and poseRatchets.inv() != 0
         poseRatchets = ratchets
         gyroLiveAxes = axes
-        if (pressed && v.gyroResetOnRatchet) {
-            gyroPose.reset()
-            gyroHeading = 0f
-        }
-        if (dt == 0f) return
         val m = gyroMouse.motion(x, y, z)
-        if (v.gyroPhone && !v.gyroPhoneGravity && axes != 0) {
-            gyroPose.rotate(
-                if (axes and MappingEngine.gyroBit(MotionAxis.YAW) != 0) m.yaw else 0f,
-                if (axes and MappingEngine.gyroBit(MotionAxis.PITCH) != 0) m.pitch else 0f,
-                if (axes and MappingEngine.gyroBit(MotionAxis.ROLL) != 0) m.roll else 0f,
-                dt,
-            )
-        }
-        if (v.gyroNeedsGravity) worldPose.fuse(m.yaw, m.pitch, m.roll, dt, HEADING_EASE_S)
-        if (v.gyroHorizon) gyroHeading = ((gyroHeading + m.yaw * dt) % 360f + 360f) % 360f
-        if (v.gyroGraph) gyroTrace.add(m.yaw, m.pitch, m.roll, dt, ratchets != 0)
-        if (v.gyroEdge && !v.gyroEdgeTilt) gyroSway.update(m.yaw, m.pitch, m.roll, dt, v.gyroEdgeSpringMs / 1000f)
+        for (f in feeds) f.feed(m.yaw, m.pitch, m.roll, dt, axes, pressed, ratchets != 0)
+        if (dt == 0f || !v.gyroEdge) return
+        if (v.gyroEdgeTilt) worldPose.fuse(m.yaw, m.pitch, m.roll, dt, GyroDisplayFeed.HEADING_EASE_S)
+        else gyroSway.update(m.yaw, m.pitch, m.roll, dt, v.gyroEdgeSpringMs / 1000f)
     }
 
     /** The gyro deflects game pad axes now ([MappingEngine.setGyroAxes]): they go back to rest when it stops. */
@@ -881,7 +880,8 @@ class GamepadRuntime(context: Context) {
         val axes = if (inputAllowed) engine.gyroAxes else 0
         val active = axes != 0
         val v = vis
-        if (v.anyGyro) feedVisuals(v, x - biasX, y - biasY, z - biasZ, dt, axes)
+        val feeds = gyroFeeds
+        if (v.gyroEdge || feeds.isNotEmpty()) feedVisuals(v, feeds, x - biasX, y - biasY, z - biasZ, dt, axes)
         if (active) {
             // A layer in use may set gyro settings of its own.
             val gs = engine.gyroSettings
