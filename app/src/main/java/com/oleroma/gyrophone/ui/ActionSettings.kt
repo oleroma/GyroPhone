@@ -85,7 +85,7 @@ private fun ButtonGyroSensitivity(g: ButtonGyroLevel, key: String) {
         key + "gyro" + g.set, "Gyro sensitivity %.0f", g.inUse.sensitivity ?: g.parent.sensitivity, 0f..MAX_GYRO_SENS, 1f,
         overridden = g.own.sensitivity != null,
         onReset = { g.edit { it.copy(sensitivity = null) } },
-        hint = "While this is held (the last pressed of several), the gyro turns at this sensitivity$where, whatever this button maps: " +
+        hint = "While this is held (the last pressed of several), the gyro turns at this sensitivity${g.where}, whatever this button maps: " +
             "a lower one aims finer. Yaw, pitch and roll follow it unless their ⚙ sets their own. Unset, the workspace's.",
     ) { v -> g.edit { it.copy(sensitivity = v) } }
 }
@@ -96,7 +96,7 @@ private fun buttonGyroGear(g: ButtonGyroLevel, key: String, axis: MotionAxis): @
         key + "gyro" + g.set + axis.name, "${axis.label} sensitivity %.0f", g.inUse.sensitivityOf(axis, g.parent), 0f..MAX_GYRO_SENS, 1f,
         overridden = g.own.own(axis) != null,
         onReset = { g.edit { it.with(axis, null) } },
-        hint = "While this is held: mouse counts per degree of ${axis.label.lowercase()}$where. Unset, it follows this button's " +
+        hint = "While this is held: mouse counts per degree of ${axis.label.lowercase()}${g.where}. Unset, it follows this button's " +
             "Gyro sensitivity (in Settings), else the workspace's.",
     ) { v -> g.edit { it.with(axis, v) } }
 }
