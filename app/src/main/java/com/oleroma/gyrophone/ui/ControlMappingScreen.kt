@@ -1244,13 +1244,12 @@ private fun ActionCard(
             )
             .onGloballyPositioned { onBounds(it.boundsInRoot()) },
         shape = RoundedCornerShape(16.dp),
+        // A drag over it shows only where it lands, not a highlighted card.
         color = when {
-            hover -> colors.tertiaryContainer
             lifted || selected -> colors.primaryContainer
             else -> colors.surfaceContainerHigh
         },
         border = when {
-            hover -> BorderStroke(2.dp, colors.tertiary)
             lifted -> BorderStroke(2.dp, colors.primary)
             selected -> BorderStroke(1.dp, colors.primary)
             else -> null
@@ -1266,7 +1265,7 @@ private fun ActionCard(
                     title,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (selected && !hover) colors.onPrimaryContainer else colors.onSurface,
+                    color = if (selected) colors.onPrimaryContainer else colors.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
