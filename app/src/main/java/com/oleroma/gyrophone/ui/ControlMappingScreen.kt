@@ -531,6 +531,14 @@ internal fun ControlMappingScreen(
         )
     }
 
+    /** Every action does nothing: cleared where the level above maps it, its own mappings gone. */
+    fun clearAll() = change(
+        inputs.fold(currentMappings) { m, input ->
+            Bindings.setTargets(m, input, if (parentOf(input).isNotEmpty()) listOf(OutputTarget.NoOutput) else emptyList())
+        },
+        "Cleared every action",
+    )
+
     // Drag & drop geometry, in root coordinates.
     val cardBounds = remember { mutableStateMapOf<InputSource, Rect>() }
     // Each card's row items (chips and dividers), by the card's source; read only by drag code.
@@ -1194,7 +1202,15 @@ internal fun ControlMappingScreen(
                             }
                         }
                         if (inputs.any { parentOf(it).isNotEmpty() && Bindings.targets(view, it).isNotEmpty() }) {
-                            TextButton(onClick = { followAll() }, contentPadding = compact) { Text("↺ Reset all") }
+                            var asking by remember { mutableStateOf(false) }
+                            TextButton(onClick = { asking = true }, contentPadding = compact) { Text("↺ Reset all") }
+                            if (asking) ConfirmResetAll(
+                                "Every action follows $parentName again; what it maps here goes.",
+                                { asking = false },
+                            ) { asking = false; followAll() }
+                        }
+                        if (inputs.any { (Bindings.targets(view, it).ifEmpty { parentOf(it) }).any { t -> t != OutputTarget.NoOutput } }) {
+                            TextButton(onClick = { clearAll() }, contentPadding = compact) { Text("✕ Clear all") }
                         }
                         val shared = settings?.shared
                         if (shared != null) TextButton(onClick = { sharedOpen = true }, contentPadding = compact) { Text("⚙ Settings") }
