@@ -33,7 +33,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
-import com.oleroma.gyrophone.core.model.PadDevices
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceEdits

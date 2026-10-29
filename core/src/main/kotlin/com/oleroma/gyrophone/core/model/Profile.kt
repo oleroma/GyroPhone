@@ -758,6 +758,8 @@ data class Profile(
     val cornerOpacity: Float = 0.5f,
     /** Resizing one corner resizes the other too. */
     val cornerSameSize: Boolean = true,
+    /** What physical devices do, pinned by workspaces ([Workspace.devicePreset]). */
+    val devicePresets: List<DevicePreset> = emptyList(),
 ) {
     /** The corners shown on the pad: ← and →. */
     val shownCorners: List<TouchControl>

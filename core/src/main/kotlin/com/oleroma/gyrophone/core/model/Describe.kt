@@ -214,10 +214,12 @@ object Describe {
     fun pickerGroups(
         analog: Boolean,
         swipe: Boolean,
-        extra: List<OutputTarget> = emptyList()
+        extra: List<OutputTarget> = emptyList(),
+        mouseMotion: Boolean = false,
     ): List<Pair<String, List<OutputTarget>>> {
         // Haptics follow any input.
         val allowed: (OutputTarget) -> Boolean = when {
+            mouseMotion -> { t -> t is OutputTarget.MouseAxis }
             swipe -> { t -> t is OutputTarget.MouseAxis || t is OutputTarget.PadAxis || isHaptic(t) }
             analog -> { t -> t is OutputTarget.PadAxis || isHaptic(t) }
             else -> { t -> t !is OutputTarget.MouseAxis }

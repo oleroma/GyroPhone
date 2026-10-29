@@ -16,27 +16,29 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.displayCutout
-import androidx.compose.foundation.layout.only
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -66,21 +68,30 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.model.Bindings
@@ -90,13 +101,11 @@ import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.LibraryButton
+import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.MappingSet
-import com.oleroma.gyrophone.core.model.Mapping
-import com.oleroma.gyrophone.core.model.OutputTarget
-import com.oleroma.gyrophone.core.model.WorkspaceMappings
-import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.model.NavCorners
+import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Placement
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchAreaKind
@@ -104,18 +113,20 @@ import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.Workspace
+import com.oleroma.gyrophone.core.model.WorkspaceMappings
 import com.oleroma.gyrophone.core.model.contains
-import com.oleroma.gyrophone.core.model.hitOrder
-import com.oleroma.gyrophone.core.model.touchedControls
 import com.oleroma.gyrophone.core.model.heightRatio
+import com.oleroma.gyrophone.core.model.hitOrder
+import com.oleroma.gyrophone.core.model.layered
+import com.oleroma.gyrophone.core.model.ownSurface
 import com.oleroma.gyrophone.core.model.placeSize
 import com.oleroma.gyrophone.core.model.placeX
 import com.oleroma.gyrophone.core.model.placeY
 import com.oleroma.gyrophone.core.model.placement
+import com.oleroma.gyrophone.core.model.surfaceSettings
+import com.oleroma.gyrophone.core.model.touchedControls
 import com.oleroma.gyrophone.core.model.withPlacement
 import com.oleroma.gyrophone.core.model.withSets
-import com.oleroma.gyrophone.core.model.ownSurface
-import com.oleroma.gyrophone.core.model.surfaceSettings
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -282,10 +293,24 @@ fun PadScreen(
     /** The floating edit menu: drag offset from its top-centre home, size, folded. */
     var menuOffset by remember { mutableStateOf(Offset.Zero) }
     var menuSize by remember { mutableStateOf(IntSize.Zero) }
+    /** The edit panel's visible bounds in the window, for menus that open beside it. */
+    var panelBounds by remember { mutableStateOf(Rect.Zero) }
 
     /** Width the user dragged the edit menu to (px); null = fit its rows. */
     var panelWidthPx by remember { mutableStateOf<Float?>(null) }
     var dragging by remember { mutableStateOf(false) }
+    /** Cancel was tapped with unsaved changes: asking whether to throw them away. */
+    var confirmingCancel by remember { mutableStateOf(false) }
+
+    /** Leaves edit mode without saving, on the workspace being looked at if the saved profile has it. */
+    fun discardEdits() {
+        val d = draft ?: return
+        val i = profile.indexOfWorkspace(d.workspace(editIndex).id)
+        draft = null
+        selected = null
+        dragging = false
+        if (i >= 0 && i != runtime.workspaceIndex.value) runtime.switchWorkspace(i)
+    }
     var snap by remember { mutableStateOf(false) }
 
     /** Knob offsets; read only while placing the knobs, so stick motion re-places them without recomposing. */
@@ -351,7 +376,7 @@ fun PadScreen(
     // Mapping sets: the set in use and its overrides, watched while this workspace has layer actions.
     var layers by remember { mutableStateOf(MappingEngine.Layers(MappingSet.BASE, emptyList())) }
     val hasLayers = remember(ws) {
-        (ws.mappings + ws.keyboard + ws.pads.flatMap { it.mappings }).any { it.target is OutputTarget.Layer }
+        (ws.mappings + ws.keyboard + ws.mouse + ws.pads.flatMap { it.mappings }).any { it.target is OutputTarget.Layer }
     }
     LaunchedEffect(hasLayers, editing) {
         if (!hasLayers || editing) {
@@ -448,6 +473,30 @@ fun PadScreen(
         val decor = view.rootView
         if (!editing) TouchStream.setPlayUnbuffered(decor, true)
         onDispose { TouchStream.setPlayUnbuffered(decor, false) }
+    }
+
+    // A mouse attached to the phone is the workspace's in play while it maps one (pointer capture:
+    // no phone cursor, raw moves and buttons). Edit mode, other pages and other apps get it back.
+    val mouseAttached by runtime.mouseAttached.collectAsStateWithLifecycle()
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    val captureMouse = !editing && mouseAttached && windowFocused && ws.mouse.isNotEmpty()
+    DisposableEffect(view) {
+        view.setOnCapturedPointerListener { _, e -> runtime.capturedPointer?.invoke(e) ?: false }
+        onDispose {
+            view.setOnCapturedPointerListener(null)
+            view.releasePointerCapture()
+            runtime.mouseCaptured = false
+        }
+    }
+    LaunchedEffect(view, captureMouse) {
+        if (captureMouse) {
+            view.isFocusable = true
+            view.requestFocus()
+            view.requestPointerCapture()
+        } else {
+            view.releasePointerCapture()
+        }
+        runtime.mouseCaptured = captureMouse
     }
 
     fun startEditing() {
@@ -1402,6 +1451,10 @@ fun PadScreen(
                 CapsuleRow(
                     runtime,
                     onEdit = { startEditing() },
+                    onDevices = {
+                        releaseAll()
+                        onOpenMenu(PadMenuPage.Devices)
+                    },
                     onSettings = {
                         releaseAll()
                         onOpenMenu(PadMenuPage.AppSettings)
@@ -1467,12 +1520,13 @@ fun PadScreen(
                     .offset { IntOffset(menuAt.x.roundToInt(), menuAt.y.roundToInt()) }
                     .onSizeChanged { menuSize = it }
                     .padding(8.dp)
+                    .onGloballyPositioned { panelBounds = it.boundsInWindow() }
                     .then(
                         if (panelWidth != null) Modifier.width(with(density) { panelWidth.toDp() })
                         else Modifier.widthIn(max = maxWidth - 16.dp),
                     ),
                 shape = RoundedCornerShape(16.dp),
-                color = Color(0xE01E232B),
+                color = PANEL_COLOR,
                 shadowElevation = 8.dp,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1506,14 +1560,9 @@ fun PadScreen(
                                 FilledTonalButton(
                                     contentPadding = compact,
                                     onClick = { finishEditing() }) { Text("Done") }
-                                OutlinedButton(contentPadding = compact, onClick = cancel@{
-                                    val d = draft ?: return@cancel
-                                    // Stay on the workspace being looked at if the saved profile has it.
-                                    val i = profile.indexOfWorkspace(d.workspace(editIndex).id)
-                                    draft = null
-                                    selected = null
-                                    dragging = false
-                                    if (i >= 0 && i != runtime.workspaceIndex.value) runtime.switchWorkspace(i)
+                                OutlinedButton(contentPadding = compact, onClick = {
+                                    // Nothing changed: leave at once; else ask first.
+                                    if (draft == profile) discardEdits() else confirmingCancel = true
                                 }) { Text("Cancel") }
                                 // The selected control's settings and mappings (also a long press and a double tap).
                                 val picked = findControl(selected)
@@ -1577,6 +1626,25 @@ fun PadScreen(
                                     OutlinedButton(
                                         contentPadding = compact,
                                         onClick = { snap = true }) { Text("Snap: off") }
+                                }
+                                // The controller, keyboard and mouse preset this workspace uses, or none.
+                                Box {
+                                    var picking by remember { mutableStateOf(false) }
+                                    val presets = (draft ?: profile).devicePresets
+                                    val pinned = presets.firstOrNull { it.id == ws.devicePreset }
+                                    OutlinedButton(contentPadding = compact, onClick = { picking = true }) {
+                                        Text("Devices: " + (pinned?.name ?: "None"))
+                                    }
+                                    if (picking) {
+                                        PanelMenu(panelBounds, onDismiss = { picking = false }) {
+                                            for (preset in listOf(null) + presets) {
+                                                PanelMenuItem(preset?.name ?: "None", chosen = preset?.id == pinned?.id) {
+                                                    picking = false
+                                                    editWorkspace { it.copy(devicePreset = preset?.id) }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 Text(
                                     ws.name + " · " + if (portrait) "portrait layout" else "landscape layout",
@@ -1778,6 +1846,20 @@ fun PadScreen(
                     )
                 }
             }
+        }
+        if (confirmingCancel) {
+            AlertDialog(
+                onDismissRequest = { confirmingCancel = false },
+                title = { Text("Discard your changes?") },
+                text = { Text("Everything changed since edit mode opened is undone.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmingCancel = false
+                        discardEdits()
+                    }) { Text("Discard", color = MaterialTheme.colorScheme.error) }
+                },
+                dismissButton = { TextButton(onClick = { confirmingCancel = false }) { Text("Keep editing") } },
+            )
         }
         removingLib?.let { b ->
             AlertDialog(
@@ -2036,4 +2118,64 @@ private fun CornerSettings(
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+/** The edit panel's colour, shared by the menus that open from it. */
+private val PANEL_COLOR = Color(0xE01E232B)
+
+/** The gap between the edit panel and a menu it opens, and around and between the menu's items. */
+private val PANEL_MENU_GAP = 6.dp
+
+/**
+ * A menu opened from the edit panel: a rounded card of the panel's colour that opens below [panel]
+ * (its window bounds), or above it when there is no room below, never over it.
+ */
+@Composable
+private fun PanelMenu(panel: Rect, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    val gap = with(LocalDensity.current) { PANEL_MENU_GAP.roundToPx() }
+    val position = remember(panel, gap) {
+        object : PopupPositionProvider {
+            override fun calculatePosition(
+                anchorBounds: IntRect,
+                windowSize: IntSize,
+                layoutDirection: LayoutDirection,
+                popupContentSize: IntSize,
+            ): IntOffset {
+                val x = anchorBounds.left.coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
+                val below = panel.bottom.roundToInt() + gap
+                val y = if (below + popupContentSize.height <= windowSize.height) below
+                else (panel.top.roundToInt() - gap - popupContentSize.height).coerceAtLeast(0)
+                return IntOffset(x, y)
+            }
+        }
+    }
+    Popup(popupPositionProvider = position, onDismissRequest = onDismiss, properties = PopupProperties(focusable = true)) {
+        Surface(shape = RoundedCornerShape(24.dp), color = PANEL_COLOR, shadowElevation = 8.dp) {
+            Column(
+                Modifier.width(IntrinsicSize.Max).padding(PANEL_MENU_GAP),
+                verticalArrangement = Arrangement.spacedBy(PANEL_MENU_GAP),
+                content = content,
+            )
+        }
+    }
+}
+
+/** A capsule in a [PanelMenu]; the [chosen] one is filled. */
+@Composable
+private fun PanelMenuItem(text: String, chosen: Boolean, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        color = if (chosen) colors.primaryContainer else Color.Transparent,
+        modifier = Modifier.fillMaxWidth().widthIn(min = 96.dp),
+    ) {
+        Text(
+            text,
+            color = if (chosen) colors.onPrimaryContainer else Color.White,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+        )
+    }
 }

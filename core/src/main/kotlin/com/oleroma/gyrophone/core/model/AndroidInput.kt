@@ -30,6 +30,17 @@ object AndroidKey {
     const val BUTTON_MODE = 110
     const val BUTTON_1 = 188 // BUTTON_1..BUTTON_16 are 188..203 (extra / paddle buttons)
 
+    // A mouse's buttons and wheel notches, as keys of the mouse (not Android key codes).
+    const val MOUSE_LEFT = 1001
+    const val MOUSE_RIGHT = 1002
+    const val MOUSE_MIDDLE = 1003
+    const val MOUSE_BACK = 1004
+    const val MOUSE_FORWARD = 1005
+    const val MOUSE_WHEEL_UP = 1011
+    const val MOUSE_WHEEL_DOWN = 1012
+    const val MOUSE_WHEEL_LEFT = 1013
+    const val MOUSE_WHEEL_RIGHT = 1014
+
     val names: Map<Int, String> = mapOf(
         DPAD_UP to "D-pad Up", DPAD_DOWN to "D-pad Down", DPAD_LEFT to "D-pad Left",
         DPAD_RIGHT to "D-pad Right", BUTTON_A to "A", BUTTON_B to "B", BUTTON_C to "C",
@@ -53,6 +64,10 @@ object AndroidAxis {
     const val RTRIGGER = 18
     const val GAS = 22
     const val BRAKE = 23
+
+    /** A mouse's movement (relative counts, not an Android axis): see MappingEngine.mouseMove. */
+    const val MOUSE_X = 1101
+    const val MOUSE_Y = 1102
 
     /** Axes the controller reader polls on every joystick MotionEvent. */
     val polled: IntArray = intArrayOf(X, Y, Z, RX, RY, RZ, HAT_X, HAT_Y, LTRIGGER, RTRIGGER, GAS, BRAKE)

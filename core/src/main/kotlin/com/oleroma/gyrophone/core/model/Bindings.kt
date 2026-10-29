@@ -13,6 +13,8 @@ data class BindableInput(
     val swipe: Boolean = false,
     /** Targets offered only for this input (switching apps, zoom), on top of the usual ones. */
     val extra: List<OutputTarget> = emptyList(),
+    /** A mouse's movement: only mouse motion and scrolling make sense. */
+    val mouseMotion: Boolean = false,
 )
 
 /**

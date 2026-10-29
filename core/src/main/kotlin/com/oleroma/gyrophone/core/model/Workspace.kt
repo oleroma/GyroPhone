@@ -34,14 +34,17 @@ data class Workspace(
      * hold = held while down.
      */
     val stickyModifiers: Boolean = false,
-    /** Physical game pads that act in this workspace; a connected pad not listed does nothing here. */
+    /**
+     * Physical game pads that act in this workspace; a connected pad not listed does nothing here.
+     * Resolved ([WorkspaceMappings.resolve]): one for any pad, with [devicePreset]'s controller mappings.
+     */
     val pads: List<AttachedPad> = emptyList(),
     /**
      * The [MappingProfile] a set saved before workspaces owned their mappings used; only read when
      * moving its mappings in ([WorkspaceMappings.fromProfiles]), null since.
      */
     val mappingProfileId: String? = null,
-    /** Physical keyboard mappings. */
+    /** Physical keyboard mappings; resolved from [devicePreset]. */
     val keyboard: List<Mapping> = emptyList(),
     /** How haptic targets without a feel of their own feel ([OutputTarget.Haptic]). */
     val haptics: HapticFeel = HapticFeel(),
@@ -54,10 +57,12 @@ data class Workspace(
     /** The named mapping sets above Base ([Mapping.set], [OutputTarget.Layer]), by id. */
     val sets: List<MappingSet> = emptyList(),
     /**
-     * Controller mappings ([InputSource.Key] / [InputSource.Axis] sources): what every attached pad
-     * without [AttachedPad.own] mappings acts with ([WorkspaceMappings]).
+     * The [DevicePreset] this workspace pins: what physical devices do while it is active. Null =
+     * none, so the devices do nothing here.
      */
-    val controller: List<Mapping> = emptyList(),
+    val devicePreset: String? = null,
+    /** A mouse's mappings: like [pads] and [keyboard], filled from [devicePreset] when resolved ([WorkspaceMappings.resolve]). */
+    val mouse: List<Mapping> = emptyList(),
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =
@@ -92,7 +97,7 @@ data class AttachedPad(
      */
     val mappings: List<Mapping> = emptyList(),
     /**
-     * The pad profile ([PadPreset]) last loaded into [mappings]; null on pads attached before pad
+     * The pad profile last loaded into [mappings] (pad profiles are gone); null on pads attached before pad
      * profiles were stored. Saving that profile again updates every pad that names it.
      */
     val presetId: String? = null,

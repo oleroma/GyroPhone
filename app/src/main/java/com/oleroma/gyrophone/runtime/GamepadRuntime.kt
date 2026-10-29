@@ -17,9 +17,6 @@ import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.LibraryButton
 import com.oleroma.gyrophone.core.model.WorkspaceMappings
-import com.oleroma.gyrophone.core.model.PadDevice
-import com.oleroma.gyrophone.core.model.PadPreset
-import com.oleroma.gyrophone.core.model.PadPresets
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.HapticFeel
@@ -73,11 +70,6 @@ class GamepadRuntime(context: Context) {
 
     val store = ProfileStore(appContext)
     val hid = HidDeviceManager(appContext)
-
-    private val _padPresets = MutableStateFlow(store.padPresets())
-
-    /** The user's own pad presets (the builtins come from [PadPresets.builtins]). */
-    val padPresets: StateFlow<List<PadPreset>> = _padPresets
 
     /** The mapping profiles of a set saved before workspaces owned their mappings; only read by [loadOwnMappings]. */
     private var legacyProfiles: List<MappingProfile> = emptyList()
@@ -210,6 +202,19 @@ class GamepadRuntime(context: Context) {
 
     private val _controllers = MutableStateFlow<List<AttachedController>>(emptyList())
     val controllers: StateFlow<List<AttachedController>> = _controllers
+
+    private val _mouseAttached = MutableStateFlow(false)
+
+    /** A mouse is attached to the phone: the pad captures it while the workspace maps a mouse. */
+    val mouseAttached: StateFlow<Boolean> = _mouseAttached
+
+    /** Gets the captured mouse's events (MainActivity's controller input); the pad's view passes them on. */
+    @Volatile
+    var capturedPointer: ((android.view.MotionEvent) -> Boolean)? = null
+
+    /** The pad holds pointer capture: a mouse's events are its own, not the phone's. */
+    @Volatile
+    var mouseCaptured = false
 
     private val _gyroInfo = MutableStateFlow(GyroInfo())
     val gyroInfo: StateFlow<GyroInfo> = _gyroInfo
@@ -482,23 +487,6 @@ class GamepadRuntime(context: Context) {
         store.saveButtonLibrary(_buttonLibrary.value)
     }
 
-    /** Saves [mappings] as a new user pad preset named [name], attached to [device]; returns it. */
-    fun savePadPreset(name: String, mappings: List<Mapping>, device: PadDevice? = null): PadPreset {
-        val preset = PadPreset(
-            PadPresets.newId(_padPresets.value.map { it.id }), name.trim().ifBlank { "My preset" }, mappings,
-            device = device?.match, deviceName = device?.name, deviceFamily = device?.family,
-        )
-        _padPresets.value = _padPresets.value + preset
-        store.savePadPresets(_padPresets.value)
-        return preset
-    }
-
-    /** Removes a user pad preset (a controller set loaded from it is kept). */
-    fun deletePadPreset(id: String) {
-        _padPresets.value = _padPresets.value.filterNot { it.id == id }
-        store.savePadPresets(_padPresets.value)
-    }
-
     /** Live value of a phone-side source (for highlighting pressed controls). */
     fun sourceValue(source: InputSource): Float = engine.sourceValue(source)
 
@@ -506,8 +494,9 @@ class GamepadRuntime(context: Context) {
      * Called by the input layer whenever the set of attached controllers changes. Never changes
      * the workspace.
      */
-    fun onControllersChanged(list: List<AttachedController>) {
+    fun onControllersChanged(list: List<AttachedController>, mouse: Boolean) {
         _controllers.value = list
+        _mouseAttached.value = mouse
     }
 
     /**
