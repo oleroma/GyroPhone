@@ -11,6 +11,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -23,6 +25,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.displayCutout
@@ -46,6 +49,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -57,6 +61,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -68,16 +73,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
@@ -175,8 +188,18 @@ private const val KEEP_ON_SCREEN_DP = 48f
 /** Edit mode: [selected] value for the touchpad (empty space), whose screens are open. */
 private const val TOUCHPAD_SELECTION = "\u0000touchpad"
 
-/** Edit mode: a second tap on overlapping controls within this picks the next one behind. */
-private const val EDIT_CYCLE_MS = 1_000L
+/**
+ * Edit mode's own touch timings (not the workspace's): a tap selects once no second tap followed
+ * within [EDIT_DOUBLE_TAP_MS]; a press held [EDIT_LONG_PRESS_MS] opens settings.
+ */
+private const val EDIT_DOUBLE_TAP_MS = 250L
+private const val EDIT_LONG_PRESS_MS = 450L
+
+/** Edit mode undo: changes this close together (a slider being dragged, say) make one step. */
+private const val UNDO_SETTLE_MS = 400L
+
+/** Edit mode undo: the most steps kept. */
+private const val UNDO_MAX = 100
 
 /**
  * PRESS: on a control, not yet moved; HELD: the same after a long press (settings screen open);
@@ -253,10 +276,12 @@ internal object TouchStream {
  * are always shown: tap ← / → for the previous / next workspace, both together for fullscreen.
  * Controls have separate landscape and portrait placements; the pad box's shape picks one.
  * Edit mode works on the current workspace in a draft profile. Its menu floats and can be dragged
- * out of the way or resized; its ⚙ saves and opens the workspace's settings page. Tap a control for its full-screen
- * mapping screen, long-press it for its full-screen settings (tap a corner for a menu next to it), drag to move,
- * pinch or use the size slider to resize. Edits change the current orientation's placement. Done
- * saves (a builtin becomes a custom copy) and switches to the workspace being edited.
+ * out of the way or resized; its ⚙ saves and opens the workspace's settings page. Tap a control to select it
+ * (taps on overlapping controls cycle through them), double-tap it for its full-screen mapping screen, long-press
+ * it for its full-screen settings (a corner: a menu next to it). A drag anywhere moves the selected control
+ * (with none selected, the one under the finger); a pinch or the size slider resizes it. The menu's 🔒 stops
+ * drags and pinches from moving or resizing anything; ↶ / ↷ undo and redo. Edits change the
+ * current orientation's placement. Done saves (a builtin becomes a custom copy) and switches to the workspace being edited.
  * In play mode the top row ([CapsuleRow]) switches and adds workspaces (tap the current one to edit
  * it) and opens Connection and Settings ([PadTab]) through [onOpenMenu]. With [GamepadRuntime.cornerAutoHide]
  * the ← / → corners fade out after a few seconds; four quick taps (or touching a corner) show them again.
@@ -277,6 +302,12 @@ fun PadScreen(
     val library by runtime.buttonLibrary.collectAsStateWithLifecycle()
     /** A library button being removed (asks first). */
     var removingLib by remember { mutableStateOf<LibraryButton?>(null) }
+
+    /** The pad's top-left in the window, to turn a drop from the edit menu into a place on the pad. */
+    var padOrigin by remember { mutableStateOf(Offset.Zero) }
+
+    /** Something being dragged out of the edit menu: its label, where the finger is (window), and whether it is out on the pad. */
+    var dropping by remember { mutableStateOf<Triple<String, Offset, Boolean>?>(null) }
     val isFullscreen by rememberUpdatedState(fullscreen)
     val setFullscreen by rememberUpdatedState(onFullscreen)
 
@@ -314,6 +345,53 @@ fun PadScreen(
         if (i >= 0 && i != runtime.workspaceIndex.value) runtime.switchWorkspace(i)
     }
     var snap by remember { mutableStateOf(false) }
+    val layoutLocked by runtime.editLayoutLocked.collectAsStateWithLifecycle()
+
+    /** Edit mode undo: earlier drafts (newest last), drafts undone, and the draft the last step ended on. */
+    val undoSteps = remember { mutableStateListOf<Profile>() }
+    val redoSteps = remember { mutableStateListOf<Profile>() }
+    val undoBase = remember { arrayOfNulls<Profile>(1) }
+
+    // A change becomes an undo step once the draft has been still for a moment and no finger is
+    // moving or resizing a control, so one drag or pinch is one step.
+    LaunchedEffect(draft, dragging) {
+        val d = draft
+        val base = undoBase[0]
+        if (d == null) {
+            undoSteps.clear()
+            redoSteps.clear()
+            undoBase[0] = null
+            return@LaunchedEffect
+        }
+        if (base == null) {
+            undoBase[0] = d
+            return@LaunchedEffect
+        }
+        if (dragging || d == base) return@LaunchedEffect
+        delay(UNDO_SETTLE_MS)
+        undoSteps.add(base)
+        if (undoSteps.size > UNDO_MAX) undoSteps.removeAt(0)
+        redoSteps.clear()
+        undoBase[0] = d
+    }
+
+    /** Goes back one step (first dropping a change that hasn't become a step yet). */
+    fun undoEdit() {
+        val d = draft ?: return
+        val base = undoBase[0] ?: return
+        val back = if (d != base) base else undoSteps.removeLastOrNull() ?: return
+        redoSteps.add(d)
+        undoBase[0] = back
+        draft = back
+    }
+
+    fun redoEdit() {
+        val d = draft ?: return
+        val next = redoSteps.removeLastOrNull() ?: return
+        undoSteps.add(undoBase[0] ?: d)
+        undoBase[0] = next
+        draft = next
+    }
 
     /** Knob offsets; read only while placing the knobs, so stick motion re-places them without recomposing. */
     val stickPos = remember { mutableStateMapOf<String, Offset>() }
@@ -354,12 +432,12 @@ fun PadScreen(
     /** Quick-tap run for the reveal: last touch-down (event nanos) and taps so far. */
     val tapRun = remember { LongArray(2) }
 
-    /** Edit mode: the last tap on overlapping controls (x, y, which one) and its time, to cycle through them. */
-    val editCycle = remember { FloatArray(3) }
-    val editCycleAt = remember { LongArray(1) { Long.MIN_VALUE / 4 } }
+    /** Edit mode: where (x, y) and when the last single tap lifted, so a second tap there makes a double tap. */
+    val editTapAt = remember { FloatArray(2) }
+    val editTapTime = remember { LongArray(1) { Long.MIN_VALUE / 4 } }
 
-    /** Edit mode: the control the last tap selected, so a second tap soon after opens its mappings. */
-    val editTapId = remember { arrayOfNulls<String>(1) }
+    /** Edit mode: what the last single tap selects once no second tap follows it. */
+    val editPending = remember { arrayOfNulls<String>(1) }
 
     /**
      * Restarts the play touch handler on layout changes but not on gyro changes, so the gyro
@@ -503,6 +581,7 @@ fun PadScreen(
 
     fun startEditing() {
         releaseAll()
+        editPending[0] = null
         selected = null
         dragging = false
         editIndex = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
@@ -547,7 +626,8 @@ fun PadScreen(
         Modifier
             .fillMaxSize()
             .background(Color(0xFF101318))
-            .recordTouches(trails, visuals, showTouchVisuals),
+            .recordTouches(trails, visuals, showTouchVisuals)
+            .onGloballyPositioned { padOrigin = it.positionInWindow() },
     ) {
         val density = LocalDensity.current
         val w = constraints.maxWidth.toFloat()
@@ -647,11 +727,25 @@ fun PadScreen(
         val touchModifier = if (editing) {
             Modifier.pointerInput("edit", w, h) {
                 val slop = viewConfiguration.touchSlop
-                val longPressMs = viewConfiguration.longPressTimeoutMillis
-                val doubleTapMs = viewConfiguration.doubleTapTimeoutMillis
+                /** Selects what the last single tap picked (no second tap came). */
+                fun commitPendingTap() {
+                    val id = editPending[0] ?: return
+                    editPending[0] = null
+                    selected = id
+                    menu = EditMenu.NONE
+                }
                 awaitPointerEventScope {
                     while (true) {
-                        var event = awaitPointerEvent()
+                        val waited = if (editPending[0] == null) awaitPointerEvent() else {
+                            withTimeoutOrNull(max(1L, editTapTime[0] + EDIT_DOUBLE_TAP_MS - SystemClock.uptimeMillis())) {
+                                awaitPointerEvent()
+                            }
+                        }
+                        if (waited == null) {
+                            commitPendingTap()
+                            continue
+                        }
+                        var event = waited
                         val first = event.changes.firstOrNull { it.pressed && !it.previousPressed }
                         if (first == null) {
                             event.changes.forEach { it.consume() }
@@ -680,7 +774,6 @@ fun PadScreen(
                         // Two-finger tap: where each finger landed, and the control under them.
                         val tapStart = HashMap<PointerId, Offset>()
                         var tapTarget: String? = null
-                        // Overlapping controls: the front one; a tap on the same spot soon after picks the next one behind.
                         val under = hitOrder(controls, portrait).filter {
                             it.contains(
                                 downPos.x,
@@ -690,21 +783,27 @@ fun PadScreen(
                                 inPortrait = portrait
                             )
                         }
-                        // A quick second tap (a double tap) keeps the same one; a slower one cycles.
-                        val sinceTap = first.uptimeMillis - editCycleAt[0]
-                        val sameSpot = under.size > 1 &&
-                                (downPos - Offset(editCycle[0], editCycle[1])).getDistance() <= slop * 2
-                        val underIndex = when {
-                            sameSpot && sinceTap <= doubleTapMs -> editCycle[2].toInt() % under.size
-                            sameSpot && sinceTap <= EDIT_CYCLE_MS -> (editCycle[2].toInt() + 1) % under.size
-                            else -> 0
-                        }
-                        val c = hit(corners, downPos) ?: under.getOrNull(underIndex)
+                        // A second tap on the same spot soon after the first makes a double tap; anything
+                        // else first selects what the earlier tap picked.
+                        val quickSecond = editPending[0] != null &&
+                                first.uptimeMillis - editTapTime[0] <= EDIT_DOUBLE_TAP_MS &&
+                                (downPos - Offset(editTapAt[0], editTapAt[1])).getDistance() <= slop * 2
+                        if (!quickSecond) commitPendingTap()
+                        // Overlapping controls: a long press, a double tap and a drag with nothing selected act
+                        // on the selected one when it is under the finger (else the front one); a single tap
+                        // picks the one after it, so taps cycle through them.
+                        val cornerHit = hit(corners, downPos)
+                        val selectedUnder = under.indexOfFirst { it.id == selected }
+                        val c = cornerHit ?: under.getOrNull(max(0, selectedUnder))
+                        val tapPick = cornerHit ?: under.getOrNull(if (selectedUnder >= 0) (selectedUnder + 1) % under.size else 0)
                         val pressedAt = first.uptimeMillis
                         var lastAt = pressedAt
                         // Empty space: a tap opens the touchpad's mappings, a long press its settings;
                         // with something selected, a tap there only closes it.
                         val hadSelection = selected != null
+                        // A drag moves the selected control from wherever it starts, never what is under the finger.
+                        val sel = findControl(editPending[0] ?: selected)
+                        val selGrab = if (sel != null) downPos - center(sel) else Offset.Zero
                         if (c != null) {
                             mode = EditGesture.PRESS
                             target = c.id
@@ -717,7 +816,7 @@ fun PadScreen(
                         while (true) {
                             // A still press that lasts opens the settings: of the control, or on empty space the touchpad's.
                             val next = if (mode == EditGesture.PRESS || mode == EditGesture.EMPTY) {
-                                withTimeoutOrNull(max(1L, pressedAt + longPressMs - lastAt)) { awaitPointerEvent() }
+                                withTimeoutOrNull(max(1L, pressedAt + EDIT_LONG_PRESS_MS - lastAt)) { awaitPointerEvent() }
                             } else {
                                 awaitPointerEvent()
                             }
@@ -755,10 +854,12 @@ fun PadScreen(
                                 down.forEach { tapStart.getOrPut(it.id) { it.position } }
                                 if (down.any { (it.position - tapStart.getValue(it.id)).getDistance() > slop }) {
                                     val c = findControl(selected)
-                                    if (c != null) {
+                                    if (c != null && !layoutLocked) {
                                         mode = EditGesture.PINCH
                                         target = c.id
                                         menu = EditMenu.NONE
+                                        // Holds the undo step until the pinch ends.
+                                        dragging = true
                                     } else {
                                         mode = EditGesture.NONE
                                     }
@@ -786,16 +887,22 @@ fun PadScreen(
                             }
 
                             when (mode) {
-                                EditGesture.PRESS, EditGesture.HELD -> if (main != null && (main.position - downPos).getDistance() > slop) {
-                                    mode = EditGesture.MOVE
-                                    selected = target
-                                    menu = EditMenu.NONE
-                                    dragging = true
-                                }
-
-                                EditGesture.EMPTY -> if (main != null && (main.position - downPos).getDistance() > slop) {
-                                    mode = EditGesture.NONE
-                                }
+                                EditGesture.PRESS, EditGesture.HELD, EditGesture.EMPTY ->
+                                    if (main != null && (main.position - downPos).getDistance() > slop) {
+                                        if (mode != EditGesture.HELD && sel != null) {
+                                            target = sel.id
+                                            grab = selGrab
+                                        }
+                                        // Locked: a drag moves nothing (and isn't a tap).
+                                        if (layoutLocked || (mode == EditGesture.EMPTY && sel == null)) {
+                                            mode = EditGesture.NONE
+                                        } else {
+                                            mode = EditGesture.MOVE
+                                            selected = target
+                                            menu = EditMenu.NONE
+                                            dragging = true
+                                        }
+                                    }
 
                                 else -> Unit
                             }
@@ -859,19 +966,20 @@ fun PadScreen(
                             event.changes.forEach { it.consume() }
                         }
 
+                        // Anything but a tap sets the selection itself: the first tap's pick is dropped.
+                        if (mode != EditGesture.PRESS) editPending[0] = null
                         when (mode) {
-                            EditGesture.PRESS -> {
-                                // A tap selects; a double tap opens the mapping (a corner, with none: its menu).
-                                val double = target != null && target == editTapId[0] && pressedAt - editCycleAt[0] <= doubleTapMs
-                                editCycle[0] = downPos.x; editCycle[1] = downPos.y; editCycle[2] = underIndex.toFloat()
-                                editCycleAt[0] = lastAt
-                                editTapId[0] = if (double) null else target
+                            EditGesture.PRESS -> if (quickSecond) {
+                                // A double tap opens the mapping (a corner: its menu).
+                                editPending[0] = null
+                                editTapTime[0] = Long.MIN_VALUE / 4
                                 selected = target
-                                menu = when {
-                                    !double -> EditMenu.NONE
-                                    d0 != null && isCorner(d0, target!!) -> EditMenu.CONTEXT
-                                    else -> EditMenu.MAPPING
-                                }
+                                menu = if (d0 != null && isCorner(d0, target!!)) EditMenu.CONTEXT else EditMenu.MAPPING
+                            } else {
+                                // A tap selects, once no second tap follows.
+                                editTapAt[0] = downPos.x; editTapAt[1] = downPos.y
+                                editTapTime[0] = lastAt
+                                editPending[0] = tapPick?.id
                             }
 
                             EditGesture.TWO -> {
@@ -1540,7 +1648,151 @@ fun PadScreen(
                         Modifier.weight(1f, fill = panelWidth != null).padding(top = 6.dp, bottom = 6.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        // Dots (move), ⚙ (this workspace's settings), Done, then the layout tools.
+                        /** A scrolling strip of the menu: framed, with a shadow at an edge that has more past it. */
+                        @Composable
+                        fun RowScope.ScrollStrip(content: @Composable RowScope.() -> Unit) {
+                            val scroll = rememberScrollState()
+                            val shape = RoundedCornerShape(12.dp)
+                            Box(
+                                Modifier
+                                    .weight(1f, fill = false)
+                                    .padding(end = 4.dp)
+                                    .clip(shape)
+                                    .border(1.dp, Color.White.copy(alpha = 0.25f), shape),
+                            ) {
+                                Row(
+                                    Modifier.horizontalScroll(scroll).padding(horizontal = 6.dp, vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    content = content,
+                                )
+                                val back = scroll.canScrollBackward
+                                val forward = scroll.canScrollForward
+                                if (back || forward) {
+                                    Canvas(Modifier.matchParentSize()) {
+                                        val edge = 20.dp.toPx()
+                                        val shade = Color.Black.copy(alpha = 0.6f)
+                                        if (back) drawRect(
+                                            Brush.horizontalGradient(listOf(shade, Color.Transparent), endX = edge),
+                                            size = Size(edge, size.height),
+                                        )
+                                        if (forward) drawRect(
+                                            Brush.horizontalGradient(
+                                                listOf(Color.Transparent, shade),
+                                                startX = size.width - edge,
+                                                endX = size.width,
+                                            ),
+                                            topLeft = Offset(size.width - edge, 0f),
+                                            size = Size(edge, size.height),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        /**
+                         * Something to add from the menu: tap it to add it in the middle of the pad, or drag it
+                         * down onto the pad to add it there ([onAdd] gets the pad position, null for the middle).
+                         * A sideways drag scrolls the strip. [onLongPress]: what a long press does, if anything.
+                         */
+                        @Composable
+                        fun AddChip(
+                            label: String,
+                            outlined: Boolean,
+                            onLongPress: (() -> Unit)? = null,
+                            onAdd: (Offset?) -> Unit,
+                        ) {
+                            val coords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+                            val haptic = LocalHapticFeedback.current
+                            val held = dropping?.first == label
+                            val add by rememberUpdatedState(onAdd)
+                            val longPress by rememberUpdatedState(onLongPress)
+                            val shape = RoundedCornerShape(50)
+                            Text(
+                                label,
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1,
+                                modifier = Modifier
+                                    .onGloballyPositioned { coords[0] = it }
+                                    .clip(shape)
+                                    .then(
+                                        when {
+                                            // Being dragged out: lit up in the selection amber.
+                                            held -> Modifier.background(SELECTED_COLOR.copy(alpha = 0.5f), shape)
+                                                .border(1.dp, SELECTED_COLOR, shape)
+                                            outlined -> Modifier.border(1.dp, Color.White.copy(alpha = 0.6f), shape)
+                                            else -> Modifier.background(Color.White.copy(alpha = 0.18f), shape)
+                                        },
+                                    )
+                                    .pointerInput(label, w, h) {
+                                        val slop = viewConfiguration.touchSlop
+                                        awaitEachGesture {
+                                            val down = awaitFirstDown()
+                                            val startAt = down.uptimeMillis
+                                            var lastAt = startAt
+                                            var dragged = false
+                                            var total = Offset.Zero
+                                            var lastWindow = Offset.Zero
+                                            var out = false
+                                            while (true) {
+                                                val event = if (dragged || longPress == null) awaitPointerEvent()
+                                                else withTimeoutOrNull(max(1L, startAt + EDIT_LONG_PRESS_MS - lastAt)) {
+                                                    awaitPointerEvent()
+                                                }
+                                                if (event == null) {
+                                                    longPress?.invoke()
+                                                    break
+                                                }
+                                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                                lastAt = change.uptimeMillis
+                                                if (!dragged && change.isConsumed) break
+                                                if (!change.pressed) {
+                                                    if (dragged) {
+                                                        // Dropped on the pad, not back on the menu: add it there.
+                                                        if (out) add(lastWindow - padOrigin)
+                                                        dropping = null
+                                                    } else if (total.getDistance() <= slop) {
+                                                        change.consume()
+                                                        add(null)
+                                                    }
+                                                    break
+                                                }
+                                                total += change.positionChange()
+                                                if (!dragged && total.getDistance() > slop) {
+                                                    // Mostly down (or up): drag it out; mostly sideways: let the strip scroll.
+                                                    if (abs(total.y) > abs(total.x)) {
+                                                        dragged = true
+                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    } else break
+                                                }
+                                                if (dragged) {
+                                                    change.consume()
+                                                    val c = coords[0]
+                                                    if (c != null) lastWindow = c.positionInWindow() + change.position
+                                                    val p = lastWindow - padOrigin
+                                                    val nowOut = !panelBounds.contains(lastWindow) && p.x in 0f..w && p.y in 0f..h
+                                                    // Out of the menu onto the pad: a firm tick (a light one going back).
+                                                    if (nowOut != out) haptic.performHapticFeedback(
+                                                        if (nowOut) HapticFeedbackType.LongPress else HapticFeedbackType.TextHandleMove,
+                                                    )
+                                                    out = nowOut
+                                                    dropping = Triple(label, lastWindow, out)
+                                                }
+                                            }
+                                            if (dragged) dropping = null
+                                        }
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                            )
+                        }
+
+                        /** A pad position for something added: where it was dropped, else the middle. */
+                        fun addAt(at: Offset?, c: TouchControl) =
+                            if (at == null) place(c, 0.5f, 0.5f, false) else place(c, at.x / w, at.y / h, snap)
+
+                        // Fixed: dots (move), ⚙ (this workspace's settings), undo, redo, lock, Done, Cancel.
+                        // Then a scrolling strip of the layout tools.
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             DragDots()
                             Text(
@@ -1557,8 +1809,31 @@ fun PadScreen(
                                     }
                                     .padding(horizontal = 8.dp, vertical = 2.dp),
                             )
+                            // Undo, redo, and the lock that keeps drags and pinches from changing the layout.
+                            @Composable
+                            fun MenuIcon(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) = Icon(
+                                icon,
+                                contentDescription = label,
+                                tint = if (enabled) Color.White else Color.White.copy(alpha = 0.35f),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .clickable(enabled = enabled, onClick = onClick)
+                                    .padding(6.dp)
+                                    .size(22.dp),
+                            )
+                            MenuIcon(
+                                EditIcons.Undo,
+                                "Undo",
+                                undoSteps.isNotEmpty() || (undoBase[0] != null && draft !== undoBase[0]),
+                            ) { undoEdit() }
+                            MenuIcon(EditIcons.Redo, "Redo", redoSteps.isNotEmpty()) { redoEdit() }
+                            MenuIcon(
+                                if (layoutLocked) EditIcons.Lock else EditIcons.LockOpen,
+                                if (layoutLocked) "Unlock layout" else "Lock layout",
+                                true,
+                            ) { runtime.setEditLayoutLocked(!layoutLocked) }
                             Row(
-                                Modifier.horizontalScroll(rememberScrollState()),
+                                Modifier.padding(start = 2.dp, end = 6.dp),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -1569,6 +1844,8 @@ fun PadScreen(
                                     // Nothing changed: leave at once; else ask first.
                                     if (draft == profile) discardEdits() else confirmingCancel = true
                                 }) { Text("Cancel") }
+                            }
+                            ScrollStrip {
                                 // The selected control's settings and mappings (also a long press and a double tap).
                                 val picked = findControl(selected)
                                 if (picked != null) {
@@ -1589,7 +1866,7 @@ fun PadScreen(
                                     }
                                 }
                                 /** Adds a button; [empty]: with every action it would take from the workspace cleared. */
-                                fun addButton(empty: Boolean) {
+                                fun addButton(empty: Boolean, at: Offset?) {
                                     val d = draft ?: return
                                     val wk = d.workspace(editIndex)
                                     val id = freshId(wk, "btn", takenIds(d))
@@ -1597,32 +1874,23 @@ fun PadScreen(
                                     val cleared = if (empty) Inheritance.cleared(Inheritance.workspace(wk, d.defaults), id) else emptyList()
                                     editWorkspace {
                                         it.copy(
-                                            touchControls = it.touchControls + place(c, 0.5f, 0.5f, false),
+                                            touchControls = it.touchControls + addAt(at, c),
                                             mappings = it.mappings + cleared,
                                         )
                                     }
                                     // Only added (and selected): Map opens its mappings.
                                     selected = id
                                 }
-                                FilledTonalButton(contentPadding = compact, onClick = { addButton(false) }) { Text("+ Button") }
-                                FilledTonalButton(contentPadding = compact, onClick = { addButton(true) }) { Text("+ Empty button") }
-                                FilledTonalButton(contentPadding = compact, onClick = addStick@{
+                                AddChip("+ Button", false) { addButton(false, it) }
+                                AddChip("+ Empty button", false) { addButton(true, it) }
+                                AddChip("+ Stick", false) addStick@{ at ->
                                     val d = draft ?: return@addStick
                                     val wk = d.workspace(editIndex)
                                     val id = freshId(wk, "stick", takenIds(d))
                                     val c = newControl(wk, id, TouchKind.STICK, NEW_STICK_SIZE, portrait)
-                                    editWorkspace {
-                                        it.copy(
-                                            touchControls = it.touchControls + place(
-                                                c,
-                                                0.5f,
-                                                0.5f,
-                                                false
-                                            )
-                                        )
-                                    }
+                                    editWorkspace { it.copy(touchControls = it.touchControls + addAt(at, c)) }
                                     selected = id
-                                }) { Text("+ Stick") }
+                                }
                                 if (snap) {
                                     FilledTonalButton(
                                         contentPadding = compact,
@@ -1659,7 +1927,8 @@ fun PadScreen(
                                 )
                             }
                         }
-                        // The button library: tap one to add it here, long-press to remove it from the library.
+                        // The button library: tap one to add it, drag it onto the pad to add it there,
+                        // long-press to remove it from the library.
                         if (library.isNotEmpty()) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
@@ -1668,35 +1937,16 @@ fun PadScreen(
                                     style = MaterialTheme.typography.labelLarge,
                                     modifier = Modifier.padding(start = 12.dp, end = 8.dp),
                                 )
-                                Row(
-                                    Modifier.horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
+                                ScrollStrip {
                                     for (b in library) {
-                                        Text(
-                                            ButtonLibrary.name(b),
-                                            color = Color.White,
-                                            style = MaterialTheme.typography.labelLarge,
-                                            maxLines = 1,
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(50))
-                                                .border(1.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(50))
-                                                .pointerInput(b.id, w, h) {
-                                                    detectTapGestures(
-                                                        onTap = addLib@{
-                                                            val d = draft ?: return@addLib
-                                                            val wk = d.workspace(editIndex)
-                                                            val prefix = if (b.control.kind == TouchKind.STICK) "stick" else "btn"
-                                                            val id = freshId(wk, prefix, takenIds(d))
-                                                            editWorkspace { ButtonLibrary.addTo(it, b, id) { c -> place(c, 0.5f, 0.5f, false) } }
-                                                            selected = id
-                                                        },
-                                                        onLongPress = { removingLib = b },
-                                                    )
-                                                }
-                                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                                        )
+                                        AddChip(ButtonLibrary.name(b), true, onLongPress = { removingLib = b }) addLib@{ at ->
+                                            val d = draft ?: return@addLib
+                                            val wk = d.workspace(editIndex)
+                                            val prefix = if (b.control.kind == TouchKind.STICK) "stick" else "btn"
+                                            val id = freshId(wk, prefix, takenIds(d))
+                                            editWorkspace { ButtonLibrary.addTo(it, b, id) { c -> addAt(at, c) } }
+                                            selected = id
+                                        }
                                     }
                                 }
                             }
@@ -1728,6 +1978,29 @@ fun PadScreen(
                                 .background(Color.White.copy(alpha = 0.5f)),
                         )
                     }
+                }
+            }
+
+            // What is being dragged out of the edit menu, under the finger until it is dropped.
+            // Out on the pad (where a drop adds it) it is lit up and larger; over the menu, faint.
+            dropping?.let { (label, at, out) ->
+                val p = at - padOrigin
+                val r = with(density) { (if (out) 32.dp else 28.dp).toPx() }
+                Box(
+                    Modifier
+                        .offset { IntOffset((p.x - r).roundToInt(), (p.y - r).roundToInt()) }
+                        .size(if (out) 64.dp else 56.dp)
+                        .background(SELECTED_COLOR.copy(alpha = if (out) 0.95f else 0.4f), CircleShape)
+                        .then(if (out) Modifier.border(2.dp, Color.White, CircleShape) else Modifier),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        label.removePrefix("+ "),
+                        color = Color.Black,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 2,
+                        modifier = Modifier.padding(4.dp),
+                    )
                 }
             }
 
