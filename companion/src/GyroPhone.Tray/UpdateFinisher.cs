@@ -87,7 +87,13 @@ internal static class UpdateFinisher
             log.Write(copied
                 ? $"update: {Application.ProductVersion} copied to {exe}"
                 : $"update: couldn't replace {exe}; starting the old build again");
-            if (tray) Start(exe, copied ? $"{Program.RestartedArg} {Program.UpdatedArg}" : $"{Program.RestartedArg} {FailedArg}", log);
+            if (tray)
+            {
+                Start(exe, copied ? $"{Program.RestartedArg} {Program.UpdatedArg}" : $"{Program.RestartedArg} {FailedArg}", log);
+                // The watcher comes second, so it finds the companion running instead of starting another one.
+                var clock = Stopwatch.StartNew();
+                while (watch && !Program.IsRunning() && clock.ElapsedMilliseconds < ExitWaitMs) Thread.Sleep(100);
+            }
             if (watch) Start(exe, Watcher.Arg, log);
             return copied ? 0 : 1;
         }

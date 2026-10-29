@@ -103,7 +103,8 @@ internal static class Watcher
                 if (clock.ElapsedMilliseconds - lastLaunch < RelaunchGapMs) continue;
                 lastLaunch = clock.ElapsedMilliseconds;
                 s.Close(); // the companion binds next; the phone repeats DISCOVER every second
-                Launch(log);
+                if (Program.IsRunning()) log.Write("known phone seen: the companion is already starting");
+                else Launch(log);
                 break;
             }
             if (Stopped(yielded ? YieldMs : BindRetryMs)) break;
