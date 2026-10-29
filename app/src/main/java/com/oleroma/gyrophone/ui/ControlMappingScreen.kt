@@ -619,6 +619,8 @@ internal fun ControlMappingScreen(
         val g = groupsNow.indexOfFirst { list -> list.any { it.sources.first() == src } }
         if (g < 0) return
         liveOrder = groupsNow[g]
+        // The card being moved is the selected one.
+        selectedSrc = src
         startDrag(Dragged.Card(input, g), at)
     }
 
@@ -664,6 +666,8 @@ internal fun ControlMappingScreen(
                 val from = d.from
                 if (l != null) {
                     val (card, at) = l
+                    // Where something lands is the selected card from then on.
+                    selectedSrc = card.sources.first()
                     val c = carried(card)
                     val row = rowOf(card).filter { it != c }.toMutableList()
                     val i = at.coerceIn(0, row.size)
@@ -830,7 +834,10 @@ internal fun ControlMappingScreen(
                         },
                         setId = editSet,
                         onOther = onEditSet,
-                        selected = input == selected,
+                        // Only one card stands out: while a target is over another card, that one does.
+                        selected = input == selected && hovered.let { h ->
+                            h == null || h == input || dragTarget == null || !allows(allowedTargets(h), dragTarget)
+                        },
                         hover = dragTarget != null && fits && hovered == input,
                         landingLabel = when (d) {
                             is Dragged.Target -> Describe.shortTarget(d.target)
@@ -848,9 +855,9 @@ internal fun ControlMappingScreen(
                         onRowBounds = { b -> rowBounds[src] = b },
                         onItemBounds = { item, b -> itemBounds[src to item] = b },
                         onDivider = { k -> if (onZoneSettings != null) zoneDialog = input to k - 1 },
-                        onDividerDrag = { k, at -> startDrag(Dragged.Divider(input, k), at) },
+                        onDividerDrag = { k, at -> selectedSrc = src; startDrag(Dragged.Divider(input, k), at) },
                         onClick = { selectedSrc = src },
-                        onChipDrag = { z, t, at -> startDrag(Dragged.Target(t, zoneInputs[z]), at) },
+                        onChipDrag = { z, t, at -> selectedSrc = src; startDrag(Dragged.Target(t, zoneInputs[z]), at) },
                         onHandleDrag = { at -> startCardDrag(input, at) },
                         modifier = Modifier.animateItem(),
                     )
