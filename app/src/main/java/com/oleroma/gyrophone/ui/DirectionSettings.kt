@@ -25,6 +25,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import com.oleroma.gyrophone.core.model.DirField
+import com.oleroma.gyrophone.core.model.DirSettings
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.HoldZone
@@ -139,18 +141,8 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
         ) {
             val pies = s.pies
             if (pies != null) {
-                val same = pies.distinct().size == 1
-                DirSwitch("Same for all", "One width for all four pies.", same) { on ->
-                    edit { it.copy(pies = if (on) List(4) { pies[0] } else pies) }
-                }
-                if (same) {
-                    DirSlider(key + "pie", "Pies %.0f°", pies[0], TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f) { v ->
-                        edit { it.copy(pies = List(4) { v }) }
-                    }
-                } else for (d in Direction.entries) {
-                    DirSlider(key + "pie" + d.name, d.label + " %.0f°", s.pieDeg(d), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f) { v ->
-                        edit { t -> t.copy(pies = (t.pies ?: pies).toMutableList().also { it[d.ordinal] = v }) }
-                    }
+                DirSlider(key + "pie", "Pies %.0f°", pies[0], TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f) { v ->
+                    edit { it.copy(pies = List(4) { v }) }
                 }
             }
         }
@@ -197,7 +189,8 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
         }
         OverrideSwitch(
             "Keep held after lift",
-            "A held direction stays held when the fingers lift. A tap lets it go; swiping on carries on from it.",
+            "A held direction stays held when the fingers lift. A tap lets it go; swiping on carries on from it. " +
+                    "Each Swipe hold ⚙ can set its own.",
             s.latch, own(SurfaceField.LATCH), reset(SurfaceField.LATCH),
         ) { v -> edit { it.copy(latch = v) } }
         if (s.latch) {
@@ -208,9 +201,63 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
             ) { v -> edit { it.copy(latchReleaseMs = (v * 1000).roundToInt()) } }
         }
         DirNote(
-            if (zones.any { it > 1 }) "Length zones: tap ⚙ on a Swipe hold, or the ┃ divider that ends a zone."
-            else "Length zones: drag a mapping past the ┃ divider at the end of a Swipe hold card, so it fires further along."
+            "Every direction uses these unless it sets its own: ⚙ on a Swipe card sets its pie and swipe distance, " +
+                    "⚙ on a Swipe hold card its pie, hold distance, keep held and length zones."
         )
+        SectionTitle("Length zones")
+        if (zones.any { it > 1 }) HoldZoneSettings(s, zones, key, only = null, zone = null, onChange = current.setZones)
+        else DirNote("Drag a mapping past the ┃ divider at the end of a Swipe hold card, so it fires further along.")
+    }
+}
+
+/**
+ * The ⚙ of direction [d]'s Swipe ([hold] false: its pie and swipe distance) or Swipe hold (its
+ * pie, hold distance, keep held after lift and, with [zones] mapped, its length zones), each its
+ * own over [level]'s shared value (the Settings), highlighted with a ↺ where it sets its own.
+ */
+@Composable
+internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, hold: Boolean, zones: IntArray) {
+    val current by rememberUpdatedState(level)
+    val s = level.eff
+    val k = key + d.name + if (hold) "hold" else "swipe"
+    fun edit(change: (DirSettings) -> DirSettings) = current.edit { it.withDir(d, change) }
+    fun own(f: DirField) = level.isDirOwn(d, f)
+    fun reset(f: DirField): () -> Unit = { current.resetDir(d, f) }
+    val fields = DirField.entries.filter { it.hold == hold }
+
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        ResetAllButton("Settings", fields.any(::own)) { fields.forEach { current.resetDir(d, it) } }
+        DirectionPies(s, hold, d)
+        val pie = if (hold) DirField.HOLD_PIE else DirField.SWIPE_PIE
+        if (s.pies == null) DirNote(
+            if (hold) "Classic directions (Settings): held directions work per axis, no pies."
+            else "Classic directions (Settings): a swipe goes the way of its larger axis, no pies."
+        ) else OverrideSlider(
+            k + "pie", "Pie %.0f°", s.pieDeg(d, hold), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
+            own(pie), reset(pie),
+            hint = if (hold) "Where a held ${d.label} counts. Its Swipe has a pie of its own." else "Where a swipe ${d.label} counts. Its Swipe hold has a pie of its own.",
+        ) { v -> edit { if (hold) it.copy(holdPie = v) else it.copy(swipePie = v) } }
+        if (!hold) {
+            OverrideSlider(
+                k + "dp", "Swipe after %.0f dp", s.swipeDpOf(d), TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f,
+                own(DirField.SWIPE), reset(DirField.SWIPE),
+            ) { v -> edit { it.copy(swipeDp = v) } }
+        } else {
+            OverrideSlider(
+                k + "dp", "Hold after %.0f dp", s.holdDpOf(d), TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f,
+                own(DirField.HOLD), reset(DirField.HOLD),
+                hint = if (s.dragStart && s.holdMode == HoldMode.FROM_START) "With Drag start point, the start point trails the furthest hold distance of the four." else null,
+            ) { v -> edit { it.copy(holdDp = v) } }
+            OverrideSwitch(
+                "Keep held after lift",
+                "Stays held when the fingers lift. A tap lets it go; swiping on carries on from it." +
+                        if (s.latchOf(d) && s.latchReleaseMs > 0) " Lets go by itself after %.1f s (Settings).".format(s.latchReleaseMs / 1000f) else "",
+                s.latchOf(d), own(DirField.LATCH), reset(DirField.LATCH),
+            ) { v -> edit { it.copy(latch = v) } }
+            SectionTitle("Length zones")
+            HoldZoneSettings(s, zones, k, only = d, zone = null, onChange = current.setZones)
+        }
+        DirNote("Highlighted: set for ${d.label} only. The rest is the Settings' value, shared by every direction.")
     }
 }
 
@@ -219,71 +266,78 @@ private fun SectionTitle(text: String) =
     Text(text, Modifier.padding(top = 10.dp, bottom = 2.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
 
 /**
- * The settings of length zone [zone] (from 0; null = every zone) of held direction [only]
- * ([TouchpadSettings.holdZone]), one of the [zones] each direction has mapped: the mapping
- * editor's divider ending that zone, or the ⚙ of the Swipe hold (every zone).
- * [onChange] gets the shared zones and the per-direction ones (null = the same for every direction).
+ * The length zones of held direction [only] ([TouchpadSettings.holdZone]): its own, or the shared
+ * ones every direction without its own follows ([only] null: those, as many as the direction with
+ * the most). [zone]: only that one (from 0; a zone divider), null = all. [zones]: how many each
+ * direction has mapped. [onChange] gets the shared zones and the per-direction ones (null = none
+ * of its own; a direction whose list equals the shared one has none).
  */
 @Composable
 internal fun HoldZoneSettings(
     s: TouchpadSettings,
     zones: IntArray,
     key: String,
-    only: Direction,
+    only: Direction?,
     zone: Int?,
     onChange: (List<HoldZone>, List<List<HoldZone>>?) -> Unit,
 ) {
     val current by rememberUpdatedState(s)
-    val mapped = zones[only.ordinal]
+    /** Per-direction lists with [d]'s (all: every one following [old]) changed to [list]. */
+    fun commit(shared: List<HoldZone>, change: (MutableList<List<HoldZone>>) -> Unit) {
+        val t = current
+        val all = MutableList(4) { t.dirHoldZones?.getOrNull(it) ?: t.holdZones }
+        change(all)
+        onChange(shared, all.takeUnless { l -> l.all { it == shared } })
+    }
+    val mapped = if (only == null) Direction.entries.maxOf { zones[it.ordinal] } else zones[only.ordinal]
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (s.dragStart && s.holdMode == HoldMode.FROM_START) {
             DirNote("Drag start point is on, so only the first zone works. Turn it off to use the zones.")
             return@Column
         }
         if (mapped < 2) {
-            DirNote("Zone settings work once a second zone has mappings: drag one past this ┃ divider.")
+            DirNote("Zone settings work once a second zone has mappings: drag one past the ┃ divider at the end of a Swipe hold card.")
             return@Column
         }
-        val same = s.dirHoldZones == null
-        DirSwitch("Same zones for every direction", "Off: each direction has its own zone lengths and modes.", same) { on ->
-            val t = current
-            if (on) onChange(t.dirHoldZones?.getOrNull(only.ordinal) ?: t.holdZones, null)
-            else onChange(t.holdZones, List(4) { t.holdZones })
-        }
+        val list = only?.let { s.dirHoldZones?.getOrNull(it.ordinal) } ?: s.holdZones
+        val own = only != null && list != s.holdZones
+        OverrideRow(
+            if (only == null) "Zones of every direction" else "Zones of " + only.label,
+            own,
+            onReset = { commit(current.holdZones) { it[only!!.ordinal] = current.holdZones } },
+            hint = if (only == null) "Each held direction uses these unless its Swipe hold ⚙ sets its own."
+            else if (own) "Its own zones." else "The Settings' zones, shared by every direction: a change here makes them its own.",
+        )
         DirNote(
             if (s.holdMode == HoldMode.FROM_START) "The first zone starts at the hold distance. The finger's distance from the start point picks the zone, so sliding back goes back a zone."
             else "The first zone starts at the hold distance. A zone counts the travel since the direction was held and never goes back."
         )
-        // Shared: as many as the direction with the most; the others' extra zones use the same.
-        val n = if (same) Direction.entries.maxOf { zones[it.ordinal] } else mapped
+        val d = only ?: Direction.entries.maxBy { zones[it.ordinal] }
         val shown = if (zone == null) 0 until mapped else zone.coerceIn(0, mapped - 1)..zone.coerceIn(0, mapped - 1)
         for (i in shown) {
-            ZoneList(current, only, n, i, key + "zones" + if (same) "" else only.name) { list ->
+            ZoneList(current, d, list, mapped, i, key + "zones" + (only?.name ?: "")) { changed ->
                 val t = current
-                if (same) onChange(list, null)
-                else {
-                    val all = (t.dirHoldZones ?: List(4) { t.holdZones }).toMutableList()
-                    all[only.ordinal] = list
-                    onChange(t.holdZones, all)
-                }
+                if (only == null) commit(changed) { all -> for (j in all.indices) if (all[j] == t.holdZones) all[j] = changed }
+                else commit(t.holdZones) { it[only.ordinal] = changed }
             }
         }
     }
 }
 
 /**
- * Zone [i] of the [n] zones of [d]: where it starts, on reach or on release, how a reached zone
+ * Zone [i] of the [n] zones [list] of [d]: where it starts, on reach or on release, how a reached zone
  * is held ([ZoneKeep]: Always, Only forward, Only in zone), and its length (not the last one's:
  * it goes on).
  */
 @Composable
-private fun ZoneList(s: TouchpadSettings, d: Direction, n: Int, i: Int, key: String, onChange: (List<HoldZone>) -> Unit) {
-    val list = s.dirHoldZones?.getOrNull(d.ordinal) ?: s.holdZones
+private fun ZoneList(s: TouchpadSettings, d: Direction, list: List<HoldZone>, n: Int, i: Int, key: String, onChange: (List<HoldZone>) -> Unit) {
     fun set(z: HoldZone) =
         onChange(List(maxOf(list.size, i + 1)) { j -> if (j == i) z else list.getOrNull(j) ?: HoldZone() })
-    var start = s.holdDp.coerceIn(TouchpadSettings.MIN_ACTIVATE_DP, TouchpadSettings.MAX_ACTIVATE_DP)
-    for (j in 0 until i) start += s.holdZoneDp(d, j)
-    val z = s.holdZone(d, i)
+    // Zones of [list], as direction [d] would have them.
+    val t = s.copy(holdZones = list, dirHoldZones = null)
+    var start = t.holdDpOf(d).coerceIn(TouchpadSettings.MIN_ACTIVATE_DP, TouchpadSettings.MAX_ACTIVATE_DP)
+    for (j in 0 until i) start += t.holdZoneDp(d, j)
+    val z = t.holdZone(d, i)
     val last = i == n - 1
     Text(
         "Zone ${i + 1} · from %.0f dp".format(start) + if (last) " on" else "",
@@ -313,15 +367,18 @@ private fun ZoneList(s: TouchpadSettings, d: Direction, n: Int, i: Int, key: Str
         )
     }
     if (!last) {
-        DirSlider(key + i, "Length %.0f dp", s.holdZoneDp(d, i), TouchpadSettings.MIN_ZONE_DP..TouchpadSettings.MAX_ZONE_DP, 1f) { v ->
+        DirSlider(key + i, "Length %.0f dp", t.holdZoneDp(d, i), TouchpadSettings.MIN_ZONE_DP..TouchpadSettings.MAX_ZONE_DP, 1f) { v ->
             set(z.copy(lengthDp = v))
         }
     }
 }
 
-/** The four pies, with a live dot: touching the circle shows which directions that way counts as. */
+/**
+ * The four pies (of the swipes, or with [hold] of the held directions; [only]: that one stands
+ * out), with a live dot: touching the circle shows which directions that way counts as.
+ */
 @Composable
-private fun DirectionPies(s: TouchpadSettings) {
+private fun DirectionPies(s: TouchpadSettings, hold: Boolean = false, only: Direction? = null) {
     val colors = MaterialTheme.colorScheme
     val pieColors = listOf(colors.primary, colors.tertiary, colors.secondary, colors.error)
     var touch by remember { mutableStateOf<Offset?>(null) }
@@ -350,9 +407,9 @@ private fun DirectionPies(s: TouchpadSettings) {
             drawCircle(colors.outline, r, c, style = Stroke(1.dp.toPx()))
             for (d in Direction.entries) {
                 // Classic: quadrants for swipes (held directions from the start point work per axis).
-                val w = s.pieDeg(d)
+                val w = s.pieDeg(d, hold)
                 drawArc(
-                    pieColors[d.ordinal].copy(alpha = 0.35f),
+                    pieColors[d.ordinal].copy(alpha = if (only == null || only == d) 0.35f else 0.1f),
                     startAngle = d.deg - 90f - w / 2f, sweepAngle = w, useCenter = true,
                     topLeft = Offset(c.x - r, c.y - r), size = androidx.compose.ui.geometry.Size(2 * r, 2 * r),
                 )
@@ -371,7 +428,7 @@ private fun DirectionPies(s: TouchpadSettings) {
                     Text(d.label, Modifier.padding(start = 6.dp), style = MaterialTheme.typography.bodySmall)
                 }
             }
-            val mask = if (at == null) -1 else s.directionsAt(at.x, at.y)
+            val mask = if (at == null) -1 else s.directionsAt(at.x, at.y, hold)
             Text(
                 when (mask) {
                     -1 -> "Touch the circle to try a direction."
@@ -405,17 +462,6 @@ private fun DirSlider(
             valueRange = range,
             onValueChangeFinished = { onDone(v) },
         )
-    }
-}
-
-@Composable
-private fun DirSwitch(title: String, hint: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).padding(end = 8.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyMedium)
-            DirNote(hint)
-        }
-        Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
     }
 }
 

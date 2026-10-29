@@ -264,7 +264,7 @@ private fun PresetMenu(runtime: GamepadRuntime, preset: DevicePreset, onPick: (S
                     )
                     // Keys' own long press / double tap times (their ⚙): all back to the workspace's.
                     val timed = profile.devicePresets.firstOrNull { it.id == preset.id }?.timings.orEmpty().size
-                    ResetAllButton("workspace" + if (timed > 0) " ($timed keys)" else "", timed > 0) {
+                    ResetAllButton("Workspace defaults" + if (timed > 0) " ($timed keys)" else "", timed > 0) {
                         runtime.editActiveProfile { p ->
                             val now = p.devicePresets.firstOrNull { it.id == preset.id } ?: return@editActiveProfile p
                             DevicePresets.put(p, now.copy(timings = emptyList()))

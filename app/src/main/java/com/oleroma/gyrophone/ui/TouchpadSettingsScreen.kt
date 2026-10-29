@@ -104,12 +104,13 @@ private fun TouchpadMappingsSummary(workspace: Workspace, onEdit: () -> Unit, on
         )
     }
     Text(
-        "Speed, scrolling, directions, timings and zones are set in Mappings: the ⚙ before an action, or Settings at the top.",
+        "The touchpad's speed, scrolling, directions, timings and zones are this workspace's Workspace defaults: " +
+                "set them in Mappings (⚙ Settings at the top, or the ⚙ before an action) or in the workspace's settings.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = onEdit) { Text("Edit mappings") }
-        TextButton(onClick = onReset) { Text("Reset to defaults") }
+        TextButton(onClick = onReset) { Text("Default mappings") }
     }
 }

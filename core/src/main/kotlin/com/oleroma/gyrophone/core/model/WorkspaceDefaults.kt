@@ -51,6 +51,9 @@ object WorkspaceDefaults {
     val keys: List<String> = top + gyroProps.map(::gyroKey) + SurfaceField.entries.map(::touchpadKey) +
         Direction.entries.flatMap { d -> DirField.entries.map { f -> dirKey(d, f) } }
 
+    /** The touchpad's keys: shared and per direction. */
+    val touchpadKeys: List<String> = keys.filter { it.startsWith(TOUCHPAD) }
+
     /** [a] and [b] have the same value of [key]. */
     fun same(key: String, a: Workspace, b: Workspace): Boolean = when {
         key.startsWith(GYRO) -> key.removePrefix(GYRO).let { p -> gyroJson(a.gyro)[p] == gyroJson(b.gyro)[p] }
@@ -105,17 +108,26 @@ object WorkspaceDefaults {
     /** [w] with [defaults]' value of every key it does not set itself. */
     fun apply(w: Workspace, defaults: Workspace): Workspace {
         val own = own(w)
-        return keys.filter { it !in own }.fold(w.copy(ownSettings = own)) { r, k ->
-            // A direction's own value of the defaults gives way to a shared one the workspace sets.
-            val dir = dirOf(k)
-            if (dir != null && touchpadKey(dir.second.shared) in own) r.copy(touchpad = dir.second.take(r.touchpad, dir.first, TouchpadSettings()))
-            else take(k, r, defaults)
-        }
+        return keys.filter { it !in own }.fold(w.copy(ownSettings = own)) { r, k -> follow(k, r, own, defaults) }
+    }
+
+    /**
+     * [w] (setting [own] itself) with [defaults]' value of [key]. A direction's own value of the
+     * defaults gives way to a shared one the workspace sets: every direction of it uses that.
+     */
+    private fun follow(key: String, w: Workspace, own: Set<String>, defaults: Workspace): Workspace {
+        val dir = dirOf(key)
+        return if (dir != null && touchpadKey(dir.second.shared) in own) w.copy(touchpad = dir.second.take(w.touchpad, dir.first, TouchpadSettings()))
+        else take(key, w, defaults)
     }
 
     /** [w] following [defaults] for [key] again. */
-    fun reset(w: Workspace, key: String, defaults: Workspace): Workspace =
-        take(key, w, defaults).copy(ownSettings = own(w) - key)
+    fun reset(w: Workspace, key: String, defaults: Workspace): Workspace {
+        val own = own(w) - key
+        // A shared touchpad value back to the defaults' brings their direction values back too.
+        val then = keys.filter { k -> k !in own && dirOf(k)?.second?.shared?.let(::touchpadKey) == key }
+        return (listOf(key) + then).fold(w.copy(ownSettings = own)) { r, k -> follow(k, r, own, defaults) }
+    }
 
     /** [w] following [defaults] for everything. */
     fun resetAll(w: Workspace, defaults: Workspace): Workspace =
@@ -129,7 +141,11 @@ object WorkspaceDefaults {
         val ownB = own(before)
         val ownA = own(after)
         val changed = keys.filter { k -> k !in ownA && k !in ownB && !same(k, before, after) }
-        return if (changed.isEmpty()) after else after.copy(ownSettings = ownA + changed)
+        if (changed.isEmpty()) return after
+        val own = ownA + changed
+        // A shared touchpad value set here hides the defaults' direction values of it.
+        return keys.filter { k -> k !in own && dirOf(k)?.second?.shared?.let(::touchpadKey) in changed }
+            .fold(after.copy(ownSettings = own)) { r, k -> follow(k, r, own, r) }
     }
 
     /** [after] (an edit of [before]) with each workspace setting the keys the edit changed itself ([markOwn]). */

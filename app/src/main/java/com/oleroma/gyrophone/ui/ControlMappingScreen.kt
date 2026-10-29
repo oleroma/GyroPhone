@@ -327,12 +327,12 @@ internal val TouchControl.physicalDevice: PhysicalDevice?
     get() = if (!id.startsWith(PHYSICAL_PREFIX)) null
     else PhysicalDevice.entries.firstOrNull { it.name == id.removePrefix(PHYSICAL_PREFIX).substringBefore(':') }
 
-/** "Stick", "Swipe button", "Button", "Touchpad", or a physical device's "Controller", "Keyboard", "Mouse". */
+/** "Stick", "Touchpad button", "Button", "Touchpad", or a physical device's "Controller", "Keyboard", "Mouse". */
 internal fun controlKindName(c: TouchControl): String = when {
     c.isTouchpadStandIn -> "Touchpad"
     c.physicalDevice != null -> c.physicalDevice!!.label
     c.kind == TouchKind.STICK -> "Stick"
-    c.swipes -> "Swipe button"
+    c.swipes -> "Touchpad button"
     else -> "Button"
 }
 
@@ -1258,7 +1258,8 @@ internal fun ControlMappingScreen(
                         Column(Modifier.weight(1f)) {
                             Text(control.label.ifBlank { control.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
-                                controlKindName(control) + " · settings its actions share",
+                                if (control.isTouchpadStandIn) "Touchpad · this workspace's Workspace defaults"
+                                else controlKindName(control) + " · settings its actions share",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colors.onSurfaceVariant,
                             )

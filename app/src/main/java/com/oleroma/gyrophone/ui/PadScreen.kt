@@ -1758,7 +1758,7 @@ fun PadScreen(
                         onZoneSettings = { a, b ->
                             editWorkspace { it.copy(touchpad = it.touchpad.copy(holdZones = a, dirHoldZones = b)) }
                         },
-                        settings = touchpadSettings(ws, d.defaults) { change -> editWorkspace(change) },
+                        settings = touchpadSettings(runtime, workspaceLevel(ws, d.defaults) { change -> editWorkspace(change) }),
                     )
                 } else {
                     TouchpadSettingsScreen(

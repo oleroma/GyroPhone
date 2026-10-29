@@ -47,12 +47,10 @@ import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.ButtonLibrary
 import com.oleroma.gyrophone.core.model.Describe
-import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.StickZones
-import com.oleroma.gyrophone.core.model.SurfaceSettings
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchLayer
@@ -104,7 +102,7 @@ internal fun ControlSettingsScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            (if (control.kind == TouchKind.STICK) "Stick" else if (control.swipes) "Swipe button" else "Button") +
+                            (if (control.kind == TouchKind.STICK) "Stick" else if (control.swipes) "Touchpad button" else "Button") +
                                     " · " + control.id + " · settings",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -268,18 +266,12 @@ internal fun ButtonBehaviourSettings(
     ) { onControlChange(current.copy(clickThrough = it)) }
     if (!control.clickThrough) {
         SwitchSetting(
-            "Swipe",
+            "Touchpad",
             "A small touchpad of its own: its mappings are the touchpad's (hold, taps, moves, " +
-                    "swipes, pinches with 1–4 fingers, in Mappings), and a swipe is never a tap.",
+                    "swipes, pinches with 1–4 fingers, in Mappings), and a swipe is never a tap. " +
+                    "Its settings follow the Workspace defaults unless it sets its own (Mappings, ⚙ Settings).",
             control.swipe,
-        ) { on ->
-            val c = current
-            // A new swipe button follows the touchpad; an old one keeps its swipe settings.
-            onControlChange(
-                if (on && !c.swipe && c.surface == null) c.copy(swipe = true, surface = SurfaceSettings(holdMode = HoldMode.DIRECTION_CHANGE))
-                else c.copy(swipe = on),
-            )
-        }
+        ) { on -> onControlChange(current.copy(swipe = on)) }
     }
     val input = Bindings.touchInputs(control).first()
     val targets = Bindings.targets(workspace.mappings, input)

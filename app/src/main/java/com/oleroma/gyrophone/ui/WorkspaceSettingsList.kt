@@ -29,7 +29,7 @@ import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.RatchetAxes
 
-import com.oleroma.gyrophone.core.model.SurfaceField
+import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 
@@ -56,21 +56,24 @@ internal class WorkspaceLevel(
     fun resetKeys(keys: List<String>): () -> Unit = { keys.forEach(reset) }
 }
 
-/** The active profile's workspace [index] over the workspace defaults. */
-internal fun workspaceLevel(runtime: GamepadRuntime, profile: Profile, index: Int): WorkspaceLevel {
-    val ws = profile.workspace(index)
+/** The active profile's workspace [index]: its Workspace defaults over the Defaults. */
+internal fun workspaceLevel(runtime: GamepadRuntime, profile: Profile, index: Int): WorkspaceLevel =
+    workspaceLevel(profile.workspace(index), profile.defaults) { change -> runtime.editActiveProfile { it.updateWorkspace(index, change) } }
+
+/** Workspace [ws]'s Workspace defaults over [defaults]; [update] changes the workspace. */
+internal fun workspaceLevel(ws: Workspace, defaults: Workspace, update: ((Workspace) -> Workspace) -> Unit): WorkspaceLevel {
     val own = WorkspaceDefaults.own(ws)
     return WorkspaceLevel(
         ws = ws,
-        parentName = "defaults",
+        parentName = "Defaults",
         isOwn = { it in own },
-        edit = { change -> runtime.editActiveProfile { it.updateWorkspace(index, change) } },
-        reset = { k -> runtime.editActiveProfile { p -> p.updateWorkspace(index) { WorkspaceDefaults.reset(it, k, p.defaults) } } },
-        resetAll = { runtime.editActiveProfile { p -> p.updateWorkspace(index) { WorkspaceDefaults.resetAll(it, p.defaults) } } },
+        edit = update,
+        reset = { k -> update { WorkspaceDefaults.reset(it, k, defaults) } },
+        resetAll = { update { WorkspaceDefaults.resetAll(it, defaults) } },
     )
 }
 
-/** The workspace defaults of the active profile over the built-in values. */
+/** The Defaults of the active profile over the built-in values. */
 internal fun defaultsLevel(runtime: GamepadRuntime, profile: Profile): WorkspaceLevel {
     val d = profile.defaults
     val builtin = WorkspaceDefaults.builtin
@@ -88,19 +91,20 @@ private fun g(p: String) = WorkspaceDefaults.gyroKey(p)
 private val AXES = listOf("mouseX", "invertX", "scaleX", "mouseY", "invertY", "scaleY", "portrait").map(::g)
 
 /**
- * Gyro, button and haptic settings of one [level] (a workspace, or the workspace defaults), each
- * highlighted with a ↺ where it differs from the parent. [defaults]: the workspace defaults, which
- * also hold the touchpad's settings and gesture timings (a workspace sets those in its touchpad's
- * mapping editor). [key] restarts slider drafts when the level changes.
+ * Every setting of one [level] (a workspace's Workspace defaults, or the Defaults): gyro, buttons,
+ * haptics, and the touchpad and gestures, each highlighted with a ↺ where it differs from the
+ * parent. [touchpadOpen]: the touchpad's first and open (its ⚙ Settings in the mapping editor).
+ * [key] restarts slider drafts when the level changes.
  */
 @Composable
-internal fun WorkspaceSettings(runtime: GamepadRuntime, level: WorkspaceLevel, key: String, defaults: Boolean = false) {
+internal fun WorkspaceSettings(runtime: GamepadRuntime, level: WorkspaceLevel, key: String, touchpadOpen: Boolean = false) {
     val ws = level.ws
     fun editWs(change: (Workspace) -> Workspace) = level.edit(change)
     fun own(k: String) = level.isOwn(k)
     fun reset(k: String): () -> Unit = { level.reset(k) }
 
     ResetAllButton(level.parentName, WorkspaceDefaults.keys.any(level.isOwn)) { level.resetAll() }
+    if (touchpadOpen) TouchpadSection(runtime, level, key, "touchpad.Touchpad", open = true)
     RememberedSection(runtime, "workspace.Gyro", "Gyro", defaultOpen = true, subtitle = ws.gyro.mode.label) {
         OverrideRow(
             "Gyro to mouse", own(g("mode")), reset(g("mode")),
@@ -269,40 +273,39 @@ internal fun WorkspaceSettings(runtime: GamepadRuntime, level: WorkspaceLevel, k
             HapticEdgeChips(ws.hapticEdge, onSelect = { e -> if (e != null) editWs { it.copy(hapticEdge = e) } })
         }
     }
-    if (defaults) {
-        RememberedSection(
-            runtime,
-            "defaults.Touchpad",
-            "Touchpad & gestures",
-            subtitle = "Long press and double tap times, speed, scrolling and directions",
-        ) {
-            MsOverride(
-                key + "long", "Long press after", ws.longPressMs, Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
-                own(WorkspaceDefaults.LONG_PRESS), reset(WorkspaceDefaults.LONG_PRESS),
-                hint = "For the Long press of touch buttons, controller buttons, keyboard keys and the touchpad.",
-            ) { ms -> editWs { it.copy(longPressMs = ms) } }
-            MsOverride(
-                key + "double", "Double tap within", ws.doubleTapMs, Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
-                own(WorkspaceDefaults.DOUBLE_TAP), reset(WorkspaceDefaults.DOUBLE_TAP),
-            ) { ms -> editWs { it.copy(doubleTapMs = ms) } }
-            SurfaceSharedSettings(
-                SurfaceLevel(
-                    eff = ws.touchpad,
-                    parentName = level.parentName,
-                    isOwn = { f -> own(WorkspaceDefaults.touchpadKey(f)) },
-                    edit = { change -> editWs { it.copy(touchpad = change(it.touchpad)) } },
-                    reset = { f -> level.reset(WorkspaceDefaults.touchpadKey(f)) },
-                    resetAll = { level.resetKeys(SurfaceField.entries.map(WorkspaceDefaults::touchpadKey))() },
-                ),
-                key + "tp",
-                IntArray(4) { 1 },
-                touchpad = true,
-                resetAll = false,
-            )
-        }
-    } else {
+    if (!touchpadOpen) TouchpadSection(runtime, level, key, "workspace.Touchpad", open = false)
+}
+
+/** The touchpad and gesture settings of [level]: gesture times, then the touchpad's own. */
+@Composable
+private fun TouchpadSection(runtime: GamepadRuntime, level: WorkspaceLevel, key: String, prefKey: String, open: Boolean) {
+    val ws = level.ws
+    RememberedSection(
+        runtime,
+        prefKey,
+        "Touchpad & gestures",
+        defaultOpen = open,
+        subtitle = "Long press and double tap times, speed, scrolling and directions",
+    ) {
+        MsOverride(
+            key + "long", "Long press after", ws.longPressMs, Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
+            level.isOwn(WorkspaceDefaults.LONG_PRESS), { level.reset(WorkspaceDefaults.LONG_PRESS) },
+            hint = "For the Tap and Long press of the touchpad, touch buttons, controller buttons and keyboard keys without a time of their own.",
+        ) { ms -> level.edit { it.copy(longPressMs = ms) } }
+        MsOverride(
+            key + "double", "Double tap within", ws.doubleTapMs, Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
+            level.isOwn(WorkspaceDefaults.DOUBLE_TAP), { level.reset(WorkspaceDefaults.DOUBLE_TAP) },
+            hint = "The same, for Double tap windows.",
+        ) { ms -> level.edit { it.copy(doubleTapMs = ms) } }
+        SurfaceSharedSettings(
+            workspaceSurfaceLevel(level),
+            key + "tp",
+            Bindings.holdZoneCounts(ws.mappings, ""),
+            touchpad = true,
+            resetAll = false,
+        )
         Text(
-            "Touchpad: in Edit layout, tap empty space for its mappings. Its speed, directions and gesture times are under ⚙ there.",
+            "Touchpad buttons use these too, unless they set their own (their Mappings, ⚙ Settings).",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),

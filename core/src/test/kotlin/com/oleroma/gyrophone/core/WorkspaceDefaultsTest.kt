@@ -1,6 +1,8 @@
 package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.model.DevicePreset
+import com.oleroma.gyrophone.core.model.DirField
+import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.HoldMode
@@ -93,5 +95,27 @@ class WorkspaceDefaultsTest {
         assertEquals(emptyList<KeyTiming>(), WorkspaceMappings.store(resolved).workspaces[0].keyTimings)
         // No own time left: the key is dropped.
         assertEquals(emptyList<KeyTiming>(), preset.withTiming(96) { it.copy(longPressMs = null) }.timings)
+    }
+
+    @Test
+    fun sharedValueHidesTheDefaultsDirectionValueUntilReset() {
+        val d = defaults.copy(touchpad = TouchpadSettings(swipeDp = 20f).withDir(Direction.UP) { it.copy(swipeDp = 60f) })
+        val ws = WorkspaceDefaults.apply(Workspace("a", "A", ownSettings = emptySet()), d)
+        assertEquals(60f, ws.touchpad.swipeDpOf(Direction.UP))
+
+        // The workspace sets the shared swipe distance: Up uses it too.
+        val edited = WorkspaceDefaults.markOwn(ws, ws.copy(touchpad = ws.touchpad.copy(swipeDp = 30f)))
+        assertEquals(30f, edited.touchpad.swipeDpOf(Direction.UP))
+        assertEquals(30f, WorkspaceDefaults.apply(edited, d).touchpad.swipeDpOf(Direction.UP))
+
+        // Its own Up distance wins over its shared one.
+        val up = WorkspaceDefaults.markOwn(edited, edited.copy(touchpad = edited.touchpad.withDir(Direction.UP) { it.copy(swipeDp = 45f) }))
+        assertTrue(WorkspaceDefaults.dirKey(Direction.UP, DirField.SWIPE) in up.ownSettings!!)
+        assertEquals(45f, WorkspaceDefaults.apply(up, d).touchpad.swipeDpOf(Direction.UP))
+
+        // Back to the defaults' shared value: their Up value comes back.
+        val reset = WorkspaceDefaults.reset(edited, WorkspaceDefaults.touchpadKey(SurfaceField.SWIPE), d)
+        assertEquals(60f, reset.touchpad.swipeDpOf(Direction.UP))
+        assertEquals(20f, reset.touchpad.swipeDpOf(Direction.LEFT))
     }
 }

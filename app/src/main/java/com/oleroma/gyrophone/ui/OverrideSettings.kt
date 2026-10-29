@@ -22,30 +22,42 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.oleroma.gyrophone.core.model.DirField
+import com.oleroma.gyrophone.core.model.Direction
+import com.oleroma.gyrophone.core.model.HoldZone
 import com.oleroma.gyrophone.core.model.SurfaceField
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchpadSettings
+import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.ownSurface
 import com.oleroma.gyrophone.core.model.surfaceSettings
 import kotlin.math.roundToInt
 
 /**
  * Touch surface settings at one level over its parent: [eff] in effect, which ones it sets itself
- * ([isOwn], shown highlighted with a ↺), and edits ([edit] gets the settings in effect changed;
- * the changed ones become its own). [parentName] names what a reset goes back to.
+ * ([isOwn], and per direction [isDirOwn]; shown highlighted with a ↺), and edits ([edit] gets the
+ * settings in effect changed; the changed ones, shared or per direction, become its own).
+ * [parentName] names what a reset goes back to. [setZones] sets its length zones (shared, and per
+ * direction or null), which are always its own.
  */
 internal class SurfaceLevel(
     val eff: TouchpadSettings,
     val parentName: String,
     val isOwn: (SurfaceField) -> Boolean,
+    val isDirOwn: (Direction, DirField) -> Boolean,
     val edit: ((TouchpadSettings) -> TouchpadSettings) -> Unit,
     val reset: (SurfaceField) -> Unit,
+    val resetDir: (Direction, DirField) -> Unit,
     val resetAll: () -> Unit,
+    val setZones: (List<HoldZone>, List<List<HoldZone>>?) -> Unit,
 ) {
-    val anyOwn: Boolean get() = SurfaceField.entries.any(isOwn)
+    val anyOwn: Boolean get() = SurfaceField.entries.any(isOwn) || Direction.entries.any(::anyDirOwn)
+
+    /** Direction [d] sets any of its own settings. */
+    fun anyDirOwn(d: Direction) = DirField.entries.any { isDirOwn(d, it) }
 }
 
-/** A swipe button's surface over the workspace touchpad [pad]; [update] changes the button. */
+/** A touchpad button's surface over the workspace touchpad [pad]; [update] changes the button. */
 internal fun buttonSurfaceLevel(
     control: TouchControl,
     pad: TouchpadSettings,
@@ -54,8 +66,9 @@ internal fun buttonSurfaceLevel(
     val own = control.ownSurface
     return SurfaceLevel(
         eff = control.surfaceSettings(pad),
-        parentName = "touchpad",
+        parentName = "Workspace defaults",
         isOwn = { it.button && it.isOwn(own) },
+        isDirOwn = { d, f -> f.isOwn(own, d) },
         edit = { change ->
             update { c ->
                 val was = c.surfaceSettings(pad)
@@ -63,23 +76,23 @@ internal fun buttonSurfaceLevel(
             }
         },
         reset = { f -> update { c -> c.copy(surface = f.drop(c.ownSurface)) } },
+        resetDir = { d, f -> update { c -> c.copy(surface = f.drop(c.ownSurface, d)) } },
         resetAll = { update { c -> c.copy(surface = SurfaceField.dropAll(c.ownSurface)) } },
+        setZones = { a, b -> update { c -> c.copy(surface = c.ownSurface.copy(holdZones = a, dirHoldZones = b)) } },
     )
 }
 
-/** The workspace touchpad [tp] over [parent] (its defaults); [update] changes it. */
-internal fun touchpadSurfaceLevel(
-    tp: TouchpadSettings,
-    parent: TouchpadSettings,
-    parentName: String,
-    update: ((TouchpadSettings) -> TouchpadSettings) -> Unit,
-) = SurfaceLevel(
-    eff = tp,
-    parentName = parentName,
-    isOwn = { !it.same(tp, parent) },
-    edit = update,
-    reset = { f -> update { f.take(it, parent) } },
-    resetAll = { update { SurfaceField.takeAll(it, parent) } },
+/** The touchpad settings of workspace settings [level] (a workspace's, or the defaults'): its keys of them. */
+internal fun workspaceSurfaceLevel(level: WorkspaceLevel) = SurfaceLevel(
+    eff = level.ws.touchpad,
+    parentName = level.parentName,
+    isOwn = { f -> level.isOwn(WorkspaceDefaults.touchpadKey(f)) },
+    isDirOwn = { d, f -> level.isOwn(WorkspaceDefaults.dirKey(d, f)) },
+    edit = { change -> level.edit { it.copy(touchpad = change(it.touchpad)) } },
+    reset = { f -> level.reset(WorkspaceDefaults.touchpadKey(f)) },
+    resetDir = { d, f -> level.reset(WorkspaceDefaults.dirKey(d, f)) },
+    resetAll = { level.resetKeys(WorkspaceDefaults.touchpadKeys)() },
+    setZones = { a, b -> level.edit { it.copy(touchpad = it.touchpad.copy(holdZones = a, dirHoldZones = b)) } },
 )
 
 /**

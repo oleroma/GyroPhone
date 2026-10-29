@@ -18,7 +18,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material3.FilterChip
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -157,9 +159,9 @@ private fun PadMenu(
 }
 
 /**
- * All settings of the current workspace (⚙ in edit mode), as one list of collapsible sections:
- * the workspace itself (rename / duplicate / delete, copy mappings), the device preset it pins,
- * then its gyro, controls and haptics. Settings of the whole app are on the Settings page instead.
+ * All settings of the current workspace (⚙ in edit mode), in two tabs: Workspace (rename /
+ * duplicate / delete, copy mappings) and Workspace defaults (gyro, controls, haptics, touchpad and
+ * gestures, over the Defaults). Settings of the whole app are on the Settings page instead.
  */
 @Composable
 private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () -> Unit) {
@@ -168,9 +170,20 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () 
     val current = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
     val ws = profile.workspace(current)
     var copying by remember { mutableStateOf(false) }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
 
     Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        RememberedSection(
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("Workspace") })
+            FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("Workspace defaults") })
+        }
+        if (tab == 1) {
+            Hint(
+                "This workspace's settings. Each follows the Defaults (Settings) unless it is set here: " +
+                        "those are highlighted, with ↺ to follow the Defaults again.",
+            )
+            WorkspaceSettings(runtime, workspaceLevel(runtime, profile, current), profile.id + "/" + ws.id)
+        } else RememberedSection(
             runtime,
             "workspace.Workspace",
             "Workspace",
@@ -187,8 +200,6 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () 
                 OutlinedButton(onClick = { copying = true }) { Text("Copy mappings from…") }
             }
         }
-
-        WorkspaceSettings(runtime, workspaceLevel(runtime, profile, current), profile.id + "/" + ws.id)
     }
 
     if (copying) {

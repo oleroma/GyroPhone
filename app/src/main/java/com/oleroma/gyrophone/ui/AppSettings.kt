@@ -31,8 +31,8 @@ import kotlin.math.roundToInt
 
 /**
  * The Settings page (from the pad's Settings capsule): the App tab, options of the whole app with
- * the corners, and the Workspace defaults tab, what every workspace uses unless it sets its own.
- * Everything about one workspace is on its settings page (⚙ in edit mode).
+ * the corners, and the Defaults tab, what every workspace uses unless its Workspace defaults (its
+ * settings page, ⚙ in edit mode) set their own.
  */
 @Composable
 fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
@@ -40,14 +40,14 @@ fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
     Column(modifier) {
         Row(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("App") })
-            FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("Workspace defaults") })
+            FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("Defaults") })
         }
         if (tab == 0) AppTab(runtime) else DefaultsTab(runtime)
     }
 }
 
 /**
- * The workspace defaults: every workspace's settings unless it sets them itself. Each shows its
+ * The Defaults: every workspace's settings unless its Workspace defaults set them. Each shows its
  * value, highlighted with a ↺ where it differs from the built-in one.
  */
 @Composable
@@ -55,10 +55,10 @@ private fun DefaultsTab(runtime: GamepadRuntime) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Hint(
-            "Every workspace uses these, except where it sets its own: those show highlighted in the workspace's " +
-                    "settings, with ↺ to follow these again.",
+            "Every workspace uses these, except where its Workspace defaults set their own: those show highlighted " +
+                    "there, with ↺ to follow these again.",
         )
-        WorkspaceSettings(runtime, defaultsLevel(runtime, profile), profile.id + "/defaults", defaults = true)
+        WorkspaceSettings(runtime, defaultsLevel(runtime, profile), profile.id + "/defaults")
     }
 }
 
@@ -118,11 +118,11 @@ private fun AppTab(runtime: GamepadRuntime) {
             )
         }
         Hint("A button's label briefly shows what it is sending, such as a tap, double tap or long press action.")
-        SwitchRow("Show the swipe line on swipe buttons", visuals.swipeLine) {
+        SwitchRow("Show the swipe line on touchpad buttons", visuals.swipeLine) {
             runtime.setTouchVisuals(visuals.copy(swipeLine = it))
         }
         Hint(
-            "A finger on a swipe button draws a line from its start point, through it, to the last activation length " +
+            "A finger on a touchpad button draws a line from its start point, through it, to the last activation length " +
                     "of that direction: a bar at Swipe after, dots at Hold after and each zone's end, a ring on a dragged " +
                     "start point. The marks it passed fill in.",
         )
