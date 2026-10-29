@@ -94,3 +94,34 @@ class GyroPoseGravityTest {
         assertEquals(1f, m[8], 1e-2f) // screen faces the player again
     }
 }
+
+class GyroTraceTest {
+    @Test fun bucketsAverageAndKeepRatchets() {
+        val t = com.oleroma.gyrophone.core.engine.GyroTrace(rateHz = 100, maxSeconds = 1)
+        // 10 ms bucket from two 5 ms samples.
+        t.add(10f, 0f, 0f, 0.005f, false)
+        t.add(30f, 0f, 0f, 0.005f, true)
+        val y = FloatArray(4); val p = FloatArray(4); val r = FloatArray(4); val h = BooleanArray(4)
+        assertEquals(1, t.read(4, y, p, r, h))
+        assertEquals(20f, y[0], 1e-3f)
+        assertEquals(true, h[0])
+    }
+
+    @Test fun keepsTheNewestOldestFirst() {
+        val t = com.oleroma.gyrophone.core.engine.GyroTrace(rateHz = 100, maxSeconds = 1)
+        for (i in 0 until 150) t.add(i.toFloat(), 0f, 0f, 0.01f, false)
+        val y = FloatArray(3); val p = FloatArray(3); val r = FloatArray(3); val h = BooleanArray(3)
+        assertEquals(3, t.read(3, y, p, r, h))
+        assertArrayEquals(floatArrayOf(147f, 148f, 149f), y, 1e-3f)
+    }
+}
+
+class GyroSwayTest {
+    @Test fun swingsThenSettles() {
+        val s = com.oleroma.gyrophone.core.engine.GyroSway()
+        repeat(100) { s.update(100f, 0f, 0f, 0.001f, 0.3f) } // 10° in 0.1 s
+        assertEquals(true, s.x > 8f)
+        repeat(3000) { s.update(0f, 0f, 0f, 0.001f, 0.3f) }
+        assertEquals(0f, s.x, 0.01f)
+    }
+}
