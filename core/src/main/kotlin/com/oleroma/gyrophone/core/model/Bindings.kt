@@ -125,7 +125,7 @@ object Bindings {
      * press, release, outside and zone; in swipe mode its press, outside and zone, then its
      * surface's inputs for 1–4 fingers, one finger's hold being the press ([swipeInputs]);
      * STICK -> X axis, Y axis (analog), Left, Right, Up, Down (halves), with 8 zones the four
-     * diagonals, then on touch, outside and zone; FULLSCREEN -> none.
+     * diagonals, then on touch, outside and zone; FULLSCREEN, DISPLAY -> none.
      */
     fun touchInputs(control: TouchControl): List<BindableInput> = when (control.kind) {
         TouchKind.BUTTON -> {
@@ -162,7 +162,7 @@ object Bindings {
             }) + TouchAreaKind.entries.map { area(control, it) }
         }
 
-        TouchKind.FULLSCREEN -> emptyList()
+        TouchKind.FULLSCREEN, TouchKind.DISPLAY -> emptyList()
     }
 
     /**

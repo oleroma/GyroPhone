@@ -31,8 +31,8 @@ import kotlin.math.hypot
  * towards its end; it shrinks back to the finger as it ages. [liveMappings]: a button's label
  * briefly shows what it is sending right now. [swipeLine]: a finger on a swipe button with swipes
  * or holds mapped shows a line from its start point, through it, to its direction's furthest
- * activation length, marking each ([SwipeLines]). The gyro* fields set up the gyro displays
- * ([GyroVisualsLayer]): a 3D phone, a ratchet ring, a graph, an attitude indicator and a parallax edge.
+ * activation length, marking each ([SwipeLines]). The gyroEdge* fields set up the parallax edge
+ * ([GyroEdgeLayer]); the other gyro displays are placed in edit mode ([GyroDisplaysLayer]).
  */
 @Serializable
 data class TouchVisuals(
@@ -43,32 +43,6 @@ data class TouchVisuals(
     val fadeMs: Int = 400,
     val liveMappings: Boolean = true,
     val swipeLine: Boolean = true,
-    /** A 3D phone turned by the gyro. */
-    val gyroPhone: Boolean = false,
-    /** Gravity: its tilt is held to the world (no drift, no ratchet needed). Off: turned by the gyro since the last reset. */
-    val gyroPhoneGravity: Boolean = false,
-    /** Each ratchet press sets the phone (gyro mode) and the attitude indicator's heading straight again. */
-    val gyroResetOnRatchet: Boolean = true,
-    /** The real pose shown square on: 0 upright facing the player, 90 flat screen up, 180 upright facing away. */
-    val gyroLevelDeg: Int = 0,
-    val gyroPhoneSize: Float = 1f,
-    val gyroPhonePlace: VisPlace = VisPlace.CENTER,
-    /** Faint copies of the last few poses behind the phone. */
-    val gyroPhoneGhosts: Boolean = false,
-    /** Red, green and blue arrows along the phone's own right, up and screen axes. */
-    val gyroPhoneAxes: Boolean = false,
-    /** Three arcs, yaw / pitch / roll, lit while that axis moves the mouse, dim while a ratchet pauses it. */
-    val gyroRatchetRing: Boolean = false,
-    val gyroRatchetRingPlace: VisPlace = VisPlace.TOP_RIGHT,
-    /** A scrolling graph of yaw / pitch / roll speed along the bottom, ratchet presses shaded. */
-    val gyroGraph: Boolean = false,
-    /** The graph's full height, ± this many deg/s. */
-    val gyroGraphRange: Int = 360,
-    val gyroGraphSeconds: Int = 3,
-    /** An aircraft-style horizon with a heading tape. */
-    val gyroHorizon: Boolean = false,
-    val gyroHorizonPlace: VisPlace = VisPlace.TOP_LEFT,
-    val gyroHorizonSize: Float = 1f,
     /** Outlines just inside the screen's edge that sway as the phone turns. */
     val gyroEdge: Boolean = false,
     /** Moved by tilt against gravity (stays while tilted) instead of by turning (springs back). */
@@ -82,31 +56,19 @@ data class TouchVisuals(
     val gyroEdgeInvert: Boolean = false,
     /** Dims and tints the edge by which gyro axes move now. */
     val gyroEdgeRatchetTint: Boolean = true,
-    /** Opacity of every gyro display. */
+    /** Tilt mode: the real pose that leaves the edge centred, 0 upright facing the player, 90 flat screen up. */
+    val gyroLevelDeg: Int = 0,
+    /** The edge's opacity. */
     val gyroOpacity: Float = 0.6f,
 ) {
-    /** Some gyro display is on. */
-    val anyGyro: Boolean get() = gyroPhone || gyroRatchetRing || gyroGraph || gyroHorizon || gyroEdge
-
-    /** A gyro display needs the pose held to gravity (and so the accelerometer). */
-    val gyroNeedsGravity: Boolean
-        get() = (gyroPhone && gyroPhoneGravity) || gyroHorizon || (gyroEdge && gyroEdgeTilt)
+    /** The edge holds its pose to gravity (and so needs the accelerometer). */
+    val gyroNeedsGravity: Boolean get() = gyroEdge && gyroEdgeTilt
 
     companion object {
         const val MIN_TRAIL_MS = 50
         const val MAX_TRAIL_MS = 1500
         const val MAX_FADE_MS = 2000
     }
-}
-
-/** Where a gyro display sits on the pad. */
-@Serializable
-enum class VisPlace(val label: String) {
-    CENTER("Centre"),
-    TOP_LEFT("Top left"),
-    TOP_RIGHT("Top right"),
-    BOTTOM_LEFT("Bottom left"),
-    BOTTOM_RIGHT("Bottom right"),
 }
 
 /** Finger paths for [TouchOverlay], fed by [recordTouches]. Main thread only. */

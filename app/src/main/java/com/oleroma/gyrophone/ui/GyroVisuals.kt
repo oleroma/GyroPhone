@@ -17,6 +17,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -27,8 +28,13 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
 import com.oleroma.gyrophone.core.engine.MappingEngine
+import com.oleroma.gyrophone.core.model.GyroDisplay
+import com.oleroma.gyrophone.core.model.GyroDisplayColor
+import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.MotionAxis
+import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.asin
 import kotlin.math.atan2
@@ -37,36 +43,79 @@ import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
+/** A gyro display ([control]) and the box it is drawn in, in pad pixels. */
+class DisplayBox(val control: TouchControl, val box: Rect)
+
 /**
- * The pad's gyro displays ([TouchVisuals]): a 3D phone, a ratchet ring, a speed graph, an attitude
- * indicator and a parallax edge, all drawn flat on one canvas (no 3D library) from the runtime's
- * gyro data, once per screen frame while any is on.
+ * The gyro displays placed on the pad ([com.oleroma.gyrophone.core.model.TouchKind.DISPLAY]), each
+ * drawn flat in its [DisplayBox] (no 3D library) from the runtime's data for it, once per screen
+ * frame. In edit mode each also gets its box, [selected] one lit.
  */
 @Composable
-fun GyroVisualsLayer(runtime: GamepadRuntime, v: TouchVisuals, modifier: Modifier = Modifier) {
+fun GyroDisplaysLayer(
+    runtime: GamepadRuntime,
+    boxes: List<DisplayBox>,
+    editing: Boolean,
+    selected: String?,
+    modifier: Modifier = Modifier,
+) {
     var frame by remember { mutableLongStateOf(0L) }
     LaunchedEffect(Unit) {
         while (true) withFrameMillis { frame = it }
     }
     val st = remember { VisState() }
     Canvas(modifier) {
-        st.draw(this, runtime, v, frame)
+        st.now = frame
+        for (b in boxes) {
+            val d = b.control.display ?: continue
+            st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
+            if (editing) {
+                val sel = b.control.id == selected
+                drawRect(
+                    (if (sel) SELECTED_BOX else Color.White.copy(alpha = 0.45f)),
+                    b.box.topLeft, b.box.size,
+                    style = Stroke(
+                        (if (sel) 2.5f else 1.5f) * density,
+                        pathEffect = if (sel) null else PathEffect.dashPathEffect(floatArrayOf(8 * density, 6 * density)),
+                    ),
+                )
+            }
+        }
     }
 }
 
-/** Buffers the displays reuse from frame to frame, so drawing allocates nothing. */
+/** The parallax edge ([TouchVisuals.gyroEdge]): outlines just inside the screen's edge that sway as the phone turns. */
+@Composable
+fun GyroEdgeLayer(runtime: GamepadRuntime, v: TouchVisuals, modifier: Modifier = Modifier) {
+    var frame by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (true) withFrameMillis { frame = it }
+    }
+    val st = remember { VisState() }
+    Canvas(modifier) {
+        @Suppress("UNUSED_EXPRESSION") frame // redraw each frame
+        st.drawEdge(this, runtime, v)
+    }
+}
+
+/** Buffers reused from frame to frame, so drawing allocates little. */
 private class VisState {
     val portrait = PhoneModel(landscape = false)
     val landscape = PhoneModel(landscape = true)
     val raw = FloatArray(9)
     val m = FloatArray(9)
     val path = Path()
+    var now = 0L
 
-    /** The last [GHOSTS] phone poses, a matrix each, newest at [ghostHead - 1]. */
-    val ghosts = FloatArray(GHOSTS * 9)
-    var ghostCount = 0
-    var ghostHead = 0
-    var ghostT = 0L
+    /** Per phone with a ghost trail: its last [GHOSTS] poses. */
+    val ghosts = HashMap<String, Ghosts>()
+
+    class Ghosts {
+        val poses = FloatArray(GHOSTS * 9)
+        var count = 0
+        var head = 0
+        var t = 0L
+    }
 
     val traceYaw = FloatArray(1024)
     val tracePitch = FloatArray(1024)
@@ -78,30 +127,8 @@ private class VisState {
         typeface = Typeface.DEFAULT_BOLD
     }
 
-    fun draw(scope: DrawScope, runtime: GamepadRuntime, v: TouchVisuals, now: Long) = with(scope) {
-        val op = v.gyroOpacity.coerceIn(0.05f, 1f)
-        val live = runtime.gyroLiveAxes
-        if (v.gyroEdge) drawEdge(runtime, v, op, live)
-        if (v.gyroGraph) drawGraph(runtime, v, op)
-        if (v.gyroHorizon) drawHorizon(runtime, v, op)
-        if (v.gyroPhone) drawPhone(runtime, v, op, now)
-        if (v.gyroRatchetRing) drawRing(v, op, live)
-    }
-
-    /** Where a display of half size [half] centres for [p]. */
-    private fun DrawScope.placeAt(p: VisPlace, half: Float): Offset {
-        val e = MARGIN_DP * density + half
-        return when (p) {
-            VisPlace.CENTER -> center
-            VisPlace.TOP_LEFT -> Offset(e, e)
-            VisPlace.TOP_RIGHT -> Offset(size.width - e, e)
-            VisPlace.BOTTOM_LEFT -> Offset(e, size.height - e)
-            VisPlace.BOTTOM_RIGHT -> Offset(size.width - e, size.height - e)
-        }
-    }
-
     /** [m] = the pose of [raw] seen from the level angle: the pose [levelDeg] back from upright shows square on. */
-    private fun level(levelDeg: Int) {
+    fun level(levelDeg: Int) {
         val a = Math.toRadians(levelDeg.toDouble())
         val c = cos(a).toFloat()
         val s = sin(a).toFloat()
@@ -113,48 +140,66 @@ private class VisState {
     }
 
     /** How far the horizon turns on screen (clockwise +, against the phone's roll) and the pitch (nose up +), in degrees, of the pose in [m]. */
-    private fun horizonRollDeg() = Math.toDegrees(atan2(m[3], m[4]).toDouble()).toFloat()
-    private fun pitchDeg() = Math.toDegrees(asin((-m[5]).coerceIn(-1f, 1f)).toDouble()).toFloat()
+    fun horizonRollDeg() = Math.toDegrees(atan2(m[3], m[4]).toDouble()).toFloat()
+    fun pitchDeg() = Math.toDegrees(asin((-m[5]).coerceIn(-1f, 1f)).toDouble()).toFloat()
 
-    private fun DrawScope.drawPhone(runtime: GamepadRuntime, v: TouchVisuals, op: Float, now: Long) {
-        (if (v.gyroPhoneGravity) runtime.worldPose else runtime.gyroPose).matrix(raw)
-        level(v.gyroLevelDeg)
-        val model = if (size.width >= size.height) landscape else portrait
-        val unit = minOf(size.width, size.height) * PHONE_SIZE * v.gyroPhoneSize.coerceIn(0.4f, 2.5f)
-        val c = placeAt(v.gyroPhonePlace, unit * 1.15f)
-        if (v.gyroPhoneGhosts) {
-            if (now - ghostT >= GHOST_MS) {
-                ghostT = now
-                m.copyInto(ghosts, ghostHead * 9)
-                ghostHead = (ghostHead + 1) % GHOSTS
-                if (ghostCount < GHOSTS) ghostCount++
+    fun drawDisplay(scope: DrawScope, feed: GyroDisplayFeed?, d: GyroDisplay, id: String, box: Rect, live: Int) = with(scope) {
+        val op = d.opacity.coerceIn(0.05f, 1f)
+        fun col(c: GyroDisplayColor) = Color(d.color(c).toInt()).let { it.copy(alpha = it.alpha * op) }
+        when (d.kind) {
+            GyroDisplayKind.PHONE -> {
+                if (feed == null) raw.fill(0f).also { raw[0] = 1f; raw[4] = 1f; raw[8] = 1f }
+                else (if (d.gravity) feed.world else feed.pose).matrix(raw)
+                level(d.levelDeg)
+                val model = if (size.width >= size.height) landscape else portrait
+                // The model's long side is 2 units, its box about 2.3 of them.
+                val unit = minOf(box.width, box.height) / 2.3f
+                if (d.ghosts) {
+                    val g = ghosts.getOrPut(id) { Ghosts() }
+                    if (now - g.t >= GHOST_MS) {
+                        g.t = now
+                        m.copyInto(g.poses, g.head * 9)
+                        g.head = (g.head + 1) % GHOSTS
+                        if (g.count < GHOSTS) g.count++
+                    }
+                    // Oldest first, fainter the older.
+                    for (i in g.count downTo 1) {
+                        val at = ((g.head - i + GHOSTS) % GHOSTS) * 9
+                        model.drawOutline(this, g.poses, at, path, box.center, unit, col(GyroDisplayColor.PHONE_EDGE).copy(alpha = col(GyroDisplayColor.PHONE_EDGE).alpha * 0.4f * (1f - (i - 1f) / GHOSTS)))
+                    }
+                } else ghosts.remove(id)
+                model.draw(
+                    this, m, path, box.center, unit,
+                    col(GyroDisplayColor.PHONE_FRONT), col(GyroDisplayColor.PHONE_BACK), col(GyroDisplayColor.PHONE_SIDE),
+                    col(GyroDisplayColor.PHONE_EDGE),
+                    if (d.axes) arrayOf(col(GyroDisplayColor.PHONE_X), col(GyroDisplayColor.PHONE_Y), col(GyroDisplayColor.PHONE_Z)) else null,
+                )
             }
-            // Oldest first, fainter the older.
-            for (i in ghostCount downTo 1) {
-                val at = ((ghostHead - i + GHOSTS) % GHOSTS) * 9
-                model.drawOutline(this, ghosts, at, path, c, unit, op * 0.35f * (1f - (i - 1f) / GHOSTS))
-            }
-        } else ghostCount = 0
-        model.draw(this, m, path, c, unit, op, v.gyroPhoneAxes)
+
+            GyroDisplayKind.RATCHET_RING -> drawRing(box, live, col(GyroDisplayColor.RING_TEXT),
+                arrayOf(col(GyroDisplayColor.RING_YAW), col(GyroDisplayColor.RING_PITCH), col(GyroDisplayColor.RING_ROLL)))
+
+            GyroDisplayKind.GRAPH -> drawGraph(feed, d, box, ::col)
+            GyroDisplayKind.HORIZON -> drawHorizon(feed, d, box, ::col)
+        }
     }
 
-    private fun DrawScope.drawRing(v: TouchVisuals, op: Float, live: Int) {
-        val r = minOf(size.width, size.height) * RING_SIZE
-        val c = placeAt(v.gyroRatchetRingPlace, r)
+    private fun DrawScope.drawRing(box: Rect, live: Int, letters: Color, colors: Array<Color>) {
+        val r = minOf(box.width, box.height) / 2f * 0.8f
+        val c = box.center
         val w = r * 0.28f
-        val box = Size(r * 2, r * 2)
         val tl = Offset(c.x - r, c.y - r)
         for ((i, a) in RING_AXES.withIndex()) {
             val on = live and MappingEngine.gyroBit(a) != 0
             drawArc(
-                AXIS_COLORS[i].copy(alpha = op * (if (on) 1f else 0.18f)),
+                colors[i].copy(alpha = colors[i].alpha * (if (on) 1f else 0.18f)),
                 startAngle = -90f - 55f + i * 120f, sweepAngle = 110f, useCenter = false,
-                topLeft = tl, size = box, style = Stroke(w, cap = StrokeCap.Round),
+                topLeft = tl, size = Size(r * 2, r * 2), style = Stroke(w, cap = StrokeCap.Round),
             )
             // Each arc's letter: Y, P, R.
             val mid = Math.toRadians((-90.0 + i * 120.0))
             text.textSize = r * 0.55f
-            text.color = Color.White.copy(alpha = op * (if (on) 0.9f else 0.3f)).toArgb()
+            text.color = letters.copy(alpha = letters.alpha * (if (on) 1f else 0.35f)).toArgb()
             drawContext.canvas.nativeCanvas.drawText(
                 RING_LETTERS[i], c.x + (r * 0.45f * cos(mid)).toFloat(),
                 c.y + (r * 0.45f * sin(mid)).toFloat() + text.textSize * 0.35f, text,
@@ -162,111 +207,108 @@ private class VisState {
         }
     }
 
-    private fun DrawScope.drawGraph(runtime: GamepadRuntime, v: TouchVisuals, op: Float) {
-        val trace = runtime.gyroTrace
-        val want = (v.gyroGraphSeconds * trace.rateHz).coerceIn(2, traceYaw.size)
+    private fun DrawScope.drawGraph(feed: GyroDisplayFeed?, d: GyroDisplay, box: Rect, col: (GyroDisplayColor) -> Color) {
+        val radius = CornerRadius(8 * density)
+        drawRoundRect(col(GyroDisplayColor.GRAPH_BACK), box.topLeft, box.size, radius)
+        val mid = box.center.y
+        drawLine(Color.White.copy(alpha = 0.2f * d.opacity), Offset(box.left, mid), Offset(box.right, mid), density)
+        val trace = feed?.trace ?: return
+        val want = (d.graphSeconds * trace.rateHz).coerceIn(2, traceYaw.size)
         val n = trace.read(want, traceYaw, tracePitch, traceRoll, traceHeld)
-        val e = MARGIN_DP * density
-        val h = size.height * GRAPH_HEIGHT
-        val top = size.height - e - h
-        val left = e
-        val width = size.width - 2 * e
-        val mid = top + h / 2
-        drawRoundRect(Color.Black.copy(alpha = op * 0.35f), Offset(left, top), Size(width, h), CornerRadius(8 * density))
-        drawLine(Color.White.copy(alpha = op * 0.25f), Offset(left, mid), Offset(left + width, mid), density)
         if (n < 2) return
         // The newest bucket sits at the right edge; a part-full window starts mid-way.
-        val step = width / (want - 1)
-        val x0 = left + width - (n - 1) * step
+        val step = box.width / (want - 1)
+        val x0 = box.right - (n - 1) * step
+        val held = col(GyroDisplayColor.GRAPH_HELD)
         var j = 0
         while (j < n) {
             if (!traceHeld[j]) { j++; continue }
             val s = j
             while (j < n && traceHeld[j]) j++
-            drawRect(
-                Color.White.copy(alpha = op * 0.12f),
-                Offset(x0 + s * step, top), Size(maxOf(step, (j - s) * step), h),
-            )
+            drawRect(held, Offset(x0 + s * step, box.top), Size(maxOf(step, (j - s) * step), box.height))
         }
-        val range = v.gyroGraphRange.coerceAtLeast(30).toFloat()
-        val half = h / 2 * 0.92f
-        for ((i, data) in listOf(traceYaw, tracePitch, traceRoll).withIndex()) {
+        val range = d.graphRange.coerceAtLeast(30).toFloat()
+        val half = box.height / 2 * 0.92f
+        val lines = arrayOf(GyroDisplayColor.GRAPH_YAW, GyroDisplayColor.GRAPH_PITCH, GyroDisplayColor.GRAPH_ROLL)
+        for ((i, data) in arrayOf(traceYaw, tracePitch, traceRoll).withIndex()) {
             path.reset()
             for (k in 0 until n) {
                 val y = mid - (data[k] / range).coerceIn(-1f, 1f) * half
                 if (k == 0) path.moveTo(x0, y) else path.lineTo(x0 + k * step, y)
             }
-            drawPath(path, AXIS_COLORS[i].copy(alpha = op), style = Stroke(1.6f * density, join = StrokeJoin.Round))
+            drawPath(path, col(lines[i]), style = Stroke(1.6f * density, join = StrokeJoin.Round))
         }
     }
 
-    private fun DrawScope.drawHorizon(runtime: GamepadRuntime, v: TouchVisuals, op: Float) {
-        runtime.worldPose.matrix(raw)
-        level(v.gyroLevelDeg)
-        val r = minOf(size.width, size.height) * HORIZON_SIZE * v.gyroHorizonSize.coerceIn(0.4f, 2.5f)
-        val tape = r * 0.3f
-        val gap = r * 0.12f
-        // The tape sits above the dial: centre the pair as one.
-        val c0 = placeAt(v.gyroHorizonPlace, r + (tape + gap) / 2)
-        val c = Offset(c0.x, c0.y + (tape + gap) / 2)
+    private fun DrawScope.drawHorizon(feed: GyroDisplayFeed?, d: GyroDisplay, box: Rect, col: (GyroDisplayColor) -> Color) {
+        if (feed == null) raw.fill(0f).also { raw[0] = 1f; raw[4] = 1f; raw[8] = 1f } else feed.world.matrix(raw)
+        level(d.levelDeg)
+        // The tape on top, the dial under it: fit both in the box.
+        val r = minOf(box.width / 2f, box.height / (2f + TAPE + TAPE_GAP)) * 0.97f
+        val tape = r * TAPE
+        val gap = r * TAPE_GAP
+        val c = Offset(box.center.x, box.center.y + (tape + gap) / 2)
         val roll = horizonRollDeg()
         val pitch = pitchDeg()
         val k = r / 40f // px per degree of pitch
         path.reset()
         path.addOval(Rect(c, r))
+        val line = col(GyroDisplayColor.HORIZON_LINE)
+        val ladder = col(GyroDisplayColor.HORIZON_LADDER)
         clipPath(path) {
             rotate(roll, c) {
                 val hy = c.y + pitch * k
-                drawRect(SKY.copy(alpha = op), Offset(c.x - 2 * r, hy - 4 * r), Size(4 * r, 4 * r))
-                drawRect(GROUND.copy(alpha = op), Offset(c.x - 2 * r, hy), Size(4 * r, 4 * r))
-                drawLine(Color.White.copy(alpha = op), Offset(c.x - 2 * r, hy), Offset(c.x + 2 * r, hy), 1.5f * density)
+                drawRect(col(GyroDisplayColor.HORIZON_SKY), Offset(c.x - 2 * r, hy - 4 * r), Size(4 * r, 4 * r))
+                drawRect(col(GyroDisplayColor.HORIZON_GROUND), Offset(c.x - 2 * r, hy), Size(4 * r, 4 * r))
+                drawLine(line, Offset(c.x - 2 * r, hy), Offset(c.x + 2 * r, hy), 1.5f * density)
                 // Pitch ladder every 10°.
                 var a = -60
                 while (a <= 60) {
                     if (a != 0) {
                         val y = hy - a * k
                         val w = if (a % 20 == 0) r * 0.4f else r * 0.22f
-                        drawLine(Color.White.copy(alpha = op * 0.7f), Offset(c.x - w, y), Offset(c.x + w, y), density)
+                        drawLine(ladder, Offset(c.x - w, y), Offset(c.x + w, y), density)
                     }
                     a += 10
                 }
             }
         }
-        drawCircle(Color.White.copy(alpha = op * 0.8f), r, c, style = Stroke(1.5f * density))
+        drawCircle(col(GyroDisplayColor.HORIZON_RIM), r, c, style = Stroke(1.5f * density))
         // The fixed aircraft symbol.
-        val sym = AIRCRAFT.copy(alpha = op)
+        val sym = col(GyroDisplayColor.HORIZON_AIRCRAFT)
         drawLine(sym, Offset(c.x - r * 0.55f, c.y), Offset(c.x - r * 0.18f, c.y), 2.5f * density, StrokeCap.Round)
         drawLine(sym, Offset(c.x + r * 0.18f, c.y), Offset(c.x + r * 0.55f, c.y), 2.5f * density, StrokeCap.Round)
         drawCircle(sym, 2.5f * density, c)
         // Heading tape: ticks every 10°, numbers every 30°, the heading under the middle mark.
         val tTop = c.y - r - gap - tape
         val tRect = Rect(c.x - r, tTop, c.x + r, tTop + tape)
-        drawRoundRect(Color.Black.copy(alpha = op * 0.4f), tRect.topLeft, tRect.size, CornerRadius(4 * density))
-        val heading = runtime.gyroHeading
+        drawRoundRect(col(GyroDisplayColor.HORIZON_TAPE), tRect.topLeft, tRect.size, CornerRadius(4 * density))
+        val heading = feed?.heading ?: 0f
         val pxPerDeg = r / 45f
+        val numbers = col(GyroDisplayColor.HORIZON_TEXT)
         text.textSize = tape * 0.48f
-        text.color = Color.White.copy(alpha = op).toArgb()
+        text.color = numbers.toArgb()
         clipRect(tRect.left, tRect.top, tRect.right, tRect.bottom) {
-            var d = (heading / 10f).roundToInt() * 10 - 50
-            while (d <= heading + 50) {
-                val x = c.x + (d - heading) * pxPerDeg
-                val big = d % 30 == 0
+            var deg = (heading / 10f).roundToInt() * 10 - 50
+            while (deg <= heading + 50) {
+                val x = c.x + (deg - heading) * pxPerDeg
+                val big = deg % 30 == 0
                 drawLine(
-                    Color.White.copy(alpha = op * 0.8f),
+                    numbers.copy(alpha = numbers.alpha * 0.8f),
                     Offset(x, tRect.bottom), Offset(x, tRect.bottom - tape * (if (big) 0.35f else 0.2f)), density,
                 )
                 if (big) {
-                    drawContext.canvas.nativeCanvas.drawText(
-                        "${((d % 360) + 360) % 360}", x, tRect.top + tape * 0.5f, text,
-                    )
+                    drawContext.canvas.nativeCanvas.drawText("${((deg % 360) + 360) % 360}", x, tRect.top + tape * 0.5f, text)
                 }
-                d += 10
+                deg += 10
             }
         }
-        drawLine(AIRCRAFT.copy(alpha = op), Offset(c.x, tRect.top), Offset(c.x, tRect.bottom), 2 * density)
+        drawLine(sym, Offset(c.x, tRect.top), Offset(c.x, tRect.bottom), 2 * density)
     }
 
-    private fun DrawScope.drawEdge(runtime: GamepadRuntime, v: TouchVisuals, op: Float, live: Int) {
+    fun drawEdge(scope: DrawScope, runtime: GamepadRuntime, v: TouchVisuals) = with(scope) {
+        val op = v.gyroOpacity.coerceIn(0.05f, 1f)
+        val live = runtime.gyroLiveAxes
         val sx: Float
         val sy: Float
         val rot: Float
@@ -387,25 +429,29 @@ private class PhoneModel(landscape: Boolean) {
     }
 
     /** Only the front outline of the pose in [m] from [at]: a ghost. */
-    fun drawOutline(scope: DrawScope, m: FloatArray, at: Int, path: Path, c: Offset, size: Float, alpha: Float) = with(scope) {
+    fun drawOutline(scope: DrawScope, m: FloatArray, at: Int, path: Path, c: Offset, size: Float, color: Color) = with(scope) {
         place(c, size)
         ring(m, body, DEPTH, front, at)
         path.outline(front)
-        drawPath(path, Color.White.copy(alpha = alpha), style = Stroke(width = density, join = StrokeJoin.Round))
+        drawPath(path, color, style = Stroke(width = density, join = StrokeJoin.Round))
     }
 
-    fun draw(scope: DrawScope, m: FloatArray, path: Path, c: Offset, size: Float, alpha: Float, axes: Boolean) = with(scope) {
+    /** The phone turned by [m]; [axes]: arrow colours for its right, up and screen axes, or none. */
+    fun draw(
+        scope: DrawScope, m: FloatArray, path: Path, c: Offset, size: Float,
+        frontColor: Color, backColor: Color, sideColor: Color, edge: Color, axes: Array<Color>?,
+    ) = with(scope) {
         place(c, size)
         ring(m, body, DEPTH, front)
         ring(m, body, -DEPTH, back)
-        val edge = Color.White.copy(alpha = 0.8f * alpha)
         val line = Stroke(width = density * 1.5f, join = StrokeJoin.Round)
         val thin = Stroke(width = density * 1f, join = StrokeJoin.Round)
+        fun Color.shade(f: Float) = copy(alpha = alpha * (0.45f + 0.55f * f))
         // How squarely the front faces the player (the screen normal's z); the back's is minus it.
         val facing = m[8]
         if (-facing > 0.01f) {
             path.outline(back)
-            drawPath(path, BACK.copy(alpha = alpha * (0.45f + 0.55f * -facing)))
+            drawPath(path, backColor.shade(-facing))
             drawPath(path, edge, style = line)
             project(m, bumpX, bumpY, -DEPTH)
             drawCircle(edge, 0.1f * p[2] * -facing, Offset(p[0], p[1]), style = line)
@@ -421,11 +467,11 @@ private class PhoneModel(landscape: Boolean) {
             path.lineTo(back[j * 2], back[j * 2 + 1])
             path.lineTo(back[i * 2], back[i * 2 + 1])
             path.close()
-            drawPath(path, SIDE.copy(alpha = alpha * (0.45f + 0.55f * f)))
+            drawPath(path, sideColor.shade(f))
         }
         if (facing > 0.01f) {
             path.outline(front)
-            drawPath(path, BODY.copy(alpha = alpha * (0.45f + 0.55f * facing)))
+            drawPath(path, frontColor.shade(facing))
             drawPath(path, edge, style = line)
             // The display: only its edge, inside thin bezels.
             ring(m, display, DEPTH, screen)
@@ -438,15 +484,14 @@ private class PhoneModel(landscape: Boolean) {
             path.outline(front)
             drawPath(path, edge.copy(alpha = edge.alpha * 0.5f), style = thin)
         }
-        if (axes) {
+        if (axes != null) {
             project(m, 0f, 0f, 0f)
             val o = Offset(p[0], p[1])
             for (a in 0..2) {
                 project(m, if (a == 0) AXIS_LEN else 0f, if (a == 1) AXIS_LEN else 0f, if (a == 2) AXIS_LEN else 0f)
                 val tip = Offset(p[0], p[1])
-                val col = AXIS_COLORS[a].copy(alpha = alpha.coerceAtLeast(0.5f))
-                drawLine(col, o, tip, 2f * density, StrokeCap.Round)
-                drawCircle(col, 3f * density, tip)
+                drawLine(axes[a], o, tip, 2f * density, StrokeCap.Round)
+                drawCircle(axes[a], 3f * density, tip)
             }
         }
     }
@@ -485,15 +530,10 @@ private const val AXIS_LEN = 1.25f
 /** Camera distance in model units: enough perspective to read the turn, little distortion. */
 private const val CAMERA = 6f
 
-/** Sizes as parts of the pad's shorter side: the phone's model unit, the ring's and the horizon's radius. */
-private const val PHONE_SIZE = 0.2f
-private const val RING_SIZE = 0.05f
-private const val HORIZON_SIZE = 0.14f
+/** The heading tape's height and its gap to the dial, in dial radii. */
+private const val TAPE = 0.3f
+private const val TAPE_GAP = 0.12f
 
-/** The graph's height as a part of the pad's. */
-private const val GRAPH_HEIGHT = 0.18f
-
-private const val MARGIN_DP = 20f
 private const val GHOSTS = 6
 private const val GHOST_MS = 45L
 
@@ -503,14 +543,9 @@ private const val EDGE_MAX_DP = 80f
 private const val EDGE_GAP_DP = 10f
 private const val EDGE_CORNER_DP = 34f
 
-private val BODY = Color(0xFF1B2330)
-private val BACK = Color(0xFF3A4352)
-private val SIDE = Color(0xFF59647A)
-private val SKY = Color(0xFF2F6DB5)
-private val GROUND = Color(0xFF7A5534)
-private val AIRCRAFT = Color(0xFFFFC94D)
+private val SELECTED_BOX = Color(0xFFFFC94D)
 
-/** Yaw, pitch, roll; also the phone's x, y, z arrows. */
+/** Yaw, pitch, roll: the edge's tint. */
 private val AXIS_COLORS = arrayOf(Color(0xFFFF5A5A), Color(0xFF5ADB6E), Color(0xFF5AA8FF))
 private val RING_AXES = arrayOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL)
 private val RING_LETTERS = arrayOf("Y", "P", "R")
