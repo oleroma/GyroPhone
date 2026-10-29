@@ -15,10 +15,12 @@ object WorkspaceMappings {
     const val PRESET_PAD = "preset"
 
     /**
-     * [set] as the engine and editors see it: each workspace with its pinned preset's device
+     * [set] as the engine and editors see it: each workspace with the workspace defaults for the
+     * settings it doesn't set itself ([WorkspaceDefaults.apply]), its pinned preset's device
      * mappings, and touch buttons' gestures where their mode reads them ([Bindings.matchSwipeModes]).
      */
-    fun resolve(set: Profile): Profile = set.copy(workspaces = set.workspaces.map { resolve(it, set.devicePresets) })
+    fun resolve(set: Profile): Profile =
+        set.copy(workspaces = set.workspaces.map { resolve(WorkspaceDefaults.apply(it, set.defaults), set.devicePresets) })
 
     fun resolve(w: Workspace, presets: List<DevicePreset> = emptyList()): Workspace =
         Bindings.matchSwipeModes(w.withTouchpadMappings()).let { r ->

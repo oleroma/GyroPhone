@@ -368,6 +368,8 @@ internal fun ControlMappingScreen(
     onZoneSettings: ((List<HoldZone>, List<List<HoldZone>>?) -> Unit)? = null,
     /** A physical control's inputs ([physicalStandIn]): its cards, instead of the touch control's. */
     physicalInputs: List<BindableInput>? = null,
+    /** The actions' own settings (their ⚙) and the shared ones (Settings); null = none. */
+    settings: MappingSettings? = null,
 ) {
     // The edited set seen as Base, so the Base-only Bindings helpers edit it.
     val view = remember(mappings, editSet) { Bindings.viewSet(mappings, editSet) }
@@ -629,7 +631,19 @@ internal fun ControlMappingScreen(
     }
 
     val hovered by remember { derivedStateOf { if (dragged is Dragged.Target) cardAt(dragPos) else null } }
-    var zoneDialog by remember { mutableStateOf<Pair<BindableInput, Int>?>(null) }
+    var zoneDialog by remember { mutableStateOf<Pair<BindableInput, Int?>?>(null) }
+    var actionDialog by remember { mutableStateOf<BindableInput?>(null) }
+    var sharedOpen by remember { mutableStateOf(false) }
+
+    /** What [input]'s ⚙ opens: its own settings, or a held direction's zones; null = no ⚙. */
+    fun gearOf(input: BindableInput): (() -> Unit)? {
+        if (settings?.action?.invoke(input) != null) return { actionDialog = input }
+        val src = input.sources.first() as? InputSource.Surface
+        if (src?.input?.holdDirection != null && onZoneSettings != null && zonesNow && zonesOf(input) > 1) {
+            return { zoneDialog = input to null }
+        }
+        return null
+    }
 
     fun startDrag(d: Dragged, at: Offset) {
         dragged = d
@@ -879,6 +893,7 @@ internal fun ControlMappingScreen(
                         onRowBounds = { b -> rowBounds[src] = b },
                         onItemBounds = { item, b -> itemBounds[src to item] = b },
                         onDivider = { k -> if (onZoneSettings != null) zoneDialog = input to k - 1 },
+                        onGear = gearOf(input),
                         onDividerDrag = { k, at -> selectedSrc = src; startDrag(Dragged.Divider(input, k), at) },
                         onClick = { selectedSrc = src },
                         onChipDrag = { z, t, at -> selectedSrc = src; startDrag(Dragged.Target(t, zoneInputs[z]), at) },
@@ -1116,7 +1131,9 @@ internal fun ControlMappingScreen(
                                 )
                             }
                         }
-                        if (onSettings != null) TextButton(onClick = onSettings, contentPadding = compact) { Text("Settings") }
+                        val shared = settings?.shared
+                        if (shared != null) TextButton(onClick = { sharedOpen = true }, contentPadding = compact) { Text("⚙ Settings") }
+                        else if (onSettings != null) TextButton(onClick = onSettings, contentPadding = compact) { Text("Settings") }
                         TextButton(
                             onClick = { undoLast() },
                             enabled = undo.isNotEmpty(),
@@ -1210,7 +1227,7 @@ internal fun ControlMappingScreen(
         if (src != null && dir != null && zs != null && onZoneSettings != null) {
             AlertDialog(
                 onDismissRequest = { zoneDialog = null },
-                title = { Text(actionTitle(control, input) + " · zone " + (zone + 1)) },
+                title = { Text(actionTitle(control, input) + if (zone == null) " · zones" else " · zone " + (zone + 1)) },
                 text = {
                     Column(Modifier.verticalScroll(rememberScrollState())) {
                         HoldZoneSettings(zs, Bindings.holdZoneCounts(mappings, src.id), control.id + "dlg", only = dir, zone = zone, onChange = onZoneSettings)
@@ -1218,6 +1235,44 @@ internal fun ControlMappingScreen(
                 },
                 confirmButton = { TextButton(onClick = { zoneDialog = null }) { Text("Done") } },
             )
+        }
+    }
+    actionDialog?.let { input ->
+        val content = settings?.action?.invoke(input)
+        if (content != null) AlertDialog(
+            onDismissRequest = { actionDialog = null },
+            title = { Text("⚙ " + actionTitle(control, input)) },
+            text = { Column(Modifier.verticalScroll(rememberScrollState())) { content() } },
+            confirmButton = { TextButton(onClick = { actionDialog = null }) { Text("Done") } },
+        )
+    }
+    val shared = settings?.shared
+    if (sharedOpen && shared != null) {
+        Dialog(onDismissRequest = { sharedOpen = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(Modifier.fillMaxSize(), color = colors.surface) {
+                Column(Modifier.fillMaxSize()) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(control.label.ifBlank { control.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                controlKindName(control) + " · settings its actions share",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                        FilledTonalButton(onClick = { sharedOpen = false }) { Text("Done") }
+                    }
+                    Column(
+                        Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Column(Modifier.widthIn(max = 720.dp)) { shared() }
+                    }
+                }
+            }
         }
     }
     layerDraft?.let { (input, t) ->
@@ -1342,6 +1397,8 @@ private fun ActionCard(
     onRowBounds: (Rect) -> Unit,
     /** A tap on the divider ending zone k - 1 (k from 1): its settings. */
     onDivider: (Int) -> Unit,
+    /** The action's own settings, opened by a ⚙ before its title; null = none. */
+    onGear: (() -> Unit)?,
     /** A long press on a divider (not the end one) starts moving it. */
     onDividerDrag: (Int, Offset) -> Unit,
     onClick: () -> Unit,
@@ -1389,6 +1446,14 @@ private fun ActionCard(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (onGear != null) {
+                    Box(
+                        Modifier.padding(end = 6.dp).size(32.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = onGear),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("⚙", style = MaterialTheme.typography.titleMedium, color = colors.primary)
+                    }
+                }
                 Text(
                     title,
                     style = MaterialTheme.typography.titleSmall,

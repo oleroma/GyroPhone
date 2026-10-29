@@ -110,6 +110,7 @@ import com.oleroma.gyrophone.core.model.Placement
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
+import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.Workspace
@@ -1756,6 +1757,7 @@ fun PadScreen(
                         onZoneSettings = { a, b ->
                             editWorkspace { it.copy(touchpad = it.touchpad.copy(holdZones = a, dirHoldZones = b)) }
                         },
+                        settings = touchpadSettings(ws, TouchpadSettings()) { change -> editWorkspace(change) },
                     )
                 } else {
                     TouchpadSettingsScreen(
@@ -1800,6 +1802,7 @@ fun PadScreen(
                         onZoneSettings = { a, b ->
                             updateControl(sel.id) { it.copy(surface = it.ownSurface.copy(holdZones = a, dirHoldZones = b)) }
                         },
+                        settings = touchControlSettings(sel, ws) { change -> updateControl(sel.id, change) },
                     )
                 } else {
                     // A long press: all of the control's settings.

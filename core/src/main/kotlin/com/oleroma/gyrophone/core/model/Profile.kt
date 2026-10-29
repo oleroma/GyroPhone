@@ -587,7 +587,7 @@ data class HoldZone(
  * moment it is reached until the fingers lift, wherever they go.
  */
 @Serializable
-enum class ZoneKeep(val label: String) { OFF("Off"), GOING_ON("Going on"), UNTIL_LIFT("Until lift") }
+enum class ZoneKeep(val label: String) { OFF("Only in zone"), GOING_ON("Only forward"), UNTIL_LIFT("Always") }
 
 /** A swipe direction, clockwise from up; [deg] is its centre, clockwise from straight up. */
 @Serializable
@@ -760,6 +760,11 @@ data class Profile(
     val cornerSameSize: Boolean = true,
     /** What physical devices do, pinned by workspaces ([Workspace.devicePreset]). */
     val devicePresets: List<DevicePreset> = emptyList(),
+    /**
+     * The workspace defaults: every workspace's settings ([WorkspaceDefaults.keys]) unless it sets
+     * them itself. Only those settings of it are used.
+     */
+    val defaults: Workspace = WorkspaceDefaults.builtin,
 ) {
     /** The corners shown on the pad: ← and →. */
     val shownCorners: List<TouchControl>

@@ -28,109 +28,200 @@ import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.HoldZone
-import com.oleroma.gyrophone.core.model.SurfaceSettings
+import com.oleroma.gyrophone.core.model.SurfaceField
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.ZoneKeep
 import com.oleroma.gyrophone.core.model.directionsAt
 import kotlin.math.roundToInt
 
+/** Same top as the workspace touchpad's speed sliders had. */
+private const val MAX_SURFACE_SENS = 12f
+
 /**
- * Swipe directions of a touch surface ([TouchpadSettings] direction settings): the direction pies,
- * how far a swipe and a held direction take, how held directions work, and the latch.
- * [s] is the settings in effect; [onChange] gets them changed. [zones]: how many length zones
- * each direction has mapped; with [ownZones] a note says where their settings are.
+ * The settings a touch surface's actions share (the mapping editor's Settings): movement and
+ * scrolling, then the swipe directions (pies, how far a swipe and a held direction take, how held
+ * directions work, the latch). Each shows [level]'s value, highlighted with a ↺ where it differs
+ * from the parent. [touchpad]: the workspace touchpad, with its own on / off and glide.
+ * [zones]: how many length zones each direction has mapped.
  */
 @Composable
-internal fun DirectionSettings(
-    s: TouchpadSettings,
-    key: String,
-    zones: IntArray = IntArray(4) { 1 },
-    ownZones: Boolean = false,
-    onChange: (TouchpadSettings) -> Unit,
-) {
-    val current by rememberUpdatedState(s)
-    fun edit(change: (TouchpadSettings) -> TouchpadSettings) = onChange(change(current))
+internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntArray, touchpad: Boolean) {
+    val current by rememberUpdatedState(level)
+    val s = level.eff
+    fun edit(change: (TouchpadSettings) -> TouchpadSettings) = current.edit(change)
+    fun own(f: SurfaceField) = level.isOwn(f)
+    fun reset(f: SurfaceField): () -> Unit = { current.reset(f) }
 
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        ResetAllButton(level.parentName, level.anyOwn) { current.resetAll() }
+        SectionTitle("Movement & scrolling")
+        if (touchpad) {
+            OverrideSwitch("Enabled", null, s.enabled, own(SurfaceField.ENABLED), reset(SurfaceField.ENABLED)) { v ->
+                edit { it.copy(enabled = v) }
+            }
+        }
+        OverrideSlider(key + "sx", "X speed %.1f", s.sensitivity, 0f..MAX_SURFACE_SENS, 0.1f, own(SurfaceField.SENSITIVITY), reset(SurfaceField.SENSITIVITY)) { v ->
+            edit { it.copy(sensitivity = v) }
+        }
+        OverrideSlider(
+            key + "sy", "Y speed %.1f", s.verticalSensitivity, 0f..MAX_SURFACE_SENS, 0.1f, own(SurfaceField.SENSITIVITY_Y), reset(SurfaceField.SENSITIVITY_Y),
+            hint = "0 turns that direction off, e.g. X 0 for one that only moves up and down.",
+        ) { v -> edit { it.copy(sensitivityY = v) } }
+        OverrideSlider(key + "acc", "Acceleration %.1f", s.acceleration, 0f..2f, 0.1f, own(SurfaceField.ACCELERATION), reset(SurfaceField.ACCELERATION)) { v ->
+            edit { it.copy(acceleration = v) }
+        }
+        OverrideSlider(key + "scroll", "Scroll speed %.2f", s.scrollSpeed, 0.25f..3f, 0.05f, own(SurfaceField.SCROLL_SPEED), reset(SurfaceField.SCROLL_SPEED)) { v ->
+            edit { it.copy(scrollSpeed = v) }
+        }
+        OverrideSwitch(
+            "Natural scrolling",
+            if (s.naturalScroll) "Content follows the fingers." else "Content moves against the fingers.",
+            s.naturalScroll, own(SurfaceField.NATURAL_SCROLL), reset(SurfaceField.NATURAL_SCROLL),
+        ) { v -> edit { it.copy(naturalScroll = v) } }
+        OverrideSwitch(
+            "Inertia",
+            if (s.inertia) "Keeps scrolling after a flick." else "Scrolling stops when the fingers lift.",
+            s.inertia, own(SurfaceField.INERTIA), reset(SurfaceField.INERTIA),
+        ) { v -> edit { it.copy(inertia = v) } }
+        if (touchpad && s.inertia) {
+            OverrideSlider(
+                key + "glide", "Glide %.0f ms", s.inertiaGlideMs, TouchpadSettings.MIN_GLIDE_MS..TouchpadSettings.MAX_GLIDE_MS, 5f,
+                own(SurfaceField.INERTIA_GLIDE), reset(SurfaceField.INERTIA_GLIDE),
+            ) { v -> edit { it.copy(inertiaGlideMs = v) } }
+        }
+        OverrideSlider(
+            key + "dz", if (s.cursorDeadzoneDp < 1f) "Cursor deadzone: off" else "Cursor deadzone %.0f dp",
+            s.cursorDeadzoneDp, 0f..TouchpadSettings.MAX_CURSOR_DEADZONE_DP, 1f, own(SurfaceField.CURSOR_DEADZONE), reset(SurfaceField.CURSOR_DEADZONE),
+            hint = "One finger: the cursor stays still until the finger has moved this far, then catches up with it.",
+        ) { v -> edit { it.copy(cursorDeadzoneDp = v) } }
+        if (s.cursorDeadzoneDp > 0f) {
+            OverrideSlider(
+                key + "catch", if (s.catchUpMs < 1) "Catch-up: instant" else "Catch-up %.0f ms",
+                s.catchUpMs.toFloat(), 0f..TouchpadSettings.MAX_CATCH_UP_MS.toFloat(), 10f, own(SurfaceField.CATCH_UP), reset(SurfaceField.CATCH_UP),
+            ) { v -> edit { it.copy(catchUpMs = v.roundToInt()) } }
+            OverrideSlider(
+                key + "rearm", if (s.deadzoneRearmMs < 1) "Re-arm: off" else "Re-arm after %.0f ms still",
+                s.deadzoneRearmMs.toFloat(), 0f..TouchpadSettings.MAX_REARM_MS.toFloat(), 10f, own(SurfaceField.REARM), reset(SurfaceField.REARM),
+                hint = "The deadzone arms again once the finger stands still this long. Off: once per touch.",
+            ) { v -> edit { it.copy(deadzoneRearmMs = v.roundToInt()) } }
+            if (s.deadzoneRearmMs > 0) {
+                OverrideSlider(
+                    key + "still", "Still within %.1f dp", s.deadzoneStillDp, 0f..TouchpadSettings.MAX_STILL_DP, 0.5f,
+                    own(SurfaceField.STILL), reset(SurfaceField.STILL),
+                    hint = "Movement smaller than this still counts as standing still.",
+                ) { v -> edit { it.copy(deadzoneStillDp = v) } }
+            }
+        }
+        OverrideSlider(
+            key + "vlock", if (s.verticalLockDeg < 1f) "Vertical lock: off" else "Vertical lock %.0f°",
+            s.verticalLockDeg, 0f..TouchpadSettings.MAX_LOCK_DEG, 1f, own(SurfaceField.VERTICAL_LOCK), reset(SurfaceField.VERTICAL_LOCK),
+            hint = "Motion within this angle of straight up / down loses its sideways part.",
+        ) { v -> edit { it.copy(verticalLockDeg = v) } }
+        OverrideSlider(
+            key + "hlock", if (s.horizontalLockDeg < 1f) "Horizontal lock: off" else "Horizontal lock %.0f°",
+            s.horizontalLockDeg, 0f..TouchpadSettings.MAX_LOCK_DEG, 1f, own(SurfaceField.HORIZONTAL_LOCK), reset(SurfaceField.HORIZONTAL_LOCK),
+            hint = "Motion within this angle of sideways loses its up / down part. Cursor, scroll, sticks and held directions alike.",
+        ) { v -> edit { it.copy(horizontalLockDeg = v) } }
+
+        SectionTitle("Directions")
         DirectionPies(s)
-        DirSwitch(
+        OverrideRow(
             "Classic directions",
-            if (s.pies == null) "A swipe goes the way of its larger axis; held directions from the start point work per axis, so diagonals hold both."
+            own(SurfaceField.PIES),
+            reset(SurfaceField.PIES),
+            hint = if (s.pies == null) "A swipe goes the way of its larger axis; held directions from the start point work per axis, so diagonals hold both."
             else "Each direction counts inside its own pie: wider pies overlap (both count there), narrower ones leave gaps.",
-            s.pies == null,
-        ) { classic -> edit { it.copy(pies = if (classic) null else List(4) { TouchpadSettings.CLASSIC_PIE_DEG }) } }
-        val pies = s.pies
-        if (pies != null) {
-            val same = pies.distinct().size == 1
-            DirSwitch("Same for all", "One width for all four pies.", same) { on ->
-                edit { it.copy(pies = if (on) List(4) { pies[0] } else pies) }
-            }
-            if (same) {
-                DirSlider(key + "pie", "Pies %.0f°", pies[0], TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f) { v ->
-                    edit { it.copy(pies = List(4) { v }) }
+            trailing = {
+                Switch(checked = s.pies == null, onCheckedChange = { classic ->
+                    edit { it.copy(pies = if (classic) null else List(4) { TouchpadSettings.CLASSIC_PIE_DEG }) }
+                })
+            },
+        ) {
+            val pies = s.pies
+            if (pies != null) {
+                val same = pies.distinct().size == 1
+                DirSwitch("Same for all", "One width for all four pies.", same) { on ->
+                    edit { it.copy(pies = if (on) List(4) { pies[0] } else pies) }
                 }
-            } else for (d in Direction.entries) {
-                DirSlider(key + "pie" + d.name, d.label + " %.0f°", s.pieDeg(d), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f) { v ->
-                    edit { t -> t.copy(pies = (t.pies ?: pies).toMutableList().also { it[d.ordinal] = v }) }
+                if (same) {
+                    DirSlider(key + "pie", "Pies %.0f°", pies[0], TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f) { v ->
+                        edit { it.copy(pies = List(4) { v }) }
+                    }
+                } else for (d in Direction.entries) {
+                    DirSlider(key + "pie" + d.name, d.label + " %.0f°", s.pieDeg(d), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f) { v ->
+                        edit { t -> t.copy(pies = (t.pies ?: pies).toMutableList().also { it[d.ordinal] = v }) }
+                    }
                 }
             }
         }
-        DirSlider(
+        OverrideSlider(
             key + "sample", "Direction sample %.0f dp", s.dirSampleDp,
-            TouchpadSettings.MIN_DIR_SAMPLE_DP..TouchpadSettings.MAX_DIR_SAMPLE_DP, 1f,
+            TouchpadSettings.MIN_DIR_SAMPLE_DP..TouchpadSettings.MAX_DIR_SAMPLE_DP, 1f, own(SurfaceField.DIR_SAMPLE), reset(SurfaceField.DIR_SAMPLE),
+            hint = "The direction is that of about the last this much travel, so small wobbles don't change it.",
         ) { v -> edit { it.copy(dirSampleDp = v) } }
-        DirNote("The direction is that of about the last this much travel, so small wobbles don't change it.")
-        DirSlider(
+        OverrideSlider(
             key + "swipe", "Swipe after %.0f dp", s.swipeDp,
-            TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f,
+            TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f, own(SurfaceField.SWIPE), reset(SurfaceField.SWIPE),
+            hint = "Measured from where the finger turned into that direction. Each new direction swipes again.",
         ) { v -> edit { it.copy(swipeDp = v) } }
-        DirNote("Measured from where the finger turned into that direction. Each new direction swipes again.")
-
-        Text("Held directions", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (m in HoldMode.entries) SelectChip(m.label, s.holdMode == m) { edit { it.copy(holdMode = m) } }
+        OverrideRow(
+            "Held directions",
+            own(SurfaceField.HOLD_MODE),
+            reset(SurfaceField.HOLD_MODE),
+            hint = if (s.holdMode == HoldMode.FROM_START) "Held while the finger is past the hold distance from the start point, like a floating stick: sliding back lets go."
+            else "Held once the finger has gone the hold distance that way, until it goes another way as far or lifts. There is no neutral spot.",
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (m in HoldMode.entries) SelectChip(m.label, s.holdMode == m) { edit { it.copy(holdMode = m) } }
+            }
         }
-        DirNote(
-            if (s.holdMode == HoldMode.FROM_START) "Held while the finger is past the hold distance from the start point, like a floating stick: sliding back lets go."
-            else "Held once the finger has gone the hold distance that way, until it goes another way as far or lifts. There is no neutral spot."
-        )
-        DirSlider(
+        OverrideSlider(
             key + "hold", "Hold after %.0f dp", s.holdDp,
-            TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f,
+            TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f, own(SurfaceField.HOLD), reset(SurfaceField.HOLD),
         ) { v -> edit { it.copy(holdDp = v) } }
         if (s.holdMode == HoldMode.FROM_START) {
             val zoned = zones.any { it > 1 }
-            DirSwitch(
+            OverrideSwitch(
                 "Drag start point",
                 if (zoned && !s.dragStart) "Off while held directions have length zones: they need the start point to stay put."
                 else "The start point follows the finger, so sliding back only the release travel lets go, wherever the finger is.",
-                s.dragStart,
+                s.dragStart, own(SurfaceField.DRAG_START), reset(SurfaceField.DRAG_START),
                 enabled = s.dragStart || !zoned,
             ) { v -> edit { it.copy(dragStart = v) } }
             if (s.dragStart) {
-                DirSlider(key + "release", "Release after %.0f dp back", s.releaseDp, 0f..TouchpadSettings.MAX_RELEASE_DP, 1f) { v ->
-                    edit { it.copy(releaseDp = v) }
-                }
+                OverrideSlider(
+                    key + "release", "Release after %.0f dp back", s.releaseDp, 0f..TouchpadSettings.MAX_RELEASE_DP, 1f,
+                    own(SurfaceField.RELEASE), reset(SurfaceField.RELEASE),
+                ) { v -> edit { it.copy(releaseDp = v) } }
             }
         }
-        DirSwitch(
+        OverrideSwitch(
             "Keep held after lift",
             "A held direction stays held when the fingers lift. A tap lets it go; swiping on carries on from it.",
-            s.latch,
+            s.latch, own(SurfaceField.LATCH), reset(SurfaceField.LATCH),
         ) { v -> edit { it.copy(latch = v) } }
         if (s.latch) {
-            DirSlider(
+            OverrideSlider(
                 key + "latchMs", if (s.latchReleaseMs < 1) "Let go by itself: never" else "Let go by itself after %.1f s",
                 s.latchReleaseMs / 1000f, 0f..TouchpadSettings.MAX_LATCH_RELEASE_MS / 1000f, 0.1f,
+                own(SurfaceField.LATCH_RELEASE), reset(SurfaceField.LATCH_RELEASE),
             ) { v -> edit { it.copy(latchReleaseMs = (v * 1000).roundToInt()) } }
         }
-        if (ownZones) ZonesNote(zones)
+        DirNote(
+            if (zones.any { it > 1 }) "Length zones: tap ⚙ on a Swipe hold, or the ┃ divider that ends a zone."
+            else "Length zones: drag a mapping past the ┃ divider at the end of a Swipe hold card, so it fires further along."
+        )
     }
 }
 
+@Composable
+private fun SectionTitle(text: String) =
+    Text(text, Modifier.padding(top = 10.dp, bottom = 2.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+
 /**
- * The settings of length zone [zone] (from 0) of held direction [only] ([TouchpadSettings.holdZone]),
- * one of the [zones] each direction has mapped: the mapping editor's divider ending that zone.
+ * The settings of length zone [zone] (from 0; null = every zone) of held direction [only]
+ * ([TouchpadSettings.holdZone]), one of the [zones] each direction has mapped: the mapping
+ * editor's divider ending that zone, or the ⚙ of the Swipe hold (every zone).
  * [onChange] gets the shared zones and the per-direction ones (null = the same for every direction).
  */
 @Composable
@@ -139,7 +230,7 @@ internal fun HoldZoneSettings(
     zones: IntArray,
     key: String,
     only: Direction,
-    zone: Int,
+    zone: Int?,
     onChange: (List<HoldZone>, List<List<HoldZone>>?) -> Unit,
 ) {
     val current by rememberUpdatedState(s)
@@ -165,21 +256,25 @@ internal fun HoldZoneSettings(
         )
         // Shared: as many as the direction with the most; the others' extra zones use the same.
         val n = if (same) Direction.entries.maxOf { zones[it.ordinal] } else mapped
-        ZoneList(current, only, n, zone.coerceIn(0, mapped - 1), key + "zones" + if (same) "" else only.name) { list ->
-            val t = current
-            if (same) onChange(list, null)
-            else {
-                val all = (t.dirHoldZones ?: List(4) { t.holdZones }).toMutableList()
-                all[only.ordinal] = list
-                onChange(t.holdZones, all)
+        val shown = if (zone == null) 0 until mapped else zone.coerceIn(0, mapped - 1)..zone.coerceIn(0, mapped - 1)
+        for (i in shown) {
+            ZoneList(current, only, n, i, key + "zones" + if (same) "" else only.name) { list ->
+                val t = current
+                if (same) onChange(list, null)
+                else {
+                    val all = (t.dirHoldZones ?: List(4) { t.holdZones }).toMutableList()
+                    all[only.ordinal] = list
+                    onChange(t.holdZones, all)
+                }
             }
         }
     }
 }
 
 /**
- * Zone [i] of the [n] zones of [d]: where it starts, on reach or on release, how long it stays
- * held, and its length (not the last one's: it goes on).
+ * Zone [i] of the [n] zones of [d]: where it starts, on reach or on release, how a reached zone
+ * is held ([ZoneKeep]: Always, Only forward, Only in zone), and its length (not the last one's:
+ * it goes on).
  */
 @Composable
 private fun ZoneList(s: TouchpadSettings, d: Direction, n: Int, i: Int, key: String, onChange: (List<HoldZone>) -> Unit) {
@@ -199,22 +294,23 @@ private fun ZoneList(s: TouchpadSettings, d: Direction, n: Int, i: Int, key: Str
         SelectChip("On reach", !z.onRelease) { set(z.copy(onRelease = false)) }
         SelectChip("On release", z.onRelease) { set(z.copy(onRelease = true, keep = ZoneKeep.OFF)) }
     }
-    DirNote(if (z.onRelease) "Fires once when the finger lifts in this zone." else "Held while the finger is in this zone.")
-    if (!z.onRelease) {
-        Text("Keep pressed", style = MaterialTheme.typography.bodyMedium)
+    if (z.onRelease) DirNote("Fires once when the finger lifts in this zone.")
+    else {
+        Text("Held", style = MaterialTheme.typography.bodyMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (k in ZoneKeep.entries) {
-                // Going on needs a zone after it.
+            for (k in listOf(ZoneKeep.UNTIL_LIFT, ZoneKeep.GOING_ON, ZoneKeep.OFF)) {
+                // Only forward needs a zone after it.
                 if (k == ZoneKeep.GOING_ON && last && z.keep != k) continue
                 SelectChip(k.label, z.keep == k) { set(z.copy(keep = k)) }
             }
         }
-        if (z.keep != ZoneKeep.OFF) {
-            DirNote(
-                if (z.keep == ZoneKeep.GOING_ON) "Also held while the finger goes on into the next zones; sliding back below it lets go."
-                else "Once reached, held wherever the finger goes until it lifts."
-            )
-        }
+        DirNote(
+            when (z.keep) {
+                ZoneKeep.UNTIL_LIFT -> "Once reached, held wherever the finger goes until it lifts."
+                ZoneKeep.GOING_ON -> "Held while the finger is in this zone or goes on into the next ones; sliding back below it lets go."
+                ZoneKeep.OFF -> "Held while the finger is in this zone."
+            }
+        )
     }
     if (!last) {
         DirSlider(key + i, "Length %.0f dp", s.holdZoneDp(d, i), TouchpadSettings.MIN_ZONE_DP..TouchpadSettings.MAX_ZONE_DP, 1f) { v ->
@@ -222,53 +318,6 @@ private fun ZoneList(s: TouchpadSettings, d: Direction, n: Int, i: Int, key: Str
         }
     }
 }
-
-/** A swipe button's direction settings: the touchpad's until its "Touchpad" switch goes off. */
-@Composable
-internal fun SurfaceDirectionSettings(
-    own: SurfaceSettings,
-    eff: TouchpadSettings,
-    key: String,
-    zones: IntArray,
-    onChange: (SurfaceSettings) -> Unit,
-) {
-    val follows = own.directionsFollow
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Directions", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-        Text("Touchpad", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Switch(checked = follows, onCheckedChange = { f -> onChange(if (f) own.followDirections() else own.withDirections(eff)) })
-    }
-    if (!follows) DirectionSettings(eff, key, zones) { onChange(own.withDirections(it)) }
-    // Length zones are always the button's own; they are set behind the mapping editor's dividers.
-    ZonesNote(zones)
-}
-
-/** Where the length zones of held directions ([zones] mapped per direction) are set: behind their dividers. */
-@Composable
-private fun ZonesNote(zones: IntArray) {
-    Text("Length zones", style = MaterialTheme.typography.labelLarge)
-    DirNote(
-        if (zones.any { it > 1 }) "Set in the mapping editor: tap the ┃ divider that ends a zone on a Hold card."
-        else "None yet. In the mapping editor, drag a mapping past the ┃ divider at the end of a Hold card: it then fires further along, in a second zone."
-    )
-}
-
-/** No direction setting of its own: all follow the touchpad. */
-private val SurfaceSettings.directionsFollow: Boolean
-    get() = dirSampleDp == null && swipeDp == null && holdDp == null && holdMode == null && dragStart == null &&
-            releaseDp == null && pies == null && classicPies == null && latch == null && latchReleaseMs == null
-
-private fun SurfaceSettings.followDirections() = copy(
-    dirSampleDp = null, swipeDp = null, holdDp = null, holdMode = null, dragStart = null,
-    releaseDp = null, pies = null, classicPies = null, latch = null, latchReleaseMs = null,
-)
-
-/** [t]'s direction settings as this surface's own. */
-private fun SurfaceSettings.withDirections(t: TouchpadSettings) = copy(
-    dirSampleDp = t.dirSampleDp, swipeDp = t.swipeDp, holdDp = t.holdDp, holdMode = t.holdMode,
-    dragStart = t.dragStart, releaseDp = t.releaseDp, pies = t.pies, classicPies = t.pies == null,
-    latch = t.latch, latchReleaseMs = t.latchReleaseMs,
-)
 
 /** The four pies, with a live dot: touching the circle shows which directions that way counts as. */
 @Composable
