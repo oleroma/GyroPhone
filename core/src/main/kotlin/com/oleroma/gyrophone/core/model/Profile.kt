@@ -51,21 +51,13 @@ data class TouchControl(
     val shape: TouchShape = TouchShape.CIRCLE,
     /** Portrait placement; null = derived from the landscape one. Keep last (positional callers). */
     val portrait: Placement? = null,
-    /**
-     * Click-through (BUTTON kind): the finger presses at once and also moves the cursor like a
-     * touchpad finger until it lifts, like a fire button you aim with in mobile shooters.
-     */
-    val clickThrough: Boolean = false,
     /** Height / width of a SQUARE button (circles and sticks stay even), in both orientations. */
     val aspect: Float = 1f,
     /** STICK: deflection (0..1 of the radius) that counts as centred; the rest is rescaled to 0..1. */
     val deadzone: Float = 0f,
     /** STICK: how deflection becomes directions. */
     val zones: StickZones = StickZones.OVERLAP,
-    /**
-     * BUTTON without click-through: a small touchpad of its own. A still tap presses it; a swipe
-     * drives its swipe mappings ([InputSource.TouchSwipe]) instead.
-     */
+    /** Before every button was a touch surface: this one was. No longer read. */
     val swipe: Boolean = false,
     /**
      * Before swipe buttons were touch surfaces: swipe sensitivity across and down (mouse counts
@@ -115,9 +107,27 @@ data class TouchControl(
     val layer: TouchLayer = TouchLayer.AUTO,
     /** A finger landing here while another control is in front also works this control. */
     val sharesTouches: Boolean = false,
+    /** BUTTON: its own gyro sensitivities while held, per mapping set ([gyroIn]); none = the workspace's. */
+    val gyro: List<ButtonGyro> = emptyList(),
 ) {
-    /** In swipe mode: a button with [swipe] on and click-through off. */
-    val swipes: Boolean get() = kind == TouchKind.BUTTON && swipe && !clickThrough
+    /**
+     * Every button is a touch surface: its fingers drive the touch inputs ([InputSource.Surface]
+     * with its id) it maps or inherits from the workspace, its one-finger hold being its press.
+     */
+    val swipes: Boolean get() = kind == TouchKind.BUTTON
+
+    /**
+     * Its gyro sensitivities with mapping sets [sets] in use (bottom to top, Base first): each
+     * set's own over the ones below.
+     */
+    fun gyroIn(sets: List<Int>): ButtonGyro =
+        sets.fold(ButtonGyro()) { r, id -> gyro.firstOrNull { it.set == id }?.let { r.under(it) } ?: r }
+
+    /** Copy with set [set]'s gyro sensitivities changed by [change] (one that sets nothing goes). */
+    fun withGyro(set: Int, change: (ButtonGyro) -> ButtonGyro): TouchControl {
+        val g = change(gyro.firstOrNull { it.set == set } ?: ButtonGyro(set))
+        return copy(gyro = gyro.filterNot { it.set == set } + listOfNotNull(g.takeIf { it.any }))
+    }
 
     /** The long-press time in effect (ms), its own or [w]'s. */
     fun longPress(w: Workspace): Int =
@@ -384,9 +394,8 @@ fun touchedControls(
 }
 
 /**
- * When gyro moves the mouse. ALWAYS = on, a held ratchet ([OutputTarget.GyroPause], or a touchpad
- * finger with [GyroSettings.touchpadRatchet]) pauses it; OFF = off, a held ratchet engages it;
- * [OutputTarget.GyroToggle] swaps the two. SENSOR_OFF = gyro off completely (the sensor is not
+ * When gyro moves the mouse. ALWAYS = on, a held ratchet ([OutputTarget.GyroPause]) pauses it; OFF = off, a held ratchet engages it;
+ * each gyro axis may have its own of the two ([GyroSettings.modeOf]). [OutputTarget.GyroToggle] swaps them. SENSOR_OFF = gyro off completely (the sensor is not
  * read, saving battery; ratchets and toggle do nothing). HOLD_OR_TOGGLE is only read from old
  * files and loads as OFF ([ProfileJson.normalize]).
  */
@@ -398,9 +407,6 @@ enum class GyroMode(val label: String) {
     HOLD_OR_TOGGLE("Ratchet enables"),
 }
 
-/** The cursor axes a gyro ratchet acts on. */
-@Serializable
-enum class RatchetAxes(val label: String) { BOTH("Both"), X("Only X"), Y("Only Y") }
 
 /** How the phone is held. AUTO follows the screen rotation. */
 @Serializable
@@ -410,6 +416,76 @@ enum class GyroOrientation(val label: String) {
     LANDSCAPE_RIGHT("Landscape, top on the right"),
     PORTRAIT("Portrait"),
     FLAT("Flat, screen up"),
+}
+
+/**
+ * A button's own gyro sensitivities in mapping set [set] ([TouchControl.gyro]), null = not its
+ * own: [sensitivity] for every axis, or an axis's own. While the button is held (the last pressed
+ * of several) they are the gyro's, over the workspace's, whatever the button maps.
+ */
+@Serializable
+data class ButtonGyro(
+    val set: Int = MappingSet.BASE,
+    val sensitivity: Float? = null,
+    val yaw: Float? = null,
+    val pitch: Float? = null,
+    val roll: Float? = null,
+    /** Yaw's, pitch's and roll's ratchet mode while held ([GyroSettings.yawMode]); null = the workspace's. */
+    val yawMode: GyroMode? = null,
+    val pitchMode: GyroMode? = null,
+    val rollMode: GyroMode? = null,
+) {
+    /** It sets something. */
+    val any: Boolean get() = sensitivity != null || yaw != null || pitch != null || roll != null ||
+        yawMode != null || pitchMode != null || rollMode != null
+
+    /** Axis [a]'s own ratchet mode. */
+    fun ownMode(a: MotionAxis): GyroMode? = when (a) {
+        MotionAxis.YAW -> yawMode
+        MotionAxis.PITCH -> pitchMode
+        MotionAxis.ROLL -> rollMode
+        MotionAxis.NONE -> null
+    }
+
+    /** Copy with axis [a]'s own ratchet mode [m]. */
+    fun withMode(a: MotionAxis, m: GyroMode?): ButtonGyro = when (a) {
+        MotionAxis.YAW -> copy(yawMode = m)
+        MotionAxis.PITCH -> copy(pitchMode = m)
+        MotionAxis.ROLL -> copy(rollMode = m)
+        MotionAxis.NONE -> this
+    }
+
+    /** Axis [a]'s own sensitivity. */
+    fun own(a: MotionAxis): Float? = when (a) {
+        MotionAxis.YAW -> yaw
+        MotionAxis.PITCH -> pitch
+        MotionAxis.ROLL -> roll
+        MotionAxis.NONE -> null
+    }
+
+    /** Copy with axis [a]'s own sensitivity [v]. */
+    fun with(a: MotionAxis, v: Float?): ButtonGyro = when (a) {
+        MotionAxis.YAW -> copy(yaw = v)
+        MotionAxis.PITCH -> copy(pitch = v)
+        MotionAxis.ROLL -> copy(roll = v)
+        MotionAxis.NONE -> this
+    }
+
+    /** [o]'s values over these (a layer over the ones below). */
+    fun under(o: ButtonGyro) = ButtonGyro(
+        set, o.sensitivity ?: sensitivity, o.yaw ?: yaw, o.pitch ?: pitch, o.roll ?: roll,
+        o.yawMode ?: yawMode, o.pitchMode ?: pitchMode, o.rollMode ?: rollMode,
+    )
+
+    /** Axis [a]'s sensitivity with these over [g]: its own, these' shared, then [g]'s. */
+    fun sensitivityOf(a: MotionAxis, g: GyroSettings): Float = own(a) ?: sensitivity ?: g.sensitivityOf(a)
+
+    /** [g] with these over it. */
+    fun over(g: GyroSettings): GyroSettings = if (!any) g else g.copy(
+        yawSensitivity = sensitivityOf(MotionAxis.YAW, g), pitchSensitivity = sensitivityOf(MotionAxis.PITCH, g),
+        rollSensitivity = sensitivityOf(MotionAxis.ROLL, g),
+        yawMode = yawMode ?: g.yawMode, pitchMode = pitchMode ?: g.pitchMode, rollMode = rollMode ?: g.rollMode,
+    )
 }
 
 /** Rotation of the phone in the player's frame. */
@@ -429,66 +505,78 @@ enum class MotionAxis(val label: String) {
 @Serializable
 data class GyroSettings(
     val mode: GyroMode = GyroMode.OFF,
-    /** Horizontal mouse counts per degree of rotation (0 = the cursor never moves sideways). */
-    val sensitivity: Float = 16f,
-    /** Vertical mouse counts per degree; null (older files) = [sensitivity] × [verticalRatio]. */
-    val sensitivityY: Float? = null,
+    /**
+     * Mouse counts per degree of rotation, for every gyro axis without its own: also how strongly
+     * gyro scrolls and moves sticks, relative to [DEFAULT_SENSITIVITY].
+     */
+    val sensitivity: Float = DEFAULT_SENSITIVITY,
+    /** Yaw's, pitch's and roll's own sensitivity; null = [sensitivity]. */
+    val yawSensitivity: Float? = null,
+    val pitchSensitivity: Float? = null,
+    val rollSensitivity: Float? = null,
     val orientation: GyroOrientation = GyroOrientation.AUTO,
-    /** Motion that moves the cursor horizontally: yaw right / pitch up / roll clockwise = right. */
-    val mouseX: MotionAxis = MotionAxis.YAW,
-    val invertX: Boolean = false,
-    val scaleX: Float = 1f,
-    /** Motion that moves the cursor vertically: pitch up / yaw right / roll clockwise = up. */
-    val mouseY: MotionAxis = MotionAxis.PITCH,
-    val invertY: Boolean = false,
-    val scaleY: Float = 1f,
-    /** Only read from older files, through [verticalSensitivity]. */
-    val verticalRatio: Float = 1f,
     /** Below this speed (deg/s) motion is scaled down, killing hand jitter. 0 (default, raw gyro) disables. */
     val tighteningThreshold: Float = 0f,
     /** Below this speed (deg/s) motion is averaged over a short window. 0 (default, raw gyro) disables. */
     val smoothingThreshold: Float = 0f,
     /**
-     * Axis mapping used while the phone is held in portrait. Null = same as the fields above,
-     * which are the landscape mapping (and the only one in profiles saved before this existed).
+     * Yaw's, pitch's and roll's own ratchet mode ([GyroMode.ALWAYS]: a ratchet disables it,
+     * [GyroMode.OFF]: enables it); null = [mode]'s. [GyroMode.SENSOR_OFF] is the whole gyro's only.
      */
-    val portrait: GyroAxes? = null,
-    /**
-     * A finger on the empty touchpad is a ratchet: gyro pauses (ALWAYS) or engages (OFF) meanwhile.
-     * A click-through button's finger counts only through the button's own ratchet mapping.
-     */
-    val touchpadRatchet: Boolean = false,
-    /** Which cursor axes a ratchet flips; the other one stays as the mode has it without a ratchet. */
-    val ratchetAxes: RatchetAxes = RatchetAxes.BOTH,
+    val yawMode: GyroMode? = null,
+    val pitchMode: GyroMode? = null,
+    val rollMode: GyroMode? = null,
 ) {
-    val verticalSensitivity: Float get() = sensitivityY ?: (sensitivity * verticalRatio)
+    /** Axis [a]'s own ratchet mode, null when it follows [mode]. */
+    fun ownMode(a: MotionAxis): GyroMode? = when (a) {
+        MotionAxis.YAW -> yawMode
+        MotionAxis.PITCH -> pitchMode
+        MotionAxis.ROLL -> rollMode
+        MotionAxis.NONE -> null
+    }
 
-    val landscapeAxes: GyroAxes get() = GyroAxes(mouseX, invertX, scaleX, mouseY, invertY, scaleY)
+    /** Axis [a]'s ratchet mode in effect: [GyroMode.SENSOR_OFF] whenever the whole gyro is off. */
+    fun modeOf(a: MotionAxis): GyroMode = if (mode == GyroMode.SENSOR_OFF) mode else ownMode(a) ?: mode
 
-    fun axesFor(portrait: Boolean): GyroAxes = (if (portrait) this.portrait else null) ?: landscapeAxes
+    /** Copy with axis [a]'s own ratchet mode [m] (null: it follows [mode]). */
+    fun withMode(a: MotionAxis, m: GyroMode?): GyroSettings = when (a) {
+        MotionAxis.YAW -> copy(yawMode = m)
+        MotionAxis.PITCH -> copy(pitchMode = m)
+        MotionAxis.ROLL -> copy(rollMode = m)
+        MotionAxis.NONE -> this
+    }
 
-    /** Returns a copy with [axes] as the mapping for that orientation. */
-    fun withAxes(portrait: Boolean, axes: GyroAxes): GyroSettings =
-        if (portrait) copy(portrait = axes)
-        else copy(
-            mouseX = axes.mouseX, invertX = axes.invertX, scaleX = axes.scaleX,
-            mouseY = axes.mouseY, invertY = axes.invertY, scaleY = axes.scaleY
-        )
+    /** Axis [a]'s own sensitivity, null when it uses [sensitivity]. */
+    fun ownSensitivity(a: MotionAxis): Float? = when (a) {
+        MotionAxis.YAW -> yawSensitivity
+        MotionAxis.PITCH -> pitchSensitivity
+        MotionAxis.ROLL -> rollSensitivity
+        MotionAxis.NONE -> null
+    }
 
-    /** Copy with the portrait axes spelled out (the landscape ones when unset), so each orientation has its own. */
-    fun withBothOrientations(): GyroSettings = if (portrait != null) this else copy(portrait = landscapeAxes)
+    /** Axis [a]'s sensitivity in effect. */
+    fun sensitivityOf(a: MotionAxis): Float = ownSensitivity(a) ?: sensitivity
+
+    /** Copy with axis [a]'s own sensitivity [v] (null: it uses [sensitivity]). */
+    fun withSensitivity(a: MotionAxis, v: Float?): GyroSettings = when (a) {
+        MotionAxis.YAW -> copy(yawSensitivity = v)
+        MotionAxis.PITCH -> copy(pitchSensitivity = v)
+        MotionAxis.ROLL -> copy(rollSensitivity = v)
+        MotionAxis.NONE -> this
+    }
+
+    companion object {
+        const val DEFAULT_SENSITIVITY = 16f
+
+        /** The property of axis [a]'s own sensitivity ([WorkspaceDefaults.gyroKey]). */
+        fun sensitivityProp(a: MotionAxis): String? = when (a) {
+            MotionAxis.YAW -> "yawSensitivity"
+            MotionAxis.PITCH -> "pitchSensitivity"
+            MotionAxis.ROLL -> "rollSensitivity"
+            MotionAxis.NONE -> null
+        }
+    }
 }
-
-/** Which motion drives each mouse axis; see [GyroSettings.mouseX] and [GyroSettings.mouseY]. */
-@Serializable
-data class GyroAxes(
-    val mouseX: MotionAxis = MotionAxis.YAW,
-    val invertX: Boolean = false,
-    val scaleX: Float = 1f,
-    val mouseY: MotionAxis = MotionAxis.PITCH,
-    val invertY: Boolean = false,
-    val scaleY: Float = 1f,
-)
 
 /** The pad screen's empty background as a laptop touchpad. */
 @Serializable

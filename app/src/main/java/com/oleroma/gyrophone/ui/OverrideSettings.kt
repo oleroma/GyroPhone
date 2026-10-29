@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -66,7 +67,7 @@ internal fun buttonSurfaceLevel(
     val own = control.ownSurface
     return SurfaceLevel(
         eff = control.surfaceSettings(pad),
-        parentName = "Workspace defaults",
+        parentName = "Workspace",
         isOwn = { it.button && it.isOwn(own) },
         isDirOwn = { d, f -> f.isOwn(own, d) },
         edit = { change ->
@@ -200,8 +201,22 @@ internal fun MsOverride(
     overridden, onReset, hint,
 ) { onSet(it.roundToInt()) }
 
-/** "Reset all to …": every setting of a level back to its parent's. */
+/** "Reset all to …": every setting of a level back to its parent's, once confirmed. */
 @Composable
 internal fun ResetAllButton(parentName: String, enabled: Boolean, onClick: () -> Unit) {
-    TextButton(onClick = onClick, enabled = enabled) { Text("↺ Reset all to $parentName") }
+    var asking by remember { mutableStateOf(false) }
+    TextButton(onClick = { asking = true }, enabled = enabled) { Text("↺ Reset all to $parentName") }
+    if (asking) ConfirmResetAll("Every setting here goes back to $parentName's.", { asking = false }) { asking = false; onClick() }
+}
+
+/** Asks before a Reset all, which [text] explains: [onConfirm] or [onDismiss]. */
+@Composable
+internal fun ConfirmResetAll(text: String, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Reset all?") },
+        text = { Text(text) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Reset all") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }

@@ -22,7 +22,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
-import com.oleroma.gyrophone.core.model.TouchpadSettings
+import com.oleroma.gyrophone.core.model.Inheritance
+import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.isTouchpad
 import com.oleroma.gyrophone.runtime.GamepadRuntime
@@ -37,6 +38,7 @@ import com.oleroma.gyrophone.runtime.GamepadRuntime
 internal fun TouchpadSettingsScreen(
     workspace: Workspace,
     runtime: GamepadRuntime,
+    defaults: Workspace,
     onWorkspaceChange: ((Workspace) -> Workspace) -> Unit,
     onEditMappings: () -> Unit,
     onClose: () -> Unit,
@@ -49,7 +51,7 @@ internal fun TouchpadSettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Touchpad", style = MaterialTheme.typography.titleMedium)
+                        Text("Workspace", style = MaterialTheme.typography.titleMedium)
                         Text(
                             "The empty pad area · " + workspace.name + " · settings",
                             style = MaterialTheme.typography.bodySmall,
@@ -70,15 +72,9 @@ internal fun TouchpadSettingsScreen(
                 ) {
                     val section = Modifier.widthIn(max = 720.dp)
                     RememberedSection(runtime, "touchpad.Mappings", "Mappings", section, defaultOpen = true) {
-                        TouchpadMappingsSummary(workspace, onEditMappings) {
-                            onWorkspaceChange { w ->
-                                w.copy(
-                                    mappings = w.mappings.filterNot { it.source.isTouchpad && it.set == 0 } + Bindings.defaultTouchpadMappings(
-                                        TouchpadSettings()
-                                    ),
-                                    touchpad = w.touchpad.copy(mapped = true),
-                                )
-                            }
+                        TouchpadMappingsSummary(workspace, defaults, onEditMappings) {
+                            // Its own Base touchpad mappings go: each input follows the Defaults again.
+                            onWorkspaceChange { w -> w.copy(mappings = w.mappings.filterNot { it.source.isTouchpad && it.set == 0 }) }
                         }
                     }
                 }
@@ -87,10 +83,11 @@ internal fun TouchpadSettingsScreen(
     }
 }
 
-/** What each finger count of the touchpad does, with Edit and Reset. */
+/** What each finger count of the touchpad does in Base (its own mappings and those it takes from [defaults]), with Edit and Reset. */
 @Composable
-private fun TouchpadMappingsSummary(workspace: Workspace, onEdit: () -> Unit, onReset: () -> Unit) {
-    val mapped = workspace.mappings.filter { it.source.isTouchpad }
+private fun TouchpadMappingsSummary(workspace: Workspace, defaults: Workspace, onEdit: () -> Unit, onReset: () -> Unit) {
+    val mapped = Inheritance.workspace(workspace, defaults)
+        .filter { it.source.isTouchpad && it.set == 0 && it.target != OutputTarget.NoOutput }
     for (n in 1..4) {
         val lines = Bindings.surfaceInputs(n).mapNotNull { input ->
             val targets = Bindings.targets(mapped, input)
@@ -104,13 +101,15 @@ private fun TouchpadMappingsSummary(workspace: Workspace, onEdit: () -> Unit, on
         )
     }
     Text(
-        "The touchpad's speed, scrolling, directions, timings and zones are this workspace's Workspace defaults: " +
+        "The touchpad's speed, scrolling, directions, timings and zones are this workspace's settings: " +
                 "set them in Mappings (⚙ Settings at the top, or the ⚙ before an action) or in the workspace's settings.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = onEdit) { Text("Edit mappings") }
-        TextButton(onClick = onReset) { Text("Default mappings") }
+        if (workspace.mappings.any { it.source.isTouchpad && it.set == 0 }) {
+            TextButton(onClick = onReset) { Text("Follow Defaults") }
+        }
     }
 }

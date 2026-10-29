@@ -5,7 +5,7 @@ package com.oleroma.gyrophone.core.model
  * does what it did:
  * - A touch button's "Press waits for a double tap" (with a double tap mapping): its press
  *   mappings become tap and long press mappings, the long press time being the workspace's old
- *   tap length ([Workspace.buttonTapMs]), past which the waiting press used to come at once.
+ *   tap length (the old "touchpad over buttons" tap time), past which the waiting press used to come at once.
  * - A touch button's release tap time: its release mappings become tap mappings, the long press
  *   time being the release tap time (unless the first rule set it).
  * - A release tap time of the touchpad or a swipe button's surface: its release mappings become
@@ -55,6 +55,9 @@ object ButtonActivators {
         return set.copy(workspaces = workspaces) to result
     }
 
+    /** What "touchpad over buttons" took as the longest tap, before it went. */
+    private const val LEGACY_TAP_MS = 200
+
     private val TouchControl.isLegacy: Boolean get() = doubleTapWaits || releaseTapMs > 0
 
     private val Workspace.isLegacy: Boolean
@@ -76,7 +79,7 @@ object ButtonActivators {
         val out = mappings.flatMap { m ->
             when {
                 waited && m.source == InputSource.Touch(id) -> {
-                    longMs = w.buttonTapMs
+                    longMs = LEGACY_TAP_MS
                     listOf(m.copy(source = InputSource.TouchTap(id)), m.copy(source = InputSource.TouchLongPress(id)))
                 }
 

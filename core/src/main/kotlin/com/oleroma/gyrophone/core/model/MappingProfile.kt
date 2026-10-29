@@ -60,6 +60,9 @@ object MappingProfiles {
         is InputSource.TouchLongPress -> source.id
         is InputSource.TouchArea -> source.id
         is InputSource.Surface -> source.id.ifEmpty { null }
+        is InputSource.Gyro -> source.id.ifEmpty { null }
+        is InputSource.Tilt -> source.id.ifEmpty { null }
+        is InputSource.Shake -> source.id.ifEmpty { null }
         else -> null
     }
 

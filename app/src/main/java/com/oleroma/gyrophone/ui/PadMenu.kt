@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
@@ -27,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
 /** A page of the pad menu. Encoded as text so the open page survives the activity being recreated. */
@@ -159,9 +161,10 @@ private fun PadMenu(
 }
 
 /**
- * All settings of the current workspace (⚙ in edit mode), in two tabs: Workspace (rename /
- * duplicate / delete, copy mappings) and Workspace defaults (gyro, controls, haptics, touchpad and
- * gestures, over the Defaults). Settings of the whole app are on the Settings page instead.
+ * All settings of the current workspace (⚙ in edit mode) in one list of categories the person
+ * can reorder: Workspace (rename / duplicate / delete, copy mappings), gyro, controls, haptics,
+ * touchpad and gestures, over the Defaults. With layers, tabs on top pick Base or a layer, whose
+ * settings go over Base's. Settings of the whole app are on the Settings page instead.
  */
 @Composable
 private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () -> Unit) {
@@ -170,36 +173,50 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () 
     val current = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
     val ws = profile.workspace(current)
     var copying by remember { mutableStateOf(false) }
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+    var tab by rememberSaveable { mutableIntStateOf(MappingSet.BASE) }
+    val set = if (ws.sets.any { it.id == tab }) tab else MappingSet.BASE
 
     Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("Workspace") })
-            FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("Workspace defaults") })
-        }
-        if (tab == 1) {
-            Hint(
-                "This workspace's settings. Each follows the Defaults (Settings) unless it is set here: " +
-                        "those are highlighted, with ↺ to follow the Defaults again.",
-            )
-            WorkspaceSettings(runtime, workspaceLevel(runtime, profile, current), profile.id + "/" + ws.id)
-        } else RememberedSection(
-            runtime,
-            "workspace.Workspace",
-            "Workspace",
-            defaultOpen = true,
-            subtitle = "${ws.name} · ${current + 1} of ${profile.workspaces.size}",
-        ) {
-            WorkspaceActions(profile, current) { p, _ ->
-                val deleted = p.workspaces.size < profile.workspaces.size
-                runtime.editActiveProfile { p }
-                if (deleted) onDeleted()
-            }
-            Hint("Duplicate copies everything, mappings included; the copy can then be changed on its own.")
-            if (profile.workspaces.size > 1) {
-                OutlinedButton(onClick = { copying = true }) { Text("Copy mappings from…") }
+        if (ws.sets.isNotEmpty()) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = set == MappingSet.BASE, onClick = { tab = MappingSet.BASE }, label = { Text("Base") })
+                ws.sets.forEach { st ->
+                    FilterChip(selected = set == st.id, onClick = { tab = st.id }, label = { Text(st.label) })
+                }
             }
         }
+        Hint(
+            if (set == MappingSet.BASE) "Each setting follows the Defaults (Settings) unless it is set here: those are " +
+                    "highlighted, with ↺ to follow the Defaults again. Long press a category to move it."
+            else "While this layer is in use. Each setting follows Base unless it is set here: those are " +
+                    "highlighted, with ↺ to follow Base again.",
+        )
+        val workspace = SectionItem("workspace") { card, header ->
+            RememberedSection(
+                runtime,
+                "workspace.Workspace",
+                "Workspace",
+                card,
+                defaultOpen = true,
+                subtitle = "${ws.name} · ${current + 1} of ${profile.workspaces.size}",
+                headerModifier = header,
+            ) {
+                WorkspaceActions(profile, current) { p, _ ->
+                    val deleted = p.workspaces.size < profile.workspaces.size
+                    runtime.editActiveProfile { p }
+                    if (deleted) onDeleted()
+                }
+                Hint("Duplicate copies everything, mappings included; the copy can then be changed on its own.")
+                if (profile.workspaces.size > 1) {
+                    OutlinedButton(onClick = { copying = true }) { Text("Copy mappings from…") }
+                }
+            }
+        }
+        val level = setLevel(ws, profile.defaults, set) { change -> runtime.editActiveProfile { it.updateWorkspace(current, change) } }
+        WorkspaceSettings(
+            runtime, level, profile.id + "/" + ws.id + "/" + set,
+            extra = if (set == MappingSet.BASE) listOf(workspace) else emptyList(),
+        )
     }
 
     if (copying) {

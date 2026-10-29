@@ -135,11 +135,6 @@ internal fun ControlSettingsScreen(
                     RememberedSection(runtime, "control.Look", "Look", section, defaultOpen = true) {
                         LookSettings(control, inPortrait, onControlChange, onSize)
                     }
-                    if (control.kind == TouchKind.BUTTON) {
-                        RememberedSection(runtime, "control.Behaviour", "Behaviour", section, defaultOpen = true) {
-                            ButtonBehaviourSettings(control, workspace, onControlChange, onMappingsChange)
-                        }
-                    }
                     if (workspace.sets.isNotEmpty()) {
                         RememberedSection(runtime, "control.Layers", "Layers", section) {
                             SwitchSetting(
@@ -250,49 +245,6 @@ private fun SwitchSetting(title: String, hint: String, checked: Boolean, onChang
     }
 }
 
-/** A button's click-through, swipe and ratchet. */
-@Composable
-internal fun ButtonBehaviourSettings(
-    control: TouchControl,
-    workspace: Workspace,
-    onControlChange: (TouchControl) -> Unit,
-    onMappingsChange: (List<Mapping>) -> Unit,
-) {
-    val current by rememberUpdatedState(control)
-    SwitchSetting(
-        "Click-through",
-        "Presses at once, and the same finger moves the cursor until it lifts.",
-        control.clickThrough,
-    ) { onControlChange(current.copy(clickThrough = it)) }
-    if (!control.clickThrough) {
-        SwitchSetting(
-            "Touchpad",
-            "A small touchpad of its own: its mappings are the touchpad's (hold, taps, moves, " +
-                    "swipes, pinches with 1–4 fingers, in Mappings), and a swipe is never a tap. " +
-                    "Its settings follow the Workspace defaults unless it sets its own (Mappings, ⚙ Settings).",
-            control.swipe,
-        ) { on -> onControlChange(current.copy(swipe = on)) }
-    }
-    val input = Bindings.touchInputs(control).first()
-    val targets = Bindings.targets(workspace.mappings, input)
-    SwitchSetting(
-        "Ratchet",
-        "While held it also flips gyro, besides its action: pauses it (Ratchet disables) " +
-                "or turns it on (Ratchet enables). With click-through, only this switch " +
-                "makes its finger a ratchet.",
-        targets.any(::isRatchet),
-    ) { on ->
-        val main = targets.filterNot(::isRatchet)
-        onMappingsChange(
-            Bindings.setTargets(
-                workspace.mappings,
-                input,
-                if (on) main + OutputTarget.GyroPause else main
-            )
-        )
-    }
-}
-
 /** A stick's deadzone and direction zones. */
 @Composable
 internal fun StickSettings(control: TouchControl, onControlChange: (TouchControl) -> Unit) {
@@ -400,7 +352,7 @@ internal fun SizeSlider(title: String, value: Float, onChange: (Float) -> Unit) 
 }
 
 /** A ratchet action (the old gyro hold works as one). */
-internal fun isRatchet(t: OutputTarget): Boolean = t == OutputTarget.GyroPause || t == OutputTarget.GyroHold
+internal fun isRatchet(t: OutputTarget): Boolean = t == OutputTarget.GyroPause || t == OutputTarget.GyroHold || t is OutputTarget.GyroPauseAxis
 
 /** True when the stick's mappings equal what [preset] would write. */
 internal fun presetMatches(

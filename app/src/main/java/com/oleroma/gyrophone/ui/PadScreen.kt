@@ -99,6 +99,7 @@ import com.oleroma.gyrophone.core.model.ButtonLibrary
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.LibraryButton
 import com.oleroma.gyrophone.core.model.Mapping
@@ -1585,24 +1586,24 @@ fun PadScreen(
                                             onClick = { menu = EditMenu.MAPPING }) { Text("Map") }
                                     }
                                 }
-                                FilledTonalButton(contentPadding = compact, onClick = addButton@{
-                                    val d = draft ?: return@addButton
+                                /** Adds a button; [empty]: with every action it would take from the workspace cleared. */
+                                fun addButton(empty: Boolean) {
+                                    val d = draft ?: return
                                     val wk = d.workspace(editIndex)
                                     val id = freshId(wk, "btn", takenIds(d))
                                     val c = newControl(wk, id, TouchKind.BUTTON, NEW_BUTTON_SIZE, portrait)
+                                    val cleared = if (empty) Inheritance.cleared(Inheritance.workspace(wk, d.defaults), id) else emptyList()
                                     editWorkspace {
                                         it.copy(
-                                            touchControls = it.touchControls + place(
-                                                c,
-                                                0.5f,
-                                                0.5f,
-                                                false
-                                            )
+                                            touchControls = it.touchControls + place(c, 0.5f, 0.5f, false),
+                                            mappings = it.mappings + cleared,
                                         )
                                     }
                                     // Only added (and selected): Map opens its mappings.
                                     selected = id
-                                }) { Text("+ Button") }
+                                }
+                                FilledTonalButton(contentPadding = compact, onClick = { addButton(false) }) { Text("+ Button") }
+                                FilledTonalButton(contentPadding = compact, onClick = { addButton(true) }) { Text("+ Empty button") }
                                 FilledTonalButton(contentPadding = compact, onClick = addStick@{
                                     val d = draft ?: return@addStick
                                     val wk = d.workspace(editIndex)
@@ -1741,12 +1742,7 @@ fun PadScreen(
                         mappings = ws.mappings,
                         runtime = runtime,
                         onMappingsChange = { m ->
-                            editWorkspace {
-                                it.copy(
-                                    mappings = m,
-                                    touchpad = it.touchpad.copy(mapped = true)
-                                )
-                            }
+                            editWorkspace { it.copy(mappings = m) }
                         },
                         onSettings = { menu = EditMenu.CONTEXT },
                         onClose = close,
@@ -1758,12 +1754,19 @@ fun PadScreen(
                         onZoneSettings = { a, b ->
                             editWorkspace { it.copy(touchpad = it.touchpad.copy(holdZones = a, dirHoldZones = b)) }
                         },
-                        settings = touchpadSettings(runtime, workspaceLevel(ws, d.defaults) { change -> editWorkspace(change) }),
+                        // ⚙ edits the settings of the layer picked in the set bar.
+                        settings = touchpadSettings(runtime, setLevel(ws, d.defaults, mapSet) { change -> editWorkspace(change) }),
+                        // Base takes the Defaults' mappings of what it does not map; a layer shows Base's greyed.
+                        inherited = if (mapSet == MappingSet.BASE || ws.sets.none { s -> s.id == mapSet }) {
+                            Inheritance.defaults(d.defaults)
+                        } else emptyList(),
+                        parentName = "Defaults",
                     )
                 } else {
                     TouchpadSettingsScreen(
                         workspace = ws,
                         runtime = runtime,
+                        defaults = d.defaults,
                         onWorkspaceChange = { change -> editWorkspace(change) },
                         onEditMappings = { menu = EditMenu.MAPPING },
                         onClose = close,
@@ -1803,7 +1806,11 @@ fun PadScreen(
                         onZoneSettings = { a, b ->
                             updateControl(sel.id) { it.copy(surface = it.ownSurface.copy(holdZones = a, dirHoldZones = b)) }
                         },
-                        settings = touchControlSettings(sel, ws) { change -> updateControl(sel.id, change) },
+                        settings = touchControlSettings(sel, ws, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE) { change -> updateControl(sel.id, change) },
+                        inherited = if (sel.kind == TouchKind.BUTTON) {
+                            Inheritance.inherited(Inheritance.workspace(ws, d.defaults), emptyList(), sel.id, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE)
+                        } else emptyList(),
+                        parentName = "Workspace",
                     )
                 } else {
                     // A long press: all of the control's settings.

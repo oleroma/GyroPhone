@@ -34,7 +34,7 @@ object WorkspaceMappings {
     )
 
     fun resolve(w: Workspace, presets: List<DevicePreset> = emptyList()): Workspace =
-        Bindings.matchSwipeModes(w.withTouchpadMappings()).let { r ->
+        Bindings.matchSwipeModes(w).let { r ->
             val p = presets.firstOrNull { it.id == w.devicePreset }
             r.copy(
                 mappings = Bindings.upgradeSwipes(r.mappings),
@@ -122,6 +122,9 @@ object WorkspaceMappings {
             is InputSource.TouchLongPress -> s.copy(id = to)
             is InputSource.TouchArea -> s.copy(id = to)
             is InputSource.Surface -> s.copy(id = to)
+            is InputSource.Gyro -> if (s.id.isEmpty()) return null else s.copy(id = to)
+            is InputSource.Tilt -> if (s.id.isEmpty()) return null else s.copy(id = to)
+            is InputSource.Shake -> if (s.id.isEmpty()) return null else s.copy(id = to)
             else -> return null
         }
         return m.copy(source = moved)

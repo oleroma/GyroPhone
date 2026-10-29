@@ -7,8 +7,10 @@ import android.os.Looper
 import com.oleroma.gyrophone.core.engine.GyroCalibration
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import com.oleroma.gyrophone.core.engine.MappingEngine
+import com.oleroma.gyrophone.core.engine.TiltShake
 import com.oleroma.gyrophone.core.engine.Touchpad
 import com.oleroma.gyrophone.core.hid.HidDescriptor
+import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.ButtonActivators
 import com.oleroma.gyrophone.core.model.InputSource
@@ -36,6 +38,7 @@ import com.oleroma.gyrophone.link.LinkState
 import com.oleroma.gyrophone.link.LinkStats
 import com.oleroma.gyrophone.link.OutputLink
 import com.oleroma.gyrophone.link.TransportKind
+import com.oleroma.gyrophone.sensor.AccelSource
 import com.oleroma.gyrophone.sensor.DirectChannelGyroSource
 import com.oleroma.gyrophone.sensor.GyroSource
 import com.oleroma.gyrophone.wifi.WifiLink
@@ -409,6 +412,7 @@ class GamepadRuntime(context: Context) {
     @Synchronized
     fun stop() {
         stopGyro()
+        stopMotion()
         // A calibration cut short must not start the sensor at the next start().
         if (calibration != null) {
             calibration = null; _calibration.value = storedCalibration()
@@ -422,6 +426,37 @@ class GamepadRuntime(context: Context) {
     fun setDisplayRotation(degrees: Int) {
         gyroMouse.displayRotation = degrees
         gyroMouse.reset()
+        tiltShake.displayRotation = degrees
+        tiltShake.reset()
+    }
+
+    private val tiltShake = TiltShake()
+    private var accel: AccelSource? = null
+
+    /** Reads the accelerometer while a tilt or shake mapping is in the workspace and input is on. */
+    private fun updateMotion() {
+        if (running && inputAllowed && engine.motionMapped) startMotion() else stopMotion()
+    }
+
+    private fun startMotion() {
+        if (accel != null) return
+        val sm = appContext.getSystemService(SensorManager::class.java) ?: return
+        val source = AccelSource(sm)
+        tiltShake.reset()
+        if (source.start { x, y, z, ts -> onAccelSample(x, y, z, ts) }) accel = source
+    }
+
+    private fun stopMotion() {
+        val a = accel ?: return
+        a.stop()
+        accel = null
+        tiltShake.reset()
+        engine.setTilt(0f, 0f)
+    }
+
+    private fun onAccelSample(x: Float, y: Float, z: Float, ts: Long) {
+        if (tiltShake.update(x, y, z, ts)) engine.shake()
+        engine.setTilt(tiltShake.x, tiltShake.y)
     }
 
     /** Makes the resolved [profile] active, in the workspace that was last active in it. */
@@ -629,8 +664,13 @@ class GamepadRuntime(context: Context) {
     }
 
     /** The active workspace's gyro is off completely ([GyroMode.SENSOR_OFF]): the sensor need not run. */
-    private fun gyroOff(): Boolean =
-        _activeProfile.value.workspace(_workspaceIndex.value).gyro.mode == GyroMode.SENSOR_OFF
+    private fun gyroOff(): Boolean {
+        val ws = _activeProfile.value.workspace(_workspaceIndex.value)
+        // A layer that turns gyro on needs the sensor running before it is used.
+        return ws.gyro.mode == GyroMode.SENSOR_OFF && ws.sets.none { s ->
+            WorkspaceDefaults.gyroKey("mode") in WorkspaceDefaults.layerOwn(s) && s.settings?.gyro?.mode != GyroMode.SENSOR_OFF
+        }
+    }
 
     /**
      * Runs the gyro sensor while its samples are used: input is allowed or a calibration runs.
@@ -640,6 +680,7 @@ class GamepadRuntime(context: Context) {
      */
     @Synchronized
     private fun updateGyro() {
+        updateMotion()
         if (running && ((inputAllowed && !gyroOff()) || calibration != null)) {
             startGyro()
         } else if (running) {
@@ -720,6 +761,14 @@ class GamepadRuntime(context: Context) {
         private const val UNAVAILABLE = "Unavailable"
     }
 
+    /** The gyro deflects game pad axes now ([MappingEngine.setGyroAxes]): they go back to rest when it stops. */
+    private var gyroPadSet = false
+
+    private fun clearGyroPad() {
+        engine.setGyroAxes(FloatArray(GamepadAxis.entries.size))
+        gyroPadSet = false
+    }
+
     private fun onGyroSample(source: GyroSource, x: Float, y: Float, z: Float, ts: Long) {
         val dt = if (lastGyroTs == 0L) 0f else ((ts - lastGyroTs) / 1e9f).coerceIn(0f, 0.05f)
         lastGyroTs = ts
@@ -738,13 +787,17 @@ class GamepadRuntime(context: Context) {
         val axes = if (inputAllowed) engine.gyroAxes else 0
         val active = axes != 0
         if (active) {
-            val c = gyroMouse.update(x - biasX, y - biasY, z - biasZ, dt)
-            // A ratchet on one axis leaves the other moving.
-            val dx = if (axes and MappingEngine.GYRO_X != 0) c.dx else 0
-            val dy = if (axes and MappingEngine.GYRO_Y != 0) c.dy else 0
-            if (dx != 0 || dy != 0) engine.addMouseMotion(dx, dy)
+            // A layer in use may set gyro settings of its own.
+            val gs = engine.gyroSettings
+            if (gs !== gyroMouse.settings) gyroMouse.settings = gs
+            val routes = engine.gyroRoutes()
+            val r = gyroMouse.route(x - biasX, y - biasY, z - biasZ, dt, routes, axes)
+            if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel)
+            engine.setGyroAxes(r.pad)
+            gyroPadSet = true
         } else {
             gyroMouse.reset()
+            if (gyroPadSet) clearGyroPad()
         }
         if (rateWindow.add(ts)) {
             _gyroInfo.value = _gyroInfo.value.copy(rateHz = rateWindow.rateHz, active = active)

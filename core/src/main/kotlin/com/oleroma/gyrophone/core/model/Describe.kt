@@ -30,18 +30,35 @@ object Describe {
         is InputSource.Surface -> (if (s.id.isEmpty()) "Touchpad" else "Swipe on ${s.id}") +
                 " ${s.fingers} finger" + (if (s.fingers > 1) "s " else " ") + s.input.label.lowercase() +
                 if (s.zone > 0) " zone ${s.zone + 1}" else ""
+        is InputSource.Gyro -> "Gyro " + s.axis.label.lowercase() + if (s.id.isEmpty()) "" else " on ${s.id}"
+        is InputSource.Tilt -> "Tilt " + when (s.axis) {
+            StickAxis.X -> when (s.half) {
+                AxisHalf.FULL -> "sideways"
+                AxisHalf.POSITIVE -> "right"
+                AxisHalf.NEGATIVE -> "left"
+            }
+
+            StickAxis.Y -> when (s.half) {
+                AxisHalf.FULL -> "forward and back"
+                AxisHalf.POSITIVE -> "back"
+                AxisHalf.NEGATIVE -> "forward"
+            }
+        } + if (s.id.isEmpty()) "" else " on ${s.id}"
+
+        is InputSource.Shake -> "Shake" + if (s.id.isEmpty()) "" else " on ${s.id}"
     }
 
     fun target(t: OutputTarget): String = when (t) {
         is OutputTarget.Pad -> "Gamepad ${t.button.label}"
         is OutputTarget.PadAxis -> "Gamepad ${t.axis}" + if (t.scale < 0) " (inverted)" else ""
-        is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage))
+        is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage)) + keyMode(t.mode)
         is OutputTarget.Mouse -> "Mouse ${t.button.name.lowercase()}"
         is OutputTarget.Wheel -> if (t.step > 0) "Wheel up" else "Wheel down"
         is OutputTarget.MouseAxis -> t.motion.label + if (t.scale < 0) ", reversed" else ""
         OutputTarget.GyroHold -> "Ratchet (flip gyro while held)"
         OutputTarget.GyroToggle -> "Toggle gyro (swap what a ratchet does)"
         OutputTarget.GyroPause -> "Ratchet (flip gyro while held)"
+        is OutputTarget.GyroPauseAxis -> "Ratchet ${t.axis.label.lowercase()} (flip it while held)"
         OutputTarget.SwitchApps -> "Switch apps (Alt+Tab)"
         OutputTarget.Zoom -> "Zoom (Ctrl + wheel)"
         is OutputTarget.Haptic -> when {
@@ -118,7 +135,7 @@ object Describe {
             GamepadAxis.RT -> "RT"
         } + if (t.scale < 0) " inv" else ""
 
-        is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage))
+        is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage)) + keyMode(t.mode)
         is OutputTarget.Mouse -> when (t.button) {
             MouseButton.LEFT -> "Mouse L"
             MouseButton.RIGHT -> "Mouse R"
@@ -138,6 +155,7 @@ object Describe {
         OutputTarget.GyroHold -> "Ratchet"
         OutputTarget.GyroToggle -> "Gyro ⇄"
         OutputTarget.GyroPause -> "Ratchet"
+        is OutputTarget.GyroPauseAxis -> "Ratchet " + t.axis.label.lowercase()
         OutputTarget.SwitchApps -> "Alt+Tab"
         OutputTarget.Zoom -> "Zoom"
         is OutputTarget.Haptic -> when {
@@ -187,7 +205,9 @@ object Describe {
                 OutputTarget.MouseAxis(it, -1f)
             )
         },
-        "Gyro" to listOf(OutputTarget.GyroPause, OutputTarget.GyroToggle),
+        "Gyro" to listOf(OutputTarget.GyroPause) +
+            listOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL).map { OutputTarget.GyroPauseAxis(it) } +
+            OutputTarget.GyroToggle,
         "Phone" to listOf(
             OutputTarget.Haptic(held = false),
             OutputTarget.Haptic(held = true),
@@ -226,5 +246,12 @@ object Describe {
         }
         val groups = targetGroups.map { (name, list) -> name to list.filter(allowed) }.filter { it.second.isNotEmpty() }
         return if (extra.isEmpty()) groups else listOf("Touchpad" to extra) + groups
+    }
+
+    /** How a key target's [mode] reads after its name; nothing for a plain held key. */
+    private fun keyMode(mode: KeyMode): String = when (mode) {
+        KeyMode.HOLD -> ""
+        KeyMode.TOGGLE -> " (toggle)"
+        KeyMode.NEXT_KEY -> " (next key)"
     }
 }

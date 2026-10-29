@@ -10,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,14 +26,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.isWorkspaceInput
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.runtime.ScreenOrientation
 import kotlin.math.roundToInt
 
 /**
  * The Settings page (from the pad's Settings capsule): the App tab, options of the whole app with
- * the corners, and the Defaults tab, what every workspace uses unless its Workspace defaults (its
- * settings page, ⚙ in edit mode) set their own.
+ * the corners, and the Defaults tab, what every workspace uses unless it sets its own (its
+ * settings page, ⚙ in edit mode).
  */
 @Composable
 fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
@@ -47,7 +49,7 @@ fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
 }
 
 /**
- * The Defaults: every workspace's settings unless its Workspace defaults set them. Each shows its
+ * The Defaults: every workspace's settings unless it sets them itself. Each shows its
  * value, highlighted with a ↺ where it differs from the built-in one.
  */
 @Composable
@@ -55,10 +57,37 @@ private fun DefaultsTab(runtime: GamepadRuntime) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Hint(
-            "Every workspace uses these, except where its Workspace defaults set their own: those show highlighted " +
+            "Every workspace uses these, except where it sets its own (its settings): those show highlighted " +
                     "there, with ↺ to follow these again.",
         )
-        WorkspaceSettings(runtime, defaultsLevel(runtime, profile), profile.id + "/defaults")
+        var mapping by remember { mutableStateOf(false) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "The touchpad and motion mappings every workspace starts from (none until you map them; " +
+                        "Presets has Windows touchpad and Gyro mouse). A workspace maps an action itself to override one.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f).padding(4.dp),
+            )
+            OutlinedButton(onClick = { mapping = true }) { Text("Mappings") }
+        }
+        val level = defaultsLevel(runtime, profile)
+        WorkspaceSettings(runtime, level, profile.id + "/defaults")
+        if (mapping) {
+            ControlMappingScreen(
+                control = TOUCHPAD_STAND_IN,
+                mappings = profile.defaults.mappings.filter { it.source.isWorkspaceInput },
+                runtime = runtime,
+                onMappingsChange = { m ->
+                    runtime.editActiveProfile { p ->
+                        p.copy(defaults = p.defaults.copy(mappings = p.defaults.mappings.filterNot { it.source.isWorkspaceInput } + m))
+                    }
+                },
+                onSettings = null,
+                onClose = { mapping = false },
+                settings = touchpadSettings(runtime, level),
+            )
+        }
     }
 }
 

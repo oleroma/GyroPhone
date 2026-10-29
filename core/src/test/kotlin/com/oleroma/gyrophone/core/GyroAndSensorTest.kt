@@ -1,13 +1,11 @@
 package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.engine.GyroMouse
-import com.oleroma.gyrophone.core.model.GyroAxes
 import com.oleroma.gyrophone.core.model.GyroOrientation
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.sensor.DirectReportParser
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.ByteBuffer
@@ -24,39 +22,35 @@ class GyroAndSensorTest {
         assertEquals(900, total)
     }
 
-    @Test fun portraitUsesItsOwnAxesAndLandscapeKeepsTheMainOnes() {
-        val base = GyroSettings(sensitivity = 10f, tighteningThreshold = 0f, smoothingThreshold = 0f)
-        val s = base.withAxes(portrait = true, GyroAxes(mouseX = MotionAxis.ROLL, invertX = true))
-        val g = GyroMouse(s)
-        val rad = (90.0 * Math.PI / 180.0).toFloat()
-        // Portrait: roll clockwise is -z, inverted -> cursor left.
-        g.displayRotation = 0
-        var total = 0
-        repeat(1000) { total += g.update(0f, 0f, -rad, 0.001f).dx }
-        assertEquals(-900, total)
-        // Landscape still uses yaw for X, unaffected by the portrait mapping.
-        g.displayRotation = 90; g.reset(); total = 0
-        repeat(1000) { total += g.update(-rad, 0f, 0f, 0.001f).dx }
-        assertEquals(900, total)
-    }
-
-    @Test fun portraitFallsBackToLandscapeAxesWhenUnset() {
-        val s = GyroSettings(mouseX = MotionAxis.ROLL, invertY = true)
-        assertNull(s.portrait)
-        assertEquals(s.landscapeAxes, s.axesFor(portrait = true))
-        val edited = s.withAxes(portrait = false, s.landscapeAxes.copy(mouseY = MotionAxis.YAW))
-        assertEquals(MotionAxis.YAW, edited.mouseY)
-        assertNull(edited.portrait)
-    }
-
-    @Test fun verticalRatioScalesOnlyVertical() {
-        val g = GyroMouse(GyroSettings(sensitivity = 10f, verticalRatio = 0.5f))
+    @Test fun eachAxisHasItsOwnSensitivityOrTheShared() {
+        val g = GyroMouse(GyroSettings(sensitivity = 10f, pitchSensitivity = 0f))
         val rad = (90.0 * Math.PI / 180.0).toFloat()
         var dx = 0; var dy = 0
-        // Landscape left: yaw right = -x, pitch up = -y (cursor up = negative HID y).
+        // Landscape left: yaw right = -x, pitch up = -y; pitch has its own sensitivity, 0.
         repeat(1000) { val c = g.update(-rad, -rad, 0f, 0.001f); dx += c.dx; dy += c.dy }
         assertEquals(900, dx)
-        assertEquals(-450, dy)
+        assertEquals(0, dy)
+        val s = GyroSettings(sensitivity = 10f).withSensitivity(MotionAxis.ROLL, 5f)
+        assertEquals(5f, s.sensitivityOf(MotionAxis.ROLL))
+        assertEquals(10f, s.sensitivityOf(MotionAxis.YAW))
+        assertEquals(null, s.withSensitivity(MotionAxis.ROLL, null).ownSensitivity(MotionAxis.ROLL))
+    }
+
+    @Test fun scrollAndSticksFollowTheSensitivityFromTheDefault() {
+        val wheel = listOf(com.oleroma.gyrophone.core.model.Mapping(
+            com.oleroma.gyrophone.core.model.InputSource.Gyro(MotionAxis.YAW),
+            com.oleroma.gyrophone.core.model.OutputTarget.MouseAxis(com.oleroma.gyrophone.core.model.MouseMotion.WHEEL),
+        ))
+        val rad = (GyroMouse.DEG_PER_NOTCH * Math.PI / 180.0).toFloat()
+        fun notches(sens: Float): Int {
+            val g = GyroMouse(GyroSettings(sensitivity = sens))
+            var w = 0
+            repeat(1000) { w += g.route(-rad, 0f, 0f, 0.001f, wheel).wheel }
+            return w
+        }
+        val unit = com.oleroma.gyrophone.core.hid.MouseState.WHEEL_UNIT
+        assertEquals(unit, notches(GyroSettings.DEFAULT_SENSITIVITY))
+        assertEquals(2 * unit, notches(2 * GyroSettings.DEFAULT_SENSITIVITY))
     }
 
     @Test fun tinyJitterIsTightened() {
@@ -123,9 +117,12 @@ class GyroOrientationTest {
     private val rad = (90.0 * Math.PI / 180.0).toFloat()
     private fun direct(s: GyroSettings) = s.copy(sensitivity = 10f, tighteningThreshold = 0f, smoothingThreshold = 0f)
 
-    private fun run(g: GyroMouse, x: Float, y: Float, z: Float): Pair<Int, Int> {
+    private fun run(
+        g: GyroMouse, x: Float, y: Float, z: Float,
+        ax: MotionAxis = MotionAxis.YAW, ay: MotionAxis = MotionAxis.PITCH, scaleX: Float = 1f,
+    ): Pair<Int, Int> {
         var dx = 0; var dy = 0
-        repeat(100) { val c = g.update(x, y, z, 0.001f); dx += c.dx; dy += c.dy }
+        repeat(100) { val c = g.update(x, y, z, 0.001f, ax, ay, scaleX); dx += c.dx; dy += c.dy }
         return dx to dy
     }
 
@@ -143,12 +140,11 @@ class GyroOrientationTest {
     }
 
     @Test fun rollCanDriveHorizontalAndAxesInvert() {
-        val g = GyroMouse(direct(GyroSettings(orientation = GyroOrientation.LANDSCAPE_LEFT,
-            mouseX = MotionAxis.ROLL, mouseY = MotionAxis.NONE)))
+        val g = GyroMouse(direct(GyroSettings(orientation = GyroOrientation.LANDSCAPE_LEFT)))
         // Clockwise roll as seen by the player is negative rotation about device Z.
-        assertEquals(90 to 0, run(g, 0f, 0f, -rad))
-        g.settings = g.settings.copy(invertX = true)
-        assertEquals(-90 to 0, run(g, 0f, 0f, -rad))
+        assertEquals(90 to 0, run(g, 0f, 0f, -rad, MotionAxis.ROLL, MotionAxis.NONE))
+        // Reversed: the mapping's scale is -1.
+        assertEquals(-90 to 0, run(g, 0f, 0f, -rad, MotionAxis.ROLL, MotionAxis.NONE, -1f))
     }
 
     @Test fun flatYawIsRotationAboutScreenNormal() {

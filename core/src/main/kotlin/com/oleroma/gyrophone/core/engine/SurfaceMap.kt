@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.core.engine
 import com.oleroma.gyrophone.core.hid.HidUsage
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.KeyMode
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
@@ -74,7 +75,8 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
             }
             when (val t = m.target) {
                 is OutputTarget.Mouse -> mouse[b] = mouse[b] or (1 shl t.button.bit)
-                is OutputTarget.Key -> when {
+                // Toggle and next-key keys are held by the engine ([MappingEngine]).
+                is OutputTarget.Key -> if (t.mode == KeyMode.HOLD) when {
                     HidUsage.isModifier(t.usage) -> mods[b] = mods[b] or (1 shl (t.usage - HidUsage.LEFT_CTRL))
                     key[b] == 0 -> key[b] = t.usage and 0xFF
                 }

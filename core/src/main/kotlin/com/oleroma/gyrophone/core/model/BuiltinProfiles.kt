@@ -69,12 +69,8 @@ object BuiltinProfiles {
 
     private fun anyPad(mappings: List<Mapping>) = AttachedPad(id = "pad1", mappings = mappings)
 
-    /**
-     * Gyro in [mode] with roll (steering-wheel tilt) on mouse left/right and pitch on up/down, set
-     * for landscape and portrait alike.
-     */
-    private fun gyro(mode: GyroMode) =
-        GyroSettings(mode = mode, mouseX = MotionAxis.ROLL, mouseY = MotionAxis.PITCH).withBothOrientations()
+    /** Gyro in [mode]; where it goes is the Defaults' gyro mappings (roll left/right, pitch up/down). */
+    private fun gyro(mode: GyroMode) = GyroSettings(mode = mode)
 
     // Controller
 
@@ -282,9 +278,25 @@ object BuiltinProfiles {
         }
     }
 
+    /**
+     * A key types on a still tap, so a finger dragged across the keys moves the cursor. Shift,
+     * Ctrl, Alt and Win are sticky: a tap holds one for the next key, a double tap locks it, and
+     * holding works as usual.
+     */
     private fun keyboardMappings(): List<Mapping> {
         val byId = keys.values.associateBy { it.id }
-        return keyboardControls.map { touch(it.id, OutputTarget.Key(byId.getValue(it.id).usage)) }
+        return keyboardControls.flatMap { c ->
+            val usage = byId.getValue(c.id).usage
+            fun on(input: SurfaceInput, mode: KeyMode = KeyMode.HOLD) =
+                Mapping(InputSource.Surface(1, input, c.id), OutputTarget.Key(usage, mode))
+            // The touchpad's double tap and tap-drag (clicks) cleared, so a key types at once.
+            fun cleared(input: SurfaceInput) = Mapping(InputSource.Surface(1, input, c.id), OutputTarget.NoOutput)
+            if (!HidUsage.isModifier(usage)) listOf(on(SurfaceInput.TAP), cleared(SurfaceInput.DOUBLE_TAP), cleared(SurfaceInput.TAP_DRAG))
+            else listOf(
+                touch(c.id, OutputTarget.Key(usage)),
+                on(SurfaceInput.TAP, KeyMode.NEXT_KEY), on(SurfaceInput.DOUBLE_TAP, KeyMode.TOGGLE), cleared(SurfaceInput.TAP_DRAG),
+            )
+        }
     }
 
     /** A full keyboard (K380 layout) under a touchpad strip; no gyro, no pads. */
@@ -294,12 +306,15 @@ object BuiltinProfiles {
         touchControls = keyboardControls,
         mappings = keyboardMappings(),
         gyro = gyro(GyroMode.OFF),
-        touchpadOverButtons = true,
-        stickyModifiers = true,
     )
 
-    /** Workspaces offered by "Add workspace" and put in every new profile. */
-    val presets: List<Workspace> get() = listOf(controllerWorkspace, wasdWorkspace, keyboardWorkspace)
+    /**
+     * Workspaces offered by "Add workspace" and put in every new profile, each with the "Windows
+     * touchpad" and "Gyro mouse" presets where it maps nothing else (the Defaults map nothing).
+     */
+    val presets: List<Workspace> get() = listOf(controllerWorkspace, wasdWorkspace, keyboardWorkspace).map { w ->
+        w.copy(mappings = Inheritance.fill(w.mappings, Bindings.defaultTouchpadMappings(TouchpadSettings()) + Bindings.gyroMouseMappings()))
+    }
 
     /** An empty workspace: touchpad only, no controls, no pads. */
     fun blankWorkspace(name: String = "Workspace") = Workspace(id = "ws", name = name, gyro = gyro(GyroMode.OFF))

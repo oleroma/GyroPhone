@@ -33,14 +33,15 @@ class SwipeButtonsTest {
         mappings: List<Mapping>,
         sensX: Float = 1f,
         sensY: Float = 1f,
-        clickThrough: Boolean = false,
         now: () -> Long = { 0L },
     ): MappingEngine {
         val b = TouchControl(
             "b", TouchKind.BUTTON, "", 0.5f, 0.5f,
-            clickThrough = clickThrough, swipe = true, swipeSensX = sensX, swipeSensY = sensY,
+            swipe = true, swipeSensX = sensX, swipeSensY = sensY,
         )
+        // The touchpad's mappings cleared, so the button takes none of them.
         val p = single(Workspace(id = "w", name = "w", touchControls = listOf(b), mappings = mappings))
+            .noTouchpadDefaults()
         return MappingEngine(p, now).apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 0 }
     }
 
@@ -134,12 +135,10 @@ class SwipeButtonsTest {
     }
 
     @Test
-    fun clickThroughTurnsSwipeModeOff() {
-        val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, swipe = true)
-        // Press (one finger's hold), outside, zone, then the other surface inputs for 1..4 fingers.
-        assertEquals(3 - 1 + (1..4).sumOf { Bindings.surfaceInputs(it).size }, Bindings.touchInputs(b).size)
-        assertEquals(7, Bindings.touchInputs(b.copy(clickThrough = true)).size)
-        assertEquals(7, Bindings.touchInputs(b.copy(swipe = false)).size)
+    fun everyButtonIsATouchSurface() {
+        val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f)
+        // Press (one finger's hold), outside, zone, the other surface inputs for 1..4 fingers, then its gyro axes, tilt and shake.
+        assertEquals(3 - 1 + (1..4).sumOf { Bindings.surfaceInputs(it).size } + 3 + 7, Bindings.touchInputs(b).size)
     }
 
     @Test
@@ -152,19 +151,7 @@ class SwipeButtonsTest {
     }
 
     @Test
-    fun gyroHasItsOwnYSensitivity() {
-        val g = GyroMouse(GyroSettings(sensitivity = 10f, sensitivityY = 0f))
-        val rad = (90.0 * Math.PI / 180.0).toFloat()
-        var dx = 0;
-        var dy = 0
-        repeat(1000) { val c = g.update(-rad, -rad, 0f, 0.001f); dx += c.dx; dy += c.dy }
-        assertEquals(900, dx)
-        assertEquals(0, dy)
-    }
-
-    @Test
     fun olderFilesKeepTheirVerticalRatio() {
-        assertEquals(5f, GyroSettings(sensitivity = 10f, verticalRatio = 0.5f).verticalSensitivity)
         assertEquals(2f, TouchpadSettings(sensitivity = 2f).verticalSensitivity)
         assertEquals(0f, TouchpadSettings(sensitivity = 2f, sensitivityY = 0f).verticalSensitivity)
     }
@@ -194,17 +181,6 @@ class SwipeButtonsTest {
             swiped.mappings,
         )
         assertTrue(Bindings.matchSwipeModes(swiped) === swiped)
-        // Out of swipe mode the taps go back; the hold stays the press.
-        val plain = Bindings.matchSwipeModes(swiped.copy(touchControls = listOf(b.copy(swipe = false))))
-        assertEquals(
-            listOf(
-                m(InputSource.TouchTap("b")),
-                m(InputSource.TouchLongPress("b"), W),
-                m(InputSource.Touch("b"), W),
-                m(InputSource.Surface(2, SurfaceInput.HOLD, "b"), W),
-            ),
-            plain.mappings,
-        )
     }
 
     @Test

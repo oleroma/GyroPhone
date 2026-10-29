@@ -190,6 +190,31 @@ sealed interface InputSource {
     @Serializable
     @SerialName("surface")
     data class Surface(val fingers: Int, val input: SurfaceInput, val id: String = "", val zone: Int = 0) : InputSource
+
+    /**
+     * The phone turning about gyro [axis] (yaw right, pitch up, roll clockwise as the player sees
+     * it are +), in °/s, while gyro is on. [id] "" = the workspace's, always; else touch button
+     * [id]'s, only while it is pressed: it then takes that axis over from the workspace (of
+     * several, the last pressed).
+     */
+    @Serializable
+    @SerialName("gyro")
+    data class Gyro(val axis: MotionAxis, val id: String = "") : InputSource
+
+    /**
+     * How far the phone is tilted ([com.oleroma.gyrophone.core.engine.TiltShake]): X sideways
+     * (+ right, turning it like a wheel), Y forward and back (+ back, the top edge toward you;
+     * forward pushes a stick up), full at the tilt range. [half] as for an [Axis]. [id] "" = the
+     * workspace's, always; else touch button [id]'s, only while it is pressed.
+     */
+    @Serializable
+    @SerialName("tilt")
+    data class Tilt(val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL, val id: String = "") : InputSource
+
+    /** A shake of the phone: a short press. [id] as for [Tilt]. */
+    @Serializable
+    @SerialName("shake")
+    data class Shake(val id: String = "") : InputSource
 }
 
 /** Something the host PC receives. */
@@ -204,10 +229,10 @@ sealed interface OutputTarget {
     @SerialName("pad_axis")
     data class PadAxis(val axis: GamepadAxis, val scale: Float = 1f) : OutputTarget
 
-    /** Keyboard key by HID usage ID (see HidUsage). */
+    /** Keyboard key by HID usage ID (see HidUsage), held as [mode] says. */
     @Serializable
     @SerialName("key")
-    data class Key(val usage: Int) : OutputTarget
+    data class Key(val usage: Int, val mode: KeyMode = KeyMode.HOLD) : OutputTarget
 
     @Serializable
     @SerialName("mouse")
@@ -247,6 +272,11 @@ sealed interface OutputTarget {
     @Serializable
     @SerialName("gyro_pause")
     data object GyroPause : OutputTarget
+
+    /** A ratchet ([GyroPause]) of gyro [axis] only, as that axis's ratchet mode says ([GyroSettings.modeOf]). */
+    @Serializable
+    @SerialName("gyro_pause_axis")
+    data class GyroPauseAxis(val axis: MotionAxis) : OutputTarget
 
     /**
      * Windows app switching from a surface's Move X: Alt is held while the fingers stay down and
@@ -311,13 +341,25 @@ sealed interface OutputTarget {
     data object NoOutput : OutputTarget
 }
 
+/**
+ * How a key target ([OutputTarget.Key]) holds its key. HOLD: while the source is held. TOGGLE:
+ * each press turns it on or off. NEXT_KEY: a press holds it until the next other key has been
+ * pressed and let go (a sticky Shift); pressed again before that, it lets go.
+ */
+@Serializable
+enum class KeyMode(val label: String) { HOLD("Hold"), TOGGLE("Toggle"), NEXT_KEY("Next key only") }
+
 /** [source] presses [target] while mapping set [set] (0 = Base) is in use ([OutputTarget.Layer]). */
 @Serializable
 data class Mapping(val source: InputSource, val target: OutputTarget, val set: Int = 0)
 
-/** A named mapping set of a [Workspace] (set 0, Base, needs none). */
+/**
+ * A named mapping set of a [Workspace] (set 0, Base, needs none). [settings]: the workspace
+ * settings this layer sets itself while it is in use ([Workspace.ownSettings] of it names them,
+ * [WorkspaceDefaults.layerKeys] only); every other one follows the workspace. Null: none.
+ */
 @Serializable
-data class MappingSet(val id: Int, val name: String = "") {
+data class MappingSet(val id: Int, val name: String = "", val settings: Workspace? = null) {
     val label: String get() = name.ifBlank { "Layer $id" }
 
     companion object {
@@ -329,11 +371,11 @@ data class MappingSet(val id: Int, val name: String = "") {
 /**
  * Which mappings are in use: those of [full] with each of [overrides] (bottom to top) laid over
  * it. For each input the topmost override that maps it wins, else [full]'s mappings. Mappings to
- * [OutputTarget.NoOutput] are dropped. Base with no overrides on a list with no other sets is
- * [ms] itself.
+ * [OutputTarget.NoOutput] are dropped unless [keepNothing]. Base with no overrides on a list with
+ * no other sets is [ms] itself.
  */
-fun layered(ms: List<Mapping>, full: Int, overrides: List<Int>): List<Mapping> {
-    if (full == MappingSet.BASE && overrides.isEmpty() && ms.none { it.set != 0 || it.target == OutputTarget.NoOutput }) return ms
+fun layered(ms: List<Mapping>, full: Int, overrides: List<Int>, keepNothing: Boolean = false): List<Mapping> {
+    if (full == MappingSet.BASE && overrides.isEmpty() && ms.none { it.set != 0 || (!keepNothing && it.target == OutputTarget.NoOutput) }) return ms
     var out = ms.filter { it.set == full }
     for (o in overrides) {
         if (o == full) continue
@@ -342,7 +384,7 @@ fun layered(ms: List<Mapping>, full: Int, overrides: List<Int>): List<Mapping> {
         val sources = top.mapTo(HashSet()) { it.source }
         out = out.filterNot { it.source in sources } + top
     }
-    return out.filter { it.target != OutputTarget.NoOutput }
+    return if (keepNothing) out else out.filter { it.target != OutputTarget.NoOutput }
 }
 
 /**

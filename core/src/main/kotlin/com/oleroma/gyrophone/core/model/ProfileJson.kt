@@ -23,16 +23,14 @@ object ProfileJson {
     }
 
     /**
-     * At least one workspace, all corners present, no corner inside a workspace, unique workspace
-     * ids, and gyro axes set for portrait and landscape alike (workspaces saved with portrait
-     * following landscape keep the same axes, now as a portrait mapping of their own).
+     * At least one workspace, all corners present, no corner inside a workspace and unique
+     * workspace ids.
      */
     fun normalize(p: Profile): Profile {
         var workspaces = p.workspaces.map { w ->
             val clean = if (w.touchControls.none { it.kind == TouchKind.FULLSCREEN }) w
             else w.copy(touchControls = w.touchControls.filterNot { it.kind == TouchKind.FULLSCREEN })
-            val g = if (clean.gyro.mode == GyroMode.HOLD_OR_TOGGLE) clean.copy(gyro = clean.gyro.copy(mode = GyroMode.OFF)) else clean
-            if (g.gyro.portrait != null) g else g.copy(gyro = g.gyro.withBothOrientations())
+            if (clean.gyro.mode == GyroMode.HOLD_OR_TOGGLE) clean.copy(gyro = clean.gyro.copy(mode = GyroMode.OFF)) else clean
         }
         if (workspaces.isEmpty()) workspaces = listOf(Workspace(id = "ws1", name = "Main"))
         val seen = HashSet<String>()
