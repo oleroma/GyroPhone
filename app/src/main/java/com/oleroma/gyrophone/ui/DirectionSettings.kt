@@ -39,7 +39,7 @@ import com.oleroma.gyrophone.core.model.ZoneKeep
 import kotlin.math.roundToInt
 
 /** Same top as the workspace touchpad's speed sliders had. */
-private const val MAX_SURFACE_SENS = 20f
+private const val MAX_SURFACE_SENS = 50f
 
 /**
  * The settings a touch surface's actions share (the mapping editor's Settings): movement and
