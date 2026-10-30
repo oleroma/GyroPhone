@@ -66,7 +66,7 @@ internal fun GyroSensSlider(
         " Exact above the jitter cutoff (%.1f°/s): slower turns move less.".format(g.tighteningThreshold)
     } else ""
     OverrideSlider(
-        key + "rws", "$label %.2f RWS", GameSens.rws(sens, c), 0f..GameSens.rws(MAX_GYRO_SENS, c), 0.05f, overridden, onReset,
+        key + "rws", "$label %.2f RWS", GameSens.rws(sens, c), 0f..GameSens.rws(MAX_GYRO_SENS, c), 0.01f, overridden, onReset,
         "%.1f counts per degree in %s. %s%s %s".format(sens, g.gameName.ifEmpty { "this game" }, RWS_HINT, tight, hint),
     ) { v -> onDone(GameSens.sensOf(v, c)) }
 }
