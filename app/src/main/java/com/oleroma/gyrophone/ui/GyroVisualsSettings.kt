@@ -91,7 +91,8 @@ fun GyroVisualsSettings(v: TouchVisuals, set: (TouchVisuals) -> Unit) {
 
 /**
  * Full-screen settings of a gyro display [control] (a long press or Configure in edit mode):
- * what it shows, how, and its colours. Edits go through [onChange].
+ * what it shows, how, and its colours. Edits go through [onChange]. [gameKnown]: the workspace's
+ * game turn is set (Gyro → Game), so a trackball's RWS is exact.
  */
 @Composable
 internal fun GyroDisplaySettingsScreen(
@@ -100,6 +101,7 @@ internal fun GyroDisplaySettingsScreen(
     onDuplicate: () -> Unit,
     onDelete: () -> Unit,
     onClose: () -> Unit,
+    gameKnown: Boolean = false,
 ) {
     val d = control.display ?: return
     var confirmDelete by remember { mutableStateOf(false) }
@@ -184,14 +186,19 @@ internal fun GyroDisplaySettingsScreen(
                                 if (d.trackball) Indented {
                                     Hint(
                                         "While the gyro moves the mouse, the ball holds still against the world, so it rolls the other way on screen, " +
-                                            "like a trackball under your hand. A ratchet stops it (only the axes it pauses), and it turns with the phone.",
+                                            "like a trackball under your hand. A ratchet stops it (only the axes it pauses), and it turns with the phone. " +
+                                            "Every other camera movement (touchpad, buttons, controllers, keys, glides) turns it too, as the gyro turn that would send it.",
                                     )
-                                    FloatSlider("Spin %.2f×", d.trackballSpin, 0.25f..4f, 0.25f) { set(d.copy(trackballSpin = it)) }
-                                    SwitchRow("Follow gyro sensitivity", d.trackballFollowSensitivity) { set(d.copy(trackballFollowSensitivity = it)) }
-                                    Hint(
-                                        "Each axis also spins by its gyro sensitivity against the default, so the ball keeps pace with the cursor. " +
-                                            "With the workspace's game set (Gyro → Game), it spins by real world sensitivity instead: as far as the game's camera turns, at Spin 1×.",
-                                    )
+                                    SwitchRow("RWS", d.trackballRws) { set(d.copy(trackballRws = it)) }
+                                    if (d.trackballRws) {
+                                        Hint(
+                                            if (gameKnown) "It turns exactly as far as the game's camera."
+                                            else "Set the game's turn in Gyro → Game for exact turns. Until then it turns as far as the phone, and every movement matches the gyro.",
+                                        )
+                                    } else {
+                                        FloatSlider("Spin %.2f×", d.trackballSpin, 0.25f..4f, 0.25f) { set(d.copy(trackballSpin = it)) }
+                                        Hint("Every movement turns it Spin times as far as the phone turn that sends it.")
+                                    }
                                     LevelSlider(d) { set(it) }
                                 } else PoseSettings(d) { set(it) }
                                 if (shape == BallShape.GLOBE) SwitchRow("Equator", d.equator) { set(d.copy(equator = it)) }

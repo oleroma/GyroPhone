@@ -2319,6 +2319,8 @@ fun PadScreen(
                     // A gyro display: what it shows, how, and its colours.
                     GyroDisplaySettingsScreen(
                         control = sel,
+                        // A trackball's RWS needs the workspace's game turn (Gyro → Game).
+                        gameKnown = ws.gyro.gameCountsPer360 > 0f,
                         onChange = { changed -> updateControl(sel.id) { changed } },
                         onDuplicate = {
                             val (nw, id) = duplicate(ws, sel, takenIds(draft ?: profile))

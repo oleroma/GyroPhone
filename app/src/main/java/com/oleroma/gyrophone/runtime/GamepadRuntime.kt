@@ -417,6 +417,15 @@ class GamepadRuntime(context: Context) {
 
     init {
         engine.hapticSink = haptics
+        // Every other mouse count turns a trackball 3D shape too, as the camera turns.
+        engine.cameraSink = { dx, dy ->
+            val feeds = gyroFeeds
+            if (feeds.any { it.display.isTrackball }) {
+                val routes = engine.gyroRoutes()
+                val gs = engine.gyroSettings
+                for (f in feeds) f.camera(dx, dy, routes, gs)
+            }
+        }
         hid.reportProvider = { id ->
             when (id) {
                 HidDescriptor.REPORT_ID_GAMEPAD -> pump.lastGamepadReport
@@ -998,7 +1007,7 @@ class GamepadRuntime(context: Context) {
             if (gs !== gyroMouse.settings) gyroMouse.settings = gs
             val routes = engine.gyroRoutes()
             val r = gyroMouse.route(x - biasX, y - biasY, z - biasZ, dt, routes, axes)
-            if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel)
+            if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel, fromGyro = active)
             engine.setGyroAxes(r.pad)
             gyroPadSet = true
         } else {
