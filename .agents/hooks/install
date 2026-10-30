@@ -49,13 +49,23 @@ install_companion() {
     return
   fi
   mkdir -p "$app"
+  # The build the exe was made from, stamped in it as <version>-<commit>. The build hook reuses
+  # an unchanged companion from an older build, so this can be older than this build ($ver).
+  local cver f
+  cver="$(EXE_W="$(cygpath -w "$exe")" powershell -NoProfile -Command '(Get-Item -LiteralPath $env:EXE_W).VersionInfo.ProductVersion' | tr -d '\r')"
+  [ -n "$cver" ] || cver="$ver"
   # VERSION.txt names the build at app_exe (comparing the big exes byte by byte is slow).
-  local have="" f
+  local have=""
   if [ -f "$app_exe" ] && [ -f "$app/VERSION.txt" ]; then have="$(head -n 1 "$app/VERSION.txt" | tr -d '\r')"; fi
   # A build still waiting as .new isn't in place yet (its update failed): installing it again retries it.
-  if [ "$have" = "$ver" ] && [ ! -e "$app_exe.new" ]; then
-    note "Companion $ver is already installed on the PC."
+  if [ "$have" = "$cver" ] && [ ! -e "$app_exe.new" ]; then
+    if [ "$cver" = "$ver" ]; then
+      note "Companion $ver is already installed on the PC."
+    else
+      note "Companion unchanged: $cver stays installed on the PC, not rebuilt or restarted."
+    fi
   else
+    ver="$cver"
     # .old files are left by builds that renamed the running exe; any still in use go next time.
     for f in "$app"/GyroPhoneCompanion.exe*.old; do
       if [ -e "$f" ]; then rm -f "$f" 2>/dev/null || true; fi
