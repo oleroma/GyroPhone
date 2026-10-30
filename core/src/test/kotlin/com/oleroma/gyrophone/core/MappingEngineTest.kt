@@ -127,6 +127,19 @@ class MappingEngineTest {
         assertEquals(5, calls)
     }
 
+    @Test fun cameraSinkGetsEveryMouseCountButTheLiveGyros() {
+        val e = MappingEngine(single(BuiltinProfiles.controllerWorkspace))
+        var got = 0 to 0
+        e.cameraSink = { dx, dy -> got = got.first + dx to got.second + dy }
+        e.addMouseMotion(5, 6, fromGyro = true)
+        e.addMouseMotion(3, -4)
+        assertEquals(8, e.snapshot().mouse.dx)
+        assertEquals(3 to -4, got)
+        e.addMouseMotion(7, 7, fromGyro = true)
+        e.snapshot()
+        assertEquals(3 to -4, got)
+    }
+
     private val MS = 1_000_000L
 
     private fun gyroOff(now: () -> Long) =

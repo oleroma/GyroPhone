@@ -208,4 +208,37 @@ class GyroDisplayTest {
         repeat(50) { f.feed(60f, 0f, 0f, 0.01f, yawOff, pressed = true, held = true) } // yaw paused: no change, no reset
         f.pose.matrix(m); assertEquals(-0.5f, m[6], 1e-3f)
     }
+
+    @Test fun trackballTurnsWithOtherMouseCountsExactlyAsTheGameCamera() {
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, trackball = true))
+        val g = com.oleroma.gyrophone.core.model.GyroSettings(gameCountsPer360 = 8000f)
+        val routes = com.oleroma.gyrophone.core.model.Bindings.gyroMouseMappings()
+        val m = FloatArray(9)
+        // Three whole camera turns in small swipes: back where it started.
+        repeat(600) { f.camera(40, 0, routes, g) }
+        f.pose.matrix(m); assertArrayEquals(floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f), m, 1e-3f)
+        // A quarter turn more: as far as a quarter of the gyro's roll would turn it.
+        f.camera(2000, 0, routes, g)
+        val turned = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, trackball = true))
+        val rws = g.rwsOf(g.sensitivityOf(com.oleroma.gyrophone.core.model.MotionAxis.ROLL))!!
+        repeat(100) { turned.feed(0f, 0f, 90f / rws, 0.01f, 7, pressed = false, held = false, gyro = g) }
+        val m2 = FloatArray(9)
+        f.pose.matrix(m); turned.pose.matrix(m2)
+        assertArrayEquals(m2, m, 1e-3f)
+        assertEquals(1f, kotlin.math.abs(m[1]), 1e-3f) // a quarter turn about the screen's axis
+    }
+
+    @Test fun trackballWithoutRwsSpinsOtherCountsAsTheGyro() {
+        val d = com.oleroma.gyrophone.core.model.GyroDisplay(ball, trackball = true, trackballRws = false, trackballSpin = 2f)
+        val f = feed(d)
+        val g = com.oleroma.gyrophone.core.model.GyroSettings(gameCountsPer360 = 8000f)
+        val pitch = g.sensitivityOf(com.oleroma.gyrophone.core.model.MotionAxis.PITCH)
+        f.camera(0, (45 * pitch).toInt(), com.oleroma.gyrophone.core.model.Bindings.gyroMouseMappings(), g) // a 45° pitch's counts, 2×
+        val turned = feed(d)
+        repeat(100) { turned.feed(0f, 4500f / 100f, 0f, 0.01f, 7, pressed = false, held = false, gyro = g) }
+        val m = FloatArray(9)
+        val m2 = FloatArray(9)
+        f.pose.matrix(m); turned.pose.matrix(m2)
+        assertArrayEquals(m2, m, 1e-3f)
+    }
 }

@@ -375,6 +375,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private var mouseDx = 0
     private var mouseDy = 0
 
+    /** The part of [mouseDx] and [mouseDy] the live gyro sent ([addMouseMotion] fromGyro). */
+    private var gyroDx = 0
+    private var gyroDy = 0
+
+    /** Mouse counts of the last snapshot other than the live gyro's, for [cameraSink]. */
+    private var cameraDx = 0
+    private var cameraDy = 0
+
     /** A physical mouse's movement not yet whole counts (or wheel units), carried to the next. */
     private val mouseRest = FloatArray(4)
 
@@ -435,6 +443,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     @Volatile
     var onChange: Runnable? = null
+
+    /**
+     * Gets the mouse counts each [snapshot] sends other than the live gyro's (touchpad and its
+     * glide, touch buttons, controllers, keys, a gyro glide), on the pump's thread and outside the
+     * engine lock: what turns the camera besides the gyro (a trackball 3D shape adds them).
+     */
+    @Volatile
+    var cameraSink: ((dx: Int, dy: Int) -> Unit)? = null
 
     /** Loads the active workspace and releases everything held. Under the lock. */
     private fun applyWorkspace() {
@@ -840,11 +856,18 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         onChange?.run()
     }
 
-    /** Relative mouse motion and scrolling from the gyro, already in mouse counts and wheel units (touchpad motion has its own path). */
-    fun addMouseMotion(dx: Int, dy: Int, wheel: Int = 0, hwheel: Int = 0) {
+    /**
+     * Relative mouse motion and scrolling from the gyro, already in mouse counts and wheel units
+     * (touchpad motion has its own path); [fromGyro]: the live gyro sent it, not a glide or a measure.
+     */
+    fun addMouseMotion(dx: Int, dy: Int, wheel: Int = 0, hwheel: Int = 0, fromGyro: Boolean = false) {
         synchronized(lock) {
             mouseDx += dx
             mouseDy += dy
+            if (fromGyro) {
+                gyroDx += dx
+                gyroDy += dy
+            }
             this.wheel += wheel
             this.hwheel += hwheel
         }
@@ -1041,7 +1064,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             for (c in carried) c.clear()
             anyCarried = false
             applyLayers()
-            mouseDx = 0; mouseDy = 0; wheel = 0; hwheel = 0
+            mouseDx = 0; mouseDy = 0; wheel = 0; hwheel = 0; gyroDx = 0; gyroDy = 0
             gyroPad.fill(0f)
             touchpad.reset()
             for (s in surfaceList) s.reset()
@@ -1055,11 +1078,18 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * back, so only the pumps may call this (OutputLink).
      */
     fun snapshot(): HidState {
-        val s = synchronized(lock) { snapshotLocked() }
+        var dx = 0
+        var dy = 0
+        val s = synchronized(lock) {
+            snapshotLocked().also {
+                dx = cameraDx; dy = cameraDy
+            }
+        }
         if (hapticDue) {
             hapticDue = false
             hapticSink?.haptics(hapticTicks, hapticHeld, hapticLevel)
         }
+        if (dx != 0 || dy != 0) cameraSink?.invoke(dx, dy)
         return s
     }
 
@@ -1141,7 +1171,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             accMouse or padButtons,
             mouseDx + touchpad.dx, mouseDy + touchpad.dy, wheel + touchpad.wheel, hwheel + touchpad.hwheel,
         )
-        mouseDx = 0; mouseDy = 0; wheel = 0; hwheel = 0
+        cameraDx = mouse.dx - gyroDx; cameraDy = mouse.dy - gyroDy
+        mouseDx = 0; mouseDy = 0; wheel = 0; hwheel = 0; gyroDx = 0; gyroDy = 0
         touchpad.drainMotion()
         return HidState(gamepad, KeyboardState(modifiers, array), mouse, all ?: array)
     }

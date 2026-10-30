@@ -3,7 +3,11 @@ package com.oleroma.gyrophone.core.engine
 import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
+import com.oleroma.gyrophone.core.model.MouseMotion
+import com.oleroma.gyrophone.core.model.OutputTarget
 import kotlin.math.sqrt
 
 /**
@@ -32,7 +36,7 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     /**
      * One sample: rates in deg/s ([GyroMouse.motion]) over [dtSeconds]; [axes] the gyro axes that
      * move the mouse ([MappingEngine.gyroAxes]); a ratchet was just [pressed]; one is [held];
-     * [gyro] the gyro settings in use (a trackball may follow their sensitivity).
+     * [gyro] the gyro settings in use (a trackball may turn by their real world sensitivity).
      */
     fun feed(
         yaw: Float, pitch: Float, roll: Float, dtSeconds: Float, axes: Int, pressed: Boolean, held: Boolean,
@@ -51,10 +55,7 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         }
         if (d.isTrackball) {
             if (dtSeconds == 0f || axes == 0) return
-            // Following sensitivity with the game's turn known, it spins by RWS: as far as the camera turns.
-            fun follow(g: GyroSettings, a: MotionAxis) = g.sensitivityOf(a).let { s -> g.rwsOf(s) ?: (s / GyroSettings.DEFAULT_SENSITIVITY) }
-            fun k(a: MotionAxis) = if (axes and MappingEngine.gyroBit(a) == 0) 0f
-            else d.trackballSpin * if (d.trackballFollowSensitivity && gyro != null) follow(gyro, a) else 1f
+            fun k(a: MotionAxis) = if (axes and MappingEngine.gyroBit(a) == 0) 0f else trackballGain(d, gyro, a)
             pose.counterRotate(yaw * k(MotionAxis.YAW), pitch * k(MotionAxis.PITCH), roll * k(MotionAxis.ROLL), dtSeconds)
             return
         }
@@ -84,6 +85,42 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         val amount = if (d.easeBySpeed) d.easeSpeed * DEG_TO_RAD * dtSeconds else 3f * dtSeconds / d.easeSeconds.coerceAtLeast(0.05f)
         if (d.gravity) pose.easeHeading(d.easeBySpeed, amount) else pose.easeAll(d.easeBySpeed, amount)
     }
+
+    /**
+     * Mouse counts [dx], [dy] sent by anything but the live gyro ([MappingEngine.cameraSink]), on
+     * the pump's thread. A trackball turns as the gyro turn that would send them would turn it:
+     * about the gyro axis [routes] map to that mouse axis (roll for X, pitch for Y when none does),
+     * at [gyro]'s sensitivity of that axis. The pose takes turns from both threads.
+     */
+    fun camera(dx: Int, dy: Int, routes: List<Mapping>, gyro: GyroSettings) {
+        val d = display
+        if (!d.isTrackball) return
+        val deg = FloatArray(3)
+        fun add(n: Int, motion: MouseMotion, fallback: MotionAxis) {
+            if (n == 0) return
+            val m = routes.firstOrNull { it.source is InputSource.Gyro && (it.target as? OutputTarget.MouseAxis)?.motion == motion }
+            val a = (m?.source as? InputSource.Gyro)?.axis ?: fallback
+            val i = when (a) {
+                MotionAxis.YAW -> 0
+                MotionAxis.PITCH -> 1
+                MotionAxis.ROLL -> 2
+                else -> return
+            }
+            // The phone's turn that sends n counts, then as far as that turn spins the trackball.
+            val perDeg = gyro.sensitivityOf(a) * ((m?.target as? OutputTarget.MouseAxis)?.scale ?: 1f)
+            if (perDeg != 0f) deg[i] += n / perDeg * trackballGain(d, gyro, a)
+        }
+        add(dx, MouseMotion.MOVE_X, MotionAxis.ROLL)
+        add(dy, MouseMotion.MOVE_Y, MotionAxis.PITCH)
+        pose.counterRotate(deg[0], deg[1], deg[2], 1f)
+    }
+
+    /**
+     * How far a trackball turns per degree the phone turns on [a]: with RWS as far as the game's
+     * camera ([GyroSettings.rwsOf]; as the phone while the game's turn is unknown), else Spin times.
+     */
+    private fun trackballGain(d: GyroDisplay, gyro: GyroSettings?, a: MotionAxis): Float =
+        if (!d.trackballRws) d.trackballSpin else gyro?.let { it.rwsOf(it.sensitivityOf(a)) } ?: 1f
 
     /** An accelerometer reading in the phone's frame (right, up, toward the player) and gravity [g] in its units. */
     fun up(x: Float, y: Float, z: Float, g: Float) {
