@@ -647,7 +647,17 @@ data class GyroSettings(
     val tiltYDeadzoneDeg: Float? = null,
     /** How hard a jolt (m/s² off gravity) counts as a shake. */
     val shakeStrength: Float = DEFAULT_SHAKE_STRENGTH,
+    /**
+     * The game's mouse counts for one full camera turn ([GameSens]); 0 = unknown. Set, gyro
+     * sensitivities are shown as real world sensitivity (RWS); they are stored as counts per degree either way.
+     */
+    val gameCountsPer360: Float = 0f,
+    /** Where [gameCountsPer360] came from, shown beside it ("CS2, sens 1.5", "Measured"). */
+    val gameName: String = "",
 ) {
+    /** Sensitivity [sens] (counts per degree) as real world sensitivity, or null with [gameCountsPer360] unknown. */
+    fun rwsOf(sens: Float): Float? = if (gameCountsPer360 > 0f) GameSens.rws(sens, gameCountsPer360) else null
+
     /** Sideways ([x]) or forward and back tilt's range in effect. */
     fun tiltRangeOf(x: Boolean): Float = (if (x) tiltXRangeDeg else tiltYRangeDeg) ?: tiltRangeDeg
 
@@ -1128,6 +1138,8 @@ data class Profile(
      * them itself. Only those settings of it are used.
      */
     val defaults: Workspace = WorkspaceDefaults.builtin,
+    /** The person's own game presets ([GameSens]), typed or measured, beside [GameSens.builtin]. */
+    val gamePresets: List<GamePreset> = emptyList(),
 ) {
     /** The corners shown on the pad: ← and →. */
     val shownCorners: List<TouchControl>

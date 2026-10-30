@@ -154,9 +154,14 @@ internal fun WorkspaceSettings(
                     }
                 }
             }
-            OverrideSlider(
-                key + "gs", "Sensitivity %.0f", ws.gyro.sensitivity, 0f..MAX_GYRO_SENS, 1f, own(g("sensitivity")), reset(g("sensitivity")),
-                hint = "Mouse counts per degree turned. Yaw, pitch and roll each follow it unless their ⚙ in the mapping editor sets their own; scrolling and sticks go faster or slower with it too.",
+            if (level.shows(g("gameCountsPer360"))) {
+                GameTurnRow(runtime, level, own(g("gameCountsPer360"))) {
+                    level.reset(g("gameCountsPer360")); level.reset(g("gameName"))
+                }
+            }
+            GyroSensSlider(
+                key + "gs", "Sensitivity", ws.gyro.sensitivity, ws.gyro, own(g("sensitivity")), reset(g("sensitivity")),
+                hint = "Yaw, pitch and roll each follow it unless their ⚙ in the mapping editor sets their own; scrolling and sticks go faster or slower with it too.",
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(sensitivity = v)) } }
             OverrideSlider(
                 key + "tiltRange", "Tilt range %.0f°", ws.gyro.tiltRangeDeg,
