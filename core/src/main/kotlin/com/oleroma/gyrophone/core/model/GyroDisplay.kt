@@ -85,7 +85,9 @@ data class GyroDisplay(
      * BALL: a trackball. While the gyro moves the mouse the ball holds still against the world (it
      * rolls the other way on screen); a ratchet (per axis) stops it, so it turns with the phone.
      * [trackballSpin] times the phone's turn, also times each axis's gyro sensitivity (against the
-     * default) with [trackballFollowSensitivity]. No gravity, compass, reset or ease back.
+     * default) with [trackballFollowSensitivity], or by each axis's real world sensitivity once the
+     * game's turn is known ([GyroSettings.gameCountsPer360]), so it turns as far as the game's camera.
+     * No gravity, compass, reset or ease back.
      */
     val trackball: Boolean = false,
     val trackballSpin: Float = 1f,
