@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
 import com.oleroma.gyrophone.core.engine.MappingEngine
+import com.oleroma.gyrophone.core.model.BallShape
 import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayColor
 import com.oleroma.gyrophone.core.model.GyroDisplayKind
@@ -107,6 +108,11 @@ private class VisState {
     val raw = FloatArray(9)
     val m = FloatArray(9)
     val path = Path()
+    val path2 = Path()
+    val facePath = Path()
+
+    /** The path [penTo] draws into. */
+    var pen = path
     var now = 0L
 
     /** Per phone with a ghost trail: its last [GHOSTS] poses. */
@@ -182,7 +188,7 @@ private class VisState {
             GyroDisplayKind.GRAPH -> drawGraph(feed, d, box, ::col)
             GyroDisplayKind.HORIZON -> drawHorizon(feed, d, box, ::col)
             GyroDisplayKind.DISK -> drawDisk(feed, d, box, ::col)
-            GyroDisplayKind.BALL -> drawBall(feed, d, box, ::col)
+            GyroDisplayKind.BALL -> drawBall(feed, d, box, live, ::col)
         }
     }
 
@@ -235,85 +241,230 @@ private class VisState {
         drawCircle(Color.Black.copy(alpha = 0.4f * dot.alpha), r * 0.09f, p, style = Stroke(density))
     }
 
-    private fun DrawScope.drawBall(feed: GyroDisplayFeed?, d: GyroDisplay, box: Rect, col: (GyroDisplayColor) -> Color) {
+    private fun DrawScope.drawBall(feed: GyroDisplayFeed?, d: GyroDisplay, box: Rect, live: Int, col: (GyroDisplayColor) -> Color) {
         poseOf(feed, d)
         val r = minOf(box.width, box.height) / 2f * 0.95f
         val c = box.center
-        val body = col(GyroDisplayColor.BALL_BODY)
-        val lit = Color(body.red + (1 - body.red) * 0.35f, body.green + (1 - body.green) * 0.35f, body.blue + (1 - body.blue) * 0.35f, body.alpha)
-        drawCircle(Brush.radialGradient(listOf(lit, body), Offset(c.x - r * 0.35f, c.y - r * 0.4f), r * 1.3f), r, c)
         val lines = col(GyroDisplayColor.BALL_LINES)
-        val thin = density
-        if (d.icosphere) {
-            drawIcosphere(c, r, lines, thin)
-        } else {
-            // Latitudes every 30° round the phone's up axis; the equator in its own colour.
-            for (lat in -60..60 step 30) {
-                val a = Math.toRadians(lat.toDouble())
-                val eq = lat == 0 && d.equator
-                sphereCircle(c, r, sin(a).toFloat(), 0f, 1f, 0f, cos(a).toFloat(), 0f, 0f, 1f, 1f, 0f, 0f,
-                    if (eq) col(GyroDisplayColor.BALL_EQUATOR) else lines, if (eq) 2.5f * density else thin)
+        val faint = lines.copy(alpha = lines.alpha * HIDDEN_ALPHA)
+        val body = col(GyroDisplayColor.BALL_BODY)
+        val stroke = Stroke(density, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val shape = d.ballShape
+        // Front lines (and the silhouette) go into one path, back ones into another, each stroked
+        // once: where lines meet or cross, their colour does not add up.
+        path.reset()
+        path2.reset()
+        pen = path
+        penBack = if (d.hiddenEdges) path2 else null
+        val mesh = Meshes.of(shape, d.subdivision, d.smooth)
+        when {
+            shape == BallShape.GIMBAL -> drawGimbal(c, r, d, live, col)
+
+            mesh == null -> {
+                // The globe: latitudes every 30° round the phone's up axis, meridians every 30°.
+                val steps = if (d.smooth) SPHERE_STEPS else POLY_STEPS
+                for (lat in -60..60 step 30) {
+                    if (lat == 0 && d.equator) continue
+                    val a = Math.toRadians(lat.toDouble())
+                    sphereCircle(c, r, sin(a).toFloat(), 0f, 1f, 0f, cos(a).toFloat(), 0f, 0f, 1f, 1f, 0f, 0f, steps)
+                }
+                for (lon in 0 until 180 step 30) {
+                    val a = Math.toRadians(lon.toDouble())
+                    sphereCircle(c, r, 0f, 0f, 0f, 0f, 1f, 0f, 1f, 0f, sin(a).toFloat(), 0f, cos(a).toFloat(), steps)
+                }
+                path.addOval(Rect(c, r))
+                drawPath(path2, faint, style = stroke)
+                if (d.fillFaces) drawBody(c, r, body)
+                drawPath(path, lines, style = stroke)
+                if (d.equator) {
+                    path2.reset()
+                    pen = path2
+                    penBack = null
+                    sphereCircle(c, r, 0f, 0f, 1f, 0f, 1f, 0f, 0f, 1f, 1f, 0f, 0f, steps)
+                    pen = path
+                    drawPath(path2, col(GyroDisplayColor.BALL_EQUATOR), style = Stroke(2.5f * density, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                }
             }
-            // Meridians every 30°: great circles through both poles.
-            for (lon in 0 until 180 step 30) {
-                val a = Math.toRadians(lon.toDouble())
-                sphereCircle(c, r, 0f, 0f, 0f, 0f, 1f, 0f, 1f, 0f, sin(a).toFloat(), 0f, cos(a).toFloat(), lines, thin)
+
+            d.smooth && mesh.onSphere -> {
+                // Each edge bent onto the ball, cut exactly where it crosses the silhouette.
+                val v = mesh.vertices
+                val e = mesh.edges
+                for (k in 0 until e.size / 2) {
+                    val ia = e[k * 2] * 3
+                    val ib = e[k * 2 + 1] * 3
+                    val n = mesh.edgePieces[k]
+                    penUp()
+                    for (j in 0..n) {
+                        val t = j / n.toFloat()
+                        val px = v[ia] + (v[ib] - v[ia]) * t
+                        val py = v[ia + 1] + (v[ib + 1] - v[ia + 1]) * t
+                        val pz = v[ia + 2] + (v[ib + 2] - v[ia + 2]) * t
+                        val l = kotlin.math.sqrt(px * px + py * py + pz * pz)
+                        penTo(c, r, px / l, py / l, pz / l, sphere = true)
+                    }
+                }
+                path.addOval(Rect(c, r))
+                drawPath(path2, faint, style = stroke)
+                if (d.fillFaces) drawBody(c, r, body)
+                drawPath(path, lines, style = stroke)
+            }
+
+            else -> {
+                mesh.project(m)
+                val e = mesh.edges
+                for (k in 0 until e.size / 2) {
+                    val ia = e[k * 2]
+                    val ib = e[k * 2 + 1]
+                    val front = mesh.edgeFront(k)
+                    val into = if (front) path else if (d.hiddenEdges) path2 else continue
+                    into.moveTo(c.x + mesh.tx[ia] * r, c.y - mesh.ty[ia] * r)
+                    into.lineTo(c.x + mesh.tx[ib] * r, c.y - mesh.ty[ib] * r)
+                }
+                drawPath(path2, faint, style = stroke)
+                if (!d.fillFaces) {
+                    drawPath(path, lines, style = stroke)
+                } else if (mesh.convex) {
+                    for (f in mesh.faces.indices) if (mesh.faceFront[f]) drawFace(mesh, f, c, r, body)
+                    drawPath(path, lines, style = stroke)
+                } else {
+                    // Far to near, each face with its own outline, so near ones cover far ones.
+                    mesh.sortFarToNear()
+                    for (f in mesh.order) {
+                        if (!mesh.faceFront[f]) continue
+                        drawFace(mesh, f, c, r, body)
+                        drawPath(facePath, lines, style = stroke)
+                    }
+                }
             }
         }
+        penBack = null
         if (d.screenMark) sphereDot(c, r, 0f, 0f, 1f, col(GyroDisplayColor.BALL_MARK))
         if (d.topMark) sphereDot(c, r, 0f, 1f, 0f, col(GyroDisplayColor.BALL_POLE))
-        drawCircle(Color.Black.copy(alpha = 0.35f * body.alpha), r, c, style = Stroke(density))
+    }
+
+    /** A smooth ball's fill: one disk, lit from the top left. */
+    private fun DrawScope.drawBody(c: Offset, r: Float, body: Color) {
+        val lit = Color(body.red + (1 - body.red) * 0.35f, body.green + (1 - body.green) * 0.35f, body.blue + (1 - body.blue) * 0.35f, body.alpha)
+        drawCircle(Brush.radialGradient(listOf(lit, body), Offset(c.x - r * 0.35f, c.y - r * 0.4f), r * 1.3f), r, c)
+    }
+
+    /** Face [f] of [mesh] (projected) filled with [body], darker the more it turns away; its outline left in [facePath]. */
+    private fun DrawScope.drawFace(mesh: Mesh, f: Int, c: Offset, r: Float, body: Color) {
+        val face = mesh.faces[f]
+        facePath.reset()
+        facePath.moveTo(c.x + mesh.tx[face[0]] * r, c.y - mesh.ty[face[0]] * r)
+        for (i in 1 until face.size) facePath.lineTo(c.x + mesh.tx[face[i]] * r, c.y - mesh.ty[face[i]] * r)
+        facePath.close()
+        val k = 0.45f + 0.55f * mesh.faceShade[f]
+        drawPath(facePath, Color(body.red * k, body.green * k, body.blue * k, body.alpha))
+    }
+
+    /** Three rings, one per axis (yaw round up, pitch round right, roll round the screen), lit while that axis moves the mouse. */
+    private fun DrawScope.drawGimbal(c: Offset, r: Float, d: GyroDisplay, live: Int, col: (GyroDisplayColor) -> Color) {
+        val steps = if (d.smooth) SPHERE_STEPS else POLY_STEPS
+        val colors = arrayOf(col(GyroDisplayColor.BALL_GIMBAL_YAW), col(GyroDisplayColor.BALL_GIMBAL_PITCH), col(GyroDisplayColor.BALL_GIMBAL_ROLL))
+        val width = 2.5f * density
+        // Back halves first (faint, under everything), then the front halves.
+        for (pass in 0..1) {
+            for ((i, a) in RING_AXES.withIndex()) {
+                val on = live and MappingEngine.gyroBit(a) != 0
+                val color = colors[i].copy(alpha = colors[i].alpha * (if (on) 1f else 0.3f))
+                val rho = GIMBAL_RADII[i]
+                path.reset()
+                path2.reset()
+                pen = path
+                penBack = path2
+                penUp()
+                for (j in 0..steps) {
+                    val t = j * (2 * Math.PI / steps)
+                    val ct = (rho * cos(t)).toFloat()
+                    val st = (rho * sin(t)).toFloat()
+                    when (i) {
+                        0 -> penTo(c, r, ct, 0f, st, sphere = false)
+                        1 -> penTo(c, r, 0f, ct, st, sphere = false)
+                        else -> penTo(c, r, ct, st, 0f, sphere = false)
+                    }
+                }
+                if (pass == 0) {
+                    if (d.hiddenEdges) drawPath(path2, color.copy(alpha = color.alpha * HIDDEN_ALPHA), style = Stroke(width, cap = StrokeCap.Round))
+                } else drawPath(path, color, style = Stroke(width, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            }
+        }
+        path.reset()
+        pen = path
     }
 
     /**
-     * The front half of a circle on the unit ball [h] along ([ax], [ay], [az]), radius [rho], spanned
-     * by ([ux], [uy], [uz]) and ([vx], [vy], [vz]) in the phone's frame, turned by [m], ball radius [r] at [c].
+     * Adds to [pen] (and the back to [penBack]) a circle on the unit ball [h] along ([ax], [ay], [az]), radius [rho], spanned
+     * by ([ux], [uy], [uz]) and ([vx], [vy], [vz]) in the phone's frame, in [steps] pieces, turned by [m], ball radius [r] at [c].
      */
-    private fun DrawScope.sphereCircle(
+    private fun sphereCircle(
         c: Offset, r: Float, h: Float, ax: Float, ay: Float, az: Float, rho: Float,
-        ux: Float, uy: Float, uz: Float, vx: Float, vy: Float, vz: Float, color: Color, width: Float,
+        ux: Float, uy: Float, uz: Float, vx: Float, vy: Float, vz: Float, steps: Int,
     ) {
-        path.reset()
-        var open = false
-        for (i in 0..SPHERE_STEPS) {
-            val t = i * (2 * Math.PI / SPHERE_STEPS)
+        penUp()
+        for (i in 0..steps) {
+            val t = i * (2 * Math.PI / steps)
             val ct = cos(t).toFloat()
             val st = sin(t).toFloat()
-            val px = h * ax + rho * (ct * ux + st * vx)
-            val py = h * ay + rho * (ct * uy + st * vy)
-            val pz = h * az + rho * (ct * uz + st * vz)
-            val z = m[6] * px + m[7] * py + m[8] * pz
-            if (z < 0f) {
-                open = false
-                continue
-            }
-            val x = c.x + (m[0] * px + m[1] * py + m[2] * pz) * r
-            val y = c.y - (m[3] * px + m[4] * py + m[5] * pz) * r
-            if (open) path.lineTo(x, y) else path.moveTo(x, y)
-            open = true
+            penTo(c, r, h * ax + rho * (ct * ux + st * vx), h * ay + rho * (ct * uy + st * vy), h * az + rho * (ct * uz + st * vz), sphere = true)
         }
-        drawPath(path, color, style = Stroke(width, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 
-    /** The front edges of [Icosphere], turned by [m], ball radius [r] at [c], as one path. */
-    private fun DrawScope.drawIcosphere(c: Offset, r: Float, color: Color, width: Float) {
-        val v = Icosphere.vertices
-        val e = Icosphere.edges
-        path.reset()
-        var i = 0
-        while (i < e.size) {
-            val a = e[i] * 3
-            val b = e[i + 1] * 3
-            i += 2
-            // An edge shows while its middle faces the player.
-            val mx = v[a] + v[b]
-            val my = v[a + 1] + v[b + 1]
-            val mz = v[a + 2] + v[b + 2]
-            if (m[6] * mx + m[7] * my + m[8] * mz < 0f) continue
-            path.moveTo(c.x + (m[0] * v[a] + m[1] * v[a + 1] + m[2] * v[a + 2]) * r, c.y - (m[3] * v[a] + m[4] * v[a + 1] + m[5] * v[a + 2]) * r)
-            path.lineTo(c.x + (m[0] * v[b] + m[1] * v[b + 1] + m[2] * v[b + 2]) * r, c.y - (m[3] * v[b] + m[4] * v[b + 1] + m[5] * v[b + 2]) * r)
+    /** The pen's last point in the view frame, or none since [penUp]. */
+    private var penX = 0f
+    private var penY = 0f
+    private var penZ = 0f
+    private var penDown = false
+
+    /** Where [penTo] puts the parts behind (z < 0), or null to leave them out. */
+    private var penBack: Path? = null
+
+    private fun penUp() {
+        penDown = false
+    }
+
+    /**
+     * Adds the line to the phone-frame point ([px], [py], [pz]), turned by [m], scale [r] at [c]:
+     * the front part to [pen], the back part to [penBack], cut exactly where it crosses z = 0, which
+     * on the unit ball ([sphere]) is pushed out onto the silhouette so no line stops short of it.
+     */
+    private fun penTo(c: Offset, r: Float, px: Float, py: Float, pz: Float, sphere: Boolean) {
+        val x = m[0] * px + m[1] * py + m[2] * pz
+        val y = m[3] * px + m[4] * py + m[5] * pz
+        val z = m[6] * px + m[7] * py + m[8] * pz
+        val sx = c.x + x * r
+        val sy = c.y - y * r
+        val back = penBack
+        if (!penDown) {
+            if (z >= 0f) pen.moveTo(sx, sy) else back?.moveTo(sx, sy)
+        } else {
+            val wasFront = penZ >= 0f
+            val front = z >= 0f
+            if (wasFront == front) {
+                if (front) pen.lineTo(sx, sy) else back?.lineTo(sx, sy)
+            } else {
+                val t = penZ / (penZ - z)
+                var rx = penX + (x - penX) * t
+                var ry = penY + (y - penY) * t
+                if (sphere) {
+                    val l = hypot(rx, ry)
+                    if (l > 0f) { rx /= l; ry /= l }
+                }
+                val cx = c.x + rx * r
+                val cy = c.y - ry * r
+                if (wasFront) {
+                    pen.lineTo(cx, cy)
+                    back?.moveTo(cx, cy); back?.lineTo(sx, sy)
+                } else {
+                    back?.lineTo(cx, cy)
+                    pen.moveTo(cx, cy); pen.lineTo(sx, sy)
+                }
+            }
         }
-        drawPath(path, color, style = Stroke(width, cap = StrokeCap.Round))
+        penX = x; penY = y; penZ = z
+        penDown = true
     }
 
     /** A mark on the ball's surface at the phone-frame direction ([px], [py], [pz]), shown while it faces the player. */
@@ -675,65 +826,17 @@ private const val CAMERA = 6f
 private const val TAPE = 0.3f
 private const val TAPE_GAP = 0.12f
 
-/** An icosahedron split once (42 points on the unit ball, 120 edges), poles on the phone's up axis. */
-private object Icosphere {
-    val vertices: FloatArray
-    val edges: IntArray
-
-    init {
-        val t = ((1 + Math.sqrt(5.0)) / 2).toFloat()
-        val pts = ArrayList<FloatArray>()
-        fun add(x: Float, y: Float, z: Float): Int {
-            val l = kotlin.math.sqrt(x * x + y * y + z * z)
-            pts += floatArrayOf(x / l, y / l, z / l)
-            return pts.size - 1
-        }
-        // The 12 corners: (0, ±1, ±t) and its cyclic turns, then tipped so two corners sit on the y axis.
-        for ((a, b) in listOf(-1f to t, 1f to t, -1f to -t, 1f to -t)) {
-            add(a, b, 0f); add(0f, a, b); add(b, 0f, a)
-        }
-        val tip = atan2(1.0, t.toDouble()).toFloat()
-        for (p in pts) {
-            val x = p[0]
-            val y = p[1]
-            p[0] = x * cos(tip) - y * sin(tip)
-            p[1] = x * sin(tip) + y * cos(tip)
-        }
-        // The 20 faces: every three corners all an edge apart.
-        val edge = 2 / kotlin.math.sqrt(1 + t * t)
-        fun near(i: Int, j: Int): Boolean {
-            val a = pts[i]
-            val b = pts[j]
-            return kotlin.math.abs(hypot(hypot(a[0] - b[0], a[1] - b[1]), a[2] - b[2]) - edge) < 1e-3f
-        }
-        val faces = ArrayList<IntArray>()
-        for (i in 0 until 12) for (j in i + 1 until 12) for (k in j + 1 until 12) {
-            if (near(i, j) && near(j, k) && near(i, k)) faces += intArrayOf(i, j, k)
-        }
-        // Split each face in four, sharing the new middle points between faces.
-        val mids = HashMap<Long, Int>()
-        fun mid(i: Int, j: Int): Int = mids.getOrPut(minOf(i, j).toLong() * 1000 + maxOf(i, j)) {
-            add(pts[i][0] + pts[j][0], pts[i][1] + pts[j][1], pts[i][2] + pts[j][2])
-        }
-        val lines = HashSet<Long>()
-        fun line(i: Int, j: Int) { lines += minOf(i, j).toLong() * 1000 + maxOf(i, j) }
-        for (f in faces) {
-            val ab = mid(f[0], f[1])
-            val bc = mid(f[1], f[2])
-            val ca = mid(f[2], f[0])
-            for ((p, q, s) in listOf(Triple(f[0], ab, ca), Triple(ab, f[1], bc), Triple(ca, bc, f[2]), Triple(ab, bc, ca))) {
-                line(p, q); line(q, s); line(s, p)
-            }
-        }
-        vertices = FloatArray(pts.size * 3).also { out -> pts.forEachIndexed { i, p -> p.copyInto(out, i * 3) } }
-        edges = IntArray(lines.size * 2).also { out ->
-            lines.forEachIndexed { i, k -> out[i * 2] = (k / 1000).toInt(); out[i * 2 + 1] = (k % 1000).toInt() }
-        }
-    }
-}
-
 /** Points round each line on the 3D ball. */
-private const val SPHERE_STEPS = 48
+private const val SPHERE_STEPS = 96
+
+/** The same, drawn polygonal. */
+private const val POLY_STEPS = 12
+
+/** How strongly edges round the back show. */
+private const val HIDDEN_ALPHA = 0.3f
+
+/** The gimbal's yaw, pitch and roll rings, in ball radii. */
+private val GIMBAL_RADII = doubleArrayOf(0.95, 0.82, 0.69)
 
 private const val GHOSTS = 6
 private const val GHOST_MS = 45L
