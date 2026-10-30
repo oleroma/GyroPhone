@@ -27,8 +27,8 @@ import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
-/** Slider top: higher than the old 60, for fast flicks. */
-internal const val MAX_GYRO_SENS = 150f
+/** Slider top: high, for fast flicks. */
+internal const val MAX_GYRO_SENS = 250f
 
 /**
  * One level of workspace settings ([WorkspaceDefaults.keys]): [ws] in effect over [parent], which
