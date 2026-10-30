@@ -163,7 +163,17 @@ internal fun GyroDisplaySettingsScreen(
 
                             GyroDisplayKind.BALL -> {
                                 Hint("A ball turned with the phone: the yellow mark faces the way the screen does, the red one its top.")
-                                PoseSettings(d) { set(it) }
+                                SwitchRow("Trackball", d.trackball) { set(d.copy(trackball = it)) }
+                                if (d.trackball) Indented {
+                                    Hint(
+                                        "While the gyro moves the mouse, the ball holds still against the world, so it rolls the other way on screen, " +
+                                            "like a trackball under your hand. A ratchet stops it (only the axes it pauses), and it turns with the phone.",
+                                    )
+                                    FloatSlider("Spin %.2f×", d.trackballSpin, 0.25f..4f, 0.25f) { set(d.copy(trackballSpin = it)) }
+                                    SwitchRow("Follow gyro sensitivity", d.trackballFollowSensitivity) { set(d.copy(trackballFollowSensitivity = it)) }
+                                    Hint("Each axis also spins by its gyro sensitivity against the default, so the ball keeps pace with the cursor.")
+                                    LevelSlider(d) { set(it) }
+                                } else PoseSettings(d) { set(it) }
                                 Chips(listOf("Globe" to false, "Icosphere" to true), d.icosphere) { set(d.copy(icosphere = it)) }
                                 if (!d.icosphere) SwitchRow("Equator", d.equator) { set(d.copy(equator = it)) }
                                 SwitchRow("Screen mark", d.screenMark) { set(d.copy(screenMark = it)) }

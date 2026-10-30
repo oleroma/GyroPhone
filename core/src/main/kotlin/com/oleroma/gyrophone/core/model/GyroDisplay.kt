@@ -72,11 +72,23 @@ data class GyroDisplay(
     val equator: Boolean = true,
     val screenMark: Boolean = true,
     val topMark: Boolean = true,
+    /**
+     * BALL: a trackball. While the gyro moves the mouse the ball holds still against the world (it
+     * rolls the other way on screen); a ratchet (per axis) stops it, so it turns with the phone.
+     * [trackballSpin] times the phone's turn, also times each axis's gyro sensitivity (against the
+     * default) with [trackballFollowSensitivity]. No gravity, compass, reset or ease back.
+     */
+    val trackball: Boolean = false,
+    val trackballSpin: Float = 1f,
+    val trackballFollowSensitivity: Boolean = false,
     val opacity: Float = 0.7f,
     val colors: Map<String, Long> = emptyMap(),
 ) {
     /** It holds its pose to gravity (and so needs the accelerometer). */
-    val needsGravity: Boolean get() = kind.pose && gravity
+    val needsGravity: Boolean get() = kind.pose && gravity && !isTrackball
+
+    /** A [trackball] ball. */
+    val isTrackball: Boolean get() = kind == GyroDisplayKind.BALL && trackball
 
     /** It holds its heading to north (and so needs the magnetometer). */
     val needsCompass: Boolean get() = needsGravity && compass

@@ -877,7 +877,8 @@ class GamepadRuntime(context: Context) {
         poseRatchets = ratchets
         gyroLiveAxes = axes
         val m = gyroMouse.motion(x, y, z)
-        for (f in feeds) f.feed(m.yaw, m.pitch, m.roll, dt, axes, pressed, ratchets != 0)
+        val gs = if (axes != 0) engine.gyroSettings else null
+        for (f in feeds) f.feed(m.yaw, m.pitch, m.roll, dt, axes, pressed, ratchets != 0, gs)
         if (dt == 0f || !v.gyroEdge) return
         if (v.gyroEdgeTilt) worldPose.fuse(m.yaw, m.pitch, m.roll, dt, GyroDisplayFeed.HEADING_EASE_S)
         else gyroSway.update(m.yaw, m.pitch, m.roll, dt, v.gyroEdgeSpringMs / 1000f)

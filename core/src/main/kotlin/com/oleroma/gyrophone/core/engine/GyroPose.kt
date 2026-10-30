@@ -180,6 +180,33 @@ class GyroPose {
         if (turn(pitch * k, -yaw * k, -roll * k)) version++
     }
 
+    /**
+     * The world as the phone sees it while it turns by [yaw], [pitch] and [roll] (as [rotate]): the
+     * opposite turn, about the view's axes, so the pose holds still against the world.
+     */
+    @Synchronized
+    fun counterRotate(yaw: Float, pitch: Float, roll: Float, dtSeconds: Float) {
+        val k = DEG_TO_RAD * dtSeconds
+        val ax = -pitch * k
+        val ay = yaw * k
+        val az = roll * k
+        val angle = sqrt(ax * ax + ay * ay + az * az)
+        if (angle == 0f) return
+        val s = sin(angle / 2) / angle
+        val bw = cos(angle / 2)
+        val bx = ax * s
+        val by = ay * s
+        val bz = az * s
+        // q = b * q
+        val nw = bw * w - bx * x - by * y - bz * z
+        val nx = bw * x + bx * w + by * z - bz * y
+        val ny = bw * y - bx * z + by * w + bz * x
+        val nz = bw * z + bx * y - by * x + bz * w
+        w = nw; x = nx; y = ny; z = nz
+        normalize()
+        version++
+    }
+
     /** Turns by the rotation vector ([ax], [ay], [az], radians) about the phone's own axes; false when it is zero. */
     private fun turn(ax: Float, ay: Float, az: Float): Boolean {
         val angle = sqrt(ax * ax + ay * ay + az * az)
