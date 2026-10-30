@@ -659,23 +659,20 @@ fun PadScreen(
             controls.lastOrNull { it.contains(p.x, p.y, w, h, inPortrait = portrait) }
 
         /**
-         * Sets the current orientation's centre, optionally snapped to the grid. A control may
-         * be larger than the screen and hang off its edges, but a fingertip of it
-         * ([KEEP_ON_SCREEN_DP], all of a smaller one) stays on screen on each axis.
+         * Sets the current orientation's centre. A control may be larger than the screen and
+         * hang off its edges, but a fingertip of it ([KEEP_ON_SCREEN_DP], all of a smaller one)
+         * stays on screen on each axis.
          */
-        fun place(c: TouchControl, x: Float, y: Float, snapToGrid: Boolean): TouchControl {
+        fun place(c: TouchControl, x: Float, y: Float): TouchControl {
             val hw = half(c);
             val hh = halfH(c)
-            // Snapping puts the left and top edges on grid lines (a control sized by the grid then fills whole cells).
-            val sx = if (snapToGrid) (((x * w - hw) / (GRID * w)).roundToInt() * GRID * w + hw) / w else x
-            val sy = if (snapToGrid) (((y * h - hh) / (GRID * h)).roundToInt() * GRID * h + hh) / h else y
             val keep = KEEP_ON_SCREEN_DP * pxPerDp
             val kx = min(2f * hw, keep);
             val ky = min(2f * hh, keep)
             return c.withPlacement(
                 portrait,
-                sx.coerceIn((kx - hw) / w, 1f - (kx - hw) / w),
-                sy.coerceIn((ky - hh) / h, 1f - (ky - hh) / h),
+                x.coerceIn((kx - hw) / w, 1f - (kx - hw) / w),
+                y.coerceIn((ky - hh) / h, 1f - (ky - hh) / h),
                 c.placeSize(portrait),
             )
         }
@@ -711,7 +708,7 @@ fun PadScreen(
                 portrait, it.placeX(portrait), it.placeY(portrait),
                 size.coerceIn(TouchControl.MIN_SIZE, TouchControl.MAX_SIZE),
             )
-            place(sized, sized.placeX(portrait), sized.placeY(portrait), false)
+            place(sized, sized.placeX(portrait), sized.placeY(portrait))
         }
 
         /** Resizes a control; with [Profile.cornerSameSize], all corners follow. */
@@ -721,8 +718,21 @@ fun PadScreen(
                 .forEach { resizeOne(it, size) } else resizeOne(id, size)
         }
 
-        /** Puts a control's edges on grid lines: a rectangle's four, a round one's left, right and top (it stays round). */
-        fun snapEdges(id: String) = updateControl(id) { c ->
+        /**
+         * Puts a control's edges on the nearest grid lines, so its size fills whole cells: a
+         * rectangle's four edges, a round one's left, right and top (it stays round). A corner
+         * keeps its size (corners may share one): only its left and top edges snap.
+         */
+        fun snapped(c: TouchControl): TouchControl {
+            val d = draft
+            if (d != null && isCorner(d, c.id)) {
+                val hw = half(c)
+                val hh = halfH(c)
+                val o = center(c)
+                val l = ((o.x - hw) / (GRID * w)).roundToInt() * GRID * w
+                val t = ((o.y - hh) / (GRID * h)).roundToInt() * GRID * h
+                return place(c, (l + hw) / w, (t + hh) / h)
+            }
             val gx = GRID * w
             val gy = GRID * h
             val o = center(c)
@@ -736,8 +746,12 @@ fun PadScreen(
             val size = ((r - l) / unit).coerceIn(TouchControl.MIN_SIZE, TouchControl.MAX_SIZE)
             val sized = c.withPlacement(portrait, c.placeX(portrait), c.placeY(portrait), size)
                 .let { if (rect) it.copy(aspect = (b - t) / (r - l)) else it }
-            place(sized, (l + r) / 2f / w, (t + b) / 2f / h, false)
+            return place(sized, (l + r) / 2f / w, (t + b) / 2f / h)
         }
+
+        /** Places a control, with [snap] on with its edges on grid lines. */
+        fun placeSnapped(c: TouchControl, x: Float, y: Float): TouchControl =
+            place(c, x, y).let { if (snap) snapped(it) else it }
 
         val touchModifier = if (editing) {
             Modifier.pointerInput("edit", w, h) {
@@ -931,7 +945,7 @@ fun PadScreen(
                                         val id = target
                                         if (id != null) {
                                             val p = main.position - grab
-                                            updateControl(id) { place(it, p.x / w, p.y / h, snap) }
+                                            updateControl(id) { placeSnapped(it, p.x / w, p.y / h) }
                                         }
                                     }
                                 }
@@ -970,7 +984,7 @@ fun PadScreen(
                                                 val cy = mid.y + (startCenter.y - startMid.y) * nh / startH
                                                 val sized = c.withPlacement(portrait, c.placeX(portrait), c.placeY(portrait), nw / unit)
                                                     .let { if (rect) it.copy(aspect = nh / nw) else it }
-                                                place(sized, cx / w, cy / h, false)
+                                                placeSnapped(sized, cx / w, cy / h)
                                             }
                                         }
                                     }
@@ -1003,12 +1017,6 @@ fun PadScreen(
                                 // A two-finger tap selects without opening anything (a long press is for settings).
                                 selected = tapTarget
                                 menu = EditMenu.NONE
-                            }
-
-                            EditGesture.PINCH -> {
-                                val id = target
-                                val d = draft
-                                if (snap && id != null && d != null && !isCorner(d, id)) snapEdges(id)
                             }
 
                             EditGesture.EMPTY -> {
@@ -1821,7 +1829,7 @@ fun PadScreen(
 
                         /** A pad position for something added: where it was dropped, else the middle. */
                         fun addAt(at: Offset?, c: TouchControl) =
-                            if (at == null) place(c, 0.5f, 0.5f, false) else place(c, at.x / w, at.y / h, snap)
+                            if (at == null) place(c, 0.5f, 0.5f) else placeSnapped(c, at.x / w, at.y / h)
 
                         // Fixed: dots (move), ⚙ (this workspace's settings), undo, redo, lock, Done, Cancel.
                         // Then a scrolling strip of the layout tools.
@@ -2122,7 +2130,7 @@ fun PadScreen(
                             val copy = nw.touchControls.first { it.id == id }
                             editWorkspace {
                                 nw.copy(touchControls = nw.touchControls.map {
-                                    if (it.id == id) place(copy, copy.placeX(portrait), copy.placeY(portrait), false) else it
+                                    if (it.id == id) place(copy, copy.placeX(portrait), copy.placeY(portrait)) else it
                                 })
                             }
                             selected = id
@@ -2170,8 +2178,7 @@ fun PadScreen(
                                 place(
                                     changed,
                                     changed.placeX(portrait),
-                                    changed.placeY(portrait),
-                                    false
+                                    changed.placeY(portrait)
                                 )
                             }
                         },
@@ -2186,8 +2193,7 @@ fun PadScreen(
                                     if (it.id == id) place(
                                         copy,
                                         copy.placeX(portrait),
-                                        copy.placeY(portrait),
-                                        false
+                                        copy.placeY(portrait)
                                     ) else it
                                 })
                             }
