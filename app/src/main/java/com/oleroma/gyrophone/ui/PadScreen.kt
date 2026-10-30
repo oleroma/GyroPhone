@@ -216,6 +216,17 @@ private const val PINCH_AXIS_FLOOR_DP = 48f
 /** Edit mode: the selected control, and the panel buttons that act on it. */
 private val SELECTED_COLOR = Color(0xFFFFC857)
 
+/**
+ * A rectangle's pinch locks to one axis, like a heading lock: once the fingers' spread has changed
+ * by [PINCH_LOCK_DECIDE_DP], an axis that changed [PINCH_LOCK_RATIO] times more than the other is
+ * the only one resized. The other joins in once its own spread changes by [PINCH_LOCK_RELEASE_DP].
+ */
+private enum class PinchLock { UNDECIDED, X, Y, FREE }
+
+private const val PINCH_LOCK_DECIDE_DP = 16f
+private const val PINCH_LOCK_RATIO = 2f
+private const val PINCH_LOCK_RELEASE_DP = 40f
+
 /** Pinch scale on one axis: the spread [now] over the spread at the start, with [floor] as the least start. */
 private fun axisScale(start: Float, now: Float, floor: Float): Float {
     val base = max(start, floor)
@@ -798,6 +809,7 @@ fun PadScreen(
                         var startDy = 0f
                         var startCenter = Offset.Zero
                         var startMid = Offset.Zero
+                        var pinchLock = PinchLock.UNDECIDED
                         var pinchA: PointerId? = null
                         var pinchB: PointerId? = null
                         // Two-finger tap: where each finger landed, and the control under them.
@@ -885,6 +897,7 @@ fun PadScreen(
                                     val c = findControl(selected)
                                     if (c != null && !lockedOut(c.id)) {
                                         mode = EditGesture.PINCH
+                                        pinchLock = PinchLock.UNDECIDED
                                         target = c.id
                                         menu = EditMenu.NONE
                                         // Holds the undo step until the pinch ends.
@@ -974,8 +987,40 @@ fun PadScreen(
                                                 val nw: Float
                                                 val nh: Float
                                                 if (rect) {
-                                                    nw = (startW * axisScale(startDx, abs(a.position.x - b.position.x), floor)).coerceIn(lo, hi)
-                                                    nh = (startH * axisScale(startDy, abs(a.position.y - b.position.y), floor)).coerceIn(lo, hi)
+                                                    val dx = abs(a.position.x - b.position.x)
+                                                    val dy = abs(a.position.y - b.position.y)
+                                                    val ddx = abs(dx - startDx)
+                                                    val ddy = abs(dy - startDy)
+                                                    if (pinchLock == PinchLock.UNDECIDED && max(ddx, ddy) > PINCH_LOCK_DECIDE_DP * pxPerDp) {
+                                                        pinchLock = when {
+                                                            ddx > ddy * PINCH_LOCK_RATIO -> PinchLock.X
+                                                            ddy > ddx * PINCH_LOCK_RATIO -> PinchLock.Y
+                                                            else -> PinchLock.FREE
+                                                        }
+                                                    }
+                                                    // The held axis lets go past the release spread; it then grows from
+                                                    // there, so its size doesn't jump.
+                                                    val release = PINCH_LOCK_RELEASE_DP * pxPerDp
+                                                    if (pinchLock == PinchLock.X && ddy > release) {
+                                                        pinchLock = PinchLock.FREE
+                                                        startDy = dy
+                                                    } else if (pinchLock == PinchLock.Y && ddx > release) {
+                                                        pinchLock = PinchLock.FREE
+                                                        startDx = dx
+                                                    }
+                                                    // Undecided: only the axis that changed more follows for now.
+                                                    val sizeX = when (pinchLock) {
+                                                        PinchLock.X, PinchLock.FREE -> true
+                                                        PinchLock.Y -> false
+                                                        PinchLock.UNDECIDED -> ddx >= ddy
+                                                    }
+                                                    val sizeY = when (pinchLock) {
+                                                        PinchLock.Y, PinchLock.FREE -> true
+                                                        PinchLock.X -> false
+                                                        PinchLock.UNDECIDED -> ddy > ddx
+                                                    }
+                                                    nw = if (sizeX) (startW * axisScale(startDx, dx, floor)).coerceIn(lo, hi) else startW
+                                                    nh = if (sizeY) (startH * axisScale(startDy, dy, floor)).coerceIn(lo, hi) else startH
                                                 } else {
                                                     nw = (startW * dist / startDist).coerceIn(lo, hi)
                                                     nh = nw
