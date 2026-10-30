@@ -160,7 +160,8 @@ class HoldZonesTest {
 
     @Test
     fun directionChangeNeverGoesBackAZone() {
-        val f = Finger(TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE))
+        // Larger-axis pies: the sideways wobble is no travel up.
+        val f = Finger(TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE, holdPieX = 90f, holdPieY = 90f))
         f.down()
         f.go(0f, -30f); assertEquals(z1, f.now)
         f.go(0f, -20f); assertEquals(z2, f.now)

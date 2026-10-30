@@ -6,7 +6,7 @@ import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.SurfaceSettings
 import com.oleroma.gyrophone.core.model.TouchpadSettings
-import com.oleroma.gyrophone.core.model.evenPies
+import com.oleroma.gyrophone.core.model.directionsAt
 import com.oleroma.gyrophone.core.model.with
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -49,8 +49,8 @@ class DirectionSettingsTest {
 
     @Test
     fun holdPieOfItsOwn() {
-        // Swipes in 90° pies; Up's hold only in a 30° one, so a 30° slant holds nothing from the start point.
-        val s = TouchpadSettings(holdDp = 20f, pies = List(4) { 90f }).withDir(Direction.UP) { it.copy(holdPie = 30f) }
+        // Held directions in 90° pies; Up's only in a 30° one, so a 30° slant holds nothing from the start point.
+        val s = TouchpadSettings(holdDp = 20f, holdPieX = 90f, holdPieY = 90f).withDir(Direction.UP) { it.copy(holdPie = 30f) }
         val t = DirectionTracker().apply { start() }
         t.go(s, 0.5f, -0.866f, 40)
         assertEquals(0, t.held)
@@ -68,11 +68,33 @@ class DirectionSettingsTest {
     }
 
     @Test
-    fun unevenPiesBecomeDirectionsOwn() {
-        val s = TouchpadSettings(pies = listOf(60f, 90f, 90f, 120f)).evenPies()
-        assertEquals(List(4) { 60f }, s.pies)
-        assertNull(s.dir(Direction.UP).swipePie)
-        assertEquals(90f, s.pieDeg(Direction.RIGHT, hold = false))
-        assertEquals(120f, s.pieDeg(Direction.LEFT, hold = true))
+    fun piesAndSamplesPerAxisAndDirection() {
+        val s = TouchpadSettings(swipePieX = 60f, swipePieY = 120f, holdSampleDp = 8f)
+            .withDir(Direction.LEFT) { it.copy(swipePie = 30f, holdSample = 2f) }
+        assertEquals(60f, s.pieDeg(Direction.RIGHT, hold = false))
+        assertEquals(30f, s.pieDeg(Direction.LEFT, hold = false))
+        assertEquals(120f, s.pieDeg(Direction.UP, hold = false))
+        assertEquals(180f, s.pieDeg(Direction.UP, hold = true))
+        assertEquals(8f, s.sampleDp(Direction.UP, hold = true))
+        assertEquals(2f, s.sampleDp(Direction.LEFT, hold = true))
+        assertEquals(4f, s.sampleDp(Direction.LEFT, hold = false))
+    }
+
+    @Test
+    fun aLongerSampleWaitsLonger() {
+        // Up judges its swipe on 12 dp, Right on the shared 4: Right is found first.
+        val s = TouchpadSettings(swipeDp = 2f).withDir(Direction.UP) { it.copy(swipeSample = 12f) }
+        val t = DirectionTracker().apply { start() }
+        assertEquals(0, t.go(s, 0f, -1f, 6))
+        assertEquals(up, t.go(s, 0f, -1f, 10))
+        t.start()
+        assertEquals(right, t.go(s, 1f, 0f, 6))
+    }
+
+    @Test
+    fun aHalfPieNeverCountsSquareAcross() {
+        val s = TouchpadSettings()
+        assertEquals(right, s.directionsAt(10f, 0f, hold = true))
+        assertEquals(up or right, s.directionsAt(10f, -1f, hold = true))
     }
 }

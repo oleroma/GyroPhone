@@ -40,7 +40,7 @@ class SwipeGuide(val settings: TouchpadSettings, private val zones: IntArray, pr
             val along = along(d, dx, dy)
             // A direction with a Swipe hold uses its hold pie, one with only a Swipe its swipe pie.
             val hold = zones[d.ordinal] != 0
-            if (along <= bestAlong || (settings.pies != null && !settings.inPie(dx, dy, d, hold))) continue
+            if (along <= bestAlong || !settings.inPie(dx, dy, d, hold)) continue
             best = d; bestAlong = along
         }
         return best
@@ -91,7 +91,7 @@ class SwipeGuide(val settings: TouchpadSettings, private val zones: IntArray, pr
             ox *= most / dist; oy *= most / dist
             start[0] = fx - ox; start[1] = fy - oy
         }
-        val now = Direction.entries.any { along(it, ox, oy) >= holdDp(it) && (s.pies == null || s.inPie(ox, oy, it, hold = true)) }
+        val now = Direction.entries.any { along(it, ox, oy) >= holdDp(it) && s.inPie(ox, oy, it, hold = true) }
         if (!now && held) {
             start[0] = fx; start[1] = fy
         }

@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -36,7 +35,6 @@ import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.SurfaceField
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.ZoneKeep
-import com.oleroma.gyrophone.core.model.directionsAt
 import kotlin.math.roundToInt
 
 /** Same top as the workspace touchpad's speed sliders had. */
@@ -115,72 +113,37 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
                 ) { v -> edit { it.copy(deadzoneStillDp = v) } }
             }
         }
+        SectionTitle("Move")
         OverrideRow(
-            "Move direction", own(SurfaceField.MOVE_MODE), reset(SurfaceField.MOVE_MODE),
-            hint = moveModeHint(s.moveMode) + " Each Move's ⚙ can set its own.",
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (mode in MoveMode.entries) SelectChip(mode.label, s.moveMode == mode) { edit { it.copy(moveMode = mode) } }
-            }
+            "Direction", own(SurfaceField.MOVE_MODE), reset(SurfaceField.MOVE_MODE),
+            hint = moveModeHint(s.moveMode) + " Each Move X / Y ⚙ can set its own.",
+        ) { MoveModeChips(s.moveMode) { m -> edit { it.copy(moveMode = m) } } }
+        if (s.moveMode != MoveMode.FREE) {
+            SharedPies(level, key, PieKind.MOVE)
         }
-        OverrideSlider(
-            key + "mpx", "Move X pie %.0f°", s.movePieX, TouchpadSettings.MIN_MOVE_PIE_DEG..TouchpadSettings.MAX_MOVE_PIE_DEG, 5f,
-            own(SurfaceField.MOVE_PIE_X), reset(SurfaceField.MOVE_PIE_X),
-            hint = "With Pie: Move X moves while the finger heads within this pie, left and right alike.",
-        ) { v -> edit { it.copy(movePieX = v) } }
-        OverrideSlider(
-            key + "mpy", "Move Y pie %.0f°", s.movePieY, TouchpadSettings.MIN_MOVE_PIE_DEG..TouchpadSettings.MAX_MOVE_PIE_DEG, 5f,
-            own(SurfaceField.MOVE_PIE_Y), reset(SurfaceField.MOVE_PIE_Y),
-            hint = "With Pie: Move Y moves while the finger heads within this pie, up and down alike.",
-        ) { v -> edit { it.copy(movePieY = v) } }
-        OverrideSlider(
-            key + "msample", "Move sample %.1f dp", s.moveSampleDp, TouchpadSettings.MIN_MOVE_SAMPLE_DP..TouchpadSettings.MAX_MOVE_SAMPLE_DP, 0.5f,
-            own(SurfaceField.MOVE_SAMPLE), reset(SurfaceField.MOVE_SAMPLE),
-            hint = "Not with Free: a Move's heading is that of about the last this much travel. A stroke's first this much waits for it, then goes on at once.",
-        ) { v -> edit { it.copy(moveSampleDp = v) } }
 
-        SectionTitle("Directions")
-        DirectionPies(s)
-        OverrideRow(
-            "Classic directions",
-            own(SurfaceField.PIES),
-            reset(SurfaceField.PIES),
-            hint = if (s.pies == null) "A swipe goes the way of its larger axis; held directions from the start point work per axis, so diagonals hold both."
-            else "Each direction counts inside its own pie: wider pies overlap (both count there), narrower ones leave gaps.",
-            trailing = {
-                Switch(checked = s.pies == null, onCheckedChange = { classic ->
-                    edit { it.copy(pies = if (classic) null else List(4) { TouchpadSettings.CLASSIC_PIE_DEG }) }
-                })
-            },
-        ) {
-            val pies = s.pies
-            if (pies != null) {
-                DirSlider(key + "pie", "Pies %.0f°", pies[0], TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f) { v ->
-                    edit { it.copy(pies = List(4) { v }) }
-                }
-            }
-        }
-        OverrideSlider(
-            key + "sample", "Direction sample %.0f dp", s.dirSampleDp,
-            TouchpadSettings.MIN_DIR_SAMPLE_DP..TouchpadSettings.MAX_DIR_SAMPLE_DP, 1f, own(SurfaceField.DIR_SAMPLE), reset(SurfaceField.DIR_SAMPLE),
-            hint = "The direction is that of about the last this much travel, so small wobbles don't change it.",
-        ) { v -> edit { it.copy(dirSampleDp = v) } }
+        SectionTitle("Swipe")
+        SharedPies(level, key, PieKind.SWIPE)
         OverrideSlider(
             key + "swipe", "Swipe after %.0f dp", s.swipeDp,
             TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f, own(SurfaceField.SWIPE), reset(SurfaceField.SWIPE),
             hint = "Measured from where the finger turned into that direction. Each new direction swipes again.",
         ) { v -> edit { it.copy(swipeDp = v) } }
+
+        SectionTitle("Swipe hold")
         OverrideRow(
-            "Held directions",
+            "Hold mode",
             own(SurfaceField.HOLD_MODE),
             reset(SurfaceField.HOLD_MODE),
             hint = if (s.holdMode == HoldMode.FROM_START) "Held while the finger is past the hold distance from the start point, like a floating stick: sliding back lets go."
-            else "Held once the finger has gone the hold distance that way, until it goes another way as far or lifts. There is no neutral spot.",
+            else "Held once the finger has gone the hold distance that way, until it goes another way as far or lifts. There is no neutral spot. " +
+                    "Pies of 90° (Larger axis) keep one direction at a time.",
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (m in HoldMode.entries) SelectChip(m.label, s.holdMode == m) { edit { it.copy(holdMode = m) } }
             }
         }
+        SharedPies(level, key, PieKind.HOLD)
         OverrideSlider(
             key + "hold", "Hold after %.0f dp", s.holdDp,
             TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f, own(SurfaceField.HOLD), reset(SurfaceField.HOLD),
@@ -203,8 +166,7 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
         }
         OverrideSwitch(
             "Keep held after lift",
-            "A held direction stays held when the fingers lift. A tap lets it go; swiping on carries on from it. " +
-                    "Each Swipe hold ⚙ can set its own.",
+            "A held direction stays held when the fingers lift. A tap lets it go; swiping on carries on from it.",
             s.latch, own(SurfaceField.LATCH), reset(SurfaceField.LATCH),
         ) { v -> edit { it.copy(latch = v) } }
         if (s.latch) {
@@ -215,8 +177,8 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
             ) { v -> edit { it.copy(latchReleaseMs = (v * 1000).roundToInt()) } }
         }
         DirNote(
-            "Every direction uses these unless it sets its own: ⚙ on a Swipe card sets its pie and swipe distance, " +
-                    "⚙ on a Swipe hold card its pie, hold distance, keep held and length zones."
+            "Every Move, Swipe and Swipe hold uses these unless its ⚙ in the mapping editor sets its own: " +
+                    "a Move X / Y its pie, a Swipe or Swipe hold direction its pie, sample and distance."
         )
         SectionTitle("Length zones")
         if (zones.any { it > 1 }) HoldZoneSettings(s, zones, key, only = null, zone = null, onChange = current.setZones)
@@ -225,8 +187,8 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
 }
 
 /**
- * The ⚙ of direction [d]'s Swipe ([hold] false: its pie and swipe distance) or Swipe hold (its
- * pie, hold distance, keep held after lift and, with [zones] mapped, its length zones), each its
+ * The ⚙ of direction [d]'s Swipe ([hold] false: its pie, sample and swipe distance) or Swipe hold (its
+ * pie, sample, hold distance, keep held after lift and, with [zones] mapped, its length zones), each its
  * own over [level]'s shared value (the Settings), highlighted with a ↺ where it sets its own.
  */
 @Composable
@@ -241,16 +203,21 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
 
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         ResetAllButton("Settings", fields.any(::own)) { fields.forEach { current.resetDir(d, it) } }
-        DirectionPies(s, hold, d)
+        var live by remember { mutableStateOf<Float?>(null) }
         val pie = if (hold) DirField.HOLD_PIE else DirField.SWIPE_PIE
-        if (s.pies == null) DirNote(
-            if (hold) "Classic directions (Settings): held directions work per axis, no pies."
-            else "Classic directions (Settings): a swipe goes the way of its larger axis, no pies."
-        ) else OverrideSlider(
+        val sample = if (hold) DirField.HOLD_SAMPLE else DirField.SWIPE_SAMPLE
+        PiePicture(if (hold) PieKind.HOLD else PieKind.SWIPE, shown = 1 shl d.ordinal) { live ?: s.pieDeg(it, hold) }
+        OverrideSlider(
             k + "pie", "Pie %.0f°", s.pieDeg(d, hold), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
             own(pie), reset(pie),
             hint = if (hold) "Where a held ${d.label} counts. Its Swipe has a pie of its own." else "Where a swipe ${d.label} counts. Its Swipe hold has a pie of its own.",
+            onLive = { live = it },
         ) { v -> edit { if (hold) it.copy(holdPie = v) else it.copy(swipePie = v) } }
+        OverrideSlider(
+            k + "sample", "Sample %.1f dp", s.sampleDp(d, hold), TouchpadSettings.MIN_SAMPLE_DP..TouchpadSettings.MAX_SAMPLE_DP, 0.5f,
+            own(sample), reset(sample),
+            hint = SAMPLE_HINT,
+        ) { v -> edit { if (hold) it.copy(holdSample = v) else it.copy(swipeSample = v) } }
         if (!hold) {
             OverrideSlider(
                 k + "dp", "Swipe after %.0f dp", s.swipeDpOf(d), TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f,
@@ -311,22 +278,22 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
         ) { v -> edit(MoveField.ACCELERATION) { it.copy(acceleration = v) } }
         val mode = if (x) f.modeX else f.modeY
         OverrideRow("Direction", own(MoveField.MODE), reset(MoveField.MODE), hint = moveModeHint(mode)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (md in MoveMode.entries) SelectChip(md.label, mode == md) { edit(MoveField.MODE) { it.copy(mode = md) } }
-            }
-        }
-        if (mode == MoveMode.PIE) {
-            OverrideSlider(
-                k + "pie", "Pie %.0f°", if (x) f.pieX else f.pieY, TouchpadSettings.MIN_MOVE_PIE_DEG..TouchpadSettings.MAX_MOVE_PIE_DEG, 5f,
-                own(MoveField.PIE), reset(MoveField.PIE),
-                hint = "It moves while the finger heads within this pie, " + if (x) "left and right alike." else "up and down alike.",
-            ) { v -> edit(MoveField.PIE) { it.copy(pie = v) } }
+            MoveModeChips(mode) { md -> edit(MoveField.MODE) { it.copy(mode = md) } }
         }
         if (mode != MoveMode.FREE) {
+            var live by remember { mutableStateOf<Float?>(null) }
+            val pie = if (x) f.pieX else f.pieY
+            PiePicture(PieKind.MOVE, shown = PieKind.axisMask(x)) { live ?: pie }
             OverrideSlider(
-                k + "sample", "Sample %.1f dp", f.moveSampleDp, TouchpadSettings.MIN_MOVE_SAMPLE_DP..TouchpadSettings.MAX_MOVE_SAMPLE_DP, 0.5f,
+                k + "pie", "Pie %.0f°", pie, TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
+                own(MoveField.PIE), reset(MoveField.PIE),
+                hint = "It moves while the finger heads within this pie, " + if (x) "left and right alike." else "up and down alike.",
+                onLive = { live = it },
+            ) { v -> edit(MoveField.PIE) { it.copy(pie = v) } }
+            OverrideSlider(
+                k + "sample", "Sample %.1f dp", f.moveSampleDp, TouchpadSettings.MIN_SAMPLE_DP..TouchpadSettings.MAX_SAMPLE_DP, 0.5f,
                 own(MoveField.SAMPLE), reset(MoveField.SAMPLE),
-                hint = "The heading is that of about the last this much travel; a stroke's first this much waits for it. For Move X and Y alike.",
+                hint = "$SAMPLE_HINT A stroke's first this much waits for it. For Move X and Y alike.",
             ) { v -> edit(MoveField.SAMPLE) { it.copy(sample = v) } }
         }
         if (m.fingers == 1) {
@@ -377,8 +344,97 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
 /** What Move direction [mode] does. */
 private fun moveModeHint(mode: MoveMode): String = when (mode) {
     MoveMode.FREE -> "Free: the finger moves both ways at once, with no delay."
-    MoveMode.LARGER_AXIS -> "Larger axis: only the way the finger mostly goes moves, so motion snaps straight."
-    MoveMode.PIE -> "Pie: each Move moves while the finger heads within its pie; wide pies overlap at diagonals."
+    MoveMode.PIE, MoveMode.LARGER_AXIS -> "Pie: a Move moves while the finger heads within its pie. 90° pies snap to the larger axis; wider ones overlap at diagonals."
+}
+
+private const val SAMPLE_HINT = "The heading is that of about the last this much travel, so small wobbles don't change it."
+
+/** Move direction chips: Free or Pie (an old Larger axis shows as Pie: it is two 90° pies). */
+@Composable
+private fun MoveModeChips(mode: MoveMode, onPick: (MoveMode) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        SelectChip(MoveMode.FREE.label, mode == MoveMode.FREE) { onPick(MoveMode.FREE) }
+        SelectChip(MoveMode.PIE.label, mode != MoveMode.FREE) { onPick(MoveMode.PIE) }
+    }
+}
+
+/**
+ * Whose pies a picture shows, with the shared settings of them: Move X / Y's (one width per axis),
+ * the swipes' or the held directions' (per direction, over the shared width of its axis).
+ */
+private enum class PieKind(val pieX: SurfaceField, val pieY: SurfaceField, val sample: SurfaceField) {
+    MOVE(SurfaceField.MOVE_PIE_X, SurfaceField.MOVE_PIE_Y, SurfaceField.MOVE_SAMPLE),
+    SWIPE(SurfaceField.SWIPE_PIE_X, SurfaceField.SWIPE_PIE_Y, SurfaceField.SWIPE_SAMPLE),
+    HOLD(SurfaceField.HOLD_PIE_X, SurfaceField.HOLD_PIE_Y, SurfaceField.HOLD_SAMPLE);
+
+    fun x(s: TouchpadSettings) = when (this) { MOVE -> s.movePieX; SWIPE -> s.swipePieX; HOLD -> s.holdPieX }
+    fun y(s: TouchpadSettings) = when (this) { MOVE -> s.movePieY; SWIPE -> s.swipePieY; HOLD -> s.holdPieY }
+    fun sample(s: TouchpadSettings) = when (this) { MOVE -> s.moveSampleDp; SWIPE -> s.swipeSampleDp; HOLD -> s.holdSampleDp }
+
+    fun withX(s: TouchpadSettings, v: Float) = when (this) { MOVE -> s.copy(movePieX = v); SWIPE -> s.copy(swipePieX = v); HOLD -> s.copy(holdPieX = v) }
+    fun withY(s: TouchpadSettings, v: Float) = when (this) { MOVE -> s.copy(movePieY = v); SWIPE -> s.copy(swipePieY = v); HOLD -> s.copy(holdPieY = v) }
+    fun withSample(s: TouchpadSettings, v: Float) =
+        when (this) { MOVE -> s.copy(moveSampleDp = v); SWIPE -> s.copy(swipeSampleDp = v); HOLD -> s.copy(holdSampleDp = v) }
+
+    /** The pie of [d] in [s]: a direction's own one counts for swipes and held directions. */
+    fun width(s: TouchpadSettings, d: Direction): Float = when (this) {
+        MOVE -> if (d.x) s.movePieX else s.movePieY
+        SWIPE -> s.pieDeg(d, hold = false)
+        HOLD -> s.pieDeg(d, hold = true)
+    }
+
+    companion object {
+        const val ALL = 0b1111
+
+        /** Left and right ([x]), or up and down. */
+        fun axisMask(x: Boolean): Int =
+            if (x) (1 shl Direction.LEFT.ordinal) or (1 shl Direction.RIGHT.ordinal)
+            else (1 shl Direction.UP.ordinal) or (1 shl Direction.DOWN.ordinal)
+    }
+}
+
+/**
+ * [kind]'s shared pies at [level]: the picture (redrawn while a slider is dragged), X pie, Y pie,
+ * quick widths and Sample, each its own over the parent's.
+ */
+@Composable
+private fun SharedPies(level: SurfaceLevel, key: String, kind: PieKind) {
+    val current by rememberUpdatedState(level)
+    val s = level.eff
+    var live by remember { mutableStateOf<TouchpadSettings?>(null) }
+    val shownOf = live ?: s
+    PiePicture(kind) { kind.width(shownOf, it) }
+    fun edit(change: (TouchpadSettings) -> TouchpadSettings) = current.edit(change)
+    val (xs, ys) = when (kind) {
+        PieKind.MOVE -> "Move X" to "Move Y"
+        else -> "Left and Right" to "Up and Down"
+    }
+    OverrideSlider(
+        key + kind.name + "x", "X pie %.0f°", kind.x(s), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
+        level.isOwn(kind.pieX), { current.reset(kind.pieX) },
+        hint = "$xs alike.",
+        onLive = { v -> live = v?.let { kind.withX(s, it) } },
+    ) { v -> edit { kind.withX(it, v) } }
+    OverrideSlider(
+        key + kind.name + "y", "Y pie %.0f°", kind.y(s), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
+        level.isOwn(kind.pieY), { current.reset(kind.pieY) },
+        hint = "$ys alike.",
+        onLive = { v -> live = v?.let { kind.withY(s, it) } },
+    ) { v -> edit { kind.withY(it, v) } }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        fun both(deg: Float) = edit { kind.withY(kind.withX(it, deg), deg) }
+        val x = kind.x(s)
+        val y = kind.y(s)
+        SelectChip("Larger axis 90°", x == TouchpadSettings.LARGER_AXIS_PIE_DEG && y == x) { both(TouchpadSettings.LARGER_AXIS_PIE_DEG) }
+        if (kind == PieKind.HOLD) {
+            SelectChip("Per axis 180°", x == TouchpadSettings.PER_AXIS_PIE_DEG && y == x) { both(TouchpadSettings.PER_AXIS_PIE_DEG) }
+        }
+    }
+    OverrideSlider(
+        key + kind.name + "sample", "Sample %.1f dp", kind.sample(s), TouchpadSettings.MIN_SAMPLE_DP..TouchpadSettings.MAX_SAMPLE_DP, 0.5f,
+        level.isOwn(kind.sample), { current.reset(kind.sample) },
+        hint = SAMPLE_HINT + if (kind == PieKind.MOVE) " A stroke's first this much waits for it." else "",
+    ) { v -> edit { kind.withSample(it, v) } }
 }
 
 @Composable
@@ -494,15 +550,18 @@ private fun ZoneList(s: TouchpadSettings, d: Direction, list: List<HoldZone>, n:
 }
 
 /**
- * The four pies (of the swipes, or with [hold] of the held directions; [only]: that one stands
- * out), with a live dot: touching the circle shows which directions that way counts as.
+ * [kind]'s pies, [width] wide each (degrees), only those of [shown] (mask of 1 shl
+ * [Direction.ordinal]), with a live line: touching the circle shows what that way counts as.
  */
 @Composable
-private fun DirectionPies(s: TouchpadSettings, hold: Boolean = false, only: Direction? = null) {
+private fun PiePicture(kind: PieKind, shown: Int = PieKind.ALL, width: (Direction) -> Float) {
     val colors = MaterialTheme.colorScheme
-    val pieColors = listOf(colors.primary, colors.tertiary, colors.secondary, colors.error)
+    // Move: one colour per axis; swipes and held directions: one per direction.
+    val pieColors = if (kind == PieKind.MOVE) listOf(colors.tertiary, colors.primary, colors.tertiary, colors.primary)
+    else listOf(colors.primary, colors.tertiary, colors.secondary, colors.error)
     var touch by remember { mutableStateOf<Offset?>(null) }
     val at = touch
+    val widths = Direction.entries.map { width(it).coerceIn(TouchpadSettings.MIN_PIE_DEG, TouchpadSettings.MAX_PIE_DEG) }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Canvas(
             Modifier
@@ -526,10 +585,10 @@ private fun DirectionPies(s: TouchpadSettings, hold: Boolean = false, only: Dire
             val c = Offset(size.width / 2f, size.height / 2f)
             drawCircle(colors.outline, r, c, style = Stroke(1.dp.toPx()))
             for (d in Direction.entries) {
-                // Classic: quadrants for swipes (held directions from the start point work per axis).
-                val w = s.pieDeg(d, hold)
+                if (shown and (1 shl d.ordinal) == 0) continue
+                val w = widths[d.ordinal]
                 drawArc(
-                    pieColors[d.ordinal].copy(alpha = if (only == null || only == d) 0.35f else 0.1f),
+                    pieColors[d.ordinal].copy(alpha = 0.35f),
                     startAngle = d.deg - 90f - w / 2f, sweepAngle = w, useCenter = true,
                     topLeft = Offset(c.x - r, c.y - r), size = androidx.compose.ui.geometry.Size(2 * r, 2 * r),
                 )
@@ -542,17 +601,24 @@ private fun DirectionPies(s: TouchpadSettings, hold: Boolean = false, only: Dire
             }
         }
         Column(Modifier.fillMaxWidth()) {
-            for (d in Direction.entries) {
+            val legend = if (kind == PieKind.MOVE) {
+                listOf("Move X" to Direction.RIGHT, "Move Y" to Direction.UP).filter { (_, d) -> shown and PieKind.axisMask(d.x) != 0 }
+            } else Direction.entries.filter { shown and (1 shl it.ordinal) != 0 }.map { it.label to it }
+            for ((label, d) in legend) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Canvas(Modifier.size(12.dp)) { drawCircle(pieColors[d.ordinal].copy(alpha = 0.6f)) }
-                    Text(d.label, Modifier.padding(start = 6.dp), style = MaterialTheme.typography.bodySmall)
+                    Text(label, Modifier.padding(start = 6.dp), style = MaterialTheme.typography.bodySmall)
                 }
             }
-            val mask = if (at == null) -1 else s.directionsAt(at.x, at.y, hold)
+            val mask = if (at == null) -1 else piesAt(widths, at.x, at.y) and shown
             Text(
-                when (mask) {
-                    -1 -> "Touch the circle to try a direction."
-                    0 -> "No direction (gap)"
+                when {
+                    mask == -1 -> "Touch the circle to try a way."
+                    kind == PieKind.MOVE -> listOfNotNull(
+                        "Move X".takeIf { mask and PieKind.axisMask(true) != 0 },
+                        "Move Y".takeIf { mask and PieKind.axisMask(false) != 0 },
+                    ).joinToString(" + ").ifEmpty { "Nothing moves (gap)" }
+                    mask == 0 -> "No direction (gap)"
                     else -> Direction.entries.filter { mask and (1 shl it.ordinal) != 0 }.joinToString(" + ") { it.label }
                 },
                 Modifier.padding(top = 6.dp),
@@ -561,6 +627,18 @@ private fun DirectionPies(s: TouchpadSettings, hold: Boolean = false, only: Dire
             )
         }
     }
+}
+
+/** The pies ([widths] by [Direction.ordinal]) the way ([x], [y]) (y down) lies in, as [TouchpadSettings.inPie] judges. */
+private fun piesAt(widths: List<Float>, x: Float, y: Float): Int {
+    if (x == 0f && y == 0f) return 0
+    val deg = Math.toDegrees(kotlin.math.atan2(x.toDouble(), (-y).toDouble())).toFloat()
+    var mask = 0
+    for (d in Direction.entries) {
+        val off = kotlin.math.abs(((deg - d.deg) % 360f + 540f) % 360f - 180f)
+        if (off <= widths[d.ordinal] / 2f && off < 90f) mask = mask or (1 shl d.ordinal)
+    }
+    return mask
 }
 
 /** A slider whose label [format] shows the value; it snaps to [step] and hands the value on once the drag ends. */

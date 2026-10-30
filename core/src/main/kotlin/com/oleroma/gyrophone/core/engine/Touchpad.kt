@@ -879,7 +879,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         if (f.free) return
         winX += sdx; winY += sdy
         val len = sqrt(winX * winX + winY * winY)
-        val cap = f.moveSampleDp.coerceIn(TouchpadSettings.MIN_MOVE_SAMPLE_DP, TouchpadSettings.MAX_MOVE_SAMPLE_DP) * pxPerDp
+        val cap = f.moveSampleDp.coerceIn(TouchpadSettings.MIN_SAMPLE_DP, TouchpadSettings.MAX_SAMPLE_DP) * pxPerDp
         val known = headed || len >= cap
         if (len > cap) {
             winX *= cap / len; winY *= cap / len
@@ -909,7 +909,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
             MoveMode.PIE -> {
                 // Off its axis, 0..90 degrees.
                 val off = Math.toDegrees(atan2(if (x) ay else ax, if (x) ax else ay).toDouble()).toFloat()
-                val pie = (if (x) f.pieX else f.pieY).coerceIn(TouchpadSettings.MIN_MOVE_PIE_DEG, TouchpadSettings.MAX_MOVE_PIE_DEG)
+                val pie = (if (x) f.pieX else f.pieY).coerceIn(TouchpadSettings.MIN_PIE_DEG, TouchpadSettings.MAX_PIE_DEG)
                 off <= pie / 2f
             }
         }

@@ -5,7 +5,6 @@ import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.HoldZone
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.ZoneKeep
-import com.oleroma.gyrophone.core.model.directionsAt
 import com.oleroma.gyrophone.core.model.inPie
 import kotlin.math.sqrt
 
@@ -14,7 +13,8 @@ import kotlin.math.sqrt
  * travel points into, the swipes that fire and the directions held ([TouchpadSettings] direction
  * settings). Direction sets are bit masks, 1 shl [Direction.ordinal].
  *
- * The direction is that of about the last [TouchpadSettings.dirSampleDp] of travel, so jitter does
+ * A direction's heading is that of about the last of its sample of travel
+ * ([TouchpadSettings.sampleDp]: swipes' and held directions' each, per direction), so jitter does
  * not flip it. A swipe fires once the travel since the direction last changed reaches
  * [TouchpadSettings.swipeDp], for the directions that did not fire last. Held directions follow
  * [TouchpadSettings.holdMode]. Each held direction is split into length zones
@@ -51,9 +51,12 @@ internal class DirectionTracker {
     private var holdCurrent = 0
     private var holdSince = 0f
 
-    private var winX = 0f
-    private var winY = 0f
-    private var sampled = 0f
+    // Per pie (swipes by Direction.ordinal, then held directions): about the last of its sample of
+    // travel, and how much has gone into it yet.
+    private val winX = FloatArray(8)
+    private val winY = FloatArray(8)
+    private val sampled = FloatArray(8)
+    private var travelled = 0f
     private var since = 0f
     private var fired = 0
 
@@ -70,7 +73,7 @@ internal class DirectionTracker {
      * [latchedZones] (by [Direction.ordinal]), and go on as if this motion held them.
      */
     fun start(latched: Int = 0, latchedZones: IntArray? = null) {
-        winX = 0f; winY = 0f; sampled = 0f; since = 0f; fired = 0
+        winX.fill(0f); winY.fill(0f); sampled.fill(0f); travelled = 0f; since = 0f; fired = 0
         offX = 0f; offY = 0f; pressed = 0
         current = 0; holdCurrent = 0; holdSince = 0f
         held = latched
@@ -98,23 +101,42 @@ internal class DirectionTracker {
     fun step(dx: Float, dy: Float, s: TouchpadSettings): Int {
         val len = sqrt(dx * dx + dy * dy)
         if (len <= 0f) return 0
-        val sample = s.dirSampleDp.coerceIn(TouchpadSettings.MIN_DIR_SAMPLE_DP, TouchpadSettings.MAX_DIR_SAMPLE_DP)
-        winX += dx; winY += dy
-        val w = sqrt(winX * winX + winY * winY)
-        if (w > sample) {
-            winX *= sample / w; winY *= sample / w
+        travelled += len
+        var mask = 0
+        var holdMask = 0
+        // Pies whose first sample filled just now.
+        var fresh = 0
+        var holdFresh = 0
+        for (i in 0 until 8) {
+            val d = Direction.entries[i % 4]
+            val hold = i >= 4
+            val sample = s.sampleDp(d, hold)
+            var x = winX[i] + dx
+            var y = winY[i] + dy
+            val w = sqrt(x * x + y * y)
+            if (w > sample) {
+                x *= sample / w; y *= sample / w
+            }
+            winX[i] = x; winY[i] = y
+            val first = sampled[i] < sample
+            if (first) sampled[i] += len
+            if (sampled[i] < sample || !s.inPie(x, y, d, hold)) continue
+            val b = 1 shl d.ordinal
+            if (hold) {
+                holdMask = holdMask or b
+                if (first) holdFresh = holdFresh or b
+            } else {
+                mask = mask or b
+                if (first) fresh = fresh or b
+            }
         }
-        val firstSample = sampled < sample
-        if (firstSample) sampled += len
-        val mask = if (sampled < sample) 0 else s.directionsAt(winX, winY)
         if (mask != current) {
             // From no direction yet, the sampled travel already went this way.
-            since = if (firstSample && current == 0) sampled else 0f
+            since = if (current == 0 && mask and fresh != 0) travelled else 0f
             current = mask
         } else since += len
-        val holdMask = if (sampled < sample) 0 else s.directionsAt(winX, winY, hold = true)
         if (holdMask != holdCurrent) {
-            holdSince = if (firstSample && holdCurrent == 0) sampled else 0f
+            holdSince = if (holdCurrent == 0 && holdMask and holdFresh != 0) travelled else 0f
             holdCurrent = holdMask
         } else holdSince += len
 
@@ -159,7 +181,7 @@ internal class DirectionTracker {
                 Direction.LEFT -> -offX
             }
             val i = d.ordinal
-            at[i] = if (s.pies == null || s.inPie(offX, offY, d, hold = true)) zoneOf(along, d, s) else -1
+            at[i] = if (s.inPie(offX, offY, d, hold = true)) zoneOf(along, d, s) else -1
             if (at[i] >= 0) mask = mask or (1 shl i)
         }
         // Dragged: letting go re-centres the start point on the finger, so the opposite

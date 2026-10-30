@@ -146,21 +146,19 @@ class SwipeDirectionsTest {
 
     @Test
     fun gapsKeepTheHeldDirectionAndFireNoSwipe() {
-        val pies = listOf(60f, 60f, 60f, 60f)
-        val f = Finger(TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE, pies = pies), holdMap)
+        val f = Finger(TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE, holdPieX = 60f, holdPieY = 60f), holdMap)
         f.down(); f.go(0f, -30f)
         assertEquals(up, f.now)
         f.go(40f, -40f) // 45°: between the up and right pies
         assertEquals(up, f.now)
-        val g = Finger(TouchpadSettings(pies = pies), swipeMap)
+        val g = Finger(TouchpadSettings(swipePieX = 60f, swipePieY = 60f), swipeMap)
         g.down(); g.go(60f, -60f)
         assertEquals(0, g.seen.fold(0) { a, b -> a or b }.toLong())
     }
 
     @Test
     fun overlappingPiesHoldBoth() {
-        val pies = listOf(135f, 135f, 135f, 135f)
-        val f = Finger(TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE, pies = pies), holdMap)
+        val f = Finger(TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE, holdPieX = 135f, holdPieY = 135f), holdMap)
         f.down(); f.go(30f, -30f)
         assertEquals(up or right, f.now)
         f.go(0f, -40f) // straight up: only the up pie
@@ -169,7 +167,7 @@ class SwipeDirectionsTest {
 
     @Test
     fun narrowPiesFromStartLeaveDiagonalsEmpty() {
-        val f = Finger(TouchpadSettings(pies = listOf(60f, 60f, 60f, 60f)), holdMap)
+        val f = Finger(TouchpadSettings(holdPieX = 60f, holdPieY = 60f), holdMap)
         f.down(); f.go(30f, -30f)
         assertEquals(0, f.now)
     }
