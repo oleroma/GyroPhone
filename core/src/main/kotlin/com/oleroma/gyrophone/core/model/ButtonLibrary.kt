@@ -37,7 +37,7 @@ object ButtonLibrary {
     fun save(w: Workspace, c: TouchControl, taken: Collection<String>): LibraryButton {
         val mappings = w.mappings.filter { MappingProfiles.touchId(it.source) == c.id }
         val used = setsOf(mappings)
-        return LibraryButton(newId(taken), c, mappings, w.sets.filter { it.id in used }.map { it.copy(settings = null) })
+        return LibraryButton(newId(taken), c.copy(group = null), mappings, w.sets.filter { it.id in used }.map { it.copy(settings = null) })
     }
 
     private fun setsOf(mappings: List<Mapping>): Set<Int> =
@@ -55,7 +55,7 @@ object ButtonLibrary {
      * mapping sets [w] does not have are added with those sets, so layer buttons keep working.
      */
     fun addTo(w: Workspace, b: LibraryButton, id: String, placed: (TouchControl) -> TouchControl): Workspace {
-        val control = placed(b.control.copy(id = id))
+        val control = placed(b.control.copy(id = id, group = null))
         val mappings = WorkspaceMappings.rekeyAll(b.mappings, b.control.id, id)
         val missing = setsOf(mappings).filter { set -> w.sets.none { it.id == set } }
         val added = missing.map { set -> b.sets.firstOrNull { it.id == set } ?: MappingSet(set) }
