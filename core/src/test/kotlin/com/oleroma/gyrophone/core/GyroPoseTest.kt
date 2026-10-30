@@ -233,7 +233,7 @@ class GyroDisplayTest {
         val f = feed(d)
         val g = com.oleroma.gyrophone.core.model.GyroSettings(gameCountsPer360 = 8000f)
         val pitch = g.sensitivityOf(com.oleroma.gyrophone.core.model.MotionAxis.PITCH)
-        f.camera(0, (45 * pitch).toInt(), com.oleroma.gyrophone.core.model.Bindings.gyroMouseMappings(), g) // a 45° pitch's counts, 2×
+        f.camera(0, -(45 * pitch).toInt(), com.oleroma.gyrophone.core.model.Bindings.gyroMouseMappings(), g) // a 45° pitch up's counts (up is -), 2×
         val turned = feed(d)
         repeat(100) { turned.feed(0f, 4500f / 100f, 0f, 0.01f, 7, pressed = false, held = false, gyro = g) }
         val m = FloatArray(9)

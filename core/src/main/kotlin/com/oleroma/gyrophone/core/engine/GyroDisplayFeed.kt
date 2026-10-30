@@ -111,7 +111,8 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
             if (perDeg != 0f) deg[i] += n / perDeg * trackballGain(d, gyro, a)
         }
         add(dx, MouseMotion.MOVE_X, MotionAxis.ROLL)
-        add(dy, MouseMotion.MOVE_Y, MotionAxis.PITCH)
+        // The gyro's Y is up +, the counts' down +.
+        add(-dy, MouseMotion.MOVE_Y, MotionAxis.PITCH)
         pose.counterRotate(deg[0], deg[1], deg[2], 1f)
     }
 
