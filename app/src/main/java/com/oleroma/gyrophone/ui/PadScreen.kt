@@ -109,6 +109,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.ButtonLibrary
+import com.oleroma.gyrophone.core.model.ControlGroups
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayKind
@@ -214,6 +215,13 @@ private const val PINCH_AXIS_FLOOR_DP = 48f
 
 /** Edit mode: the selected control, and the panel buttons that act on it. */
 private val SELECTED_COLOR = Color(0xFFFFC857)
+
+/** Edit mode's Select: the controls picked, and the panel buttons that act on them. */
+private val PICKED_COLOR = Color(0xFFFF5A5A)
+
+/** [want] cut down to [can] (the same way, no further); nothing when [can] goes the other way. */
+private fun towards(want: Float, can: Float): Float =
+    if (want * can <= 0f) 0f else if (abs(can) < abs(want)) can else want
 
 /**
  * A rectangle's pinch locks to one axis, like a heading lock: once the fingers' spread has changed
@@ -337,6 +345,10 @@ fun PadScreen(
     var selected by remember { mutableStateOf<String?>(null) }
     var menu by remember { mutableStateOf(EditMenu.NONE) }
 
+    /** The menu's Select: taps pick several controls ([picked], whole groups) and a drag moves them all. */
+    var selectMode by remember { mutableStateOf(false) }
+    var picked by remember { mutableStateOf<Set<String>>(emptySet()) }
+
     /** The control's settings were opened from its mapping screen: closing them goes back there. */
     var settingsFromMap by remember { mutableStateOf(false) }
 
@@ -358,6 +370,8 @@ fun PadScreen(
         val i = profile.indexOfWorkspace(d.workspace(editIndex).id)
         draft = null
         selected = null
+        selectMode = false
+        picked = emptySet()
         dragging = false
         if (i >= 0 && i != runtime.workspaceIndex.value) runtime.switchWorkspace(i)
     }
@@ -601,6 +615,8 @@ fun PadScreen(
     fun startEditing() {
         releaseAll()
         selected = null
+        selectMode = false
+        picked = emptySet()
         dragging = false
         editIndex = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
         lockableIds[0] = profile.corners.mapTo(HashSet()) { it.id } +
@@ -758,6 +774,56 @@ fun PadScreen(
         fun placeSnapped(c: TouchControl, x: Float, y: Float): TouchControl =
             place(c, x, y).let { if (snap) snapped(it) else it }
 
+        fun editControls(): List<TouchControl> = draft?.workspace(editIndex)?.touchControls ?: emptyList()
+
+        /** What a drag or pinch of [id] moves: with Select on, everything picked; else its group (or itself). */
+        fun unitOf(id: String): Set<String> =
+            if (selectMode && picked.isNotEmpty()) picked else ControlGroups.unitOf(editControls(), id)
+
+        /** Whether the lock keeps any of [id]'s group from being moved or sized. */
+        fun unitLocked(id: String?) = id != null && unitOf(id).any { lockedOut(it) }
+
+        /**
+         * The box around [members] (px of the pad area): a group's edges, which [snap] puts on grid lines.
+         */
+        fun boundsOf(members: List<TouchControl>): Rect = members.map {
+            val o = center(it)
+            Rect(o.x - half(it), o.y - halfH(it), o.x + half(it), o.y + halfH(it))
+        }.reduce { a, b ->
+            Rect(min(a.left, b.left), min(a.top, b.top), max(a.right, b.right), max(a.bottom, b.bottom))
+        }
+
+        /**
+         * Moves the controls [ids] together so that [anchor] lands at [x], [y] (with [snap], the
+         * group's box has its left and top edges on grid lines; nothing is resized); the others keep
+         * their places around it, and all stop where one would leave the screen.
+         */
+        fun moveUnit(ids: Set<String>, anchor: String, x: Float, y: Float) {
+            val members = editControls().filter { it.id in ids }
+            val a = members.firstOrNull { it.id == anchor } ?: return
+            val to = place(a, x, y)
+            var dx = to.placeX(portrait) - a.placeX(portrait)
+            var dy = to.placeY(portrait) - a.placeY(portrait)
+            if (snap) {
+                val box = boundsOf(members)
+                dx = (((box.left + dx * w) / (GRID * w)).roundToInt() * GRID * w - box.left) / w
+                dy = (((box.top + dy * h) / (GRID * h)).roundToInt() * GRID * h - box.top) / h
+            }
+            for (m in members) {
+                val p = place(m, m.placeX(portrait) + dx, m.placeY(portrait) + dy)
+                dx = towards(dx, p.placeX(portrait) - m.placeX(portrait))
+                dy = towards(dy, p.placeY(portrait) - m.placeY(portrait))
+            }
+            if (dx == 0f && dy == 0f) return
+            editWorkspace { wk ->
+                wk.copy(touchControls = wk.touchControls.map {
+                    if (it.id in ids) {
+                        it.withPlacement(portrait, it.placeX(portrait) + dx, it.placeY(portrait) + dy, it.placeSize(portrait))
+                    } else it
+                })
+            }
+        }
+
         val touchModifier = if (editing) {
             Modifier.pointerInput("edit", w, h) {
                 val slop = viewConfiguration.touchSlop
@@ -790,6 +856,9 @@ fun PadScreen(
                         var pinchLock = PinchLock.UNDECIDED
                         var pinchA: PointerId? = null
                         var pinchB: PointerId? = null
+                        // A group's pinch: each member's centre (px) and size when the pinch was anchored.
+                        var groupStart: Map<String, Pair<Offset, Float>> = emptyMap()
+                        var groupBox = Rect.Zero
                         // Two-finger tap: where each finger landed, and the control under them.
                         val tapStart = HashMap<PointerId, Offset>()
                         var tapTarget: String? = null
@@ -805,17 +874,24 @@ fun PadScreen(
                         // Overlapping controls: a long press and a drag with nothing selected act
                         // on the selected one when it is under the finger (else the front one); a single tap
                         // picks the one after it, so taps cycle through them.
-                        val cornerHit = hit(corners, downPos)
+                        // With Select on, corners can't be picked and a tap picks the front control.
+                        val selecting = selectMode
+                        val cornerHit = if (selecting) null else hit(corners, downPos)
                         val selectedUnder = under.indexOfFirst { it.id == selected }
                         val c = cornerHit ?: under.getOrNull(max(0, selectedUnder))
-                        val tapPick = cornerHit ?: under.getOrNull(if (selectedUnder >= 0) (selectedUnder + 1) % under.size else 0)
+                        val tapPick = cornerHit ?: if (selecting) under.firstOrNull() else {
+                            under.getOrNull(if (selectedUnder >= 0) (selectedUnder + 1) % under.size else 0)
+                        }
                         val pressedAt = first.uptimeMillis
                         var lastAt = pressedAt
                         // Empty space: a tap opens the touchpad's mappings, a long press its settings;
                         // with something selected, a tap there only closes it.
                         val hadSelection = selected != null
-                        // A drag moves the selected control from wherever it starts, never what is under the finger.
-                        val sel = findControl(selected)
+                        // A drag moves the selected control from wherever it starts, never what is under the finger
+                        // (with Select on: the picked ones, held by the one under the finger if it is picked).
+                        val sel = if (selecting) {
+                            findControl(c?.id?.takeIf { it in picked } ?: picked.firstOrNull())
+                        } else findControl(selected)
                         val selGrab = if (sel != null) downPos - center(sel) else Offset.Zero
                         if (c != null) {
                             mode = EditGesture.PRESS
@@ -828,7 +904,8 @@ fun PadScreen(
 
                         while (true) {
                             // A still press that lasts opens the settings: of the control, or on empty space the touchpad's.
-                            val next = if (mode == EditGesture.PRESS || mode == EditGesture.EMPTY) {
+                            // (Not with Select on: a press only picks.)
+                            val next = if (!selecting && (mode == EditGesture.PRESS || mode == EditGesture.EMPTY)) {
                                 withTimeoutOrNull(max(1L, pressedAt + EDIT_LONG_PRESS_MS - lastAt)) { awaitPointerEvent() }
                             } else {
                                 awaitPointerEvent()
@@ -856,7 +933,11 @@ fun PadScreen(
 
                             // Two fingers: lifted still, they select the control under them; moved, they
                             // pinch-resize the selected control, wherever they are (nothing when none is selected).
-                            if (down.size >= 2 && tapStart.isEmpty() && mode != EditGesture.PINCH) {
+                            // With Select on, a second finger stops the gesture: nothing is sized there.
+                            if (down.size >= 2 && selecting) {
+                                mode = EditGesture.NONE
+                                dragging = false
+                            } else if (down.size >= 2 && tapStart.isEmpty() && mode != EditGesture.PINCH) {
                                 mode = EditGesture.TWO
                                 dragging = false
                                 val second = down.firstOrNull { it.id != pointer }?.position
@@ -870,7 +951,7 @@ fun PadScreen(
                                 down.forEach { tapStart.getOrPut(it.id) { it.position } }
                                 if (down.any { (it.position - tapStart.getValue(it.id)).getDistance() > slop }) {
                                     val c = findControl(selected)
-                                    if (c != null && !lockedOut(c.id)) {
+                                    if (c != null && !unitLocked(c.id)) {
                                         mode = EditGesture.PINCH
                                         pinchLock = PinchLock.UNDECIDED
                                         target = c.id
@@ -900,6 +981,12 @@ fun PadScreen(
                                     startDy = abs(pa.position.y - pb.position.y)
                                     startCenter = center(c)
                                     startMid = (pa.position + pb.position) / 2f
+                                    val ids = unitOf(c.id)
+                                    val members = editControls().filter { it.id in ids }
+                                    groupStart = if (members.size < 2) emptyMap() else {
+                                        members.associate { it.id to (center(it) to it.placeSize(portrait)) }
+                                    }
+                                    if (members.size >= 2) groupBox = boundsOf(members)
                                 }
                             }
 
@@ -911,11 +998,11 @@ fun PadScreen(
                                             grab = selGrab
                                         }
                                         // Locked (and there before this session): a drag moves nothing (and isn't a tap).
-                                        if (lockedOut(target) || (mode == EditGesture.EMPTY && sel == null)) {
+                                        if (unitLocked(target) || (mode == EditGesture.EMPTY && sel == null)) {
                                             mode = EditGesture.NONE
                                         } else {
                                             mode = EditGesture.MOVE
-                                            selected = target
+                                            if (!selecting) selected = target
                                             menu = EditMenu.NONE
                                             dragging = true
                                         }
@@ -933,7 +1020,10 @@ fun PadScreen(
                                         val id = target
                                         if (id != null) {
                                             val p = main.position - grab
-                                            updateControl(id) { placeSnapped(it, p.x / w, p.y / h) }
+                                            // A group (or what Select picked) moves as one.
+                                            val ids = unitOf(id)
+                                            if (ids.size > 1) moveUnit(ids, id, p.x / w, p.y / h)
+                                            else updateControl(id) { placeSnapped(it, p.x / w, p.y / h) }
                                         }
                                     }
                                 }
@@ -948,6 +1038,37 @@ fun PadScreen(
                                         val dist = (a.position - b.position).getDistance()
                                         if (isCorner(d, id)) {
                                             resize(id, startSize * dist / startDist)
+                                        } else if (groupStart.size > 1) {
+                                            // A group zooms as one: every member's size and its place around the
+                                            // fingers' midpoint scale together, as far as the smallest and largest allow.
+                                            // With snap on, the group's box is as wide as whole cells, its left and top on grid lines.
+                                            var lo = 0f
+                                            var hi = Float.MAX_VALUE
+                                            for ((_, st) in groupStart) {
+                                                lo = max(lo, TouchControl.MIN_SIZE / st.second)
+                                                hi = min(hi, TouchControl.MAX_SIZE / st.second)
+                                            }
+                                            fun limit(v: Float) = if (lo <= hi) v.coerceIn(lo, hi) else 1f
+                                            var s = limit(dist / startDist)
+                                            val mid = (a.position + b.position) / 2f
+                                            var shift = Offset.Zero
+                                            if (snap && groupBox.width > 1f) {
+                                                val gx = GRID * w
+                                                val gy = GRID * h
+                                                val cells = max(1, (groupBox.width * s / gx).roundToInt())
+                                                s = limit(cells * gx / groupBox.width)
+                                                val left = mid.x + (groupBox.left - startMid.x) * s
+                                                val top = mid.y + (groupBox.top - startMid.y) * s
+                                                shift = Offset((left / gx).roundToInt() * gx - left, (top / gy).roundToInt() * gy - top)
+                                            }
+                                            editWorkspace { wk ->
+                                                wk.copy(touchControls = wk.touchControls.map { c ->
+                                                    val st = groupStart[c.id] ?: return@map c
+                                                    val at = mid + (st.first - startMid) * s + shift
+                                                    val sized = c.withPlacement(portrait, c.placeX(portrait), c.placeY(portrait), st.second * s)
+                                                    place(sized, at.x / w, at.y / h)
+                                                })
+                                            }
                                         } else {
                                             // Pinch to zoom: the size follows the fingers' spread, and the point of the
                                             // control under the fingers' midpoint stays under it (moving both fingers
@@ -1015,20 +1136,31 @@ fun PadScreen(
                             event.changes.forEach { it.consume() }
                         }
 
-                        when (mode) {
-                            EditGesture.PRESS -> {
+                        when {
+                            // With Select on, a tap picks a control (its whole group) or drops it; on empty space it drops all.
+                            selecting && mode == EditGesture.PRESS -> {
+                                val id = tapPick?.id
+                                if (id != null) {
+                                    val u = ControlGroups.unitOf(controls, id)
+                                    picked = if (id in picked) picked - u else picked + u
+                                }
+                            }
+
+                            selecting -> if (mode == EditGesture.EMPTY) picked = emptySet()
+
+                            mode == EditGesture.PRESS -> {
                                 // A tap selects at once.
                                 selected = tapPick?.id
                                 menu = EditMenu.NONE
                             }
 
-                            EditGesture.TWO -> {
+                            mode == EditGesture.TWO -> {
                                 // A two-finger tap selects without opening anything (a long press is for settings).
                                 selected = tapTarget
                                 menu = EditMenu.NONE
                             }
 
-                            EditGesture.EMPTY -> {
+                            mode == EditGesture.EMPTY -> {
                                 selected = if (hadSelection) null else TOUCHPAD_SELECTION
                                 menu = if (hadSelection) EditMenu.NONE else EditMenu.MAPPING
                             }
@@ -1436,6 +1568,12 @@ fun PadScreen(
         }
 
         // Gyro displays: under everything, only drawn. The runtime gathers data for the ones shown.
+        // Lit in edit mode: what Select picked (red), else the selected control (amber) and the rest
+        // of its group (red, to show they go together).
+        val lit = remember(ws, selected, selectMode, picked) {
+            if (selectMode) picked else selected?.let { ControlGroups.unitOf(ws.touchControls, it) } ?: emptySet()
+        }
+        val litColor: (String) -> Color = { id -> if (!selectMode && id == selected) SELECTED_COLOR else PICKED_COLOR }
         val displays = ws.touchControls.filter { it.kind == TouchKind.DISPLAY }
         DisposableEffect(displays) {
             runtime.setGyroDisplays(displays)
@@ -1446,7 +1584,7 @@ fun PadScreen(
                 val o = center(c)
                 DisplayBox(c, Rect(o.x - half(c), o.y - halfH(c), o.x + half(c), o.y + halfH(c)))
             }
-            GyroDisplaysLayer(runtime, boxes, editing, selected, Modifier.fillMaxSize())
+            GyroDisplaysLayer(runtime, boxes, editing, lit, litColor, Modifier.fillMaxSize())
         }
         if (!editing && visuals.gyroEdge) GyroEdgeLayer(runtime, visuals, Modifier.fillMaxSize())
         val noButtons = ws.touchControls.all { it.kind == TouchKind.DISPLAY }
@@ -1495,11 +1633,11 @@ fun PadScreen(
                 val r = half(c)
                 val rh = halfH(c)
                 val ctr = center(c)
-                val isSelected = editing && selected == c.id
+                val isSelected = editing && c.id in lit
                 val isPressed = !editing && (c.id in pressedIds || c.id in heldSticks)
                 val isLatched = !editing && c.id in latchedIds
                 val tint = when {
-                    isSelected -> SELECTED_COLOR
+                    isSelected -> litColor(c.id)
                     isPressed -> Color(0xFF7CC4FF)
                     isLatched -> Color(0xFF8FE39A)
                     else -> Color(0x66FFFFFF)
@@ -1529,7 +1667,7 @@ fun PadScreen(
                 val r = half(c)
                 val rh = halfH(c)
                 val ctr = center(c)
-                val isSelected = editing && selected == c.id
+                val isSelected = editing && !selectMode && selected == c.id
                 val isPressed = !editing && c.id in cornersHeld
                 val atEnd = when (c.id) {
                     NavCorners.PREV -> shown.previousWorkspace(shownIndex) == null
@@ -1649,6 +1787,8 @@ fun PadScreen(
                 if (runtime.workspaceIndex.value != idx) runtime.switchWorkspace(idx)
                 draft = null
                 selected = null
+                selectMode = false
+                picked = emptySet()
                 dragging = false
             }
 
@@ -1895,9 +2035,47 @@ fun PadScreen(
                                 }) { Text("Cancel") }
                             }
                             ScrollStrip {
+                                val pickColors = ButtonDefaults.filledTonalButtonColors(
+                                    containerColor = PICKED_COLOR,
+                                    contentColor = Color.Black,
+                                )
+                                // Select: taps pick several controls to move together, and Group joins them.
+                                // Turning it off keeps a group that was picked selected (ready to pinch).
+                                if (selectMode) {
+                                    FilledTonalButton(contentPadding = compact, colors = pickColors, onClick = {
+                                        val controls = editControls()
+                                        val left = picked.filterTo(LinkedHashSet()) { id -> controls.any { it.id == id } }
+                                        selected = if (ControlGroups.units(controls, left) == 1) left.first() else null
+                                        picked = emptySet()
+                                        selectMode = false
+                                    }) { Text("Select") }
+                                    val controls = editControls()
+                                    if (ControlGroups.units(controls, picked) >= 2) {
+                                        FilledTonalButton(
+                                            contentPadding = compact,
+                                            colors = pickColors,
+                                            onClick = { editWorkspace { ControlGroups.group(it, picked) } }) { Text("Group") }
+                                    }
+                                    if (ControlGroups.anyGrouped(controls, picked)) {
+                                        FilledTonalButton(
+                                            contentPadding = compact,
+                                            colors = pickColors,
+                                            onClick = { editWorkspace { ControlGroups.ungroup(it, picked) } }) { Text("Ungroup") }
+                                    }
+                                } else {
+                                    OutlinedButton(contentPadding = compact, onClick = {
+                                        val s = findControl(selected)
+                                        picked = if (s != null && draft?.let { isCorner(it, s.id) } == false) {
+                                            ControlGroups.unitOf(editControls(), s.id)
+                                        } else emptySet()
+                                        selected = null
+                                        menu = EditMenu.NONE
+                                        selectMode = true
+                                    }) { Text("Select") }
+                                }
                                 // The selected control's settings and mappings (a long press opens the mappings).
-                                val picked = findControl(selected)
-                                if (picked != null) {
+                                val chosen = if (selectMode) null else findControl(selected)
+                                if (chosen != null) {
                                     val selColors = ButtonDefaults.filledTonalButtonColors(
                                         containerColor = SELECTED_COLOR,
                                         contentColor = Color.Black,
@@ -1907,11 +2085,17 @@ fun PadScreen(
                                         colors = selColors,
                                         onClick = { settingsFromMap = false; menu = EditMenu.CONTEXT }) { Text("Configure") }
                                     val d = draft
-                                    if (d != null && !isCorner(d, picked.id) && picked.kind != TouchKind.DISPLAY) {
+                                    if (d != null && !isCorner(d, chosen.id) && chosen.kind != TouchKind.DISPLAY) {
                                         FilledTonalButton(
                                             contentPadding = compact,
                                             colors = selColors,
                                             onClick = { menu = EditMenu.MAPPING }) { Text("Map") }
+                                    }
+                                    if (chosen.group != null) {
+                                        FilledTonalButton(
+                                            contentPadding = compact,
+                                            colors = selColors,
+                                            onClick = { editWorkspace { ControlGroups.ungroup(it, listOf(chosen.id)) } }) { Text("Ungroup") }
                                     }
                                 }
                                 /** Adds a button; [empty]: with every action it would take from the workspace cleared. */
@@ -2341,6 +2525,7 @@ private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>)
     val pHalf = (p.size / 2f).coerceAtMost(0.5f) // portrait: size is a fraction of the width
     val copy = c.copy(
         id = id,
+        group = null,
         x = toCentre(c.x, 0.05f),
         y = toCentre(c.y, 0.05f).coerceIn(lHalf, 1f - lHalf),
         portrait = Placement(toCentre(p.x, 0.05f).coerceIn(pHalf, 1f - pHalf), toCentre(p.y, 0.03f), p.size),

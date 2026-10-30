@@ -52,14 +52,15 @@ class DisplayBox(val control: TouchControl, val box: Rect)
 /**
  * The gyro displays placed on the pad ([com.oleroma.gyrophone.core.model.TouchKind.DISPLAY]), each
  * drawn flat in its [DisplayBox] (no 3D library) from the runtime's data for it, once per screen
- * frame. In edit mode each also gets its box, [selected] one lit.
+ * frame. In edit mode each also gets its box, the [selected] ones lit in their [selectedColor].
  */
 @Composable
 fun GyroDisplaysLayer(
     runtime: GamepadRuntime,
     boxes: List<DisplayBox>,
     editing: Boolean,
-    selected: String?,
+    selected: Set<String>,
+    selectedColor: (String) -> Color,
     modifier: Modifier = Modifier,
 ) {
     var frame by remember { mutableLongStateOf(0L) }
@@ -73,9 +74,9 @@ fun GyroDisplaysLayer(
             val d = b.control.display ?: continue
             st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
             if (editing) {
-                val sel = b.control.id == selected
+                val sel = b.control.id in selected
                 drawRect(
-                    (if (sel) SELECTED_BOX else Color.White.copy(alpha = 0.45f)),
+                    (if (sel) selectedColor(b.control.id) else Color.White.copy(alpha = 0.45f)),
                     b.box.topLeft, b.box.size,
                     style = Stroke(
                         (if (sel) 2.5f else 1.5f) * density,
@@ -847,7 +848,6 @@ private const val EDGE_MAX_DP = 80f
 private const val EDGE_GAP_DP = 10f
 private const val EDGE_CORNER_DP = 34f
 
-private val SELECTED_BOX = Color(0xFFFFC94D)
 
 /** Yaw, pitch, roll: the edge's tint. */
 private val AXIS_COLORS = arrayOf(Color(0xFFFF5A5A), Color(0xFF5ADB6E), Color(0xFF5AA8FF))

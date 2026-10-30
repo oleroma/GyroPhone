@@ -115,6 +115,8 @@ data class TouchControl(
     val gyro: List<ButtonGyro> = emptyList(),
     /** DISPLAY: what it shows and how. */
     val display: GyroDisplay? = null,
+    /** Edit mode: controls sharing a group id move and size together ([ControlGroups]); null = none. */
+    val group: String? = null,
 ) {
     /**
      * Every button is a touch surface: its fingers drive the touch inputs ([InputSource.Surface]

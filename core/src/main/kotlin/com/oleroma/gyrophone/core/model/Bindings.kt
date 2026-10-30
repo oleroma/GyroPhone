@@ -369,10 +369,12 @@ object Bindings {
         GestureAction.SwitchApps -> listOf(OutputTarget.Key(HidUsage.LEFT_CTRL + 2), OutputTarget.Key(0x2B))
     }
 
-    /** Drops a touch control and all of its mappings (on delete). */
-    fun removeTouchControl(workspace: Workspace, id: String): Workspace = workspace.copy(
-        touchControls = workspace.touchControls.filterNot { it.id == id },
-        mappings = workspace.mappings.filterNot { MappingProfiles.touchId(it.source) == id },
+    /** Drops a touch control and all of its mappings (on delete); a group left with one member ends. */
+    fun removeTouchControl(workspace: Workspace, id: String): Workspace = ControlGroups.tidy(
+        workspace.copy(
+            touchControls = workspace.touchControls.filterNot { it.id == id },
+            mappings = workspace.mappings.filterNot { MappingProfiles.touchId(it.source) == id },
+        ),
     )
 
     /** Fresh id not used by any control: prefix + n. */
