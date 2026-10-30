@@ -1,6 +1,7 @@
 package com.oleroma.gyrophone.runtime
 
 import android.content.Context
+import android.hardware.Sensor
 import android.hardware.SensorManager
 import android.os.Handler
 import android.os.Looper
@@ -200,18 +201,23 @@ class GamepadRuntime(context: Context) {
      */
     fun setGyroDisplays(controls: List<TouchControl>) {
         val old = gyroFeeds
+        val sensors = needsGravity to needsCompass
         val next = controls.mapNotNull { c ->
             val d = c.display ?: return@mapNotNull null
             old.firstOrNull { it.id == c.id && it.display.kind == d.kind }?.also { it.display = d }
                 ?: GyroDisplayFeed(c.id, d)
         }
-        if (next.size == old.size && next.indices.all { next[it] === old[it] }) return
-        gyroFeeds = next.toTypedArray()
-        synchronized(this) { updateMotion() }
+        val same = next.size == old.size && next.indices.all { next[it] === old[it] }
+        if (!same) gyroFeeds = next.toTypedArray()
+        // A changed setting may need the accelerometer or the magnetometer (or no longer).
+        if (!same || sensors != (needsGravity to needsCompass)) synchronized(this) { updateMotion() }
     }
 
     /** Some gyro display holds its pose to gravity (and so needs the accelerometer). */
     private val needsGravity: Boolean get() = vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity }
+
+    /** Some gyro display holds its heading to north (and so needs the magnetometer). */
+    private val needsCompass: Boolean get() = gyroFeeds.any { it.display.needsCompass }
 
     /** The gyro axes moving the mouse now ([MappingEngine.gyroAxes]), for the ratchet ring and the edge's tint. */
     @Volatile var gyroLiveAxes = 0
@@ -474,6 +480,7 @@ class GamepadRuntime(context: Context) {
     fun stop() {
         stopGyro()
         stopMotion()
+        stopCompass()
         // A calibration cut short must not start the sensor at the next start().
         if (calibration != null) {
             calibration = null; _calibration.value = storedCalibration()
@@ -500,6 +507,28 @@ class GamepadRuntime(context: Context) {
      */
     private fun updateMotion() {
         if (running && inputAllowed && (engine.motionMapped || needsGravity)) startMotion() else stopMotion()
+        if (running && inputAllowed && needsCompass) startCompass() else stopCompass()
+    }
+
+    private var magnet: AccelSource? = null
+
+    private fun startCompass() {
+        if (magnet != null) return
+        val sm = appContext.getSystemService(SensorManager::class.java) ?: return
+        val source = AccelSource(sm, Sensor.TYPE_MAGNETIC_FIELD)
+        if (source.start { x, y, z, _ -> onMagnetSample(x, y, z) }) magnet = source
+    }
+
+    private fun stopCompass() {
+        magnet?.stop()
+        magnet = null
+    }
+
+    /** A magnetometer reading (µT, Android sensor frame) for the gyro displays with a compass. */
+    private fun onMagnetSample(x: Float, y: Float, z: Float) {
+        // The same axes as the gyro's: right, up and toward the player in the phone's frame.
+        val m = gyroMouse.motion(x, y, z)
+        for (f in gyroFeeds) f.north(m.pitch, -m.yaw, -m.roll)
     }
 
     private fun startMotion() {

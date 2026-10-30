@@ -156,4 +156,45 @@ class GyroDisplayTest {
         on.pose.matrix(m); assertEquals(1f, m[8], 1e-4f)
         off.pose.matrix(m); assertEquals(0f, m[8], 1e-2f)
     }
+
+    private fun feed(d: com.oleroma.gyrophone.core.model.GyroDisplay) = com.oleroma.gyrophone.core.engine.GyroDisplayFeed("f", d)
+    private val ball = com.oleroma.gyrophone.core.model.GyroDisplayKind.BALL
+
+    @Test fun easesBackOnceStillAfterTheDelay() {
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, ease = true, easeDelayMs = 200, easeSeconds = 0.5f))
+        val m = FloatArray(9)
+        repeat(50) { f.feed(0f, 90f, 0f, 0.01f, 7, pressed = false, held = false) } // 45° pitch
+        repeat(10) { f.feed(0f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // still, inside the delay
+        f.pose.matrix(m); assertEquals(0.707f, m[8], 1e-2f)
+        repeat(100) { f.feed(0f, 0f, 0f, 0.01f, 7, pressed = false, held = false) }
+        f.pose.matrix(m); assertEquals(1f, m[8], 1e-3f)
+    }
+
+    @Test fun easesBackBySpeedAfterTheRatchetIsLetGo() {
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, ease = true, easeAfterRatchet = true, easeDelayMs = 0, easeBySpeed = true, easeSpeed = 90))
+        val m = FloatArray(9)
+        repeat(100) { f.feed(90f, 0f, 0f, 0.01f, 7, pressed = false, held = true) } // 90° yaw, held
+        f.pose.matrix(m); assertEquals(0f, m[0], 1e-2f)
+        repeat(50) { f.feed(0f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // half a second at 90°/s: 45° back
+        assertEquals(45f, Math.toDegrees(f.pose.heading().toDouble()).toFloat(), 1f)
+    }
+
+    @Test fun headingOnlyResetKeepsTheTilt() {
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, resetHeadingOnly = true))
+        repeat(50) { f.feed(60f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // 30° right
+        assertEquals(30f, Math.toDegrees(f.pose.heading().toDouble()).toFloat(), 0.5f)
+        f.feed(0f, 0f, 0f, 0.01f, 7, pressed = true, held = true)
+        assertEquals(0f, f.pose.heading(), 1e-3f)
+    }
+
+    @Test fun compassHoldsTheHeadingToNorth() {
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, gravity = true, compass = true))
+        // Upright, facing the player; north is to the phone's right (and dips down): the player faces west.
+        repeat(2000) {
+            f.up(0f, 9.8f, 0f, 9.8f)
+            f.north(20f, -40f, 0f)
+            f.feed(0f, 0f, 0f, 0.01f, 7, pressed = false, held = false)
+        }
+        assertEquals(-90f, Math.toDegrees(f.pose.heading().toDouble()).toFloat(), 2f)
+    }
 }

@@ -1,5 +1,7 @@
 package com.oleroma.gyrophone.core.engine
 
+import kotlin.math.abs
+import kotlin.math.acos
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -9,8 +11,9 @@ import kotlin.math.sqrt
  * The phone's orientation for the pad's gyro phone view, integrated from gyro rates. Its frame is
  * the player's view: x right, y up, z toward the player. [rotate]: since the last [reset], neutral
  * being the phone facing the player. [fuse]: against the world, its tilt held to gravity
- * ([setUp], from the accelerometer) and its heading eased back to facing the player, so it never
- * drifts. Written by the sensor threads (a few multiplies per sample), read by the UI ([matrix])
+ * ([setUp], from the accelerometer) and its heading eased back to facing the player or held to
+ * north ([setNorth], from the magnetometer), so it never drifts. [easeAll] / [easeHeading] take it
+ * back toward straight. Written by the sensor threads (a few multiplies per sample), read by the UI ([matrix])
  * once per frame.
  */
 class GyroPose {
@@ -28,6 +31,12 @@ class GyroPose {
     private var upY = 0f
     private var upZ = 0f
     private var hasUp = false
+
+    /** The last measured magnetic field in the phone's frame (unit length), or none yet. */
+    private var northX = 0f
+    private var northY = 0f
+    private var northZ = 0f
+    private var hasNorth = false
 
     /** Seconds of [fuse] left that pull hard toward gravity: a fresh pose settles at once. */
     private var settling = SETTLE_S
@@ -53,13 +62,23 @@ class GyroPose {
         hasUp = true
     }
 
+    /** The magnetometer's reading in the phone's frame (as [setUp]), any unit: where north is, dipping down. */
+    @Synchronized
+    fun setNorth(mx: Float, my: Float, mz: Float) {
+        val l = sqrt(mx * mx + my * my + mz * mz)
+        if (l == 0f) return
+        northX = mx / l; northY = my / l; northZ = mz / l
+        hasNorth = true
+    }
+
     /**
      * [rotate] against the world: the gyro turn, pulled toward the measured up ([setUp]) so the tilt
      * matches gravity, then the heading (which way the right edge points, round the vertical)
-     * eased back to facing the player over about [easeSeconds].
+     * eased back to facing the player over about [easeSeconds] (none at 0), or with [compass]
+     * pulled toward facing north ([setNorth]): the player looking north sees heading 0.
      */
     @Synchronized
-    fun fuse(yaw: Float, pitch: Float, roll: Float, dtSeconds: Float, easeSeconds: Float) {
+    fun fuse(yaw: Float, pitch: Float, roll: Float, dtSeconds: Float, easeSeconds: Float, compass: Boolean = false) {
         var ax = pitch * DEG_TO_RAD
         var ay = -yaw * DEG_TO_RAD
         var az = -roll * DEG_TO_RAD
@@ -75,23 +94,78 @@ class GyroPose {
             az += k * (upX * py - upY * px)
             settling -= dtSeconds
         }
+        val settled = settling <= 0f
         turn(ax * dtSeconds, ay * dtSeconds, az * dtSeconds)
-        // Heading: the right edge's angle round the vertical; turn the world back by part of it.
-        val rx = 1 - 2 * (y * y + z * z)
-        val rz = 2 * (x * z - w * y)
-        if (rx * rx + rz * rz > 0.04f && easeSeconds > 0f) {
-            val a = -atan2(-rz, rx) * (dtSeconds / easeSeconds).coerceAtMost(1f)
-            val bw = cos(a / 2)
-            val by = sin(a / 2)
-            // q = b * q, b about the world's vertical.
-            val nw = bw * w - by * y
-            val nx = bw * x + by * z
-            val ny = bw * y + by * w
-            val nz = bw * z - by * x
-            w = nw; x = nx; y = ny; z = nz
-            normalize()
+        if (compass && hasNorth) {
+            // North in the view frame (the matrix times it), flattened: turn it toward straight ahead (-z).
+            val nx = (1 - 2 * (y * y + z * z)) * northX + 2 * (x * y - w * z) * northY + 2 * (x * z + w * y) * northZ
+            val nz = 2 * (x * z - w * y) * northX + 2 * (y * z + w * x) * northY + (1 - 2 * (x * x + y * y)) * northZ
+            if (nx * nx + nz * nz > 0.01f) {
+                turnVertical(atan2(nx, -nz) * (dtSeconds * if (settled) KC else KP_SETTLE).coerceAtMost(1f))
+            }
+        } else if (easeSeconds > 0f) {
+            turnVertical(heading() * (dtSeconds / easeSeconds).coerceAtMost(1f))
         }
         version++
+    }
+
+    /** The heading in radians (right +): the right edge's angle round the vertical, 0 while that edge points up or down. */
+    @Synchronized
+    fun heading(): Float {
+        val rx = 1 - 2 * (y * y + z * z)
+        val rz = 2 * (x * z - w * y)
+        // Turning right brings the right edge toward the player (+z).
+        return if (rx * rx + rz * rz > 0.04f) atan2(rz, rx) else 0f
+    }
+
+    /** Turns the heading by [a] radians (right +), about the world's vertical. */
+    @Synchronized
+    fun turnHeading(a: Float) {
+        if (a == 0f) return
+        turnVertical(-a)
+        version++
+    }
+
+    /**
+     * Takes the heading back toward 0: by the share [amount] of it, or with [bySpeed] by [amount]
+     * radians, never past 0.
+     */
+    @Synchronized
+    fun easeHeading(bySpeed: Boolean, amount: Float) {
+        val h = heading()
+        if (h == 0f) return
+        turnHeading(eased(abs(h), bySpeed, amount) * (if (h < 0f) -1f else 1f) - h)
+    }
+
+    /** Takes the whole pose back toward straight, along the shortest turn, as [easeHeading] does the heading. */
+    @Synchronized
+    fun easeAll(bySpeed: Boolean, amount: Float) {
+        if (w < 0f) {
+            w = -w; x = -x; y = -y; z = -z
+        }
+        val a = 2 * acos(w.coerceAtMost(1f))
+        if (a < 1e-5f) return
+        val n = eased(a, bySpeed, amount)
+        val k = sin(n / 2) / sin(a / 2)
+        x *= k; y *= k; z *= k
+        w = cos(n / 2)
+        normalize()
+        version++
+    }
+
+    private fun eased(a: Float, bySpeed: Boolean, amount: Float): Float =
+        if (bySpeed) (a - amount).coerceAtLeast(0f) else a * (1f - amount.coerceIn(0f, 1f))
+
+    /** Turns by [a] radians about the world's vertical (anticlockwise seen from above: the heading goes down by [a]): q = b * q. */
+    private fun turnVertical(a: Float) {
+        val bw = cos(a / 2)
+        val by = sin(a / 2)
+        val nw = bw * w - by * y
+        val nx = bw * x + by * z
+        val ny = bw * y + by * w
+        val nz = bw * z - by * x
+        w = nw; x = nx; y = ny; z = nz
+        normalize()
     }
 
     /**
@@ -145,6 +219,9 @@ class GyroPose {
         /** Pull toward gravity (rad/s per unit of error): slow enough to ride out hand shake. */
         const val KP = 1.5f
         const val KP_SETTLE = 20f
+
+        /** Pull toward north (rad/s per radian off): slow, as the magnetometer is noisy. */
+        const val KC = 1f
         const val SETTLE_S = 0.3f
 
         /** How far from 1 g a reading may be and still count as gravity. */

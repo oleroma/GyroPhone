@@ -13,16 +13,19 @@ fun interface AccelSink {
     fun onAccel(x: Float, y: Float, z: Float, timestampNs: Long)
 }
 
-/** The accelerometer at game rate on a thread of its own, for tilt and shake. */
-class AccelSource(private val sensorManager: SensorManager) {
+/**
+ * The accelerometer at game rate on a thread of its own, for tilt and shake; or another 3-axis
+ * sensor of [type] (the magnetometer, for a gyro display's compass).
+ */
+class AccelSource(private val sensorManager: SensorManager, private val type: Int = Sensor.TYPE_ACCELEROMETER) {
     private var thread: HandlerThread? = null
     private var listener: SensorEventListener? = null
 
     /** Starts reading into [sink]; false when the phone has no accelerometer. */
     fun start(sink: AccelSink): Boolean {
         if (listener != null) return true
-        val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) ?: return false
-        val t = HandlerThread("accel-listener", Process.THREAD_PRIORITY_DISPLAY).apply { start() }
+        val sensor = sensorManager.getDefaultSensor(type) ?: return false
+        val t = HandlerThread(if (type == Sensor.TYPE_ACCELEROMETER) "accel-listener" else "sensor-$type-listener", Process.THREAD_PRIORITY_DISPLAY).apply { start() }
         val l = object : SensorEventListener {
             override fun onSensorChanged(e: SensorEvent) = sink.onAccel(e.values[0], e.values[1], e.values[2], e.timestamp)
             override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
