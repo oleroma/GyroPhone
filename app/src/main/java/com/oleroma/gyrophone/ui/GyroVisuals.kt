@@ -274,25 +274,59 @@ private class VisState {
         ux: Float, uy: Float, uz: Float, vx: Float, vy: Float, vz: Float, color: Color, width: Float,
     ) {
         path.reset()
-        var open = false
+        penUp()
         for (i in 0..SPHERE_STEPS) {
             val t = i * (2 * Math.PI / SPHERE_STEPS)
             val ct = cos(t).toFloat()
             val st = sin(t).toFloat()
-            val px = h * ax + rho * (ct * ux + st * vx)
-            val py = h * ay + rho * (ct * uy + st * vy)
-            val pz = h * az + rho * (ct * uz + st * vz)
-            val z = m[6] * px + m[7] * py + m[8] * pz
-            if (z < 0f) {
-                open = false
-                continue
-            }
-            val x = c.x + (m[0] * px + m[1] * py + m[2] * pz) * r
-            val y = c.y - (m[3] * px + m[4] * py + m[5] * pz) * r
-            if (open) path.lineTo(x, y) else path.moveTo(x, y)
-            open = true
+            penTo(c, r, h * ax + rho * (ct * ux + st * vx), h * ay + rho * (ct * uy + st * vy), h * az + rho * (ct * uz + st * vz))
         }
         drawPath(path, color, style = Stroke(width, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+
+    /** The pen's last point in the view frame (on the unit ball), or none since [penUp]. */
+    private var penX = 0f
+    private var penY = 0f
+    private var penZ = 0f
+    private var penDown = false
+
+    private fun penUp() {
+        penDown = false
+    }
+
+    /**
+     * Adds to [path] the line to the phone-frame point ([px], [py], [pz]) on the unit ball, turned by
+     * [m], ball radius [r] at [c]: only its front part, cut exactly at the rim so no line stops short
+     * of the silhouette.
+     */
+    private fun penTo(c: Offset, r: Float, px: Float, py: Float, pz: Float) {
+        val x = m[0] * px + m[1] * py + m[2] * pz
+        val y = m[3] * px + m[4] * py + m[5] * pz
+        val z = m[6] * px + m[7] * py + m[8] * pz
+        if (penDown) {
+            val wasFront = penZ >= 0f
+            val front = z >= 0f
+            if (wasFront && front) {
+                path.lineTo(c.x + x * r, c.y - y * r)
+            } else if (wasFront != front) {
+                // Where it crosses the rim: on the line between the points, pushed out onto the circle.
+                val t = penZ / (penZ - z)
+                var rx = penX + (x - penX) * t
+                var ry = penY + (y - penY) * t
+                val l = hypot(rx, ry)
+                if (l > 0f) { rx /= l; ry /= l }
+                if (wasFront) {
+                    path.lineTo(c.x + rx * r, c.y - ry * r)
+                } else {
+                    path.moveTo(c.x + rx * r, c.y - ry * r)
+                    path.lineTo(c.x + x * r, c.y - y * r)
+                }
+            }
+        } else if (z >= 0f) {
+            path.moveTo(c.x + x * r, c.y - y * r)
+        }
+        penX = x; penY = y; penZ = z
+        penDown = true
     }
 
     /** The front edges of [Icosphere], turned by [m], ball radius [r] at [c], as one path. */
@@ -305,13 +339,16 @@ private class VisState {
             val a = e[i] * 3
             val b = e[i + 1] * 3
             i += 2
-            // An edge shows while its middle faces the player.
-            val mx = v[a] + v[b]
-            val my = v[a + 1] + v[b + 1]
-            val mz = v[a + 2] + v[b + 2]
-            if (m[6] * mx + m[7] * my + m[8] * mz < 0f) continue
-            path.moveTo(c.x + (m[0] * v[a] + m[1] * v[a + 1] + m[2] * v[a + 2]) * r, c.y - (m[3] * v[a] + m[4] * v[a + 1] + m[5] * v[a + 2]) * r)
-            path.lineTo(c.x + (m[0] * v[b] + m[1] * v[b + 1] + m[2] * v[b + 2]) * r, c.y - (m[3] * v[b] + m[4] * v[b + 1] + m[5] * v[b + 2]) * r)
+            // Each edge as an arc on the ball (a few pieces), so it meets the rim where it crosses it.
+            penUp()
+            for (k in 0..ICO_PIECES) {
+                val s = k / ICO_PIECES.toFloat()
+                val px = v[a] + (v[b] - v[a]) * s
+                val py = v[a + 1] + (v[b + 1] - v[a + 1]) * s
+                val pz = v[a + 2] + (v[b + 2] - v[a + 2]) * s
+                val l = kotlin.math.sqrt(px * px + py * py + pz * pz)
+                penTo(c, r, px / l, py / l, pz / l)
+            }
         }
         drawPath(path, color, style = Stroke(width, cap = StrokeCap.Round))
     }
@@ -731,6 +768,9 @@ private object Icosphere {
         }
     }
 }
+
+/** Pieces per icosphere edge. */
+private const val ICO_PIECES = 3
 
 /** Points round each line on the 3D ball. */
 private const val SPHERE_STEPS = 48
