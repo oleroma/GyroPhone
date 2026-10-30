@@ -1980,7 +1980,7 @@ fun PadScreen(
                         fun addAt(at: Offset?, c: TouchControl) =
                             if (at == null) place(c, 0.5f, 0.5f) else placeSnapped(c, at.x / w, at.y / h)
 
-                        // Fixed: dots (move), ⚙ (this workspace's settings), undo, redo, lock, Done, Cancel.
+                        // Fixed: dots (move), ⚙ (this workspace's settings), undo, redo, lock, Done, Cancel, Select, Group / Ungroup.
                         // Then a scrolling strip of the layout tools.
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             DragDots()
@@ -2033,8 +2033,6 @@ fun PadScreen(
                                     // Nothing changed: leave at once; else ask first.
                                     if (draft == profile) discardEdits() else confirmingCancel = true
                                 }) { Text("Cancel") }
-                            }
-                            ScrollStrip {
                                 val pickColors = ButtonDefaults.filledTonalButtonColors(
                                     containerColor = PICKED_COLOR,
                                     contentColor = Color.Black,
@@ -2073,6 +2071,16 @@ fun PadScreen(
                                         selectMode = true
                                     }) { Text("Select") }
                                 }
+                                // A selected control in a group: Ungroup (amber, like its other buttons).
+                                val grouped = if (selectMode) null else findControl(selected)?.takeIf { it.group != null }
+                                if (grouped != null) {
+                                    FilledTonalButton(
+                                        contentPadding = compact,
+                                        colors = ButtonDefaults.filledTonalButtonColors(containerColor = SELECTED_COLOR, contentColor = Color.Black),
+                                        onClick = { editWorkspace { ControlGroups.ungroup(it, listOf(grouped.id)) } }) { Text("Ungroup") }
+                                }
+                            }
+                            ScrollStrip {
                                 // The selected control's settings and mappings (a long press opens the mappings).
                                 val chosen = if (selectMode) null else findControl(selected)
                                 if (chosen != null) {
@@ -2090,12 +2098,6 @@ fun PadScreen(
                                             contentPadding = compact,
                                             colors = selColors,
                                             onClick = { menu = EditMenu.MAPPING }) { Text("Map") }
-                                    }
-                                    if (chosen.group != null) {
-                                        FilledTonalButton(
-                                            contentPadding = compact,
-                                            colors = selColors,
-                                            onClick = { editWorkspace { ControlGroups.ungroup(it, listOf(chosen.id)) } }) { Text("Ungroup") }
                                     }
                                 }
                                 /** Adds a button; [empty]: with every action it would take from the workspace cleared. */
