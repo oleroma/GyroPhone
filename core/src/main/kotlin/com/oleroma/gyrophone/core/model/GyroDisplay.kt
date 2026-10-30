@@ -146,6 +146,7 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     DISK_DOT(GyroDisplayKind.DISK, "dot", "Dot", 0xFFFFC94D),
     BALL_BODY(GyroDisplayKind.BALL, "body", "Ball", 0xFF2A3446),
     BALL_LINES(GyroDisplayKind.BALL, "lines", "Lines", 0x99FFFFFF),
+    BALL_RIM(GyroDisplayKind.BALL, "rim", "Outline", 0xCCFFFFFF),
     BALL_EQUATOR(GyroDisplayKind.BALL, "equator", "Equator", 0xFF5AA8FF),
     BALL_MARK(GyroDisplayKind.BALL, "mark", "Screen mark", 0xFFFFC94D),
     BALL_POLE(GyroDisplayKind.BALL, "pole", "Top mark", 0xFFFF5A5A),

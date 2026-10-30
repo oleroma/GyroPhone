@@ -262,7 +262,8 @@ private class VisState {
         }
         if (d.screenMark) sphereDot(c, r, 0f, 0f, 1f, col(GyroDisplayColor.BALL_MARK))
         if (d.topMark) sphereDot(c, r, 0f, 1f, 0f, col(GyroDisplayColor.BALL_POLE))
-        drawCircle(Color.Black.copy(alpha = 0.35f * body.alpha), r, c, style = Stroke(density))
+        // The silhouette: the lines end on it, so it closes the ball.
+        drawCircle(col(GyroDisplayColor.BALL_RIM), r, c, style = Stroke(1.5f * density))
     }
 
     /**
@@ -770,7 +771,7 @@ private object Icosphere {
 }
 
 /** Pieces per icosphere edge. */
-private const val ICO_PIECES = 3
+private const val ICO_PIECES = 4
 
 /** Points round each line on the 3D ball. */
 private const val SPHERE_STEPS = 48
