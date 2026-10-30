@@ -201,6 +201,10 @@ data class SurfaceSettings(
     val movePieX: Float? = null,
     val movePieY: Float? = null,
     val moveSampleDp: Float? = null,
+    val moveLock: Boolean? = null,
+    val moveTurnDp: Float? = null,
+    val movePieMargin: Float? = null,
+    val holdStopsMove: Boolean? = null,
     val swipePieX: Float? = null,
     val swipePieY: Float? = null,
     val swipeSampleDp: Float? = null,
@@ -274,6 +278,10 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
     movePieX = o.movePieX ?: movePieX,
     movePieY = o.movePieY ?: movePieY,
     moveSampleDp = o.moveSampleDp ?: moveSampleDp,
+    moveLock = o.moveLock ?: moveLock,
+    moveTurnDp = o.moveTurnDp ?: moveTurnDp,
+    movePieMargin = o.movePieMargin ?: movePieMargin,
+    holdStopsMove = o.holdStopsMove ?: holdStopsMove,
     swipePieX = o.swipePieX ?: swipePieX,
     swipePieY = o.swipePieY ?: swipePieY,
     swipeSampleDp = o.swipeSampleDp ?: swipeSampleDp,
@@ -317,6 +325,10 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
                 mode = m.mode.takeIf { o.moveMode == null },
                 pie = m.pie.takeIf { (if (x) o.movePieX else o.movePieY) == null },
                 sample = m.sample.takeIf { o.moveSampleDp == null },
+                lock = m.lock.takeIf { o.moveLock == null },
+                turnDp = m.turnDp.takeIf { o.moveTurnDp == null },
+                margin = m.margin.takeIf { o.movePieMargin == null },
+                holdStops = m.holdStops.takeIf { o.holdStopsMove == null },
                 cursorDeadzoneDp = m.cursorDeadzoneDp.takeIf { o.cursorDeadzoneDp == null },
                 catchUpMs = m.catchUpMs.takeIf { o.catchUpMs == null },
                 deadzoneRearmMs = m.deadzoneRearmMs.takeIf { o.deadzoneRearmMs == null },
@@ -356,7 +368,8 @@ enum class MoveMode(val label: String) { FREE("Free"), LARGER_AXIS("Larger axis"
 /**
  * One Move X / Y's own settings ([MoveSlot]) over the shared ones of its surface (null = the
  * shared value). [mode] and [pie]: when it moves ([MoveMode]). The cursor deadzone with its
- * catch-up and re-arm, inertia and the move sample go for the whole motion of a finger count:
+ * catch-up and re-arm, inertia, the move sample, lock, turn, pie margin and whether a swipe hold
+ * stops the Moves go for the whole motion of a finger count:
  * its Move X holds them ([MoveField.whole]).
  */
 @Serializable
@@ -373,13 +386,18 @@ data class MoveSettings(
     val deadzoneStillDp: Float? = null,
     val inertia: Boolean? = null,
     val sample: Float? = null,
+    val lock: Boolean? = null,
+    val turnDp: Float? = null,
+    val margin: Float? = null,
+    val holdStops: Boolean? = null,
 ) {
     /** These with [over]'s own values in place of theirs. */
     fun under(over: MoveSettings?): MoveSettings = if (over == null) this else MoveSettings(
         over.sensitivity ?: sensitivity, over.acceleration ?: acceleration, over.scrollSpeed ?: scrollSpeed,
         over.naturalScroll ?: naturalScroll, over.mode ?: mode, over.pie ?: pie, over.cursorDeadzoneDp ?: cursorDeadzoneDp,
         over.catchUpMs ?: catchUpMs, over.deadzoneRearmMs ?: deadzoneRearmMs, over.deadzoneStillDp ?: deadzoneStillDp,
-        over.inertia ?: inertia, over.sample ?: sample,
+        over.inertia ?: inertia, over.sample ?: sample, over.lock ?: lock, over.turnDp ?: turnDp,
+        over.margin ?: margin, over.holdStops ?: holdStops,
     )
 
     val isEmpty: Boolean get() = this == NONE
@@ -408,6 +426,8 @@ data class MotionFeel(
     val cursorDeadzoneDp: Float, val catchUpMs: Int, val deadzoneRearmMs: Int, val deadzoneStillDp: Float,
     val inertia: Boolean,
     val moveSampleDp: Float,
+    val moveLock: Boolean, val moveTurnDp: Float, val movePieMargin: Float,
+    val holdStopsMove: Boolean,
 ) {
     /** Every Move moves freely: nothing to judge. */
     val free: Boolean get() = modeX == MoveMode.FREE && modeY == MoveMode.FREE
@@ -756,6 +776,16 @@ data class TouchpadSettings(
     /** A Move's heading is that of about the last this many dp of travel; a motion's first this many wait for it. */
     val moveSampleDp: Float = DEFAULT_MOVE_SAMPLE_DP,
     /**
+     * With pies: a stroke keeps the Moves it heads for ([moveLock]) until it heads elsewhere for
+     * [moveTurnDp] on end; that travel then goes to the Moves it turned to, so none is lost.
+     */
+    val moveLock: Boolean = true,
+    val moveTurnDp: Float = DEFAULT_MOVE_TURN_DP,
+    /** A Move moving now stays on until the finger heads this many degrees past its pie (0 = off). */
+    val movePieMargin: Float = DEFAULT_MOVE_PIE_MARGIN,
+    /** Once a mapped swipe hold presses, the stroke's Move X and Y stop until the fingers lift. */
+    val holdStopsMove: Boolean = true,
+    /**
      * Swipes: the pie (degrees) of Left and Right alike ([swipePieX]) and of Up and Down: a swipe
      * counts while the finger heads within its pie. Wider pies overlap (both count there),
      * narrower ones leave gaps; 90° = the way of the larger axis.
@@ -819,6 +849,8 @@ data class TouchpadSettings(
             x.cursorDeadzoneDp ?: cursorDeadzoneDp, x.catchUpMs ?: catchUpMs,
             x.deadzoneRearmMs ?: deadzoneRearmMs, x.deadzoneStillDp ?: deadzoneStillDp,
             x.inertia ?: inertia, x.sample ?: moveSampleDp,
+            x.lock ?: moveLock, x.turnDp ?: moveTurnDp, x.margin ?: movePieMargin,
+            x.holdStops ?: holdStopsMove,
         )
     }
 
@@ -876,6 +908,10 @@ data class TouchpadSettings(
         const val MAX_STILL_DP = 10f
         const val DEFAULT_MOVE_PIE_DEG = 120f
         const val DEFAULT_MOVE_SAMPLE_DP = 2f
+        const val DEFAULT_MOVE_TURN_DP = 6f
+        const val MAX_MOVE_TURN_DP = 40f
+        const val DEFAULT_MOVE_PIE_MARGIN = 15f
+        const val MAX_MOVE_PIE_MARGIN = 45f
         const val DEFAULT_SAMPLE_DP = 4f
         const val MIN_SAMPLE_DP = 0.5f
         const val MAX_SAMPLE_DP = 20f

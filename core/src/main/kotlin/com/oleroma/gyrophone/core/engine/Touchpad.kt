@@ -852,6 +852,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         swiped = false; scrolled = false
         trX = 0f; trY = 0f; winX = 0f; winY = 0f
         headed = false; waitX = 0f; waitY = 0f
+        moving = 0; turnX = 0f; turnY = 0f; turnLen = 0f; holdStopped = false
         motionN = n
         dzHolding = n == 1 && state == State.MOVE && feel(n).cursorDeadzoneDp > 0f && map.motion[0].cursor
         rearmable = dzHolding && feel(n).deadzoneRearmMs > 0
@@ -871,11 +872,19 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
      * Which of the step goes on to Move X and Y ([MotionFeel.modeX], [MoveMode]): a Move moves
      * while the heading of the last [MotionFeel.moveSampleDp] of travel is its way, always when
      * free. A motion's first sample waits for its heading, then goes to the Moves it heads for at
-     * once, so none of it is lost. Writes the step to [moveX] / [moveY].
+     * once, so none of it is lost. With [MotionFeel.moveLock] the Moves moving ([moving]) change
+     * only once the heading has pointed elsewhere for [MotionFeel.moveTurnDp] on end; that travel
+     * then goes to the Moves turned to. A Move moving now keeps going [MotionFeel.movePieMargin]
+     * past its pie. Once a swipe hold pressed ([holdStopped]), nothing moves. Writes the step to
+     * [moveX] / [moveY].
      */
     private fun gateMoves(sdx: Float, sdy: Float) {
         moveX = sdx; moveY = sdy
         val f = feel()
+        if (holdStopped) {
+            moveX = 0f; moveY = 0f
+            return
+        }
         if (f.free) return
         winX += sdx; winY += sdy
         val len = sqrt(winX * winX + winY * winY)
@@ -890,16 +899,33 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
             if (f.modeY != MoveMode.FREE) { waitY += sdy; moveY = 0f }
             return
         }
+        val heading = (if (heads(f, true)) MOVE_X else 0) or (if (heads(f, false)) MOVE_Y else 0)
         if (!headed) {
             headed = true
+            moving = heading
             moveX += waitX; moveY += waitY
             waitX = 0f; waitY = 0f
+        } else if (heading == moving) {
+            turnX = 0f; turnY = 0f; turnLen = 0f
+        } else {
+            val turn = if (f.moveLock) f.moveTurnDp.coerceIn(0f, TouchpadSettings.MAX_MOVE_TURN_DP) * pxPerDp else 0f
+            turnX += sdx; turnY += sdy; turnLen += sqrt(sdx * sdx + sdy * sdy)
+            if (turnLen >= turn) {
+                // Turned: the Moves it turned to take the whole turn's travel.
+                if (moving and MOVE_X == 0) moveX = turnX
+                if (moving and MOVE_Y == 0) moveY = turnY
+                moving = heading
+                turnX = 0f; turnY = 0f; turnLen = 0f
+            }
         }
-        if (!heads(f, true)) moveX = 0f
-        if (!heads(f, false)) moveY = 0f
+        if (moving and MOVE_X == 0) moveX = 0f
+        if (moving and MOVE_Y == 0) moveY = 0f
     }
 
-    /** The recent travel ([winX], [winY]) heads Move X's way ([x]) or Move Y's, as its mode has it. */
+    /**
+     * The recent travel ([winX], [winY]) heads Move X's way ([x]) or Move Y's, as its mode has it;
+     * one moving now ([moving]) by its pie widened by the margin.
+     */
     private fun heads(f: MotionFeel, x: Boolean): Boolean {
         val ax = abs(winX)
         val ay = abs(winY)
@@ -910,7 +936,23 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
                 // Off its axis, 0..90 degrees.
                 val off = Math.toDegrees(atan2(if (x) ay else ax, if (x) ax else ay).toDouble()).toFloat()
                 val pie = (if (x) f.pieX else f.pieY).coerceIn(TouchpadSettings.MIN_PIE_DEG, TouchpadSettings.MAX_PIE_DEG)
-                off <= pie / 2f
+                val margin = if (moving and (if (x) MOVE_X else MOVE_Y) != 0) {
+                    f.movePieMargin.coerceIn(0f, TouchpadSettings.MAX_MOVE_PIE_MARGIN)
+                } else 0f
+                off <= pie / 2f + margin
+            }
+        }
+    }
+
+    /** A mapped swipe hold of [n] fingers pressed this motion: with [MotionFeel.holdStopsMove], its Moves stop. */
+    private fun stopMovesOnHold(n: Int) {
+        if (holdStopped || !feel(n).holdStopsMove) return
+        for (d in Direction.entries) {
+            val z = dirs.zoneAt(d)
+            if (z >= 0 && map.has(n, HOLDS[d.ordinal], z)) {
+                holdStopped = true
+                waitX = 0f; waitY = 0f
+                return
             }
         }
     }
@@ -922,6 +964,14 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     private var headed = false
     private var waitX = 0f
     private var waitY = 0f
+
+    // The Moves moving now ([MOVE_X], [MOVE_Y]); the travel of a turn to others not yet confirmed
+    // (px, and its length); a swipe hold stopped the Moves until the lift.
+    private var moving = 0
+    private var turnX = 0f
+    private var turnY = 0f
+    private var turnLen = 0f
+    private var holdStopped = false
 
     /**
      * The motion ends: its held directions let go (or, as the last finger lifts with the latch
@@ -985,6 +1035,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         // Swipes and held directions judge their own way, by their pies.
         val fired = dirs.step(rawX / pxPerDp, rawY / pxPerDp, settings)
         holdZones(n)
+        stopMovesOnHold(n)
         for (d in Direction.entries) if (fired and (1 shl d.ordinal) != 0) pulse(n, SWIPES[d.ordinal])
         val sideways = fired and (RIGHT_BIT or LEFT_BIT)
         if (fired != 0 && !swiped) {
@@ -1569,6 +1620,8 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
             arrayOf(SurfaceInput.HOLD_UP, SurfaceInput.HOLD_RIGHT, SurfaceInput.HOLD_DOWN, SurfaceInput.HOLD_LEFT)
         private val SWIPES =
             arrayOf(SurfaceInput.SWIPE_UP, SurfaceInput.SWIPE_RIGHT, SurfaceInput.SWIPE_DOWN, SurfaceInput.SWIPE_LEFT)
+        private const val MOVE_X = 1
+        private const val MOVE_Y = 2
         private val RIGHT_BIT = 1 shl Direction.RIGHT.ordinal
         private val LEFT_BIT = 1 shl Direction.LEFT.ordinal
         const val SCRUB_STEP_DP = 80f

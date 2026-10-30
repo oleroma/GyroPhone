@@ -120,7 +120,24 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
         ) { MoveModeChips(s.moveMode) { m -> edit { it.copy(moveMode = m) } } }
         if (s.moveMode != MoveMode.FREE) {
             SharedPies(level, key, PieKind.MOVE)
+            OverrideSwitch(
+                "Lock heading", LOCK_HINT, s.moveLock, own(SurfaceField.MOVE_LOCK), reset(SurfaceField.MOVE_LOCK),
+            ) { v -> edit { it.copy(moveLock = v) } }
+            if (s.moveLock) {
+                OverrideSlider(
+                    key + "turn", "Turn after %.1f dp", s.moveTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
+                    own(SurfaceField.MOVE_TURN), reset(SurfaceField.MOVE_TURN), hint = TURN_HINT,
+                ) { v -> edit { it.copy(moveTurnDp = v) } }
+            }
+            OverrideSlider(
+                key + "margin", if (s.movePieMargin < 1f) "Pie margin: off" else "Pie margin %.0f°",
+                s.movePieMargin, 0f..TouchpadSettings.MAX_MOVE_PIE_MARGIN, 1f,
+                own(SurfaceField.MOVE_PIE_MARGIN), reset(SurfaceField.MOVE_PIE_MARGIN), hint = MARGIN_HINT,
+            ) { v -> edit { it.copy(movePieMargin = v) } }
         }
+        OverrideSwitch(
+            "Swipe hold stops Move", HOLD_STOPS_HINT, s.holdStopsMove, own(SurfaceField.HOLD_STOPS_MOVE), reset(SurfaceField.HOLD_STOPS_MOVE),
+        ) { v -> edit { it.copy(holdStopsMove = v) } }
 
         SectionTitle("Swipe")
         SharedPies(level, key, PieKind.SWIPE)
@@ -295,7 +312,25 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
                 own(MoveField.SAMPLE), reset(MoveField.SAMPLE),
                 hint = "$SAMPLE_HINT A stroke's first this much waits for it. For Move X and Y alike.",
             ) { v -> edit(MoveField.SAMPLE) { it.copy(sample = v) } }
+            OverrideSwitch(
+                "Lock heading", "$LOCK_HINT For Move X and Y alike.", f.moveLock, own(MoveField.LOCK), reset(MoveField.LOCK),
+            ) { v -> edit(MoveField.LOCK) { it.copy(lock = v) } }
+            if (f.moveLock) {
+                OverrideSlider(
+                    k + "turn", "Turn after %.1f dp", f.moveTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
+                    own(MoveField.TURN), reset(MoveField.TURN), hint = "$TURN_HINT For Move X and Y alike.",
+                ) { v -> edit(MoveField.TURN) { it.copy(turnDp = v) } }
+            }
+            OverrideSlider(
+                k + "margin", if (f.movePieMargin < 1f) "Pie margin: off" else "Pie margin %.0f°",
+                f.movePieMargin, 0f..TouchpadSettings.MAX_MOVE_PIE_MARGIN, 1f,
+                own(MoveField.PIE_MARGIN), reset(MoveField.PIE_MARGIN), hint = "$MARGIN_HINT For Move X and Y alike.",
+            ) { v -> edit(MoveField.PIE_MARGIN) { it.copy(margin = v) } }
         }
+        OverrideSwitch(
+            "Swipe hold stops Move", "$HOLD_STOPS_HINT For Move X and Y alike.", f.holdStopsMove,
+            own(MoveField.HOLD_STOPS), reset(MoveField.HOLD_STOPS),
+        ) { v -> edit(MoveField.HOLD_STOPS) { it.copy(holdStops = v) } }
         if (m.fingers == 1) {
             OverrideSlider(
                 k + "dz", if (f.cursorDeadzoneDp < 1f) "Cursor deadzone: off" else "Cursor deadzone %.0f dp",
@@ -346,6 +381,15 @@ private fun moveModeHint(mode: MoveMode): String = when (mode) {
     MoveMode.FREE -> "Free: the finger moves both ways at once, with no delay."
     MoveMode.PIE, MoveMode.LARGER_AXIS -> "Pie: a Move moves while the finger heads within its pie. 90° pies snap to the larger axis; wider ones overlap at diagonals."
 }
+
+private const val LOCK_HINT =
+    "A stroke keeps moving the way it started, so a wobbly finger doesn't drop movement or move the other axis."
+private const val TURN_HINT =
+    "The stroke turns once it heads another way for this long; that travel then moves the new way, so none is lost. 0 turns at once."
+private const val MARGIN_HINT =
+    "A Move that is moving keeps going until the finger heads this far past its pie, so it doesn't flicker at the pie's edge."
+private const val HOLD_STOPS_HINT =
+    "Once a mapped swipe hold presses, Move X and Y stop until the fingers lift, so a jump or crouch never moves the cursor."
 
 private const val SAMPLE_HINT = "The heading is that of about the last this much travel, so small wobbles don't change it."
 
