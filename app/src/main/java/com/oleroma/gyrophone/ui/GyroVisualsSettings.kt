@@ -195,7 +195,10 @@ internal fun GyroDisplaySettingsScreen(
                                             if (gameKnown) "It turns exactly as far as the game's camera."
                                             else "Set the game's turn in Gyro → Game for exact turns. Until then it turns as far as the phone, and every movement matches the gyro.",
                                         )
-                                    } else FloatSlider("Spin %.2f×", d.trackballSpin, 0.25f..4f, 0.25f) { set(d.copy(trackballSpin = it)) }
+                                    } else {
+                                        FloatSlider("Spin %.2f×", d.trackballSpin, 0.25f..4f, 0.25f) { set(d.copy(trackballSpin = it)) }
+                                        Hint("Every movement turns it Spin times as far as the phone turn that sends it.")
+                                    }
                                     LevelSlider(d) { set(it) }
                                 } else PoseSettings(d) { set(it) }
                                 if (shape == BallShape.GLOBE) SwitchRow("Equator", d.equator) { set(d.copy(equator = it)) }
