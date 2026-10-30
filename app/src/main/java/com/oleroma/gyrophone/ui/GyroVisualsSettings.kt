@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.oleroma.gyrophone.core.model.BallShape
 import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayColor
 import com.oleroma.gyrophone.core.model.GyroDisplayKind
@@ -162,7 +163,23 @@ internal fun GyroDisplaySettingsScreen(
                             }
 
                             GyroDisplayKind.BALL -> {
-                                Hint("A ball turned with the phone: the yellow mark faces the way the screen does, the red one its top.")
+                                val shape = d.ballShape
+                                Hint("A shape turned with the phone: the yellow mark shows where the screen faces, the red one its top.")
+                                Chips(BallShape.entries.map { it.label to it }, shape) { set(d.copy(shape = it, icosphere = false)) }
+                                if (shape == BallShape.ICOSPHERE) {
+                                    IntSlider("Subdivision %d", d.subdivision, 0..Meshes.MAX_SUBDIVISION) { set(d.copy(subdivision = it)) }
+                                }
+                                if (shape != BallShape.PLANE) {
+                                    Chips(listOf("Smooth" to true, "Polygonal" to false), d.smooth) { set(d.copy(smooth = it)) }
+                                    Hint(
+                                        when (shape) {
+                                            BallShape.GLOBE, BallShape.TORUS, BallShape.GIMBAL -> "Smooth: round lines. Polygonal: a few straight sides."
+                                            else -> "Smooth: every edge bent onto a ball. Polygonal: straight edges and flat faces."
+                                        },
+                                    )
+                                    SwitchRow("Show hidden edges", d.hiddenEdges) { set(d.copy(hiddenEdges = it)) }
+                                }
+                                if (shape != BallShape.GIMBAL) SwitchRow("Fill faces", d.fillFaces) { set(d.copy(fillFaces = it)) }
                                 SwitchRow("Trackball", d.trackball) { set(d.copy(trackball = it)) }
                                 if (d.trackball) Indented {
                                     Hint(
@@ -174,15 +191,14 @@ internal fun GyroDisplaySettingsScreen(
                                     Hint("Each axis also spins by its gyro sensitivity against the default, so the ball keeps pace with the cursor.")
                                     LevelSlider(d) { set(it) }
                                 } else PoseSettings(d) { set(it) }
-                                Chips(listOf("Globe" to false, "Icosphere" to true), d.icosphere) { set(d.copy(icosphere = it)) }
-                                if (!d.icosphere) SwitchRow("Equator", d.equator) { set(d.copy(equator = it)) }
+                                if (shape == BallShape.GLOBE) SwitchRow("Equator", d.equator) { set(d.copy(equator = it)) }
                                 SwitchRow("Screen mark", d.screenMark) { set(d.copy(screenMark = it)) }
                                 SwitchRow("Top mark", d.topMark) { set(d.copy(topMark = it)) }
                             }
                         }
                         PercentSlider("Opacity", d.opacity, 0.1f..1f) { set(d.copy(opacity = it)) }
                         Text("Colours", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
-                        for (c in GyroDisplayColor.of(d.kind)) {
+                        for (c in GyroDisplayColor.of(d.kind).filter { shown(d, it) }) {
                             Row(
                                 Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { picking = c }.padding(vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -254,6 +270,17 @@ private fun PoseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
         }
     }
     LevelSlider(d, set)
+}
+
+/** Colour [c] is drawn on [d] (a 3D shape only uses those of its shape). */
+private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
+    GyroDisplayColor.BALL_GIMBAL_YAW, GyroDisplayColor.BALL_GIMBAL_PITCH, GyroDisplayColor.BALL_GIMBAL_ROLL -> d.ballShape == BallShape.GIMBAL
+    GyroDisplayColor.BALL_LINES -> d.ballShape != BallShape.GIMBAL
+    GyroDisplayColor.BALL_BODY -> d.ballShape != BallShape.GIMBAL && d.fillFaces
+    GyroDisplayColor.BALL_EQUATOR -> d.ballShape == BallShape.GLOBE && d.equator
+    GyroDisplayColor.BALL_MARK -> d.screenMark
+    GyroDisplayColor.BALL_POLE -> d.topMark
+    else -> true
 }
 
 @Composable

@@ -20,8 +20,8 @@ enum class GyroDisplayKind(val label: String) {
     /** A disk with clock marks that spins with the heading, a dot showing the tilt. */
     DISK("Bubble disk"),
 
-    /** A ball with lines on it, turned with the phone. */
-    BALL("3D ball"),
+    /** A 3D shape ([BallShape]: a ball with lines on it, a solid, a torus...), turned with the phone. */
+    BALL("3D shape"),
     ;
 
     /** It shows the phone's pose ([GyroDisplay] pose settings apply). */
@@ -66,8 +66,17 @@ data class GyroDisplay(
     /** DISK: the tilt that puts the dot on the rim, in degrees. */
     val diskRange: Int = 30,
     val crosshair: Boolean = true,
-    /** BALL: a geodesic icosphere wireframe instead of latitude / longitude lines. */
+    /** BALL: an icosphere instead of the globe (from before [shape]; see [ballShape]). */
     val icosphere: Boolean = false,
+    /** BALL: what it shows; [subdivision] (icosphere) 0 to 3. */
+    val shape: BallShape = BallShape.GLOBE,
+    val subdivision: Int = 1,
+    /** BALL: edges bent onto a ball (round rings for the torus and gimbal), or straight. */
+    val smooth: Boolean = true,
+    /** BALL: the edges round the back, faint. */
+    val hiddenEdges: Boolean = true,
+    /** BALL: the faces filled, shaded by how squarely they face the viewer (a smooth ball: one shaded disk). */
+    val fillFaces: Boolean = true,
     /** BALL: the equator line (globe only), the mark where the screen faces and the mark at the top. */
     val equator: Boolean = true,
     val screenMark: Boolean = true,
@@ -86,6 +95,9 @@ data class GyroDisplay(
 ) {
     /** It holds its pose to gravity (and so needs the accelerometer). */
     val needsGravity: Boolean get() = kind.pose && gravity && !isTrackball
+
+    /** The shape a BALL shows. */
+    val ballShape: BallShape get() = if (icosphere && shape == BallShape.GLOBE) BallShape.ICOSPHERE else shape
 
     /** A [trackball] ball. */
     val isTrackball: Boolean get() = kind == GyroDisplayKind.BALL && trackball
@@ -110,6 +122,21 @@ data class GyroDisplay(
             GyroDisplayKind.BALL -> 0.4f to 1f
         }
     }
+}
+
+/** What a 3D shape display ([GyroDisplayKind.BALL]) shows. */
+@Serializable
+enum class BallShape(val label: String) {
+    GLOBE("Globe"),
+    ICOSPHERE("Icosphere"),
+    CUBE("Cube"),
+    TETRAHEDRON("Tetrahedron"),
+    DODECAHEDRON("Dodecahedron"),
+    TORUS("Torus"),
+
+    /** Three rings, one per axis (yaw, pitch, roll), lit while that axis moves the mouse. */
+    GIMBAL("Gimbal rings"),
+    PLANE("Paper plane"),
 }
 
 /** A colour a gyro display can change, per [kind]; [default] is ARGB. */
@@ -144,11 +171,14 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     DISK_NORTH(GyroDisplayKind.DISK, "north", "12 o'clock mark", 0xFFFF5A5A),
     DISK_CROSS(GyroDisplayKind.DISK, "cross", "Crosshair", 0x80FFFFFF),
     DISK_DOT(GyroDisplayKind.DISK, "dot", "Dot", 0xFFFFC94D),
-    BALL_BODY(GyroDisplayKind.BALL, "body", "Ball", 0xFF2A3446),
+    BALL_BODY(GyroDisplayKind.BALL, "body", "Fill", 0xFF2A3446),
     BALL_LINES(GyroDisplayKind.BALL, "lines", "Lines", 0x99FFFFFF),
     BALL_EQUATOR(GyroDisplayKind.BALL, "equator", "Equator", 0xFF5AA8FF),
     BALL_MARK(GyroDisplayKind.BALL, "mark", "Screen mark", 0xFFFFC94D),
     BALL_POLE(GyroDisplayKind.BALL, "pole", "Top mark", 0xFFFF5A5A),
+    BALL_GIMBAL_YAW(GyroDisplayKind.BALL, "gyaw", "Gimbal yaw ring", 0xFFFF5A5A),
+    BALL_GIMBAL_PITCH(GyroDisplayKind.BALL, "gpitch", "Gimbal pitch ring", 0xFF5ADB6E),
+    BALL_GIMBAL_ROLL(GyroDisplayKind.BALL, "groll", "Gimbal roll ring", 0xFF5AA8FF),
     ;
 
     companion object {
