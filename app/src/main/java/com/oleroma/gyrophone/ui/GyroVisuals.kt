@@ -244,19 +244,24 @@ private class VisState {
         drawCircle(Brush.radialGradient(listOf(lit, body), Offset(c.x - r * 0.35f, c.y - r * 0.4f), r * 1.3f), r, c)
         val lines = col(GyroDisplayColor.BALL_LINES)
         val thin = density
-        // Latitudes every 30° round the phone's up axis; the equator in its own colour.
-        for (lat in -60..60 step 30) {
-            val a = Math.toRadians(lat.toDouble())
-            sphereCircle(c, r, sin(a).toFloat(), 0f, 1f, 0f, cos(a).toFloat(), 0f, 0f, 1f, 1f, 0f, 0f,
-                if (lat == 0) col(GyroDisplayColor.BALL_EQUATOR) else lines, if (lat == 0) 2.5f * density else thin)
+        if (d.icosphere) {
+            drawIcosphere(c, r, lines, thin)
+        } else {
+            // Latitudes every 30° round the phone's up axis; the equator in its own colour.
+            for (lat in -60..60 step 30) {
+                val a = Math.toRadians(lat.toDouble())
+                val eq = lat == 0 && d.equator
+                sphereCircle(c, r, sin(a).toFloat(), 0f, 1f, 0f, cos(a).toFloat(), 0f, 0f, 1f, 1f, 0f, 0f,
+                    if (eq) col(GyroDisplayColor.BALL_EQUATOR) else lines, if (eq) 2.5f * density else thin)
+            }
+            // Meridians every 30°: great circles through both poles.
+            for (lon in 0 until 180 step 30) {
+                val a = Math.toRadians(lon.toDouble())
+                sphereCircle(c, r, 0f, 0f, 0f, 0f, 1f, 0f, 1f, 0f, sin(a).toFloat(), 0f, cos(a).toFloat(), lines, thin)
+            }
         }
-        // Meridians every 30°: great circles through both poles.
-        for (lon in 0 until 180 step 30) {
-            val a = Math.toRadians(lon.toDouble())
-            sphereCircle(c, r, 0f, 0f, 0f, 0f, 1f, 0f, 1f, 0f, sin(a).toFloat(), 0f, cos(a).toFloat(), lines, thin)
-        }
-        sphereDot(c, r, 0f, 0f, 1f, col(GyroDisplayColor.BALL_MARK))
-        sphereDot(c, r, 0f, 1f, 0f, col(GyroDisplayColor.BALL_POLE))
+        if (d.screenMark) sphereDot(c, r, 0f, 0f, 1f, col(GyroDisplayColor.BALL_MARK))
+        if (d.topMark) sphereDot(c, r, 0f, 1f, 0f, col(GyroDisplayColor.BALL_POLE))
         drawCircle(Color.Black.copy(alpha = 0.35f * body.alpha), r, c, style = Stroke(density))
     }
 
@@ -288,6 +293,27 @@ private class VisState {
             open = true
         }
         drawPath(path, color, style = Stroke(width, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+
+    /** The front edges of [Icosphere], turned by [m], ball radius [r] at [c], as one path. */
+    private fun DrawScope.drawIcosphere(c: Offset, r: Float, color: Color, width: Float) {
+        val v = Icosphere.vertices
+        val e = Icosphere.edges
+        path.reset()
+        var i = 0
+        while (i < e.size) {
+            val a = e[i] * 3
+            val b = e[i + 1] * 3
+            i += 2
+            // An edge shows while its middle faces the player.
+            val mx = v[a] + v[b]
+            val my = v[a + 1] + v[b + 1]
+            val mz = v[a + 2] + v[b + 2]
+            if (m[6] * mx + m[7] * my + m[8] * mz < 0f) continue
+            path.moveTo(c.x + (m[0] * v[a] + m[1] * v[a + 1] + m[2] * v[a + 2]) * r, c.y - (m[3] * v[a] + m[4] * v[a + 1] + m[5] * v[a + 2]) * r)
+            path.lineTo(c.x + (m[0] * v[b] + m[1] * v[b + 1] + m[2] * v[b + 2]) * r, c.y - (m[3] * v[b] + m[4] * v[b + 1] + m[5] * v[b + 2]) * r)
+        }
+        drawPath(path, color, style = Stroke(width, cap = StrokeCap.Round))
     }
 
     /** A mark on the ball's surface at the phone-frame direction ([px], [py], [pz]), shown while it faces the player. */
@@ -648,6 +674,63 @@ private const val CAMERA = 6f
 /** The heading tape's height and its gap to the dial, in dial radii. */
 private const val TAPE = 0.3f
 private const val TAPE_GAP = 0.12f
+
+/** An icosahedron split once (42 points on the unit ball, 120 edges), poles on the phone's up axis. */
+private object Icosphere {
+    val vertices: FloatArray
+    val edges: IntArray
+
+    init {
+        val t = ((1 + Math.sqrt(5.0)) / 2).toFloat()
+        val pts = ArrayList<FloatArray>()
+        fun add(x: Float, y: Float, z: Float): Int {
+            val l = kotlin.math.sqrt(x * x + y * y + z * z)
+            pts += floatArrayOf(x / l, y / l, z / l)
+            return pts.size - 1
+        }
+        // The 12 corners: (0, ±1, ±t) and its cyclic turns, then tipped so two corners sit on the y axis.
+        for ((a, b) in listOf(-1f to t, 1f to t, -1f to -t, 1f to -t)) {
+            add(a, b, 0f); add(0f, a, b); add(b, 0f, a)
+        }
+        val tip = atan2(1.0, t.toDouble()).toFloat()
+        for (p in pts) {
+            val x = p[0]
+            val y = p[1]
+            p[0] = x * cos(tip) - y * sin(tip)
+            p[1] = x * sin(tip) + y * cos(tip)
+        }
+        // The 20 faces: every three corners all an edge apart.
+        val edge = 2 / kotlin.math.sqrt(1 + t * t)
+        fun near(i: Int, j: Int): Boolean {
+            val a = pts[i]
+            val b = pts[j]
+            return kotlin.math.abs(hypot(hypot(a[0] - b[0], a[1] - b[1]), a[2] - b[2]) - edge) < 1e-3f
+        }
+        val faces = ArrayList<IntArray>()
+        for (i in 0 until 12) for (j in i + 1 until 12) for (k in j + 1 until 12) {
+            if (near(i, j) && near(j, k) && near(i, k)) faces += intArrayOf(i, j, k)
+        }
+        // Split each face in four, sharing the new middle points between faces.
+        val mids = HashMap<Long, Int>()
+        fun mid(i: Int, j: Int): Int = mids.getOrPut(minOf(i, j).toLong() * 1000 + maxOf(i, j)) {
+            add(pts[i][0] + pts[j][0], pts[i][1] + pts[j][1], pts[i][2] + pts[j][2])
+        }
+        val lines = HashSet<Long>()
+        fun line(i: Int, j: Int) { lines += minOf(i, j).toLong() * 1000 + maxOf(i, j) }
+        for (f in faces) {
+            val ab = mid(f[0], f[1])
+            val bc = mid(f[1], f[2])
+            val ca = mid(f[2], f[0])
+            for ((p, q, s) in listOf(Triple(f[0], ab, ca), Triple(ab, f[1], bc), Triple(ca, bc, f[2]), Triple(ab, bc, ca))) {
+                line(p, q); line(q, s); line(s, p)
+            }
+        }
+        vertices = FloatArray(pts.size * 3).also { out -> pts.forEachIndexed { i, p -> p.copyInto(out, i * 3) } }
+        edges = IntArray(lines.size * 2).also { out ->
+            lines.forEachIndexed { i, k -> out[i * 2] = (k / 1000).toInt(); out[i * 2 + 1] = (k % 1000).toInt() }
+        }
+    }
+}
 
 /** Points round each line on the 3D ball. */
 private const val SPHERE_STEPS = 48

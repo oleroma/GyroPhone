@@ -164,6 +164,10 @@ internal fun GyroDisplaySettingsScreen(
                             GyroDisplayKind.BALL -> {
                                 Hint("A ball turned with the phone: the yellow mark faces the way the screen does, the red one its top.")
                                 PoseSettings(d) { set(it) }
+                                Chips(listOf("Globe" to false, "Icosphere" to true), d.icosphere) { set(d.copy(icosphere = it)) }
+                                if (!d.icosphere) SwitchRow("Equator", d.equator) { set(d.copy(equator = it)) }
+                                SwitchRow("Screen mark", d.screenMark) { set(d.copy(screenMark = it)) }
+                                SwitchRow("Top mark", d.topMark) { set(d.copy(topMark = it)) }
                             }
                         }
                         PercentSlider("Opacity", d.opacity, 0.1f..1f) { set(d.copy(opacity = it)) }

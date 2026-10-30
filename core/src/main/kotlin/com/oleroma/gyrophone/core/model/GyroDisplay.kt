@@ -66,6 +66,12 @@ data class GyroDisplay(
     /** DISK: the tilt that puts the dot on the rim, in degrees. */
     val diskRange: Int = 30,
     val crosshair: Boolean = true,
+    /** BALL: a geodesic icosphere wireframe instead of latitude / longitude lines. */
+    val icosphere: Boolean = false,
+    /** BALL: the equator line (globe only), the mark where the screen faces and the mark at the top. */
+    val equator: Boolean = true,
+    val screenMark: Boolean = true,
+    val topMark: Boolean = true,
     val opacity: Float = 0.7f,
     val colors: Map<String, Long> = emptyMap(),
 ) {
