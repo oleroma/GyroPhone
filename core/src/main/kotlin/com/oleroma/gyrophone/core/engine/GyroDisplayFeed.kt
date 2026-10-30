@@ -63,7 +63,7 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         if (!d.ease || compass) return
         val busy = if (d.easeAfterRatchet) held else sqrt(yaw * yaw + pitch * pitch + roll * roll) > STILL_DPS
         calm = if (busy) 0f else calm + dtSeconds
-        if (calm < d.easeDelayMs / 1000f) return
+        if (busy || calm < d.easeDelayMs / 1000f) return
         // By time: an exponential, 95% of the way back after easeSeconds.
         val amount = if (d.easeBySpeed) d.easeSpeed * DEG_TO_RAD * dtSeconds else 3f * dtSeconds / d.easeSeconds.coerceAtLeast(0.05f)
         if (d.gravity) pose.easeHeading(d.easeBySpeed, amount) else pose.easeAll(d.easeBySpeed, amount)
