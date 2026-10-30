@@ -22,10 +22,22 @@ fi
 
 if [ "$what" = companion ] || { [ "$what" = all ] && [ "${OS:-}" = Windows_NT ]; }; then
   # Branch builds skip ReadyToRun: it only speeds up startup and makes the build much slower.
-  dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contained true \
-    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
-    -p:EnableCompressionInSingleFile=true -p:DebugType=none \
-    -p:Version="$version" -p:InformationalVersion="$version-$GP_COMMIT" \
-    -p:IncludeSourceRevisionInInformationalVersion=false -o companion/out
-  echo "build-file: companion/out/GyroPhoneCompanion.exe $version"
+  publish=(dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contained true
+    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+    -p:EnableCompressionInSingleFile=true -p:DebugType=none)
+  out=companion/out
+  # The companion is built only from companion/src, companion/Directory.Build.props and the
+  # publish settings above. When none of them changed since the exe in companion/out was built,
+  # that exe is reused as is, keeping its own (older) version, and the install hook leaves the
+  # installed companion alone. The version and commit stamped into the exe aren't part of the key.
+  key="$(git rev-parse HEAD:companion/src HEAD:companion/Directory.Build.props | tr '\n' ' ')$(printf '%s ' "${publish[@]}" | git hash-object --stdin)"
+  if [ -f "$out/GyroPhoneCompanion.exe" ] && [ -f "$out/source-key.txt" ] && [ "$(cat "$out/source-key.txt")" = "$key" ]; then
+    echo "Companion sources unchanged: reusing companion/out/GyroPhoneCompanion.exe." >&2
+  else
+    if [ -f "$out/source-key.txt" ]; then : >"$out/source-key.txt"; fi
+    "${publish[@]}" -p:Version="$version" -p:InformationalVersion="$version-$GP_COMMIT" \
+      -p:IncludeSourceRevisionInInformationalVersion=false -o "$out"
+    echo "$key" >"$out/source-key.txt"
+  fi
+  echo "build-file: $out/GyroPhoneCompanion.exe $version"
 fi
