@@ -14,33 +14,72 @@ enum class GyroDisplayKind(val label: String) {
     /** A scrolling graph of yaw / pitch / roll speed, ratchet presses shaded. */
     GRAPH("Speed graph"),
 
-    /** An aircraft-style horizon against gravity, with a heading tape. */
+    /** An aircraft-style horizon, with a heading tape. */
     HORIZON("Attitude indicator"),
+
+    /** A disk with clock marks that spins with the heading, a dot showing the tilt. */
+    DISK("Bubble disk"),
+
+    /** A ball with lines on it, turned with the phone. */
+    BALL("3D ball"),
+    ;
+
+    /** It shows the phone's pose ([GyroDisplay] pose settings apply). */
+    val pose: Boolean get() = this == PHONE || this == HORIZON || this == DISK || this == BALL
 }
 
 /**
- * A gyro display's settings ([TouchControl.display]). [gravity] (PHONE): its tilt held to the
- * world, so it never drifts; off, turned by the gyro since the last reset. [resetOnRatchet]: each
- * ratchet press sets the gyro-mode phone and the heading tape straight. [levelDeg] (PHONE,
- * HORIZON): the real pose shown square on, 0 upright facing the player, 90 flat screen up, 180
- * upright facing away. [colors]: ARGB per [GyroDisplayColor.key], missing = its default.
+ * A gyro display's settings ([TouchControl.display]). The pose ones apply to the kinds that show
+ * the phone's pose ([GyroDisplayKind.pose]):
+ * - [gravity]: its tilt held to the world, so it never drifts; off, turned by the gyro (only the
+ *   axes that move the mouse) since the last reset. [compass] (with gravity): its heading held to
+ *   north by the magnetometer.
+ * - [resetOnRatchet]: each ratchet press sets it straight: the whole pose, or with
+ *   [resetHeadingOnly] (always with gravity) only the turn round the vertical.
+ * - [ease]: it goes back to straight on its own (the heading only with gravity), starting
+ *   [easeDelayMs] after the phone stops turning, or with [easeAfterRatchet] after a ratchet is let
+ *   go; [easeSeconds] to get (almost) all the way back, or with [easeBySpeed] at [easeSpeed] deg/s.
+ * - [levelDeg]: the real pose shown square on, 0 upright facing the player, 90 flat screen up,
+ *   180 upright facing away.
+ *
+ * [colors]: ARGB per [GyroDisplayColor.key], missing = its default.
  */
 @Serializable
 data class GyroDisplay(
     val kind: GyroDisplayKind,
     val gravity: Boolean = false,
     val resetOnRatchet: Boolean = true,
+    val resetHeadingOnly: Boolean = false,
+    val ease: Boolean = false,
+    val easeAfterRatchet: Boolean = false,
+    val easeDelayMs: Int = 300,
+    val easeBySpeed: Boolean = false,
+    val easeSeconds: Float = 0.5f,
+    val easeSpeed: Int = 90,
+    val compass: Boolean = false,
     val levelDeg: Int = 0,
     val ghosts: Boolean = false,
     val axes: Boolean = false,
     /** GRAPH: its full height, ± this many deg/s. */
     val graphRange: Int = 360,
     val graphSeconds: Int = 3,
+    /** DISK: the tilt that puts the dot on the rim, in degrees. */
+    val diskRange: Int = 30,
+    val crosshair: Boolean = true,
+    /** BALL: a geodesic icosphere wireframe instead of latitude / longitude lines. */
+    val icosphere: Boolean = false,
+    /** BALL: the equator line (globe only), the mark where the screen faces and the mark at the top. */
+    val equator: Boolean = true,
+    val screenMark: Boolean = true,
+    val topMark: Boolean = true,
     val opacity: Float = 0.7f,
     val colors: Map<String, Long> = emptyMap(),
 ) {
     /** It holds its pose to gravity (and so needs the accelerometer). */
-    val needsGravity: Boolean get() = (kind == GyroDisplayKind.PHONE && gravity) || kind == GyroDisplayKind.HORIZON
+    val needsGravity: Boolean get() = kind.pose && gravity
+
+    /** It holds its heading to north (and so needs the magnetometer). */
+    val needsCompass: Boolean get() = needsGravity && compass
 
     /** Colour [c] as ARGB: its own or the default. */
     fun color(c: GyroDisplayColor): Long = colors[c.key] ?: c.default
@@ -55,6 +94,8 @@ data class GyroDisplay(
             GyroDisplayKind.RATCHET_RING -> 0.16f to 1f
             GyroDisplayKind.GRAPH -> 1.1f to 0.3f
             GyroDisplayKind.HORIZON -> 0.4f to 1.25f
+            GyroDisplayKind.DISK -> 0.4f to 1f
+            GyroDisplayKind.BALL -> 0.4f to 1f
         }
     }
 }
@@ -85,6 +126,17 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     HORIZON_RIM(GyroDisplayKind.HORIZON, "rim", "Rim", 0xCCFFFFFF),
     HORIZON_TAPE(GyroDisplayKind.HORIZON, "tape", "Heading tape", 0x66000000),
     HORIZON_TEXT(GyroDisplayKind.HORIZON, "text", "Heading numbers", 0xFFFFFFFF),
+    DISK_FACE(GyroDisplayKind.DISK, "face", "Disk", 0x66000000),
+    DISK_RIM(GyroDisplayKind.DISK, "rim", "Rim", 0xCCFFFFFF),
+    DISK_MARKS(GyroDisplayKind.DISK, "marks", "Marks", 0xCCFFFFFF),
+    DISK_NORTH(GyroDisplayKind.DISK, "north", "12 o'clock mark", 0xFFFF5A5A),
+    DISK_CROSS(GyroDisplayKind.DISK, "cross", "Crosshair", 0x80FFFFFF),
+    DISK_DOT(GyroDisplayKind.DISK, "dot", "Dot", 0xFFFFC94D),
+    BALL_BODY(GyroDisplayKind.BALL, "body", "Ball", 0xFF2A3446),
+    BALL_LINES(GyroDisplayKind.BALL, "lines", "Lines", 0x99FFFFFF),
+    BALL_EQUATOR(GyroDisplayKind.BALL, "equator", "Equator", 0xFF5AA8FF),
+    BALL_MARK(GyroDisplayKind.BALL, "mark", "Screen mark", 0xFFFFC94D),
+    BALL_POLE(GyroDisplayKind.BALL, "pole", "Top mark", 0xFFFF5A5A),
     ;
 
     companion object {

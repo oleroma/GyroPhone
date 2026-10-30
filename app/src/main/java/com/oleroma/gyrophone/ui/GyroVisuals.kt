@@ -15,6 +15,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
@@ -36,6 +37,7 @@ import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.runtime.GamepadRuntime
+import kotlin.math.acos
 import kotlin.math.asin
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -148,9 +150,7 @@ private class VisState {
         fun col(c: GyroDisplayColor) = Color(d.color(c).toInt()).let { it.copy(alpha = it.alpha * op) }
         when (d.kind) {
             GyroDisplayKind.PHONE -> {
-                if (feed == null) raw.fill(0f).also { raw[0] = 1f; raw[4] = 1f; raw[8] = 1f }
-                else (if (d.gravity) feed.world else feed.pose).matrix(raw)
-                level(d.levelDeg)
+                poseOf(feed, d)
                 val model = if (size.width >= size.height) landscape else portrait
                 // The model's long side is 2 units, its box about 2.3 of them.
                 val unit = minOf(box.width, box.height) / 2.3f
@@ -181,7 +181,149 @@ private class VisState {
 
             GyroDisplayKind.GRAPH -> drawGraph(feed, d, box, ::col)
             GyroDisplayKind.HORIZON -> drawHorizon(feed, d, box, ::col)
+            GyroDisplayKind.DISK -> drawDisk(feed, d, box, ::col)
+            GyroDisplayKind.BALL -> drawBall(feed, d, box, ::col)
         }
+    }
+
+    /** [raw] = [feed]'s pose (straight without one), [m] = it seen from [GyroDisplay.levelDeg]. */
+    private fun poseOf(feed: GyroDisplayFeed?, d: GyroDisplay) {
+        if (feed == null) raw.fill(0f).also { raw[0] = 1f; raw[4] = 1f; raw[8] = 1f } else feed.pose.matrix(raw)
+        level(d.levelDeg)
+    }
+
+    /** The heading of [raw] in degrees (right +), as [com.oleroma.gyrophone.core.engine.GyroPose.heading]. */
+    private fun headingDeg(): Float =
+        if (raw[0] * raw[0] + raw[6] * raw[6] > 0.04f) Math.toDegrees(atan2(raw[6], raw[0]).toDouble()).toFloat() else 0f
+
+    private fun DrawScope.drawDisk(feed: GyroDisplayFeed?, d: GyroDisplay, box: Rect, col: (GyroDisplayColor) -> Color) {
+        poseOf(feed, d)
+        val r = minOf(box.width, box.height) / 2f * 0.95f
+        val c = box.center
+        drawCircle(col(GyroDisplayColor.DISK_FACE), r, c)
+        drawCircle(col(GyroDisplayColor.DISK_RIM), r, c, style = Stroke(1.5f * density))
+        // The card spins against the heading, as a compass card does: the 12 o'clock mark stays put in the world.
+        rotate(-headingDeg(), c) {
+            val marks = col(GyroDisplayColor.DISK_MARKS)
+            for (i in 0 until 12) {
+                val a = Math.toRadians(i * 30.0 - 90.0)
+                val inner = if (i % 3 == 0) 0.74f else 0.84f
+                val ca = cos(a).toFloat()
+                val sa = sin(a).toFloat()
+                drawLine(
+                    if (i == 0) col(GyroDisplayColor.DISK_NORTH) else marks,
+                    Offset(c.x + ca * r * inner, c.y + sa * r * inner), Offset(c.x + ca * r * 0.95f, c.y + sa * r * 0.95f),
+                    (if (i == 0) 3.5f else if (i % 3 == 0) 2.5f else 1.5f) * density, StrokeCap.Round,
+                )
+            }
+            if (d.crosshair) {
+                val cross = col(GyroDisplayColor.DISK_CROSS)
+                drawLine(cross, Offset(c.x - r * 0.66f, c.y), Offset(c.x + r * 0.66f, c.y), density)
+                drawLine(cross, Offset(c.x, c.y - r * 0.66f), Offset(c.x, c.y + r * 0.66f), density)
+                drawCircle(cross, r * 0.33f, c, style = Stroke(density))
+            }
+        }
+        // The dot: where the screen points, off centre by the tilt, on the rim at the range.
+        val nx = m[2]
+        val ny = m[5]
+        val flat = hypot(nx, ny)
+        val tilt = Math.toDegrees(acos(m[8].coerceIn(-1f, 1f).toDouble())).toFloat()
+        val off = (tilt / d.diskRange.coerceAtLeast(5)).coerceAtMost(1f) * r * 0.86f
+        val p = if (flat > 1e-4f) Offset(c.x + nx / flat * off, c.y - ny / flat * off) else c
+        val dot = col(GyroDisplayColor.DISK_DOT)
+        drawCircle(dot, r * 0.09f, p)
+        drawCircle(Color.Black.copy(alpha = 0.4f * dot.alpha), r * 0.09f, p, style = Stroke(density))
+    }
+
+    private fun DrawScope.drawBall(feed: GyroDisplayFeed?, d: GyroDisplay, box: Rect, col: (GyroDisplayColor) -> Color) {
+        poseOf(feed, d)
+        val r = minOf(box.width, box.height) / 2f * 0.95f
+        val c = box.center
+        val body = col(GyroDisplayColor.BALL_BODY)
+        val lit = Color(body.red + (1 - body.red) * 0.35f, body.green + (1 - body.green) * 0.35f, body.blue + (1 - body.blue) * 0.35f, body.alpha)
+        drawCircle(Brush.radialGradient(listOf(lit, body), Offset(c.x - r * 0.35f, c.y - r * 0.4f), r * 1.3f), r, c)
+        val lines = col(GyroDisplayColor.BALL_LINES)
+        val thin = density
+        if (d.icosphere) {
+            drawIcosphere(c, r, lines, thin)
+        } else {
+            // Latitudes every 30° round the phone's up axis; the equator in its own colour.
+            for (lat in -60..60 step 30) {
+                val a = Math.toRadians(lat.toDouble())
+                val eq = lat == 0 && d.equator
+                sphereCircle(c, r, sin(a).toFloat(), 0f, 1f, 0f, cos(a).toFloat(), 0f, 0f, 1f, 1f, 0f, 0f,
+                    if (eq) col(GyroDisplayColor.BALL_EQUATOR) else lines, if (eq) 2.5f * density else thin)
+            }
+            // Meridians every 30°: great circles through both poles.
+            for (lon in 0 until 180 step 30) {
+                val a = Math.toRadians(lon.toDouble())
+                sphereCircle(c, r, 0f, 0f, 0f, 0f, 1f, 0f, 1f, 0f, sin(a).toFloat(), 0f, cos(a).toFloat(), lines, thin)
+            }
+        }
+        if (d.screenMark) sphereDot(c, r, 0f, 0f, 1f, col(GyroDisplayColor.BALL_MARK))
+        if (d.topMark) sphereDot(c, r, 0f, 1f, 0f, col(GyroDisplayColor.BALL_POLE))
+        drawCircle(Color.Black.copy(alpha = 0.35f * body.alpha), r, c, style = Stroke(density))
+    }
+
+    /**
+     * The front half of a circle on the unit ball [h] along ([ax], [ay], [az]), radius [rho], spanned
+     * by ([ux], [uy], [uz]) and ([vx], [vy], [vz]) in the phone's frame, turned by [m], ball radius [r] at [c].
+     */
+    private fun DrawScope.sphereCircle(
+        c: Offset, r: Float, h: Float, ax: Float, ay: Float, az: Float, rho: Float,
+        ux: Float, uy: Float, uz: Float, vx: Float, vy: Float, vz: Float, color: Color, width: Float,
+    ) {
+        path.reset()
+        var open = false
+        for (i in 0..SPHERE_STEPS) {
+            val t = i * (2 * Math.PI / SPHERE_STEPS)
+            val ct = cos(t).toFloat()
+            val st = sin(t).toFloat()
+            val px = h * ax + rho * (ct * ux + st * vx)
+            val py = h * ay + rho * (ct * uy + st * vy)
+            val pz = h * az + rho * (ct * uz + st * vz)
+            val z = m[6] * px + m[7] * py + m[8] * pz
+            if (z < 0f) {
+                open = false
+                continue
+            }
+            val x = c.x + (m[0] * px + m[1] * py + m[2] * pz) * r
+            val y = c.y - (m[3] * px + m[4] * py + m[5] * pz) * r
+            if (open) path.lineTo(x, y) else path.moveTo(x, y)
+            open = true
+        }
+        drawPath(path, color, style = Stroke(width, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+
+    /** The front edges of [Icosphere], turned by [m], ball radius [r] at [c], as one path. */
+    private fun DrawScope.drawIcosphere(c: Offset, r: Float, color: Color, width: Float) {
+        val v = Icosphere.vertices
+        val e = Icosphere.edges
+        path.reset()
+        var i = 0
+        while (i < e.size) {
+            val a = e[i] * 3
+            val b = e[i + 1] * 3
+            i += 2
+            // An edge shows while its middle faces the player.
+            val mx = v[a] + v[b]
+            val my = v[a + 1] + v[b + 1]
+            val mz = v[a + 2] + v[b + 2]
+            if (m[6] * mx + m[7] * my + m[8] * mz < 0f) continue
+            path.moveTo(c.x + (m[0] * v[a] + m[1] * v[a + 1] + m[2] * v[a + 2]) * r, c.y - (m[3] * v[a] + m[4] * v[a + 1] + m[5] * v[a + 2]) * r)
+            path.lineTo(c.x + (m[0] * v[b] + m[1] * v[b + 1] + m[2] * v[b + 2]) * r, c.y - (m[3] * v[b] + m[4] * v[b + 1] + m[5] * v[b + 2]) * r)
+        }
+        drawPath(path, color, style = Stroke(width, cap = StrokeCap.Round))
+    }
+
+    /** A mark on the ball's surface at the phone-frame direction ([px], [py], [pz]), shown while it faces the player. */
+    private fun DrawScope.sphereDot(c: Offset, r: Float, px: Float, py: Float, pz: Float, color: Color) {
+        val z = m[6] * px + m[7] * py + m[8] * pz
+        if (z <= 0f) return
+        val x = c.x + (m[0] * px + m[1] * py + m[2] * pz) * r
+        val y = c.y - (m[3] * px + m[4] * py + m[5] * pz) * r
+        // Foreshortened toward the rim.
+        drawCircle(color, r * 0.1f * (0.4f + 0.6f * z), Offset(x, y))
     }
 
     private fun DrawScope.drawRing(box: Rect, live: Int, letters: Color, colors: Array<Color>) {
@@ -241,8 +383,7 @@ private class VisState {
     }
 
     private fun DrawScope.drawHorizon(feed: GyroDisplayFeed?, d: GyroDisplay, box: Rect, col: (GyroDisplayColor) -> Color) {
-        if (feed == null) raw.fill(0f).also { raw[0] = 1f; raw[4] = 1f; raw[8] = 1f } else feed.world.matrix(raw)
-        level(d.levelDeg)
+        poseOf(feed, d)
         // The tape on top, the dial under it: fit both in the box.
         val r = minOf(box.width / 2f, box.height / (2f + TAPE + TAPE_GAP)) * 0.97f
         val tape = r * TAPE
@@ -283,7 +424,7 @@ private class VisState {
         val tTop = c.y - r - gap - tape
         val tRect = Rect(c.x - r, tTop, c.x + r, tTop + tape)
         drawRoundRect(col(GyroDisplayColor.HORIZON_TAPE), tRect.topLeft, tRect.size, CornerRadius(4 * density))
-        val heading = feed?.heading ?: 0f
+        val heading = (headingDeg() + 360f) % 360f
         val pxPerDeg = r / 45f
         val numbers = col(GyroDisplayColor.HORIZON_TEXT)
         text.textSize = tape * 0.48f
@@ -533,6 +674,66 @@ private const val CAMERA = 6f
 /** The heading tape's height and its gap to the dial, in dial radii. */
 private const val TAPE = 0.3f
 private const val TAPE_GAP = 0.12f
+
+/** An icosahedron split once (42 points on the unit ball, 120 edges), poles on the phone's up axis. */
+private object Icosphere {
+    val vertices: FloatArray
+    val edges: IntArray
+
+    init {
+        val t = ((1 + Math.sqrt(5.0)) / 2).toFloat()
+        val pts = ArrayList<FloatArray>()
+        fun add(x: Float, y: Float, z: Float): Int {
+            val l = kotlin.math.sqrt(x * x + y * y + z * z)
+            pts += floatArrayOf(x / l, y / l, z / l)
+            return pts.size - 1
+        }
+        // The 12 corners: (0, ±1, ±t) and its cyclic turns, then tipped so two corners sit on the y axis.
+        for ((a, b) in listOf(-1f to t, 1f to t, -1f to -t, 1f to -t)) {
+            add(a, b, 0f); add(0f, a, b); add(b, 0f, a)
+        }
+        val tip = atan2(1.0, t.toDouble()).toFloat()
+        for (p in pts) {
+            val x = p[0]
+            val y = p[1]
+            p[0] = x * cos(tip) - y * sin(tip)
+            p[1] = x * sin(tip) + y * cos(tip)
+        }
+        // The 20 faces: every three corners all an edge apart.
+        val edge = 2 / kotlin.math.sqrt(1 + t * t)
+        fun near(i: Int, j: Int): Boolean {
+            val a = pts[i]
+            val b = pts[j]
+            return kotlin.math.abs(hypot(hypot(a[0] - b[0], a[1] - b[1]), a[2] - b[2]) - edge) < 1e-3f
+        }
+        val faces = ArrayList<IntArray>()
+        for (i in 0 until 12) for (j in i + 1 until 12) for (k in j + 1 until 12) {
+            if (near(i, j) && near(j, k) && near(i, k)) faces += intArrayOf(i, j, k)
+        }
+        // Split each face in four, sharing the new middle points between faces.
+        val mids = HashMap<Long, Int>()
+        fun mid(i: Int, j: Int): Int = mids.getOrPut(minOf(i, j).toLong() * 1000 + maxOf(i, j)) {
+            add(pts[i][0] + pts[j][0], pts[i][1] + pts[j][1], pts[i][2] + pts[j][2])
+        }
+        val lines = HashSet<Long>()
+        fun line(i: Int, j: Int) { lines += minOf(i, j).toLong() * 1000 + maxOf(i, j) }
+        for (f in faces) {
+            val ab = mid(f[0], f[1])
+            val bc = mid(f[1], f[2])
+            val ca = mid(f[2], f[0])
+            for ((p, q, s) in listOf(Triple(f[0], ab, ca), Triple(ab, f[1], bc), Triple(ca, bc, f[2]), Triple(ab, bc, ca))) {
+                line(p, q); line(q, s); line(s, p)
+            }
+        }
+        vertices = FloatArray(pts.size * 3).also { out -> pts.forEachIndexed { i, p -> p.copyInto(out, i * 3) } }
+        edges = IntArray(lines.size * 2).also { out ->
+            lines.forEachIndexed { i, k -> out[i * 2] = (k / 1000).toInt(); out[i * 2 + 1] = (k % 1000).toInt() }
+        }
+    }
+}
+
+/** Points round each line on the 3D ball. */
+private const val SPHERE_STEPS = 48
 
 private const val GHOSTS = 6
 private const val GHOST_MS = 45L

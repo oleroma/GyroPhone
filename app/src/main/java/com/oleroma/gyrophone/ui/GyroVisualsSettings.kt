@@ -134,13 +134,7 @@ internal fun GyroDisplaySettingsScreen(
                     Column(narrow, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         when (d.kind) {
                             GyroDisplayKind.PHONE -> {
-                                Chips(listOf("Gyro" to false, "Gravity" to true), d.gravity) { set(d.copy(gravity = it)) }
-                                Hint(
-                                    if (d.gravity) "Its tilt follows gravity, so it never drifts; a turn left or right eases back to facing you."
-                                    else "It turns as the gyro moves the mouse (paused axes stay still) and can drift over time.",
-                                )
-                                if (!d.gravity) SwitchRow("Reset on ratchet", d.resetOnRatchet) { set(d.copy(resetOnRatchet = it)) }
-                                LevelSlider(d) { set(it) }
+                                PoseSettings(d) { set(it) }
                                 SwitchRow("Ghost trail", d.ghosts) { set(d.copy(ghosts = it)) }
                                 SwitchRow("Axis arrows", d.axes) { set(d.copy(axes = it)) }
                                 Hint("Arrows along the phone's own right, up and screen directions.")
@@ -156,9 +150,24 @@ internal fun GyroDisplaySettingsScreen(
                             }
 
                             GyroDisplayKind.HORIZON -> {
-                                LevelSlider(d) { set(it) }
-                                SwitchRow("Reset heading on ratchet", d.resetOnRatchet) { set(d.copy(resetOnRatchet = it)) }
-                                Hint("It tilts with roll and moves with pitch against gravity. The tape on top counts degrees turned.")
+                                Hint("It tilts with roll and moves with pitch. The tape on top shows the heading.")
+                                PoseSettings(d) { set(it) }
+                            }
+
+                            GyroDisplayKind.DISK -> {
+                                Hint("The dot moves off centre where the screen tilts; the disk and its marks spin with the heading.")
+                                PoseSettings(d) { set(it) }
+                                IntSlider("Dot on the rim at %d°", d.diskRange, 10..90, step = 5) { set(d.copy(diskRange = it)) }
+                                SwitchRow("Crosshair", d.crosshair) { set(d.copy(crosshair = it)) }
+                            }
+
+                            GyroDisplayKind.BALL -> {
+                                Hint("A ball turned with the phone: the yellow mark faces the way the screen does, the red one its top.")
+                                PoseSettings(d) { set(it) }
+                                Chips(listOf("Globe" to false, "Icosphere" to true), d.icosphere) { set(d.copy(icosphere = it)) }
+                                if (!d.icosphere) SwitchRow("Equator", d.equator) { set(d.copy(equator = it)) }
+                                SwitchRow("Screen mark", d.screenMark) { set(d.copy(screenMark = it)) }
+                                SwitchRow("Top mark", d.topMark) { set(d.copy(topMark = it)) }
                             }
                         }
                         PercentSlider("Opacity", d.opacity, 0.1f..1f) { set(d.copy(opacity = it)) }
@@ -200,6 +209,41 @@ internal fun GyroDisplaySettingsScreen(
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
         )
     }
+}
+
+/** The settings every pose display has ([GyroDisplayKind.pose]): gravity, compass, reset, ease back and level. */
+@Composable
+private fun PoseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
+    SwitchRow("Gravity", d.gravity) { set(d.copy(gravity = it)) }
+    Hint(
+        if (d.gravity) "Its tilt follows gravity, so it never drifts. Only the heading (the turn left or right) can drift, reset or ease back."
+        else "It turns as the gyro moves the mouse (paused axes stay still) and can drift over time.",
+    )
+    if (d.gravity) {
+        SwitchRow("Compass", d.compass) { set(d.copy(compass = it)) }
+        if (d.compass) Hint("The heading is held to north by the magnetometer: 0° is you facing north. Reset and ease back leave it alone.")
+    }
+    if (!d.needsCompass) {
+        SwitchRow("Reset on ratchet", d.resetOnRatchet) { set(d.copy(resetOnRatchet = it)) }
+        if (d.resetOnRatchet && !d.gravity) Indented {
+            Chips(listOf("Whole pose" to false, "Heading only" to true), d.resetHeadingOnly) { set(d.copy(resetHeadingOnly = it)) }
+        }
+        SwitchRow("Ease back", d.ease) { set(d.copy(ease = it)) }
+        if (d.ease) Indented {
+            Hint(if (d.gravity) "The heading goes back to straight on its own." else "It goes back to straight on its own.")
+            Chips(listOf("When the phone stops" to false, "When the ratchet is let go" to true), d.easeAfterRatchet) {
+                set(d.copy(easeAfterRatchet = it))
+            }
+            IntSlider("Starting after %d ms", d.easeDelayMs, 0..3000, step = 50) { set(d.copy(easeDelayMs = it)) }
+            Chips(listOf("By time" to false, "By speed" to true), d.easeBySpeed) { set(d.copy(easeBySpeed = it)) }
+            if (d.easeBySpeed) {
+                IntSlider("At %d°/s", d.easeSpeed, 10..720, step = 10) { set(d.copy(easeSpeed = it)) }
+            } else {
+                FloatSlider("Back in %.1f s", d.easeSeconds, 0.1f..5f, 0.1f) { set(d.copy(easeSeconds = it)) }
+            }
+        }
+    }
+    LevelSlider(d, set)
 }
 
 @Composable
