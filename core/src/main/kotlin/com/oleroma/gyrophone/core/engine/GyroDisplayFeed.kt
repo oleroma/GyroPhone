@@ -51,8 +51,10 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         }
         if (d.isTrackball) {
             if (dtSeconds == 0f || axes == 0) return
+            // Following sensitivity with the game's turn known, it spins by RWS: as far as the camera turns.
+            fun follow(g: GyroSettings, a: MotionAxis) = g.sensitivityOf(a).let { s -> g.rwsOf(s) ?: (s / GyroSettings.DEFAULT_SENSITIVITY) }
             fun k(a: MotionAxis) = if (axes and MappingEngine.gyroBit(a) == 0) 0f
-            else d.trackballSpin * if (d.trackballFollowSensitivity && gyro != null) gyro.sensitivityOf(a) / GyroSettings.DEFAULT_SENSITIVITY else 1f
+            else d.trackballSpin * if (d.trackballFollowSensitivity && gyro != null) follow(gyro, a) else 1f
             pose.counterRotate(yaw * k(MotionAxis.YAW), pitch * k(MotionAxis.PITCH), roll * k(MotionAxis.ROLL), dtSeconds)
             return
         }

@@ -188,7 +188,10 @@ internal fun GyroDisplaySettingsScreen(
                                     )
                                     FloatSlider("Spin %.2f×", d.trackballSpin, 0.25f..4f, 0.25f) { set(d.copy(trackballSpin = it)) }
                                     SwitchRow("Follow gyro sensitivity", d.trackballFollowSensitivity) { set(d.copy(trackballFollowSensitivity = it)) }
-                                    Hint("Each axis also spins by its gyro sensitivity against the default, so the ball keeps pace with the cursor.")
+                                    Hint(
+                                        "Each axis also spins by its gyro sensitivity against the default, so the ball keeps pace with the cursor. " +
+                                            "With the workspace's game set (Gyro → Game), it spins by real world sensitivity instead: as far as the game's camera turns, at Spin 1×.",
+                                    )
                                     LevelSlider(d) { set(it) }
                                 } else PoseSettings(d) { set(it) }
                                 if (shape == BallShape.GLOBE) SwitchRow("Equator", d.equator) { set(d.copy(equator = it)) }
