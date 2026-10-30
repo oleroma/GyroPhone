@@ -28,6 +28,17 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     /** Its mode at the last sample (gravity, trackball): switching starts it straight. */
     private var wasGravity = display.needsGravity
     private var wasTrackball = display.isTrackball
+    private var wasMouse = display.followsMouse
+
+    /** Starts the pose straight when [d]'s mode changed since the last sample. */
+    @Synchronized
+    private fun restartOnSwitch(d: GyroDisplay) {
+        if (d.needsGravity == wasGravity && d.isTrackball == wasTrackball && d.followsMouse == wasMouse) return
+        wasGravity = d.needsGravity
+        wasTrackball = d.isTrackball
+        wasMouse = d.followsMouse
+        pose.reset()
+    }
 
     /**
      * One sample: rates in deg/s ([GyroMouse.motion]) over [dtSeconds]; [axes] the gyro axes that
@@ -44,11 +55,8 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
             return
         }
         if (!d.kind.pose) return
-        if (d.needsGravity != wasGravity || d.isTrackball != wasTrackball) {
-            wasGravity = d.needsGravity
-            wasTrackball = d.isTrackball
-            pose.reset()
-        }
+        restartOnSwitch(d)
+        if (d.followsMouse) return
         if (d.isTrackball) {
             if (dtSeconds == 0f || axes == 0) return
             // Following sensitivity with the game's turn known, it spins by RWS: as far as the camera turns.
@@ -83,6 +91,21 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         // By time: an exponential, 95% of the way back after easeSeconds.
         val amount = if (d.easeBySpeed) d.easeSpeed * DEG_TO_RAD * dtSeconds else 3f * dtSeconds / d.easeSeconds.coerceAtLeast(0.05f)
         if (d.gravity) pose.easeHeading(d.easeBySpeed, amount) else pose.easeAll(d.easeBySpeed, amount)
+    }
+
+    /**
+     * Mouse counts sent ([MappingEngine.mouseSink], the pump's thread): [dx] right, [dy] down;
+     * [gyro] the gyro settings in use. Only a trackball following the camera turns.
+     */
+    fun mouse(dx: Int, dy: Int, gyro: GyroSettings?) {
+        val d = display
+        if (!d.followsMouse) return
+        restartOnSwitch(d)
+        val g = gyro?.gameCountsPer360 ?: 0f
+        // Degrees per count: the game's camera turn, or else the phone turn that sends it.
+        val k = d.trackballSpin * if (g > 0f) 360f / g else 1f / (gyro?.sensitivity ?: GyroSettings.DEFAULT_SENSITIVITY)
+        val up = -dy * k * d.mouseVertical * if (d.mouseInvertY) -1f else 1f
+        pose.look(dx * k, up, d.mouseStopAtPoles)
     }
 
     /** An accelerometer reading in the phone's frame (right, up, toward the player) and gravity [g] in its units. */

@@ -41,9 +41,13 @@ class GyroPose {
     /** Seconds of [fuse] left that pull hard toward gravity: a fresh pose settles at once. */
     private var settling = SETTLE_S
 
+    /** How far [look] has looked up (degrees, down -). */
+    private var lookUp = 0f
+
     @Synchronized
     fun reset() {
         w = 1f; x = 0f; y = 0f; z = 0f
+        lookUp = 0f
         hasUp = false
         settling = SETTLE_S
         version++
@@ -187,11 +191,28 @@ class GyroPose {
     @Synchronized
     fun counterRotate(yaw: Float, pitch: Float, roll: Float, dtSeconds: Float) {
         val k = DEG_TO_RAD * dtSeconds
-        val ax = -pitch * k
-        val ay = yaw * k
-        val az = roll * k
+        if (viewTurn(-pitch * k, yaw * k, roll * k)) version++
+    }
+
+    /**
+     * The world as a game camera sees it while it turns by [yaw] degrees (right +) and looks up by
+     * [up] degrees, the turn [counterRotate] gives the same phone turn. Like the camera, it turns
+     * about the world's vertical (the pose's own) and looks up about its own sideways axis (the
+     * view's), so it never rolls. With [stop] it looks no further than straight up or down.
+     */
+    @Synchronized
+    fun look(yaw: Float, up: Float, stop: Boolean) {
+        var u = up
+        if (stop) u = (lookUp + up).coerceIn(-90f, 90f) - lookUp
+        lookUp += u
+        val a = turn(0f, yaw * DEG_TO_RAD, 0f)
+        if (viewTurn(-u * DEG_TO_RAD, 0f, 0f) || a) version++
+    }
+
+    /** Turns by the rotation vector ([ax], [ay], [az], radians) about the view's axes; false when it is zero. */
+    private fun viewTurn(ax: Float, ay: Float, az: Float): Boolean {
         val angle = sqrt(ax * ax + ay * ay + az * az)
-        if (angle == 0f) return
+        if (angle == 0f) return false
         val s = sin(angle / 2) / angle
         val bw = cos(angle / 2)
         val bx = ax * s
@@ -204,7 +225,7 @@ class GyroPose {
         val nz = bw * z + bx * y - by * x + bz * w
         w = nw; x = nx; y = ny; z = nz
         normalize()
-        version++
+        return true
     }
 
     /** Turns by the rotation vector ([ax], [ay], [az], radians) about the phone's own axes; false when it is zero. */

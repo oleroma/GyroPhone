@@ -425,6 +425,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     @Volatile
     var hapticSink: HapticSink? = null
 
+    /**
+     * Gets the mouse motion of each [snapshot] that moved it (counts, gyro and touch together, as
+     * sent), on the pump's thread and outside the engine lock.
+     */
+    @Volatile
+    var mouseSink: MouseSink? = null
+
     init {
         applyWorkspace()
     }
@@ -1056,6 +1063,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     fun snapshot(): HidState {
         val s = synchronized(lock) { snapshotLocked() }
+        val m = s.mouse
+        if (m.dx != 0 || m.dy != 0) mouseSink?.moved(m.dx, m.dy)
         if (hapticDue) {
             hapticDue = false
             hapticSink?.haptics(hapticTicks, hapticHeld, hapticLevel)

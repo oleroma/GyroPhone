@@ -208,4 +208,28 @@ class GyroDisplayTest {
         repeat(50) { f.feed(60f, 0f, 0f, 0.01f, yawOff, pressed = true, held = true) } // yaw paused: no change, no reset
         f.pose.matrix(m); assertEquals(-0.5f, m[6], 1e-3f)
     }
+
+    @Test fun followingTheCameraTurnsByTheCountsSentLikeTheGyroTrackball() {
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, trackball = true, trackballMouse = true))
+        val game = com.oleroma.gyrophone.core.model.GyroSettings(gameCountsPer360 = 3600f) // 10 counts per degree
+        val m = FloatArray(9)
+        repeat(50) { f.feed(60f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // the gyro alone turns nothing
+        f.pose.matrix(m); assertEquals(0f, m[6], 1e-6f)
+        f.mouse(300, 0, game) // the camera 30° right: as the gyro trackball for the phone 30° right
+        f.pose.matrix(m); assertEquals(-0.5f, m[6], 1e-3f)
+    }
+
+    @Test fun followingTheCameraNeverRollsAndStopsStraightUp() {
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, trackball = true, trackballMouse = true))
+        val game = com.oleroma.gyrophone.core.model.GyroSettings(gameCountsPer360 = 3600f)
+        val m = FloatArray(9)
+        f.mouse(0, -450, game) // look 45° up
+        f.mouse(900, 0, game) // then turn 90° right
+        // The world's vertical stays in the view's up-and-toward plane: no roll.
+        f.pose.matrix(m); assertEquals(0f, m[1], 1e-5f)
+        f.mouse(-900, 0, game)
+        f.mouse(0, -2000, game) // 200° up: stops at 90°
+        f.mouse(0, 900, game) // 90° down: straight again
+        f.pose.matrix(m); assertEquals(1f, m[4], 1e-4f)
+    }
 }

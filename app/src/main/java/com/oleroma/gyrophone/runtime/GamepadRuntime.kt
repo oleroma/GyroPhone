@@ -9,6 +9,7 @@ import com.oleroma.gyrophone.core.engine.CountStream
 import com.oleroma.gyrophone.core.engine.GyroCalibration
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
+import com.oleroma.gyrophone.core.engine.MouseSink
 import com.oleroma.gyrophone.core.engine.GyroPose
 import com.oleroma.gyrophone.core.engine.GyroSway
 import com.oleroma.gyrophone.core.engine.MappingEngine
@@ -417,6 +418,14 @@ class GamepadRuntime(context: Context) {
 
     init {
         engine.hapticSink = haptics
+        // A trackball following the camera turns by the mouse counts sent.
+        engine.mouseSink = MouseSink { dx, dy ->
+            val feeds = gyroFeeds
+            if (feeds.isNotEmpty()) {
+                val gs = engine.gyroSettings
+                for (f in feeds) f.mouse(dx, dy, gs)
+            }
+        }
         hid.reportProvider = { id ->
             when (id) {
                 HidDescriptor.REPORT_ID_GAMEPAD -> pump.lastGamepadReport

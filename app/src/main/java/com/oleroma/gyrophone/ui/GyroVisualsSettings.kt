@@ -182,16 +182,28 @@ internal fun GyroDisplaySettingsScreen(
                                 if (shape != BallShape.GIMBAL) SwitchRow("Fill faces", d.fillFaces) { set(d.copy(fillFaces = it)) }
                                 SwitchRow("Trackball", d.trackball) { set(d.copy(trackball = it)) }
                                 if (d.trackball) Indented {
-                                    Hint(
-                                        "While the gyro moves the mouse, the ball holds still against the world, so it rolls the other way on screen, " +
-                                            "like a trackball under your hand. A ratchet stops it (only the axes it pauses), and it turns with the phone.",
-                                    )
-                                    FloatSlider("Spin %.2f×", d.trackballSpin, 0.25f..4f, 0.25f) { set(d.copy(trackballSpin = it)) }
-                                    SwitchRow("Follow gyro sensitivity", d.trackballFollowSensitivity) { set(d.copy(trackballFollowSensitivity = it)) }
-                                    Hint(
-                                        "Each axis also spins by its gyro sensitivity against the default, so the ball keeps pace with the cursor. " +
-                                            "With the workspace's game set (Gyro → Game), it spins by real world sensitivity instead: as far as the game's camera turns, at Spin 1×.",
-                                    )
+                                    SwitchRow("Follow the camera", d.trackballMouse) { set(d.copy(trackballMouse = it)) }
+                                    if (d.trackballMouse) {
+                                        Hint(
+                                            "It turns by the mouse it sends (Move X and Move Y from the gyro, the touchpad or any button), the way a game camera turns: " +
+                                                "Move X about the world's vertical, Move Y up and down. With the workspace's game set (Gyro → Game), it turns as far as the camera at Spin 1×.",
+                                        )
+                                        FloatSlider("Spin %.2f×", d.trackballSpin, 0.25f..4f, 0.25f) { set(d.copy(trackballSpin = it)) }
+                                        FloatSlider("Vertical %.2f×", d.mouseVertical, 0.25f..4f, 0.05f) { set(d.copy(mouseVertical = it)) }
+                                        SwitchRow("Invert Y", d.mouseInvertY) { set(d.copy(mouseInvertY = it)) }
+                                        SwitchRow("Stop at straight up and down", d.mouseStopAtPoles) { set(d.copy(mouseStopAtPoles = it)) }
+                                    } else {
+                                        Hint(
+                                            "While the gyro moves the mouse, the ball holds still against the world, so it rolls the other way on screen, " +
+                                                "like a trackball under your hand. A ratchet stops it (only the axes it pauses), and it turns with the phone.",
+                                        )
+                                        FloatSlider("Spin %.2f×", d.trackballSpin, 0.25f..4f, 0.25f) { set(d.copy(trackballSpin = it)) }
+                                        SwitchRow("Follow gyro sensitivity", d.trackballFollowSensitivity) { set(d.copy(trackballFollowSensitivity = it)) }
+                                        Hint(
+                                            "Each axis also spins by its gyro sensitivity against the default, so the ball keeps pace with the cursor. " +
+                                                "With the workspace's game set (Gyro → Game), it spins by real world sensitivity instead: as far as the game's camera turns, at Spin 1×.",
+                                        )
+                                    }
                                     LevelSlider(d) { set(it) }
                                 } else PoseSettings(d) { set(it) }
                                 if (shape == BallShape.GLOBE) SwitchRow("Equator", d.equator) { set(d.copy(equator = it)) }

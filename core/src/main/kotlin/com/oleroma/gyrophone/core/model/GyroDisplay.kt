@@ -92,6 +92,18 @@ data class GyroDisplay(
     val trackball: Boolean = false,
     val trackballSpin: Float = 1f,
     val trackballFollowSensitivity: Boolean = false,
+    /**
+     * BALL trackball: follows the camera instead of the gyro: turned by the mouse counts sent (from
+     * gyro, touchpad or anything else on Move X / Move Y), Move X about the world's vertical and
+     * Move Y about the view's sideways axis, as an FPS camera turns, by 360° per the game's turn
+     * ([GyroSettings.gameCountsPer360]) or else per degree of gyro sensitivity, times
+     * [trackballSpin]. [mouseVertical] scales Move Y, [mouseInvertY] flips it, and with
+     * [mouseStopAtPoles] it looks no further than straight up or down.
+     */
+    val trackballMouse: Boolean = false,
+    val mouseVertical: Float = 1f,
+    val mouseInvertY: Boolean = false,
+    val mouseStopAtPoles: Boolean = true,
     val opacity: Float = 0.7f,
     val colors: Map<String, Long> = emptyMap(),
 ) {
@@ -103,6 +115,9 @@ data class GyroDisplay(
 
     /** A [trackball] ball. */
     val isTrackball: Boolean get() = kind == GyroDisplayKind.BALL && trackball
+
+    /** A trackball following the camera ([trackballMouse]). */
+    val followsMouse: Boolean get() = isTrackball && trackballMouse
 
     /** It holds its heading to north (and so needs the magnetometer). */
     val needsCompass: Boolean get() = needsGravity && compass
