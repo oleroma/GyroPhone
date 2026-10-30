@@ -170,8 +170,11 @@ class SwipeButtonsTest {
         assertEquals(2f, t.feel(2).sensitivityY)
         assertEquals(3f, t.feel(2).scrollSpeedX)
         assertEquals(1.5f, t.feel(2).scrollSpeedY)
-        assertFalse(t.feel(2).inertia)
-        assertTrue(t.feel(1).inertia)
+        assertFalse(t.feel(2).inertiaX)
+        assertTrue(t.feel(2).inertiaY)
+        // Built in, the one-finger cursor does not glide.
+        assertFalse(t.feel(1).inertiaX)
+        assertFalse(t.feel(1).inertiaY)
     }
 
     @Test

@@ -3,12 +3,17 @@ package com.oleroma.gyrophone.core.engine
 import com.oleroma.gyrophone.core.hid.MouseState
 import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.core.model.InertiaCurve
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
+import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sign
 import kotlin.math.sqrt
 
 /**
@@ -16,7 +21,7 @@ import kotlin.math.sqrt
  * velocity into yaw / pitch / roll for the way the screen is turned ([displayRotation]), routes each where the gyro
  * mappings say, optionally applies soft tightening and tiered smoothing at low speeds (both off
  * by default: raw gyro), scales to mouse counts and keeps the sub-count remainder so slow motion
- * is not lost.
+ * is not lost. An axis a ratchet turns off glides on with inertia ([GyroSettings.inertiaOf]).
  */
 class GyroMouse(settings: GyroSettings = GyroSettings()) {
 
@@ -74,6 +79,18 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
     private var remWheel = 0f
     private var remHWheel = 0f
 
+    // Inertia, per axis (yaw, pitch, roll): its recent speed (deg/s EMA), its glide speed (deg/s,
+    // 0 = none), glide time (ms) and linear slowing (deg/s per ms, 0 = smooth); the axes on last sample.
+    private val speed = FloatArray(3)
+    private val glideV = FloatArray(3)
+    private val glideTau = FloatArray(3)
+    private val glideDec = FloatArray(3)
+    private val glideOut = FloatArray(3)
+    private var lastAxes = 0
+
+    /** An axis glides, or one was on last sample (turning it off may start a glide): [route] wants every sample. */
+    val coasting: Boolean get() = lastAxes != 0 || glideV[0] != 0f || glideV[1] != 0f || glideV[2] != 0f
+
     /**
      * One sample (angular velocity [gx], [gy], [gz] in rad/s, Android sensor frame) sent where gyro
      * mappings [routes] ([InputSource.Gyro] sources) say: mouse motion at the axis's sensitivity
@@ -86,15 +103,19 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
     fun route(gx: Float, gy: Float, gz: Float, dtSeconds: Float, routes: List<Mapping>, axes: Int = MappingEngine.ALL_GYRO): Routed {
         val s = settings
         val m = motion(gx, gy, gz, resolvedOrientation())
+        coast(s, m, axes, dtSeconds)
         var vx = 0f; var vy = 0f; var w = 0f; var hw = 0f
         val pad = routed.pad
         pad.fill(0f)
         for (i in routes.indices) {
             val r = routes[i]
             val src = r.source as? InputSource.Gyro ?: continue
-            if (axes and MappingEngine.gyroBit(src.axis) == 0) continue
+            val on = axes and MappingEngine.gyroBit(src.axis) != 0
+            val g = if (on) 0f else glideOf(src.axis)
+            // Off, only a glide moves it, and only the mouse and wheel.
+            if (!on && (g == 0f || r.target !is OutputTarget.MouseAxis)) continue
             val k = s.sensitivityOf(src.axis)
-            val v = m[src.axis]
+            val v = if (on) m[src.axis] else g
             when (val t = r.target) {
                 is OutputTarget.MouseAxis -> when (t.motion) {
                     MouseMotion.MOVE_X -> vx += v * k * t.scale
@@ -162,6 +183,59 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
     fun reset() {
         remX = 0f; remY = 0f; remWheel = 0f; remHWheel = 0f
         bufX.fill(0f); bufY.fill(0f)
+        speed.fill(0f); glideV.fill(0f); glideOut.fill(0f); lastAxes = 0
+    }
+
+    /** Axis [a]'s glide speed over the last sample (deg/s), 0 when it does not glide. */
+    private fun glideOf(a: MotionAxis): Float = if (a == MotionAxis.NONE) 0f else glideOut[a.ordinal]
+
+    /**
+     * Inertia for one sample of motion [m] with axes [axes] on, over [dtSeconds]: an axis on
+     * follows its speed and never glides; one just turned off with inertia glides on from its
+     * recent speed; a gliding one slows down by its glide time and curve ([InertiaCurve]).
+     */
+    private fun coast(s: GyroSettings, m: Motion, axes: Int, dtSeconds: Float) {
+        val dtMs = dtSeconds * 1000f
+        for (i in 0 until 3) {
+            val a = AXES[i]
+            val bit = MappingEngine.gyroBit(a)
+            glideOut[i] = 0f
+            if (axes and bit != 0) {
+                // A short EMA, so one noisy sample does not set the glide.
+                val k = if (dtMs <= 0f) 0f else 1f - exp(-dtMs / SPEED_TAU_MS)
+                speed[i] += k * (m[a] - speed[i])
+                glideV[i] = 0f
+                continue
+            }
+            if (lastAxes and bit != 0) {
+                // Just turned off: glides on from its recent speed, this sample at that speed.
+                glideV[i] = 0f
+                if (s.inertiaOf(a) && abs(speed[i]) >= GLIDE_MIN_DEG_PER_S) {
+                    val tau = s.glideMsOf(a).coerceIn(MIN_GLIDE_MS, MAX_GLIDE_MS)
+                    glideV[i] = speed[i]; glideTau[i] = tau
+                    // Linear: stops after 2·T, so it turns as far as the smooth one.
+                    glideDec[i] = if (s.curveOf(a) == InertiaCurve.LINEAR) abs(speed[i]) / (2f * tau) else 0f
+                    glideOut[i] = speed[i]
+                }
+                speed[i] = 0f
+                continue
+            }
+            val v = glideV[i]
+            if (v == 0f || dtMs <= 0f) continue
+            // The sample moves by the glide's mean speed over it.
+            val next: Float
+            if (glideDec[i] == 0f) {
+                val decay = exp(-dtMs / glideTau[i])
+                next = v * decay
+                glideOut[i] = v * glideTau[i] * (1f - decay) / dtMs
+            } else {
+                val t = min(dtMs, abs(v) / glideDec[i])
+                next = (abs(v) - glideDec[i] * t) * sign(v)
+                glideOut[i] = (v + next) / 2f * t / dtMs
+            }
+            glideV[i] = if (abs(next) < GLIDE_STOP_DEG_PER_S) 0f else next
+        }
+        lastAxes = axes
     }
 
     private enum class Resolved { LANDSCAPE_LEFT, LANDSCAPE_RIGHT, PORTRAIT, PORTRAIT_UPSIDE_DOWN }
@@ -182,5 +256,16 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
 
         /** Turning this fast (°/s) deflects a game pad axis fully. */
         const val STICK_FULL_DEG_PER_S = 90f
+
+        private val AXES = arrayOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL)
+
+        /** The recent speed a glide starts from: an EMA with this time constant (ms). */
+        private const val SPEED_TAU_MS = 15f
+
+        /** An axis turned off slower than this (deg/s) does not glide; a glide stops below [GLIDE_STOP_DEG_PER_S]. */
+        const val GLIDE_MIN_DEG_PER_S = 5f
+        const val GLIDE_STOP_DEG_PER_S = 0.5f
+        const val MIN_GLIDE_MS = 100f
+        const val MAX_GLIDE_MS = 1000f
     }
 }

@@ -8,6 +8,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
+import com.oleroma.gyrophone.core.engine.GyroMouse
+import com.oleroma.gyrophone.core.model.AxisGlide
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.ButtonGyro
 import com.oleroma.gyrophone.core.model.GyroMode
@@ -118,6 +120,34 @@ private fun buttonGyroGear(g: ButtonGyroLevel, key: String, axis: MotionAxis): @
             hint = "While this is held: how fast ${axis.label.lowercase()} turns${g.where}. Unset, it follows this button's " +
                 "Gyro sensitivity (in Settings), else the workspace's.",
         ) { v -> g.edit { it.with(axis, v) } }
+        val eff = g.inUse.over(g.parent)
+        AxisGlideSettings(
+            key + "gyro" + g.set, axis, eff, g.own.ownGlide(axis),
+            unset = "While this is held${g.where}. Unset, the workspace's.",
+        ) { a -> g.edit { it.withGlide(axis, a) } }
+    }
+}
+
+/**
+ * Gyro [axis]'s inertia, glide curve and glide time in effect ([eff]), each highlighted with a ↺
+ * where [own] sets it; [onSet] changes [own]. [unset]: what an unset one follows.
+ */
+@Composable
+private fun AxisGlideSettings(key: String, axis: MotionAxis, eff: GyroSettings, own: AxisGlide, unset: String, onSet: (AxisGlide) -> Unit) {
+    val name = axis.label
+    val on = eff.inertiaOf(axis)
+    OverrideSwitch(
+        "$name inertia",
+        (if (on) "When a ratchet turns $name off, its mouse and scrolling motion glides on and slows down." else "$name stops as soon as a ratchet turns it off.") +
+            " $unset",
+        on, own.inertia != null, { onSet(own.copy(inertia = null)) },
+    ) { v -> onSet(own.copy(inertia = v)) }
+    if (on) {
+        InertiaCurveRow(eff.curveOf(axis), own.curve != null, { onSet(own.copy(curve = null)) }) { c -> onSet(own.copy(curve = c)) }
+        OverrideSlider(
+            key + "glide" + axis.name, "$name glide %.0f ms", eff.glideMsOf(axis), GyroMouse.MIN_GLIDE_MS..GyroMouse.MAX_GLIDE_MS, 5f,
+            own.glideMs != null, { onSet(own.copy(glideMs = null)) }, hint = GLIDE_HINT,
+        ) { v -> onSet(own.copy(glideMs = v)) }
     }
 }
 
@@ -249,6 +279,9 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
             hint = "How fast ${axis.label.lowercase()} turns; scrolling and sticks go faster or slower with it too. " +
                 "Unset, it follows the shared Sensitivity (${g.rwsOf(g.sensitivity)?.let { "%.2f RWS".format(it) } ?: "%.0f".format(g.sensitivity)}) in Settings.",
         ) { v -> level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, v)) } }
+        AxisGlideSettings(
+            key, axis, g, g.ownGlide(axis), unset = "Unset, it follows the shared Inertia in Settings.",
+        ) { a -> level.edit { it.copy(gyro = it.gyro.withGlide(axis, a)) } }
     }
 }
 

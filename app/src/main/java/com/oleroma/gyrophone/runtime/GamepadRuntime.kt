@@ -985,12 +985,14 @@ class GamepadRuntime(context: Context) {
                 }
             }
         }
-        val axes = if (inputAllowed && !measuring) engine.gyroAxes else 0
+        val allowed = inputAllowed && !measuring
+        val axes = if (allowed) engine.gyroAxes else 0
         val active = axes != 0
         val v = vis
         val feeds = gyroFeeds
         if (v.gyroEdge || feeds.isNotEmpty()) feedVisuals(v, feeds, x - biasX, y - biasY, z - biasZ, dt, axes)
-        if (active) {
+        // An axis a ratchet just turned off may glide on (inertia) while the others are off.
+        if (active || (allowed && gyroMouse.coasting)) {
             // A layer in use may set gyro settings of its own.
             val gs = engine.gyroSettings
             if (gs !== gyroMouse.settings) gyroMouse.settings = gs

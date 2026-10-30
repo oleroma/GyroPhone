@@ -9,8 +9,7 @@ package com.oleroma.gyrophone.core.model
  */
 enum class SurfaceField(val button: Boolean = true) {
     ENABLED(button = false),
-    SENSITIVITY, ACCELERATION, SCROLL_SPEED, NATURAL_SCROLL, INERTIA,
-    INERTIA_GLIDE(button = false),
+    SENSITIVITY, ACCELERATION, SCROLL_SPEED, NATURAL_SCROLL, INERTIA, INERTIA_GLIDE, INERTIA_CURVE,
     CURSOR_DEADZONE, CATCH_UP, REARM, STILL, MOVE_MODE, MOVE_PIE_X, MOVE_PIE_Y, MOVE_SAMPLE,
     MOVE_LOCK, MOVE_TURN, MOVE_PIE_MARGIN, HOLD_STOPS_MOVE,
     SWIPE_PIE_X, SWIPE_PIE_Y, SWIPE_SAMPLE, SWIPE,
@@ -24,6 +23,7 @@ enum class SurfaceField(val button: Boolean = true) {
         NATURAL_SCROLL -> t.naturalScroll
         INERTIA -> t.inertia
         INERTIA_GLIDE -> t.inertiaGlideMs
+        INERTIA_CURVE -> t.inertiaCurve
         CURSOR_DEADZONE -> t.cursorDeadzoneDp
         CATCH_UP -> t.catchUpMs
         REARM -> t.deadzoneRearmMs
@@ -63,6 +63,7 @@ enum class SurfaceField(val button: Boolean = true) {
         NATURAL_SCROLL -> to.copy(naturalScroll = from.naturalScroll)
         INERTIA -> to.copy(inertia = from.inertia)
         INERTIA_GLIDE -> to.copy(inertiaGlideMs = from.inertiaGlideMs)
+        INERTIA_CURVE -> to.copy(inertiaCurve = from.inertiaCurve)
         CURSOR_DEADZONE -> to.copy(cursorDeadzoneDp = from.cursorDeadzoneDp)
         CATCH_UP -> to.copy(catchUpMs = from.catchUpMs)
         REARM -> to.copy(deadzoneRearmMs = from.deadzoneRearmMs)
@@ -94,6 +95,7 @@ enum class SurfaceField(val button: Boolean = true) {
     fun isOwn(s: SurfaceSettings): Boolean = when (this) {
         ENABLED -> s.enabled != null
         INERTIA_GLIDE -> s.inertiaGlideMs != null
+        INERTIA_CURVE -> s.inertiaCurve != null
         SENSITIVITY -> s.sensitivity != null
         ACCELERATION -> s.acceleration != null
         SCROLL_SPEED -> s.scrollSpeed != null
@@ -130,6 +132,7 @@ enum class SurfaceField(val button: Boolean = true) {
     fun own(s: SurfaceSettings, from: TouchpadSettings): SurfaceSettings = when (this) {
         ENABLED -> s.copy(enabled = from.enabled)
         INERTIA_GLIDE -> s.copy(inertiaGlideMs = from.inertiaGlideMs)
+        INERTIA_CURVE -> s.copy(inertiaCurve = from.inertiaCurve)
         SENSITIVITY -> s.copy(sensitivity = from.sensitivity)
         ACCELERATION -> s.copy(acceleration = from.acceleration)
         SCROLL_SPEED -> s.copy(scrollSpeed = from.scrollSpeed)
@@ -166,6 +169,7 @@ enum class SurfaceField(val button: Boolean = true) {
     fun drop(s: SurfaceSettings): SurfaceSettings = when (this) {
         ENABLED -> s.copy(enabled = null)
         INERTIA_GLIDE -> s.copy(inertiaGlideMs = null)
+        INERTIA_CURVE -> s.copy(inertiaCurve = null)
         SENSITIVITY -> s.copy(sensitivity = null)
         ACCELERATION -> s.copy(acceleration = null)
         SCROLL_SPEED -> s.copy(scrollSpeed = null)
@@ -288,8 +292,8 @@ enum class DirField(val hold: Boolean) {
  * ([sharedOf]). [whole]: it goes for the whole motion of a finger count, kept on its Move X.
  */
 enum class MoveField(val whole: Boolean = false) {
-    SENSITIVITY, ACCELERATION, SCROLL_SPEED, NATURAL_SCROLL, MODE, PIE,
-    CURSOR_DEADZONE(true), CATCH_UP(true), REARM(true), STILL(true), INERTIA(true), SAMPLE(true),
+    SENSITIVITY, ACCELERATION, SCROLL_SPEED, NATURAL_SCROLL, MODE, PIE, INERTIA, GLIDE, CURVE,
+    CURSOR_DEADZONE(true), CATCH_UP(true), REARM(true), STILL(true), SAMPLE(true),
     LOCK(true), TURN(true), PIE_MARGIN(true), HOLD_STOPS(true);
 
     /** The shared setting of [m] this sets over. */
@@ -305,6 +309,8 @@ enum class MoveField(val whole: Boolean = false) {
         REARM -> SurfaceField.REARM
         STILL -> SurfaceField.STILL
         INERTIA -> SurfaceField.INERTIA
+        GLIDE -> SurfaceField.INERTIA_GLIDE
+        CURVE -> SurfaceField.INERTIA_CURVE
         SAMPLE -> SurfaceField.MOVE_SAMPLE
         LOCK -> SurfaceField.MOVE_LOCK
         TURN -> SurfaceField.MOVE_TURN
@@ -324,6 +330,8 @@ enum class MoveField(val whole: Boolean = false) {
         REARM -> s.deadzoneRearmMs
         STILL -> s.deadzoneStillDp
         INERTIA -> s.inertia
+        GLIDE -> s.glideMs
+        CURVE -> s.curve
         SAMPLE -> s.sample
         LOCK -> s.lock
         TURN -> s.turnDp
@@ -346,6 +354,8 @@ enum class MoveField(val whole: Boolean = false) {
         REARM -> to.copy(deadzoneRearmMs = from.deadzoneRearmMs)
         STILL -> to.copy(deadzoneStillDp = from.deadzoneStillDp)
         INERTIA -> to.copy(inertia = from.inertia)
+        GLIDE -> to.copy(glideMs = from.glideMs)
+        CURVE -> to.copy(curve = from.curve)
         SAMPLE -> to.copy(sample = from.sample)
         LOCK -> to.copy(lock = from.lock)
         TURN -> to.copy(turnDp = from.turnDp)
