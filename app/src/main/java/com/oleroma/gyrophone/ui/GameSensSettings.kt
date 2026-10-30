@@ -39,15 +39,12 @@ import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.roundToLong
 
-/** Slider top for real world sensitivity. */
-private const val MAX_RWS = 3f
-
 private const val RWS_HINT = "Real world sensitivity: how many degrees the game's camera turns per degree the phone turns (1 = the same)."
 
 /**
  * A gyro sensitivity slider: in real world sensitivity once [g]'s game turn is known
  * ([GyroSettings.gameCountsPer360]), else in counts per degree. [sens] and [onDone] are counts
- * per degree either way. [label] has no number: "Sensitivity".
+ * per degree either way, up to [MAX_GYRO_SENS] in both. [label] has no number: "Sensitivity".
  */
 @Composable
 internal fun GyroSensSlider(
@@ -69,7 +66,7 @@ internal fun GyroSensSlider(
         " Exact above the jitter cutoff (%.1f°/s): slower turns move less.".format(g.tighteningThreshold)
     } else ""
     OverrideSlider(
-        key + "rws", "$label %.2f RWS", GameSens.rws(sens, c), 0f..MAX_RWS, 0.05f, overridden, onReset,
+        key + "rws", "$label %.2f RWS", GameSens.rws(sens, c), 0f..GameSens.rws(MAX_GYRO_SENS, c), 0.05f, overridden, onReset,
         "%.1f counts per degree in %s. %s%s %s".format(sens, g.gameName.ifEmpty { "this game" }, RWS_HINT, tight, hint),
     ) { v -> onDone(GameSens.sensOf(v, c)) }
 }
