@@ -29,6 +29,7 @@ import com.oleroma.gyrophone.core.model.DirSettings
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.HoldZone
+import com.oleroma.gyrophone.core.model.InertiaCurve
 import com.oleroma.gyrophone.core.model.MoveField
 import com.oleroma.gyrophone.core.model.MoveMode
 import com.oleroma.gyrophone.core.model.MoveSlot
@@ -38,13 +39,13 @@ import com.oleroma.gyrophone.core.model.ZoneKeep
 import kotlin.math.roundToInt
 
 /** Same top as the workspace touchpad's speed sliders had. */
-private const val MAX_SURFACE_SENS = 12f
+private const val MAX_SURFACE_SENS = 50f
 
 /**
  * The settings a touch surface's actions share (the mapping editor's Settings): movement and
  * scrolling, then the swipe directions (pies, how far a swipe and a held direction take, how held
  * directions work, the latch). Each shows [level]'s value, highlighted with a ↺ where it differs
- * from the parent. [touchpad]: the workspace touchpad, with its own on / off and glide.
+ * from the parent. [touchpad]: the workspace touchpad, with its own on / off.
  * [zones]: how many length zones each direction has mapped. [resetAll]: with its own Reset all.
  */
 @Composable
@@ -81,15 +82,15 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
         ) { v -> edit { it.copy(naturalScroll = v) } }
         OverrideSwitch(
             "Inertia",
-            if (s.inertia) "Keeps scrolling after a flick." else "Scrolling stops when the fingers lift.",
+            (if (s.inertia) "A Move keeps going after a flick, cursor and scrolling alike." else "Moves stop when the fingers lift.") +
+                " Each Move X / Y ⚙ can set its own; built in, the one-finger cursor's is off.",
             s.inertia, own(SurfaceField.INERTIA), reset(SurfaceField.INERTIA),
         ) { v -> edit { it.copy(inertia = v) } }
-        if (touchpad && s.inertia) {
-            OverrideSlider(
-                key + "glide", "Glide %.0f ms", s.inertiaGlideMs, TouchpadSettings.MIN_GLIDE_MS..TouchpadSettings.MAX_GLIDE_MS, 5f,
-                own(SurfaceField.INERTIA_GLIDE), reset(SurfaceField.INERTIA_GLIDE),
-            ) { v -> edit { it.copy(inertiaGlideMs = v) } }
-        }
+        InertiaCurveRow(s.inertiaCurve, own(SurfaceField.INERTIA_CURVE), reset(SurfaceField.INERTIA_CURVE)) { c -> edit { it.copy(inertiaCurve = c) } }
+        OverrideSlider(
+            key + "glide", "Glide %.0f ms", s.inertiaGlideMs, TouchpadSettings.MIN_GLIDE_MS..TouchpadSettings.MAX_GLIDE_MS, 5f,
+            own(SurfaceField.INERTIA_GLIDE), reset(SurfaceField.INERTIA_GLIDE), hint = GLIDE_HINT,
+        ) { v -> edit { it.copy(inertiaGlideMs = v) } }
         OverrideSlider(
             key + "dz", if (s.cursorDeadzoneDp < 1f) "Cursor deadzone: off" else "Cursor deadzone %.0f dp",
             s.cursorDeadzoneDp, 0f..TouchpadSettings.MAX_CURSOR_DEADZONE_DP, 1f, own(SurfaceField.CURSOR_DEADZONE), reset(SurfaceField.CURSOR_DEADZONE),
@@ -261,8 +262,8 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
 
 /**
  * The ⚙ of Move X or Y [m]: the cursor and scrolling settings it uses, each its own over [level]'s
- * shared one (the Settings), highlighted with a ↺ where it sets its own. The cursor deadzone and
- * inertia go for the whole motion of its finger count: Move X and Y show the same ones.
+ * shared one (the Settings), highlighted with a ↺ where it sets its own. The cursor deadzone
+ * goes for the whole motion of its finger count: Move X and Y show the same one.
  */
 @Composable
 internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, touchpad: Boolean) {
@@ -366,13 +367,36 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
             if (natural) "Content follows the fingers." else "Content moves against the fingers.",
             natural, own(MoveField.NATURAL_SCROLL), reset(MoveField.NATURAL_SCROLL),
         ) { v -> edit(MoveField.NATURAL_SCROLL) { it.copy(naturalScroll = v) } }
+        SectionTitle("Inertia")
+        val inertia = if (x) f.inertiaX else f.inertiaY
         OverrideSwitch(
             "Inertia",
-            (if (f.inertia) "Keeps scrolling after a flick." else "Scrolling stops when the fingers lift.") +
-                    " For Move X and Y alike" + if (touchpad) "; the glide is in Settings." else ".",
-            f.inertia, own(MoveField.INERTIA), reset(MoveField.INERTIA),
+            if (inertia) "Keeps going $axis after a flick, cursor or scrolling, and slows down." else "Stops when the fingers lift.",
+            inertia, own(MoveField.INERTIA), reset(MoveField.INERTIA),
         ) { v -> edit(MoveField.INERTIA) { it.copy(inertia = v) } }
+        if (inertia) {
+            InertiaCurveRow(if (x) f.curveX else f.curveY, own(MoveField.CURVE), reset(MoveField.CURVE)) { c ->
+                edit(MoveField.CURVE) { it.copy(curve = c) }
+            }
+            OverrideSlider(
+                k + "glide", "Glide %.0f ms", if (x) f.glideMsX else f.glideMsY, TouchpadSettings.MIN_GLIDE_MS..TouchpadSettings.MAX_GLIDE_MS, 5f,
+                own(MoveField.GLIDE), reset(MoveField.GLIDE), hint = GLIDE_HINT,
+            ) { v -> edit(MoveField.GLIDE) { it.copy(glideMs = v) } }
+        }
         DirNote("Highlighted: set for ${m.label} only. The rest is the Settings' value, shared by every Move X and Y.")
+    }
+}
+
+internal const val GLIDE_HINT =
+    "How long a glide goes on. Smooth fades out with a long soft tail; Linear slows evenly and stops after twice this, as far as Smooth goes."
+
+/** How a glide slows down ([InertiaCurve]), highlighted with a ↺ when [overridden]. */
+@Composable
+internal fun InertiaCurveRow(curve: InertiaCurve, overridden: Boolean, onReset: (() -> Unit)?, onPick: (InertiaCurve) -> Unit) {
+    OverrideRow("Glide curve", overridden, onReset) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (c in InertiaCurve.entries) SelectChip(c.label, curve == c) { onPick(c) }
+        }
     }
 }
 

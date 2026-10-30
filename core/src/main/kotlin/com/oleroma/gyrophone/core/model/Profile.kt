@@ -227,9 +227,10 @@ data class SurfaceSettings(
     val dirs: List<DirSettings>? = null,
     /** Per Move X / Y of each finger count ([MoveSlot.ordinal]), what it sets over the parent's. */
     val moves: List<MoveSettings>? = null,
-    /** The workspace touchpad's own on / off and glide (a swipe button is always on and never glides). */
+    /** The workspace touchpad's own on / off (a swipe button is always on). */
     val enabled: Boolean? = null,
     val inertiaGlideMs: Float? = null,
+    val inertiaCurve: InertiaCurve? = null,
 )
 
 /**
@@ -336,12 +337,15 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
                 deadzoneRearmMs = m.deadzoneRearmMs.takeIf { o.deadzoneRearmMs == null },
                 deadzoneStillDp = m.deadzoneStillDp.takeIf { o.deadzoneStillDp == null },
                 inertia = m.inertia.takeIf { o.inertia == null },
+                glideMs = m.glideMs.takeIf { o.inertiaGlideMs == null },
+                curve = m.curve.takeIf { o.inertiaCurve == null },
             )
         },
         o.moves,
     ),
     enabled = o.enabled ?: enabled,
     inertiaGlideMs = o.inertiaGlideMs ?: inertiaGlideMs,
+    inertiaCurve = o.inertiaCurve ?: inertiaCurve,
 )
 
 /**
@@ -368,9 +372,18 @@ enum class MoveSlot(val fingers: Int, val x: Boolean) {
 enum class MoveMode(val label: String) { FREE("Free"), LARGER_AXIS("Larger axis"), PIE("Pie") }
 
 /**
+ * How a glide slows down over its glide time T: [SMOOTH] fades exponentially (T is the time
+ * constant: fast at first, a long soft tail), [LINEAR] slows evenly and stops after 2·T, so both
+ * travel the same distance.
+ */
+@Serializable
+enum class InertiaCurve(val label: String) { SMOOTH("Smooth"), LINEAR("Linear") }
+
+/**
  * One Move X / Y's own settings ([MoveSlot]) over the shared ones of its surface (null = the
- * shared value). [mode] and [pie]: when it moves ([MoveMode]). The cursor deadzone with its
- * catch-up and re-arm, inertia, the move sample, lock, turn, pie margin and whether a swipe hold
+ * shared value). [mode] and [pie]: when it moves ([MoveMode]). [inertia], [glideMs] and [curve]:
+ * whether and how it glides after the lift ([InertiaCurve]). The cursor deadzone with its
+ * catch-up and re-arm, the move sample, lock, turn, pie margin and whether a swipe hold
  * stops the Moves go for the whole motion of a finger count:
  * its Move X holds them ([MoveField.whole]).
  */
@@ -392,6 +405,8 @@ data class MoveSettings(
     val turnDp: Float? = null,
     val margin: Float? = null,
     val holdStops: Boolean? = null,
+    val glideMs: Float? = null,
+    val curve: InertiaCurve? = null,
 ) {
     /** These with [over]'s own values in place of theirs. */
     fun under(over: MoveSettings?): MoveSettings = if (over == null) this else MoveSettings(
@@ -399,7 +414,7 @@ data class MoveSettings(
         over.naturalScroll ?: naturalScroll, over.mode ?: mode, over.pie ?: pie, over.cursorDeadzoneDp ?: cursorDeadzoneDp,
         over.catchUpMs ?: catchUpMs, over.deadzoneRearmMs ?: deadzoneRearmMs, over.deadzoneStillDp ?: deadzoneStillDp,
         over.inertia ?: inertia, over.sample ?: sample, over.lock ?: lock, over.turnDp ?: turnDp,
-        over.margin ?: margin, over.holdStops ?: holdStops,
+        over.margin ?: margin, over.holdStops ?: holdStops, over.glideMs ?: glideMs, over.curve ?: curve,
     )
 
     val isEmpty: Boolean get() = this == NONE
@@ -426,7 +441,9 @@ data class MotionFeel(
     val modeX: MoveMode, val modeY: MoveMode,
     val pieX: Float, val pieY: Float,
     val cursorDeadzoneDp: Float, val catchUpMs: Int, val deadzoneRearmMs: Int, val deadzoneStillDp: Float,
-    val inertia: Boolean,
+    val inertiaX: Boolean, val inertiaY: Boolean,
+    val glideMsX: Float, val glideMsY: Float,
+    val curveX: InertiaCurve, val curveY: InertiaCurve,
     val moveSampleDp: Float,
     val moveLock: Boolean, val moveTurnDp: Float, val movePieMargin: Float,
     val holdStopsMove: Boolean,
@@ -547,10 +564,33 @@ data class ButtonGyro(
     val yawMode: GyroMode? = null,
     val pitchMode: GyroMode? = null,
     val rollMode: GyroMode? = null,
+    /** Yaw's, pitch's and roll's inertia, glide and curve while held ([GyroSettings.ownGlide]); null = the workspace's. */
+    val yawGlide: AxisGlide? = null,
+    val pitchGlide: AxisGlide? = null,
+    val rollGlide: AxisGlide? = null,
 ) {
     /** It sets something. */
     val any: Boolean get() = sensitivity != null || yaw != null || pitch != null || roll != null ||
-        yawMode != null || pitchMode != null || rollMode != null
+        yawMode != null || pitchMode != null || rollMode != null || yawGlide != null || pitchGlide != null || rollGlide != null
+
+    /** Axis [a]'s own inertia, glide and curve. */
+    fun ownGlide(a: MotionAxis): AxisGlide = when (a) {
+        MotionAxis.YAW -> yawGlide
+        MotionAxis.PITCH -> pitchGlide
+        MotionAxis.ROLL -> rollGlide
+        MotionAxis.NONE -> null
+    } ?: AxisGlide()
+
+    /** Copy with axis [a]'s own inertia, glide and curve [g]. */
+    fun withGlide(a: MotionAxis, g: AxisGlide): ButtonGyro {
+        val v = g.takeUnless { it.isEmpty }
+        return when (a) {
+            MotionAxis.YAW -> copy(yawGlide = v)
+            MotionAxis.PITCH -> copy(pitchGlide = v)
+            MotionAxis.ROLL -> copy(rollGlide = v)
+            MotionAxis.NONE -> this
+        }
+    }
 
     /** Axis [a]'s own ratchet mode. */
     fun ownMode(a: MotionAxis): GyroMode? = when (a) {
@@ -588,6 +628,7 @@ data class ButtonGyro(
     fun under(o: ButtonGyro) = ButtonGyro(
         set, o.sensitivity ?: sensitivity, o.yaw ?: yaw, o.pitch ?: pitch, o.roll ?: roll,
         o.yawMode ?: yawMode, o.pitchMode ?: pitchMode, o.rollMode ?: rollMode,
+        AxisGlide.merge(yawGlide, o.yawGlide), AxisGlide.merge(pitchGlide, o.pitchGlide), AxisGlide.merge(rollGlide, o.rollGlide),
     )
 
     /** Axis [a]'s sensitivity with these over [g]: its own, these' shared, then [g]'s. */
@@ -598,7 +639,28 @@ data class ButtonGyro(
         yawSensitivity = sensitivityOf(MotionAxis.YAW, g), pitchSensitivity = sensitivityOf(MotionAxis.PITCH, g),
         rollSensitivity = sensitivityOf(MotionAxis.ROLL, g),
         yawMode = yawMode ?: g.yawMode, pitchMode = pitchMode ?: g.pitchMode, rollMode = rollMode ?: g.rollMode,
-    )
+    ).let { r ->
+        listOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL).fold(r) { acc, a -> acc.withGlide(a, g.ownGlide(a).under(ownGlide(a))) }
+    }
+}
+
+/** One gyro axis's own inertia, glide (ms) and curve ([GyroSettings.inertia]); null = the parent's. */
+@Serializable
+data class AxisGlide(
+    val inertia: Boolean? = null,
+    val glideMs: Float? = null,
+    val curve: InertiaCurve? = null,
+) {
+    val isEmpty: Boolean get() = inertia == null && glideMs == null && curve == null
+
+    /** These with [o]'s own values in place of theirs. */
+    fun under(o: AxisGlide?): AxisGlide = if (o == null) this else AxisGlide(o.inertia ?: inertia, o.glideMs ?: glideMs, o.curve ?: curve)
+
+    companion object {
+        /** [base] with [over] on top; null when neither sets anything. */
+        fun merge(base: AxisGlide?, over: AxisGlide?): AxisGlide? =
+            (base ?: AxisGlide()).under(over).takeUnless { it.isEmpty }
+    }
 }
 
 /** Rotation of the phone in the player's frame. */
@@ -656,7 +718,44 @@ data class GyroSettings(
     val gameCountsPer360: Float = 0f,
     /** Where [gameCountsPer360] came from, shown beside it ("CS2, sens 1.5", "Measured"). */
     val gameName: String = "",
+    /**
+     * Inertia: when a ratchet turns a gyro axis off, its mouse and wheel motion glides on and slows
+     * down over [glideMs] ([InertiaCurve]); it stops at once when the axis is on again. Sticks never glide.
+     */
+    val inertia: Boolean = false,
+    val glideMs: Float = DEFAULT_GLIDE_MS,
+    val inertiaCurve: InertiaCurve = InertiaCurve.SMOOTH,
+    /** Yaw's, pitch's and roll's own inertia, glide and curve; null = the shared one. */
+    val yawInertia: Boolean? = null,
+    val pitchInertia: Boolean? = null,
+    val rollInertia: Boolean? = null,
+    val yawGlideMs: Float? = null,
+    val pitchGlideMs: Float? = null,
+    val rollGlideMs: Float? = null,
+    val yawCurve: InertiaCurve? = null,
+    val pitchCurve: InertiaCurve? = null,
+    val rollCurve: InertiaCurve? = null,
 ) {
+    /** Axis [a]'s own inertia, glide and curve ([AxisGlide]: null = the shared one). */
+    fun ownGlide(a: MotionAxis): AxisGlide = when (a) {
+        MotionAxis.YAW -> AxisGlide(yawInertia, yawGlideMs, yawCurve)
+        MotionAxis.PITCH -> AxisGlide(pitchInertia, pitchGlideMs, pitchCurve)
+        MotionAxis.ROLL -> AxisGlide(rollInertia, rollGlideMs, rollCurve)
+        MotionAxis.NONE -> AxisGlide()
+    }
+
+    /** Copy with axis [a]'s own inertia, glide and curve [g]. */
+    fun withGlide(a: MotionAxis, g: AxisGlide): GyroSettings = when (a) {
+        MotionAxis.YAW -> copy(yawInertia = g.inertia, yawGlideMs = g.glideMs, yawCurve = g.curve)
+        MotionAxis.PITCH -> copy(pitchInertia = g.inertia, pitchGlideMs = g.glideMs, pitchCurve = g.curve)
+        MotionAxis.ROLL -> copy(rollInertia = g.inertia, rollGlideMs = g.glideMs, rollCurve = g.curve)
+        MotionAxis.NONE -> this
+    }
+
+    fun inertiaOf(a: MotionAxis): Boolean = ownGlide(a).inertia ?: inertia
+    fun glideMsOf(a: MotionAxis): Float = ownGlide(a).glideMs ?: glideMs
+    fun curveOf(a: MotionAxis): InertiaCurve = ownGlide(a).curve ?: inertiaCurve
+
     /** Sensitivity [sens] (counts per degree) as real world sensitivity, or null with [gameCountsPer360] unknown. */
     fun rwsOf(sens: Float): Float? = if (gameCountsPer360 > 0f) GameSens.rws(sens, gameCountsPer360) else null
 
@@ -706,6 +805,7 @@ data class GyroSettings(
 
     companion object {
         const val DEFAULT_SENSITIVITY = 16f
+        const val DEFAULT_GLIDE_MS = 325f
         const val DEFAULT_TILT_RANGE_DEG = 30f
         const val MIN_TILT_RANGE_DEG = 5f
         const val MAX_TILT_RANGE_DEG = 90f
@@ -713,6 +813,10 @@ data class GyroSettings(
         const val DEFAULT_SHAKE_STRENGTH = 14f
         const val MIN_SHAKE_STRENGTH = 5f
         const val MAX_SHAKE_STRENGTH = 40f
+
+        /** The properties of axis [a]'s own inertia, glide and curve ([WorkspaceDefaults.gyroKey]). */
+        fun glideProps(a: MotionAxis): List<String> =
+            if (a == MotionAxis.NONE) emptyList() else a.name.lowercase().let { listOf(it + "Inertia", it + "GlideMs", it + "Curve") }
 
         /** The property of axis [a]'s own sensitivity ([WorkspaceDefaults.gyroKey]). */
         fun sensitivityProp(a: MotionAxis): String? = when (a) {
@@ -742,10 +846,14 @@ data class TouchpadSettings(
     val naturalScroll: Boolean = true,
     /** Two-finger scrolling also moves sideways. */
     val horizontalScroll: Boolean = true,
-    /** A two-finger scroll that lifts while moving keeps gliding and slows down. */
+    /**
+     * A Move X / Y that lifts while moving keeps gliding and slows down ([inertiaCurve]), every
+     * Move without its own; by default ([DEFAULT_MOVES]) not the one-finger cursor's.
+     */
     val inertia: Boolean = true,
-    /** Glide time constant in ms: how long the scroll keeps going after the fingers lift. */
+    /** How long a glide keeps going after the fingers lift (ms, [InertiaCurve]). */
     val inertiaGlideMs: Float = 325f,
+    val inertiaCurve: InertiaCurve = InertiaCurve.SMOOTH,
     /** Two fingers spreading or closing zoom (Ctrl + wheel). */
     val pinchZoom: Boolean = true,
     /** Three- and four-finger swipes and taps run [gestures3] / [gestures4]. */
@@ -836,7 +944,7 @@ data class TouchpadSettings(
     /** Per direction ([Direction.ordinal]), its own settings over the shared ones above ([DirSettings]). */
     val dirs: List<DirSettings>? = null,
     /** Per Move X / Y of each finger count ([MoveSlot.ordinal]), its own settings over the shared ones ([MoveSettings]). */
-    val moves: List<MoveSettings>? = null,
+    val moves: List<MoveSettings>? = DEFAULT_MOVES,
 ) {
     /** [m]'s own settings (empty: all shared). */
     fun move(m: MoveSlot): MoveSettings = moves?.getOrNull(m.ordinal) ?: MoveSettings.NONE
@@ -860,7 +968,10 @@ data class TouchpadSettings(
             x.pie ?: movePieX, y.pie ?: movePieY,
             x.cursorDeadzoneDp ?: cursorDeadzoneDp, x.catchUpMs ?: catchUpMs,
             x.deadzoneRearmMs ?: deadzoneRearmMs, x.deadzoneStillDp ?: deadzoneStillDp,
-            x.inertia ?: inertia, x.sample ?: moveSampleDp,
+            x.inertia ?: inertia, y.inertia ?: inertia,
+            x.glideMs ?: inertiaGlideMs, y.glideMs ?: inertiaGlideMs,
+            x.curve ?: inertiaCurve, y.curve ?: inertiaCurve,
+            x.sample ?: moveSampleDp,
             x.lock ?: moveLock, x.turnDp ?: moveTurnDp, x.margin ?: movePieMargin,
             x.holdStops ?: holdStopsMove,
         )
@@ -913,6 +1024,10 @@ data class TouchpadSettings(
     companion object {
         const val MIN_GLIDE_MS = 100f
         const val MAX_GLIDE_MS = 1000f
+
+        /** The built-in Moves' own settings: one finger (the cursor) does not glide. */
+        val DEFAULT_MOVES: List<MoveSettings> =
+            MoveSlot.entries.map { if (it.fingers == 1) MoveSettings(inertia = false) else MoveSettings.NONE }
         const val MAX_RELEASE_TAP_MS = 1000
         const val MAX_CURSOR_DEADZONE_DP = 80f
         const val MAX_CATCH_UP_MS = 500

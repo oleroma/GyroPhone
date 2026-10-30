@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.ui
 
+import com.oleroma.gyrophone.core.engine.GyroMouse
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.horizontalScroll
@@ -163,6 +164,19 @@ internal fun WorkspaceSettings(
                 key + "gs", "Sensitivity", ws.gyro.sensitivity, ws.gyro, own(g("sensitivity")), reset(g("sensitivity")),
                 hint = "Yaw, pitch and roll each follow it unless their ⚙ in the mapping editor sets their own; scrolling and sticks go faster or slower with it too.",
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(sensitivity = v)) } }
+            OverrideSwitch(
+                "Inertia",
+                (if (ws.gyro.inertia) "When a ratchet turns gyro off, the mouse and scrolling glide on and slow down; turning it on again stops the glide."
+                else "Gyro motion stops as soon as a ratchet turns it off.") + " Sticks never glide. Yaw, pitch and roll follow it unless their ⚙ sets their own.",
+                ws.gyro.inertia, own(g("inertia")), reset(g("inertia")),
+            ) { v -> editWs { it.copy(gyro = it.gyro.copy(inertia = v)) } }
+            InertiaCurveRow(ws.gyro.inertiaCurve, own(g("inertiaCurve")), reset(g("inertiaCurve"))) { c ->
+                editWs { it.copy(gyro = it.gyro.copy(inertiaCurve = c)) }
+            }
+            OverrideSlider(
+                key + "gglide", "Glide %.0f ms", ws.gyro.glideMs, GyroMouse.MIN_GLIDE_MS..GyroMouse.MAX_GLIDE_MS, 5f,
+                own(g("glideMs")), reset(g("glideMs")), hint = GLIDE_HINT,
+            ) { v -> editWs { it.copy(gyro = it.gyro.copy(glideMs = v)) } }
             OverrideSlider(
                 key + "tiltRange", "Tilt range %.0f°", ws.gyro.tiltRangeDeg,
                 GyroSettings.MIN_TILT_RANGE_DEG..GyroSettings.MAX_TILT_RANGE_DEG, 1f, own(g("tiltRangeDeg")), reset(g("tiltRangeDeg")),

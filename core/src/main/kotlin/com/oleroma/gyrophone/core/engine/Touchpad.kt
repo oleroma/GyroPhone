@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.core.engine
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.GestureActions
+import com.oleroma.gyrophone.core.model.InertiaCurve
 import com.oleroma.gyrophone.core.model.MotionFeel
 import com.oleroma.gyrophone.core.model.MoveMode
 import com.oleroma.gyrophone.core.model.SurfaceInput
@@ -137,22 +138,33 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     private var wheelRem = 0f
     private var hwheelRem = 0f
 
-    /** Scroll velocity EMA in wheel units per ms, and the travel / time it is being sampled over. */
+    /**
+     * Move X / Y velocity EMA (the travel they take, px per ms) for a fling, the travel / time it
+     * is being sampled over, and when they last moved.
+     */
     private var velX = 0f
     private var velY = 0f
     private var velAccX = 0f
     private var velAccY = 0f
     private var velSinceNs = 0L
-    private var lastScrollNs = 0L
+    private var lastMoveNs = 0L
 
     /** When the first of two scrolling fingers lifted (SCROLL_LIFT). */
     private var liftNs = 0L
 
-    // Inertia after a fling.
+    // Inertia after a fling: Move X / Y's velocity (px per ms), each axis's glide time and curve
+    // and, for a linear one, its slowing (px per ms²), the motion's cursor and wheel mappings.
     private var gliding = false
     private var glideVx = 0f
     private var glideVy = 0f
     private var glideNs = 0L
+    private var glideTauX = 0f
+    private var glideTauY = 0f
+    private var glideLinearX = false
+    private var glideLinearY = false
+    private var glideDecX = 0f
+    private var glideDecY = 0f
+    private var glideMotion: SurfaceMap.Motion? = null
 
     // Pinch: zoom travel not yet released into [wheel] (waits until Ctrl is visible).
     private var lastSpread = 0f
@@ -166,7 +178,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     private var scrubbing = false
 
     // The current motion (MOVE, DRAG, SCROLL, SWIPE): its finger count (0 = none), travel origin
-    // (centroid, px), floating-stick levels (-1..1), whether its swipe fired and it scrolled.
+    // (centroid, px), floating-stick levels (-1..1), whether its swipe fired and its Moves moved.
     private var phaseN = 0
 
     // Travel since the motion started (px), as Move X / Y take it; and the recent travel that
@@ -194,7 +206,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
 
     /** The time of the latest event or poll. */
     private var nowNs = 0L
-    private var scrolled = false
+    private var moved = false
 
     // Cursor deadzone (one-finger MOVE): the cursor holds still until the travel passes it, then
     // makes up the travel it held back ([catchX], [catchY] px) over the catch-up time.
@@ -479,7 +491,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
             }
 
             State.MOVE -> if (slot == primary) {
-                if (count == 0 && scrolled) fling(now)
+                if (count == 0 && moved) fling(now)
                 endPhase()
                 state = if (count == 0) State.IDLE else State.IGNORE
             }
@@ -496,7 +508,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
 
             State.DRAG -> if (slot == primary) {
                 set(1, SurfaceInput.TAP_DRAG, false)
-                if (count == 0 && scrolled) fling(now)
+                if (count == 0 && moved) fling(now)
                 endPhase()
                 state = if (count == 0) State.IDLE else State.IGNORE
             }
@@ -531,7 +543,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
             // Glides from this lift. A remaining finger that moved after the first lift is judged here
             // (it may have stopped since); one that stayed still is judged from the first lift.
             State.SCROLL_LIFT -> if (count == 0) {
-                fling(if (lastScrollNs > liftNs) now else liftNs, now); endPhase(); state = State.IDLE
+                fling(if (lastMoveNs > liftNs) now else liftNs, now); endPhase(); state = State.IDLE
             }
 
             State.PINCH -> if (count < 2) {
@@ -541,7 +553,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
             }
 
             State.SWIPE -> if (count == 0) {
-                if (scrolled) fling(now)
+                if (moved) fling(now)
                 endPhase()
                 state = State.IDLE
             } else {
@@ -849,7 +861,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         }
         dirs.start(carried, latchZones)
         zoneCounts(n)
-        swiped = false; scrolled = false
+        swiped = false; moved = false
         trX = 0f; trY = 0f; winX = 0f; winY = 0f
         headed = false; waitX = 0f; waitY = 0f
         moving = 0; turnX = 0f; turnY = 0f; turnLen = 0f; holdStopped = false
@@ -1015,6 +1027,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         val sdx = moveX
         val sdy = moveY
         trX += sdx; trY += sdy
+        track(sdx, sdy, now, eventNs)
         if (rearmable) {
             val sx = centroidX() - stillX;
             val sy = centroidY() - stillY
@@ -1026,7 +1039,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         if (m.cursor) {
             if (dzHolding) passDeadzone(m, now, eventNs) else emit(run, sdx, sdy, eventNs, m)
         }
-        if (m.scroll) scrollStep(sdx, sdy, now, eventNs, m)
+        if (m.scroll) scrollStep(sdx, sdy, m)
         val tx = trX / pxPerDp
         val ty = trY / pxPerDp
         levelX = (tx / STICK_FULL_DP).coerceIn(-1f, 1f)
@@ -1134,18 +1147,13 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         }
     }
 
-    /** One step of motion mapped to the wheel; the velocity (for a fling) is timed by [eventNs]. */
-    private fun scrollStep(sdxPx: Float, sdyPx: Float, now: Long, eventNs: Long, m: SurfaceMap.Motion) {
-        val f = feel()
-        // Natural: content follows the fingers (finger down = wheel up, finger right = pan left).
-        val sx = sdxPx * f.scrollSpeedX * UNITS_PER_DP / pxPerDp * if (f.naturalScrollX) 1f else -1f
-        val sy = sdyPx * f.scrollSpeedY * UNITS_PER_DP / pxPerDp * if (f.naturalScrollY) 1f else -1f
-        val uy = m.wx * sx + m.wy * sy
-        val ux = m.hx * sx + m.hy * sy
-        addScroll(ux, uy)
-        lastScrollNs = now
-        scrolled = true
-        velAccX += ux; velAccY += uy
+    /** Move X / Y took [sdx], [sdy] px: their velocity (for a fling), timed by [eventNs]. */
+    private fun track(sdx: Float, sdy: Float, now: Long, eventNs: Long) {
+        if (sdx != 0f || sdy != 0f) {
+            lastMoveNs = now
+            moved = true
+        }
+        velAccX += sdx; velAccY += sdy
         val dt = eventNs - velSinceNs
         if (dt >= VEL_SAMPLE_NS) {
             val ms = dt / 1e6f
@@ -1155,6 +1163,15 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
             velY = w * (velAccY / ms) + (1 - w) * velY
             velAccX = 0f; velAccY = 0f; velSinceNs = eventNs
         }
+    }
+
+    /** One step of motion mapped to the wheel. */
+    private fun scrollStep(sdxPx: Float, sdyPx: Float, m: SurfaceMap.Motion) {
+        val f = feel()
+        // Natural: content follows the fingers (finger down = wheel up, finger right = pan left).
+        val sx = sdxPx * f.scrollSpeedX * UNITS_PER_DP / pxPerDp * if (f.naturalScrollX) 1f else -1f
+        val sy = sdyPx * f.scrollSpeedY * UNITS_PER_DP / pxPerDp * if (f.naturalScrollY) 1f else -1f
+        addScroll(m.hx * sx + m.hy * sy, m.wx * sx + m.wy * sy)
     }
 
     private fun addScroll(ux: Float, uy: Float) {
@@ -1168,28 +1185,76 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         wheel += w
     }
 
-    /** Starts the glide, from [startNs], if the fingers lifted (at [at]) while still moving fast. */
+    /**
+     * Starts the glide, from [startNs], if the fingers lifted (at [at]) while still moving fast:
+     * each Move X / Y with inertia ([MotionFeel.inertiaX]) goes on at its velocity, slowing down
+     * by its own glide time and curve, through the motion's cursor and wheel mappings.
+     */
     private fun fling(at: Long, startNs: Long = at) {
         val f = feel()
-        if (!f.inertia || at - lastScrollNs > FLING_MAX_PAUSE_NS) return
-        val speedDp = sqrt(velX * velX + velY * velY) / UNITS_PER_DP / max(f.scrollSpeedX, f.scrollSpeedY).coerceAtLeast(0.05f)
-        if (speedDp < FLING_MIN_DP_PER_MS) return
+        // Still in the cursor deadzone, the cursor never moved: it does not glide either.
+        if ((!f.inertiaX && !f.inertiaY) || dzHolding || at - lastMoveNs > FLING_MAX_PAUSE_NS) return
+        val vx = if (f.inertiaX) velX else 0f
+        val vy = if (f.inertiaY) velY else 0f
+        if (sqrt(vx * vx + vy * vy) / pxPerDp < FLING_MIN_DP_PER_MS) return
+        val m = map.motion[motionN.coerceIn(1, 4) - 1]
+        if (!m.cursor && !m.scroll) return
         gliding = true
-        glideVx = velX; glideVy = velY
+        glideMotion = m
+        glideVx = vx; glideVy = vy
         glideNs = startNs
+        glideTauX = f.glideMsX.coerceIn(TouchpadSettings.MIN_GLIDE_MS, TouchpadSettings.MAX_GLIDE_MS)
+        glideTauY = f.glideMsY.coerceIn(TouchpadSettings.MIN_GLIDE_MS, TouchpadSettings.MAX_GLIDE_MS)
+        glideLinearX = f.curveX == InertiaCurve.LINEAR
+        glideLinearY = f.curveY == InertiaCurve.LINEAR
+        // Linear: stops after 2·T, so it travels as far as the smooth one (v0·T).
+        glideDecX = abs(vx) / (2f * glideTauX)
+        glideDecY = abs(vy) / (2f * glideTauY)
+        run.start(startNs)
     }
 
-    /** Exponential decay: v(t) = v0·e^(−t/τ); travel over dt = v·τ·(1 − e^(−dt/τ)). */
+    /** One step of the glide: each axis's travel since the last, sent as Move X / Y's travel would be. */
     private fun glide(now: Long) {
         val dtMs = (now - glideNs) / 1e6f
         if (dtMs <= 0f) return
-        val tau = settings.inertiaGlideMs.coerceIn(TouchpadSettings.MIN_GLIDE_MS, TouchpadSettings.MAX_GLIDE_MS)
-        val decay = exp(-dtMs / tau)
-        val k = tau * (1f - decay)
-        addScroll(glideVx * k, glideVy * k)
-        glideVx *= decay; glideVy *= decay
         glideNs = now
-        if (sqrt(glideVx * glideVx + glideVy * glideVy) < GLIDE_STOP_UNITS_PER_MS) gliding = false
+        val gx = glideStep(glideVx, glideTauX, glideLinearX, glideDecX, dtMs)
+        glideVx = glideNext
+        val gy = glideStep(glideVy, glideTauY, glideLinearY, glideDecY, dtMs)
+        glideVy = glideNext
+        val m = glideMotion
+        if (m != null) {
+            if (m.cursor) emit(run, gx, gy, now, m)
+            if (m.scroll) scrollStep(gx, gy, m)
+        }
+        val stop = GLIDE_STOP_DP_PER_MS * pxPerDp
+        if (m == null || (abs(glideVx) < stop && abs(glideVy) < stop)) {
+            gliding = false; glideMotion = null
+        }
+    }
+
+    /** The velocity after the last [glideStep]. */
+    private var glideNext = 0f
+
+    /**
+     * Travel (px) over [dtMs] of one axis gliding at [v] (px per ms): smooth, v(t) = v·e^(−t/τ),
+     * travel v·τ·(1 − e^(−dt/τ)); [linear], slowing by [dec] until it stops. Its new velocity goes to [glideNext].
+     */
+    private fun glideStep(v: Float, tau: Float, linear: Boolean, dec: Float, dtMs: Float): Float {
+        if (v == 0f) {
+            glideNext = 0f; return 0f
+        }
+        if (!linear) {
+            val decay = exp(-dtMs / tau)
+            glideNext = v * decay
+            return v * tau * (1f - decay)
+        }
+        val speed = abs(v)
+        val left = speed / dec // ms until it stops
+        val t = min(dtMs, left)
+        val next = speed - dec * t
+        glideNext = if (t >= left) 0f else next * kotlin.math.sign(v)
+        return (speed + next) / 2f * t * kotlin.math.sign(v)
     }
 
     private fun startPinch() {
@@ -1372,14 +1437,14 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         state = State.IDLE
         tapCandidate = false
         run.remX = 0f; run.remY = 0f; wheelRem = 0f; hwheelRem = 0f
-        gliding = false
+        gliding = false; glideMotion = null
         zoomRem = 0f; zoomPending = 0
         flipCount = 0
         kSize = 0
         // What is shown stays until [cancel] / [reset] let it go.
         want0 = vis0; want1 = vis1; want2 = vis2
         phaseN = 0; levelX = 0f; levelY = 0f; pinchLevel = 0f
-        scrubbing = false; scrolled = false; touchMax = 0
+        scrubbing = false; moved = false; touchMax = 0
         dzHolding = false; catching = false; catchMotion = null; rearmable = false
         pendingTapN = 0; lastTapN = 0; longN = 0; longOn = false; doubleHeld = false
         dirs.start(); latchN = 0; latchMask = 0; latchUntil = Long.MAX_VALUE
@@ -1629,7 +1694,8 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         /** A lift within this of the last scroll movement, faster than the minimum, flings. */
         const val FLING_MAX_PAUSE_NS = 60_000_000L
         const val FLING_MIN_DP_PER_MS = 0.25f
-        const val GLIDE_STOP_UNITS_PER_MS = 0.05f
+        /** A glide stops below this speed, each axis (dp per ms: 1/400 notch per ms at scroll speed 1). */
+        const val GLIDE_STOP_DP_PER_MS = 0.01f
         const val GLIDE_STEP_NS = 4_000_000L
 
         /** After one of two scrolling fingers lifts, the other may follow within this and still fling. */
