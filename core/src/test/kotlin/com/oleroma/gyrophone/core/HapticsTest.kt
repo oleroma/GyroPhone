@@ -11,6 +11,7 @@ import com.oleroma.gyrophone.core.model.StickAxis
 import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
+import com.oleroma.gyrophone.core.model.MoveMode
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
 import org.junit.Assert.assertEquals
@@ -162,9 +163,9 @@ class HapticsTest {
     }
 
     @Test
-    fun verticalLockDropsSidewaysPartOfASteepStroke() {
+    fun moveXStaysOutsideItsPie() {
         val p =
-            Touchpad(TouchpadSettings(acceleration = 0f, tapToClick = false, sensitivity = 1f, verticalLockDeg = 30f))
+            Touchpad(TouchpadSettings(acceleration = 0f, tapToClick = false, sensitivity = 1f, moveMode = MoveMode.PIE, movePieX = 120f))
                 .apply { pxPerDp = 1f }
         p.down(1, 100f, 100f, 0)
         var x = 100f;
@@ -181,6 +182,28 @@ class HapticsTest {
         } // mostly sideways
         p.poll(120 * MS)
         assertTrue("dx " + p.dx, p.dx >= 40)
+    }
+
+    @Test
+    fun theFirstSampleWaitsForItsHeadingAndIsNotLost() {
+        val p = Touchpad(
+            TouchpadSettings(acceleration = 0f, tapToClick = false, sensitivity = 1f, moveMode = MoveMode.LARGER_AXIS, moveSampleDp = 4f),
+        ).apply { pxPerDp = 1f }
+        p.down(1, 100f, 100f, 0)
+        p.move(1, 102f, 100f, 5 * MS); p.poll(5 * MS)
+        assertEquals(0, p.dx) // 2 dp: heading not known yet
+        p.move(1, 105f, 101f, 10 * MS); p.poll(10 * MS)
+        assertEquals(5, p.dx) // known: all of it at once
+        assertEquals(0, p.dy) // Move Y: not its way
+    }
+
+    @Test
+    fun freeMovesAtOnce() {
+        val p = Touchpad(TouchpadSettings(acceleration = 0f, tapToClick = false, sensitivity = 1f)).apply { pxPerDp = 1f }
+        p.down(1, 100f, 100f, 0)
+        p.move(1, 101f, 101f, 5 * MS); p.poll(5 * MS)
+        assertEquals(1, p.dx)
+        assertEquals(1, p.dy)
     }
 
     @Test

@@ -156,7 +156,8 @@ internal fun OverrideRow(
 
 /**
  * A slider setting: [format] shows the value; it snaps to [step] and hands the value to [onDone]
- * once the drag ends. [key] restarts the draft when the setting's owner changes.
+ * once the drag ends; [onLive] gets it while it is dragged (null once it ends), for a live
+ * preview. [key] restarts the draft when the setting's owner changes.
  */
 @Composable
 internal fun OverrideSlider(
@@ -168,15 +169,22 @@ internal fun OverrideSlider(
     overridden: Boolean,
     onReset: (() -> Unit)?,
     hint: String? = null,
+    onLive: ((Float?) -> Unit)? = null,
     onDone: (Float) -> Unit,
 ) {
     var v by remember(key, value) { mutableStateOf(value) }
     OverrideRow(format.format(v), overridden, onReset, hint) {
         Slider(
             value = v,
-            onValueChange = { v = (it / step).roundToInt() * step },
+            onValueChange = {
+                v = (it / step).roundToInt() * step
+                onLive?.invoke(v)
+            },
             valueRange = range,
-            onValueChangeFinished = { onDone(v) },
+            onValueChangeFinished = {
+                onDone(v)
+                onLive?.invoke(null)
+            },
         )
     }
 }

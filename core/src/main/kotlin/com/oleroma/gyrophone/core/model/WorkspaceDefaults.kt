@@ -41,7 +41,7 @@ object WorkspaceDefaults {
     private fun dirOf(key: String): Pair<Direction, DirField>? {
         if (!key.startsWith(TOUCHPAD + DIR)) return null
         val (d, f) = key.removePrefix(TOUCHPAD + DIR).split('.')
-        return Direction.valueOf(d) to DirField.valueOf(f)
+        return Direction.valueOf(d) to (DirField.entries.firstOrNull { it.name == f } ?: return null)
     }
 
     fun moveKey(m: MoveSlot, f: MoveField) = TOUCHPAD + MOVE + m.name + "." + f.name
@@ -50,12 +50,12 @@ object WorkspaceDefaults {
     private fun moveOf(key: String): Pair<MoveSlot, MoveField>? {
         if (!key.startsWith(TOUCHPAD + MOVE)) return null
         val (m, f) = key.removePrefix(TOUCHPAD + MOVE).split('.')
-        return MoveSlot.valueOf(m) to MoveField.valueOf(f)
+        return MoveSlot.valueOf(m) to (MoveField.entries.firstOrNull { it.name == f } ?: return null)
     }
 
     /** The shared touchpad key [key] (a direction's or a Move X / Y's own) sets over, else null. */
     private fun sharedOf(key: String): String? =
-        dirOf(key)?.second?.shared?.let(::touchpadKey) ?: moveOf(key)?.let { (m, f) -> touchpadKey(f.sharedOf(m)) }
+        dirOf(key)?.let { (d, f) -> touchpadKey(f.sharedOf(d)) } ?: moveOf(key)?.let { (m, f) -> touchpadKey(f.sharedOf(m)) }
 
     /** Every key a workspace can set over the defaults. */
     val keys: List<String> = top + gyroProps.map(::gyroKey) + SurfaceField.entries.map(::touchpadKey) +
@@ -113,7 +113,10 @@ object WorkspaceDefaults {
      * The keys [w] sets itself: [Workspace.ownSettings], or for one from before the defaults
      * (null) each that differs from the built-in values, so nothing set by hand is lost.
      */
-    fun own(w: Workspace): Set<String> = w.ownSettings ?: differing(w, builtin)
+    fun own(w: Workspace): Set<String> = w.ownSettings?.filterTo(LinkedHashSet()) { it in keySet } ?: differing(w, builtin)
+
+    /** [keys] to look up; a stored key no longer among them (a setting since removed) is dropped. */
+    private val keySet: Set<String> = keys.toHashSet()
 
     /** [w] with [defaults]' value of every key it does not set itself. */
     fun apply(w: Workspace, defaults: Workspace): Workspace {
@@ -163,7 +166,7 @@ object WorkspaceDefaults {
     )
 
     /** The keys layer [set] sets itself. */
-    fun layerOwn(set: MappingSet?): Set<String> = set?.settings?.ownSettings.orEmpty()
+    fun layerOwn(set: MappingSet?): Set<String> = set?.settings?.ownSettings.orEmpty().filterTo(LinkedHashSet()) { it in keySet }
 
     /**
      * [base] with layer [set]'s own settings laid over. A shared touchpad value the layer sets
@@ -171,7 +174,7 @@ object WorkspaceDefaults {
      */
     fun overlay(base: Workspace, set: MappingSet?): Workspace {
         val layer = set?.settings ?: return base
-        val own = layer.ownSettings.orEmpty()
+        val own = layerOwn(set)
         if (own.isEmpty()) return base
         val r = own.fold(base) { acc, k -> take(k, acc, layer) }
         return keys.filter { k -> k !in own && sharedOf(k) in own }

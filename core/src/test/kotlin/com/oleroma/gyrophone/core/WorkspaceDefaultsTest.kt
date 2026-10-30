@@ -71,17 +71,20 @@ class WorkspaceDefaultsTest {
         val pad = TouchpadSettings(holdDp = 30f)
         val own = SurfaceSettings()
         val was = pad.with(own)
-        val now = was.copy(swipeDp = 55f, pies = List(4) { 120f })
+        val now = was.copy(swipeDp = 55f, swipePieX = 120f)
         val edited = SurfaceField.edited(own, was, now)
         assertEquals(55f, edited.swipeDp)
-        assertEquals(List(4) { 120f }, edited.pies)
+        assertEquals(120f, edited.swipePieX)
+        assertNull(edited.swipePieY)
         assertNull(edited.holdDp)
-        assertTrue(SurfaceField.PIES.isOwn(edited))
+        assertTrue(SurfaceField.SWIPE_PIE_X.isOwn(edited))
         assertFalse(SurfaceField.HOLD.isOwn(edited))
 
-        // Back to classic pies over a touchpad with its own pies: the button keeps classic.
-        val classic = SurfaceField.edited(edited, pad.copy(pies = List(4) { 60f }).with(edited), pad.with(edited).copy(pies = null))
-        assertNull(pad.copy(pies = List(4) { 60f }).with(classic).pies)
+        // The button's own X pie hides the touchpad's own Left pie, not its Up pie.
+        val classic = edited
+        val dirs = pad.withDir(Direction.LEFT) { it.copy(swipePie = 30f) }.withDir(Direction.UP) { it.copy(swipePie = 40f) }
+        assertEquals(120f, dirs.with(edited).pieDeg(Direction.LEFT, hold = false))
+        assertEquals(40f, dirs.with(edited).pieDeg(Direction.UP, hold = false))
         assertEquals(HoldMode.FROM_START, pad.with(SurfaceField.dropAll(classic)).holdMode)
     }
 

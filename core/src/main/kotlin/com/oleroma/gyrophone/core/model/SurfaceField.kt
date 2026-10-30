@@ -11,8 +11,9 @@ enum class SurfaceField(val button: Boolean = true) {
     ENABLED(button = false),
     SENSITIVITY, ACCELERATION, SCROLL_SPEED, NATURAL_SCROLL, INERTIA,
     INERTIA_GLIDE(button = false),
-    CURSOR_DEADZONE, CATCH_UP, REARM, STILL, VERTICAL_LOCK, HORIZONTAL_LOCK,
-    DIR_SAMPLE, SWIPE, HOLD, HOLD_MODE, DRAG_START, RELEASE, PIES, LATCH, LATCH_RELEASE;
+    CURSOR_DEADZONE, CATCH_UP, REARM, STILL, MOVE_MODE, MOVE_PIE_X, MOVE_PIE_Y, MOVE_SAMPLE,
+    SWIPE_PIE_X, SWIPE_PIE_Y, SWIPE_SAMPLE, SWIPE,
+    HOLD_PIE_X, HOLD_PIE_Y, HOLD_SAMPLE, HOLD, HOLD_MODE, DRAG_START, RELEASE, LATCH, LATCH_RELEASE;
 
     private fun value(t: TouchpadSettings): Any? = when (this) {
         ENABLED -> t.enabled
@@ -26,15 +27,21 @@ enum class SurfaceField(val button: Boolean = true) {
         CATCH_UP -> t.catchUpMs
         REARM -> t.deadzoneRearmMs
         STILL -> t.deadzoneStillDp
-        VERTICAL_LOCK -> t.verticalLockDeg
-        HORIZONTAL_LOCK -> t.horizontalLockDeg
-        DIR_SAMPLE -> t.dirSampleDp
+        MOVE_MODE -> t.moveMode
+        MOVE_PIE_X -> t.movePieX
+        MOVE_PIE_Y -> t.movePieY
+        MOVE_SAMPLE -> t.moveSampleDp
+        SWIPE_PIE_X -> t.swipePieX
+        SWIPE_PIE_Y -> t.swipePieY
+        SWIPE_SAMPLE -> t.swipeSampleDp
+        HOLD_PIE_X -> t.holdPieX
+        HOLD_PIE_Y -> t.holdPieY
+        HOLD_SAMPLE -> t.holdSampleDp
         SWIPE -> t.swipeDp
         HOLD -> t.holdDp
         HOLD_MODE -> t.holdMode
         DRAG_START -> t.dragStart
         RELEASE -> t.releaseDp
-        PIES -> t.pies
         LATCH -> t.latch
         LATCH_RELEASE -> t.latchReleaseMs
     }
@@ -55,15 +62,21 @@ enum class SurfaceField(val button: Boolean = true) {
         CATCH_UP -> to.copy(catchUpMs = from.catchUpMs)
         REARM -> to.copy(deadzoneRearmMs = from.deadzoneRearmMs)
         STILL -> to.copy(deadzoneStillDp = from.deadzoneStillDp)
-        VERTICAL_LOCK -> to.copy(verticalLockDeg = from.verticalLockDeg)
-        HORIZONTAL_LOCK -> to.copy(horizontalLockDeg = from.horizontalLockDeg)
-        DIR_SAMPLE -> to.copy(dirSampleDp = from.dirSampleDp)
+        MOVE_MODE -> to.copy(moveMode = from.moveMode)
+        MOVE_PIE_X -> to.copy(movePieX = from.movePieX)
+        MOVE_PIE_Y -> to.copy(movePieY = from.movePieY)
+        MOVE_SAMPLE -> to.copy(moveSampleDp = from.moveSampleDp)
+        SWIPE_PIE_X -> to.copy(swipePieX = from.swipePieX)
+        SWIPE_PIE_Y -> to.copy(swipePieY = from.swipePieY)
+        SWIPE_SAMPLE -> to.copy(swipeSampleDp = from.swipeSampleDp)
+        HOLD_PIE_X -> to.copy(holdPieX = from.holdPieX)
+        HOLD_PIE_Y -> to.copy(holdPieY = from.holdPieY)
+        HOLD_SAMPLE -> to.copy(holdSampleDp = from.holdSampleDp)
         SWIPE -> to.copy(swipeDp = from.swipeDp)
         HOLD -> to.copy(holdDp = from.holdDp)
         HOLD_MODE -> to.copy(holdMode = from.holdMode)
         DRAG_START -> to.copy(dragStart = from.dragStart)
         RELEASE -> to.copy(releaseDp = from.releaseDp)
-        PIES -> to.copy(pies = from.pies)
         LATCH -> to.copy(latch = from.latch)
         LATCH_RELEASE -> to.copy(latchReleaseMs = from.latchReleaseMs)
     }
@@ -81,15 +94,21 @@ enum class SurfaceField(val button: Boolean = true) {
         CATCH_UP -> s.catchUpMs != null
         REARM -> s.deadzoneRearmMs != null
         STILL -> s.deadzoneStillDp != null
-        VERTICAL_LOCK -> s.verticalLockDeg != null
-        HORIZONTAL_LOCK -> s.horizontalLockDeg != null
-        DIR_SAMPLE -> s.dirSampleDp != null
+        MOVE_MODE -> s.moveMode != null
+        MOVE_PIE_X -> s.movePieX != null
+        MOVE_PIE_Y -> s.movePieY != null
+        MOVE_SAMPLE -> s.moveSampleDp != null
+        SWIPE_PIE_X -> s.swipePieX != null
+        SWIPE_PIE_Y -> s.swipePieY != null
+        SWIPE_SAMPLE -> s.swipeSampleDp != null
+        HOLD_PIE_X -> s.holdPieX != null
+        HOLD_PIE_Y -> s.holdPieY != null
+        HOLD_SAMPLE -> s.holdSampleDp != null
         SWIPE -> s.swipeDp != null
         HOLD -> s.holdDp != null
         HOLD_MODE -> s.holdMode != null
         DRAG_START -> s.dragStart != null
         RELEASE -> s.releaseDp != null
-        PIES -> s.pies != null || s.classicPies != null
         LATCH -> s.latch != null
         LATCH_RELEASE -> s.latchReleaseMs != null
     }
@@ -107,15 +126,21 @@ enum class SurfaceField(val button: Boolean = true) {
         CATCH_UP -> s.copy(catchUpMs = from.catchUpMs)
         REARM -> s.copy(deadzoneRearmMs = from.deadzoneRearmMs)
         STILL -> s.copy(deadzoneStillDp = from.deadzoneStillDp)
-        VERTICAL_LOCK -> s.copy(verticalLockDeg = from.verticalLockDeg)
-        HORIZONTAL_LOCK -> s.copy(horizontalLockDeg = from.horizontalLockDeg)
-        DIR_SAMPLE -> s.copy(dirSampleDp = from.dirSampleDp)
+        MOVE_MODE -> s.copy(moveMode = from.moveMode)
+        MOVE_PIE_X -> s.copy(movePieX = from.movePieX)
+        MOVE_PIE_Y -> s.copy(movePieY = from.movePieY)
+        MOVE_SAMPLE -> s.copy(moveSampleDp = from.moveSampleDp)
+        SWIPE_PIE_X -> s.copy(swipePieX = from.swipePieX)
+        SWIPE_PIE_Y -> s.copy(swipePieY = from.swipePieY)
+        SWIPE_SAMPLE -> s.copy(swipeSampleDp = from.swipeSampleDp)
+        HOLD_PIE_X -> s.copy(holdPieX = from.holdPieX)
+        HOLD_PIE_Y -> s.copy(holdPieY = from.holdPieY)
+        HOLD_SAMPLE -> s.copy(holdSampleDp = from.holdSampleDp)
         SWIPE -> s.copy(swipeDp = from.swipeDp)
         HOLD -> s.copy(holdDp = from.holdDp)
         HOLD_MODE -> s.copy(holdMode = from.holdMode)
         DRAG_START -> s.copy(dragStart = from.dragStart)
         RELEASE -> s.copy(releaseDp = from.releaseDp)
-        PIES -> s.copy(pies = from.pies, classicPies = if (from.pies == null) true else null)
         LATCH -> s.copy(latch = from.latch)
         LATCH_RELEASE -> s.copy(latchReleaseMs = from.latchReleaseMs)
     }
@@ -133,15 +158,21 @@ enum class SurfaceField(val button: Boolean = true) {
         CATCH_UP -> s.copy(catchUpMs = null)
         REARM -> s.copy(deadzoneRearmMs = null)
         STILL -> s.copy(deadzoneStillDp = null)
-        VERTICAL_LOCK -> s.copy(verticalLockDeg = null)
-        HORIZONTAL_LOCK -> s.copy(horizontalLockDeg = null)
-        DIR_SAMPLE -> s.copy(dirSampleDp = null)
+        MOVE_MODE -> s.copy(moveMode = null)
+        MOVE_PIE_X -> s.copy(movePieX = null)
+        MOVE_PIE_Y -> s.copy(movePieY = null)
+        MOVE_SAMPLE -> s.copy(moveSampleDp = null)
+        SWIPE_PIE_X -> s.copy(swipePieX = null)
+        SWIPE_PIE_Y -> s.copy(swipePieY = null)
+        SWIPE_SAMPLE -> s.copy(swipeSampleDp = null)
+        HOLD_PIE_X -> s.copy(holdPieX = null)
+        HOLD_PIE_Y -> s.copy(holdPieY = null)
+        HOLD_SAMPLE -> s.copy(holdSampleDp = null)
         SWIPE -> s.copy(swipeDp = null)
         HOLD -> s.copy(holdDp = null)
         HOLD_MODE -> s.copy(holdMode = null)
         DRAG_START -> s.copy(dragStart = null)
         RELEASE -> s.copy(releaseDp = null)
-        PIES -> s.copy(pies = null, classicPies = null)
         LATCH -> s.copy(latch = null)
         LATCH_RELEASE -> s.copy(latchReleaseMs = null)
     }
@@ -173,17 +204,30 @@ enum class SurfaceField(val button: Boolean = true) {
 }
 
 /**
- * One direction's own setting ([DirSettings]) over its surface's shared [shared] one: the pie
- * width and distance of its Swipe, the pie width, hold distance and latch of its Swipe hold.
+ * One direction's own setting ([DirSettings]) over its surface's shared one ([sharedOf]): the pie,
+ * sample and distance of its Swipe, the pie, sample, hold distance and latch of its Swipe hold.
  */
-enum class DirField(val shared: SurfaceField, val hold: Boolean) {
-    SWIPE_PIE(SurfaceField.PIES, false), SWIPE(SurfaceField.SWIPE, false),
-    HOLD_PIE(SurfaceField.PIES, true), HOLD(SurfaceField.HOLD, true), LATCH(SurfaceField.LATCH, true);
+enum class DirField(val hold: Boolean) {
+    SWIPE_PIE(false), SWIPE_SAMPLE(false), SWIPE(false),
+    HOLD_PIE(true), HOLD_SAMPLE(true), HOLD(true), LATCH(true);
+
+    /** The shared setting of [d] this sets over: a pie its axis's. */
+    fun sharedOf(d: Direction): SurfaceField = when (this) {
+        SWIPE_PIE -> if (d.x) SurfaceField.SWIPE_PIE_X else SurfaceField.SWIPE_PIE_Y
+        SWIPE_SAMPLE -> SurfaceField.SWIPE_SAMPLE
+        SWIPE -> SurfaceField.SWIPE
+        HOLD_PIE -> if (d.x) SurfaceField.HOLD_PIE_X else SurfaceField.HOLD_PIE_Y
+        HOLD_SAMPLE -> SurfaceField.HOLD_SAMPLE
+        HOLD -> SurfaceField.HOLD
+        LATCH -> SurfaceField.LATCH
+    }
 
     fun get(s: DirSettings): Any? = when (this) {
         SWIPE_PIE -> s.swipePie
+        SWIPE_SAMPLE -> s.swipeSample
         SWIPE -> s.swipeDp
         HOLD_PIE -> s.holdPie
+        HOLD_SAMPLE -> s.holdSample
         HOLD -> s.holdDp
         LATCH -> s.latch
     }
@@ -193,8 +237,10 @@ enum class DirField(val shared: SurfaceField, val hold: Boolean) {
     /** [to] with [from]'s value. */
     fun take(to: DirSettings, from: DirSettings): DirSettings = when (this) {
         SWIPE_PIE -> to.copy(swipePie = from.swipePie)
+        SWIPE_SAMPLE -> to.copy(swipeSample = from.swipeSample)
         SWIPE -> to.copy(swipeDp = from.swipeDp)
         HOLD_PIE -> to.copy(holdPie = from.holdPie)
+        HOLD_SAMPLE -> to.copy(holdSample = from.holdSample)
         HOLD -> to.copy(holdDp = from.holdDp)
         LATCH -> to.copy(latch = from.latch)
     }
@@ -221,8 +267,8 @@ enum class DirField(val shared: SurfaceField, val hold: Boolean) {
  * ([sharedOf]). [whole]: it goes for the whole motion of a finger count, kept on its Move X.
  */
 enum class MoveField(val whole: Boolean = false) {
-    SENSITIVITY, ACCELERATION, SCROLL_SPEED, NATURAL_SCROLL, LOCK,
-    CURSOR_DEADZONE(true), CATCH_UP(true), REARM(true), STILL(true), INERTIA(true);
+    SENSITIVITY, ACCELERATION, SCROLL_SPEED, NATURAL_SCROLL, MODE, PIE,
+    CURSOR_DEADZONE(true), CATCH_UP(true), REARM(true), STILL(true), INERTIA(true), SAMPLE(true);
 
     /** The shared setting of [m] this sets over. */
     fun sharedOf(m: MoveSlot): SurfaceField = when (this) {
@@ -230,12 +276,14 @@ enum class MoveField(val whole: Boolean = false) {
         ACCELERATION -> SurfaceField.ACCELERATION
         SCROLL_SPEED -> SurfaceField.SCROLL_SPEED
         NATURAL_SCROLL -> SurfaceField.NATURAL_SCROLL
-        LOCK -> if (m.x) SurfaceField.VERTICAL_LOCK else SurfaceField.HORIZONTAL_LOCK
+        MODE -> SurfaceField.MOVE_MODE
+        PIE -> if (m.x) SurfaceField.MOVE_PIE_X else SurfaceField.MOVE_PIE_Y
         CURSOR_DEADZONE -> SurfaceField.CURSOR_DEADZONE
         CATCH_UP -> SurfaceField.CATCH_UP
         REARM -> SurfaceField.REARM
         STILL -> SurfaceField.STILL
         INERTIA -> SurfaceField.INERTIA
+        SAMPLE -> SurfaceField.MOVE_SAMPLE
     }
 
     fun get(s: MoveSettings): Any? = when (this) {
@@ -243,12 +291,14 @@ enum class MoveField(val whole: Boolean = false) {
         ACCELERATION -> s.acceleration
         SCROLL_SPEED -> s.scrollSpeed
         NATURAL_SCROLL -> s.naturalScroll
-        LOCK -> s.lock
+        MODE -> s.mode
+        PIE -> s.pie
         CURSOR_DEADZONE -> s.cursorDeadzoneDp
         CATCH_UP -> s.catchUpMs
         REARM -> s.deadzoneRearmMs
         STILL -> s.deadzoneStillDp
         INERTIA -> s.inertia
+        SAMPLE -> s.sample
     }
 
     fun same(a: MoveSettings, b: MoveSettings): Boolean = get(a) == get(b)
@@ -259,12 +309,14 @@ enum class MoveField(val whole: Boolean = false) {
         ACCELERATION -> to.copy(acceleration = from.acceleration)
         SCROLL_SPEED -> to.copy(scrollSpeed = from.scrollSpeed)
         NATURAL_SCROLL -> to.copy(naturalScroll = from.naturalScroll)
-        LOCK -> to.copy(lock = from.lock)
+        MODE -> to.copy(mode = from.mode)
+        PIE -> to.copy(pie = from.pie)
         CURSOR_DEADZONE -> to.copy(cursorDeadzoneDp = from.cursorDeadzoneDp)
         CATCH_UP -> to.copy(catchUpMs = from.catchUpMs)
         REARM -> to.copy(deadzoneRearmMs = from.deadzoneRearmMs)
         STILL -> to.copy(deadzoneStillDp = from.deadzoneStillDp)
         INERTIA -> to.copy(inertia = from.inertia)
+        SAMPLE -> to.copy(sample = from.sample)
     }
 
     /** A level's own [s] sets this for [m]. */
