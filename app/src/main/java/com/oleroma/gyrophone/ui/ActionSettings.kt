@@ -94,8 +94,8 @@ private class ButtonGyroLevel(val control: TouchControl, ws: Workspace, val set:
 /** The button's Sensitivity while held: every gyro axis's unless the axis has its own. */
 @Composable
 private fun ButtonGyroSensitivity(g: ButtonGyroLevel, key: String) {
-    OverrideSlider(
-        key + "gyro" + g.set, "Gyro sensitivity %.0f", g.inUse.sensitivity ?: g.parent.sensitivity, 0f..MAX_GYRO_SENS, 1f,
+    GyroSensSlider(
+        key + "gyro" + g.set, "Gyro sensitivity", g.inUse.sensitivity ?: g.parent.sensitivity, g.parent,
         overridden = g.own.sensitivity != null,
         onReset = { g.edit { it.copy(sensitivity = null) } },
         hint = "While this is held (the last pressed of several), the gyro turns at this sensitivity${g.where}, whatever this button maps: " +
@@ -111,11 +111,11 @@ private fun buttonGyroGear(g: ButtonGyroLevel, key: String, axis: MotionAxis): @
             onReset = { g.edit { it.withMode(axis, null) } },
             hint = "While this is held${g.where}. Unset, the workspace's.",
         ) { m -> g.edit { it.withMode(axis, m) } }
-        OverrideSlider(
-            key + "gyro" + g.set + axis.name, "${axis.label} sensitivity %.0f", g.inUse.sensitivityOf(axis, g.parent), 0f..MAX_GYRO_SENS, 1f,
+        GyroSensSlider(
+            key + "gyro" + g.set + axis.name, "${axis.label} sensitivity", g.inUse.sensitivityOf(axis, g.parent), g.parent,
             overridden = g.own.own(axis) != null,
             onReset = { g.edit { it.with(axis, null) } },
-            hint = "While this is held: mouse counts per degree of ${axis.label.lowercase()}${g.where}. Unset, it follows this button's " +
+            hint = "While this is held: how fast ${axis.label.lowercase()} turns${g.where}. Unset, it follows this button's " +
                 "Gyro sensitivity (in Settings), else the workspace's.",
         ) { v -> g.edit { it.with(axis, v) } }
     }
@@ -242,12 +242,12 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
             onReset = { level.edit { it.copy(gyro = it.gyro.withMode(axis, null)) } },
             hint = "Unset, it follows the gyro mode in Settings." + if (g.mode == GyroMode.SENSOR_OFF) " Gyro is off there now." else "",
         ) { m -> level.edit { it.copy(gyro = it.gyro.withMode(axis, m)) } }
-        OverrideSlider(
-            key + "sens" + axis.name, "${axis.label} sensitivity %.0f", g.sensitivityOf(axis), 0f..MAX_GYRO_SENS, 1f,
+        GyroSensSlider(
+            key + "sens" + axis.name, "${axis.label} sensitivity", g.sensitivityOf(axis), g,
             overridden = g.ownSensitivity(axis) != null,
             onReset = { level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, null)) } },
-            hint = "Mouse counts per degree of ${axis.label.lowercase()}; scrolling and sticks go faster or slower with it too. " +
-                "Unset, it follows the shared Sensitivity (${"%.0f".format(g.sensitivity)}) in Settings.",
+            hint = "How fast ${axis.label.lowercase()} turns; scrolling and sticks go faster or slower with it too. " +
+                "Unset, it follows the shared Sensitivity (${g.rwsOf(g.sensitivity)?.let { "%.2f RWS".format(it) } ?: "%.0f".format(g.sensitivity)}) in Settings.",
         ) { v -> level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, v)) } }
     }
 }

@@ -27,8 +27,8 @@ import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
-/** Slider top: higher than the old 60, for fast flicks. */
-internal const val MAX_GYRO_SENS = 150f
+/** Slider top: high, for fast flicks. */
+internal const val MAX_GYRO_SENS = 250f
 
 /**
  * One level of workspace settings ([WorkspaceDefaults.keys]): [ws] in effect over [parent], which
@@ -154,9 +154,14 @@ internal fun WorkspaceSettings(
                     }
                 }
             }
-            OverrideSlider(
-                key + "gs", "Sensitivity %.0f", ws.gyro.sensitivity, 0f..MAX_GYRO_SENS, 1f, own(g("sensitivity")), reset(g("sensitivity")),
-                hint = "Mouse counts per degree turned. Yaw, pitch and roll each follow it unless their ⚙ in the mapping editor sets their own; scrolling and sticks go faster or slower with it too.",
+            if (level.shows(g("gameCountsPer360"))) {
+                GameTurnRow(runtime, level, own(g("gameCountsPer360"))) {
+                    level.reset(g("gameCountsPer360")); level.reset(g("gameName"))
+                }
+            }
+            GyroSensSlider(
+                key + "gs", "Sensitivity", ws.gyro.sensitivity, ws.gyro, own(g("sensitivity")), reset(g("sensitivity")),
+                hint = "Yaw, pitch and roll each follow it unless their ⚙ in the mapping editor sets their own; scrolling and sticks go faster or slower with it too.",
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(sensitivity = v)) } }
             OverrideSlider(
                 key + "tiltRange", "Tilt range %.0f°", ws.gyro.tiltRangeDeg,

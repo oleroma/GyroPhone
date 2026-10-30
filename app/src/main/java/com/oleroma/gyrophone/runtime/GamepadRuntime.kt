@@ -5,6 +5,7 @@ import android.hardware.Sensor
 import android.hardware.SensorManager
 import android.os.Handler
 import android.os.Looper
+import com.oleroma.gyrophone.core.engine.CountStream
 import com.oleroma.gyrophone.core.engine.GyroCalibration
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
@@ -49,7 +50,10 @@ import com.oleroma.gyrophone.sensor.GyroSource
 import com.oleroma.gyrophone.wifi.WifiLink
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -312,6 +316,79 @@ class GamepadRuntime(context: Context) {
     private var calibration: GyroCalibration? = null
     private val _calibration = MutableStateFlow(storedCalibration())
     val calibrationState: StateFlow<CalibrationState> = _calibration
+
+    /** Measuring a game's full turn ([measureStart]): steady counts out, the gyro moves nothing meanwhile. */
+    private val turn = CountStream()
+
+    @Volatile
+    private var measuring = false
+    private var turnJob: Job? = null
+    private val _turnSent = MutableStateFlow(0L)
+
+    /** Counts sent since the measure began ([measureBegin]). */
+    val turnSent: StateFlow<Long> = _turnSent
+    private val _turnRunning = MutableStateFlow(false)
+
+    /** The measure is streaming counts now. */
+    val turnRunning: StateFlow<Boolean> = _turnRunning
+
+    /** Opens a measure: from 0 counts, the gyro paused until [measureEnd]. */
+    @Synchronized
+    fun measureBegin() {
+        synchronized(turn) { turn.reset() }
+        measuring = true
+        _turnSent.value = 0
+    }
+
+    /** Streams [countsPerSecond] to the right until [measureStop]. */
+    fun measureStart(countsPerSecond: Float) {
+        synchronized(turn) { turn.run(countsPerSecond) }
+        streamTurn()
+    }
+
+    /** From 0, streams exactly [total] counts at [countsPerSecond] and stops: one full turn when [total] is right. */
+    fun measureVerify(total: Long, countsPerSecond: Float) {
+        synchronized(turn) { turn.reset(); turn.runTo(total, countsPerSecond) }
+        _turnSent.value = 0
+        streamTurn()
+    }
+
+    fun measureStop() {
+        synchronized(turn) { turn.stop() }
+    }
+
+    /** Sends [n] counts at once (negative: left) to line the camera up. */
+    fun measureNudge(n: Int) {
+        val sent = synchronized(turn) { turn.nudge(n); turn.sent }
+        engine.addMouseMotion(n, 0)
+        _turnSent.value = sent
+    }
+
+    /** Closes the measure: the stream stops and the gyro works again. */
+    fun measureEnd() {
+        measureStop()
+        measuring = false
+    }
+
+    private fun streamTurn() {
+        turnJob?.cancel()
+        _turnRunning.value = true
+        turnJob = scope.launch {
+            var last = System.nanoTime()
+            while (isActive) {
+                delay(TURN_TICK_MS)
+                val now = System.nanoTime()
+                val (n, sent, more) = synchronized(turn) { Triple(turn.tick((now - last) / 1e9f), turn.sent, turn.running) }
+                last = now
+                if (n != 0) engine.addMouseMotion(n, 0)
+                _turnSent.value = sent
+                if (!more) {
+                    _turnRunning.value = false
+                    break
+                }
+            }
+        }
+    }
 
     /** Started, switched and stopped on the main thread only (under this object's lock). */
     private var gyro: GyroSource? = null
@@ -854,6 +931,7 @@ class GamepadRuntime(context: Context) {
         private const val KEY_TOUCH_VISUALS = "touch_visuals"
         private val visualsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
         private const val KEY_UI_PREFIX = "ui."
+        private const val TURN_TICK_MS = 4L
         private const val KEY_BIAS_X = "gyro_bias_x"
         private const val KEY_BIAS_Y = "gyro_bias_y"
         private const val KEY_BIAS_Z = "gyro_bias_z"
@@ -907,7 +985,7 @@ class GamepadRuntime(context: Context) {
                 }
             }
         }
-        val axes = if (inputAllowed) engine.gyroAxes else 0
+        val axes = if (inputAllowed && !measuring) engine.gyroAxes else 0
         val active = axes != 0
         val v = vis
         val feeds = gyroFeeds
