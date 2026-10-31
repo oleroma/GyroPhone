@@ -253,6 +253,20 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
             own(sample), reset(sample),
             hint = SAMPLE_HINT,
         ) { v -> edit { if (hold) it.copy(holdSample = v) else it.copy(swipeSample = v) } }
+        val lock = if (hold) DirField.HOLD_LOCK else DirField.SWIPE_LOCK
+        val turn = if (hold) DirField.HOLD_TURN else DirField.SWIPE_TURN
+        OverrideSwitch(
+            "Lock heading",
+            "Turning to ${d.label} from another way takes Turn after of heading this way on end, so drift and turnarounds " +
+                    "can't reach it." + if (hold && s.holdMode == HoldMode.FROM_START) " From start point, its axis's start point follows the finger while the heading is on the other axis." else "",
+            s.lockOf(d, hold), own(lock), reset(lock),
+        ) { v -> edit { if (hold) it.copy(holdLock = v) else it.copy(swipeLock = v) } }
+        if (s.lockOf(d, hold)) {
+            OverrideSlider(
+                k + "turn", "Turn after %.1f dp", s.turnDpOf(d, hold), 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
+                own(turn), reset(turn),
+            ) { v -> edit { if (hold) it.copy(holdTurn = v) else it.copy(swipeTurn = v) } }
+        }
         if (!hold) {
             OverrideSlider(
                 k + "dp", "Swipe after %.0f dp", s.swipeDpOf(d), TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f,

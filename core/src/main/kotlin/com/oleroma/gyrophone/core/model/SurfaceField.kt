@@ -253,8 +253,8 @@ enum class SurfaceField(val button: Boolean = true) {
  * sample and distance of its Swipe, the pie, sample, hold distance and latch of its Swipe hold.
  */
 enum class DirField(val hold: Boolean) {
-    SWIPE_PIE(false), SWIPE_SAMPLE(false), SWIPE(false),
-    HOLD_PIE(true), HOLD_SAMPLE(true), HOLD(true), LATCH(true);
+    SWIPE_PIE(false), SWIPE_SAMPLE(false), SWIPE(false), SWIPE_LOCK(false), SWIPE_TURN(false),
+    HOLD_PIE(true), HOLD_SAMPLE(true), HOLD(true), LATCH(true), HOLD_LOCK(true), HOLD_TURN(true);
 
     /** The shared setting of [d] this sets over: a pie its axis's. */
     fun sharedOf(d: Direction): SurfaceField = when (this) {
@@ -265,6 +265,10 @@ enum class DirField(val hold: Boolean) {
         HOLD_SAMPLE -> SurfaceField.HOLD_SAMPLE
         HOLD -> SurfaceField.HOLD
         LATCH -> SurfaceField.LATCH
+        SWIPE_LOCK -> SurfaceField.SWIPE_LOCK
+        SWIPE_TURN -> SurfaceField.SWIPE_TURN
+        HOLD_LOCK -> SurfaceField.HOLD_LOCK
+        HOLD_TURN -> SurfaceField.HOLD_TURN
     }
 
     fun get(s: DirSettings): Any? = when (this) {
@@ -275,6 +279,10 @@ enum class DirField(val hold: Boolean) {
         HOLD_SAMPLE -> s.holdSample
         HOLD -> s.holdDp
         LATCH -> s.latch
+        SWIPE_LOCK -> s.swipeLock
+        SWIPE_TURN -> s.swipeTurn
+        HOLD_LOCK -> s.holdLock
+        HOLD_TURN -> s.holdTurn
     }
 
     fun same(a: DirSettings, b: DirSettings): Boolean = get(a) == get(b)
@@ -288,6 +296,10 @@ enum class DirField(val hold: Boolean) {
         HOLD_SAMPLE -> to.copy(holdSample = from.holdSample)
         HOLD -> to.copy(holdDp = from.holdDp)
         LATCH -> to.copy(latch = from.latch)
+        SWIPE_LOCK -> to.copy(swipeLock = from.swipeLock)
+        SWIPE_TURN -> to.copy(swipeTurn = from.swipeTurn)
+        HOLD_LOCK -> to.copy(holdLock = from.holdLock)
+        HOLD_TURN -> to.copy(holdTurn = from.holdTurn)
     }
 
     /** A level's own [s] sets this for [d]. */

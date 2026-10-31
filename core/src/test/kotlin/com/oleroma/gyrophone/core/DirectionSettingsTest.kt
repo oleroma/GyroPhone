@@ -136,4 +136,15 @@ class DirectionSettingsTest {
         val t = DirectionTracker().apply { start() }
         assertEquals(0, t.go(s, 0.866f, -0.5f, 40) and up)
     }
+
+    @Test
+    fun lockHeadingOfItsOwn() {
+        // Only Up and Down lock: the sideways sweeps turn at once, the drift never turns to Up.
+        val s = TouchpadSettings(swipeDp = 15f).withDir(Direction.UP) { it.copy(swipeLock = true, swipeTurn = 16f) }
+            .withDir(Direction.DOWN) { it.copy(swipeLock = true, swipeTurn = 16f) }
+        val t = DirectionTracker().apply { start() }
+        assertEquals(0, t.sweep(s, 10, 30, 0.1f) and up)
+        assertEquals(up, t.go(s, 0f, -1f, 40) and up)
+        assertEquals(right, DirectionTracker().apply { start() }.go(s, 1f, 0f, 20) and right)
+    }
 }

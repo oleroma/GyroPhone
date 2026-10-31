@@ -250,11 +250,16 @@ data class DirSettings(
     val latch: Boolean? = null,
     val swipeSample: Float? = null,
     val holdSample: Float? = null,
+    val swipeLock: Boolean? = null,
+    val swipeTurn: Float? = null,
+    val holdLock: Boolean? = null,
+    val holdTurn: Float? = null,
 ) {
     /** These with [over]'s own values in place of theirs. */
     fun under(over: DirSettings?): DirSettings = if (over == null) this else DirSettings(
         over.swipePie ?: swipePie, over.swipeDp ?: swipeDp, over.holdPie ?: holdPie, over.holdDp ?: holdDp, over.latch ?: latch,
         over.swipeSample ?: swipeSample, over.holdSample ?: holdSample,
+        over.swipeLock ?: swipeLock, over.swipeTurn ?: swipeTurn, over.holdLock ?: holdLock, over.holdTurn ?: holdTurn,
     )
 
     val isEmpty: Boolean get() = this == NONE
@@ -320,6 +325,10 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
                 latch = it.latch.takeIf { o.latch == null },
                 swipeSample = it.swipeSample.takeIf { o.swipeSampleDp == null },
                 holdSample = it.holdSample.takeIf { o.holdSampleDp == null },
+                swipeLock = it.swipeLock.takeIf { o.swipeLock == null },
+                swipeTurn = it.swipeTurn.takeIf { o.swipeTurnDp == null },
+                holdLock = it.holdLock.takeIf { o.holdLock == null },
+                holdTurn = it.holdTurn.takeIf { o.holdTurnDp == null },
             )
         },
         o.dirs,
@@ -1038,6 +1047,19 @@ data class TouchpadSettings(
 
     /** How far a held [d] travels before it is held (dp). */
     fun holdDpOf(d: Direction): Float = dir(d).holdDp ?: holdDp
+
+    /** Whether a swipe ([hold] false) or held direction [d] locks the heading as it turns to it ([swipeLock], [holdLock]). */
+    fun lockOf(d: Direction, hold: Boolean): Boolean = dir(d).let { if (hold) it.holdLock else it.swipeLock } ?: if (hold) holdLock else swipeLock
+
+    /** The Turn after (dp) of a swipe ([hold] false) or held direction [d]. */
+    fun turnDpOf(d: Direction, hold: Boolean): Float =
+        (dir(d).let { if (hold) it.holdTurn else it.swipeTurn } ?: if (hold) holdTurnDp else swipeTurnDp).coerceIn(0f, MAX_MOVE_TURN_DP)
+
+    /** Some held direction locks its heading: of the X axis ([x]) or the Y axis. */
+    fun holdLocks(x: Boolean): Boolean = Direction.entries.any { it.x == x && lockOf(it, true) }
+
+    /** Some held direction locks its heading. */
+    val anyHoldLock: Boolean get() = holdLocks(true) || holdLocks(false)
 
     /** Whether a held [d] stays held after the lift. */
     fun latchOf(d: Direction): Boolean = dir(d).latch ?: latch

@@ -310,7 +310,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
      * [out] (x, y) for the swipe line; false otherwise.
      */
     fun holdOffset(out: FloatArray): Boolean {
-        if (settings.holdMode != com.oleroma.gyrophone.core.model.HoldMode.FROM_START || !settings.holdLock || settings.dragStart) return false
+        if (settings.holdMode != com.oleroma.gyrophone.core.model.HoldMode.FROM_START || !settings.anyHoldLock || settings.dragStart) return false
         out[0] = dirs.offsetX; out[1] = dirs.offsetY
         return true
     }

@@ -149,7 +149,7 @@ internal class DirectionTracker {
             winX[i] = x; winY[i] = y
             val first = sampled[i] < sample
             if (first) sampled[i] += len
-            val inPie = if (hold && s.holdLock) heads(x, y, d, s.pieDeg(d, true)) else s.inPie(x, y, d, hold)
+            val inPie = if (hold && s.lockOf(d, true)) heads(x, y, d, s.pieDeg(d, true)) else s.inPie(x, y, d, hold)
             if (sampled[i] < sample || !inPie) continue
             val b = 1 shl d.ordinal
             if (hold) {
@@ -191,7 +191,8 @@ internal class DirectionTracker {
             alongStep(current, dx, dy)
             return
         }
-        if (current == 0 || !s.swipeLock) {
+        val turn = turnOf(mask and current.inv(), false, s)
+        if (current == 0 || turn <= 0f) {
             // From no direction yet, the sampled travel already went this way.
             val from = current == 0 && mask and fresh != 0
             alongStep(mask and current, dx, dy)
@@ -201,7 +202,7 @@ internal class DirectionTracker {
         }
         alongStep(current, dx, dy)
         turnX += dx; turnY += dy; turnLen += len
-        if (mask == 0 || turnLen < s.swipeTurnDp.coerceIn(0f, TouchpadSettings.MAX_MOVE_TURN_DP)) return
+        if (mask == 0 || turnLen < turn) return
         joined(mask, turnX, turnY)
         current = mask
         turnX = 0f; turnY = 0f; turnLen = 0f
@@ -232,7 +233,8 @@ internal class DirectionTracker {
             holdSince += len
             return
         }
-        if (holdCurrent == 0 || !s.holdLock) {
+        val turn = turnOf(mask and holdCurrent.inv(), true, s)
+        if (holdCurrent == 0 || turn <= 0f) {
             val from = holdCurrent == 0 && mask and fresh != 0
             holdSince = if (from) travelled else 0f
             lock(mask, if (from) totX else 0f, if (from) totY else 0f)
@@ -240,7 +242,7 @@ internal class DirectionTracker {
         }
         holdTurnX += dx; holdTurnY += dy; holdTurnLen += len
         holdSince += len
-        if (mask == 0 || holdTurnLen < s.holdTurnDp.coerceIn(0f, TouchpadSettings.MAX_MOVE_TURN_DP)) return
+        if (mask == 0 || holdTurnLen < turn) return
         holdSince = holdTurnLen
         lock(mask, holdTurnX, holdTurnY)
         holdTurnX = 0f; holdTurnY = 0f; holdTurnLen = 0f
@@ -251,6 +253,22 @@ internal class DirectionTracker {
         if (mask and X_BITS != 0 && holdCurrent and X_BITS == 0) { lockedX = true; lockOffX = x }
         if (mask and Y_BITS != 0 && holdCurrent and Y_BITS == 0) { lockedY = true; lockOffY = y }
         holdCurrent = mask
+    }
+
+    /**
+     * The Turn after (dp) a heading needs to turn to the directions of [mask] (swipes', or with
+     * [hold] held ones): the longest of theirs that lock; 0 = turn at once. Turning to none (a gap)
+     * needs a lock of any: the heading stays.
+     */
+    private fun turnOf(mask: Int, hold: Boolean, s: TouchpadSettings): Float {
+        var t = 0f
+        var any = false
+        for (d in Direction.entries) {
+            if (!s.lockOf(d, hold)) continue
+            any = true
+            if (mask and (1 shl d.ordinal) != 0) t = maxOf(t, s.turnDpOf(d, hold))
+        }
+        return if (mask == 0 && any) Float.MIN_VALUE else t
     }
 
     /** Vector [x], [y] heads into [d]'s pie of [pie] degrees, for Lock heading: a 180° pie heads as a 90° one. */
@@ -280,15 +298,17 @@ internal class DirectionTracker {
 
     /** Held while the offset from the start point, along a direction and inside its pie, passes the hold distance. */
     private fun fromStart(dx: Float, dy: Float, s: TouchpadSettings) {
-        if (s.holdLock) {
+        if (s.anyHoldLock) {
             // An axis off the locked heading: its start point follows the finger, so its drift never
             // adds up; one the heading just turned onto starts from the turn's travel on it.
             offX = when {
+                !s.holdLocks(true) -> offX + dx
                 holdCurrent and X_BITS == 0 -> 0f
                 lockedX -> lockOffX
                 else -> offX + dx
             }
             offY = when {
+                !s.holdLocks(false) -> offY + dy
                 holdCurrent and Y_BITS == 0 -> 0f
                 lockedY -> lockOffY
                 else -> offY + dy
