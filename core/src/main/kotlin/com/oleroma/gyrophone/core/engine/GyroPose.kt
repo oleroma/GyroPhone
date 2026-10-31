@@ -11,8 +11,8 @@ import kotlin.math.sqrt
  * The phone's orientation for the pad's gyro phone view, integrated from gyro rates. Its frame is
  * the player's view: x right, y up, z toward the player. [rotate]: since the last [reset], neutral
  * being the phone facing the player. [fuse]: against the world, its tilt held to gravity
- * ([setUp], from the accelerometer) and its heading eased back to facing the player or held to
- * north ([setNorth], from the magnetometer), so it never drifts. [easeAll] / [easeHeading] take it
+ * ([setUp], from the accelerometer) and its heading eased back to facing the player or held by
+ * the magnetometer ([setNorth]) to where it was aimed ([aimHere]), so it never drifts. [easeAll] / [easeHeading] take it
  * back toward straight. Written by the sensor threads (a few multiplies per sample), read by the UI ([matrix])
  * once per frame.
  */
@@ -38,6 +38,15 @@ class GyroPose {
     private var northZ = 0f
     private var hasNorth = false
 
+    /**
+     * Where north lies from straight ahead (radians, as [fuse] measures it) while the heading is 0:
+     * the compass holds the pose there, so heading 0 is the way the phone faced when it took it.
+     */
+    private var northAt = 0f
+
+    /** [northAt] is to be taken at the next settled [fuse] with a magnetometer reading ([aimHere]). */
+    private var aimPending = true
+
     /** Seconds of [fuse] left that pull hard toward gravity: a fresh pose settles at once. */
     private var settling = SETTLE_S
 
@@ -46,7 +55,17 @@ class GyroPose {
         w = 1f; x = 0f; y = 0f; z = 0f
         hasUp = false
         settling = SETTLE_S
+        aimPending = true
         version++
+    }
+
+    /**
+     * The compass ([fuse]) takes the way the phone faces now as heading 0, instead of north: at the
+     * next settled sample with a magnetometer reading, the heading goes to 0 and stays held there.
+     */
+    @Synchronized
+    fun aimHere() {
+        aimPending = true
     }
 
     /**
@@ -74,8 +93,9 @@ class GyroPose {
     /**
      * [rotate] against the world: the gyro turn, pulled toward the measured up ([setUp]) so the tilt
      * matches gravity, then the heading (which way the right edge points, round the vertical)
-     * eased back to facing the player over about [easeSeconds] (none at 0), or with [compass]
-     * pulled toward facing north ([setNorth]): the player looking north sees heading 0.
+     * eased back to facing the player over about [easeSeconds] (none at 0), or with [compass] held
+     * by the magnetometer ([setNorth]) to the way the phone faced when it was aimed ([aimHere], and
+     * at the start): that way is heading 0, wherever north is.
      */
     @Synchronized
     fun fuse(yaw: Float, pitch: Float, roll: Float, dtSeconds: Float, easeSeconds: Float, compass: Boolean = false) {
@@ -97,11 +117,23 @@ class GyroPose {
         val settled = settling <= 0f
         turn(ax * dtSeconds, ay * dtSeconds, az * dtSeconds)
         if (compass && hasNorth) {
-            // North in the view frame (the matrix times it), flattened: turn it toward straight ahead (-z).
+            // North in the view frame (the matrix times it), flattened: its angle from straight ahead (-z).
             val nx = (1 - 2 * (y * y + z * z)) * northX + 2 * (x * y - w * z) * northY + 2 * (x * z + w * y) * northZ
             val nz = 2 * (x * z - w * y) * northX + 2 * (y * z + w * x) * northY + (1 - 2 * (x * x + y * y)) * northZ
             if (nx * nx + nz * nz > 0.01f) {
-                turnVertical(atan2(nx, -nz) * (dtSeconds * if (settled) KC else KP_SETTLE).coerceAtMost(1f))
+                val a = atan2(nx, -nz)
+                if (aimPending) {
+                    // Turning the heading by t takes both it and a down by t: a - heading is where
+                    // north lies at heading 0. Then the heading goes straight to 0.
+                    if (settled) {
+                        val h = heading()
+                        northAt = a - h
+                        turnVertical(h)
+                        aimPending = false
+                    }
+                } else {
+                    turnVertical(wrap(a - northAt) * (dtSeconds * KC).coerceAtMost(1f))
+                }
             }
         } else if (easeSeconds > 0f) {
             turnVertical(heading() * (dtSeconds / easeSeconds).coerceAtMost(1f))
@@ -151,6 +183,13 @@ class GyroPose {
         w = cos(n / 2)
         normalize()
         version++
+    }
+
+    /** [a] wrapped into -π..π. */
+    private fun wrap(a: Float): Float {
+        var r = a % TWO_PI
+        if (r > PI) r -= TWO_PI else if (r < -PI) r += TWO_PI
+        return r
     }
 
     private fun eased(a: Float, bySpeed: Boolean, amount: Float): Float =
@@ -242,6 +281,8 @@ class GyroPose {
 
     private companion object {
         const val DEG_TO_RAD = (Math.PI / 180).toFloat()
+        const val PI = Math.PI.toFloat()
+        const val TWO_PI = (2 * Math.PI).toFloat()
 
         /** Pull toward gravity (rad/s per unit of error): slow enough to ride out hand shake. */
         const val KP = 1.5f

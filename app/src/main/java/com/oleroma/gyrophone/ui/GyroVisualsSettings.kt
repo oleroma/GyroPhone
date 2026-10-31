@@ -257,13 +257,16 @@ private fun PoseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
     )
     if (d.gravity) {
         SwitchRow("Compass", d.compass) { set(d.copy(compass = it)) }
-        if (d.compass) Hint("The heading is held to north by the magnetometer: 0° is you facing north. Reset and ease back leave it alone.")
+        if (d.compass) Hint(
+            "The magnetometer holds the heading, so it never drifts. 0° is the way the phone faced when the app opened, " +
+                "edit mode closed or the workspace changed (or a ratchet reset it), wherever north is.",
+        )
+    }
+    SwitchRow("Reset on ratchet", d.resetOnRatchet) { set(d.copy(resetOnRatchet = it)) }
+    if (d.resetOnRatchet && !d.gravity) Indented {
+        Chips(listOf("Whole pose" to false, "Heading only" to true), d.resetHeadingOnly) { set(d.copy(resetHeadingOnly = it)) }
     }
     if (!d.needsCompass) {
-        SwitchRow("Reset on ratchet", d.resetOnRatchet) { set(d.copy(resetOnRatchet = it)) }
-        if (d.resetOnRatchet && !d.gravity) Indented {
-            Chips(listOf("Whole pose" to false, "Heading only" to true), d.resetHeadingOnly) { set(d.copy(resetHeadingOnly = it)) }
-        }
         SwitchRow("Ease back", d.ease) { set(d.copy(ease = it)) }
         if (d.ease) Indented {
             Hint(if (d.gravity) "The heading goes back to straight on its own." else "It goes back to straight on its own.")

@@ -13,6 +13,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -60,7 +61,7 @@ private const val LATCH_HINT =
 /**
  * The settings of one mapping (a chip): When it starts ([triggers] offered, named by
  * [triggerLabel]; one = none to pick), How it outputs, and its options. [swipe]: a swipe direction's. [onApply] gets the trigger and options picked (null = none); [onRemove]
- * removes the mapping.
+ * removes the mapping. [onTargetSettings] (a buzz's): a button that opens the target's own settings.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -75,6 +76,7 @@ internal fun MappingChipDialog(
     onApply: (Trigger, MapOptions?) -> Unit,
     onRemove: () -> Unit,
     onDismiss: () -> Unit,
+    onTargetSettings: (() -> Unit)? = null,
 ) {
     val o0 = options ?: MapOptions()
     var t by remember { mutableStateOf(trigger) }
@@ -124,6 +126,9 @@ internal fun MappingChipDialog(
         title = { Text(title) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (onTargetSettings != null) {
+                    OutlinedButton(onClick = onTargetSettings, modifier = Modifier.fillMaxWidth()) { Text("Buzz settings") }
+                }
                 if (triggers.size > 1) {
                     Text("When", style = MaterialTheme.typography.titleSmall)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

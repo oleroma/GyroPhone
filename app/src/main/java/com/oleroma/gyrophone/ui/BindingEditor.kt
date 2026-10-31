@@ -145,7 +145,7 @@ fun BindingList(
             runtime = runtime,
             current = Bindings.targets(mappings, input),
             sets = active.workspace(wsIndex).sets,
-            editing = replacing as? OutputTarget.Layer,
+            editing = replacing?.takeIf { it is OutputTarget.Layer || Describe.isHaptic(it) },
             onPick = { picked ->
                 val current = Bindings.targets(mappings, input)
                 val next = if (replacing != null && replacing in current) {
@@ -216,7 +216,7 @@ private sealed interface PickerEntry {
  * Grouped target picker dialog with a search field, a section list per group, and "Press a key on
  * a keyboard" capture (uses runtime.keyLearnListener + AndroidKeyToHid). analog=true -> only analog
  * targets; swipe=true -> analog and mouse motion targets. Picking calls [onPick] and then [onDismiss]; [current] targets are shown as mapped.
- * A haptic target first opens [HapticTargetDialog] to set its feel (and step).
+ * A haptic target is added as it is; pressing its chip ([editing]) opens [HapticTargetDialog] to set its feel (and step).
  */
 @Composable
 fun TargetPickerDialog(
@@ -231,13 +231,13 @@ fun TargetPickerDialog(
     sets: List<MappingSet>? = null,
     /** Adds a set to the profile and gives it ("+ New layer" in the layer dialog). */
     onAddSet: (() -> MappingSet)? = null,
-    /** A layer target being changed: its dialog opens at once. */
+    /** A layer or haptic target being changed: its dialog opens at once. */
     editing: OutputTarget? = null,
 ) {
     var query by remember { mutableStateOf("") }
     var capturing by remember { mutableStateOf(false) }
-    // A picked haptic target being configured before it is handed to onPick.
-    var hapticDraft by remember { mutableStateOf<OutputTarget?>(null) }
+    // A haptic target being changed, configured before it is handed to onPick.
+    var hapticDraft by remember { mutableStateOf(editing?.takeIf { Describe.isHaptic(it) }) }
     // A picked layer action, its set and option being chosen.
     var layerDraft by remember { mutableStateOf(editing as? OutputTarget.Layer) }
 
@@ -261,9 +261,7 @@ fun TargetPickerDialog(
         }
     }
     val pick: (OutputTarget) -> Unit = { t ->
-        if (Describe.isHaptic(t)) {
-            hapticDraft = t
-        } else if (t is OutputTarget.Layer) {
+        if (t is OutputTarget.Layer) {
             layerDraft = t
         } else {
             onPick(t)
@@ -318,7 +316,7 @@ fun TargetPickerDialog(
                 onPick(t)
                 onDismiss()
             },
-            onCancel = { hapticDraft = null },
+            onCancel = { if (editing != null) onDismiss() else hapticDraft = null },
         )
     }
 
