@@ -200,6 +200,16 @@ private fun AppTab(runtime: GamepadRuntime) {
             Text("${c.name} (${c.known?.name ?: "standard layout"}) " + "%04X:%04X".format(c.vendorId, c.productId))
         }
 
+        Text("Debugging", style = MaterialTheme.typography.titleSmall)
+        val debugOn by runtime.debug.enabled.collectAsStateWithLifecycle()
+        SwitchRow("Debug tools", debugOn) { runtime.debug.setEnabled(it) }
+        Hint(
+            "Shows a debug panel on the pad: the link's speed and latency, the gyro, the active workspace and " +
+                    "layer, what the PC is sent now, and a list of what you press and what it turns into. " +
+                    "Record saves the last 30 seconds (the PC saves its side too over Wi-Fi or USB). " +
+                    "Off: nothing is logged.",
+        )
+
         Text("About", style = MaterialTheme.typography.titleSmall)
         Text("GyroPhone $version", style = MaterialTheme.typography.bodySmall)
         Text("Gyro: ${gyro.source}", style = MaterialTheme.typography.bodySmall)

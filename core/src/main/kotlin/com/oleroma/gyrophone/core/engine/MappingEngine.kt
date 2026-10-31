@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.core.engine
 
+import com.oleroma.gyrophone.core.debug.DebugTrace
 import com.oleroma.gyrophone.core.hid.GamepadState
 import com.oleroma.gyrophone.core.hid.Hat
 import com.oleroma.gyrophone.core.hid.HidState
@@ -36,6 +37,7 @@ import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.model.ButtonGyro
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.Bindings
+import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.surfaceSettings
 import java.util.BitSet
@@ -452,6 +454,67 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     @Volatile
     var cameraSink: ((dx: Int, dy: Int) -> Unit)? = null
 
+    /**
+     * The debug log while debugging is on (null otherwise, which costs nothing): input edges with
+     * what they map to in the set in use, workspace and layer changes, resets.
+     */
+    @Volatile
+    var trace: DebugTrace? = null
+        set(value) {
+            field = value
+            if (value != null) synchronized(lock) { tracedLayers = ""; traceLayers(value) }
+        }
+
+    /** The layers last logged, so only a change is. */
+    private var tracedLayers = ""
+
+    private fun traceLayers(t: DebugTrace) {
+        val d = buildString {
+            append(Describe.setName(layerSet))
+            for (o in layerOverrides) if (o != layerSet && o != MappingSet.BASE) append(" + ").append(Describe.setName(o))
+        }
+        if (d == tracedLayers) return
+        tracedLayers = d
+        t.state("layer: " + d + (ws.sets.firstOrNull { it.id == layerSet && it.name.isNotBlank() }?.let { " (${it.name})" } ?: ""))
+    }
+
+    /** " → targets" of the mappings in [ms] whose source [match]es, for the debug log. */
+    private fun traceTargets(ms: List<Mapping>?, match: (InputSource) -> Boolean): String {
+        val hits = ms?.filter { match(it.source) }.orEmpty()
+        if (hits.isEmpty()) return " → (not mapped)"
+        return " → " + hits.joinToString(", ") { m ->
+            val gesture = when (val src = m.source) {
+                is InputSource.KeyGesture -> src.gesture.label.lowercase() + ": "
+                is InputSource.TouchTap -> "tap: "
+                is InputSource.TouchDoubleTap -> "double tap: "
+                is InputSource.TouchLongPress -> "long press: "
+                is InputSource.TouchRelease -> "release: "
+                else -> ""
+            }
+            gesture + Describe.target(m.target)
+        }
+    }
+
+    private fun traceKey(t: DebugTrace, who: String, keyCode: Int, pressed: Boolean, ms: List<Mapping>?) {
+        val name = AndroidKey.names[keyCode] ?: "key $keyCode"
+        t.input("$who $name " + (if (pressed) "down" else "up") +
+                if (pressed) traceTargets(ms) { mapsKey(it, keyCode) } else "")
+    }
+
+    private fun traceTouch(t: DebugTrace, id: String, what: String, withTargets: Boolean) {
+        val label = ws.touchControls.firstOrNull { it.id == id }?.label?.takeIf { it.isNotBlank() } ?: id
+        t.input("touch \"$label\" $what" + if (withTargets) traceTargets(touchMappings) { src ->
+            when (src) {
+                is InputSource.Touch -> src.id == id
+                is InputSource.TouchTap -> src.id == id
+                is InputSource.TouchDoubleTap -> src.id == id
+                is InputSource.TouchLongPress -> src.id == id
+                is InputSource.TouchRelease -> src.id == id
+                else -> false
+            }
+        } else "")
+    }
+
     /** Loads the active workspace and releases everything held. Under the lock. */
     private fun applyWorkspace() {
         val loaded = profile.workspace(workspaceIndex)
@@ -459,6 +522,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val w = loaded.copy(mappings = Bindings.upgradeSwipes(Inheritance.workspace(loaded, profile.defaults)))
         ws = w
         allTouch = w.mappings
+        trace?.state("workspace: ${w.name}")
         motionMapped = w.mappings.any { it.source is InputSource.Tilt || it.source is InputSource.Shake }
         allPads = Array(w.pads.size + 2) {
             when {
@@ -571,6 +635,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 d.setKey(keyCode, pressed)
                 if (was != pressed) keyEdge(d, keyCode, pressed, now)
                 pad = d.pad
+                if (was != pressed) trace?.let { traceKey(it, device.name + ":", keyCode, pressed, padMappings.getOrNull(d.pad)) }
             }
             pad >= 0 && allPads[pad].any { mapsKey(it.source, keyCode) }
         }
@@ -640,6 +705,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (slot < 0) return@firingEvents
                 bpPointer[slot] = pointer; bpControl[slot] = id
                 bpDownX[slot] = x; bpDownY[slot] = y; bpDownNs[slot] = now
+                trace?.let { traceTouch(it, id, "down at ${x.toInt()},${y.toInt()}", withTargets = true) }
                 press(id)
                 val surface = surfaces[id]
                 if (surface != null) {
@@ -672,6 +738,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val slot = slotOf(pointer)
                 if (slot < 0) return@firingEvents
                 val id = bpControl[slot]!!
+                trace?.let { traceTouch(it, id, "up after ${(now - bpDownNs[slot]) / 1_000_000} ms", withTargets = false) }
                 if (bpState[slot] == BP_SWIPE) surfaces[id]?.up(pointer, now)
                 // A quick tap stays pressed until a snapshot has shown it for the minimum pulse,
                 // so a pump that ticks between its down and up still sends it.
@@ -693,6 +760,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val slot = slotOf(pointer)
                 if (slot < 0) return@firingEvents
                 val id = bpControl[slot]!!
+                trace?.let { traceTouch(it, id, "cancelled by the system", withTargets = false) }
                 if (bpState[slot] == BP_SWIPE) surfaces[id]?.cancelFinger(pointer, now)
                 release(id)
                 bpState[slot] = BP_FREE; bpControl[slot] = null
@@ -737,6 +805,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val was = anyDevice.key(keyCode)
                 anyDevice.setKey(keyCode, pressed)
                 if (was != pressed) keyEdge(anyDevice, keyCode, pressed, now)
+                if (was != pressed) trace?.let { traceKey(it, "any device:", keyCode, pressed, padMappings.flatMap { ms -> ms }) }
             }
             allPads.any { ms -> ms.any { mapsKey(it.source, keyCode) } }
         }
@@ -758,9 +827,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val now = clock()
             firingEvents(now) {
                 if (pressed) {
-                    if (setTouchHeld.put(id, now) == null) press(id)
+                    if (setTouchHeld.put(id, now) == null) {
+                        trace?.let { traceTouch(it, id, "down", withTargets = true) }
+                        press(id)
+                    }
                 } else {
                     setTouchHeld.remove(id) ?: return@firingEvents
+                    trace?.let { traceTouch(it, id, "up", withTargets = false) }
                     release(id)
                 }
             }
@@ -904,6 +977,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     fun shake() {
         synchronized(lock) {
             firingEvents(clock()) { shakeAt = clock(); shakeShown = false }
+            trace?.input("shake")
         }
         onChange?.run()
     }
@@ -925,6 +999,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         synchronized(lock) {
             val now = clock()
             resolveIfDue(now)
+            trace?.input("touchpad finger $pointer down at ${x.toInt()},${y.toInt()}")
             touchpad.down(pointer, x, y, now, eventNs = eventNanos)
         }
         onChange?.run()
@@ -943,6 +1018,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         synchronized(lock) {
             val now = clock()
             resolveIfDue(now)
+            trace?.input("touchpad finger $pointer up")
             touchpad.up(pointer, now)
         }
         onChange?.run()
@@ -961,6 +1037,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         synchronized(lock) {
             val now = clock()
             resolveIfDue(now)
+            trace?.input("touchpad finger $pointer cancelled by the system")
             touchpad.cancelFinger(pointer, now)
         }
         onChange?.run()
@@ -1059,6 +1136,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Releases everything and goes back to Base, e.g. when the profile changes or the host disconnects. */
     fun reset() {
         synchronized(lock) {
+            trace?.state("reset: everything released")
             releaseHeld()
             layerSet = MappingSet.BASE; layerOverrides.clear(); layerHolds.clear()
             for (c in carried) c.clear()
@@ -1085,6 +1163,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 dx = cameraDx; dy = cameraDy
             }
         }
+        // The gyro's part of the motion is what the camera moves did not make.
+        trace?.output(s, s.mouse.dx - dx, s.mouse.dy - dy)
         if (hapticDue) {
             hapticDue = false
             hapticSink?.haptics(hapticTicks, hapticHeld, hapticLevel)
@@ -1662,6 +1742,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         ratchetMapped = (padMappings.asSequence() + sequenceOf(touchMappings)).any { ms ->
             ms.any { it.target == OutputTarget.GyroPause || it.target == OutputTarget.GyroHold || it.target is OutputTarget.GyroPauseAxis }
         }
+        trace?.let { traceLayers(it) }
         touchpad.map = SurfaceMap(touchMappings)
         for ((id, s) in surfaces) s.map = SurfaceMap(touchMappings, id)
         for ((id, st) in tapStates) {

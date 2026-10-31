@@ -1028,6 +1028,21 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         publishState()
     }
 
+    /** Debugging is on: LINK_INFO asks the PC to keep its debug log too ([LinkInfoFlags.DEBUG_TRACE]). */
+    @Volatile var debugTrace = false
+
+    /** Bumped by [requestDebugSave]; LINK_INFO carries its low bits so the PC saves when they change. */
+    @Volatile private var debugSaves = 0
+
+    /** Asks the PC to save its last 30 s of debug log now, next to the phone's recording. */
+    fun requestDebugSave() {
+        debugSaves++
+        pump.requestLinkInfo()
+    }
+
+    /** For a debug recording: the phone clock now (us) and the offset that turns it into the PC's, or null before a clock sample. */
+    fun debugClock(): Pair<Long, Long>? = if (rttMinUs < 0) null else WifiPump.phoneUs() to clockOffsetUs
+
     /** Pump thread: LINK_INFO for the PC's latency statistics, once a clock sample exists. */
     private fun buildLinkInfo(): LinkInfo? {
         val rtt = rttMinUs
@@ -1043,7 +1058,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             linkMbps = (info.linkMbps ?: 0).coerceIn(0, 0xFFFF),
             freqMhz = (info.freqMhz ?: 0).coerceIn(0, 0xFFFF),
             flags = (if (locks.held) LinkInfoFlags.LOW_LATENCY_LOCK_HELD else 0) or (if (usbNow) LinkInfoFlags.USB else 0) or
-                (if (usbNow && usbDirect) LinkInfoFlags.USB_DIRECT else 0),
+                (if (usbNow && usbDirect) LinkInfoFlags.USB_DIRECT else 0) or
+                (if (debugTrace) LinkInfoFlags.DEBUG_TRACE or LinkInfoFlags.debugSave(debugSaves) else 0),
         )
     }
 

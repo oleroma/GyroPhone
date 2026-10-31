@@ -1746,6 +1746,8 @@ fun PadScreen(
             }
         }
 
+        if (!editing) DebugOverlay(runtime, Modifier.align(Alignment.BottomStart))
+
         if (!editing) {
             if (!fullscreen) {
                 CapsuleRow(

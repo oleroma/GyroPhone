@@ -129,6 +129,7 @@ internal sealed class MainForm : Form
         _retryDriver = NewButton("Retry driver", () => _app.RetryDriver(), tools);
         _restartAdmin = NewButton("Restart as administrator", () => _app.RestartAsAdmin(), tools);
         NewButton("Open log folder", () => _app.OpenLogFolder(), tools);
+        NewButton("Debug window…", () => _app.ShowDebugForm(), tools);
 
         table.Controls.Add(settings, 0, 1);
 

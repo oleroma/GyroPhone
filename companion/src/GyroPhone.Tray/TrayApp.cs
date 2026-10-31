@@ -60,6 +60,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
 
     private PairForm? _pairForm;
     private MainForm? _mainForm;
+    private DebugForm? _debugForm;
     private int _refreshQueued;
     private bool? _firewallOk;
     private bool? _usbRuleOk;
@@ -144,6 +145,13 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _retryDriverItem = new ToolStripMenuItem("Retry driver", null, (_, _) => RetryDriver());
         _restartAdminItem = new ToolStripMenuItem("Restart as administrator", null, (_, _) => RestartAsAdmin());
         var logItem = new ToolStripMenuItem("Open log folder", null, (_, _) => OpenLogFolder());
+        var debugItem = new ToolStripMenuItem("Debug window…", null, (_, _) => ShowDebugForm());
+        // The phone's Record button: save this PC's side at once (the ring keeps moving).
+        _engine.DebugSaveRequested = () => Post(() =>
+        {
+            var path = SaveDebug();
+            if (_debugForm is { IsDisposed: false } f) f.ShowSaved(path);
+        });
         var exitItem = new ToolStripMenuItem("Exit", null, (_, _) => ExitApp());
         _versionItem = new ToolStripMenuItem($"{Program.AppName} {Application.ProductVersion}") { Enabled = false };
         _menu.Items.AddRange(new ToolStripItem[]
@@ -173,6 +181,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _retryDriverItem,
             _restartAdminItem,
             logItem,
+            debugItem,
             new ToolStripSeparator(),
             exitItem,
         });
@@ -422,6 +431,61 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _mainForm.Show();
         if (_mainForm.WindowState == FormWindowState.Minimized) _mainForm.WindowState = FormWindowState.Normal;
         _mainForm.Activate();
+    }
+
+    internal void ShowDebugForm()
+    {
+        if (_debugForm == null || _debugForm.IsDisposed)
+        {
+            var form = new DebugForm(_engine, SaveDebug, OpenDebugFolder);
+            form.FormClosed += (_, _) =>
+            {
+                if (ReferenceEquals(_debugForm, form)) _debugForm = null;
+            };
+            _debugForm = form;
+        }
+        _debugForm.Show();
+        if (_debugForm.WindowState == FormWindowState.Minimized) _debugForm.WindowState = FormWindowState.Normal;
+        _debugForm.Activate();
+    }
+
+    /// <summary>Debug recordings: Documents\GyroPhone\Debug, where they are easy to find and send.</summary>
+    internal static string DebugDirectory =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "GyroPhone", "Debug");
+
+    /// <summary>Writes the last 30 s of the debug log to the debug folder; returns the path, or null.</summary>
+    internal string? SaveDebug()
+    {
+        try
+        {
+            Directory.CreateDirectory(DebugDirectory);
+            var path = Path.Combine(DebugDirectory, $"pc-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+            var header = new List<string> { $"{Program.AppName} {Application.ProductVersion}" };
+            header.AddRange(DebugForm.StatusText(_engine).Split("\r\n"));
+            File.WriteAllText(path, _engine.Debug.Save(header));
+            // Keep the newest 20 recordings.
+            foreach (var old in Directory.GetFiles(DebugDirectory, "pc-*.txt").OrderByDescending(f => f).Skip(20)) File.Delete(old);
+            _log.Write($"debug recording saved: {Path.GetFileName(path)}");
+            return path;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _log.Write($"debug recording failed: {e.GetType().Name}");
+            return null;
+        }
+    }
+
+    internal void OpenDebugFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(DebugDirectory);
+            using var p = Process.Start(new ProcessStartInfo("explorer.exe", $"\"{DebugDirectory}\"") { UseShellExecute = true });
+        }
+        catch (Exception e) when (e is Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            _log.Write($"open debug folder failed: {e.GetType().Name}");
+        }
     }
 
     private string StatusText()
@@ -807,6 +871,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     {
         _pairForm?.Close();
         _mainForm?.Close();
+        _debugForm?.Close();
         Shutdown();
         ExitThread();
     }
