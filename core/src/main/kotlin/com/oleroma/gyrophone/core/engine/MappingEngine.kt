@@ -21,6 +21,7 @@ import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.Taps
 import com.oleroma.gyrophone.core.model.TriggerUpgrade
 import com.oleroma.gyrophone.core.model.When
+import com.oleroma.gyrophone.core.model.holdDirection
 import com.oleroma.gyrophone.core.model.Where
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
@@ -327,6 +328,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private val tapStates = Array(Where.entries.size) { HashMap<String, ButtonGestures>() }
     private val tapList = ArrayList<ButtonGestures>()
 
+    /**
+     * Triggers of the Touch directions that map one (a Swipe, Long drag or Release), by source:
+     * reaching the direction (its zone) is the press, leaving it the lift ([triggered]).
+     */
+    private val dirStates = HashMap<InputSource.Surface, ButtonGestures>()
+
     /** Per pad of [padMappings]: the keys with trigger mappings, true when one has a Double; [anyKeyCfgs] for the "any device" source. */
     private var keyCfgs: Array<Map<Int, Boolean>> = emptyArray()
     private var anyKeyCfgs: Map<Int, Boolean> = emptyMap()
@@ -488,6 +495,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         surfaceList = surfaces.values.toTypedArray()
         for (t in tapStates) t.clear()
+        dirStates.clear()
         tapList.clear()
         for (d in deviceList) d.gestures.clear()
         anyDevice.gestures.clear()
@@ -1749,6 +1757,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                     }
                 }
 
+                src is InputSource.Surface && src.input.holdDirection != null && tr.gestures -> {
+                    val sf = (if (src.id.isEmpty()) touchpad else surfaces[src.id]) ?: continue
+                    dirStates.getOrPut(src) {
+                        ButtonGestures(sf.longPressNanos, sf.doubleTapNanos, false).also { tapList.add(it) }
+                    }
+                }
+
                 else -> continue
             }
             if (tr.taps == Taps.DOUBLE) st.hasDouble = true
@@ -1872,7 +1887,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             is InputSource.Surface ->
                 if (s.input == SurfaceInput.HOLD && s.zone == 0 && s.fingers in 1..4) {
                     (if (s.id.isEmpty()) touchpad else surfaces[s.id])?.presses?.get(s.fingers - 1)
-                } else null
+                } else dirStates[s]?.also { g ->
+                    // The direction's level drives its press: reaching it presses, leaving it lifts.
+                    val on = value(s, dev) >= PRESS_THRESHOLD
+                    if (on != g.pressed) {
+                        val now = clock()
+                        if (on) g.down(now, touchpad.minPulseNanos) else g.up(now, touchpad.minPulseNanos)
+                    }
+                }
 
             else -> null
         } ?: return if (tr.on == When.PRESS && tr.taps == Taps.ANY && tr.where == Where.BUTTON) value(m.source, dev) else 0f

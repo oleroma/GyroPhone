@@ -396,6 +396,12 @@ internal fun ControlMappingScreen(
 
     /** What the level above maps [input] to (cleared ones left out). */
     fun parentOf(input: BindableInput) = Bindings.targets(parentView, input).filter { it != OutputTarget.NoOutput }
+
+    /** Nothing in each trigger slot the level above maps [input] in (each slot inherits on its own), at least its press. */
+    fun clearsOf(input: BindableInput): List<TargetChip> =
+        Bindings.chips(parentView, input).filter { it.target != OutputTarget.NoOutput }
+            .map { TargetChip(OutputTarget.NoOutput, Trigger(on = it.trigger.on, taps = it.trigger.taps, where = it.trigger.where)) }
+            .distinct().ifEmpty { listOf(TargetChip(OutputTarget.NoOutput)) }
     // Drag callbacks outlive a composition: everything they read goes through state.
     val currentMappings by rememberUpdatedState(view)
     val allMappings by rememberUpdatedState(mappings)
@@ -519,7 +525,7 @@ internal fun ControlMappingScreen(
 
     /** [input] maps nothing here, so it does not do what the level above maps it to. */
     fun clear(input: BindableInput) = change(
-        Bindings.setTargets(currentMappings, input, listOf(OutputTarget.NoOutput)),
+        Bindings.setChips(currentMappings, input, clearsOf(input)),
         "Cleared " + actionTitle(currentControl, input),
     )
 
@@ -541,7 +547,7 @@ internal fun ControlMappingScreen(
     /** Every action does nothing: cleared where the level above maps it, its own mappings gone. */
     fun clearAll() = change(
         inputs.fold(currentMappings) { m, input ->
-            Bindings.setTargets(m, input, if (parentOf(input).isNotEmpty()) listOf(OutputTarget.NoOutput) else emptyList())
+            Bindings.setChips(m, input, if (parentOf(input).isNotEmpty()) clearsOf(input) else emptyList())
         },
         "Cleared every action",
     )
@@ -941,7 +947,12 @@ internal fun ControlMappingScreen(
                     ActionCard(
                         title = if (isSurface(input)) input.label else actionLabel(control, input),
                         row = row,
-                        inherited = if (own.isEmpty() && !ownBase) parent else emptyList(),
+                        // Each trigger slot inherits on its own: the level above's chips in slots this one leaves alone.
+                        inherited = if (ownBase) emptyList() else {
+                            val slots = Bindings.chips(view, input).mapTo(HashSet()) { it.trigger.slot }
+                            Bindings.chips(parentView, input).filter { it.target != OutputTarget.NoOutput && it.trigger.slot !in slots }
+                                .map { it.target }.distinct()
+                        },
                         parentName = parentName,
                         onClear = if (parent.isNotEmpty() && own != listOf(OutputTarget.NoOutput)) ({ clear(input) }) else null,
                         onFollow = if (parent.isNotEmpty() && own.isNotEmpty()) ({ follow(input) }) else null,
@@ -1343,6 +1354,7 @@ internal fun ControlMappingScreen(
             trigger = chip.trigger,
             // Area and Outside are where a finger counts on a touch button or stick.
             hasWhere = input.sources.first() is InputSource.Touch && !control.isTouchpadStandIn,
+            direction = (input.sources.first() as? InputSource.Surface)?.input?.holdDirection != null,
             onChange = { next ->
                 if (next != chip.trigger) {
                     change(Bindings.setTrigger(currentMappings, input, chip, next), Describe.shortTarget(chip.target) + ": " + Describe.triggerBadge(next).ifEmpty { "Press" })

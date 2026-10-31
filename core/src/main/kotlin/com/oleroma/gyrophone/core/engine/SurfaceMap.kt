@@ -62,14 +62,12 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
             // A button's one-finger press is its own (the engine runs its triggers).
             if (id.isNotEmpty() && m.source == InputSource.Touch(id) && m.trigger.gestures) triggers[0] = true
             val s = m.source as? InputSource.Surface ?: continue
-            // A press mapping with a trigger or an output of its own runs in the engine.
-            if (!m.trigger.isDefault && s.input == SurfaceInput.HOLD && s.fingers in 1..4) {
-                if (m.trigger.gestures) triggers[s.fingers - 1] = true
-                // Its level still shows (an output of its own reads it), it presses nothing here.
-                else mapped[bit(s.fingers, s.input)] = true
+            if (s.id != id || s.fingers !in 1..4) continue
+            // A press mapping with a trigger runs in the engine.
+            if (m.trigger.gestures && s.input == SurfaceInput.HOLD) {
+                triggers[s.fingers - 1] = true
                 continue
             }
-            if (s.id != id || s.fingers !in 1..4) continue
             val dir = s.input.holdDirection
             if (s.zone != 0 && (dir == null || s.zone !in 1 until TouchpadSettings.MAX_HOLD_ZONES)) continue
             if (dir != null) {
@@ -78,6 +76,9 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
             }
             val b = bit(s.fingers, s.input, s.zone)
             mapped[b] = true
+            // A mapping with a trigger or an output of its own runs in the engine: its level still
+            // shows (the engine reads it), it presses nothing here.
+            if (!m.trigger.isDefault) continue
             (targets[b] ?: HashSet<OutputTarget>().also { targets[b] = it }).add(m.target)
             val mo = motion[s.fingers - 1]
             val axis = when (s.input) {

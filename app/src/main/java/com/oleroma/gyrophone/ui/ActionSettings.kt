@@ -50,7 +50,7 @@ private const val DOUBLE_WINDOW = "Double window"
 private const val DOUBLE_HINT = "The longest gap between the taps of a double. A Single tap waits this long when the action has a Double mapping. 0 turns Double off."
 
 /**
- * The ⚙ of a Swipe or Swipe hold [input] of a surface at [level] ([zones]: as mapped), or of a
+ * The ⚙ of a Touch direction [input] of a surface at [level] ([zones]: as mapped), or of a
  * Move X / Y ([touchpad]: the workspace's), else null.
  */
 private fun directionGear(level: SurfaceLevel, key: String, input: BindableInput, zones: IntArray, touchpad: Boolean = false): (@Composable () -> Unit)? {

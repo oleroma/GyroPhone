@@ -10,9 +10,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.model.FireAt
@@ -24,13 +26,16 @@ import com.oleroma.gyrophone.core.model.Where
 
 /**
  * A chip's trigger: When it fires on its action, which Taps count, how its Output behaves and,
- * on a touch button or stick ([hasWhere]), Where a finger counts. Each pick applies at once.
+ * on a touch button or stick ([hasWhere]), Where a finger counts. On a Touch direction
+ * ([direction]) the Whens are Drag, Swipe, Long drag and Release, and a Fire once may repeat
+ * every swipe distance. Each pick applies at once.
  */
 @Composable
 internal fun TriggerDialog(
     title: String,
     trigger: Trigger,
     hasWhere: Boolean,
+    direction: Boolean,
     onChange: (Trigger) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -39,8 +44,17 @@ internal fun TriggerDialog(
         title = { Text(title) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Choices("When", When.entries, trigger.on, { it.label }) { onChange(trigger.copy(on = it)) }
-                TriggerHint(
+                Choices("When", When.entries, trigger.on, { if (direction) it.touchLabel else it.label }) {
+                    onChange(trigger.copy(on = it, repeat = trigger.repeat && it == When.PRESS))
+                }
+                if (direction) TriggerHint(
+                    when (trigger.on) {
+                        When.PRESS -> "While the finger is in the direction."
+                        When.TAP -> "Into the direction and out again within the tap window."
+                        When.LONG_PRESS -> "Once the finger has stayed in the direction past the tap window."
+                        When.RELEASE -> "As the finger leaves the direction or lifts."
+                    },
+                ) else TriggerHint(
                     when (trigger.on) {
                         When.PRESS -> "As the press starts, for as long as it lasts."
                         When.TAP -> "A short press, on its lift. A press is a tap or a long press, never both."
@@ -56,9 +70,15 @@ internal fun TriggerDialog(
                         Taps.DOUBLE -> "The second press, within the double window after a tap."
                     },
                 )
-                Choices("Output", Output.entries, trigger.output, { it.label }) { onChange(trigger.copy(output = it)) }
+                Choices("Output", Output.entries, trigger.output, { it.label }) {
+                    onChange(trigger.copy(output = it, repeat = trigger.repeat && it == Output.FIRE_ONCE))
+                }
                 if (trigger.output == Output.FIRE_ONCE) {
                     Choices(null, FireAt.entries, trigger.fireAt, { it.label }) { onChange(trigger.copy(fireAt = it)) }
+                    if (direction && trigger.on == When.PRESS) Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Repeat every swipe distance", Modifier.weight(1f))
+                        Switch(checked = trigger.repeat, onCheckedChange = { onChange(trigger.copy(repeat = it)) })
+                    }
                 }
                 TriggerHint(
                     when (trigger.output) {

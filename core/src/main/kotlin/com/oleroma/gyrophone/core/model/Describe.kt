@@ -138,7 +138,7 @@ object Describe {
         when (t.output) {
             Output.HELD -> {}
             Output.FIRE_ONCE -> add(
-                when (t.fireAt) {
+                if (t.repeat) "Repeat" else when (t.fireAt) {
                     FireAt.START -> "Once"
                     FireAt.END -> "Once at end"
                     FireAt.BOTH -> "Once at both"
