@@ -135,7 +135,7 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
                     Text("No device presets yet", style = MaterialTheme.typography.titleMedium)
                     Text(
                         "A preset says what a controller, a keyboard and a mouse attached to the phone do. " +
-                            "Each workspace uses one preset, or none: pick it in the workspace's edit mode.",
+                            "Each workspace uses one preset, or none: pick it in Settings, on the workspace's chip (Workspace → Device preset).",
                         style = MaterialTheme.typography.bodyMedium,
                         color = colors.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -256,7 +256,7 @@ private fun PresetMenu(runtime: GamepadRuntime, preset: DevicePreset, onPick: (S
                 Column {
                     OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Name") })
                     Text(
-                        if (users.isEmpty()) "No workspace uses it yet: pick it in a workspace's edit mode."
+                        if (users.isEmpty()) "No workspace uses it yet: pick it in Settings, on a workspace's chip (Workspace → Device preset)."
                         else "Used in " + users.joinToString(),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant,

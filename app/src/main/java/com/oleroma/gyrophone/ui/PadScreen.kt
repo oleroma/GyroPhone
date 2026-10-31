@@ -53,6 +53,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -915,7 +916,7 @@ fun PadScreen(
                                 if (mode == EditGesture.EMPTY) {
                                     mode = EditGesture.NONE
                                     selected = TOUCHPAD_SELECTION
-                                    menu = EditMenu.CONTEXT
+                                    menu = EditMenu.MAPPING
                                 } else {
                                     // A long press opens the mapping editor (a corner or a gyro display: its menu).
                                     mode = EditGesture.HELD
@@ -1593,7 +1594,6 @@ fun PadScreen(
             }
             GyroDisplaysLayer(runtime, boxes, editing, lit, litColor, Modifier.fillMaxSize())
         }
-        if (!editing && visuals.gyroEdge) GyroEdgeLayer(runtime, visuals, Modifier.fillMaxSize())
         val noButtons = ws.touchControls.all { it.kind == TouchKind.DISPLAY }
         if (!editing && ws.touchpad.enabled && (noButtons || portrait)) {
             Text(
@@ -2028,6 +2028,17 @@ fun PadScreen(
                                 if (layoutLocked) "Unlock layout" else "Lock layout",
                                 true,
                             ) { runtime.setEditLayoutLocked(!layoutLocked) }
+                            // Snap: lit while on, dim while off (always tappable).
+                            Icon(
+                                EditIcons.Grid,
+                                contentDescription = if (snap) "Snap: on" else "Snap: off",
+                                tint = if (snap) Color.White else Color.White.copy(alpha = 0.35f),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .clickable { snap = !snap }
+                                    .padding(6.dp)
+                                    .size(22.dp),
+                            )
                             Row(
                                 Modifier.padding(start = 2.dp, end = 6.dp),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -2088,43 +2099,34 @@ fun PadScreen(
                                 }
                             }
                             ScrollStrip {
-                                // The selected control's settings and mappings (a long press opens the mappings).
+                                // The selected control's Edit (a long press opens it too).
                                 val chosen = if (selectMode) null else findControl(selected)
                                 if (chosen != null) {
                                     val selColors = ButtonDefaults.filledTonalButtonColors(
                                         containerColor = SELECTED_COLOR,
                                         contentColor = Color.Black,
                                     )
+                                    // Edit: a button or stick's mapping editor (its ⚙ Settings has the rest); a corner or display: its settings.
+                                    val d = draft
+                                    val mapped = d != null && !isCorner(d, chosen.id) && chosen.kind != TouchKind.DISPLAY
                                     FilledTonalButton(
                                         contentPadding = compact,
                                         colors = selColors,
-                                        onClick = { settingsFromMap = false; menu = EditMenu.CONTEXT }) { Text("Configure") }
-                                    val d = draft
-                                    if (d != null && !isCorner(d, chosen.id) && chosen.kind != TouchKind.DISPLAY) {
-                                        FilledTonalButton(
-                                            contentPadding = compact,
-                                            colors = selColors,
-                                            onClick = { menu = EditMenu.MAPPING }) { Text("Map") }
-                                    }
+                                        onClick = {
+                                            settingsFromMap = false
+                                            menu = if (mapped) EditMenu.MAPPING else EditMenu.CONTEXT
+                                        }) { Text("Edit") }
                                 }
-                                /** Adds a button; [empty]: with every action it would take from the workspace cleared. */
-                                fun addButton(empty: Boolean, at: Offset?) {
+                                fun addButton(at: Offset?) {
                                     val d = draft ?: return
                                     val wk = d.workspace(editIndex)
                                     val id = freshId(wk, "btn", takenIds(d))
                                     val c = newControl(wk, id, TouchKind.BUTTON, NEW_BUTTON_SIZE, portrait)
-                                    val cleared = if (empty) Inheritance.cleared(Inheritance.workspace(wk, d.defaults), id) else emptyList()
-                                    editWorkspace {
-                                        it.copy(
-                                            touchControls = it.touchControls + addAt(at, c),
-                                            mappings = it.mappings + cleared,
-                                        )
-                                    }
-                                    // Only added (and selected): Map opens its mappings.
+                                    editWorkspace { it.copy(touchControls = it.touchControls + addAt(at, c)) }
+                                    // Only added (and selected): Edit opens its mappings.
                                     selected = id
                                 }
-                                AddChip("+ Button", false) { addButton(false, it) }
-                                AddChip("+ Empty button", false) { addButton(true, it) }
+                                AddChip("+ Button", false) { addButton(it) }
                                 AddChip("+ Stick", false) addStick@{ at ->
                                     val d = draft ?: return@addStick
                                     val wk = d.workspace(editIndex)
@@ -2134,56 +2136,31 @@ fun PadScreen(
                                     selected = id
                                 }
                                 // Gyro displays: placed and sized like buttons, drawn under everything in play.
-                                for (kind in GyroDisplayKind.entries) {
-                                    AddChip("+ " + kind.label, false) addDisplay@{ at ->
-                                        val d = draft ?: return@addDisplay
-                                        val wk = d.workspace(editIndex)
-                                        val id = freshId(wk, "disp", takenIds(d))
-                                        val (size, aspect) = GyroDisplay.newSize(kind)
-                                        val c = newControl(wk, id, TouchKind.DISPLAY, size, portrait).copy(
-                                            shape = TouchShape.SQUARE,
-                                            aspect = aspect,
-                                            layer = TouchLayer.BACK,
-                                            display = GyroDisplay(kind),
-                                        )
-                                        editWorkspace { it.copy(touchControls = it.touchControls + addAt(at, c)) }
-                                        selected = id
-                                    }
-                                }
-                                if (snap) {
-                                    FilledTonalButton(
-                                        contentPadding = compact,
-                                        onClick = { snap = false }) { Text("Snap: on") }
-                                } else {
-                                    OutlinedButton(
-                                        contentPadding = compact,
-                                        onClick = { snap = true }) { Text("Snap: off") }
-                                }
-                                // The controller, keyboard and mouse preset this workspace uses, or none.
                                 Box {
                                     var picking by remember { mutableStateOf(false) }
-                                    val presets = (draft ?: profile).devicePresets
-                                    val pinned = presets.firstOrNull { it.id == ws.devicePreset }
-                                    OutlinedButton(contentPadding = compact, onClick = { picking = true }) {
-                                        Text("Devices: " + (pinned?.name ?: "None"))
-                                    }
+                                    OutlinedButton(contentPadding = compact, onClick = { picking = true }) { Text("+ Gyro display ▾") }
                                     if (picking) {
                                         PanelMenu(panelBounds, onDismiss = { picking = false }) {
-                                            for (preset in listOf(null) + presets) {
-                                                PanelMenuItem(preset?.name ?: "None", chosen = preset?.id == pinned?.id) {
+                                            for (kind in GyroDisplayKind.entries) {
+                                                PanelMenuItem(kind.label, chosen = false) addDisplay@{
                                                     picking = false
-                                                    editWorkspace { it.copy(devicePreset = preset?.id) }
+                                                    val d = draft ?: return@addDisplay
+                                                    val wk = d.workspace(editIndex)
+                                                    val id = freshId(wk, "disp", takenIds(d))
+                                                    val (size, aspect) = GyroDisplay.newSize(kind)
+                                                    val c = newControl(wk, id, TouchKind.DISPLAY, size, portrait).copy(
+                                                        shape = TouchShape.SQUARE,
+                                                        aspect = aspect,
+                                                        layer = TouchLayer.BACK,
+                                                        display = GyroDisplay(kind),
+                                                    )
+                                                    editWorkspace { it.copy(touchControls = it.touchControls + addAt(null, c)) }
+                                                    selected = id
                                                 }
                                             }
                                         }
                                     }
                                 }
-                                Text(
-                                    ws.name + " · " + if (portrait) "portrait layout" else "landscape layout",
-                                    color = Color.White.copy(alpha = 0.7f),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    modifier = Modifier.padding(end = 4.dp),
-                                )
                             }
                         }
                         // The button library: tap one to add it, drag it onto the pad to add it there,
@@ -2270,7 +2247,8 @@ fun PadScreen(
                     selected = null
                     menu = EditMenu.NONE
                 }
-                if (menu == EditMenu.MAPPING) {
+                run {
+                    // The touchpad has no settings page of its own: its ⚙ Settings are the workspace's touchpad settings.
                     ControlMappingScreen(
                         control = TOUCHPAD_STAND_IN,
                         mappings = ws.mappings,
@@ -2278,7 +2256,7 @@ fun PadScreen(
                         onMappingsChange = { m ->
                             editWorkspace { it.copy(mappings = m) }
                         },
-                        onSettings = { menu = EditMenu.CONTEXT },
+                        onSettings = null,
                         onClose = close,
                         sets = ws.sets,
                         editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
@@ -2296,15 +2274,6 @@ fun PadScreen(
                         } else emptyList(),
                         parentName = "Defaults",
                     )
-                } else {
-                    TouchpadSettingsScreen(
-                        workspace = ws,
-                        runtime = runtime,
-                        defaults = d.defaults,
-                        onWorkspaceChange = { change -> editWorkspace(change) },
-                        onEditMappings = { menu = EditMenu.MAPPING },
-                        onClose = close,
-                    )
                 }
             } else if (d != null && sel != null && !dragging && menu != EditMenu.NONE) {
                 if (isCorner(d, sel.id)) {
@@ -2316,6 +2285,8 @@ fun PadScreen(
                             width = (maxWidth - 16.dp).coerceAtMost(340.dp),
                             inPortrait = portrait,
                             onProfileChange = { draft = it },
+                            autoHide = runtime.cornerAutoHide.collectAsStateWithLifecycle().value,
+                            onAutoHide = { runtime.setCornerAutoHide(it) },
                             onSize = { resize(sel.id, it) },
                             // The control stays selected (ready to pinch); a tap on empty space clears it.
                             onClose = { menu = EditMenu.NONE },
@@ -2328,6 +2299,8 @@ fun PadScreen(
                         control = sel,
                         // A trackball's RWS needs the workspace's game turn (Gyro → Game).
                         gameKnown = ws.gyro.gameCountsPer360 > 0f,
+                        visuals = visuals,
+                        onVisuals = { runtime.setTouchVisuals(it) },
                         onChange = { changed -> updateControl(sel.id) { changed } },
                         onDuplicate = {
                             val (nw, id) = duplicate(ws, sel, takenIds(draft ?: profile))
@@ -2371,7 +2344,7 @@ fun PadScreen(
                         parentName = "Workspace",
                     )
                 } else {
-                    // A long press: all of the control's settings.
+                    // ⚙ Settings in its mapping editor: all of the control's settings.
                     ControlSettingsScreen(
                         workspace = ws,
                         control = sel,
@@ -2387,8 +2360,7 @@ fun PadScreen(
                             }
                         },
                         onSize = { resize(sel.id, it) },
-                        onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
-                        onEditMappings = { menu = EditMenu.MAPPING },
+                        behaviour = touchControlSettings(sel, ws, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE) { change -> updateControl(sel.id, change) }.shared,
                         onDuplicate = {
                             val (nw, id) = duplicate(ws, sel, takenIds(draft ?: profile))
                             val copy = nw.touchControls.first { it.id == id }
@@ -2630,6 +2602,8 @@ private fun CornerPanel(
     width: Dp,
     inPortrait: Boolean,
     onProfileChange: (Profile) -> Unit,
+    autoHide: Boolean,
+    onAutoHide: (Boolean) -> Unit,
     onSize: (Float) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
@@ -2653,6 +2627,12 @@ private fun CornerPanel(
                     onProfileChange(profile.copy(cornerSameSize = on))
                     if (on) onSize(control.placeSize(inPortrait))
                 },
+                opacity = profile.cornerOpacity,
+                onOpacity = { onProfileChange(profile.copy(cornerOpacity = it)) },
+                wrap = profile.wrapWorkspaces,
+                onWrap = { onProfileChange(profile.copy(wrapWorkspaces = it)) },
+                autoHide = autoHide,
+                onAutoHide = onAutoHide,
                 onSize = onSize,
                 onClose = onClose,
             )
@@ -2666,6 +2646,12 @@ private fun CornerSettings(
     inPortrait: Boolean,
     sameSize: Boolean,
     onSameSize: (Boolean) -> Unit,
+    opacity: Float,
+    onOpacity: (Float) -> Unit,
+    wrap: Boolean,
+    onWrap: (Boolean) -> Unit,
+    autoHide: Boolean,
+    onAutoHide: (Boolean) -> Unit,
     onSize: (Float) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -2689,8 +2675,27 @@ private fun CornerSettings(
         Text("Same size for all corners", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
         Switch(checked = sameSize, onCheckedChange = onSameSize)
     }
+    // The corners' other settings, shared by both: how visible, wrap-around and auto-hide.
+    var shown by remember(opacity) { mutableStateOf(opacity) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Opacity %.0f%%".format(shown * 100), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 8.dp))
+        Slider(
+            value = shown,
+            onValueChange = { shown = it },
+            valueRange = Profile.MIN_CONTROL_OPACITY..1f,
+            onValueChangeFinished = { onOpacity(shown) },
+        )
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Wrap around (→ on the last workspace goes to the first)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+        Switch(checked = wrap, onCheckedChange = onWrap)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Hide after a few seconds", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+        Switch(checked = autoHide, onCheckedChange = onAutoHide)
+    }
     Text(
-        "Corner opacity and wrap-around are in Settings (on the pad).",
+        "Hidden corners still work; tap the screen 4 times quickly to show them again.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

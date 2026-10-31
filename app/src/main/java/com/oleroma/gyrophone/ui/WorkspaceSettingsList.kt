@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.ui
 
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -126,7 +127,8 @@ internal fun WorkspaceSettings(
     level: WorkspaceLevel,
     key: String,
     touchpadOpen: Boolean = false,
-    extra: List<SectionItem> = emptyList(),
+    workspaceSubtitle: String? = null,
+    workspace: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
     val ws = level.ws
     fun editWs(change: (Workspace) -> Workspace) = level.edit(change)
@@ -135,17 +137,33 @@ internal fun WorkspaceSettings(
 
     val layer = !level.shows(WorkspaceDefaults.CONTROL_OPACITY)
     ResetAllButton(level.parentName, WorkspaceDefaults.keys.any { level.shows(it) && level.isOwn(it) }) { level.resetAll() }
-    val items = ArrayList(extra)
+    val items = ArrayList<SectionItem>()
+    // The workspace itself ([workspace]: rename, duplicate, delete, copy, device preset) and how its controls look.
+    if (!layer) items += SectionItem("workspace") { card, header ->
+        RememberedSection(
+            runtime, "workspace.Workspace", "Workspace", card,
+            defaultOpen = workspace != null,
+            subtitle = workspaceSubtitle ?: "Control opacity",
+            headerModifier = header,
+        ) {
+            workspace?.invoke(this)
+            OverrideSlider(
+                key + "opacity", "Control opacity %.0f%%", ws.controlOpacity * 100, Profile.MIN_CONTROL_OPACITY * 100..100f, 1f,
+                own(WorkspaceDefaults.CONTROL_OPACITY), reset(WorkspaceDefaults.CONTROL_OPACITY),
+                hint = "How visible the touch controls are. The corners have their own opacity (on the corners in edit mode).",
+            ) { v -> editWs { it.copy(controlOpacity = v / 100f) } }
+        }
+    }
     items += SectionItem("gyro") { card, header ->
         RememberedSection(runtime, "workspace.Gyro", "Gyro", card, defaultOpen = true, subtitle = ws.gyro.mode.label, headerModifier = header) {
             OverrideRow(
-                "Gyro to mouse", own(g("mode")), reset(g("mode")),
+                "Gyro", own(g("mode")), reset(g("mode")),
                 hint = when (ws.gyro.mode) {
-                    GyroMode.ALWAYS -> "Gyro moves the mouse; a ratchet pauses it while held."
-                    GyroMode.SENSOR_OFF -> "Gyro is off completely: the sensor is not read (saves battery), and ratchets and Toggle gyro do nothing."
-                    else -> "Gyro is off; a ratchet turns it on while held."
+                    GyroMode.ALWAYS -> "On: gyro moves the mouse. A Ratchet turns it off while held."
+                    GyroMode.SENSOR_OFF -> "Sensor off: the gyro is not read at all (saves battery), and Ratchets do nothing."
+                    else -> "Off: gyro does nothing until a Ratchet turns it on while held."
                 } + if (ws.gyro.mode == GyroMode.SENSOR_OFF) "" else
-                    " Map Ratchet to a touch button, the workspace's one-finger Hold or a controller button; Toggle gyro swaps the two modes.",
+                    " Map Ratchet to a touch button, the touchpad or a controller button; Toggle gyro flips it until pressed again.",
             ) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(GyroMode.ALWAYS, GyroMode.OFF, GyroMode.SENSOR_OFF).forEach { mode ->
@@ -192,8 +210,7 @@ internal fun WorkspaceSettings(
                 GyroSettings.MIN_SHAKE_STRENGTH..GyroSettings.MAX_SHAKE_STRENGTH, 1f, own(g("shakeStrength")), reset(g("shakeStrength")),
                 hint = "How hard a jolt counts as a shake.",
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(shakeStrength = v)) } }
-            // Both filters default to off: raw gyro. Calibration only subtracts a fixed resting bias
-            // and suits the phone, not a layer: the whole workspace's only.
+            // Both filters default to off: raw gyro. Calibration is the phone's, in Settings → App → Phone.
             run {
                 val tight = ws.gyro.tighteningThreshold
                 OverrideSlider(
@@ -206,44 +223,6 @@ internal fun WorkspaceSettings(
                     own(g("smoothingThreshold")), reset(g("smoothingThreshold")),
                 ) { v -> editWs { it.copy(gyro = it.gyro.copy(smoothingThreshold = if (v < 0.05f) 0f else v)) } }
             }
-            if (!layer) {
-                val cal by runtime.calibrationState.collectAsState()
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        when (val c = cal) {
-                            GamepadRuntime.CalibrationState.None -> "Not calibrated (phone's own drift correction only)"
-                            GamepadRuntime.CalibrationState.Running -> "Calibrating: keep the phone still…"
-                            GamepadRuntime.CalibrationState.Moved -> "The phone moved. Lay it flat and try again."
-                            is GamepadRuntime.CalibrationState.Calibrated -> "Calibrated (removes %.2f°/s drift)".format(c.degPerSec)
-                        },
-                        Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
-                    )
-                    if (cal is GamepadRuntime.CalibrationState.Calibrated) {
-                        TextButton(onClick = { runtime.clearGyroCalibration() }) { Text("Clear") }
-                    }
-                    TextButton(
-                        onClick = { runtime.calibrateGyro() },
-                        enabled = cal != GamepadRuntime.CalibrationState.Running
-                    ) {
-                        Text("Calibrate")
-                    }
-                }
-            }
-        }
-    }
-    if (!layer) items += SectionItem("controls") { card, header ->
-        RememberedSection(
-            runtime,
-            "workspace.Controls",
-            "Controls",
-            card,
-            subtitle = "How visible the touch controls are",
-            headerModifier = header,
-        ) {
-            OverrideSlider(
-                key + "opacity", "Control opacity %.0f%%", ws.controlOpacity * 100, Profile.MIN_CONTROL_OPACITY * 100..100f, 1f,
-                own(WorkspaceDefaults.CONTROL_OPACITY), reset(WorkspaceDefaults.CONTROL_OPACITY),
-            ) { v -> editWs { it.copy(controlOpacity = v / 100f) } }
         }
     }
     items += SectionItem("haptics") { card, header ->
@@ -266,6 +245,24 @@ internal fun WorkspaceSettings(
                     onTry = { runtime.previewHaptic(ws.haptics, false) },
                 )
             }
+        }
+    }
+    items += SectionItem("timings") { card, header ->
+        RememberedSection(
+            runtime, "workspace.Timings", "Timings", card,
+            subtitle = "Tap and double windows of every button and key",
+            headerModifier = header,
+        ) {
+            MsOverride(
+                key + "long", "Tap window", ws.longPressMs, Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
+                level.isOwn(WorkspaceDefaults.LONG_PRESS), { level.reset(WorkspaceDefaults.LONG_PRESS) },
+                hint = "A press shorter than this is a tap; one held this long is a long press. For the touchpad, touch buttons, controller buttons and keyboard keys without a window of their own.",
+            ) { ms -> level.edit { it.copy(longPressMs = ms) } }
+            MsOverride(
+                key + "double", "Double window", ws.doubleTapMs, Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
+                level.isOwn(WorkspaceDefaults.DOUBLE_TAP), { level.reset(WorkspaceDefaults.DOUBLE_TAP) },
+                hint = "The longest gap between the taps of a double. 0 turns Double off.",
+            ) { ms -> level.edit { it.copy(doubleTapMs = ms) } }
         }
     }
     items += SectionItem("touchpad") { card, header ->
@@ -296,18 +293,8 @@ private fun TouchpadSection(
         card,
         defaultOpen = open,
         headerModifier = header,
-        subtitle = "Tap and double windows, speed, scrolling and directions",
+        subtitle = "Speed, scrolling and directions",
     ) {
-        MsOverride(
-            key + "long", "Tap window", ws.longPressMs, Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
-            level.isOwn(WorkspaceDefaults.LONG_PRESS), { level.reset(WorkspaceDefaults.LONG_PRESS) },
-            hint = "A press shorter than this is a tap; one held this long is a long press. For the touchpad, touch buttons, controller buttons and keyboard keys without a window of their own.",
-        ) { ms -> level.edit { it.copy(longPressMs = ms) } }
-        MsOverride(
-            key + "double", "Double window", ws.doubleTapMs, Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
-            level.isOwn(WorkspaceDefaults.DOUBLE_TAP), { level.reset(WorkspaceDefaults.DOUBLE_TAP) },
-            hint = "The longest gap between the taps of a double. 0 turns Double off.",
-        ) { ms -> level.edit { it.copy(doubleTapMs = ms) } }
         SurfaceSharedSettings(
             workspaceSurfaceLevel(level),
             key + "tp",
@@ -316,7 +303,7 @@ private fun TouchpadSection(
             resetAll = false,
         )
         Text(
-            "Touchpad buttons use these too, unless they set their own (their Mappings, ⚙ Settings).",
+            "Buttons use these too, unless they set their own (their ⚙ Settings, Behaviour).",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),

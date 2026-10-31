@@ -451,7 +451,7 @@ internal fun HapticTargetDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    FilterChip(selected = !own, onClick = { own = false }, label = { Text("Workspace default") })
+                    FilterChip(selected = !own, onClick = { own = false }, label = { Text("Workspace's") })
                     FilterChip(selected = own, onClick = { own = true }, label = { Text("Own feel") })
                     if (!own) {
                         TextButton(onClick = {

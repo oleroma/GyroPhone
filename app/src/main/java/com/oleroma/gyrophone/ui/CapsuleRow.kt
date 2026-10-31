@@ -147,7 +147,7 @@ internal fun CapsuleRow(
         for (c in shown) key(c) {
             val label = when (c) {
                 is Capsule.Ws -> profile.workspaces.getOrNull(c.index)?.name.orEmpty() + if (c.index == wsIndex) " ✎" else ""
-                Capsule.Devices -> "Controller, keyboard and mouse"
+                Capsule.Devices -> "Devices"
                 Capsule.Settings -> "Settings"
                 Capsule.Connection -> "Connection"
             }

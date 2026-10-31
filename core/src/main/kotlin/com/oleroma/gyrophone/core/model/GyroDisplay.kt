@@ -22,6 +22,13 @@ enum class GyroDisplayKind(val label: String) {
 
     /** A 3D shape ([BallShape]: a ball with lines on it, a solid, a torus...), turned with the phone. */
     BALL("3D shape"),
+
+    /**
+     * Outlines just inside its box (made screen-sized) that sway as the phone turns: the parallax
+     * edge. Its look is the app's (Settings, kept with the touch display); a workspace shows it
+     * while it has one.
+     */
+    EDGE("Parallax edge"),
     ;
 
     /** It shows the phone's pose ([GyroDisplay] pose settings apply). */
@@ -123,7 +130,33 @@ data class GyroDisplay(
             GyroDisplayKind.HORIZON -> 0.4f to 1.25f
             GyroDisplayKind.DISK -> 0.4f to 1f
             GyroDisplayKind.BALL -> 0.4f to 1f
+            GyroDisplayKind.EDGE -> EDGE_SIZE to EDGE_ASPECT
         }
+
+        /** A new parallax edge's size: about a 20:9 landscape screen, whole. */
+        const val EDGE_SIZE = 2.2f
+        const val EDGE_ASPECT = 0.45f
+
+        /**
+         * [profile] with a parallax edge in each workspace that has none: what the app-wide edge
+         * switch from before edges were displays becomes.
+         */
+        fun addEdges(profile: Profile): Profile = profile.copy(
+            workspaces = profile.workspaces.map { ws ->
+                if (ws.touchControls.any { it.display?.kind == GyroDisplayKind.EDGE }) ws
+                else {
+                    val taken = ws.touchControls.mapTo(HashSet()) { it.id }
+                    val id = generateSequence(1) { it + 1 }.map { "edge_${ws.id}_$it" }.first { it !in taken }
+                    ws.copy(
+                        touchControls = ws.touchControls + TouchControl(
+                            id = id, kind = TouchKind.DISPLAY, label = "", x = 0.5f, y = 0.5f,
+                            size = EDGE_SIZE, aspect = EDGE_ASPECT, shape = TouchShape.SQUARE, layer = TouchLayer.BACK,
+                            display = GyroDisplay(GyroDisplayKind.EDGE),
+                        ),
+                    )
+                }
+            },
+        )
     }
 }
 

@@ -541,10 +541,10 @@ fun touchedControls(
  */
 @Serializable
 enum class GyroMode(val label: String) {
-    OFF("Ratchet enables"),
-    ALWAYS("Ratchet disables"),
-    SENSOR_OFF("Gyro off"),
-    HOLD_OR_TOGGLE("Ratchet enables"),
+    OFF("Off"),
+    ALWAYS("On"),
+    SENSOR_OFF("Sensor off"),
+    HOLD_OR_TOGGLE("Off"),
 }
 
 

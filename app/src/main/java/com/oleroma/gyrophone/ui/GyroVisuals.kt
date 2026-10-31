@@ -72,7 +72,8 @@ fun GyroDisplaysLayer(
         st.now = frame
         for (b in boxes) {
             val d = b.control.display ?: continue
-            st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
+            if (d.kind == GyroDisplayKind.EDGE) st.drawEdge(this, runtime, runtime.touchVisuals.value, b.box)
+            else st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
             if (editing) {
                 val sel = b.control.id in selected
                 drawRect(
@@ -85,20 +86,6 @@ fun GyroDisplaysLayer(
                 )
             }
         }
-    }
-}
-
-/** The parallax edge ([TouchVisuals.gyroEdge]): outlines just inside the screen's edge that sway as the phone turns. */
-@Composable
-fun GyroEdgeLayer(runtime: GamepadRuntime, v: TouchVisuals, modifier: Modifier = Modifier) {
-    var frame by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(Unit) {
-        while (true) withFrameMillis { frame = it }
-    }
-    val st = remember { VisState() }
-    Canvas(modifier) {
-        @Suppress("UNUSED_EXPRESSION") frame // redraw each frame
-        st.drawEdge(this, runtime, v)
     }
 }
 
@@ -190,6 +177,7 @@ private class VisState {
             GyroDisplayKind.HORIZON -> drawHorizon(feed, d, box, ::col)
             GyroDisplayKind.DISK -> drawDisk(feed, d, box, ::col)
             GyroDisplayKind.BALL -> drawBall(feed, d, box, live, ::col)
+            GyroDisplayKind.EDGE -> Unit // drawn by drawEdge, with the app's edge settings
         }
     }
 
@@ -599,7 +587,8 @@ private class VisState {
         drawLine(sym, Offset(c.x, tRect.top), Offset(c.x, tRect.bottom), 2 * density)
     }
 
-    fun drawEdge(scope: DrawScope, runtime: GamepadRuntime, v: TouchVisuals) = with(scope) {
+    /** The parallax edge in [box]: outlines just inside it that sway as the phone turns, as [v] says. */
+    fun drawEdge(scope: DrawScope, runtime: GamepadRuntime, v: TouchVisuals, box: Rect) = with(scope) {
         val op = v.gyroOpacity.coerceIn(0.05f, 1f)
         val live = runtime.gyroLiveAxes
         val sx: Float
@@ -636,18 +625,18 @@ private class VisState {
         for (i in 0 until layers) {
             val depth = (i + 1f) / layers
             val inset = (v.gyroEdgeInsetDp + i * EDGE_GAP_DP) * density
-            if (inset * 2 >= minOf(size.width, size.height)) break
+            if (inset * 2 >= minOf(box.width, box.height)) break
             val dx = (-sx * k * depth).coerceIn(-limit, limit)
             val dy = (sy * k * depth).coerceIn(-limit, limit)
             val radius = (EDGE_CORNER_DP * density - inset * 0.3f).coerceAtLeast(6 * density)
             val alpha = op * dim * (1f - 0.55f * i / layers)
             withTransform({
                 translate(dx, dy)
-                rotate(-rot * 0.5f * depth * dir, center)
+                rotate(-rot * 0.5f * depth * dir, box.center)
             }) {
                 drawRoundRect(
-                    color.copy(alpha = alpha), Offset(inset, inset),
-                    Size(size.width - 2 * inset, size.height - 2 * inset), CornerRadius(radius),
+                    color.copy(alpha = alpha), Offset(box.left + inset, box.top + inset),
+                    Size(box.width - 2 * inset, box.height - 2 * inset), CornerRadius(radius),
                     style = Stroke(width),
                 )
             }

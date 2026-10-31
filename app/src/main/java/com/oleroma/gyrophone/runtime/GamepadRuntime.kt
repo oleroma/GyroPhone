@@ -15,6 +15,8 @@ import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.TiltShake
 import com.oleroma.gyrophone.core.engine.Touchpad
 import com.oleroma.gyrophone.core.hid.HidDescriptor
+import com.oleroma.gyrophone.core.model.GyroDisplay
+import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.ButtonActivators
@@ -176,8 +178,7 @@ class GamepadRuntime(context: Context) {
     fun setTouchVisuals(v: TouchVisuals) {
         prefs.edit().putString(KEY_TOUCH_VISUALS, visualsJson.encodeToString(TouchVisuals.serializer(), v)).apply()
         val old = vis
-        if (v.gyroNeedsGravity && !old.gyroNeedsGravity) worldPose.reset()
-        if (v.gyroEdge && !old.gyroEdge) gyroSway.reset()
+        if (v.gyroEdgeTilt && !old.gyroEdgeTilt) worldPose.reset()
         vis = v
         _touchVisuals.value = v
         // updateGyro starts and stops the accelerometer under this lock too.
@@ -212,13 +213,21 @@ class GamepadRuntime(context: Context) {
                 ?: GyroDisplayFeed(c.id, d)
         }
         val same = next.size == old.size && next.indices.all { next[it] === old[it] }
+        val edgeBefore = edgeOn
         if (!same) gyroFeeds = next.toTypedArray()
+        if (edgeOn && !edgeBefore) { gyroSway.reset(); worldPose.reset() }
         // A changed setting may need the accelerometer or the magnetometer (or no longer).
         if (!same || sensors != (needsGravity to needsCompass)) synchronized(this) { updateMotion() }
     }
 
     /** Some gyro display holds its pose to gravity (and so needs the accelerometer). */
-    private val needsGravity: Boolean get() = vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity }
+    private val needsGravity: Boolean get() = edgeGravity || gyroFeeds.any { it.display.needsGravity }
+
+    /** A parallax edge ([GyroDisplayKind.EDGE]) is on the pad now: its data is fed only then. */
+    private val edgeOn: Boolean get() = gyroFeeds.any { it.display.kind == GyroDisplayKind.EDGE }
+
+    /** The parallax edge on the pad holds to gravity (tilt mode), so it needs the accelerometer. */
+    private val edgeGravity: Boolean get() = edgeOn && vis.gyroEdgeTilt
 
     /** Some gyro display holds its heading to north (and so needs the magnetometer). */
     private val needsCompass: Boolean get() = gyroFeeds.any { it.display.needsCompass }
@@ -635,11 +644,11 @@ class GamepadRuntime(context: Context) {
 
     private fun onAccelSample(x: Float, y: Float, z: Float, ts: Long) {
         val feeds = gyroFeeds
-        if (vis.gyroNeedsGravity || feeds.isNotEmpty()) {
+        if (edgeGravity || feeds.isNotEmpty()) {
             // The same axes as the gyro's: right, up and toward the player in the phone's frame.
             val m = gyroMouse.motion(x, y, z)
             val g = SensorManager.GRAVITY_EARTH * RAD_TO_DEG
-            if (vis.gyroNeedsGravity) worldPose.setUp(m.pitch, -m.yaw, -m.roll, g)
+            if (edgeGravity) worldPose.setUp(m.pitch, -m.yaw, -m.roll, g)
             for (f in feeds) f.up(m.pitch, -m.yaw, -m.roll, g)
         }
         if (!engine.motionMapped) return
@@ -925,6 +934,11 @@ class GamepadRuntime(context: Context) {
     init {
         // Profiles from before Toggle gyro buttons: the gyro corner becomes one in every workspace.
         if (stored.corners.any { it.id == NavCorners.GYRO }) editActiveProfile { NavCorners.gyroCornerToButtons(it) }
+        // From before the parallax edge was a display: the app-wide switch becomes one in every workspace.
+        if (vis.gyroEdge) {
+            editActiveProfile { GyroDisplay.addEdges(it) }
+            setTouchVisuals(vis.copy(gyroEdge = false))
+        }
     }
 
     companion object {
@@ -966,7 +980,7 @@ class GamepadRuntime(context: Context) {
         val m = gyroMouse.motion(x, y, z)
         val gs = if (axes != 0) engine.gyroSettings else null
         for (f in feeds) f.feed(m.yaw, m.pitch, m.roll, dt, axes, pressed, ratchets != 0, gs)
-        if (dt == 0f || !v.gyroEdge) return
+        if (dt == 0f || !edgeOn) return
         if (v.gyroEdgeTilt) worldPose.fuse(m.yaw, m.pitch, m.roll, dt, GyroDisplayFeed.HEADING_EASE_S)
         else gyroSway.update(m.yaw, m.pitch, m.roll, dt, v.gyroEdgeSpringMs / 1000f)
     }
@@ -999,7 +1013,7 @@ class GamepadRuntime(context: Context) {
         val active = axes != 0
         val v = vis
         val feeds = gyroFeeds
-        if (v.gyroEdge || feeds.isNotEmpty()) feedVisuals(v, feeds, x - biasX, y - biasY, z - biasZ, dt, axes)
+        if (feeds.isNotEmpty()) feedVisuals(v, feeds, x - biasX, y - biasY, z - biasZ, dt, axes)
         // An axis a ratchet just turned off may glide on (inertia) while the others are off.
         if (active || (allowed && gyroMouse.coasting)) {
             // A layer in use may set gyro settings of its own.

@@ -138,10 +138,9 @@ private fun PadMenu(
             TextButton(onClick = { leave(back) }) { Text(if (stack.size > 1) "← Back" else "← Pad") }
             Text(
                 when (page) {
-                    PadMenuPage.Devices -> "Controller"
-                    PadMenuPage.Root -> "Workspace settings"
+                    PadMenuPage.Devices -> "Devices"
+                    PadMenuPage.Root, PadMenuPage.AppSettings -> "Settings"
                     PadMenuPage.Connection -> "Connection"
-                    PadMenuPage.AppSettings -> "Settings"
                 },
                 style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
@@ -152,22 +151,22 @@ private fun PadMenu(
         HorizontalDivider()
         val content = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)
         when (page) {
-            PadMenuPage.Root -> MenuList(runtime, content, onDeleted = onWorkspaceDeleted)
+            PadMenuPage.Root -> SettingsScreen(runtime, content, startOnWorkspace = true, onWorkspaceDeleted = onWorkspaceDeleted)
             PadMenuPage.Connection -> ConnectScreen(runtime, onRetry)
-            PadMenuPage.AppSettings -> AppSettingsScreen(runtime, content)
+            PadMenuPage.AppSettings -> SettingsScreen(runtime, content, startOnWorkspace = false, onWorkspaceDeleted = onWorkspaceDeleted)
             PadMenuPage.Devices -> Unit
         }
     }
 }
 
 /**
- * All settings of the current workspace (⚙ in edit mode) in one list of categories the person
- * can reorder: Workspace (rename / duplicate / delete, copy mappings), gyro, controls, haptics,
- * touchpad and gestures, over the Defaults. With layers, tabs on top pick Base or a layer, whose
- * settings go over Base's. Settings of the whole app are on the Settings page instead.
+ * The workspace chip of the Settings page: all settings of the current workspace in one list of
+ * categories the person can reorder: Workspace (rename / duplicate / delete, copy mappings, device
+ * preset, control opacity), gyro, timings, haptics, touchpad and gestures, over the Defaults. With
+ * layers, chips on top pick Base or a layer, whose settings go over Base's.
  */
 @Composable
-private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () -> Unit) {
+internal fun WorkspaceTab(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () -> Unit) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
     val current = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
@@ -186,21 +185,16 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () 
             }
         }
         Hint(
-            if (set == MappingSet.BASE) "Each setting follows the Defaults (Settings) unless it is set here: those are " +
+            if (set == MappingSet.BASE) "Each setting follows the Defaults unless it is set here: those are " +
                     "highlighted, with ↺ to follow the Defaults again. Long press a category to move it."
             else "While this layer is in use. Each setting follows Base unless it is set here: those are " +
                     "highlighted, with ↺ to follow Base again.",
         )
-        val workspace = SectionItem("workspace") { card, header ->
-            RememberedSection(
-                runtime,
-                "workspace.Workspace",
-                "Workspace",
-                card,
-                defaultOpen = true,
-                subtitle = "${ws.name} · ${current + 1} of ${profile.workspaces.size}",
-                headerModifier = header,
-            ) {
+        val level = setLevel(ws, profile.defaults, set) { change -> runtime.editActiveProfile { it.updateWorkspace(current, change) } }
+        WorkspaceSettings(
+            runtime, level, profile.id + "/" + ws.id + "/" + set,
+            workspaceSubtitle = "${ws.name} · ${current + 1} of ${profile.workspaces.size}",
+            workspace = if (set != MappingSet.BASE) null else { {
                 WorkspaceActions(profile, current) { p, _ ->
                     val deleted = p.workspaces.size < profile.workspaces.size
                     runtime.editActiveProfile { p }
@@ -210,12 +204,19 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () 
                 if (profile.workspaces.size > 1) {
                     OutlinedButton(onClick = { copying = true }) { Text("Copy mappings from…") }
                 }
-            }
-        }
-        val level = setLevel(ws, profile.defaults, set) { change -> runtime.editActiveProfile { it.updateWorkspace(current, change) } }
-        WorkspaceSettings(
-            runtime, level, profile.id + "/" + ws.id + "/" + set,
-            extra = if (set == MappingSet.BASE) listOf(workspace) else emptyList(),
+                // What attached controllers, keyboards and mice do here: one of the Devices page's presets, or none.
+                Text("Device preset", style = MaterialTheme.typography.titleSmall)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (preset in listOf(null) + profile.devicePresets) {
+                        FilterChip(
+                            selected = preset?.id == ws.devicePreset,
+                            onClick = { runtime.editActiveProfile { it.updateWorkspace(current) { w -> w.copy(devicePreset = preset?.id) } } },
+                            label = { Text(preset?.name ?: "None") },
+                        )
+                    }
+                }
+                Hint("What attached controllers, keyboards and mice do in this workspace. Presets are made on the Devices page.")
+            } },
         )
     }
 

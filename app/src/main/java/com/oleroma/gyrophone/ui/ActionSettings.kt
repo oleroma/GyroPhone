@@ -11,10 +11,8 @@ import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import com.oleroma.gyrophone.core.model.AxisGlide
 import com.oleroma.gyrophone.core.model.BindableInput
-import com.oleroma.gyrophone.core.model.ButtonGyro
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
-import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.DevicePreset
 import com.oleroma.gyrophone.core.model.InputSource
@@ -67,54 +65,6 @@ private fun directionGear(level: SurfaceLevel, key: String, input: BindableInput
 
 
 /**
- * A button's gyro sensitivities in mapping set [set] of [ws] ([TouchControl.gyro]): the ones it
- * uses there (its own in [set] over its Base ones) and the workspace's gyro below them.
- */
-private class ButtonGyroLevel(val control: TouchControl, ws: Workspace, val set: Int, val update: ((TouchControl) -> TouchControl) -> Unit) {
-    private val sets = if (set == MappingSet.BASE) listOf(MappingSet.BASE) else listOf(MappingSet.BASE, set)
-    val parent: GyroSettings = WorkspaceDefaults.layered(ws, MappingSet.BASE, sets.drop(1)).gyro
-    val inUse: ButtonGyro = control.gyroIn(sets)
-    val own: ButtonGyro = control.gyro.firstOrNull { it.set == set } ?: ButtonGyro(set)
-    val where = if (set == MappingSet.BASE) "" else " in this layer"
-    fun edit(change: (ButtonGyro) -> ButtonGyro) = update { it.withGyro(set, change) }
-}
-
-/** The button's Sensitivity while held: every gyro axis's unless the axis has its own. */
-@Composable
-private fun ButtonGyroSensitivity(g: ButtonGyroLevel, key: String) {
-    GyroSensSlider(
-        key + "gyro" + g.set, "Gyro sensitivity", g.inUse.sensitivity ?: g.parent.sensitivity, g.parent,
-        overridden = g.own.sensitivity != null,
-        onReset = { g.edit { it.copy(sensitivity = null) } },
-        hint = "While this is held (the last pressed of several), the gyro turns at this sensitivity${g.where}, whatever this button maps: " +
-            "a lower one aims finer. Yaw, pitch and roll follow it unless their ⚙ sets their own. Unset, the workspace's.",
-    ) { v -> g.edit { it.copy(sensitivity = v) } }
-}
-
-/** The ⚙ of gyro [axis] of a button: its ratchet mode and sensitivity while held, its own or else the workspace's. */
-private fun buttonGyroGear(g: ButtonGyroLevel, key: String, axis: MotionAxis): @Composable () -> Unit = ui {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        RatchetModeRow(
-            axis, g.inUse.ownMode(axis) ?: g.parent.ownMode(axis) ?: g.parent.mode, g.own.ownMode(axis) != null,
-            onReset = { g.edit { it.withMode(axis, null) } },
-            hint = "While this is held${g.where}. Unset, the workspace's.",
-        ) { m -> g.edit { it.withMode(axis, m) } }
-        GyroSensSlider(
-            key + "gyro" + g.set + axis.name, "${axis.label} sensitivity", g.inUse.sensitivityOf(axis, g.parent), g.parent,
-            overridden = g.own.own(axis) != null,
-            onReset = { g.edit { it.with(axis, null) } },
-            hint = "While this is held: how fast ${axis.label.lowercase()} turns${g.where}. Unset, it follows this button's " +
-                "Gyro sensitivity (in Settings), else the workspace's.",
-        ) { v -> g.edit { it.with(axis, v) } }
-        val eff = g.inUse.over(g.parent)
-        AxisGlideSettings(
-            key + "gyro" + g.set, axis, eff, g.own.ownGlide(axis),
-            unset = "While this is held${g.where}. Unset, the workspace's.",
-        ) { a -> g.edit { it.withGlide(axis, a) } }
-    }
-}
-
-/**
  * Gyro [axis]'s inertia, glide curve and glide time in effect ([eff]), each highlighted with a ↺
  * where [own] sets it; [onSet] changes [own]. [unset]: what an unset one follows.
  */
@@ -139,8 +89,7 @@ private fun AxisGlideSettings(key: String, axis: MotionAxis, eff: GyroSettings, 
 
 /**
  * The ⚙ and Settings of touch control [control] of [ws]: its press's tap and double windows
- * (over the workspace's), its area's options, its gyro sensitivities in mapping set [set], a
- * touchpad button's direction settings and shared settings (over the workspace defaults), or a
+ * (over the workspace's), its area's options, a touchpad button's direction settings and shared settings (over the workspace defaults), or a
  * stick's. [update] changes the control.
  */
 internal fun touchControlSettings(
@@ -152,14 +101,11 @@ internal fun touchControlSettings(
     val key = ws.id + control.id
     val surface = if (control.swipes) buttonSurfaceLevel(control, ws.touchpad, update) else null
     val zones = Bindings.holdZoneCounts(ws.mappings, control.id)
-    val gyro = if (control.kind == TouchKind.BUTTON) ButtonGyroLevel(control, ws, set, update) else null
     val hasArea = ws.mappings.any { it.source == InputSource.Touch(control.id) && it.trigger.where == Where.AREA }
     return MappingSettings(
         action = { input ->
             val src = input.sources.firstOrNull()
             when {
-                gyro != null && src is InputSource.Gyro -> buttonGyroGear(gyro, key, src.axis)
-
                 surface != null && directionGear(surface, key, input, zones) != null -> directionGear(surface, key, input, zones)
 
                 // A button's press: its tap and double windows, and its area's options when an Area mapping uses it.
@@ -189,12 +135,7 @@ internal fun touchControlSettings(
             }
         },
         shared = when {
-            surface != null -> ui {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (gyro != null) ButtonGyroSensitivity(gyro, key)
-                    SurfaceSharedSettings(surface, key, zones, touchpad = false)
-                }
-            }
+            surface != null -> ui { SurfaceSharedSettings(surface, key, zones, touchpad = false) }
 
             control.kind == TouchKind.STICK -> ui { StickSettings(control) { c -> update { c } } }
 

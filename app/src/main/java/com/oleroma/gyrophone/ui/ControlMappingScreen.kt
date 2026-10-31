@@ -1,5 +1,7 @@
 package com.oleroma.gyrophone.ui
 
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material3.Icon
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -339,12 +341,12 @@ internal val TouchControl.physicalDevice: PhysicalDevice?
     get() = if (!id.startsWith(PHYSICAL_PREFIX)) null
     else PhysicalDevice.entries.firstOrNull { it.name == id.removePrefix(PHYSICAL_PREFIX).substringBefore(':') }
 
-/** "Stick", "Touchpad button", "Button", "Workspace" (the touchpad), or a physical device's "Controller", "Keyboard", "Mouse". */
+/** "Stick", "Button", "Workspace" (the touchpad), or a physical device's "Controller", "Keyboard", "Mouse". */
 internal fun controlKindName(c: TouchControl): String = when {
     c.isTouchpadStandIn -> "Workspace"
     c.physicalDevice != null -> c.physicalDevice!!.label
     c.kind == TouchKind.STICK -> "Stick"
-    c.swipes -> "Touchpad button"
+    c.swipes -> "Button"
     else -> "Button"
 }
 
@@ -465,6 +467,7 @@ internal fun ControlMappingScreen(
     val selectedAllowed = remember(selected) { selected?.let(::allowedTargets).orEmpty() }
 
     val undo = remember(control.id) { mutableStateListOf<List<Mapping>>() }
+    val redo = remember(control.id) { mutableStateListOf<List<Mapping>>() }
     var recent by remember { mutableStateOf(loadRecent(runtime)) }
     var hapticDraft by remember { mutableStateOf<Pair<BindableInput, OutputTarget>?>(null) }
     var layerDraft by remember { mutableStateOf<Pair<BindableInput, OutputTarget.Layer>?>(null) }
@@ -478,7 +481,14 @@ internal fun ControlMappingScreen(
 
     fun undoLast() {
         val prev = undo.removeLastOrNull() ?: return
+        redo.add(allMappings)
         emit(prev)
+    }
+
+    fun redoLast() {
+        val next = redo.removeLastOrNull() ?: return
+        undo.add(allMappings)
+        emit(next)
     }
 
     /** [next] is the edited set's view; undo keeps every set as it was. */
@@ -490,6 +500,7 @@ internal fun ControlMappingScreen(
         if (all == prev) return
         undo.add(prev)
         if (undo.size > MAX_UNDO) undo.removeAt(0)
+        redo.clear()
         emit(all)
         scope.launch {
             snackbar.currentSnackbarData?.dismiss()
@@ -1196,20 +1207,44 @@ internal fun ControlMappingScreen(
                             }
                             Spacer(Modifier.width(8.dp))
                         }
+                        // ⚙ Settings: a touch control's settings page (its look, and what its actions
+                        // share); the touchpad's and a device's shared action settings.
+                        val shared = settings?.shared
+                        val ownSettings = onSettings != null && !control.isTouchpadStandIn && physicalInputs == null
+                        if (ownSettings) {
+                            TextButton(onClick = onSettings!!, contentPadding = compact) { Text("⚙ Settings") }
+                        } else if (shared != null) {
+                            TextButton(onClick = { sharedOpen = true }, contentPadding = compact) { Text("⚙ Settings") }
+                        }
+                        @Composable
+                        fun BarIcon(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) = Icon(
+                            icon,
+                            contentDescription = label,
+                            tint = if (enabled) colors.onSurface else colors.onSurface.copy(alpha = 0.35f),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .clickable(enabled = enabled, onClick = onClick)
+                                .padding(6.dp)
+                                .size(22.dp),
+                        )
+                        BarIcon(EditIcons.Undo, "Undo", undo.isNotEmpty()) { undoLast() }
+                        BarIcon(EditIcons.Redo, "Redo", redo.isNotEmpty()) { redoLast() }
+                        // ⋯: sorting the actions, and the changes to all of them at once.
                         Box {
-                            TextButton(onClick = { sortMenu = true }, contentPadding = compact) { Text("Sort ▾") }
+                            var asking by remember { mutableStateOf(false) }
+                            TextButton(onClick = { sortMenu = true }, contentPadding = compact) { Text("⋯") }
                             DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
                                 DropdownMenuItem(
-                                    text = { Text("Default") },
+                                    text = { Text("Sort: default order") },
                                     onClick = { sortMenu = false; confirmDefault = true },
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Custom") },
+                                    text = { Text("Sort: custom order") },
                                     enabled = custom.isNotEmpty() && custom != order,
                                     onClick = { sortMenu = false; saveOrder(custom) },
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Mapped first") },
+                                    text = { Text("Sort: mapped first") },
                                     onClick = {
                                         sortMenu = false
                                         // Every action of the control in the order shown, the ones mapped in any layer first.
@@ -1222,34 +1257,24 @@ internal fun ControlMappingScreen(
                                         saveOrder(keys.filter { it in mapped } + keys.filter { it !in mapped } + order.filter { it !in keys })
                                     },
                                 )
+                                if (inputs.any { parentOf(it).isNotEmpty() && Bindings.targets(view, it).isNotEmpty() }) {
+                                    DropdownMenuItem(
+                                        text = { Text("↺ Reset all") },
+                                        onClick = { sortMenu = false; asking = true },
+                                    )
+                                }
+                                if (inputs.any { (Bindings.targets(view, it).ifEmpty { parentOf(it) }).any { t -> t != OutputTarget.NoOutput } }) {
+                                    DropdownMenuItem(
+                                        text = { Text("✕ Clear all (map nothing, nothing inherited)") },
+                                        onClick = { sortMenu = false; clearAll() },
+                                    )
+                                }
                             }
-                        }
-                        if (inputs.any { parentOf(it).isNotEmpty() && Bindings.targets(view, it).isNotEmpty() }) {
-                            var asking by remember { mutableStateOf(false) }
-                            TextButton(onClick = { asking = true }, contentPadding = compact) { Text("↺ Reset all") }
                             if (asking) ConfirmResetAll(
                                 "Every action follows $parentName again; what it maps here goes.",
                                 { asking = false },
                             ) { asking = false; followAll() }
                         }
-                        if (inputs.any { (Bindings.targets(view, it).ifEmpty { parentOf(it) }).any { t -> t != OutputTarget.NoOutput } }) {
-                            TextButton(onClick = { clearAll() }, contentPadding = compact) { Text("✕ Clear all") }
-                        }
-                        // A touch control's shared action settings are its "Button defaults"; its own
-                        // settings (size, shape, look...) sit next to them.
-                        val shared = settings?.shared
-                        val ownSettings = onSettings != null && !control.isTouchpadStandIn && physicalInputs == null
-                        if (shared != null) TextButton(onClick = { sharedOpen = true }, contentPadding = compact) {
-                            Text(if (ownSettings) "⚙ Button defaults" else "⚙ Settings")
-                        }
-                        if (onSettings != null && (shared == null || ownSettings)) {
-                            TextButton(onClick = onSettings, contentPadding = compact) { Text("Settings") }
-                        }
-                        TextButton(
-                            onClick = { undoLast() },
-                            enabled = undo.isNotEmpty(),
-                            contentPadding = compact
-                        ) { Text("↶ Undo") }
                         FilledTonalButton(onClick = onClose, contentPadding = compact) { Text("Done") }
                     }
                     BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {

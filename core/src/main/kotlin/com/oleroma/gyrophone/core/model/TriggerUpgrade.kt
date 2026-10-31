@@ -13,6 +13,8 @@ object TriggerUpgrade {
     fun workspace(w: Workspace): Workspace {
         val latched = latches(w)
         if (latched !== w) return workspace(latched)
+        val layered = buttonGyroLayers(w)
+        if (layered !== w) return workspace(layered)
         val mappings = mappings(w.mappings, w.hapticEdge)
         val keyboard = mappings(w.keyboard, w.hapticEdge)
         val mouse = mappings(w.mouse, w.hapticEdge)
@@ -53,6 +55,32 @@ object TriggerUpgrade {
                 listOf(up.copy(trigger = up.trigger.copy(on = When.TAP, taps = Taps.ANY)), up)
             } else listOf(up)
         }.distinct()
+    }
+
+    /**
+     * [w] with each button's own gyro settings ([TouchControl.gyro], from before layers held them)
+     * as a layer named after the button, held while it is pressed: an override layer with those
+     * gyro settings and no mappings, so the button still does what it did. One per button and set
+     * it had them in, while there is room ([MappingSet.MAX]); past that they are dropped.
+     */
+    fun buttonGyroLayers(w: Workspace): Workspace {
+        if (w.touchControls.none { it.gyro.isNotEmpty() }) return w
+        val sets = w.sets.toMutableList()
+        val added = ArrayList<Mapping>()
+        for (c in w.touchControls) for (g in c.gyro) {
+            if (!g.any) continue
+            val id = (1..MappingSet.MAX).firstOrNull { i -> sets.none { it.id == i } } ?: break
+            val under = if (g.set == MappingSet.BASE) emptyList() else listOf(g.set)
+            val before = WorkspaceDefaults.layered(w, MappingSet.BASE, under)
+            val after = before.copy(gyro = g.over(before.gyro))
+            sets += WorkspaceDefaults.editLayer(MappingSet(id, c.label.ifBlank { "Button" }), before, after)
+            added += Mapping(InputSource.Touch(c.id), OutputTarget.Layer(id, override = true, follows = true), set = g.set)
+        }
+        return w.copy(
+            sets = sets,
+            mappings = w.mappings + added,
+            touchControls = w.touchControls.map { if (it.gyro.isEmpty()) it else it.copy(gyro = emptyList()) },
+        )
     }
 
     /**
