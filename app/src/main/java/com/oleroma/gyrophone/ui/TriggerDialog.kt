@@ -66,7 +66,7 @@ internal fun TriggerDialog(
                 TriggerHint(
                     when (trigger.taps) {
                         Taps.ANY -> "Every press, either press of a double too. Never waits."
-                        Taps.SINGLE -> "Not part of a double. A single tap waits out the double window when the action has a Double mapping."
+                        Taps.SINGLE -> "Not the second press of a double. A Tap waits out the double window to be sure, but only when the action has a Double mapping; Press, Long press and Release never wait."
                         Taps.DOUBLE -> "The second press, within the double window after a tap."
                     },
                 )
