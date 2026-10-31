@@ -101,12 +101,22 @@ class AbsolutePitchTest {
         assertEquals(200 + push, a.at(-70f, lim = 60f))
     }
 
-    @Test fun setLevelSnapsTheCameraToThePhone() {
+    @Test fun setLevelMakesThePhonesAngleLevelAndMovesNothing() {
         val a = AbsolutePitch()
         a.at(5f) // drifted: the camera looks level while the phone is at 5°
-        a.setLevel()
-        assertEquals(-50, a.at(5f))
-        assertEquals(5f, a.cameraDeg, 0.1f)
+        // Tipped 5° back from upright (top away): just below the 0° of upright.
+        assertEquals(-5f, a.setLevel(), 0.1f)
+        assertEquals(0, a.at(5f))
+        assertEquals(0f, a.cameraDeg, 0.1f)
+        // From there the phone tilts the camera as before.
+        assertEquals(-100, a.at(15f))
+        assertEquals(10f, a.cameraDeg, 0.1f)
+        // Lying flat, screen up: that becomes level.
+        a.setUp(0f, 0f, 1f, 1f)
+        a.rotate(0f, 0f, 0f, 10f)
+        assertEquals(90f, a.setLevel(), 0.1f)
+        assertEquals(0, a.step(1f, cpd, limit))
+        assertEquals(0f, a.pitchDeg, 0.1f)
     }
 
     @Test fun resetForgetsTheCamera() {

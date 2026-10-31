@@ -16,7 +16,8 @@ import kotlin.math.sqrt
  * Drift (counts the game dropped, the game moving the camera itself) is corrected at the poles:
  * once the phone asks for more than the camera's limit, the camera is sent there plus [PUSH_DEG]
  * once, so the game pins it at its pole whatever the estimate was, and the estimate becomes the
- * limit exactly. Set level ([setLevel]) says the camera is level now: it snaps to the phone.
+ * limit exactly. Set level ([setLevel]) says the camera and the phone are both level now: the
+ * phone's angle becomes [levelDeg] and nothing moves.
  *
  * The phone's pitch is the gyro's turn, pulled toward the accelerometer's gravity over about
  * [GRAVITY_TAU_S] (a jolt off 1 g is skipped), so it is quick and never drifts. Pitch 0 is
@@ -46,6 +47,15 @@ class AbsolutePitch {
 
     /** Set level was pressed: the next [step] takes the camera as level. */
     @Volatile private var levelAsked = false
+
+    /** The [levelDeg] that makes the phone's pose now level: the angle of its up from the screen's top toward the player. */
+    val levelHereDeg: Float
+        get() = synchronized(this) {
+            var a = kotlin.math.atan2(uz, uy) * RAD_TO_DEG
+            // Kept near the 0..180 the setting shows: tipped back past upright is a little below 0.
+            if (a < -90f) a += 360f
+            a
+        }
 
     /** For a camera display: the camera's estimated pitch, where the phone points it (both camera degrees) and the limit, and whether it runs. */
     @Volatile var cameraDeg: Float = 0f
@@ -85,9 +95,15 @@ class AbsolutePitch {
         running = false
     }
 
-    /** The camera is level now: the next [step] sends it to the phone's angle. */
-    fun setLevel() {
+    /**
+     * The camera and the phone are level now: the phone's angle becomes [levelDeg] (returned, for
+     * the setting) and the next [step] takes the camera as level, so nothing moves.
+     */
+    fun setLevel(): Float {
+        val a = levelHereDeg
+        levelDeg = a
         levelAsked = true
+        return a
     }
 
     /** An accelerometer reading in the phone's frame (right, up, toward the player), gravity [g] in its units. */

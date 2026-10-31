@@ -191,7 +191,8 @@ internal fun WorkspaceSettings(
                     else "The phone's tilt against gravity sets the camera's pitch: phone level, camera level; " +
                         "its own sensitivity times further. Mouse Y then comes from it alone: ratchets and every other " +
                         "Mouse Y input are ignored. Past the camera's limit the camera is pinned at its pole and re-synced. " +
-                        "Map Set level (Gyro tab) and press it while the camera looks level to fix drift. " +
+                        "Map Set level (Gyro tab) and press it while the camera looks level: the way you hold the phone then " +
+                        "counts as level, and nothing moves. Press it again to fix drift. " +
                         "Needs raw input and no mouse acceleration or smoothing in the game.",
                     ws.gyro.absolutePitch, own(g("absolutePitch")), reset(g("absolutePitch")),
                     enabled = known || ws.gyro.absolutePitch,
@@ -205,12 +206,6 @@ internal fun WorkspaceSettings(
                             (ws.gyro.pitchLimitDeg / ws.gyro.absoluteRws.coerceAtLeast(0.01f)).coerceAtMost(90f),
                         ),
                 ) { v -> editWs { it.copy(gyro = it.gyro.copy(absoluteRws = v)) } }
-                if (ws.gyro.absolutePitch) OverrideSlider(
-                    key + "plevel", "Level at %.0f°", ws.gyro.absoluteLevelDeg, 0f..180f, 1f,
-                    own(g("absoluteLevelDeg")), reset(g("absoluteLevelDeg")),
-                    hint = "Where the phone counts as level (camera level): 0° upright, screen facing you; " +
-                        "90° lying flat, screen up; 180° upside down. Tilting from there pitches the camera.",
-                ) { v -> editWs { it.copy(gyro = it.gyro.copy(absoluteLevelDeg = v)) } }
                 if (ws.gyro.absolutePitch) OverrideSlider(
                     key + "plimit", "Camera limit ±%.0f°", ws.gyro.pitchLimitDeg,
                     GyroSettings.MIN_PITCH_LIMIT_DEG..GyroSettings.MAX_PITCH_LIMIT_DEG, 1f,

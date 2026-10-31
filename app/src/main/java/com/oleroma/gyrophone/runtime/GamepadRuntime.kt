@@ -237,6 +237,9 @@ class GamepadRuntime(context: Context) {
     private var levelSeen = 0
     private var absoluteOn = false
 
+    /** The level angle Set level took, used until the workspace's setting (saved on the main thread) has it. */
+    private var heldLevel: Float? = null
+
     /**
      * The active workspace's gyro settings while its absolute pitch can run (on, the game's turn
      * known, gyro not off completely), else null. The workspace's own: layers and buttons cannot change it.
@@ -269,6 +272,7 @@ class GamepadRuntime(context: Context) {
         engine.absoluteY = on
         if (!on) {
             levelSeen = presses
+            heldLevel = null
             if (absoluteOn) {
                 absoluteOn = false
                 absolutePitch.reset()
@@ -276,16 +280,26 @@ class GamepadRuntime(context: Context) {
             return
         }
         absoluteOn = true
+        val held = heldLevel
+        if (held != null && abs(g!!.absoluteLevelDeg - held) < 0.01f) heldLevel = null
+        absolutePitch.levelDeg = heldLevel ?: g!!.absoluteLevelDeg
         if (presses != levelSeen) {
             levelSeen = presses
-            absolutePitch.setLevel()
+            // The phone's angle now becomes the workspace's Level at; the camera is taken as level, so nothing moves.
+            val level = absolutePitch.setLevel()
+            heldLevel = level
+            val ws = _workspaceIndex.value
+            main.post {
+                if (_workspaceIndex.value == ws) editActiveProfile { p ->
+                    p.updateWorkspace(ws) { it.copy(gyro = it.gyro.copy(absoluteLevelDeg = level)) }
+                }
+            }
         }
         // The camera goes the way the gyro's Mouse Y mapping does: reversed, it pitches the other way.
         val routes = engine.gyroRoutes()
         val y0 = routes.firstOrNull { it.source is InputSource.Gyro && (it.target as? OutputTarget.MouseAxis)?.motion == MouseMotion.MOVE_Y }
         val sign = if (((y0?.target as? OutputTarget.MouseAxis)?.scale ?: 1f) < 0f) -1f else 1f
         val gain = g!!.absoluteRws * sign
-        absolutePitch.levelDeg = g.absoluteLevelDeg
         engine.addAbsoluteY(absolutePitch.step(gain, g.gameCountsPer360 / 360f, g.pitchLimitDeg))
     }
 
