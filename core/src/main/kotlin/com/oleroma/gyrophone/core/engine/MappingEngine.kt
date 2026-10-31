@@ -804,6 +804,22 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Swipe button [id]'s held directions and zones as mapped in the set in use, for its swipe line ([Touchpad.guide]). */
     fun swipeGuide(id: String): SwipeGuide? = synchronized(lock) { surfaces[id]?.guide() }
 
+    /** Swipe button [id]'s finger offset from its locked start point (dp, [Touchpad.holdOffset]), for its swipe line. */
+    fun swipeOffset(id: String, out: FloatArray): Boolean = synchronized(lock) { surfaces[id]?.holdOffset(out) ?: false }
+
+    /**
+     * Touch button [id]'s Move X / Y, for its Move rulers: writes their travel ([Touchpad.moveTravelX],
+     * px) to [out] (x, y) and returns the Moves mapped ([Touchpad.MOVES_X], [Touchpad.MOVES_Y]), with
+     * [MOVES_GLIDING] while inertia carries them on; 0 = no Move mapped.
+     */
+    fun moveTrack(id: String, out: FloatArray): Int = synchronized(lock) {
+        val s = surfaces[id] ?: return 0
+        val mapped = s.movesMapped()
+        if (mapped == 0) return 0
+        out[0] = s.moveTravelX; out[1] = s.moveTravelY
+        mapped or if (s.isGliding) MOVES_GLIDING else 0
+    }
+
     /**
      * The touch mappings in use now: the mapping set and overrides in use, with what inputs held
      * through a set change still press instead (for labels that show what is really active).
@@ -2270,6 +2286,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     companion object {
         const val PRESS_THRESHOLD = 0.5f
+
+        /** [moveTrack]: inertia carries the Moves on. */
+        const val MOVES_GLIDING = 4
         private val NO_OPTIONS = MapOptions()
 
         /** How long a shake presses at least. */

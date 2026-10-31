@@ -297,6 +297,32 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     val latched: Boolean get() = latchMask != 0
 
     /**
+     * Move X / Y's travel (px) since this surface was made, the glide's included: what the pad's Move
+     * rulers slide by. A pie or swipe hold holding a Move back holds its travel back too.
+     */
+    var moveTravelX = 0f
+        private set
+    var moveTravelY = 0f
+        private set
+
+    /**
+     * From start point with Lock heading: writes the finger's offset from the start point (dp) to
+     * [out] (x, y) for the swipe line; false otherwise.
+     */
+    fun holdOffset(out: FloatArray): Boolean {
+        if (settings.holdMode != com.oleroma.gyrophone.core.model.HoldMode.FROM_START || !settings.anyHoldLock || settings.dragStart) return false
+        out[0] = dirs.offsetX; out[1] = dirs.offsetY
+        return true
+    }
+
+    /** Inertia carries Move X / Y on after the fingers lifted. */
+    val isGliding: Boolean get() = gliding
+
+    /** The one-finger Moves mapped: [MOVES_X], [MOVES_Y]. */
+    fun movesMapped(): Int =
+        (if (map.has(1, SurfaceInput.MOTION_X)) MOVES_X else 0) or (if (map.has(1, SurfaceInput.MOTION_Y)) MOVES_Y else 0)
+
+    /**
      * An input's value as of the last [poll]: 1 / 0, or for Move X / Y and Pinch their level now
      * (-1..1: the travel from where the motion started, a floating stick; the spread change).
      * [zone]: a held direction's length zone.
@@ -1034,6 +1060,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         val sdx = moveX
         val sdy = moveY
         trX += sdx; trY += sdy
+        moveTravelX += sdx; moveTravelY += sdy
         track(sdx, sdy, now, eventNs)
         if (rearmable) {
             val sx = centroidX() - stillX;
@@ -1268,6 +1295,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         glideVx = glideNext
         val gy = glideStep(glideVy, glideTauY, glideLinearY, glideDecY, dtMs)
         glideVy = glideNext
+        moveTravelX += gx; moveTravelY += gy
         val m = glideMotion
         if (m != null) {
             if (m.cursor) emit(run, gx, gy, now, m)
@@ -1731,6 +1759,10 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
             arrayOf(SurfaceInput.HOLD_UP, SurfaceInput.HOLD_RIGHT, SurfaceInput.HOLD_DOWN, SurfaceInput.HOLD_LEFT)
         private val SWIPES =
             arrayOf(SurfaceInput.SWIPE_UP, SurfaceInput.SWIPE_RIGHT, SurfaceInput.SWIPE_DOWN, SurfaceInput.SWIPE_LEFT)
+        /** [movesMapped]: Move X / Move Y. */
+        const val MOVES_X = 1
+        const val MOVES_Y = 2
+
         private const val MOVE_X = 1
         private const val MOVE_Y = 2
         private val RIGHT_BIT = 1 shl Direction.RIGHT.ordinal

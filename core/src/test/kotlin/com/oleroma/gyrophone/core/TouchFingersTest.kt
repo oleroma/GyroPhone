@@ -287,4 +287,20 @@ class TouchFingersTest {
         for (i in 1..20) { now = (60 + 20 * i) * MS; e.snap(o) }
         assertEquals(0, o.buttons)
     }
+
+    @Test fun moveTrackFollowsAButtonsMoveTravel() {
+        var now = 0L
+        val e = engine { now }
+        val out = FloatArray(2)
+        assertEquals(0, engine(aimButton = false) { now }.moveTrack("a", out))
+        val mapped = e.moveTrack("a", out)
+        assertEquals(3, mapped and 3)
+        val x0 = out[0]
+        var fx = 1600f
+        e.buttonDown(1, "a", fx, 500f)
+        for (i in 1..20) { now += FRAME; fx += 6f; e.buttonMove(1, fx, 500f) }
+        e.moveTrack("a", out)
+        assertTrue(out[0] - x0 > 60f)
+        assertEquals(0f, out[1], 0.01f)
+    }
 }

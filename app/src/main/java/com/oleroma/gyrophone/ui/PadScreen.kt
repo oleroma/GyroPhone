@@ -457,6 +457,9 @@ fun PadScreen(
     val swipeLines = remember { SwipeLines() }
     val swipeLineOn by rememberUpdatedState(visuals.swipeLine)
     LaunchedEffect(swipeLineOn) { if (!swipeLineOn) swipeLines.clear() }
+    val moveRulers = remember { MoveRulers { id, out -> runtime.engine.moveTrack(id, out) } }
+    val moveRulersOn by rememberUpdatedState(visuals.moveRulers)
+    LaunchedEffect(moveRulersOn) { if (!moveRulersOn) moveRulers.clear() }
 
     /** Bumped to show auto-hidden ← / → corners again: four quick taps, or a corner touched. */
     var revealTick by remember { mutableIntStateOf(0) }
@@ -563,6 +566,7 @@ fun PadScreen(
         for (p in buttonFingers) runtime.engine.buttonCancel(p)
         buttonFingers.clear()
         swipeLines.clear()
+        moveRulers.clear()
         fingersOnButtons = 0
         for (id in stickPos.keys.toList()) runtime.engine.setTouchStick(id, 0f, 0f)
         stickPos.clear()
@@ -1271,9 +1275,15 @@ fun PadScreen(
                     if (mapped(id, TouchAreaKind.HELD)) runtime.engine.setTouchArea(id, TouchAreaKind.HELD, false)
                 }
 
-                /** Finger [pointer] landed on swipe button [c] at [p]: its swipe line, when it has swipes or holds mapped. */
+                /**
+                 * Finger [pointer] landed on swipe button [c] at [p]: its swipe line, when it has swipes or
+                 * holds mapped, and its Move rulers, when it has a Move mapped.
+                 */
                 fun swipeLine(pointer: Long, c: TouchControl, p: Offset) {
-                    if (swipeLineOn && c.swipes) runtime.engine.swipeGuide(c.id)?.let { swipeLines.down(pointer, it, p, pxPerDp) }
+                    if (swipeLineOn && c.swipes) runtime.engine.swipeGuide(c.id)?.let { g ->
+                        swipeLines.down(pointer, g, p, pxPerDp) { out -> runtime.engine.swipeOffset(c.id, out) }
+                    }
+                    if (moveRulersOn && c.swipes) moveRulers.down(pointer, c.id, p)
                 }
 
                 /** Stops what finger [pointer] does (an interrupting zone). False if it does nothing to stop. */
@@ -1289,6 +1299,7 @@ fun PadScreen(
                         pid in buttonFingers -> {
                             buttonFingers.remove(pid)
                             swipeLines.up(pid)
+                            moveRulers.up(pid)
                             runtime.engine.buttonCancel(pid)
                             FingerJob.BUTTON
                         }
@@ -1395,6 +1406,7 @@ fun PadScreen(
                             for (p in buttonFingers) runtime.engine.buttonCancel(p)
                             buttonFingers.clear()
                             swipeLines.clear()
+                            moveRulers.clear()
                             cornerOwner.clear()
                         }
                         for (ch in event.changes) {
@@ -1509,10 +1521,12 @@ fun PadScreen(
                                 if (!ch.pressed) {
                                     buttonFingers.remove(pid)
                                     swipeLines.up(pid)
+                                    moveRulers.up(pid)
                                     if (pointerCancel) runtime.engine.buttonCancel(pid) else runtime.engine.buttonUp(pid)
                                 } else if (ch.position != ch.previousPosition) {
                                     runtime.engine.buttonMove(pid, ch.position.x, ch.position.y, at)
                                     swipeLines.move(pid, ch.position, pxPerDp)
+                                    moveRulers.move(pid, ch.position)
                                 }
                             } else if (ch.id in cornerOwner) {
                                 if (!ch.pressed) {
@@ -2445,6 +2459,7 @@ fun PadScreen(
         // Touches and trails: over everything, never taking a touch.
         if (showTouchVisuals) TouchOverlay(trails, visuals, Modifier.fillMaxSize())
         if (!editing && visuals.swipeLine) SwipeLineOverlay(swipeLines, Modifier.fillMaxSize())
+        if (!editing && visuals.moveRulers) MoveRulerOverlay(moveRulers, Modifier.fillMaxSize())
     }
 }
 

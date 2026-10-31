@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -137,18 +138,34 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
             ) { v -> edit { it.copy(movePieMargin = v) } }
         }
         OverrideSwitch(
-            "Swipe hold stops Move", HOLD_STOPS_HINT, s.holdStopsMove, own(SurfaceField.HOLD_STOPS_MOVE), reset(SurfaceField.HOLD_STOPS_MOVE),
+            "Swipe stops Move", HOLD_STOPS_HINT, s.holdStopsMove, own(SurfaceField.HOLD_STOPS_MOVE), reset(SurfaceField.HOLD_STOPS_MOVE),
         ) { v -> edit { it.copy(holdStopsMove = v) } }
 
-        SectionTitle("Swipe")
+        SectionTitle("Quick swipe")
         SharedPies(level, key, PieKind.SWIPE)
         OverrideSlider(
-            key + "swipe", "Swipe after %.0f dp", s.swipeDp,
+            key + "swipe", "Quick swipe after %.0f dp", s.swipeDp,
             TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f, own(SurfaceField.SWIPE), reset(SurfaceField.SWIPE),
-            hint = "Measured from where the finger turned into that direction. Each new direction swipes again.",
+            hint = "Measured along the direction, from where the finger turned into it. Each new direction swipes again.",
         ) { v -> edit { it.copy(swipeDp = v) } }
+        ChildOverrides(level, DirField.SWIPE)
+        OverrideSwitch(
+            "Lock heading",
+            "A quick swipe keeps the way it locked into until the finger heads another way for Turn after, so the wobble " +
+                    "at each turnaround of a sideways stroke can't fire Quick swipe up or down.",
+            s.swipeLock, own(SurfaceField.SWIPE_LOCK), reset(SurfaceField.SWIPE_LOCK),
+        ) { v -> edit { it.copy(swipeLock = v) } }
+        ChildOverrides(level, DirField.SWIPE_LOCK)
+        if (s.swipeLock) {
+            OverrideSlider(
+                key + "swipeturn", "Turn after %.1f dp", s.swipeTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
+                own(SurfaceField.SWIPE_TURN), reset(SurfaceField.SWIPE_TURN),
+                hint = "How far the finger must head another way, on end, before the quick swipe turns there. That travel counts for the new way.",
+            ) { v -> edit { it.copy(swipeTurnDp = v) } }
+        }
+        ChildOverrides(level, DirField.SWIPE_TURN)
 
-        SectionTitle("Swipe hold")
+        SectionTitle("Swipe")
         OverrideRow(
             "Hold mode",
             own(SurfaceField.HOLD_MODE),
@@ -166,6 +183,24 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
             key + "hold", "Hold after %.0f dp", s.holdDp,
             TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f, own(SurfaceField.HOLD), reset(SurfaceField.HOLD),
         ) { v -> edit { it.copy(holdDp = v) } }
+        ChildOverrides(level, DirField.HOLD)
+        OverrideSwitch(
+            "Lock heading",
+            (if (s.holdMode == HoldMode.FROM_START) "While the finger heads along one axis, the other axis's start point follows it, so " +
+                    "drift never adds up: up / down count from where the finger turned up / down. "
+            else "A held direction keeps the way it locked into until the finger heads another way for Turn after. ") +
+                    "Pies of 180° count as 90° for the heading; wider than 90° lets diagonals hold both.",
+            s.holdLock, own(SurfaceField.HOLD_LOCK), reset(SurfaceField.HOLD_LOCK),
+        ) { v -> edit { it.copy(holdLock = v) } }
+        ChildOverrides(level, DirField.HOLD_LOCK)
+        if (s.holdLock) {
+            OverrideSlider(
+                key + "holdturn", "Turn after %.1f dp", s.holdTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
+                own(SurfaceField.HOLD_TURN), reset(SurfaceField.HOLD_TURN),
+                hint = "How far the finger must head another way, on end, before the held heading turns there.",
+            ) { v -> edit { it.copy(holdTurnDp = v) } }
+        }
+        ChildOverrides(level, DirField.HOLD_TURN)
         if (s.holdMode == HoldMode.FROM_START) {
             val zoned = zones.any { it > 1 }
             OverrideSwitch(
@@ -184,8 +219,8 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
         }
         DirNote("To keep a direction held after the lift, set its On swipe chip to Toggle (tap the chip).")
         DirNote(
-            "Every Move, Swipe and Swipe hold uses these unless its ⚙ in the mapping editor sets its own: " +
-                    "a Move X / Y its pie, a Swipe or Swipe hold direction its pie, sample and distance."
+            "Every Move, Quick swipe and Swipe uses these unless its ⚙ in the mapping editor sets its own: " +
+                    "a Move X / Y its pie, a Quick swipe or Swipe direction its pie, sample and distance."
         )
         SectionTitle("Length zones")
         HoldZoneSettings(s, zones, key, only = null, zone = null, onChange = current.setZones)
@@ -195,7 +230,7 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
 
 /**
  * The ⚙ of direction [d]'s Swipe ([hold] false: its pie, sample and swipe distance) or Swipe hold (its
- * pie, sample, hold distance, keep held after lift and, with [zones] mapped, its length zones), each its
+ * pie, sample, hold distance; zones are set by its ┃ dividers), each its
  * own over [level]'s shared value (the Settings), highlighted with a ↺ where it sets its own.
  */
 @Composable
@@ -217,7 +252,7 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
         OverrideSlider(
             k + "pie", "Pie %.0f°", s.pieDeg(d, hold), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
             own(pie), reset(pie),
-            hint = if (hold) "Where a held ${d.label} counts. Its Quick swipe has a pie of its own." else "Where a swipe ${d.label} counts. Its Swipe hold has a pie of its own.",
+            hint = if (hold) "Where a held ${d.label} counts. Its Quick swipe has a pie of its own." else "Where a quick swipe ${d.label} counts. Its Swipe has a pie of its own.",
             onLive = { live = it },
         ) { v -> edit { if (hold) it.copy(holdPie = v) else it.copy(swipePie = v) } }
         OverrideSlider(
@@ -225,9 +260,23 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
             own(sample), reset(sample),
             hint = SAMPLE_HINT,
         ) { v -> edit { if (hold) it.copy(holdSample = v) else it.copy(swipeSample = v) } }
+        val lock = if (hold) DirField.HOLD_LOCK else DirField.SWIPE_LOCK
+        val turn = if (hold) DirField.HOLD_TURN else DirField.SWIPE_TURN
+        OverrideSwitch(
+            "Lock heading",
+            "Turning to ${d.label} from another way takes Turn after of heading this way on end, so drift and turnarounds " +
+                    "can't reach it." + if (hold && s.holdMode == HoldMode.FROM_START) " From start point, its axis's start point follows the finger while the heading is on the other axis." else "",
+            s.lockOf(d, hold), own(lock), reset(lock),
+        ) { v -> edit { if (hold) it.copy(holdLock = v) else it.copy(swipeLock = v) } }
+        if (s.lockOf(d, hold)) {
+            OverrideSlider(
+                k + "turn", "Turn after %.1f dp", s.turnDpOf(d, hold), 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
+                own(turn), reset(turn),
+            ) { v -> edit { if (hold) it.copy(holdTurn = v) else it.copy(swipeTurn = v) } }
+        }
         if (!hold) {
             OverrideSlider(
-                k + "dp", "Swipe after %.0f dp", s.swipeDpOf(d), TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f,
+                k + "dp", "Quick swipe after %.0f dp", s.swipeDpOf(d), TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f,
                 own(DirField.SWIPE), reset(DirField.SWIPE),
             ) { v -> edit { it.copy(swipeDp = v) } }
         } else {
@@ -236,9 +285,8 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
                 own(DirField.HOLD), reset(DirField.HOLD),
                 hint = if (s.dragStart && s.holdMode == HoldMode.FROM_START) "With Drag start point, the start point trails the furthest hold distance of the four." else null,
             ) { v -> edit { it.copy(holdDp = v) } }
-            SectionTitle("Length zones")
-            HoldZoneSettings(s, zones, k, only = d, zone = null, onChange = current.setZones)
         }
+        if (hold) DirNote("Zone lengths and what each zone does: tap the zone's ┃ divider in the mapping row.")
         DirNote("Highlighted: set for ${d.label} only. The rest is the Settings' value, shared by every direction.")
     }
 }
@@ -312,7 +360,7 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
             ) { v -> edit(MoveField.PIE_MARGIN) { it.copy(margin = v) } }
         }
         OverrideSwitch(
-            "Swipe hold stops Move", "$HOLD_STOPS_HINT For Move X and Y alike.", f.holdStopsMove,
+            "Swipe stops Move", "$HOLD_STOPS_HINT For Move X and Y alike.", f.holdStopsMove,
             own(MoveField.HOLD_STOPS), reset(MoveField.HOLD_STOPS),
         ) { v -> edit(MoveField.HOLD_STOPS) { it.copy(holdStops = v) } }
         if (m.fingers == 1) {
@@ -396,7 +444,7 @@ private const val TURN_HINT =
 private const val MARGIN_HINT =
     "A Move that is moving keeps going until the finger heads this far past its pie, so it doesn't flicker at the pie's edge."
 private const val HOLD_STOPS_HINT =
-    "Once a mapped swipe hold presses, Move X and Y stop until the fingers lift, so a jump or crouch never moves the cursor."
+    "Once a mapped Swipe presses, Move X and Y stop until the fingers lift, so a jump or crouch never moves the cursor."
 
 private const val SAMPLE_HINT = "The heading is that of about the last this much travel, so small wobbles don't change it."
 
@@ -428,6 +476,9 @@ private enum class PieKind(val pieX: SurfaceField, val pieY: SurfaceField, val s
         when (this) { MOVE -> s.copy(moveSampleDp = v); SWIPE -> s.copy(swipeSampleDp = v); HOLD -> s.copy(holdSampleDp = v) }
 
     /** The pie of [d] in [s]: a direction's own one counts for swipes and held directions. */
+    val dirPie: DirField? get() = when (this) { MOVE -> null; SWIPE -> DirField.SWIPE_PIE; HOLD -> DirField.HOLD_PIE }
+    val dirSample: DirField? get() = when (this) { MOVE -> null; SWIPE -> DirField.SWIPE_SAMPLE; HOLD -> DirField.HOLD_SAMPLE }
+
     fun width(s: TouchpadSettings, d: Direction): Float = when (this) {
         MOVE -> if (d.x) s.movePieX else s.movePieY
         SWIPE -> s.pieDeg(d, hold = false)
@@ -454,7 +505,8 @@ private fun SharedPies(level: SurfaceLevel, key: String, kind: PieKind) {
     val s = level.eff
     var live by remember { mutableStateOf<TouchpadSettings?>(null) }
     val shownOf = live ?: s
-    PiePicture(kind) { kind.width(shownOf, it) }
+    // The shared pies themselves (what the sliders set), whatever a direction sets in its own ⚙.
+    PiePicture(kind) { if (it.x) kind.x(shownOf) else kind.y(shownOf) }
     fun edit(change: (TouchpadSettings) -> TouchpadSettings) = current.edit(change)
     val (xs, ys) = when (kind) {
         PieKind.MOVE -> "Move X" to "Move Y"
@@ -466,12 +518,14 @@ private fun SharedPies(level: SurfaceLevel, key: String, kind: PieKind) {
         hint = "$xs alike.",
         onLive = { v -> live = v?.let { kind.withX(s, it) } },
     ) { v -> edit { kind.withX(it, v) } }
+    kind.dirPie?.let { ChildOverrides(level, it, Direction.entries.filter { d -> d.x }) }
     OverrideSlider(
         key + kind.name + "y", "Y pie %.0f°", kind.y(s), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
         level.isOwn(kind.pieY), { current.reset(kind.pieY) },
         hint = "$ys alike.",
         onLive = { v -> live = v?.let { kind.withY(s, it) } },
     ) { v -> edit { kind.withY(it, v) } }
+    kind.dirPie?.let { ChildOverrides(level, it, Direction.entries.filter { d -> !d.x }) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         fun both(deg: Float) = edit { kind.withY(kind.withX(it, deg), deg) }
         val x = kind.x(s)
@@ -486,6 +540,28 @@ private fun SharedPies(level: SurfaceLevel, key: String, kind: PieKind) {
         level.isOwn(kind.sample), { current.reset(kind.sample) },
         hint = SAMPLE_HINT + if (kind == PieKind.MOVE) " A stroke's first this much waits for it." else "",
     ) { v -> edit { kind.withSample(it, v) } }
+    kind.dirSample?.let { ChildOverrides(level, it) }
+}
+
+/**
+ * Under a shared setting: which of [dirs] set their own [f] at [level] (their ⚙), which the shared
+ * value never changes, and a Reset children button that alone makes them follow it again.
+ */
+@Composable
+internal fun ChildOverrides(level: SurfaceLevel, f: DirField, dirs: List<Direction> = Direction.entries) {
+    val current by rememberUpdatedState(level)
+    val own = dirs.filter { level.isDirOwn(it, f) }
+    if (own.isEmpty()) return
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            own.joinToString(", ") { it.label } + (if (own.size == 1) " sets its own" else " set their own") + " in its ⚙; this doesn't change " +
+                    (if (own.size == 1) "it." else "them."),
+            Modifier.weight(1f),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.tertiary,
+        )
+        TextButton(onClick = { own.forEach { current.resetDir(it, f) } }) { Text("Reset children") }
+    }
 }
 
 @Composable
@@ -531,7 +607,7 @@ internal fun HoldZoneSettings(
             if (only == null) "Zones of every direction" else "Zones of " + only.label,
             own,
             onReset = { commit(current.holdZones) { it[only!!.ordinal] = current.holdZones } },
-            hint = if (only == null) "Each held direction uses these unless its Swipe hold ⚙ sets its own."
+            hint = if (only == null) "Each held direction uses these unless its Swipe ⚙ sets its own."
             else if (own) "Its own zones." else "The Settings' zones, shared by every direction: a change here makes them its own.",
         )
         if (mapped > 1) DirNote(

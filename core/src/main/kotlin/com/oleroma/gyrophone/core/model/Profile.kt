@@ -211,10 +211,14 @@ data class SurfaceSettings(
     val swipePieY: Float? = null,
     val swipeSampleDp: Float? = null,
     val swipeDp: Float? = null,
+    val swipeLock: Boolean? = null,
+    val swipeTurnDp: Float? = null,
     val holdPieX: Float? = null,
     val holdPieY: Float? = null,
     val holdSampleDp: Float? = null,
     val holdDp: Float? = null,
+    val holdLock: Boolean? = null,
+    val holdTurnDp: Float? = null,
     val holdMode: HoldMode? = null,
     val dragStart: Boolean? = null,
     val releaseDp: Float? = null,
@@ -246,11 +250,16 @@ data class DirSettings(
     val latch: Boolean? = null,
     val swipeSample: Float? = null,
     val holdSample: Float? = null,
+    val swipeLock: Boolean? = null,
+    val swipeTurn: Float? = null,
+    val holdLock: Boolean? = null,
+    val holdTurn: Float? = null,
 ) {
     /** These with [over]'s own values in place of theirs. */
     fun under(over: DirSettings?): DirSettings = if (over == null) this else DirSettings(
         over.swipePie ?: swipePie, over.swipeDp ?: swipeDp, over.holdPie ?: holdPie, over.holdDp ?: holdDp, over.latch ?: latch,
         over.swipeSample ?: swipeSample, over.holdSample ?: holdSample,
+        over.swipeLock ?: swipeLock, over.swipeTurn ?: swipeTurn, over.holdLock ?: holdLock, over.holdTurn ?: holdTurn,
     )
 
     val isEmpty: Boolean get() = this == NONE
@@ -289,6 +298,10 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
     swipePieY = o.swipePieY ?: swipePieY,
     swipeSampleDp = o.swipeSampleDp ?: swipeSampleDp,
     swipeDp = o.swipeDp ?: swipeDp,
+    swipeLock = o.swipeLock ?: swipeLock,
+    swipeTurnDp = o.swipeTurnDp ?: swipeTurnDp,
+    holdLock = o.holdLock ?: holdLock,
+    holdTurnDp = o.holdTurnDp ?: holdTurnDp,
     holdPieX = o.holdPieX ?: holdPieX,
     holdPieY = o.holdPieY ?: holdPieY,
     holdSampleDp = o.holdSampleDp ?: holdSampleDp,
@@ -312,6 +325,10 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
                 latch = it.latch.takeIf { o.latch == null },
                 swipeSample = it.swipeSample.takeIf { o.swipeSampleDp == null },
                 holdSample = it.holdSample.takeIf { o.holdSampleDp == null },
+                swipeLock = it.swipeLock.takeIf { o.swipeLock == null },
+                swipeTurn = it.swipeTurn.takeIf { o.swipeTurnDp == null },
+                holdLock = it.holdLock.takeIf { o.holdLock == null },
+                holdTurn = it.holdTurn.takeIf { o.holdTurnDp == null },
             )
         },
         o.dirs,
@@ -941,8 +958,14 @@ data class TouchpadSettings(
     val swipePieY: Float = LARGER_AXIS_PIE_DEG,
     /** A swipe's heading is that of about the last this many dp of travel; there is none before it. */
     val swipeSampleDp: Float = DEFAULT_SAMPLE_DP,
-    /** A swipe fires once the travel since the direction last changed reaches this (dp). */
+    /** A swipe fires once the travel along its direction since the direction last changed reaches this (dp). */
     val swipeDp: Float = DEFAULT_SWIPE_DP,
+    /**
+     * Swipes keep the heading they locked into ([swipeLock]) until the finger heads elsewhere for
+     * [swipeTurnDp] on end; that travel then goes to the new heading, so none is lost.
+     */
+    val swipeLock: Boolean = false,
+    val swipeTurnDp: Float = DEFAULT_LOCK_TURN_DP,
     /** Held directions' pies, as [swipePieX]; 180° = per axis (from the start point, diagonals hold both). */
     val holdPieX: Float = PER_AXIS_PIE_DEG,
     val holdPieY: Float = PER_AXIS_PIE_DEG,
@@ -950,6 +973,14 @@ data class TouchpadSettings(
     val holdSampleDp: Float = DEFAULT_SAMPLE_DP,
     /** Held directions: the travel that presses one (see [holdMode]), in dp. */
     val holdDp: Float = DEFAULT_HOLD_DP,
+    /**
+     * Held directions keep the heading they locked into ([holdLock]) until the finger heads
+     * elsewhere for [holdTurnDp] on end. From start point, an axis the heading is not on has its
+     * start point follow the finger, so drift on it never adds up: its directions count from where
+     * the heading locked onto it. Pies of 180° count as 90° for the heading.
+     */
+    val holdLock: Boolean = false,
+    val holdTurnDp: Float = DEFAULT_LOCK_TURN_DP,
     val holdMode: HoldMode = HoldMode.FROM_START,
     /**
      * [HoldMode.FROM_START]: the start point is dragged along so it never trails the finger by
@@ -1017,6 +1048,19 @@ data class TouchpadSettings(
     /** How far a held [d] travels before it is held (dp). */
     fun holdDpOf(d: Direction): Float = dir(d).holdDp ?: holdDp
 
+    /** Whether a swipe ([hold] false) or held direction [d] locks the heading as it turns to it ([swipeLock], [holdLock]). */
+    fun lockOf(d: Direction, hold: Boolean): Boolean = dir(d).let { if (hold) it.holdLock else it.swipeLock } ?: if (hold) holdLock else swipeLock
+
+    /** The Turn after (dp) of a swipe ([hold] false) or held direction [d]. */
+    fun turnDpOf(d: Direction, hold: Boolean): Float =
+        (dir(d).let { if (hold) it.holdTurn else it.swipeTurn } ?: if (hold) holdTurnDp else swipeTurnDp).coerceIn(0f, MAX_MOVE_TURN_DP)
+
+    /** Some held direction locks its heading: of the X axis ([x]) or the Y axis. */
+    fun holdLocks(x: Boolean): Boolean = Direction.entries.any { it.x == x && lockOf(it, true) }
+
+    /** Some held direction locks its heading. */
+    val anyHoldLock: Boolean get() = holdLocks(true) || holdLocks(false)
+
     /** Whether a held [d] stays held after the lift. */
     fun latchOf(d: Direction): Boolean = dir(d).latch ?: latch
 
@@ -1064,6 +1108,9 @@ data class TouchpadSettings(
         const val DEFAULT_MOVE_SAMPLE_DP = 2f
         const val DEFAULT_MOVE_TURN_DP = 6f
         const val MAX_MOVE_TURN_DP = 40f
+
+        /** Swipes' and held directions' Turn after ([swipeTurnDp], [holdTurnDp]). */
+        const val DEFAULT_LOCK_TURN_DP = 16f
         const val DEFAULT_MOVE_PIE_MARGIN = 15f
         const val MAX_MOVE_PIE_MARGIN = 45f
         const val DEFAULT_SAMPLE_DP = 4f

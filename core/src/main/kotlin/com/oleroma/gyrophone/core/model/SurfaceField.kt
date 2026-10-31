@@ -12,8 +12,8 @@ enum class SurfaceField(val button: Boolean = true) {
     SENSITIVITY, ACCELERATION, SCROLL_SPEED, NATURAL_SCROLL, INERTIA, INERTIA_GLIDE, INERTIA_CURVE,
     CURSOR_DEADZONE, CATCH_UP, REARM, STILL, MOVE_MODE, MOVE_PIE_X, MOVE_PIE_Y, MOVE_SAMPLE,
     MOVE_LOCK, MOVE_TURN, MOVE_PIE_MARGIN, HOLD_STOPS_MOVE,
-    SWIPE_PIE_X, SWIPE_PIE_Y, SWIPE_SAMPLE, SWIPE,
-    HOLD_PIE_X, HOLD_PIE_Y, HOLD_SAMPLE, HOLD, HOLD_MODE, DRAG_START, RELEASE, LATCH, LATCH_RELEASE;
+    SWIPE_PIE_X, SWIPE_PIE_Y, SWIPE_SAMPLE, SWIPE, SWIPE_LOCK, SWIPE_TURN,
+    HOLD_PIE_X, HOLD_PIE_Y, HOLD_SAMPLE, HOLD, HOLD_LOCK, HOLD_TURN, HOLD_MODE, DRAG_START, RELEASE, LATCH, LATCH_RELEASE;
 
     private fun value(t: TouchpadSettings): Any? = when (this) {
         ENABLED -> t.enabled
@@ -44,6 +44,10 @@ enum class SurfaceField(val button: Boolean = true) {
         HOLD_SAMPLE -> t.holdSampleDp
         SWIPE -> t.swipeDp
         HOLD -> t.holdDp
+        SWIPE_LOCK -> t.swipeLock
+        SWIPE_TURN -> t.swipeTurnDp
+        HOLD_LOCK -> t.holdLock
+        HOLD_TURN -> t.holdTurnDp
         HOLD_MODE -> t.holdMode
         DRAG_START -> t.dragStart
         RELEASE -> t.releaseDp
@@ -84,6 +88,10 @@ enum class SurfaceField(val button: Boolean = true) {
         HOLD_SAMPLE -> to.copy(holdSampleDp = from.holdSampleDp)
         SWIPE -> to.copy(swipeDp = from.swipeDp)
         HOLD -> to.copy(holdDp = from.holdDp)
+        SWIPE_LOCK -> to.copy(swipeLock = from.swipeLock)
+        SWIPE_TURN -> to.copy(swipeTurnDp = from.swipeTurnDp)
+        HOLD_LOCK -> to.copy(holdLock = from.holdLock)
+        HOLD_TURN -> to.copy(holdTurnDp = from.holdTurnDp)
         HOLD_MODE -> to.copy(holdMode = from.holdMode)
         DRAG_START -> to.copy(dragStart = from.dragStart)
         RELEASE -> to.copy(releaseDp = from.releaseDp)
@@ -121,6 +129,10 @@ enum class SurfaceField(val button: Boolean = true) {
         HOLD_SAMPLE -> s.holdSampleDp != null
         SWIPE -> s.swipeDp != null
         HOLD -> s.holdDp != null
+        SWIPE_LOCK -> s.swipeLock != null
+        SWIPE_TURN -> s.swipeTurnDp != null
+        HOLD_LOCK -> s.holdLock != null
+        HOLD_TURN -> s.holdTurnDp != null
         HOLD_MODE -> s.holdMode != null
         DRAG_START -> s.dragStart != null
         RELEASE -> s.releaseDp != null
@@ -158,6 +170,10 @@ enum class SurfaceField(val button: Boolean = true) {
         HOLD_SAMPLE -> s.copy(holdSampleDp = from.holdSampleDp)
         SWIPE -> s.copy(swipeDp = from.swipeDp)
         HOLD -> s.copy(holdDp = from.holdDp)
+        SWIPE_LOCK -> s.copy(swipeLock = from.swipeLock)
+        SWIPE_TURN -> s.copy(swipeTurnDp = from.swipeTurnDp)
+        HOLD_LOCK -> s.copy(holdLock = from.holdLock)
+        HOLD_TURN -> s.copy(holdTurnDp = from.holdTurnDp)
         HOLD_MODE -> s.copy(holdMode = from.holdMode)
         DRAG_START -> s.copy(dragStart = from.dragStart)
         RELEASE -> s.copy(releaseDp = from.releaseDp)
@@ -195,6 +211,10 @@ enum class SurfaceField(val button: Boolean = true) {
         HOLD_SAMPLE -> s.copy(holdSampleDp = null)
         SWIPE -> s.copy(swipeDp = null)
         HOLD -> s.copy(holdDp = null)
+        SWIPE_LOCK -> s.copy(swipeLock = null)
+        SWIPE_TURN -> s.copy(swipeTurnDp = null)
+        HOLD_LOCK -> s.copy(holdLock = null)
+        HOLD_TURN -> s.copy(holdTurnDp = null)
         HOLD_MODE -> s.copy(holdMode = null)
         DRAG_START -> s.copy(dragStart = null)
         RELEASE -> s.copy(releaseDp = null)
@@ -233,8 +253,8 @@ enum class SurfaceField(val button: Boolean = true) {
  * sample and distance of its Swipe, the pie, sample, hold distance and latch of its Swipe hold.
  */
 enum class DirField(val hold: Boolean) {
-    SWIPE_PIE(false), SWIPE_SAMPLE(false), SWIPE(false),
-    HOLD_PIE(true), HOLD_SAMPLE(true), HOLD(true), LATCH(true);
+    SWIPE_PIE(false), SWIPE_SAMPLE(false), SWIPE(false), SWIPE_LOCK(false), SWIPE_TURN(false),
+    HOLD_PIE(true), HOLD_SAMPLE(true), HOLD(true), LATCH(true), HOLD_LOCK(true), HOLD_TURN(true);
 
     /** The shared setting of [d] this sets over: a pie its axis's. */
     fun sharedOf(d: Direction): SurfaceField = when (this) {
@@ -245,6 +265,10 @@ enum class DirField(val hold: Boolean) {
         HOLD_SAMPLE -> SurfaceField.HOLD_SAMPLE
         HOLD -> SurfaceField.HOLD
         LATCH -> SurfaceField.LATCH
+        SWIPE_LOCK -> SurfaceField.SWIPE_LOCK
+        SWIPE_TURN -> SurfaceField.SWIPE_TURN
+        HOLD_LOCK -> SurfaceField.HOLD_LOCK
+        HOLD_TURN -> SurfaceField.HOLD_TURN
     }
 
     fun get(s: DirSettings): Any? = when (this) {
@@ -255,6 +279,10 @@ enum class DirField(val hold: Boolean) {
         HOLD_SAMPLE -> s.holdSample
         HOLD -> s.holdDp
         LATCH -> s.latch
+        SWIPE_LOCK -> s.swipeLock
+        SWIPE_TURN -> s.swipeTurn
+        HOLD_LOCK -> s.holdLock
+        HOLD_TURN -> s.holdTurn
     }
 
     fun same(a: DirSettings, b: DirSettings): Boolean = get(a) == get(b)
@@ -268,6 +296,10 @@ enum class DirField(val hold: Boolean) {
         HOLD_SAMPLE -> to.copy(holdSample = from.holdSample)
         HOLD -> to.copy(holdDp = from.holdDp)
         LATCH -> to.copy(latch = from.latch)
+        SWIPE_LOCK -> to.copy(swipeLock = from.swipeLock)
+        SWIPE_TURN -> to.copy(swipeTurn = from.swipeTurn)
+        HOLD_LOCK -> to.copy(holdLock = from.holdLock)
+        HOLD_TURN -> to.copy(holdTurn = from.holdTurn)
     }
 
     /** A level's own [s] sets this for [d]. */
