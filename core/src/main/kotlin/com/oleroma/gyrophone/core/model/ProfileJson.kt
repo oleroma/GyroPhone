@@ -2,6 +2,9 @@ package com.oleroma.gyrophone.core.model
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 
 /**
@@ -21,6 +24,35 @@ object ProfileJson {
         else migrate(json.decodeFromJsonElement(LegacyProfile.serializer(), obj))
         return normalize(profile)
     }
+
+    /** A profile read by [decodeLenient], and how many mappings it had to leave out. */
+    class Lenient(val profile: Profile, val dropped: Int)
+
+    /**
+     * [text] read like [decode], but when that fails (a newer build's action or input this one does
+     * not know), with each mapping it cannot read left out, so one unknown mapping cannot hide the
+     * whole profile. Null when even that fails.
+     */
+    fun decodeLenient(text: String): Lenient? {
+        runCatching { return Lenient(decode(text), 0) }
+        return runCatching {
+            var dropped = 0
+            fun prune(e: JsonElement, key: String?): JsonElement = when (e) {
+                is JsonObject -> JsonObject(e.mapValues { (k, v) -> prune(v, k) })
+                is JsonArray -> JsonArray(
+                    if (key in MAPPING_LISTS) e.filter { m ->
+                        runCatching { json.decodeFromJsonElement(Mapping.serializer(), m) }.isSuccess.also { if (!it) dropped++ }
+                    } else e.map { prune(it, null) },
+                )
+                else -> e
+            }
+            val pruned = prune(json.parseToJsonElement(text), null)
+            if (dropped == 0) null else Lenient(decode(json.encodeToString(JsonElement.serializer(), pruned)), dropped)
+        }.getOrNull()
+    }
+
+    /** Keys that hold a list of mappings. */
+    private val MAPPING_LISTS = setOf("mappings", "controller", "keyboard", "mouse", "touch")
 
     /**
      * At least one workspace, all corners present, no corner inside a workspace and unique

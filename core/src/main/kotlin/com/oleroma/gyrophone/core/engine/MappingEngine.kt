@@ -1292,6 +1292,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         trigger[1] = max(trigger[1], abs(gyroPad[GamepadAxis.RT.ordinal]))
         holdModeKeys()
         endOnNextInput(now)
+        endOnSame(now)
         collectHaptics()
         for (i in deviceList.indices) deviceList[i].shownInSnapshot()
         anyDevice.shownInSnapshot()
@@ -1437,6 +1438,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 }
                 // A swipe direction's own outputs are not another input for its latch.
                 if (latchChip(m.source)) stickies.add(Sticky(null, m.target))
+                sameSeen(m, dev, now)
             }
             when (val t = m.target) {
                 is OutputTarget.Pad -> if (v >= PRESS_THRESHOLD) when (t.button) {
@@ -1570,6 +1572,64 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 for (sf in surfaceList) sf.endLatch(letGo = false)
             }
         }
+    }
+
+    /** Outputs pressed by mappings that are not toggles watching for them ([MapOptions.endsOnSame]): now and at the last snapshot. */
+    private var othersNow = HashSet<OutputTarget>()
+    private var othersBefore = HashSet<OutputTarget>()
+
+    /** Toggles that are on and end when their output is pressed elsewhere; toggles of other mappings that are on. */
+    private val sameWatchers = ArrayList<Sticky>()
+    private val onToggles = ArrayList<Sticky>()
+
+    /** What swipe latches that end on their own output pressed elsewhere press. */
+    private val latchSameTargets = HashSet<OutputTarget>()
+
+    /** Mapping [m] (of [dev]'s group) presses its output now: notes it for [endOnSame]. */
+    private fun sameSeen(m: Mapping, dev: Dev?, now: Long) {
+        val o = m.options
+        val toggle = o != null && o.mode == How.TOGGLE
+        if (toggle && o!!.endsOnTap && latchChip(m.source)) {
+            // A swipe latch's chip: held while latched.
+            if (o!!.endsOnSame) latchSameTargets.add(m.target)
+            return
+        }
+        if (toggle) {
+            val sh = shaperOf(m, dev)
+            if (sh.toggledOn(now)) {
+                if (o!!.endsOnSame) {
+                    sameWatchers.add(Sticky(sh, m.target)); return
+                }
+                onToggles.add(Sticky(sh, m.target))
+            }
+        }
+        othersNow.add(m.target)
+    }
+
+    /**
+     * Toggles set to end on the same output ([MapOptions.endsOnSame]) end when another mapping
+     * starts pressing it (not one that already pressed it when the toggle came on). A toggle of that
+     * other mapping that came on with that press ends too, so the press only turns the output off.
+     */
+    private fun endOnSame(now: Long) {
+        if (sameWatchers.isNotEmpty() || latchSameTargets.isNotEmpty()) {
+            for (w in sameWatchers) {
+                val sh = w.shaper!!
+                if (sh.sameArmed && w.target in othersNow && w.target !in othersBefore) {
+                    sh.letGo(now)
+                    for (t in onToggles) if (t.target == w.target && !t.shaper!!.sameArmed) t.shaper.letGo(now)
+                }
+                sh.sameArmed = true
+            }
+            if (latchSameTargets.any { it in othersNow && it !in othersBefore }) {
+                touchpad.endLatchOnSame()
+                for (sf in surfaceList) sf.endLatchOnSame()
+            }
+        }
+        // A toggle seen on: the next snapshot's press of its output is a new one.
+        for (t in onToggles) t.shaper!!.sameArmed = true
+        sameWatchers.clear(); onToggles.clear(); latchSameTargets.clear()
+        val b = othersBefore; othersBefore = othersNow; othersNow = b; othersNow.clear()
     }
 
     /** Whether [ms] maps analog axis [a] or [b] to a game pad trigger. */
@@ -1755,13 +1815,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         (dev?.shapers ?: touchShapers).getOrPut(m) { Shaper(shaperOptions(m), derivedTrigger(m.source)) }
 
     /**
-     * [m]'s options as its shaper runs them: an On swipe chip's Toggle is the surface's latch
-     * ([SurfaceMap.latches]), which keeps the direction held, so the chip itself is Held.
+     * [m]'s options as its shaper runs them: an On swipe chip's Toggle that also ends on a tap is
+     * the surface's latch ([SurfaceMap.latches]), which keeps the direction held, so the chip itself
+     * is Held. Without Tap it is a plain Toggle: the next swipe that way turns it off.
      */
     private fun shaperOptions(m: Mapping): MapOptions {
         val o = m.options ?: return MapOptions()
         val s = m.source
-        return if (o.mode == How.TOGGLE && latchChip(s)) o.copy(how = How.HELD, toggle = false) else o
+        return if (o.mode == How.TOGGLE && o.endsOnTap && latchChip(s)) o.copy(how = How.HELD, toggle = false) else o
     }
 
     /** [s] is an On swipe chip of a swipe direction (any zone): a Toggle on it latches the surface. */

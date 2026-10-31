@@ -415,7 +415,8 @@ enum class How(val label: String, val mark: String) {
  * A TOGGLE also ends ("Also ends on") on [endsOnTap] (the next touch of the same button or
  * surface), [endsOnLetGo] (a [OutputTarget.LetGo] mapping firing), [endsAfterMs] (a timer; 0 =
  * none) and [endsOnNextInput] (once the next other key, mouse button or pad button has been
- * pressed and let go: a sticky Shift).
+ * pressed and let go: a sticky Shift) and [endsOnSame] (the same output, its key or button,
+ * pressed by another mapping).
  */
 @Serializable
 data class MapOptions(
@@ -430,6 +431,7 @@ data class MapOptions(
     val endsOnLetGo: Boolean = false,
     val endsAfterMs: Int = 0,
     val endsOnNextInput: Boolean = false,
+    val endsOnSame: Boolean = false,
 ) {
     /** Changes nothing (such a mapping keeps no options). */
     val none: Boolean get() = this == MapOptions()
