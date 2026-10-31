@@ -230,7 +230,7 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
 
 /**
  * The ⚙ of direction [d]'s Swipe ([hold] false: its pie, sample and swipe distance) or Swipe hold (its
- * pie, sample, hold distance, keep held after lift and, with [zones] mapped, its length zones), each its
+ * pie, sample, hold distance; zones are set by its ┃ dividers), each its
  * own over [level]'s shared value (the Settings), highlighted with a ↺ where it sets its own.
  */
 @Composable
@@ -285,9 +285,8 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
                 own(DirField.HOLD), reset(DirField.HOLD),
                 hint = if (s.dragStart && s.holdMode == HoldMode.FROM_START) "With Drag start point, the start point trails the furthest hold distance of the four." else null,
             ) { v -> edit { it.copy(holdDp = v) } }
-            SectionTitle("Length zones")
-            HoldZoneSettings(s, zones, k, only = d, zone = null, onChange = current.setZones)
         }
+        if (hold) DirNote("Zone lengths and what each zone does: tap the zone's ┃ divider in the mapping row.")
         DirNote("Highlighted: set for ${d.label} only. The rest is the Settings' value, shared by every direction.")
     }
 }
