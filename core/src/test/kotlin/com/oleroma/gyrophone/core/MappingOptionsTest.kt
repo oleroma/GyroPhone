@@ -2,7 +2,11 @@ package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.PadDevice
+import com.oleroma.gyrophone.core.model.AndroidAxis
+import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AttachedPad
+import com.oleroma.gyrophone.core.model.GyroMode
+import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.ButtonGesture
 import com.oleroma.gyrophone.core.model.HoldZone
 import com.oleroma.gyrophone.core.model.How
@@ -10,6 +14,7 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingSet
+import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchControl
@@ -303,6 +308,37 @@ class MappingOptionsTest {
         e.slide(0, 30, seen)
         e.touchpadCancel(); e.hold(40, seen)
         assertTrue(seen.none { A in it || B in it })
+    }
+
+    @Test
+    fun eachActiveRatchetFlipsItsAxes() {
+        val lt = listOf(InputSource.Axis(AndroidAxis.LTRIGGER), InputSource.Axis(AndroidAxis.BRAKE), InputSource.Key(AndroidKey.BUTTON_L2))
+        val w = Workspace(
+            id = "w", name = "w", gyro = GyroSettings(mode = GyroMode.ALWAYS),
+            pads = listOf(AttachedPad(id = "p", mappings = listOf(
+                Mapping(InputSource.Key(KEY_A), OutputTarget.GyroPause),
+                Mapping(InputSource.KeyGesture(KEY_A, ButtonGesture.DOUBLE_TAP), OutputTarget.GyroPause),
+                Mapping(InputSource.Key(KEY_B), OutputTarget.GyroPauseAxis(MotionAxis.YAW)),
+            ) + lt.map { Mapping(it, OutputTarget.GyroPause) })),
+        )
+        val e = MappingEngine(single(w)) { t }.apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 10 * MS }
+        val all = MappingEngine.ALL_GYRO
+        val yaw = MappingEngine.gyroBit(MotionAxis.YAW)
+        assertEquals(all, e.gyroAxes)
+        e.down(); e.keys()
+        assertEquals(0, e.gyroAxes) // one ratchet: paused
+        e.setKey(dev, KEY_B, true); e.keys()
+        assertEquals(yaw, e.gyroAxes) // a yaw ratchet on top: yaw back on
+        assertEquals(all, e.ratchetsHeld) // still shown as held
+        e.setKey(dev, KEY_B, false); e.up(); e.keys(); t += 600 * MS; e.keys()
+        // A double tap's ratchet on top of the same button's press: back on.
+        e.down(); e.keys(); t += 20 * MS; e.up(); e.keys(); t += 20 * MS
+        e.down(); e.keys()
+        assertEquals(all, e.gyroAxes)
+        e.up(); e.keys(); t += 600 * MS; e.keys()
+        // A trigger pull (its axes and key mapped alike) is one ratchet.
+        e.setKey(dev, AndroidKey.BUTTON_L2, true); e.setAxis(dev, AndroidAxis.LTRIGGER, 1f); e.setAxis(dev, AndroidAxis.BRAKE, 1f); e.keys()
+        assertEquals(0, e.gyroAxes)
     }
 
     @Test

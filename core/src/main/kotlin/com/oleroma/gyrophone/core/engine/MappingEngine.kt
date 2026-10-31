@@ -1121,7 +1121,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /**
      * Whether gyro moves anything now. A ratchet (a held [OutputTarget.GyroPause], old
      * [OutputTarget.GyroHold] or one axis's [OutputTarget.GyroPauseAxis]) pauses an axis in
-     * "ratchet disables" (ALWAYS) and engages one in "ratchet enables" (OFF) while held. A
+     * "ratchet disables" (ALWAYS) and engages one in "ratchet enables" (OFF) while held; each
+     * further ratchet active on that axis flips it again (two cancel out, [ratchetedAxes]). A
      * [OutputTarget.GyroToggle] press swaps the two until the workspace changes. SENSOR_OFF: never.
      */
     val gyroActive: Boolean get() = gyroAxes != 0
@@ -1132,7 +1133,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val g = gyroNow
             if (g.mode == GyroMode.SENSOR_OFF) return@synchronized 0
             val ratchets = if (ratchetMapped) ratchetedAxes() else 0
-            ratchetsHeld = ratchets
+            ratchetsHeld = ratchetHeldBits
             var out = 0
             for (a in MOTION_AXES) {
                 // On without a ratchet: "ratchet disables" (ALWAYS) unless toggled, "ratchet enables" only toggled.
@@ -1142,13 +1143,32 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             out
         }
 
-    /** The [gyroBit]s of the axes a held ratchet acts on, as of the last [gyroAxes] read. */
+    /** The [gyroBit]s of the axes some held ratchet acts on (flipped or not), as of the last [gyroAxes] read. */
     @Volatile var ratchetsHeld: Int = 0
         private set
 
-    /** The [gyroBit]s of the axes a held ratchet acts on. */
+    /** [ratchetedAxes]' axes with any ratchet held. */
+    private var ratchetHeldBits = 0
+
+    /** The ratchets [ratchetedAxes] counted: group, input, target. */
+    private val ratchetSeen = HashSet<Triple<Dev?, InputSource, OutputTarget>>()
+
+    /** [s] as the one input it is part of: a trigger's pull axes are its key (they map together). */
+    private fun sameInput(s: InputSource): InputSource = when {
+        s is InputSource.Axis && (s.axis == AndroidAxis.LTRIGGER || s.axis == AndroidAxis.BRAKE) -> InputSource.Key(AndroidKey.BUTTON_L2)
+        s is InputSource.Axis && (s.axis == AndroidAxis.RTRIGGER || s.axis == AndroidAxis.GAS) -> InputSource.Key(AndroidKey.BUTTON_R2)
+        else -> s
+    }
+
+    /**
+     * The [gyroBit]s of the axes flipped by the ratchets active now: each active ratchet mapping
+     * flips its axes, so an odd number of them on an axis flips it. Several triggers of one
+     * button each count (a press ratchets, a swipe on it ratchets back).
+     */
     private fun ratchetedAxes(): Int {
         var bits = 0
+        var held = 0
+        ratchetSeen.clear()
         forEachGroup { ms, dev ->
             for (i in ms.indices) {
                 val m = ms[i]
@@ -1158,9 +1178,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                     is OutputTarget.GyroPauseAxis -> gyroBit(t.axis)
                     else -> continue
                 }
-                if (bits and b != b && out(m, dev, clock()) >= PRESS_THRESHOLD) bits = bits or b
+                // One input's sources (a trigger's axes and its key) count once.
+                if (out(m, dev, clock()) >= PRESS_THRESHOLD && ratchetSeen.add(Triple(dev, sameInput(m.source), t))) {
+                    bits = bits xor b; held = held or b
+                }
             }
         }
+        ratchetHeldBits = held
         return bits
     }
 
