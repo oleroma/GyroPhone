@@ -1064,9 +1064,9 @@ data class TouchpadSettings(
 /**
  * One length zone of a held direction ([TouchpadSettings.holdZone]). [lengthDp]: how far it goes
  * before the next zone starts (null = the first zone's length, or for the first the hold
- * distance). On reach (default): its mappings are held while the finger is in it; [onRelease]:
- * they fire once as the finger lifts in it instead. [keep] (on reach only): whether they stay held
- * once the finger leaves it ([ZoneKeep]).
+ * distance). Its mappings are held while the finger is in it ([keep]: whether they stay held
+ * once the finger leaves it, [ZoneKeep]); a mapping whose When is Release fires as the finger
+ * lifts in it instead ([InputSource.Surface.on]). [onRelease]: from before that, no longer read.
  */
 @Serializable
 data class HoldZone(

@@ -27,6 +27,7 @@ import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.WorkspaceMappings
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.TouchControl
+import com.oleroma.gyrophone.core.model.TriggerReset
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.NavCorners
@@ -91,7 +92,10 @@ class GamepadRuntime(context: Context) {
      * All workspaces live in one profile ([WorkspaceSet]), each with its own mappings, stored as
      * [WorkspaceMappings.store] keeps them. See [loadWorkspaceSet] and [loadOwnMappings].
      */
-    private var stored: Profile = loadOwnMappings(loadWorkspaceSet())
+    private var stored: Profile = run {
+        val existing = store.userProfiles().isNotEmpty()
+        resetForTriggers(loadOwnMappings(loadWorkspaceSet()), existing)
+    }
 
     private val _activeProfile = MutableStateFlow(WorkspaceMappings.resolve(stored))
 
@@ -741,6 +745,25 @@ class GamepadRuntime(context: Context) {
      * merged from the profile that was active (its workspaces first, so the current one stays
      * current) and every other user profile. Old profile files are left on disk untouched.
      */
+    /**
+     * On the first start with mapping triggers, a set from before goes back to a fresh install's
+     * config, keeping its workspaces' names and layouts ([TriggerReset]); the set as it was is
+     * kept beside it as a backup. A fresh install has nothing to reset.
+     */
+    private fun resetForTriggers(set: Profile, existing: Boolean): Profile {
+        if (store.triggerReset) return set
+        if (!existing) {
+            store.triggerReset = true
+            return set
+        }
+        store.backup(set, TRIGGER_BACKUP_TAG)
+        val fresh = WorkspaceMappings.store(WorkspaceSet.merge(BuiltinProfiles.default, emptyList()))
+        val reset = TriggerReset.apply(set, fresh)
+        store.save(reset)
+        store.triggerReset = true
+        return reset
+    }
+
     private fun loadWorkspaceSet(): Profile {
         val users = store.userProfiles()
         users.firstOrNull { it.id == WorkspaceSet.ID }?.let {
@@ -958,6 +981,7 @@ class GamepadRuntime(context: Context) {
         private const val MAPPING_MIGRATION = 2
         private const val BACKUP_TAG = "pre-mappings"
         private const val OWN_BACKUP_TAG = "pre-own-mappings"
+        private const val TRIGGER_BACKUP_TAG = "pre-trigger-reset"
         private const val PAUSED = "Paused while the pad is not open"
         private const val GYRO_OFF = "Off in this workspace"
         private const val UNAVAILABLE = "Unavailable"

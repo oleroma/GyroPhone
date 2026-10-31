@@ -100,14 +100,40 @@ object Bindings {
     fun targets(mappings: List<Mapping>, input: BindableInput): List<OutputTarget> =
         mappings.filter { belongs(it, input) }.map { it.target }.distinct()
 
+    /** The options [input] maps [target] with (null = none). */
+    fun options(mappings: List<Mapping>, input: BindableInput, target: OutputTarget): MapOptions? =
+        mappings.firstOrNull { belongs(it, input) && it.target == target }?.options
+
+    /** [input] (a held one, see [Triggers.supports]) firing on [t]: its sources' trigger sources; null when it has no such trigger. */
+    fun triggerInput(input: BindableInput, t: Trigger): BindableInput? {
+        if (t == Trigger.HOLD) return input
+        val sources = input.sources.map { Triggers.with(it, t) ?: return null }
+        return input.copy(label = Triggers.label(input.sources.first(), t), sources = sources)
+    }
+
+    /** The triggers [input] offers ([Triggers.offered]): those all its sources offer, else Hold only. */
+    fun triggersOf(input: BindableInput): List<Trigger> =
+        if (input.sources.isEmpty()) listOf(Trigger.HOLD)
+        else input.sources.map { Triggers.offered(it) }.reduce { a, b -> a.filter { it in b } }
+
+    /** An input that is another one's trigger (its tap, long press...): shown on that one's card, not its own. */
+    fun isTriggerOf(input: BindableInput): Boolean =
+        input.sources.firstOrNull()?.let { Triggers.of(it) != Trigger.HOLD } == true
+
     /**
      * Replaces every mapping whose source is one of input.sources with sources x targets. Keeps
      * other mappings and their order; new ones go where the first removed one was, else at the end.
      */
-    fun setTargets(mappings: List<Mapping>, input: BindableInput, targets: List<OutputTarget>): List<Mapping> {
+    fun setTargets(
+        mappings: List<Mapping>,
+        input: BindableInput,
+        targets: List<OutputTarget>,
+        /** The options of a target kept or added; by default those it had here. */
+        options: (OutputTarget) -> MapOptions? = { t -> mappings.firstOrNull { belongs(it, input) && it.target == t }?.options },
+    ): List<Mapping> {
         val first = mappings.indexOfFirst { belongs(it, input) }
         val kept = mappings.filterNot { belongs(it, input) }
-        val added = input.sources.flatMap { s -> targets.distinct().map { Mapping(s, it) } }
+        val added = input.sources.flatMap { s -> targets.distinct().map { Mapping(s, it, options = options(it)) } }
         val at = if (first < 0) kept.size else first
         return kept.subList(0, at) + added + kept.subList(at, kept.size)
     }

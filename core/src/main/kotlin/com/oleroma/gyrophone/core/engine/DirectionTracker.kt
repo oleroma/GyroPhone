@@ -31,6 +31,13 @@ internal class DirectionTracker {
      */
     val zoneCount = IntArray(4) { 1 }
 
+    /**
+     * Per direction ([Direction.ordinal]): the zones mapped only to fire as the finger lifts in
+     * them (a mask of 1 shl zone; the caller sets it). Nothing holds them: they are not held,
+     * kept or latched, and fire through [zoneAt] at the lift.
+     */
+    val releaseOnly = IntArray(4)
+
     /** Per direction: the zone the finger is in now (FROM_START) or got to (DIRECTION_CHANGE), -1 = none. */
     private val at = IntArray(4) { -1 }
 
@@ -90,12 +97,6 @@ internal class DirectionTracker {
 
     /** The zone of [d] the finger is in now (FROM_START) or got to (DIRECTION_CHANGE), or -1. */
     fun zoneAt(d: Direction): Int = at[d.ordinal]
-
-    /** [d]'s zone the finger is in fires on release: it fires as the finger lifts. */
-    fun firesOnRelease(d: Direction, s: TouchpadSettings): Boolean {
-        val z = at[d.ordinal]
-        return z >= 0 && zone(d, z, s).onRelease
-    }
 
     /** One step of travel ([dx], [dy] dp); returns the directions whose swipe fires now. */
     fun step(dx: Float, dy: Float, s: TouchpadSettings): Int {
@@ -247,9 +248,8 @@ internal class DirectionTracker {
         if (z < 0) return 0
         var m = 0
         for (i in 0..z) {
-            val zone = zone(d, i, s)
-            if (zone.onRelease) continue
-            if (i == z || zone.keep != ZoneKeep.OFF) m = m or (1 shl i)
+            if (lifts(d, i)) continue
+            if (i == z || zone(d, i, s).keep != ZoneKeep.OFF) m = m or (1 shl i)
         }
         return m
     }
@@ -257,10 +257,12 @@ internal class DirectionTracker {
     /** The finger got to zone [z] of [d]: it and the zones before it that stay until the lift are held from now on. */
     private fun reach(d: Direction, z: Int, s: TouchpadSettings) {
         for (i in 0..z) {
-            val zone = zone(d, i, s)
-            if (!zone.onRelease && zone.keep == ZoneKeep.UNTIL_LIFT) untilLift[d.ordinal] = untilLift[d.ordinal] or (1 shl i)
+            if (!lifts(d, i) && zone(d, i, s).keep == ZoneKeep.UNTIL_LIFT) untilLift[d.ordinal] = untilLift[d.ordinal] or (1 shl i)
         }
     }
+
+    /** Zone [i] of [d] only fires as the finger lifts in it ([releaseOnly]). */
+    private fun lifts(d: Direction, i: Int) = releaseOnly[d.ordinal] and (1 shl i) != 0
 
     /** Zone [i] of [d]; with one zone only it is a plain held direction, whatever its settings say. */
     private fun zone(d: Direction, i: Int, s: TouchpadSettings): HoldZone =

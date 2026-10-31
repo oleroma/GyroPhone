@@ -2364,6 +2364,7 @@ fun PadScreen(
                             Inheritance.inherited(Inheritance.workspace(ws, d.defaults), emptyList(), sel.id, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE)
                         } else emptyList(),
                         parentName = "Workspace",
+                        timing = { sel.longPress(ws) to sel.doubleTap(ws) },
                     )
                 } else {
                     // A long press: all of the control's settings.

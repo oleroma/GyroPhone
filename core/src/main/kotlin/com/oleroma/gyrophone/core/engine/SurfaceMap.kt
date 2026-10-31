@@ -3,13 +3,16 @@ package com.oleroma.gyrophone.core.engine
 import com.oleroma.gyrophone.core.hid.HidUsage
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.How
 import com.oleroma.gyrophone.core.model.KeyMode
+import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.StickAxis
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchpadSettings
+import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.holdDirection
 
 /**
@@ -18,6 +21,9 @@ import com.oleroma.gyrophone.core.model.holdDirection
  */
 class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
     private val mapped = BooleanArray(BITS)
+
+    /** Per input bit: something maps it that is not a swipe Release ([InputSource.Surface.on]). */
+    private val holds = BooleanArray(BITS)
 
     /** Per input bit: its targets (to tell whether a tap and its double tap do the same). */
     private val targets = arrayOfNulls<HashSet<OutputTarget>>(BITS)
@@ -35,6 +41,20 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
 
     /** Pinch zooms (Ctrl + wheel). */
     internal var zoom = false
+
+    /**
+     * Per finger count (index fingers - 1): the held directions that latch ([Touchpad] keeps them
+     * held after the lift), a mask of 1 shl [Direction.ordinal]. A direction latches when one of its
+     * On swipe chips is a Toggle ([How.TOGGLE]).
+     */
+    private val latchDirs = IntArray(4)
+
+    /** Per finger count: a latch lets go by itself this long after the lift (ms); 0 = never. */
+    internal val latchMs = IntArray(4) { -1 }
+
+    /** Per finger count: a latch also ends on a Let go action / on the next other input. */
+    internal val latchLetGo = BooleanArray(4)
+    internal val latchNext = BooleanArray(4)
 
     /**
      * Motion routing: cursor counts and wheel units out per unit of X / Y travel in (X in, Y in).
@@ -66,6 +86,17 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
             }
             val b = bit(s.fingers, s.input, s.zone)
             mapped[b] = true
+            val o = m.options
+            if (dir != null && s.on == Trigger.HOLD && o != null && o.mode == How.TOGGLE) {
+                val f = s.fingers - 1
+                latchDirs[f] = latchDirs[f] or (1 shl dir.ordinal)
+                val ms = o.endsAfterMs.coerceIn(0, MapOptions.MAX_TOGGLE_MS)
+                // Any chip without a timer keeps it; else the longest timer.
+                latchMs[f] = if (latchMs[f] < 0) ms else if (latchMs[f] == 0 || ms == 0) 0 else maxOf(latchMs[f], ms)
+                if (o.endsOnLetGo) latchLetGo[f] = true
+                if (o.endsOnNextInput) latchNext[f] = true
+            }
+            if (s.on != Trigger.RELEASE) holds[b] = true
             (targets[b] ?: HashSet<OutputTarget>().also { targets[b] = it }).add(m.target)
             val mo = motion[s.fingers - 1]
             val axis = when (s.input) {
@@ -73,10 +104,12 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
                 SurfaceInput.MOTION_Y -> StickAxis.Y
                 else -> null
             }
+            // A mapping with options is shaped and pressed by the engine ([MappingEngine]).
+            val shaped = m.options != null || s.on != Trigger.HOLD
             when (val t = m.target) {
-                is OutputTarget.Mouse -> mouse[b] = mouse[b] or (1 shl t.button.bit)
+                is OutputTarget.Mouse -> if (!shaped) mouse[b] = mouse[b] or (1 shl t.button.bit)
                 // Toggle and next-key keys are held by the engine ([MappingEngine]).
-                is OutputTarget.Key -> if (t.mode == KeyMode.HOLD) when {
+                is OutputTarget.Key -> if (t.mode == KeyMode.HOLD && !shaped) when {
                     HidUsage.isModifier(t.usage) -> mods[b] = mods[b] or (1 shl (t.usage - HidUsage.LEFT_CTRL))
                     key[b] == 0 -> key[b] = t.usage and 0xFF
                 }
@@ -119,6 +152,23 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
     fun has(fingers: Int, input: SurfaceInput, zone: Int = 0): Boolean =
         fingers in 1..4 && zone in 0 until TouchpadSettings.MAX_HOLD_ZONES && mapped[bit(fingers, input, zone)]
 
+    /**
+     * The zones of held direction [d] with [fingers] mapped only to fire as the finger lifts in
+     * them (swipe Release), a mask of 1 shl zone: nothing holds them ([DirectionTracker]).
+     */
+    fun releaseOnly(fingers: Int, d: Direction): Int {
+        if (fingers !in 1..4) return 0
+        var m = 0
+        for (z in 0 until TouchpadSettings.MAX_HOLD_ZONES) {
+            val b = bit(fingers, holdOf(d), z)
+            if (mapped[b] && !holds[b]) m = m or (1 shl z)
+        }
+        return m
+    }
+
+    /** Held direction [d] with [fingers] latches (see [latchDirs]). */
+    fun latches(fingers: Int, d: Direction): Boolean = fingers in 1..4 && latchDirs[fingers - 1] and (1 shl d.ordinal) != 0
+
     /** How many length zones held direction [d] with [fingers] has mapped (at least 1). */
     fun zoneCount(fingers: Int, d: Direction): Int = if (fingers in 1..4) zones[(fingers - 1) * 4 + d.ordinal] else 1
 
@@ -155,6 +205,13 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
             val d = input.holdDirection ?: return (fingers - 1) * INPUTS + input.ordinal
             return 4 * INPUTS + ((fingers - 1) * 4 + d.ordinal) * (TouchpadSettings.MAX_HOLD_ZONES - 1) + zone - 1
         }
+        private fun holdOf(d: Direction): SurfaceInput = when (d) {
+            Direction.UP -> SurfaceInput.HOLD_UP
+            Direction.RIGHT -> SurfaceInput.HOLD_RIGHT
+            Direction.DOWN -> SurfaceInput.HOLD_DOWN
+            Direction.LEFT -> SurfaceInput.HOLD_LEFT
+        }
+
         private val MOVES = listOf(
             SurfaceInput.MOTION_X, SurfaceInput.MOTION_Y,
             SurfaceInput.SWIPE_LEFT, SurfaceInput.SWIPE_RIGHT, SurfaceInput.SWIPE_UP, SurfaceInput.SWIPE_DOWN,

@@ -327,12 +327,13 @@ internal fun MappingsSummary(control: TouchControl, mappings: List<Mapping>, onE
     FilledTonalButton(onClick = onEditMappings) { Text("Edit mappings") }
 }
 
-/** What the editor calls an action: a button's own press is "Press" (its input is named after the button). */
+/**
+ * What the editor calls an action: a button's own touch is "Touch" (its input is named after the
+ * button; "Press" is now a trigger). Its triggers (Tap, Long press...) are chips on that card.
+ */
 internal fun actionLabel(control: TouchControl, input: BindableInput): String = when {
     control.kind != TouchKind.BUTTON || input.sources.firstOrNull() !is InputSource.Touch -> input.label
-    // In swipe mode the press is one finger's hold.
-    control.swipes -> "Hold"
-    else -> "Press"
+    else -> "Touch"
 }
 
 /**

@@ -19,17 +19,26 @@ object WorkspaceMappings {
      * settings it doesn't set itself ([WorkspaceDefaults.apply]), its pinned preset's device
      * mappings, and touch buttons' gestures where their mode reads them ([Bindings.matchSwipeModes]).
      */
-    fun resolve(set: Profile): Profile =
-        set.copy(workspaces = set.workspaces.map { resolve(WorkspaceDefaults.apply(it, set.defaults), set.devicePresets) })
+    fun resolve(set: Profile): Profile {
+        // Old latch settings become Toggle chips ([ToggleUpgrade]); the Defaults' still count for the workspaces.
+        val d = set.defaults
+        val defaults = ToggleUpgrade.latches(d.copy(mappings = Triggers.upgrade(d.mappings)))
+        return set.copy(
+            defaults = defaults,
+            workspaces = set.workspaces.map {
+                resolve(ToggleUpgrade.latches(WorkspaceDefaults.apply(it, d)), set.devicePresets)
+            },
+        )
+    }
 
     fun resolve(w: Workspace, presets: List<DevicePreset> = emptyList()): Workspace =
         Bindings.matchSwipeModes(w).let { r ->
             val p = presets.firstOrNull { it.id == w.devicePreset }
             r.copy(
-                mappings = Bindings.upgradeSwipes(r.mappings),
-                pads = if (p == null) emptyList() else listOf(AttachedPad(PRESET_PAD, mappings = p.controller)),
-                keyboard = p?.keyboard.orEmpty(),
-                mouse = p?.mouse.orEmpty(),
+                mappings = Triggers.upgrade(Bindings.upgradeSwipes(r.mappings)),
+                pads = if (p == null) emptyList() else listOf(AttachedPad(PRESET_PAD, mappings = Triggers.upgrade(p.controller))),
+                keyboard = Triggers.upgrade(p?.keyboard.orEmpty()),
+                mouse = Triggers.upgrade(p?.mouse.orEmpty()),
                 keyTimings = p?.timings.orEmpty(),
             )
         }

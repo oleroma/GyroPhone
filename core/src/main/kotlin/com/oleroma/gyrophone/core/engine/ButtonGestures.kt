@@ -54,22 +54,24 @@ internal class ButtonGestures(
     val double = Gesture()
     val long = Gesture()
     val release = Gesture()
+    val press = Gesture()
 
     fun gesture(g: ButtonGesture): Gesture = when (g) {
         ButtonGesture.TAP -> tap
         ButtonGesture.DOUBLE_TAP -> double
         ButtonGesture.LONG_PRESS -> long
         ButtonGesture.RELEASE -> release
+        ButtonGesture.PRESS -> press
     }
 
     fun on(g: ButtonGesture): Boolean = gesture(g).on
 
     /** Some gesture is on (so its device still counts as active). */
-    val anyOn: Boolean get() = tap.on || double.on || long.on || release.on
+    val anyOn: Boolean get() = tap.on || double.on || long.on || release.on || press.on
 
     fun reset() {
         pressing = false; second = false; longThisPress = false; windowOpen = false; tapPending = false
-        tap.reset(); double.reset(); long.reset(); release.reset()
+        tap.reset(); double.reset(); long.reset(); release.reset(); press.reset()
     }
 
     fun down(now: Long, minPulse: Long) {
@@ -77,6 +79,7 @@ internal class ButtonGestures(
         if (pressing) return
         pressing = true
         downNs = now
+        press.start(now, hold = false)
         longThisPress = false
         second = hasDouble && windowOpen && now - upNs <= doubleNs
         windowOpen = false
@@ -131,6 +134,7 @@ internal class ButtonGestures(
         if (double.on && !double.holding && double.seen) d = min(d, double.startNs + minPulse)
         if (long.on && !long.holding && long.seen) d = min(d, long.startNs + minPulse)
         if (release.on && !release.holding && release.seen) d = min(d, release.startNs + minPulse)
+        if (press.on && !press.holding && press.seen) d = min(d, press.startNs + minPulse)
         return d
     }
 
@@ -140,6 +144,7 @@ internal class ButtonGestures(
         if (double.on) double.seen = true
         if (long.on) long.seen = true
         if (release.on) release.seen = true
+        if (press.on) press.seen = true
     }
 
     private fun endShown(now: Long, minPulse: Long) {
@@ -147,5 +152,6 @@ internal class ButtonGestures(
         if (double.done(now, minPulse)) double.on = false
         if (long.done(now, minPulse)) long.on = false
         if (release.done(now, minPulse)) release.on = false
+        if (press.done(now, minPulse)) press.on = false
     }
 }
