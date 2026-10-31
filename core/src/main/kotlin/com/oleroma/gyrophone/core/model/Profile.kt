@@ -539,6 +539,21 @@ fun touchedControls(
  * read, saving battery; ratchets and toggle do nothing). HOLD_OR_TOGGLE is only read from old
  * files and loads as OFF ([ProfileJson.normalize]).
  */
+/**
+ * Which axes gyro yaw, pitch and roll are measured about ([GyroSettings.gyroSpace]).
+ * - [LOCAL]: the phone's own axes (turning a tilted phone left and right leaks into roll).
+ * - [WORLD]: against gravity: yaw is turning around the vertical, pitch tilting around the
+ *   horizontal axis to the right, roll turning around the horizontal way the phone faces.
+ * - [PLAYER]: yaw blends the phone's yaw and roll by how it is tilted (forgiving when leaning
+ *   or lying down); pitch and roll stay the phone's.
+ */
+@Serializable
+enum class GyroSpace(val label: String) {
+    LOCAL("Local"),
+    WORLD("World"),
+    PLAYER("Player"),
+}
+
 @Serializable
 enum class GyroMode(val label: String) {
     OFF("Ratchet enables"),
@@ -735,6 +750,8 @@ data class GyroSettings(
     val absoluteLevelDeg: Float = 0f,
     /** [absolutePitch]'s own sensitivity: camera degrees per phone degree (RWS), apart from the gyro sensitivities. */
     val absoluteRws: Float = 1f,
+    /** Which axes yaw, pitch and roll are measured about ([GyroSpace]); the workspace's (and Defaults') only. */
+    val gyroSpace: GyroSpace = GyroSpace.LOCAL,
     /**
      * Inertia: when a ratchet turns a gyro axis off, its mouse and wheel motion glides on and slows
      * down over [glideMs] ([InertiaCurve]); it stops at once when the axis is on again. Sticks never glide.

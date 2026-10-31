@@ -31,6 +31,7 @@ import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TriggerReset
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.core.model.GyroSpace
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.HapticFeel
@@ -226,7 +227,8 @@ class GamepadRuntime(context: Context) {
     }
 
     /** Some gyro display holds its pose to gravity (and so needs the accelerometer). */
-    private val needsGravity: Boolean get() = vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity } || absoluteGyro() != null
+    private val needsGravity: Boolean get() = vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity } || absoluteGyro() != null ||
+        _activeProfile.value.workspace(_workspaceIndex.value).gyro.gyroSpace != GyroSpace.LOCAL
 
     /** Absolute pitch ([GyroSettings.absolutePitch]): the phone's pitch sets the camera's; the 3D camera display shows it. */
     val absolutePitch = AbsolutePitch()
@@ -239,6 +241,18 @@ class GamepadRuntime(context: Context) {
      * The active workspace's gyro settings while its absolute pitch can run (on, the game's turn
      * known, gyro not off completely), else null. The workspace's own: layers and buttons cannot change it.
      */
+    /**
+     * The gyro space ([GyroSpace]) yaw, pitch and roll are measured in now: the workspace's, or
+     * World while absolute pitch runs with Local set.
+     */
+    private fun gyroSpace(): GyroSpace {
+        val g = _activeProfile.value.workspace(_workspaceIndex.value).gyro
+        return if (g.gyroSpace == GyroSpace.LOCAL && absoluteGyro() != null) GyroSpace.WORLD else g.gyroSpace
+    }
+
+    /** The world's up for [GyroMouse.route] (gyro thread). */
+    private val upNow = FloatArray(3)
+
     private fun absoluteGyro(): GyroSettings? {
         val g = _activeProfile.value.workspace(_workspaceIndex.value).gyro
         return if (g.absolutePitch && g.gameCountsPer360 > 0f && g.mode != GyroMode.SENSOR_OFF) g else null
@@ -252,10 +266,6 @@ class GamepadRuntime(context: Context) {
     private fun absoluteSample(g: GyroSettings?, x: Float, y: Float, z: Float, dt: Float) {
         val presses = engine.levelPresses
         val on = g != null && !engine.gyroToggledNow
-        if (g != null) {
-            val m = gyroMouse.motion(x, y, z)
-            absolutePitch.rotate(m.yaw, m.pitch, m.roll, dt)
-        }
         engine.absoluteY = on
         if (!on) {
             levelSeen = presses
@@ -711,7 +721,7 @@ class GamepadRuntime(context: Context) {
 
     private fun onAccelSample(x: Float, y: Float, z: Float, ts: Long) {
         val feeds = gyroFeeds
-        val absolute = absoluteGyro() != null
+        val absolute = absoluteGyro() != null || gyroSpace() != GyroSpace.LOCAL
         if (vis.gyroNeedsGravity || feeds.isNotEmpty() || absolute) {
             // The same axes as the gyro's: right, up and toward the player in the phone's frame.
             val m = gyroMouse.motion(x, y, z)
@@ -1102,14 +1112,22 @@ class GamepadRuntime(context: Context) {
         val v = vis
         val feeds = gyroFeeds
         if (v.gyroEdge || feeds.isNotEmpty()) feedVisuals(v, feeds, x - biasX, y - biasY, z - biasZ, dt, axes)
-        absoluteSample(if (allowed) absoluteGyro() else null, x - biasX, y - biasY, z - biasZ, dt)
+        // World and player space and absolute pitch read the phone's pose against gravity.
+        val absG = if (allowed) absoluteGyro() else null
+        val space = gyroSpace()
+        if (absG != null || space != GyroSpace.LOCAL) {
+            val m = gyroMouse.motion(x - biasX, y - biasY, z - biasZ)
+            absolutePitch.rotate(m.yaw, m.pitch, m.roll, dt)
+            absolutePitch.up(upNow)
+        }
+        absoluteSample(absG, x - biasX, y - biasY, z - biasZ, dt)
         // An axis a ratchet just turned off may glide on (inertia) while the others are off.
         if (active || (allowed && gyroMouse.coasting)) {
             // A layer in use may set gyro settings of its own.
             val gs = engine.gyroSettings
             if (gs !== gyroMouse.settings) gyroMouse.settings = gs
             val routes = engine.gyroRoutes()
-            val r = gyroMouse.route(x - biasX, y - biasY, z - biasZ, dt, routes, axes)
+            val r = gyroMouse.route(x - biasX, y - biasY, z - biasZ, dt, routes, axes, space, upNow)
             if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel, fromGyro = active)
             engine.setGyroAxes(r.pad)
             gyroPadSet = true

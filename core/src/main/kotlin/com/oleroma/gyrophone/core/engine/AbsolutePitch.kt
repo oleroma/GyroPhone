@@ -73,6 +73,11 @@ class AbsolutePitch {
             return synchronized(this) { asin((-uz * c + uy * s).coerceIn(-1f, 1f)) * RAD_TO_DEG }
         }
 
+    /** The world's up in the phone's frame (right, up, toward the player), unit length, into [out]. */
+    fun up(out: FloatArray) = synchronized(this) {
+        out[0] = ux; out[1] = uy; out[2] = uz
+    }
+
     /** Forgets the camera: the next [step] takes it as where the phone points it (nothing moves). Keeps the phone's pose. */
     fun reset() {
         camera = null
