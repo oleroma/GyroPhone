@@ -36,6 +36,9 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
     /** Pinch zooms (Ctrl + wheel). */
     internal var zoom = false
 
+    /** Per finger count (index fingers - 1): its press has a mapping with a trigger (a tap, long press, release...). */
+    private val triggers = BooleanArray(4)
+
     /**
      * Motion routing: cursor counts and wheel units out per unit of X / Y travel in (X in, Y in).
      * Sideways wheel already carries its sign (natural: the page follows the finger).
@@ -56,7 +59,16 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
 
     init {
         for (m in mappings) {
+            // A button's one-finger press is its own (the engine runs its triggers).
+            if (id.isNotEmpty() && m.source == InputSource.Touch(id) && m.trigger.gestures) triggers[0] = true
             val s = m.source as? InputSource.Surface ?: continue
+            // A press mapping with a trigger or an output of its own runs in the engine.
+            if (!m.trigger.isDefault && s.input == SurfaceInput.HOLD && s.fingers in 1..4) {
+                if (m.trigger.gestures) triggers[s.fingers - 1] = true
+                // Its level still shows (an output of its own reads it), it presses nothing here.
+                else mapped[bit(s.fingers, s.input)] = true
+                continue
+            }
             if (s.id != id || s.fingers !in 1..4) continue
             val dir = s.input.holdDirection
             if (s.zone != 0 && (dir == null || s.zone !in 1 until TouchpadSettings.MAX_HOLD_ZONES)) continue
@@ -132,8 +144,8 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
             ?: emptySet<OutputTarget>())
     }
 
-    /** Something happens on a tap with [fingers]: a tap, double tap or tap-drag mapping. */
-    fun taps(fingers: Int): Boolean =
+    /** Something happens on a tap with [fingers]: a press mapping with a trigger, or an old tap, double tap or tap-drag one. */
+    fun taps(fingers: Int): Boolean = (fingers in 1..4 && triggers[fingers - 1]) ||
         has(fingers, SurfaceInput.TAP) || has(fingers, SurfaceInput.DOUBLE_TAP) || has(fingers, SurfaceInput.TAP_DRAG)
 
     /** Something follows the travel of [fingers]: a move, swipe or held direction mapping. */

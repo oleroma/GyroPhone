@@ -26,7 +26,9 @@ object ProfileJson {
      * At least one workspace, all corners present, no corner inside a workspace and unique
      * workspace ids.
      */
-    fun normalize(p: Profile): Profile {
+    fun normalize(profile: Profile): Profile {
+        // Mappings from before triggers do the same with triggers.
+        val p = TriggerUpgrade.profile(profile)
         var workspaces = p.workspaces.map { w ->
             val clean = if (w.touchControls.none { it.kind == TouchKind.FULLSCREEN }) w
             else w.copy(touchControls = w.touchControls.filterNot { it.kind == TouchKind.FULLSCREEN })

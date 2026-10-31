@@ -90,6 +90,7 @@ class HapticsTest {
         assertEquals(2, c.ticks) // still inside
         t += 50 * MS
         e.setTouchArea("s", TouchAreaKind.ZONE, false)
+        e.snapshot() // the entry pulse's end shows first
         e.snapshot()
         assertEquals(3, c.ticks) // and on exit
         e.snapshot()

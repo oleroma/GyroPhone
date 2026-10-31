@@ -287,14 +287,15 @@ object BuiltinProfiles {
         val byId = keys.values.associateBy { it.id }
         return keyboardControls.flatMap { c ->
             val usage = byId.getValue(c.id).usage
-            fun on(input: SurfaceInput, mode: KeyMode = KeyMode.HOLD) =
-                Mapping(InputSource.Surface(1, input, c.id), OutputTarget.Key(usage, mode))
-            // The touchpad's double tap and tap-drag (clicks) cleared, so a key types at once.
-            fun cleared(input: SurfaceInput) = Mapping(InputSource.Surface(1, input, c.id), OutputTarget.NoOutput)
-            if (!HidUsage.isModifier(usage)) listOf(on(SurfaceInput.TAP), cleared(SurfaceInput.DOUBLE_TAP), cleared(SurfaceInput.TAP_DRAG))
+            fun on(trigger: Trigger, t: OutputTarget = OutputTarget.Key(usage)) = Mapping(InputSource.Touch(c.id), t, trigger = trigger)
+            // The touchpad's clicks cleared, so a key types at once.
+            fun cleared(trigger: Trigger) = on(trigger, OutputTarget.NoOutput)
+            if (!HidUsage.isModifier(usage)) listOf(on(Trigger.TAP), cleared(Trigger.DOUBLE_PRESS), cleared(Trigger.DOUBLE_TAP))
             else listOf(
                 touch(c.id, OutputTarget.Key(usage)),
-                on(SurfaceInput.TAP, KeyMode.NEXT_KEY), on(SurfaceInput.DOUBLE_TAP, KeyMode.TOGGLE), cleared(SurfaceInput.TAP_DRAG),
+                on(Trigger(on = When.TAP, taps = Taps.SINGLE, output = Output.STICKY)),
+                on(Trigger(on = When.TAP, taps = Taps.DOUBLE, output = Output.TOGGLE)),
+                cleared(Trigger.TAP), cleared(Trigger.DOUBLE_PRESS),
             )
         }
     }

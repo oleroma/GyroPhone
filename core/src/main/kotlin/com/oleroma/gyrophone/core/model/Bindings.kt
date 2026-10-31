@@ -303,14 +303,21 @@ object Bindings {
      * touchpad mappings: tap = left click (tap-drag and double tap with tap and drag), one finger
      * moves the cursor, two-finger tap = right click, two fingers scroll, pinch zooms.
      */
-    fun defaultTouchpadMappings(s: TouchpadSettings): List<Mapping> = buildList {
+    fun defaultTouchpadMappings(s: TouchpadSettings): List<Mapping> = TriggerUpgrade.mappings(legacyTouchpadMappings(s))
+
+    /**
+     * [defaultTouchpadMappings] as they were before mapping triggers, with the surface's own tap
+     * inputs: what a [com.oleroma.gyrophone.core.engine.Touchpad] made without mappings runs.
+     */
+    internal fun legacyTouchpadMappings(s: TouchpadSettings): List<Mapping> = buildList {
         fun add(n: Int, i: SurfaceInput, t: OutputTarget) = add(Mapping(InputSource.Surface(n, i), t))
+        val tap = SurfaceInput.TAP
         val left = OutputTarget.Mouse(MouseButton.LEFT)
         if (s.tapToClick) {
             if (s.tapDrag) {
                 add(1, SurfaceInput.TAP_DRAG, left); add(1, SurfaceInput.DOUBLE_TAP, left)
-            } else add(1, SurfaceInput.TAP, left)
-            add(2, SurfaceInput.TAP, OutputTarget.Mouse(MouseButton.RIGHT))
+            } else add(1, tap, left)
+            add(2, tap, OutputTarget.Mouse(MouseButton.RIGHT))
         }
         add(1, SurfaceInput.MOTION_X, OutputTarget.MouseAxis(MouseMotion.MOVE_X))
         add(1, SurfaceInput.MOTION_Y, OutputTarget.MouseAxis(MouseMotion.MOVE_Y))
@@ -321,12 +328,12 @@ object Bindings {
         if (s.pinchZoom) add(2, SurfaceInput.PINCH, OutputTarget.Zoom)
         if (!s.gestures) {
             // Without gestures, three and four fingers tapped a middle click.
-            if (s.tapToClick) for (n in 3..4) add(n, SurfaceInput.TAP, OutputTarget.Mouse(MouseButton.MIDDLE))
+            if (s.tapToClick) for (n in 3..4) add(n, tap, OutputTarget.Mouse(MouseButton.MIDDLE))
             return@buildList
         }
         for (n in 3..4) {
             val g = s.gesturesFor(n)
-            if (s.tapToClick) for (t in gestureTargets(g.tap)) add(n, SurfaceInput.TAP, t)
+            if (s.tapToClick) for (t in gestureTargets(g.tap)) add(n, tap, t)
             val switches = g.swipeLeft == GestureAction.SwitchApps || g.swipeRight == GestureAction.SwitchApps
             if (switches) add(n, SurfaceInput.MOTION_X, OutputTarget.SwitchApps)
             for ((input, action) in listOf(

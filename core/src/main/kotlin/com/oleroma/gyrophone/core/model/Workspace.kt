@@ -68,7 +68,7 @@ data class Workspace(
         const val MIN_LONG_PRESS_MS = 100
         const val MAX_LONG_PRESS_MS = 1500
         const val DEFAULT_DOUBLE_TAP_MS = 300
-        const val MIN_DOUBLE_TAP_MS = 100
+        const val MIN_DOUBLE_TAP_MS = 0
         const val MAX_DOUBLE_TAP_MS = 800
     }
 }
