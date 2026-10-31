@@ -537,10 +537,9 @@ internal fun ControlMappingScreen(
         )
     }
 
-    /** Adds [t] to [input]; a haptic target or a layer action is set up first. */
+    /** Adds [t] to [input]; a layer action is set up first (a buzz is added as it is, its chip opens its settings). */
     fun pick(input: BindableInput, t: OutputTarget) {
         when {
-            Describe.isHaptic(t) -> hapticDraft = input to t
             t is OutputTarget.Layer && t.set < 0 -> layerDraft = input to t
             else -> assign(input, t)
         }
@@ -839,7 +838,7 @@ internal fun ControlMappingScreen(
                     val i = at.coerceIn(0, row.size)
                     val zone = zoneIn(row, i)
                     val zi = if (zone == 0) card else Bindings.zoneInput(card, zone)
-                    if (from == null && (Describe.isHaptic(d.target) || (d.target as? OutputTarget.Layer)?.set?.let { it < 0 } == true)) {
+                    if (from == null && (d.target as? OutputTarget.Layer)?.set?.let { it < 0 } == true) {
                         pick(zi, d.target)
                     } else {
                         if (from == null) addRecent(d.target)
@@ -1480,6 +1479,12 @@ internal fun ControlMappingScreen(
                 remove(ti, chip.target)
             },
             onDismiss = { chipDialog = null },
+            onTargetSettings = if (Describe.isHaptic(chip.target)) {
+                {
+                    chipDialog = null
+                    hapticDraft = ti to chip.target
+                }
+            } else null,
         )
     }
     val shared = settings?.shared
@@ -1576,7 +1581,17 @@ internal fun ControlMappingScreen(
             runtime = runtime,
             onOk = { configured ->
                 hapticDraft = null
-                assign(input, configured)
+                // The chip's buzz changes in place, keeping its place, When and How.
+                val old = Bindings.targets(currentMappings, input)
+                if (configured != t && t in old) {
+                    val opts = Bindings.options(currentMappings, input, t)
+                    change(
+                        Bindings.setTargets(currentMappings, input, old.map { if (it == t) configured else it }.distinct()) { x ->
+                            if (x == configured) opts else Bindings.options(currentMappings, input, x)
+                        },
+                        Describe.shortTarget(configured) + " set up",
+                    )
+                }
             },
             onCancel = { hapticDraft = null },
         )
