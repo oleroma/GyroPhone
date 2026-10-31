@@ -1523,8 +1523,8 @@ fun PadScreen(
                                     if (pointerCancel) runtime.engine.buttonCancel(pid) else runtime.engine.buttonUp(pid)
                                 } else if (ch.position != ch.previousPosition) {
                                     runtime.engine.buttonMove(pid, ch.position.x, ch.position.y, at)
-                                    // Once its Move moves, the finger shows Move rulers instead of the swipe line.
-                                    if (moveRulers.move(pid, ch.position)) swipeLines.up(pid) else swipeLines.move(pid, ch.position, pxPerDp)
+                                    swipeLines.move(pid, ch.position, pxPerDp)
+                                    moveRulers.move(pid, ch.position)
                                 }
                             } else if (ch.id in cornerOwner) {
                                 if (!ch.pressed) {

@@ -220,6 +220,9 @@ class SwipeLines {
         var y = p.y
         var held = false
 
+        /** On its axis ([SwipeGuide.onAxis]): the direction it last pointed into; it stays while the finger is outside every pie. */
+        var axis: Direction? = null
+
         /** Hold after was reached: the line shows from then until the finger lifts. */
         var shown = false
     }
@@ -273,9 +276,15 @@ class SwipeLines {
             var dx = l.x - l.start[0]
             var dy = l.y - l.start[1]
             // Along its direction's axis: the finger as far along as it went that way.
-            val axis = if (l.guide.onAxis) l.guide.direction(dx, dy) else null
+            // Outside every pie (moving another way, such as a Move) it stays on the last direction's
+            // axis, so it never turns into a line from the start point to the finger.
+            if (l.guide.onAxis) {
+                l.guide.direction(dx, dy)?.let { l.axis = it }
+                if (l.axis == null) continue
+            }
+            val axis = if (l.guide.onAxis) l.axis else null
             if (axis != null) {
-                val a = l.guide.along(axis, dx, dy)
+                val a = l.guide.along(axis, dx, dy).coerceAtLeast(0f)
                 dx = when (axis) { Direction.RIGHT -> a; Direction.LEFT -> -a; else -> 0f }
                 dy = when (axis) { Direction.DOWN -> a; Direction.UP -> -a; else -> 0f }
             }
@@ -374,7 +383,7 @@ class MoveRulers(private val track: (String, FloatArray) -> Int) {
         active = true
     }
 
-    /** Finger [id] moved to [p] (px), the engine fed first. True once its Move has moved (the swipe line then gives way). */
+    /** Finger [id] moved to [p] (px), the engine fed first. True once its Move has moved. */
     fun move(id: Long, p: Offset): Boolean {
         val r = rulers[id] ?: return false
         if (r.liftT >= 0) return false

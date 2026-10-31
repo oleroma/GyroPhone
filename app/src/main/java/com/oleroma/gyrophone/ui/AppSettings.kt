@@ -159,8 +159,8 @@ private fun AppTab(runtime: GamepadRuntime) {
             runtime.setTouchVisuals(visuals.copy(moveRulers = it))
         }
         Hint(
-            "Once a finger on a touchpad button moves its Move X or Move Y, it shows a short ruler for each Move instead " +
-                    "of the swipe line. The ticks slide as the axis moves, stay dim while a Move is held back, and keep " +
+            "Once a finger on a touchpad button moves its Move X or Move Y, it shows a short ruler for each Move, next to " +
+                    "the swipe line. The ticks slide as the axis moves, stay dim while a Move is held back, and keep " +
                     "sliding while inertia glides after the lift.",
         )
         GyroVisualsSettings(visuals) { runtime.setTouchVisuals(it) }
