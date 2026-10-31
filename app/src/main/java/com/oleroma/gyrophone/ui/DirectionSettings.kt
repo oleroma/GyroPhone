@@ -727,6 +727,20 @@ private fun PiePicture(kind: PieKind, shown: Int = PieKind.ALL, width: (Directio
                     topLeft = Offset(c.x - r, c.y - r), size = androidx.compose.ui.geometry.Size(2 * r, 2 * r),
                 )
             }
+            // Each pie's edge in its own colour on top, so one under another's fill still shows
+            // (two 180° pies fill the circle on their own).
+            for ((i, d) in Direction.entries.withIndex()) {
+                if (shown and (1 shl d.ordinal) == 0) continue
+                val w = widths[d.ordinal]
+                // Nested a little per direction, so pies of the same width don't hide each other's edge.
+                val rr = r - (2 + 3 * i).dp.toPx()
+                drawArc(
+                    pieColors[d.ordinal].copy(alpha = 0.95f),
+                    startAngle = d.deg - 90f - w / 2f, sweepAngle = w, useCenter = true,
+                    topLeft = Offset(c.x - rr, c.y - rr), size = androidx.compose.ui.geometry.Size(2 * rr, 2 * rr),
+                    style = Stroke(2.dp.toPx()),
+                )
+            }
             if (at != null) {
                 val len = at.getDistance()
                 val p = if (len > r) at * (r / len) else at
