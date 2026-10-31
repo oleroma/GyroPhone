@@ -44,6 +44,8 @@ import kotlin.math.roundToInt
 @Composable
 fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
     val on by runtime.debug.enabled.collectAsStateWithLifecycle()
+    val link by runtime.linkState.collectAsStateWithLifecycle()
+    val g by runtime.gyroInfo.collectAsStateWithLifecycle()
     if (!on) return
     val trace = runtime.debug.trace ?: return
     var offset by remember { mutableStateOf(IntOffset(0, 0)) }
@@ -103,11 +105,9 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
             }
             savedText?.let { Text(it, color = Color(0xFFB9F6CA), style = mono) }
             val stats = runtime.linkStats()
-            val link = runtime.linkState.value
             Line("link", PhoneDebug.describe(link).take(60), mono)
             if (!folded) {
                 Line("", PhoneDebug.linkLine(stats), mono)
-                val g = runtime.gyroInfo.value
                 val raw = trace.gyroRaw
                 Line(
                     "gyro",
