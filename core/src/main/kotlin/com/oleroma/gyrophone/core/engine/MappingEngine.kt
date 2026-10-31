@@ -20,7 +20,6 @@ import com.oleroma.gyrophone.core.model.Output
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.Taps
 import com.oleroma.gyrophone.core.model.TriggerUpgrade
-import com.oleroma.gyrophone.core.model.When
 import com.oleroma.gyrophone.core.model.holdDirection
 import com.oleroma.gyrophone.core.model.Where
 import com.oleroma.gyrophone.core.model.Mapping
@@ -305,7 +304,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private var followLayerIds: Set<String> = emptySet()
 
     /**
-     * Triggers ([When] × [Taps]) of the touch controls that map one, by id and [Where] ordinal
+     * Triggers ([FiresOn] × [Taps] × [Duration]) of the touch controls that map one, by id and [Where] ordinal
      * ([touchTriggers]), and every trigger state in play: those, the keys' ([Dev.gestures]) and
      * the surfaces' finger counts' ([Touchpad.presses]).
      */
@@ -1736,16 +1735,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 src is InputSource.Surface && src.input == SurfaceInput.HOLD && src.zone == 0 && tr.gestures &&
                         src.fingers in 1..4 -> {
                     val sf = (if (src.id.isEmpty()) touchpad else surfaces[src.id]) ?: continue
-                    sf.presses[src.fingers - 1] ?: ButtonGestures(sf.longPressNanos, sf.doubleTapNanos, false).also {
+                    sf.presses[src.fingers - 1] ?: ButtonGestures(sf.longPressNanos, sf.doubleTapNanos, false, sf.doubleReleaseNanos).also {
                         sf.presses[src.fingers - 1] = it; tapList.add(it)
                     }
                 }
 
                 src is InputSource.Surface && src.input.holdDirection != null && tr.gestures -> {
                     val sf = (if (src.id.isEmpty()) touchpad else surfaces[src.id]) ?: continue
-                    dirStates.getOrPut(src) {
-                        ButtonGestures(sf.longPressNanos, sf.doubleTapNanos, false).also { tapList.add(it) }
-                    }
+                    dirStates.getOrPut(src) { ButtonGestures(0, 0, false).also { timeDirection(sf, src, it); tapList.add(it) } }
                 }
 
                 else -> continue
@@ -1759,6 +1756,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val c = ws.touchControls.firstOrNull { it.id == id }
         val st = ButtonGestures(
             (c?.longPress(eff) ?: eff.longPressMs) * 1_000_000L, (c?.doubleTap(eff) ?: eff.doubleTapMs) * 1_000_000L, false,
+            (c?.doubleRelease(eff) ?: eff.doubleReleaseMs) * 1_000_000L,
         )
         tapList.add(st)
         val held = when (where) {
@@ -1780,18 +1778,33 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         touchpad.settings = e.touchpad
         touchpad.doubleTapNanos = e.doubleTapMs.coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L
         touchpad.longPressNanos = e.longPressMs.coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
+        touchpad.doubleReleaseNanos = e.doubleReleaseMs.coerceIn(Workspace.MIN_DOUBLE_RELEASE_MS, Workspace.MAX_DOUBLE_RELEASE_MS) * 1_000_000L
         touchpad.timePresses()
         for (c in ws.touchControls) {
             surfaces[c.id]?.let { s ->
                 s.settings = c.surfaceSettings(e.touchpad)
                 s.doubleTapNanos = c.doubleTap(e) * 1_000_000L; s.longPressNanos = c.longPress(e) * 1_000_000L
+                s.doubleReleaseNanos = c.doubleRelease(e) * 1_000_000L
                 s.timePresses()
             }
-            for (t in tapStates) t[c.id]?.let { st -> st.tapNs = c.longPress(e) * 1_000_000L; st.doubleNs = c.doubleTap(e) * 1_000_000L }
+            for (t in tapStates) t[c.id]?.let { st ->
+                st.tapNs = c.longPress(e) * 1_000_000L; st.doubleNs = c.doubleTap(e) * 1_000_000L
+                st.releaseNs = c.doubleRelease(e) * 1_000_000L
+            }
         }
         for (d in deviceList) for ((code, g) in d.gestures) keyTimes(code, g)
         for ((code, g) in anyDevice.gestures) keyTimes(code, g)
+        for ((src, g) in dirStates) ((if (src.id.isEmpty()) touchpad else surfaces[src.id]) ?: continue).let { timeDirection(it, src, g) }
         updateGyroNow()
+    }
+
+    /** A Touch direction's timings: its own ([DirSettings]), else its surface's. */
+    private fun timeDirection(sf: Touchpad, src: InputSource.Surface, g: ButtonGestures) {
+        val own = src.input.holdDirection?.let { sf.settings.dir(it) }
+        g.tapNs = own?.windowMs?.let { it.coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L } ?: sf.longPressNanos
+        g.doubleNs = own?.doubleMs?.let { it.coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L } ?: sf.doubleTapNanos
+        g.releaseNs = own?.releaseMs?.let { it.coerceIn(Workspace.MIN_DOUBLE_RELEASE_MS, Workspace.MAX_DOUBLE_RELEASE_MS) * 1_000_000L }
+            ?: sf.doubleReleaseNanos
     }
 
     /** Key [code]'s gesture times: its own from the pinned preset, else those in effect ([eff]). */
@@ -1799,6 +1812,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val own = ws.keyTimings.firstOrNull { it.keyCode == code }
         g.tapNs = (own?.longPressMs ?: eff.longPressMs).coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
         g.doubleNs = (own?.doubleTapMs ?: eff.doubleTapMs).coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L
+        g.releaseNs = (own?.doubleReleaseMs ?: eff.doubleReleaseMs)
+            .coerceIn(Workspace.MIN_DOUBLE_RELEASE_MS, Workspace.MAX_DOUBLE_RELEASE_MS) * 1_000_000L
     }
 
     // ---- Touch presses ----
@@ -1881,8 +1896,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 }
 
             else -> null
-        } ?: return if (tr.on == When.PRESS && tr.taps == Taps.ANY && tr.where == Where.BUTTON) value(m.source, dev) else 0f
-        return if (g.on(tr.on, tr.taps)) 1f else 0f
+        } ?: return if (!tr.gestures && tr.where == Where.BUTTON) value(m.source, dev) else 0f
+        return if (g.on(tr.fires, tr.taps, tr.duration, tr.dontWait)) 1f else 0f
     }
 
     /** What [m]'s output keeps in group [dev] (null = the touch group); null for a Held output. */

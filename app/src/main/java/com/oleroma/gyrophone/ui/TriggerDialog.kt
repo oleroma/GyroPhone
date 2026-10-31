@@ -17,18 +17,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.oleroma.gyrophone.core.model.Duration
 import com.oleroma.gyrophone.core.model.FireAt
+import com.oleroma.gyrophone.core.model.FiresOn
 import com.oleroma.gyrophone.core.model.Output
 import com.oleroma.gyrophone.core.model.Taps
 import com.oleroma.gyrophone.core.model.Trigger
-import com.oleroma.gyrophone.core.model.When
+import com.oleroma.gyrophone.core.model.TriggerPreset
 import com.oleroma.gyrophone.core.model.Where
 
 /**
- * A chip's trigger: When it fires on its action, which Taps count, how its Output behaves and,
- * on a touch button or stick ([hasWhere]), Where a finger counts. On a Touch direction
- * ([direction]) the Whens are Drag, Swipe, Long drag and Release, and a Fire once may repeat
- * every swipe distance. Each pick applies at once.
+ * A chip's trigger: a preset (Hold, Long press, Release, Tap, Double tap hold, Double tap; on a
+ * Touch direction [direction] Drag, Long drag, Release, Swipe, Swipe hold, Double swipe) or the
+ * three choices under it (Fires on, Taps, Duration; other mixes show as Custom), a Tap's Don't
+ * wait, how its Output behaves and, on a touch button or stick ([hasWhere]), Where a finger
+ * counts. A Fire once Drag may repeat every swipe distance. Each pick applies at once.
  */
 @Composable
 internal fun TriggerDialog(
@@ -39,43 +42,53 @@ internal fun TriggerDialog(
     onChange: (Trigger) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val window = if (direction) "swipe window" else "tap window"
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Choices("When", When.entries, trigger.on, { if (direction) it.touchLabel else it.label }) {
-                    onChange(trigger.copy(on = it, repeat = trigger.repeat && it == When.PRESS))
-                }
-                if (direction) TriggerHint(
-                    when (trigger.on) {
-                        When.PRESS -> "While the finger is in the direction."
-                        When.TAP -> "Into the direction and out again within the tap window."
-                        When.LONG_PRESS -> "Once the finger has stayed in the direction past the tap window."
-                        When.RELEASE -> "As the finger leaves the direction or lifts."
-                    },
-                ) else TriggerHint(
-                    when (trigger.on) {
-                        When.PRESS -> "As the press starts, for as long as it lasts."
-                        When.TAP -> "A short press, on its lift. A press is a tap or a long press, never both."
-                        When.LONG_PRESS -> "Once the press has lasted past the tap window, until it lifts."
-                        When.RELEASE -> "On every lift."
-                    },
-                )
-                Choices("Taps", Taps.entries, trigger.taps, { it.label }) { onChange(trigger.copy(taps = it)) }
+                val presets: List<TriggerPreset?> = TriggerPreset.entries + listOf(null)
+                Choices("Trigger", presets, trigger.preset, { p ->
+                    if (p == null) "Custom" else if (direction) p.touchLabel else p.label
+                }, enabled = { it != null }) { p -> if (p != null) onChange(trigger.with(p)) }
                 TriggerHint(
-                    when (trigger.taps) {
-                        Taps.ANY -> "Every press, either press of a double too. Never waits."
-                        Taps.SINGLE -> "Not the second press of a double. A Tap waits out the double window to be sure, but only when the action has a Double mapping; Press, Long press and Release never wait."
-                        Taps.DOUBLE -> "The second press, within the double window after a tap."
+                    when (trigger.preset) {
+                        TriggerPreset.HOLD -> if (direction) "While the finger is in the direction." else "On every press, for as long as it lasts."
+                        TriggerPreset.LONG_PRESS -> "Once the press has lasted past the $window, until it lifts."
+                        TriggerPreset.RELEASE -> if (direction) "As the finger leaves the direction or lifts." else "On every lift."
+                        TriggerPreset.TAP -> "A quick press, on its lift (within the $window). A press is quick or long, never both."
+                        TriggerPreset.DOUBLE_HOLD -> "A second press soon after a quick one, for as long as it lasts."
+                        TriggerPreset.DOUBLE_TAP -> "A second quick press soon after a quick one, on its lift."
+                        null -> "A custom mix of the choices below."
                     },
                 )
+                Choices("Fires on", FiresOn.entries, trigger.fires, { it.label }) { onChange(trigger.copy(fires = it).fixed()) }
+                Choices("Taps", Taps.entries, trigger.taps, { it.label }) { onChange(trigger.copy(taps = it).fixed()) }
+                Choices("Duration", Duration.entries, trigger.duration, { it.label }) { onChange(trigger.copy(duration = it).fixed()) }
+                TriggerHint(
+                    when (trigger.duration) {
+                        Duration.ANY -> if (trigger.taps == Taps.SINGLE) "Any press, the second of a double too." else "Any second press."
+                        Duration.QUICK -> "Lifted within the $window (a second press: within the second tap release window)."
+                        Duration.LONG -> "Held past the $window (a second press: past the second tap release window)."
+                    },
+                )
+                if (trigger.isTap) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                        Text("Don't wait", Modifier.weight(1f))
+                        Switch(checked = trigger.dontWait, onCheckedChange = { onChange(trigger.copy(dontWait = it)) })
+                    }
+                    TriggerHint(
+                        if (trigger.dontWait) "Fires at once on every quick lift, even when a double is mapped (like a double click)."
+                        else "Waits out the second tap window when a double is mapped, so it never fires as part of a double.",
+                    )
+                }
                 Choices("Output", Output.entries, trigger.output, { it.label }) {
                     onChange(trigger.copy(output = it, repeat = trigger.repeat && it == Output.FIRE_ONCE))
                 }
                 if (trigger.output == Output.FIRE_ONCE) {
                     Choices(null, FireAt.entries, trigger.fireAt, { it.label }) { onChange(trigger.copy(fireAt = it)) }
-                    if (direction && trigger.on == When.PRESS) Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (direction && !trigger.gestures) Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Repeat every swipe distance", Modifier.weight(1f))
                         Switch(checked = trigger.repeat, onCheckedChange = { onChange(trigger.copy(repeat = it)) })
                     }
@@ -108,10 +121,21 @@ internal fun TriggerDialog(
 }
 
 @Composable
-private fun <T> Choices(label: String?, options: List<T>, value: T, name: (T) -> String, onPick: (T) -> Unit) {
+private fun <T> Choices(
+    label: String?,
+    options: List<T>,
+    value: T,
+    name: (T) -> String,
+    enabled: (T) -> Boolean = { true },
+    onPick: (T) -> Unit,
+) {
     if (label != null) Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        for (o in options) FilterChip(selected = o == value, onClick = { onPick(o) }, label = { Text(name(o)) })
+        for (o in options) {
+            // A choice that can't be picked (Custom) shows only while it is the value.
+            if (!enabled(o) && o != value) continue
+            FilterChip(selected = o == value, onClick = { onPick(o) }, label = { Text(name(o)) })
+        }
     }
 }
 

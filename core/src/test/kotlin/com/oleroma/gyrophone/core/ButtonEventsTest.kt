@@ -21,7 +21,6 @@ import com.oleroma.gyrophone.core.model.FireAt
 import com.oleroma.gyrophone.core.model.Output
 import com.oleroma.gyrophone.core.model.Taps
 import com.oleroma.gyrophone.core.model.Trigger
-import com.oleroma.gyrophone.core.model.When
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -121,7 +120,7 @@ class ButtonEventsTest {
 
     @Test
     fun doubleTapIsNeitherASingleTapNorALongPress() {
-        val single = Mapping(InputSource.Touch("b"), OutputTarget.Key(B), trigger = Trigger(on = When.TAP, taps = Taps.SINGLE))
+        val single = Mapping(InputSource.Touch("b"), OutputTarget.Key(B), trigger = Trigger.TAP)
         val held = Mapping(InputSource.Touch("b"), OutputTarget.Key(C), trigger = Trigger.DOUBLE_PRESS)
         val e = engine(press, single, held, long, Mapping(InputSource.Touch("b"), OutputTarget.Key(E), trigger = Trigger.DOUBLE_TAP))
         e.tap()
@@ -167,8 +166,8 @@ class ButtonEventsTest {
     }
 
     @Test
-    fun anyTapNeverWaitsAndFiresOnEveryTap() {
-        val any = Mapping(InputSource.Touch("b"), OutputTarget.Key(B), trigger = Trigger.TAP)
+    fun dontWaitTapNeverWaitsAndFiresOnEveryTap() {
+        val any = Mapping(InputSource.Touch("b"), OutputTarget.Key(B), trigger = Trigger.TAP_NOW)
         val e = engine(any, Mapping(InputSource.Touch("b"), OutputTarget.Key(C), trigger = Trigger.DOUBLE_TAP))
         e.buttonDown(1, "b", 10f, 10f); e.keys(); t += 50 * MS; e.buttonUp(1)
         assertEquals(setOf(B), e.keys()) // at once, though a double is mapped

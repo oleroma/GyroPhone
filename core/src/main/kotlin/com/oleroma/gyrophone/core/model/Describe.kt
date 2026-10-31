@@ -120,20 +120,18 @@ object Describe {
     }
 
     /**
-     * The badge on a chip whose trigger is not Press + Any, Held, on the button: "2×" for a
+     * The badge on a chip whose trigger is not Hold, Held, on the button: "2×" for a
      * double, a clock for a long press, and the rest in a word; "" for the default.
      */
     fun triggerBadge(t: Trigger): String = buildList {
-        when (t.on) {
-            When.PRESS -> {}
-            When.TAP -> add("Tap")
-            When.LONG_PRESS -> add("\u23F1")
-            When.RELEASE -> add("Release")
-        }
-        when (t.taps) {
-            Taps.ANY -> {}
-            Taps.SINGLE -> add("1×")
-            Taps.DOUBLE -> add("2×")
+        if (t.taps == Taps.DOUBLE) add("2×")
+        when {
+            t.fires == FiresOn.PRESS && t.duration == Duration.ANY -> {}
+            t.fires == FiresOn.PRESS && t.duration == Duration.LONG -> add("\u23F1")
+            t.fires == FiresOn.LIFT && t.duration == Duration.ANY -> add("\u2191")
+            t.fires == FiresOn.LIFT && t.duration == Duration.QUICK -> add(if (t.dontWait) "Tap!" else "Tap")
+            t.fires == FiresOn.LIFT && t.duration == Duration.LONG -> add("\u23F1\u2191")
+            else -> add("Quick")
         }
         when (t.output) {
             Output.HELD -> {}

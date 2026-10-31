@@ -290,12 +290,12 @@ object BuiltinProfiles {
             fun on(trigger: Trigger, t: OutputTarget = OutputTarget.Key(usage)) = Mapping(InputSource.Touch(c.id), t, trigger = trigger)
             // The touchpad's clicks cleared, so a key types at once.
             fun cleared(trigger: Trigger) = on(trigger, OutputTarget.NoOutput)
-            if (!HidUsage.isModifier(usage)) listOf(on(Trigger.TAP), cleared(Trigger.DOUBLE_PRESS), cleared(Trigger.DOUBLE_TAP))
+            if (!HidUsage.isModifier(usage)) listOf(on(Trigger.TAP_NOW), cleared(Trigger.DOUBLE_PRESS), cleared(Trigger.DOUBLE_TAP))
             else listOf(
                 touch(c.id, OutputTarget.Key(usage)),
-                on(Trigger(on = When.TAP, taps = Taps.SINGLE, output = Output.STICKY)),
-                on(Trigger(on = When.TAP, taps = Taps.DOUBLE, output = Output.TOGGLE)),
-                cleared(Trigger.TAP), cleared(Trigger.DOUBLE_PRESS),
+                on(Trigger.TAP.copy(output = Output.STICKY)),
+                on(Trigger.DOUBLE_TAP.copy(output = Output.TOGGLE)),
+                cleared(Trigger.TAP_NOW), cleared(Trigger.DOUBLE_PRESS),
             )
         }
     }

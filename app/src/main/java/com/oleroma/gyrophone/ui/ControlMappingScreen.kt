@@ -402,7 +402,10 @@ internal fun ControlMappingScreen(
     /** Nothing in each trigger slot the level above maps [input] in (each slot inherits on its own), at least its press. */
     fun clearsOf(input: BindableInput): List<TargetChip> =
         Bindings.chips(parentView, input).filter { it.target != OutputTarget.NoOutput }
-            .map { TargetChip(OutputTarget.NoOutput, Trigger(on = it.trigger.on, taps = it.trigger.taps, where = it.trigger.where)) }
+            .map {
+                val tr = it.trigger
+                TargetChip(OutputTarget.NoOutput, Trigger(tr.fires, tr.taps, tr.duration, tr.dontWait && tr.isTap, where = tr.where))
+            }
             .distinct().ifEmpty { listOf(TargetChip(OutputTarget.NoOutput)) }
     // Drag callbacks outlive a composition: everything they read goes through state.
     val currentMappings by rememberUpdatedState(view)
@@ -1382,7 +1385,7 @@ internal fun ControlMappingScreen(
             direction = (input.sources.first() as? InputSource.Surface)?.input?.holdDirection != null,
             onChange = { next ->
                 if (next != chip.trigger) {
-                    change(Bindings.setTrigger(currentMappings, input, chip, next), Describe.shortTarget(chip.target) + ": " + Describe.triggerBadge(next).ifEmpty { "Press" })
+                    change(Bindings.setTrigger(currentMappings, input, chip, next), Describe.shortTarget(chip.target) + ": " + Describe.triggerBadge(next).ifEmpty { "Hold" })
                     triggerDraft = input to chip.copy(trigger = next)
                 }
             },

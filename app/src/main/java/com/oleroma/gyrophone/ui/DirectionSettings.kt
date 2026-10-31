@@ -28,6 +28,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.model.DirField
 import com.oleroma.gyrophone.core.model.DirSettings
+import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.HoldZone
@@ -197,7 +198,7 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
  * own over [level]'s shared value (the Settings), highlighted with a ↺ where it sets its own.
  */
 @Composable
-internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, hold: Boolean, zones: IntArray) {
+internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, hold: Boolean, zones: IntArray, timings: IntArray) {
     val current by rememberUpdatedState(level)
     val s = level.eff
     val k = key + d.name + if (hold) "hold" else "swipe"
@@ -234,6 +235,23 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
                 own(DirField.HOLD), reset(DirField.HOLD),
                 hint = if (s.dragStart && s.holdMode == HoldMode.FROM_START) "With Drag start point, the start point trails the furthest hold distance of the four." else null,
             ) { v -> edit { it.copy(holdDp = v) } }
+            SectionTitle("Timings")
+            val dir = s.dir(d)
+            MsOverride(
+                k + "window", "Swipe window", dir.windowMs ?: timings[0], Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
+                own(DirField.WINDOW), reset(DirField.WINDOW),
+                hint = "Into the direction and out again within this is Quick (a Swipe); staying longer is Long.",
+            ) { v -> edit { it.copy(windowMs = v) } }
+            MsOverride(
+                k + "double", "Second tap window", dir.doubleMs ?: timings[1], Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
+                own(DirField.DOUBLE), reset(DirField.DOUBLE),
+                hint = "How soon the finger must come back into the direction to count as Double (Swipe hold, Double swipe). 0 turns Double off.",
+            ) { v -> edit { it.copy(doubleMs = v) } }
+            MsOverride(
+                k + "release", "Second tap release window", dir.releaseMs ?: timings[2], Workspace.MIN_DOUBLE_RELEASE_MS..Workspace.MAX_DOUBLE_RELEASE_MS,
+                own(DirField.RELEASE), reset(DirField.RELEASE),
+                hint = "How long the second visit may last and still be a Double Quick. 0: it fires as the finger comes back.",
+            ) { v -> edit { it.copy(releaseMs = v) } }
             SectionTitle("Length zones")
             HoldZoneSettings(s, zones, k, only = d, zone = null, onChange = current.setZones)
         }

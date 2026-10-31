@@ -11,7 +11,6 @@ import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.TriggerUpgrade
-import com.oleroma.gyrophone.core.model.When
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import org.junit.Assert.assertEquals
@@ -49,7 +48,7 @@ class TouchDirectionsTest {
 
     @Test
     fun aDragIsHeldAndASwipeFiresOnLeaving() {
-        val e = engine(right(OutputTarget.Key(A)), right(OutputTarget.Key(B), Trigger(on = When.RELEASE)))
+        val e = engine(right(OutputTarget.Key(A)), right(OutputTarget.Key(B), Trigger.RELEASE))
         e.drag(160f)
         assertTrue(A in e.keys())
         assertTrue(B !in e.keys())

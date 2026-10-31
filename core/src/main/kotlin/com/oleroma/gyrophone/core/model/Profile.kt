@@ -89,6 +89,8 @@ data class TouchControl(
     val longPressMs: Int? = null,
     /** BUTTON: the longest gap between the taps of a double tap (ms); null = the workspace's. */
     val doubleTapMs: Int? = null,
+    /** BUTTON: the second tap release window (ms); null = the workspace's. */
+    val doubleReleaseMs: Int? = null,
     /**
      * Zone mapping ([TouchAreaKind.ZONE]): a finger that slides in from elsewhere stops what it
      * was doing (cursor, stick, another button) while it is in the zone, and one that lands on
@@ -144,6 +146,10 @@ data class TouchControl(
     /** The double-tap window in effect (ms), its own or [w]'s. */
     fun doubleTap(w: Workspace): Int =
         (doubleTapMs ?: w.doubleTapMs).coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS)
+
+    /** The second tap release window in effect (ms), its own or [w]'s. */
+    fun doubleRelease(w: Workspace): Int =
+        (doubleReleaseMs ?: w.doubleReleaseMs).coerceIn(Workspace.MIN_DOUBLE_RELEASE_MS, Workspace.MAX_DOUBLE_RELEASE_MS)
 
     companion object {
         const val MIN_SIZE = 0.06f
@@ -246,11 +252,18 @@ data class DirSettings(
     val latch: Boolean? = null,
     val swipeSample: Float? = null,
     val holdSample: Float? = null,
+    /** Its Touch direction's swipe window (ms; the line between Quick and Long); null = its control's tap window. */
+    val windowMs: Int? = null,
+    /** Its Touch direction's second tap window (ms); null = its control's. */
+    val doubleMs: Int? = null,
+    /** Its Touch direction's second tap release window (ms); null = its control's. */
+    val releaseMs: Int? = null,
 ) {
     /** These with [over]'s own values in place of theirs. */
     fun under(over: DirSettings?): DirSettings = if (over == null) this else DirSettings(
         over.swipePie ?: swipePie, over.swipeDp ?: swipeDp, over.holdPie ?: holdPie, over.holdDp ?: holdDp, over.latch ?: latch,
         over.swipeSample ?: swipeSample, over.holdSample ?: holdSample,
+        over.windowMs ?: windowMs, over.doubleMs ?: doubleMs, over.releaseMs ?: releaseMs,
     )
 
     val isEmpty: Boolean get() = this == NONE

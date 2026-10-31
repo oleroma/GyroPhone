@@ -234,9 +234,21 @@ enum class SurfaceField(val button: Boolean = true) {
  */
 enum class DirField(val hold: Boolean) {
     SWIPE_PIE(false), SWIPE_SAMPLE(false), SWIPE(false),
-    HOLD_PIE(true), HOLD_SAMPLE(true), HOLD(true), LATCH(true);
+    HOLD_PIE(true), HOLD_SAMPLE(true), HOLD(true), LATCH(true),
 
-    /** The shared setting of [d] this sets over: a pie its axis's. */
+    /** The Touch direction's timings: over its control's (the workspace's) tap, second tap and release windows, not a surface setting. */
+    WINDOW(true), DOUBLE(true), RELEASE(true);
+
+    /** The workspace timing ([WorkspaceDefaults] key) a timing sets over, else null. */
+    val timingKey: String?
+        get() = when (this) {
+            WINDOW -> WorkspaceDefaults.LONG_PRESS
+            DOUBLE -> WorkspaceDefaults.DOUBLE_TAP
+            RELEASE -> WorkspaceDefaults.DOUBLE_RELEASE
+            else -> null
+        }
+
+    /** The shared setting of [d] this sets over: a pie its axis's (a timing: the tap window's slot, see [timingKey]). */
     fun sharedOf(d: Direction): SurfaceField = when (this) {
         SWIPE_PIE -> if (d.x) SurfaceField.SWIPE_PIE_X else SurfaceField.SWIPE_PIE_Y
         SWIPE_SAMPLE -> SurfaceField.SWIPE_SAMPLE
@@ -245,6 +257,7 @@ enum class DirField(val hold: Boolean) {
         HOLD_SAMPLE -> SurfaceField.HOLD_SAMPLE
         HOLD -> SurfaceField.HOLD
         LATCH -> SurfaceField.LATCH
+        WINDOW, DOUBLE, RELEASE -> SurfaceField.HOLD
     }
 
     fun get(s: DirSettings): Any? = when (this) {
@@ -255,6 +268,9 @@ enum class DirField(val hold: Boolean) {
         HOLD_SAMPLE -> s.holdSample
         HOLD -> s.holdDp
         LATCH -> s.latch
+        WINDOW -> s.windowMs
+        DOUBLE -> s.doubleMs
+        RELEASE -> s.releaseMs
     }
 
     fun same(a: DirSettings, b: DirSettings): Boolean = get(a) == get(b)
@@ -268,6 +284,9 @@ enum class DirField(val hold: Boolean) {
         HOLD_SAMPLE -> to.copy(holdSample = from.holdSample)
         HOLD -> to.copy(holdDp = from.holdDp)
         LATCH -> to.copy(latch = from.latch)
+        WINDOW -> to.copy(windowMs = from.windowMs)
+        DOUBLE -> to.copy(doubleMs = from.doubleMs)
+        RELEASE -> to.copy(releaseMs = from.releaseMs)
     }
 
     /** A level's own [s] sets this for [d]. */

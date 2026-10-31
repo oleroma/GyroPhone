@@ -71,6 +71,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     /** How long still fingers must stay down to be a long press. */
     var longPressNanos: Long = DEFAULT_LONG_PRESS_NS
 
+    /** The second tap release window of the finger counts' presses ([ButtonGestures.releaseNs]). */
+    var doubleReleaseNanos: Long = Workspace.DEFAULT_DOUBLE_RELEASE_MS * 1_000_000L
+
     /** Relative output accumulated since the last [drainMotion]: mouse counts, wheel in 1/120 notch. */
     var dx = 0; private set
     var dy = 0; private set
@@ -299,7 +302,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     /** Gives [presses] the tap window ([longPressNanos]) and double window ([doubleTapNanos]). */
     internal fun timePresses() {
         for (p in presses) if (p != null) {
-            p.tapNs = longPressNanos; p.doubleNs = doubleTapNanos
+            p.tapNs = longPressNanos; p.doubleNs = doubleTapNanos; p.releaseNs = doubleReleaseNanos
         }
     }
 

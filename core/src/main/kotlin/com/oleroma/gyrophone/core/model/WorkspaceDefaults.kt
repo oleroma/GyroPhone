@@ -14,6 +14,7 @@ object WorkspaceDefaults {
     const val ID = "defaults"
     const val LONG_PRESS = "longPressMs"
     const val DOUBLE_TAP = "doubleTapMs"
+    const val DOUBLE_RELEASE = "doubleReleaseMs"
     const val CONTROL_OPACITY = "controlOpacity"
     const val HAPTICS = "haptics"
     const val HAPTIC_EDGE = "hapticEdge"
@@ -26,7 +27,7 @@ object WorkspaceDefaults {
     val builtin = Workspace(ID, "Workspace defaults")
 
     private val top = listOf(
-        LONG_PRESS, DOUBLE_TAP, CONTROL_OPACITY, HAPTICS, HAPTIC_EDGE,
+        LONG_PRESS, DOUBLE_TAP, DOUBLE_RELEASE, CONTROL_OPACITY, HAPTICS, HAPTIC_EDGE,
     )
 
     private fun gyroJson(g: GyroSettings): JsonObject = json.encodeToJsonElement(GyroSettings.serializer(), g).jsonObject
@@ -55,7 +56,7 @@ object WorkspaceDefaults {
 
     /** The shared touchpad key [key] (a direction's or a Move X / Y's own) sets over, else null. */
     private fun sharedOf(key: String): String? =
-        dirOf(key)?.let { (d, f) -> touchpadKey(f.sharedOf(d)) } ?: moveOf(key)?.let { (m, f) -> touchpadKey(f.sharedOf(m)) }
+        dirOf(key)?.let { (d, f) -> f.timingKey ?: touchpadKey(f.sharedOf(d)) } ?: moveOf(key)?.let { (m, f) -> touchpadKey(f.sharedOf(m)) }
 
     /** Every key a workspace can set over the defaults. */
     val keys: List<String> = top + gyroProps.map(::gyroKey) + SurfaceField.entries.map(::touchpadKey) +
@@ -77,6 +78,7 @@ object WorkspaceDefaults {
         else -> when (key) {
             LONG_PRESS -> a.longPressMs == b.longPressMs
             DOUBLE_TAP -> a.doubleTapMs == b.doubleTapMs
+            DOUBLE_RELEASE -> a.doubleReleaseMs == b.doubleReleaseMs
             CONTROL_OPACITY -> a.controlOpacity == b.controlOpacity
             HAPTICS -> a.haptics == b.haptics
             HAPTIC_EDGE -> a.hapticEdge == b.hapticEdge
@@ -99,6 +101,7 @@ object WorkspaceDefaults {
         else -> when (key) {
             LONG_PRESS -> to.copy(longPressMs = from.longPressMs)
             DOUBLE_TAP -> to.copy(doubleTapMs = from.doubleTapMs)
+            DOUBLE_RELEASE -> to.copy(doubleReleaseMs = from.doubleReleaseMs)
             CONTROL_OPACITY -> to.copy(controlOpacity = from.controlOpacity)
             HAPTICS -> to.copy(haptics = from.haptics)
             HAPTIC_EDGE -> to.copy(hapticEdge = from.hapticEdge)

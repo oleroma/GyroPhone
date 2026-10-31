@@ -36,6 +36,12 @@ data class Workspace(
     val longPressMs: Int = DEFAULT_LONG_PRESS_MS,
     /** Touch buttons: the longest gap between the taps of a double tap, in ms ([TouchControl.doubleTapMs]). */
     val doubleTapMs: Int = DEFAULT_DOUBLE_TAP_MS,
+    /**
+     * The second tap release window, in ms: how long the second press of a double may last and
+     * still be a Double Quick; 0 = a Double Quick fires as the second press starts
+     * ([TouchControl.doubleReleaseMs]).
+     */
+    val doubleReleaseMs: Int = DEFAULT_DOUBLE_RELEASE_MS,
     /** The named mapping sets above Base ([Mapping.set], [OutputTarget.Layer]), by id. */
     val sets: List<MappingSet> = emptyList(),
     /**
@@ -65,6 +71,9 @@ data class Workspace(
         const val DEFAULT_DOUBLE_TAP_MS = 300
         const val MIN_DOUBLE_TAP_MS = 0
         const val MAX_DOUBLE_TAP_MS = 800
+        const val DEFAULT_DOUBLE_RELEASE_MS = 400
+        const val MIN_DOUBLE_RELEASE_MS = 0
+        const val MAX_DOUBLE_RELEASE_MS = 1500
     }
 }
 

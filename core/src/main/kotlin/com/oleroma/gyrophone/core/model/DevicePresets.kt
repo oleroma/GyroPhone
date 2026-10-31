@@ -27,7 +27,7 @@ data class DevicePreset(
     fun withTiming(keyCode: Int, change: (KeyTiming) -> KeyTiming): DevicePreset {
         val t = change(timing(keyCode) ?: KeyTiming(keyCode))
         val rest = timings.filter { it.keyCode != keyCode }
-        return copy(timings = if (t.longPressMs == null && t.doubleTapMs == null) rest else rest + t)
+        return copy(timings = if (t.longPressMs == null && t.doubleTapMs == null && t.doubleReleaseMs == null) rest else rest + t)
     }
 
     fun mappings(device: PhysicalDevice): List<Mapping> = when (device) {
@@ -48,7 +48,7 @@ data class DevicePreset(
  * workspace's ([Workspace.longPressMs], [Workspace.doubleTapMs]).
  */
 @Serializable
-data class KeyTiming(val keyCode: Int, val longPressMs: Int? = null, val doubleTapMs: Int? = null)
+data class KeyTiming(val keyCode: Int, val longPressMs: Int? = null, val doubleTapMs: Int? = null, val doubleReleaseMs: Int? = null)
 
 /** The kinds of physical device a [DevicePreset] maps. */
 enum class PhysicalDevice(val label: String) { CONTROLLER("Controller"), KEYBOARD("Keyboard"), MOUSE("Mouse") }

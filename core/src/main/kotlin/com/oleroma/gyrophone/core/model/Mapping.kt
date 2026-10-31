@@ -369,7 +369,7 @@ data class Mapping(
     val source: InputSource,
     val target: OutputTarget,
     val set: Int = 0,
-    val trigger: Trigger = Trigger(),
+    @Serializable(with = TriggerJson::class) val trigger: Trigger = Trigger(),
 ) {
     /** What this mapping maps: its source and trigger slot ([Trigger.slot]); a layer or level mapping it again replaces it. */
     val slot: Slot get() = Slot(source, trigger.slot)

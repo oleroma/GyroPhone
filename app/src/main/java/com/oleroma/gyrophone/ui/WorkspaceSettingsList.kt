@@ -250,19 +250,25 @@ internal fun WorkspaceSettings(
     items += SectionItem("timings") { card, header ->
         RememberedSection(
             runtime, "workspace.Timings", "Timings", card,
-            subtitle = "Tap and double windows of every button and key",
+            subtitle = "Tap, second tap and second tap release windows of every button and key",
             headerModifier = header,
         ) {
             MsOverride(
                 key + "long", "Tap window", ws.longPressMs, Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
                 level.isOwn(WorkspaceDefaults.LONG_PRESS), { level.reset(WorkspaceDefaults.LONG_PRESS) },
-                hint = "A press shorter than this is a tap; one held this long is a long press. For the touchpad, touch buttons, controller buttons and keyboard keys without a window of their own.",
+                hint = "A press lifted within this is Quick; one held this long is Long. For the touchpad, touch buttons, controller buttons and keyboard keys without a window of their own.",
             ) { ms -> level.edit { it.copy(longPressMs = ms) } }
             MsOverride(
-                key + "double", "Double window", ws.doubleTapMs, Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
+                key + "double", "Second tap window", ws.doubleTapMs, Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
                 level.isOwn(WorkspaceDefaults.DOUBLE_TAP), { level.reset(WorkspaceDefaults.DOUBLE_TAP) },
-                hint = "The longest gap between the taps of a double. 0 turns Double off.",
+                hint = "How soon the second press must come to count as Double. 0 turns Double off.",
             ) { ms -> level.edit { it.copy(doubleTapMs = ms) } }
+            MsOverride(
+                key + "release", "Second tap release window", ws.doubleReleaseMs,
+                Workspace.MIN_DOUBLE_RELEASE_MS..Workspace.MAX_DOUBLE_RELEASE_MS,
+                level.isOwn(WorkspaceDefaults.DOUBLE_RELEASE), { level.reset(WorkspaceDefaults.DOUBLE_RELEASE) },
+                hint = "How long the second press may last and still be a Double Quick. 0: a Double Quick fires as the second press starts.",
+            ) { ms -> level.edit { it.copy(doubleReleaseMs = ms) } }
         }
     }
     items += SectionItem("touchpad") { card, header ->

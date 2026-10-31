@@ -43,23 +43,27 @@ internal class MappingSettings(
 private fun ui(content: @Composable () -> Unit): @Composable () -> Unit = content
 
 private const val TAP_WINDOW = "Tap window"
-private const val TAP_HINT = "A press shorter than this is a tap; one held this long is a long press."
-private const val DOUBLE_WINDOW = "Double window"
-private const val DOUBLE_HINT = "The longest gap between the taps of a double. A Single tap waits this long when the action has a Double mapping. 0 turns Double off."
+private const val TAP_HINT = "A press lifted within this is Quick; one held this long is Long."
+private const val DOUBLE_WINDOW = "Second tap window"
+private const val DOUBLE_HINT = "How soon the second press must come to count as Double. A Tap waits this long when the action has a Double mapping (unless it is set to Don't wait). 0 turns Double off."
+private const val RELEASE_WINDOW = "Second tap release window"
+private const val RELEASE_HINT = "How long the second press may last and still be a Double Quick. 0: a Double Quick fires as the second press starts."
 
 /**
  * The ⚙ of a Touch direction [input] of a surface at [level] ([zones]: as mapped), or of a
  * Move X / Y ([touchpad]: the workspace's), else null.
  */
-private fun directionGear(level: SurfaceLevel, key: String, input: BindableInput, zones: IntArray, touchpad: Boolean = false): (@Composable () -> Unit)? {
+private fun directionGear(
+    level: SurfaceLevel, key: String, input: BindableInput, zones: IntArray, timings: IntArray, touchpad: Boolean = false,
+): (@Composable () -> Unit)? {
     val src = input.sources.firstOrNull() as? InputSource.Surface ?: return null
     val s = src.input
     if (s == SurfaceInput.MOTION_X || s == SurfaceInput.MOTION_Y) {
         val m = MoveSlot.of(src.fingers, s == SurfaceInput.MOTION_X)
         return ui { MoveGearSettings(level, key, m, touchpad) }
     }
-    s.swipeDirection?.let { d -> return ui { DirectionSettings(level, key, d, hold = false, zones) } }
-    s.holdDirection?.let { d -> return ui { DirectionSettings(level, key, d, hold = true, zones) } }
+    s.swipeDirection?.let { d -> return ui { DirectionSettings(level, key, d, hold = false, zones, timings) } }
+    s.holdDirection?.let { d -> return ui { DirectionSettings(level, key, d, hold = true, zones, timings) } }
     return null
 }
 
@@ -102,11 +106,12 @@ internal fun touchControlSettings(
     val surface = if (control.swipes) buttonSurfaceLevel(control, ws.touchpad, update) else null
     val zones = Bindings.holdZoneCounts(ws.mappings, control.id)
     val hasArea = ws.mappings.any { it.source == InputSource.Touch(control.id) && it.trigger.where == Where.AREA }
+    val timings = intArrayOf(control.longPress(ws), control.doubleTap(ws), control.doubleRelease(ws))
     return MappingSettings(
         action = { input ->
             val src = input.sources.firstOrNull()
             when {
-                surface != null && directionGear(surface, key, input, zones) != null -> directionGear(surface, key, input, zones)
+                surface != null && directionGear(surface, key, input, zones, timings) != null -> directionGear(surface, key, input, zones, timings)
 
                 // A button's press: its tap and double windows, and its area's options when an Area mapping uses it.
                 src is InputSource.Touch && control.kind == TouchKind.BUTTON -> ui {
@@ -125,6 +130,13 @@ internal fun touchControlSettings(
                             onReset = { update { it.copy(doubleTapMs = null) } },
                             hint = DOUBLE_HINT,
                         ) { ms -> update { it.copy(doubleTapMs = ms) } }
+                        MsOverride(
+                            key + "release", RELEASE_WINDOW, control.doubleRelease(ws),
+                            Workspace.MIN_DOUBLE_RELEASE_MS..Workspace.MAX_DOUBLE_RELEASE_MS,
+                            overridden = control.doubleReleaseMs != null,
+                            onReset = { update { it.copy(doubleReleaseMs = null) } },
+                            hint = RELEASE_HINT,
+                        ) { ms -> update { it.copy(doubleReleaseMs = ms) } }
                         if (hasArea) AreaOptions(control, update)
                     }
                 }
@@ -154,6 +166,7 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
     val key = level.key + "touchpad"
     val surface = workspaceSurfaceLevel(level)
     val zones = Bindings.holdZoneCounts(ws.mappings, "")
+    val timings = intArrayOf(ws.longPressMs, ws.doubleTapMs, ws.doubleReleaseMs)
     return MappingSettings(
         action = { input ->
             when (val src = input.sources.firstOrNull()) {
@@ -161,7 +174,7 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
                 is InputSource.Tilt -> tiltGear(level, key, src.axis == StickAxis.X)
                 is InputSource.Shake -> shakeGear(level, key)
                 else -> null
-            } ?: directionGear(surface, key, input, zones, touchpad = true) ?: pressTimings(input, level, key)
+            } ?: directionGear(surface, key, input, zones, timings, touchpad = true) ?: pressTimings(input, level, key)
         },
         shared = { WorkspaceSettings(runtime, level, key, touchpadOpen = true) },
     )
@@ -188,6 +201,13 @@ private fun pressTimings(input: BindableInput, level: WorkspaceLevel, key: Strin
                 onReset = { level.reset(WorkspaceDefaults.DOUBLE_TAP) },
                 hint = "$DOUBLE_HINT The workspace's: every button and key without a window of its own uses it.",
             ) { ms -> level.edit { it.copy(doubleTapMs = ms) } }
+            MsOverride(
+                key + "release", RELEASE_WINDOW, ws.doubleReleaseMs,
+                Workspace.MIN_DOUBLE_RELEASE_MS..Workspace.MAX_DOUBLE_RELEASE_MS,
+                overridden = level.isOwn(WorkspaceDefaults.DOUBLE_RELEASE),
+                onReset = { level.reset(WorkspaceDefaults.DOUBLE_RELEASE) },
+                hint = "$RELEASE_HINT The workspace's: every button and key without a window of its own uses it.",
+            ) { ms -> level.edit { it.copy(doubleReleaseMs = ms) } }
         }
     }
 }
@@ -299,6 +319,13 @@ internal fun physicalSettings(
                     onReset = { update { p -> p.withTiming(src.keyCode) { it.copy(doubleTapMs = null) } } },
                     hint = "$DOUBLE_HINT Kept in the preset. Without a window of its own it uses the workspace's.",
                 ) { ms -> update { p -> p.withTiming(src.keyCode) { it.copy(doubleTapMs = ms) } } }
+                MsOverride(
+                    key + "release", RELEASE_WINDOW, own?.doubleReleaseMs ?: ws.doubleReleaseMs,
+                    Workspace.MIN_DOUBLE_RELEASE_MS..Workspace.MAX_DOUBLE_RELEASE_MS,
+                    overridden = own?.doubleReleaseMs != null,
+                    onReset = { update { p -> p.withTiming(src.keyCode) { it.copy(doubleReleaseMs = null) } } },
+                    hint = "$RELEASE_HINT Kept in the preset. Without a window of its own it uses the workspace's.",
+                ) { ms -> update { p -> p.withTiming(src.keyCode) { it.copy(doubleReleaseMs = ms) } } }
             }
         }
     },

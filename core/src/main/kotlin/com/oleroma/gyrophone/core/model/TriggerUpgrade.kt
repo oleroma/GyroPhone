@@ -51,7 +51,7 @@ object TriggerUpgrade {
             val up = upgrade(m, edge, doubled)
             // A tap-drag clicked on every tap and held through a touch soon after: a Tap and a Double press.
             if (m.source.let { it is InputSource.Surface && it.input == SurfaceInput.TAP_DRAG }) {
-                listOf(up.copy(trigger = up.trigger.copy(on = When.TAP, taps = Taps.ANY)), up)
+                listOf(up.copy(trigger = up.trigger.copy(fires = FiresOn.LIFT, taps = Taps.SINGLE, duration = Duration.QUICK, dontWait = true)), up)
             } else listOf(up)
         }.distinct()
     }
@@ -182,11 +182,13 @@ object TriggerUpgrade {
         if (g != null) {
             source = g.first
             trigger = when (g.second) {
-                Old.TAP -> trigger.copy(on = When.TAP, taps = if (g.first in doubled) Taps.SINGLE else Taps.ANY)
-                Old.DOUBLE -> trigger.copy(on = When.TAP, taps = Taps.DOUBLE)
-                Old.DOUBLE_PRESS -> trigger.copy(on = When.PRESS, taps = Taps.DOUBLE)
-                Old.LONG -> trigger.copy(on = When.LONG_PRESS, taps = if (g.first in doubled) Taps.SINGLE else Taps.ANY)
-                Old.RELEASE -> trigger.copy(on = When.RELEASE)
+                // A tap waited for a double only when its own input had one: otherwise it never waits
+                // (a double the button inherits must not hold it up).
+                Old.TAP -> trigger.copy(fires = FiresOn.LIFT, taps = Taps.SINGLE, duration = Duration.QUICK, dontWait = g.first !in doubled)
+                Old.DOUBLE -> trigger.copy(fires = FiresOn.LIFT, taps = Taps.DOUBLE, duration = Duration.QUICK)
+                Old.DOUBLE_PRESS -> trigger.copy(fires = FiresOn.PRESS, taps = Taps.DOUBLE, duration = Duration.ANY)
+                Old.LONG -> trigger.copy(fires = FiresOn.PRESS, taps = Taps.SINGLE, duration = Duration.LONG)
+                Old.RELEASE -> trigger.copy(fires = FiresOn.LIFT, taps = Taps.SINGLE, duration = Duration.ANY)
             }
         }
         // A swipe is its Touch direction's Drag, firing once every swipe distance.
