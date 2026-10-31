@@ -105,7 +105,7 @@ internal static class Program
         if (recovered > 0) log.Write($"released {recovered} inputs left held by a previous run");
         var marker = new HeldKeysMarker(markerPath);
         var watchdog = new Watchdog(engine, clock, marker, store,
-            ElevationProbe.IsForegroundElevated, NetworkCategory.IsAnyConnectedPublic, log.Write);
+            networkPublicProbe: NetworkCategory.IsAnyConnectedPublic, log: log.Write);
 
         engine.Start(clock.NowUs);
         if (pair) engine.OpenPairingWindow();
@@ -196,7 +196,6 @@ internal static class Program
             : "waiting for a phone");
         Console.WriteLine($"output {s.OutputMode} (driver {(s.DriverOk ? "ok" : "missing")}, pad {(s.PadPlugged ? "plugged" : "off")}), "
             + $"paired phones {s.PairedPhones.Count}, pairing window {(s.PairingWindowS > 0 ? $"{s.PairingWindowS} s" : "closed")}");
-        if (s.ElevatedForeground) Console.WriteLine("the window in front runs as administrator: input to it is blocked unless this app runs as administrator too");
         if (s.NetworkPublic) Console.WriteLine("this network is Public: set it to Private in Windows settings");
         var c = s.Counters;
         Console.WriteLine($"datagrams {c.Datagrams}, states {c.States}, injections {c.Injections}, dropped {c.Dropped}, bad auth {c.BadAuth}");

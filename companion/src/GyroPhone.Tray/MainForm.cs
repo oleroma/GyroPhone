@@ -11,7 +11,6 @@ internal sealed record MainView(
     string HostKey,
     bool AutoStart,
     bool Watcher,
-    bool ShowUipi,
     bool ShowNetwork,
     bool ShowFirewall,
     bool ShowUsb,
@@ -36,7 +35,7 @@ internal sealed class MainForm : Form
     private readonly ListBox _phones;
     private readonly Button _forget;
     private readonly Label _hostKey;
-    private readonly Button _uipi, _network, _firewall, _usb, _installDriver, _retryDriver, _restartAdmin;
+    private readonly Button _network, _firewall, _usb, _installDriver, _retryDriver, _restartAdmin;
     private readonly TextBox _box;
     private readonly Font _mono;
     private readonly Font _headerFont;
@@ -121,7 +120,6 @@ internal sealed class MainForm : Form
         phones.Controls.Add(_hostKey);
 
         var tools = Group("Tools", settings);
-        _uipi = NewButton("The game runs as administrator: restart as admin", () => _app.RestartAsAdmin(), tools);
         _network = NewButton("This network is Public: make it Private…", () => _app.OpenNetworkSettings(), tools);
         _firewall = NewButton("Allow through firewall…", () => _app.AllowThroughFirewall(), tools);
         _usb = NewButton("Allow the phone over a USB cable…", () => _app.AllowUsb(), tools);
@@ -176,7 +174,6 @@ internal sealed class MainForm : Form
         _autoStart.Checked = v.AutoStart;
         _watcher.Checked = v.Watcher;
         _hostKey.Text = v.HostKey;
-        _uipi.Visible = v.ShowUipi;
         _network.Visible = v.ShowNetwork;
         _firewall.Visible = v.ShowFirewall;
         _usb.Visible = v.ShowUsb;
