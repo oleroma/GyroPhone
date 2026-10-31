@@ -375,6 +375,24 @@ data class Mapping(
     val slot: Slot get() = Slot(source, trigger.slot)
 }
 
+/** The touch control id a mapping's source belongs to, or null for a key / axis source. */
+fun touchIdOf(source: InputSource): String? = when (source) {
+    is InputSource.Touch -> source.id
+    is InputSource.TouchStick -> source.id
+    is InputSource.TouchStickDiagonal -> source.id
+    is InputSource.TouchSwipe -> source.id
+    is InputSource.TouchRelease -> source.id
+    is InputSource.TouchDoubleTap -> source.id
+    is InputSource.TouchTap -> source.id
+    is InputSource.TouchLongPress -> source.id
+    is InputSource.TouchArea -> source.id
+    is InputSource.Surface -> source.id.ifEmpty { null }
+    is InputSource.Gyro -> source.id.ifEmpty { null }
+    is InputSource.Tilt -> source.id.ifEmpty { null }
+    is InputSource.Shake -> source.id.ifEmpty { null }
+    else -> null
+}
+
 /** One mappable slot: an action ([source]) and which of its triggers ([Trigger.slot]). */
 data class Slot(val source: InputSource, val trigger: TriggerSlot)
 

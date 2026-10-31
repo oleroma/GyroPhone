@@ -26,11 +26,6 @@ data class Workspace(
      * Resolved ([WorkspaceMappings.resolve]): one for any pad, with [devicePreset]'s controller mappings.
      */
     val pads: List<AttachedPad> = emptyList(),
-    /**
-     * The [MappingProfile] a set saved before workspaces owned their mappings used; only read when
-     * moving its mappings in ([WorkspaceMappings.fromProfiles]), null since.
-     */
-    val mappingProfileId: String? = null,
     /** Physical keyboard mappings; resolved from [devicePreset]. */
     val keyboard: List<Mapping> = emptyList(),
     /** How haptic targets without a feel of their own feel ([OutputTarget.Haptic]). */
@@ -84,21 +79,10 @@ data class AttachedPad(
     /** Face-button convention the mapping started from; see [KnownLayouts.familyMappings]. */
     val family: FaceLayout = FaceLayout.XBOX,
     /**
-     * Android key / axis sources ([InputSource.Key], [InputSource.Axis]) to PC outputs: its
-     * [own] or the workspace's [Workspace.controller] set in a resolved set, empty when stored.
+     * Android key / axis sources ([InputSource.Key], [InputSource.Axis]) to PC outputs: the
+     * workspace's device preset's in a resolved set, empty when stored.
      */
     val mappings: List<Mapping> = emptyList(),
-    /**
-     * The pad profile last loaded into [mappings] (pad profiles are gone); null on pads attached before pad
-     * profiles were stored. Saving that profile again updates every pad that names it.
-     */
-    val presetId: String? = null,
-    /**
-     * This pad's own mappings, used instead of the workspace's controller set; null = the
-     * workspace's. Only pads that mapped differently from the first pad of their workspace before
-     * mapping profiles have them, so nothing changed for them on update.
-     */
-    val own: List<Mapping>? = null,
 ) {
     fun matches(vendorId: Int, productId: Int, name: String): Boolean =
         match?.matches(vendorId, productId, name) ?: true

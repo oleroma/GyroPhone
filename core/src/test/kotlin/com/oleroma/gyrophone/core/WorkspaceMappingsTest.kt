@@ -7,7 +7,7 @@ import com.oleroma.gyrophone.core.model.DevicePresets
 import com.oleroma.gyrophone.core.model.GamepadButton
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
-import com.oleroma.gyrophone.core.model.MappingProfiles
+import com.oleroma.gyrophone.core.model.touchIdOf
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
@@ -42,31 +42,12 @@ class WorkspaceMappingsTest {
     )
     private val set = Profile("user.workspaces", "Workspaces", listOf(ws1, ws2))
 
-    /** The set as the app keeps it: migrated, stored, resolved. */
+    /** The set as the app keeps it: stored, resolved. */
     private fun live(): Profile {
-        val m = MappingProfiles.migrate(set)
-        return WorkspaceMappings.resolve(WorkspaceMappings.store(WorkspaceMappings.fromProfiles(m.set, m.profiles)))
+        return WorkspaceMappings.resolve(WorkspaceMappings.store(set))
     }
 
-    @Test fun movingOutOfProfilesKeepsWhatEveryWorkspaceDid() {
-        val resolved = live()
-        for ((old, new) in set.workspaces.zip(resolved.workspaces)) {
-            assertEquals(old.mappings.toSet(), new.controls().toSet())
-            assertEquals(null, new.mappingProfileId)
-        }
-    }
 
-    @Test fun workspacesSharingAProfileGetTheirOwnCopies() {
-        val same = set.copy(workspaces = listOf(ws1, ws1.copy(id = "ws2", name = "Copy")))
-        val m = MappingProfiles.migrate(same)
-        assertEquals(1, m.profiles.size)
-        val before = WorkspaceMappings.resolve(WorkspaceMappings.fromProfiles(m.set, m.profiles))
-        val after = before.updateWorkspace(0) { w -> w.copy(mappings = listOf(touch("btn1", x))) }
-        val settled = WorkspaceMappings.resolve(WorkspaceMappings.store(WorkspaceMappings.settle(before, after, null)))
-        assertEquals(listOf(touch("btn1", x)), settled.workspaces[0].controls())
-        // The other workspace is untouched.
-        assertEquals(before.workspaces[1], settled.workspaces[1])
-    }
 
     @Test fun workspacesPinningAPresetGetItsDevicesAndOthersNone() {
         val preset = DevicePresets.standard("preset1", "Preset 1").copy(controller = listOf(key(AndroidKey.BUTTON_A, x)))
@@ -148,7 +129,7 @@ class WorkspaceMappingsTest {
         val added = ButtonLibrary.addTo(ws2, lib, "btn10") { it }
         assertEquals("btn10", added.touchControls.last().id)
         assertEquals(setOf(touch("btn10", a), touch("btn10", b, set = 2)), added.mappings.filter {
-            MappingProfiles.touchId(it.source) == "btn10"
+            touchIdOf(it.source) == "btn10"
         }.toSet())
         assertEquals(listOf(MappingSet(2, "Aim")), added.sets)
     }

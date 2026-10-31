@@ -8,7 +8,7 @@ import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KeyMode
 import com.oleroma.gyrophone.core.model.Mapping
-import com.oleroma.gyrophone.core.model.MappingProfiles
+import com.oleroma.gyrophone.core.model.touchIdOf
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.SurfaceInput
@@ -153,7 +153,7 @@ class TouchFingersTest {
     @Test fun overlappingKeyTapsOnTheKeyboardWorkspaceTypeBothAndNeverScroll() {
         var now = 0L
         val kb = BuiltinProfiles.keyboardWorkspace
-        fun idOf(usage: Int) = MappingProfiles.touchId(kb.mappings.first { (it.target as? OutputTarget.Key)?.usage == usage }.source)!!
+        fun idOf(usage: Int) = touchIdOf(kb.mappings.first { (it.target as? OutputTarget.Key)?.usage == usage }.source)!!
         val k1 = idOf(0x04); val k2 = idOf(0x16) // A, S
         val e = MappingEngine(single(kb)) { now }.apply { touchpadPxPerDp = 3f; touchpadMinPulseNanos = 40 * MS }
         val o = Out()

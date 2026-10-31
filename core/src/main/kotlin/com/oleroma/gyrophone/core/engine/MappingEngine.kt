@@ -40,7 +40,7 @@ import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.Bindings
-import com.oleroma.gyrophone.core.model.MappingProfiles
+import com.oleroma.gyrophone.core.model.touchIdOf
 import com.oleroma.gyrophone.core.model.surfaceSettings
 import java.util.BitSet
 import kotlin.math.PI
@@ -687,7 +687,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 // An unintended touch: no tap, release or long press, and a sticky output it set lets go.
                 if (touches[id] == 1) {
                     tapStates[Where.BUTTON.ordinal][id]?.cancel(now, touchpad.minPulseNanos)
-                    touchOutputs.forEach({ it.trigger.output == Output.STICKY && MappingProfiles.touchId(it.source) == id }) { it.on = false }
+                    touchOutputs.forEach({ it.trigger.output == Output.STICKY && touchIdOf(it.source) == id }) { it.on = false }
                 }
                 release(id)
                 bpState[slot] = BP_FREE; bpControl[slot] = null
@@ -1613,7 +1613,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val now = HashMap<InputSource, Carried>()
             for ((src, list) in bySource) {
                 val holder = list.any { (it.target as? OutputTarget.Layer)?.let { l -> l.set == t.set && l.override == t.override } == true }
-                val keep = holder || MappingProfiles.touchId(src) !in followLayerIds
+                val keep = holder || touchIdOf(src) !in followLayerIds
                 val kept = list.filter { carries(it, keep) }
                 // A stick or trigger axis (or touch motion) held past half keeps nothing: it follows the new set.
                 if (kept.isEmpty() && (!keep || continuous(src))) continue

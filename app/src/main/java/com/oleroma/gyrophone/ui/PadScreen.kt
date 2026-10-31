@@ -120,7 +120,7 @@ import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.LibraryButton
 import com.oleroma.gyrophone.core.model.Mapping
-import com.oleroma.gyrophone.core.model.MappingProfiles
+import com.oleroma.gyrophone.core.model.touchIdOf
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.OutputTarget
@@ -508,7 +508,7 @@ fun PadScreen(
     // labels: the engine's mappings in use, held inputs carrying their old set's included).
     val controlMappings = remember(ws, layers) {
         layered(ws.mappings, layers.set, layers.overrides).filterNot { Describe.isHaptic(it.target) }
-            .groupBy { MappingProfiles.touchId(it.source) }
+            .groupBy { touchIdOf(it.source) }
     }
     val inUseCache = remember { arrayOfNulls<List<Mapping>>(1) }
     val inUseGroups = remember { arrayOf<Map<String?, List<Mapping>>>(emptyMap()) }
@@ -527,7 +527,7 @@ fun PadScreen(
         if (inUse !== inUseCache[0]) {
             inUseCache[0] = inUse
             inUseGroups[0] = inUse.filterNot { Describe.isHaptic(it.target) || it.target == OutputTarget.NoOutput }
-                .groupBy { MappingProfiles.touchId(it.source) }
+                .groupBy { touchIdOf(it.source) }
         }
         val groups = inUseGroups[0]
         for (id in groups.keys + liveLabels.keys.toList()) {
@@ -1203,7 +1203,7 @@ fun PadScreen(
                 // if it landed on what is under it (the touchpad or another control).
                 val zoneOnly = zoneControls.filter { c ->
                     c.kind == TouchKind.BUTTON && workspace.mappings.all { m ->
-                        MappingProfiles.touchId(m.source) != c.id || (m.source == InputSource.Touch(c.id) && m.trigger.where == Where.AREA)
+                        touchIdOf(m.source) != c.id || (m.source == InputSource.Touch(c.id) && m.trigger.where == Where.AREA)
                     }
                 }.mapTo(HashSet()) { it.id }
                 // Front first, as touches see them (size, layer); see hitOrder.
@@ -2452,7 +2452,7 @@ private fun takenIds(set: Profile): Set<String> = WorkspaceMappings.takenTouchId
 
 /** Id not used by any control of the workspace, by its leftover mappings, nor in [taken]. */
 private fun freshId(workspace: Workspace, prefix: String, taken: Set<String>): String {
-    val orphans = workspace.mappings.mapNotNull { MappingProfiles.touchId(it.source) }.plus(taken).distinct()
+    val orphans = workspace.mappings.mapNotNull { touchIdOf(it.source) }.plus(taken).distinct()
         .map { TouchControl(it, TouchKind.BUTTON, "", 0f, 0f) }
     return Bindings.newTouchId(workspace.touchControls + orphans, prefix)
 }

@@ -20,8 +20,7 @@ object TriggerUpgrade {
         val mouse = mappings(w.mouse, w.hapticEdge)
         val pads = w.pads.map { p ->
             val ms = mappings(p.mappings, w.hapticEdge)
-            val own = p.own?.let { mappings(it, w.hapticEdge) }
-            if (ms === p.mappings && own === p.own) p else p.copy(mappings = ms, own = own)
+            if (ms === p.mappings) p else p.copy(mappings = ms)
         }
         if (mappings === w.mappings && keyboard === w.keyboard && mouse === w.mouse &&
             pads.indices.all { pads[it] === w.pads[it] }

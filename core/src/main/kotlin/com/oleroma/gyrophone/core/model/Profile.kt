@@ -536,15 +536,13 @@ fun touchedControls(
 /**
  * When gyro moves the mouse. ALWAYS = on, a held ratchet ([OutputTarget.GyroPause]) pauses it; OFF = off, a held ratchet engages it;
  * each gyro axis may have its own of the two ([GyroSettings.modeOf]). [OutputTarget.GyroToggle] swaps them. SENSOR_OFF = gyro off completely (the sensor is not
- * read, saving battery; ratchets and toggle do nothing). HOLD_OR_TOGGLE is only read from old
- * files and loads as OFF ([ProfileJson.normalize]).
+ * read, saving battery; ratchets and toggle do nothing).
  */
 @Serializable
 enum class GyroMode(val label: String) {
     OFF("Off"),
     ALWAYS("On"),
     SENSOR_OFF("Sensor off"),
-    HOLD_OR_TOGGLE("Off"),
 }
 
 
@@ -1233,17 +1231,11 @@ data class Profile(
     val workspaces: List<Workspace>,
     /** Stepping past the last workspace goes to the first (and back). */
     val wrapWorkspaces: Boolean = false,
-    /** Windows executables this profile belongs to (used by the companion for auto-switching). */
-    val games: List<String> = emptyList(),
-    /** Auto-select this profile when a matching controller is attached to the phone. */
-    val controllers: List<DeviceMatch> = emptyList(),
     /**
      * The previous / next workspace corners ([NavCorners]), kind [TouchKind.FULLSCREEN]. A gyro
      * corner from before Toggle gyro buttons may be here until [NavCorners.gyroCornerToButtons].
      */
     val corners: List<TouchControl> = NavCorners.defaults(),
-    /** Whether the old gyro corner ([NavCorners.GYRO]) was shown; read once to convert it. */
-    val gyroCorner: Boolean = true,
     /** Opacity of the corners in play; they ignore the workspaces' control opacity. */
     val cornerOpacity: Float = 0.5f,
     /** Resizing one corner resizes the other too. */

@@ -352,7 +352,7 @@ object Bindings {
     fun removeTouchControl(workspace: Workspace, id: String): Workspace = ControlGroups.tidy(
         workspace.copy(
             touchControls = workspace.touchControls.filterNot { it.id == id },
-            mappings = workspace.mappings.filterNot { MappingProfiles.touchId(it.source) == id },
+            mappings = workspace.mappings.filterNot { touchIdOf(it.source) == id },
         ),
     )
 

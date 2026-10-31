@@ -22,8 +22,6 @@ import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.ButtonActivators
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownController
-import com.oleroma.gyrophone.core.model.MappingProfile
-import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.LibraryButton
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.WorkspaceMappings
@@ -86,14 +84,11 @@ class GamepadRuntime(context: Context) {
     val store = ProfileStore(appContext)
     val hid = HidDeviceManager(appContext)
 
-    /** The mapping profiles of a set saved before workspaces owned their mappings; only read by [loadOwnMappings]. */
-    private var legacyProfiles: List<MappingProfile> = emptyList()
-
     /**
      * All workspaces live in one profile ([WorkspaceSet]), each with its own mappings, stored as
-     * [WorkspaceMappings.store] keeps them. See [loadWorkspaceSet] and [loadOwnMappings].
+     * [WorkspaceMappings.store] keeps them. See [loadWorkspaceSet] and [upgradeButtons].
      */
-    private var stored: Profile = loadOwnMappings(loadWorkspaceSet())
+    private var stored: Profile = upgradeButtons(loadWorkspaceSet())
 
     private val _activeProfile = MutableStateFlow(WorkspaceMappings.resolve(stored))
 
@@ -759,66 +754,12 @@ class GamepadRuntime(context: Context) {
         return set
     }
 
-    /**
-     * The stored set, each workspace with its own mappings. On the first start after workspaces
-     * got them, each one gets a copy of the mapping profile it used ([WorkspaceMappings.fromProfiles];
-     * the profile file is left on disk untouched and a copy of the set as it was is kept beside
-     * it). An unreadable mapping file is left alone and the set is used as it is, to try again
-     * next start.
-     */
-    private fun loadOwnMappings(set: Profile): Profile {
-        if (store.ownMappings) return upgradeButtons(set)
-        if (store.hasMappingFile() && store.mappingProfiles() == null) return set
-        val legacy = upgradeLegacyButtons(loadMappings(set))
-        store.backup(legacy, OWN_BACKUP_TAG)
-        val own = WorkspaceMappings.store(WorkspaceMappings.fromProfiles(legacy, legacyProfiles))
-        store.save(own)
-        store.ownMappings = true
-        return own
-    }
-
-    /**
-     * The mapping profiles, or on the first start after they were added, profiles made from the
-     * mappings [set] still holds ([MappingProfiles.migrate]). Returns the set as it was stored with
-     * them; [loadOwnMappings] then moves them into the workspaces.
-     */
-    private fun loadMappings(set: Profile): Profile {
-        store.mappingProfiles()?.takeIf { it.isNotEmpty() }?.let {
-            val before = if (store.mappingMigration < MAPPING_MIGRATION) store.readBackup(set.id, BACKUP_TAG) else null
-            if (before == null) {
-                store.mappingMigration = MAPPING_MIGRATION
-                legacyProfiles = it
-                return set
-            }
-            // The first move (build 0.1.61) lost keyboard and extra-pad mappings: redo it once from
-            // the copy it kept, keeping its result beside the file.
-            store.backupMappings("v1")
-            return migrateMappings(before)
-        }
-        store.backup(set, BACKUP_TAG)
-        return migrateMappings(set)
-    }
-
-    /** Turns the old touch button switches into tap and long press mappings ([ButtonActivators]), in profile form. */
-    private fun upgradeLegacyButtons(set: Profile): Profile {
-        val (upgraded, profiles) = ButtonActivators.upgrade(set, legacyProfiles)
-        legacyProfiles = profiles
-        return upgraded
-    }
-
     /** Turns any old touch button switches into tap and long press mappings ([ButtonActivators]), saving the set if anything changed. */
     private fun upgradeButtons(set: Profile): Profile {
-        val (upgraded, _) = ButtonActivators.upgrade(set, emptyList())
+        val upgraded = ButtonActivators.upgrade(set)
         if (upgraded === set) return set
         store.save(upgraded)
         return upgraded
-    }
-
-    private fun migrateMappings(set: Profile): Profile {
-        val m = MappingProfiles.migrate(set)
-        legacyProfiles = m.profiles
-        store.mappingMigration = MAPPING_MIGRATION
-        return m.set
     }
 
     /**
@@ -959,10 +900,6 @@ class GamepadRuntime(context: Context) {
         private const val KEY_BIAS_Y = "gyro_bias_y"
         private const val KEY_BIAS_Z = "gyro_bias_z"
 
-        /** Version of [MappingProfiles.migrate]'s rules; a phone that ran an older one redoes it from [BACKUP_TAG]. */
-        private const val MAPPING_MIGRATION = 2
-        private const val BACKUP_TAG = "pre-mappings"
-        private const val OWN_BACKUP_TAG = "pre-own-mappings"
         private const val PAUSED = "Paused while the pad is not open"
         private const val GYRO_OFF = "Off in this workspace"
         private const val UNAVAILABLE = "Unavailable"

@@ -36,7 +36,7 @@ object ButtonLibrary {
 
     /** Control [c] of [w] as a library button (with its mappings in every set), given an id not in [taken]. */
     fun save(w: Workspace, c: TouchControl, taken: Collection<String>): LibraryButton {
-        val mappings = w.mappings.filter { MappingProfiles.touchId(it.source) == c.id }
+        val mappings = w.mappings.filter { touchIdOf(it.source) == c.id }
         val used = setsOf(mappings)
         return LibraryButton(newId(taken), c.copy(group = null), mappings, w.sets.filter { it.id in used }.map { it.copy(settings = null) })
     }

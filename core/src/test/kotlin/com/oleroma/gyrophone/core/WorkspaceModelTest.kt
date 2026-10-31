@@ -49,7 +49,6 @@ class WorkspaceModelTest {
         val p = ProfileJson.decode(legacyPad)
         assertEquals("user.1", p.id)
         assertEquals("My pad", p.name)
-        assertEquals(listOf("game.exe"), p.games)
         val w = p.workspaces.single()
         assertEquals(listOf("a", "ls"), w.touchControls.map { it.id })
         assertTrue(w.mappings.all { it.source.isTouch })

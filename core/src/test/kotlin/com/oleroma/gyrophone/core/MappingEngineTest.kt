@@ -66,7 +66,7 @@ class MappingEngineTest {
 
     @Test fun gyroToggle() {
         val p = profileOf(listOf(Mapping(InputSource.Key(AndroidKey.BUTTON_THUMBR), OutputTarget.GyroToggle)),
-            gyro = GyroSettings(mode = GyroMode.HOLD_OR_TOGGLE))
+            gyro = GyroSettings(mode = GyroMode.OFF))
         val e = MappingEngine(p)
         e.setKey(AndroidKey.BUTTON_THUMBR, true); e.setKey(AndroidKey.BUTTON_THUMBR, false)
         assertTrue(e.gyroActive)
@@ -80,7 +80,7 @@ class MappingEngineTest {
             Mapping(InputSource.Axis(AndroidAxis.RTRIGGER, AxisHalf.FULL), OutputTarget.GyroToggle),
             Mapping(InputSource.Key(AndroidKey.BUTTON_R2), OutputTarget.GyroToggle),
             Mapping(InputSource.TouchStick("s", StickAxis.Y, AxisHalf.NEGATIVE), OutputTarget.Wheel(-1)),
-        ), gyro = GyroSettings(mode = GyroMode.HOLD_OR_TOGGLE))
+        ), gyro = GyroSettings(mode = GyroMode.OFF))
         val e = MappingEngine(p)
         e.setAxis(AndroidAxis.X, -1f)
         assertEquals(120, e.snapshot().mouse.wheel)

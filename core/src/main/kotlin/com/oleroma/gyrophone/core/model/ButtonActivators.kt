@@ -13,46 +13,33 @@ package com.oleroma.gyrophone.core.model
  * The old settings are then cleared, so running it again changes nothing.
  */
 object ButtonActivators {
-    /** [set] (stored, without mappings) and [profiles] upgraded; the same instances when nothing changed. */
-    fun upgrade(set: Profile, profiles: List<MappingProfile>): Pair<Profile, List<MappingProfile>> {
-        if (set.workspaces.none { it.isLegacy }) return set to profiles
-        var result = profiles
+    /** [set] upgraded; the same instance when nothing changed. */
+    fun upgrade(set: Profile): Profile {
+        if (set.workspaces.none { it.isLegacy }) return set
         val workspaces = set.workspaces.map { w ->
             if (!w.isLegacy) return@map w
-            val profile = MappingProfiles.of(w, result)
-            var touch = profile?.touch.orEmpty()
-            var pad = profile?.touchpad
             var own = w.mappings
             val controls = w.touchControls.map { c ->
                 var out = c
                 if (c.isLegacy) {
-                    val (t, longT) = rewrite(c, touch, w)
-                    val (o, longO) = rewrite(c, own, w)
-                    touch = t; own = o
-                    out = out.copy(
-                        doubleTapWaits = false,
-                        releaseTapMs = 0,
-                        longPressMs = longT ?: longO ?: c.longPressMs
-                    )
+                    val (o, long) = rewrite(c, own, w)
+                    own = o
+                    out = out.copy(doubleTapWaits = false, releaseTapMs = 0, longPressMs = long ?: c.longPressMs)
                 }
                 if (c.swipes && (c.surface?.releaseTapMs ?: w.touchpad.releaseTapMs) > 0) {
-                    touch = releasesToTaps(touch, c.id); own = releasesToTaps(own, c.id)
+                    own = releasesToTaps(own, c.id)
                     out = out.copy(surface = out.surface?.copy(releaseTapMs = null))
                 }
                 out
             }
             var touchpad = w.touchpad
             if (touchpad.releaseTapMs > 0) {
-                pad = pad?.let { releasesToTaps(it, "") }
                 own = releasesToTaps(own, "")
                 touchpad = touchpad.copy(releaseTapMs = 0)
             }
-            if (profile != null && (touch != profile.touch || pad != profile.touchpad)) {
-                result = result.map { if (it.id == profile.id) it.copy(touch = touch, touchpad = pad) else it }
-            }
             w.copy(touchControls = controls, mappings = own, touchpad = touchpad)
         }
-        return set.copy(workspaces = workspaces) to result
+        return set.copy(workspaces = workspaces)
     }
 
     /** What "touchpad over buttons" took as the longest tap, before it went. */
