@@ -23,6 +23,9 @@ internal sealed class DebugForm : Form
     private readonly Font _mono;
     private readonly System.Windows.Forms.Timer _timer;
     private long _shownVersion = -1;
+    /// <summary>Local clock ticks minus engine us × 10, taken once so a row's time never changes.</summary>
+    private readonly long _clockOffsetTicks =
+        DateTime.Now.Ticks - GyroPhone.Host.Abstractions.StopwatchClock.Instance.NowUs * 10;
 
     /// <param name="save">Saves a recording and returns its path, or null when it could not.</param>
     public DebugForm(HostEngine engine, Func<string?> save, Action openFolder)
@@ -103,13 +106,13 @@ internal sealed class DebugForm : Form
         var d = _engine.Debug;
         if (_pause.Checked || d.Version == _shownVersion) return;
         _shownVersion = d.Version;
-        long now = GyroPhone.Host.Abstractions.StopwatchClock.Instance.NowUs;
         var sb = new StringBuilder();
         var list = d.Latest(EventsShown, k => _kinds[k].Checked);
         for (int i = list.Count - 1; i >= 0; i--)
         {
             var e = list[i];
-            sb.Append($"{-(now - e.Us) / 1_000_000.0,7:0.0}s  {DebugTrace.Tag(e.Kind),-5}  {e.Text}\r\n");
+            var at = new DateTime(_clockOffsetTicks + e.Us * 10);
+            sb.Append($"{at:HH:mm:ss.fff}  {DebugTrace.Tag(e.Kind),-5}  {e.Text}\r\n");
         }
         _events.Text = sb.ToString();
     }
