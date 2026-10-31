@@ -73,6 +73,7 @@ object Describe {
 
         is OutputTarget.HapticStep -> "Haptic per ${t.percent} % step" + feel(t.feel)
         is OutputTarget.Layer -> layer(t) + if (t.set < 0) "" else " → " + setName(t.set)
+        OutputTarget.LayerBack -> "Layer back (to the layers before the last change)"
         OutputTarget.NoOutput -> "Nothing (blocks the layer below)"
     }
 
@@ -80,7 +81,7 @@ object Describe {
     val layerTargets: List<OutputTarget> = listOf(
         OutputTarget.Layer(-1), OutputTarget.Layer(-1, whileHeld = true),
         OutputTarget.Layer(-1, override = true), OutputTarget.Layer(-1, override = true, whileHeld = true),
-        OutputTarget.NoOutput,
+        OutputTarget.LayerBack, OutputTarget.NoOutput,
     )
 
     /** "Layer set", "Layer hold", "Override layer set" or "Override layer hold". */
@@ -168,6 +169,7 @@ object Describe {
 
         is OutputTarget.HapticStep -> "Buzz ${t.percent}%"
         is OutputTarget.Layer -> layer(t) + if (t.set < 0) "" else " " + (if (t.set == MappingSet.BASE) "Base" else t.set.toString())
+        OutputTarget.LayerBack -> "Layer back"
 
         OutputTarget.NoOutput -> "Nothing"
     }

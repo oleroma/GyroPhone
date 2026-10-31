@@ -73,6 +73,9 @@ enum class SurfaceInput(val label: String, val motion: Boolean = false) {
     SWIPE_LEFT("Swipe ←"), SWIPE_RIGHT("Swipe →"), SWIPE_UP("Swipe ↑"), SWIPE_DOWN("Swipe ↓"),
     HOLD_LEFT("Swipe hold ←"), HOLD_RIGHT("Swipe hold →"), HOLD_UP("Swipe hold ↑"), HOLD_DOWN("Swipe hold ↓"),
     PINCH("Pinch", motion = true), PINCH_IN("Pinch in"), PINCH_OUT("Pinch out"),
+
+    /** A pulse each time exactly that many fingers come down (the hold starting). */
+    PRESS("Press"),
 }
 
 /** The direction of a swipe input (Swipe ←→↑↓), else null. */
@@ -106,6 +109,9 @@ val SurfaceInput.holdDirection: Direction?
 @Serializable
 enum class ButtonGesture(val label: String) {
     TAP("Tap"), DOUBLE_TAP("Double tap"), LONG_PRESS("Long press"), RELEASE("Release"),
+
+    /** A pulse at every press, however long it is held. */
+    PRESS("Press"),
 }
 
 /** Something on the phone side that produces input. */
@@ -335,6 +341,14 @@ sealed interface OutputTarget {
         val switchHeld: Boolean = false,
     ) : OutputTarget
 
+    /**
+     * Back to the mapping sets in use before the last layer change ([Layer] press or release, or
+     * another Layer back): pressed twice it swaps back again.
+     */
+    @Serializable
+    @SerialName("layer_back")
+    data object LayerBack : OutputTarget
+
     /** Does nothing: in a set used as an override, it stops an input falling through to the set below. */
     @Serializable
     @SerialName("nothing")
@@ -349,9 +363,47 @@ sealed interface OutputTarget {
 @Serializable
 enum class KeyMode(val label: String) { HOLD("Hold"), TOGGLE("Toggle"), NEXT_KEY("Next key only") }
 
-/** [source] presses [target] while mapping set [set] (0 = Base) is in use ([OutputTarget.Layer]). */
+/**
+ * [source] presses [target] while mapping set [set] (0 = Base) is in use ([OutputTarget.Layer]),
+ * shaped by [options] (null = as the source is held).
+ */
 @Serializable
-data class Mapping(val source: InputSource, val target: OutputTarget, val set: Int = 0)
+data class Mapping(
+    val source: InputSource,
+    val target: OutputTarget,
+    val set: Int = 0,
+    val options: MapOptions? = null,
+)
+
+/**
+ * How a mapping turns its source's activations into output. [toggle]: each activation turns it
+ * on, the next off. [turbo]: while on it presses and lets go [turboRate] times a second.
+ * [cycle]: the mappings of one source and set with cycle on take turns, one per activation, in
+ * list order. [startDelayMs]: output starts this long after the activation; [minHoldMs]: it lasts
+ * at least this long; [endDelayMs]: it lasts this much longer after the source lets go.
+ */
+@Serializable
+data class MapOptions(
+    val toggle: Boolean = false,
+    val turbo: Boolean = false,
+    val turboRate: Int = DEFAULT_TURBO_RATE,
+    val cycle: Boolean = false,
+    val startDelayMs: Int = 0,
+    val endDelayMs: Int = 0,
+    val minHoldMs: Int = 0,
+) {
+    /** Changes nothing (such a mapping keeps no options). */
+    val none: Boolean get() = this == MapOptions()
+
+    val rate: Int get() = turboRate.coerceIn(MIN_TURBO_RATE, MAX_TURBO_RATE)
+
+    companion object {
+        const val DEFAULT_TURBO_RATE = 10
+        const val MIN_TURBO_RATE = 1
+        const val MAX_TURBO_RATE = 30
+        const val MAX_DELAY_MS = 2000
+    }
+}
 
 /**
  * A named mapping set of a [Workspace] (set 0, Base, needs none). [settings]: the workspace

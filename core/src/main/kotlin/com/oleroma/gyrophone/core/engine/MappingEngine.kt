@@ -19,6 +19,7 @@ import com.oleroma.gyrophone.core.model.HapticEdge
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KeyMode
+import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MouseMotion
@@ -147,6 +148,21 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     private val layerHolds = HashMap<OutputTarget.Layer, LayerHold>()
 
+    /** The sets in use before the last layer change: where [OutputTarget.LayerBack] goes. */
+    private var backLayers: Layers? = null
+
+    /** The touch group's mappings with options: their shapers and cycle turns ([shaped]). */
+    private val touchShapers = HashMap<Mapping, Shaper>()
+    private val touchCycles = HashMap<CycleKey, CycleTurn>()
+
+    /** A cycle of mappings: one source in one set. */
+    private data class CycleKey(val source: InputSource, val set: Int)
+
+    /** Each cycle mapping in use: its cycle, its place in it and the cycle's size. */
+    private class CycleInfo(val key: CycleKey, val index: Int, val size: Int)
+
+    private var cycleInfo: Map<Mapping, CycleInfo> = emptyMap()
+
     /**
      * Inputs held through a set change, per group (0 = touch, then 1 + pad index), by source: the
      * old mappings they keep until released, and whether the new set's are held back meanwhile
@@ -198,6 +214,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
         /** Gestures of its keys that have gesture mappings, by key code (also in [tapList]). */
         val gestures = HashMap<Int, ButtonGestures>()
+
+        /** Mappings with options of this device's group: their shapers and cycle turns ([shaped]). */
+        val shapers = HashMap<Mapping, Shaper>()
+        val cycles = HashMap<CycleKey, CycleTurn>()
         val axes = FloatArray(AXIS_SLOTS)
         private var axisCount = 0
 
@@ -571,7 +591,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         releaseHeld()
         for (d in deviceList) d.pad = resolvePad(d.device)
-        layerSet = MappingSet.BASE; layerOverrides.clear(); layerHolds.clear()
+        layerSet = MappingSet.BASE; layerOverrides.clear(); layerHolds.clear(); backLayers = null
         carried = Array(allPads.size + 1) { HashMap() }; anyCarried = false
         applyLayers()
         touchpad.cancel(clock())
@@ -589,6 +609,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         bpState.fill(BP_FREE); bpControl.fill(null)
         pulses.clear()
         keyModeHeld.clear(); toggledKeys.clear(); nextKeys.clear()
+        clearShapers()
         for (t in tapList) t.reset()
         gyroToggled = false
         keyOrderSize = 0; inKeyOrder.fill(false)
@@ -1089,6 +1110,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (i in pulses.indices) d = min(d, pulses[i].startNs + touchpad.minPulseNanos)
         for (i in tapList.indices) d = min(d, tapDeadline(tapList[i]))
         for (a in areas) for ((id, t) in a.late) if (id in a.seen) d = min(d, t + touchpad.minPulseNanos)
+        d = min(d, shapersDeadline(clock()))
         // A held haptic is renewed from snapshots, so they keep coming while it is held.
         if (hapticHeld != null) d = min(d, clock() + HAPTIC_RENEW_NS)
         d
@@ -1134,7 +1156,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                     is OutputTarget.GyroPauseAxis -> gyroBit(t.axis)
                     else -> continue
                 }
-                if (bits and b != b && value(m.source, dev) >= PRESS_THRESHOLD) bits = bits or b
+                if (bits and b != b && out(m, dev, clock()) >= PRESS_THRESHOLD) bits = bits or b
             }
         }
         return bits
@@ -1160,7 +1182,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         synchronized(lock) {
             trace?.state("reset: everything released")
             releaseHeld()
-            layerSet = MappingSet.BASE; layerOverrides.clear(); layerHolds.clear()
+            layerSet = MappingSet.BASE; layerOverrides.clear(); layerHolds.clear(); backLayers = null
             for (c in carried) c.clear()
             anyCarried = false
             applyLayers()
@@ -1351,9 +1373,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val dupL2 = device?.analogLeftTrigger == true && pad in mapsLeftTriggerAxis.indices && mapsLeftTriggerAxis[pad]
         val dupR2 =
             device?.analogRightTrigger == true && pad in mapsRightTriggerAxis.indices && mapsRightTriggerAxis[pad]
+        val now = clock()
         for (i in ms.indices) {
             val m = ms[i]
-            val v = value(m.source, dev, output = true)
+            val v = out(m, dev, now, output = true)
             when (val t = m.target) {
                 is OutputTarget.Pad -> if (v >= PRESS_THRESHOLD) when (t.button) {
                     GamepadButton.DPAD_UP -> accUp = true
@@ -1385,7 +1408,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 // Surface motion, switching apps and zoom run in the touchpad (Touchpad.route).
                 is OutputTarget.Wheel, is OutputTarget.MouseAxis,
                 OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause, is OutputTarget.GyroPauseAxis,
-                OutputTarget.SwitchApps, OutputTarget.Zoom, is OutputTarget.Layer, OutputTarget.NoOutput -> Unit
+                OutputTarget.SwitchApps, OutputTarget.Zoom, is OutputTarget.Layer, OutputTarget.LayerBack,
+                OutputTarget.NoOutput -> Unit
 
                 is OutputTarget.Haptic, is OutputTarget.HapticStep -> {
                     val a = min(1f, abs(v))
@@ -1457,7 +1481,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         forEachGroup { ms, dev ->
             if (!hit) for (i in ms.indices) {
                 val m = ms[i]
-                if (m.target == target && value(m.source, dev) >= PRESS_THRESHOLD) {
+                if (m.target == target && out(m, dev, clock()) >= PRESS_THRESHOLD) {
                     hit = true; break
                 }
             }
@@ -1472,10 +1496,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * Due button holds and tap releases are resolved first.
      */
     private inline fun firingEvents(now: Long, change: () -> Unit) {
-        engagedEvents(eventsBefore)
+        engagedEvents(eventsBefore, now, before = true)
         resolveButtons(now)
         change()
-        engagedEvents(eventsAfter)
+        engagedEvents(eventsAfter, now, before = false)
         for (t in eventsAfter) if (t !in eventsBefore) onPress(t)
         for (t in eventsBefore) if (t is OutputTarget.Layer && t !in eventsAfter) layerReleased(t)
         if (anyCarried) pruneCarried()
@@ -1490,7 +1514,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (i in pulses.indices) if (pulseDone(pulses[i], now)) return true
         for (i in tapList.indices) if (now >= tapDeadline(tapList[i])) return true
         for (a in areas) for ((id, t) in a.late) if (areaDone(a, id, t, now)) return true
-        return false
+        return shapersDeadline(now) <= now
     }
 
     private fun areaDone(a: AreaHolds, id: String, t: Long, now: Long) =
@@ -1578,19 +1602,86 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
     }
 
-    private fun engagedEvents(into: HashSet<OutputTarget>) {
+    /**
+     * The event targets engaged now. [before]: as the last call left them for mappings with
+     * options (their output also changes with time, which must show as an edge), else now.
+     */
+    private fun engagedEvents(into: HashSet<OutputTarget>, now: Long, before: Boolean) {
         into.clear()
         forEachGroup { ms, dev ->
             for (i in ms.indices) {
                 val m = ms[i]
                 val t = m.target
-                if ((t is OutputTarget.Wheel || t == OutputTarget.GyroToggle || t is OutputTarget.Layer) && value(
-                        m.source,
-                        dev
-                    ) >= PRESS_THRESHOLD
-                ) into.add(t)
+                if (t !is OutputTarget.Wheel && t != OutputTarget.GyroToggle && t !is OutputTarget.Layer &&
+                    t != OutputTarget.LayerBack
+                ) continue
+                val on = if (m.options == null) value(m.source, dev) >= PRESS_THRESHOLD else {
+                    val sh = shaperOf(m, dev)
+                    if (before) sh.eventOn else (out(m, dev, now) >= PRESS_THRESHOLD).also { sh.eventOn = it }
+                }
+                if (on) into.add(t)
             }
         }
+    }
+
+    /** [m]'s shaper in [dev]'s group (the touch group for null). */
+    private fun shaperOf(m: Mapping, dev: Dev?): Shaper =
+        (dev?.shapers ?: touchShapers).getOrPut(m) { Shaper(m.options ?: MapOptions()) }
+
+    /**
+     * [m]'s output value in [dev]'s group at [now]: its source's value, or with options that
+     * shaped as a press (1 or 0) by its toggle, turbo, cycle and delays.
+     */
+    private fun out(m: Mapping, dev: Dev?, now: Long, output: Boolean = false): Float {
+        val v = value(m.source, dev, output)
+        val o = m.options ?: return v
+        var on = abs(v) >= PRESS_THRESHOLD
+        if (o.cycle) cycleInfo[m]?.let { c ->
+            val turn = (dev?.cycles ?: touchCycles).getOrPut(c.key) { CycleTurn() }
+            turn.update(on, c.size)
+            on = on && turn.turn == c.index
+        }
+        val sh = shaperOf(m, dev)
+        sh.update(on, now)
+        return if (sh.on(now)) 1f else 0f
+    }
+
+    /** When a shaped output next changes by itself (after [now]); Long.MAX_VALUE = none. */
+    private fun shapersDeadline(now: Long): Long {
+        var d = Long.MAX_VALUE
+        for (sh in touchShapers.values) d = min(d, sh.deadline(now))
+        for (dev in deviceList) for (sh in dev.shapers.values) d = min(d, sh.deadline(now))
+        for (sh in anyDevice.shapers.values) d = min(d, sh.deadline(now))
+        return d
+    }
+
+    private fun clearShapers() {
+        touchShapers.clear(); touchCycles.clear()
+        for (d in deviceList) {
+            d.shapers.clear(); d.cycles.clear()
+        }
+        anyDevice.shapers.clear(); anyDevice.cycles.clear()
+    }
+
+    /** Works out the cycles of the mappings in use and forgets the shapers of mappings no longer in use. */
+    private fun updateShapers() {
+        val info = HashMap<Mapping, CycleInfo>()
+        fun cycles(ms: List<Mapping>) {
+            val groups = LinkedHashMap<CycleKey, ArrayList<Mapping>>()
+            for (m in ms) if (m.options?.cycle == true) groups.getOrPut(CycleKey(m.source, m.set)) { ArrayList() }.add(m)
+            for ((k, list) in groups) list.forEachIndexed { i, m -> info[m] = CycleInfo(k, i, list.size) }
+        }
+        cycles(touchMappings)
+        for (ms in padMappings) cycles(ms)
+        cycleInfo = info
+        val touchUsed = touchMappings.toHashSet()
+        touchShapers.keys.retainAll(touchUsed)
+        for (d in deviceList) {
+            val used = padMappings.getOrNull(d.pad)?.toHashSet() ?: emptySet()
+            d.shapers.keys.retainAll(used)
+        }
+        val all = padMappings.flatMapTo(HashSet()) { it }
+        anyDevice.shapers.keys.retainAll(all)
     }
 
     private fun onPress(t: OutputTarget) {
@@ -1598,6 +1689,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             OutputTarget.GyroToggle -> gyroToggled = !gyroToggled
             is OutputTarget.Wheel -> wheel += t.step * MouseState.WHEEL_UNIT
             is OutputTarget.Layer -> layerPressed(t)
+            OutputTarget.LayerBack -> layerBack()
             else -> Unit
         }
     }
@@ -1612,7 +1704,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     private fun layerPressed(t: OutputTarget.Layer) {
         if (t.set !in MappingSet.BASE..MappingSet.MAX) return
-        carryHeld(t)
+        backLayers = Layers(layerSet, layerOverrides.toList())
+        carryHeld(t, t.whileHeld)
         when {
             t.override && t.whileHeld -> {
                 val added = t.set !in layerOverrides
@@ -1633,7 +1726,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** A "... hold" action let go: back to where it came from, unless a set change came since. */
     private fun layerReleased(t: OutputTarget.Layer) {
         val h = layerHolds.remove(t) ?: return
-        carryHeld(t)
+        backLayers = Layers(layerSet, layerOverrides.toList())
+        carryHeld(t, t.whileHeld)
         if (t.override) {
             if (h.added) layerOverrides.remove(t.set)
         } else {
@@ -1653,6 +1747,17 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         applyLayers()
     }
 
+    /** Back to the sets in use before the last layer change; the ones left become the way back. */
+    private fun layerBack() {
+        val b = backLayers ?: return
+        backLayers = Layers(layerSet, layerOverrides.toList())
+        carryHeld(OutputTarget.LayerBack, whileHeld = false)
+        layerHolds.clear()
+        layerSet = b.set
+        layerOverrides.clear(); layerOverrides.addAll(b.overrides)
+        applyLayers()
+    }
+
     /**
      * Before a set change by [t]: every held input remembers what it presses now. Its layer actions
      * always stay until it is released; its buttons, keys and clicks too, and the new set's mappings
@@ -1660,7 +1765,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * itself always keep everything; holding a "... hold" action they also press what the new set
      * maps them to at once (all but its layer actions, which wait, so nothing flips back and forth).
      */
-    private fun carryHeld(t: OutputTarget.Layer) {
+    private fun carryHeld(t: OutputTarget, whileHeld: Boolean) {
         for (g in carried.indices) {
             val ms = if (g == 0) touchMappings else padMappings[g - 1]
             val bySource = HashMap<InputSource, ArrayList<Mapping>>()
@@ -1677,7 +1782,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 // A stick or trigger axis (or touch motion) held past half keeps nothing: it follows the new set.
                 if (kept.isEmpty() && (!keep || continuous(src))) continue
                 val before = was[src]
-                val layersOnly = holder && t.whileHeld && (before == null || before.holdsLayers)
+                val layersOnly = holder && whileHeld && (before == null || before.holdsLayers)
                 now[src] = Carried(kept, keep || before?.holdsBack == true, layersOnly)
             }
             carried[g] = now
@@ -1688,7 +1793,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** A held input keeps [m] through a set change: its layer action always, a button-like output when it [keep]s. */
     private fun carries(m: Mapping, keep: Boolean): Boolean {
         val t = m.target
-        if (t is OutputTarget.Layer) return true
+        if (t is OutputTarget.Layer || t == OutputTarget.LayerBack) return true
         if (!keep || continuous(m.source)) return false
         return t is OutputTarget.Pad || t is OutputTarget.Key || t is OutputTarget.Mouse ||
                 t is OutputTarget.PadAxis || t == OutputTarget.GyroPause || t == OutputTarget.GyroHold || t is OutputTarget.GyroPauseAxis
@@ -1774,6 +1879,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         keyCfgs = Array(padMappings.size) { keyGestureCfgs(padMappings[it]) }
         anyKeyCfgs = keyGestureCfgs(padMappings.flatMap { it })
+        updateShapers()
         for (d in deviceList) for ((code, g) in d.gestures) {
             val cfg = keyCfgs.getOrNull(d.pad)?.get(code) ?: continue
             g.hasDouble = cfg.hasDouble; g.tapWaits = cfg.tapWaits

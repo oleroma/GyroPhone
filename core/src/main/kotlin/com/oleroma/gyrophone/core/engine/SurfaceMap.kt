@@ -73,10 +73,12 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
                 SurfaceInput.MOTION_Y -> StickAxis.Y
                 else -> null
             }
+            // A mapping with options is shaped and pressed by the engine ([MappingEngine]).
+            val shaped = m.options != null
             when (val t = m.target) {
-                is OutputTarget.Mouse -> mouse[b] = mouse[b] or (1 shl t.button.bit)
+                is OutputTarget.Mouse -> if (!shaped) mouse[b] = mouse[b] or (1 shl t.button.bit)
                 // Toggle and next-key keys are held by the engine ([MappingEngine]).
-                is OutputTarget.Key -> if (t.mode == KeyMode.HOLD) when {
+                is OutputTarget.Key -> if (t.mode == KeyMode.HOLD && !shaped) when {
                     HidUsage.isModifier(t.usage) -> mods[b] = mods[b] or (1 shl (t.usage - HidUsage.LEFT_CTRL))
                     key[b] == 0 -> key[b] = t.usage and 0xFF
                 }

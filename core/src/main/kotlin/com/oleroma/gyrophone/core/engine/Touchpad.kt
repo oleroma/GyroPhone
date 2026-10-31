@@ -344,6 +344,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         latchUntil = Long.MAX_VALUE // a latch never times out under a finger
         touchMax = if (count == 1) 1 else max(touchMax, count)
         holdCount()
+        if (count in 1..4) pulse(count, SurfaceInput.PRESS)
         armLong(if (state == State.TAP_WAIT) 0 else count, now)
         when (state) {
             State.IDLE -> {
