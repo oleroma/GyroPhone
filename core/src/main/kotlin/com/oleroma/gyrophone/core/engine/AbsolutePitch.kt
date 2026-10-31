@@ -19,8 +19,8 @@ import kotlin.math.sqrt
  * limit exactly. Set level ([setLevel]) says the camera is level now: it snaps to the phone.
  *
  * The phone's pitch is the gyro's turn, pulled toward the accelerometer's gravity over about
- * [GRAVITY_TAU_S] (a jolt off 1 g is skipped), so it is quick and never drifts. Pitch 0 is the
- * phone upright with the screen facing the player (the back looking at the horizon), up +.
+ * [GRAVITY_TAU_S] (a jolt off 1 g is skipped), so it is quick and never drifts. Pitch 0 is
+ * where the phone is level ([levelDeg]), up +.
  *
  * Mouse Y is up + here; [step] returns HID counts (down +). Called from the gyro's thread; the
  * accelerometer's ([setUp]) may come from another, so the gravity vector is guarded.
@@ -57,8 +57,21 @@ class AbsolutePitch {
     @Volatile var running: Boolean = false
         private set
 
-    /** The phone's pitch against gravity now, degrees (up +). */
-    val pitchDeg: Float get() = synchronized(this) { pitchOf(uz) }
+    /**
+     * Where the phone is level, degrees: 0 upright, up along the screen's top (Y+); 90 flat with
+     * up out of the screen; 180 upside down, up along the screen's bottom (Y-). Set from the UI.
+     */
+    @Volatile var levelDeg: Float = 0f
+
+    /** The phone's pitch against gravity now, degrees from level ([levelDeg]), up +. */
+    val pitchDeg: Float
+        get() {
+            val a = Math.toRadians(levelDeg.toDouble())
+            val c = kotlin.math.cos(a).toFloat()
+            val s = kotlin.math.sin(a).toFloat()
+            // "Forward" turned from the back (0, 0, -1) toward the screen's top by the level angle.
+            return synchronized(this) { asin((-uz * c + uy * s).coerceIn(-1f, 1f)) * RAD_TO_DEG }
+        }
 
     /** Forgets the camera: the next [step] takes it as where the phone points it (nothing moves). Keeps the phone's pose. */
     fun reset() {
@@ -156,8 +169,6 @@ class AbsolutePitch {
         cameraDeg = camera!! / countsPerDeg
         return -send
     }
-
-    private fun pitchOf(z: Float): Float = asin((-z).coerceIn(-1f, 1f)) * RAD_TO_DEG
 
     companion object {
         /** Past a pole the camera is sent this much further (camera degrees), once, so the game pins it there. */

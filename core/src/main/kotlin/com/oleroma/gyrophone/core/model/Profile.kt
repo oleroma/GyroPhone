@@ -729,6 +729,11 @@ data class GyroSettings(
     /** How far the game's camera pitches above and below the horizon, degrees: where [absolutePitch] re-syncs. */
     val pitchLimitDeg: Float = DEFAULT_PITCH_LIMIT_DEG,
     /**
+     * Where the phone counts as level for [absolutePitch], degrees: 0 upright (up along the
+     * screen's top), 90 flat (up out of the screen), 180 upside down (up along the screen's bottom).
+     */
+    val absoluteLevelDeg: Float = 0f,
+    /**
      * Inertia: when a ratchet turns a gyro axis off, its mouse and wheel motion glides on and slows
      * down over [glideMs] ([InertiaCurve]); it stops at once when the axis is on again. Sticks never glide.
      */

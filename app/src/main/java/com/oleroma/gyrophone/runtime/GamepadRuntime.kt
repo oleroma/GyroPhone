@@ -276,6 +276,7 @@ class GamepadRuntime(context: Context) {
         val y0 = routes.firstOrNull { it.source is InputSource.Gyro && (it.target as? OutputTarget.MouseAxis)?.motion == MouseMotion.MOVE_Y }
         val sign = if (((y0?.target as? OutputTarget.MouseAxis)?.scale ?: 1f) < 0f) -1f else 1f
         val gain = (g!!.rwsOf(g.sensitivityOf(MotionAxis.PITCH)) ?: 1f) * sign
+        absolutePitch.levelDeg = g.absoluteLevelDeg
         engine.addAbsoluteY(absolutePitch.step(gain, g.gameCountsPer360 / 360f, g.pitchLimitDeg))
     }
 

@@ -174,6 +174,12 @@ internal fun WorkspaceSettings(
                     enabled = known || ws.gyro.absolutePitch,
                 ) { v -> editWs { it.copy(gyro = it.gyro.copy(absolutePitch = v)) } }
                 if (ws.gyro.absolutePitch) OverrideSlider(
+                    key + "plevel", "Level at %.0f°", ws.gyro.absoluteLevelDeg, 0f..180f, 1f,
+                    own(g("absoluteLevelDeg")), reset(g("absoluteLevelDeg")),
+                    hint = "Where the phone counts as level (camera level): 0° upright, screen facing you; " +
+                        "90° lying flat, screen up; 180° upside down. Tilting from there pitches the camera.",
+                ) { v -> editWs { it.copy(gyro = it.gyro.copy(absoluteLevelDeg = v)) } }
+                if (ws.gyro.absolutePitch) OverrideSlider(
                     key + "plimit", "Camera limit ±%.0f°", ws.gyro.pitchLimitDeg,
                     GyroSettings.MIN_PITCH_LIMIT_DEG..GyroSettings.MAX_PITCH_LIMIT_DEG, 1f,
                     own(g("pitchLimitDeg")), reset(g("pitchLimitDeg")),

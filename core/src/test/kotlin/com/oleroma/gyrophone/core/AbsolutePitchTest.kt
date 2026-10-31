@@ -44,6 +44,23 @@ class AbsolutePitchTest {
         assertEquals(-45f, a.pitchDeg, 0.1f)
     }
 
+    @Test fun theLevelAngleSetsWhereThePhoneIsLevel() {
+        val a = AbsolutePitch()
+        // Lying flat, screen up: up is out of the screen.
+        a.setUp(0f, 0f, 1f, 1f)
+        a.rotate(0f, 0f, 0f, 10f)
+        assertEquals(-90f, a.pitchDeg, 0.1f)
+        a.levelDeg = 90f
+        assertEquals(0f, a.pitchDeg, 0.1f)
+        // Tipping the top edge up from flat (toward upright) is pitching up.
+        a.hold(-60f) // 30° from flat toward upright
+        assertEquals(30f, a.pitchDeg, 0.5f)
+        a.levelDeg = 180f
+        a.setUp(0f, -1f, 0f, 1f)
+        a.rotate(0f, 0f, 0f, 10f)
+        assertEquals(0f, a.pitchDeg, 0.1f)
+    }
+
     @Test fun nothingMovesOnStartThenTheCameraFollowsThePhone() {
         val a = AbsolutePitch()
         assertEquals(0, a.at(20f))
