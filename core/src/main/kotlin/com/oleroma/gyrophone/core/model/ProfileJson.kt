@@ -27,8 +27,8 @@ object ProfileJson {
      * workspace ids.
      */
     fun normalize(profile: Profile): Profile {
-        // A button's own gyro settings become a layer it holds.
-        val p = ButtonGyroLayers.profile(profile)
+        // Mappings from before triggers do the same with triggers.
+        val p = TriggerUpgrade.profile(profile)
         var workspaces = p.workspaces.map { w ->
             if (w.touchControls.none { it.kind == TouchKind.FULLSCREEN }) w
             else w.copy(touchControls = w.touchControls.filterNot { it.kind == TouchKind.FULLSCREEN })

@@ -14,7 +14,9 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.NavCorners
+import com.oleroma.gyrophone.core.model.Output
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.ProfileJson
 import com.oleroma.gyrophone.core.model.SurfaceInput
@@ -169,7 +171,10 @@ class GyroModesTest {
             val b = w.touchControls.single { it.id == NavCorners.GYRO_BUTTON }
             assertEquals(TouchKind.BUTTON, b.kind)
             assertEquals(0.9f, b.x)
-            assertEquals(listOf(OutputTarget.GyroToggle), w.mappings.filter { it.source == InputSource.Touch(NavCorners.GYRO_BUTTON) }.map { it.target })
+            assertEquals(
+                listOf(Mapping(InputSource.Touch(NavCorners.GYRO_BUTTON), OutputTarget.GyroPause, trigger = Trigger(output = Output.TOGGLE))),
+                w.mappings.filter { it.source == InputSource.Touch(NavCorners.GYRO_BUTTON) },
+            )
         }
     }
 

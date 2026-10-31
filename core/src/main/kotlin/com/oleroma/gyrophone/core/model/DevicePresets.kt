@@ -130,13 +130,9 @@ object PhysicalLayouts {
     /** A key of the keyboard drawing: [code] null is a gap; [width] in key units. */
     data class KeyCell(val code: Int?, val label: String, val width: Float = 1f)
 
-    /** A button's press and, from its first key, its tap, double tap, long press and release. */
-    fun buttonInputs(codes: List<Int>, press: String = "Press"): List<BindableInput> {
-        val keys = codes.map { InputSource.Key(it) }
-        return listOf(BindableInput(press, keys)) + ButtonGesture.entries.map { g ->
-            BindableInput(g.label, codes.map { InputSource.KeyGesture(it, g) })
-        }
-    }
+    /** A button's press (its taps, long press and release are its mappings' triggers). */
+    fun buttonInputs(codes: List<Int>, press: String = "Press"): List<BindableInput> =
+        listOf(BindableInput(press, codes.map { InputSource.Key(it) }))
 
     private fun stickInputs(x: Int, y: Int, click: Int) = listOf(
         BindableInput("X axis", listOf(InputSource.Axis(x)), analog = true),
@@ -206,7 +202,7 @@ object PhysicalLayouts {
             PhysicalControl(id, label, kind, x, y, w / a, h, inputs)
         fun trigger(code: Int, axis: Int, alt: Int) = listOf(
             BindableInput("Pull", listOf(InputSource.Axis(axis), InputSource.Axis(alt), InputSource.Key(code))),
-        ) + ButtonGesture.entries.map { g -> BindableInput(g.label, listOf(InputSource.KeyGesture(code, g))) }
+        )
         fun paddle(id: String, x: Float, y: Float) =
             rect(id, id.uppercase(), PhysicalKind.FACE, x, y, 0.15f, 0.15f, buttonInputs(paddles.getValue(id)))
         ControllerDiagram(

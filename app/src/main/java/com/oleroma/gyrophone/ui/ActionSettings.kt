@@ -14,19 +14,18 @@ import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.Bindings
-import com.oleroma.gyrophone.core.model.ButtonGesture
 import com.oleroma.gyrophone.core.model.DevicePreset
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.StickAxis
 import com.oleroma.gyrophone.core.model.SurfaceInput
-import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.holdDirection
 import com.oleroma.gyrophone.core.model.swipeDirection
 import com.oleroma.gyrophone.runtime.GamepadRuntime
+import com.oleroma.gyrophone.core.model.Where
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 
@@ -43,25 +42,13 @@ internal class MappingSettings(
 /** [content] as a composable value (a branch of a `when` gives it no expected type to infer that from). */
 private fun ui(content: @Composable () -> Unit): @Composable () -> Unit = content
 
-/**
- * Which gesture timing an action has: a long press its time (a tap too: a longer press is no tap),
- * a double tap its window.
- */
-private enum class Timing { LONG_PRESS, DOUBLE_TAP }
-
-private fun timingOf(input: BindableInput): Timing? = when (val s = input.sources.firstOrNull()) {
-    is InputSource.TouchTap, is InputSource.TouchLongPress -> Timing.LONG_PRESS
-    is InputSource.TouchDoubleTap -> Timing.DOUBLE_TAP
-    is InputSource.Surface -> when (s.input) {
-        SurfaceInput.TAP, SurfaceInput.LONG_PRESS -> Timing.LONG_PRESS
-        SurfaceInput.DOUBLE_TAP -> Timing.DOUBLE_TAP
-        else -> null
-    }
-    else -> null
-}
+private const val TAP_WINDOW = "Tap window"
+private const val TAP_HINT = "A press shorter than this is a tap; one held this long is a long press."
+private const val DOUBLE_WINDOW = "Double window"
+private const val DOUBLE_HINT = "The longest gap between the taps of a double. A Single tap waits this long when the action has a Double mapping. 0 turns Double off."
 
 /**
- * The ⚙ of a Swipe or Swipe hold [input] of a surface at [level] ([zones]: as mapped), or of a
+ * The ⚙ of a Touch direction [input] of a surface at [level] ([zones]: as mapped), or of a
  * Move X / Y ([touchpad]: the workspace's), else null.
  */
 private fun directionGear(level: SurfaceLevel, key: String, input: BindableInput, zones: IntArray, touchpad: Boolean = false): (@Composable () -> Unit)? {
@@ -76,7 +63,6 @@ private fun directionGear(level: SurfaceLevel, key: String, input: BindableInput
     return null
 }
 
-private const val LONG_HINT = "How long a press is held to be a long press; a shorter one is a tap."
 
 /**
  * Gyro [axis]'s inertia, glide curve and glide time in effect ([eff]), each highlighted with a ↺
@@ -102,9 +88,8 @@ private fun AxisGlideSettings(key: String, axis: MotionAxis, eff: GyroSettings, 
 }
 
 /**
- * The ⚙ and Settings of touch control [control] of [ws]: its long press and double tap timings
- * (over the workspace's), its area's options, a touchpad button's direction settings and shared
- * settings (over the workspace defaults), or a
+ * The ⚙ and Settings of touch control [control] of [ws]: its press's tap and double windows
+ * (over the workspace's), its area's options, a touchpad button's direction settings and shared settings (over the workspace defaults), or a
  * stick's. [update] changes the control.
  */
 internal fun touchControlSettings(
@@ -116,33 +101,35 @@ internal fun touchControlSettings(
     val key = ws.id + control.id
     val surface = if (control.swipes) buttonSurfaceLevel(control, ws.touchpad, update) else null
     val zones = Bindings.holdZoneCounts(ws.mappings, control.id)
+    val hasArea = ws.mappings.any { it.source == InputSource.Touch(control.id) && it.trigger.where == Where.AREA }
     return MappingSettings(
         action = { input ->
             val src = input.sources.firstOrNull()
             when {
                 surface != null && directionGear(surface, key, input, zones) != null -> directionGear(surface, key, input, zones)
 
-                timingOf(input) == Timing.LONG_PRESS -> ui {
-                    MsOverride(
-                        key + "long", "Long press after", control.longPress(ws),
-                        Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
-                        overridden = control.longPressMs != null,
-                        onReset = { update { it.copy(longPressMs = null) } },
-                        hint = LONG_HINT,
-                    ) { ms -> update { it.copy(longPressMs = ms) } }
+                // A button's press: its tap and double windows, and its area's options when an Area mapping uses it.
+                src is InputSource.Touch && control.kind == TouchKind.BUTTON -> ui {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        MsOverride(
+                            key + "long", TAP_WINDOW, control.longPress(ws),
+                            Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
+                            overridden = control.longPressMs != null,
+                            onReset = { update { it.copy(longPressMs = null) } },
+                            hint = TAP_HINT,
+                        ) { ms -> update { it.copy(longPressMs = ms) } }
+                        MsOverride(
+                            key + "double", DOUBLE_WINDOW, control.doubleTap(ws),
+                            Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
+                            overridden = control.doubleTapMs != null,
+                            onReset = { update { it.copy(doubleTapMs = null) } },
+                            hint = DOUBLE_HINT,
+                        ) { ms -> update { it.copy(doubleTapMs = ms) } }
+                        if (hasArea) AreaOptions(control, update)
+                    }
                 }
 
-                timingOf(input) == Timing.DOUBLE_TAP -> ui {
-                    MsOverride(
-                        key + "double", "Double tap within", control.doubleTap(ws),
-                        Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
-                        overridden = control.doubleTapMs != null,
-                        onReset = { update { it.copy(doubleTapMs = null) } },
-                        hint = "The longest gap between the taps. A tap waits this long when a double tap does something else.",
-                    ) { ms -> update { it.copy(doubleTapMs = ms) } }
-                }
-
-                src is InputSource.TouchArea && src.kind == TouchAreaKind.ZONE -> ui { AreaOptions(control, update) }
+                src is InputSource.Touch && hasArea -> ui { AreaOptions(control, update) }
 
                 else -> null
             }
@@ -174,32 +161,35 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
                 is InputSource.Tilt -> tiltGear(level, key, src.axis == StickAxis.X)
                 is InputSource.Shake -> shakeGear(level, key)
                 else -> null
-            } ?: directionGear(surface, key, input, zones, touchpad = true) ?: when (timingOf(input)) {
-                Timing.LONG_PRESS -> ui {
-                    MsOverride(
-                        key + "long", "Long press after", ws.longPressMs,
-                        Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
-                        overridden = level.isOwn(WorkspaceDefaults.LONG_PRESS),
-                        onReset = { level.reset(WorkspaceDefaults.LONG_PRESS) },
-                        hint = "$LONG_HINT The workspace's: every button and key without a time of its own uses it.",
-                    ) { ms -> level.edit { it.copy(longPressMs = ms) } }
-                }
-
-                Timing.DOUBLE_TAP -> ui {
-                    MsOverride(
-                        key + "double", "Double tap within", ws.doubleTapMs,
-                        Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
-                        overridden = level.isOwn(WorkspaceDefaults.DOUBLE_TAP),
-                        onReset = { level.reset(WorkspaceDefaults.DOUBLE_TAP) },
-                        hint = "The workspace's: every button and key without a window of its own uses it.",
-                    ) { ms -> level.edit { it.copy(doubleTapMs = ms) } }
-                }
-
-                null -> null
-            }
+            } ?: directionGear(surface, key, input, zones, touchpad = true) ?: pressTimings(input, level, key)
         },
         shared = { WorkspaceSettings(runtime, level, key, touchpadOpen = true) },
     )
+}
+
+/** A finger count's press: the workspace's tap and double windows, which every press without its own uses. */
+private fun pressTimings(input: BindableInput, level: WorkspaceLevel, key: String): (@Composable () -> Unit)? {
+    val src = input.sources.firstOrNull() as? InputSource.Surface ?: return null
+    if (src.input != SurfaceInput.HOLD) return null
+    val ws = level.ws
+    return ui {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            MsOverride(
+                key + "long", TAP_WINDOW, ws.longPressMs,
+                Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
+                overridden = level.isOwn(WorkspaceDefaults.LONG_PRESS),
+                onReset = { level.reset(WorkspaceDefaults.LONG_PRESS) },
+                hint = "$TAP_HINT The workspace's: every button and key without a window of its own uses it.",
+            ) { ms -> level.edit { it.copy(longPressMs = ms) } }
+            MsOverride(
+                key + "double", DOUBLE_WINDOW, ws.doubleTapMs,
+                Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
+                overridden = level.isOwn(WorkspaceDefaults.DOUBLE_TAP),
+                onReset = { level.reset(WorkspaceDefaults.DOUBLE_TAP) },
+                hint = "$DOUBLE_HINT The workspace's: every button and key without a window of its own uses it.",
+            ) { ms -> level.edit { it.copy(doubleTapMs = ms) } }
+        }
+    }
 }
 
 /**
@@ -281,7 +271,7 @@ private fun RatchetModeRow(
 }
 
 /**
- * The ⚙ of a physical control's actions in [preset]: a key's long press and double tap timings,
+ * The ⚙ of a physical control's actions in [preset]: a key's tap and double windows,
  * its own over the workspace [ws]'s. [update] changes the preset.
  */
 internal fun physicalSettings(
@@ -290,31 +280,26 @@ internal fun physicalSettings(
     update: ((DevicePreset) -> DevicePreset) -> Unit,
 ) = MappingSettings(
     action = { input ->
-        val src = input.sources.firstOrNull() as? InputSource.KeyGesture
+        val src = input.sources.firstOrNull() as? InputSource.Key
         val own = src?.let { preset.timing(it.keyCode) }
         val key = preset.id + ":" + src?.keyCode
-        when (src?.gesture) {
-            ButtonGesture.TAP, ButtonGesture.LONG_PRESS -> ui {
+        if (src == null) null else ui {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 MsOverride(
-                    key + "long", "Long press after", own?.longPressMs ?: ws.longPressMs,
+                    key + "long", TAP_WINDOW, own?.longPressMs ?: ws.longPressMs,
                     Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
                     overridden = own?.longPressMs != null,
                     onReset = { update { p -> p.withTiming(src.keyCode) { it.copy(longPressMs = null) } } },
-                    hint = "$LONG_HINT Kept in the preset. Without a time of its own it uses the workspace's.",
+                    hint = "$TAP_HINT Kept in the preset. Without a time of its own it uses the workspace's.",
                 ) { ms -> update { p -> p.withTiming(src.keyCode) { it.copy(longPressMs = ms) } } }
-            }
-
-            ButtonGesture.DOUBLE_TAP -> ui {
                 MsOverride(
-                    key + "double", "Double tap within", own?.doubleTapMs ?: ws.doubleTapMs,
+                    key + "double", DOUBLE_WINDOW, own?.doubleTapMs ?: ws.doubleTapMs,
                     Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
                     overridden = own?.doubleTapMs != null,
                     onReset = { update { p -> p.withTiming(src.keyCode) { it.copy(doubleTapMs = null) } } },
-                    hint = "Kept in the preset. Without a window of its own it uses the workspace's.",
+                    hint = "$DOUBLE_HINT Kept in the preset. Without a window of its own it uses the workspace's.",
                 ) { ms -> update { p -> p.withTiming(src.keyCode) { it.copy(doubleTapMs = ms) } } }
             }
-
-            else -> null
         }
     },
     shared = null,

@@ -37,14 +37,14 @@ object NavCorners {
 
     /**
      * [p] (with its mappings resolved) without the old gyro corner, which becomes a touch
-     * button in every workspace, where the corner was, mapped to [OutputTarget.GyroToggle]
+     * button in every workspace, where the corner was, mapped to a Toggle [OutputTarget.GyroPause]
      * (skipped in a workspace that already has a control with that id).
      */
     fun gyroCornerToButtons(p: Profile): Profile {
         val corner = p.corners.firstOrNull { it.id == GYRO } ?: return p
         val corners = p.corners.filter { it.id != GYRO }
         val button = corner.copy(id = GYRO_BUTTON, kind = TouchKind.BUTTON, label = GYRO_LABEL)
-        val mapping = Mapping(InputSource.Touch(GYRO_BUTTON), OutputTarget.GyroToggle)
+        val mapping = Mapping(InputSource.Touch(GYRO_BUTTON), OutputTarget.GyroPause, trigger = Trigger(output = Output.TOGGLE))
         return p.copy(
             corners = corners,
             workspaces = p.workspaces.map { w ->

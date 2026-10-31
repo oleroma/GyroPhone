@@ -136,10 +136,10 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
             }
         }
         OverrideSwitch(
-            "Swipe hold stops Move", HOLD_STOPS_HINT, s.holdStopsMove, own(SurfaceField.HOLD_STOPS_MOVE), reset(SurfaceField.HOLD_STOPS_MOVE),
+            "Touch direction stops Move", HOLD_STOPS_HINT, s.holdStopsMove, own(SurfaceField.HOLD_STOPS_MOVE), reset(SurfaceField.HOLD_STOPS_MOVE),
         ) { v -> edit { it.copy(holdStopsMove = v) } }
 
-        SectionTitle("Swipe")
+        SectionTitle("Repeating swipe")
         SharedPies(level, key, PieKind.SWIPE)
         OverrideSlider(
             key + "swipe", "Swipe after %.0f dp", s.swipeDp,
@@ -147,7 +147,7 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
             hint = "Measured from where the finger turned into that direction. Each new direction swipes again.",
         ) { v -> edit { it.copy(swipeDp = v) } }
 
-        SectionTitle("Swipe hold")
+        SectionTitle("Touch directions")
         OverrideRow(
             "Hold mode",
             own(SurfaceField.HOLD_MODE),
@@ -181,25 +181,13 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
                 ) { v -> edit { it.copy(releaseDp = v) } }
             }
         }
-        OverrideSwitch(
-            "Keep held after lift",
-            "A held direction stays held when the fingers lift. A tap lets it go; swiping on carries on from it.",
-            s.latch, own(SurfaceField.LATCH), reset(SurfaceField.LATCH),
-        ) { v -> edit { it.copy(latch = v) } }
-        if (s.latch) {
-            OverrideSlider(
-                key + "latchMs", if (s.latchReleaseMs < 1) "Let go by itself: never" else "Let go by itself after %.1f s",
-                s.latchReleaseMs / 1000f, 0f..TouchpadSettings.MAX_LATCH_RELEASE_MS / 1000f, 0.1f,
-                own(SurfaceField.LATCH_RELEASE), reset(SurfaceField.LATCH_RELEASE),
-            ) { v -> edit { it.copy(latchReleaseMs = (v * 1000).roundToInt()) } }
-        }
         DirNote(
-            "Every Move, Swipe and Swipe hold uses these unless its ⚙ in the mapping editor sets its own: " +
-                    "a Move X / Y its pie, a Swipe or Swipe hold direction its pie, sample and distance."
+            "Every Move and Touch direction uses these unless its ⚙ in the mapping editor sets its own: " +
+                    "a Move X / Y its pie, a Touch direction its pie, sample and distance. To keep a direction held after the lift, give its mapping a Sticky output."
         )
         SectionTitle("Length zones")
         if (zones.any { it > 1 }) HoldZoneSettings(s, zones, key, only = null, zone = null, onChange = current.setZones)
-        else DirNote("Drag a mapping past the ┃ divider at the end of a Swipe hold card, so it fires further along.")
+        else DirNote("Drag a mapping past the ┃ divider at the end of a Touch direction card, so it fires further along.")
     }
 }
 
@@ -227,7 +215,7 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
         OverrideSlider(
             k + "pie", "Pie %.0f°", s.pieDeg(d, hold), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
             own(pie), reset(pie),
-            hint = if (hold) "Where a held ${d.label} counts. Its Swipe has a pie of its own." else "Where a swipe ${d.label} counts. Its Swipe hold has a pie of its own.",
+            hint = if (hold) "Where a held ${d.label} counts. Its repeating swipe has a pie of its own." else "Where a swipe ${d.label} counts. Its Touch direction has a pie of its own.",
             onLive = { live = it },
         ) { v -> edit { if (hold) it.copy(holdPie = v) else it.copy(swipePie = v) } }
         OverrideSlider(
@@ -246,12 +234,6 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
                 own(DirField.HOLD), reset(DirField.HOLD),
                 hint = if (s.dragStart && s.holdMode == HoldMode.FROM_START) "With Drag start point, the start point trails the furthest hold distance of the four." else null,
             ) { v -> edit { it.copy(holdDp = v) } }
-            OverrideSwitch(
-                "Keep held after lift",
-                "Stays held when the fingers lift. A tap lets it go; swiping on carries on from it." +
-                        if (s.latchOf(d) && s.latchReleaseMs > 0) " Lets go by itself after %.1f s (Settings).".format(s.latchReleaseMs / 1000f) else "",
-                s.latchOf(d), own(DirField.LATCH), reset(DirField.LATCH),
-            ) { v -> edit { it.copy(latch = v) } }
             SectionTitle("Length zones")
             HoldZoneSettings(s, zones, k, only = d, zone = null, onChange = current.setZones)
         }
@@ -330,7 +312,7 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
             }
         }
         OverrideSwitch(
-            "Swipe hold stops Move", "$HOLD_STOPS_HINT For Move X and Y alike.", f.holdStopsMove,
+            "Touch direction stops Move", "$HOLD_STOPS_HINT For Move X and Y alike.", f.holdStopsMove,
             own(MoveField.HOLD_STOPS), reset(MoveField.HOLD_STOPS),
         ) { v -> edit(MoveField.HOLD_STOPS) { it.copy(holdStops = v) } }
         if (m.fingers == 1) {
@@ -410,7 +392,7 @@ private const val TURN_HINT =
 private const val MARGIN_HINT =
     "A Move that is moving keeps going until the finger heads this far past its pie, so it doesn't flicker at the pie's edge."
 private const val HOLD_STOPS_HINT =
-    "Once a mapped swipe hold presses, Move X and Y stop until the fingers lift, so a jump or crouch never moves the cursor."
+    "Once a mapped Touch direction presses, Move X and Y stop until the fingers lift, so a jump or crouch never moves the cursor."
 
 private const val SAMPLE_HINT = "The heading is that of about the last this much travel, so small wobbles don't change it."
 
@@ -545,7 +527,7 @@ internal fun HoldZoneSettings(
             return@Column
         }
         if (mapped < 2) {
-            DirNote("Zone settings work once a second zone has mappings: drag one past the ┃ divider at the end of a Swipe hold card.")
+            DirNote("Zone settings work once a second zone has mappings: drag one past the ┃ divider at the end of a Touch direction card.")
             return@Column
         }
         val list = only?.let { s.dirHoldZones?.getOrNull(it.ordinal) } ?: s.holdZones
@@ -554,7 +536,7 @@ internal fun HoldZoneSettings(
             if (only == null) "Zones of every direction" else "Zones of " + only.label,
             own,
             onReset = { commit(current.holdZones) { it[only!!.ordinal] = current.holdZones } },
-            hint = if (only == null) "Each held direction uses these unless its Swipe hold ⚙ sets its own."
+            hint = if (only == null) "Each held direction uses these unless its Touch direction ⚙ sets its own."
             else if (own) "Its own zones." else "The Settings' zones, shared by every direction: a change here makes them its own.",
         )
         DirNote(
