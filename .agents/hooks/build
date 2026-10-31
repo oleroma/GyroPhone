@@ -8,7 +8,11 @@ cd "$(dirname "$0")/../.."
 what="${1:-all}"
 
 # The version is the commit count, read by app/build.gradle.kts and stamped into the companion.
+# version-floor (next to this hook) lifts it to at least that number, so a branch with fewer
+# commits than the build already on the phone still installs over it.
 GP_BUILD="$(git rev-list --count HEAD)"
+floor="$(cat .agents/hooks/version-floor 2>/dev/null || echo 0)"
+[ "$GP_BUILD" -ge "$floor" ] || GP_BUILD="$floor"
 GP_COMMIT="$(git rev-parse --short=7 HEAD)"
 export GP_BUILD GP_COMMIT
 version="0.1.$GP_BUILD"
