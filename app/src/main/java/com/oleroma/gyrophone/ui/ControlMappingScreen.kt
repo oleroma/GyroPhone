@@ -207,15 +207,14 @@ private fun allows(allowed: Set<OutputTarget>, t: OutputTarget): Boolean {
 private fun isSurface(input: BindableInput) = input.sources.firstOrNull() is InputSource.Surface
 
 /**
- * A chip's text: its trigger's badge unless Hold ("Tap · Q"), its target, then marks for its
- * options: ⟲ toggle, ⚡ turbo, ↻ cycle, ⏱ delays.
+ * A chip's text: its trigger's badge unless On touch ("Tap · Q"), its target, then marks for its
+ * How and options: ¹ once, ⟲ toggle, ↻ cycle, ⏱ delays.
  */
-private fun chipText(trigger: Trigger, target: OutputTarget, o: MapOptions?): String = buildString {
-    if (trigger.badge.isNotEmpty()) append(trigger.badge).append(" · ")
+private fun chipText(badge: String, target: OutputTarget, o: MapOptions?): String = buildString {
+    if (badge.isNotEmpty()) append(badge).append(" · ")
     append(Describe.shortTarget(target))
     if (o != null) {
-        if (o.toggle) append(" ⟲")
-        if (o.turbo) append(" ⚡")
+        if (o.mode.mark.isNotEmpty()) append(" ").append(o.mode.mark)
         if (o.cycle) append(" ↻")
         if (o.startDelayMs > 0 || o.endDelayMs > 0 || o.minHoldMs > 0) append(" ⏱")
     }
@@ -419,6 +418,12 @@ internal fun ControlMappingScreen(
     fun trigInputs(input: BindableInput): List<Pair<Trigger, BindableInput>> =
         Bindings.triggersOf(input).map { it to trig(input, it) }
 
+    /** [input]'s zone [z] (itself for 0). */
+    fun zin(input: BindableInput, z: Int): BindableInput = if (z == 0) input else Bindings.zoneInput(input, z)
+
+    /** What [input]'s chips call trigger [t] ("Quick swipe"...). */
+    fun trigLabel(input: BindableInput, t: Trigger): String = Triggers.label(input.sources.first(), t)
+
     /** What the level above maps [input] to (cleared ones left out), with their triggers. */
     fun parentOf(input: BindableInput): List<Pair<Trigger, OutputTarget>> = trigInputs(input).flatMap { (t, ti) ->
         Bindings.targets(parentView, ti).filter { it != OutputTarget.NoOutput }.map { t to it }
@@ -606,7 +611,7 @@ internal fun ControlMappingScreen(
         if (src.input.holdDirection == null) return 1
         return 1 + (allMappings.maxOfOrNull { m ->
             val s = m.source as? InputSource.Surface
-            if (s != null && s.copy(zone = 0) == src) s.zone else 0
+            if (s != null && s.copy(zone = 0, on = Trigger.HOLD) == src) s.zone else 0
         } ?: 0)
     }
 
@@ -615,25 +620,21 @@ internal fun ControlMappingScreen(
         val src = input.sources.first() as? InputSource.Surface ?: return false
         if (!zonesNow || src.input.holdDirection == null) return false
         return zonesOf(input) < TouchpadSettings.MAX_HOLD_ZONES &&
-                allMappings.any { (it.source as? InputSource.Surface)?.copy(zone = 0) == src }
+                allMappings.any { (it.source as? InputSource.Surface)?.copy(zone = 0, on = Trigger.HOLD) == src }
     }
 
     /** A held direction with something mapped (any set): its row ends in a divider that opens the last zone's settings. */
     fun hasEnd(input: BindableInput): Boolean {
         val src = input.sources.first() as? InputSource.Surface ?: return false
         if (zoneSettings == null || src.input.holdDirection == null) return false
-        return allMappings.any { (it.source as? InputSource.Surface)?.copy(zone = 0) == src }
+        return allMappings.any { (it.source as? InputSource.Surface)?.copy(zone = 0, on = Trigger.HOLD) == src }
     }
 
     /** [input]'s row as mapped: each zone's chips of the edited set, divided, then the end divider. */
     fun rowOf(input: BindableInput): List<RowItem> = buildList {
         for (z in 0 until zonesOf(input)) {
             if (z > 0) add(RowItem.Divider(z))
-            if (z == 0) {
-                for ((tr, ti) in trigInputs(input)) for (t in Bindings.targets(currentMappings, ti)) add(RowItem.Chip(0, t, tr))
-            } else {
-                for (t in Bindings.targets(currentMappings, Bindings.zoneInput(input, z))) add(RowItem.Chip(z, t))
-            }
+            for ((tr, ti) in trigInputs(zin(input, z))) for (t in Bindings.targets(currentMappings, ti)) add(RowItem.Chip(z, t, tr))
         }
         if (hasEnd(input)) add(RowItem.End)
     }
@@ -645,11 +646,7 @@ internal fun ControlMappingScreen(
             val s = s0 as? InputSource.Surface
             val zone = s?.zone ?: 0
             val tr = Triggers.of(s0)
-            val base = when {
-                tr != Trigger.HOLD -> Triggers.base(s0)
-                s != null -> Bindings.zoneInput(f, 0).sources.first()
-                else -> s0
-            }
+            val base = Triggers.base(s0).let { b -> if (b is InputSource.Surface) b.copy(zone = 0) else b }
             if (base == input.sources.first()) RowItem.Chip(zone, d.target, tr) else null
         }
 
@@ -719,16 +716,12 @@ internal fun ControlMappingScreen(
         var out = m
         for (z in 0 until maxOf(lists.size, zonesOf(card)).coerceAtMost(TouchpadSettings.MAX_HOLD_ZONES)) {
             val chips = lists.getOrNull(z).orEmpty()
-            if (z == 0) {
-                // Each trigger's chips keep their options; a chip moved within the card keeps its trigger.
-                for ((tr, ti) in trigInputs(card)) {
-                    val was = out
-                    out = Bindings.setTargets(out, ti, chips.filter { it.trigger == tr }.map { it.target }) { t ->
-                        Bindings.options(was, ti, t)
-                    }
+            // Each trigger's chips keep their options; a chip moved within the card keeps its trigger.
+            for ((tr, ti) in trigInputs(zin(card, z))) {
+                val was = out
+                out = Bindings.setTargets(out, ti, chips.filter { it.trigger == tr }.map { it.target }) { t ->
+                    Bindings.options(was, ti, t)
                 }
-            } else {
-                out = Bindings.setTargets(out, Bindings.zoneInput(card, z), chips.map { it.target })
             }
         }
         return out
@@ -748,15 +741,15 @@ internal fun ControlMappingScreen(
         if (tis.isEmpty()) return null
         val (long, double) = timing(input) ?: return null
         val doubleTargets = Bindings.targets(view, trig(input, Trigger.DOUBLE_TAP)).toSet()
-        val waits = doubleTargets.isNotEmpty() && doubleTargets != Bindings.targets(view, trig(input, Trigger.TAP)).toSet()
+        val waits = !Triggers.isSwipe(input.sources.first()) && doubleTargets.isNotEmpty() && doubleTargets != Bindings.targets(view, trig(input, Trigger.TAP)).toSet()
+        val swipe = Triggers.isSwipe(input.sources.first())
         return tis.joinToString(" · ") { (t, _) ->
-            when (t) {
-                Trigger.HOLD -> ""
-                Trigger.PRESS -> "Press: at touch"
-                Trigger.TAP -> "Tap: at lift before $long ms" + if (waits) ", after a $double ms wait" else ""
-                Trigger.LONG_PRESS -> "Long press: from $long ms"
-                Trigger.RELEASE -> "Release: every lift"
-                Trigger.DOUBLE_TAP -> "Double tap: 2nd touch within $double ms"
+            trigLabel(input, t) + ": " + when (t) {
+                Trigger.HOLD, Trigger.PRESS -> ""
+                Trigger.TAP -> if (swipe) "as you swipe" else "at lift before $long ms" + if (waits) ", after a $double ms wait" else ""
+                Trigger.LONG_PRESS -> "from $long ms"
+                Trigger.RELEASE -> "every lift"
+                Trigger.DOUBLE_TAP -> (if (swipe) "2nd swipe" else "2nd touch") + " within $double ms"
             }
         }
     }
@@ -852,11 +845,10 @@ internal fun ControlMappingScreen(
                         if (from == null) addRecent(d.target)
                         // A chip keeps its trigger where the card offers it; a new one is Hold.
                         val tr = when {
-                            zone != 0 -> Trigger.HOLD
                             c != null -> (c as? RowItem.Chip)?.trigger ?: Trigger.HOLD
-                            from != null -> Triggers.of(from.sources.first()).takeIf { it in Bindings.triggersOf(card) } ?: Trigger.HOLD
+                            from != null -> Triggers.of(from.sources.first())
                             else -> Trigger.HOLD
-                        }
+                        }.takeIf { it in Bindings.triggersOf(zi) } ?: Trigger.HOLD
                         row.add(i, RowItem.Chip(zone, d.target, tr))
                         val base = if (from == null || c != null) currentMappings else Bindings.removeTarget(currentMappings, from, d.target)
                         // Already in the zone it lands in: just moved there, not twice.
@@ -1042,13 +1034,11 @@ internal fun ControlMappingScreen(
                         others = zoneInputs.mapIndexed { z, zi ->
                             (listOf(MappingSet.BASE) + sets.map { it.id }).filter { it != editSet }.flatMap { n ->
                                 val inSet = Bindings.viewSet(mappings, n)
-                                if (z == 0) tis.flatMap { (tr, ti) -> Bindings.targets(inSet, ti).map { Triple(n, it, tr) } }
-                                else Bindings.targets(inSet, zi).map { Triple(n, it, Trigger.HOLD) }
+                                trigInputs(zi).flatMap { (tr, ti) -> Bindings.targets(inSet, ti).map { Triple(n, it, tr) } }
                             }
                         },
-                        optionsOf = { chip ->
-                            if (chip.zone == 0) Bindings.options(view, trig(input, chip.trigger), chip.target) else null
-                        },
+                        optionsOf = { chip -> Bindings.options(view, trig(zin(input, chip.zone), chip.trigger), chip.target) },
+                        badge = { tr -> Triggers.badge(src, tr) },
                         timing = timingLine(input),
                         setOrder = sets.map { it.id },
                         setId = editSet,
@@ -1079,7 +1069,7 @@ internal fun ControlMappingScreen(
                         onClick = { selectedSrc = src },
                         onChipDrag = { chip, at ->
                             selectedSrc = src
-                            val from = if (chip.zone == 0) trig(input, chip.trigger) else zoneInputs[chip.zone]
+                            val from = trig(zoneInputs[chip.zone], chip.trigger)
                             startDrag(Dragged.Target(chip.target, from), at)
                         },
                         onChipClick = { chip -> selectedSrc = src; chipDialog = input to chip },
@@ -1447,7 +1437,8 @@ internal fun ControlMappingScreen(
         val mappedTriggers = trigInputs(input).filter { (t, ti) -> t != Trigger.HOLD && Bindings.targets(view, ti).isNotEmpty() }
         val timingContents = listOfNotNull(
             mappedTriggers.firstOrNull { it.first == Trigger.TAP || it.first == Trigger.LONG_PRESS }?.second,
-            mappedTriggers.firstOrNull { it.first == Trigger.DOUBLE_TAP }?.second,
+            // A swipe's double has its quick swipe's settings.
+            mappedTriggers.firstOrNull { it.first == Trigger.DOUBLE_TAP && !Triggers.isSwipe(input.sources.first()) }?.second,
         ).mapNotNull { settings?.action?.invoke(it) }
         val keyInputs = trigInputs(input).flatMap { (_, ti) ->
             Bindings.targets(view, ti).filterIsInstance<OutputTarget.Key>().map { ti to it }
@@ -1462,7 +1453,7 @@ internal fun ControlMappingScreen(
                     for ((ki, k) in keyInputs) {
                         val tr = Triggers.of(ki.sources.first())
                         Text(
-                            (if (tr == Trigger.HOLD) "" else tr.label + ": ") + Describe.shortTarget(k.copy(mode = KeyMode.HOLD)),
+                            (if (tr == Trigger.HOLD) "" else trigLabel(input, tr) + ": ") + Describe.shortTarget(k.copy(mode = KeyMode.HOLD)),
                             style = MaterialTheme.typography.labelLarge,
                         )
                         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1484,7 +1475,7 @@ internal fun ControlMappingScreen(
                         }
                     }
                     if (keys.isNotEmpty()) Text(
-                        "Next key only: it stays down until the next other key is let go (a sticky Shift). Toggle, turbo and the rest are in each chip's settings (tap it).",
+                        "Next key only: it stays down until the next other key is let go (a sticky Shift). Toggle, cycle and the rest are in each chip's settings (tap it).",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 8.dp),
@@ -1497,21 +1488,25 @@ internal fun ControlMappingScreen(
         )
     }
     chipDialog?.let { (input, chip) ->
-        val ti = if (chip.zone == 0) trig(input, chip.trigger) else Bindings.zoneInput(input, chip.zone)
+        val zi = zin(input, chip.zone)
+        val ti = trig(zi, chip.trigger)
         MappingChipDialog(
-            title = Describe.shortTarget(chip.target) + " · " + actionTitle(control, input),
-            triggers = if (chip.zone == 0) Bindings.triggersOf(input) else listOf(Trigger.HOLD),
+            title = Describe.shortTarget(chip.target) + " · " + actionTitle(control, input) +
+                if (chip.zone > 0) " · zone " + (chip.zone + 1) else "",
+            triggers = Bindings.triggersOf(zi),
             trigger = chip.trigger,
+            triggerLabel = { trigLabel(input, it) },
+            swipe = Triggers.isSwipe(input.sources.first()),
             options = Bindings.options(view, ti, chip.target),
             onApply = { tr, o ->
                 chipDialog = null
-                val dest = if (chip.zone == 0) trig(input, tr) else ti
+                val dest = trig(zi, tr)
                 // Another trigger: it leaves this one's chips and joins that one's (keeping their order).
                 val base = if (dest == ti) currentMappings else Bindings.removeTarget(currentMappings, ti, chip.target)
                 val targets = Bindings.targets(base, dest).let { if (chip.target in it) it else it + chip.target }
                 change(
                     Bindings.setTargets(base, dest, targets) { t -> if (t == chip.target) o else Bindings.options(base, dest, t) },
-                    Describe.shortTarget(chip.target) + ": " + tr.label + if (o == null) "" else " with options",
+                    Describe.shortTarget(chip.target) + ": " + trigLabel(input, tr) + if (o == null) "" else " with options",
                 )
             },
             onRemove = {
@@ -1656,8 +1651,10 @@ private fun ActionCard(
     onFollow: (() -> Unit)?,
     /** Per zone, other sets' targets (set, target, trigger): greyed at the end of that zone. */
     others: List<List<Triple<Int, OutputTarget, Trigger>>>,
-    /** A chip's options (toggle, turbo...), marked on it. */
+    /** A chip's options (How, cycle...), marked on it. */
     optionsOf: (RowItem.Chip) -> MapOptions?,
+    /** A trigger's badge on this card's chips. */
+    badge: (Trigger) -> String,
     /** When its triggers fire (a line under the chips); null = none. */
     timing: String?,
     /** The layers in their order (Base comes first): the row keeps every set's mappings in it. */
@@ -1841,7 +1838,7 @@ private fun ActionCard(
                                     Text("Base", style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
                                 } else SetNumber(n)
                                 Text(
-                                    chipText(tr, t, null),
+                                    chipText(badge(tr), t, null),
                                     style = MaterialTheme.typography.labelLarge,
                                     color = colors.onSurfaceVariant,
                                     maxLines = 1,
@@ -1863,7 +1860,7 @@ private fun ActionCard(
                         ) {
                             Text(parentName, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
                             Text(
-                                chipText(tr, t, null),
+                                chipText(badge(tr), t, null),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = colors.onSurfaceVariant,
                                 maxLines = 1,
@@ -1893,7 +1890,7 @@ private fun ActionCard(
                             ) {
                                 if (setId != MappingSet.BASE) SetNumber(setId, Modifier.padding(start = 6.dp))
                                 Text(
-                                    chipText(item.trigger, t, optionsOf(item)),
+                                    chipText(badge(item.trigger), t, optionsOf(item)),
                                     style = MaterialTheme.typography.labelLarge,
                                     color = fg,
                                     maxLines = 1,

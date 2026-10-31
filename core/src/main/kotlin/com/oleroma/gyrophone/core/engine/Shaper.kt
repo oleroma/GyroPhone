@@ -1,19 +1,35 @@
 package com.oleroma.gyrophone.core.engine
 
+import com.oleroma.gyrophone.core.model.How
 import com.oleroma.gyrophone.core.model.MapOptions
+import com.oleroma.gyrophone.core.model.Trigger
 import kotlin.math.max
-import kotlin.math.min
 
 /**
- * One mapping's output shaped by its [MapOptions], driven by its source's activations
- * ([update]) and the clock. Without toggle an activation turns the output on from its start
- * plus the start delay until its end, held at least the minimum hold, plus the end delay; with
- * toggle each activation turns it on (from the start delay) or off (after the minimum hold and
- * end delay). With turbo the output presses and lets go at the turbo rate while on. Not
- * thread-safe.
+ * One mapping's output shaped by its [MapOptions], driven by its source's level ([update]) and
+ * the clock. First [trigger] works out its activations from the source (HOLD: the source itself;
+ * LONG_PRESS: once it has been on for [longNs]; RELEASE: its every lift, an instant; DOUBLE_TAP:
+ * a rise within [doubleNs] of the one before, while on). Then [MapOptions.mode]: HELD is on from
+ * an activation's start plus the start delay until its end, held at least the minimum hold
+ * (and [pulseNs]), plus the end delay; ONCE is on for that minimum only; TOGGLE turns on at one
+ * activation (from the start delay) and off at the next (after the minimum hold and end delay).
+ * Not thread-safe.
  */
-internal class Shaper(var options: MapOptions) {
+internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HOLD) {
+    /** The long-press time and double-tap window of its source, for [trigger]. */
+    var longNs = 0L
+    var doubleNs = 0L
+
+    /** The shortest press it outputs, so a snapshot shows it. */
+    var pulseNs = DEFAULT_PULSE_NS
+
     private var raw = false
+    private var rawStartNs = Long.MIN_VALUE
+    private var lastRiseNs = Long.MIN_VALUE
+    private var double = false
+
+    /** The activation (after [trigger]) is on. */
+    private var active = false
     private var startNs = Long.MIN_VALUE
     private var endNs = Long.MIN_VALUE
     private var latched = false
@@ -23,24 +39,55 @@ internal class Shaper(var options: MapOptions) {
 
     private val startDelay get() = options.startDelayMs.coerceIn(0, MapOptions.MAX_DELAY_MS) * MS
     private val endDelay get() = options.endDelayMs.coerceIn(0, MapOptions.MAX_DELAY_MS) * MS
-    private val minHold get() = options.minHoldMs.coerceIn(0, MapOptions.MAX_DELAY_MS) * MS
-    private val halfPeriod get() = 500 * MS / options.rate
+    private val minHold get() = max(options.minHoldMs.coerceIn(0, MapOptions.MAX_DELAY_MS) * MS, pulseNs)
 
-    /** The output is in its on window at [now] (before turbo). */
+    /** The output is in its on window at [now]. */
     private fun inWindow(now: Long) = now >= startNs && now < endNs
 
-    /** The source is [on] at [now]: its edges start and end activations. */
+    /** The source is [on] at [now]. */
     fun update(on: Boolean, now: Long) {
-        if (on == raw) return
+        val rose = on && !raw
+        val fell = !on && raw
         raw = on
-        if (options.toggle) {
-            if (!on) return
-            if (!latched) {
-                latched = true; open(now)
-            } else {
-                latched = false; endNs = max(now, startNs + minHold) + endDelay
+        if (rose) {
+            rawStartNs = now
+            double = lastRiseNs != Long.MIN_VALUE && now - lastRiseNs <= doubleNs
+            // A double's second rise starts no new one.
+            lastRiseNs = if (double) Long.MIN_VALUE else now
+        }
+        when (trigger) {
+            Trigger.RELEASE -> if (fell) {
+                activation(true, now); activation(false, now)
             }
-        } else if (on) open(now) else endNs = max(now, startNs + minHold) + endDelay
+
+            Trigger.LONG_PRESS -> level(on && now - rawStartNs >= longNs, now)
+            Trigger.DOUBLE_TAP -> level(on && double, now)
+            else -> level(on, now)
+        }
+    }
+
+    private fun level(on: Boolean, now: Long) {
+        if (on == active) return
+        active = on
+        activation(on, now)
+    }
+
+    /** An activation starts ([on]) or ends at [now]. */
+    private fun activation(on: Boolean, now: Long) {
+        when (options.mode) {
+            How.HELD -> if (on) open(now) else endNs = max(now, startNs + minHold) + endDelay
+            How.ONCE -> if (on) {
+                startNs = now + startDelay; endNs = startNs + minHold + endDelay
+            }
+
+            How.TOGGLE -> if (on) {
+                if (!latched) {
+                    latched = true; open(now)
+                } else {
+                    latched = false; endNs = max(now, startNs + minHold) + endDelay
+                }
+            }
+        }
     }
 
     /** An activation at [now]: on from its start delay; one still on carries on. */
@@ -50,30 +97,25 @@ internal class Shaper(var options: MapOptions) {
     }
 
     /** Whether the output is pressed at [now]. */
-    fun on(now: Long): Boolean {
-        if (!inWindow(now)) return false
-        if (!options.turbo) return true
-        return ((now - startNs) / halfPeriod) % 2 == 0L
-    }
-
-    /** Whether the output may still change without input (a window or turbo running). */
-    val busy: Boolean get() = startNs != Long.MIN_VALUE && endNs > startNs
+    fun on(now: Long): Boolean = inWindow(now)
 
     /** When the output next changes without input after [now]; Long.MAX_VALUE = not by itself. */
     fun deadline(now: Long): Long {
-        if (now < startNs) return startNs
-        if (now >= endNs) return Long.MAX_VALUE
-        var d = endNs
-        if (options.turbo) d = min(d, startNs + ((now - startNs) / halfPeriod + 1) * halfPeriod)
-        return d
+        var d = Long.MAX_VALUE
+        if (trigger == Trigger.LONG_PRESS && raw && !active) d = rawStartNs + longNs
+        if (now < startNs) return minOf(d, startNs)
+        if (now >= endNs) return d
+        return minOf(d, endNs)
     }
 
     fun reset() {
-        raw = false; latched = false; eventOn = false; startNs = Long.MIN_VALUE; endNs = Long.MIN_VALUE
+        raw = false; active = false; double = false; latched = false; eventOn = false
+        rawStartNs = Long.MIN_VALUE; lastRiseNs = Long.MIN_VALUE; startNs = Long.MIN_VALUE; endNs = Long.MIN_VALUE
     }
 
-    private companion object {
-        const val MS = 1_000_000L
+    companion object {
+        private const val MS = 1_000_000L
+        const val DEFAULT_PULSE_NS = 40_000_000L
     }
 }
 

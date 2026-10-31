@@ -70,8 +70,8 @@ enum class SurfaceInput(val label: String, val motion: Boolean = false) {
     TAP("Tap"), DOUBLE_TAP("Double tap"), TAP_DRAG("Tap-drag"), HOLD("Hold"), LONG_PRESS("Long press"),
     RELEASE("Release"),
     MOTION_X("Move X", motion = true), MOTION_Y("Move Y", motion = true),
-    SWIPE_LEFT("Swipe ←"), SWIPE_RIGHT("Swipe →"), SWIPE_UP("Swipe ↑"), SWIPE_DOWN("Swipe ↓"),
-    HOLD_LEFT("Swipe hold ←"), HOLD_RIGHT("Swipe hold →"), HOLD_UP("Swipe hold ↑"), HOLD_DOWN("Swipe hold ↓"),
+    SWIPE_LEFT("Quick swipe ←"), SWIPE_RIGHT("Quick swipe →"), SWIPE_UP("Quick swipe ↑"), SWIPE_DOWN("Quick swipe ↓"),
+    HOLD_LEFT("Swipe ←"), HOLD_RIGHT("Swipe →"), HOLD_UP("Swipe ↑"), HOLD_DOWN("Swipe ↓"),
     PINCH("Pinch", motion = true), PINCH_IN("Pinch in"), PINCH_OUT("Pinch out"),
 
     /** A pulse each time exactly that many fingers come down (the hold starting). */
@@ -192,10 +192,19 @@ sealed interface InputSource {
      * An input of a touch surface with [fingers] (1..4) down; [id] "" = the workspace touchpad.
      * [zone]: for a held direction (Hold ←→↑↓), its length zone from 0 (the first, from the hold
      * distance on; see [TouchpadSettings.holdZone]); 0 for every other input.
+     * [on]: when a swipe fires ([Triggers]): HOLD = as the input itself; on a held direction
+     * LONG_PRESS (held long enough) or RELEASE (its lift), on a swipe DOUBLE_TAP (a second swipe
+     * soon after). The engine works these out from the input itself ([MappingEngine]).
      */
     @Serializable
     @SerialName("surface")
-    data class Surface(val fingers: Int, val input: SurfaceInput, val id: String = "", val zone: Int = 0) : InputSource
+    data class Surface(
+        val fingers: Int,
+        val input: SurfaceInput,
+        val id: String = "",
+        val zone: Int = 0,
+        val on: Trigger = Trigger.HOLD,
+    ) : InputSource
 
     /**
      * The phone turning about gyro [axis] (yaw right, pitch up, roll clockwise as the player sees
@@ -376,17 +385,26 @@ data class Mapping(
 )
 
 /**
- * How a mapping turns its source's activations into output. [toggle]: each activation turns it
- * on, the next off. [turbo]: while on it presses and lets go [turboRate] times a second.
- * [cycle]: the mappings of one source and set with cycle on take turns, one per activation, in
+ * How a mapping's output follows its activations ("How" in the editor): HELD for as long as the
+ * activation lasts, ONCE a short press as it starts, TOGGLE each activation turns it on, the next off.
+ */
+@Serializable
+enum class How(val label: String, val mark: String) {
+    @SerialName("held") HELD("Held", ""),
+    @SerialName("once") ONCE("Once", "¹"),
+    @SerialName("toggle") TOGGLE("Toggle", "⟲"),
+}
+
+/**
+ * How a mapping turns its source's activations into output: [how] (see [How]). [cycle]: the mappings of one source and set with cycle on take turns, one per activation, in
  * list order. [startDelayMs]: output starts this long after the activation; [minHoldMs]: it lasts
  * at least this long; [endDelayMs]: it lasts this much longer after the source lets go.
  */
 @Serializable
 data class MapOptions(
+    val how: How = How.HELD,
+    /** Superseded by [how] (TOGGLE); still read. */
     val toggle: Boolean = false,
-    val turbo: Boolean = false,
-    val turboRate: Int = DEFAULT_TURBO_RATE,
     val cycle: Boolean = false,
     val startDelayMs: Int = 0,
     val endDelayMs: Int = 0,
@@ -395,12 +413,10 @@ data class MapOptions(
     /** Changes nothing (such a mapping keeps no options). */
     val none: Boolean get() = this == MapOptions()
 
-    val rate: Int get() = turboRate.coerceIn(MIN_TURBO_RATE, MAX_TURBO_RATE)
+    /** [how], with the older toggle switch read as TOGGLE. */
+    val mode: How get() = if (toggle) How.TOGGLE else how
 
     companion object {
-        const val DEFAULT_TURBO_RATE = 10
-        const val MIN_TURBO_RATE = 1
-        const val MAX_TURBO_RATE = 30
         const val MAX_DELAY_MS = 2000
     }
 }

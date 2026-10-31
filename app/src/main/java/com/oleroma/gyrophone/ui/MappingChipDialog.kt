@@ -24,23 +24,37 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.oleroma.gyrophone.core.model.How
 import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.Trigger
 import kotlin.math.roundToInt
 
-/** What each trigger does, under the When chips. */
-private fun triggerHint(t: Trigger): String = when (t) {
-    Trigger.HOLD -> "Held from touch-down until you let go."
-    Trigger.PRESS -> "A short press as you touch down, however long you hold."
-    Trigger.TAP -> "A short press as you let go, if you let go before the long-press time."
-    Trigger.LONG_PRESS -> "Held from the long-press time until you let go (then it is no tap)."
-    Trigger.RELEASE -> "A short press every time you let go."
-    Trigger.DOUBLE_TAP -> "Held from a second touch soon after a tap until you let go."
+/** When each trigger starts, under the When chips ([swipe]: a swipe direction's). */
+private fun triggerHint(t: Trigger, swipe: Boolean): String = if (swipe) when (t) {
+    Trigger.HOLD -> "Starts as the swipe reaches its hold distance, ends when you let go."
+    Trigger.TAP -> "Each quick swipe, as you swipe."
+    Trigger.LONG_PRESS -> "Starts once the swipe is held for the long-press time."
+    Trigger.RELEASE -> "When you let go of a held swipe."
+    Trigger.DOUBLE_TAP -> "A second quick swipe soon after the first."
+    Trigger.PRESS -> ""
+} else when (t) {
+    Trigger.HOLD -> "Starts at touch-down, ends when you let go."
+    Trigger.PRESS -> ""
+    Trigger.TAP -> "When you let go before the long-press time."
+    Trigger.LONG_PRESS -> "Starts at the long-press time (then it is no tap), ends when you let go."
+    Trigger.RELEASE -> "Every time you let go."
+    Trigger.DOUBLE_TAP -> "A second touch soon after a tap; ends when you let go."
+}
+
+private fun howHint(h: How): String = when (h) {
+    How.HELD -> "Pressed for as long as it lasts."
+    How.ONCE -> "One short press as it starts, however long it lasts."
+    How.TOGGLE -> "Each time it starts it turns on, the next time off."
 }
 
 /**
- * The settings of one mapping (a chip): when it fires ([triggers] offered; Hold only = none to
- * pick) and its options. [onApply] gets the trigger and options picked (null = none); [onRemove]
+ * The settings of one mapping (a chip): When it starts ([triggers] offered, named by
+ * [triggerLabel]; one = none to pick), How it outputs, and its options. [swipe]: a swipe direction's. [onApply] gets the trigger and options picked (null = none); [onRemove]
  * removes the mapping.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -49,6 +63,8 @@ internal fun MappingChipDialog(
     title: String,
     triggers: List<Trigger>,
     trigger: Trigger,
+    triggerLabel: (Trigger) -> String,
+    swipe: Boolean,
     options: MapOptions?,
     onApply: (Trigger, MapOptions?) -> Unit,
     onRemove: () -> Unit,
@@ -56,9 +72,7 @@ internal fun MappingChipDialog(
 ) {
     val o0 = options ?: MapOptions()
     var t by remember { mutableStateOf(trigger) }
-    var toggle by remember { mutableStateOf(o0.toggle) }
-    var turbo by remember { mutableStateOf(o0.turbo) }
-    var rate by remember { mutableIntStateOf(o0.rate) }
+    var how by remember { mutableStateOf(o0.mode) }
     var cycle by remember { mutableStateOf(o0.cycle) }
     var start by remember { mutableIntStateOf(o0.startDelayMs) }
     var end by remember { mutableIntStateOf(o0.endDelayMs) }
@@ -95,22 +109,18 @@ internal fun MappingChipDialog(
                 if (triggers.size > 1) {
                     Text("When", style = MaterialTheme.typography.titleSmall)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (x in triggers) FilterChip(selected = t == x, onClick = { t = x }, label = { Text(x.label) })
+                        for (x in triggers) FilterChip(selected = t == x, onClick = { t = x }, label = { Text(triggerLabel(x)) })
                     }
-                    hint(triggerHint(t))
+                    hint(triggerHint(t, swipe))
                 }
-                switchRow("Toggle", toggle) { toggle = it }
-                hint("Each time it fires it turns on, the next time off.")
-                switchRow("Turbo", turbo) { turbo = it }
-                if (turbo) {
-                    Text("$rate presses a second", style = MaterialTheme.typography.labelLarge)
-                    Slider(
-                        value = rate.toFloat(),
-                        onValueChange = { rate = it.roundToInt() },
-                        valueRange = MapOptions.MIN_TURBO_RATE.toFloat()..MapOptions.MAX_TURBO_RATE.toFloat(),
-                    )
+                // Tap and Release start at a lift: nothing is held, so Held is Once there.
+                val hows = How.entries.filter { it != How.HELD || t.holds }
+                val shown = if (how == How.HELD && !t.holds) How.ONCE else how
+                Text("How", style = MaterialTheme.typography.titleSmall)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (x in hows) FilterChip(selected = shown == x, onClick = { how = x }, label = { Text(x.label) })
                 }
-                hint("While on, it presses and lets go over and over.")
+                hint(howHint(shown))
                 switchRow("Cycle", cycle) { cycle = it }
                 hint("The mappings of this action with Cycle on take turns: each time it fires, the next one.")
                 TextButton(onClick = { advanced = !advanced }, modifier = Modifier.padding(top = 4.dp)) {
@@ -128,7 +138,8 @@ internal fun MappingChipDialog(
         confirmButton = {
             TextButton(onClick = {
                 val o = MapOptions(
-                    toggle = toggle, turbo = turbo, turboRate = if (turbo) rate else MapOptions.DEFAULT_TURBO_RATE, cycle = cycle,
+                    // At a lift Held and Once are the same short press: kept as Held (no options).
+                    how = if (how == How.ONCE && !t.holds) How.HELD else how, cycle = cycle,
                     startDelayMs = start, endDelayMs = end, minHoldMs = minHold,
                 )
                 onApply(t, o.takeUnless { it.none })

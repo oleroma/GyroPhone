@@ -200,7 +200,7 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
         )
         SectionTitle("Length zones")
         if (zones.any { it > 1 }) HoldZoneSettings(s, zones, key, only = null, zone = null, onChange = current.setZones)
-        else DirNote("Drag a mapping past the ┃ divider at the end of a Swipe hold card, so it fires further along.")
+        else DirNote("Drag a mapping past the ┃ divider at the end of a Swipe card, so it fires further along.")
     }
 }
 
@@ -228,7 +228,7 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
         OverrideSlider(
             k + "pie", "Pie %.0f°", s.pieDeg(d, hold), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
             own(pie), reset(pie),
-            hint = if (hold) "Where a held ${d.label} counts. Its Swipe has a pie of its own." else "Where a swipe ${d.label} counts. Its Swipe hold has a pie of its own.",
+            hint = if (hold) "Where a held ${d.label} counts. Its Quick swipe has a pie of its own." else "Where a swipe ${d.label} counts. Its Swipe hold has a pie of its own.",
             onLive = { live = it },
         ) { v -> edit { if (hold) it.copy(holdPie = v) else it.copy(swipePie = v) } }
         OverrideSlider(
@@ -540,7 +540,7 @@ internal fun HoldZoneSettings(
             return@Column
         }
         if (mapped < 2) {
-            DirNote("Zone settings work once a second zone has mappings: drag one past the ┃ divider at the end of a Swipe hold card.")
+            DirNote("Zone settings work once a second zone has mappings: drag one past the ┃ divider at the end of a Swipe card.")
             return@Column
         }
         val list = only?.let { s.dirHoldZones?.getOrNull(it.ordinal) } ?: s.holdZones

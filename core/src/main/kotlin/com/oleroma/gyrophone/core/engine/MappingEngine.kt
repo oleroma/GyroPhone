@@ -31,6 +31,7 @@ import com.oleroma.gyrophone.core.model.StickZones
 import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
+import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.Inheritance
@@ -1615,7 +1616,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (t !is OutputTarget.Wheel && t != OutputTarget.GyroToggle && t !is OutputTarget.Layer &&
                     t != OutputTarget.LayerBack
                 ) continue
-                val on = if (m.options == null) value(m.source, dev) >= PRESS_THRESHOLD else {
+                val on = if (!shaped(m)) value(m.source, dev) >= PRESS_THRESHOLD else {
                     val sh = shaperOf(m, dev)
                     if (before) sh.eventOn else (out(m, dev, now) >= PRESS_THRESHOLD).also { sh.eventOn = it }
                 }
@@ -1626,15 +1627,23 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** [m]'s shaper in [dev]'s group (the touch group for null). */
     private fun shaperOf(m: Mapping, dev: Dev?): Shaper =
-        (dev?.shapers ?: touchShapers).getOrPut(m) { Shaper(m.options ?: MapOptions()) }
+        (dev?.shapers ?: touchShapers).getOrPut(m) { Shaper(m.options ?: MapOptions(), derivedTrigger(m.source)) }
+
+    /** A swipe trigger the engine works out from the swipe itself ([InputSource.Surface.on]); HOLD = none. */
+    private fun derivedTrigger(s: InputSource): Trigger = (s as? InputSource.Surface)?.on ?: Trigger.HOLD
+
+    /** [m]'s output goes through a [Shaper]: it has options, or a swipe trigger. */
+    private fun shaped(m: Mapping): Boolean = m.options != null || derivedTrigger(m.source) != Trigger.HOLD
 
     /**
      * [m]'s output value in [dev]'s group at [now]: its source's value, or with options that
      * shaped as a press (1 or 0) by its toggle, turbo, cycle and delays.
      */
     private fun out(m: Mapping, dev: Dev?, now: Long, output: Boolean = false): Float {
-        val v = value(m.source, dev, output)
-        val o = m.options ?: return v
+        val src = m.source
+        val derived = derivedTrigger(src)
+        val v = value(if (derived == Trigger.HOLD) src else (src as InputSource.Surface).copy(on = Trigger.HOLD), dev, output)
+        val o = m.options ?: if (derived == Trigger.HOLD) return v else NO_OPTIONS
         var on = abs(v) >= PRESS_THRESHOLD
         if (o.cycle) cycleInfo[m]?.let { c ->
             val turn = (dev?.cycles ?: touchCycles).getOrPut(c.key) { CycleTurn() }
@@ -1642,6 +1651,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             on = on && turn.turn == c.index
         }
         val sh = shaperOf(m, dev)
+        if (src is InputSource.Surface) {
+            val surface = if (src.id.isEmpty()) touchpad else surfaces[src.id]
+            if (surface != null) {
+                sh.longNs = surface.longPressNanos; sh.doubleNs = surface.doubleTapNanos
+            }
+        }
+        sh.pulseNs = touchpad.minPulseNanos
         sh.update(on, now)
         return if (sh.on(now)) 1f else 0f
     }
@@ -2043,6 +2059,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     companion object {
         const val PRESS_THRESHOLD = 0.5f
+        private val NO_OPTIONS = MapOptions()
 
         /** How long a shake presses at least. */
         const val SHAKE_PULSE_NS = 120_000_000L

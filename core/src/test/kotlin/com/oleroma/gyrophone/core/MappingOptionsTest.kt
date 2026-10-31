@@ -4,6 +4,7 @@ import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.PadDevice
 import com.oleroma.gyrophone.core.model.AttachedPad
 import com.oleroma.gyrophone.core.model.ButtonGesture
+import com.oleroma.gyrophone.core.model.How
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.Mapping
@@ -16,9 +17,10 @@ import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.Triggers
 import com.oleroma.gyrophone.core.model.Workspace
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The Press trigger, mapping options (toggle, turbo, cycle, delays) and Layer back. */
+/** The Press trigger, mapping options (toggle, cycle, delays) and Layer back. */
 class MappingOptionsTest {
     private val MS = 1_000_000L
     private val KEY_A = 96 // KEYCODE_BUTTON_A
@@ -70,26 +72,12 @@ class MappingOptionsTest {
 
     @Test
     fun toggleTurnsOnAndOffByActivations() {
-        val e = keyEngine(a(MapOptions(toggle = true)))
+        val e = keyEngine(a(MapOptions(how = How.TOGGLE)))
         e.down(); assertEquals(setOf(A), e.keys())
         e.up(); t += 100 * MS
         assertEquals(setOf(A), e.keys()) // stays on
         e.down(); assertEquals(emptySet<Int>(), e.keys())
         e.up(); t += 100 * MS
-        assertEquals(emptySet<Int>(), e.keys())
-    }
-
-    @Test
-    fun turboRepeatsWhileHeld() {
-        val e = keyEngine(a(MapOptions(turbo = true, turboRate = 10))) // 50 ms on, 50 ms off
-        e.down()
-        assertEquals(setOf(A), e.keys())
-        t += 60 * MS
-        assertEquals(emptySet<Int>(), e.keys())
-        t += 50 * MS
-        assertEquals(setOf(A), e.keys())
-        e.up()
-        t += 60 * MS
         assertEquals(emptySet<Int>(), e.keys())
     }
 
@@ -121,11 +109,12 @@ class MappingOptionsTest {
     fun toggleWorksOnLayerActions() {
         val e = keyEngine(
             Mapping(InputSource.Key(KEY_A), OutputTarget.Layer(1, override = true, whileHeld = true),
-                options = MapOptions(toggle = true)),
+                options = MapOptions(how = How.TOGGLE)),
             sets = true,
         )
         e.down(); e.up()
         assertEquals(listOf(1), e.layers.overrides)
+        t += 20 * MS
         e.down(); e.up()
         assertEquals(emptyList<Int>(), e.layers.overrides)
     }
@@ -158,5 +147,92 @@ class MappingOptionsTest {
             assertEquals(tr, Triggers.of(s))
             assertEquals(b, Triggers.base(s))
         }
+        // A swipe direction: its quick swipe, long hold, release and double swipe.
+        for (zone in 0..1) {
+            val d = InputSource.Surface(1, SurfaceInput.HOLD_RIGHT, "b", zone)
+            assertEquals(if (zone == 0) Triggers.OFFERED else listOf(Trigger.HOLD, Trigger.LONG_PRESS, Trigger.RELEASE), Triggers.offered(d))
+            for (tr in Triggers.offered(d)) {
+                val s = Triggers.with(d, tr)!!
+                assertEquals(tr, Triggers.of(s))
+                assertEquals(d, Triggers.base(s))
+            }
+        }
+        assertEquals(SurfaceInput.SWIPE_RIGHT, (Triggers.with(InputSource.Surface(1, SurfaceInput.HOLD_RIGHT), Trigger.TAP) as InputSource.Surface).input)
+    }
+
+    @Test
+    fun onceIsOneShortPress() {
+        val e = keyEngine(a(MapOptions(how = How.ONCE)))
+        e.down(); assertEquals(setOf(A), e.keys())
+        t += 30 * MS
+        assertEquals(emptySet<Int>(), e.keys()) // still held: the press is over
+        e.up(); t += 30 * MS
+        assertEquals(emptySet<Int>(), e.keys())
+    }
+
+    @Test
+    fun pressBecomesOnTouchOnce() {
+        val old = listOf(
+            Mapping(InputSource.KeyGesture(KEY_A, ButtonGesture.PRESS), OutputTarget.Key(A)),
+            Mapping(InputSource.Surface(1, SurfaceInput.PRESS, "b"), OutputTarget.Key(B)),
+            Mapping(InputSource.Key(KEY_B), OutputTarget.Key(C)),
+        )
+        val up = Triggers.upgrade(old)
+        assertEquals(InputSource.Key(KEY_A), up[0].source)
+        assertEquals(InputSource.Touch("b"), up[1].source)
+        assertEquals(How.ONCE, up[0].options!!.how)
+        assertEquals(old[2], up[2])
+        assertTrue(Triggers.upgrade(up) === up)
+    }
+
+    /** A swipe right on the touchpad: down, then 1 dp steps every 2 ms over [dx] dp. */
+    private fun MappingEngine.swipeRight(dx: Int): MutableList<Set<Int>> {
+        touchpadDown(1, 100f, 100f, t)
+        val out = ArrayList<Set<Int>>()
+        for (i in 1..dx) {
+            t += 2 * MS; touchpadMove(1, 100f + i, 100f, t); out.add(keys())
+        }
+        return out
+    }
+
+    private fun swipeEngine(vararg ms: Mapping): MappingEngine {
+        val w = Workspace(id = "w", name = "w", mappings = ms.toList())
+        return MappingEngine(single(w)) { t }.apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 10 * MS }
+    }
+
+    private fun MappingEngine.hold(ms: Long, out: MutableList<Set<Int>> = ArrayList()): MutableList<Set<Int>> {
+        val end = t + ms * MS
+        while (t < end) {
+            out.add(keys()); t += 2 * MS
+        }
+        return out
+    }
+
+    @Test
+    fun swipeLongHoldAndRelease() {
+        val right = InputSource.Surface(1, SurfaceInput.HOLD_RIGHT)
+        val e = swipeEngine(
+            Mapping(Triggers.with(right, Trigger.LONG_PRESS)!!, OutputTarget.Key(A)),
+            Mapping(Triggers.with(right, Trigger.RELEASE)!!, OutputTarget.Key(B)),
+        )
+        e.swipeRight(60)
+        val early = e.hold(100)
+        assertTrue(early.none { A in it || B in it })
+        val late = e.hold(800)
+        assertTrue(A in late.last()) // held past the long-press time
+        e.touchpadUp(1)
+        val after = e.hold(40)
+        assertTrue(after.any { B in it }) // the release
+        assertTrue(A !in after.last())
+    }
+
+    @Test
+    fun swipeOnceFiresAtEngage() {
+        val right = InputSource.Surface(1, SurfaceInput.HOLD_RIGHT)
+        val e = swipeEngine(Mapping(right, OutputTarget.Key(A), options = MapOptions(how = How.ONCE)))
+        val held = e.hold(300, e.swipeRight(60))
+        assertTrue(held.any { A in it })
+        assertTrue(A !in held.last()) // still held: the press is over
+        e.touchpadUp(1); e.hold(20)
     }
 }

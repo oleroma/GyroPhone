@@ -26,10 +26,10 @@ object WorkspaceMappings {
         Bindings.matchSwipeModes(w).let { r ->
             val p = presets.firstOrNull { it.id == w.devicePreset }
             r.copy(
-                mappings = Bindings.upgradeSwipes(r.mappings),
-                pads = if (p == null) emptyList() else listOf(AttachedPad(PRESET_PAD, mappings = p.controller)),
-                keyboard = p?.keyboard.orEmpty(),
-                mouse = p?.mouse.orEmpty(),
+                mappings = Triggers.upgrade(Bindings.upgradeSwipes(r.mappings)),
+                pads = if (p == null) emptyList() else listOf(AttachedPad(PRESET_PAD, mappings = Triggers.upgrade(p.controller))),
+                keyboard = Triggers.upgrade(p?.keyboard.orEmpty()),
+                mouse = Triggers.upgrade(p?.mouse.orEmpty()),
                 keyTimings = p?.timings.orEmpty(),
             )
         }

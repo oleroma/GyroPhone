@@ -108,12 +108,13 @@ object Bindings {
     fun triggerInput(input: BindableInput, t: Trigger): BindableInput? {
         if (t == Trigger.HOLD) return input
         val sources = input.sources.map { Triggers.with(it, t) ?: return null }
-        return input.copy(label = t.label, sources = sources)
+        return input.copy(label = Triggers.label(input.sources.first(), t), sources = sources)
     }
 
-    /** The triggers [input] offers: every one for a key, touch button or finger count, else Hold only. */
+    /** The triggers [input] offers ([Triggers.offered]): those all its sources offer, else Hold only. */
     fun triggersOf(input: BindableInput): List<Trigger> =
-        if (input.sources.isNotEmpty() && input.sources.all { Triggers.supports(it) }) Trigger.entries else listOf(Trigger.HOLD)
+        if (input.sources.isEmpty()) listOf(Trigger.HOLD)
+        else input.sources.map { Triggers.offered(it) }.reduce { a, b -> a.filter { it in b } }
 
     /** An input that is another one's trigger (its tap, long press...): shown on that one's card, not its own. */
     fun isTriggerOf(input: BindableInput): Boolean =

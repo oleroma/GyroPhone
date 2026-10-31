@@ -74,7 +74,7 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
                 else -> null
             }
             // A mapping with options is shaped and pressed by the engine ([MappingEngine]).
-            val shaped = m.options != null
+            val shaped = m.options != null || s.on != com.oleroma.gyrophone.core.model.Trigger.HOLD
             when (val t = m.target) {
                 is OutputTarget.Mouse -> if (!shaped) mouse[b] = mouse[b] or (1 shl t.button.bit)
                 // Toggle and next-key keys are held by the engine ([MappingEngine]).
