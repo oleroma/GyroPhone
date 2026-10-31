@@ -999,9 +999,12 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         if (n in 1..4) {
             val lift = count == 0 && !cancelling
             var keep = 0
-            if (lift) for (d in Direction.entries) if (map.latches(n, d) && dirs.zones(d) != 0) keep = keep or (1 shl d.ordinal)
+            // Only the zones whose On swipe chip is a Toggle latch.
+            if (lift) for (d in Direction.entries) if (dirs.zones(d) and map.latchZones(n, d) != 0) keep = keep or (1 shl d.ordinal)
             if (keep != 0) {
-                for (d in Direction.entries) latchZones[d.ordinal] = dirs.zones(d)
+                for (d in Direction.entries) {
+                    latchZones[d.ordinal] = if (keep and (1 shl d.ordinal) != 0) dirs.zones(d) and map.latchZones(n, d) else 0
+                }
                 latchN = n; latchMask = keep; latchUntil = Long.MAX_VALUE
             }
             holds(n, if (keep != 0) latchZones else null)
@@ -1121,6 +1124,14 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     fun endLatch(letGo: Boolean) {
         if (latchMask == 0 || latchN !in 1..4) return
         if (if (letGo) map.latchLetGo[latchN - 1] else map.latchNext[latchN - 1]) releaseLatch()
+    }
+
+    /** A latch that ends when its own output is pressed by another mapping is on. */
+    val latchEndsOnSame: Boolean get() = latchMask != 0 && latchN in 1..4 && map.latchSame[latchN - 1]
+
+    /** A latch set to end on its own output pressed elsewhere lets go. */
+    fun endLatchOnSame() {
+        if (latchEndsOnSame) releaseLatch()
     }
 
     /** A latch that ends on the next other input is on. */

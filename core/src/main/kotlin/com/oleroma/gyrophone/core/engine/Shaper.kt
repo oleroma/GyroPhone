@@ -93,7 +93,7 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
                 // Ended some other way meanwhile (a timer, Let go): this one starts it again.
                 if (latched && now >= endNs) latched = false
                 if (!latched) {
-                    latched = true; nextUsed = false; open(now)
+                    latched = true; nextUsed = false; sameArmed = false; open(now)
                     val timer = options.endsAfterMs.coerceIn(0, MapOptions.MAX_TOGGLE_MS)
                     if (timer > 0) endNs = startNs + timer * MS
                 } else {
@@ -129,6 +129,9 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
     /** With [MapOptions.endsOnNextInput]: another input was pressed while it was on (it ends as that is let go). */
     var nextUsed = false
 
+    /** It has been seen on in a snapshot since it turned on ([MapOptions.endsOnSame] counts presses after that). */
+    var sameArmed = false
+
     /**
      * The same button or surface is [on] (touched) at [now], seen before [update]: with
      * [MapOptions.endsOnTap], touching it again ends a toggle that is on, and the activation that
@@ -163,7 +166,7 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
 
     fun reset() {
         raw = false; active = false; double = false; latched = false; eventOn = false; baseOn = false
-        swallow = false; nextUsed = false; baseRiseNs = Long.MIN_VALUE
+        swallow = false; nextUsed = false; sameArmed = false; baseRiseNs = Long.MIN_VALUE
         rawStartNs = Long.MIN_VALUE; lastRiseNs = Long.MIN_VALUE; startNs = Long.MIN_VALUE; endNs = Long.MIN_VALUE
     }
 
