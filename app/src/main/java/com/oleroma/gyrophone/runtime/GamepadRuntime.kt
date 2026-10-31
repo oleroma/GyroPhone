@@ -945,7 +945,6 @@ class GamepadRuntime(context: Context) {
         private val visualsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
         private const val KEY_UI_PREFIX = "ui."
         private const val TURN_TICK_MS = 4L
-        private const val RAD_TO_DEG = (180.0 / Math.PI).toFloat()
         private const val KEY_BIAS_X = "gyro_bias_x"
         private const val KEY_BIAS_Y = "gyro_bias_y"
         private const val KEY_BIAS_Z = "gyro_bias_z"
