@@ -530,4 +530,17 @@ class MappingOptionsTest {
         assertEquals(1, read.dropped)
         assertEquals(1, read.profile.workspaces.single().mappings.size)
     }
+
+    @Test
+    fun swipeToggleWithoutTapIsAPlainToggle() {
+        val e = swipeEngine(Mapping(InputSource.Surface(1, SurfaceInput.HOLD_RIGHT), OutputTarget.Key(A),
+            options = MapOptions(how = How.TOGGLE)))
+        assertTrue(A in e.swipeRight(40).last())
+        e.touchpadUp(1)
+        assertTrue(e.hold(200).all { A in it }) // stays on
+        e.touchpadDown(1, 100f, 100f, t); e.hold(30); e.touchpadUp(1)
+        assertTrue(A in e.hold(100).last()) // a tap does not end it
+        e.swipeRight(40); e.touchpadUp(1)
+        assertTrue(A !in e.hold(100).last()) // the next swipe that way does
+    }
 }

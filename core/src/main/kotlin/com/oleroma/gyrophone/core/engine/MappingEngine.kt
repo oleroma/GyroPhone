@@ -1565,7 +1565,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun sameSeen(m: Mapping, dev: Dev?, now: Long) {
         val o = m.options
         val toggle = o != null && o.mode == How.TOGGLE
-        if (toggle && latchChip(m.source)) {
+        if (toggle && o!!.endsOnTap && latchChip(m.source)) {
             // A swipe latch's chip: held while latched.
             if (o!!.endsOnSame) latchSameTargets.add(m.target)
             return
@@ -1791,13 +1791,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         (dev?.shapers ?: touchShapers).getOrPut(m) { Shaper(shaperOptions(m), derivedTrigger(m.source)) }
 
     /**
-     * [m]'s options as its shaper runs them: an On swipe chip's Toggle is the surface's latch
-     * ([SurfaceMap.latches]), which keeps the direction held, so the chip itself is Held.
+     * [m]'s options as its shaper runs them: an On swipe chip's Toggle that also ends on a tap is
+     * the surface's latch ([SurfaceMap.latches]), which keeps the direction held, so the chip itself
+     * is Held. Without Tap it is a plain Toggle: the next swipe that way turns it off.
      */
     private fun shaperOptions(m: Mapping): MapOptions {
         val o = m.options ?: return MapOptions()
         val s = m.source
-        return if (o.mode == How.TOGGLE && latchChip(s)) o.copy(how = How.HELD, toggle = false) else o
+        return if (o.mode == How.TOGGLE && o.endsOnTap && latchChip(s)) o.copy(how = How.HELD, toggle = false) else o
     }
 
     /** [s] is an On swipe chip of a swipe direction (any zone): a Toggle on it latches the surface. */

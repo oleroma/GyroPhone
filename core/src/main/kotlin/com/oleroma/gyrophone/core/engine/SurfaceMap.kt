@@ -45,7 +45,7 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
     /**
      * Per finger count (index fingers - 1): the held directions that latch ([Touchpad] keeps them
      * held after the lift), a mask of 1 shl [Direction.ordinal]. A direction latches when one of its
-     * On swipe chips is a Toggle ([How.TOGGLE]).
+     * On swipe chips is a Toggle ([How.TOGGLE]) that also ends on a tap (without, it is a plain Toggle).
      */
     private val latchDirs = IntArray(4)
 
@@ -91,7 +91,7 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
             val b = bit(s.fingers, s.input, s.zone)
             mapped[b] = true
             val o = m.options
-            if (dir != null && s.on == Trigger.HOLD && o != null && o.mode == How.TOGGLE) {
+            if (dir != null && s.on == Trigger.HOLD && o != null && o.mode == How.TOGGLE && o.endsOnTap) {
                 val f = s.fingers - 1
                 latchDirs[f] = latchDirs[f] or (1 shl dir.ordinal)
                 latchZoneMask[f * 4 + dir.ordinal] = latchZoneMask[f * 4 + dir.ordinal] or (1 shl s.zone)

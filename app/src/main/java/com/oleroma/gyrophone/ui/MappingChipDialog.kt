@@ -54,9 +54,13 @@ private fun howHint(h: How): String = when (h) {
     How.TOGGLE -> "Each time it starts it turns on, the next time off."
 }
 
-/** A swipe direction's On swipe Toggle: the latch. */
+/** A swipe direction's On swipe Toggle with Tap: the latch. */
 private const val LATCH_HINT =
     "It stays on after you lift. Swiping the same way carries on, another direction takes over, and a tap on this surface ends it (that tap does nothing else)."
+
+/** A swipe direction's On swipe Toggle without Tap. */
+private const val SWIPE_TOGGLE_HINT =
+    "A swipe this way turns it on, and it stays on after you lift; the next swipe this way turns it off. Tick Tap to make it a latch instead."
 
 /**
  * The settings of one mapping (a chip): When it starts ([triggers] offered, named by
@@ -146,10 +150,10 @@ internal fun MappingChipDialog(
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (x in hows) FilterChip(selected = shown == x, onClick = { how = x }, label = { Text(x.label) })
                 }
-                hint(if (shown == How.TOGGLE && latch) LATCH_HINT else howHint(shown))
+                hint(if (shown == How.TOGGLE && latch) (if (endsOnTap) LATCH_HINT else SWIPE_TOGGLE_HINT) else howHint(shown))
                 if (shown == How.TOGGLE) {
                     Text("Also ends on", style = MaterialTheme.typography.titleSmall)
-                    checkRow("Tap (touching this " + (if (swipe) "surface" else "button") + " again)", endsOnTap || latch, enabled = !latch) {
+                    checkRow("Tap (touching this " + (if (swipe) "surface" else "button") + " again)", endsOnTap) {
                         endsOnTap = it
                     }
                     checkRow("\"Let go\" mapping (any button mapped to (Let go))", endsOnLetGo) { endsOnLetGo = it }
@@ -186,7 +190,7 @@ internal fun MappingChipDialog(
                     // At a lift Held and Once are the same short press: kept as Held (no options).
                     how = if (how == How.ONCE && !t.holds) How.HELD else how, cycle = cycle,
                     startDelayMs = start, endDelayMs = end, minHoldMs = minHold,
-                    endsOnTap = toggle && (endsOnTap || (swipe && t == Trigger.HOLD)),
+                    endsOnTap = toggle && endsOnTap,
                     endsOnLetGo = toggle && endsOnLetGo,
                     endsAfterMs = if (toggle) endsAfter else 0,
                     endsOnNextInput = toggle && endsOnNext,
