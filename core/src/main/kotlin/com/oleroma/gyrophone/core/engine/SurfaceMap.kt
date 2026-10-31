@@ -49,12 +49,16 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
      */
     private val latchDirs = IntArray(4)
 
+    /** Per finger count and direction ((fingers - 1) * 4 + [Direction.ordinal]): the zones that latch, 1 shl zone. */
+    private val latchZoneMask = IntArray(16)
+
     /** Per finger count: a latch lets go by itself this long after the lift (ms); 0 = never. */
     internal val latchMs = IntArray(4) { -1 }
 
     /** Per finger count: a latch also ends on a Let go action / on the next other input. */
     internal val latchLetGo = BooleanArray(4)
     internal val latchNext = BooleanArray(4)
+    internal val latchSame = BooleanArray(4)
 
     /**
      * Motion routing: cursor counts and wheel units out per unit of X / Y travel in (X in, Y in).
@@ -90,6 +94,8 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
             if (dir != null && s.on == Trigger.HOLD && o != null && o.mode == How.TOGGLE) {
                 val f = s.fingers - 1
                 latchDirs[f] = latchDirs[f] or (1 shl dir.ordinal)
+                latchZoneMask[f * 4 + dir.ordinal] = latchZoneMask[f * 4 + dir.ordinal] or (1 shl s.zone)
+                if (o.endsOnSame) latchSame[f] = true
                 val ms = o.endsAfterMs.coerceIn(0, MapOptions.MAX_TOGGLE_MS)
                 // Any chip without a timer keeps it; else the longest timer.
                 latchMs[f] = if (latchMs[f] < 0) ms else if (latchMs[f] == 0 || ms == 0) 0 else maxOf(latchMs[f], ms)
@@ -168,6 +174,9 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
 
     /** Held direction [d] with [fingers] latches (see [latchDirs]). */
     fun latches(fingers: Int, d: Direction): Boolean = fingers in 1..4 && latchDirs[fingers - 1] and (1 shl d.ordinal) != 0
+
+    /** The zones of held direction [d] with [fingers] that latch (their On swipe chip is a Toggle), 1 shl zone. */
+    fun latchZones(fingers: Int, d: Direction): Int = if (fingers in 1..4) latchZoneMask[(fingers - 1) * 4 + d.ordinal] else 0
 
     /** How many length zones held direction [d] with [fingers] has mapped (at least 1). */
     fun zoneCount(fingers: Int, d: Direction): Int = if (fingers in 1..4) zones[(fingers - 1) * 4 + d.ordinal] else 1

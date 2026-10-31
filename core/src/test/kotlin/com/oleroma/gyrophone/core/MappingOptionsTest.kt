@@ -455,4 +455,65 @@ class MappingOptionsTest {
         assertTrue(!u.touchpad.latch)
         assertTrue(com.oleroma.gyrophone.core.model.ToggleUpgrade.latches(u) === u)
     }
+
+    @Test
+    fun toggleAlsoEndsOnTheSameKeystroke() {
+        val e = keyEngine(
+            a(MapOptions(how = How.TOGGLE, endsOnSame = true), usage = C),
+            Mapping(InputSource.Key(KEY_B), OutputTarget.Key(C)),
+        )
+        e.down(); e.keys(); e.up(); t += 50 * MS
+        assertEquals(setOf(C), e.keys())
+        e.setKey(dev, KEY_B, true)
+        assertEquals(setOf(C), e.keys()) // pressed by the other one
+        t += 50 * MS; e.setKey(dev, KEY_B, false)
+        assertEquals(emptySet<Int>(), e.keys()) // and the toggle ended with that press
+        t += 50 * MS
+        assertEquals(emptySet<Int>(), e.keys())
+    }
+
+    @Test
+    fun anotherToggleOfTheSameKeystrokeOnlyEndsIt() {
+        val e = keyEngine(
+            a(MapOptions(how = How.TOGGLE, endsOnSame = true), usage = C),
+            Mapping(InputSource.Key(KEY_B), OutputTarget.Key(C), options = MapOptions(how = How.TOGGLE)),
+        )
+        e.down(); e.keys(); e.up(); t += 50 * MS
+        assertEquals(setOf(C), e.keys())
+        e.setKey(dev, KEY_B, true); e.keys(); e.setKey(dev, KEY_B, false)
+        assertTrue(e.hold(100).last().isEmpty()) // off: neither stays on
+    }
+
+    @Test
+    fun swipeZoneToggleEndsOnTheSameKeystroke() {
+        // Zone 1: Crouch (C) while held; zone 2: Crouch Toggle (latched) that ends on Crouch elsewhere.
+        val w = Workspace(
+            id = "w", name = "w",
+            mappings = listOf(
+                zone(0, Trigger.HOLD, C),
+                Mapping(InputSource.Surface(1, SurfaceInput.HOLD_RIGHT, zone = 1), OutputTarget.Key(C),
+                    options = MapOptions(how = How.TOGGLE, endsOnTap = true, endsOnSame = true)),
+            ),
+            pads = listOf(AttachedPad(id = "p", mappings = listOf(Mapping(InputSource.Key(KEY_B), OutputTarget.Key(C))))),
+            touchpad = TouchpadSettings(holdZones = listOf(HoldZone(), HoldZone())),
+        )
+        val e = MappingEngine(single(w)) { t }.apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 10 * MS }
+        val out = ArrayList<Set<Int>>()
+        e.touchpadDown(1, 100f, 100f, t)
+        e.slide(0, 50, out)
+        e.lift(out)
+        assertTrue(C in out.last()) // zone 2 latched
+        assertTrue(C in e.hold(200).last())
+        // Crouch from another button ends it.
+        e.setKey(dev, KEY_B, true); e.keys(); t += 30 * MS
+        e.setKey(dev, KEY_B, false)
+        assertTrue(C !in e.hold(50).last())
+        // Again: latch it, then a swipe into zone 1 and a lift there lets it go.
+        e.touchpadDown(1, 100f, 100f, t); e.slide(0, 50, out); e.lift(out)
+        assertTrue(C in e.hold(100).last())
+        e.touchpadDown(1, 100f, 100f, t); e.slide(0, 25, out)
+        assertTrue(C in out.last()) // zone 1 crouches
+        e.lift(out)
+        assertTrue(C !in e.hold(100).last())
+    }
 }

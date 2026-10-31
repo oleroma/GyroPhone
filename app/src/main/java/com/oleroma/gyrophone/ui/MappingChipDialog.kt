@@ -89,6 +89,7 @@ internal fun MappingChipDialog(
     var endsOnLetGo by remember { mutableStateOf(o0.endsOnLetGo) }
     var endsAfter by remember { mutableIntStateOf(o0.endsAfterMs) }
     var endsOnNext by remember { mutableStateOf(o0.endsOnNextInput) }
+    var endsOnSame by remember { mutableStateOf(o0.endsOnSame) }
     var advanced by remember { mutableStateOf(start > 0 || end > 0 || minHold > 0) }
     val colors = MaterialTheme.colorScheme
 
@@ -153,6 +154,7 @@ internal fun MappingChipDialog(
                     }
                     checkRow("\"Let go\" mapping (any button mapped to (Let go))", endsOnLetGo) { endsOnLetGo = it }
                     checkRow("Next input (another key or button pressed and let go, like a sticky Shift)", endsOnNext) { endsOnNext = it }
+                    checkRow("Same keystroke (this key or button pressed by any other mapping)", endsOnSame) { endsOnSame = it }
                     Text(
                         "Timer: " + if (endsAfter == 0) "off" else "%.1f s".format(endsAfter / 1000f),
                         style = MaterialTheme.typography.labelLarge,
@@ -188,6 +190,7 @@ internal fun MappingChipDialog(
                     endsOnLetGo = toggle && endsOnLetGo,
                     endsAfterMs = if (toggle) endsAfter else 0,
                     endsOnNextInput = toggle && endsOnNext,
+                    endsOnSame = toggle && endsOnSame,
                 )
                 onApply(t, o.takeUnless { it.none })
             }) { Text("Done") }
