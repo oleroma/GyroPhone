@@ -197,8 +197,8 @@ private fun allows(allowed: Set<OutputTarget>, t: OutputTarget): Boolean {
         is OutputTarget.MouseAxis -> allowed.any { it is OutputTarget.MouseAxis && it.motion == t.motion }
         is OutputTarget.Key -> allowed.any { it is OutputTarget.Key }
         OutputTarget.GyroHold -> OutputTarget.GyroPause in allowed
-        // Layer actions and Nothing go where button outputs do.
-        is OutputTarget.Layer, OutputTarget.NoOutput -> allowed.any { it is OutputTarget.Key }
+        // Layer actions, (Let go) and Nothing go where button outputs do.
+        is OutputTarget.Layer, OutputTarget.LayerBack, OutputTarget.LetGo, OutputTarget.NoOutput -> allowed.any { it is OutputTarget.Key }
         else -> false
     }
 }
