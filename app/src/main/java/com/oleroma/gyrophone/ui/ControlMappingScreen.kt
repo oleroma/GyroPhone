@@ -766,7 +766,8 @@ internal fun ControlMappingScreen(
                     (t != Trigger.HOLD && Bindings.targets(view, ti).isNotEmpty() && settings?.action?.invoke(ti) != null)
             }) return { actionDialog = input }
         val src = input.sources.first() as? InputSource.Surface
-        if (src?.input?.holdDirection != null && onZoneSettings != null && zonesNow && zonesOf(input) > 1) {
+        if (src?.input?.holdDirection != null && onZoneSettings != null && zonesNow &&
+            allMappings.any { (it.source as? InputSource.Surface)?.copy(zone = 0, on = Trigger.HOLD) == src }) {
             return { zoneDialog = input to null }
         }
         return null
