@@ -151,6 +151,11 @@ class ProfileStore(context: Context) {
         get() = prefs.getBoolean(KEY_OWN_MAPPINGS, false)
         set(value) { prefs.edit().putBoolean(KEY_OWN_MAPPINGS, value).apply() }
 
+    /** The one-time reset that came with mapping triggers ([com.oleroma.gyrophone.core.model.TriggerReset]) ran or was not needed. */
+    var triggerReset: Boolean
+        get() = prefs.getBoolean(KEY_TRIGGER_RESET, false)
+        set(value) { prefs.edit().putBoolean(KEY_TRIGGER_RESET, value).apply() }
+
     /** Which version of the move to mapping profiles last ran (0 = none recorded). */
     var mappingMigration: Int
         get() = prefs.getInt(KEY_MAPPING_MIGRATION, 0)
@@ -175,5 +180,6 @@ class ProfileStore(context: Context) {
         private const val KEY_WORKSPACE_PREFIX = "workspace_"
         private const val KEY_MAPPING_MIGRATION = "mapping_migration"
         private const val KEY_OWN_MAPPINGS = "own_mappings"
+        private const val KEY_TRIGGER_RESET = "trigger_reset"
     }
 }
