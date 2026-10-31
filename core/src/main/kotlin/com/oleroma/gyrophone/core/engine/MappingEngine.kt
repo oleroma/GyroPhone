@@ -398,6 +398,21 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
 
     private var gyroToggled = false
+
+    /** Toggle gyro is on (it swaps what a ratchet does): absolute pitch pauses while it is. */
+    val gyroToggledNow: Boolean get() = synchronized(lock) { gyroToggled }
+
+    /** Set level presses ([OutputTarget.SetLevel]) so far: absolute pitch takes each new one. */
+    @Volatile var levelPresses = 0
+        private set
+
+    /**
+     * Absolute pitch runs ([AbsolutePitch]): the mouse's Y is [addAbsoluteY]'s alone, every other
+     * Mouse Y (gyro, touchpad, buttons, controllers) is dropped.
+     */
+    @Volatile var absoluteY = false
+    private var absDy = 0
+
     private var mouseDx = 0
     private var mouseDy = 0
 
@@ -980,6 +995,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * Relative mouse motion and scrolling from the gyro, already in mouse counts and wheel units
      * (touchpad motion has its own path); [fromGyro]: the live gyro sent it, not a glide or a measure.
      */
+    /** Absolute pitch's mouse Y ([absoluteY]), HID counts (down +). */
+    fun addAbsoluteY(dy: Int) {
+        if (dy == 0) return
+        synchronized(lock) { absDy += dy }
+        onChange?.run()
+    }
+
     fun addMouseMotion(dx: Int, dy: Int, wheel: Int = 0, hwheel: Int = 0, fromGyro: Boolean = false) {
         synchronized(lock) {
             mouseDx += dx
@@ -1214,7 +1236,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             for (c in carried) c.clear()
             anyCarried = false
             applyLayers()
-            mouseDx = 0; mouseDy = 0; wheel = 0; hwheel = 0; gyroDx = 0; gyroDy = 0
+            mouseDx = 0; mouseDy = 0; wheel = 0; hwheel = 0; gyroDx = 0; gyroDy = 0; absDy = 0
             gyroPad.fill(0f)
             touchpad.reset()
             for (s in surfaceList) s.reset()
@@ -1320,12 +1342,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             lt = toTrigger(trigger[0]), rt = toTrigger(trigger[1]),
         )
         // Touchpad output is never gated by gyroActive.
+        // With absolute pitch, Y is its alone (and is the gyro's, not the camera display's to follow).
+        val abs = absoluteY
         val mouse = MouseState(
             accMouse or padButtons,
-            mouseDx + touchpad.dx, mouseDy + touchpad.dy, wheel + touchpad.wheel, hwheel + touchpad.hwheel,
+            mouseDx + touchpad.dx, if (abs) absDy else mouseDy + touchpad.dy, wheel + touchpad.wheel, hwheel + touchpad.hwheel,
         )
-        cameraDx = mouse.dx - gyroDx; cameraDy = mouse.dy - gyroDy
-        mouseDx = 0; mouseDy = 0; wheel = 0; hwheel = 0; gyroDx = 0; gyroDy = 0
+        cameraDx = mouse.dx - gyroDx; cameraDy = if (abs) 0 else mouse.dy - gyroDy
+        mouseDx = 0; mouseDy = 0; wheel = 0; hwheel = 0; gyroDx = 0; gyroDy = 0; absDy = 0
         touchpad.drainMotion()
         return HidState(gamepad, KeyboardState(modifiers, array), mouse, all ?: array)
     }
@@ -1445,7 +1469,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 // Surface motion, switching apps and zoom run in the touchpad (Touchpad.route).
                 is OutputTarget.Wheel, is OutputTarget.MouseAxis,
                 OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause, is OutputTarget.GyroPauseAxis,
-                OutputTarget.SwitchApps, OutputTarget.Zoom, is OutputTarget.Layer, OutputTarget.LayerBack,
+                OutputTarget.SetLevel, OutputTarget.SwitchApps, OutputTarget.Zoom, is OutputTarget.Layer, OutputTarget.LayerBack,
                 OutputTarget.LetGo, OutputTarget.NoOutput -> Unit
 
                 is OutputTarget.Haptic, is OutputTarget.HapticStep -> {
@@ -1714,7 +1738,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             for (i in ms.indices) {
                 val m = ms[i]
                 val t = m.target
-                if (t !is OutputTarget.Wheel && t != OutputTarget.GyroToggle && t !is OutputTarget.Layer &&
+                if (t !is OutputTarget.Wheel && t != OutputTarget.GyroToggle && t != OutputTarget.SetLevel && t !is OutputTarget.Layer &&
                     t != OutputTarget.LayerBack && t != OutputTarget.LetGo
                 ) continue
                 val on = if (!shaped(m)) value(m.source, dev) >= PRESS_THRESHOLD else {
@@ -1852,6 +1876,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun onPress(t: OutputTarget) {
         when (t) {
             OutputTarget.GyroToggle -> gyroToggled = !gyroToggled
+            OutputTarget.SetLevel -> levelPresses++
             is OutputTarget.Wheel -> wheel += t.step * MouseState.WHEEL_UNIT
             is OutputTarget.Layer -> layerPressed(t)
             OutputTarget.LayerBack -> layerBack()

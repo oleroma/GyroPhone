@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import com.oleroma.gyrophone.core.engine.AbsolutePitch
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.model.BallShape
@@ -72,7 +73,8 @@ fun GyroDisplaysLayer(
         st.now = frame
         for (b in boxes) {
             val d = b.control.display ?: continue
-            st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
+            if (d.kind == GyroDisplayKind.CAMERA) st.drawCamera(this, runtime.absolutePitch, d, b.box)
+            else st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
             if (editing) {
                 val sel = b.control.id in selected
                 drawRect(
@@ -190,7 +192,96 @@ private class VisState {
             GyroDisplayKind.HORIZON -> drawHorizon(feed, d, box, ::col)
             GyroDisplayKind.DISK -> drawDisk(feed, d, box, ::col)
             GyroDisplayKind.BALL -> drawBall(feed, d, box, live, ::col)
+            GyroDisplayKind.CAMERA -> Unit // drawCamera: it shows absolute pitch, not a feed
         }
+    }
+
+    private val camPts = FloatArray(CAM_POINTS.size / 3 * 3)
+    private val camScreen = FloatArray(CAM_POINTS.size / 3 * 2)
+
+    /**
+     * The 3D camera ([GyroDisplayKind.CAMERA]): a camera seen from the side and a little in front,
+     * pitched where [abs] believes the game's camera is, its view cone, the horizon, the camera's
+     * limits (dashed) and where the phone points it (a line). Dim while absolute pitch is off.
+     */
+    fun drawCamera(scope: DrawScope, abs: AbsolutePitch, d: GyroDisplay, box: Rect) = with(scope) {
+        val op = d.opacity.coerceIn(0.05f, 1f) * if (abs.running) 1f else 0.4f
+        fun col(c: GyroDisplayColor) = Color(d.color(c).toInt()).let { it.copy(alpha = it.alpha * op) }
+        val r = minOf(box.width, box.height * 1.2f) * 0.42f
+        val pivot = Offset(box.left + box.width * 0.38f, box.center.y)
+        val dash = PathEffect.dashPathEffect(floatArrayOf(5 * density, 4 * density))
+        fun ray(deg: Float, len: Float, color: Color, width: Float, effect: PathEffect? = null) {
+            val a = Math.toRadians(deg.toDouble())
+            drawLine(
+                color, pivot, Offset(pivot.x + (cos(a) * len).toFloat(), pivot.y - (sin(a) * len).toFloat()),
+                width * density, StrokeCap.Round, effect,
+            )
+        }
+        val limit = abs.limitDeg
+        val lines = col(GyroDisplayColor.CAMERA_LIMIT)
+        ray(0f, r * 1.25f, lines, 1f, dash)
+        ray(limit, r * 1.15f, lines, 1.5f, dash)
+        ray(-limit, r * 1.15f, lines, 1.5f, dash)
+        drawArc(
+            lines, -limit, 2 * limit, false, Offset(pivot.x - r * 1.15f, pivot.y - r * 1.15f), Size(r * 2.3f, r * 2.3f),
+            style = Stroke(density),
+        )
+        val cam = if (abs.running) abs.cameraDeg else 0f
+        // The view cone: ±20° about where the camera looks.
+        val view = col(GyroDisplayColor.CAMERA_VIEW)
+        path.reset()
+        path.moveTo(pivot.x, pivot.y)
+        for (k in -1..1 step 2) {
+            val a = Math.toRadians((cam + k * VIEW_HALF_DEG).toDouble())
+            path.lineTo(pivot.x + (cos(a) * r * 1.1f).toFloat(), pivot.y - (sin(a) * r * 1.1f).toFloat())
+        }
+        path.close()
+        drawPath(path, view)
+        if (abs.running) ray(abs.phoneDeg.coerceIn(-100f, 100f), r * 1.2f, col(GyroDisplayColor.CAMERA_PHONE), 2f)
+
+        // The camera's points: pitched about its side axis, turned a little toward the viewer, in perspective.
+        val th = Math.toRadians(cam.toDouble())
+        val ct = cos(th).toFloat(); val st = sin(th).toFloat()
+        val unit = r * 0.5f
+        for (i in 0 until CAM_POINTS.size / 3) {
+            val x = CAM_POINTS[i * 3]; val y = CAM_POINTS[i * 3 + 1]; val z = CAM_POINTS[i * 3 + 2]
+            val x1 = x * ct - y * st
+            val y1 = x * st + y * ct
+            val x2 = x1 * VIEW_COS + z * VIEW_SIN
+            val z2 = -x1 * VIEW_SIN + z * VIEW_COS
+            camPts[i * 3] = x2; camPts[i * 3 + 1] = y1; camPts[i * 3 + 2] = z2
+            val s = EYE / (EYE - z2)
+            camScreen[i * 2] = pivot.x + x2 * s * unit
+            camScreen[i * 2 + 1] = pivot.y - y1 * s * unit
+        }
+        val body = col(GyroDisplayColor.CAMERA_BODY)
+        val edge = col(GyroDisplayColor.CAMERA_EDGE)
+        for (solid in CAM_SOLIDS) {
+            // A convex solid: a face shows when it faces the eye (its centre away from the solid's).
+            var sx = 0f; var sy = 0f; var sz = 0f
+            for (i in solid.points) { sx += camPts[i * 3]; sy += camPts[i * 3 + 1]; sz += camPts[i * 3 + 2] }
+            val n0 = solid.points.size.toFloat()
+            sx /= n0; sy /= n0; sz /= n0
+            for (f in solid.faces) {
+                var fx = 0f; var fy = 0f; var fz = 0f
+                for (i in f) { fx += camPts[i * 3]; fy += camPts[i * 3 + 1]; fz += camPts[i * 3 + 2] }
+                fx /= f.size; fy /= f.size; fz /= f.size
+                val nx = fx - sx; val ny = fy - sy; val nz = fz - sz
+                if (nx * -fx + ny * -fy + nz * (EYE - fz) <= 0f) continue
+                path.reset()
+                path.moveTo(camScreen[f[0] * 2], camScreen[f[0] * 2 + 1])
+                for (k in 1 until f.size) path.lineTo(camScreen[f[k] * 2], camScreen[f[k] * 2 + 1])
+                path.close()
+                val lit = 0.55f + 0.45f * (nz / kotlin.math.sqrt(nx * nx + ny * ny + nz * nz)).coerceIn(0f, 1f)
+                drawPath(path, body.copy(red = body.red * lit, green = body.green * lit, blue = body.blue * lit))
+                drawPath(path, edge, style = Stroke(density, join = StrokeJoin.Round))
+            }
+        }
+
+        text.textSize = r * 0.22f
+        text.color = col(GyroDisplayColor.CAMERA_TEXT).toArgb()
+        val label = if (abs.running) "%+.0f°".format(cam) else "Absolute pitch off"
+        drawContext.canvas.nativeCanvas.drawText(label, box.center.x, box.bottom - text.textSize * 0.4f, text)
     }
 
     /** [raw] = [feed]'s pose (straight without one), [m] = it seen from [GyroDisplay.levelDeg]. */
@@ -853,3 +944,36 @@ private const val EDGE_CORNER_DP = 34f
 private val AXIS_COLORS = arrayOf(Color(0xFFFF5A5A), Color(0xFF5ADB6E), Color(0xFF5AA8FF))
 private val RING_AXES = arrayOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL)
 private val RING_LETTERS = arrayOf("Y", "P", "R")
+
+// The 3D camera ([GyroDisplayKind.CAMERA]): looks along +x, up +y, +z toward the viewer.
+private const val VIEW_HALF_DEG = 20f
+private const val EYE = 4f
+private val VIEW_SIN = sin(Math.toRadians(-25.0)).toFloat()
+private val VIEW_COS = cos(Math.toRadians(-25.0)).toFloat()
+
+/** Body box corners (0-7) then the lens (8-15), each as x, y, z; corner i = x bit 4, y bit 2, z bit 1. */
+private val CAM_POINTS: FloatArray = FloatArray(16 * 3).also { p ->
+    for (i in 0 until 8) {
+        val xi = i shr 2 and 1; val yi = i shr 1 and 1; val zi = i and 1
+        p[i * 3] = if (xi == 0) -0.6f else 0.1f
+        p[i * 3 + 1] = if (yi == 0) -0.28f else 0.28f
+        p[i * 3 + 2] = if (zi == 0) -0.22f else 0.22f
+        val h = if (xi == 0) 0.13f else 0.2f
+        p[(8 + i) * 3] = if (xi == 0) 0.1f else 0.42f
+        p[(8 + i) * 3 + 1] = if (yi == 0) -h else h
+        p[(8 + i) * 3 + 2] = if (zi == 0) -h else h
+    }
+}
+
+private class CamSolid(val points: IntArray, val faces: List<IntArray>)
+
+private fun camBox(o: Int) = CamSolid(
+    IntArray(8) { o + it },
+    listOf(
+        intArrayOf(0, 1, 3, 2), intArrayOf(4, 5, 7, 6), intArrayOf(0, 1, 5, 4),
+        intArrayOf(2, 3, 7, 6), intArrayOf(0, 2, 6, 4), intArrayOf(1, 3, 7, 5),
+    ).map { f -> IntArray(4) { o + f[it] } },
+)
+
+/** Drawn in this order: the body, then the lens in front of it. */
+private val CAM_SOLIDS = listOf(camBox(0), camBox(8))

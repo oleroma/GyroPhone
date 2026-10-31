@@ -719,6 +719,16 @@ data class GyroSettings(
     /** Where [gameCountsPer360] came from, shown beside it ("CS2, sens 1.5", "Measured"). */
     val gameName: String = "",
     /**
+     * Absolute pitch ([com.oleroma.gyrophone.core.engine.AbsolutePitch]): the phone's pitch against
+     * gravity sets the camera's pitch, at the pitch's real world sensitivity (camera degrees per
+     * phone degree), level with level. Mouse Y then comes from it alone: every other Mouse Y
+     * (ratchets included) is ignored. Needs [gameCountsPer360]. The workspace's (and Defaults')
+     * only, never a layer's or a button's.
+     */
+    val absolutePitch: Boolean = false,
+    /** How far the game's camera pitches above and below the horizon, degrees: where [absolutePitch] re-syncs. */
+    val pitchLimitDeg: Float = DEFAULT_PITCH_LIMIT_DEG,
+    /**
      * Inertia: when a ratchet turns a gyro axis off, its mouse and wheel motion glides on and slows
      * down over [glideMs] ([InertiaCurve]); it stops at once when the axis is on again. Sticks never glide.
      */
@@ -804,6 +814,11 @@ data class GyroSettings(
     }
 
     companion object {
+        /** How far a game camera pitches above and below the horizon by default ([GyroSettings.pitchLimitDeg]), and the range offered. */
+        const val DEFAULT_PITCH_LIMIT_DEG = 89f
+        const val MIN_PITCH_LIMIT_DEG = 45f
+        const val MAX_PITCH_LIMIT_DEG = 90f
+
         const val DEFAULT_SENSITIVITY = 16f
         const val DEFAULT_GLIDE_MS = 325f
         const val DEFAULT_TILT_RANGE_DEG = 30f

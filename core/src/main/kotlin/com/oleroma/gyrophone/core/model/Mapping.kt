@@ -294,6 +294,14 @@ sealed interface OutputTarget {
     data class GyroPauseAxis(val axis: MotionAxis) : OutputTarget
 
     /**
+     * Set level: with absolute pitch on ([GyroSettings.absolutePitch]), says the game's camera is
+     * level now, so it snaps to the phone's angle. Press it while the camera looks level in game.
+     */
+    @Serializable
+    @SerialName("set_level")
+    data object SetLevel : OutputTarget
+
+    /**
      * Windows app switching from a surface's Move X: Alt is held while the fingers stay down and
      * Tab (moving right) or Shift+Tab (moving left) is sent per step of travel.
      */

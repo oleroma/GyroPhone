@@ -59,6 +59,7 @@ object Describe {
         OutputTarget.GyroToggle -> "Toggle gyro (swap what a ratchet does)"
         OutputTarget.GyroPause -> "Ratchet (flip gyro while held)"
         is OutputTarget.GyroPauseAxis -> "Ratchet ${t.axis.label.lowercase()} (flip it while held)"
+        OutputTarget.SetLevel -> "Set level (absolute pitch: the camera is level now)"
         OutputTarget.SwitchApps -> "Switch apps (Alt+Tab)"
         OutputTarget.Zoom -> "Zoom (Ctrl + wheel)"
         is OutputTarget.Haptic -> when {
@@ -161,6 +162,7 @@ object Describe {
         OutputTarget.GyroToggle -> "Gyro ⇄"
         OutputTarget.GyroPause -> "Ratchet"
         is OutputTarget.GyroPauseAxis -> "Ratchet " + t.axis.label.lowercase()
+        OutputTarget.SetLevel -> "Set level"
         OutputTarget.SwitchApps -> "Alt+Tab"
         OutputTarget.Zoom -> "Zoom"
         is OutputTarget.Haptic -> when {
@@ -214,7 +216,7 @@ object Describe {
         },
         "Gyro" to listOf(OutputTarget.GyroPause) +
             listOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL).map { OutputTarget.GyroPauseAxis(it) } +
-            OutputTarget.GyroToggle,
+            OutputTarget.GyroToggle + OutputTarget.SetLevel,
         "Phone" to listOf(
             OutputTarget.Haptic(held = false),
             OutputTarget.Haptic(held = true),

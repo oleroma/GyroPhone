@@ -160,6 +160,26 @@ internal fun WorkspaceSettings(
                     level.reset(g("gameCountsPer360")); level.reset(g("gameName"))
                 }
             }
+            if (level.shows(g("absolutePitch"))) {
+                val known = ws.gyro.gameCountsPer360 > 0f
+                OverrideSwitch(
+                    "Absolute pitch",
+                    if (!known) "Set the game first: absolute pitch needs its turn to know how far the camera goes."
+                    else "The phone's tilt against gravity sets the camera's pitch: phone level, camera level; " +
+                        "pitch sensitivity (RWS) times further. Mouse Y then comes from it alone: ratchets and every other " +
+                        "Mouse Y input are ignored. Past the camera's limit the camera is pinned at its pole and re-synced. " +
+                        "Map Set level (Gyro tab) and press it while the camera looks level to fix drift. " +
+                        "Needs raw input and no mouse acceleration or smoothing in the game.",
+                    ws.gyro.absolutePitch, own(g("absolutePitch")), reset(g("absolutePitch")),
+                    enabled = known || ws.gyro.absolutePitch,
+                ) { v -> editWs { it.copy(gyro = it.gyro.copy(absolutePitch = v)) } }
+                if (ws.gyro.absolutePitch) OverrideSlider(
+                    key + "plimit", "Camera limit ±%.0f°", ws.gyro.pitchLimitDeg,
+                    GyroSettings.MIN_PITCH_LIMIT_DEG..GyroSettings.MAX_PITCH_LIMIT_DEG, 1f,
+                    own(g("pitchLimitDeg")), reset(g("pitchLimitDeg")),
+                    hint = "How far the game's camera looks up and down from the horizon (most stop at 89°).",
+                ) { v -> editWs { it.copy(gyro = it.gyro.copy(pitchLimitDeg = v)) } }
+            }
             GyroSensSlider(
                 key + "gs", "Sensitivity", ws.gyro.sensitivity, ws.gyro, own(g("sensitivity")), reset(g("sensitivity")),
                 hint = "Yaw, pitch and roll each follow it unless their ⚙ in the mapping editor sets their own; scrolling and sticks go faster or slower with it too.",

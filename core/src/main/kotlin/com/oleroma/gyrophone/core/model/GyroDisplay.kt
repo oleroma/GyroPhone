@@ -22,6 +22,12 @@ enum class GyroDisplayKind(val label: String) {
 
     /** A 3D shape ([BallShape]: a ball with lines on it, a solid, a torus...), turned with the phone. */
     BALL("3D shape"),
+
+    /**
+     * A 3D camera seen from the side, pitched where absolute pitch ([GyroSettings.absolutePitch])
+     * believes the game's camera is, with where the phone points it and the camera's limits.
+     */
+    CAMERA("3D camera"),
     ;
 
     /** It shows the phone's pose ([GyroDisplay] pose settings apply). */
@@ -124,6 +130,7 @@ data class GyroDisplay(
             GyroDisplayKind.HORIZON -> 0.4f to 1.25f
             GyroDisplayKind.DISK -> 0.4f to 1f
             GyroDisplayKind.BALL -> 0.4f to 1f
+            GyroDisplayKind.CAMERA -> 0.45f to 1f
         }
     }
 }
@@ -183,6 +190,12 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     BALL_GIMBAL_YAW(GyroDisplayKind.BALL, "gyaw", "Gimbal yaw ring", 0xFFFF5A5A),
     BALL_GIMBAL_PITCH(GyroDisplayKind.BALL, "gpitch", "Gimbal pitch ring", 0xFF5ADB6E),
     BALL_GIMBAL_ROLL(GyroDisplayKind.BALL, "groll", "Gimbal roll ring", 0xFF5AA8FF),
+    CAMERA_BODY(GyroDisplayKind.CAMERA, "body", "Camera", 0xFF2A3446),
+    CAMERA_EDGE(GyroDisplayKind.CAMERA, "edge", "Camera outline", 0xCCFFFFFF),
+    CAMERA_VIEW(GyroDisplayKind.CAMERA, "view", "View cone", 0x4DFFC94D),
+    CAMERA_PHONE(GyroDisplayKind.CAMERA, "phone", "Phone's aim", 0xFF5AA8FF),
+    CAMERA_LIMIT(GyroDisplayKind.CAMERA, "limit", "Limits and horizon", 0x99FFFFFF),
+    CAMERA_TEXT(GyroDisplayKind.CAMERA, "text", "Numbers", 0xE6FFFFFF),
     ;
 
     companion object {
