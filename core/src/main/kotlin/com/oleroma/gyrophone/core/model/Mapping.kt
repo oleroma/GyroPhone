@@ -71,9 +71,14 @@ enum class SurfaceInput(val label: String, val motion: Boolean = false) {
     RELEASE("Release"),
     MOTION_X("Move X", motion = true), MOTION_Y("Move Y", motion = true),
     SWIPE_LEFT("Swipe ←"), SWIPE_RIGHT("Swipe →"), SWIPE_UP("Swipe ↑"), SWIPE_DOWN("Swipe ↓"),
-    HOLD_LEFT("Swipe hold ←"), HOLD_RIGHT("Swipe hold →"), HOLD_UP("Swipe hold ↑"), HOLD_DOWN("Swipe hold ↓"),
+    HOLD_LEFT("Touch ←"), HOLD_RIGHT("Touch →"), HOLD_UP("Touch ↑"), HOLD_DOWN("Touch ↓"),
     PINCH("Pinch", motion = true), PINCH_IN("Pinch in"), PINCH_OUT("Pinch out"),
 }
+
+/** One of the finger count's press gestures from before mapping triggers: now a trigger on its [SurfaceInput.HOLD]. */
+val SurfaceInput.gesture: Boolean
+    get() = this == SurfaceInput.TAP || this == SurfaceInput.DOUBLE_TAP || this == SurfaceInput.TAP_DRAG ||
+            this == SurfaceInput.LONG_PRESS || this == SurfaceInput.RELEASE
 
 /** The direction of a swipe input (Swipe ←→↑↓), else null. */
 val SurfaceInput.swipeDirection: Direction?
@@ -333,6 +338,12 @@ sealed interface OutputTarget {
         val override: Boolean = false,
         val whileHeld: Boolean = false,
         val switchHeld: Boolean = false,
+        /**
+         * It works as its mapping's [Output] says ([Mapping.trigger]): Held while held, Fire once
+         * switches to it, Toggle turns it on and off, Sticky for the next button. False: from
+         * before triggers, [whileHeld] says ([TriggerUpgrade] turns it into an output).
+         */
+        val follows: Boolean = false,
     ) : OutputTarget
 
     /** Does nothing: in a set used as an override, it stops an input falling through to the set below. */
@@ -349,9 +360,23 @@ sealed interface OutputTarget {
 @Serializable
 enum class KeyMode(val label: String) { HOLD("Hold"), TOGGLE("Toggle"), NEXT_KEY("Next key only") }
 
-/** [source] presses [target] while mapping set [set] (0 = Base) is in use ([OutputTarget.Layer]). */
+/**
+ * [source] presses [target] while mapping set [set] (0 = Base) is in use ([OutputTarget.Layer]),
+ * as [trigger] says: when it fires on the source's action and how the output behaves.
+ */
 @Serializable
-data class Mapping(val source: InputSource, val target: OutputTarget, val set: Int = 0)
+data class Mapping(
+    val source: InputSource,
+    val target: OutputTarget,
+    val set: Int = 0,
+    val trigger: Trigger = Trigger(),
+) {
+    /** What this mapping maps: its source and trigger slot ([Trigger.slot]); a layer or level mapping it again replaces it. */
+    val slot: Slot get() = Slot(source, trigger.slot)
+}
+
+/** One mappable slot: an action ([source]) and which of its triggers ([Trigger.slot]). */
+data class Slot(val source: InputSource, val trigger: TriggerSlot)
 
 /**
  * A named mapping set of a [Workspace] (set 0, Base, needs none). [settings]: the workspace
@@ -370,7 +395,8 @@ data class MappingSet(val id: Int, val name: String = "", val settings: Workspac
 
 /**
  * Which mappings are in use: those of [full] with each of [overrides] (bottom to top) laid over
- * it. For each input the topmost override that maps it wins, else [full]'s mappings. Mappings to
+ * it. For each input (an action and trigger, [Mapping.slot]) the topmost override that maps it
+ * wins, else [full]'s mappings. Mappings to
  * [OutputTarget.NoOutput] are dropped unless [keepNothing]. Base with no overrides on a list with
  * no other sets is [ms] itself.
  */
@@ -381,8 +407,8 @@ fun layered(ms: List<Mapping>, full: Int, overrides: List<Int>, keepNothing: Boo
         if (o == full) continue
         val top = ms.filter { it.set == o }
         if (top.isEmpty()) continue
-        val sources = top.mapTo(HashSet()) { it.source }
-        out = out.filterNot { it.source in sources } + top
+        val slots = top.mapTo(HashSet()) { it.slot }
+        out = out.filterNot { it.slot in slots } + top
     }
     return if (keepNothing) out else out.filter { it.target != OutputTarget.NoOutput }
 }

@@ -78,13 +78,16 @@ object Describe {
 
     /** The "Layers" picker group: each action with no set yet (set -1, picked next), and Nothing. */
     val layerTargets: List<OutputTarget> = listOf(
-        OutputTarget.Layer(-1), OutputTarget.Layer(-1, whileHeld = true),
-        OutputTarget.Layer(-1, override = true), OutputTarget.Layer(-1, override = true, whileHeld = true),
+        OutputTarget.Layer(-1, follows = true), OutputTarget.Layer(-1, override = true, follows = true),
         OutputTarget.NoOutput,
     )
 
-    /** "Layer set", "Layer hold", "Override layer set" or "Override layer hold". */
+    /**
+     * "Layer" or "Override layer" (what its press does is its trigger's Output); from before
+     * triggers "Layer set", "Layer hold", "Override layer set" or "Override layer hold".
+     */
     fun layer(t: OutputTarget.Layer): String = when {
+        t.follows -> if (t.override) "Override layer" else "Layer"
         t.override && t.whileHeld -> "Override layer hold"
         t.override -> "Override layer set"
         t.whileHeld -> "Layer hold"
@@ -115,6 +118,42 @@ object Describe {
         AxisHalf.POSITIVE -> " +"
         AxisHalf.NEGATIVE -> " −"
     }
+
+    /**
+     * The badge on a chip whose trigger is not Press + Any, Held, on the button: "2×" for a
+     * double, a clock for a long press, and the rest in a word; "" for the default.
+     */
+    fun triggerBadge(t: Trigger): String = buildList {
+        when (t.on) {
+            When.PRESS -> {}
+            When.TAP -> add("Tap")
+            When.LONG_PRESS -> add("\u23F1")
+            When.RELEASE -> add("Release")
+        }
+        when (t.taps) {
+            Taps.ANY -> {}
+            Taps.SINGLE -> add("1×")
+            Taps.DOUBLE -> add("2×")
+        }
+        when (t.output) {
+            Output.HELD -> {}
+            Output.FIRE_ONCE -> add(
+                if (t.repeat) "Repeat" else when (t.fireAt) {
+                    FireAt.START -> "Once"
+                    FireAt.END -> "Once at end"
+                    FireAt.BOTH -> "Once at both"
+                },
+            )
+
+            Output.TOGGLE -> add("Toggle")
+            Output.STICKY -> add("Sticky")
+        }
+        when (t.where) {
+            Where.BUTTON -> {}
+            Where.AREA -> add("Area")
+            Where.OUTSIDE -> add("Outside")
+        }
+    }.joinToString(" ")
 
     /** Compact chip text, e.g. "A", "LT", "Key W", "Mouse L", "Wheel ↑", "Gyro hold". */
     fun shortTarget(t: OutputTarget): String = when (t) {
@@ -206,8 +245,8 @@ object Describe {
             )
         },
         "Gyro" to listOf(OutputTarget.GyroPause) +
-            listOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL).map { OutputTarget.GyroPauseAxis(it) } +
-            OutputTarget.GyroToggle,
+            // Toggling gyro is a Ratchet with a Toggle output.
+            listOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL).map { OutputTarget.GyroPauseAxis(it) },
         "Phone" to listOf(
             OutputTarget.Haptic(held = false),
             OutputTarget.Haptic(held = true),

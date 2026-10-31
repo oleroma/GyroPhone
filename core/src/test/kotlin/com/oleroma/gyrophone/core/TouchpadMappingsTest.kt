@@ -11,6 +11,9 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MouseButton
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.When
+import com.oleroma.gyrophone.core.model.Trigger
+import com.oleroma.gyrophone.core.model.Taps
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
@@ -178,10 +181,10 @@ class TouchpadMappingsTest {
         val off = Workspace(id = "w", name = "w", touchpad = TouchpadSettings(tapToClick = false, pinchZoom = false))
             .withTouchpadMappings()
         assertTrue(off.touchpad.mapped)
-        assertTrue(off.mappings.none { (it.source as InputSource.Surface).input == SurfaceInput.TAP_DRAG })
+        assertTrue(off.mappings.none { it.trigger.on == When.TAP || it.trigger.taps == Taps.DOUBLE })
         assertTrue(off.mappings.none { it.target == OutputTarget.Zoom })
         val on = Bindings.defaultTouchpadMappings(TouchpadSettings())
         assertTrue(m(3, SurfaceInput.MOTION_X, OutputTarget.SwitchApps) in on)
-        assertTrue(m(2, SurfaceInput.TAP, OutputTarget.Mouse(MouseButton.RIGHT)) in on)
+        assertTrue(Mapping(InputSource.Surface(2, SurfaceInput.HOLD), OutputTarget.Mouse(MouseButton.RIGHT), trigger = Trigger.TAP) in on)
     }
 }

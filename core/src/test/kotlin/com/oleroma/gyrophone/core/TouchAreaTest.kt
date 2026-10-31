@@ -76,8 +76,8 @@ class TouchAreaTest {
     @Test
     fun inputsAndSources() {
         val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f)
-        val labels = Bindings.touchInputs(b).map { it.label }
-        assertTrue(labels.containsAll(listOf("Outside", "Area")))
+        // Area and Outside are where a press mapping's trigger counts, not inputs of their own.
+        assertTrue(Bindings.touchInputs(b).none { it.sources.first() is InputSource.TouchArea })
         assertTrue(InputSource.TouchArea("b", TouchAreaKind.ZONE).isTouch)
     }
 }

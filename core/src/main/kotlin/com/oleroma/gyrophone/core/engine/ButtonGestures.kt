@@ -1,23 +1,27 @@
 package com.oleroma.gyrophone.core.engine
 
-import com.oleroma.gyrophone.core.model.ButtonGesture
+import com.oleroma.gyrophone.core.model.Taps
+import com.oleroma.gyrophone.core.model.When
 import kotlin.math.min
 
 /**
- * The [ButtonGesture]s of one button-like input (a touch button, a key of a device), driven by
- * its press edges ([down] / [up]) and the clock ([resolve]). A press shorter than [longNs] is a
- * tap, one held to [longNs] a long press. With [hasDouble], a second press within [doubleNs]
- * after a tap is a double tap (neither a tap nor a long press); the tap waits out that window
- * only when [tapWaits] (its double tap does something else). Each gesture stays on until a
- * snapshot has shown it for the minimum pulse ([markSeen]). Not thread-safe.
+ * The triggers ([When] × [Taps]) of one Press action (a touch button, a key, a surface's finger
+ * count), driven by its press edges ([down] / [up] / [cancel]) and the clock ([resolve]).
+ *
+ * A press is a tap when it lifts within [tapNs] and stayed clean (in the tap slop: [dirty] says
+ * otherwise), a long press once it has lasted [tapNs], never both. With [doubleNs] > 0 and
+ * [hasDouble] (the action has a Double mapping), a press within [doubleNs] after a tap's lift is
+ * the second press of a double. A Single Tap waits out that window when [hasDouble]. A silent
+ * [cancel] (the finger count changed) ends the press with none of its Tap, Release or Long press.
+ * Each trigger stays on until a snapshot has shown it for the minimum pulse ([markSeen]).
+ * Not thread-safe.
  */
 internal class ButtonGestures(
-    var longNs: Long,
+    var tapNs: Long,
     var doubleNs: Long,
     var hasDouble: Boolean,
-    var tapWaits: Boolean,
 ) {
-    /** One gesture: on from [startNs], held while [holding], then on for the minimum pulse once seen. */
+    /** One trigger: on from [startNs], held while [holding], then on for the minimum pulse once seen. */
     class Gesture {
         var on = false
         var holding = false
@@ -38,39 +42,53 @@ internal class ButtonGestures(
     private var downNs = 0L
     private var upNs = 0L
 
-    /** The current press is the second of a double tap. */
+    /** The current press is the second of a double. */
     private var second = false
 
     /** The current press has turned into a long press. */
     private var longThisPress = false
 
-    /** A tap lifted at [upNs]: a press within the window is a double tap. */
+    /** The current press left the tap slop: it is neither a tap nor a long press. */
+    private var dirtyPress = false
+
+    /** A tap lifted at [upNs]: a press within the window is the second of a double. */
     private var windowOpen = false
 
-    /** That tap fires when the window closes ([tapWaits]). */
+    /** That tap's Single Tap fires when the window closes. */
     private var tapPending = false
 
-    val tap = Gesture()
-    val double = Gesture()
-    val long = Gesture()
-    val release = Gesture()
+    /** By [When] ordinal × 3 + [Taps] ordinal. */
+    private val gestures = Array(When.entries.size * 3) { Gesture() }
 
-    fun gesture(g: ButtonGesture): Gesture = when (g) {
-        ButtonGesture.TAP -> tap
-        ButtonGesture.DOUBLE_TAP -> double
-        ButtonGesture.LONG_PRESS -> long
-        ButtonGesture.RELEASE -> release
-    }
+    private fun g(w: When, t: Taps) = gestures[w.ordinal * 3 + t.ordinal]
 
-    fun on(g: ButtonGesture): Boolean = gesture(g).on
+    fun on(w: When, t: Taps): Boolean = g(w, t).on
 
-    /** Some gesture is on (so its device still counts as active). */
-    val anyOn: Boolean get() = tap.on || double.on || long.on || release.on
+    /** Some trigger is on (so its device still counts as active). */
+    val anyOn: Boolean get() = gestures.any { it.on }
+
+    /** It is pressed now. */
+    val pressed: Boolean get() = pressing
+
+    private val doubles: Boolean get() = hasDouble && doubleNs > 0
 
     fun reset() {
-        pressing = false; second = false; longThisPress = false; windowOpen = false; tapPending = false
-        tap.reset(); double.reset(); long.reset(); release.reset()
+        pressing = false; second = false; longThisPress = false; dirtyPress = false
+        windowOpen = false; tapPending = false
+        for (x in gestures) x.reset()
     }
+
+    /** Starts the press's triggers of [w] that hold: Any, and Single or Double by [second]. */
+    private fun hold(w: When, now: Long) {
+        g(w, Taps.ANY).start(now, hold = true)
+        g(w, if (second) Taps.DOUBLE else Taps.SINGLE).start(now, hold = true)
+    }
+
+    private fun letGo(w: When) {
+        for (t in Taps.entries) g(w, t).holding = false
+    }
+
+    private fun pulse(w: When, t: Taps, now: Long) = g(w, t).start(now, hold = false)
 
     fun down(now: Long, minPulse: Long) {
         resolve(now, minPulse)
@@ -78,12 +96,17 @@ internal class ButtonGestures(
         pressing = true
         downNs = now
         longThisPress = false
-        second = hasDouble && windowOpen && now - upNs <= doubleNs
+        dirtyPress = false
+        second = doubles && windowOpen && now - upNs <= doubleNs
         windowOpen = false
-        if (second) {
-            tapPending = false
-            double.start(now, hold = true)
-        }
+        // The waiting tap was the first of a double: never a Single Tap.
+        if (second) tapPending = false
+        hold(When.PRESS, now)
+    }
+
+    /** The press left the tap slop: it can no longer be a tap or turn into a long press. */
+    fun dirty() {
+        if (pressing) dirtyPress = true
     }
 
     fun up(now: Long, minPulse: Long) {
@@ -91,14 +114,21 @@ internal class ButtonGestures(
         if (!pressing) return
         pressing = false
         upNs = now
-        release.start(now, hold = false)
-        when {
-            second -> double.holding = false
-            longThisPress -> long.holding = false
-            else -> {
-                windowOpen = hasDouble
-                tapPending = hasDouble && tapWaits
-                if (!tapPending) tap.start(now, hold = false)
+        letGo(When.PRESS)
+        letGo(When.LONG_PRESS)
+        pulse(When.RELEASE, Taps.ANY, now)
+        pulse(When.RELEASE, if (second) Taps.DOUBLE else Taps.SINGLE, now)
+        val tap = !longThisPress && !dirtyPress && now - downNs < tapNs
+        if (tap) {
+            pulse(When.TAP, Taps.ANY, now)
+            when {
+                second -> pulse(When.TAP, Taps.DOUBLE, now)
+                doubles -> {
+                    windowOpen = true
+                    tapPending = true
+                }
+
+                else -> pulse(When.TAP, Taps.SINGLE, now)
             }
         }
         second = false
@@ -106,17 +136,30 @@ internal class ButtonGestures(
         endShown(now, minPulse)
     }
 
-    /** Due long press, waiting tap and gesture pulses. */
+    /** Ends the press silently: its holds let go at once, and none of its Tap, Release or Long press fire. */
+    fun cancel(now: Long, minPulse: Long) {
+        resolve(now, minPulse)
+        if (!pressing) return
+        pressing = false
+        for (t in Taps.entries) {
+            g(When.PRESS, t).reset(); g(When.LONG_PRESS, t).reset()
+        }
+        second = false
+        windowOpen = false
+        endShown(now, minPulse)
+    }
+
+    /** Due long press, waiting tap and trigger pulses. */
     fun resolve(now: Long, minPulse: Long) {
-        if (pressing && !second && !longThisPress && now - downNs >= longNs) {
+        if (pressing && !longThisPress && !dirtyPress && now - downNs >= tapNs) {
             longThisPress = true
-            long.start(now, hold = true)
+            hold(When.LONG_PRESS, now)
         }
         if (windowOpen && now - upNs > doubleNs) {
             windowOpen = false
             if (tapPending) {
                 tapPending = false
-                tap.start(now, hold = false)
+                pulse(When.TAP, Taps.SINGLE, now)
             }
         }
         endShown(now, minPulse)
@@ -125,27 +168,18 @@ internal class ButtonGestures(
     /** When this next changes without input: a press turns long, a waiting tap fires, a pulse ends. */
     fun deadline(minPulse: Long): Long {
         var d = Long.MAX_VALUE
-        if (pressing && !second && !longThisPress) d = downNs + longNs
-        if (tapPending) d = min(d, upNs + doubleNs + 1)
-        if (tap.on && !tap.holding && tap.seen) d = min(d, tap.startNs + minPulse)
-        if (double.on && !double.holding && double.seen) d = min(d, double.startNs + minPulse)
-        if (long.on && !long.holding && long.seen) d = min(d, long.startNs + minPulse)
-        if (release.on && !release.holding && release.seen) d = min(d, release.startNs + minPulse)
+        if (pressing && !longThisPress && !dirtyPress) d = downNs + tapNs
+        if (windowOpen) d = min(d, upNs + doubleNs + 1)
+        for (x in gestures) if (x.on && !x.holding && x.seen) d = min(d, x.startNs + minPulse)
         return d
     }
 
-    /** A snapshot showed the gestures that are on. */
+    /** A snapshot showed the triggers that are on. */
     fun markSeen() {
-        if (tap.on) tap.seen = true
-        if (double.on) double.seen = true
-        if (long.on) long.seen = true
-        if (release.on) release.seen = true
+        for (x in gestures) if (x.on) x.seen = true
     }
 
     private fun endShown(now: Long, minPulse: Long) {
-        if (tap.done(now, minPulse)) tap.on = false
-        if (double.done(now, minPulse)) double.on = false
-        if (long.done(now, minPulse)) long.on = false
-        if (release.done(now, minPulse)) release.on = false
+        for (x in gestures) if (x.done(now, minPulse)) x.on = false
     }
 }
