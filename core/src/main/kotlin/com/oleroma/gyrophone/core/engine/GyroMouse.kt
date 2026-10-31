@@ -40,7 +40,10 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
 
     data class Counts(val dx: Int, val dy: Int)
 
-    /** Yaw (right +), pitch (up +), roll (clockwise as seen by the player +), in deg/s. */
+    /**
+     * Yaw (right +), pitch (up +), roll (clockwise as seen by the player +), in deg/s, by their
+     * stored names ([MotionAxis]): shown, [roll] is yaw and [yaw] is roll.
+     */
     data class Motion(val yaw: Float, val pitch: Float, val roll: Float) {
         operator fun get(axis: MotionAxis): Float = when (axis) {
             MotionAxis.YAW -> yaw
@@ -78,23 +81,26 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
         val wr = m.pitch; val wu = -m.yaw; val wt = -m.roll
         return when (space) {
             GyroSpace.WORLD -> {
-                val yaw = -(wr * ux + wu * uy + wt * uz)
+                // Shown yaw (stored as roll): the turn around gravity.
+                val turn = -(wr * ux + wu * uy + wt * uz)
                 // The right axis laid flat; straight up or down (phone on its side), the phone's own pitch and roll.
                 var rx = 1f - ux * ux; var ry = -ux * uy; var rz = -ux * uz
                 val n = sqrt(rx * rx + ry * ry + rz * rz)
-                if (n < FLAT_MIN) return Motion(yaw, m.pitch, m.roll)
+                if (n < FLAT_MIN) return Motion(m.yaw, m.pitch, turn)
                 rx /= n; ry /= n; rz /= n
-                // Toward the player, laid flat: right × up.
+                // The flat axis along the screen: right × up. Turning about it raises the right edge
+                // (shown roll, stored as yaw); lying flat that is the phone's own.
                 val tx = ry * uz - rz * uy; val ty = rz * ux - rx * uz; val tz = rx * uy - ry * ux
-                Motion(yaw, wr * rx + wu * ry + wt * rz, -(wr * tx + wu * ty + wt * tz))
+                Motion(wr * tx + wu * ty + wt * tz, wr * rx + wu * ry + wt * rz, turn)
             }
 
             GyroSpace.PLAYER -> {
-                // JoyShockMapper's player space: yaw from the phone's yaw and roll by how up lies
-                // in their plane, eased (×1.41) but never more than their combined speed.
+                // JoyShockMapper's player space: shown yaw (stored as roll) from the turns about the
+                // screen's vertical axis and through the screen, by how gravity lies in their plane,
+                // eased (×1.41) but never faster than both together. Pitch and roll stay the phone's.
                 val world = -(wu * uy + wt * uz)
                 val most = sqrt(wu * wu + wt * wt)
-                Motion(sign(world) * min(abs(world) * PLAYER_RELAX, most), m.pitch, m.roll)
+                Motion(m.yaw, m.pitch, sign(world) * min(abs(world) * PLAYER_RELAX, most))
             }
 
             GyroSpace.LOCAL -> m

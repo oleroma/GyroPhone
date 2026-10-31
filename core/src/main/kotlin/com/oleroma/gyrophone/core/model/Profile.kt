@@ -678,18 +678,28 @@ data class AxisGlide(
     }
 }
 
-/** Rotation of the phone in the player's frame. */
+/**
+ * Rotation of the phone, about the screen's axes as it is turned (portrait or landscape). Shown
+ * names ([label]) follow the screen: yaw turns around the axis through the screen, pitch around
+ * the screen's horizontal axis, roll around its vertical axis. The stored names are older and
+ * kept so saved configs and other builds read the same: [YAW] is shown as roll and [ROLL] as yaw.
+ */
 @Serializable
 enum class MotionAxis(val label: String) {
-    /** Turning left/right around the vertical axis. */
-    YAW("Yaw"),
+    /** Around the screen's vertical axis: shown as roll. */
+    YAW("Roll"),
 
-    /** Tilting the far edge up/down. */
+    /** Around the screen's horizontal axis: tilting the top edge toward or away. */
     PITCH("Pitch"),
 
-    /** Tilting like a steering wheel. */
-    ROLL("Roll"),
-    NONE("None"),
+    /** Around the axis through the screen (a steering wheel held facing you; a flat phone turning left and right): shown as yaw. */
+    ROLL("Yaw"),
+    NONE("None");
+
+    companion object {
+        /** The axes in the order they are shown: yaw, pitch, roll. */
+        val shown: List<MotionAxis> = listOf(ROLL, PITCH, YAW)
+    }
 }
 
 @Serializable

@@ -165,11 +165,12 @@ internal fun WorkspaceSettings(
                 OverrideRow(
                     "Gyro space", own(g("gyroSpace")), reset(g("gyroSpace")),
                     hint = when (ws.gyro.gyroSpace) {
-                        GyroSpace.LOCAL -> "Turns are measured about the phone's own axes: with the phone tilted, turning left and right leaks into roll." +
+                        GyroSpace.LOCAL -> "Turns are measured about the phone's own axes: yaw through the screen, pitch across it, roll along it. " +
+                            "With the phone tilted, turning left and right mixes yaw and roll." +
                             if (ws.gyro.absolutePitch) " Absolute pitch uses World meanwhile." else ""
                         GyroSpace.WORLD -> "Turns are measured against gravity: yaw is turning around the vertical, however the phone is tilted; " +
-                            "pitch is tilting around the horizontal axis to your right."
-                        GyroSpace.PLAYER -> "Yaw blends the phone's yaw and roll by how it is tilted: like World, but more forgiving when you lean or lie down. " +
+                            "pitch is tilting around the flat axis across the screen, roll around the flat axis along it."
+                        GyroSpace.PLAYER -> "Yaw blends the phone's yaw and roll by how gravity lies: like World, but more forgiving when you lean or lie down. " +
                             "Pitch and roll stay the phone's."
                     },
                 ) {

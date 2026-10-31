@@ -215,7 +215,7 @@ object Describe {
             )
         },
         "Gyro" to listOf(OutputTarget.GyroPause) +
-            listOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL).map { OutputTarget.GyroPauseAxis(it) } +
+            MotionAxis.shown.map { OutputTarget.GyroPauseAxis(it) } +
             OutputTarget.GyroToggle + OutputTarget.SetLevel,
         "Phone" to listOf(
             OutputTarget.Haptic(held = false),

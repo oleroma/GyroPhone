@@ -18,31 +18,38 @@ class GyroSpaceTest {
         assertEquals(yaw, m.yaw, 0.01f); assertEquals(pitch, m.pitch, 0.01f); assertEquals(roll, m.roll, 0.01f)
     }
 
+    @Test fun shownNamesFollowTheScreen() {
+        assertEquals("Yaw", com.oleroma.gyrophone.core.model.MotionAxis.ROLL.label)
+        assertEquals("Roll", com.oleroma.gyrophone.core.model.MotionAxis.YAW.label)
+    }
+
     @Test fun localAndUprightAreThePhonesAxes() {
         val m = GyroMouse.Motion(10f, 20f, 30f)
         assertMotion(10f, 20f, 30f, g.inSpace(m, GyroSpace.LOCAL, flat))
-        assertMotion(10f, 20f, 30f, g.inSpace(m, GyroSpace.WORLD, upright))
+        // Upright, the turn around gravity is the phone's turn about the screen's vertical axis.
+        assertMotion(-30f, 20f, 10f, g.inSpace(m, GyroSpace.WORLD, upright))
         assertMotion(10f, 20f, 30f, g.inSpace(m, GyroSpace.WORLD, null))
     }
 
     @Test fun worldYawIsTurningAroundGravity() {
-        // Lying flat, turning left and right is the phone's roll.
-        assertMotion(10f, 0f, 0f, g.inSpace(GyroMouse.Motion(0f, 0f, 10f), GyroSpace.WORLD, flat))
+        // Lying flat, turning left and right is the turn through the screen (shown yaw, stored roll): as the phone's own.
+        assertMotion(0f, 0f, 10f, g.inSpace(GyroMouse.Motion(0f, 0f, 10f), GyroSpace.WORLD, flat))
+        assertMotion(4f, 0f, 0f, g.inSpace(GyroMouse.Motion(4f, 0f, 0f), GyroSpace.WORLD, flat))
         // Tilted back 45°: a turn around the vertical is half yaw, half roll on the phone.
         val a = Math.toRadians(45.0)
         val up = floatArrayOf(0f, cos(a).toFloat(), sin(a).toFloat())
         val k = (10 / sqrt(2.0)).toFloat()
         val w = g.inSpace(GyroMouse.Motion(k, 0f, k), GyroSpace.WORLD, up)
-        assertMotion(10f, 0f, 0f, w)
+        assertEquals(10f, w.roll, 0.01f)
         // Pitch stays pitch: the right axis is flat.
         assertEquals(5f, g.inSpace(GyroMouse.Motion(0f, 5f, 0f), GyroSpace.WORLD, up).pitch, 0.01f)
     }
 
     @Test fun playerYawBlendsYawAndRollButNeverFasterThanBoth() {
-        assertMotion(10f, 3f, 10f, g.inSpace(GyroMouse.Motion(0f, 3f, 10f), GyroSpace.PLAYER, flat))
+        assertMotion(0f, 3f, 10f, g.inSpace(GyroMouse.Motion(0f, 3f, 10f), GyroSpace.PLAYER, flat))
         val a = Math.toRadians(45.0)
         val up = floatArrayOf(0f, cos(a).toFloat(), sin(a).toFloat())
         // Only phone yaw while tilted 45°: world part 7.07, eased ×1.41 to ~10, capped at 10.
-        assertEquals(9.97f, g.inSpace(GyroMouse.Motion(10f, 0f, 0f), GyroSpace.PLAYER, up).yaw, 0.05f)
+        assertEquals(9.97f, g.inSpace(GyroMouse.Motion(10f, 0f, 0f), GyroSpace.PLAYER, up).roll, 0.05f)
     }
 }

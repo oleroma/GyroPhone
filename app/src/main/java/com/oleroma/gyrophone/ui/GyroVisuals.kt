@@ -942,7 +942,7 @@ private const val EDGE_CORNER_DP = 34f
 
 /** Yaw, pitch, roll: the edge's tint. */
 private val AXIS_COLORS = arrayOf(Color(0xFFFF5A5A), Color(0xFF5ADB6E), Color(0xFF5AA8FF))
-private val RING_AXES = arrayOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL)
+private val RING_AXES = MotionAxis.shown.toTypedArray()
 private val RING_LETTERS = arrayOf("Y", "P", "R")
 
 // The 3D camera ([GyroDisplayKind.CAMERA]): looks along +x, up +y, +z toward the viewer.
