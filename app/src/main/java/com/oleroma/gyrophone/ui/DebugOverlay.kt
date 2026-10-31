@@ -53,6 +53,7 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
     var offset by remember { mutableStateOf(IntOffset(0, 0)) }
     var folded by remember { mutableStateOf(runtime.uiPref(PREF_FOLDED) == "1") }
     var paused by remember { mutableStateOf(false) }
+    var timings by remember { mutableStateOf(runtime.uiPref(PREF_TIMINGS) == "1") }
     var tick by remember { mutableIntStateOf(0) }
     var savedText by remember { mutableStateOf<String?>(null) }
     var frozen by remember { mutableStateOf<List<DebugTrace.Event>>(emptyList()) }
@@ -107,6 +108,10 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
                     val f = runtime.debug.record()
                     savedText = if (f != null) "Saved ${f.name}" else "Debug tools are off"
                 }
+                Button(if (timings) "☑ ms" else "☐ ms") {
+                    timings = !timings
+                    runtime.setUiPref(PREF_TIMINGS, if (timings) "1" else null)
+                }
                 Button(if (paused) "▶ Live" else "❚❚ Pause") {
                     paused = !paused
                     if (paused) frozen = trace.latest(EVENTS, shownKinds)
@@ -145,9 +150,11 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
                     }
                 }
                 val events = (if (paused) frozen else trace.latest(EVENTS, shownKinds)).asReversed()
-                for (e in events) {
+                // Newest first; with timings on, each row ends with the ms since the event below it.
+                for ((i, e) in events.withIndex()) {
+                    val gap = events.getOrNull(i + 1)?.let { " +${(e.nanos - it.nanos) / 1_000_000} ms" } ?: ""
                     Text(
-                        "%-5s %s".format(e.kind.tag, e.text),
+                        "%-5s %s".format(e.kind.tag, e.text) + if (timings) gap else "",
                         color = kindColor(e.kind),
                         style = mono,
                         maxLines = 1,
@@ -192,3 +199,4 @@ private fun kindColor(k: DebugTrace.Kind): Color = when (k) {
 private const val EVENTS = 12
 private const val PREF_FOLDED = "debug_overlay_folded"
 private const val PREF_KINDS = "debug_overlay_kinds"
+private const val PREF_TIMINGS = "debug_overlay_timings"
