@@ -46,6 +46,7 @@ public class DebugTraceTests
         t.OnX360(new X360Frame(0, 20000, 0, 0, 0, 0, 0), _now); // stick too soon after the last
         Assert.Equal(["xbox A down", "pad LX 50%", "xbox A up"], Texts(t));
         Assert.StartsWith("xbox no buttons · L 61,0%", t.CurrentPad);
+        Assert.Equal(["xbox A down", "xbox A up"], t.Latest(10, k => k != DebugTrace.Kind.Move).Select(e => e.Text));
     }
 
     [Fact]

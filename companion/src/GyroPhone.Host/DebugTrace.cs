@@ -11,7 +11,8 @@ namespace GyroPhone.Host;
 /// </summary>
 public sealed class DebugTrace
 {
-    public enum Kind { In, Out, State, Link, Note }
+    /// <summary>Move: stick and trigger moves and summed mouse motion, which the window can hide.</summary>
+    public enum Kind { In, Out, Move, State, Link, Note }
 
     public readonly record struct Event(long Us, Kind Kind, string Text);
 
@@ -79,6 +80,22 @@ public sealed class DebugTrace
         }
     }
 
+    /// <summary>The newest <paramref name="max"/> events whose kind <paramref name="shown"/> accepts, oldest first.</summary>
+    public List<Event> Latest(int max, Func<Kind, bool> shown)
+    {
+        lock (_lock)
+        {
+            var list = new List<Event>(max);
+            for (int i = 0; i < _count && list.Count < max; i++)
+            {
+                var e = _ring[Mod(_head - 1 - i, _ring.Length)];
+                if (shown(e.Kind)) list.Add(e);
+            }
+            list.Reverse();
+            return list;
+        }
+    }
+
     private List<Event> Since(long fromUs)
     {
         lock (_lock)
@@ -137,7 +154,7 @@ public sealed class DebugTrace
         if (_dx != 0 || _dy != 0) parts.Add($"move {_dx},{_dy}");
         if (_wheel != 0) parts.Add($"wheel {_wheel / 120.0:0.#}");
         if (_hwheel != 0) parts.Add($"pan {_hwheel / 120.0:0.#}");
-        Add(Kind.Out, $"mouse {string.Join(", ", parts)} in {(nowUs - _motionSinceUs) / 1000} ms", nowUs);
+        Add(Kind.Move, $"mouse {string.Join(", ", parts)} in {(nowUs - _motionSinceUs) / 1000} ms", nowUs);
         _dx = _dy = _wheel = _hwheel = 0;
     }
 
@@ -207,7 +224,7 @@ public sealed class DebugTrace
         if (!big || (nowUs - _axisAtUs[i] < AxisEveryUs && pct != 0)) return;
         _shownAxis[i] = pct;
         _axisAtUs[i] = nowUs;
-        Add(Kind.Out, $"pad {name} {pct}%", nowUs);
+        Add(Kind.Move, $"pad {name} {pct}%", nowUs);
     }
 
     /// <summary>Once a second: flushes summed motion and logs <paramref name="linkLine"/>.</summary>
@@ -244,6 +261,7 @@ public sealed class DebugTrace
     {
         Kind.In => "in",
         Kind.Out => "out",
+        Kind.Move => "move",
         Kind.State => "state",
         Kind.Link => "link",
         _ => "note",

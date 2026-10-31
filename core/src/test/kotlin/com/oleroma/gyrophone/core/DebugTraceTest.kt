@@ -38,6 +38,14 @@ class DebugTraceTest {
         )
     }
 
+    @Test fun motionIsItsOwnKindAndCanBeFilteredOut() {
+        val t = trace()
+        t.output(HidState(gamepad = GamepadState(buttons = 1, lx = 32767)))
+        val shown = t.latest(10, DebugTrace.Kind.entries.toSet() - DebugTrace.Kind.MOVE).map { it.text }
+        assertEquals(listOf("pad A down"), shown)
+        assertEquals(listOf("pad LX 100%"), t.latest(10, setOf(DebugTrace.Kind.MOVE)).map { it.text })
+    }
+
     @Test fun sticksAreThrottledButReachZero() {
         val t = trace()
         t.output(HidState(gamepad = GamepadState(lx = 16384)))

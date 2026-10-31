@@ -18,6 +18,7 @@ internal sealed class DebugForm : Form
     private readonly Label _status;
     private readonly TextBox _events;
     private readonly CheckBox _pause;
+    private readonly Dictionary<DebugTrace.Kind, CheckBox> _kinds = new();
     private readonly Label _saved;
     private readonly Font _mono;
     private readonly System.Windows.Forms.Timer _timer;
@@ -51,7 +52,16 @@ internal sealed class DebugForm : Form
         folderButton.Click += (_, _) => openFolder();
         _pause = new CheckBox { Text = "Pause the list", AutoSize = true, Margin = new Padding(12, 6, 3, 3) };
         _saved = new Label { AutoSize = true, Margin = new Padding(12, 8, 3, 3) };
-        buttons.Controls.AddRange([saveButton, folderButton, _pause, _saved]);
+        buttons.Controls.AddRange([saveButton, folderButton, _pause]);
+        // What the list shows (recordings keep everything); movement is hidden until ticked.
+        foreach (var k in Enum.GetValues<DebugTrace.Kind>())
+        {
+            var box = new CheckBox { Text = DebugTrace.Tag(k), AutoSize = true, Checked = k != DebugTrace.Kind.Move, Margin = new Padding(8, 6, 3, 3) };
+            box.CheckedChanged += (_, _) => { _shownVersion = -1; UpdateView(); };
+            _kinds[k] = box;
+            buttons.Controls.Add(box);
+        }
+        buttons.Controls.Add(_saved);
         table.Controls.Add(buttons, 0, 1);
 
         _events = new TextBox
@@ -95,7 +105,7 @@ internal sealed class DebugForm : Form
         _shownVersion = d.Version;
         long now = GyroPhone.Host.Abstractions.StopwatchClock.Instance.NowUs;
         var sb = new StringBuilder();
-        var list = d.Latest(EventsShown);
+        var list = d.Latest(EventsShown, k => _kinds[k].Checked);
         for (int i = list.Count - 1; i >= 0; i--)
         {
             var e = list[i];

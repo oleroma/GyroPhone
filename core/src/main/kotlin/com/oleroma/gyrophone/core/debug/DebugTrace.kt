@@ -22,8 +22,10 @@ class DebugTrace(
     enum class Kind(val tag: String) {
         /** Something that came in: a touch, a controller key, a gyro switch. */
         IN("in"),
-        /** Something the PC is sent. */
+        /** Something the PC is sent: a button, key or mouse button change. */
         OUT("out"),
+        /** Continuous output: stick and trigger moves, summed mouse motion and scrolling (gyro included). */
+        MOVE("move"),
         /** Mode changes: workspace, layer, gyro on or off, a reset. */
         STATE("state"),
         /** The link: once-a-second stats, connects and drops. */
@@ -65,6 +67,20 @@ class DebugTrace(
             val at = Math.floorMod(head - n + i, capacity)
             Event(times[at], kinds[at]!!, texts[at]!!)
         }
+    }
+
+    /** The newest [max] events of [shown] kinds, oldest first. */
+    @Synchronized
+    fun latest(max: Int, shown: Set<Kind>): List<Event> {
+        val out = ArrayList<Event>(max)
+        var i = 0
+        while (i < count && out.size < max) {
+            val at = Math.floorMod(head - 1 - i, capacity)
+            if (kinds[at] in shown) out.add(Event(times[at], kinds[at]!!, texts[at]!!))
+            i++
+        }
+        out.reverse()
+        return out
     }
 
     /** Events of the last [windowNanos], oldest first. */
@@ -135,7 +151,7 @@ class DebugTrace(
             val big = abs(pct - shownAxis[i]) >= AXIS_STEP_PCT || pct == 0 || abs(pct) == 100
             if (!big || (nanos - lastAxisAt[i] < AXIS_EVERY_NANOS && pct != 0)) continue
             shownAxis[i] = pct; lastAxisAt[i] = nanos
-            add(Kind.OUT, "pad ${AXIS_NAMES[i]} $pct%", nanos)
+            add(Kind.MOVE, "pad ${AXIS_NAMES[i]} $pct%", nanos)
         }
         val keys = s.allKeys.toSet() + modifierUsages(s.keyboard.modifiers)
         val oldKeys = old.allKeys.toSet() + modifierUsages(old.keyboard.modifiers)
@@ -163,7 +179,7 @@ class DebugTrace(
         }
         if (outWheel != 0) parts.add("wheel ${fmt1(outWheel / 120f)}")
         if (outHWheel != 0) parts.add("pan ${fmt1(outHWheel / 120f)}")
-        add(Kind.OUT, "mouse " + parts.joinToString(", ") + " in $ms ms", nanos)
+        add(Kind.MOVE, "mouse " + parts.joinToString(", ") + " in $ms ms", nanos)
         outDx = 0; outDy = 0; outWheel = 0; outHWheel = 0; outGyroDx = 0; outGyroDy = 0
     }
 

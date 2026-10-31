@@ -1,6 +1,8 @@
 package com.oleroma.gyrophone.ui
 
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -54,6 +56,13 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
     var tick by remember { mutableIntStateOf(0) }
     var savedText by remember { mutableStateOf<String?>(null) }
     var frozen by remember { mutableStateOf<List<DebugTrace.Event>>(emptyList()) }
+    // Kinds shown in the list (recordings keep everything); movement is hidden until turned on.
+    var shownKinds by remember {
+        mutableStateOf(
+            runtime.uiPref(PREF_KINDS)?.split(',')?.mapNotNull { t -> DebugTrace.Kind.entries.firstOrNull { it.tag == t } }?.toSet()
+                ?: (DebugTrace.Kind.entries.toSet() - DebugTrace.Kind.MOVE),
+        )
+    }
 
     LaunchedEffect(trace) {
         while (true) {
@@ -100,7 +109,7 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
                 }
                 Button(if (paused) "▶ Live" else "❚❚ Pause") {
                     paused = !paused
-                    if (paused) frozen = trace.latest(EVENTS)
+                    if (paused) frozen = trace.latest(EVENTS, shownKinds)
                 }
             }
             savedText?.let { Text(it, color = Color(0xFFB9F6CA), style = mono) }
@@ -125,7 +134,17 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
                     mono,
                 )
                 Line("out", PhoneDebug.outputLine(trace) + " · ${trace.snapshotsPerSecond} snapshots/s", mono)
-                val events = (if (paused) frozen else trace.latest(EVENTS)).asReversed()
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (k in DebugTrace.Kind.entries) {
+                        val on = k in shownKinds
+                        Button((if (on) "☑ " else "☐ ") + k.tag, if (on) kindColor(k) else Color(0xFF757575)) {
+                            shownKinds = if (on) shownKinds - k else shownKinds + k
+                            runtime.setUiPref(PREF_KINDS, shownKinds.joinToString(",") { it.tag })
+                            if (paused) frozen = trace.latest(EVENTS, shownKinds)
+                        }
+                    }
+                }
+                val events = (if (paused) frozen else trace.latest(EVENTS, shownKinds)).asReversed()
                 for (e in events) {
                     val ago = (now - e.nanos) / 100_000_000 / 10f
                     Text(
@@ -165,6 +184,7 @@ private fun Line(label: String, text: String, style: androidx.compose.ui.text.Te
 private fun kindColor(k: DebugTrace.Kind): Color = when (k) {
     DebugTrace.Kind.IN -> Color(0xFFFFE082)
     DebugTrace.Kind.OUT -> Color(0xFF80CBC4)
+    DebugTrace.Kind.MOVE -> Color(0xFF9E9E9E)
     DebugTrace.Kind.STATE -> Color(0xFFCE93D8)
     DebugTrace.Kind.LINK -> Color(0xFF90CAF9)
     DebugTrace.Kind.NOTE -> Color(0xFFBDBDBD)
@@ -172,3 +192,4 @@ private fun kindColor(k: DebugTrace.Kind): Color = when (k) {
 
 private const val EVENTS = 12
 private const val PREF_FOLDED = "debug_overlay_folded"
+private const val PREF_KINDS = "debug_overlay_kinds"
