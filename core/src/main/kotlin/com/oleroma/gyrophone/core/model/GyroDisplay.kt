@@ -32,8 +32,9 @@ enum class GyroDisplayKind(val label: String) {
  * A gyro display's settings ([TouchControl.display]). The pose ones apply to the kinds that show
  * the phone's pose ([GyroDisplayKind.pose]):
  * - [gravity]: its tilt held to the world, so it never drifts; off, turned by the gyro (only the
- *   axes that move the mouse) since the last reset. [compass] (with gravity): its heading held to
- *   north by the magnetometer.
+ *   axes that move the mouse) since the last reset. [compass] (with gravity): its heading held by
+ *   the magnetometer to the way the phone faced when the app opened, edit mode closed or the
+ *   workspace changed (or a ratchet reset it): 0° there, wherever north is.
  * - [resetOnRatchet]: each ratchet press sets it straight: the whole pose, or with
  *   [resetHeadingOnly] (always with gravity) only the turn round the vertical.
  * - [ease]: it goes back to straight on its own (the heading only with gravity), starting

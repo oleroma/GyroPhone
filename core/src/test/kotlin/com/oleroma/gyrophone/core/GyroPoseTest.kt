@@ -187,15 +187,47 @@ class GyroDisplayTest {
         assertEquals(0f, f.pose.heading(), 1e-3f)
     }
 
-    @Test fun compassHoldsTheHeadingToNorth() {
+    @Test fun compassHoldsTheHeadingWhereItStartedNotNorth() {
         val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, gravity = true, compass = true))
         // Upright, facing the player; north is to the phone's right (and dips down): the player faces west.
-        repeat(2000) {
+        fun still(n: Int, nx: Float, nz: Float, yaw: Float = 0f) = repeat(n) {
             f.up(0f, 9.8f, 0f, 9.8f)
-            f.north(20f, -40f, 0f)
-            f.feed(0f, 0f, 0f, 0.01f, 7, pressed = false, held = false)
+            f.north(nx, -40f, nz)
+            f.feed(yaw, 0f, 0f, 0.01f, 7, pressed = false, held = false)
         }
+        fun heading() = Math.toDegrees(f.pose.heading().toDouble()).toFloat()
+        still(2000, 20f, 0f)
+        assertEquals(0f, heading(), 1f)
+        // A gyro drift of 5°/s while the magnetometer says nothing turned: held at the start.
+        still(1000, 20f, 0f, yaw = 5f)
+        assertEquals(0f, heading(), 6f)
+        still(1000, 20f, 0f)
+        assertEquals(0f, heading(), 1f)
+        // The phone really turned 90° right: north now ahead of it (into the screen).
+        repeat(100) { f.feed(90f, 0f, 0f, 0.01f, 7, pressed = false, held = false) }
+        still(2000, 0f, -20f)
+        assertEquals(90f, heading(), 2f)
+        // Aimed again there: that way is 0 now.
+        f.aimHere()
+        still(2000, 0f, -20f)
+        assertEquals(0f, heading(), 1f)
+    }
+
+    @Test fun compassRatchetResetAimsWhereThePhoneFaces() {
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, gravity = true, compass = true, resetOnRatchet = true))
+        fun sample(nx: Float, nz: Float, pressed: Boolean = false) {
+            f.up(0f, 9.8f, 0f, 9.8f)
+            f.north(nx, -40f, nz)
+            f.feed(0f, 0f, 0f, 0.01f, 7, pressed = pressed, held = pressed)
+        }
+        repeat(500) { sample(20f, 0f) }
+        // Turned 90° left by hand (the magnetometer sees north behind it): heading -90.
+        repeat(100) { f.feed(-90f, 0f, 0f, 0.01f, 7, pressed = false, held = false) }
+        repeat(1000) { sample(0f, 20f) }
         assertEquals(-90f, Math.toDegrees(f.pose.heading().toDouble()).toFloat(), 2f)
+        sample(0f, 20f, pressed = true)
+        repeat(500) { sample(0f, 20f) }
+        assertEquals(0f, Math.toDegrees(f.pose.heading().toDouble()).toFloat(), 1f)
     }
 
     @Test fun trackballHoldsStillAgainstTheWorldUntilARatchetStopsIt() {

@@ -32,6 +32,7 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     /** Its mode at the last sample (gravity, trackball): switching starts it straight. */
     private var wasGravity = display.needsGravity
     private var wasTrackball = display.isTrackball
+    private var wasCompass = display.needsCompass
 
     /**
      * One sample: rates in deg/s ([GyroMouse.motion]) over [dtSeconds]; [axes] the gyro axes that
@@ -60,10 +61,13 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
             return
         }
         val compass = d.needsCompass
+        // Turning the compass on takes the way the phone faces as heading 0.
+        if (compass && !wasCompass) pose.aimHere()
+        wasCompass = compass
         if (pressed && d.resetOnRatchet) {
             // With gravity the tilt is the world's: only the heading can go back.
             if (d.gravity || d.resetHeadingOnly) {
-                if (!compass) pose.turnHeading(-pose.heading())
+                if (compass) pose.aimHere() else pose.turnHeading(-pose.heading())
             } else pose.reset()
         }
         if (dtSeconds == 0f) return
@@ -122,6 +126,12 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
      */
     private fun trackballGain(d: GyroDisplay, gyro: GyroSettings?, a: MotionAxis): Float =
         if (!d.trackballRws) d.trackballSpin else gyro?.let { it.rwsOf(it.sensitivityOf(a)) } ?: 1f
+
+    /**
+     * The compass ([GyroDisplay.needsCompass]) takes the way the phone faces now as heading 0 (the
+     * app opened, edit mode closed, the workspace changed).
+     */
+    fun aimHere() = pose.aimHere()
 
     /** An accelerometer reading in the phone's frame (right, up, toward the player) and gravity [g] in its units. */
     fun up(x: Float, y: Float, z: Float, g: Float) {

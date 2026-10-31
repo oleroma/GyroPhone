@@ -520,11 +520,19 @@ class GamepadRuntime(context: Context) {
     fun previewHaptic(feel: HapticFeel, held: Boolean) = haptics.preview(feel, held)
 
     fun setPadShown(shown: Boolean) {
+        // The pad back in play (the app opened, edit mode closed): the compass takes the heading here.
+        if (shown && !padShown) aimGyroDisplays()
         padShown = shown; updateInputAllowed()
+    }
+
+    /** The gyro displays with a compass take the way the phone faces now as heading 0 ([GyroDisplayFeed.aimHere]). */
+    private fun aimGyroDisplays() {
+        for (f in gyroFeeds) f.aimHere()
     }
 
     @Synchronized
     fun setForeground(resumed: Boolean) {
+        if (resumed && !foreground) aimGyroDisplays()
         foreground = resumed
         // Back in front: try the capped direct channel again (the toggle may be off by now).
         if (resumed && avoidDirect) {
@@ -687,6 +695,7 @@ class GamepadRuntime(context: Context) {
         _workspaceIndex.value = i
         store.setWorkspaceIndex(profile.id, i)
         applyWorkspaceGyro()
+        aimGyroDisplays()
     }
 
     /** The saved workspace index of [profile], clamped into range. */
