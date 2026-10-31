@@ -189,12 +189,41 @@ class HoldZonesTest {
     }
 
     @Test
-    fun oneZoneIsAPlainHeldDirection() {
+    fun oneZoneAlwaysStaysHeldUntilTheLift() {
         val one = SurfaceMap(listOf(m(0, MouseButton.LEFT)))
         val s = TouchpadSettings(holdZones = listOf(HoldZone(keep = ZoneKeep.UNTIL_LIFT)))
         val f = Finger(s, one)
-        f.down(); f.go(0f, -80f)
-        assertEquals(z1, f.now) // zone settings count only with two zones or more
+        f.down(); f.go(0f, -30f); assertEquals(z1, f.now)
+        f.go(0f, 30f); assertEquals(z1, f.now) // back at the start: still held
+        f.go(-40f, 0f); assertEquals(z1, f.now)
+        f.up(); assertEquals(0, f.now)
+    }
+
+    @Test
+    fun oneZoneAlwaysStaysThroughADirectionChange() {
+        val one = SurfaceMap(listOf(m(0, MouseButton.LEFT)))
+        val s = TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE, holdZones = listOf(HoldZone(keep = ZoneKeep.UNTIL_LIFT)))
+        val f = Finger(s, one)
+        f.down(); f.go(0f, -30f); assertEquals(z1, f.now)
+        f.go(0f, 40f); assertEquals(z1, f.now) // down takes over
+        f.up(); assertEquals(0, f.now)
+    }
+
+    @Test
+    fun oneZoneOnlyInZoneLetsGoSlidingBack() {
+        val one = SurfaceMap(listOf(m(0, MouseButton.LEFT)))
+        val f = Finger(TouchpadSettings(), one)
+        f.down(); f.go(0f, -30f); assertEquals(z1, f.now)
+        f.go(0f, 30f); assertEquals(0, f.now)
+    }
+
+    @Test
+    fun dragStartIgnoresTheZonesHeldSetting() {
+        val one = SurfaceMap(listOf(m(0, MouseButton.LEFT)))
+        val s = TouchpadSettings(dragStart = true, holdZones = listOf(HoldZone(keep = ZoneKeep.UNTIL_LIFT)))
+        val f = Finger(s, one)
+        f.down(); f.go(0f, -30f); assertEquals(z1, f.now)
+        f.go(0f, 30f); assertEquals(0, f.now)
     }
 
     @Test
