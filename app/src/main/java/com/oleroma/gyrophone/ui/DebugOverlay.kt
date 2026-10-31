@@ -97,6 +97,8 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
     remember(tick) { tick } // reading tick redraws the panel every 200 ms
     val mono = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = 10.sp, lineHeight = 12.sp)
     BoxWithConstraints(modifier.fillMaxSize()) {
+        val areaW = maxWidth
+        val areaH = maxHeight
         val maxW = constraints.maxWidth.toFloat()
         val maxH = constraints.maxHeight.toFloat()
         val minSize = with(density) { DpSize(MIN_W.dp.coerceAtMost(maxWidth), MIN_H.dp.coerceAtMost(maxHeight)) }
@@ -219,8 +221,8 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
                                 val dw = with(density) { drag.x.toDp() }
                                 val dh = with(density) { drag.y.toDp() }
                                 size = DpSize(
-                                    (size.width.coerceIn(minSize.width, maxWidth) + dw).coerceIn(minSize.width, maxWidth),
-                                    (size.height.coerceIn(minSize.height, maxHeight) + dh).coerceIn(minSize.height, maxHeight),
+                                    (size.width.coerceIn(minSize.width, areaW) + dw).coerceIn(minSize.width, areaW),
+                                    (size.height.coerceIn(minSize.height, areaH) + dh).coerceIn(minSize.height, areaH),
                                 )
                             }
                         },
