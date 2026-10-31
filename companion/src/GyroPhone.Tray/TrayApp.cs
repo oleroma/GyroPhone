@@ -46,7 +46,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private readonly ToolStripMenuItem _pauseItem;
     private readonly ToolStripMenuItem _autoStartItem;
     private readonly ToolStripMenuItem _watcherItem;
-    private readonly ToolStripMenuItem _uipiItem;
     private readonly ToolStripMenuItem _networkItem;
     private readonly ToolStripMenuItem _firewallItem;
     private readonly ToolStripMenuItem _usbFirewallItem;
@@ -66,7 +65,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private bool? _usbRuleOk;
     /// <summary>Why key file pairing is off (the host key could not be loaded), or null.</summary>
     private readonly string? _keyError;
-    private bool _firewallHintShown, _uipiHintShown, _publicHintShown;
+    private bool _firewallHintShown, _publicHintShown;
     private string _phonesKey = "";
     private bool _sessionLocked, _suspended;
     private int _exited;
@@ -110,7 +109,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             log: _log.Write);
         _usb = new AoaUsbLink(Wire.Port, settings.UsbDirect, _log.Write);
         _watchdog = new Watchdog(_engine, _clock, _marker, store,
-            ElevationProbe.IsForegroundElevated, NetworkCategory.IsAnyConnectedPublic, _log.Write);
+            networkPublicProbe: NetworkCategory.IsAnyConnectedPublic, log: _log.Write);
 
         // Keep the Run entry pointing at this exe (it may have moved since it was enabled).
         if (settings.StartWithWindows) TrySetAutoStart(true);
@@ -134,7 +133,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         trayClickItem.DropDownItems.AddRange(new ToolStripItem[] { _clickMainItem, _clickPairItem });
         _autoStartItem = new ToolStripMenuItem("Start with Windows", null, (_, _) => ToggleAutoStart());
         _watcherItem = new ToolStripMenuItem("Start when my phone appears", null, (_, _) => ToggleWatcher());
-        _uipiItem = new ToolStripMenuItem("The game runs as administrator: restart as administrator", null, (_, _) => RestartAsAdmin());
         _networkItem = new ToolStripMenuItem("This network is Public: make it Private…", null, (_, _) => OpenNetworkSettings());
         _firewallItem = new ToolStripMenuItem("Allow through firewall…", null, (_, _) => AllowThroughFirewall());
         _usbFirewallItem = new ToolStripMenuItem("Allow the phone over a USB cable…", null, (_, _) => AllowUsb());
@@ -171,7 +169,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _usbDirectItem,
             trayClickItem,
             new ToolStripSeparator(),
-            _uipiItem,
             _networkItem,
             _firewallItem,
             _usbFirewallItem,
@@ -315,7 +312,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _usbDirectItem.ToolTipText = UsbDirectText();
         _usbDriverItem.Available = _usb.State == UsbDirectState.NeedsDriver;
         _usbTakeItem.Available = _usb.State == UsbDirectState.AdbBusy;
-        _uipiItem.Available = s.ElevatedForeground && !ElevationProbe.IsSelfElevated;
         _networkItem.Available = s.NetworkPublic;
         _firewallItem.Available = _firewallOk == false;
         _usbFirewallItem.Available = _usbRuleOk == false;
@@ -332,16 +328,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         if (_mainForm != null && !_mainForm.IsDisposed)
         {
             _mainForm.RefreshNow(new MainView(s, $"{_versionItem.Text}\n{status}", _hostKeyItem.Text,
-                _autoStartItem.Checked, _watcherItem.Checked, _uipiItem.Available, _networkItem.Available,
+                _autoStartItem.Checked, _watcherItem.Checked, _networkItem.Available,
                 _firewallOk == false, _usbFirewallItem.Available, _installDriverItem.Available, _restartAdminItem.Available));
         }
 
-        if (s.ElevatedForeground && !ElevationProbe.IsSelfElevated && s.Connected && !_uipiHintShown)
-        {
-            _uipiHintShown = true;
-            Balloon("Input blocked for this window", "The window in front runs as administrator, so Windows blocks injected keys and mouse. "
-                + "Choose \"Restart as administrator\" in the menu. The game pad still works.", ToolTipIcon.Warning);
-        }
         if (s.NetworkPublic && !_publicHintShown)
         {
             _publicHintShown = true;
@@ -507,7 +497,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         b.AppendLine($"USB direct:   {UsbDirectText()}");
         b.AppendLine($"Output:       {OutputName(s.OutputMode)}, pad {(s.PadPlugged ? "plugged" : "not plugged")}");
         b.AppendLine($"Gamepad driver: {(s.DriverOk ? "ViGEmBus ok" : _padError ?? "missing")}");
-        b.AppendLine($"Input:        {(s.Paused ? "paused" : "active")}{(s.ElevatedForeground ? ", window in front runs as administrator" : "")}");
+        b.AppendLine($"Input:        {(s.Paused ? "paused" : "active")}");
         b.AppendLine($"Network:      {(s.NetworkPublic ? "Public (set it to Private)" : "Private or Domain")}, firewall rule "
             + (_firewallOk switch { true => "present", false => "missing", null => "checking" })
             + ", USB rule " + (_usbRuleOk switch { true => "present", false => "missing", null => "checking" }));

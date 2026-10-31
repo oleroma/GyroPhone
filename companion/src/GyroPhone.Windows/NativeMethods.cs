@@ -8,7 +8,6 @@ internal static unsafe class NativeMethods
     public const uint InputMouse = 0;
     public const uint InputKeyboard = 1;
 
-    public const uint ProcessQueryLimitedInformation = 0x1000;
     public const uint TokenQuery = 0x0008;
     public const int TokenElevationClass = 20;
     public const int ErrorAccessDenied = 5;
@@ -77,15 +76,6 @@ internal static unsafe class NativeMethods
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint SendInput(uint cInputs, INPUT* pInputs, int cbSize);
-
-    [DllImport("user32.dll")]
-    public static extern nint GetForegroundWindow();
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern nint OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint processId);
 
     [DllImport("kernel32.dll")]
     public static extern nint GetCurrentProcess();

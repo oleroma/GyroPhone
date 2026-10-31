@@ -125,7 +125,6 @@ internal sealed class DebugForm : Form
         sb.Append(s.Connected ? $"phone: {s.PhoneName}{(s.Silent ? " (not answering)" : "")}" : "phone: not connected");
         sb.Append($" · output {s.OutputMode}{(s.PadPlugged ? "" : " (not plugged)")}{(s.DriverOk ? "" : " · no ViGEm driver")}");
         if (s.Paused) sb.Append(" · input paused");
-        if (s.ElevatedForeground) sb.Append(" · an admin window has focus: input is blocked");
         sb.Append("\r\nlink: ");
         sb.Append($"got {s.RxPerSec}/s · loss {s.LossPermille / 10.0:0.0}%");
         sb.Append(s.LatP50Us == GyroPhone.Protocol.HostStatus.Unknown ? " · latency unknown" :

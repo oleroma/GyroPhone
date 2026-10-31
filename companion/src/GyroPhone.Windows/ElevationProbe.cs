@@ -4,9 +4,9 @@ using static GyroPhone.Windows.NativeMethods;
 namespace GyroPhone.Windows;
 
 /// <summary>
-/// Detects an elevated foreground window, which UIPI shields from SendInput. Foreground window, PID,
-/// OpenProcess(QUERY_LIMITED), OpenProcessToken(TOKEN_QUERY), TokenElevation. ACCESS_DENIED at any
-/// step counts as elevated.
+/// Whether the companion itself runs as administrator (OpenProcessToken on its own process, TokenElevation).
+/// It never opens other processes: probing the foreground window touched the game's process, which
+/// anti-cheat systems log.
 /// </summary>
 public static class ElevationProbe
 {
@@ -14,26 +14,6 @@ public static class ElevationProbe
 
     /// <summary>The companion itself runs as administrator (then UIPI does not apply).</summary>
     public static bool IsSelfElevated => SelfElevated.Value;
-
-    /// <summary>True when the foreground window belongs to an elevated process the companion cannot inject into.</summary>
-    public static bool IsForegroundElevated()
-    {
-        if (IsSelfElevated) return false;
-        nint hwnd = GetForegroundWindow();
-        if (hwnd == 0) return false;
-        GetWindowThreadProcessId(hwnd, out uint pid);
-        if (pid == 0 || pid == (uint)Environment.ProcessId) return false;
-        nint process = OpenProcess(ProcessQueryLimitedInformation, false, pid);
-        if (process == 0) return Marshal.GetLastPInvokeError() == ErrorAccessDenied;
-        try
-        {
-            return IsProcessElevated(process) ?? true;
-        }
-        finally
-        {
-            CloseHandle(process);
-        }
-    }
 
     /// <summary>TokenElevation of a process; null when the token cannot be read because of ACCESS_DENIED, false on other errors.</summary>
     private static bool? IsProcessElevated(nint process)
