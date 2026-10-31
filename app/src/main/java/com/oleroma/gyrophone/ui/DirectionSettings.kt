@@ -505,37 +505,25 @@ private fun SharedPies(level: SurfaceLevel, key: String, kind: PieKind) {
     val s = level.eff
     var live by remember { mutableStateOf<TouchpadSettings?>(null) }
     val shownOf = live ?: s
-    PiePicture(kind) { kind.width(shownOf, it) }
+    // The shared pies themselves (what the sliders set), whatever a direction sets in its own ⚙.
+    PiePicture(kind) { if (it.x) kind.x(shownOf) else kind.y(shownOf) }
     fun edit(change: (TouchpadSettings) -> TouchpadSettings) = current.edit(change)
     val (xs, ys) = when (kind) {
         PieKind.MOVE -> "Move X" to "Move Y"
         else -> "Left and Right" to "Up and Down"
     }
-    /**
-     * The picture while an axis's ([x]) shared pie is dragged: directions with a pie inherited from
-     * the parent drop it, as they will once this level sets its own; this level's own ones stay.
-     */
-    fun preview(t: TouchpadSettings, x: Boolean): TouchpadSettings {
-        val f = kind.dirPie ?: return t
-        var r = t
-        for (d in Direction.entries) {
-            if (d.x != x || level.isDirOwn(d, f)) continue
-            r = r.withDir(d) { if (f == DirField.HOLD_PIE) it.copy(holdPie = null) else it.copy(swipePie = null) }
-        }
-        return r
-    }
     OverrideSlider(
         key + kind.name + "x", "X pie %.0f°", kind.x(s), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
         level.isOwn(kind.pieX), { current.reset(kind.pieX) },
         hint = "$xs alike.",
-        onLive = { v -> live = v?.let { preview(kind.withX(s, it), true) } },
+        onLive = { v -> live = v?.let { kind.withX(s, it) } },
     ) { v -> edit { kind.withX(it, v) } }
     kind.dirPie?.let { ChildOverrides(level, it, Direction.entries.filter { d -> d.x }) }
     OverrideSlider(
         key + kind.name + "y", "Y pie %.0f°", kind.y(s), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
         level.isOwn(kind.pieY), { current.reset(kind.pieY) },
         hint = "$ys alike.",
-        onLive = { v -> live = v?.let { preview(kind.withY(s, it), false) } },
+        onLive = { v -> live = v?.let { kind.withY(s, it) } },
     ) { v -> edit { kind.withY(it, v) } }
     kind.dirPie?.let { ChildOverrides(level, it, Direction.entries.filter { d -> !d.x }) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
