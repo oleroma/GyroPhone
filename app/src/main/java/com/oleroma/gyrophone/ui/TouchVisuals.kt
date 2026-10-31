@@ -32,7 +32,7 @@ import kotlin.math.hypot
  * briefly shows what it is sending right now. [swipeLine]: a finger on a swipe button with swipes
  * or holds mapped shows a line from its start point, through it, to its direction's furthest
  * activation length, marking each ([SwipeLines]). The gyroEdge* fields set up the parallax edge
- * ([GyroEdgeLayer]); the other gyro displays are placed in edit mode ([GyroDisplaysLayer]).
+ * (drawn by its display, [GyroDisplayKind.EDGE]); the gyro displays are placed in edit mode ([GyroDisplaysLayer]).
  */
 @Serializable
 data class TouchVisuals(
@@ -43,7 +43,10 @@ data class TouchVisuals(
     val fadeMs: Int = 400,
     val liveMappings: Boolean = true,
     val swipeLine: Boolean = true,
-    /** Outlines just inside the screen's edge that sway as the phone turns. */
+    /**
+     * From before the parallax edge was a display ([GyroDisplayKind.EDGE]): it was on for the whole
+     * app. Read once at start, which puts an edge in every workspace and clears it.
+     */
     val gyroEdge: Boolean = false,
     /** Moved by tilt against gravity (stays while tilted) instead of by turning (springs back). */
     val gyroEdgeTilt: Boolean = false,
@@ -61,8 +64,6 @@ data class TouchVisuals(
     /** The edge's opacity. */
     val gyroOpacity: Float = 0.6f,
 ) {
-    /** The edge holds its pose to gravity (and so needs the accelerometer). */
-    val gyroNeedsGravity: Boolean get() = gyroEdge && gyroEdgeTilt
 
     companion object {
         const val MIN_TRAIL_MS = 50

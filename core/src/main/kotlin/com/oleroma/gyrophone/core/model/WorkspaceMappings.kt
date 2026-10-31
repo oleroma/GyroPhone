@@ -37,7 +37,7 @@ object WorkspaceMappings {
     /** [set] as it is stored: the device mappings stay in the presets only. */
     fun store(set: Profile): Profile = set.copy(
         workspaces = set.workspaces.map { w ->
-            w.copy(mappingProfileId = null, pads = emptyList(), keyboard = emptyList(), mouse = emptyList(), keyTimings = emptyList())
+            w.copy(pads = emptyList(), keyboard = emptyList(), mouse = emptyList(), keyTimings = emptyList())
         },
     )
 
@@ -77,29 +77,16 @@ object WorkspaceMappings {
         )
     }
 
-    /**
-     * Moves the mappings of a set saved with mapping profiles into its workspaces: each gets its own
-     * copy of the profile it used (only its own controls' touch mappings), so every input does what
-     * it did. A workspace naming no profile uses the first, as before; with no profiles at all the
-     * set is left as it is.
-     */
-    fun fromProfiles(set: Profile, profiles: List<MappingProfile>): Profile = set.copy(
-        workspaces = set.workspaces.map { w ->
-            val p = MappingProfiles.of(w, profiles) ?: return@map w
-            MappingProfiles.resolve(w, p).copy(mappingProfileId = null)
-        },
-    )
-
     /** Ids used by any control or touch mapping of [set]: a new control must avoid them. */
     fun takenTouchIds(set: Profile): Set<String> =
         set.workspaces.flatMapTo(HashSet()) { w ->
-            w.touchControls.map { it.id } + w.mappings.mapNotNull { MappingProfiles.touchId(it.source) }
+            w.touchControls.map { it.id } + w.mappings.mapNotNull { touchIdOf(it.source) }
         }
 
     /** [m] moved from touch control [from] to [to]; null when its source is not [from]'s. */
     fun rekey(m: Mapping, from: String, to: String): Mapping? {
         val s = m.source
-        if (MappingProfiles.touchId(s) != from) return null
+        if (touchIdOf(s) != from) return null
         val moved = when (s) {
             is InputSource.Touch -> InputSource.Touch(to)
             is InputSource.TouchStick -> s.copy(id = to)
@@ -160,7 +147,7 @@ object WorkspaceMappings {
         for (c in target.touchControls) {
             val name = buttonName(target, c).lowercase()
             val match = if (name.isEmpty()) null else byName[c.kind to name]?.firstOrNull()
-            val mine = target.mappings.filter { MappingProfiles.touchId(it.source) == c.id }
+            val mine = target.mappings.filter { touchIdOf(it.source) == c.id }
             if (match == null) {
                 touch += mine
                 if (c.kind != TouchKind.FULLSCREEN) unmatched += c

@@ -60,33 +60,29 @@ import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import kotlin.math.roundToInt
 
-/** Settings of the parallax edge ([GyroEdgeLayer]); [set] saves a changed [v]. The other gyro displays are placed in edit mode. */
+/** The parallax edge's look ([GyroDisplayKind.EDGE]), the same for every edge in the app; [set] saves a changed [v]. */
 @Composable
-fun GyroVisualsSettings(v: TouchVisuals, set: (TouchVisuals) -> Unit) {
-    Text("Gyro display", style = MaterialTheme.typography.titleSmall)
-    Hint("3D phone, ratchet ring, speed graph and attitude indicator: add them in edit mode, like buttons.")
-    SwitchRow("Parallax edge", v.gyroEdge) { set(v.copy(gyroEdge = it)) }
-    if (v.gyroEdge) Indented {
-        Chips(listOf("Turn" to false, "Tilt" to true), v.gyroEdgeTilt) { set(v.copy(gyroEdgeTilt = it)) }
-        Hint(
-            if (v.gyroEdgeTilt) "It shifts while the phone is tilted against gravity and stays there."
-            else "It slides as the phone turns and springs back once it stops.",
-        )
-        IntSlider("Layers %d", v.gyroEdgeLayers, 1..5) { set(v.copy(gyroEdgeLayers = it)) }
-        PercentSlider("Strength", v.gyroEdgeStrength, 0.2f..4f) { set(v.copy(gyroEdgeStrength = it)) }
-        if (v.gyroEdgeTilt) {
-            IntSlider("Level at %d°", v.gyroLevelDeg, 0..180, step = 5) { set(v.copy(gyroLevelDeg = it)) }
-            Hint("The tilt that leaves it centred: 0° upright facing you, 90° flat with the screen up, 180° upright facing away.")
-        } else {
-            IntSlider("Spring back %d ms", v.gyroEdgeSpringMs, 100..1500, step = 50) { set(v.copy(gyroEdgeSpringMs = it)) }
-        }
-        FloatSlider("Line %.1f dp", v.gyroEdgeWidthDp, 0.5f..8f, 0.5f) { set(v.copy(gyroEdgeWidthDp = it)) }
-        FloatSlider("Inset %.0f dp", v.gyroEdgeInsetDp, 0f..60f, 1f) { set(v.copy(gyroEdgeInsetDp = it)) }
-        PercentSlider("Opacity", v.gyroOpacity, 0.1f..1f) { set(v.copy(gyroOpacity = it)) }
-        SwitchRow("Move with the phone", v.gyroEdgeInvert) { set(v.copy(gyroEdgeInvert = it)) }
-        SwitchRow("Tint by ratchet", v.gyroEdgeRatchetTint) { set(v.copy(gyroEdgeRatchetTint = it)) }
-        Hint("Off: the frame lags behind the phone, like a window onto a still world. Tint: it dims and takes the live axes' colours while a ratchet pauses some.")
+private fun EdgeSettings(v: TouchVisuals, set: (TouchVisuals) -> Unit) {
+    Hint("Outlines just inside its box that sway as the phone turns. Its look is the same in every workspace; a workspace shows it while it has one.")
+    Chips(listOf("Turn" to false, "Tilt" to true), v.gyroEdgeTilt) { set(v.copy(gyroEdgeTilt = it)) }
+    Hint(
+        if (v.gyroEdgeTilt) "It shifts while the phone is tilted against gravity and stays there."
+        else "It slides as the phone turns and springs back once it stops.",
+    )
+    IntSlider("Layers %d", v.gyroEdgeLayers, 1..5) { set(v.copy(gyroEdgeLayers = it)) }
+    PercentSlider("Strength", v.gyroEdgeStrength, 0.2f..4f) { set(v.copy(gyroEdgeStrength = it)) }
+    if (v.gyroEdgeTilt) {
+        IntSlider("Level at %d°", v.gyroLevelDeg, 0..180, step = 5) { set(v.copy(gyroLevelDeg = it)) }
+        Hint("The tilt that leaves it centred: 0° upright facing you, 90° flat with the screen up, 180° upright facing away.")
+    } else {
+        IntSlider("Spring back %d ms", v.gyroEdgeSpringMs, 100..1500, step = 50) { set(v.copy(gyroEdgeSpringMs = it)) }
     }
+    FloatSlider("Line %.1f dp", v.gyroEdgeWidthDp, 0.5f..8f, 0.5f) { set(v.copy(gyroEdgeWidthDp = it)) }
+    FloatSlider("Inset %.0f dp", v.gyroEdgeInsetDp, 0f..60f, 1f) { set(v.copy(gyroEdgeInsetDp = it)) }
+    PercentSlider("Opacity", v.gyroOpacity, 0.1f..1f) { set(v.copy(gyroOpacity = it)) }
+    SwitchRow("Move with the phone", v.gyroEdgeInvert) { set(v.copy(gyroEdgeInvert = it)) }
+    SwitchRow("Tint by ratchet", v.gyroEdgeRatchetTint) { set(v.copy(gyroEdgeRatchetTint = it)) }
+    Hint("Off: the frame lags behind the phone, like a window onto a still world. Tint: it dims and takes the live axes' colours while a ratchet pauses some.")
 }
 
 /**
@@ -102,6 +98,8 @@ internal fun GyroDisplaySettingsScreen(
     onDelete: () -> Unit,
     onClose: () -> Unit,
     gameKnown: Boolean = false,
+    visuals: TouchVisuals = TouchVisuals(),
+    onVisuals: (TouchVisuals) -> Unit = {},
 ) {
     val d = control.display ?: return
     var confirmDelete by remember { mutableStateOf(false) }
@@ -205,9 +203,10 @@ internal fun GyroDisplaySettingsScreen(
                                 SwitchRow("Screen mark", d.screenMark) { set(d.copy(screenMark = it)) }
                                 SwitchRow("Top mark", d.topMark) { set(d.copy(topMark = it)) }
                             }
+                            GyroDisplayKind.EDGE -> EdgeSettings(visuals, onVisuals)
                         }
-                        PercentSlider("Opacity", d.opacity, 0.1f..1f) { set(d.copy(opacity = it)) }
-                        Text("Colours", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                        if (d.kind != GyroDisplayKind.EDGE) PercentSlider("Opacity", d.opacity, 0.1f..1f) { set(d.copy(opacity = it)) }
+                        if (GyroDisplayColor.of(d.kind).isNotEmpty()) Text("Colours", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
                         for (c in GyroDisplayColor.of(d.kind).filter { shown(d, it) }) {
                             Row(
                                 Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { picking = c }.padding(vertical = 6.dp),
@@ -218,7 +217,7 @@ internal fun GyroDisplaySettingsScreen(
                                 if (c.key in d.colors) TextButton(onClick = { set(d.withColor(c, null)) }) { Text("Reset") }
                             }
                         }
-                        Hint("Resize it with a pinch in edit mode; it always keeps its shape.")
+                        Hint(if (d.kind == GyroDisplayKind.EDGE) "Resize it with a pinch in edit mode." else "Resize it with a pinch in edit mode; it always keeps its shape.")
                     }
                 }
             }

@@ -353,6 +353,24 @@ enum class KeyMode(val label: String) { HOLD("Hold"), TOGGLE("Toggle"), NEXT_KEY
 @Serializable
 data class Mapping(val source: InputSource, val target: OutputTarget, val set: Int = 0)
 
+/** The touch control id a mapping's source belongs to, or null for a key / axis source. */
+fun touchIdOf(source: InputSource): String? = when (source) {
+    is InputSource.Touch -> source.id
+    is InputSource.TouchStick -> source.id
+    is InputSource.TouchStickDiagonal -> source.id
+    is InputSource.TouchSwipe -> source.id
+    is InputSource.TouchRelease -> source.id
+    is InputSource.TouchDoubleTap -> source.id
+    is InputSource.TouchTap -> source.id
+    is InputSource.TouchLongPress -> source.id
+    is InputSource.TouchArea -> source.id
+    is InputSource.Surface -> source.id.ifEmpty { null }
+    is InputSource.Gyro -> source.id.ifEmpty { null }
+    is InputSource.Tilt -> source.id.ifEmpty { null }
+    is InputSource.Shake -> source.id.ifEmpty { null }
+    else -> null
+}
+
 /**
  * A named mapping set of a [Workspace] (set 0, Base, needs none). [settings]: the workspace
  * settings this layer sets itself while it is in use ([Workspace.ownSettings] of it names them,

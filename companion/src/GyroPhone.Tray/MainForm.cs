@@ -16,10 +16,12 @@ internal sealed record MainView(
     bool ShowFirewall,
     bool ShowUsb,
     bool ShowDriver,
-    bool ShowRestartAdmin);
+    bool ShowRestartAdmin,
+    bool UsbDirect,
+    string UsbDirectText);
 
 /// <summary>
-/// The main window: settings in the left column (the same ones as the tray menu), the status text
+/// The main window: every setting in the left column (the tray menu has only the quick ones), the status text
 /// (refreshed at 2 Hz) in the right one. Check boxes and radio buttons don't check themselves: a click
 /// asks TrayApp to change the setting and the next <see cref="RefreshNow"/> shows the result.
 /// </summary>
@@ -31,8 +33,8 @@ internal sealed class MainForm : Form
     private readonly Func<string> _statusText;
     private readonly Label _header;
     private readonly RadioButton _outX360, _outDs4, _outOff;
-    private readonly CheckBox _pause, _autoStart, _watcher;
-    private readonly RadioButton _clickMain, _clickPair;
+    private readonly CheckBox _pause, _autoStart, _watcher, _usbDirect;
+    private readonly Label _usbDirectText;
     private readonly ListBox _phones;
     private readonly Button _forget;
     private readonly Label _hostKey;
@@ -87,10 +89,10 @@ internal sealed class MainForm : Form
         _outOff = Radio("Off (keyboard and mouse only)", output, () => _app.SetOutputMode(OutputMode.None));
         _pause = Check("Pause input", output, () => _app.TogglePaused());
 
-        var tray = Group("Clicking the tray icon", settings);
-        _clickMain = Radio("Opens this window", tray, () => _app.SetTrayClick(TrayClickAction.OpenMainWindow));
-        _clickPair = Radio("Pairs a new phone", tray, () => _app.SetTrayClick(TrayClickAction.PairNewPhone));
-        tray.Controls.Add(NewLabel("Right-click the tray icon for the menu."));
+        var usb = Group("USB cable", settings);
+        _usbDirect = Check("Use the phone over the USB cable", usb, () => _app.ToggleUsbDirect());
+        _usbDirectText = NewLabel("");
+        usb.Controls.Add(_usbDirectText);
 
         var startup = Group("Startup", settings);
         _autoStart = Check("Start with Windows", startup, () => _app.ToggleAutoStart());
@@ -170,8 +172,8 @@ internal sealed class MainForm : Form
         _outDs4.Checked = s.OutputMode == OutputMode.DualShock4;
         _outOff.Checked = s.OutputMode == OutputMode.None;
         _pause.Checked = s.Paused;
-        _clickMain.Checked = _app.TrayClick == TrayClickAction.OpenMainWindow;
-        _clickPair.Checked = _app.TrayClick == TrayClickAction.PairNewPhone;
+        _usbDirect.Checked = v.UsbDirect;
+        _usbDirectText.Text = v.UsbDirectText;
         _autoStart.Checked = v.AutoStart;
         _watcher.Checked = v.Watcher;
         _hostKey.Text = v.HostKey;

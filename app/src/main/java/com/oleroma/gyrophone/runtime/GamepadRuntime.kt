@@ -15,13 +15,13 @@ import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.TiltShake
 import com.oleroma.gyrophone.core.engine.Touchpad
 import com.oleroma.gyrophone.core.hid.HidDescriptor
+import com.oleroma.gyrophone.core.model.GyroDisplay
+import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.ButtonActivators
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownController
-import com.oleroma.gyrophone.core.model.MappingProfile
-import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.LibraryButton
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.WorkspaceMappings
@@ -84,14 +84,11 @@ class GamepadRuntime(context: Context) {
     val store = ProfileStore(appContext)
     val hid = HidDeviceManager(appContext)
 
-    /** The mapping profiles of a set saved before workspaces owned their mappings; only read by [loadOwnMappings]. */
-    private var legacyProfiles: List<MappingProfile> = emptyList()
-
     /**
      * All workspaces live in one profile ([WorkspaceSet]), each with its own mappings, stored as
-     * [WorkspaceMappings.store] keeps them. See [loadWorkspaceSet] and [loadOwnMappings].
+     * [WorkspaceMappings.store] keeps them. See [loadWorkspaceSet] and [upgradeButtons].
      */
-    private var stored: Profile = loadOwnMappings(loadWorkspaceSet())
+    private var stored: Profile = upgradeButtons(loadWorkspaceSet())
 
     private val _activeProfile = MutableStateFlow(WorkspaceMappings.resolve(stored))
 
@@ -176,8 +173,7 @@ class GamepadRuntime(context: Context) {
     fun setTouchVisuals(v: TouchVisuals) {
         prefs.edit().putString(KEY_TOUCH_VISUALS, visualsJson.encodeToString(TouchVisuals.serializer(), v)).apply()
         val old = vis
-        if (v.gyroNeedsGravity && !old.gyroNeedsGravity) worldPose.reset()
-        if (v.gyroEdge && !old.gyroEdge) gyroSway.reset()
+        if (v.gyroEdgeTilt && !old.gyroEdgeTilt) worldPose.reset()
         vis = v
         _touchVisuals.value = v
         // updateGyro starts and stops the accelerometer under this lock too.
@@ -212,13 +208,21 @@ class GamepadRuntime(context: Context) {
                 ?: GyroDisplayFeed(c.id, d)
         }
         val same = next.size == old.size && next.indices.all { next[it] === old[it] }
+        val edgeBefore = edgeOn
         if (!same) gyroFeeds = next.toTypedArray()
+        if (edgeOn && !edgeBefore) { gyroSway.reset(); worldPose.reset() }
         // A changed setting may need the accelerometer or the magnetometer (or no longer).
         if (!same || sensors != (needsGravity to needsCompass)) synchronized(this) { updateMotion() }
     }
 
     /** Some gyro display holds its pose to gravity (and so needs the accelerometer). */
-    private val needsGravity: Boolean get() = vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity }
+    private val needsGravity: Boolean get() = edgeGravity || gyroFeeds.any { it.display.needsGravity }
+
+    /** A parallax edge ([GyroDisplayKind.EDGE]) is on the pad now: its data is fed only then. */
+    private val edgeOn: Boolean get() = gyroFeeds.any { it.display.kind == GyroDisplayKind.EDGE }
+
+    /** The parallax edge on the pad holds to gravity (tilt mode), so it needs the accelerometer. */
+    private val edgeGravity: Boolean get() = edgeOn && vis.gyroEdgeTilt
 
     /** Some gyro display holds its heading to north (and so needs the magnetometer). */
     private val needsCompass: Boolean get() = gyroFeeds.any { it.display.needsCompass }
@@ -635,11 +639,11 @@ class GamepadRuntime(context: Context) {
 
     private fun onAccelSample(x: Float, y: Float, z: Float, ts: Long) {
         val feeds = gyroFeeds
-        if (vis.gyroNeedsGravity || feeds.isNotEmpty()) {
+        if (edgeGravity || feeds.isNotEmpty()) {
             // The same axes as the gyro's: right, up and toward the player in the phone's frame.
             val m = gyroMouse.motion(x, y, z)
             val g = SensorManager.GRAVITY_EARTH * RAD_TO_DEG
-            if (vis.gyroNeedsGravity) worldPose.setUp(m.pitch, -m.yaw, -m.roll, g)
+            if (edgeGravity) worldPose.setUp(m.pitch, -m.yaw, -m.roll, g)
             for (f in feeds) f.up(m.pitch, -m.yaw, -m.roll, g)
         }
         if (!engine.motionMapped) return
@@ -750,66 +754,12 @@ class GamepadRuntime(context: Context) {
         return set
     }
 
-    /**
-     * The stored set, each workspace with its own mappings. On the first start after workspaces
-     * got them, each one gets a copy of the mapping profile it used ([WorkspaceMappings.fromProfiles];
-     * the profile file is left on disk untouched and a copy of the set as it was is kept beside
-     * it). An unreadable mapping file is left alone and the set is used as it is, to try again
-     * next start.
-     */
-    private fun loadOwnMappings(set: Profile): Profile {
-        if (store.ownMappings) return upgradeButtons(set)
-        if (store.hasMappingFile() && store.mappingProfiles() == null) return set
-        val legacy = upgradeLegacyButtons(loadMappings(set))
-        store.backup(legacy, OWN_BACKUP_TAG)
-        val own = WorkspaceMappings.store(WorkspaceMappings.fromProfiles(legacy, legacyProfiles))
-        store.save(own)
-        store.ownMappings = true
-        return own
-    }
-
-    /**
-     * The mapping profiles, or on the first start after they were added, profiles made from the
-     * mappings [set] still holds ([MappingProfiles.migrate]). Returns the set as it was stored with
-     * them; [loadOwnMappings] then moves them into the workspaces.
-     */
-    private fun loadMappings(set: Profile): Profile {
-        store.mappingProfiles()?.takeIf { it.isNotEmpty() }?.let {
-            val before = if (store.mappingMigration < MAPPING_MIGRATION) store.readBackup(set.id, BACKUP_TAG) else null
-            if (before == null) {
-                store.mappingMigration = MAPPING_MIGRATION
-                legacyProfiles = it
-                return set
-            }
-            // The first move (build 0.1.61) lost keyboard and extra-pad mappings: redo it once from
-            // the copy it kept, keeping its result beside the file.
-            store.backupMappings("v1")
-            return migrateMappings(before)
-        }
-        store.backup(set, BACKUP_TAG)
-        return migrateMappings(set)
-    }
-
-    /** Turns the old touch button switches into tap and long press mappings ([ButtonActivators]), in profile form. */
-    private fun upgradeLegacyButtons(set: Profile): Profile {
-        val (upgraded, profiles) = ButtonActivators.upgrade(set, legacyProfiles)
-        legacyProfiles = profiles
-        return upgraded
-    }
-
     /** Turns any old touch button switches into tap and long press mappings ([ButtonActivators]), saving the set if anything changed. */
     private fun upgradeButtons(set: Profile): Profile {
-        val (upgraded, _) = ButtonActivators.upgrade(set, emptyList())
+        val upgraded = ButtonActivators.upgrade(set)
         if (upgraded === set) return set
         store.save(upgraded)
         return upgraded
-    }
-
-    private fun migrateMappings(set: Profile): Profile {
-        val m = MappingProfiles.migrate(set)
-        legacyProfiles = m.profiles
-        store.mappingMigration = MAPPING_MIGRATION
-        return m.set
     }
 
     /**
@@ -925,6 +875,11 @@ class GamepadRuntime(context: Context) {
     init {
         // Profiles from before Toggle gyro buttons: the gyro corner becomes one in every workspace.
         if (stored.corners.any { it.id == NavCorners.GYRO }) editActiveProfile { NavCorners.gyroCornerToButtons(it) }
+        // From before the parallax edge was a display: the app-wide switch becomes one in every workspace.
+        if (vis.gyroEdge) {
+            editActiveProfile { GyroDisplay.addEdges(it) }
+            setTouchVisuals(vis.copy(gyroEdge = false))
+        }
     }
 
     companion object {
@@ -945,10 +900,6 @@ class GamepadRuntime(context: Context) {
         private const val KEY_BIAS_Y = "gyro_bias_y"
         private const val KEY_BIAS_Z = "gyro_bias_z"
 
-        /** Version of [MappingProfiles.migrate]'s rules; a phone that ran an older one redoes it from [BACKUP_TAG]. */
-        private const val MAPPING_MIGRATION = 2
-        private const val BACKUP_TAG = "pre-mappings"
-        private const val OWN_BACKUP_TAG = "pre-own-mappings"
         private const val PAUSED = "Paused while the pad is not open"
         private const val GYRO_OFF = "Off in this workspace"
         private const val UNAVAILABLE = "Unavailable"
@@ -966,7 +917,7 @@ class GamepadRuntime(context: Context) {
         val m = gyroMouse.motion(x, y, z)
         val gs = if (axes != 0) engine.gyroSettings else null
         for (f in feeds) f.feed(m.yaw, m.pitch, m.roll, dt, axes, pressed, ratchets != 0, gs)
-        if (dt == 0f || !v.gyroEdge) return
+        if (dt == 0f || !edgeOn) return
         if (v.gyroEdgeTilt) worldPose.fuse(m.yaw, m.pitch, m.roll, dt, GyroDisplayFeed.HEADING_EASE_S)
         else gyroSway.update(m.yaw, m.pitch, m.roll, dt, v.gyroEdgeSpringMs / 1000f)
     }
@@ -999,7 +950,7 @@ class GamepadRuntime(context: Context) {
         val active = axes != 0
         val v = vis
         val feeds = gyroFeeds
-        if (v.gyroEdge || feeds.isNotEmpty()) feedVisuals(v, feeds, x - biasX, y - biasY, z - biasZ, dt, axes)
+        if (feeds.isNotEmpty()) feedVisuals(v, feeds, x - biasX, y - biasY, z - biasZ, dt, axes)
         // An axis a ratchet just turned off may glide on (inertia) while the others are off.
         if (active || (allowed && gyroMouse.coasting)) {
             // A layer in use may set gyro settings of its own.

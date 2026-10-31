@@ -128,12 +128,6 @@ class GyroModesTest {
         assertFalse(e.gyroActive)
     }
 
-    @Test fun oldHoldOrToggleLoadsAsRatchetEnables() {
-        val old = Profile(id = "p", name = "P", workspaces = listOf(Workspace(id = "w", name = "w",
-            gyro = GyroSettings(mode = GyroMode.HOLD_OR_TOGGLE))))
-        assertEquals(GyroMode.OFF, ProfileJson.decode(ProfileJson.encode(old)).workspaces.single().gyro.mode)
-        assertEquals(GyroMode.OFF, GyroSettings().mode)
-    }
 
     @Test fun buttonsTakeTheTouchpadRatchetUnlessTheyMapTheirHold() {
         val ws = Workspace(
@@ -177,10 +171,6 @@ class GyroModesTest {
             assertEquals(0.9f, b.x)
             assertEquals(listOf(OutputTarget.GyroToggle), w.mappings.filter { it.source == InputSource.Touch(NavCorners.GYRO_BUTTON) }.map { it.target })
         }
-        // A hidden corner just goes.
-        val hidden = NavCorners.gyroCornerToButtons(p.copy(gyroCorner = false))
-        assertEquals(listOf(NavCorners.PREV, NavCorners.NEXT), hidden.corners.map { it.id })
-        assertTrue(hidden.workspaces.all { it.touchControls.isEmpty() })
     }
 
     @Test fun presetWorkspacesMoveTheMouseByTouchpadAndGyroWhileTheDefaultsMapNothing() {

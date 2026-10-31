@@ -56,6 +56,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
     val transport by runtime.transport.collectAsStateWithLifecycle()
     val rate by runtime.reportRateHz.collectAsStateWithLifecycle()
     val wifiRate by runtime.wifiRateHz.collectAsStateWithLifecycle()
+    val padOnly by runtime.padOnlyInput.collectAsStateWithLifecycle()
     val portrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
     var stats by remember { mutableStateOf(runtime.linkStats()) }
     LaunchedEffect(transport) {
@@ -117,6 +118,12 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
             Text("If the mouse lags behind your hand, pick a lower rate. Bluetooth queues anything faster than the link can carry.",
                 style = MaterialTheme.typography.bodySmall)
         }
+        SwitchRow("Send input only while the pad is open", padOnly) { runtime.setPadOnlyInput(it) }
+        Text(
+            if (padOnly) "Controller, keyboard and gyro reach the PC only on the pad, outside its pages and edit mode. The connection stays up."
+            else "Controller, keyboard and gyro reach the PC from anywhere, also with the app in the background.",
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 
     if (portrait) {

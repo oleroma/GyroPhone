@@ -9,7 +9,6 @@ import com.oleroma.gyrophone.core.model.ButtonActivators
 import com.oleroma.gyrophone.core.model.ButtonGesture
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.InputSource
-import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
@@ -224,15 +223,14 @@ class ButtonEventsTest {
                     id = "w",
                     name = "w",
                     touchpad = TouchpadSettings(releaseTapMs = 150),
-                    mappingProfileId = "m"
+                    mappings = listOf(Mapping(InputSource.Surface(2, SurfaceInput.RELEASE), OutputTarget.Key(E))),
                 )
             ),
         )
-        val release = Mapping(InputSource.Surface(2, SurfaceInput.RELEASE), OutputTarget.Key(E))
-        val (s, ps) = ButtonActivators.upgrade(set, listOf(MappingProfile("m", "m", touchpad = listOf(release))))
+        val s = ButtonActivators.upgrade(set)
         assertEquals(
             listOf(Mapping(InputSource.Surface(2, SurfaceInput.TAP), OutputTarget.Key(E))),
-            ps.single().touchpad
+            s.workspaces.single().mappings
         )
         assertEquals(0, s.workspaces.single().touchpad.releaseTapMs)
     }
@@ -248,16 +246,12 @@ class ButtonEventsTest {
                     id = "w",
                     name = "w",
                     touchControls = listOf(waited, timed),
-                    mappingProfileId = "m"
+                    mappings = listOf(press, double, Mapping(InputSource.TouchRelease("r"), OutputTarget.Key(E))),
                 )
             ),
         )
-        val profile = MappingProfile(
-            "m", "m",
-            touch = listOf(press, double, Mapping(InputSource.TouchRelease("r"), OutputTarget.Key(E))),
-        )
-        val (s, ps) = ButtonActivators.upgrade(set, listOf(profile))
-        val touch = ps.single().touch.toSet()
+        val s = ButtonActivators.upgrade(set)
+        val touch = s.workspaces.single().mappings.toSet()
         assertEquals(
             setOf(
                 Mapping(InputSource.TouchTap("b"), OutputTarget.Key(A)),
@@ -272,8 +266,7 @@ class ButtonEventsTest {
         assertEquals(250, r.longPressMs)
         assertEquals(0, r.releaseTapMs)
         // Once upgraded, nothing changes.
-        val again = ButtonActivators.upgrade(s, ps)
-        assertTrue(again.first === s && again.second === ps)
+        assertTrue(ButtonActivators.upgrade(s) === s)
     }
 
     private fun gyroEngine(gyro: GyroSettings, ratchet: OutputTarget = OutputTarget.GyroPause, touchpadOn: Boolean = true) = MappingEngine(

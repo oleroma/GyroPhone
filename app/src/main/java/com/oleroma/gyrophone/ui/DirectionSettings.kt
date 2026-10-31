@@ -11,11 +11,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,17 +103,12 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
                 key + "catch", if (s.catchUpMs < 1) "Catch-up: instant" else "Catch-up %.0f ms",
                 s.catchUpMs.toFloat(), 0f..TouchpadSettings.MAX_CATCH_UP_MS.toFloat(), 10f, own(SurfaceField.CATCH_UP), reset(SurfaceField.CATCH_UP),
             ) { v -> edit { it.copy(catchUpMs = v.roundToInt()) } }
-            OverrideSlider(
-                key + "rearm", if (s.deadzoneRearmMs < 1) "Re-arm: off" else "Re-arm after %.0f ms still",
-                s.deadzoneRearmMs.toFloat(), 0f..TouchpadSettings.MAX_REARM_MS.toFloat(), 10f, own(SurfaceField.REARM), reset(SurfaceField.REARM),
-                hint = "The deadzone arms again once the finger stands still this long. Off: once per touch.",
-            ) { v -> edit { it.copy(deadzoneRearmMs = v.roundToInt()) } }
-            if (s.deadzoneRearmMs > 0) {
+            FineTuning(key + "dzfine") {
                 OverrideSlider(
-                    key + "still", "Still within %.1f dp", s.deadzoneStillDp, 0f..TouchpadSettings.MAX_STILL_DP, 0.5f,
-                    own(SurfaceField.STILL), reset(SurfaceField.STILL),
-                    hint = "Movement smaller than this still counts as standing still.",
-                ) { v -> edit { it.copy(deadzoneStillDp = v) } }
+                    key + "rearm", if (s.deadzoneRearmMs < 1) "Re-arm: off" else "Re-arm after %.0f ms still",
+                    s.deadzoneRearmMs.toFloat(), 0f..TouchpadSettings.MAX_REARM_MS.toFloat(), 10f, own(SurfaceField.REARM), reset(SurfaceField.REARM),
+                    hint = "The deadzone arms again once the finger stands still this long. Off: once per touch.",
+                ) { v -> edit { it.copy(deadzoneRearmMs = v.roundToInt()) } }
             }
         }
         SectionTitle("Move")
@@ -121,20 +118,22 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
         ) { MoveModeChips(s.moveMode) { m -> edit { it.copy(moveMode = m) } } }
         if (s.moveMode != MoveMode.FREE) {
             SharedPies(level, key, PieKind.MOVE)
-            OverrideSwitch(
-                "Lock heading", LOCK_HINT, s.moveLock, own(SurfaceField.MOVE_LOCK), reset(SurfaceField.MOVE_LOCK),
-            ) { v -> edit { it.copy(moveLock = v) } }
-            if (s.moveLock) {
+            FineTuning(key + "movefine") {
+                OverrideSwitch(
+                    "Lock heading", LOCK_HINT, s.moveLock, own(SurfaceField.MOVE_LOCK), reset(SurfaceField.MOVE_LOCK),
+                ) { v -> edit { it.copy(moveLock = v) } }
+                if (s.moveLock) {
+                    OverrideSlider(
+                        key + "turn", "Turn after %.1f dp", s.moveTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
+                        own(SurfaceField.MOVE_TURN), reset(SurfaceField.MOVE_TURN), hint = TURN_HINT,
+                    ) { v -> edit { it.copy(moveTurnDp = v) } }
+                }
                 OverrideSlider(
-                    key + "turn", "Turn after %.1f dp", s.moveTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
-                    own(SurfaceField.MOVE_TURN), reset(SurfaceField.MOVE_TURN), hint = TURN_HINT,
-                ) { v -> edit { it.copy(moveTurnDp = v) } }
+                    key + "margin", if (s.movePieMargin < 1f) "Pie margin: off" else "Pie margin %.0f°",
+                    s.movePieMargin, 0f..TouchpadSettings.MAX_MOVE_PIE_MARGIN, 1f,
+                    own(SurfaceField.MOVE_PIE_MARGIN), reset(SurfaceField.MOVE_PIE_MARGIN), hint = MARGIN_HINT,
+                ) { v -> edit { it.copy(movePieMargin = v) } }
             }
-            OverrideSlider(
-                key + "margin", if (s.movePieMargin < 1f) "Pie margin: off" else "Pie margin %.0f°",
-                s.movePieMargin, 0f..TouchpadSettings.MAX_MOVE_PIE_MARGIN, 1f,
-                own(SurfaceField.MOVE_PIE_MARGIN), reset(SurfaceField.MOVE_PIE_MARGIN), hint = MARGIN_HINT,
-            ) { v -> edit { it.copy(movePieMargin = v) } }
         }
         OverrideSwitch(
             "Swipe hold stops Move", HOLD_STOPS_HINT, s.holdStopsMove, own(SurfaceField.HOLD_STOPS_MOVE), reset(SurfaceField.HOLD_STOPS_MOVE),
@@ -308,25 +307,27 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
                 hint = "It moves while the finger heads within this pie, " + if (x) "left and right alike." else "up and down alike.",
                 onLive = { live = it },
             ) { v -> edit(MoveField.PIE) { it.copy(pie = v) } }
-            OverrideSlider(
-                k + "sample", "Sample %.1f dp", f.moveSampleDp, TouchpadSettings.MIN_SAMPLE_DP..TouchpadSettings.MAX_SAMPLE_DP, 0.5f,
-                own(MoveField.SAMPLE), reset(MoveField.SAMPLE),
-                hint = "$SAMPLE_HINT A stroke's first this much waits for it. For Move X and Y alike.",
-            ) { v -> edit(MoveField.SAMPLE) { it.copy(sample = v) } }
-            OverrideSwitch(
-                "Lock heading", "$LOCK_HINT For Move X and Y alike.", f.moveLock, own(MoveField.LOCK), reset(MoveField.LOCK),
-            ) { v -> edit(MoveField.LOCK) { it.copy(lock = v) } }
-            if (f.moveLock) {
+            FineTuning(k + "movefine") {
                 OverrideSlider(
-                    k + "turn", "Turn after %.1f dp", f.moveTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
-                    own(MoveField.TURN), reset(MoveField.TURN), hint = "$TURN_HINT For Move X and Y alike.",
-                ) { v -> edit(MoveField.TURN) { it.copy(turnDp = v) } }
+                    k + "sample", "Sample %.1f dp", f.moveSampleDp, TouchpadSettings.MIN_SAMPLE_DP..TouchpadSettings.MAX_SAMPLE_DP, 0.5f,
+                    own(MoveField.SAMPLE), reset(MoveField.SAMPLE),
+                    hint = "$SAMPLE_HINT A stroke's first this much waits for it. For Move X and Y alike.",
+                ) { v -> edit(MoveField.SAMPLE) { it.copy(sample = v) } }
+                OverrideSwitch(
+                    "Lock heading", "$LOCK_HINT For Move X and Y alike.", f.moveLock, own(MoveField.LOCK), reset(MoveField.LOCK),
+                ) { v -> edit(MoveField.LOCK) { it.copy(lock = v) } }
+                if (f.moveLock) {
+                    OverrideSlider(
+                        k + "turn", "Turn after %.1f dp", f.moveTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
+                        own(MoveField.TURN), reset(MoveField.TURN), hint = "$TURN_HINT For Move X and Y alike.",
+                    ) { v -> edit(MoveField.TURN) { it.copy(turnDp = v) } }
+                }
+                OverrideSlider(
+                    k + "margin", if (f.movePieMargin < 1f) "Pie margin: off" else "Pie margin %.0f°",
+                    f.movePieMargin, 0f..TouchpadSettings.MAX_MOVE_PIE_MARGIN, 1f,
+                    own(MoveField.PIE_MARGIN), reset(MoveField.PIE_MARGIN), hint = "$MARGIN_HINT For Move X and Y alike.",
+                ) { v -> edit(MoveField.PIE_MARGIN) { it.copy(margin = v) } }
             }
-            OverrideSlider(
-                k + "margin", if (f.movePieMargin < 1f) "Pie margin: off" else "Pie margin %.0f°",
-                f.movePieMargin, 0f..TouchpadSettings.MAX_MOVE_PIE_MARGIN, 1f,
-                own(MoveField.PIE_MARGIN), reset(MoveField.PIE_MARGIN), hint = "$MARGIN_HINT For Move X and Y alike.",
-            ) { v -> edit(MoveField.PIE_MARGIN) { it.copy(margin = v) } }
         }
         OverrideSwitch(
             "Swipe hold stops Move", "$HOLD_STOPS_HINT For Move X and Y alike.", f.holdStopsMove,
@@ -343,16 +344,12 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
                     k + "catch", if (f.catchUpMs < 1) "Catch-up: instant" else "Catch-up %.0f ms",
                     f.catchUpMs.toFloat(), 0f..TouchpadSettings.MAX_CATCH_UP_MS.toFloat(), 10f, own(MoveField.CATCH_UP), reset(MoveField.CATCH_UP),
                 ) { v -> edit(MoveField.CATCH_UP) { it.copy(catchUpMs = v.roundToInt()) } }
-                OverrideSlider(
-                    k + "rearm", if (f.deadzoneRearmMs < 1) "Re-arm: off" else "Re-arm after %.0f ms still",
-                    f.deadzoneRearmMs.toFloat(), 0f..TouchpadSettings.MAX_REARM_MS.toFloat(), 10f, own(MoveField.REARM), reset(MoveField.REARM),
-                    hint = "The deadzone arms again once the finger stands still this long. Off: once per touch.",
-                ) { v -> edit(MoveField.REARM) { it.copy(deadzoneRearmMs = v.roundToInt()) } }
-                if (f.deadzoneRearmMs > 0) {
+                FineTuning(k + "dzfine") {
                     OverrideSlider(
-                        k + "still", "Still within %.1f dp", f.deadzoneStillDp, 0f..TouchpadSettings.MAX_STILL_DP, 0.5f,
-                        own(MoveField.STILL), reset(MoveField.STILL),
-                    ) { v -> edit(MoveField.STILL) { it.copy(deadzoneStillDp = v) } }
+                        k + "rearm", if (f.deadzoneRearmMs < 1) "Re-arm: off" else "Re-arm after %.0f ms still",
+                        f.deadzoneRearmMs.toFloat(), 0f..TouchpadSettings.MAX_REARM_MS.toFloat(), 10f, own(MoveField.REARM), reset(MoveField.REARM),
+                        hint = "The deadzone arms again once the finger stands still this long. Off: once per touch.",
+                    ) { v -> edit(MoveField.REARM) { it.copy(deadzoneRearmMs = v.roundToInt()) } }
                 }
             }
         }
@@ -503,6 +500,14 @@ private fun SharedPies(level: SurfaceLevel, key: String, kind: PieKind) {
         level.isOwn(kind.sample), { current.reset(kind.sample) },
         hint = SAMPLE_HINT + if (kind == PieKind.MOVE) " A stroke's first this much waits for it." else "",
     ) { v -> edit { kind.withSample(it, v) } }
+}
+
+/** Settings most people leave alone, behind a fold that starts closed ([key]: one per place). */
+@Composable
+private fun FineTuning(key: String, content: @Composable () -> Unit) {
+    var open by rememberSaveable(key) { mutableStateOf(false) }
+    TextButton(onClick = { open = !open }) { Text(if (open) "Fine tuning ▾" else "Fine tuning ▸") }
+    if (open) content()
 }
 
 @Composable

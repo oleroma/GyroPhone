@@ -5,8 +5,6 @@ import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
-import com.oleroma.gyrophone.core.model.MappingProfile
-import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
@@ -83,19 +81,4 @@ class SwipeSurfaceTest {
         assertEquals(0f, old.acceleration, 0f)
     }
 
-    @Test
-    fun oldSwipeMappingsBecomeSurfaceInputs() {
-        val old = listOf(
-            Mapping(InputSource.TouchSwipe("b", StickAxis.X), OutputTarget.MouseAxis(MouseMotion.MOVE_X)),
-            Mapping(InputSource.TouchSwipe("b", StickAxis.Y, AxisHalf.NEGATIVE), OutputTarget.Key(Q)),
-        )
-        val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, swipe = true)
-        val set = Profile("s", "s", listOf(Workspace("w", "w", listOf(b), mappingProfileId = "m")))
-        val resolved = MappingProfiles.resolve(set, listOf(MappingProfile("m", "m", touch = old)))
-        val ms = resolved.workspaces[0].mappings
-        assertTrue(Mapping(InputSource.Surface(1, SurfaceInput.MOTION_X, "b"), OutputTarget.MouseAxis(MouseMotion.MOVE_X)) in ms)
-        assertTrue(Mapping(InputSource.Surface(1, SurfaceInput.HOLD_UP, "b"), OutputTarget.Key(Q)) in ms)
-        assertTrue(ms.none { it.source is InputSource.TouchSwipe })
-        assertEquals(Bindings.upgradeSwipes(old), Bindings.upgradeSwipes(Bindings.upgradeSwipes(old)))
-    }
 }

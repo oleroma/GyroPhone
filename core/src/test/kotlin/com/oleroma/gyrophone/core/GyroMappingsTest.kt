@@ -14,6 +14,7 @@ import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
+import com.oleroma.gyrophone.core.model.ButtonGyroLayers
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import org.junit.Assert.assertEquals
@@ -89,42 +90,50 @@ class GyroMappingsTest {
         assertEquals(0, g.route(45f * rad, 0f, 0f, 0.5f, routes, MappingEngine.ALL_GYRO and MappingEngine.gyroBit(MotionAxis.YAW).inv()).dx) // yaw ratcheted
     }
 
-    @Test fun aHeldButtonsSensitivityIsTheGyrosLastPressedWinsAndLayersOverride() {
+    @Test fun aButtonsOwnGyroSettingsBecomeALayerHeldWhileItIsPressed() {
         val ws = Workspace(
             "w", "w",
             touchControls = listOf(
-                TouchControl("aim", TouchKind.BUTTON, "aim", 0.5f, 0.5f, gyro = listOf(ButtonGyro(sensitivity = 4f), ButtonGyro(1, sensitivity = 2f))),
-                TouchControl("roll", TouchKind.BUTTON, "roll", 0.5f, 0.5f, gyro = listOf(ButtonGyro(roll = 40f))),
+                TouchControl("aim", TouchKind.BUTTON, "Aim", 0.5f, 0.5f, gyro = listOf(ButtonGyro(sensitivity = 4f))),
+                TouchControl("roll", TouchKind.BUTTON, "", 0.5f, 0.5f, gyro = listOf(ButtonGyro(roll = 40f))),
                 TouchControl("plain", TouchKind.BUTTON, "plain", 0.5f, 0.5f),
             ),
             gyro = GyroSettings(sensitivity = 10f, yawSensitivity = 12f),
             sets = listOf(MappingSet(1)),
-            mappings = listOf(Mapping(InputSource.Touch("plain"), OutputTarget.Layer(1, whileHeld = true))),
+            mappings = listOf(Mapping(InputSource.Touch("aim"), lx)),
         )
+        val up = ButtonGyroLayers.workspace(ws)
+        assertTrue(up.touchControls.all { it.gyro.isEmpty() })
+        assertEquals(listOf(1, 2, 3), up.sets.map { it.id })
+        assertEquals(listOf("Aim", "Button"), up.sets.drop(1).map { it.name })
+        // The button still does what it did, and holds its layer too.
+        assertEquals(
+            listOf(lx, OutputTarget.Layer(2, override = true, whileHeld = true)),
+            up.mappings.filter { it.source == InputSource.Touch("aim") }.map { it.target },
+        )
+        assertEquals(up, ButtonGyroLayers.workspace(up))
+
         val e = MappingEngine(single(ws))
         assertEquals(12f, e.gyroSettings.sensitivityOf(MotionAxis.YAW))
         e.setTouch("aim", true)
-        // The button's own Sensitivity beats the workspace's per-axis one.
         assertEquals(4f, e.gyroSettings.sensitivityOf(MotionAxis.YAW))
         assertEquals(4f, e.gyroSettings.sensitivityOf(MotionAxis.ROLL))
+        e.setTouch("aim", false)
+        assertEquals(12f, e.gyroSettings.sensitivityOf(MotionAxis.YAW))
         e.setTouch("roll", true)
-        // Last pressed wins: roll its own, the rest the workspace's.
         assertEquals(40f, e.gyroSettings.sensitivityOf(MotionAxis.ROLL))
         assertEquals(12f, e.gyroSettings.sensitivityOf(MotionAxis.YAW))
-        assertEquals(10f, e.gyroSettings.sensitivityOf(MotionAxis.PITCH))
         e.setTouch("roll", false)
-        e.setTouch("plain", true) // layer 1: aim's layer value
-        assertEquals(2f, e.gyroSettings.sensitivityOf(MotionAxis.PITCH))
-        e.setTouch("plain", false)
-        e.setTouch("aim", false)
-        assertEquals(10f, e.gyroSettings.sensitivityOf(MotionAxis.PITCH))
+        assertEquals(10f, e.gyroSettings.sensitivityOf(MotionAxis.ROLL))
     }
 
-    @Test fun aButtonsGyroSettingsGoWhenEmpty() {
-        val c = TouchControl("a", TouchKind.BUTTON, "a", 0.5f, 0.5f).withGyro(1) { it.copy(yaw = 3f) }
-        assertEquals(listOf(ButtonGyro(1, yaw = 3f)), c.gyro)
-        assertEquals(3f, c.gyroIn(listOf(MappingSet.BASE, 1)).yaw)
-        assertEquals(null, c.gyroIn(listOf(MappingSet.BASE)).yaw)
-        assertTrue(c.withGyro(1) { it.copy(yaw = null) }.gyro.isEmpty())
+    @Test fun buttonGyroLayersStopAtTheLayerLimit() {
+        val ws = Workspace(
+            "w", "w",
+            touchControls = (1..12).map { TouchControl("b$it", TouchKind.BUTTON, "b$it", 0.5f, 0.5f, gyro = listOf(ButtonGyro(sensitivity = it.toFloat()))) },
+        )
+        val up = ButtonGyroLayers.workspace(ws)
+        assertEquals(MappingSet.MAX, up.sets.size)
+        assertTrue(up.touchControls.all { it.gyro.isEmpty() })
     }
 }

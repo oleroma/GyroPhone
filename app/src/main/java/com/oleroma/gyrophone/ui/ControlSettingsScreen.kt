@@ -65,9 +65,9 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
- * Full-screen settings of a touch control (a long press in edit mode): collapsible sections for
- * its look, behaviour, area, stick, surface and a summary of its mappings ([onEditMappings]
- * opens the mapping screen). [workspace] holds its mappings; edits go through the callbacks.
+ * Full-screen settings of a touch control (⚙ Settings in its mapping editor): collapsible sections
+ * for its look, its [behaviour] (the settings its actions share: timings, areas, speed,
+ * directions) and layers. [workspace] holds it; edits go through the callbacks.
  */
 @Composable
 internal fun ControlSettingsScreen(
@@ -77,8 +77,7 @@ internal fun ControlSettingsScreen(
     inPortrait: Boolean,
     onControlChange: (TouchControl) -> Unit,
     onSize: (Float) -> Unit,
-    onMappingsChange: (List<Mapping>) -> Unit,
-    onEditMappings: () -> Unit,
+    behaviour: (@Composable () -> Unit)?,
     onDuplicate: () -> Unit,
     onDelete: () -> Unit,
     onClose: () -> Unit,
@@ -102,7 +101,7 @@ internal fun ControlSettingsScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            (if (control.kind == TouchKind.STICK) "Stick" else if (control.swipes) "Touchpad button" else "Button") +
+                            (if (control.kind == TouchKind.STICK) "Stick" else "Button") +
                                     " · " + control.id + " · settings",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -118,8 +117,7 @@ internal fun ControlSettingsScreen(
                         }) { Text(if (saved) "In library" else "Save to library") }
                     }
                     TextButton(onClick = { confirmDelete = true }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
-                    OutlinedButton(onClick = onEditMappings) { Text("Mappings") }
-                    TextButton(onClick = onClose) { Text("Done") }
+                    FilledTonalButton(onClick = onClose) { Text("Done") }
                 }
                 Column(
                     Modifier
@@ -145,14 +143,14 @@ internal fun ControlSettingsScreen(
                             ) { onControlChange(control.copy(followLayers = it)) }
                         }
                     }
-                    RememberedSection(runtime, "control.Mappings", "Mappings", section, defaultOpen = true) {
-                        MappingsSummary(control, workspace.mappings, onEditMappings)
-                        Text(
-                            "Timings, areas" + (if (control.swipes) ", speed and directions" else if (control.kind == TouchKind.STICK) ", deadzone and directions" else "") +
-                                    " are set in Mappings: the ⚙ before an action, or Settings at the top.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    if (behaviour != null) {
+                        RememberedSection(runtime, "control.Behaviour", "Behaviour", section, defaultOpen = true) {
+                            Hint(
+                                "What its actions share: timings, areas" + (if (control.swipes) ", speed and directions" else if (control.kind == TouchKind.STICK) ", deadzone and directions" else "") +
+                                        ". One action's own are behind the ⚙ before it in the mapping editor.",
+                            )
+                            behaviour()
+                        }
                     }
                 }
             }
@@ -280,51 +278,6 @@ internal fun StickSettings(control: TouchControl, onControlChange: (TouchControl
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-}
-
-/** Each mapped action of [control] with its targets, and a way into the mapping screen. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-internal fun MappingsSummary(control: TouchControl, mappings: List<Mapping>, onEditMappings: () -> Unit) {
-    val mapped =
-        Bindings.touchInputs(control).map { it to Bindings.targets(mappings, it) }.filter { it.second.isNotEmpty() }
-    if (mapped.isEmpty()) {
-        Text(
-            "Nothing mapped yet.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-    for ((input, targets) in mapped) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                actionLabel(control, input),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.width(96.dp),
-            )
-            FlowRow(
-                Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                for (t in targets) {
-                    Text(
-                        Describe.shortTarget(t),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.secondaryContainer)
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                    )
-                }
-            }
-        }
-    }
-    FilledTonalButton(onClick = onEditMappings) { Text("Edit mappings") }
 }
 
 /** What the editor calls an action: a button's own press is "Press" (its input is named after the button). */

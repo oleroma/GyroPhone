@@ -33,10 +33,10 @@ import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.layered
-import com.oleroma.gyrophone.core.model.ButtonGyro
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.Bindings
-import com.oleroma.gyrophone.core.model.MappingProfiles
+import com.oleroma.gyrophone.core.model.ButtonGyroLayers
+import com.oleroma.gyrophone.core.model.touchIdOf
 import com.oleroma.gyrophone.core.model.surfaceSettings
 import java.util.BitSet
 import kotlin.math.PI
@@ -100,30 +100,15 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     @Volatile
     private var eff: Workspace = ws
 
-    /**
-     * The gyro settings in effect now: the workspace's, or a layer's in use, with the sensitivities
-     * of the last pressed button held that has its own ([TouchControl.gyro]) over them.
-     */
+    /** The gyro settings in effect now: the workspace's, or a layer's in use. */
     val gyroSettings: GyroSettings get() = gyroNow
 
     @Volatile
     private var gyroNow: GyroSettings = ws.gyro
 
-    /** Sets [gyroNow] for the settings in effect and the buttons held. */
+    /** Sets [gyroNow] for the settings in effect. */
     private fun updateGyroNow() {
-        val sets = buildList {
-            add(MappingSet.BASE)
-            if (layerSet != MappingSet.BASE) add(layerSet)
-            for (o in layerOverrides) if (o != layerSet && o != MappingSet.BASE) add(o)
-        }
-        var held: ButtonGyro? = null
-        if (ws.touchControls.any { it.gyro.isNotEmpty() }) for (id in pressOrder) {
-            val c = ws.touchControls.firstOrNull { it.id == id } ?: continue
-            if (c.gyro.isEmpty()) continue
-            val g = c.gyroIn(sets)
-            if (g.any) held = g
-        }
-        gyroNow = held?.over(eff.gyro) ?: eff.gyro
+        gyroNow = eff.gyro
     }
 
     /** Touch mappings of the active workspace in use (the touch source group): see [applyLayers]. */
@@ -454,7 +439,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** Loads the active workspace and releases everything held. Under the lock. */
     private fun applyWorkspace() {
-        val loaded = profile.workspace(workspaceIndex)
+        val loaded = ButtonGyroLayers.workspace(profile.workspace(workspaceIndex))
         // The touchpad mappings it does not set come from the Defaults.
         val w = loaded.copy(mappings = Bindings.upgradeSwipes(Inheritance.workspace(loaded, profile.defaults)))
         ws = w
@@ -1570,7 +1555,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val now = HashMap<InputSource, Carried>()
             for ((src, list) in bySource) {
                 val holder = list.any { it.target == t }
-                val keep = holder || MappingProfiles.touchId(src) !in followLayerIds
+                val keep = holder || touchIdOf(src) !in followLayerIds
                 val kept = list.filter { carries(it, keep) }
                 // A stick or trigger axis (or touch motion) held past half keeps nothing: it follows the new set.
                 if (kept.isEmpty() && (!keep || continuous(src))) continue

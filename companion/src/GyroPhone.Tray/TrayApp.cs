@@ -56,7 +56,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private readonly System.Windows.Forms.Timer _uiTimer;
     private readonly CompanionUpdater _updater;
     private readonly ToolStripMenuItem _versionItem;
-    private readonly ToolStripMenuItem _clickMainItem, _clickPairItem;
 
     private PairForm? _pairForm;
     private MainForm? _mainForm;
@@ -121,16 +120,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _outOff = new ToolStripMenuItem("Off (keyboard and mouse only)", null, (_, _) => _engine.SetOutputMode(OutputMode.None));
         var outputItem = new ToolStripMenuItem("Output");
         outputItem.DropDownItems.AddRange(new ToolStripItem[] { _outX360, _outDs4, _outOff });
-        var pairItem = new ToolStripMenuItem("Pair new phone…", null, (_, _) => PairNewPhone());
         _phonesItem = new ToolStripMenuItem("Paired phones");
         _hostKeyItem = new ToolStripMenuItem("This PC's key: none") { Enabled = false };
-        var keysFolderItem = new ToolStripMenuItem("Open keys folder", null, (_, _) => OpenKeysFolder());
         var mainFormItem = new ToolStripMenuItem("Open main window", null, (_, _) => ShowMainForm());
         _pauseItem = new ToolStripMenuItem("Pause input", null, (_, _) => TogglePaused());
-        _clickMainItem = new ToolStripMenuItem("Opens the main window", null, (_, _) => SetTrayClick(TrayClickAction.OpenMainWindow));
-        _clickPairItem = new ToolStripMenuItem("Pairs a new phone", null, (_, _) => SetTrayClick(TrayClickAction.PairNewPhone));
-        var trayClickItem = new ToolStripMenuItem("Clicking the tray icon");
-        trayClickItem.DropDownItems.AddRange(new ToolStripItem[] { _clickMainItem, _clickPairItem });
         _autoStartItem = new ToolStripMenuItem("Start with Windows", null, (_, _) => ToggleAutoStart());
         _watcherItem = new ToolStripMenuItem("Start when my phone appears", null, (_, _) => ToggleWatcher());
         _uipiItem = new ToolStripMenuItem("The game runs as administrator: restart as administrator", null, (_, _) => RestartAsAdmin());
@@ -143,25 +136,17 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _installDriverItem = new ToolStripMenuItem("Install gamepad driver (ViGEmBus)…", null, (_, _) => OpenDriverDownload());
         _retryDriverItem = new ToolStripMenuItem("Retry driver", null, (_, _) => RetryDriver());
         _restartAdminItem = new ToolStripMenuItem("Restart as administrator", null, (_, _) => RestartAsAdmin());
-        var logItem = new ToolStripMenuItem("Open log folder", null, (_, _) => OpenLogFolder());
         var exitItem = new ToolStripMenuItem("Exit", null, (_, _) => ExitApp());
         _versionItem = new ToolStripMenuItem($"{Program.AppName} {Application.ProductVersion}") { Enabled = false };
         _menu.Items.AddRange(new ToolStripItem[]
         {
+            // Only what is needed at a glance or in a hurry; everything else is in the main window.
             _versionItem,
             _statusItem,
             new ToolStripSeparator(),
             mainFormItem,
             outputItem,
-            pairItem,
-            _phonesItem,
-            keysFolderItem,
-            _hostKeyItem,
             _pauseItem,
-            _autoStartItem,
-            _watcherItem,
-            _usbDirectItem,
-            trayClickItem,
             new ToolStripSeparator(),
             _uipiItem,
             _networkItem,
@@ -172,7 +157,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _installDriverItem,
             _retryDriverItem,
             _restartAdminItem,
-            logItem,
             new ToolStripSeparator(),
             exitItem,
         });
@@ -313,8 +297,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _installDriverItem.Available = !s.DriverOk;
         _retryDriverItem.Available = !s.DriverOk;
         _restartAdminItem.Available = !ElevationProbe.IsSelfElevated;
-        _clickMainItem.Checked = TrayClick == TrayClickAction.OpenMainWindow;
-        _clickPairItem.Checked = TrayClick == TrayClickAction.PairNewPhone;
         RebuildPhones(s.PairedPhones);
         _hostKeyItem.Text = s.HostKeyFingerprint is { } fp ? $"This PC's key: {fp}" : "This PC's key: unavailable (see Status)";
         _versionItem.Text = _updater.Pending is { } pending
@@ -324,7 +306,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         {
             _mainForm.RefreshNow(new MainView(s, $"{_versionItem.Text}\n{status}", _hostKeyItem.Text,
                 _autoStartItem.Checked, _watcherItem.Checked, _uipiItem.Available, _networkItem.Available,
-                _firewallOk == false, _usbFirewallItem.Available, _installDriverItem.Available, _restartAdminItem.Available));
+                _firewallOk == false, _usbFirewallItem.Available, _installDriverItem.Available, _restartAdminItem.Available,
+                _usb.Enabled, UsbDirectText()));
         }
 
         if (s.ElevatedForeground && !ElevationProbe.IsSelfElevated && s.Connected && !_uipiHintShown)
@@ -368,19 +351,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     }
 
     /// <summary>A left click on the tray icon: what the "Clicking the tray icon" setting says.</summary>
-    private void TrayClicked()
-    {
-        if (TrayClick == TrayClickAction.PairNewPhone) PairNewPhone();
-        else ShowMainForm();
-    }
-
-    internal TrayClickAction TrayClick => _engine.Settings.TrayClick;
-
-    internal void SetTrayClick(TrayClickAction action)
-    {
-        _engine.SetTrayClick(action);
-        Refresh();
-    }
+    /// <summary>A click on the tray icon opens the main window (Pair new phone is a button there).</summary>
+    private void TrayClicked() => ShowMainForm();
 
     internal void SetOutputMode(OutputMode mode) => _engine.SetOutputMode(mode);
 

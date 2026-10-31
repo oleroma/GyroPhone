@@ -352,8 +352,4 @@ object BuiltinProfiles {
 
     /** Ids of the builtins before workspaces; a saved active id among them means [default]. */
     val retiredIds: Set<String> = setOf("builtin.virtual_gamepad", "builtin.controller", "builtin.kbm")
-
-    /** Picks the profile for an attached controller: a user profile that matches it, else a builtin. */
-    fun forController(profiles: List<Profile>, vendorId: Int, productId: Int, name: String): Profile? =
-        profiles.firstOrNull { p -> p.controllers.any { it.matches(vendorId, productId, name) } }
 }

@@ -243,7 +243,7 @@ object Bindings {
                 }
 
                 else -> {
-                    val id = MappingProfiles.touchId(s) ?: return null
+                    val id = touchIdOf(s) ?: return null
                     if (buttons[id]?.swipes != true) return null
                     val pair = gesturePairs.firstOrNull { it.first(id) == s } ?: return null
                     return InputSource.Surface(1, pair.second, id)
@@ -373,7 +373,7 @@ object Bindings {
     fun removeTouchControl(workspace: Workspace, id: String): Workspace = ControlGroups.tidy(
         workspace.copy(
             touchControls = workspace.touchControls.filterNot { it.id == id },
-            mappings = workspace.mappings.filterNot { MappingProfiles.touchId(it.source) == id },
+            mappings = workspace.mappings.filterNot { touchIdOf(it.source) == id },
         ),
     )
 

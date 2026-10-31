@@ -22,6 +22,6 @@ object WorkspaceSet {
                 w.copy(id = id, name = "${w.name} · ${p.name}")
             }
         }
-        return active.copy(id = ID, name = NAME, workspaces = active.workspaces + extra, games = emptyList(), controllers = emptyList())
+        return active.copy(id = ID, name = NAME, workspaces = active.workspaces + extra)
     }
 }

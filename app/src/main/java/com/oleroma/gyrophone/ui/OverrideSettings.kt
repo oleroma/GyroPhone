@@ -223,7 +223,7 @@ internal fun MsOverride(
 @Composable
 internal fun ResetAllButton(parentName: String, enabled: Boolean, onClick: () -> Unit) {
     var asking by remember { mutableStateOf(false) }
-    TextButton(onClick = { asking = true }, enabled = enabled) { Text("↺ Reset all to $parentName") }
+    TextButton(onClick = { asking = true }, enabled = enabled) { Text("↺ Reset all") }
     if (asking) ConfirmResetAll("Every setting here goes back to $parentName's.", { asking = false }) { asking = false; onClick() }
 }
 

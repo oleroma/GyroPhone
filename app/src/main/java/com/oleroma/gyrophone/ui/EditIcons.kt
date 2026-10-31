@@ -31,6 +31,13 @@ internal object EditIcons {
             "7.6,-5.5 1.95,0 3.73,0.72 5.12,1.88L13,16h9V7l-3.6,3.6z",
     )
 
+    val Grid = icon(
+        "Grid",
+        "M20,2H4c-1.1,0 -2,0.9 -2,2v16c0,1.1 0.9,2 2,2h16c1.1,0 2,-0.9 2,-2V4c0,-1.1 -0.9,-2 -2,-2zM8,20H4v-4h4v4z" +
+            "M8,14H4v-4h4v4zM8,8H4V4h4v4zM14,20h-4v-4h4v4zM14,14h-4v-4h4v4zM14,8h-4V4h4v4zM20,20h-4v-4h4v4z" +
+            "M20,14h-4v-4h4v4zM20,8h-4V4h4v4z",
+    )
+
     private fun icon(name: String, path: String) =
         ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f)
             .addPath(addPathNodes(path), fill = SolidColor(Color.Black))
