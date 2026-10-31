@@ -10,6 +10,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import com.oleroma.gyrophone.core.engine.HapticSink
+import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.HapticFeel
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
@@ -29,6 +30,14 @@ class PhoneHaptics(context: Context, private val connected: () -> Boolean) : Hap
     private val tickEffect = VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
     private val clickEffect = VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
     private val heavyEffect = VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK)
+
+    /** The debug log while the debug tools are on: each tick and hold, played or skipped. */
+    @Volatile var log: ((String) -> Unit)? = null
+
+    /** For the debug tools: whether the phone has a vibrator and the vibrator can set its strength. */
+    val describe: String
+        get() = "vibrator " + (if (vibrator.hasVibrator()) "yes" else "NONE") +
+                ", strength control " + (if (amplitudeControl) "yes" else "no")
 
     private val thread = HandlerThread("gp-haptics", Process.THREAD_PRIORITY_DISPLAY).apply { start() }
     private val worker = Handler(thread.looper)
@@ -74,6 +83,13 @@ class PhoneHaptics(context: Context, private val connected: () -> Boolean) : Hap
     private fun play(tick: HapticFeel?, held: HapticFeel?, level: Float) {
         val on = connected()
         val now = SystemClock.uptimeMillis()
+        log?.let { l ->
+            val why = if (on) "" else " skipped: no PC connected"
+            if (tick != null) l("haptic tick" + Describe.feel(tick) + why)
+            if (held != holding && (held == null || on || holding != null)) {
+                l(if (held == null) "haptic hold ends" else "haptic hold" + Describe.feel(held) + why)
+            }
+        }
         if (on && tick != null) {
             playTick(tick)
             tickPending = true

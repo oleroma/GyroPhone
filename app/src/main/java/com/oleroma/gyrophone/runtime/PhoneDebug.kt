@@ -23,6 +23,7 @@ import java.util.Locale
  * ([dump]). While the switch is off there is no trace and nothing is logged.
  */
 class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private val scope: CoroutineScope) {
+    private val appContext = context.applicationContext
     private val prefs = context.getSharedPreferences("gyrophone", Context.MODE_PRIVATE)
     private val dir = File(context.filesDir, "debug")
     private val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
@@ -130,6 +131,11 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
         val p = runtime.activeProfile.value
         add("workspace: " + (p.workspaces.getOrNull(runtime.workspaceIndex.value)?.name ?: "?"))
         add("controllers: " + runtime.controllers.value.joinToString { it.name }.ifEmpty { "none" })
+        val touchFeedback = runCatching {
+            android.provider.Settings.System.getInt(appContext.contentResolver, android.provider.Settings.System.HAPTIC_FEEDBACK_ENABLED, 1)
+        }.getOrNull()
+        add("haptics: ${runtime.hapticsInfo} · system touch feedback " + when (touchFeedback) { 0 -> "OFF (system-style ticks are muted)"; 1 -> "on"; else -> "unknown" } +
+                " · plays only while a PC is connected")
         trace?.let { add("output now: " + outputLine(it)) }
         runtime.wifi.debugClock()?.let { (phoneUs, offsetUs) ->
             add("clock-pair: wall_ms=${System.currentTimeMillis()} phone_us=$phoneUs offset_us=$offsetUs")

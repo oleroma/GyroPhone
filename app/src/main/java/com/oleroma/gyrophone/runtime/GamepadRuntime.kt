@@ -259,7 +259,12 @@ class GamepadRuntime(context: Context) {
     val debug = PhoneDebug(appContext, this, scope)
 
     /** Plays the engine's haptic mappings while a PC is connected. */
-    private val haptics = PhoneHaptics(appContext) { _linkState.value is LinkState.Connected }
+    private val haptics = PhoneHaptics(appContext) { _linkState.value is LinkState.Connected }.also { h ->
+        h.log = { line -> debug.trace?.add(com.oleroma.gyrophone.core.debug.DebugTrace.Kind.OUT, line) }
+    }
+
+    /** For the debug tools' header: the vibrator. */
+    val hapticsInfo: String get() = haptics.describe
 
     @Volatile
     private var running = false
