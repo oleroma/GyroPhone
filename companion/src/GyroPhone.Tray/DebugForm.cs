@@ -11,7 +11,7 @@ namespace GyroPhone.Tray;
 /// </summary>
 internal sealed class DebugForm : Form
 {
-    private const int Shown = 400;
+    private const int EventsShown = 400;
 
     private readonly HostEngine _engine;
     private readonly Func<string?> _save;
@@ -95,7 +95,7 @@ internal sealed class DebugForm : Form
         _shownVersion = d.Version;
         long now = GyroPhone.Host.Abstractions.StopwatchClock.Instance.NowUs;
         var sb = new StringBuilder();
-        var list = d.Latest(Shown);
+        var list = d.Latest(EventsShown);
         for (int i = list.Count - 1; i >= 0; i--)
         {
             var e = list[i];
