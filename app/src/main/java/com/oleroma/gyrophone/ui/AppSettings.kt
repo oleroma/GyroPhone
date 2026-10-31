@@ -155,6 +155,14 @@ private fun AppTab(runtime: GamepadRuntime) {
                     "of that direction: a bar at Swipe after, dots at Hold after and each zone's end, a ring on a dragged " +
                     "start point. The marks it passed fill in.",
         )
+        SwitchRow("Show Move rulers on touchpad buttons", visuals.moveRulers) {
+            runtime.setTouchVisuals(visuals.copy(moveRulers = it))
+        }
+        Hint(
+            "Once a finger on a touchpad button moves its Move X or Move Y, it shows a short ruler for each Move instead " +
+                    "of the swipe line. The ticks slide as the axis moves, stay dim while a Move is held back, and keep " +
+                    "sliding while inertia glides after the lift.",
+        )
         GyroVisualsSettings(visuals) { runtime.setTouchVisuals(it) }
 
         Text("Corners", style = MaterialTheme.typography.titleSmall)
