@@ -152,7 +152,7 @@ private fun AppTab(runtime: GamepadRuntime) {
         }
         Hint(
             "A finger on a touchpad button draws a line from its start point, through it, to the last activation length " +
-                    "of that direction: a bar at Swipe after, dots at Hold after and each zone's end, a ring on a dragged " +
+                    "of that direction: a bar at Quick swipe after, dots at Hold after and each zone's end, a ring on a dragged " +
                     "start point. The marks it passed fill in.",
         )
         SwitchRow("Show Move rulers on touchpad buttons", visuals.moveRulers) {

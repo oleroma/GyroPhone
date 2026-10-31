@@ -266,7 +266,7 @@ class SwipeLines {
      * Draws every line: from the start point through the finger to its direction's furthest mark
  * ([SwipeGuide.onAxis]: along the direction, through the finger's travel that way), once the
  * finger has reached Hold after.
-     * Marks: Hold after and the zone ends as dots, Swipe after as a bar across the line; the ones
+     * Marks: Hold after and the zone ends as dots, Quick swipe after as a bar across the line; the ones
      * the finger passed are filled.
      */
     fun draw(scope: DrawScope, pxPerDp: Float) {
