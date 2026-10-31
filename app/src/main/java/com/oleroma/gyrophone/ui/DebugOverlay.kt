@@ -78,9 +78,6 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
 
     // Reading tick redraws the panel every 200 ms.
     remember(tick) { tick } // reading tick redraws the panel every 200 ms
-    // Wall time = engine time + this offset, taken once so a row's time never changes.
-    val wallOffsetMs = remember { System.currentTimeMillis() - System.nanoTime() / 1_000_000 }
-    val clockFormat = remember { java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US) }
     val mono = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = 10.sp, lineHeight = 12.sp)
     Surface(
         shape = RoundedCornerShape(10.dp),
@@ -149,9 +146,8 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
                 }
                 val events = (if (paused) frozen else trace.latest(EVENTS, shownKinds)).asReversed()
                 for (e in events) {
-                    val at = clockFormat.format(java.util.Date(e.nanos / 1_000_000 + wallOffsetMs))
                     Text(
-                        "%s %-5s %s".format(at, e.kind.tag, e.text),
+                        "%-5s %s".format(e.kind.tag, e.text),
                         color = kindColor(e.kind),
                         style = mono,
                         maxLines = 1,
