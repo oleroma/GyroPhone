@@ -4,11 +4,22 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.DpSize
+import kotlin.math.max
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -39,9 +50,10 @@ import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 /**
- * The pad's debug panel while Settings › Debug tools is on: link, gyro, workspace and layer, the
- * output now, and the newest events. Drag its title to move it; tap ▾ to fold it to one line.
- * Record saves the last 30 s ([PhoneDebug.record]).
+ * The pad's debug panel while Settings › Debug tools is on: link, gyro, workspace and layer, what
+ * is held (inputs and output), and the newest events. It keeps its place and size whatever it
+ * shows: drag the title to move it, drag the ◢ corner to resize it, tap ▾ to fold it to the
+ * link and what is held. It stays on screen. Record saves the last 30 s ([PhoneDebug.record]).
  */
 @Composable
 fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
@@ -50,7 +62,11 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
     val g by runtime.gyroInfo.collectAsStateWithLifecycle()
     if (!on) return
     val trace = runtime.debug.trace ?: return
-    var offset by remember { mutableStateOf(IntOffset(0, 0)) }
+    val density = LocalDensity.current
+    // Place (px from the top left) and size (dp), remembered: "x,y,w,h".
+    val stored = remember { runtime.uiPref(PREF_BOX)?.split(',')?.mapNotNull { it.toFloatOrNull() }?.takeIf { it.size == 4 } }
+    var pos by remember { mutableStateOf(Offset(stored?.get(0) ?: 0f, stored?.get(1) ?: Float.MAX_VALUE)) }
+    var size by remember { mutableStateOf(DpSize((stored?.get(2) ?: 360f).dp, (stored?.get(3) ?: 260f).dp)) }
     var folded by remember { mutableStateOf(runtime.uiPref(PREF_FOLDED) == "1") }
     var paused by remember { mutableStateOf(false) }
     var timings by remember { mutableStateOf(runtime.uiPref(PREF_TIMINGS) == "1") }
@@ -64,6 +80,7 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
                 ?: (DebugTrace.Kind.entries.toSet() - DebugTrace.Kind.MOVE),
         )
     }
+    fun saveBox() = runtime.setUiPref(PREF_BOX, "${pos.x},${pos.y},${size.width.value},${size.height.value}")
 
     LaunchedEffect(trace) {
         while (true) {
@@ -77,90 +94,137 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
         }
     }
 
-    // Reading tick redraws the panel every 200 ms.
     remember(tick) { tick } // reading tick redraws the panel every 200 ms
     val mono = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = 10.sp, lineHeight = 12.sp)
-    Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = Color(0xD0101418),
-        modifier = modifier
-            .offset { offset }
-            .padding(8.dp)
-            .widthIn(max = 420.dp),
-    ) {
-        Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.pointerInput(Unit) {
-                    detectDragGestures { change, drag ->
-                        change.consume()
-                        offset = IntOffset(offset.x + drag.x.roundToInt(), offset.y + drag.y.roundToInt())
-                    }
-                },
-            ) {
-                Text("⠿ Debug", color = Color(0xFF9AD0FF), style = MaterialTheme.typography.labelMedium)
-                Button(if (folded) "▸" else "▾") {
-                    folded = !folded
-                    runtime.setUiPref(PREF_FOLDED, if (folded) "1" else null)
-                }
-                Button("● Record", Color(0xFFFF8A80)) {
-                    val f = runtime.debug.record()
-                    savedText = if (f != null) "Saved ${f.name}" else "Debug tools are off"
-                }
-                Button(if (timings) "☑ ms" else "☐ ms") {
-                    timings = !timings
-                    runtime.setUiPref(PREF_TIMINGS, if (timings) "1" else null)
-                }
-                Button(if (paused) "▶ Live" else "❚❚ Pause") {
-                    paused = !paused
-                    if (paused) frozen = trace.latest(EVENTS, shownKinds)
-                }
-            }
-            savedText?.let { Text(it, color = Color(0xFFB9F6CA), style = mono) }
-            val stats = runtime.linkStats()
-            Line("link", PhoneDebug.describe(link).take(60), mono)
-            if (!folded) {
-                Line("", PhoneDebug.linkLine(stats), mono)
-                val raw = trace.gyroRaw
-                Line(
-                    "gyro",
-                    "${g.source} · ${trace.gyroPerSecond}/s · " +
-                            "%+6.1f %+6.1f %+6.1f °/s".format(raw[0], raw[1], raw[2]) +
-                            if (g.active) " · mouse" else "",
-                    mono,
-                )
-                val ws = runtime.engine.workspace
-                val layers = runtime.engine.layers
-                fun name(id: Int) = if (id == MappingSet.BASE) "Base" else ws.sets.firstOrNull { it.id == id }?.label ?: "Layer $id"
-                Line(
-                    "where",
-                    ws.name + " · " + (listOf(name(layers.set)) + layers.overrides.map { "+ " + name(it) }).joinToString(" "),
-                    mono,
-                )
-                Line("out", PhoneDebug.outputLine(trace) + " · ${trace.snapshotsPerSecond} snapshots/s", mono)
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    for (k in DebugTrace.Kind.entries) {
-                        val on = k in shownKinds
-                        Button((if (on) "☑ " else "☐ ") + k.tag, if (on) kindColor(k) else Color(0xFF757575)) {
-                            shownKinds = if (on) shownKinds - k else shownKinds + k
-                            runtime.setUiPref(PREF_KINDS, shownKinds.joinToString(",") { it.tag })
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        val maxW = constraints.maxWidth.toFloat()
+        val maxH = constraints.maxHeight.toFloat()
+        val minSize = with(density) { DpSize(MIN_W.dp.coerceAtMost(maxWidth), MIN_H.dp.coerceAtMost(maxHeight)) }
+        val w = size.width.coerceIn(minSize.width, maxWidth)
+        val h = size.height.coerceIn(minSize.height, maxHeight)
+        val wPx = with(density) { w.toPx() }
+        // Folded, the panel is as tall as what it shows; the full height still decides where it may go.
+        val hPx = with(density) { h.toPx() }
+        val x = pos.x.coerceIn(0f, max(0f, maxW - wPx))
+        val y = pos.y.coerceIn(0f, max(0f, maxH - hPx))
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = Color(0xD0101418),
+            modifier = Modifier
+                .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
+                .width(w)
+                .then(if (folded) Modifier.heightIn(max = h) else Modifier.height(h)),
+        ) {
+            Box {
+                Column(
+                    Modifier.padding(horizontal = 8.dp, vertical = 6.dp).clipToBounds(),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier
+                            .horizontalScroll(rememberScrollState())
+                            .pointerInput(Unit) {
+                                detectDragGestures(onDragEnd = { saveBox() }) { change, drag ->
+                                    change.consume()
+                                    pos = Offset(
+                                        (pos.x.coerceIn(0f, max(0f, maxW - wPx)) + drag.x).coerceIn(0f, max(0f, maxW - wPx)),
+                                        (pos.y.coerceIn(0f, max(0f, maxH - hPx)) + drag.y).coerceIn(0f, max(0f, maxH - hPx)),
+                                    )
+                                }
+                            },
+                    ) {
+                        Text("⠿ Debug", color = Color(0xFF9AD0FF), style = MaterialTheme.typography.labelMedium)
+                        Button(if (folded) "▸" else "▾") {
+                            folded = !folded
+                            runtime.setUiPref(PREF_FOLDED, if (folded) "1" else null)
+                        }
+                        Button("● Record", Color(0xFFFF8A80)) {
+                            val f = runtime.debug.record()
+                            savedText = if (f != null) "Saved ${f.name}" else "Debug tools are off"
+                        }
+                        Button(if (timings) "☑ ms" else "☐ ms") {
+                            timings = !timings
+                            runtime.setUiPref(PREF_TIMINGS, if (timings) "1" else null)
+                        }
+                        Button(if (paused) "▶ Live" else "❚❚ Pause") {
+                            paused = !paused
                             if (paused) frozen = trace.latest(EVENTS, shownKinds)
                         }
                     }
+                    savedText?.let { Text(it, color = Color(0xFFB9F6CA), style = mono) }
+                    Line("link", PhoneDebug.describe(link).take(60), mono)
+                    val held = runtime.engine.heldInputs()
+                    Line("held", held.joinToString(" · ").ifEmpty { "nothing" }, mono, maxLines = 3)
+                    Line("out", PhoneDebug.outputLine(trace), mono, maxLines = 3)
+                    if (!folded) {
+                        Line("", PhoneDebug.linkLine(runtime.linkStats()), mono)
+                        val raw = trace.gyroRaw
+                        Line(
+                            "gyro",
+                            "${g.source} · ${trace.gyroPerSecond}/s · " +
+                                    "%+6.1f %+6.1f %+6.1f °/s".format(raw[0], raw[1], raw[2]) +
+                                    if (g.active) " · mouse" else "",
+                            mono,
+                        )
+                        val ws = runtime.engine.workspace
+                        val layers = runtime.engine.layers
+                        fun name(id: Int) = if (id == MappingSet.BASE) "Base" else ws.sets.firstOrNull { it.id == id }?.label ?: "Layer $id"
+                        Line(
+                            "where",
+                            ws.name + " · " + (listOf(name(layers.set)) + layers.overrides.map { "+ " + name(it) }).joinToString(" ") +
+                                    " · ${trace.snapshotsPerSecond} snapshots/s",
+                            mono,
+                        )
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            for (k in DebugTrace.Kind.entries) {
+                                val shown = k in shownKinds
+                                Button((if (shown) "☑ " else "☐ ") + k.tag, if (shown) kindColor(k) else Color(0xFF757575)) {
+                                    shownKinds = if (shown) shownKinds - k else shownKinds + k
+                                    runtime.setUiPref(PREF_KINDS, shownKinds.joinToString(",") { it.tag })
+                                    if (paused) frozen = trace.latest(EVENTS, shownKinds)
+                                }
+                            }
+                        }
+                        // Newest first; rows that don't fit are cut off at the bottom (the oldest).
+                        // With timings on, each row ends with the ms since the event below it.
+                        val events = (if (paused) frozen else trace.latest(EVENTS, shownKinds)).asReversed()
+                        Column(Modifier.weight(1f, fill = false).clipToBounds()) {
+                            for ((i, e) in events.withIndex()) {
+                                val gap = events.getOrNull(i + 1)?.let { " +${(e.nanos - it.nanos) / 1_000_000} ms" } ?: ""
+                                Text(
+                                    "%-5s %s".format(e.kind.tag, e.text) + if (timings) gap else "",
+                                    color = kindColor(e.kind),
+                                    style = mono,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Clip,
+                                )
+                            }
+                        }
+                    }
                 }
-                val events = (if (paused) frozen else trace.latest(EVENTS, shownKinds)).asReversed()
-                // Newest first; with timings on, each row ends with the ms since the event below it.
-                for ((i, e) in events.withIndex()) {
-                    val gap = events.getOrNull(i + 1)?.let { " +${(e.nanos - it.nanos) / 1_000_000} ms" } ?: ""
-                    Text(
-                        "%-5s %s".format(e.kind.tag, e.text) + if (timings) gap else "",
-                        color = kindColor(e.kind),
-                        style = mono,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                // Resize corner.
+                Text(
+                    "◢",
+                    color = Color(0xFF9AD0FF),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(28.dp)
+                        .padding(6.dp)
+                        .pointerInput(Unit) {
+                            detectDragGestures(onDragEnd = { saveBox() }) { change, drag ->
+                                change.consume()
+                                val dw = with(density) { drag.x.toDp() }
+                                val dh = with(density) { drag.y.toDp() }
+                                size = DpSize(
+                                    (size.width.coerceIn(minSize.width, maxWidth) + dw).coerceIn(minSize.width, maxWidth),
+                                    (size.height.coerceIn(minSize.height, maxHeight) + dh).coerceIn(minSize.height, maxHeight),
+                                )
+                            }
+                        },
+                )
             }
         }
     }
@@ -177,12 +241,12 @@ private fun Button(text: String, color: Color = Color.White, onClick: () -> Unit
 }
 
 @Composable
-private fun Line(label: String, text: String, style: androidx.compose.ui.text.TextStyle) {
+private fun Line(label: String, text: String, style: androidx.compose.ui.text.TextStyle, maxLines: Int = 2) {
     Text(
         (if (label.isEmpty()) "      " else "%-5s ".format(label)) + text,
         color = Color(0xFFE0E0E0),
         style = style,
-        maxLines = 2,
+        maxLines = maxLines,
         overflow = TextOverflow.Ellipsis,
     )
 }
@@ -196,7 +260,10 @@ private fun kindColor(k: DebugTrace.Kind): Color = when (k) {
     DebugTrace.Kind.NOTE -> Color(0xFFBDBDBD)
 }
 
-private const val EVENTS = 12
+private const val EVENTS = 60
+private const val MIN_W = 220f
+private const val MIN_H = 120f
+private const val PREF_BOX = "debug_overlay_box"
 private const val PREF_FOLDED = "debug_overlay_folded"
 private const val PREF_KINDS = "debug_overlay_kinds"
 private const val PREF_TIMINGS = "debug_overlay_timings"

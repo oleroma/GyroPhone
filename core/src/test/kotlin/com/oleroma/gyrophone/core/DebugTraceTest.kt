@@ -78,4 +78,12 @@ class DebugTraceTest {
         assertTrue(log.toString(), "pad A down" in log)
         assertTrue(log.toString(), log.any { it.startsWith("layer: Base") })
     }
+
+    @Test fun heldInputsListsKeysHeld() {
+        val e = MappingEngine(controllerProfile)
+        e.setKey(AndroidKey.BUTTON_A, true)
+        assertEquals(listOf("A"), e.heldInputs())
+        e.setKey(AndroidKey.BUTTON_A, false)
+        assertEquals(emptyList<String>(), e.heldInputs())
+    }
 }

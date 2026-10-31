@@ -785,6 +785,28 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     val touchMappingsInUse: List<Mapping> get() = synchronized(lock) { touchMappings }
 
+    /**
+     * Every input held now, for the debug panel: touch controls pressed (by label), then each
+     * device's held keys ("GameSir X5: A"), then touchpad fingers.
+     */
+    fun heldInputs(): List<String> = synchronized(lock) {
+        val out = ArrayList<String>()
+        for (id in LinkedHashSet(pressOrder).apply { addAll(touches.keys) }) {
+            out.add(ws.touchControls.firstOrNull { it.id == id }?.label?.takeIf { it.isNotBlank() } ?: id)
+        }
+        for (d in deviceList + anyDevice) {
+            var code = d.keys.nextSetBit(0)
+            while (code >= 0) {
+                val name = AndroidKey.names[code] ?: "key $code"
+                out.add((d.device?.name?.let { "$it: " } ?: "") + name)
+                code = d.keys.nextSetBit(code + 1)
+            }
+        }
+        val fingers = touchpad.fingers
+        if (fingers > 0) out.add("touchpad $fingers finger" + if (fingers > 1) "s" else "")
+        out
+    }
+
     /** Touch controls currently pressed (including by touchpad-over-buttons commits and zones), for highlighting. */
     fun pressedTouches(): Set<String> = synchronized(lock) {
         resolveIfDue(clock())
