@@ -97,4 +97,43 @@ class DirectionSettingsTest {
         assertEquals(right, s.directionsAt(10f, 0f, hold = true))
         assertEquals(up or right, s.directionsAt(10f, -1f, hold = true))
     }
+
+    /** [sweeps] left / right strokes of [len] 1 dp steps, drifting [drift] dp up each step; the swipes fired, or-ed. */
+    private fun DirectionTracker.sweep(s: TouchpadSettings, sweeps: Int, len: Int, drift: Float): Int {
+        var fired = 0
+        for (k in 0 until sweeps) fired = fired or go(s, if (k % 2 == 0) 1f else -1f, -drift, len)
+        return fired
+    }
+
+    @Test
+    fun lockedHoldHeadingKeepsDriftFromAddingUp() {
+        val free = TouchpadSettings(holdDp = 20f)
+        val t = DirectionTracker().apply { start() }
+        t.sweep(free, 10, 30, 0.1f)
+        assertEquals(up, t.held and up)
+        // Locked: the Y start point follows the finger while it heads sideways.
+        val locked = free.copy(holdLock = true, holdTurnDp = 16f)
+        t.start()
+        t.sweep(locked, 10, 30, 0.1f)
+        assertEquals(0, t.held and up)
+        // Heading up: Up counts from the turn, so 16 dp of turn + 10 more passes 20.
+        t.go(locked, 0f, -1f, 26)
+        assertEquals(up, t.held and up)
+    }
+
+    @Test
+    fun lockedSwipeHeadingIgnoresTurnarounds() {
+        val s = TouchpadSettings(swipeDp = 15f, swipeLock = true, swipeTurnDp = 16f)
+        val t = DirectionTracker().apply { start() }
+        assertEquals(0, t.sweep(s, 10, 30, 0.1f) and up)
+        assertEquals(up, t.go(s, 0f, -1f, 40) and up)
+    }
+
+    @Test
+    fun swipeCountsOnlyTravelAlongIt() {
+        // A 60° slant in Up's 120° pie: 40 dp of it go 20 dp up, short of 30.
+        val s = TouchpadSettings(swipeDp = 30f, swipePieY = 120f, swipePieX = 30f)
+        val t = DirectionTracker().apply { start() }
+        assertEquals(0, t.go(s, 0.866f, -0.5f, 40) and up)
+    }
 }

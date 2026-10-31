@@ -145,8 +145,21 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
         OverrideSlider(
             key + "swipe", "Swipe after %.0f dp", s.swipeDp,
             TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f, own(SurfaceField.SWIPE), reset(SurfaceField.SWIPE),
-            hint = "Measured from where the finger turned into that direction. Each new direction swipes again.",
+            hint = "Measured along the direction, from where the finger turned into it. Each new direction swipes again.",
         ) { v -> edit { it.copy(swipeDp = v) } }
+        OverrideSwitch(
+            "Lock heading",
+            "A swipe keeps the way it locked into until the finger heads another way for Turn after, so the wobble " +
+                    "at each turnaround of a sideways stroke can't swipe up or down.",
+            s.swipeLock, own(SurfaceField.SWIPE_LOCK), reset(SurfaceField.SWIPE_LOCK),
+        ) { v -> edit { it.copy(swipeLock = v) } }
+        if (s.swipeLock) {
+            OverrideSlider(
+                key + "swipeturn", "Turn after %.1f dp", s.swipeTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
+                own(SurfaceField.SWIPE_TURN), reset(SurfaceField.SWIPE_TURN),
+                hint = "How far the finger must head another way, on end, before the swipe turns there. That travel counts for the new way.",
+            ) { v -> edit { it.copy(swipeTurnDp = v) } }
+        }
 
         SectionTitle("Swipe hold")
         OverrideRow(
@@ -166,6 +179,21 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
             key + "hold", "Hold after %.0f dp", s.holdDp,
             TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f, own(SurfaceField.HOLD), reset(SurfaceField.HOLD),
         ) { v -> edit { it.copy(holdDp = v) } }
+        OverrideSwitch(
+            "Lock heading",
+            (if (s.holdMode == HoldMode.FROM_START) "While the finger heads along one axis, the other axis's start point follows it, so " +
+                    "drift never adds up: up / down count from where the finger turned up / down. "
+            else "A held direction keeps the way it locked into until the finger heads another way for Turn after. ") +
+                    "Pies of 180° count as 90° for the heading; wider than 90° lets diagonals hold both.",
+            s.holdLock, own(SurfaceField.HOLD_LOCK), reset(SurfaceField.HOLD_LOCK),
+        ) { v -> edit { it.copy(holdLock = v) } }
+        if (s.holdLock) {
+            OverrideSlider(
+                key + "holdturn", "Turn after %.1f dp", s.holdTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
+                own(SurfaceField.HOLD_TURN), reset(SurfaceField.HOLD_TURN),
+                hint = "How far the finger must head another way, on end, before the held heading turns there.",
+            ) { v -> edit { it.copy(holdTurnDp = v) } }
+        }
         if (s.holdMode == HoldMode.FROM_START) {
             val zoned = zones.any { it > 1 }
             OverrideSwitch(

@@ -305,6 +305,16 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     var moveTravelY = 0f
         private set
 
+    /**
+     * From start point with Lock heading: writes the finger's offset from the start point (dp) to
+     * [out] (x, y) for the swipe line; false otherwise.
+     */
+    fun holdOffset(out: FloatArray): Boolean {
+        if (settings.holdMode != com.oleroma.gyrophone.core.model.HoldMode.FROM_START || !settings.holdLock || settings.dragStart) return false
+        out[0] = dirs.offsetX; out[1] = dirs.offsetY
+        return true
+    }
+
     /** Inertia carries Move X / Y on after the fingers lifted. */
     val isGliding: Boolean get() = gliding
 

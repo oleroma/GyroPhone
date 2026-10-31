@@ -26,6 +26,12 @@ class SwipeGuide(val settings: TouchpadSettings, private val zones: IntArray, pr
      */
     val onAxis = fromStart && !dragsStart
 
+    /**
+     * On its axis with Lock heading ([TouchpadSettings.holdLock]): the start point moves as the
+     * heading locks ([MappingEngine.swipeOffset] gives the finger's offset from it).
+     */
+    val locks = onAxis && settings.holdLock
+
     private fun holdDp(d: Direction) = activate(settings.holdDpOf(d))
 
     /** The farthest hold distance: where a dragged start point stops trailing. */

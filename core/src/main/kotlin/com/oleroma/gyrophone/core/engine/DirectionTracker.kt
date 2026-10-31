@@ -6,6 +6,8 @@ import com.oleroma.gyrophone.core.model.HoldZone
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.ZoneKeep
 import com.oleroma.gyrophone.core.model.inPie
+import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.sqrt
 
 /**
@@ -15,8 +17,10 @@ import kotlin.math.sqrt
  *
  * A direction's heading is that of about the last of its sample of travel
  * ([TouchpadSettings.sampleDp]: swipes' and held directions' each, per direction), so jitter does
- * not flip it. A swipe fires once the travel since the direction last changed reaches
- * [TouchpadSettings.swipeDp], for the directions that did not fire last. Held directions follow
+ * not flip it. A swipe fires once the travel along it since the direction last changed reaches
+ * [TouchpadSettings.swipeDp], for the directions that did not fire last. With Lock heading
+ * ([TouchpadSettings.swipeLock], [TouchpadSettings.holdLock]) a heading only changes once the
+ * finger has headed elsewhere for the Turn after travel on end. Held directions follow
  * [TouchpadSettings.holdMode]. Each held direction is split into length zones
  * ([TouchpadSettings.holdZone]): [zones] says which of a direction's zones are held now.
  */
@@ -50,9 +54,31 @@ internal class DirectionTracker {
     /** Per direction: zones reached this motion that stay held until the lift ([ZoneKeep.UNTIL_LIFT]). */
     private val untilLift = IntArray(4)
 
-    /** The swipe pies the recent travel points into (0 = none yet, or a gap between pies). */
+    /** The swipe pies the recent travel points into (0 = none yet, or a gap between pies); with Lock heading, the locked ones. */
     var current = 0
         private set
+
+    /** Per swipe direction: the travel along it since it joined [current] (dp). */
+    private val since = FloatArray(4)
+
+    // Lock heading: the travel (dp, and its length) heading elsewhere than the swipes' and the held
+    // directions' locked heading, not yet a turn.
+    private var turnX = 0f
+    private var turnY = 0f
+    private var turnLen = 0f
+    private var holdTurnX = 0f
+    private var holdTurnY = 0f
+    private var holdTurnLen = 0f
+
+    // The whole travel since the motion started (dp).
+    private var totX = 0f
+    private var totY = 0f
+
+    // FROM_START with Lock heading: an axis the held heading just locked onto, and its offset from then.
+    private var lockedX = false
+    private var lockedY = false
+    private var lockOffX = 0f
+    private var lockOffY = 0f
 
     /** The same for the held directions' pies ([TouchpadSettings.pieDeg] of holds), and the travel since it last changed. */
     private var holdCurrent = 0
@@ -64,7 +90,6 @@ internal class DirectionTracker {
     private val winY = FloatArray(8)
     private val sampled = FloatArray(8)
     private var travelled = 0f
-    private var since = 0f
     private var fired = 0
 
     // FROM_START: the finger's offset from the start point, and directions carried over from a
@@ -80,7 +105,10 @@ internal class DirectionTracker {
      * [latchedZones] (by [Direction.ordinal]), and go on as if this motion held them.
      */
     fun start(latched: Int = 0, latchedZones: IntArray? = null) {
-        winX.fill(0f); winY.fill(0f); sampled.fill(0f); travelled = 0f; since = 0f; fired = 0
+        winX.fill(0f); winY.fill(0f); sampled.fill(0f); travelled = 0f; since.fill(0f); fired = 0
+        turnX = 0f; turnY = 0f; turnLen = 0f; holdTurnX = 0f; holdTurnY = 0f; holdTurnLen = 0f
+        totX = 0f; totY = 0f
+        lockedX = false; lockedY = false; lockOffX = 0f; lockOffY = 0f
         offX = 0f; offY = 0f; pressed = 0
         current = 0; holdCurrent = 0; holdSince = 0f
         held = latched
@@ -121,7 +149,8 @@ internal class DirectionTracker {
             winX[i] = x; winY[i] = y
             val first = sampled[i] < sample
             if (first) sampled[i] += len
-            if (sampled[i] < sample || !s.inPie(x, y, d, hold)) continue
+            val inPie = if (hold && s.holdLock) heads(x, y, d, s.pieDeg(d, true)) else s.inPie(x, y, d, hold)
+            if (sampled[i] < sample || !inPie) continue
             val b = 1 shl d.ordinal
             if (hold) {
                 holdMask = holdMask or b
@@ -131,25 +160,112 @@ internal class DirectionTracker {
                 if (first) fresh = fresh or b
             }
         }
-        if (mask != current) {
-            // From no direction yet, the sampled travel already went this way.
-            since = if (current == 0 && mask and fresh != 0) travelled else 0f
-            current = mask
-        } else since += len
-        if (holdMask != holdCurrent) {
-            holdSince = if (holdCurrent == 0 && holdMask and holdFresh != 0) travelled else 0f
-            holdCurrent = holdMask
-        } else holdSince += len
+        totX += dx; totY += dy
+        swipeHeading(mask, fresh, dx, dy, len, s)
+        holdHeading(holdMask, holdFresh, dx, dy, len, s)
 
         if (s.holdMode == HoldMode.FROM_START) fromStart(dx, dy, s)
         else directionChange(len, s)
 
-        // Each direction of the pies fires once its own swipe distance is travelled.
-        val ready = passed(current, since) { s.swipeDpOf(it) }
+        // Each direction of the pies fires once its own swipe distance is travelled along it.
+        var ready = 0
+        for (d in Direction.entries) {
+            val b = 1 shl d.ordinal
+            if (current and b != 0 && since[d.ordinal] >= activate(s.swipeDpOf(d))) ready = ready or b
+        }
         if (ready == 0) return 0
         val fire = ready and fired.inv()
         fired = (fired and current) or ready
         return fire
+    }
+
+    /**
+     * The swipes' heading after a step ([dx], [dy] dp, [len] long) whose pies are [mask] ([fresh]:
+     * the ones whose first sample filled just now). Without Lock heading it is [mask] at once; with
+     * it, it changes once the finger has headed elsewhere for [TouchpadSettings.swipeTurnDp] on
+     * end, and the directions it turned to take that travel.
+     */
+    private fun swipeHeading(mask: Int, fresh: Int, dx: Float, dy: Float, len: Float, s: TouchpadSettings) {
+        if (mask == current) {
+            turnX = 0f; turnY = 0f; turnLen = 0f
+            alongStep(current, dx, dy)
+            return
+        }
+        if (current == 0 || !s.swipeLock) {
+            // From no direction yet, the sampled travel already went this way.
+            val from = current == 0 && mask and fresh != 0
+            alongStep(mask and current, dx, dy)
+            joined(mask, if (from) totX else 0f, if (from) totY else 0f)
+            current = mask
+            return
+        }
+        alongStep(current, dx, dy)
+        turnX += dx; turnY += dy; turnLen += len
+        if (mask == 0 || turnLen < s.swipeTurnDp.coerceIn(0f, TouchpadSettings.MAX_MOVE_TURN_DP)) return
+        joined(mask, turnX, turnY)
+        current = mask
+        turnX = 0f; turnY = 0f; turnLen = 0f
+    }
+
+    /** The directions of [mask] not in [current] start counting, with the travel [x], [y] (dp) along them. */
+    private fun joined(mask: Int, x: Float, y: Float) {
+        for (d in Direction.entries) {
+            val b = 1 shl d.ordinal
+            if (mask and b != 0 && current and b == 0) since[d.ordinal] = along(d, x, y)
+        }
+    }
+
+    /** The directions of [mask] count a step [dx], [dy] along them. */
+    private fun alongStep(mask: Int, dx: Float, dy: Float) {
+        for (d in Direction.entries) if (mask and (1 shl d.ordinal) != 0) since[d.ordinal] += along(d, dx, dy)
+    }
+
+    /**
+     * The held directions' heading after a step, as [swipeHeading] with [TouchpadSettings.holdLock]
+     * and [TouchpadSettings.holdTurnDp]; [holdSince] is the travel since it changed. From start
+     * point with Lock heading, an axis it turns onto counts its offset from where it turned
+     * ([lockedX], [lockedY]).
+     */
+    private fun holdHeading(mask: Int, fresh: Int, dx: Float, dy: Float, len: Float, s: TouchpadSettings) {
+        if (mask == holdCurrent) {
+            holdTurnX = 0f; holdTurnY = 0f; holdTurnLen = 0f
+            holdSince += len
+            return
+        }
+        if (holdCurrent == 0 || !s.holdLock) {
+            val from = holdCurrent == 0 && mask and fresh != 0
+            holdSince = if (from) travelled else 0f
+            lock(mask, if (from) totX else 0f, if (from) totY else 0f)
+            return
+        }
+        holdTurnX += dx; holdTurnY += dy; holdTurnLen += len
+        holdSince += len
+        if (mask == 0 || holdTurnLen < s.holdTurnDp.coerceIn(0f, TouchpadSettings.MAX_MOVE_TURN_DP)) return
+        holdSince = holdTurnLen
+        lock(mask, holdTurnX, holdTurnY)
+        holdTurnX = 0f; holdTurnY = 0f; holdTurnLen = 0f
+    }
+
+    /** The held heading becomes [mask]; an axis it newly takes counts its offset from the travel [x], [y] (dp) of the turn. */
+    private fun lock(mask: Int, x: Float, y: Float) {
+        if (mask and X_BITS != 0 && holdCurrent and X_BITS == 0) { lockedX = true; lockOffX = x }
+        if (mask and Y_BITS != 0 && holdCurrent and Y_BITS == 0) { lockedY = true; lockOffY = y }
+        holdCurrent = mask
+    }
+
+    /** Vector [x], [y] heads into [d]'s pie of [pie] degrees, for Lock heading: a 180° pie heads as a 90° one. */
+    private fun heads(x: Float, y: Float, d: Direction, pie: Float): Boolean {
+        val deg = Math.toDegrees(atan2(x.toDouble(), (-y).toDouble())).toFloat()
+        val off = abs(((deg - d.deg) % 360f + 540f) % 360f - 180f)
+        val w = if (pie >= TouchpadSettings.MAX_PIE_DEG) TouchpadSettings.LARGER_AXIS_PIE_DEG else pie
+        return off <= w / 2f
+    }
+
+    private fun along(d: Direction, x: Float, y: Float) = when (d) {
+        Direction.UP -> -y
+        Direction.RIGHT -> x
+        Direction.DOWN -> y
+        Direction.LEFT -> -x
     }
 
     /** The directions of [mask] whose [dp] the [travel] has reached. */
@@ -164,7 +280,23 @@ internal class DirectionTracker {
 
     /** Held while the offset from the start point, along a direction and inside its pie, passes the hold distance. */
     private fun fromStart(dx: Float, dy: Float, s: TouchpadSettings) {
-        offX += dx; offY += dy
+        if (s.holdLock) {
+            // An axis off the locked heading: its start point follows the finger, so its drift never
+            // adds up; one the heading just turned onto starts from the turn's travel on it.
+            offX = when {
+                holdCurrent and X_BITS == 0 -> 0f
+                lockedX -> lockOffX
+                else -> offX + dx
+            }
+            offY = when {
+                holdCurrent and Y_BITS == 0 -> 0f
+                lockedY -> lockOffY
+                else -> offY + dy
+            }
+            lockedX = false; lockedY = false
+        } else {
+            offX += dx; offY += dy
+        }
         if (s.dragStart) {
             val hold = Direction.entries.maxOf { activate(s.holdDpOf(it)) }
             val max = hold + s.releaseDp.coerceIn(0f, TouchpadSettings.MAX_RELEASE_DP)
@@ -277,7 +409,13 @@ internal class DirectionTracker {
 
     private fun activate(dp: Float) = dp.coerceIn(TouchpadSettings.MIN_ACTIVATE_DP, TouchpadSettings.MAX_ACTIVATE_DP)
 
+    /** FROM_START: the finger's offset from the start point (dp), for the swipe line. */
+    val offsetX: Float get() = offX
+    val offsetY: Float get() = offY
+
     private companion object {
         val PLAIN = HoldZone()
+        val X_BITS = (1 shl Direction.RIGHT.ordinal) or (1 shl Direction.LEFT.ordinal)
+        val Y_BITS = (1 shl Direction.UP.ordinal) or (1 shl Direction.DOWN.ordinal)
     }
 }

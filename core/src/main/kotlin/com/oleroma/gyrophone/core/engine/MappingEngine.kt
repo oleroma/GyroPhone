@@ -804,6 +804,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Swipe button [id]'s held directions and zones as mapped in the set in use, for its swipe line ([Touchpad.guide]). */
     fun swipeGuide(id: String): SwipeGuide? = synchronized(lock) { surfaces[id]?.guide() }
 
+    /** Swipe button [id]'s finger offset from its locked start point (dp, [Touchpad.holdOffset]), for its swipe line. */
+    fun swipeOffset(id: String, out: FloatArray): Boolean = synchronized(lock) { surfaces[id]?.holdOffset(out) ?: false }
+
     /**
      * Touch button [id]'s Move X / Y, for its Move rulers: writes their travel ([Touchpad.moveTravelX],
      * px) to [out] (x, y) and returns the Moves mapped ([Touchpad.MOVES_X], [Touchpad.MOVES_Y]), with

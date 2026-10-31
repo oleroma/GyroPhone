@@ -1280,7 +1280,9 @@ fun PadScreen(
                  * holds mapped, and its Move rulers, when it has a Move mapped.
                  */
                 fun swipeLine(pointer: Long, c: TouchControl, p: Offset) {
-                    if (swipeLineOn && c.swipes) runtime.engine.swipeGuide(c.id)?.let { swipeLines.down(pointer, it, p, pxPerDp) }
+                    if (swipeLineOn && c.swipes) runtime.engine.swipeGuide(c.id)?.let { g ->
+                        swipeLines.down(pointer, g, p, pxPerDp) { out -> runtime.engine.swipeOffset(c.id, out) }
+                    }
                     if (moveRulersOn && c.swipes) moveRulers.down(pointer, c.id, p)
                 }
 

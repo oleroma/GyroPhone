@@ -213,7 +213,7 @@ private const val DOT_DP = 18f
  * thread only; cheap to keep and draw (no allocation per move).
  */
 class SwipeLines {
-    private class Line(val guide: SwipeGuide, p: Offset) {
+    private class Line(val guide: SwipeGuide, p: Offset, val offset: ((FloatArray) -> Boolean)?) {
         /** Start point and finger, dp. */
         val start = floatArrayOf(p.x, p.y)
         var x = p.x
@@ -228,6 +228,7 @@ class SwipeLines {
     }
 
     private val lines = HashMap<Long, Line>()
+    private val off = FloatArray(2)
     private val marks = FloatArray(SwipeGuide.MAX_MARKS)
     private val kinds = IntArray(SwipeGuide.MAX_MARKS)
 
@@ -235,14 +236,18 @@ class SwipeLines {
     private var version by mutableIntStateOf(0)
 
     /** Finger [id] landed at [p] (px; [pxPerDp]: display density). */
-    fun down(id: Long, guide: SwipeGuide, p: Offset, pxPerDp: Float) {
-        lines[id] = Line(guide, p / pxPerDp)
+    /** [offset]: the engine's [com.oleroma.gyrophone.core.engine.MappingEngine.swipeOffset] for a start point that moves as the heading locks. */
+    fun down(id: Long, guide: SwipeGuide, p: Offset, pxPerDp: Float, offset: ((FloatArray) -> Boolean)? = null) {
+        lines[id] = Line(guide, p / pxPerDp, offset.takeIf { guide.locks })
         version++
     }
 
     fun move(id: Long, p: Offset, pxPerDp: Float) {
         val l = lines[id] ?: return
         l.x = p.x / pxPerDp; l.y = p.y / pxPerDp
+        if (l.offset?.invoke(off) == true) {
+            l.start[0] = l.x - off[0]; l.start[1] = l.y - off[1]
+        }
         if (l.guide.dragsStart) l.held = l.guide.drag(l.start, l.x, l.y, l.held)
         version++
     }
