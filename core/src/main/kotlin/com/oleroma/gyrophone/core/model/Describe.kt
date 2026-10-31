@@ -82,8 +82,11 @@ object Describe {
     val layerTargets: List<OutputTarget> = listOf(
         OutputTarget.Layer(-1), OutputTarget.Layer(-1, whileHeld = true),
         OutputTarget.Layer(-1, override = true), OutputTarget.Layer(-1, override = true, whileHeld = true),
-        OutputTarget.LayerBack, OutputTarget.LetGo, OutputTarget.NoOutput,
+        OutputTarget.LayerBack, OutputTarget.NoOutput,
     )
+
+    /** The "Other" picker group: (Let go). */
+    val otherTargets: List<OutputTarget> = listOf(OutputTarget.LetGo)
 
     /** "Layer set", "Layer hold", "Override layer set" or "Override layer hold". */
     fun layer(t: OutputTarget.Layer): String = when {

@@ -168,7 +168,7 @@ private class MapPreset(val label: String, val apply: (List<Mapping>) -> List<Ma
 
 private enum class LibraryTab(val label: String) {
     RECENT("Recent"), PRESETS("Presets"), KEYBOARD("Keyboard"), MOUSE("Mouse"), GAMEPAD("Gamepad"),
-    GYRO("Gyro"), PHONE("Phone"), TOUCHPAD("Touchpad"), LAYERS("Layers"),
+    GYRO("Gyro"), PHONE("Phone"), TOUCHPAD("Touchpad"), LAYERS("Layers"), OTHER("Other"),
 }
 
 private fun group(name: String): List<OutputTarget> =
@@ -182,6 +182,7 @@ private fun tabTargets(tab: LibraryTab, extras: List<OutputTarget>): List<Output
     LibraryTab.PHONE -> group("Phone")
     LibraryTab.TOUCHPAD -> extras
     LibraryTab.LAYERS -> Describe.layerTargets
+    LibraryTab.OTHER -> Describe.otherTargets
     LibraryTab.RECENT, LibraryTab.PRESETS -> emptyList()
 }
 

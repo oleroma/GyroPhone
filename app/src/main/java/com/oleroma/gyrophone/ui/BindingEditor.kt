@@ -243,7 +243,8 @@ fun TargetPickerDialog(
 
     val groups = remember(analog, swipe, extra, sets != null) {
         val g = Describe.pickerGroups(analog, swipe, extra)
-        if (sets == null || analog) g else g + ("Layers" to Describe.layerTargets)
+        val withLayers = if (sets == null || analog) g else g + ("Layers" to Describe.layerTargets)
+        if (analog || swipe) withLayers else withLayers + ("Other" to Describe.otherTargets)
     }
     val entries = remember(groups, query) {
         val q = query.trim()
