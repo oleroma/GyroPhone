@@ -123,23 +123,6 @@ class HoldZonesTest {
     }
 
     @Test
-    fun onReleaseFiresOnceOnLiftInThatZone() {
-        val s = TouchpadSettings(holdZones = listOf(HoldZone(), HoldZone(onRelease = true)))
-        val f = Finger(s)
-        f.down()
-        f.go(0f, -50f); assertEquals(0, f.now) // in zone 2: nothing held
-        f.up()
-        assertEquals(1, f.presses(z2))
-        assertEquals(0, f.now)
-
-        val g = Finger(s)
-        g.down(); g.go(0f, -50f); g.go(0f, 20f) // back in zone 1
-        assertEquals(z1, g.now)
-        g.up()
-        assertEquals(0, g.presses(z2))
-    }
-
-    @Test
     fun zoneLengthsAreTheirOwnOrTheFirstZones() {
         val s = TouchpadSettings(holdZones = listOf(HoldZone(lengthDp = 30f)))
         val f = Finger(s)
@@ -202,7 +185,7 @@ class HoldZonesTest {
     @Test
     fun oneZoneIsAPlainHeldDirection() {
         val one = SurfaceMap(listOf(m(0, MouseButton.LEFT)))
-        val s = TouchpadSettings(holdZones = listOf(HoldZone(onRelease = true)))
+        val s = TouchpadSettings(holdZones = listOf(HoldZone(keep = ZoneKeep.UNTIL_LIFT)))
         val f = Finger(s, one)
         f.down(); f.go(0f, -80f)
         assertEquals(z1, f.now) // zone settings count only with two zones or more

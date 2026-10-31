@@ -588,12 +588,8 @@ private fun ZoneList(s: TouchpadSettings, d: Direction, list: List<HoldZone>, n:
         style = MaterialTheme.typography.bodyMedium,
         modifier = Modifier.padding(top = 6.dp),
     )
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        SelectChip("On reach", !z.onRelease) { set(z.copy(onRelease = false)) }
-        SelectChip("On release", z.onRelease) { set(z.copy(onRelease = true, keep = ZoneKeep.OFF)) }
-    }
-    if (z.onRelease) DirNote("Fires once when the finger lifts in this zone.")
-    else {
+    // Firing as the finger lifts in the zone is each mapping's own: its chip's When = Release.
+    run {
         Text("Held", style = MaterialTheme.typography.bodyMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (k in listOf(ZoneKeep.UNTIL_LIFT, ZoneKeep.GOING_ON, ZoneKeep.OFF)) {
@@ -607,7 +603,7 @@ private fun ZoneList(s: TouchpadSettings, d: Direction, list: List<HoldZone>, n:
                 ZoneKeep.UNTIL_LIFT -> "Once reached, held wherever the finger goes until it lifts."
                 ZoneKeep.GOING_ON -> "Held while the finger is in this zone or goes on into the next ones; sliding back below it lets go."
                 ZoneKeep.OFF -> "Held while the finger is in this zone."
-            }
+            } + " To fire as the finger lifts in this zone, set a chip's When to Release.",
         )
     }
     if (!last) {

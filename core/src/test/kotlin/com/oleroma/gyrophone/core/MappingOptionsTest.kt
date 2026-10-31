@@ -4,6 +4,7 @@ import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.PadDevice
 import com.oleroma.gyrophone.core.model.AttachedPad
 import com.oleroma.gyrophone.core.model.ButtonGesture
+import com.oleroma.gyrophone.core.model.HoldZone
 import com.oleroma.gyrophone.core.model.How
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.MapOptions
@@ -13,9 +14,11 @@ import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
+import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.Triggers
 import com.oleroma.gyrophone.core.model.Workspace
+import com.oleroma.gyrophone.core.model.ZoneKeep
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -224,6 +227,82 @@ class MappingOptionsTest {
         val after = e.hold(40)
         assertTrue(after.any { B in it }) // the release
         assertTrue(A !in after.last())
+    }
+
+    /** Swipe → zones (1 finger): zone 1 from 20 dp, zone 2 from 40 dp. */
+    private fun zone(z: Int, tr: Trigger, key: Int) =
+        Mapping(Triggers.with(InputSource.Surface(1, SurfaceInput.HOLD_RIGHT, zone = z), tr)!!, OutputTarget.Key(key))
+
+    private fun zoneEngine(vararg ms: Mapping, keep: ZoneKeep = ZoneKeep.OFF): MappingEngine {
+        val w = Workspace(
+            id = "w", name = "w", mappings = ms.toList(),
+            touchpad = TouchpadSettings(holdZones = listOf(HoldZone(keep = keep), HoldZone())),
+        )
+        return MappingEngine(single(w)) { t }.apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 10 * MS }
+    }
+
+    /** Moves the touchpad finger from [from] to [to] dp right of where it landed. */
+    private fun MappingEngine.slide(from: Int, to: Int, out: MutableList<Set<Int>>) {
+        val step = if (to > from) 1 else -1
+        var i = from
+        while (i != to) {
+            i += step; t += 2 * MS; touchpadMove(1, 100f + i, 100f, t); out.add(keys())
+        }
+    }
+
+    private fun MappingEngine.lift(out: MutableList<Set<Int>>) {
+        touchpadUp(1); hold(40, out)
+    }
+
+    @Test
+    fun swipeReleaseFiresOnlyInTheZoneLiftedIn() {
+        fun run(vararg path: Int, keep: ZoneKeep = ZoneKeep.OFF, extra: List<Mapping> = emptyList()): List<Set<Int>> {
+            val e = zoneEngine(zone(0, Trigger.RELEASE, A), zone(1, Trigger.RELEASE, B), *extra.toTypedArray(), keep = keep)
+            val seen = ArrayList<Set<Int>>()
+            e.touchpadDown(1, 100f, 100f, t)
+            for (k in 1 until path.size) e.slide(path[k - 1], path[k], seen)
+            e.hold(20, seen)
+            val before = seen.size
+            e.lift(seen)
+            assertTrue(seen.take(before).none { A in it || B in it }) // nothing before the lift
+            return seen.drop(before)
+        }
+        // Lifted in zone 1: only zone 1's.
+        run(0, 30).let { assertTrue(it.any { A in it }); assertTrue(it.none { B in it }) }
+        // Slid on into zone 2, lifted there: only zone 2's (zone 1's does not fire on the way).
+        run(0, 50).let { assertTrue(it.any { B in it }); assertTrue(it.none { A in it }) }
+        // Slid back into zone 1, lifted there: zone 1's.
+        run(0, 50, 30).let { assertTrue(it.any { A in it }); assertTrue(it.none { B in it }) }
+        // Back before the hold distance: nothing.
+        run(0, 50, 5).let { assertTrue(it.none { A in it || B in it }) }
+        // Zone 1 kept until the lift: still only the zone lifted in.
+        run(0, 50, keep = ZoneKeep.UNTIL_LIFT).let { assertTrue(it.any { B in it }); assertTrue(it.none { A in it }) }
+    }
+
+    @Test
+    fun swipeReleaseBesideAHeldMapping() {
+        // Zone 1 holds C and fires A at a lift in it; zone 2 only fires B at a lift.
+        val e = zoneEngine(zone(0, Trigger.HOLD, C), zone(0, Trigger.RELEASE, A), zone(1, Trigger.RELEASE, B))
+        val seen = ArrayList<Set<Int>>()
+        e.touchpadDown(1, 100f, 100f, t)
+        e.slide(0, 30, seen); e.hold(20, seen)
+        assertTrue(C in seen.last())
+        e.slide(30, 50, seen); e.hold(20, seen)
+        assertTrue(seen.last().isEmpty()) // zone 2 holds nothing, as an on-release zone did
+        val at = seen.size
+        e.lift(seen)
+        assertTrue(seen.drop(at).any { B in it })
+        assertTrue(seen.drop(at).none { A in it })
+    }
+
+    @Test
+    fun cancelledTouchFiresNoSwipeRelease() {
+        val e = zoneEngine(zone(0, Trigger.RELEASE, A), zone(1, Trigger.RELEASE, B))
+        val seen = ArrayList<Set<Int>>()
+        e.touchpadDown(1, 100f, 100f, t)
+        e.slide(0, 30, seen)
+        e.touchpadCancel(); e.hold(40, seen)
+        assertTrue(seen.none { A in it || B in it })
     }
 
     @Test

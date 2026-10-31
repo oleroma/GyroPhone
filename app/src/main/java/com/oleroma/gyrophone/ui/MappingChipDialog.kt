@@ -34,7 +34,7 @@ private fun triggerHint(t: Trigger, swipe: Boolean): String = if (swipe) when (t
     Trigger.HOLD -> "Starts as the swipe reaches its hold distance, ends when you let go."
     Trigger.TAP -> "Each quick swipe, as you swipe."
     Trigger.LONG_PRESS -> "Starts once the swipe is held for the long-press time."
-    Trigger.RELEASE -> "When you let go of a held swipe."
+    Trigger.RELEASE -> "When you lift while in this zone (sliding on into the next zone does not fire it)."
     Trigger.DOUBLE_TAP -> "A second quick swipe soon after the first."
     Trigger.PRESS -> ""
 } else when (t) {

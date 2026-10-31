@@ -988,7 +988,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
 
     /**
      * The motion ends: its held directions let go (or, as the last finger lifts with the latch
-     * on, stay held: [latchMask]), zones that fire on release fire as the last finger lifts, its
+     * on, stay held: [latchMask]), the last finger's lift is noted for swipe Releases ([liftedIn]), its
      * levels go back to 0, app switching ends.
      */
     private fun endPhase() {
@@ -1004,8 +1004,10 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
                 latchN = n; latchMask = keep; latchUntil = Long.MAX_VALUE
             }
             holds(n, if (keep != 0) latchZones else null)
-            if (lift) for (d in Direction.entries) {
-                if (dirs.firesOnRelease(d, settings)) pulse(n, HOLDS[d.ordinal], dirs.zoneAt(d))
+            if (lift) {
+                liftN = n
+                for (d in Direction.entries) liftZone[d.ordinal] = dirs.zoneAt(d)
+                liftSeq++
             }
         }
         dirs.start()
@@ -1085,8 +1087,24 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
 
     /** The motion's directions have the zones [n] fingers have mapped. */
     private fun zoneCounts(n: Int) {
-        for (d in Direction.entries) dirs.zoneCount[d.ordinal] = map.zoneCount(n, d)
+        for (d in Direction.entries) {
+            dirs.zoneCount[d.ordinal] = map.zoneCount(n, d)
+            dirs.releaseOnly[d.ordinal] = map.releaseOnly(n, d)
+        }
     }
+
+    /** Counts the lifts of the last finger after a motion ([liftedIn]). */
+    var liftSeq = 0L
+        private set
+    private var liftN = 0
+    private val liftZone = IntArray(4) { -1 }
+
+    /**
+     * The last lift ([liftSeq]) was of [fingers] with held direction [d] in its [zone] (the zone the
+     * finger was in, FROM_START, or got to, DIRECTION_CHANGE): its swipe Release fires.
+     */
+    fun liftedIn(fingers: Int, d: Direction, zone: Int): Boolean =
+        liftN == fingers && liftZone[d.ordinal] == zone
 
     /** The latched directions let go. */
     private fun releaseLatch() {

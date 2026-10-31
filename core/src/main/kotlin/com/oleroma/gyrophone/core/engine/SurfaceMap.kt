@@ -19,6 +19,9 @@ import com.oleroma.gyrophone.core.model.holdDirection
 class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
     private val mapped = BooleanArray(BITS)
 
+    /** Per input bit: something maps it that is not a swipe Release ([InputSource.Surface.on]). */
+    private val holds = BooleanArray(BITS)
+
     /** Per input bit: its targets (to tell whether a tap and its double tap do the same). */
     private val targets = arrayOfNulls<HashSet<OutputTarget>>(BITS)
 
@@ -66,6 +69,7 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
             }
             val b = bit(s.fingers, s.input, s.zone)
             mapped[b] = true
+            if (s.on != com.oleroma.gyrophone.core.model.Trigger.RELEASE) holds[b] = true
             (targets[b] ?: HashSet<OutputTarget>().also { targets[b] = it }).add(m.target)
             val mo = motion[s.fingers - 1]
             val axis = when (s.input) {
@@ -121,6 +125,20 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
     fun has(fingers: Int, input: SurfaceInput, zone: Int = 0): Boolean =
         fingers in 1..4 && zone in 0 until TouchpadSettings.MAX_HOLD_ZONES && mapped[bit(fingers, input, zone)]
 
+    /**
+     * The zones of held direction [d] with [fingers] mapped only to fire as the finger lifts in
+     * them (swipe Release), a mask of 1 shl zone: nothing holds them ([DirectionTracker]).
+     */
+    fun releaseOnly(fingers: Int, d: Direction): Int {
+        if (fingers !in 1..4) return 0
+        var m = 0
+        for (z in 0 until TouchpadSettings.MAX_HOLD_ZONES) {
+            val b = bit(fingers, holdOf(d), z)
+            if (mapped[b] && !holds[b]) m = m or (1 shl z)
+        }
+        return m
+    }
+
     /** How many length zones held direction [d] with [fingers] has mapped (at least 1). */
     fun zoneCount(fingers: Int, d: Direction): Int = if (fingers in 1..4) zones[(fingers - 1) * 4 + d.ordinal] else 1
 
@@ -157,6 +175,13 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
             val d = input.holdDirection ?: return (fingers - 1) * INPUTS + input.ordinal
             return 4 * INPUTS + ((fingers - 1) * 4 + d.ordinal) * (TouchpadSettings.MAX_HOLD_ZONES - 1) + zone - 1
         }
+        private fun holdOf(d: Direction): SurfaceInput = when (d) {
+            Direction.UP -> SurfaceInput.HOLD_UP
+            Direction.RIGHT -> SurfaceInput.HOLD_RIGHT
+            Direction.DOWN -> SurfaceInput.HOLD_DOWN
+            Direction.LEFT -> SurfaceInput.HOLD_LEFT
+        }
+
         private val MOVES = listOf(
             SurfaceInput.MOTION_X, SurfaceInput.MOTION_Y,
             SurfaceInput.SWIPE_LEFT, SurfaceInput.SWIPE_RIGHT, SurfaceInput.SWIPE_UP, SurfaceInput.SWIPE_DOWN,

@@ -32,6 +32,7 @@ import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Trigger
+import com.oleroma.gyrophone.core.model.holdDirection
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.Inheritance
@@ -1642,15 +1643,26 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun out(m: Mapping, dev: Dev?, now: Long, output: Boolean = false): Float {
         val src = m.source
         val derived = derivedTrigger(src)
-        val v = value(if (derived == Trigger.HOLD) src else (src as InputSource.Surface).copy(on = Trigger.HOLD), dev, output)
+        val v = value(src, dev, output)
         val o = m.options ?: if (derived == Trigger.HOLD) return v else NO_OPTIONS
         var on = abs(v) >= PRESS_THRESHOLD
+        val sh = shaperOf(m, dev)
+        if (derived == Trigger.RELEASE) {
+            // A swipe's Release: the last finger lifted in its zone (not sliding on, not leaving the direction).
+            val s = src as InputSource.Surface
+            val pad = if (s.id.isEmpty()) touchpad else surfaces[s.id]
+            val d = s.input.holdDirection
+            on = false
+            if (pad != null && d != null) {
+                if (sh.liftSeq != Long.MIN_VALUE && pad.liftSeq != sh.liftSeq) on = pad.liftedIn(s.fingers, d, s.zone)
+                sh.liftSeq = pad.liftSeq
+            }
+        }
         if (o.cycle) cycleInfo[m]?.let { c ->
             val turn = (dev?.cycles ?: touchCycles).getOrPut(c.key) { CycleTurn() }
             turn.update(on, c.size)
             on = on && turn.turn == c.index
         }
-        val sh = shaperOf(m, dev)
         if (src is InputSource.Surface) {
             val surface = if (src.id.isEmpty()) touchpad else surfaces[src.id]
             if (surface != null) {

@@ -8,7 +8,7 @@ import kotlin.math.max
 /**
  * One mapping's output shaped by its [MapOptions], driven by its source's level ([update]) and
  * the clock. First [trigger] works out its activations from the source (HOLD: the source itself;
- * LONG_PRESS: once it has been on for [longNs]; RELEASE: its every lift, an instant; DOUBLE_TAP:
+ * LONG_PRESS: once it has been on for [longNs]; RELEASE: [update]'s rise is the lift, an instant; DOUBLE_TAP:
  * a rise within [doubleNs] of the one before, while on). Then [MapOptions.mode]: HELD is on from
  * an activation's start plus the start delay until its end, held at least the minimum hold
  * (and [pulseNs]), plus the end delay; ONCE is on for that minimum only; TOGGLE turns on at one
@@ -24,6 +24,9 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
     var pulseNs = DEFAULT_PULSE_NS
 
     private var raw = false
+
+    /** A swipe Release: the source's lift count it last saw ([Touchpad.liftSeq]); MIN = none yet. */
+    var liftSeq = Long.MIN_VALUE
     private var rawStartNs = Long.MIN_VALUE
     private var lastRiseNs = Long.MIN_VALUE
     private var double = false
@@ -47,7 +50,6 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
     /** The source is [on] at [now]. */
     fun update(on: Boolean, now: Long) {
         val rose = on && !raw
-        val fell = !on && raw
         raw = on
         if (rose) {
             rawStartNs = now
@@ -56,7 +58,8 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
             lastRiseNs = if (double) Long.MIN_VALUE else now
         }
         when (trigger) {
-            Trigger.RELEASE -> if (fell) {
+            // [on] is the lift itself (the engine works it out): an instant.
+            Trigger.RELEASE -> if (rose) {
                 activation(true, now); activation(false, now)
             }
 
