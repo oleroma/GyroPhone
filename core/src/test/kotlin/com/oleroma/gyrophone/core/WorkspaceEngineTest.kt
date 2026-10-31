@@ -215,12 +215,11 @@ class WorkspaceEngineTest {
             gyro = GyroSettings(mode = GyroMode.OFF)))
         val e = MappingEngine(p)
         e.setKey(xbox, AndroidKey.BUTTON_Y, true)
+        e.setTouch("g", true) // same engagement: no second flip
         assertTrue(e.gyroActive)
-        e.setTouch("g", true) // each toggle mapping flips on its own
-        assertFalse(e.gyroActive)
         e.setKey(xbox, AndroidKey.BUTTON_Y, false); e.setTouch("g", false)
         e.setTouch("g", true)
-        assertTrue(e.gyroActive)
+        assertFalse(e.gyroActive)
 
         val paused = MappingEngine(single(ws("w", listOf(sensePad), gyro = GyroSettings(mode = GyroMode.ALWAYS))))
         assertTrue(paused.gyroActive)

@@ -26,7 +26,6 @@ object ButtonLibrary {
     /** Reads a saved list; unreadable text gives null (the caller keeps the file). */
     fun decode(text: String): List<LibraryButton>? =
         runCatching { json.decodeFromString(listSerializer, text) }.getOrNull()
-            ?.map { b -> TriggerUpgrade.mappings(b.mappings).let { if (it === b.mappings) b else b.copy(mappings = it) } }
 
     fun newId(taken: Collection<String>): String {
         var n = 1

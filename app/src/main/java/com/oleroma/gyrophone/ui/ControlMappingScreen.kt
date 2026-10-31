@@ -106,6 +106,7 @@ import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.HoldZone
 import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.KeyMode
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.MouseButton
@@ -113,11 +114,9 @@ import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.PhysicalDevice
 import com.oleroma.gyrophone.core.model.SurfaceInput
-import com.oleroma.gyrophone.core.model.TargetChip
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchpadSettings
-import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.holdDirection
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.roundToInt
@@ -140,8 +139,8 @@ private val prefJson = Json { ignoreUnknownKeys = true }
 
 /** Something being dragged on the mapping screen. */
 private sealed interface Dragged {
-    /** A target from the library ([from] null) or a chip of action [from], with its [trigger]. */
-    data class Target(val target: OutputTarget, val from: BindableInput?, val trigger: Trigger = Trigger.DEFAULT) : Dragged
+    /** A target from the library ([from] null) or a chip of action [from]. */
+    data class Target(val target: OutputTarget, val from: BindableInput?) : Dragged
     data class Preset(val preset: MapPreset) : Dragged
 
     /** An action card moved within its [group] (the one list: the control's actions, a swipe button's with the chosen fingers). */
@@ -157,9 +156,7 @@ private sealed interface Dragged {
  * zone (a held direction with mappings), and while dragging the [Landing] spot where the drag goes.
  */
 private sealed interface RowItem {
-    data class Chip(val zone: Int, val target: OutputTarget, val trigger: Trigger = Trigger.DEFAULT) : RowItem {
-        val chip: TargetChip get() = TargetChip(target, trigger)
-    }
+    data class Chip(val zone: Int, val target: OutputTarget) : RowItem
     data class Divider(val k: Int) : RowItem
     data object End : RowItem
     data object Landing : RowItem
@@ -398,12 +395,6 @@ internal fun ControlMappingScreen(
 
     /** What the level above maps [input] to (cleared ones left out). */
     fun parentOf(input: BindableInput) = Bindings.targets(parentView, input).filter { it != OutputTarget.NoOutput }
-
-    /** Nothing in each trigger slot the level above maps [input] in (each slot inherits on its own), at least its press. */
-    fun clearsOf(input: BindableInput): List<TargetChip> =
-        Bindings.chips(parentView, input).filter { it.target != OutputTarget.NoOutput }
-            .map { TargetChip(OutputTarget.NoOutput, Trigger(on = it.trigger.on, taps = it.trigger.taps, where = it.trigger.where)) }
-            .distinct().ifEmpty { listOf(TargetChip(OutputTarget.NoOutput)) }
     // Drag callbacks outlive a composition: everything they read goes through state.
     val currentMappings by rememberUpdatedState(view)
     val allMappings by rememberUpdatedState(mappings)
@@ -471,8 +462,6 @@ internal fun ControlMappingScreen(
     var recent by remember { mutableStateOf(loadRecent(runtime)) }
     var hapticDraft by remember { mutableStateOf<Pair<BindableInput, OutputTarget>?>(null) }
     var layerDraft by remember { mutableStateOf<Pair<BindableInput, OutputTarget.Layer>?>(null) }
-    // The chip whose trigger is being set, with its action (its zone's input).
-    var triggerDraft by remember { mutableStateOf<Pair<BindableInput, TargetChip>?>(null) }
     var setMenu by remember { mutableStateOf<MappingSet?>(null) }
     var capturing by remember { mutableStateOf(false) }
     var split by remember {
@@ -532,11 +521,16 @@ internal fun ControlMappingScreen(
         }
     }
 
+    fun remove(input: BindableInput, t: OutputTarget) = change(
+        Bindings.removeTarget(currentMappings, input, t),
+        "Removed " + Describe.shortTarget(t) + " from " + actionTitle(currentControl, input),
+    )
+
     fun applyPreset(p: MapPreset) = change(p.apply(currentMappings), "Applied " + p.label)
 
     /** [input] maps nothing here, so it does not do what the level above maps it to. */
     fun clear(input: BindableInput) = change(
-        Bindings.setChips(currentMappings, input, clearsOf(input)),
+        Bindings.setTargets(currentMappings, input, listOf(OutputTarget.NoOutput)),
         "Cleared " + actionTitle(currentControl, input),
     )
 
@@ -558,7 +552,7 @@ internal fun ControlMappingScreen(
     /** Every action does nothing: cleared where the level above maps it, its own mappings gone. */
     fun clearAll() = change(
         inputs.fold(currentMappings) { m, input ->
-            Bindings.setChips(m, input, if (parentOf(input).isNotEmpty()) clearsOf(input) else emptyList())
+            Bindings.setTargets(m, input, if (parentOf(input).isNotEmpty()) listOf(OutputTarget.NoOutput) else emptyList())
         },
         "Cleared every action",
     )
@@ -613,7 +607,7 @@ internal fun ControlMappingScreen(
         for (z in 0 until zonesOf(input)) {
             if (z > 0) add(RowItem.Divider(z))
             val zi = if (z == 0) input else Bindings.zoneInput(input, z)
-            for (c in Bindings.chips(currentMappings, zi)) add(RowItem.Chip(z, c.target, c.trigger))
+            for (t in Bindings.targets(currentMappings, zi)) add(RowItem.Chip(z, t))
         }
         if (hasEnd(input)) add(RowItem.End)
     }
@@ -624,7 +618,7 @@ internal fun ControlMappingScreen(
             val s = f.sources.first() as? InputSource.Surface
             val zone = s?.zone ?: 0
             val base = if (s != null) Bindings.zoneInput(f, 0) else f
-            if (base.sources.first() == input.sources.first()) RowItem.Chip(zone, d.target, d.trigger) else null
+            if (base.sources.first() == input.sources.first()) RowItem.Chip(zone, d.target) else null
         }
 
         is Dragged.Divider -> if (d.card.sources.first() == input.sources.first()) RowItem.Divider(d.k) else null
@@ -684,16 +678,16 @@ internal fun ControlMappingScreen(
      * dividers before it, in its order. Zones left empty close up in [change].
      */
     fun withRow(m: List<Mapping>, card: BindableInput, row: List<RowItem>): List<Mapping> {
-        val lists = mutableListOf(mutableListOf<TargetChip>())
+        val lists = mutableListOf(mutableListOf<OutputTarget>())
         for (item in row) when (item) {
-            is RowItem.Chip -> lists.last().add(item.chip)
+            is RowItem.Chip -> lists.last().add(item.target)
             is RowItem.Divider, RowItem.End -> lists.add(mutableListOf())
             RowItem.Landing -> {}
         }
         var out = m
         for (z in 0 until maxOf(lists.size, zonesOf(card)).coerceAtMost(TouchpadSettings.MAX_HOLD_ZONES)) {
             val zi = if (z == 0) card else Bindings.zoneInput(card, z)
-            out = Bindings.setChips(out, zi, lists.getOrNull(z).orEmpty())
+            out = Bindings.setTargets(out, zi, lists.getOrNull(z).orEmpty())
         }
         return out
     }
@@ -706,6 +700,7 @@ internal fun ControlMappingScreen(
     /** What [input]'s ⚙ opens: its own settings, or a held direction's zones; null = no ⚙. */
     fun gearOf(input: BindableInput): (() -> Unit)? {
         if (settings?.action?.invoke(input) != null) return { actionDialog = input }
+        if (Bindings.targets(view, input).any { it is OutputTarget.Key }) return { actionDialog = input }
         val src = input.sources.first() as? InputSource.Surface
         if (src?.input?.holdDirection != null && onZoneSettings != null && zonesNow && zonesOf(input) > 1) {
             return { zoneDialog = input to null }
@@ -783,11 +778,10 @@ internal fun ControlMappingScreen(
                         pick(zi, d.target)
                     } else {
                         if (from == null) addRecent(d.target)
-                        val dropped = RowItem.Chip(zone, d.target, d.trigger)
-                        row.add(i, dropped)
-                        val base = if (from == null || c != null) currentMappings else Bindings.removeChip(currentMappings, from, dropped.chip)
+                        row.add(i, RowItem.Chip(zone, d.target))
+                        val base = if (from == null || c != null) currentMappings else Bindings.removeTarget(currentMappings, from, d.target)
                         // Already in the zone it lands in: just moved there, not twice.
-                        val cleaned = if (c == null) row.filterIndexed { j, it -> j == i || !(it is RowItem.Chip && it.chip == dropped.chip && zoneIn(row, j) == zone) } else row
+                        val cleaned = if (c == null) row.filterIndexed { j, it -> j == i || !(it is RowItem.Chip && it.target == d.target && zoneIn(row, j) == zone) } else row
                         change(
                             withRow(base, card, cleaned),
                             (if (from == null) "Mapped " else "Moved ") + Describe.shortTarget(d.target) + " to " + actionTitle(currentControl, zi),
@@ -796,10 +790,7 @@ internal fun ControlMappingScreen(
                     done = true
                 } else if (from != null && libraryBounds.contains(dragPos)) {
                     // Dropped back on the library it goes; anywhere else it stays.
-                    change(
-                        Bindings.removeChip(currentMappings, from, TargetChip(d.target, d.trigger)),
-                        "Removed " + Describe.shortTarget(d.target) + " from " + actionTitle(currentControl, from),
-                    )
+                    remove(from, d.target)
                     done = true
                 }
             }
@@ -958,12 +949,7 @@ internal fun ControlMappingScreen(
                     ActionCard(
                         title = if (isSurface(input)) input.label else actionLabel(control, input),
                         row = row,
-                        // Each trigger slot inherits on its own: the level above's chips in slots this one leaves alone.
-                        inherited = if (ownBase) emptyList() else {
-                            val slots = Bindings.chips(view, input).mapTo(HashSet()) { it.trigger.slot }
-                            Bindings.chips(parentView, input).filter { it.target != OutputTarget.NoOutput && it.trigger.slot !in slots }
-                                .map { it.target }.distinct()
-                        },
+                        inherited = if (own.isEmpty() && !ownBase) parent else emptyList(),
                         parentName = parentName,
                         onClear = if (parent.isNotEmpty() && own != listOf(OutputTarget.NoOutput)) ({ clear(input) }) else null,
                         onFollow = if (parent.isNotEmpty() && own.isNotEmpty()) ({ follow(input) }) else null,
@@ -999,8 +985,7 @@ internal fun ControlMappingScreen(
                         onGear = gearOf(input),
                         onDividerDrag = { k, at -> selectedSrc = src; startDrag(Dragged.Divider(input, k), at) },
                         onClick = { selectedSrc = src },
-                        onChipDrag = { c, at -> selectedSrc = src; startDrag(Dragged.Target(c.target, zoneInputs[c.zone], c.trigger), at) },
-                        onChipClick = { c -> selectedSrc = src; triggerDraft = zoneInputs[c.zone] to c.chip },
+                        onChipDrag = { z, t, at -> selectedSrc = src; startDrag(Dragged.Target(t, zoneInputs[z]), at) },
                         onHandleDrag = { at -> startCardDrag(input, at) },
                         modifier = Modifier.animateItem(),
                     )
@@ -1373,29 +1358,34 @@ internal fun ControlMappingScreen(
             )
         }
     }
-    triggerDraft?.let { (input, chip) ->
-        TriggerDialog(
-            title = Describe.shortTarget(chip.target) + " · " + actionTitle(control, input),
-            trigger = chip.trigger,
-            // Area and Outside are where a finger counts on a touch button or stick.
-            hasWhere = input.sources.first() is InputSource.Touch && !control.isTouchpadStandIn,
-            direction = (input.sources.first() as? InputSource.Surface)?.input?.holdDirection != null,
-            onChange = { next ->
-                if (next != chip.trigger) {
-                    change(Bindings.setTrigger(currentMappings, input, chip, next), Describe.shortTarget(chip.target) + ": " + Describe.triggerBadge(next).ifEmpty { "Press" })
-                    triggerDraft = input to chip.copy(trigger = next)
-                }
-            },
-            onDismiss = { triggerDraft = null },
-        )
-    }
     actionDialog?.let { input ->
         val content = settings?.action?.invoke(input)
-        if (content != null) AlertDialog(
+        val keys = Bindings.targets(view, input).filterIsInstance<OutputTarget.Key>()
+        if (content != null || keys.isNotEmpty()) AlertDialog(
             onDismissRequest = { actionDialog = null },
             title = { Text("⚙ " + actionTitle(control, input)) },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
+                    // How each key it presses holds: while held, toggled, or for the next key only.
+                    for (k in keys) {
+                        Text(Describe.shortTarget(k.copy(mode = KeyMode.HOLD)), style = MaterialTheme.typography.labelLarge)
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            for (mode in KeyMode.entries) FilterChip(
+                                selected = k.mode == mode,
+                                onClick = {
+                                    val next = Bindings.targets(view, input).map { if (it == k) k.copy(mode = mode) else it }
+                                    change(Bindings.setTargets(view, input, next), Describe.shortTarget(k.copy(mode = KeyMode.HOLD)) + ": " + mode.label)
+                                },
+                                label = { Text(mode.label) },
+                            )
+                        }
+                    }
+                    if (keys.isNotEmpty()) Text(
+                        "Toggle: pressed once it stays down until pressed again. Next key only: it stays down until the next other key is let go.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
                     content?.invoke()
                 }
             },
@@ -1569,9 +1559,7 @@ private fun ActionCard(
     onDividerDrag: (Int, Offset) -> Unit,
     onClick: () -> Unit,
     /** A long press on a chip starts dragging it (back onto the library to remove it). */
-    onChipDrag: (RowItem.Chip, Offset) -> Unit,
-    /** A tap on a chip: its trigger. */
-    onChipClick: (RowItem.Chip) -> Unit,
+    onChipDrag: (Int, OutputTarget, Offset) -> Unit,
     /** The ⠿ handle starts moving the card. */
     onHandleDrag: (Offset) -> Unit,
     modifier: Modifier = Modifier,
@@ -1758,9 +1746,8 @@ private fun ActionCard(
                             Row(
                                 Modifier
                                     .onGloballyPositioned { onItemBounds(item, Rect(it.positionInRoot(), it.size.toSize())) }
-                                    .dragSource(item, chipCoords) { chipDrag(item, it) }
+                                    .dragSource(z to t, chipCoords) { chipDrag(z, t, it) }
                                     .clip(RoundedCornerShape(8.dp))
-                                    .clickable { onChipClick(item) }
                                     .background(
                                         if (setId == MappingSet.BASE) colors.secondaryContainer else setColor(setId).copy(alpha = 0.35f),
                                     )
@@ -1768,24 +1755,12 @@ private fun ActionCard(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 if (setId != MappingSet.BASE) SetNumber(setId, Modifier.padding(start = 6.dp))
-                                val badge = Describe.triggerBadge(item.trigger)
                                 Text(
                                     Describe.shortTarget(t),
                                     style = MaterialTheme.typography.labelLarge,
                                     color = fg,
                                     maxLines = 1,
-                                    modifier = Modifier.padding(start = if (setId == MappingSet.BASE) 10.dp else 6.dp, end = if (badge.isEmpty()) 10.dp else 4.dp),
-                                )
-                                if (badge.isNotEmpty()) Text(
-                                    badge,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = fg,
-                                    maxLines = 1,
-                                    modifier = Modifier
-                                        .padding(end = 6.dp)
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(fg.copy(alpha = 0.12f))
-                                        .padding(horizontal = 4.dp),
+                                    modifier = Modifier.padding(start = if (setId == MappingSet.BASE) 10.dp else 6.dp, end = 10.dp),
                                 )
                             }
                         }

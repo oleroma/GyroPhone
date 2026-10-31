@@ -14,7 +14,7 @@ import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
-import com.oleroma.gyrophone.core.model.TriggerUpgrade
+import com.oleroma.gyrophone.core.model.ButtonGyroLayers
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import org.junit.Assert.assertEquals
@@ -102,16 +102,16 @@ class GyroMappingsTest {
             sets = listOf(MappingSet(1)),
             mappings = listOf(Mapping(InputSource.Touch("aim"), lx)),
         )
-        val up = TriggerUpgrade.workspace(ws)
+        val up = ButtonGyroLayers.workspace(ws)
         assertTrue(up.touchControls.all { it.gyro.isEmpty() })
         assertEquals(listOf(1, 2, 3), up.sets.map { it.id })
         assertEquals(listOf("Aim", "Button"), up.sets.drop(1).map { it.name })
         // The button still does what it did, and holds its layer too.
         assertEquals(
-            listOf(lx, OutputTarget.Layer(2, override = true, follows = true)),
+            listOf(lx, OutputTarget.Layer(2, override = true, whileHeld = true)),
             up.mappings.filter { it.source == InputSource.Touch("aim") }.map { it.target },
         )
-        assertEquals(up, TriggerUpgrade.workspace(up))
+        assertEquals(up, ButtonGyroLayers.workspace(up))
 
         val e = MappingEngine(single(ws))
         assertEquals(12f, e.gyroSettings.sensitivityOf(MotionAxis.YAW))
@@ -132,7 +132,7 @@ class GyroMappingsTest {
             "w", "w",
             touchControls = (1..12).map { TouchControl("b$it", TouchKind.BUTTON, "b$it", 0.5f, 0.5f, gyro = listOf(ButtonGyro(sensitivity = it.toFloat()))) },
         )
-        val up = TriggerUpgrade.workspace(ws)
+        val up = ButtonGyroLayers.workspace(ws)
         assertEquals(MappingSet.MAX, up.sets.size)
         assertTrue(up.touchControls.all { it.gyro.isEmpty() })
     }

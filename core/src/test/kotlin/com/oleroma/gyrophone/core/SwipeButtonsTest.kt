@@ -16,7 +16,6 @@ import com.oleroma.gyrophone.core.model.StickAxis
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.SurfaceSettings
 import com.oleroma.gyrophone.core.model.TouchControl
-import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.MoveSettings
 import com.oleroma.gyrophone.core.model.MoveSlot
@@ -148,8 +147,8 @@ class SwipeButtonsTest {
     @Test
     fun everyButtonIsATouchSurface() {
         val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f)
-        // Press (one finger's), the other surface inputs for 1..4 fingers, then its gyro axes, tilt and shake.
-        assertEquals(1 - 1 + (1..4).sumOf { Bindings.surfaceInputs(it).size } + 3 + 7, Bindings.touchInputs(b).size)
+        // Press (one finger's hold), outside, zone, the other surface inputs for 1..4 fingers, then its gyro axes, tilt and shake.
+        assertEquals(3 - 1 + (1..4).sumOf { Bindings.surfaceInputs(it).size } + 3 + 7, Bindings.touchInputs(b).size)
     }
 
     @Test
@@ -179,18 +178,29 @@ class SwipeButtonsTest {
     }
 
     @Test
-    fun swipeModeMakesTheOneFingerPressTheButtons() {
+    fun swipeModeMovesGesturesToTheSurface() {
         fun m(s: InputSource, k: Int = A) = Mapping(s, OutputTarget.Key(k))
         val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, swipe = true)
         val w = Workspace(
             id = "w", name = "w", touchControls = listOf(b),
             mappings = listOf(
+                m(InputSource.TouchTap("b")),
+                m(InputSource.Surface(1, SurfaceInput.TAP, "b")), // the same twice: kept once
+                m(InputSource.TouchLongPress("b"), W),
                 m(InputSource.Surface(1, SurfaceInput.HOLD, "b"), W),
                 m(InputSource.Surface(2, SurfaceInput.HOLD, "b"), W),
             ),
         )
         val swiped = Bindings.matchSwipeModes(w)
-        assertEquals(listOf(m(InputSource.Touch("b"), W), m(InputSource.Surface(2, SurfaceInput.HOLD, "b"), W)), swiped.mappings)
+        assertEquals(
+            listOf(
+                m(InputSource.Surface(1, SurfaceInput.TAP, "b")),
+                m(InputSource.Surface(1, SurfaceInput.LONG_PRESS, "b"), W),
+                m(InputSource.Touch("b"), W),
+                m(InputSource.Surface(2, SurfaceInput.HOLD, "b"), W),
+            ),
+            swiped.mappings,
+        )
         assertTrue(Bindings.matchSwipeModes(swiped) === swiped)
     }
 
@@ -202,7 +212,7 @@ class SwipeButtonsTest {
             mappings = listOf(Mapping(InputSource.Touch("b"), OutputTarget.Key(A), set = 1)),
         )
         val out = Bindings.matchSwipeModes(w)
-        assertEquals(listOf(Mapping(InputSource.Touch("b"), OutputTarget.Key(A), set = 1, trigger = Trigger.TAP)), out.mappings)
+        assertEquals(listOf(Mapping(InputSource.Surface(1, SurfaceInput.TAP, "b"), OutputTarget.Key(A), set = 1)), out.mappings)
         assertFalse(out.touchControls.single().swipeTapOnRelease)
     }
 
@@ -210,8 +220,8 @@ class SwipeButtonsTest {
     fun swipeButtonsOfferOneHold() {
         val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, swipe = true)
         val one = Bindings.swipeInputs(b, 1)
-        assertEquals(listOf(InputSource.Touch("b")), one.filter { it.label == "Press" }.map { it.sources.first() })
+        assertEquals(listOf(InputSource.Touch("b")), one.filter { it.label == "Hold" }.map { it.sources.first() })
         assertTrue(one.none { (it.sources.first() as? InputSource.Surface)?.input == SurfaceInput.HOLD })
-        assertEquals(InputSource.Surface(2, SurfaceInput.HOLD, "b"), Bindings.swipeInputs(b, 2).first { it.label == "Press" }.sources.first())
+        assertEquals(InputSource.Surface(2, SurfaceInput.HOLD, "b"), Bindings.swipeInputs(b, 2).first { it.label == "Hold" }.sources.first())
     }
 }

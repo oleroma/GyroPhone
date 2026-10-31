@@ -59,7 +59,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     }
 
     /** What is mapped; by default what [settings]' touchpad switches stand for. */
-    var map: SurfaceMap = map ?: SurfaceMap(Bindings.legacyTouchpadMappings(settings))
+    var map: SurfaceMap = map ?: SurfaceMap(Bindings.defaultTouchpadMappings(settings))
 
     /** Display density (px per dp); thresholds and sensitivity are in dp. */
     var pxPerDp: Float = 1f
@@ -283,49 +283,6 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     private val aimRun = Array(MAX_FINGERS) { Run() }
     private var aimCount = 0
 
-    /**
-     * Per finger count (index n - 1): the triggers of its Press action, when the engine tracks
-     * them (null = none). A press of n fingers starts when the n-th finger lands (a finger more
-     * ends it silently and starts the next count's), and ends when one lifts; the fingers left
-     * press nothing until all have lifted. Moving past the tap slop, or the fingers scrolling,
-     * pinching or swiping, makes it neither a tap nor a long press.
-     */
-    internal val presses = arrayOfNulls<ButtonGestures>(4)
-
-    /** The finger count pressing now (0 = none), and whether the touch's press already ended. */
-    private var pressN = 0
-    private var pressSpent = false
-
-    /** Gives [presses] the tap window ([longPressNanos]) and double window ([doubleTapNanos]). */
-    internal fun timePresses() {
-        for (p in presses) if (p != null) {
-            p.tapNs = longPressNanos; p.doubleNs = doubleTapNanos
-        }
-    }
-
-    /** The fingers down are now [count]: a new count's press starts, ending the one before silently. */
-    private fun pressFingers(now: Long) {
-        if (pressSpent || count !in 1..4 || count <= pressN) return
-        if (pressN > 0) presses[pressN - 1]?.cancel(now, minPulseNanos)
-        pressN = count
-        presses[count - 1]?.down(now, minPulseNanos)
-    }
-
-    /** A finger lifted ([silent]: cancelled): the press ends, and nothing presses until all fingers lift. */
-    private fun pressLift(now: Long, silent: Boolean) {
-        if (pressN > 0) {
-            val p = presses[pressN - 1]
-            if (silent) p?.cancel(now, minPulseNanos) else p?.up(now, minPulseNanos)
-            pressN = 0
-        }
-        pressSpent = count > 0
-    }
-
-    /** The press is no longer a tap or long press. */
-    private fun pressDirty() {
-        if (pressN > 0) presses[pressN - 1]?.dirty()
-    }
-
     /** Fingers down, aiming ones included. */
     val fingers: Int get() = count + aimCount
 
@@ -384,7 +341,6 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         downX[slot] = x; downY[slot] = y; lastX[slot] = x; lastY[slot] = y
         baseEventNs[slot] = eventNs; lastEventNs[slot] = eventNs
         count++
-        pressFingers(now)
         latchUntil = Long.MAX_VALUE // a latch never times out under a finger
         touchMax = if (count == 1) 1 else max(touchMax, count)
         holdCount()
@@ -497,7 +453,6 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
             State.SWIPE -> route(phaseN, (x - oldX) / count, (y - oldY) / count, now, eventNs)
             State.IDLE, State.TAP_WAIT, State.IGNORE -> Unit
         }
-        if (pressN > 0 && (pastSlop(slot) || state == State.SCROLL || state == State.PINCH || state == State.SWIPE)) pressDirty()
     }
 
     fun up(pointer: Long, now: Long) {
@@ -510,7 +465,6 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         if (slot < 0) return
         used[slot] = false
         count--
-        pressLift(now, silent = false)
         movedMask = 0
         holdCount()
         armLong(0, now)
@@ -648,7 +602,6 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     private fun cancelFingerSlot(slot: Int) {
         used[slot] = false
         count--
-        pressLift(nowNs, silent = true)
         movedMask = 0
         holdCount()
         armLong(0, nowNs)
@@ -1495,8 +1448,6 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         dzHolding = false; catching = false; catchMotion = null; rearmable = false
         pendingTapN = 0; lastTapN = 0; longN = 0; longOn = false; doubleHeld = false
         dirs.start(); latchN = 0; latchMask = 0; latchUntil = Long.MAX_VALUE
-        if (pressN > 0) presses[pressN - 1]?.cancel(nowNs, minPulseNanos)
-        pressN = 0; pressSpent = false
     }
 
     /**

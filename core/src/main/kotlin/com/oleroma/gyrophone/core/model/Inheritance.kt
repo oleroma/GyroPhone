@@ -4,30 +4,24 @@ package com.oleroma.gyrophone.core.model
  * How touch mappings pass down the levels: Defaults ([Profile.defaults]) → workspace
  * → button. A level maps each touch input itself or takes its parent's mapping of it, one input
  * at a time; a level that maps an input to [OutputTarget.NoOutput] has cleared it. An input is a
- * finger count, a [SurfaceInput] and a hold zone, whoever's surface it is, and one trigger of it
- * ([Trigger.slot]: a button that maps only a Tap still takes the workspace's other triggers); a
- * button's one-finger Hold is its press ([InputSource.Touch]).
+ * finger count, a [SurfaceInput] and a hold zone, whoever's surface it is; a button's one-finger
+ * Hold is its press ([InputSource.Touch]).
  *
  * Defaults have no layers: their mappings fill in the Base of a workspace. A button takes the
  * workspace's mappings of the layers in use only for inputs it maps in none of them, so a
  * button's own mapping beats the workspace's in every layer ([toButtons]).
  */
 object Inheritance {
-    /** A touch input on its surface (finger count, [SurfaceInput], hold zone) and which of its triggers. */
-    private data class Input(val fingers: Int, val input: SurfaceInput, val zone: Int, val trigger: TriggerSlot)
-
-    /** The touch input [m] maps on its surface, or null for a source that is not one. */
-    private fun inputOf(m: Mapping): Input? = when (val s = m.source) {
-        is InputSource.Surface -> Input(s.fingers, s.input, s.zone, m.trigger.slot)
-        is InputSource.Touch -> Input(1, SurfaceInput.HOLD, 0, m.trigger.slot)
+    /** The touch input [s] stands for on its surface, or null for a source that is not one. */
+    private fun inputOf(s: InputSource): Triple<Int, SurfaceInput, Int>? = when (s) {
+        is InputSource.Surface -> Triple(s.fingers, s.input, s.zone)
+        is InputSource.Touch -> Triple(1, SurfaceInput.HOLD, 0)
         else -> null
     }
 
-    /** Which input of its level [m] maps, for a workspace's own input ([isWorkspaceInput]). */
-    private fun levelKey(m: Mapping): Any? {
-        val s = m.source
-        return if (s is InputSource.Gyro || s is InputSource.Tilt || s is InputSource.Shake) m.slot else inputOf(m)
-    }
+    /** Which input of its level [s] is, for a workspace's own input ([isWorkspaceInput]). */
+    private fun levelKey(s: InputSource): Any? =
+        if (s is InputSource.Gyro || s is InputSource.Tilt || s is InputSource.Shake) s else inputOf(s)
 
     /**
      * [own] with [parent]'s Base mappings of the workspace's own inputs (touchpad and gyro,
@@ -35,8 +29,8 @@ object Inheritance {
      */
     fun fill(own: List<Mapping>, parent: List<Mapping>): List<Mapping> {
         val mapped = HashSet<Any>()
-        for (m in own) if (m.set == MappingSet.BASE && m.source.isWorkspaceInput) levelKey(m)?.let(mapped::add)
-        val taken = parent.filter { m -> m.set == MappingSet.BASE && m.source.isWorkspaceInput && levelKey(m) !in mapped }
+        for (m in own) if (m.set == MappingSet.BASE && m.source.isWorkspaceInput) levelKey(m.source)?.let(mapped::add)
+        val taken = parent.filter { m -> m.set == MappingSet.BASE && m.source.isWorkspaceInput && levelKey(m.source) !in mapped }
         return if (taken.isEmpty()) own else own + taken
     }
 
@@ -47,8 +41,8 @@ object Inheritance {
     fun workspace(w: Workspace, defaults: Workspace): List<Mapping> = fill(w.mappings, defaults(defaults))
 
     /** Which of [inputOf] the mappings of [id] in [ms] cover. */
-    private fun inputsOf(ms: List<Mapping>, id: String): Set<Input> {
-        val out = HashSet<Input>()
+    private fun inputsOf(ms: List<Mapping>, id: String): Set<Triple<Int, SurfaceInput, Int>> {
+        val out = HashSet<Triple<Int, SurfaceInput, Int>>()
         for (m in ms) {
             val s = m.source
             val owner = when (s) {
@@ -56,7 +50,7 @@ object Inheritance {
                 is InputSource.Touch -> s.id
                 else -> null
             }
-            if (owner == id) inputOf(m)?.let(out::add)
+            if (owner == id) inputOf(s)?.let(out::add)
         }
         return out
     }
@@ -81,7 +75,7 @@ object Inheritance {
         val out = ArrayList(inUse)
         for (id in buttons) {
             val own = inputsOf(inUse, id)
-            for (m in pad) if (inputOf(m) !in own) out.add(forButton(m, id))
+            for (m in pad) if (inputOf(m.source) !in own) out.add(forButton(m, id))
         }
         return out
     }
@@ -97,17 +91,17 @@ object Inheritance {
         // As an override layer laid over Base (a set switched to as a whole has nothing of Base).
         val over = if (set == MappingSet.BASE) emptyList() else listOf(set)
         val pad = layered(touchpad.filter { it.source.isTouchpad }, MappingSet.BASE, over, keepNothing = true)
-        return pad.filter { inputOf(it) !in own }.map { forButton(it, id) }
+        return pad.filter { inputOf(it.source) !in own }.map { forButton(it, id) }
     }
 
     /**
-     * [ms] without the [OutputTarget.NoOutput] of each input (action and trigger, set) that maps
-     * something else too: mapping an action that was cleared overrides it with that instead.
+     * [ms] without the [OutputTarget.NoOutput] of each input (source, set) that maps something
+     * else too: mapping an action that was cleared overrides it with that instead.
      */
     fun tidy(ms: List<Mapping>): List<Mapping> {
-        val mapped = ms.filter { it.target != OutputTarget.NoOutput }.mapTo(HashSet()) { it.slot to it.set }
-        if (ms.none { it.target == OutputTarget.NoOutput && (it.slot to it.set) in mapped }) return ms
-        return ms.filterNot { it.target == OutputTarget.NoOutput && (it.slot to it.set) in mapped }
+        val mapped = ms.filter { it.target != OutputTarget.NoOutput }.mapTo(HashSet()) { it.source to it.set }
+        if (ms.none { it.target == OutputTarget.NoOutput && (it.source to it.set) in mapped }) return ms
+        return ms.filterNot { it.target == OutputTarget.NoOutput && (it.source to it.set) in mapped }
     }
 
     /**

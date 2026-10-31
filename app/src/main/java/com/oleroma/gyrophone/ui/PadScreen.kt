@@ -127,7 +127,6 @@ import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Placement
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchAreaKind
-import com.oleroma.gyrophone.core.model.Where
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchLayer
@@ -1186,24 +1185,18 @@ fun PadScreen(
                 val padOwner = HashSet<PointerId>()
                 val cornerOwner = HashMap<PointerId, String>()
 
-                // What the engine needs told of each control: a stick's press (On touch), and the
-                // Area and Outside of press mappings with that Where.
-                val stickIds = controls.filter { it.kind == TouchKind.STICK }.mapTo(HashSet()) { it.id }
-                val areaMapped = workspace.mappings.mapNotNullTo(HashSet()) { m ->
-                    val s = m.source as? InputSource.Touch ?: return@mapNotNullTo null
-                    when (m.trigger.where) {
-                        Where.AREA -> InputSource.TouchArea(s.id, TouchAreaKind.ZONE)
-                        Where.OUTSIDE -> InputSource.TouchArea(s.id, TouchAreaKind.OUTSIDE)
-                        Where.BUTTON -> if (s.id in stickIds) InputSource.TouchArea(s.id, TouchAreaKind.HELD) else null
-                    }
-                }
+                // On touch, Outside and Zone mappings (TouchArea sources).
+                val areaMapped = workspace.mappings.mapNotNullTo(HashSet()) { it.source as? InputSource.TouchArea }
                 fun mapped(id: String, kind: TouchAreaKind) = InputSource.TouchArea(id, kind) in areaMapped
                 val zoneControls = controls.filter { mapped(it.id, TouchAreaKind.ZONE) }
-                // A button with only Area mappings holds nothing itself: a finger landing on it acts as
+                // A button with only a Zone mapping holds nothing itself: a finger landing on it acts as
                 // if it landed on what is under it (the touchpad or another control).
                 val zoneOnly = zoneControls.filter { c ->
                     c.kind == TouchKind.BUTTON && workspace.mappings.all { m ->
-                        touchIdOf(m.source) != c.id || (m.source == InputSource.Touch(c.id) && m.trigger.where == Where.AREA)
+                        touchIdOf(m.source) != c.id || m.source == InputSource.TouchArea(
+                            c.id,
+                            TouchAreaKind.ZONE
+                        )
                     }
                 }.mapTo(HashSet()) { it.id }
                 // Front first, as touches see them (size, layer); see hitOrder.

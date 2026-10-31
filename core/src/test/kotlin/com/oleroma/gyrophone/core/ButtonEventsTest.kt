@@ -17,11 +17,6 @@ import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
-import com.oleroma.gyrophone.core.model.FireAt
-import com.oleroma.gyrophone.core.model.Output
-import com.oleroma.gyrophone.core.model.Taps
-import com.oleroma.gyrophone.core.model.Trigger
-import com.oleroma.gyrophone.core.model.When
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -120,32 +115,28 @@ class ButtonEventsTest {
     }
 
     @Test
-    fun doubleTapIsNeitherASingleTapNorALongPress() {
-        val single = Mapping(InputSource.Touch("b"), OutputTarget.Key(B), trigger = Trigger(on = When.TAP, taps = Taps.SINGLE))
-        val held = Mapping(InputSource.Touch("b"), OutputTarget.Key(C), trigger = Trigger.DOUBLE_PRESS)
-        val e = engine(press, single, held, long, Mapping(InputSource.Touch("b"), OutputTarget.Key(E), trigger = Trigger.DOUBLE_TAP))
+    fun doubleTapIsNeitherATapNorALongPress() {
+        val e = engine(press, tap, double, long)
         e.tap()
         t += 100 * MS
         e.buttonDown(1, "b", 10f, 10f)
         assertEquals(setOf(A, C), e.keys()) // the press is raw: it presses every time
         t += 800 * MS
-        assertEquals(setOf(A, C), e.keys()) // held: the double press, no long press
+        assertEquals(setOf(A, C), e.keys()) // held: still the double tap, no long press
         e.buttonUp(1)
-        repeat(5) { t += 100 * MS; assertEquals(emptySet<Int>(), e.keys()) } // too long for a double tap
-        // A third press starts over.
+        repeat(5) { t += 100 * MS; assertEquals(emptySet<Int>(), e.keys()) }
+        // A third tap starts over.
         e.buttonDown(1, "b", 10f, 10f)
         assertEquals(setOf(A), e.keys())
     }
 
     @Test
     fun quickDoubleTapStillShows() {
-        val e = engine(Mapping(InputSource.Touch("b"), OutputTarget.Key(C), trigger = Trigger.DOUBLE_TAP))
+        val e = engine(double)
         e.tap()
         t += 100 * MS
         e.buttonDown(1, "b", 10f, 10f); t += 2 * MS; e.buttonUp(1)
-        e.keys() // the press shows for its minimum pulse first
-        t += 20 * MS
-        assertEquals(setOf(C), e.keys()) // then the double tap, once
+        assertEquals(setOf(C), e.keys()) // let go before any snapshot: shown once
         t += 20 * MS
         assertEquals(emptySet<Int>(), e.keys())
     }
@@ -162,67 +153,8 @@ class ButtonEventsTest {
         own.tap()
         t += 400 * MS
         assertEquals(emptySet<Int>(), own.keys()) // its own 600 ms window, not the workspace's 150
-        own.buttonDown(1, "b", 10f, 10f); own.keys(); t += 50 * MS; own.buttonUp(1)
+        own.buttonDown(1, "b", 10f, 10f)
         assertEquals(setOf(C), own.keys())
-    }
-
-    @Test
-    fun anyTapNeverWaitsAndFiresOnEveryTap() {
-        val any = Mapping(InputSource.Touch("b"), OutputTarget.Key(B), trigger = Trigger.TAP)
-        val e = engine(any, Mapping(InputSource.Touch("b"), OutputTarget.Key(C), trigger = Trigger.DOUBLE_TAP))
-        e.buttonDown(1, "b", 10f, 10f); e.keys(); t += 50 * MS; e.buttonUp(1)
-        assertEquals(setOf(B), e.keys()) // at once, though a double is mapped
-        t += 30 * MS; e.keys()
-        e.buttonDown(1, "b", 10f, 10f); e.keys(); t += 50 * MS; e.buttonUp(1)
-        assertEquals(setOf(B, C), e.keys()) // the second tap is a tap too
-    }
-
-    @Test
-    fun aDoubleWindowOfZeroTurnsDoubleOff() {
-        val e = engine(tap, double, ws = { it.copy(doubleTapMs = 0) })
-        e.buttonDown(1, "b", 10f, 10f); e.keys(); t += 50 * MS; e.buttonUp(1)
-        assertEquals(setOf(B), e.keys()) // nothing to wait for
-        t += 30 * MS; e.keys()
-        e.buttonDown(1, "b", 10f, 10f); e.keys(); t += 50 * MS; e.buttonUp(1)
-        assertEquals(setOf(B), e.keys())
-    }
-
-    @Test
-    fun movingPastTheSlopIsNeitherATapNorALongPress() {
-        val e = engine(press, tap, long)
-        e.buttonDown(1, "b", 10f, 10f)
-        e.buttonMove(1, 40f, 10f)
-        t += 50 * MS
-        e.buttonUp(1)
-        assertEquals(emptySet<Int>(), e.keys())
-        e.buttonDown(1, "b", 10f, 10f)
-        e.buttonMove(1, 40f, 10f)
-        t += 600 * MS
-        assertEquals(setOf(A), e.keys()) // the press still holds, no long press
-    }
-
-    @Test
-    fun outputsToggleFireOnceAndStick() {
-        val toggle = Mapping(InputSource.Touch("b"), OutputTarget.Key(A), trigger = Trigger(output = Output.TOGGLE))
-        val e = engine(toggle)
-        e.tap()
-        assertEquals(setOf(A), e.keys())
-        t += 500 * MS
-        assertEquals(setOf(A), e.keys()) // on until the next press
-        e.tap()
-        assertEquals(emptySet<Int>(), e.keys())
-
-        val both = Mapping(InputSource.Touch("b"), OutputTarget.Key(B), trigger = Trigger(output = Output.FIRE_ONCE, fireAt = FireAt.BOTH))
-        val f = engine(both)
-        f.buttonDown(1, "b", 10f, 10f)
-        assertEquals(setOf(B), f.keys())
-        t += 20 * MS
-        assertEquals(emptySet<Int>(), f.keys()) // a pulse
-        t += 300 * MS
-        f.buttonUp(1)
-        assertEquals(setOf(B), f.keys()) // the gap after the first pulse has shown
-        t += 20 * MS
-        assertEquals(emptySet<Int>(), f.keys())
     }
 
     private val dev = PadDevice(1, 0x45e, 0x2ea, "pad")
@@ -235,7 +167,7 @@ class ButtonEventsTest {
     private fun key(g: ButtonGesture, usage: Int) = Mapping(InputSource.KeyGesture(KEY_A, g), OutputTarget.Key(usage))
 
     @Test
-    fun controllerButtonsHaveTheSameTriggers() {
+    fun controllerButtonsHaveTheSameGestures() {
         val e = keyEngine(
             Mapping(InputSource.Key(KEY_A), OutputTarget.Key(A)),
             key(ButtonGesture.TAP, B), key(ButtonGesture.DOUBLE_TAP, C), key(ButtonGesture.LONG_PRESS, D),
@@ -248,20 +180,18 @@ class ButtonEventsTest {
         e.setKey(dev, KEY_A, false)
         e.keys(); t += 20 * MS
         assertEquals(emptySet<Int>(), e.keys())
-        // Tap: waits out the window (a double is mapped).
+        // Tap: waits out the window (the double tap does something else).
         e.setKey(dev, KEY_A, true); e.keys(); t += 50 * MS; e.setKey(dev, KEY_A, false)
         assertEquals(emptySet<Int>(), e.keys())
         t += 310 * MS
         assertEquals(setOf(B), e.keys())
         t += 20 * MS; e.keys()
-        // Double tap: on the second lift.
+        // Double tap.
         e.setKey(dev, KEY_A, true); e.keys(); t += 50 * MS; e.setKey(dev, KEY_A, false); e.keys()
         t += 100 * MS
         e.setKey(dev, KEY_A, true)
-        assertEquals(setOf(A), e.keys())
-        t += 50 * MS
+        assertEquals(setOf(A, C), e.keys())
         e.setKey(dev, KEY_A, false)
-        assertEquals(setOf(C), e.keys())
         repeat(5) { t += 100 * MS; assertTrue(B !in e.keys()) }
     }
 
@@ -272,6 +202,16 @@ class ButtonEventsTest {
         e.keys(); t += 50 * MS
         e.setKey(dev, KEY_A, false)
         assertEquals(setOf(B), e.keys()) // no double tap: at once
+    }
+
+    @Test
+    fun tapAndDoubleTapMappedAlikeStayInstant() {
+        val e = engine(
+            Mapping(InputSource.TouchTap("b"), OutputTarget.Key(B)),
+            Mapping(InputSource.TouchDoubleTap("b"), OutputTarget.Key(B))
+        )
+        e.buttonDown(1, "b", 10f, 10f); e.keys(); t += 50 * MS; e.buttonUp(1)
+        assertEquals(setOf(B), e.keys())
     }
 
     @Test

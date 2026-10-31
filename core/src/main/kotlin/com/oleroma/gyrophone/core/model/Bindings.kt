@@ -100,60 +100,47 @@ object Bindings {
     fun targets(mappings: List<Mapping>, input: BindableInput): List<OutputTarget> =
         mappings.filter { belongs(it, input) }.map { it.target }.distinct()
 
-    /** Distinct chips (target and trigger) mapped from any of input.sources, in list order. */
-    fun chips(mappings: List<Mapping>, input: BindableInput): List<TargetChip> =
-        mappings.filter { belongs(it, input) }.map { TargetChip(it.target, it.trigger) }.distinct()
-
     /**
-     * Replaces every mapping whose source is one of input.sources with sources x [chips]. Keeps
+     * Replaces every mapping whose source is one of input.sources with sources x targets. Keeps
      * other mappings and their order; new ones go where the first removed one was, else at the end.
      */
-    fun setChips(mappings: List<Mapping>, input: BindableInput, chips: List<TargetChip>): List<Mapping> {
+    fun setTargets(mappings: List<Mapping>, input: BindableInput, targets: List<OutputTarget>): List<Mapping> {
         val first = mappings.indexOfFirst { belongs(it, input) }
         val kept = mappings.filterNot { belongs(it, input) }
-        val added = input.sources.flatMap { s -> chips.distinct().map { Mapping(s, it.target, trigger = it.trigger) } }
+        val added = input.sources.flatMap { s -> targets.distinct().map { Mapping(s, it) } }
         val at = if (first < 0) kept.size else first
         return kept.subList(0, at) + added + kept.subList(at, kept.size)
     }
 
-    /** [setChips] with [targets], each keeping the triggers it has; a new one Press, Held. */
-    fun setTargets(mappings: List<Mapping>, input: BindableInput, targets: List<OutputTarget>): List<Mapping> {
-        val had = chips(mappings, input)
-        return setChips(mappings, input, targets.distinct().flatMap { t ->
-            had.filter { it.target == t }.ifEmpty { listOf(TargetChip(t)) }
-        })
-    }
-
-    /** Adds a Press, Held chip of [target] unless there is one. */
     fun addTarget(mappings: List<Mapping>, input: BindableInput, target: OutputTarget): List<Mapping> {
-        val current = chips(mappings, input)
-        return if (TargetChip(target) in current) mappings else setChips(mappings, input, current + TargetChip(target))
+        val current = targets(mappings, input)
+        return if (target in current) mappings else setTargets(mappings, input, current + target)
     }
 
-    /** Removes every chip of [target]. */
     fun removeTarget(mappings: List<Mapping>, input: BindableInput, target: OutputTarget): List<Mapping> =
-        setChips(mappings, input, chips(mappings, input).filter { it.target != target })
-
-    /** Removes [chip]. */
-    fun removeChip(mappings: List<Mapping>, input: BindableInput, chip: TargetChip): List<Mapping> =
-        setChips(mappings, input, chips(mappings, input) - chip)
-
-    /** [chip] with [trigger] instead, in its place (one chip when another already has that trigger). */
-    fun setTrigger(mappings: List<Mapping>, input: BindableInput, chip: TargetChip, trigger: Trigger): List<Mapping> =
-        setChips(mappings, input, chips(mappings, input).map { if (it == chip) it.copy(trigger = trigger) else it })
+        setTargets(mappings, input, targets(mappings, input) - target)
 
     /**
-     * Inputs a touch control exposes: BUTTON -> [Touch(id)] (its press, whose taps, long press,
-     * release, area and outside are its mappings' triggers); in swipe mode its press, then its
-     * surface's inputs for 1–4 fingers, one finger's press being the button's ([swipeInputs]);
+     * Inputs a touch control exposes: BUTTON -> [Touch(id)] (its press), tap, double tap, long
+     * press, release, outside and zone; in swipe mode its press, outside and zone, then its
+     * surface's inputs for 1–4 fingers, one finger's hold being the press ([swipeInputs]);
      * STICK -> X axis, Y axis (analog), Left, Right, Up, Down (halves), with 8 zones the four
-     * diagonals, then its press; FULLSCREEN, DISPLAY -> none.
+     * diagonals, then on touch, outside and zone; FULLSCREEN, DISPLAY -> none.
      */
     fun touchInputs(control: TouchControl): List<BindableInput> = when (control.kind) {
         TouchKind.BUTTON -> {
             val press = BindableInput(control.label.ifBlank { control.id }, listOf(InputSource.Touch(control.id)))
+            val events = listOf(
+                press,
+                BindableInput("Tap", listOf(InputSource.TouchTap(control.id))),
+                BindableInput("Double tap", listOf(InputSource.TouchDoubleTap(control.id))),
+                BindableInput("Long press", listOf(InputSource.TouchLongPress(control.id))),
+                BindableInput("Release", listOf(InputSource.TouchRelease(control.id))),
+                area(control, TouchAreaKind.OUTSIDE),
+                area(control, TouchAreaKind.ZONE),
+            )
             // Swipe mode: a touch surface, with the touchpad's inputs per finger count.
-            if (!control.swipes) listOf(press) else listOf(press) +
+            if (!control.swipes) events else listOf(press) + events.filter { it.sources.first() is InputSource.TouchArea } +
                     (1..4).flatMap { n ->
                         surfaceInputs(n, control.id).filterNot { n == 1 && isOneFingerHold(it) }
                             .map { it.copy(label = "${n}f " + it.label) }
@@ -172,7 +159,7 @@ object Bindings {
                 BindableInput("Down", s(StickAxis.Y, AxisHalf.POSITIVE)),
             ) + (if (control.zones != StickZones.EIGHT) emptyList() else StickDiagonal.entries.map {
                 BindableInput(it.label, listOf(InputSource.TouchStickDiagonal(control.id, it)))
-            }) + BindableInput("Press", listOf(InputSource.Touch(control.id)))
+            }) + TouchAreaKind.entries.map { area(control, it) }
         }
 
         TouchKind.FULLSCREEN, TouchKind.DISPLAY -> emptyList()
@@ -213,33 +200,60 @@ object Bindings {
     fun swipeInputs(control: TouchControl, fingers: Int): List<BindableInput> {
         val surface = surfaceInputs(fingers, control.id)
         if (fingers != 1 || control.id.isEmpty()) return surface
-        val press = BindableInput("Press", listOf(InputSource.Touch(control.id)))
+        val press = BindableInput(SurfaceInput.HOLD.label, listOf(InputSource.Touch(control.id)))
         return surface.map { if (isOneFingerHold(it)) press else it }
     }
 
     private fun isOneFingerHold(input: BindableInput): Boolean =
         (input.sources.first() as? InputSource.Surface)?.let { it.fingers == 1 && it.input == SurfaceInput.HOLD } == true
 
+    /** A touch button's gestures and its surface's one-finger ones, which do their job in swipe mode. */
+    private val gesturePairs: List<Pair<(String) -> InputSource, SurfaceInput>> = listOf(
+        { id: String -> InputSource.TouchTap(id) } to SurfaceInput.TAP,
+        { id: String -> InputSource.TouchDoubleTap(id) } to SurfaceInput.DOUBLE_TAP,
+        { id: String -> InputSource.TouchLongPress(id) } to SurfaceInput.LONG_PRESS,
+        { id: String -> InputSource.TouchRelease(id) } to SurfaceInput.RELEASE,
+    )
+
     /**
-     * [w] with each swipe button's one-finger press as the button's own press (its one-finger
-     * surface hold becomes [InputSource.Touch]), and "press only on a tap" turned into Tap triggers
-     * on its plain press mappings (then cleared). The same instance when nothing changes.
+     * [w] with each touch button's mappings where its mode reads them, so a button has one tap,
+     * double tap, long press, release and hold. In swipe mode those are its surface's one-finger
+     * ones (a swipe is never a tap there) and its press is the hold: its own gestures move to the
+     * surface, the surface's one-finger hold to the press, and with "press only on a tap" (then
+     * cleared) the press to a one-finger tap. Out of swipe mode the one-finger gestures move back,
+     * each unless the button has its own of that kind. The same instance when nothing changes.
      */
     fun matchSwipeModes(w: Workspace): Workspace {
-        val buttons = w.touchControls.filter { it.kind == TouchKind.BUTTON && it.swipes }.associateBy { it.id }
+        val buttons = w.touchControls.filter { it.kind == TouchKind.BUTTON }.associateBy { it.id }
         if (buttons.isEmpty()) return w
+        val own = w.mappings.mapTo(HashSet()) { it.source }
+        fun moved(s: InputSource): InputSource? {
+            when (s) {
+                is InputSource.Touch -> {
+                    val c = buttons[s.id] ?: return null
+                    return if (c.swipes && c.swipeTapOnRelease) InputSource.Surface(1, SurfaceInput.TAP, s.id) else null
+                }
+
+                is InputSource.Surface -> {
+                    val c = buttons[s.id] ?: return null
+                    if (s.id.isEmpty() || s.fingers != 1 || s.zone != 0) return null
+                    if (c.swipes) return if (s.input == SurfaceInput.HOLD) InputSource.Touch(s.id) else null
+                    val back = gesturePairs.firstOrNull { it.second == s.input }?.first?.invoke(s.id) ?: return null
+                    return back.takeIf { it !in own }
+                }
+
+                else -> {
+                    val id = touchIdOf(s) ?: return null
+                    if (buttons[id]?.swipes != true) return null
+                    val pair = gesturePairs.firstOrNull { it.first(id) == s } ?: return null
+                    return InputSource.Surface(1, pair.second, id)
+                }
+            }
+        }
         var changed = false
         val mappings = w.mappings.map { m ->
-            val s = m.source
-            when {
-                s is InputSource.Touch && buttons[s.id]?.swipeTapOnRelease == true && m.trigger.isDefault ->
-                    m.copy(trigger = Trigger.TAP).also { changed = true }
-
-                s is InputSource.Surface && s.id in buttons && s.fingers == 1 && s.zone == 0 && s.input == SurfaceInput.HOLD ->
-                    m.copy(source = InputSource.Touch(s.id)).also { changed = true }
-
-                else -> m
-            }
+            val to = moved(m.source)
+            if (to == null) m else m.copy(source = to).also { changed = true }
         }.distinct()
         val controls = w.touchControls.map { c ->
             if (c.swipes && c.swipeTapOnRelease) c.copy(swipeTapOnRelease = false).also { changed = true } else c
@@ -247,12 +261,26 @@ object Bindings {
         return if (changed) w.copy(touchControls = controls, mappings = mappings) else w
     }
 
-    /** The surface inputs offered with [fingers] down: its press (with the taps as triggers), moves, Touch directions, pinch with two. */
+    /**
+     * The gesture inputs (tap, double tap, long press, release) of a key-based [input] (a
+     * controller button or keyboard key: its first source a [InputSource.Key]), labelled by the
+     * gesture; none for sticks, triggers and other axes.
+     */
+    fun gestureInputs(input: BindableInput): List<BindableInput> {
+        val key = input.sources.firstOrNull() as? InputSource.Key ?: return emptyList()
+        return ButtonGesture.entries.map { g ->
+            BindableInput(g.label, listOf(InputSource.KeyGesture(key.keyCode, g)))
+        }
+    }
+
+    private fun area(control: TouchControl, kind: TouchAreaKind) =
+        BindableInput(kind.label, listOf(InputSource.TouchArea(control.id, kind)))
+
+    /** The surface inputs offered with [fingers] down: taps (tap-drag with one), moves, swipes, pinch with two. */
     fun surfaceInputs(fingers: Int, id: String = ""): List<BindableInput> = SurfaceInput.entries.filter { i ->
-        when {
-            // Taps are the press's triggers, swipes a Touch direction's repeating Fire once.
-            i.gesture || i.swipeDirection != null -> false
-            i == SurfaceInput.PINCH || i == SurfaceInput.PINCH_IN || i == SurfaceInput.PINCH_OUT -> fingers == 2
+        when (i) {
+            SurfaceInput.TAP_DRAG -> fingers == 1
+            SurfaceInput.PINCH, SurfaceInput.PINCH_IN, SurfaceInput.PINCH_OUT -> fingers == 2
             else -> true
         }
     }.map { i ->
@@ -262,7 +290,7 @@ object Bindings {
             else -> emptyList()
         }
         BindableInput(
-            if (i == SurfaceInput.HOLD) "Press" else i.label,
+            i.label,
             listOf(InputSource.Surface(fingers, i, id)),
             analog = i.motion,
             swipe = i.motion && i != SurfaceInput.PINCH,
@@ -275,21 +303,14 @@ object Bindings {
      * touchpad mappings: tap = left click (tap-drag and double tap with tap and drag), one finger
      * moves the cursor, two-finger tap = right click, two fingers scroll, pinch zooms.
      */
-    fun defaultTouchpadMappings(s: TouchpadSettings): List<Mapping> = TriggerUpgrade.mappings(legacyTouchpadMappings(s))
-
-    /**
-     * [defaultTouchpadMappings] as they were before mapping triggers, with the surface's own tap
-     * inputs: what a [com.oleroma.gyrophone.core.engine.Touchpad] made without mappings runs.
-     */
-    internal fun legacyTouchpadMappings(s: TouchpadSettings): List<Mapping> = buildList {
+    fun defaultTouchpadMappings(s: TouchpadSettings): List<Mapping> = buildList {
         fun add(n: Int, i: SurfaceInput, t: OutputTarget) = add(Mapping(InputSource.Surface(n, i), t))
-        val tap = SurfaceInput.TAP
         val left = OutputTarget.Mouse(MouseButton.LEFT)
         if (s.tapToClick) {
             if (s.tapDrag) {
                 add(1, SurfaceInput.TAP_DRAG, left); add(1, SurfaceInput.DOUBLE_TAP, left)
-            } else add(1, tap, left)
-            add(2, tap, OutputTarget.Mouse(MouseButton.RIGHT))
+            } else add(1, SurfaceInput.TAP, left)
+            add(2, SurfaceInput.TAP, OutputTarget.Mouse(MouseButton.RIGHT))
         }
         add(1, SurfaceInput.MOTION_X, OutputTarget.MouseAxis(MouseMotion.MOVE_X))
         add(1, SurfaceInput.MOTION_Y, OutputTarget.MouseAxis(MouseMotion.MOVE_Y))
@@ -300,12 +321,12 @@ object Bindings {
         if (s.pinchZoom) add(2, SurfaceInput.PINCH, OutputTarget.Zoom)
         if (!s.gestures) {
             // Without gestures, three and four fingers tapped a middle click.
-            if (s.tapToClick) for (n in 3..4) add(n, tap, OutputTarget.Mouse(MouseButton.MIDDLE))
+            if (s.tapToClick) for (n in 3..4) add(n, SurfaceInput.TAP, OutputTarget.Mouse(MouseButton.MIDDLE))
             return@buildList
         }
         for (n in 3..4) {
             val g = s.gesturesFor(n)
-            if (s.tapToClick) for (t in gestureTargets(g.tap)) add(n, tap, t)
+            if (s.tapToClick) for (t in gestureTargets(g.tap)) add(n, SurfaceInput.TAP, t)
             val switches = g.swipeLeft == GestureAction.SwitchApps || g.swipeRight == GestureAction.SwitchApps
             if (switches) add(n, SurfaceInput.MOTION_X, OutputTarget.SwitchApps)
             for ((input, action) in listOf(
@@ -410,6 +431,3 @@ object Bindings {
         return m
     }
 }
-
-/** One chip of an action: a target and the trigger it fires on. */
-data class TargetChip(val target: OutputTarget, val trigger: Trigger = Trigger.DEFAULT)

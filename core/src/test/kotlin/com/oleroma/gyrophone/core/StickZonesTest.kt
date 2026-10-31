@@ -85,9 +85,9 @@ class StickZonesTest {
     @Test
     fun eightZoneStickListsDiagonals() {
         val c = TouchControl("s", TouchKind.STICK, "", 0.5f, 0.5f)
-        // X, Y, four halves, then its press; 8 zones add the diagonals before that.
-        assertEquals(7, Bindings.touchInputs(c).size)
-        assertEquals(11, Bindings.touchInputs(c.copy(zones = StickZones.EIGHT)).size)
+        // X, Y, four halves, then On touch, Outside and Area; 8 zones add the diagonals before those.
+        assertEquals(9, Bindings.touchInputs(c).size)
+        assertEquals(13, Bindings.touchInputs(c.copy(zones = StickZones.EIGHT)).size)
     }
 
     @Test
