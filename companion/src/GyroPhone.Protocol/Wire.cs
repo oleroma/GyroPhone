@@ -187,6 +187,13 @@ public static class LinkInfoFlags
 
     /// <summary>With Usb: the cable runs in accessory mode (direct USB), not tethering.</summary>
     public const byte UsbDirect = 1 << 2;
+
+    /// <summary>The phone's debug tools are on: the PC keeps its debug log while LINK_INFOs carry this.</summary>
+    public const byte DebugTrace = 1 << 3;
+
+    /// <summary>With DebugTrace: a 3-bit counter; the PC saves its last 30 s of debug log when it changes.</summary>
+    public const byte DebugSaveMask = 0x70;
+    public const int DebugSaveShift = 4;
 }
 
 /// <summary>HOST_STATUS flags.</summary>

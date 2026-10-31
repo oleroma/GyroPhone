@@ -158,7 +158,8 @@ public sealed class HostEngine
         _keyMouse = keyMouse;
         _protector = protector;
         _clock = clock ?? StopwatchClock.Instance;
-        _events = events ?? NullHostEvents.Instance;
+        Debug = new DebugTrace(() => _clock.NowUs);
+        _events = new TracedEvents(events ?? NullHostEvents.Instance, Debug);
         _sessions = new SessionManager(random);
         _pairing = new PairingManager(prompt, () => (_settings.HostId, _settings.HostName), OnPaired, random, newPairKey);
         _pad.Rumble += OnRumble;
@@ -174,6 +175,18 @@ public sealed class HostEngine
             }
         }
     }
+
+    /// <summary>The debug log (see <see cref="DebugTrace"/>); the Debug window reads it.</summary>
+    public DebugTrace Debug { get; }
+
+    /// <summary>
+    /// The phone asked for a debug recording (LINK_INFO's save counter changed). Called on the rx
+    /// thread, under the engine lock: hand the work to another thread.
+    /// </summary>
+    public Action? DebugSaveRequested { get; set; }
+
+    /// <summary>The save counter of the last LINK_INFO with the debug flag; -1 until one in this session.</summary>
+    private int _debugSaves = -1;
 
     /// <summary>Optional hook for the headless latency log; called on the rx thread after injection.</summary>
     public Action<LatencySample>? LatencySampleHook { get; set; }
@@ -312,7 +325,9 @@ public sealed class HostEngine
                 SendPong(s, plain, nowUs);
                 break;
             case PacketType.LinkInfo:
-                _stats.OnLinkInfo(WireCodec.DecodeLinkInfo(plain));
+                var info = WireCodec.DecodeLinkInfo(plain);
+                _stats.OnLinkInfo(info);
+                OnDebugFlags(info.Flags, nowUs);
                 break;
             case PacketType.Bye:
                 _events.Log($"phone said bye (reason {plain[0]})");
@@ -320,6 +335,28 @@ public sealed class HostEngine
                 EndActive(hostByeReason: null);
                 break;
         }
+    }
+
+    private void OnDebugFlags(byte flags, long nowUs)
+    {
+        if ((flags & LinkInfoFlags.DebugTrace) == 0) return;
+        Debug.PhoneAsked(nowUs);
+        int saves = (flags & LinkInfoFlags.DebugSaveMask) >> LinkInfoFlags.DebugSaveShift;
+        bool asked = _debugSaves >= 0 && saves != _debugSaves;
+        _debugSaves = saves;
+        if (!asked) return;
+        Debug.Add(DebugTrace.Kind.Note, "the phone asked for a recording", nowUs);
+        DebugSaveRequested?.Invoke();
+    }
+
+    /// <summary>One line of link statistics for the debug log.</summary>
+    private string DebugLinkLine()
+    {
+        string lat = _stats.LatP50Us == HostStatus.Unknown ? "latency unknown" :
+            $"latency {_stats.LatP50Us / 1000.0:0.0} / {_stats.LatP99Us / 1000.0:0.0} ms (p50/p99)";
+        return $"got {_stats.RxPerSec}/s · loss {_stats.LossPermille / 10.0:0.0}% · {lat} · jitter {_stats.JitterUs / 1000.0:0.0} ms" +
+            $" · output {_pad.Plugged}" + (_paused ? " · paused" : "") + (_locked ? " · locked" : "") +
+            (_elevatedForeground ? " · an admin window has focus (input blocked)" : "");
     }
 
     private void HandlePendingControl(HostSession s, byte type, ReadOnlySpan<byte> plain, long nowUs)
@@ -392,6 +429,7 @@ public sealed class HostEngine
 
     private void Promote(HostSession s, long nowUs)
     {
+        _debugSaves = -1;
         var old = _sessions.Promote(s);
         if (old != null)
         {
@@ -467,6 +505,7 @@ public sealed class HostEngine
             {
                 _keyMouse.Inject(_inject.AsSpan(0, n));
                 _injections++;
+                if (Debug.Enabled) Debug.OnInject(_inject.AsSpan(0, n), nowUs);
                 for (int i = 0; i < n; i++)
                 {
                     if (_inject[i].Kind == InjectKind.Key || (_inject[i].Flags & ~(InjectEvent.MouseMove | InjectEvent.MouseWheel | InjectEvent.MouseHWheel)) != 0)
@@ -564,6 +603,7 @@ public sealed class HostEngine
                 if (_padFrameValid && x == _lastX360) return;
                 if (!TrySubmit(x)) { _padRetryAfterUs = nowUs + PadRetryUs; return; } // the next flush after it sends it again
                 _lastX360 = x;
+                if (Debug.Enabled) Debug.OnX360(x, nowUs);
                 _padFrameValid = true;
                 break;
             case OutputMode.DualShock4:
@@ -571,6 +611,7 @@ public sealed class HostEngine
                 if (_padFrameValid && f == _lastDs4) return;
                 if (!TrySubmit(f)) { _padRetryAfterUs = nowUs + PadRetryUs; return; }
                 _lastDs4 = f;
+                if (Debug.Enabled) Debug.OnDs4(f, nowUs);
                 _padFrameValid = true;
                 break;
         }
@@ -653,6 +694,7 @@ public sealed class HostEngine
             {
                 _stats.Roll();
                 SendStatus(a, nowUs);
+                if (Debug.Enabled) Debug.SecondTick(DebugLinkLine(), nowUs);
             }
         }
     }
@@ -1276,4 +1318,16 @@ internal sealed class QrSession(byte[] token, byte[] tokenId, long expiresUs, Fu
     public string? EnrolledName { get; set; }
 
     public void Clear() => System.Security.Cryptography.CryptographicOperations.ZeroMemory(Token);
+}
+
+/// <summary>Passes session events on and copies them into the debug log while it logs.</summary>
+internal sealed class TracedEvents(IHostEvents inner, DebugTrace debug) : IHostEvents
+{
+    public void StateChanged() => inner.StateChanged();
+
+    public void Log(string message)
+    {
+        if (debug.Enabled) debug.Add(DebugTrace.Kind.State, message);
+        inner.Log(message);
+    }
 }

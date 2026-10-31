@@ -255,8 +255,16 @@ class GamepadRuntime(context: Context) {
     /** State of the active link. */
     val linkState: StateFlow<LinkState> = _linkState
 
+    /** Debug tools: the Settings switch, the debug log, recordings ([PhoneDebug]). */
+    val debug = PhoneDebug(appContext, this, scope)
+
     /** Plays the engine's haptic mappings while a PC is connected. */
-    private val haptics = PhoneHaptics(appContext) { _linkState.value is LinkState.Connected }
+    private val haptics = PhoneHaptics(appContext) { _linkState.value is LinkState.Connected }.also { h ->
+        h.log = { line -> debug.trace?.add(com.oleroma.gyrophone.core.debug.DebugTrace.Kind.OUT, line) }
+    }
+
+    /** For the debug tools' header: the vibrator. */
+    val hapticsInfo: String get() = haptics.describe
 
     @Volatile
     private var running = false
@@ -447,6 +455,7 @@ class GamepadRuntime(context: Context) {
         scope.launch {
             _transport.collectLatest { kind -> link(kind).state.collect { _linkState.value = it } }
         }
+        debug.init()
     }
 
     fun setReportRate(hz: Int) {
@@ -982,6 +991,7 @@ class GamepadRuntime(context: Context) {
     private fun onGyroSample(source: GyroSource, x: Float, y: Float, z: Float, ts: Long) {
         val dt = if (lastGyroTs == 0L) 0f else ((ts - lastGyroTs) / 1e9f).coerceIn(0f, 0.05f)
         lastGyroTs = ts
+        debug.trace?.gyro((x - biasX) * RAD_TO_DEG, (y - biasY) * RAD_TO_DEG, (z - biasZ) * RAD_TO_DEG)
         calibration?.let { cal ->
             when (val r = cal.add(x, y, z, ts)) {
                 null -> Unit
