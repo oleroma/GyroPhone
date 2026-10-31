@@ -287,14 +287,16 @@ object BuiltinProfiles {
         val byId = keys.values.associateBy { it.id }
         return keyboardControls.flatMap { c ->
             val usage = byId.getValue(c.id).usage
-            fun on(input: SurfaceInput, mode: KeyMode = KeyMode.HOLD) =
-                Mapping(InputSource.Surface(1, input, c.id), OutputTarget.Key(usage, mode))
+            fun on(input: SurfaceInput, options: MapOptions? = null) =
+                Mapping(InputSource.Surface(1, input, c.id), OutputTarget.Key(usage), options = options)
             // The touchpad's double tap and tap-drag (clicks) cleared, so a key types at once.
             fun cleared(input: SurfaceInput) = Mapping(InputSource.Surface(1, input, c.id), OutputTarget.NoOutput)
             if (!HidUsage.isModifier(usage)) listOf(on(SurfaceInput.TAP), cleared(SurfaceInput.DOUBLE_TAP), cleared(SurfaceInput.TAP_DRAG))
             else listOf(
                 touch(c.id, OutputTarget.Key(usage)),
-                on(SurfaceInput.TAP, KeyMode.NEXT_KEY), on(SurfaceInput.DOUBLE_TAP, KeyMode.TOGGLE), cleared(SurfaceInput.TAP_DRAG),
+                // Tap: held until the next key (sticky); double tap: held until tapped again.
+                on(SurfaceInput.TAP, MapOptions(how = How.TOGGLE, endsOnNextInput = true)),
+                on(SurfaceInput.DOUBLE_TAP, MapOptions(how = How.TOGGLE)), cleared(SurfaceInput.TAP_DRAG),
             )
         }
     }

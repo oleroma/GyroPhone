@@ -187,10 +187,12 @@ object Triggers {
     fun all(base: InputSource): List<InputSource> = offered(base).mapNotNull { with(base, it) }
 
     /**
-     * [ms] with the Press trigger (no longer offered) turned into On touch + Once, the same
-     * thing. Returns [ms] itself when there is none.
+     * [list] with the Press trigger (no longer offered) turned into On touch + Once, the same
+     * thing, and old key modes as Toggles ([ToggleUpgrade.keyModes]). Returns [list] itself when
+     * there is none.
      */
-    fun upgrade(ms: List<Mapping>): List<Mapping> {
+    fun upgrade(list: List<Mapping>): List<Mapping> {
+        val ms = ToggleUpgrade.keyModes(list)
         if (ms.none { of(it.source) == Trigger.PRESS }) return ms
         return ms.map { m ->
             if (of(m.source) != Trigger.PRESS) m

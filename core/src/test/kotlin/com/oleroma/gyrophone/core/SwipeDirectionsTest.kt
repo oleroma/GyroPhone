@@ -5,6 +5,8 @@ import com.oleroma.gyrophone.core.engine.Touchpad
 import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
+import com.oleroma.gyrophone.core.model.How
+import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.MouseButton
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.SurfaceInput
@@ -13,7 +15,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Swipe directions: pies, activation lengths, hold modes and the latch ([TouchpadSettings] direction settings). */
+/** Swipe directions: pies, activation lengths, hold modes ([TouchpadSettings] direction settings) and the latch (a Toggle On swipe chip). */
 class SwipeDirectionsTest {
     private val ms = 1_000_000L
     private val up = 1 shl MouseButton.LEFT.bit
@@ -27,6 +29,16 @@ class SwipeDirectionsTest {
         m(SurfaceInput.HOLD_UP, MouseButton.LEFT), m(SurfaceInput.HOLD_RIGHT, MouseButton.RIGHT),
         m(SurfaceInput.HOLD_DOWN, MouseButton.MIDDLE), m(SurfaceInput.HOLD_LEFT, MouseButton.BACK),
     ))
+    private val holdList = listOf(
+        m(SurfaceInput.HOLD_UP, MouseButton.LEFT), m(SurfaceInput.HOLD_RIGHT, MouseButton.RIGHT),
+        m(SurfaceInput.HOLD_DOWN, MouseButton.MIDDLE), m(SurfaceInput.HOLD_LEFT, MouseButton.BACK),
+    )
+
+    /** [holdList] with each direction latched: a Toggle On swipe chip beside it (its timer [timerMs]). */
+    private fun latchMap(timerMs: Int = 0) = SurfaceMap(holdList + holdList.map {
+        it.copy(target = OutputTarget.NoOutput, options = MapOptions(how = How.TOGGLE, endsOnTap = true, endsAfterMs = timerMs))
+    })
+
     private val swipeMap = SurfaceMap(listOf(
         m(SurfaceInput.SWIPE_UP, MouseButton.LEFT), m(SurfaceInput.SWIPE_RIGHT, MouseButton.RIGHT),
         m(SurfaceInput.SWIPE_DOWN, MouseButton.MIDDLE), m(SurfaceInput.SWIPE_LEFT, MouseButton.BACK),
@@ -174,7 +186,7 @@ class SwipeDirectionsTest {
 
     @Test
     fun latchKeepsTheDirectionUntilATap() {
-        val f = Finger(TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE, latch = true), holdMap)
+        val f = Finger(TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE), latchMap())
         f.down(); f.go(30f, 0f); f.up()
         assertEquals(right, f.now)
         assertTrue(f.pad.latched)
@@ -185,7 +197,7 @@ class SwipeDirectionsTest {
 
     @Test
     fun latchGoesOnWithTheSameDirectionAndSwitchesToAnother() {
-        val f = Finger(TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE, latch = true), holdMap)
+        val f = Finger(TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE), latchMap())
         f.down(); f.go(30f, 0f); f.up()
         f.down(); f.go(30f, 0f)
         assertEquals(right, f.now)
@@ -200,7 +212,7 @@ class SwipeDirectionsTest {
 
     @Test
     fun latchFromStartStaysUntilTheFingerPressesSomething() {
-        val f = Finger(TouchpadSettings(latch = true), holdMap)
+        val f = Finger(TouchpadSettings(), latchMap())
         f.down(); f.go(30f, 0f); f.up()
         assertEquals(right, f.now)
         f.down(); f.go(12f, 0f) // under the hold length: the latch stays
@@ -211,7 +223,7 @@ class SwipeDirectionsTest {
 
     @Test
     fun latchLetsGoAfterItsTimer() {
-        val f = Finger(TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE, latch = true, latchReleaseMs = 200), holdMap)
+        val f = Finger(TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE), latchMap(200))
         f.down(); f.go(30f, 0f); f.up()
         assertEquals(right, f.now)
         f.settle(100)

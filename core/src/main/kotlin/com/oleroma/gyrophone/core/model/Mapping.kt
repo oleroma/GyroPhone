@@ -358,6 +358,11 @@ sealed interface OutputTarget {
     @SerialName("layer_back")
     data object LayerBack : OutputTarget
 
+    /** Ends the toggles that end on it ([MapOptions.endsOnLetGo]); shown as "(Let go)". */
+    @Serializable
+    @SerialName("let_go")
+    data object LetGo : OutputTarget
+
     /** Does nothing: in a set used as an override, it stops an input falling through to the set below. */
     @Serializable
     @SerialName("nothing")
@@ -399,6 +404,10 @@ enum class How(val label: String, val mark: String) {
  * How a mapping turns its source's activations into output: [how] (see [How]). [cycle]: the mappings of one source and set with cycle on take turns, one per activation, in
  * list order. [startDelayMs]: output starts this long after the activation; [minHoldMs]: it lasts
  * at least this long; [endDelayMs]: it lasts this much longer after the source lets go.
+ * A TOGGLE also ends ("Also ends on") on [endsOnTap] (the next touch of the same button or
+ * surface), [endsOnLetGo] (a [OutputTarget.LetGo] mapping firing), [endsAfterMs] (a timer; 0 =
+ * none) and [endsOnNextInput] (once the next other key, mouse button or pad button has been
+ * pressed and let go: a sticky Shift).
  */
 @Serializable
 data class MapOptions(
@@ -409,6 +418,10 @@ data class MapOptions(
     val startDelayMs: Int = 0,
     val endDelayMs: Int = 0,
     val minHoldMs: Int = 0,
+    val endsOnTap: Boolean = false,
+    val endsOnLetGo: Boolean = false,
+    val endsAfterMs: Int = 0,
+    val endsOnNextInput: Boolean = false,
 ) {
     /** Changes nothing (such a mapping keeps no options). */
     val none: Boolean get() = this == MapOptions()
@@ -418,6 +431,7 @@ data class MapOptions(
 
     companion object {
         const val MAX_DELAY_MS = 2000
+        const val MAX_TOGGLE_MS = 60_000
     }
 }
 

@@ -4,6 +4,7 @@ import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.GestureActions
 import com.oleroma.gyrophone.core.model.InertiaCurve
+import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.MotionFeel
 import com.oleroma.gyrophone.core.model.MoveMode
 import com.oleroma.gyrophone.core.model.SurfaceInput
@@ -194,7 +195,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     private val dirs = DirectionTracker()
     private var swiped = false
 
-    // Latch ([TouchpadSettings.latch]): held directions kept after the fingers lifted, their
+    // Latch (a Toggle On swipe chip, [SurfaceMap.latches]): held directions kept after the fingers lifted, their
     // finger count, and when they let go by themselves (Long.MAX_VALUE = not timed now).
     private var latchN = 0
     private var latchMask = 0
@@ -998,7 +999,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         if (n in 1..4) {
             val lift = count == 0 && !cancelling
             var keep = 0
-            if (lift) for (d in Direction.entries) if (settings.latchOf(d) && dirs.zones(d) != 0) keep = keep or (1 shl d.ordinal)
+            if (lift) for (d in Direction.entries) if (map.latches(n, d) && dirs.zones(d) != 0) keep = keep or (1 shl d.ordinal)
             if (keep != 0) {
                 for (d in Direction.entries) latchZones[d.ordinal] = dirs.zones(d)
                 latchN = n; latchMask = keep; latchUntil = Long.MAX_VALUE
@@ -1113,10 +1114,25 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         latchN = 0; latchMask = 0; latchUntil = Long.MAX_VALUE
     }
 
-    /** The fingers all lifted with a latch on: it lets go by itself after [TouchpadSettings.latchReleaseMs]. */
+    /**
+     * A latch that also ends on a Let go action ([letGo]) or on the next other input lets go
+     * ([SurfaceMap.latchLetGo], [SurfaceMap.latchNext]).
+     */
+    fun endLatch(letGo: Boolean) {
+        if (latchMask == 0 || latchN !in 1..4) return
+        if (if (letGo) map.latchLetGo[latchN - 1] else map.latchNext[latchN - 1]) releaseLatch()
+    }
+
+    /** A latch that ends on the next other input is on. */
+    val latchEndsOnNext: Boolean get() = latchMask != 0 && latchN in 1..4 && map.latchNext[latchN - 1]
+
+    /** A finger is on it. */
+    val touching: Boolean get() = count > 0
+
+    /** The fingers all lifted with a latch on: it lets go by itself after its timer ([SurfaceMap.latchMs]). */
     private fun armLatchTimer(now: Long) {
-        if (latchMask == 0 || latchUntil != Long.MAX_VALUE) return
-        val ms = settings.latchReleaseMs.coerceIn(0, TouchpadSettings.MAX_LATCH_RELEASE_MS)
+        if (latchMask == 0 || latchUntil != Long.MAX_VALUE || latchN !in 1..4) return
+        val ms = map.latchMs[latchN - 1].coerceIn(0, MapOptions.MAX_TOGGLE_MS)
         if (ms > 0) latchUntil = now + ms * 1_000_000L
     }
 

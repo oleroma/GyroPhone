@@ -104,7 +104,6 @@ import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.HoldZone
 import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.InputSource
-import com.oleroma.gyrophone.core.model.KeyMode
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.MappingSet
@@ -1440,46 +1439,11 @@ internal fun ControlMappingScreen(
             // A swipe's double has its quick swipe's settings.
             mappedTriggers.firstOrNull { it.first == Trigger.DOUBLE_TAP && !Triggers.isSwipe(input.sources.first()) }?.second,
         ).mapNotNull { settings?.action?.invoke(it) }
-        val keyInputs = trigInputs(input).flatMap { (_, ti) ->
-            Bindings.targets(view, ti).filterIsInstance<OutputTarget.Key>().map { ti to it }
-        }
-        val keys = keyInputs.map { it.second }
-        if (content != null || keys.isNotEmpty() || timingContents.isNotEmpty()) AlertDialog(
+        if (content != null || timingContents.isNotEmpty()) AlertDialog(
             onDismissRequest = { actionDialog = null },
             title = { Text("⚙ " + actionTitle(control, input)) },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
-                    // How each key it presses holds: while held, toggled, or for the next key only.
-                    for ((ki, k) in keyInputs) {
-                        val tr = Triggers.of(ki.sources.first())
-                        Text(
-                            (if (tr == Trigger.HOLD) "" else trigLabel(input, tr) + ": ") + Describe.shortTarget(k.copy(mode = KeyMode.HOLD)),
-                            style = MaterialTheme.typography.labelLarge,
-                        )
-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            // Toggle is every mapping's option now (its chip): offered here only to switch an old one off.
-                            for (mode in KeyMode.entries.filter { it != KeyMode.TOGGLE || k.mode == KeyMode.TOGGLE }) FilterChip(
-                                selected = k.mode == mode,
-                                onClick = {
-                                    val was = Bindings.options(view, ki, k)
-                                    val next = Bindings.targets(view, ki).map { if (it == k) k.copy(mode = mode) else it }
-                                    change(
-                                        Bindings.setTargets(view, ki, next) { t ->
-                                            if (t == k.copy(mode = mode)) was else Bindings.options(view, ki, t)
-                                        },
-                                        Describe.shortTarget(k.copy(mode = KeyMode.HOLD)) + ": " + mode.label,
-                                    )
-                                },
-                                label = { Text(mode.label) },
-                            )
-                        }
-                    }
-                    if (keys.isNotEmpty()) Text(
-                        "Next key only: it stays down until the next other key is let go (a sticky Shift). Toggle, cycle and the rest are in each chip's settings (tap it).",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp),
-                    )
                     content?.invoke()
                     for (c in timingContents) c()
                 }
@@ -1497,6 +1461,7 @@ internal fun ControlMappingScreen(
             trigger = chip.trigger,
             triggerLabel = { trigLabel(input, it) },
             swipe = Triggers.isSwipe(input.sources.first()),
+            analog = chip.target is OutputTarget.PadAxis || chip.target is OutputTarget.MouseAxis,
             options = Bindings.options(view, ti, chip.target),
             onApply = { tr, o ->
                 chipDialog = null

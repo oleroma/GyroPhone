@@ -96,7 +96,7 @@ class MappingOptionsTest {
         assertEquals(emptySet<Int>(), e.keys())
         t += 100 * MS
         assertEquals(setOf(A), e.keys())
-        e.up() // at 100 ms: held at least to 300, then 50 more
+        e.up(); e.keys() // at 100 ms: held at least to 300, then 50 more
         t += 240 * MS
         assertEquals(setOf(A), e.keys())
         t += 20 * MS
@@ -349,5 +349,110 @@ class MappingOptionsTest {
         assertTrue(held.any { A in it })
         assertTrue(A !in held.last()) // still held: the press is over
         e.touchpadUp(1); e.hold(20)
+    }
+
+    @Test
+    fun toggleAlsoEndsOnATapOfTheSameButton() {
+        val tap = Mapping(InputSource.KeyGesture(KEY_A, ButtonGesture.TAP), OutputTarget.Key(A),
+            options = MapOptions(how = How.TOGGLE, endsOnTap = true))
+        val e = keyEngine(tap)
+        e.down(); e.keys(); t += 50 * MS; e.up()
+        val on = e.hold(100)
+        assertTrue(A in on.last()) // the tap turned it on
+        e.down()
+        assertEquals(emptySet<Int>(), e.keys()) // touching it again ends it
+        t += 50 * MS; e.up()
+        assertTrue(e.hold(200).none { A in it }) // and that tap does not turn it on again
+        e.down(); e.keys(); t += 50 * MS; e.up()
+        assertTrue(A in e.hold(100).last()) // the next one does
+    }
+
+    @Test
+    fun toggleAlsoEndsOnLetGo() {
+        val e = keyEngine(
+            a(MapOptions(how = How.TOGGLE, endsOnLetGo = true)),
+            a(MapOptions(how = How.TOGGLE), usage = C),
+            Mapping(InputSource.Key(KEY_B), OutputTarget.LetGo),
+        )
+        e.down(); e.keys(); e.up(); t += 50 * MS
+        assertEquals(setOf(A, C), e.keys())
+        e.setKey(dev, KEY_B, true)
+        assertEquals(setOf(C), e.keys()) // only the one set to end on it
+        e.setKey(dev, KEY_B, false); t += 50 * MS
+        assertEquals(setOf(C), e.keys())
+    }
+
+    @Test
+    fun toggleAlsoEndsAfterItsTimer() {
+        val e = keyEngine(a(MapOptions(how = How.TOGGLE, endsAfterMs = 300)))
+        e.down(); e.keys(); e.up()
+        t += 250 * MS
+        assertEquals(setOf(A), e.keys())
+        t += 60 * MS
+        assertEquals(emptySet<Int>(), e.keys())
+        e.down() // turns it on again
+        assertEquals(setOf(A), e.keys())
+        e.up()
+    }
+
+    @Test
+    fun stickyShiftEndsAfterTheNextKey() {
+        val shift = 0xE1
+        val e = keyEngine(
+            a(MapOptions(how = How.TOGGLE, endsOnNextInput = true), usage = shift),
+            Mapping(InputSource.Key(KEY_B), OutputTarget.Key(B)),
+        )
+        e.down(); e.keys(); e.up(); t += 50 * MS
+        assertEquals(0x02, e.snapshot().keyboard.modifiers) // left shift held
+        e.setKey(dev, KEY_B, true)
+        val with = e.snapshot().keyboard
+        assertEquals(0x02, with.modifiers); assertEquals(listOf(B), with.keys)
+        t += 50 * MS
+        e.setKey(dev, KEY_B, false)
+        val after = e.snapshot().keyboard
+        assertEquals(0, after.modifiers) // let go with the key
+        assertEquals(emptyList<Int>(), after.keys)
+        t += 50 * MS
+        assertEquals(0, e.snapshot().keyboard.modifiers)
+    }
+
+    @Test
+    fun swipeToggleLatchesUntilATap() {
+        val e = swipeEngine(Mapping(InputSource.Surface(1, SurfaceInput.HOLD_RIGHT), OutputTarget.Key(A),
+            options = MapOptions(how = How.TOGGLE, endsOnTap = true)))
+        assertTrue(A in e.swipeRight(40).last())
+        e.touchpadUp(1)
+        assertTrue(e.hold(200).all { A in it }) // latched
+        e.touchpadDown(1, 100f, 100f, t); e.hold(30); e.touchpadUp(1)
+        assertTrue(A !in e.hold(100).last()) // a tap lets it go
+    }
+
+    @Test
+    fun swipeToggleLatchEndsOnLetGo() {
+        val w = Workspace(
+            id = "w", name = "w",
+            mappings = listOf(Mapping(InputSource.Surface(1, SurfaceInput.HOLD_RIGHT), OutputTarget.Key(A),
+                options = MapOptions(how = How.TOGGLE, endsOnTap = true, endsOnLetGo = true))),
+            pads = listOf(AttachedPad(id = "p", mappings = listOf(Mapping(InputSource.Key(KEY_B), OutputTarget.LetGo)))),
+        )
+        val e = MappingEngine(single(w)) { t }.apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 10 * MS }
+        e.swipeRight(40); e.touchpadUp(1)
+        assertTrue(A in e.hold(100).last())
+        e.setKey(dev, KEY_B, true); e.keys(); e.setKey(dev, KEY_B, false)
+        assertTrue(A !in e.hold(50).last()) // Let go ended the latch
+    }
+
+    @Test
+    fun oldStickySettingsBecomeToggles() {
+        val next = Mapping(InputSource.Key(KEY_A), OutputTarget.Key(A, com.oleroma.gyrophone.core.model.KeyMode.NEXT_KEY))
+        val up = com.oleroma.gyrophone.core.model.ToggleUpgrade.keyMode(next)
+        assertEquals(OutputTarget.Key(A), up.target)
+        assertEquals(MapOptions(how = How.TOGGLE, endsOnNextInput = true), up.options)
+        val dir = Mapping(InputSource.Surface(1, SurfaceInput.HOLD_RIGHT), OutputTarget.Key(A))
+        val w = Workspace(id = "w", name = "w", mappings = listOf(dir), touchpad = TouchpadSettings(latch = true, latchReleaseMs = 500))
+        val u = com.oleroma.gyrophone.core.model.ToggleUpgrade.latches(w)
+        assertEquals(MapOptions(how = How.TOGGLE, endsOnTap = true, endsAfterMs = 500), u.mappings.single().options)
+        assertTrue(!u.touchpad.latch)
+        assertTrue(com.oleroma.gyrophone.core.model.ToggleUpgrade.latches(u) === u)
     }
 }

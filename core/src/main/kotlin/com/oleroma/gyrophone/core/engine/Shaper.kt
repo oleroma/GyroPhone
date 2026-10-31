@@ -75,8 +75,14 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
         activation(on, now)
     }
 
+    /** The same button or surface touched last time ([touched]). */
+    private var baseOn = false
+
     /** An activation starts ([on]) or ends at [now]. */
     private fun activation(on: Boolean, now: Long) {
+        if (on && swallow) {
+            swallow = false; return
+        }
         when (options.mode) {
             How.HELD -> if (on) open(now) else endNs = max(now, startNs + minHold) + endDelay
             How.ONCE -> if (on) {
@@ -84,8 +90,12 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
             }
 
             How.TOGGLE -> if (on) {
+                // Ended some other way meanwhile (a timer, Let go): this one starts it again.
+                if (latched && now >= endNs) latched = false
                 if (!latched) {
-                    latched = true; open(now)
+                    latched = true; nextUsed = false; open(now)
+                    val timer = options.endsAfterMs.coerceIn(0, MapOptions.MAX_TOGGLE_MS)
+                    if (timer > 0) endNs = startNs + timer * MS
                 } else {
                     latched = false; endNs = max(now, startNs + minHold) + endDelay
                 }
@@ -98,6 +108,46 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
         if (!inWindow(now)) startNs = now + startDelay
         endNs = Long.MAX_VALUE
     }
+
+    /**
+     * A toggle that is on ends now ("Also ends on": the same button touched again, a Let go, the
+     * next input). Nothing when it is off.
+     */
+    fun letGo(now: Long) {
+        if (!latched) return
+        latched = false
+        if (now < endNs) endNs = max(now, startNs + minHold) + endDelay
+    }
+
+    /** A toggle is on now ([MapOptions.mode] TOGGLE, turned on and not ended). */
+    fun toggledOn(now: Long): Boolean = latched && now < endNs
+
+    /** A touch ended the toggle ([touched]): that touch's own activation starts nothing. */
+    private var swallow = false
+    private var baseRiseNs = Long.MIN_VALUE
+
+    /** With [MapOptions.endsOnNextInput]: another input was pressed while it was on (it ends as that is let go). */
+    var nextUsed = false
+
+    /**
+     * The same button or surface is [on] (touched) at [now], seen before [update]: with
+     * [MapOptions.endsOnTap], touching it again ends a toggle that is on, and the activation that
+     * touch makes (its tap, long press, ...) does not turn it on again.
+     */
+    fun touched(on: Boolean, now: Long) {
+        val rose = on && !baseOn
+        baseOn = on
+        if (!rose) return
+        // A double tap's second touch belongs with the first.
+        if (trigger != Trigger.DOUBLE_TAP || baseRiseNs == Long.MIN_VALUE || now - baseRiseNs > doubleNs) swallow = false
+        baseRiseNs = now
+        if (options.endsOnTap && options.mode == How.TOGGLE && toggledOn(now)) {
+            letGo(now); swallow = true
+        }
+    }
+
+    /** It is on at [now], latched, or turns on or off by itself later. */
+    fun busy(now: Long): Boolean = latched || now < endNs
 
     /** Whether the output is pressed at [now]. */
     fun on(now: Long): Boolean = inWindow(now)
@@ -112,7 +162,8 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
     }
 
     fun reset() {
-        raw = false; active = false; double = false; latched = false; eventOn = false
+        raw = false; active = false; double = false; latched = false; eventOn = false; baseOn = false
+        swallow = false; nextUsed = false; baseRiseNs = Long.MIN_VALUE
         rawStartNs = Long.MIN_VALUE; lastRiseNs = Long.MIN_VALUE; startNs = Long.MIN_VALUE; endNs = Long.MIN_VALUE
     }
 

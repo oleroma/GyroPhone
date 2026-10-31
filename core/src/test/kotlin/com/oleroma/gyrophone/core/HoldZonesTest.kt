@@ -9,6 +9,8 @@ import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.HoldZone
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
+import com.oleroma.gyrophone.core.model.How
+import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.MouseButton
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.SurfaceInput
@@ -30,6 +32,10 @@ class HoldZonesTest {
 
     /** Hold ↑ in three zones: 20..40 dp, 40..60 dp, from 60 dp on (the hold distance is 20). */
     private val map = SurfaceMap(listOf(m(0, MouseButton.LEFT), m(1, MouseButton.RIGHT), m(2, MouseButton.MIDDLE)))
+
+    /** [map] latched: a Toggle On swipe chip on each zone. */
+    private val latchMap = SurfaceMap(listOf(m(0, MouseButton.LEFT), m(1, MouseButton.RIGHT), m(2, MouseButton.MIDDLE)) +
+        (0..2).map { Mapping(InputSource.Surface(1, SurfaceInput.HOLD_UP, zone = it), OutputTarget.NoOutput, options = MapOptions(how = How.TOGGLE, endsOnTap = true)) })
 
     private inner class Finger(s: TouchpadSettings, map: SurfaceMap = this.map) {
         val pad = Touchpad(s.copy(acceleration = 0f), map).apply { pxPerDp = 1f; minPulseNanos = 4 * ms }
@@ -163,8 +169,8 @@ class HoldZonesTest {
 
     @Test
     fun latchKeepsTheHeldZonesUntilATap() {
-        val s = TouchpadSettings(latch = true, holdZones = listOf(HoldZone(keep = ZoneKeep.GOING_ON)))
-        val f = Finger(s)
+        val s = TouchpadSettings(holdZones = listOf(HoldZone(keep = ZoneKeep.GOING_ON)))
+        val f = Finger(s, latchMap)
         f.down(); f.go(0f, -50f); f.up()
         assertEquals(z1 or z2, f.now)
         f.tap()
@@ -173,7 +179,7 @@ class HoldZonesTest {
 
     @Test
     fun latchedZonesStayUntilTheNextSwipeReachesOne() {
-        val f = Finger(TouchpadSettings(latch = true))
+        val f = Finger(TouchpadSettings(), latchMap)
         f.down(); f.go(0f, -70f); f.up()
         assertEquals(z3, f.now)
         f.down(); f.go(0f, -12f)

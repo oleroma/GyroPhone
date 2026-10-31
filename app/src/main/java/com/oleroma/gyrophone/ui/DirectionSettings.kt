@@ -44,7 +44,7 @@ private const val MAX_SURFACE_SENS = 50f
 /**
  * The settings a touch surface's actions share (the mapping editor's Settings): movement and
  * scrolling, then the swipe directions (pies, how far a swipe and a held direction take, how held
- * directions work, the latch). Each shows [level]'s value, highlighted with a ↺ where it differs
+ * directions work). Each shows [level]'s value, highlighted with a ↺ where it differs
  * from the parent. [touchpad]: the workspace touchpad, with its own on / off.
  * [zones]: how many length zones each direction has mapped. [resetAll]: with its own Reset all.
  */
@@ -182,18 +182,7 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
                 ) { v -> edit { it.copy(releaseDp = v) } }
             }
         }
-        OverrideSwitch(
-            "Keep held after lift",
-            "A held direction stays held when the fingers lift. A tap lets it go; swiping on carries on from it.",
-            s.latch, own(SurfaceField.LATCH), reset(SurfaceField.LATCH),
-        ) { v -> edit { it.copy(latch = v) } }
-        if (s.latch) {
-            OverrideSlider(
-                key + "latchMs", if (s.latchReleaseMs < 1) "Let go by itself: never" else "Let go by itself after %.1f s",
-                s.latchReleaseMs / 1000f, 0f..TouchpadSettings.MAX_LATCH_RELEASE_MS / 1000f, 0.1f,
-                own(SurfaceField.LATCH_RELEASE), reset(SurfaceField.LATCH_RELEASE),
-            ) { v -> edit { it.copy(latchReleaseMs = (v * 1000).roundToInt()) } }
-        }
+        DirNote("To keep a direction held after the lift, set its On swipe chip to Toggle (tap the chip).")
         DirNote(
             "Every Move, Swipe and Swipe hold uses these unless its ⚙ in the mapping editor sets its own: " +
                     "a Move X / Y its pie, a Swipe or Swipe hold direction its pie, sample and distance."
@@ -247,12 +236,6 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
                 own(DirField.HOLD), reset(DirField.HOLD),
                 hint = if (s.dragStart && s.holdMode == HoldMode.FROM_START) "With Drag start point, the start point trails the furthest hold distance of the four." else null,
             ) { v -> edit { it.copy(holdDp = v) } }
-            OverrideSwitch(
-                "Keep held after lift",
-                "Stays held when the fingers lift. A tap lets it go; swiping on carries on from it." +
-                        if (s.latchOf(d) && s.latchReleaseMs > 0) " Lets go by itself after %.1f s (Settings).".format(s.latchReleaseMs / 1000f) else "",
-                s.latchOf(d), own(DirField.LATCH), reset(DirField.LATCH),
-            ) { v -> edit { it.copy(latch = v) } }
             SectionTitle("Length zones")
             HoldZoneSettings(s, zones, k, only = d, zone = null, onChange = current.setZones)
         }

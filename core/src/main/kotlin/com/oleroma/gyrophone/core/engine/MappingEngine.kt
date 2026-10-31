@@ -19,6 +19,7 @@ import com.oleroma.gyrophone.core.model.HapticEdge
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KeyMode
+import com.oleroma.gyrophone.core.model.How
 import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
@@ -32,6 +33,7 @@ import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Trigger
+import com.oleroma.gyrophone.core.model.Triggers
 import com.oleroma.gyrophone.core.model.holdDirection
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
@@ -1267,6 +1269,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         trigger[0] = max(trigger[0], abs(gyroPad[GamepadAxis.LT.ordinal]))
         trigger[1] = max(trigger[1], abs(gyroPad[GamepadAxis.RT.ordinal]))
         holdModeKeys()
+        endOnNextInput(now)
         collectHaptics()
         for (i in deviceList.indices) deviceList[i].shownInSnapshot()
         anyDevice.shownInSnapshot()
@@ -1403,6 +1406,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (i in ms.indices) {
             val m = ms[i]
             val v = out(m, dev, now, output = true)
+            if (v >= PRESS_THRESHOLD) {
+                if (m.options?.endsOnNextInput == true) {
+                    val sh = shaperOf(m, dev)
+                    if (sh.options.mode == How.TOGGLE && sh.toggledOn(now)) stickies.add(Sticky(sh, m.target))
+                }
+                // A swipe direction's own outputs are not another input for its latch.
+                if (latchChip(m.source)) stickies.add(Sticky(null, m.target))
+            }
             when (val t = m.target) {
                 is OutputTarget.Pad -> if (v >= PRESS_THRESHOLD) when (t.button) {
                     GamepadButton.DPAD_UP -> accUp = true
@@ -1435,7 +1446,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 is OutputTarget.Wheel, is OutputTarget.MouseAxis,
                 OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause, is OutputTarget.GyroPauseAxis,
                 OutputTarget.SwitchApps, OutputTarget.Zoom, is OutputTarget.Layer, OutputTarget.LayerBack,
-                OutputTarget.NoOutput -> Unit
+                OutputTarget.LetGo, OutputTarget.NoOutput -> Unit
 
                 is OutputTarget.Haptic, is OutputTarget.HapticStep -> {
                     val a = min(1f, abs(v))
@@ -1480,6 +1491,63 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
     }
 
+    /** A toggle that is on and ends on the next other input, and what it presses (null: only what a swipe direction presses). */
+    private class Sticky(val shaper: Shaper?, val target: OutputTarget)
+
+    /** This snapshot's [Sticky]s ([accumulate]). */
+    private val stickies = ArrayList<Sticky>()
+
+    /** A swipe latch that ends on the next input saw another one pressed. */
+    private var latchNextUsed = false
+
+    /**
+     * Toggles set to end on the next input ([MapOptions.endsOnNextInput], sticky keys): once
+     * another key (not a modifier), mouse button or pad button has been pressed, they end as it is
+     * let go, in the same report. Swipe latches set so end the same way.
+     */
+    private fun endOnNextInput(now: Long) {
+        val latch = touchpad.latchEndsOnNext || surfaceList.any { it.latchEndsOnNext }
+        if (stickies.none { it.shaper != null } && !latch) {
+            latchNextUsed = false; stickies.clear(); return
+        }
+        val keys = BooleanArray(256)
+        var pad = 0
+        var mouse = 0
+        for (st in stickies) when (val t = st.target) {
+            is OutputTarget.Key -> if (t.usage in 0..255) keys[t.usage] = true
+            is OutputTarget.Pad -> pad = pad or (1 shl t.button.bit)
+            is OutputTarget.Mouse -> mouse = mouse or (1 shl t.button.bit)
+            else -> Unit
+        }
+        var other = (accButtons and pad.inv()) != 0 || (accMouse and mouse.inv()) != 0 ||
+                accUp || accDown || accLeft || accRight
+        if (!other) for (u in 0 until 256) if (heldKeys[u] && !keys[u] && !HidUsage.isModifier(u)) {
+            other = true; break
+        }
+        for (st in stickies) {
+            val sh = st.shaper ?: continue
+            if (other) sh.nextUsed = true
+            else if (sh.nextUsed) {
+                sh.letGo(now)
+                if (!sh.on(now)) when (val t = st.target) {
+                    is OutputTarget.Key -> if (t.usage in 0..255) heldKeys[t.usage] = false
+                    is OutputTarget.Pad -> accButtons = accButtons and (1 shl t.button.bit).inv()
+                    is OutputTarget.Mouse -> accMouse = accMouse and (1 shl t.button.bit).inv()
+                    else -> Unit
+                }
+            }
+        }
+        stickies.clear()
+        if (latch) {
+            if (other) latchNextUsed = true
+            else if (latchNextUsed) {
+                latchNextUsed = false
+                touchpad.endLatch(letGo = false)
+                for (sf in surfaceList) sf.endLatch(letGo = false)
+            }
+        }
+    }
+
     /** Whether [ms] maps analog axis [a] or [b] to a game pad trigger. */
     private fun mapsTriggerAxis(ms: List<Mapping>, a: Int, b: Int): Boolean = ms.any { m ->
         val src = m.source
@@ -1494,12 +1562,20 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     private inline fun forEachGroup(block: (List<Mapping>, Dev?) -> Unit) {
         block(touchMappings, null)
+        var now = Long.MIN_VALUE
         for (i in deviceList.indices) {
             val d = deviceList[i]
-            if (d.pad >= 0 && d.active) block(padMappings[d.pad], d)
+            if (d.pad < 0) continue
+            // A toggle (or a delay, a minimum hold) goes on after the device's inputs are let go.
+            if (d.active || (d.shapers.isNotEmpty() && busy(d, if (now == Long.MIN_VALUE) clock().also { now = it } else now))) {
+                block(padMappings[d.pad], d)
+            }
         }
-        if (anyDevice.active) for (ms in padMappings) block(ms, anyDevice)
+        if (anyDevice.active || (anyDevice.shapers.isNotEmpty() && busy(anyDevice, clock()))) for (ms in padMappings) block(ms, anyDevice)
     }
+
+    /** Some shaper of [d] is on or changes by itself after [now]. */
+    private fun busy(d: Dev, now: Long): Boolean = d.shapers.values.any { it.busy(now) }
 
     /** Whether some group holds a source mapped to [target]. */
     private fun engaged(target: OutputTarget): Boolean {
@@ -1639,7 +1715,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val m = ms[i]
                 val t = m.target
                 if (t !is OutputTarget.Wheel && t != OutputTarget.GyroToggle && t !is OutputTarget.Layer &&
-                    t != OutputTarget.LayerBack
+                    t != OutputTarget.LayerBack && t != OutputTarget.LetGo
                 ) continue
                 val on = if (!shaped(m)) value(m.source, dev) >= PRESS_THRESHOLD else {
                     val sh = shaperOf(m, dev)
@@ -1652,7 +1728,20 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** [m]'s shaper in [dev]'s group (the touch group for null). */
     private fun shaperOf(m: Mapping, dev: Dev?): Shaper =
-        (dev?.shapers ?: touchShapers).getOrPut(m) { Shaper(m.options ?: MapOptions(), derivedTrigger(m.source)) }
+        (dev?.shapers ?: touchShapers).getOrPut(m) { Shaper(shaperOptions(m), derivedTrigger(m.source)) }
+
+    /**
+     * [m]'s options as its shaper runs them: an On swipe chip's Toggle is the surface's latch
+     * ([SurfaceMap.latches]), which keeps the direction held, so the chip itself is Held.
+     */
+    private fun shaperOptions(m: Mapping): MapOptions {
+        val o = m.options ?: return MapOptions()
+        val s = m.source
+        return if (o.mode == How.TOGGLE && latchChip(s)) o.copy(how = How.HELD, toggle = false) else o
+    }
+
+    /** [s] is an On swipe chip of a swipe direction (any zone): a Toggle on it latches the surface. */
+    private fun latchChip(s: InputSource) = s is InputSource.Surface && s.on == Trigger.HOLD && s.input.holdDirection != null
 
     /** A swipe trigger the engine works out from the swipe itself ([InputSource.Surface.on]); HOLD = none. */
     private fun derivedTrigger(s: InputSource): Trigger = (s as? InputSource.Surface)?.on ?: Trigger.HOLD
@@ -1694,8 +1783,32 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
         }
         sh.pulseNs = touchpad.minPulseNanos
+        if (o.endsOnTap && o.mode == How.TOGGLE) sh.touched(touchedNow(src, dev), now)
         sh.update(on, now)
         return if (sh.on(now)) 1f else 0f
+    }
+
+    /** The button or surface [src] is a trigger of is touched (pressed) now. */
+    private fun touchedNow(src: InputSource, dev: Dev?): Boolean {
+        val b = Triggers.base(src)
+        if (b is InputSource.Surface) return (if (b.id.isEmpty()) touchpad else surfaces[b.id])?.touching == true
+        if (b is InputSource.Touch) surfaces[b.id]?.let { return it.touching }
+        return abs(value(b, dev)) >= PRESS_THRESHOLD
+    }
+
+    /** Every toggle that is on and [ends][MapOptions.endsOnLetGo] on a Let go ends, and so do such swipe latches. */
+    private fun letGoAll(now: Long) {
+        fun go(shapers: Map<Mapping, Shaper>) {
+            for ((m, sh) in shapers) {
+                val o = m.options ?: continue
+                if (o.mode == How.TOGGLE && o.endsOnLetGo) sh.letGo(now)
+            }
+        }
+        go(touchShapers)
+        for (d in deviceList) go(d.shapers)
+        go(anyDevice.shapers)
+        touchpad.endLatch(letGo = true)
+        for (sf in surfaceList) sf.endLatch(letGo = true)
     }
 
     /** When a shaped output next changes by itself (after [now]); Long.MAX_VALUE = none. */
@@ -1742,6 +1855,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             is OutputTarget.Wheel -> wheel += t.step * MouseState.WHEEL_UNIT
             is OutputTarget.Layer -> layerPressed(t)
             OutputTarget.LayerBack -> layerBack()
+            OutputTarget.LetGo -> letGoAll(clock())
             else -> Unit
         }
     }
