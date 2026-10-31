@@ -188,8 +188,8 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
                     "a Move X / Y its pie, a Swipe or Swipe hold direction its pie, sample and distance."
         )
         SectionTitle("Length zones")
-        if (zones.any { it > 1 }) HoldZoneSettings(s, zones, key, only = null, zone = null, onChange = current.setZones)
-        else DirNote("Drag a mapping past the ┃ divider at the end of a Swipe card, so it fires further along.")
+        HoldZoneSettings(s, zones, key, only = null, zone = null, onChange = current.setZones)
+        if (zones.none { it > 1 }) DirNote("Drag a mapping past the ┃ divider at the end of a Swipe card, so it fires further along.")
     }
 }
 
@@ -519,11 +519,10 @@ internal fun HoldZoneSettings(
     val mapped = if (only == null) Direction.entries.maxOf { zones[it.ordinal] } else zones[only.ordinal]
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (s.dragStart && s.holdMode == HoldMode.FROM_START) {
-            DirNote("Drag start point is on, so only the first zone works. Turn it off to use the zones.")
-            return@Column
-        }
-        if (mapped < 2) {
-            DirNote("Zone settings work once a second zone has mappings: drag one past the ┃ divider at the end of a Swipe card.")
+            DirNote(
+                if (mapped < 2) "Drag start point is on, so the direction is held only while the finger is past the hold distance. Turn it off to choose how it is held."
+                else "Drag start point is on, so only the first zone works. Turn it off to use the zones."
+            )
             return@Column
         }
         val list = only?.let { s.dirHoldZones?.getOrNull(it.ordinal) } ?: s.holdZones
@@ -535,7 +534,7 @@ internal fun HoldZoneSettings(
             hint = if (only == null) "Each held direction uses these unless its Swipe hold ⚙ sets its own."
             else if (own) "Its own zones." else "The Settings' zones, shared by every direction: a change here makes them its own.",
         )
-        DirNote(
+        if (mapped > 1) DirNote(
             if (s.holdMode == HoldMode.FROM_START) "The first zone starts at the hold distance. The finger's distance from the start point picks the zone, so sliding back goes back a zone."
             else "The first zone starts at the hold distance. A zone counts the travel since the direction was held and never goes back."
         )

@@ -264,9 +264,12 @@ internal class DirectionTracker {
     /** Zone [i] of [d] only fires as the finger lifts in it ([releaseOnly]). */
     private fun lifts(d: Direction, i: Int) = releaseOnly[d.ordinal] and (1 shl i) != 0
 
-    /** Zone [i] of [d]; with one zone only it is a plain held direction, whatever its settings say. */
+    /**
+     * Zone [i] of [d]. A single zone keeps its Held setting (Always or Only in zone); with Drag
+     * start point it is a plain held direction, whatever its settings say.
+     */
     private fun zone(d: Direction, i: Int, s: TouchpadSettings): HoldZone =
-        if (count(d, s) < 2) PLAIN else s.holdZone(d, i)
+        if (s.dragStart && s.holdMode == HoldMode.FROM_START) PLAIN else s.holdZone(d, i)
 
     private fun count(d: Direction, s: TouchpadSettings): Int =
         if (s.dragStart && s.holdMode == HoldMode.FROM_START) 1
