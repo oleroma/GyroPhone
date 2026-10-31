@@ -16,7 +16,9 @@ import java.util.concurrent.Executors
 /**
  * User profiles as JSON files in app storage; builtins are always listed after them. Files are
  * read with [ProfileJson.decode] (which migrates files saved before workspaces) and written with
- * [ProfileJson.encode]. A file that fails to decode is skipped but kept on disk untouched: it is
+ * [ProfileJson.encode]. A mapping this build cannot read (a newer build's action) is left out
+ * ([ProfileJson.decodeLenient]) and the file is copied to "<file>.newer-build.bak" before the first
+ * save over it. A file that fails to decode even so is skipped but kept on disk untouched: it is
  * never deleted or overwritten, so a later build can still read it.
  */
 class ProfileStore(context: Context) {
@@ -31,9 +33,14 @@ class ProfileStore(context: Context) {
         val out = ArrayList<Profile>()
         // Newest first, so if two files hold the same id the last saved one wins.
         for (f in dir.listFiles { f -> f.extension == "json" }.orEmpty().sortedByDescending { it.lastModified() }) {
-            val p = runCatching { ProfileJson.decode(f.readText()) }.getOrNull()
+            val read = ProfileJson.decodeLenient(f.readText())
+            val p = read?.profile
             if (p == null || isBuiltin(p) || p.id in files) continue
             files[p.id] = f
+            if (read.dropped > 0) {
+                Log.w(TAG, "${f.name}: left out ${read.dropped} mapping(s) this build cannot read")
+                partial += f.path
+            }
             out += p
         }
         return out.sortedBy { it.name }
@@ -41,9 +48,17 @@ class ProfileStore(context: Context) {
 
     fun all(): List<Profile> = userProfiles() + BuiltinProfiles.all
 
+    /** Files read with mappings left out ([ProfileJson.decodeLenient]): a copy is kept before the first save over one. */
+    private val partial = HashSet<String>()
+
     @Synchronized fun save(profile: Profile) {
         require(!isBuiltin(profile)) { "builtin profiles are read-only" }
         val file = files[profile.id] ?: freeFile(profile.id).also { files[profile.id] = it }
+        if (partial.remove(file.path)) {
+            // Saved by a newer build: keep it whole before this one writes over it.
+            val bak = File(file.path + ".newer-build.bak")
+            if (!bak.exists() && file.exists()) file.copyTo(bak)
+        }
         replaceFile(file, ProfileJson.encode(profile))
     }
 

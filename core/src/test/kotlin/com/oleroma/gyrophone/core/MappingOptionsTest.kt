@@ -516,4 +516,18 @@ class MappingOptionsTest {
         e.lift(out)
         assertTrue(C !in e.hold(100).last())
     }
+
+    @Test
+    fun aProfileWithAnUnknownActionStillReads() {
+        val w = Workspace(id = "w", name = "w", mappings = listOf(
+            Mapping(InputSource.Key(KEY_A), OutputTarget.Key(A)), Mapping(InputSource.Key(KEY_B), OutputTarget.Key(B)),
+        ))
+        val text = com.oleroma.gyrophone.core.model.ProfileJson.encode(single(w))
+        val newer = text.replaceFirst("\"type\": \"key\"", "\"type\": \"set_level\"")
+        assertTrue(newer != text)
+        assertTrue(runCatching { com.oleroma.gyrophone.core.model.ProfileJson.decode(newer) }.isFailure)
+        val read = com.oleroma.gyrophone.core.model.ProfileJson.decodeLenient(newer)!!
+        assertEquals(1, read.dropped)
+        assertEquals(1, read.profile.workspaces.single().mappings.size)
+    }
 }
