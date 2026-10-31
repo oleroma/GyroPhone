@@ -733,6 +733,8 @@ data class GyroSettings(
      * screen's top), 90 flat (up out of the screen), 180 upside down (up along the screen's bottom).
      */
     val absoluteLevelDeg: Float = 0f,
+    /** [absolutePitch]'s own sensitivity: camera degrees per phone degree (RWS), apart from the gyro sensitivities. */
+    val absoluteRws: Float = 1f,
     /**
      * Inertia: when a ratchet turns a gyro axis off, its mouse and wheel motion glides on and slows
      * down over [glideMs] ([InertiaCurve]); it stops at once when the axis is on again. Sticks never glide.
@@ -823,6 +825,8 @@ data class GyroSettings(
         const val DEFAULT_PITCH_LIMIT_DEG = 89f
         const val MIN_PITCH_LIMIT_DEG = 45f
         const val MAX_PITCH_LIMIT_DEG = 90f
+        const val MIN_ABSOLUTE_RWS = 0.25f
+        const val MAX_ABSOLUTE_RWS = 6f
 
         const val DEFAULT_SENSITIVITY = 16f
         const val DEFAULT_GLIDE_MS = 325f
