@@ -743,23 +743,6 @@ data class GyroSettings(
     val gameCountsPer360: Float = 0f,
     /** Where [gameCountsPer360] came from, shown beside it ("CS2, sens 1.5", "Measured"). */
     val gameName: String = "",
-    /**
-     * Absolute pitch ([com.oleroma.gyrophone.core.engine.AbsolutePitch]): the phone's pitch against
-     * gravity sets the camera's pitch, at the pitch's real world sensitivity (camera degrees per
-     * phone degree), level with level. Mouse Y then comes from it alone: every other Mouse Y
-     * (ratchets included) is ignored. Needs [gameCountsPer360]. The workspace's (and Defaults')
-     * only, never a layer's or a button's.
-     */
-    val absolutePitch: Boolean = false,
-    /** How far the game's camera pitches above and below the horizon, degrees: where [absolutePitch] re-syncs. */
-    val pitchLimitDeg: Float = DEFAULT_PITCH_LIMIT_DEG,
-    /**
-     * Where the phone counts as level for [absolutePitch], degrees: 0 upright (up along the
-     * screen's top), 90 flat (up out of the screen), 180 upside down (up along the screen's bottom).
-     */
-    val absoluteLevelDeg: Float = 0f,
-    /** [absolutePitch]'s own sensitivity: camera degrees per phone degree (RWS), apart from the gyro sensitivities. */
-    val absoluteRws: Float = 1f,
     /** Which axes yaw, pitch and roll are measured about ([GyroSpace]); the workspace's (and Defaults') only. */
     val gyroSpace: GyroSpace = GyroSpace.LOCAL,
     /**
@@ -848,13 +831,6 @@ data class GyroSettings(
     }
 
     companion object {
-        /** How far a game camera pitches above and below the horizon by default ([GyroSettings.pitchLimitDeg]), and the range offered. */
-        const val DEFAULT_PITCH_LIMIT_DEG = 89f
-        const val MIN_PITCH_LIMIT_DEG = 45f
-        const val MAX_PITCH_LIMIT_DEG = 90f
-        const val MIN_ABSOLUTE_RWS = 0.25f
-        const val MAX_ABSOLUTE_RWS = 6f
-
         const val DEFAULT_SENSITIVITY = 16f
         const val DEFAULT_GLIDE_MS = 325f
         const val DEFAULT_TILT_RANGE_DEG = 30f

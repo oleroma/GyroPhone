@@ -152,12 +152,6 @@ internal fun GyroDisplaySettingsScreen(
                                 Hint("Yaw, pitch and roll speed; shaded while a ratchet is held.")
                             }
 
-                            GyroDisplayKind.CAMERA -> Hint(
-                                "The game's camera seen from the side, pitched where absolute pitch (Gyro settings) believes it is. " +
-                                    "The blue line is where the phone points it; the dashed lines are the camera's limits. " +
-                                    "When the blue line goes past a limit, the camera is pinned there and re-synced. Idle while absolute pitch is off.",
-                            )
-
                             GyroDisplayKind.HORIZON -> {
                                 Hint("It tilts with roll and moves with pitch. The tape on top shows the heading.")
                                 PoseSettings(d) { set(it) }

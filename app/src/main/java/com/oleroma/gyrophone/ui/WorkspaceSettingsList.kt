@@ -166,8 +166,7 @@ internal fun WorkspaceSettings(
                     "Gyro space", own(g("gyroSpace")), reset(g("gyroSpace")),
                     hint = when (ws.gyro.gyroSpace) {
                         GyroSpace.LOCAL -> "Turns are measured about the phone's own axes: yaw through the screen, pitch across it, roll along it. " +
-                            "With the phone tilted, turning left and right mixes yaw and roll." +
-                            if (ws.gyro.absolutePitch) " Absolute pitch uses World meanwhile." else ""
+                            "With the phone tilted, turning left and right mixes yaw and roll."
                         GyroSpace.WORLD -> "Turns are measured against gravity: yaw is turning around the vertical, however the phone is tilted; " +
                             "pitch is tilting around the flat axis across the screen, roll around the flat axis along it."
                         GyroSpace.PLAYER -> "Yaw blends the phone's yaw and roll by how gravity lies: like World, but more forgiving when you lean or lie down. " +
@@ -182,36 +181,6 @@ internal fun WorkspaceSettings(
                         }
                     }
                 }
-            }
-            if (level.shows(g("absolutePitch"))) {
-                val known = ws.gyro.gameCountsPer360 > 0f
-                OverrideSwitch(
-                    "Absolute pitch",
-                    if (!known) "Set the game first: absolute pitch needs its turn to know how far the camera goes."
-                    else "The phone's tilt against gravity sets the camera's pitch: phone level, camera level; " +
-                        "its own sensitivity times further. Mouse Y then comes from it alone: ratchets and every other " +
-                        "Mouse Y input are ignored. Past the camera's limit the camera is pinned at its pole and re-synced. " +
-                        "Map Set level (Gyro tab) and press it while the camera looks level: the way you hold the phone then " +
-                        "counts as level, and nothing moves. Press it again to fix drift. " +
-                        "Needs raw input and no mouse acceleration or smoothing in the game.",
-                    ws.gyro.absolutePitch, own(g("absolutePitch")), reset(g("absolutePitch")),
-                    enabled = known || ws.gyro.absolutePitch,
-                ) { v -> editWs { it.copy(gyro = it.gyro.copy(absolutePitch = v)) } }
-                if (ws.gyro.absolutePitch) OverrideSlider(
-                    key + "prws", "Sensitivity %.2f× (RWS)", ws.gyro.absoluteRws,
-                    GyroSettings.MIN_ABSOLUTE_RWS..GyroSettings.MAX_ABSOLUTE_RWS, 0.05f,
-                    own(g("absoluteRws")), reset(g("absoluteRws")),
-                    hint = "Camera degrees per degree the phone tilts (1.00 = 1:1). The camera reaches its limit when the phone is " +
-                        "%.0f° from level. Only absolute pitch uses it; the gyro sensitivities still move yaw.".format(
-                            (ws.gyro.pitchLimitDeg / ws.gyro.absoluteRws.coerceAtLeast(0.01f)).coerceAtMost(90f),
-                        ),
-                ) { v -> editWs { it.copy(gyro = it.gyro.copy(absoluteRws = v)) } }
-                if (ws.gyro.absolutePitch) OverrideSlider(
-                    key + "plimit", "Camera limit ±%.0f°", ws.gyro.pitchLimitDeg,
-                    GyroSettings.MIN_PITCH_LIMIT_DEG..GyroSettings.MAX_PITCH_LIMIT_DEG, 1f,
-                    own(g("pitchLimitDeg")), reset(g("pitchLimitDeg")),
-                    hint = "How far the game's camera looks up and down from the horizon (most stop at 89°).",
-                ) { v -> editWs { it.copy(gyro = it.gyro.copy(pitchLimitDeg = v)) } }
             }
             GyroSensSlider(
                 key + "gs", "Sensitivity", ws.gyro.sensitivity, ws.gyro, own(g("sensitivity")), reset(g("sensitivity")),
