@@ -266,12 +266,6 @@ internal fun WorkspaceSettings(
                     onTry = { runtime.previewHaptic(ws.haptics, false) },
                 )
             }
-            OverrideRow(
-                "Ticks play", own(WorkspaceDefaults.HAPTIC_EDGE), reset(WorkspaceDefaults.HAPTIC_EDGE),
-                hint = "When a source presses or lets go; for an area, when a finger enters or leaves it. A tick mapping can set its own.",
-            ) {
-                HapticEdgeChips(ws.hapticEdge, onSelect = { e -> if (e != null) editWs { it.copy(hapticEdge = e) } })
-            }
         }
     }
     items += SectionItem("touchpad") { card, header ->
@@ -302,17 +296,17 @@ private fun TouchpadSection(
         card,
         defaultOpen = open,
         headerModifier = header,
-        subtitle = "Long press and double tap times, speed, scrolling and directions",
+        subtitle = "Tap and double windows, speed, scrolling and directions",
     ) {
         MsOverride(
-            key + "long", "Long press after", ws.longPressMs, Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
+            key + "long", "Tap window", ws.longPressMs, Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
             level.isOwn(WorkspaceDefaults.LONG_PRESS), { level.reset(WorkspaceDefaults.LONG_PRESS) },
-            hint = "For the Tap and Long press of the touchpad, touch buttons, controller buttons and keyboard keys without a time of their own.",
+            hint = "A press shorter than this is a tap; one held this long is a long press. For the touchpad, touch buttons, controller buttons and keyboard keys without a window of their own.",
         ) { ms -> level.edit { it.copy(longPressMs = ms) } }
         MsOverride(
-            key + "double", "Double tap within", ws.doubleTapMs, Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
+            key + "double", "Double window", ws.doubleTapMs, Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
             level.isOwn(WorkspaceDefaults.DOUBLE_TAP), { level.reset(WorkspaceDefaults.DOUBLE_TAP) },
-            hint = "The same, for Double tap windows.",
+            hint = "The longest gap between the taps of a double. 0 turns Double off.",
         ) { ms -> level.edit { it.copy(doubleTapMs = ms) } }
         SurfaceSharedSettings(
             workspaceSurfaceLevel(level),

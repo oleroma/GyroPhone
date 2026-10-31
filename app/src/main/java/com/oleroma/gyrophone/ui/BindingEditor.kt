@@ -64,7 +64,6 @@ import com.oleroma.gyrophone.core.hid.AndroidKeyToHid
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
-import com.oleroma.gyrophone.core.model.HapticEdge
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
@@ -348,7 +347,7 @@ internal fun LayerTargetDialog(
     onCancel: () -> Unit,
 ) {
     var t by remember {
-        mutableStateOf((if (start.set < 0) start.copy(set = sets.firstOrNull()?.id ?: MappingSet.BASE) else start).copy(switchHeld = false))
+        mutableStateOf((if (start.set < 0) start.copy(set = sets.firstOrNull()?.id ?: MappingSet.BASE) else start).copy(switchHeld = false, whileHeld = false, follows = true))
     }
     var known by remember { mutableStateOf(sets) }
     AlertDialog(
@@ -358,17 +357,14 @@ internal fun LayerTargetDialog(
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (kind in Describe.layerTargets.filterIsInstance<OutputTarget.Layer>()) {
-                        val k = t.copy(override = kind.override, whileHeld = kind.whileHeld)
+                        val k = t.copy(override = kind.override, whileHeld = false, follows = true)
                         FilterChip(selected = k == t, onClick = { t = k }, label = { Text(Describe.layer(kind), maxLines = 1) })
                     }
                 }
                 Text(
-                    when {
-                        t.override && t.whileHeld -> "While held, the layer's mappings are laid over the current layer; inputs it doesn't map keep theirs."
-                        t.override -> "Lays the layer over the current layer until pressed again or a layer set changes everything; inputs it doesn't map keep theirs."
-                        t.whileHeld -> "While held, everything does what the layer maps (and nothing it doesn't); on release it goes back."
-                        else -> "Everything does what the layer maps from now on (nothing it doesn't). Map a \"Layer set → Base\" in that layer to get back."
-                    },
+                    (if (t.override) "Lays the layer over the current one; inputs it doesn't map keep theirs."
+                    else "Everything does what the layer maps (and nothing it doesn't).") +
+                            " Tap the chip for its Output: Held while held, Fire once switches to it, Toggle turns it on and off, Sticky for the next button.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -423,14 +419,13 @@ internal fun HapticTargetDialog(
             ((start as? OutputTarget.HapticStep)?.percent ?: OutputTarget.HapticStep.DEFAULT_STEP_PERCENT).toFloat()
         )
     }
-    var edge by remember { mutableStateOf((start as? OutputTarget.Haptic)?.edge) }
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
     fun result(): OutputTarget {
         val f = if (own) feel else null
         return when (start) {
             is OutputTarget.HapticStep -> start.copy(percent = percent.toInt(), feel = f)
-            is OutputTarget.Haptic -> start.copy(feel = f, edge = if (start.held) null else edge)
+            is OutputTarget.Haptic -> start.copy(feel = f, edge = null)
             else -> start
         }
     }
@@ -450,11 +445,6 @@ internal fun HapticTargetDialog(
                             valueRange = OutputTarget.HapticStep.MIN_STEP_PERCENT.toFloat()..OutputTarget.HapticStep.MAX_STEP_PERCENT.toFloat(),
                         )
                     }
-                }
-                if (start is OutputTarget.Haptic && !held) {
-                    val wsEdge = profile.workspace(wsIndex).hapticEdge
-                    Text("Plays", style = MaterialTheme.typography.labelLarge)
-                    HapticEdgeChips(edge, onSelect = { edge = it }, workspaceEdge = wsEdge)
                 }
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()),
@@ -487,34 +477,6 @@ internal fun HapticTargetDialog(
         confirmButton = { TextButton(onClick = { onOk(result()) }) { Text("OK") } },
         dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
     )
-}
-
-/**
- * Picks when a haptic tick plays. With [workspaceEdge], a first chip stands for the workspace's
- * setting ([selected] null); without it, [selected] is never null.
- */
-@Composable
-internal fun HapticEdgeChips(
-    selected: HapticEdge?,
-    onSelect: (HapticEdge?) -> Unit,
-    workspaceEdge: HapticEdge? = null
-) {
-    Row(
-        Modifier.horizontalScroll(rememberScrollState()),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        if (workspaceEdge != null) {
-            FilterChip(
-                selected = selected == null,
-                onClick = { onSelect(null) },
-                label = { Text("Workspace default (" + workspaceEdge.label.lowercase() + ")") },
-            )
-        }
-        for (e in HapticEdge.entries) {
-            FilterChip(selected = selected == e, onClick = { onSelect(e) }, label = { Text(e.label) })
-        }
-    }
 }
 
 @Composable

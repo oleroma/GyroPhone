@@ -75,6 +75,11 @@ enum class SurfaceInput(val label: String, val motion: Boolean = false) {
     PINCH("Pinch", motion = true), PINCH_IN("Pinch in"), PINCH_OUT("Pinch out"),
 }
 
+/** One of the finger count's press gestures from before mapping triggers: now a trigger on its [SurfaceInput.HOLD]. */
+val SurfaceInput.gesture: Boolean
+    get() = this == SurfaceInput.TAP || this == SurfaceInput.DOUBLE_TAP || this == SurfaceInput.TAP_DRAG ||
+            this == SurfaceInput.LONG_PRESS || this == SurfaceInput.RELEASE
+
 /** The direction of a swipe input (Swipe ←→↑↓), else null. */
 val SurfaceInput.swipeDirection: Direction?
     get() = when (this) {
