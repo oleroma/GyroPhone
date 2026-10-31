@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -147,12 +148,14 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
             TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f, own(SurfaceField.SWIPE), reset(SurfaceField.SWIPE),
             hint = "Measured along the direction, from where the finger turned into it. Each new direction swipes again.",
         ) { v -> edit { it.copy(swipeDp = v) } }
+        ChildOverrides(level, DirField.SWIPE)
         OverrideSwitch(
             "Lock heading",
             "A swipe keeps the way it locked into until the finger heads another way for Turn after, so the wobble " +
                     "at each turnaround of a sideways stroke can't swipe up or down.",
             s.swipeLock, own(SurfaceField.SWIPE_LOCK), reset(SurfaceField.SWIPE_LOCK),
         ) { v -> edit { it.copy(swipeLock = v) } }
+        ChildOverrides(level, DirField.SWIPE_LOCK)
         if (s.swipeLock) {
             OverrideSlider(
                 key + "swipeturn", "Turn after %.1f dp", s.swipeTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
@@ -160,6 +163,7 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
                 hint = "How far the finger must head another way, on end, before the swipe turns there. That travel counts for the new way.",
             ) { v -> edit { it.copy(swipeTurnDp = v) } }
         }
+        ChildOverrides(level, DirField.SWIPE_TURN)
 
         SectionTitle("Swipe hold")
         OverrideRow(
@@ -179,6 +183,7 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
             key + "hold", "Hold after %.0f dp", s.holdDp,
             TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f, own(SurfaceField.HOLD), reset(SurfaceField.HOLD),
         ) { v -> edit { it.copy(holdDp = v) } }
+        ChildOverrides(level, DirField.HOLD)
         OverrideSwitch(
             "Lock heading",
             (if (s.holdMode == HoldMode.FROM_START) "While the finger heads along one axis, the other axis's start point follows it, so " +
@@ -187,6 +192,7 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
                     "Pies of 180° count as 90° for the heading; wider than 90° lets diagonals hold both.",
             s.holdLock, own(SurfaceField.HOLD_LOCK), reset(SurfaceField.HOLD_LOCK),
         ) { v -> edit { it.copy(holdLock = v) } }
+        ChildOverrides(level, DirField.HOLD_LOCK)
         if (s.holdLock) {
             OverrideSlider(
                 key + "holdturn", "Turn after %.1f dp", s.holdTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
@@ -194,6 +200,7 @@ internal fun SurfaceSharedSettings(level: SurfaceLevel, key: String, zones: IntA
                 hint = "How far the finger must head another way, on end, before the held heading turns there.",
             ) { v -> edit { it.copy(holdTurnDp = v) } }
         }
+        ChildOverrides(level, DirField.HOLD_TURN)
         if (s.holdMode == HoldMode.FROM_START) {
             val zoned = zones.any { it > 1 }
             OverrideSwitch(
@@ -470,6 +477,9 @@ private enum class PieKind(val pieX: SurfaceField, val pieY: SurfaceField, val s
         when (this) { MOVE -> s.copy(moveSampleDp = v); SWIPE -> s.copy(swipeSampleDp = v); HOLD -> s.copy(holdSampleDp = v) }
 
     /** The pie of [d] in [s]: a direction's own one counts for swipes and held directions. */
+    val dirPie: DirField? get() = when (this) { MOVE -> null; SWIPE -> DirField.SWIPE_PIE; HOLD -> DirField.HOLD_PIE }
+    val dirSample: DirField? get() = when (this) { MOVE -> null; SWIPE -> DirField.SWIPE_SAMPLE; HOLD -> DirField.HOLD_SAMPLE }
+
     fun width(s: TouchpadSettings, d: Direction): Float = when (this) {
         MOVE -> if (d.x) s.movePieX else s.movePieY
         SWIPE -> s.pieDeg(d, hold = false)
@@ -502,26 +512,20 @@ private fun SharedPies(level: SurfaceLevel, key: String, kind: PieKind) {
         PieKind.MOVE -> "Move X" to "Move Y"
         else -> "Left and Right" to "Up and Down"
     }
-    /** The directions of an axis ([x]) whose own pie ([DirSettings]) wins over the shared one here, as a note. */
-    fun ownPies(x: Boolean): String {
-        if (kind == PieKind.MOVE) return ""
-        val hold = kind == PieKind.HOLD
-        val own = Direction.entries.filter { it.x == x && (if (hold) s.dir(it).holdPie else s.dir(it).swipePie) != null }
-        return if (own.isEmpty()) "" else " " + own.joinToString(" and ") { it.label } +
-                (if (own.size == 1) " has its own pie" else " have their own pies") + " (its ⚙), which this doesn't change."
-    }
     OverrideSlider(
         key + kind.name + "x", "X pie %.0f°", kind.x(s), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
         level.isOwn(kind.pieX), { current.reset(kind.pieX) },
-        hint = "$xs alike." + ownPies(true),
+        hint = "$xs alike.",
         onLive = { v -> live = v?.let { kind.withX(s, it) } },
     ) { v -> edit { kind.withX(it, v) } }
+    kind.dirPie?.let { ChildOverrides(level, it, Direction.entries.filter { d -> d.x }) }
     OverrideSlider(
         key + kind.name + "y", "Y pie %.0f°", kind.y(s), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
         level.isOwn(kind.pieY), { current.reset(kind.pieY) },
-        hint = "$ys alike." + ownPies(false),
+        hint = "$ys alike.",
         onLive = { v -> live = v?.let { kind.withY(s, it) } },
     ) { v -> edit { kind.withY(it, v) } }
+    kind.dirPie?.let { ChildOverrides(level, it, Direction.entries.filter { d -> !d.x }) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         fun both(deg: Float) = edit { kind.withY(kind.withX(it, deg), deg) }
         val x = kind.x(s)
@@ -536,6 +540,28 @@ private fun SharedPies(level: SurfaceLevel, key: String, kind: PieKind) {
         level.isOwn(kind.sample), { current.reset(kind.sample) },
         hint = SAMPLE_HINT + if (kind == PieKind.MOVE) " A stroke's first this much waits for it." else "",
     ) { v -> edit { kind.withSample(it, v) } }
+    kind.dirSample?.let { ChildOverrides(level, it) }
+}
+
+/**
+ * Under a shared setting: which of [dirs] set their own [f] at [level] (their ⚙), which the shared
+ * value never changes, and a Reset children button that alone makes them follow it again.
+ */
+@Composable
+internal fun ChildOverrides(level: SurfaceLevel, f: DirField, dirs: List<Direction> = Direction.entries) {
+    val current by rememberUpdatedState(level)
+    val own = dirs.filter { level.isDirOwn(it, f) }
+    if (own.isEmpty()) return
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            own.joinToString(", ") { it.label } + (if (own.size == 1) " sets its own" else " set their own") + " in its ⚙; this doesn't change " +
+                    (if (own.size == 1) "it." else "them."),
+            Modifier.weight(1f),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.tertiary,
+        )
+        TextButton(onClick = { own.forEach { current.resetDir(it, f) } }) { Text("Reset children") }
+    }
 }
 
 @Composable
