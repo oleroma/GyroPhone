@@ -58,6 +58,7 @@ enum class Where(val label: String) { BUTTON("On button"), AREA("Area"), OUTSIDE
 /**
  * A mapping's trigger: when it fires on its action ([on], [taps]), where a finger counts
  * ([where], touch buttons and sticks only) and how its output behaves ([output], [fireAt]).
+ * [repeat]: a Touch direction's Drag + Fire once fires again every swipe distance of travel.
  * The default is Press + Any, Held, on the button: the output follows the action.
  */
 @Serializable
@@ -67,6 +68,7 @@ data class Trigger(
     val output: Output = Output.HELD,
     val fireAt: FireAt = FireAt.START,
     val where: Where = Where.BUTTON,
+    val repeat: Boolean = false,
 ) {
     /** Which slot of its action this fills: one mapping per action and slot per level or layer ([Mapping.slot]). */
     val slot: TriggerSlot get() = TriggerSlot(on, taps, where)
@@ -87,6 +89,9 @@ data class Trigger(
         val RELEASE = Trigger(on = When.RELEASE)
         val DOUBLE_TAP = Trigger(on = When.TAP, taps = Taps.DOUBLE)
         val DOUBLE_PRESS = Trigger(taps = Taps.DOUBLE)
+
+        /** A Touch direction's swipe: fires once every swipe distance of travel. */
+        val SWIPE = Trigger(output = Output.FIRE_ONCE, repeat = true)
     }
 }
 

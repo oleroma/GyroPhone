@@ -9,8 +9,10 @@ package com.oleroma.gyrophone.core.model
  * again changes nothing.
  */
 object TriggerUpgrade {
-    /** [w] with every mapping list upgraded; the same instance when nothing changed. */
+    /** [w] with every mapping list upgraded, latches turned Sticky; the same instance when nothing changed. */
     fun workspace(w: Workspace): Workspace {
+        val latched = latches(w)
+        if (latched !== w) return workspace(latched)
         val mappings = mappings(w.mappings, w.hapticEdge)
         val keyboard = mappings(w.keyboard, w.hapticEdge)
         val mouse = mappings(w.mouse, w.hapticEdge)
@@ -53,6 +55,55 @@ object TriggerUpgrade {
         }.distinct()
     }
 
+    /**
+     * [w] with each latched direction (the touchpad's and each swipe button's) as Sticky outputs of
+     * its Touch direction's plain mappings, and the latch settings cleared.
+     */
+    private fun latches(w: Workspace): Workspace {
+        fun latchedDirs(t: TouchpadSettings?): Int = if (t == null) 0 else
+            Direction.entries.fold(0) { m, d -> if (t.latchOf(d)) m or (1 shl d.ordinal) else m }
+        fun latchedDirs(s: SurfaceSettings?): Int = if (s == null) 0 else
+            Direction.entries.fold(0) { m, d ->
+                if (s.dirs?.getOrNull(d.ordinal)?.latch ?: s.latch ?: false) m or (1 shl d.ordinal) else m
+            }
+        val byId = HashMap<String, Int>()
+        latchedDirs(w.touchpad).let { if (it != 0) byId[""] = it }
+        for (c in w.touchControls) latchedDirs(c.surface).let { if (it != 0) byId[c.id] = it }
+        val hasOwn = w.touchpad.latch || w.touchpad.dirs.orEmpty().any { it.latch != null } ||
+                w.touchControls.any { c -> c.surface?.latch != null || c.surface?.dirs.orEmpty().any { it.latch != null } }
+        if (byId.isEmpty() && !hasOwn) return w
+        val mappings = w.mappings.map { m ->
+            val s = m.source as? InputSource.Surface ?: return@map m
+            val d = s.input.holdDirection ?: return@map m
+            val dirs = byId[s.id] ?: return@map m
+            if (dirs and (1 shl d.ordinal) != 0 && m.trigger.output == Output.HELD) m.copy(trigger = m.trigger.copy(output = Output.STICKY)) else m
+        }
+        fun clear(t: TouchpadSettings) = t.copy(latch = false, latchReleaseMs = 0, dirs = t.dirs?.map { it.copy(latch = null) }?.takeUnless { l -> l.all { it.isEmpty } })
+        fun clear(s: SurfaceSettings) = s.copy(latch = null, latchReleaseMs = null, dirs = s.dirs?.map { it.copy(latch = null) }?.takeUnless { l -> l.all { it.isEmpty } })
+        return w.copy(
+            mappings = mappings,
+            touchpad = clear(w.touchpad),
+            touchControls = w.touchControls.map { c -> c.surface?.let { c.copy(surface = clear(it)) } ?: c },
+        )
+    }
+
+    /**
+     * What the engine runs: a Touch direction's repeating Fire once ([Trigger.repeat]) is its swipe
+     * input (which pulses every swipe distance), the rest as they are.
+     */
+    fun lower(ms: List<Mapping>): List<Mapping> {
+        if (ms.none { it.trigger.repeat }) return ms
+        return ms.map { m ->
+            val s = m.source as? InputSource.Surface
+            val d = s?.input?.holdDirection
+            if (!m.trigger.repeat || s == null || d == null) m
+            else Mapping(s.copy(input = SWIPES[d.ordinal], zone = 0), m.target, m.set, Trigger(where = m.trigger.where))
+        }.distinct()
+    }
+
+    private val SWIPES = arrayOf(SurfaceInput.SWIPE_UP, SurfaceInput.SWIPE_RIGHT, SurfaceInput.SWIPE_DOWN, SurfaceInput.SWIPE_LEFT)
+    private val HOLDS = arrayOf(SurfaceInput.HOLD_UP, SurfaceInput.HOLD_RIGHT, SurfaceInput.HOLD_DOWN, SurfaceInput.HOLD_LEFT)
+
     private enum class Old { TAP, DOUBLE, DOUBLE_PRESS, LONG, RELEASE }
 
     /** The press a gesture source belongs to and which gesture it was. */
@@ -87,6 +138,7 @@ object TriggerUpgrade {
     private fun needs(m: Mapping): Boolean {
         val s = m.source
         if (gestureOf(s) != null || s is InputSource.TouchArea) return true
+        if (s is InputSource.Surface && s.input.swipeDirection != null) return true
         return when (val t = m.target) {
             is OutputTarget.Key -> t.mode != KeyMode.HOLD
             OutputTarget.GyroHold, OutputTarget.GyroToggle -> true
@@ -109,6 +161,12 @@ object TriggerUpgrade {
                 Old.LONG -> trigger.copy(on = When.LONG_PRESS, taps = if (g.first in doubled) Taps.SINGLE else Taps.ANY)
                 Old.RELEASE -> trigger.copy(on = When.RELEASE)
             }
+        }
+        // A swipe is its Touch direction's Drag, firing once every swipe distance.
+        val swiped = (source as? InputSource.Surface)?.input?.swipeDirection
+        if (swiped != null && source is InputSource.Surface) {
+            source = source.copy(input = HOLDS[swiped.ordinal], zone = 0)
+            if (trigger.output == Output.HELD) trigger = trigger.copy(output = Output.FIRE_ONCE, repeat = true)
         }
         if (source is InputSource.TouchArea) {
             val where = when (source.kind) {

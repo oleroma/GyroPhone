@@ -464,7 +464,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val loaded = profile.workspace(workspaceIndex)
         // The touchpad mappings it does not set come from the Defaults.
         val up = TriggerUpgrade.workspace(loaded)
-        val w = up.copy(mappings = Bindings.upgradeSwipes(Inheritance.workspace(up, TriggerUpgrade.workspace(profile.defaults))))
+        val w = up.copy(mappings = TriggerUpgrade.lower(Bindings.upgradeSwipes(Inheritance.workspace(up, TriggerUpgrade.workspace(profile.defaults)))))
         ws = w
         allTouch = w.mappings
         motionMapped = w.mappings.any { it.source is InputSource.Tilt || it.source is InputSource.Shake }

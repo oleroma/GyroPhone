@@ -247,10 +247,11 @@ object Bindings {
         return if (changed) w.copy(touchControls = controls, mappings = mappings) else w
     }
 
-    /** The surface inputs offered with [fingers] down: its press (with the taps as triggers), moves, swipes, pinch with two. */
+    /** The surface inputs offered with [fingers] down: its press (with the taps as triggers), moves, Touch directions, pinch with two. */
     fun surfaceInputs(fingers: Int, id: String = ""): List<BindableInput> = SurfaceInput.entries.filter { i ->
         when {
-            i.gesture -> false
+            // Taps are the press's triggers, swipes a Touch direction's repeating Fire once.
+            i.gesture || i.swipeDirection != null -> false
             i == SurfaceInput.PINCH || i == SurfaceInput.PINCH_IN || i == SurfaceInput.PINCH_OUT -> fingers == 2
             else -> true
         }

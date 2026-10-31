@@ -40,7 +40,7 @@ internal fun TriggerDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Choices("When", When.entries, trigger.on, { it.label }) { onChange(trigger.copy(on = it)) }
-                Hint(
+                TriggerHint(
                     when (trigger.on) {
                         When.PRESS -> "As the press starts, for as long as it lasts."
                         When.TAP -> "A short press, on its lift. A press is a tap or a long press, never both."
@@ -49,7 +49,7 @@ internal fun TriggerDialog(
                     },
                 )
                 Choices("Taps", Taps.entries, trigger.taps, { it.label }) { onChange(trigger.copy(taps = it)) }
-                Hint(
+                TriggerHint(
                     when (trigger.taps) {
                         Taps.ANY -> "Every press, either press of a double too. Never waits."
                         Taps.SINGLE -> "Not part of a double. A single tap waits out the double window when the action has a Double mapping."
@@ -60,7 +60,7 @@ internal fun TriggerDialog(
                 if (trigger.output == Output.FIRE_ONCE) {
                     Choices(null, FireAt.entries, trigger.fireAt, { it.label }) { onChange(trigger.copy(fireAt = it)) }
                 }
-                Hint(
+                TriggerHint(
                     when (trigger.output) {
                         Output.HELD -> "On while the trigger is on."
                         Output.FIRE_ONCE -> "A short pulse as the trigger starts, ends or both."
@@ -70,7 +70,7 @@ internal fun TriggerDialog(
                 )
                 if (hasWhere) {
                     Choices("Where", Where.entries, trigger.where, { it.label }) { onChange(trigger.copy(where = it)) }
-                    Hint(
+                    TriggerHint(
                         when (trigger.where) {
                             Where.BUTTON -> "The finger touched down on it and is still down."
                             Where.AREA -> "The finger is inside its area, wherever it touched down."
@@ -96,6 +96,6 @@ private fun <T> Choices(label: String?, options: List<T>, value: T, name: (T) ->
 }
 
 @Composable
-private fun Hint(text: String) {
+private fun TriggerHint(text: String) {
     Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }

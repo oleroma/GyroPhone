@@ -71,7 +71,7 @@ enum class SurfaceInput(val label: String, val motion: Boolean = false) {
     RELEASE("Release"),
     MOTION_X("Move X", motion = true), MOTION_Y("Move Y", motion = true),
     SWIPE_LEFT("Swipe ←"), SWIPE_RIGHT("Swipe →"), SWIPE_UP("Swipe ↑"), SWIPE_DOWN("Swipe ↓"),
-    HOLD_LEFT("Swipe hold ←"), HOLD_RIGHT("Swipe hold →"), HOLD_UP("Swipe hold ↑"), HOLD_DOWN("Swipe hold ↓"),
+    HOLD_LEFT("Touch ←"), HOLD_RIGHT("Touch →"), HOLD_UP("Touch ↑"), HOLD_DOWN("Touch ↓"),
     PINCH("Pinch", motion = true), PINCH_IN("Pinch in"), PINCH_OUT("Pinch out"),
 }
 
