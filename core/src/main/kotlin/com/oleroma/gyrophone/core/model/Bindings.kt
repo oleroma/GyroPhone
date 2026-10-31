@@ -199,11 +199,11 @@ object Bindings {
      * The gyro axes of touch control [id] ("" = the workspace's): what yaw, pitch and roll do (a
      * button's only while it is pressed). Mouse motion, scrolling and game pad axes make sense.
      */
-    fun gyroInputs(id: String = ""): List<BindableInput> = MotionAxis.entries.filter { it != MotionAxis.NONE }.map { a ->
+    fun gyroInputs(id: String = ""): List<BindableInput> = MotionAxis.shown.map { a ->
         BindableInput("Gyro " + a.label.lowercase(), listOf(InputSource.Gyro(a, id)), swipe = true)
     }
 
-    /** The "Gyro mouse" preset of touch control [id] ("" = the workspace's): roll moves the mouse left and right, pitch up and down. */
+    /** The "Gyro mouse" preset of touch control [id] ("" = the workspace's): yaw (around the axis through the screen) moves the mouse left and right, pitch up and down. */
     fun gyroMouseMappings(id: String = ""): List<Mapping> = listOf(
         Mapping(InputSource.Gyro(MotionAxis.ROLL, id), OutputTarget.MouseAxis(MouseMotion.MOVE_X)),
         Mapping(InputSource.Gyro(MotionAxis.PITCH, id), OutputTarget.MouseAxis(MouseMotion.MOVE_Y)),

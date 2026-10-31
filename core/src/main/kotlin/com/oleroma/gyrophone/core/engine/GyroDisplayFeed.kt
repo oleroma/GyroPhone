@@ -45,7 +45,8 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     ) {
         val d = display
         if (d.kind == GyroDisplayKind.GRAPH) {
-            if (dtSeconds > 0f) trace?.add(yaw, pitch, roll, dtSeconds, held)
+            // Shown names: the turn through the screen (stored as roll) is yaw.
+            if (dtSeconds > 0f) trace?.add(roll, pitch, yaw, dtSeconds, held)
             return
         }
         if (!d.kind.pose) return

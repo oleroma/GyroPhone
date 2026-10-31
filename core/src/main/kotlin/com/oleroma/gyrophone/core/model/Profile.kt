@@ -539,6 +539,21 @@ fun touchedControls(
  * read, saving battery; ratchets and toggle do nothing). HOLD_OR_TOGGLE is only read from old
  * files and loads as OFF ([ProfileJson.normalize]).
  */
+/**
+ * Which axes gyro yaw, pitch and roll are measured about ([GyroSettings.gyroSpace]).
+ * - [LOCAL]: the phone's own axes (turning a tilted phone left and right leaks into roll).
+ * - [WORLD]: against gravity: yaw is turning around the vertical, pitch tilting around the
+ *   horizontal axis to the right, roll turning around the horizontal way the phone faces.
+ * - [PLAYER]: yaw blends the phone's yaw and roll by how it is tilted (forgiving when leaning
+ *   or lying down); pitch and roll stay the phone's.
+ */
+@Serializable
+enum class GyroSpace(val label: String) {
+    LOCAL("Local"),
+    WORLD("World"),
+    PLAYER("Player"),
+}
+
 @Serializable
 enum class GyroMode(val label: String) {
     OFF("Ratchet enables"),
@@ -663,18 +678,28 @@ data class AxisGlide(
     }
 }
 
-/** Rotation of the phone in the player's frame. */
+/**
+ * Rotation of the phone, about the screen's axes as it is turned (portrait or landscape). Shown
+ * names ([label]) follow the screen: yaw turns around the axis through the screen, pitch around
+ * the screen's horizontal axis, roll around its vertical axis. The stored names are older and
+ * kept so saved configs and other builds read the same: [YAW] is shown as roll and [ROLL] as yaw.
+ */
 @Serializable
 enum class MotionAxis(val label: String) {
-    /** Turning left/right around the vertical axis. */
-    YAW("Yaw"),
+    /** Around the screen's vertical axis: shown as roll. */
+    YAW("Roll"),
 
-    /** Tilting the far edge up/down. */
+    /** Around the screen's horizontal axis: tilting the top edge toward or away. */
     PITCH("Pitch"),
 
-    /** Tilting like a steering wheel. */
-    ROLL("Roll"),
-    NONE("None"),
+    /** Around the axis through the screen (a steering wheel held facing you; a flat phone turning left and right): shown as yaw. */
+    ROLL("Yaw"),
+    NONE("None");
+
+    companion object {
+        /** The axes in the order they are shown: yaw, pitch, roll. */
+        val shown: List<MotionAxis> = listOf(ROLL, PITCH, YAW)
+    }
 }
 
 @Serializable
@@ -718,6 +743,8 @@ data class GyroSettings(
     val gameCountsPer360: Float = 0f,
     /** Where [gameCountsPer360] came from, shown beside it ("CS2, sens 1.5", "Measured"). */
     val gameName: String = "",
+    /** Which axes yaw, pitch and roll are measured about ([GyroSpace]); the workspace's (and Defaults') only. */
+    val gyroSpace: GyroSpace = GyroSpace.LOCAL,
     /**
      * Inertia: when a ratchet turns a gyro axis off, its mouse and wheel motion glides on and slows
      * down over [glideMs] ([InertiaCurve]); it stops at once when the axis is on again. Sticks never glide.

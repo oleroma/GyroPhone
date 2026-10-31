@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import com.oleroma.gyrophone.core.engine.CountStream
 import com.oleroma.gyrophone.core.engine.GyroCalibration
+import com.oleroma.gyrophone.core.engine.GravityPose
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
 import com.oleroma.gyrophone.core.engine.GyroPose
@@ -29,6 +30,7 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TriggerReset
 import com.oleroma.gyrophone.core.model.GyroMode
+import com.oleroma.gyrophone.core.model.GyroSpace
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.Profile
@@ -222,7 +224,17 @@ class GamepadRuntime(context: Context) {
     }
 
     /** Some gyro display holds its pose to gravity (and so needs the accelerometer). */
-    private val needsGravity: Boolean get() = vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity }
+    private val needsGravity: Boolean get() = vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity } ||
+        _activeProfile.value.workspace(_workspaceIndex.value).gyro.gyroSpace != GyroSpace.LOCAL
+
+    /** The phone's pose against gravity, for the World and Player gyro spaces ([GyroSpace]). */
+    private val gravityPose = GravityPose()
+
+    /** The gyro space ([GyroSpace]) yaw, pitch and roll are measured in now: the workspace's. */
+    private fun gyroSpace(): GyroSpace = _activeProfile.value.workspace(_workspaceIndex.value).gyro.gyroSpace
+
+    /** The world's up for [GyroMouse.route] (gyro thread). */
+    private val upNow = FloatArray(3)
 
     /** Some gyro display holds its heading to north (and so needs the magnetometer). */
     private val needsCompass: Boolean get() = gyroFeeds.any { it.display.needsCompass }
@@ -656,12 +668,14 @@ class GamepadRuntime(context: Context) {
 
     private fun onAccelSample(x: Float, y: Float, z: Float, ts: Long) {
         val feeds = gyroFeeds
-        if (vis.gyroNeedsGravity || feeds.isNotEmpty()) {
+        val spaced = gyroSpace() != GyroSpace.LOCAL
+        if (vis.gyroNeedsGravity || feeds.isNotEmpty() || spaced) {
             // The same axes as the gyro's: right, up and toward the player in the phone's frame.
             val m = gyroMouse.motion(x, y, z)
             val g = SensorManager.GRAVITY_EARTH * RAD_TO_DEG
             if (vis.gyroNeedsGravity) worldPose.setUp(m.pitch, -m.yaw, -m.roll, g)
             for (f in feeds) f.up(m.pitch, -m.yaw, -m.roll, g)
+            if (spaced) gravityPose.setUp(m.pitch, -m.yaw, -m.roll, g)
         }
         if (!engine.motionMapped) return
         // A layer or a held button may have tilt and shake settings of its own.
@@ -1043,13 +1057,20 @@ class GamepadRuntime(context: Context) {
         val v = vis
         val feeds = gyroFeeds
         if (v.gyroEdge || feeds.isNotEmpty()) feedVisuals(v, feeds, x - biasX, y - biasY, z - biasZ, dt, axes)
+        // World and player space read the phone's pose against gravity.
+        val space = gyroSpace()
+        if (space != GyroSpace.LOCAL) {
+            val m = gyroMouse.motion(x - biasX, y - biasY, z - biasZ)
+            gravityPose.rotate(m.yaw, m.pitch, m.roll, dt)
+            gravityPose.up(upNow)
+        }
         // An axis a ratchet just turned off may glide on (inertia) while the others are off.
         if (active || (allowed && gyroMouse.coasting)) {
             // A layer in use may set gyro settings of its own.
             val gs = engine.gyroSettings
             if (gs !== gyroMouse.settings) gyroMouse.settings = gs
             val routes = engine.gyroRoutes()
-            val r = gyroMouse.route(x - biasX, y - biasY, z - biasZ, dt, routes, axes)
+            val r = gyroMouse.route(x - biasX, y - biasY, z - biasZ, dt, routes, axes, space, upNow)
             if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel, fromGyro = active)
             engine.setGyroAxes(r.pad)
             gyroPadSet = true

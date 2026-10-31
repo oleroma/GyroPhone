@@ -62,8 +62,10 @@ object WorkspaceDefaults {
         Direction.entries.flatMap { d -> DirField.entries.map { f -> dirKey(d, f) } } +
         MoveSlot.entries.flatMap { m -> MoveField.of(m).map { f -> moveKey(m, f) } }
 
-    /** The keys a layer ([MappingSet.settings]) may set: all but the controls' opacity and the game's turn. */
-    val layerKeys: List<String> = keys - setOf(CONTROL_OPACITY, gyroKey("gameCountsPer360"), gyroKey("gameName"))
+    /** The keys a layer ([MappingSet.settings]) may set: all but the controls' opacity, the game's turn and the gyro space. */
+    val layerKeys: List<String> = keys - setOf(
+        CONTROL_OPACITY, gyroKey("gameCountsPer360"), gyroKey("gameName"), gyroKey("gyroSpace"),
+    )
 
     /** The touchpad's keys: shared and per direction. */
     val touchpadKeys: List<String> = keys.filter { it.startsWith(TOUCHPAD) }

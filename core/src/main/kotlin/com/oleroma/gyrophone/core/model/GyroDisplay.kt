@@ -1,11 +1,15 @@
 package com.oleroma.gyrophone.core.model
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNames
 
 /** What a gyro display ([TouchKind.DISPLAY]) shows. */
 @Serializable
 enum class GyroDisplayKind(val label: String) {
-    /** A 3D phone turned by the gyro. */
+    /** A 3D phone turned by the gyro. Also reads the removed "3D camera" (CAMERA), so a saved one cannot hide the profile. */
+    @OptIn(ExperimentalSerializationApi::class)
+    @JsonNames("CAMERA")
     PHONE("3D phone"),
 
     /** Yaw / pitch / roll arcs, lit while that axis moves the mouse, dim while a ratchet pauses it. */
@@ -22,6 +26,7 @@ enum class GyroDisplayKind(val label: String) {
 
     /** A 3D shape ([BallShape]: a ball with lines on it, a solid, a torus...), turned with the phone. */
     BALL("3D shape"),
+
     ;
 
     /** It shows the phone's pose ([GyroDisplay] pose settings apply). */

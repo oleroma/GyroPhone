@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.core.model.GyroSpace
 import com.oleroma.gyrophone.core.model.Profile
 
 import com.oleroma.gyrophone.core.model.Bindings
@@ -158,6 +159,27 @@ internal fun WorkspaceSettings(
             if (level.shows(g("gameCountsPer360"))) {
                 GameTurnRow(runtime, level, own(g("gameCountsPer360"))) {
                     level.reset(g("gameCountsPer360")); level.reset(g("gameName"))
+                }
+            }
+            if (level.shows(g("gyroSpace"))) {
+                OverrideRow(
+                    "Gyro space", own(g("gyroSpace")), reset(g("gyroSpace")),
+                    hint = when (ws.gyro.gyroSpace) {
+                        GyroSpace.LOCAL -> "Turns are measured about the phone's own axes: yaw through the screen, pitch across it, roll along it. " +
+                            "With the phone tilted, turning left and right mixes yaw and roll."
+                        GyroSpace.WORLD -> "Turns are measured against gravity: yaw is turning around the vertical, however the phone is tilted; " +
+                            "pitch is tilting around the flat axis across the screen, roll around the flat axis along it."
+                        GyroSpace.PLAYER -> "Yaw blends the phone's yaw and roll by how gravity lies: like World, but more forgiving when you lean or lie down. " +
+                            "Pitch and roll stay the phone's."
+                    },
+                ) {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        GyroSpace.entries.forEach { sp ->
+                            FilterChip(selected = ws.gyro.gyroSpace == sp, onClick = {
+                                editWs { it.copy(gyro = it.gyro.copy(gyroSpace = sp)) }
+                            }, label = { Text(sp.label) })
+                        }
+                    }
                 }
             }
             GyroSensSlider(
