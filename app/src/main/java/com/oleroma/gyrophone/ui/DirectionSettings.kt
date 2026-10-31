@@ -502,16 +502,24 @@ private fun SharedPies(level: SurfaceLevel, key: String, kind: PieKind) {
         PieKind.MOVE -> "Move X" to "Move Y"
         else -> "Left and Right" to "Up and Down"
     }
+    /** The directions of an axis ([x]) whose own pie ([DirSettings]) wins over the shared one here, as a note. */
+    fun ownPies(x: Boolean): String {
+        if (kind == PieKind.MOVE) return ""
+        val hold = kind == PieKind.HOLD
+        val own = Direction.entries.filter { it.x == x && (if (hold) s.dir(it).holdPie else s.dir(it).swipePie) != null }
+        return if (own.isEmpty()) "" else " " + own.joinToString(" and ") { it.label } +
+                (if (own.size == 1) " has its own pie" else " have their own pies") + " (its ⚙), which this doesn't change."
+    }
     OverrideSlider(
         key + kind.name + "x", "X pie %.0f°", kind.x(s), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
         level.isOwn(kind.pieX), { current.reset(kind.pieX) },
-        hint = "$xs alike.",
+        hint = "$xs alike." + ownPies(true),
         onLive = { v -> live = v?.let { kind.withX(s, it) } },
     ) { v -> edit { kind.withX(it, v) } }
     OverrideSlider(
         key + kind.name + "y", "Y pie %.0f°", kind.y(s), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
         level.isOwn(kind.pieY), { current.reset(kind.pieY) },
-        hint = "$ys alike.",
+        hint = "$ys alike." + ownPies(false),
         onLive = { v -> live = v?.let { kind.withY(s, it) } },
     ) { v -> edit { kind.withY(it, v) } }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
