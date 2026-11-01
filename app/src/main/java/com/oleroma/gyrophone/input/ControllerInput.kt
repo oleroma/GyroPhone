@@ -16,7 +16,7 @@ import com.oleroma.gyrophone.runtime.AttachedController
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
 /**
- * Feeds key and joystick events from devices attached to the phone (GameSir X5, any XInput/HID
+ * Feeds key and joystick events from devices attached to the phone (a clip-on controller, any XInput/HID
  * pad, a USB or Bluetooth keyboard) into the mapping engine, and tracks which controllers are
  * attached. Each event carries its device, so only pads attached to the active workspace act.
  * Android only delivers these to the foreground activity, so MainActivity forwards them.

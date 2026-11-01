@@ -222,7 +222,7 @@ object BuiltinProfiles {
     private fun gap(width: Float) = Cell(null, width)
     private fun spaces(width: Float) = (1..SPACE_KEYS).map { k("space$it", width) }
 
-    /** Logitech K380 rows, 15 key units wide; arrows as an inverted T at the bottom right. */
+    /** Compact keyboard rows, 15 key units wide; arrows as an inverted T at the bottom right. */
     private val keyboardLandscapeRows: List<List<Cell>> = listOf(
         listOf(k("esc", 1.5f)) + (1..12).map { k("f$it", 1.125f) },
         ks("grave", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "minus", "equal") + k("bksp", 2f),

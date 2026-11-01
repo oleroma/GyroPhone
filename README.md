@@ -10,32 +10,32 @@
 
 # GyroPhone
 
-GyroPhone turns an Android phone into a Bluetooth or Wi-Fi gamepad, keyboard and mouse for a PC, in the spirit of the [Alpakka](https://github.com/inputlabs/alpakka_firmware) controller. Gyro moves the mouse. A clip-on controller such as the GameSir X5 supplies the physical buttons, and you can place virtual buttons anywhere on the touchscreen.
+GyroPhone turns an Android phone into a Bluetooth or Wi-Fi gamepad, keyboard and mouse for a PC. Gyro moves the mouse. A clip-on controller supplies the physical buttons, and you can place virtual buttons anywhere on the touchscreen.
 
-The reference device is the **OnePlus 15** (Android 16, no root). Windows is the first host; other hosts come later.
+The reference device is an Android 16 phone (no root). Windows is the first host; other hosts come later.
 
 ## How it works
 
 ```
-GameSir X5 / any pad / keyboard ─┐
+Gamepad / keyboard ──────────────┐
 Touchscreen controls ────────────┼─► Mapping engine (profile) ─► Report pump ─► Bluetooth HID ─► Windows
 Gyro (sensor direct channel) ────┘                                                  gamepad + keyboard + mouse
 ```
 
 * **Bluetooth HID device.** The phone registers itself through `BluetoothHidDevice` as one composite device with a gamepad, a 6-key keyboard and a 16-bit mouse. Windows pairs with it like any Bluetooth controller, and nothing needs to be installed on the PC.
-* **Gyro.** The gyro is read through `SensorDirectChannel` (shared memory written by the sensor HAL, with no Binder or Looper hop) at the highest rate the phone offers. If the phone doesn't support that, it falls back to `SENSOR_DELAY_FASTEST` on a high-priority thread. Gyro-to-mouse is raw by default: every sample goes straight to the cursor, with sub-count remainders kept so slow aiming isn't lost. Optional Alpakka/JoyShockMapper-style jitter cutoff (tightening) and tiered smoothing can be turned up per workspace in the pad Menu. Drift is handled by the phone's own gyro bias correction plus an optional rest calibration (Calibrate in the pad Menu: lay the phone still for 2 seconds), which subtracts a fixed offset and does no filtering. Each profile sets how the phone is held (auto from screen rotation, landscape either way, portrait or flat) and which motion (yaw, pitch or roll) drives mouse X and Y, with per-axis invert.
+* **Gyro.** The gyro is read through `SensorDirectChannel` (shared memory written by the sensor HAL, with no Binder or Looper hop) at the highest rate the phone offers. If the phone doesn't support that, it falls back to `SENSOR_DELAY_FASTEST` on a high-priority thread. Gyro-to-mouse is raw by default: every sample goes straight to the cursor, with sub-count remainders kept so slow aiming isn't lost. Optional jitter cutoff (tightening) and tiered smoothing can be turned up per workspace in the pad Menu. Drift is handled by the phone's own gyro bias correction plus an optional rest calibration (Calibrate in the pad Menu: lay the phone still for 2 seconds), which subtracts a fixed offset and does no filtering. Each profile sets how the phone is held (auto from screen rotation, landscape either way, portrait or flat) and which motion (yaw, pitch or roll) drives mouse X and Y, with per-axis invert.
 * **Gyro modes and ratchet.** Each workspace's gyro is *Always on*, *Always off* or *Hold / toggle button*. Any touch or controller button mapped to *Ratchet* flips it while held: always-on gyro pauses (re-centre the phone), always-off gyro engages. With *Touchpad is a ratchet* in the pad Menu, a finger on the touchpad does the same. The *G* corner, next to the → workspace corner, switches the current workspace between always on and always off (it is lit while gyro is on), and ratchets flip with it. Built-in workspaces set gyro axes for portrait and landscape alike.
-* **Report rate.** Reports go out at a fixed rate (30 to 90 Hz, 60 Hz by default), one report per tick, and mouse motion is merged between reports. Android gives no signal when Bluetooth has actually sent a report, so a rate above what the link can carry builds a queue, which feels like growing lag. On the OnePlus 15 the phone's Bluetooth stack holds the HID link in sniff mode (it can't be turned off without root), which carries roughly one packet per sniff interval (about 11 ms by Android's HID default). That is why higher rates lag more. The Connection page (Connection button on the pad) shows reports sent per second.
+* **Report rate.** Reports go out at a fixed rate (30 to 90 Hz, 60 Hz by default), one report per tick, and mouse motion is merged between reports. Android gives no signal when Bluetooth has actually sent a report, so a rate above what the link can carry builds a queue, which feels like growing lag. On the reference phone the Bluetooth stack holds the HID link in sniff mode (it can't be turned off without root), which carries roughly one packet per sniff interval (about 11 ms by Android's HID default). That is why higher rates lag more. The Connection page (Connection button on the pad) shows reports sent per second.
 * **Mapping.** Any input on the phone side (a controller button or axis, a keyboard key, a touch button or touch stick) can map to any output: a gamepad button, axis or trigger, a keyboard key, a mouse button, the wheel, or gyro hold/toggle. One input can drive several outputs, and several inputs can drive one output.
-* **Touchpad.** The pad screen's empty background works like a laptop touchpad: one finger moves the cursor, taps click, two fingers scroll smoothly on both axes (high-resolution wheel, 1/120 of a notch) and keep gliding after a flick, two fingers pinch to zoom (Ctrl + wheel), and three- or four-finger swipes and taps send Windows shortcuts (Task View, show desktop, Alt+Tab scrubbing, switch desktops, notification centre). Every gesture can be changed per profile. Over Bluetooth, smooth scrolling needs the PC to have paired with the current descriptor: after updating from a build without it, remove GyroPhone in Windows Bluetooth settings and pair again once. Until then scrolling falls back to whole notches. Phones with three-finger screenshot gestures (OnePlus and others) take three-finger touches away from apps: turn those gestures off in the phone's settings to use three- and four-finger gestures.
+* **Touchpad.** The pad screen's empty background works like a laptop touchpad: one finger moves the cursor, taps click, two fingers scroll smoothly on both axes (high-resolution wheel, 1/120 of a notch) and keep gliding after a flick, two fingers pinch to zoom (Ctrl + wheel), and three- or four-finger swipes and taps send Windows shortcuts (Task View, show desktop, Alt+Tab scrubbing, switch desktops, notification centre). Every gesture can be changed per profile. Over Bluetooth, smooth scrolling needs the PC to have paired with the current descriptor: after updating from a build without it, remove GyroPhone in Windows Bluetooth settings and pair again once. Until then scrolling falls back to whole notches. Phones with three-finger screenshot gestures take three-finger touches away from apps: turn those gestures off in the phone's settings to use three- and four-finger gestures.
 * **Fullscreen pad.** In *Edit layout*, *+ Fullscreen* adds two small corner markers to the profile. Pressing both at the same time hides the tabs and the Edit button so the pad fills the screen; pressing both again, or Back, brings them back. Move or resize the markers like any control, or remove them from their settings. The *Opacity* slider in Edit layout sets how see-through all of the profile's controls are; the fullscreen corners have their own opacity, and by default resizing one resizes both (see a corner's settings).
-* **Profiles.** Profiles are JSON files. Three are built in: *Virtual gamepad* (a prebuilt touch layout), *Controller passthrough* (X5 → PC gamepad, R3 toggles gyro) and *Keyboard + mouse (WASD)*. When a known controller is attached (GameSir, Xbox, PlayStation, Nintendo, 8BitDo), the matching profile is selected automatically. Any other standard pad still works through Android's normalised button layout.
+* **Profiles.** Profiles are JSON files. Three are built in: *Virtual gamepad* (a prebuilt touch layout), *Controller passthrough* (attached pad → PC gamepad, R3 toggles gyro) and *Keyboard + mouse (WASD)*. When a known controller is attached, the matching profile is selected automatically. Any other standard pad still works through Android's normalised button layout.
 
 ### XInput vs DirectInput on Windows
 
 Over plain Bluetooth HID, Windows sees GyroPhone as a **DirectInput** (generic HID) gamepad. Windows only loads its XInput driver for devices that report a Microsoft vendor/product ID in the Bluetooth Device ID record, and Android does not let apps set that record. There are two ways to get XInput:
 
-1. **Steam Input** (works today): Steam recognises the generic gamepad and presents it to games as an Xbox controller.
+1. **A PC-side remapper** (works today): a gamepad remapper on the PC can present the generic gamepad to games as an XInput controller.
 2. **Windows companion over Wi-Fi**: the tray app below creates a virtual Xbox 360 (XInput) or DualShock 4 controller. Per-game profile switching from the same app comes later.
 
 ## Windows companion (Wi-Fi)
@@ -101,7 +101,7 @@ dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contain
    * Tap a control to open its settings panel. There you set its label, its shape (circle or square) and its size, and you map it to any gamepad button, stick, trigger, keyboard key, mouse button, wheel or gyro action. Sticks also have presets: left stick, right stick, WASD, arrow keys or D-pad.
    * Resize the selected control with the handle on its corner, or pinch with two fingers.
    * **+ Button** and **+ Stick** add new controls, and **Snap** aligns controls to a grid. **Done** saves the layout and its mappings, and **Cancel** throws the changes away.
-4. Open the **Controller** tab to remap an attached controller. The app recognises it (GameSir X5, Xbox, PlayStation, Nintendo, 8BitDo, Razer Kishi, Backbone and others) and draws it. An unknown pad gets a generic layout with only the buttons it reports. Every button starts on its standard action. Tap a button to map it to any other gamepad, keyboard or mouse output, and **Reset to default** or **Reset all to standard** undoes your changes. Pressed buttons and stick movement light up live. With no controller attached, you can preview each layout.
+4. Open the **Controller** tab to remap an attached controller. The app recognises common controllers and draws them. An unknown pad gets a generic layout with only the buttons it reports. Every button starts on its standard action. Tap a button to map it to any other gamepad, keyboard or mouse output, and **Reset to default** or **Reset all to standard** undoes your changes. Pressed buttons and stick movement light up live. With no controller attached, you can preview each layout.
 5. Edits in the Pad and Controller tabs go to the active profile. A built-in profile is saved as a custom copy. **Profiles** still has **Add from controller** and **Add from touch** for mapping a source directly.
 
 ## Debug tools
@@ -130,7 +130,7 @@ dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contain
 - [x] Pad editor: tap a control to open its settings and mappings, circle or square shapes, resize by handle or pinch
 - [x] Controller tab: the attached controller drawn with every remappable button, standard actions by default
 
-**M2: Tuning on the OnePlus 15**
+**M2: Tuning on the reference phone**
 - [ ] Measure the real gyro rate and the end-to-end latency (input → Windows)
 - [x] Selectable report rate with live send stats, plus gyro orientation and yaw/pitch/roll → mouse axis routing
 - [ ] Tune Bluetooth QoS, and check that sniff mode is off while active
@@ -146,6 +146,6 @@ dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contain
 - [ ] Optional USB transport, and configuration from the PC
 
 **M4: More hosts and polish**
-- [ ] Linux, macOS, Android TV and Steam Deck hosts
+- [ ] Linux, macOS and Android TV hosts
 - [ ] DualShock-style descriptor with gyro passthrough for games with native gyro
 - [ ] Profile import/export and sharing, plus layouts for more known controllers
