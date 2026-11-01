@@ -48,6 +48,31 @@ private fun triggerHint(t: Trigger, swipe: Boolean): String = if (swipe) when (t
     Trigger.DOUBLE_TAP -> "A second touch soon after a tap; ends when you let go."
 }
 
+/** The Where choices' names. */
+internal const val WHERE_TOUCH = "Touch"
+internal const val WHERE_AREA = "Area"
+internal const val WHERE_OUTSIDE = "Outside"
+
+private fun whereHint(w: String?): String = when (w) {
+    WHERE_AREA -> "Any finger inside the button, wherever it touched down (sliding in counts)."
+    WHERE_OUTSIDE -> "A finger that touched down on the button, now outside it."
+    else -> "A touch that starts on the button."
+}
+
+/** When each trigger starts on an Area ([inside]) or Outside. */
+private fun areaHint(t: Trigger, inside: Boolean): String {
+    val into = if (inside) "slides in" else "leaves the button"
+    val back = if (inside) "slides out or lifts" else "comes back or lifts"
+    return when (t) {
+        Trigger.HOLD -> "Starts as a finger $into, ends as it $back."
+        Trigger.TAP -> "When a finger $into and $back before the long-press time."
+        Trigger.LONG_PRESS -> "Starts once a finger has stayed there for the long-press time."
+        Trigger.DOUBLE_TAP -> "A second time soon after a quick one; ends as it $back."
+        Trigger.RELEASE -> "When the finger $back."
+        Trigger.PRESS -> ""
+    }
+}
+
 private fun howHint(h: How): String = when (h) {
     How.HELD -> "Pressed for as long as it lasts."
     How.ONCE -> "One short press as it starts, however long it lasts."
@@ -73,17 +98,22 @@ internal fun MappingChipDialog(
     title: String,
     triggers: List<Trigger>,
     trigger: Trigger,
-    triggerLabel: (Trigger) -> String,
+    /** What trigger [Trigger] is called where the chip is (an index of [wheres]; 0 when there are none). */
+    triggerLabel: (Int, Trigger) -> String,
     swipe: Boolean,
     analog: Boolean,
     options: MapOptions?,
-    onApply: (Trigger, MapOptions?) -> Unit,
+    onApply: (Trigger, MapOptions?, Int) -> Unit,
     onRemove: () -> Unit,
     onDismiss: () -> Unit,
     onTargetSettings: (() -> Unit)? = null,
+    /** Where the chip can be (Touch, Area, Outside), and where it is; none = no choice. */
+    wheres: List<String> = emptyList(),
+    where: Int = 0,
 ) {
     val o0 = options ?: MapOptions()
     var t by remember { mutableStateOf(trigger) }
+    var w by remember { mutableIntStateOf(where) }
     var how by remember { mutableStateOf(o0.mode) }
     var cycle by remember { mutableStateOf(o0.cycle) }
     var start by remember { mutableIntStateOf(o0.startDelayMs) }
@@ -134,12 +164,19 @@ internal fun MappingChipDialog(
                 if (onTargetSettings != null) {
                     OutlinedButton(onClick = onTargetSettings, modifier = Modifier.fillMaxWidth()) { Text("Buzz settings") }
                 }
+                if (wheres.size > 1) {
+                    Text("Where", style = MaterialTheme.typography.titleSmall)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        wheres.forEachIndexed { i, label -> FilterChip(selected = w == i, onClick = { w = i }, label = { Text(label) }) }
+                    }
+                    hint(whereHint(wheres.getOrNull(w)))
+                }
                 if (triggers.size > 1) {
                     Text("When", style = MaterialTheme.typography.titleSmall)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (x in triggers) FilterChip(selected = t == x, onClick = { t = x }, label = { Text(triggerLabel(x)) })
+                        for (x in triggers) FilterChip(selected = t == x, onClick = { t = x }, label = { Text(triggerLabel(w, x)) })
                     }
-                    hint(triggerHint(t, swipe))
+                    hint(if (wheres.getOrNull(w).let { it == WHERE_AREA || it == WHERE_OUTSIDE }) areaHint(t, wheres[w] == WHERE_AREA) else triggerHint(t, swipe))
                 }
                 // Tap and Release start at a lift: nothing is held, so Held is Once there.
                 // An analog output (a stick, a trigger, mouse motion) follows its input: no Toggle.
@@ -196,7 +233,7 @@ internal fun MappingChipDialog(
                     endsOnNextInput = toggle && endsOnNext,
                     endsOnSame = toggle && endsOnSame,
                 )
-                onApply(t, o.takeUnless { it.none })
+                onApply(t, o.takeUnless { it.none }, w)
             }) { Text("Done") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },

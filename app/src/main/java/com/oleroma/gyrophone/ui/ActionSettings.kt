@@ -24,6 +24,7 @@ import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.StickAxis
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchAreaKind
+import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.holdDirection
@@ -54,6 +55,12 @@ private enum class Timing { LONG_PRESS, DOUBLE_TAP }
 private fun timingOf(input: BindableInput): Timing? = when (val s = input.sources.firstOrNull()) {
     is InputSource.TouchTap, is InputSource.TouchLongPress -> Timing.LONG_PRESS
     is InputSource.TouchDoubleTap -> Timing.DOUBLE_TAP
+    // Area and Outside: the button's own times.
+    is InputSource.TouchArea -> when (s.on) {
+        Trigger.TAP, Trigger.LONG_PRESS -> Timing.LONG_PRESS
+        Trigger.DOUBLE_TAP -> Timing.DOUBLE_TAP
+        else -> null
+    }
     is InputSource.Surface -> when (s.input) {
         SurfaceInput.TAP, SurfaceInput.LONG_PRESS -> Timing.LONG_PRESS
         SurfaceInput.DOUBLE_TAP -> Timing.DOUBLE_TAP

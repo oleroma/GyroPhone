@@ -342,6 +342,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * and every gesture state in play: those and the keys' ([Dev.gestures]).
      */
     private val tapStates = HashMap<String, ButtonGestures>()
+    /** Each touch control's long press and double tap times (ns) in effect, by id: its Area and Outside use them. */
+    private val buttonTimes = HashMap<String, LongArray>()
     private val tapList = ArrayList<ButtonGestures>()
 
     /** What a key with gesture mappings needs: whether it has a double tap and its tap waits. */
@@ -1821,7 +1823,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun latchChip(s: InputSource) = s is InputSource.Surface && s.on == Trigger.HOLD && s.input.holdDirection != null
 
     /** A swipe trigger the engine works out from the swipe itself ([InputSource.Surface.on]); HOLD = none. */
-    private fun derivedTrigger(s: InputSource): Trigger = (s as? InputSource.Surface)?.on ?: Trigger.HOLD
+    private fun derivedTrigger(s: InputSource): Trigger = when (s) {
+        is InputSource.Surface -> s.on
+        is InputSource.TouchArea -> s.on
+        else -> Trigger.HOLD
+    }
 
     /** [m]'s output goes through a [Shaper]: it has options, or a swipe trigger. */
     private fun shaped(m: Mapping): Boolean = m.options != null || derivedTrigger(m.source) != Trigger.HOLD
@@ -1837,9 +1843,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val o = m.options ?: if (derived == Trigger.HOLD) return v else NO_OPTIONS
         var on = abs(v) >= PRESS_THRESHOLD
         val sh = shaperOf(m, dev)
-        if (derived == Trigger.RELEASE) {
+        if (derived == Trigger.RELEASE && src is InputSource.Surface) {
             // A swipe's Release: the last finger lifted in its zone (not sliding on, not leaving the direction).
-            val s = src as InputSource.Surface
+            val s = src
             val pad = if (s.id.isEmpty()) touchpad else surfaces[s.id]
             val d = s.input.holdDirection
             on = false
@@ -1858,6 +1864,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             if (surface != null) {
                 sh.longNs = surface.longPressNanos; sh.doubleNs = surface.doubleTapNanos
             }
+        } else if (src is InputSource.TouchArea) {
+            // Area / Outside: their on / off is the press; Tap and Release come at its end.
+            // The button's own long press and double tap times, as its touch has.
+            val times = buttonTimes[src.id]
+            sh.longNs = times?.get(0) ?: touchpad.longPressNanos
+            sh.doubleNs = times?.get(1) ?: touchpad.doubleTapNanos
+            sh.edges = true
         }
         sh.pulseNs = touchpad.minPulseNanos
         if (o.endsOnTap && o.mode == How.TOGGLE) sh.touched(touchedNow(src, dev), now)
@@ -2150,6 +2163,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 s.doubleTapNanos = c.doubleTap(e) * 1_000_000L; s.longPressNanos = c.longPress(e) * 1_000_000L
             }
             tapStates[c.id]?.let { st -> st.longNs = c.longPress(e) * 1_000_000L; st.doubleNs = c.doubleTap(e) * 1_000_000L }
+            buttonTimes[c.id] = longArrayOf(c.longPress(e) * 1_000_000L, c.doubleTap(e) * 1_000_000L)
         }
         for (d in deviceList) for ((code, g) in d.gestures) keyTimes(code, g)
         for ((code, g) in anyDevice.gestures) keyTimes(code, g)

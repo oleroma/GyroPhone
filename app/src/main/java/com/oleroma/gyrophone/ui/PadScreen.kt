@@ -126,6 +126,7 @@ import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Placement
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchAreaKind
+import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchLayer
@@ -1189,17 +1190,16 @@ fun PadScreen(
                 val cornerOwner = HashMap<PointerId, String>()
 
                 // On touch, Outside and Zone mappings (TouchArea sources).
-                val areaMapped = workspace.mappings.mapNotNullTo(HashSet()) { it.source as? InputSource.TouchArea }
+                // Any trigger of one (Long press, Tap...) needs its on / off: kept by its plain source.
+                val areaMapped = workspace.mappings.mapNotNullTo(HashSet()) { (it.source as? InputSource.TouchArea)?.copy(on = Trigger.HOLD) }
                 fun mapped(id: String, kind: TouchAreaKind) = InputSource.TouchArea(id, kind) in areaMapped
                 val zoneControls = controls.filter { mapped(it.id, TouchAreaKind.ZONE) }
                 // A button with only a Zone mapping holds nothing itself: a finger landing on it acts as
                 // if it landed on what is under it (the touchpad or another control).
                 val zoneOnly = zoneControls.filter { c ->
                     c.kind == TouchKind.BUTTON && workspace.mappings.all { m ->
-                        MappingProfiles.touchId(m.source) != c.id || m.source == InputSource.TouchArea(
-                            c.id,
-                            TouchAreaKind.ZONE
-                        )
+                        MappingProfiles.touchId(m.source) != c.id ||
+                                (m.source as? InputSource.TouchArea)?.let { it.id == c.id && it.kind == TouchAreaKind.ZONE } == true
                     }
                 }.mapTo(HashSet()) { it.id }
                 // Front first, as touches see them (size, layer); see hitOrder.

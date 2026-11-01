@@ -85,9 +85,13 @@ object Triggers {
     private fun isDirection(s: InputSource) =
         s is InputSource.Surface && s.input.holdDirection != null && s.on == Trigger.HOLD && s.fingers in 1..4
 
-    /** Whether [base] (a held source) offers triggers: keys, touch buttons, surface finger counts and swipe directions. */
+    /** A control's Area or Outside (not a stick's On touch). */
+    private fun isArea(s: InputSource) = s is InputSource.TouchArea && s.kind != TouchAreaKind.HELD
+
+    /** Whether [base] (a held source) offers triggers: keys, touch buttons, surface finger counts, swipe directions, Area and Outside. */
     fun supports(base: InputSource): Boolean = when (base) {
         is InputSource.Key, is InputSource.Touch -> true
+        is InputSource.TouchArea -> base.on == Trigger.HOLD && isArea(base)
         is InputSource.Surface -> base.on == Trigger.HOLD && base.fingers in 1..4 &&
             ((base.input == SurfaceInput.HOLD && base.zone == 0) || base.input.holdDirection != null)
 
@@ -103,7 +107,8 @@ object Triggers {
     }
 
     /** What the editor calls [t] on [base]: a swipe direction's are its own ("Quick swipe"). */
-    fun label(base: InputSource, t: Trigger): String = if (!isDirection(base)) t.label else when (t) {
+    fun label(base: InputSource, t: Trigger): String = if (isArea(base)) areaLabel((base as InputSource.TouchArea).kind, t)
+    else if (!isDirection(base)) t.label else when (t) {
         Trigger.HOLD -> "On swipe"
         Trigger.TAP -> "Quick swipe"
         Trigger.LONG_PRESS -> "Long hold"
@@ -111,9 +116,29 @@ object Triggers {
         else -> t.label
     }
 
+    /** What Area / Outside call [t]. */
+    private fun areaLabel(kind: TouchAreaKind, t: Trigger): String = if (kind == TouchAreaKind.ZONE) when (t) {
+        Trigger.HOLD -> "Slide in"
+        Trigger.TAP -> "Quick pass"
+        Trigger.LONG_PRESS -> "Stay in"
+        Trigger.DOUBLE_TAP -> "Double pass"
+        Trigger.RELEASE -> "Slide out"
+        else -> t.label
+    } else when (t) {
+        Trigger.HOLD -> "Slide out"
+        Trigger.TAP -> "Quick out"
+        Trigger.LONG_PRESS -> "Stay out"
+        Trigger.DOUBLE_TAP -> "Double out"
+        Trigger.RELEASE -> "Back in"
+        else -> t.label
+    }
+
     /** [t]'s badge on a chip of [base] ("" for On touch / On swipe). */
-    fun badge(base: InputSource, t: Trigger): String =
-        if (isDirection(base) && t == Trigger.TAP) "Quick" else t.badge
+    fun badge(base: InputSource, t: Trigger): String = when {
+        isArea(base) -> if (t == Trigger.HOLD) "" else label(base, t)
+        isDirection(base) && t == Trigger.TAP -> "Quick"
+        else -> t.badge
+    }
 
     /** Whether [base] is a swipe direction (its triggers are named for swipes). */
     fun isSwipe(base: InputSource): Boolean = isDirection(base)
@@ -125,6 +150,7 @@ object Triggers {
         is InputSource.TouchDoubleTap -> Trigger.DOUBLE_TAP
         is InputSource.TouchLongPress -> Trigger.LONG_PRESS
         is InputSource.TouchRelease -> Trigger.RELEASE
+        is InputSource.TouchArea -> s.on
         is InputSource.Surface -> when {
             s.on != Trigger.HOLD -> s.on
             s.input.swipeDirection != null -> Trigger.TAP
@@ -142,6 +168,7 @@ object Triggers {
         is InputSource.TouchDoubleTap -> InputSource.Touch(s.id)
         is InputSource.TouchLongPress -> InputSource.Touch(s.id)
         is InputSource.TouchRelease -> InputSource.Touch(s.id)
+        is InputSource.TouchArea -> if (s.on == Trigger.HOLD) s else s.copy(on = Trigger.HOLD)
         is InputSource.Surface -> {
             val d = s.input.swipeDirection
             when {
@@ -163,6 +190,7 @@ object Triggers {
             is InputSource.Key -> InputSource.KeyGesture(base.keyCode, gesture(t)!!)
             // Every touch button is a touch surface: its gestures are its one-finger ones.
             is InputSource.Touch -> InputSource.Surface(1, surfaceInput(t), base.id)
+            is InputSource.TouchArea -> if (supports(base) && t in OFFERED) base.copy(on = t) else null
             is InputSource.Surface -> when {
                 t !in offered(base) && t != Trigger.PRESS -> null
                 isDirection(base) -> {
