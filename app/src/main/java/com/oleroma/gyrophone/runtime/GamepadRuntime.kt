@@ -63,7 +63,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-/** A game controller attached to the phone (e.g. GameSir X5). */
+/** A game controller attached to the phone (e.g. a clip-on controller). */
 data class AttachedController(
     val deviceId: Int,
     val name: String,

@@ -13,7 +13,7 @@ android {
 
     defaultConfig {
         applicationId = "com.oleroma.gyrophone"
-        // OnePlus 15 ships Android 16 (API 36); API 35 keeps one step of headroom for testing.
+        // The reference phone ships Android 16 (API 36); API 35 keeps one step of headroom for testing.
         minSdk = 35
         targetSdk = 36
         // update.cmd stamps each build: 0.1.<commit count>-<commit>. Plain Gradle builds are 0.1.0-dev.

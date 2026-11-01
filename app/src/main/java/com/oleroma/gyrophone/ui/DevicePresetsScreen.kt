@@ -379,7 +379,7 @@ private fun ElementBox(
 }
 
 /**
- * The outline of a DualSense in a box of [w] x [h], as seen from above: a flat top with round
+ * The outline of a symmetric-stick gamepad in a box of [w] x [h], as seen from above: a flat top with round
  * shoulders and two long grips. The back view uses it too.
  */
 private fun padOutline(w: Float, h: Float): Path {
