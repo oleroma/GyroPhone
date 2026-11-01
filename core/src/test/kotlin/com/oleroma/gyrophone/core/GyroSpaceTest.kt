@@ -8,7 +8,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/** Gyro space: yaw, pitch and roll about the phone's axes, the world's, or JoyShockMapper's player space. */
+/** Gyro space: yaw, pitch and roll about the phone's axes, the world's, or player space. */
 class GyroSpaceTest {
     private val g = GyroMouse()
     private val upright = floatArrayOf(0f, 1f, 0f)

@@ -13,7 +13,7 @@ import java.util.concurrent.locks.LockSupport
  * enqueue faster than the Bluetooth link drains, reports pile up in the stack and every new
  * movement waits behind the backlog, which feels like heavy, growing lag.
  *
- * On the OnePlus 15 the stack keeps the HID link in sniff mode (it re-enters sniff after every
+ * On the reference phone the stack keeps the HID link in sniff mode (it re-enters sniff after every
  * report and cannot be told not to), which allows roughly one packet per sniff interval. So
  * each tick sends at most ONE report, chosen by [ReportScheduler], and two reports are never
  * closer than one interval. After a tick that sent nothing, input (the engine's onChange) ends

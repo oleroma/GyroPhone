@@ -117,7 +117,7 @@ enum class ButtonGesture(val label: String) {
 /** Something on the phone side that produces input. */
 @Serializable
 sealed interface InputSource {
-    /** A key or button of any input device attached to the phone (GameSir X5, keyboard...). */
+    /** A key or button of any input device attached to the phone (gamepad, keyboard...). */
     @Serializable
     @SerialName("key")
     data class Key(val keyCode: Int) : InputSource

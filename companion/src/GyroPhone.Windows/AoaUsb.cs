@@ -317,7 +317,7 @@ internal static class Aoa
 internal sealed record UsbNode(uint DevInst, string InstanceId, string[] HardwareIds, string[] CompatibleIds, string[] InterfaceGuids)
 {
     // VID and PID come from the instance id (USB\VID_xxxx&PID_xxxx...). The interface number does not
-    // always: a vendor's composite driver (e.g. Samsung's) names interfaces ...&ADB or ...&MS_COMP_MTP,
+    // always: a vendor's composite driver names interfaces ...&ADB or ...&MS_COMP_MTP,
     // so it is read from any id that has &MI_xx.
     private static readonly Regex VidPid = new(@"^USB\\VID_([0-9A-F]{4})&PID_([0-9A-F]{4})", RegexOptions.IgnoreCase);
     private static readonly Regex Mi = new(@"&MI_([0-9A-F]{2})", RegexOptions.IgnoreCase);

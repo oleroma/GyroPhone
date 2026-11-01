@@ -203,7 +203,7 @@ private fun AppTab(runtime: GamepadRuntime) {
         )
 
         Text("Controllers on phone", style = MaterialTheme.typography.titleSmall)
-        if (controllers.isEmpty()) Text("None. Attach a GameSir X5 or any gamepad.")
+        if (controllers.isEmpty()) Text("None. Attach any gamepad.")
         controllers.forEach { c ->
             Text("${c.name} (${c.known?.name ?: "standard layout"}) " + "%04X:%04X".format(c.vendorId, c.productId))
         }
