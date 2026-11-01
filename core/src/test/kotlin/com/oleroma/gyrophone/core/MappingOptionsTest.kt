@@ -473,6 +473,41 @@ class MappingOptionsTest {
     }
 
     @Test
+    fun touchHeldWithLongPressToggleOfTheSameKey() {
+        // Crouch at once on every touch; held long it stays on; the next touch ends it.
+        val e = keyEngine(
+            Mapping(InputSource.Key(KEY_A), OutputTarget.Key(C)),
+            Mapping(InputSource.KeyGesture(KEY_A, ButtonGesture.LONG_PRESS), OutputTarget.Key(C),
+                options = MapOptions(how = How.TOGGLE, endsOnSame = true)),
+        )
+        e.down(); assertEquals(setOf(C), e.keys()) // at once
+        t += 50 * MS; e.up(); assertEquals(emptySet<Int>(), e.keys()) // a quick touch: just crouch
+        t += 500 * MS; e.down(); e.keys()
+        t += 1000 * MS; assertEquals(setOf(C), e.keys()) // held long: the toggle came on
+        e.up(); t += 50 * MS
+        assertEquals(setOf(C), e.keys()) // and stays on after the lift
+        t += 500 * MS; e.down(); assertEquals(setOf(C), e.keys()) // the next touch: held
+        t += 50 * MS; e.up(); t += 50 * MS
+        assertEquals(emptySet<Int>(), e.keys()) // and the toggle ended
+    }
+
+    @Test
+    fun touchHeldWithDoubleTapToggleOfTheSameKey() {
+        val e = keyEngine(
+            Mapping(InputSource.Key(KEY_A), OutputTarget.Key(C)),
+            Mapping(InputSource.KeyGesture(KEY_A, ButtonGesture.DOUBLE_TAP), OutputTarget.Key(C),
+                options = MapOptions(how = How.TOGGLE, endsOnSame = true)),
+        )
+        e.down(); assertEquals(setOf(C), e.keys())
+        t += 50 * MS; e.up(); assertEquals(emptySet<Int>(), e.keys())
+        t += 50 * MS; e.down(); assertEquals(setOf(C), e.keys()) // the second touch
+        t += 50 * MS; e.up(); t += 50 * MS
+        assertEquals(setOf(C), e.keys()) // toggled on
+        t += 1000 * MS; e.down(); e.keys(); t += 50 * MS; e.up(); t += 50 * MS
+        assertEquals(emptySet<Int>(), e.keys()) // the next touch ends it
+    }
+
+    @Test
     fun anotherToggleOfTheSameKeystrokeOnlyEndsIt() {
         val e = keyEngine(
             a(MapOptions(how = How.TOGGLE, endsOnSame = true), usage = C),

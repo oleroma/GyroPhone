@@ -888,11 +888,16 @@ internal fun ControlMappingScreen(
                     } else {
                         if (from == null) addRecent(d.target)
                         // A chip keeps its trigger where the card offers it; a new one is Hold.
-                        val tr = when {
+                        val tr0 = when {
                             c != null -> (c as? RowItem.Chip)?.trigger ?: Trigger.HOLD
                             from != null -> Triggers.of(from.sources.first())
                             else -> Trigger.HOLD
                         }.takeIf { it in Bindings.triggersOf(zi) } ?: Trigger.HOLD
+                        // A new one already mapped there goes to the next When that does not map it yet
+                        // (On touch Crouch, then Long press Crouch), its settings opened to pick When and How.
+                        fun maps(t: Trigger) = d.target in Bindings.targets(currentMappings, trig(zi, t))
+                        val fresh = if (from == null && maps(tr0)) Bindings.triggersOf(zi).firstOrNull { !maps(it) } else null
+                        val tr = fresh ?: tr0
                         row.add(i, RowItem.Chip(zone, d.target, tr, w))
                         val base = if (from == null || c != null) currentMappings else Bindings.removeTarget(currentMappings, from, d.target)
                         // Already in the zone it lands in: just moved there, not twice.
@@ -903,6 +908,7 @@ internal fun ControlMappingScreen(
                             withRow(base, card, cleaned),
                             (if (from == null) "Mapped " else "Moved ") + Describe.shortTarget(d.target) + " to " + actionTitle(currentControl, zi),
                         )
+                        if (fresh != null) chipDialog = card to RowItem.Chip(zone, d.target, tr, w)
                     }
                     done = true
                 } else if (from != null && libraryBounds.contains(dragPos)) {
