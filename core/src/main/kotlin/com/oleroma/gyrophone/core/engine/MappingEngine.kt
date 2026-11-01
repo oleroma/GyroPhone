@@ -828,7 +828,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /**
      * Every input held now, for the debug panel: touch controls pressed (by label), then each
-     * device's held keys ("GameSir X5: A"), then touchpad fingers.
+     * device's held keys ("Gamepad: A"), then touchpad fingers.
      */
     fun heldInputs(): List<String> = synchronized(lock) {
         val out = ArrayList<String>()

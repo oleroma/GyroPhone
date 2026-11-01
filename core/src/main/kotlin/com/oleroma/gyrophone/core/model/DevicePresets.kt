@@ -161,13 +161,13 @@ object PhysicalLayouts {
         "p4" to listOf(AndroidKey.BUTTON_1 + 3),
     )
 
-    /** The controller drawings' box: width / height (a DualSense seen from above). */
+    /** The controller drawings' box: width / height (a symmetric-stick gamepad seen from above). */
     const val CONTROLLER_ASPECT = 1.5f
 
     /** The top view's touchpad, drawn but not mapped: left, top, right, bottom. */
     val TOUCHPAD = listOf(0.335f, 0.06f, 0.665f, 0.40f)
 
-    /** The controller's top, laid out as a DualSense: D-pad and face buttons high, both sticks low. */
+    /** The controller's top, laid out symmetrically: D-pad and face buttons high, both sticks low. */
     val controllerFront: ControllerDiagram = run {
         val a = CONTROLLER_ASPECT
         fun round(id: String, label: String, kind: PhysicalKind, x: Float, y: Float, d: Float, inputs: List<BindableInput>) =

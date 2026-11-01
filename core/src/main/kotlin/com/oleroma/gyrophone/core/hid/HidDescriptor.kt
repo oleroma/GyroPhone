@@ -13,7 +13,7 @@ package com.oleroma.gyrophone.core.hid
  *
  * Windows enumerates the game pad as a generic HID (DirectInput) controller. Native XInput needs a
  * Microsoft VID/PID in the Bluetooth Device ID record, which Android apps cannot set; XInput is
- * provided by the Windows companion (see README) or by Steam Input on top of this game pad.
+ * provided by the Windows companion (see README) or by a PC-side remapper on top of this game pad.
  */
 object HidDescriptor {
     const val REPORT_ID_GAMEPAD: Int = 1
