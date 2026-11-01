@@ -16,7 +16,7 @@ android {
         // The reference phone ships Android 16 (API 36); API 35 keeps one step of headroom for testing.
         minSdk = 35
         targetSdk = 36
-        // update.cmd stamps each build: 0.1.<commit count>-<commit>. Plain Gradle builds are 0.1.0-dev.
+        // The build hook stamps each build: 0.1.<build number>-<commit>. Plain Gradle builds are 0.1.0-dev.
         val run = System.getenv("GP_BUILD")?.toIntOrNull()
         val sha = System.getenv("GP_COMMIT")?.take(7)
         versionCode = run ?: 1

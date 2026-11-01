@@ -4,7 +4,7 @@ namespace GyroPhone.Host.Update;
 
 /// <summary>
 /// Version checks for the companion's self-restart. update.cmd stamps the exe with InformationalVersion
-/// "0.1.&lt;commit count&gt;-&lt;commit&gt;", which is also the file's ProductVersion; other builds have no build number.
+/// "0.1.&lt;build number&gt;-&lt;commit&gt;", which is also the file's ProductVersion; other builds have no build number.
 /// </summary>
 public static partial class UpdateInfo
 {
