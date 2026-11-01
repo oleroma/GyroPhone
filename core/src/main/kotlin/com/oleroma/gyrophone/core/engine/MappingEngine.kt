@@ -342,6 +342,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * and every gesture state in play: those and the keys' ([Dev.gestures]).
      */
     private val tapStates = HashMap<String, ButtonGestures>()
+    /** Each touch control's long press and double tap times (ns) in effect, by id: its Area and Outside use them. */
+    private val buttonTimes = HashMap<String, LongArray>()
     private val tapList = ArrayList<ButtonGestures>()
 
     /** What a key with gesture mappings needs: whether it has a double tap and its tap waits. */
@@ -1864,8 +1866,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
         } else if (src is InputSource.TouchArea) {
             // Area / Outside: their on / off is the press; Tap and Release come at its end.
-            val surface = surfaces[src.id] ?: touchpad
-            sh.longNs = surface.longPressNanos; sh.doubleNs = surface.doubleTapNanos; sh.edges = true
+            // The button's own long press and double tap times, as its touch has.
+            val times = buttonTimes[src.id]
+            sh.longNs = times?.get(0) ?: touchpad.longPressNanos
+            sh.doubleNs = times?.get(1) ?: touchpad.doubleTapNanos
+            sh.edges = true
         }
         sh.pulseNs = touchpad.minPulseNanos
         if (o.endsOnTap && o.mode == How.TOGGLE) sh.touched(touchedNow(src, dev), now)
@@ -2158,6 +2163,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 s.doubleTapNanos = c.doubleTap(e) * 1_000_000L; s.longPressNanos = c.longPress(e) * 1_000_000L
             }
             tapStates[c.id]?.let { st -> st.longNs = c.longPress(e) * 1_000_000L; st.doubleNs = c.doubleTap(e) * 1_000_000L }
+            buttonTimes[c.id] = longArrayOf(c.longPress(e) * 1_000_000L, c.doubleTap(e) * 1_000_000L)
         }
         for (d in deviceList) for ((code, g) in d.gestures) keyTimes(code, g)
         for ((code, g) in anyDevice.gestures) keyTimes(code, g)

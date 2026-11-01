@@ -803,7 +803,7 @@ internal fun ControlMappingScreen(
     fun gearOf(input: BindableInput): (() -> Unit)? {
         if (settings?.action?.invoke(input) != null) return { actionDialog = input }
         if (areaGears(input).isNotEmpty()) return { actionDialog = input }
-        if (trigInputs(input).any { (t, ti) ->
+        if (wheresOf(input).filterNotNull().flatMap { trigInputs(it) }.any { (t, ti) ->
                 Bindings.targets(view, ti).any { it is OutputTarget.Key } ||
                     (t != Trigger.HOLD && Bindings.targets(view, ti).isNotEmpty() && settings?.action?.invoke(ti) != null)
             }) return { actionDialog = input }
@@ -1488,7 +1488,8 @@ internal fun ControlMappingScreen(
     actionDialog?.let { input ->
         val content = settings?.action?.invoke(input)
         // A card's triggers that map something: their timing settings (long press time, double tap window), once each.
-        val mappedTriggers = trigInputs(input).filter { (t, ti) -> t != Trigger.HOLD && Bindings.targets(view, ti).isNotEmpty() }
+        val mappedTriggers = wheresOf(input).filterNotNull().flatMap { trigInputs(it) }
+            .filter { (t, ti) -> t != Trigger.HOLD && Bindings.targets(view, ti).isNotEmpty() }
         val timingContents = listOfNotNull(
             mappedTriggers.firstOrNull { it.first == Trigger.TAP || it.first == Trigger.LONG_PRESS }?.second,
             // A swipe's double has its quick swipe's settings.
