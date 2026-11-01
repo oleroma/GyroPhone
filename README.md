@@ -77,7 +77,7 @@ Phone (mapping engine) ─► UDP, AES-GCM sealed ─► GyroPhoneCompanion ─�
 
 Builds run through the scripts in `.agents/` (see `AGENTS.md`). On the PC, check the commit out in the `build\src` worktree and run `bash build/src/.agents/agent-build pc`: it runs the quick tests, builds `gyrophone-0.1.<build number>.apk` and `GyroPhoneCompanion.exe`, puts the newest ones in `build\` (ignored by git), keeps the last 4 builds in `build\builds\0.1.<build number>-<commit>\`, and installs the APK on a connected phone. Then `.agents/hooks/install` installs the companion in `%LOCALAPPDATA%\Programs\GyroPhone` (a running companion shuts down, updates and starts again within a few seconds) and, with the phone on adb, swaps the phone and PC key files so they connect over Wi-Fi without a code. The build itself is `.agents/hooks/build`. You need JDK 17, the Android SDK (API 36) and the .NET 8 SDK, found through `JAVA_HOME`, `ANDROID_HOME` and the `PATH`.
 
-When the PC is offline, the `fallback.yml` workflow, started by hand on a branch, runs the quick tests and saves the APK and the companion on the run. A push to `main` runs the full checks only.
+When the PC is offline, the `fallback.yml` workflow, started by hand on a branch, does what a PC build does (quick tests, build, full checks) and saves the APK and the companion on the run.
 
 The tests:
 

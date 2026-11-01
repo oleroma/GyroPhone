@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Full checks, run on every push to main. Not run on branches.
+# Full checks, run once by every build (PC and fallback) after the build. The quick tests
+# already ran before it, so they aren't repeated here.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-bash .agents/hooks/quick-test
 ./gradlew :app:lintDebug
