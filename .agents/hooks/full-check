@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Full checks, run once by every build (PC and fallback) after the build. The quick tests
 # already ran before it, so they aren't repeated here.
+# Usage: full-check [apk|companion]; no argument: the parts this branch changed (see parts).
+# Only the app has full checks (Android lint).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+if [ $# -gt 0 ]; then parts="$*"; else parts="$(bash .agents/hooks/parts)"; fi
 
-./gradlew :app:lintDebug
+if grep -qw apk <<<"$parts"; then
+  ./gradlew :app:lintDebug
+fi

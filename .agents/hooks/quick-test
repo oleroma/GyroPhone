@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
-# Quick tests, run by every branch build (PC and fallback) before building:
-# the Kotlin core's unit tests and the companion's tests.
+# Quick tests, run by every branch build (PC and fallback) before building.
+# Usage: quick-test [apk|companion]
+#   no argument: the parts this branch changed (see parts)
+#   apk: the Kotlin core's unit tests; companion: the companion's tests
+# (the fallback workflow tests each part on the runner that builds it)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+if [ $# -gt 0 ]; then parts="$*"; else parts="$(bash .agents/hooks/parts)"; fi
 
-./gradlew :core:test
+if grep -qw apk <<<"$parts"; then
+  ./gradlew :core:test
+fi
 
-# The Windows-only companion projects build only on Windows; elsewhere the
-# cross-platform ones (protocol, engine and their tests) still run.
-if [ "${OS:-}" = Windows_NT ]; then
-  dotnet test companion/GyroPhone.Companion.sln -c Release
-else
-  dotnet test companion/GyroPhone.Companion.Linux.slnf -c Release
+if grep -qw companion <<<"$parts"; then
+  # The Windows-only companion projects build only on Windows; elsewhere the
+  # cross-platform ones (protocol, engine and their tests) still run.
+  if [ "${OS:-}" = Windows_NT ]; then
+    dotnet test companion/GyroPhone.Companion.sln -c Release
+  else
+    dotnet test companion/GyroPhone.Companion.Linux.slnf -c Release
+  fi
 fi

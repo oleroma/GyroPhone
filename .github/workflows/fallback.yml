@@ -5,9 +5,9 @@ name: Fallback build
 # It does what a PC build does, with the same hooks in .agents/hooks/: quick tests, build,
 # full checks. When every job passes it marks the commit checked, as PC builds do.
 # Each build file is saved on the run unzipped. It never runs on a push.
-# The quick tests run on Windows, the only place all of them (the Kotlin core and every
-# companion project) can run. The APK builds on Linux and the companion on Windows; both
-# share one build number.
+# Only the parts the branch changed since main are tested and built (.agents/hooks/parts):
+# the APK with the Kotlin core's tests on Linux, the companion with its tests on Windows, the
+# only place all companion projects run. Both share one build number.
 on:
   workflow_dispatch:
 
@@ -19,7 +19,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Claims the build number both build jobs use, so the APK and the companion share one version.
+  # Claims the build number both build jobs use, so the APK and the companion share one version,
+  # and finds the parts the branch changed.
   number:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -27,13 +28,19 @@ jobs:
       contents: write # pushes the build/<n> tag
     outputs:
       n: ${{ steps.n.outputs.n }}
+      parts: ${{ steps.parts.outputs.parts }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # parts compares the branch with main
+      - id: parts
+        run: echo "parts=$(bash .agents/hooks/parts | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
       - id: n
         run: n="$(bash .agents/build-number)" && echo "n=$n" >> "$GITHUB_OUTPUT"
 
   android:
     needs: number
+    if: contains(needs.number.outputs.parts, 'apk')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -51,6 +58,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
+
+      - name: Quick tests
+        run: bash .agents/hooks/quick-test apk
 
       - name: Build
         id: build
@@ -71,24 +81,20 @@ jobs:
           archive: false
 
       - name: Full checks
-        run: bash .agents/hooks/full-check
+        run: bash .agents/hooks/full-check apk
 
   companion:
     needs: number
+    if: contains(needs.number.outputs.parts, 'companion')
     runs-on: windows-latest
     timeout-minutes: 30
+    outputs:
+      version: ${{ steps.build.outputs.version }}
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: 17
-      - uses: gradle/actions/setup-gradle@v6
-        with:
-          cache-provider: basic
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
@@ -99,7 +105,7 @@ jobs:
           restore-keys: nuget-
 
       - name: Quick tests
-        run: bash .agents/hooks/quick-test
+        run: bash .agents/hooks/quick-test companion
 
       - name: Build
         id: build
@@ -118,9 +124,10 @@ jobs:
           path: ${{ steps.build.outputs.file }}
           archive: false
 
-  # Runs only when both build jobs passed.
+  # Runs only when every build job that ran passed (a part the branch didn't change is skipped).
   checked:
     needs: [android, companion]
+    if: always() && !failure() && !cancelled()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -130,7 +137,7 @@ jobs:
       - name: Mark the commit checked
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.android.outputs.version }}
+          VERSION: ${{ needs.android.outputs.version || needs.companion.outputs.version }}
         run: >-
           test -n "$VERSION" &&
           gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
