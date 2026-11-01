@@ -28,13 +28,26 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
+  # Claims the build number both build jobs use, so the APK and the companion share one version.
+  number:
+    if: github.event_name != 'push' && inputs.mode != 'check'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # pushes the build/<n> tag
+    outputs:
+      n: ${{ steps.n.outputs.n }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: n
+        run: n="$(bash .agents/build-number)" && echo "n=$n" >> "$GITHUB_OUTPUT"
+
   android:
+    needs: number
+    # Also runs when number is skipped (check mode, pushes to main).
+    if: ${{ !cancelled() && needs.number.result != 'failure' }}
     runs-on: ubuntu-latest
     steps:
-      # Full history: the version is the commit count.
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -61,6 +74,8 @@ jobs:
       - name: Build
         id: build
         if: github.event_name != 'push' && inputs.mode != 'check'
+        env:
+          BUILD_NUMBER: ${{ needs.number.outputs.n }}
         run: |
           set -o pipefail
           bash .agents/hooks/build apk | tee "$RUNNER_TEMP/build.out"
@@ -89,12 +104,10 @@ jobs:
           archive: false
 
   companion:
-    if: github.event_name != 'push' && inputs.mode != 'check'
+    needs: number
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
@@ -107,6 +120,8 @@ jobs:
       - name: Build
         id: build
         shell: bash
+        env:
+          BUILD_NUMBER: ${{ needs.number.outputs.n }}
         run: |
           set -o pipefail
           bash .agents/hooks/build companion | tee "$RUNNER_TEMP/build.out"
