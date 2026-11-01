@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Builds GyroPhone and prints "build-file: <path> <version>" per build file.
 # Usage: build [apk|companion]
-#   no argument: the APK, plus the Windows companion when running on Windows
+#   no argument: the parts this branch changed (see parts); the companion only on Windows
 #   apk / companion: only that one (the fallback workflow builds them on separate runners)
+# A part that isn't built has no build file, so agent-install leaves it as installed.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-what="${1:-all}"
+if [ $# -gt 0 ]; then parts="$*"; else parts="$(bash .agents/hooks/parts)"; fi
 
 # The version is 0.1.<build number>, read by app/build.gradle.kts and stamped into the companion.
 # BUILD_NUMBER comes from .agents/build-number, run by agent-build pc and fallback.yml.
@@ -14,14 +15,14 @@ GP_COMMIT="$(git rev-parse --short=7 HEAD)"
 export GP_BUILD GP_COMMIT
 version="0.1.$GP_BUILD"
 
-if [ "$what" = all ] || [ "$what" = apk ]; then
+if grep -qw apk <<<"$parts"; then
   ./gradlew :app:assembleDebug
   apk="app/build/outputs/apk/debug/gyrophone-$version.apk"
   cp app/build/outputs/apk/debug/app-debug.apk "$apk"
   echo "build-file: $apk $version"
 fi
 
-if [ "$what" = companion ] || { [ "$what" = all ] && [ "${OS:-}" = Windows_NT ]; }; then
+if grep -qw companion <<<"$parts" && { [ $# -gt 0 ] || [ "${OS:-}" = Windows_NT ]; }; then
   # Branch builds skip ReadyToRun: it only speeds up startup and makes the build much slower.
   publish=(dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contained true
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
