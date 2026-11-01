@@ -1821,7 +1821,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun latchChip(s: InputSource) = s is InputSource.Surface && s.on == Trigger.HOLD && s.input.holdDirection != null
 
     /** A swipe trigger the engine works out from the swipe itself ([InputSource.Surface.on]); HOLD = none. */
-    private fun derivedTrigger(s: InputSource): Trigger = (s as? InputSource.Surface)?.on ?: Trigger.HOLD
+    private fun derivedTrigger(s: InputSource): Trigger = when (s) {
+        is InputSource.Surface -> s.on
+        is InputSource.TouchArea -> s.on
+        else -> Trigger.HOLD
+    }
 
     /** [m]'s output goes through a [Shaper]: it has options, or a swipe trigger. */
     private fun shaped(m: Mapping): Boolean = m.options != null || derivedTrigger(m.source) != Trigger.HOLD
@@ -1837,9 +1841,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val o = m.options ?: if (derived == Trigger.HOLD) return v else NO_OPTIONS
         var on = abs(v) >= PRESS_THRESHOLD
         val sh = shaperOf(m, dev)
-        if (derived == Trigger.RELEASE) {
+        if (derived == Trigger.RELEASE && src is InputSource.Surface) {
             // A swipe's Release: the last finger lifted in its zone (not sliding on, not leaving the direction).
-            val s = src as InputSource.Surface
+            val s = src
             val pad = if (s.id.isEmpty()) touchpad else surfaces[s.id]
             val d = s.input.holdDirection
             on = false
@@ -1858,6 +1862,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             if (surface != null) {
                 sh.longNs = surface.longPressNanos; sh.doubleNs = surface.doubleTapNanos
             }
+        } else if (src is InputSource.TouchArea) {
+            // Area / Outside: their on / off is the press; Tap and Release come at its end.
+            val surface = surfaces[src.id] ?: touchpad
+            sh.longNs = surface.longPressNanos; sh.doubleNs = surface.doubleTapNanos; sh.edges = true
         }
         sh.pulseNs = touchpad.minPulseNanos
         if (o.endsOnTap && o.mode == How.TOGGLE) sh.touched(touchedNow(src, dev), now)

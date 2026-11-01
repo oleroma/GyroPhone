@@ -183,10 +183,14 @@ sealed interface InputSource {
     @SerialName("touch_swipe")
     data class TouchSwipe(val id: String, val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL) : InputSource
 
-    /** Where fingers are relative to a touch control's area (see [TouchAreaKind]); the pad screen drives it. */
+    /**
+     * Where fingers are relative to a touch control's area (see [TouchAreaKind]); the pad screen
+     * drives it. [on]: its trigger ([Trigger]), worked out from that on / off by the engine (Area
+     * and Outside only; HOLD = while it is on).
+     */
     @Serializable
     @SerialName("touch_area")
-    data class TouchArea(val id: String, val kind: TouchAreaKind) : InputSource
+    data class TouchArea(val id: String, val kind: TouchAreaKind, val on: Trigger = Trigger.HOLD) : InputSource
 
     /**
      * An input of a touch surface with [fingers] (1..4) down; [id] "" = the workspace touchpad.

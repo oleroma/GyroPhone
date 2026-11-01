@@ -112,6 +112,7 @@ import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.PhysicalDevice
 import com.oleroma.gyrophone.core.model.SurfaceInput
+import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchpadSettings
@@ -1455,24 +1456,39 @@ internal fun ControlMappingScreen(
     chipDialog?.let { (input, chip) ->
         val zi = zin(input, chip.zone)
         val ti = trig(zi, chip.trigger)
+        // A button's Touch, Area and Outside: a chip can move between them (Where).
+        val src0 = input.sources.first()
+        fun isTouch(s: InputSource) = s == InputSource.Touch(control.id) ||
+                (s is InputSource.Surface && s.id == control.id && s.fingers == 1 && s.input == SurfaceInput.HOLD && s.zone == 0)
+        val whereInputs = listOfNotNull(
+            shown.firstOrNull { isTouch(it.sources.first()) }?.let { WHERE_TOUCH to it },
+            shown.firstOrNull { it.sources.first() == InputSource.TouchArea(control.id, TouchAreaKind.ZONE) }?.let { WHERE_AREA to it },
+            shown.firstOrNull { it.sources.first() == InputSource.TouchArea(control.id, TouchAreaKind.OUTSIDE) }?.let { WHERE_OUTSIDE to it },
+        ).takeIf { chip.zone == 0 && it.size > 1 && it.any { (_, wi) -> wi.sources.first() == src0 } }.orEmpty()
+        val whereNow = whereInputs.indexOfFirst { it.second.sources.first() == src0 }.coerceAtLeast(0)
+        fun inputAt(w: Int) = whereInputs.getOrNull(w)?.second ?: input
         MappingChipDialog(
+            wheres = whereInputs.map { it.first },
+            where = whereNow,
             title = Describe.shortTarget(chip.target) + " · " + actionTitle(control, input) +
                 if (chip.zone > 0) " · zone " + (chip.zone + 1) else "",
             triggers = Bindings.triggersOf(zi),
             trigger = chip.trigger,
-            triggerLabel = { trigLabel(input, it) },
+            triggerLabel = { w, t -> trigLabel(inputAt(w), t) },
             swipe = Triggers.isSwipe(input.sources.first()),
             analog = chip.target is OutputTarget.PadAxis || chip.target is OutputTarget.MouseAxis,
             options = Bindings.options(view, ti, chip.target),
-            onApply = { tr, o ->
+            onApply = { tr, o, w ->
                 chipDialog = null
-                val dest = trig(zi, tr)
+                val destInput = if (whereInputs.isEmpty()) zi else inputAt(w)
+                val dest = trig(destInput, if (tr in Bindings.triggersOf(destInput)) tr else Trigger.HOLD)
                 // Another trigger: it leaves this one's chips and joins that one's (keeping their order).
                 val base = if (dest == ti) currentMappings else Bindings.removeTarget(currentMappings, ti, chip.target)
                 val targets = Bindings.targets(base, dest).let { if (chip.target in it) it else it + chip.target }
                 change(
                     Bindings.setTargets(base, dest, targets) { t -> if (t == chip.target) o else Bindings.options(base, dest, t) },
-                    Describe.shortTarget(chip.target) + ": " + trigLabel(input, tr) + if (o == null) "" else " with options",
+                    Describe.shortTarget(chip.target) + ": " + trigLabel(if (whereInputs.isEmpty()) input else inputAt(w), tr) +
+                            if (o == null) "" else " with options",
                 )
             },
             onRemove = {

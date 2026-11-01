@@ -543,4 +543,25 @@ class MappingOptionsTest {
         e.swipeRight(40); e.touchpadUp(1)
         assertTrue(A !in e.hold(100).last()) // the next swipe that way does
     }
+
+    @Test
+    fun areaTriggers() {
+        val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f)
+        fun area(t: Trigger, key: Int) =
+            Mapping(Triggers.with(InputSource.TouchArea("b", com.oleroma.gyrophone.core.model.TouchAreaKind.ZONE), t)!!, OutputTarget.Key(key))
+        val w = Workspace(id = "w", name = "w", touchControls = listOf(b),
+            mappings = listOf(area(Trigger.LONG_PRESS, A), area(Trigger.TAP, B), area(Trigger.RELEASE, C)))
+        val e = MappingEngine(single(w)) { t }.apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 10 * MS }
+        fun inside(on: Boolean) = e.setTouchArea("b", com.oleroma.gyrophone.core.model.TouchAreaKind.ZONE, on)
+        // A quick pass: Tap and Release, no long press.
+        inside(true); val quick = e.hold(60); inside(false); quick.addAll(e.hold(60))
+        assertTrue(quick.none { A in it })
+        assertTrue(quick.any { B in it }); assertTrue(quick.any { C in it })
+        t += 500 * MS
+        // Staying in: the long press, then only Release on the way out.
+        inside(true); val stay = e.hold(1200)
+        assertTrue(A in stay.last()); assertTrue(stay.none { B in it || C in it })
+        inside(false); val out = e.hold(60)
+        assertTrue(out.any { C in it }); assertTrue(out.none { B in it }); assertTrue(A !in out.last())
+    }
 }
