@@ -30,7 +30,7 @@ object Triggers {
     /** The triggers the editor offers, in its order. */
     val OFFERED = listOf(Trigger.HOLD, Trigger.TAP, Trigger.LONG_PRESS, Trigger.DOUBLE_TAP, Trigger.RELEASE)
 
-    private fun gesture(t: Trigger): ButtonGesture? = when (t) {
+    fun gesture(t: Trigger): ButtonGesture? = when (t) {
         Trigger.HOLD -> null
         Trigger.PRESS -> ButtonGesture.PRESS
         Trigger.TAP -> ButtonGesture.TAP
@@ -85,13 +85,12 @@ object Triggers {
     private fun isDirection(s: InputSource) =
         s is InputSource.Surface && s.input.holdDirection != null && s.on == Trigger.HOLD && s.fingers in 1..4
 
-    /** A control's Area or Outside (not a stick's On touch). */
-    private fun isArea(s: InputSource) = s is InputSource.TouchArea && s.kind != TouchAreaKind.HELD
 
     /** Whether [base] (a held source) offers triggers: keys, touch buttons, surface finger counts, swipe directions, Area and Outside. */
     fun supports(base: InputSource): Boolean = when (base) {
         is InputSource.Key, is InputSource.Touch -> true
-        is InputSource.TouchArea -> base.on == Trigger.HOLD && isArea(base)
+        // Inside, Outside and a stick's On touch: the same gestures as a button's touch.
+        is InputSource.TouchArea -> base.on == Trigger.HOLD
         is InputSource.Surface -> base.on == Trigger.HOLD && base.fingers in 1..4 &&
             ((base.input == SurfaceInput.HOLD && base.zone == 0) || base.input.holdDirection != null)
 
@@ -106,9 +105,8 @@ object Triggers {
         else -> OFFERED
     }
 
-    /** What the editor calls [t] on [base]: a swipe direction's are its own ("Quick swipe"). */
-    fun label(base: InputSource, t: Trigger): String = if (isArea(base)) areaLabel((base as InputSource.TouchArea).kind, t)
-    else if (!isDirection(base)) t.label else when (t) {
+    /** What the editor calls [t] on [base]: a swipe direction's are its own ("Quick swipe"); every Where shares the rest. */
+    fun label(base: InputSource, t: Trigger): String = if (!isDirection(base)) t.label else when (t) {
         Trigger.HOLD -> "On swipe"
         Trigger.TAP -> "Quick swipe"
         Trigger.LONG_PRESS -> "Long hold"
@@ -116,26 +114,8 @@ object Triggers {
         else -> t.label
     }
 
-    /** What Area / Outside call [t]. */
-    private fun areaLabel(kind: TouchAreaKind, t: Trigger): String = if (kind == TouchAreaKind.ZONE) when (t) {
-        Trigger.HOLD -> "Slide in"
-        Trigger.TAP -> "Quick pass"
-        Trigger.LONG_PRESS -> "Stay in"
-        Trigger.DOUBLE_TAP -> "Double pass"
-        Trigger.RELEASE -> "Slide out"
-        else -> t.label
-    } else when (t) {
-        Trigger.HOLD -> "Slide out"
-        Trigger.TAP -> "Quick out"
-        Trigger.LONG_PRESS -> "Stay out"
-        Trigger.DOUBLE_TAP -> "Double out"
-        Trigger.RELEASE -> "Back in"
-        else -> t.label
-    }
-
     /** [t]'s badge on a chip of [base] ("" for On touch / On swipe). */
     fun badge(base: InputSource, t: Trigger): String = when {
-        isArea(base) -> if (t == Trigger.HOLD) "" else label(base, t)
         isDirection(base) && t == Trigger.TAP -> "Quick"
         else -> t.badge
     }

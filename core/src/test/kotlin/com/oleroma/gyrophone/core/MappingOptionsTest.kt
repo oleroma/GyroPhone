@@ -8,7 +8,9 @@ import com.oleroma.gyrophone.core.model.AttachedPad
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.ButtonGesture
+import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.HoldZone
+import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.How
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.MapOptions
@@ -598,6 +600,34 @@ class MappingOptionsTest {
         assertTrue(A in stay.last()); assertTrue(stay.none { B in it || C in it })
         inside(false); val out = e.hold(60)
         assertTrue(out.any { C in it }); assertTrue(out.none { B in it }); assertTrue(A !in out.last())
+    }
+
+    /** Every Where (Touch, Inside, Outside, a stick's On touch) gives the same When for the same touches. */
+    @Test
+    fun everyWhereHasTheSameWhens() {
+        val E = 0x08; val D = 0x07
+        val kinds = listOf(null, com.oleroma.gyrophone.core.model.TouchAreaKind.ZONE, com.oleroma.gyrophone.core.model.TouchAreaKind.OUTSIDE,
+            com.oleroma.gyrophone.core.model.TouchAreaKind.HELD)
+        val results = kinds.map { kind ->
+            val c = TouchControl("b", if (kind == com.oleroma.gyrophone.core.model.TouchAreaKind.HELD) TouchKind.STICK else TouchKind.BUTTON, "", 0.5f, 0.5f)
+            val src: InputSource = if (kind == null) InputSource.Touch("b") else InputSource.TouchArea("b", kind)
+            fun m(t: Trigger, key: Int) = Mapping(Triggers.with(src, t)!!, OutputTarget.Key(key))
+            val w = Workspace(id = "w", name = "w", touchControls = listOf(c), mappings = listOf(
+                m(Trigger.HOLD, E), m(Trigger.TAP, A), m(Trigger.LONG_PRESS, B), m(Trigger.DOUBLE_TAP, C), m(Trigger.RELEASE, D)) +
+                // As a new button: the touchpad's tap-drag cleared, not taken over.
+                Inheritance.cleared(Bindings.defaultTouchpadMappings(TouchpadSettings()), "b"))
+            val e = MappingEngine(single(w)) { t }.apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 10 * MS }
+            fun on(v: Boolean) = if (kind == null) { if (v) e.buttonDown(1, "b", 10f, 10f) else e.buttonUp(1) } else e.setTouchArea("b", kind, v)
+            fun run(ms: Int): Set<Int> { val seen = HashSet<Int>(); repeat(ms / 10) { t += 10 * MS; seen.addAll(e.keys()) }; return seen }
+            val quick = HashSet<Int>().apply { on(true); addAll(e.keys()); addAll(run(50)); on(false); addAll(run(1000)) }
+            t += 1000 * MS
+            val long = HashSet<Int>().apply { on(true); addAll(run(1500)); on(false); addAll(run(500)) }
+            t += 1000 * MS
+            val double = HashSet<Int>().apply { on(true); addAll(run(50)); on(false); addAll(run(50)); on(true); addAll(run(50)); on(false); addAll(run(1000)) }
+            Triple(quick, long, double)
+        }
+        assertEquals(Triple(setOf(E, A, D), setOf(E, B, D), setOf(E, C, D)), results[0])
+        for (r in results) assertEquals(results[0], r)
     }
 
     @Test

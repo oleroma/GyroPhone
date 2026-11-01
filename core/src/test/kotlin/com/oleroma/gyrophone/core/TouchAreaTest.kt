@@ -77,7 +77,7 @@ class TouchAreaTest {
     fun inputsAndSources() {
         val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f)
         val labels = Bindings.touchInputs(b).map { it.label }
-        assertTrue(labels.containsAll(listOf("Outside", "Area")))
+        assertTrue(labels.containsAll(listOf("Outside", "Inside")))
         assertTrue(InputSource.TouchArea("b", TouchAreaKind.ZONE).isTouch)
     }
 }

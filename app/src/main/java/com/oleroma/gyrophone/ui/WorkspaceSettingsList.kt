@@ -290,7 +290,7 @@ internal fun WorkspaceSettings(
             }
             OverrideRow(
                 "Ticks play", own(WorkspaceDefaults.HAPTIC_EDGE), reset(WorkspaceDefaults.HAPTIC_EDGE),
-                hint = "When a source presses or lets go; for an area, when a finger enters or leaves it. A tick mapping can set its own.",
+                hint = "When a source presses or lets go; for Inside, when a finger enters or leaves the button. A tick mapping can set its own.",
             ) {
                 HapticEdgeChips(ws.hapticEdge, onSelect = { e -> if (e != null) editWs { it.copy(hapticEdge = e) } })
             }

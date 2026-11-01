@@ -342,8 +342,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * and every gesture state in play: those and the keys' ([Dev.gestures]).
      */
     private val tapStates = HashMap<String, ButtonGestures>()
-    /** Each touch control's long press and double tap times (ns) in effect, by id: its Area and Outside use them. */
-    private val buttonTimes = HashMap<String, LongArray>()
+    /**
+     * Gestures of the touch controls' Inside, Outside and (a stick's) On touch that map one, by
+     * [areaKey]: the same as a button's own touch, on its long press and double tap times.
+     */
+    private val areaGestures = HashMap<String, ButtonGestures>()
+
+    private fun areaKey(id: String, kind: TouchAreaKind) = kind.ordinal.toString() + ":" + id
     private val tapList = ArrayList<ButtonGestures>()
 
     /** What a key with gesture mappings needs: whether it has a double tap and its tap waits. */
@@ -591,6 +596,17 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 tapWaits = double.isNotEmpty() && double != targetsOf(w.mappings, InputSource.TouchTap(c.id)),
             )
             tapStates[c.id] = st; tapList.add(st)
+        }
+        areaGestures.clear()
+        for (k in w.mappings.mapNotNull { (it.source as? InputSource.TouchArea)?.takeIf { a -> a.on != Trigger.HOLD }?.copy(on = Trigger.HOLD) }.distinct()) {
+            val c = w.touchControls.firstOrNull { it.id == k.id }
+            val double = targetsOf(w.mappings, k.copy(on = Trigger.DOUBLE_TAP))
+            val st = ButtonGestures(
+                (c?.longPress(w) ?: w.longPressMs) * 1_000_000L, (c?.doubleTap(w) ?: w.doubleTapMs) * 1_000_000L,
+                hasDouble = double.isNotEmpty(),
+                tapWaits = double.isNotEmpty() && double != targetsOf(w.mappings, k.copy(on = Trigger.TAP)),
+            )
+            areaGestures[areaKey(k.id, k.kind)] = st; tapList.add(st)
         }
         stickCfgs = w.touchControls.filter { it.kind == TouchKind.STICK }.associate { c ->
             c.id to StickCfg(c.deadzone.coerceIn(0f, TouchControl.MAX_DEADZONE), c.zones, BooleanArray(StickDiagonal.entries.size))
@@ -915,10 +931,15 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val now = clock()
             firingEvents(now) {
                 val a = areas[kind.ordinal]
+                val g = areaGestures[areaKey(id, kind)]
                 if (held) {
-                    if (!a.since.containsKey(id)) a.since[id] = a.late.remove(id) ?: now
+                    if (!a.since.containsKey(id)) {
+                        a.since[id] = a.late.remove(id) ?: now
+                        g?.down(now, touchpad.minPulseNanos)
+                    }
                 } else {
                     val t = a.since.remove(id) ?: return@firingEvents
+                    g?.up(now, touchpad.minPulseNanos)
                     if (id !in a.seen || now - t < touchpad.minPulseNanos) a.late[id] = t else a.seen.remove(id)
                 }
             }
@@ -929,7 +950,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Lets go every [InputSource.TouchArea] at once (pad left, layout changed), without pulses. */
     fun touchAreasCancel() {
         synchronized(lock) {
-            firingEvents(clock()) { for (a in areas) a.clear() }
+            firingEvents(clock()) {
+                for (a in areas) a.clear()
+                for (g in areaGestures.values) g.reset()
+            }
         }
         onChange?.run()
     }
@@ -1825,7 +1849,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** A swipe trigger the engine works out from the swipe itself ([InputSource.Surface.on]); HOLD = none. */
     private fun derivedTrigger(s: InputSource): Trigger = when (s) {
         is InputSource.Surface -> s.on
-        is InputSource.TouchArea -> s.on
         else -> Trigger.HOLD
     }
 
@@ -1864,13 +1887,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             if (surface != null) {
                 sh.longNs = surface.longPressNanos; sh.doubleNs = surface.doubleTapNanos
             }
-        } else if (src is InputSource.TouchArea) {
-            // Area / Outside: their on / off is the press; Tap and Release come at its end.
-            // The button's own long press and double tap times, as its touch has.
-            val times = buttonTimes[src.id]
-            sh.longNs = times?.get(0) ?: touchpad.longPressNanos
-            sh.doubleNs = times?.get(1) ?: touchpad.doubleTapNanos
-            sh.edges = true
         }
         sh.pulseNs = touchpad.minPulseNanos
         if (o.endsOnTap && o.mode == How.TOGGLE) sh.touched(touchedNow(src, dev), now)
@@ -2163,7 +2179,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 s.doubleTapNanos = c.doubleTap(e) * 1_000_000L; s.longPressNanos = c.longPress(e) * 1_000_000L
             }
             tapStates[c.id]?.let { st -> st.longNs = c.longPress(e) * 1_000_000L; st.doubleNs = c.doubleTap(e) * 1_000_000L }
-            buttonTimes[c.id] = longArrayOf(c.longPress(e) * 1_000_000L, c.doubleTap(e) * 1_000_000L)
+            for (k in TouchAreaKind.entries) areaGestures[areaKey(c.id, k)]?.let { st ->
+                st.longNs = c.longPress(e) * 1_000_000L; st.doubleNs = c.doubleTap(e) * 1_000_000L
+            }
         }
         for (d in deviceList) for ((code, g) in d.gestures) keyTimes(code, g)
         for ((code, g) in anyDevice.gestures) keyTimes(code, g)
@@ -2236,7 +2254,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         is InputSource.TouchLongPress -> if (tapStates[source.id]?.on(ButtonGesture.LONG_PRESS) == true) 1f else 0f
         is InputSource.TouchRelease -> if (tapStates[source.id]?.on(ButtonGesture.RELEASE) == true) 1f else 0f
         is InputSource.TouchDoubleTap -> if (tapStates[source.id]?.on(ButtonGesture.DOUBLE_TAP) == true) 1f else 0f
-        is InputSource.TouchArea -> if (areas[source.kind.ordinal].held(source.id)) 1f else 0f
+        is InputSource.TouchArea -> if (source.on == Trigger.HOLD) {
+            if (areas[source.kind.ordinal].held(source.id)) 1f else 0f
+        } else if (Triggers.gesture(source.on)?.let { areaGestures[areaKey(source.id, source.kind)]?.on(it) } == true) 1f else 0f
         is InputSource.Surface ->
             if (source.id.isEmpty()) touchpad.level(source.fingers, source.input, source.zone)
             else surfaces[source.id]?.level(source.fingers, source.input, source.zone) ?: 0f
