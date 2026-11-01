@@ -50,7 +50,7 @@ private fun triggerHint(t: Trigger, swipe: Boolean): String = if (swipe) when (t
 
 /** The Where choices' names. */
 internal const val WHERE_TOUCH = "Touch"
-internal const val WHERE_AREA = "Area"
+internal const val WHERE_AREA = "Inside"
 internal const val WHERE_OUTSIDE = "Outside"
 
 private fun whereHint(w: String?): String = when (w) {
@@ -59,16 +59,19 @@ private fun whereHint(w: String?): String = when (w) {
     else -> "A touch that starts on the button."
 }
 
-/** When each trigger starts on an Area ([inside]) or Outside. */
+/**
+ * When each trigger starts Inside ([inside]) or Outside: the same rules as a touch, with entering
+ * as the touch-down and leaving as the lift.
+ */
 private fun areaHint(t: Trigger, inside: Boolean): String {
     val into = if (inside) "slides in" else "leaves the button"
     val back = if (inside) "slides out or lifts" else "comes back or lifts"
     return when (t) {
         Trigger.HOLD -> "Starts as a finger $into, ends as it $back."
         Trigger.TAP -> "When a finger $into and $back before the long-press time."
-        Trigger.LONG_PRESS -> "Starts once a finger has stayed there for the long-press time."
-        Trigger.DOUBLE_TAP -> "A second time soon after a quick one; ends as it $back."
-        Trigger.RELEASE -> "When the finger $back."
+        Trigger.LONG_PRESS -> "Starts once a finger has stayed for the long-press time (then it is no tap), ends as it $back."
+        Trigger.DOUBLE_TAP -> "A second time soon after a quick one (then that is no tap); ends as it $back."
+        Trigger.RELEASE -> "Every time a finger $back."
         Trigger.PRESS -> ""
     }
 }

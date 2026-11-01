@@ -390,21 +390,21 @@ internal fun physicalSettings(
 private fun AreaOptions(control: TouchControl, update: ((TouchControl) -> TouchControl) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         OverrideSwitch(
-            "Area interrupts",
-            "A finger that slides into the area stops what it was doing (cursor, stick, " +
-                    "another button). One landing on the area but on no other control moves no cursor.",
+            "Inside interrupts",
+            "A finger that slides inside stops what it was doing (cursor, stick, " +
+                    "another button). One landing inside but on no other control moves no cursor.",
             control.zoneInterrupt, overridden = false, onReset = null,
         ) { v -> update { it.copy(zoneInterrupt = v) } }
         if (control.zoneInterrupt) {
             OverrideSwitch(
                 "Resume on exit",
-                "Leaving the area, the finger goes back to what it was doing. Off: it does " +
+                "Leaving, the finger goes back to what it was doing. Off: it does " +
                         "nothing more until it lifts.",
                 control.zoneResume, overridden = false, onReset = null,
             ) { v -> update { it.copy(zoneResume = v) } }
         }
         Text(
-            "An area acts while any finger is inside the control, wherever it touched down.",
+            "Inside acts while any finger is inside the control, wherever it touched down.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

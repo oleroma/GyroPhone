@@ -49,7 +49,7 @@ enum class MouseButton(val bit: Int) { LEFT(0), RIGHT(1), MIDDLE(2), BACK(3), FO
  * any finger is inside its area, wherever it touched down.
  */
 @Serializable
-enum class TouchAreaKind(val label: String) { HELD("On touch"), OUTSIDE("Outside"), ZONE("Area") }
+enum class TouchAreaKind(val label: String) { HELD("On touch"), OUTSIDE("Outside"), ZONE("Inside") }
 
 /**
  * A mappable input of a touch surface (the workspace touchpad), per finger count

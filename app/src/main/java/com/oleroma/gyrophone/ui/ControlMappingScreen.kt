@@ -1091,7 +1091,7 @@ internal fun ControlMappingScreen(
                         badge = { tr, w ->
                             val wi = wheresOf(input).getOrNull(w)
                             if (w == 0 || wi == null) Triggers.badge(src, tr)
-                            else listOf(wi.label, Triggers.label(wi.sources.first(), tr)).filter { it.isNotEmpty() }.joinToString(" · ")
+                            else listOf(wi.label, Triggers.badge(wi.sources.first(), tr)).filter { it.isNotEmpty() }.joinToString(" · ")
                         },
                         timing = timingLine(input),
                         setOrder = sets.map { it.id },

@@ -20,9 +20,6 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
     var longNs = 0L
     var doubleNs = 0L
 
-    /** The source is a level (an Area): Tap and Release fire as it ends (else Release's source is the lift instant). */
-    var edges = false
-
     /** The shortest press it outputs, so a snapshot shows it. */
     var pulseNs = DEFAULT_PULSE_NS
 
@@ -53,8 +50,6 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
     /** The source is [on] at [now]. */
     fun update(on: Boolean, now: Long) {
         val rose = on && !raw
-        val fell = !on && raw
-        val heldNs = now - rawStartNs
         raw = on
         if (rose) {
             rawStartNs = now
@@ -64,11 +59,7 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
         }
         when (trigger) {
             // [on] is the lift itself (the engine works it out): an instant.
-            Trigger.RELEASE -> if (if (edges) fell else rose) {
-                activation(true, now); activation(false, now)
-            }
-
-            Trigger.TAP -> if (!edges) level(on, now) else if (fell && heldNs < longNs) {
+            Trigger.RELEASE -> if (rose) {
                 activation(true, now); activation(false, now)
             }
 

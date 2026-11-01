@@ -26,7 +26,7 @@ object Describe {
         is InputSource.TouchDoubleTap -> "Touch ${s.id} double tap"
         is InputSource.TouchTap -> "Touch ${s.id} tap"
         is InputSource.TouchLongPress -> "Touch ${s.id} long press"
-        is InputSource.TouchArea -> "Touch ${s.id} ${s.kind.label.lowercase()}"
+        is InputSource.TouchArea -> "Touch ${s.id} ${s.kind.label.lowercase()}" + if (s.on == Trigger.HOLD) "" else " " + s.on.label.lowercase()
         is InputSource.Surface -> (if (s.id.isEmpty()) "Touchpad" else "Swipe on ${s.id}") +
                 " ${s.fingers} finger" + (if (s.fingers > 1) "s " else " ") + s.input.label.lowercase() +
                 if (s.zone > 0) " zone ${s.zone + 1}" else ""
