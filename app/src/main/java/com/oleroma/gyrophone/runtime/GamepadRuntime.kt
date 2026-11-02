@@ -316,6 +316,9 @@ class GamepadRuntime(context: Context) {
     /** A mouse is attached to the phone: the pad captures it while the workspace maps a mouse. */
     val mouseAttached: StateFlow<Boolean> = _mouseAttached
 
+    /** Closes the app's screen and removes it from recents; MainActivity sets it, the notification's Stop calls it. */
+    var closeApp: (() -> Unit)? = null
+
     /** Gets the captured mouse's events (MainActivity's controller input); the pad's view passes them on. */
     @Volatile
     var capturedPointer: ((android.view.MotionEvent) -> Boolean)? = null

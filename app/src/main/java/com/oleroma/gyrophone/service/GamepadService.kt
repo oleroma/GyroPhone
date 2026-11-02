@@ -27,8 +27,9 @@ import kotlinx.coroutines.launch
 
 /**
  * Keeps the active output link (Bluetooth HID or Wi-Fi) and the gyro alive while the PC is connected.
- * It stops, ending the link, on the notification's Stop or after the app has been off screen for
- * [com.oleroma.gyrophone.runtime.GamepadRuntime.idleStopMinutes]; MainActivity starts it again.
+ * It stops, ending the link, on the notification's Stop (which also closes the app) or after the
+ * app has been off screen for [com.oleroma.gyrophone.runtime.GamepadRuntime.idleStopMinutes];
+ * MainActivity starts it again.
  */
 class GamepadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -77,6 +78,7 @@ class GamepadService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            runtime.closeApp?.invoke()
             stopSelf()
             return START_NOT_STICKY
         }

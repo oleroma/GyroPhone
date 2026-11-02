@@ -78,6 +78,8 @@ class MainActivity : ComponentActivity() {
         if (hasBluetooth() && runtime.transport.value == TransportKind.BLUETOOTH) runtime.hid.start()
     }
 
+    private val closeThis: () -> Unit = { finishAndRemoveTask() }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -88,6 +90,7 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         controllerInput = ControllerInput(this, runtime)
+        runtime.closeApp = closeThis
         runtime.capturedPointer = controllerInput::onCapturedPointerEvent
 
         // Wi-Fi needs no runtime permission; Bluetooth HID needs BLUETOOTH_CONNECT first.
@@ -138,6 +141,12 @@ class MainActivity : ComponentActivity() {
             Settings.System.getUriFor(Settings.System.ACCELEROMETER_ROTATION), false, rotationObserver,
         )
         rotationOn = readRotationOn()
+    }
+
+    override fun onDestroy() {
+        // A newer instance (e.g. after a rotation) may have set its own already.
+        if (runtime.closeApp === closeThis) runtime.closeApp = null
+        super.onDestroy()
     }
 
     override fun onPause() {
