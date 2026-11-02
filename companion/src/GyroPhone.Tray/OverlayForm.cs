@@ -38,6 +38,12 @@ internal sealed class OverlayForm : Form
     private bool _uiOnly;
     // The graphics card draws every window unless it failed once in this run; then they draw with the CPU.
     private static bool _gpuBroken;
+    // The swap chain (picture shown straight from the graphics card) failed once in this run: every
+    // window copies its picture through the CPU (UpdateLayeredWindow) instead.
+    private static bool _directBroken;
+    // The window shows a swap chain (constant alpha + extended frame), not UpdateLayeredWindow pictures.
+    private bool _direct;
+    private byte _directAlpha;
     private GpuSurface? _gpuSurface;
     private readonly Dictionary<(float, bool), Font> _fonts = [];
     // Draw times and pictures in the last second, for the Debug window.
@@ -134,6 +140,11 @@ internal sealed class OverlayForm : Form
     public void SettingsChanged()
     {
         if (!IsHandleCreated) return;
+        if (_direct && WindowAlpha() is var a && a != _directAlpha)
+        {
+            _directAlpha = a;
+            SetLayeredWindowAttributes(Handle, 0, a, LwaAlpha);
+        }
         long ex = GetWindowLongPtr(Handle, GwlExStyle).ToInt64();
         long want = ClickThrough ? ex | WsExTransparent : ex & ~WsExTransparent;
         if (want != ex) SetWindowLongPtr(Handle, GwlExStyle, new IntPtr(want));
@@ -154,7 +165,31 @@ internal sealed class OverlayForm : Form
         lock (_renderLock)
         {
             _hwnd = Handle;
-            if (!_gpuBroken)
+            _direct = false;
+            if (!_gpuBroken && !_directBroken)
+            {
+                try
+                {
+                    // The layered window shows the swap chain's alpha: constant window alpha, frame over it all.
+                    _directAlpha = WindowAlpha();
+                    if (!SetLayeredWindowAttributes(Handle, 0, _directAlpha, LwaAlpha)) throw new Win32Exception();
+                    var margins = new Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
+                    int hr = DwmExtendFrameIntoClientArea(Handle, ref margins);
+                    if (hr < 0) throw new Win32Exception(hr);
+                    _gpuSurface = new GpuSurface(Handle, Width, Height);
+                    _direct = true;
+                }
+                catch (Exception ex)
+                {
+                    _log($"overlay: showing straight from the graphics card failed, copying through the CPU: {ex.GetType().Name}: {ex.Message}");
+                    _directBroken = true;
+                    // Out of constant-alpha mode, so UpdateLayeredWindow works again.
+                    long ex0 = GetWindowLongPtr(Handle, GwlExStyle).ToInt64();
+                    SetWindowLongPtr(Handle, GwlExStyle, new IntPtr(ex0 & ~WsExLayered));
+                    SetWindowLongPtr(Handle, GwlExStyle, new IntPtr(ex0));
+                }
+            }
+            if (!_direct && !_gpuBroken)
             {
                 try
                 {
@@ -425,6 +460,12 @@ internal sealed class OverlayForm : Form
         _gpuBroken = true;
         try { _gpuSurface?.Dispose(); } catch (Exception) { }
         _gpuSurface = null;
+        if (_direct)
+        {
+            // Made again (UI thread) without the swap chain: UpdateLayeredWindow pictures from then on.
+            _direct = false;
+            try { BeginInvoke(RecreateHandle); } catch (Exception) { }
+        }
     }
 
     private void Count(double start)
@@ -442,7 +483,7 @@ internal sealed class OverlayForm : Form
         double now = _clock.Elapsed.TotalMilliseconds;
         if (now - _statStart < 1000) return;
         double secs = (now - _statStart) / 1000.0;
-        string by = _gpuSurface != null ? "GPU" : "CPU";
+        string by = _gpuSurface == null ? "CPU" : _gpuSurface.Direct ? "GPU" : "GPU, copied";
         _stats = _statFrames == 0
             ? $"{_title} {Width}×{Height} ({by}): idle"
             : $"{_title} {Width}×{Height} ({by}): {_statSumMs / _statFrames:0.0} ms avg, {_statMaxMs:0.0} max, {_statFrames / secs:0} fps";
@@ -457,6 +498,12 @@ internal sealed class OverlayForm : Form
         float op = Math.Clamp(Settings?.Opacity ?? 1f, 0.1f, 1f);
         if (!ClickThrough) op = Math.Max(op, 0.6f);
         return (byte)Math.Round(op * 255);
+    }
+
+    // A swap chain fills the window: WinForms must not paint its background over it.
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        if (!_direct) base.OnPaintBackground(e);
     }
 
     /// <summary>Hands the picture, with its alpha, to the layered window.</summary>
@@ -598,6 +645,18 @@ internal sealed class OverlayForm : Form
     [DllImport("gdi32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DeleteObject(IntPtr hObject);
+
+    private const uint LwaAlpha = 0x2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Margins { public int Left, Right, Top, Bottom; }
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmExtendFrameIntoClientArea(IntPtr hwnd, ref Margins margins);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint key, byte alpha, uint flags);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeRect { public int Left, Top, Right, Bottom; }

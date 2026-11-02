@@ -14,11 +14,17 @@ using Rect = Vortice.Mathematics.Rect;
 namespace GyroPhone.Tray;
 
 /// <summary>
-/// One overlay window's graphics-card surface: a Direct3D device and a GDI-compatible texture that
-/// a Direct2D context draws into; the finished picture goes to the layered window by
-/// UpdateLayeredWindow from the texture's DC, so the window keeps its per-pixel transparency and
-/// click-through exactly as with CPU drawing. Throws when the graphics card can't be used (the
-/// window then draws with <see cref="GdiCanvas"/>).
+/// One overlay window's graphics-card surface: a Direct3D device that a Direct2D context draws with.
+/// Two ways to the screen:
+/// <list type="bullet">
+/// <item>Swap chain (with a window handle): the picture stays on the graphics card and is presented
+/// to the window, which shows its alpha through the desktop compositor (the frame extended over the
+/// whole window). No copy through the CPU: the cheap way.</item>
+/// <item>Copy (no window handle): a GDI-compatible texture whose DC goes to UpdateLayeredWindow,
+/// the whole picture through the CPU every frame (slowed other windows' drawing, such as the main
+/// window scrolling).</item>
+/// </list>
+/// Throws when the graphics card can't be used (the window then draws with <see cref="GdiCanvas"/>).
 /// </summary>
 internal sealed class GpuSurface : IDisposable
 {
@@ -33,8 +39,10 @@ internal sealed class GpuSurface : IDisposable
     private IDXGISurface1? _surface;
     private ID2D1Bitmap1? _bitmap;
     private int _width, _height;
+    private readonly IDXGISwapChain1? _swap;
 
-    public GpuSurface()
+    /// <summary>With <paramref name="hwnd"/>: presented by a swap chain to that window; without: copied (see the class).</summary>
+    public GpuSurface(IntPtr hwnd = default, int width = 1, int height = 1)
     {
         D3D11.D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport,
             [Vortice.Direct3D.FeatureLevel.Level_11_1, Vortice.Direct3D.FeatureLevel.Level_11_0, Vortice.Direct3D.FeatureLevel.Level_10_1, Vortice.Direct3D.FeatureLevel.Level_10_0],
@@ -46,6 +54,49 @@ internal sealed class GpuSurface : IDisposable
         _dc = _device.CreateDeviceContext(DeviceContextOptions.None);
         _write = DWrite.DWriteCreateFactory<IDWriteFactory>();
         _canvas = new D2DCanvas(_factory, _dc, _write);
+        if (hwnd == IntPtr.Zero) return;
+        try
+        {
+            using var adapter = _dxgi.GetAdapter();
+            using var dxgiFactory = adapter.GetParent<IDXGIFactory2>();
+            // Bit-block transfer model: the one a layered window takes. Its alpha reaches the screen
+            // through the window's redirection surface (the extended frame), premultiplied.
+            var desc = new SwapChainDescription1
+            {
+                Width = (uint)Math.Max(1, width),
+                Height = (uint)Math.Max(1, height),
+                Format = Format.B8G8R8A8_UNorm,
+                BufferCount = 1,
+                BufferUsage = Usage.RenderTargetOutput,
+                SwapEffect = SwapEffect.Discard,
+                AlphaMode = Vortice.DXGI.AlphaMode.Unspecified,
+                SampleDescription = new SampleDescription(1, 0),
+                Scaling = Scaling.Stretch,
+            };
+            _swap = dxgiFactory.CreateSwapChainForHwnd(_d3d, hwnd, desc);
+            // No Alt+Enter full screen, and DXGI never touches the window (it lives on another thread).
+            dxgiFactory.MakeWindowAssociation(hwnd, WindowAssociationFlags.IgnoreAll);
+            _width = (int)desc.Width;
+            _height = (int)desc.Height;
+            BindSwap();
+        }
+        catch
+        {
+            Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>Presented by a swap chain (no copy through the CPU).</summary>
+    public bool Direct => _swap != null;
+
+    private void BindSwap()
+    {
+        using var buffer = _swap!.GetBuffer<IDXGISurface>(0);
+        var props = new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied), 96, 96,
+            BitmapOptions.Target | BitmapOptions.CannotDraw);
+        _bitmap = _dc.CreateBitmapFromDxgiSurface(buffer, props);
+        _dc.Target = _bitmap;
     }
 
     private void Unbind()
@@ -83,6 +134,30 @@ internal sealed class GpuSurface : IDisposable
     {
         width = Math.Max(1, width);
         height = Math.Max(1, height);
+        if (_swap != null)
+        {
+            if (width != _width || height != _height)
+            {
+                Unbind();
+                _swap.ResizeBuffers(1, (uint)width, (uint)height, Format.B8G8R8A8_UNorm, SwapChainFlags.None).CheckError();
+                _width = width;
+                _height = height;
+                BindSwap();
+            }
+            _dc.BeginDraw();
+            try
+            {
+                _canvas.Begin(quality);
+                draw(_canvas);
+                _canvas.End();
+            }
+            finally
+            {
+                _dc.EndDraw().CheckError();
+            }
+            _swap.Present(0, PresentFlags.None).CheckError();
+            return;
+        }
         if (_bitmap == null || width != _width || height != _height) Bind(width, height);
         _dc.BeginDraw();
         try
@@ -109,6 +184,7 @@ internal sealed class GpuSurface : IDisposable
     public void Dispose()
     {
         Unbind();
+        _swap?.Dispose();
         _canvas.Dispose();
         _write.Dispose();
         _dc.Dispose();
