@@ -91,7 +91,8 @@ class MainActivity : ComponentActivity() {
         runtime.capturedPointer = controllerInput::onCapturedPointerEvent
 
         // Wi-Fi needs no runtime permission; Bluetooth HID needs BLUETOOTH_CONNECT first.
-        if (canStartService()) GamepadService.start(this) else permissionRequest.launch(permissions)
+        // onResume starts the service once it may run.
+        if (!canStartService()) permissionRequest.launch(permissions)
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
@@ -125,6 +126,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Also brings the link back after the notification's Stop or the idle stop ended it.
+        if (canStartService()) GamepadService.start(this)
         runtime.setForeground(true)
         controllerInput.register()
         getSystemService(DisplayManager::class.java)

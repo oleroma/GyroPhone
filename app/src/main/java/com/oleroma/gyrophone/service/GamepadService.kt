@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.os.SystemClock
 import com.oleroma.gyrophone.R
 import com.oleroma.gyrophone.link.LinkState
 import com.oleroma.gyrophone.runtime
@@ -17,11 +18,18 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
-/** Keeps the active output link (Bluetooth HID or Wi-Fi) and the gyro alive while the PC is connected. */
+/**
+ * Keeps the active output link (Bluetooth HID or Wi-Fi) and the gyro alive while the PC is connected.
+ * It stops, ending the link, on the notification's Stop or after the app has been off screen for
+ * [com.oleroma.gyrophone.runtime.GamepadRuntime.idleStopMinutes]; MainActivity starts it again.
+ */
 class GamepadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -50,9 +58,30 @@ class GamepadService : Service() {
                 nm.notify(NOTIFICATION_ID, notification(text))
             }
         }
+        scope.launch {
+            combine(runtime.onScreen, runtime.idleStopMinutes) { shown, minutes -> if (shown) 0 else minutes }
+                .distinctUntilChanged()
+                .collectLatest { minutes ->
+                    if (minutes <= 0) return@collectLatest
+                    // Counted on the wall clock: the main looper's delays stand still in deep sleep.
+                    val stopAt = SystemClock.elapsedRealtime() + minutes * 60_000L
+                    while (true) {
+                        val left = stopAt - SystemClock.elapsedRealtime()
+                        if (left <= 0) break
+                        delay(minOf(left, IDLE_CHECK_MS))
+                    }
+                    stopSelf()
+                }
+        }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        return START_STICKY
+    }
 
     /**
      * `adb shell dumpsys activity service com.oleroma.gyrophone/.service.GamepadService [on|off|record|events N]`:
@@ -77,6 +106,9 @@ class GamepadService : Service() {
             .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
             .setContentIntent(open)
+            .addAction(Notification.Action.Builder(null, getString(R.string.notification_stop),
+                PendingIntent.getService(this, 1, Intent(this, GamepadService::class.java).setAction(ACTION_STOP),
+                    PendingIntent.FLAG_IMMUTABLE)).build())
             .setOngoing(true)
             .build()
     }
@@ -84,6 +116,8 @@ class GamepadService : Service() {
     companion object {
         private const val CHANNEL = "connection"
         private const val NOTIFICATION_ID = 1
+        private const val ACTION_STOP = "com.oleroma.gyrophone.STOP"
+        private const val IDLE_CHECK_MS = 15_000L
 
         fun start(context: Context) = context.startForegroundService(Intent(context, GamepadService::class.java))
         fun stop(context: Context) = context.stopService(Intent(context, GamepadService::class.java))

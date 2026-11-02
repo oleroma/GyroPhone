@@ -3,4 +3,5 @@
     <string name="notification_channel">Connection</string>
     <string name="notification_text">Sending input to %1$s</string>
     <string name="notification_idle">Waiting for a PC to connect</string>
+    <string name="notification_stop">Stop</string>
 </resources>

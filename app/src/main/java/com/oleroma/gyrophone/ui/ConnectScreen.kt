@@ -56,6 +56,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
     val transport by runtime.transport.collectAsStateWithLifecycle()
     val rate by runtime.reportRateHz.collectAsStateWithLifecycle()
     val wifiRate by runtime.wifiRateHz.collectAsStateWithLifecycle()
+    val idleStop by runtime.idleStopMinutes.collectAsStateWithLifecycle()
     val portrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
     var stats by remember { mutableStateOf(runtime.linkStats()) }
     LaunchedEffect(transport) {
@@ -117,6 +118,19 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
             Text("If the mouse lags behind your hand, pick a lower rate. Bluetooth queues anything faster than the link can carry.",
                 style = MaterialTheme.typography.bodySmall)
         }
+        Text("Stop when idle", style = MaterialTheme.typography.titleSmall)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            GamepadRuntime.IDLE_STOP_CHOICES.forEach { m ->
+                FilterChip(selected = idleStop == m, onClick = { runtime.setIdleStopMinutes(m) },
+                    label = { Text(if (m == 0) "Off" else "$m min") })
+            }
+        }
+        Text(
+            if (idleStop == 0) "The connection stays up while the app is in the background. Stop it from the notification."
+            else "The connection stops after the app has been off screen for $idleStop min, screen off included. " +
+                "Opening the app connects again. The notification's Stop ends it right away.",
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 
     if (portrait) {
