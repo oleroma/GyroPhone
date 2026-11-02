@@ -62,6 +62,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private DebugForm? _debugForm;
     // The open overlay windows, by settings id.
     private readonly Dictionary<string, OverlayForm> _overlayForms = [];
+    // The overlays' global shortcuts; null until the server owns the port (one instance holds them).
+    private Hotkeys? _hotkeys;
+    private string? _selectedOverlay;
     private int _refreshQueued;
     private bool? _firewallOk;
     private bool? _usbRuleOk;
@@ -225,6 +228,15 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _usb.Start();
             _log.Write($"listening on UDP {Wire.Port} as '{settings.HostName}'");
             ApplyOverlays(); // shown last time: shown again
+            try
+            {
+                _hotkeys = new Hotkeys(OnShortcut);
+                ApplyShortcuts();
+            }
+            catch (Exception e)
+            {
+                _log.Write($"overlay shortcuts off: {e.GetType().Name}: {e.Message}");
+            }
         }
         else
         {
@@ -454,11 +466,15 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             });
         }
         menu.DropDownItems.Add(new ToolStripSeparator());
-        menu.DropDownItems.Add(new ToolStripMenuItem("Edit: drag the windows to move and resize", null, (_, _) => SetOverlayEdit(!OverlayEdit))
+        menu.DropDownItems.Add(new ToolStripMenuItem("Hide all overlays" + KeysSuffix(OverlayAction.HideAll), null, (_, _) => SetOverlaysHidden(!OverlaysHidden))
+        {
+            Checked = OverlaysHidden,
+        });
+        menu.DropDownItems.Add(new ToolStripMenuItem("Edit: drag the windows to move and resize" + KeysSuffix(OverlayAction.Edit), null, (_, _) => SetOverlayEdit(!OverlayEdit))
         {
             Checked = OverlayEdit,
         });
-        menu.DropDownItems.Add(new ToolStripMenuItem("Level all: as held now shows face-on (Ctrl+Alt+R)", null, (_, _) => LevelAll()));
+        menu.DropDownItems.Add(new ToolStripMenuItem("Level all: as held now shows face-on" + KeysSuffix(OverlayAction.LevelAll), null, (_, _) => LevelAll()));
         menu.DropDownItems.Add(new ToolStripMenuItem("Overlay settings…", null, (_, _) => ShowMainForm()));
     }
 
@@ -466,7 +482,92 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     internal void SetOverlayShown(string id, bool shown)
     {
         _engine.UpdateOverlaySettings(id, o => o.Shown = shown);
+        // Showing one while all are hidden: it should appear, so Hide all ends.
+        if (shown) _engine.SetOverlaysHidden(false);
         ApplyOverlays();
+        Refresh();
+    }
+
+    internal bool OverlaysHidden => _engine.Settings.OverlaysHidden;
+
+    /// <summary>Hide all: every overlay window closes, each keeping its own Show for when this is off.</summary>
+    internal void SetOverlaysHidden(bool hidden)
+    {
+        _engine.SetOverlaysHidden(hidden);
+        ApplyOverlays();
+        Refresh();
+    }
+
+    internal OverlayShortcuts Shortcuts => _engine.Settings.OverlayShortcuts;
+
+    /// <summary>" (Ctrl+Alt+R)" for a menu item or button, or "" when the action has no keys.</summary>
+    internal string KeysSuffix(OverlayAction a) => Shortcuts.Get(a) is { Length: > 0 } k ? $" ({k})" : "";
+
+    /// <summary>Whether another app holds <paramref name="a"/>'s keys, so they do nothing here.</summary>
+    internal bool ShortcutTaken(OverlayAction a) => _hotkeys?.IsTaken(a) ?? false;
+
+    /// <summary>Sets <paramref name="a"/>'s keys ("" = none) and holds them at once.</summary>
+    internal void SetShortcut(OverlayAction a, string keys)
+    {
+        _engine.SetOverlayShortcut(a, keys);
+        ApplyShortcuts();
+        Refresh();
+    }
+
+    /// <summary>A shortcut field is taking keys: the shortcuts let go meanwhile, so the press reaches it.</summary>
+    internal void PauseShortcuts(bool paused)
+    {
+        _hotkeys?.Pause(paused, Shortcuts);
+    }
+
+    private void ApplyShortcuts()
+    {
+        if (_hotkeys == null) return;
+        foreach (var a in _hotkeys.Apply(Shortcuts))
+            _log.Write($"overlay: {Shortcuts.Get(a)} ({OverlayShortcuts.ActionName(a)}) is taken by another app");
+    }
+
+    private void OnShortcut(OverlayAction a)
+    {
+        switch (a)
+        {
+            case OverlayAction.LevelAll: LevelAll(); break;
+            case OverlayAction.HideAll: SetOverlaysHidden(!OverlaysHidden); break;
+            case OverlayAction.Edit: SetOverlayEdit(!OverlayEdit); break;
+        }
+    }
+
+    /// <summary>The overlay window picked in Edit and in the main window's list.</summary>
+    internal string? SelectedOverlay => _selectedOverlay;
+
+    internal void SelectOverlay(string? id)
+    {
+        if (_selectedOverlay == id) return;
+        _selectedOverlay = id;
+        foreach (var f in _overlayForms.Values) f.Selected = f.Id == id;
+    }
+
+    /// <summary>
+    /// A click (no drag) in Edit on window <paramref name="id"/> at screen point <paramref name="at"/>:
+    /// it gets picked; if it already was, the next window under the cursor (in list order, wrapping)
+    /// is picked and brought to the front, so clicks cycle through overlapping windows.
+    /// </summary>
+    private void OverlayClicked(string id, Point at)
+    {
+        var under = _engine.Settings.Overlays
+            .Where(o => _overlayForms.TryGetValue(o.Id, out var f) && f.Visible && f.Bounds.Contains(at))
+            .Select(o => o.Id).ToList();
+        string pick = id;
+        int i = _selectedOverlay == null ? -1 : under.IndexOf(_selectedOverlay);
+        if (_selectedOverlay == id && i >= 0 && under.Count > 1) pick = under[(i + 1) % under.Count];
+        SelectOverlay(pick);
+        if (_overlayForms.TryGetValue(pick, out var form)) form.BringUp();
+        Refresh();
+    }
+
+    private void OverlayPicked(string id)
+    {
+        SelectOverlay(id);
         Refresh();
     }
 
@@ -539,7 +640,11 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         foreach (var id in _overlayForms.Keys.Where(id => OverlayOf(id) == null).ToList())
             if (_overlayForms.Remove(id, out var f)) f.Close();
         _engine.SetOverlay(_overlayForms.Count > 0);
-        EnsureHotkey();
+        foreach (var f in _overlayForms.Values)
+        {
+            f.Title = OverlayOf(f.Id) is { } o ? OverlayName(o) : "";
+            f.Selected = f.Id == _selectedOverlay;
+        }
     }
 
     private void ApplyOverlay(OverlaySettings o)
@@ -550,10 +655,11 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _overlayForms.Remove(o.Id);
             open = null;
         }
-        if (o.Shown && open == null)
+        bool shown = o.Shown && !OverlaysHidden;
+        if (shown && open == null)
         {
             var id = o.Id;
-            var form = new OverlayForm(_engine, id, _log.Write, LevelAll);
+            var form = new OverlayForm(_engine, id, _log.Write, OverlayClicked, OverlayPicked);
             form.FormClosed += (_, _) =>
             {
                 if (_overlayForms.TryGetValue(id, out var cur) && ReferenceEquals(cur, form))
@@ -561,25 +667,15 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
                     _overlayForms.Remove(id);
                     _engine.SetOverlay(_overlayForms.Count > 0);
                 }
-                EnsureHotkey();
             };
             _overlayForms[id] = form;
             form.Show();
         }
-        else if (!o.Shown && open != null)
+        else if (!shown && open != null)
         {
             _overlayForms.Remove(o.Id);
             open.Close();
         }
-    }
-
-    /// <summary>Ctrl+Alt+R (Level all) held by one open overlay window.</summary>
-    private void EnsureHotkey()
-    {
-        if (_overlayForms.Count == 0 || _overlayForms.Values.Any(f => f.HasHotkey)) return;
-        foreach (var f in _overlayForms.Values)
-            if (f.TryHotkey()) return;
-        _log.Write("overlay: Ctrl+Alt+R is taken by another app; level from the tray menu");
     }
 
     internal void ShowDebugForm()
@@ -1022,6 +1118,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _mainForm?.Close();
         _debugForm?.Close();
         foreach (var f in _overlayForms.Values.ToList()) f.Close();
+        _hotkeys?.Dispose();
+        _hotkeys = null;
         Shutdown();
         ExitThread();
     }
@@ -1061,6 +1159,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         if (disposing)
         {
             Shutdown();
+            _hotkeys?.Dispose();
             AppDomain.CurrentDomain.ProcessExit -= OnProcessExit;
             _uiTimer.Dispose();
             _pairForm?.Dispose();

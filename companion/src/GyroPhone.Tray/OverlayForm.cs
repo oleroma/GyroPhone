@@ -13,30 +13,38 @@ namespace GyroPhone.Tray;
 /// disk (<see cref="OverlayRenderer"/>), turned by its own pose. A per-pixel alpha layered window,
 /// so it shows over games running windowed or borderless and OBS Window Capture records it. It
 /// never takes focus. The mouse goes past it, except in Edit (all windows at once): then it can be dragged and
-/// resized. One open window holds Ctrl+Alt+R (Level all) for the tray.
+/// resized, and a click (no drag) picks it, or where windows overlap the next one under the cursor
+/// (<see cref="TrayApp"/> decides).
 /// </summary>
 internal sealed class OverlayForm : Form
 {
     private readonly HostEngine _engine;
     private readonly string _id;
-    private readonly Action _levelAll;
+    private readonly Action<string, Point> _clicked;
+    private readonly Action<string> _picked;
     private readonly FingerTrails _trails = new();
     private readonly Action<string> _log;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly OverlayScene _scene = new();
     private Bitmap? _bitmap;
-    private bool _hotkey;
+    private bool _selected;
+    private string _title = "";
+    // A left press in Edit: where the cursor and the window were, and whether it has become a drag.
+    private Point? _pressAt;
+    private Point _pressWindow;
+    private bool _dragging;
     private uint _lastTime;
     private ushort _lastLayout;
     private long _lastDrawTicks;
     private bool _dirty = true;
 
-    public OverlayForm(HostEngine engine, string id, Action<string> log, Action levelAll)
+    public OverlayForm(HostEngine engine, string id, Action<string> log, Action<string, Point> clicked, Action<string> picked)
     {
         _engine = engine;
         _id = id;
         _log = log;
-        _levelAll = levelAll;
+        _clicked = clicked;
+        _picked = picked;
         var s = Settings ?? new OverlaySettings();
         Text = $"{Program.AppName} {OverlaySettings.KindName(s.Kind).ToLowerInvariant()} overlay";
         FormBorderStyle = FormBorderStyle.None;
@@ -76,15 +84,35 @@ internal sealed class OverlayForm : Form
 
     private bool ClickThrough => !(_engine?.Settings.OverlayEdit ?? false);
 
-    /// <summary>Holds Ctrl+Alt+R (Level all) if no other window does; true when this one has it.</summary>
-    public bool TryHotkey()
+    /// <summary>The picked window in Edit (also picked in the main window's list): drawn with a solid frame.</summary>
+    public bool Selected
     {
-        if (_hotkey || !IsHandleCreated) return _hotkey;
-        _hotkey = RegisterHotKey(Handle, HotkeyId, ModControl | ModAlt | ModNoRepeat, (uint)Keys.R);
-        return _hotkey;
+        get => _selected;
+        set
+        {
+            if (_selected == value) return;
+            _selected = value;
+            if (!ClickThrough) SettingsChanged();
+        }
     }
 
-    public bool HasHotkey => _hotkey;
+    /// <summary>Its name, shown in Edit.</summary>
+    public string Title
+    {
+        get => _title;
+        set
+        {
+            if (_title == value) return;
+            _title = value;
+            if (!ClickThrough) SettingsChanged();
+        }
+    }
+
+    /// <summary>On top of the other overlay windows, without taking focus.</summary>
+    public void BringUp()
+    {
+        if (IsHandleCreated) SetWindowPos(Handle, HwndTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+    }
 
     /// <summary>Settings changed (background, scale, dots, Edit): applied at the next frame.</summary>
     public void SettingsChanged()
@@ -114,16 +142,11 @@ internal sealed class OverlayForm : Form
     protected override void OnHandleDestroyed(EventArgs e)
     {
         _timer.Stop();
-        if (_hotkey) UnregisterHotKey(Handle, HotkeyId);
-        _hotkey = false;
         base.OnHandleDestroyed(e);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        // Let go of Ctrl+Alt+R now, so another open window can take it.
-        if (_hotkey) UnregisterHotKey(Handle, HotkeyId);
-        _hotkey = false;
         SaveBounds();
         base.OnFormClosing(e);
     }
@@ -141,6 +164,56 @@ internal sealed class OverlayForm : Form
         if (IsHandleCreated) Render();
     }
 
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (e.Button != MouseButtons.Left || ClickThrough) return;
+        _pressAt = Cursor.Position;
+        _pressWindow = Location;
+        _dragging = false;
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (_pressAt is not { } at || ClickThrough) return;
+        if ((e.Button & MouseButtons.Left) == 0)
+        {
+            // The release was missed (capture taken by another window): keep where it got to.
+            _pressAt = null;
+            if (_dragging) SaveBounds();
+            _dragging = false;
+            return;
+        }
+        var now = Cursor.Position;
+        int dx = now.X - at.X, dy = now.Y - at.Y;
+        var drag = SystemInformation.DragSize;
+        if (!_dragging && Math.Abs(dx) < drag.Width && Math.Abs(dy) < drag.Height) return;
+        if (!_dragging)
+        {
+            // A drag moves the window in front (the one that got the press) and picks it.
+            _dragging = true;
+            _picked(_id);
+        }
+        Location = new Point(_pressWindow.X + dx, _pressWindow.Y + dy);
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (e.Button != MouseButtons.Left || _pressAt == null) return;
+        _pressAt = null;
+        if (_dragging)
+        {
+            _dragging = false;
+            SaveBounds();
+        }
+        else if (!ClickThrough)
+        {
+            _clicked(_id, Cursor.Position);
+        }
+    }
+
     private void SaveBounds()
     {
         var b = Bounds;
@@ -154,9 +227,6 @@ internal sealed class OverlayForm : Form
     {
         switch (m.Msg)
         {
-            case WmHotkey when m.WParam.ToInt32() == HotkeyId:
-                _levelAll();
-                return;
             case WmMouseActivate:
                 m.Result = new IntPtr(MaNoActivate);
                 return;
@@ -164,9 +234,10 @@ internal sealed class OverlayForm : Form
                 var p = PointToClient(new Point(unchecked((short)(long)m.LParam), unchecked((short)((long)m.LParam >> 16))));
                 const int grip = 14;
                 bool right = p.X >= Width - grip, bottom = p.Y >= Height - grip, left = p.X < grip, top = p.Y < grip;
+                // Edges resize; inside is ours (OnMouseDown/Move/Up): a drag moves, a click picks.
                 m.Result = new IntPtr(
                     right && bottom ? HtBottomRight : left && top ? HtTopLeft : right && top ? HtTopRight : left && bottom ? HtBottomLeft :
-                    right ? HtRight : left ? HtLeft : bottom ? HtBottom : top ? HtTop : HtCaption);
+                    right ? HtRight : left ? HtLeft : bottom ? HtBottom : top ? HtTop : HtClient);
                 return;
         }
         base.WndProc(ref m);
@@ -220,6 +291,8 @@ internal sealed class OverlayForm : Form
         _lastDrawTicks = Environment.TickCount64;
         _scene.Connected = _engine.Snapshot().Connected;
         _scene.Arranging = !ClickThrough;
+        _scene.Selected = _selected;
+        _scene.Title = _title;
         if (_bitmap == null || _bitmap.Width != Width || _bitmap.Height != Height)
         {
             _bitmap?.Dispose();
@@ -297,12 +370,11 @@ internal sealed class OverlayForm : Form
     private const int WsExTopmost = 0x00000008;
     private const int WmNcHitTest = 0x0084;
     private const int WmMouseActivate = 0x0021;
-    private const int WmHotkey = 0x0312;
     private const int MaNoActivate = 3;
-    private const int HtCaption = 2, HtLeft = 10, HtRight = 11, HtTop = 12, HtTopLeft = 13, HtTopRight = 14;
+    private const int HtClient = 1, HtLeft = 10, HtRight = 11, HtTop = 12, HtTopLeft = 13, HtTopRight = 14;
     private const int HtBottom = 15, HtBottomLeft = 16, HtBottomRight = 17;
-    private const int HotkeyId = 0x4750;
-    private const uint ModAlt = 0x1, ModControl = 0x2, ModNoRepeat = 0x4000;
+    private static readonly IntPtr HwndTopmost = new(-1);
+    private const uint SwpNoSize = 0x1, SwpNoMove = 0x2, SwpNoActivate = 0x10;
     private const byte AcSrcOver = 0, AcSrcAlpha = 1;
     private const int UlwAlpha = 2;
 
@@ -346,11 +418,7 @@ internal sealed class OverlayForm : Form
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
     private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr value);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
-
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
 }

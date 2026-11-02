@@ -21,6 +21,10 @@ public sealed class HostSettings
     public List<OverlaySettings> Overlays { get; set; } = [];
     /// <summary>Overlay windows can be dragged to move and resize; off, the mouse goes through them to the game.</summary>
     public bool OverlayEdit { get; set; }
+    /// <summary>Every overlay window is hidden (shortcut or tray), each keeping its own Show for when this is off.</summary>
+    public bool OverlaysHidden { get; set; }
+    /// <summary>The overlays' global shortcuts.</summary>
+    public OverlayShortcuts OverlayShortcuts { get; set; } = new();
     /// <summary>The one phone overlay of earlier builds: read once into <see cref="Overlays"/>.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public OverlaySettings? Overlay { get; set; }
@@ -30,6 +34,8 @@ public sealed class HostSettings
     {
         PairedPhones ??= [];
         Overlays ??= [];
+        OverlayShortcuts ??= new();
+        OverlayShortcuts.Normalize();
         if (Overlay != null)
         {
             if (Overlays.Count == 0) Overlays.Add(Overlay);
@@ -56,6 +62,63 @@ public sealed class HostSettings
         var s = new HostSettings { HostId = id, HostName = hostName };
         s.Normalize();
         return s;
+    }
+}
+
+/// <summary>What an overlay shortcut does.</summary>
+public enum OverlayAction
+{
+    LevelAll,
+    HideAll,
+    Edit,
+}
+
+/// <summary>
+/// The overlays' global shortcuts, as "Ctrl+Alt+R" (modifiers Ctrl, Alt, Shift, Win, then one key);
+/// empty = none.
+/// </summary>
+public sealed class OverlayShortcuts
+{
+    public const string DefaultLevelAll = "Ctrl+Alt+R";
+    public const string DefaultHideAll = "Ctrl+Alt+O";
+    public const string DefaultEdit = "Ctrl+Alt+E";
+
+    public string? LevelAll { get; set; } = DefaultLevelAll;
+    public string? HideAll { get; set; } = DefaultHideAll;
+    public string? Edit { get; set; } = DefaultEdit;
+
+    public static IReadOnlyList<OverlayAction> All { get; } = [OverlayAction.LevelAll, OverlayAction.HideAll, OverlayAction.Edit];
+
+    public static string ActionName(OverlayAction a) => a switch
+    {
+        OverlayAction.LevelAll => "Level all",
+        OverlayAction.HideAll => "Hide or show all overlays",
+        _ => "Edit on or off",
+    };
+
+    public string Get(OverlayAction a) => (a switch
+    {
+        OverlayAction.LevelAll => LevelAll,
+        OverlayAction.HideAll => HideAll,
+        _ => Edit,
+    }) ?? "";
+
+    public void Set(OverlayAction a, string keys)
+    {
+        switch (a)
+        {
+            case OverlayAction.LevelAll: LevelAll = keys; break;
+            case OverlayAction.HideAll: HideAll = keys; break;
+            default: Edit = keys; break;
+        }
+    }
+
+    /// <summary>A file without them gets the defaults (an empty one stays cleared).</summary>
+    public void Normalize()
+    {
+        LevelAll ??= DefaultLevelAll;
+        HideAll ??= DefaultHideAll;
+        Edit ??= DefaultEdit;
     }
 }
 

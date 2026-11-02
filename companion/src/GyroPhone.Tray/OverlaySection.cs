@@ -20,11 +20,18 @@ internal sealed class OverlaySection
     private readonly TabControl _tabs;
     private readonly List<string> _ids = [];
     private string _listKey = "";
-    private string? _selected;
+    // The pick is the tray's, shared with Edit's click-to-pick on the windows.
+    private string? Picked
+    {
+        get => _app.SelectedOverlay;
+        set => _app.SelectOverlay(value);
+    }
     private bool _refreshing;
 
     // Window
-    private readonly CheckBox _shown, _edit;
+    private readonly CheckBox _shown, _edit, _hideAll;
+    private readonly Button _levelAll;
+    private readonly List<(OverlayAction Action, TextBox Box, Label Note)> _keys = [];
     private readonly RadioButton _bgClear, _bgGreen, _bgDark;
     private readonly NumericUpDown _opacity;
 
@@ -58,7 +65,7 @@ internal sealed class OverlaySection
         _list.SelectedIndexChanged += (_, _) =>
         {
             if (_refreshing || _list.SelectedIndex < 0 || _list.SelectedIndex >= _ids.Count) return;
-            _selected = _ids[_list.SelectedIndex];
+            Picked = _ids[_list.SelectedIndex];
             RefreshNow();
         };
         g.Controls.Add(_list);
@@ -70,23 +77,27 @@ internal sealed class OverlaySection
             var kind = k;
             kinds.Items.Add(OverlaySettings.KindName(kind), null, (_, _) =>
             {
-                _selected = _app.AddOverlay(kind);
+                Picked = _app.AddOverlay(kind);
                 RefreshNow();
             });
         }
         add.Click += (_, _) => kinds.Show(add, new Point(0, add.Height));
         _remove = MainForm.NewButton("Remove", () =>
         {
-            if (_selected is { } id && _app.OverlayOf(id) is { } o &&
+            if (Picked is { } id && _app.OverlayOf(id) is { } o &&
                 MessageBox.Show($"Remove the {_app.OverlayName(o)} overlay and its settings?", Program.AppName, MessageBoxButtons.OKCancel) == DialogResult.OK)
             {
-                _selected = null;
+                Picked = null;
                 _app.RemoveOverlay(id);
             }
         }, buttons);
-        MainForm.NewButton("Level all (Ctrl+Alt+R)", () => _app.LevelAll(), buttons);
+        _levelAll = MainForm.NewButton("Level all", () => _app.LevelAll(), buttons);
         g.Controls.Add(buttons);
-        _edit = MainForm.Check("Edit: drag the windows to move and resize (all of them)", g, () => _app.SetOverlayEdit(!_app.OverlayEdit));
+        _hideAll = MainForm.Check("Hide all overlays", g, () => _app.SetOverlaysHidden(!_app.OverlaysHidden));
+        _edit = MainForm.Check("Edit: drag to move and resize; click overlaps to pick the next", g, () => _app.SetOverlayEdit(!_app.OverlayEdit));
+        g.Controls.Add(Heading("Shortcuts"));
+        g.Controls.Add(MainForm.NewLabel("Work everywhere, also in games. Click a field and press the keys (Ctrl, Alt, Shift or Win with a key, or F1..F24 alone); Esc cancels, Delete clears."));
+        foreach (var a in OverlayShortcuts.All) AddShortcutRow(g, a);
 
         _tabs = new TabControl { Width = TabWidth, Height = TabHeight, Margin = new Padding(0, 6, 0, 0) };
         g.Controls.Add(_tabs);
@@ -183,7 +194,7 @@ internal sealed class OverlaySection
 
         _scale = Number(t, "Turn amount ×", 0.5m, 3m, 0.1m, 1, v => Change(o => o.MotionScale = (float)v));
         var center = MainForm.Row();
-        MainForm.NewButton("Level (Ctrl+Alt+R: all)", () => { if (_selected is { } id) _app.LevelOverlay(id); }, center);
+        MainForm.NewButton("Level", () => { if (Picked is { } id) _app.LevelOverlay(id); }, center);
         t.Controls.Add(center);
         t.Controls.Add(MainForm.NewLabel("Hold the phone the way you play and press Level: held that way, it shows face-on, its screen flat toward you."));
     }
@@ -203,7 +214,7 @@ internal sealed class OverlaySection
         try
         {
             var all = _app.Overlays;
-            if (_selected == null || all.All(o => o.Id != _selected)) _selected = all.Count > 0 ? all[0].Id : null;
+            if (Picked == null || all.All(o => o.Id != Picked)) Picked = all.Count > 0 ? all[0].Id : null;
             var key = string.Join("|", all.Select(o => $"{o.Id}{o.Kind}{o.Shown}"));
             if (key != _listKey)
             {
@@ -218,11 +229,22 @@ internal sealed class OverlaySection
                 }
                 _list.EndUpdate();
             }
-            int at = _selected == null ? -1 : _ids.IndexOf(_selected);
+            int at = Picked == null ? -1 : _ids.IndexOf(Picked);
             if (_list.SelectedIndex != at) _list.SelectedIndex = at;
-            var s = _selected == null ? null : _app.OverlayOf(_selected);
+            var s = Picked == null ? null : _app.OverlayOf(Picked);
             _remove.Enabled = s != null;
             _edit.Checked = _app.OverlayEdit;
+            _hideAll.Checked = _app.OverlaysHidden;
+            _hideAll.Text = "Hide all overlays" + _app.KeysSuffix(OverlayAction.HideAll);
+            _edit.Text = "Edit: drag to move and resize; click overlaps to pick the next" + _app.KeysSuffix(OverlayAction.Edit);
+            _levelAll.Text = "Level all" + _app.KeysSuffix(OverlayAction.LevelAll);
+            foreach (var (a, box, note) in _keys)
+            {
+                if (!box.Focused) box.Text = KeysText(_app.Shortcuts.Get(a));
+                bool taken = _app.ShortcutTaken(a);
+                note.Text = taken ? "Taken by another app" : "";
+                note.Visible = taken;
+            }
             _tabs.Visible = s != null;
             if (s != null) ShowSettings(s);
         }
@@ -290,6 +312,62 @@ internal sealed class OverlaySection
         Set(_scale, (decimal)o.MotionScale);
     }
 
+    /// <summary>One shortcut: its name, a field that takes the keys pressed in it, a Clear button and a note when another app holds them.</summary>
+    private void AddShortcutRow(Control parent, OverlayAction a)
+    {
+        var row = MainForm.Row();
+        row.Controls.Add(Caption(OverlayShortcuts.ActionName(a), 170));
+        var box = new TextBox { Width = 130, ReadOnly = true, ShortcutsEnabled = false, Cursor = Cursors.Hand, BackColor = SystemColors.Window };
+        box.GotFocus += (_, _) =>
+        {
+            _app.PauseShortcuts(true);
+            box.Text = "Press the keys…";
+        };
+        box.LostFocus += (_, _) =>
+        {
+            _app.PauseShortcuts(false);
+            box.Text = KeysText(_app.Shortcuts.Get(a));
+        };
+        box.PreviewKeyDown += (_, e) => e.IsInputKey = true; // Tab, arrows and Enter are keys too
+        box.KeyDown += (_, e) =>
+        {
+            e.Handled = e.SuppressKeyPress = true;
+            var key = e.KeyCode;
+            if (e.Modifiers == Keys.None && key == Keys.Escape)
+            {
+                Leave(box);
+                return;
+            }
+            if (e.Modifiers == Keys.None && key is Keys.Delete or Keys.Back)
+            {
+                _app.SetShortcut(a, "");
+                Leave(box);
+                return;
+            }
+            if (Hotkeys.Format(e.KeyData) is { } keys)
+            {
+                _app.SetShortcut(a, keys);
+                Leave(box);
+            }
+        };
+        row.Controls.Add(box);
+        var clear = new Button { Text = "Clear", AutoSize = true };
+        clear.Click += (_, _) => _app.SetShortcut(a, "");
+        row.Controls.Add(clear);
+        var note = new Label { AutoSize = true, ForeColor = Color.Firebrick, Margin = new Padding(3, 6, 3, 3), Visible = false };
+        row.Controls.Add(note);
+        parent.Controls.Add(row);
+        _keys.Add((a, box, note));
+    }
+
+    /// <summary>Moves focus off a shortcut field (to its form), which puts the shortcuts back.</summary>
+    private static void Leave(TextBox box)
+    {
+        if (box.FindForm() is { } f) f.ActiveControl = null;
+    }
+
+    private static string KeysText(string keys) => keys.Length > 0 ? keys : "None";
+
     /// <summary>One swatch per colour the picked window's kind (and shape) draws with.</summary>
     private void ShowColors(OverlaySettings o)
     {
@@ -320,7 +398,7 @@ internal sealed class OverlaySection
 
     private void PickColor(Button b, string key)
     {
-        if (_selected == null || _app.OverlayOf(_selected) is not { } o) return;
+        if (Picked == null || _app.OverlayOf(Picked) is not { } o) return;
         var now = Color.FromArgb(o.Color(key));
         using var dlg = new ColorDialog { Color = Color.FromArgb(255, now), FullOpen = true, AnyColor = true };
         if (dlg.ShowDialog(b.FindForm()) != DialogResult.OK) return;
@@ -331,7 +409,7 @@ internal sealed class OverlaySection
 
     private void Change(Action<OverlaySettings> change, bool show = false)
     {
-        if (_refreshing || _selected is not { } id) return;
+        if (_refreshing || Picked is not { } id) return;
         if (show) _app.SetOverlayShown(id, !(_app.OverlayOf(id)?.Shown ?? false));
         else _app.ChangeOverlay(id, change);
     }

@@ -17,6 +17,10 @@ internal sealed class OverlayScene
     public bool Connected;
     /// <summary>Moving and resizing (Edit): a frame shows the window's edges.</summary>
     public bool Arranging;
+    /// <summary>The window picked in Edit: a solid frame instead of a dashed one.</summary>
+    public bool Selected;
+    /// <summary>The window's name, shown while arranging.</summary>
+    public string Title = "";
     /// <summary>The fingers' trails (phone, with Finger trails on), and the time to fade them by (ms).</summary>
     public FingerTrails? Trails;
     public long NowTicks;
@@ -58,11 +62,14 @@ internal static class OverlayRenderer
         {
             using var shade = new SolidBrush(Color.FromArgb(70, 20, 22, 26));
             g.FillRectangle(shade, 0, 0, size.Width, size.Height);
-            using var pen = new Pen(Color.FromArgb(200, 124, 196, 255), 2) { DashStyle = DashStyle.Dash };
+            // Picked: solid amber (as the phone's edit selection); the others dashed blue.
+            var edge = scene.Selected ? Color.FromArgb(240, 255, 183, 77) : Color.FromArgb(200, 124, 196, 255);
+            using var pen = new Pen(edge, scene.Selected ? 3 : 2) { DashStyle = scene.Selected ? DashStyle.Solid : DashStyle.Dash };
             g.DrawRectangle(pen, 1, 1, size.Width - 3, size.Height - 3);
-            using var grip = new SolidBrush(Color.FromArgb(220, 124, 196, 255));
+            using var grip = new SolidBrush(edge);
             g.FillPolygon(grip, new PointF[] { new(size.Width - 2, size.Height - 18), new(size.Width - 2, size.Height - 2), new(size.Width - 18, size.Height - 2) });
-            DrawCaption(g, size, "Drag to move · drag the corner to resize");
+            var name = scene.Title.Length > 0 ? scene.Title + " · " : "";
+            DrawCaption(g, size, scene.Selected ? $"{name}drag to move · click to pick the one under it" : $"{name}click to pick · drag to move");
         }
 
         bool live = scene.Connected && scene.FrameAgeUs is >= 0 and < 1_500_000;
@@ -200,10 +207,23 @@ internal static class OverlayRenderer
         float camR = Math.Max(1.2f, k * 0.012f);
         using (var cb = new SolidBrush(Color.FromArgb(0x05, 0x06, 0x08))) g.FillEllipse(cb, camP.X - camR, camP.Y - camR, camR * 2, camR * 2);
 
+        // Control shapes are cut to the screen here, in pad coordinates, before projecting: a GDI+
+        // clip is whole pixels (no antialiasing), so outlines along the screen's edge flickered as
+        // its projected edge moved by fractions of a pixel. Cut a little inside the edge, so a whole
+        // stroke (with its antialiased rim) fits on the screen.
+        float penWidth = Math.Clamp(k * 0.008f, 1f, 3f);
+        float inset = (penWidth / 2f + 1.5f) / Math.Max(k, 1f);
+        var screenUv = RoundedRect(sw - 2 * inset, sh - 2 * inset, Math.Max(0f, Math.Min(sw, sh) * 0.09f - inset), 6)
+            .Select(p => (p.X / sw + 0.5f, 0.5f - p.Y / sh)).ToArray();
+        PointF[]? Cut((float X, float Y)[] shape)
+        {
+            var cut = ClipConvex(shape, screenUv);
+            return cut.Length < 3 ? null : cut.Select(p => P(p.X, p.Y)).ToArray();
+        }
+
         using var clipPath = new GraphicsPath();
         clipPath.AddPolygon(screen);
         var savedClip = g.Clip;
-        g.SetClip(clipPath, CombineMode.Intersect);
 
         float pxW = layout is { WidthPx: > 0 } ? layout.WidthPx : 2400;
         float pxH = layout is { HeightPx: > 0 } ? layout.HeightPx : 1080;
@@ -219,7 +239,7 @@ internal static class OverlayRenderer
                 bool pressed = live && f.IsPressed(i);
                 bool latched = live && !pressed && f.IsLatched(i);
                 var shape = c.Round ? Ellipse(c.X, c.Y, c.W / 2, c.H / 2, 32) : RoundedBox(c, pxW, pxH);
-                var pts = shape.Select(p => P(p.X, p.Y)).ToArray();
+                if (Cut(shape) is not { } pts) continue;
                 float op = Math.Clamp(c.Opacity, 0f, 1f);
                 if (c.Kind == OverlayControlKind.Display)
                 {
@@ -233,23 +253,34 @@ internal static class OverlayRenderer
                     using var fill = new SolidBrush(Color.FromArgb((int)(0.25f * 255 * op), tint));
                     g.FillPolygon(fill, pts);
                 }
-                using (var pen = new Pen(Color.FromArgb((int)(tint.A * op), tint), Math.Clamp(k * 0.008f, 1f, 3f)))
+                using (var pen = new Pen(Color.FromArgb((int)(tint.A * op), tint), penWidth) { LineJoin = LineJoin.Round })
                     g.DrawPolygon(pen, pts);
                 if (c.Kind == OverlayControlKind.Stick)
                 {
                     var knob = sticks.TryGetValue(i, out var kv) ? kv : (0f, 0f);
                     float kx = c.X + knob.Item1 * 0.6f * c.W / 2, ky = c.Y + knob.Item2 * 0.6f * c.H / 2;
-                    var kp = Ellipse(kx, ky, c.W / 5, c.H / 5, 24).Select(p => P(p.X, p.Y)).ToArray();
-                    using var kb = new SolidBrush(Color.FromArgb((int)(0.6f * tint.A * op), tint));
-                    g.FillPolygon(kb, kp);
+                    if (Cut(Ellipse(kx, ky, c.W / 5, c.H / 5, 24)) is { } kp)
+                    {
+                        using var kb = new SolidBrush(Color.FromArgb((int)(0.6f * tint.A * op), tint));
+                        g.FillPolygon(kb, kp);
+                    }
                 }
-                if (c.Label.Length > 0)
-                    DrawLabel(g, c.Label, c.X, c.Y, c.W * pxW, fontPx, pxW, pxH, P, Color.FromArgb((int)(255 * Math.Max(op, 0.5f)), 255, 255, 255));
+            }
+            // Labels, trails and dots: cut by the screen's clip (text can't be cut by hand).
+            g.SetClip(clipPath, CombineMode.Intersect);
+            for (int i = 0; i < layout.Controls.Count; i++)
+            {
+                var c = layout.Controls[i];
+                if (c.Kind == OverlayControlKind.Display || c.Label.Length == 0) continue;
+                float op = Math.Clamp(c.Opacity, 0f, 1f);
+                DrawLabel(g, c.Label, c.X, c.Y, c.W * pxW, fontPx, pxW, pxH, P, Color.FromArgb((int)(255 * Math.Max(op, 0.5f)), 255, 255, 255));
             }
             if (layout.Layer.Length > 0)
                 DrawLabel(g, layout.Layer, 0.5f, 0.05f, pxW * 0.6f, fontPx, pxW, pxH, P, Color.FromArgb(230, 255, 255, 255), pill: true);
         }
 
+        g.SetClip(savedClip, CombineMode.Replace);
+        g.SetClip(clipPath, CombineMode.Intersect);
         if (live && scene.Trails is { } trails)
         {
             // Each trail fades along its length: older points fainter and thinner.
@@ -361,6 +392,53 @@ internal static class OverlayRenderer
                 pts.Add((ccx + r * MathF.Cos(a), ccy + r * MathF.Sin(a)));
             }
         return pts.ToArray();
+    }
+
+    /// <summary>
+    /// <paramref name="shape"/> cut to convex polygon <paramref name="clip"/> (Sutherland–Hodgman);
+    /// either winding. Empty when nothing is left.
+    /// </summary>
+    internal static (float X, float Y)[] ClipConvex((float X, float Y)[] shape, (float X, float Y)[] clip)
+    {
+        float area = 0;
+        for (int i = 0; i < clip.Length; i++)
+        {
+            var a = clip[i];
+            var b = clip[(i + 1) % clip.Length];
+            area += a.X * b.Y - b.X * a.Y;
+        }
+        float sign = area >= 0 ? 1f : -1f;
+        var output = new List<(float X, float Y)>(shape);
+        for (int e = 0; e < clip.Length && output.Count > 0; e++)
+        {
+            var a = clip[e];
+            var b = clip[(e + 1) % clip.Length];
+            float Side((float X, float Y) p) => sign * ((b.X - a.X) * (p.Y - a.Y) - (b.Y - a.Y) * (p.X - a.X));
+            var input = output;
+            output = new List<(float X, float Y)>(input.Count + 4);
+            for (int i = 0; i < input.Count; i++)
+            {
+                var cur = input[i];
+                var prev = input[(i + input.Count - 1) % input.Count];
+                float sc = Side(cur), sp = Side(prev);
+                if (sc >= 0)
+                {
+                    if (sp < 0) output.Add(Cross(prev, cur, sp, sc));
+                    output.Add(cur);
+                }
+                else if (sp >= 0)
+                {
+                    output.Add(Cross(prev, cur, sp, sc));
+                }
+            }
+        }
+        return output.ToArray();
+
+        static (float X, float Y) Cross((float X, float Y) p, (float X, float Y) q, float sp, float sq)
+        {
+            float t = sp / (sp - sq);
+            return (p.X + (q.X - p.X) * t, p.Y + (q.Y - p.Y) * t);
+        }
     }
 
     /// <summary>An ellipse in pad coordinates (u right, v down).</summary>
