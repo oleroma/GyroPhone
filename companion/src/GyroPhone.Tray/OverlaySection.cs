@@ -188,6 +188,14 @@ internal sealed class OverlaySection
         t.Controls.Add(MainForm.NewLabel("Hold the phone the way you play and press Level: held that way, it shows face-on, its screen flat toward you."));
     }
 
+    /// <summary>The settings column is <paramref name="width"/> wide (the splitter moved): the list and tabs fill it.</summary>
+    public void Fit(int width)
+    {
+        int w = Math.Max(TabWidth, width);
+        if (_list.Width != w) _list.Width = w;
+        if (_tabs.Width != w) _tabs.Width = w;
+    }
+
     public void RefreshNow()
     {
         if (_refreshing) return;
