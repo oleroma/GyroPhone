@@ -884,7 +884,7 @@ public sealed class HostEngine
                 var f = _settings.Overlays[0];
                 o.Gravity = f.Gravity; o.Compass = f.Compass; o.ResetOnRatchet = f.ResetOnRatchet; o.ResetHeadingOnly = f.ResetHeadingOnly;
                 o.Ease = f.Ease; o.EaseAfterRatchet = f.EaseAfterRatchet; o.EaseDelayMs = f.EaseDelayMs; o.EaseBySpeed = f.EaseBySpeed;
-                o.EaseSeconds = f.EaseSeconds; o.EaseSpeed = f.EaseSpeed; o.LevelDeg = f.LevelDeg; o.MotionScale = f.MotionScale;
+                o.EaseSeconds = f.EaseSeconds; o.EaseSpeed = f.EaseSpeed; o.MotionScale = f.MotionScale;
             }
             if (kind != OverlayKind.Phone) o.Width = o.Height = 260;
             _settings.Overlays.Add(o);
@@ -1021,6 +1021,32 @@ public sealed class HostEngine
                 into.Qw = 1; into.Qx = into.Qy = into.Qz = 0;
             }
             return Math.Max(0, _clock.NowUs - _overlayRxUs);
+        }
+    }
+
+    /// <summary>
+    /// Level: the way the phone is held now becomes overlay <paramref name="id"/>'s resting pose, shown
+    /// face-on. With gravity that is the tilt now (saved as <see cref="OverlaySettings.Rest"/>); without
+    /// (turned by the gyro since the last reset, or a trackball) the pose simply starts again from straight.
+    /// </summary>
+    public void LevelOverlay(string id)
+    {
+        lock (_lock)
+        {
+            var o = _settings.Overlays.Find(x => x.Id == id);
+            if (o == null) return;
+            _overlayPoses.TryGetValue(id, out var pose);
+            if (o.Gravity && !o.IsTrackball)
+            {
+                if (pose == null) return;
+                o.Rest = pose.TiltOnly();
+            }
+            else
+            {
+                pose?.Reset();
+                o.Rest = null;
+            }
+            _settingsDirty = true;
         }
     }
 

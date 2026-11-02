@@ -95,8 +95,12 @@ public sealed class OverlaySettings
     public bool Crosshair { get; set; } = true;
 
     // The pose, made on the PC (the phone's own gyro display settings are separate).
-    /// <summary>The pose shown straight (Level), as a quaternion w, x, y, z; null = upright, facing the player.</summary>
-    public float[]? Center { get; set; }
+    /// <summary>
+    /// The resting pose (Level), as a quaternion w, x, y, z: the phone held this way shows face-on, its
+    /// screen flat toward the viewer. With gravity only the tilt is kept (the heading eases back on its
+    /// own); null = upright, facing the player.
+    /// </summary>
+    public float[]? Rest { get; set; }
     /// <summary>Tilt held to gravity (never drifts); off, turned by the gyro axes that move the mouse.</summary>
     public bool Gravity { get; set; } = true;
     /// <summary>With gravity: the heading held by the phone's compass to the way it faced at the start.</summary>
@@ -113,8 +117,6 @@ public sealed class OverlaySettings
     public bool EaseBySpeed { get; set; }
     public float EaseSeconds { get; set; } = 2f;
     public int EaseSpeed { get; set; } = 90;
-    /// <summary>The pose shown straight: 0 upright facing the player, 90 flat screen up, 180 upright facing away.</summary>
-    public int LevelDeg { get; set; }
 
     /// <summary>ARGB per <see cref="OverlayColor.Key"/> of this kind; missing = its default.</summary>
     public Dictionary<string, int> Colors { get; set; } = [];

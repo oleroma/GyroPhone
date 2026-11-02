@@ -460,11 +460,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             foreach (var o in _engine.Settings.Overlays.ToList()) ChangeOverlay(o.Id, x => x.ClickThrough = !allThrough);
         })
         { Checked = allThrough });
-        menu.DropDownItems.Add(new ToolStripMenuItem("Level all: as held now shows straight (Ctrl+Alt+R)", null, (_, _) => LevelAll()));
-        menu.DropDownItems.Add(new ToolStripMenuItem("Reset all (undo Level)", null, (_, _) =>
-        {
-            foreach (var o in _engine.Settings.Overlays.ToList()) ChangeOverlay(o.Id, x => x.Center = null);
-        }));
+        menu.DropDownItems.Add(new ToolStripMenuItem("Level all: as held now shows face-on (Ctrl+Alt+R)", null, (_, _) => LevelAll()));
         menu.DropDownItems.Add(new ToolStripMenuItem("Overlay settings…", null, (_, _) => ShowMainForm()));
     }
 

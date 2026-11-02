@@ -203,6 +203,16 @@ public sealed class OverlayPose
         }
     }
 
+    /// <summary>The pose with its heading taken out (w, x, y, z): only how it is tilted against gravity.</summary>
+    public float[] TiltOnly()
+    {
+        float w = _w, x = _x, y = _y, z = _z;
+        TurnVertical(Heading());
+        float[] tilt = [_w, _x, _y, _z];
+        _w = w; _x = x; _y = y; _z = z;
+        return tilt;
+    }
+
     /// <summary>The heading in radians (right +): the right edge's angle round the vertical.</summary>
     public float Heading()
     {

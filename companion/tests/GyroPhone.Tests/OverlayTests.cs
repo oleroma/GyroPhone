@@ -267,11 +267,36 @@ public class OverlayTests
     [Fact]
     public void OldSingleOverlayIsKept()
     {
-        var s = new GyroPhone.Host.Settings.HostSettings { Overlay = new GyroPhone.Host.Settings.OverlaySettings { Shown = true, LevelDeg = 45 } };
+        var s = new GyroPhone.Host.Settings.HostSettings { Overlay = new GyroPhone.Host.Settings.OverlaySettings { Shown = true, EaseSeconds = 3 } };
         s.Normalize();
         var o = Assert.Single(s.Overlays);
-        Assert.Equal(45, o.LevelDeg);
+        Assert.Equal(3f, o.EaseSeconds);
         Assert.Null(s.Overlay);
         Assert.Equal(unchecked((int)0xFF2A2E35), o.Color("body"));
+    }
+
+    [Fact]
+    public void LevelWithGravityKeepsOnlyTheTilt()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = true, Ease = false };
+        var p = new GyroPhone.Host.OverlayPose();
+        // Held tilted back about 45° (up measured between the phone's up and its screen), turned 30° right.
+        var f = Motion(30f, 0.01f, up: true);
+        f.UpY = 0.7071f; f.UpZ = 0.7071f;
+        p.Feed(f, s);
+        for (int i = 0; i < 100; i++)
+        {
+            var g = Motion(0f, 0.01f, up: true);
+            g.UpY = 0.7071f; g.UpZ = 0.7071f;
+            p.Feed(g, s);
+        }
+        Assert.True(MathF.Abs(HeadingDeg(p)) > 20f);
+        var tilt = p.TiltOnly();
+        // No heading left, the tilt kept: the turn about the phone's right edge (x) only.
+        Assert.Equal(0f, tilt[2], 2);
+        Assert.Equal(0f, tilt[3], 2);
+        Assert.True(MathF.Abs(tilt[1]) > 0.3f);
+        // The pose itself is untouched.
+        Assert.True(MathF.Abs(HeadingDeg(p)) > 20f);
     }
 }

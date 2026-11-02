@@ -47,7 +47,7 @@ internal sealed class OverlaySection
     private readonly NumericUpDown _scale;
     private readonly CheckBox _gravity, _compass, _reset, _headingOnly, _ease;
     private readonly RadioButton _whenStill, _whenRatchet, _byTime, _bySpeed;
-    private readonly NumericUpDown _delay, _seconds, _speed, _level;
+    private readonly NumericUpDown _delay, _seconds, _speed;
     private readonly Control _easeOptions, _secondsRow, _speedRow;
 
     public OverlaySection(TrayApp app, FlowLayoutPanel g)
@@ -182,13 +182,10 @@ internal sealed class OverlaySection
         _poseRows = pose;
 
         _scale = Number(t, "Turn amount ×", 0.5m, 3m, 0.1m, 1, v => Change(o => o.MotionScale = (float)v));
-        _level = Number(t, "Level at, °", 0, 180, 5, 0, v => Change(o => o.LevelDeg = (int)v));
-        t.Controls.Add(MainForm.NewLabel("0 upright facing you, 90 flat screen up, 180 facing away."));
         var center = MainForm.Row();
-        MainForm.NewButton("Level", () => { if (_selected is { } id) _app.LevelOverlay(id); }, center);
-        MainForm.NewButton("Reset", () => Change(o => o.Center = null), center);
+        MainForm.NewButton("Level (Ctrl+Alt+R: all)", () => { if (_selected is { } id) _app.LevelOverlay(id); }, center);
         t.Controls.Add(center);
-        t.Controls.Add(MainForm.NewLabel("Level: the way the phone is held now shows straight. Reset undoes it."));
+        t.Controls.Add(MainForm.NewLabel("Hold the phone the way you play and press Level: held that way, it shows face-on, its screen flat toward you."));
     }
 
     public void RefreshNow()
@@ -283,7 +280,6 @@ internal sealed class OverlaySection
         _secondsRow.Visible = !o.EaseBySpeed;
         _speedRow.Visible = o.EaseBySpeed;
         Set(_scale, (decimal)o.MotionScale);
-        Set(_level, o.LevelDeg);
     }
 
     /// <summary>One swatch per colour the picked window's kind (and shape) draws with.</summary>

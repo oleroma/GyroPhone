@@ -97,12 +97,10 @@ internal sealed class OverlayForm : Form
         Render();
     }
 
-    /// <summary>Level: the pose now shows straight.</summary>
+    /// <summary>Level: the way the phone is held now shows face-on.</summary>
     public void Level()
     {
-        var q = _engine.OverlayPoseOf(_id);
-        if (q == null) return;
-        _engine.UpdateOverlaySettings(_id, o => o.Center = q);
+        _engine.LevelOverlay(_id);
         _dirty = true;
     }
 

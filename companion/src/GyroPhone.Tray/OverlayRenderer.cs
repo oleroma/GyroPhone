@@ -67,7 +67,7 @@ internal static class OverlayRenderer
 
         bool live = scene.Connected && scene.FrameAgeUs is >= 0 and < 1_500_000;
         var raw = live ? Shown(scene.Frame, settings) : (1f, 0f, 0f, 0f);
-        var m = Matrix3(Level(raw, settings.LevelDeg));
+        var m = Matrix3(raw);
         int top = scene.Arranging ? 18 : 0;
         var area = new RectangleF(0, 0, size.Width, size.Height - top);
         string? note = !scene.Connected ? "Waiting for the phone" : !live ? "Waiting for the phone's data" : null;
@@ -80,10 +80,10 @@ internal static class OverlayRenderer
                 ShapeDrawing.Draw(g, area, settings, m, live ? scene.Frame.Axes : 0);
                 break;
             case OverlayKind.Horizon:
-                DialDrawing.DrawHorizon(g, area, settings, m, Matrix3(raw));
+                DialDrawing.DrawHorizon(g, area, settings, m, m);
                 break;
             default:
-                DialDrawing.DrawDisk(g, area, settings, m, Matrix3(raw));
+                DialDrawing.DrawDisk(g, area, settings, m, m);
                 break;
         }
         if (note != null) DrawNote(g, area, note);
@@ -299,7 +299,8 @@ internal static class OverlayRenderer
     private static (float W, float X, float Y, float Z) Shown(OverlayFrame f, OverlaySettings s)
     {
         var q = (f.Qw, f.Qx, f.Qy, f.Qz);
-        if (s.Center is { Length: 4 } c) q = MulQ((c[0], -c[1], -c[2], -c[3]), q);
+        // The model mounted at the resting grip: held that way, it shows face-on.
+        if (s.Rest is { Length: 4 } c) q = MulQ(q, (c[0], -c[1], -c[2], -c[3]));
         float scale = Math.Clamp(s.MotionScale, 0.25f, 4f);
         if (MathF.Abs(scale - 1f) < 0.001f) return q;
         if (q.Item1 < 0) q = (-q.Item1, -q.Item2, -q.Item3, -q.Item4); // the short way round
@@ -310,14 +311,6 @@ internal static class OverlayRenderer
         float a = Math.Min(angle * scale, MathF.PI) / 2f;
         float r = MathF.Sin(a) / sn;
         return (MathF.Cos(a), q.Item2 * r, q.Item3 * r, q.Item4 * r);
-    }
-
-    /// <summary>The pose seen from the level angle: the pose <paramref name="deg"/> back from upright shows square on.</summary>
-    private static (float W, float X, float Y, float Z) Level((float W, float X, float Y, float Z) q, int deg)
-    {
-        if (deg == 0) return q;
-        float a = Math.Clamp(deg, 0, 180) * MathF.PI / 360f;
-        return MulQ((MathF.Cos(a), MathF.Sin(a), 0f, 0f), q);
     }
 
     private static Color Opaque(int argb) => Color.FromArgb(255, Color.FromArgb(argb));
