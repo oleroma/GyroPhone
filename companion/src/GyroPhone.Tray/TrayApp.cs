@@ -478,6 +478,23 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
 
     private void ApplyOverlay()
     {
+        try
+        {
+            ApplyOverlayCore();
+        }
+        catch (Exception e)
+        {
+            // The overlay must never take the companion down (it reopens at every start while Shown).
+            _log.Write($"overlay failed and was turned off: {e}");
+            _engine.UpdateOverlaySettings(o => o.Shown = false);
+            try { _overlayForm?.Dispose(); } catch (Exception) { }
+            _overlayForm = null;
+            Balloon("Phone overlay failed", "It was turned off. The log has the details.", ToolTipIcon.Warning);
+        }
+    }
+
+    private void ApplyOverlayCore()
+    {
         bool shown = _engine.Settings.Overlay.Shown;
         if (shown && (_overlayForm == null || _overlayForm.IsDisposed))
         {

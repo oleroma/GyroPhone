@@ -62,7 +62,8 @@ internal sealed class PhoneOverlayForm : Form
         }
     }
 
-    private bool ClickThrough => _engine.Settings.Overlay.ClickThrough;
+    // The base Form constructor reads CreateParams before this constructor has set _engine.
+    private bool ClickThrough => _engine?.Settings.Overlay.ClickThrough ?? true;
 
     /// <summary>Settings changed (background, scale, dots, click-through): applied at the next frame.</summary>
     public void SettingsChanged()
@@ -155,6 +156,18 @@ internal sealed class PhoneOverlayForm : Form
 
     private void Tick()
     {
+        try
+        {
+            TickCore();
+        }
+        catch (Exception e)
+        {
+            _log($"overlay: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    private void TickCore()
+    {
         // A new OVERLAY, a new layout, or now and then for the status: draw again.
         long age = _engine.OverlaySnapshot(_scene.Frame, out var layout);
         bool changed = _dirty || age >= 0 && (_scene.Frame.PhoneTimeUs != _lastTime || _scene.Frame.LayoutVersion != _lastLayout) ||
@@ -167,6 +180,18 @@ internal sealed class PhoneOverlayForm : Form
     }
 
     private void Render()
+    {
+        try
+        {
+            RenderCore();
+        }
+        catch (Exception e)
+        {
+            _log($"overlay: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    private void RenderCore()
     {
         if (!IsHandleCreated || Width <= 0 || Height <= 0) return;
         _dirty = false;
@@ -186,8 +211,9 @@ internal sealed class PhoneOverlayForm : Form
             {
                 PhoneOverlayRenderer.Draw(g, _bitmap.Size, _scene, _engine.Settings.Overlay);
             }
-            catch (Exception e) when (e is ArgumentException or OverflowException or ExternalException)
+            catch (Exception e)
             {
+                // A drawing failure must never take the companion down: log it and keep the last picture.
                 _log($"overlay: drawing failed: {e.Message}");
             }
         }
