@@ -24,7 +24,7 @@ internal sealed record MainView(
 /// </summary>
 internal sealed class MainForm : Form
 {
-    private const int ColumnWidth = 300;
+    internal const int ColumnWidth = 300;
 
     private readonly TrayApp _app;
     private readonly Func<string> _statusText;
@@ -36,6 +36,8 @@ internal sealed class MainForm : Form
     private readonly Button _forget;
     private readonly Label _hostKey;
     private readonly Button _network, _firewall, _usb, _installDriver, _retryDriver, _restartAdmin;
+    private readonly OverlaySection _overlay;
+    private readonly SplitContainer _split;
     private readonly TextBox _box;
     private readonly Font _mono;
     private readonly Font _headerFont;
@@ -58,15 +60,23 @@ internal sealed class MainForm : Form
         _headerFont = new Font(Font.FontFamily, Font.Size * 1.2f, FontStyle.Bold);
         _mono = new Font(FontFamily.GenericMonospace, 10f);
 
-        var table = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2 };
-        table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var table = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         table.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         _header = new Label { AutoSize = true, Font = _headerFont, Margin = new Padding(3, 3, 3, 8) };
         table.Controls.Add(_header, 0, 0);
-        table.SetColumnSpan(_header, 2);
+
+        // Settings | status, with a splitter to drag: the settings column (and the overlay tabs in it) widens with it.
+        var split = new SplitContainer
+        {
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Vertical,
+            FixedPanel = FixedPanel.Panel1,
+            SplitterWidth = 6,
+        };
+        _split = split;
 
         // Left column: settings, scrolling when the window is short.
         var settings = new FlowLayoutPanel
@@ -74,8 +84,6 @@ internal sealed class MainForm : Form
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
             AutoScroll = true,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Dock = DockStyle.Fill,
             Padding = new Padding(0, 0, SystemInformation.VerticalScrollBarWidth, 0),
         };
@@ -94,6 +102,8 @@ internal sealed class MainForm : Form
         var startup = Group("Startup", settings);
         _autoStart = Check("Start with Windows", startup, () => _app.ToggleAutoStart());
         _watcher = Check("Start when my phone appears", startup, () => _app.ToggleWatcher());
+
+        _overlay = new OverlaySection(_app, Group("Overlays", settings));
 
         var phones = Group("Phones", settings);
         phones.Controls.Add(NewButton("Pair new phone…", () => _app.PairNewPhone()));
@@ -129,7 +139,8 @@ internal sealed class MainForm : Form
         NewButton("Open log folder", () => _app.OpenLogFolder(), tools);
         NewButton("Debug window…", () => _app.ShowDebugForm(), tools);
 
-        table.Controls.Add(settings, 0, 1);
+        split.Panel1.Controls.Add(settings);
+        settings.SizeChanged += (_, _) => _overlay.Fit(settings.ClientSize.Width - settings.Padding.Horizontal - 24);
 
         // Right column: the status text that used to be the "Status…" window.
         var stats = new GroupBox { Text = "Status", Dock = DockStyle.Fill, Padding = new Padding(8) };
@@ -146,7 +157,8 @@ internal sealed class MainForm : Form
             TabStop = false,
         };
         stats.Controls.Add(_box);
-        table.Controls.Add(stats, 1, 1);
+        split.Panel2.Controls.Add(stats);
+        table.Controls.Add(split, 0, 1);
 
         Controls.Add(table);
 
@@ -154,6 +166,16 @@ internal sealed class MainForm : Form
         _timer.Tick += (_, _) => UpdateText();
         Load += (_, _) =>
         {
+            try
+            {
+                split.Panel1MinSize = ColumnWidth + SystemInformation.VerticalScrollBarWidth + 16;
+                split.Panel2MinSize = 160;
+                split.SplitterDistance = Math.Clamp(split.Panel1MinSize + 40, split.Panel1MinSize, Math.Max(split.Panel1MinSize, split.Width - 160));
+            }
+            catch (InvalidOperationException)
+            {
+                // The window is too narrow for the minimum sizes: keep the default split.
+            }
             UpdateText();
             _timer.Start();
         };
@@ -181,6 +203,7 @@ internal sealed class MainForm : Form
         _retryDriver.Visible = v.ShowDriver;
         _restartAdmin.Visible = v.ShowRestartAdmin;
         RebuildPhones(s.PairedPhones);
+        _overlay.RefreshNow();
     }
 
     private void RebuildPhones(IReadOnlyList<PairedPhoneInfo> phones)
@@ -222,7 +245,7 @@ internal sealed class MainForm : Form
     }
 
     /// <summary>A titled box in the settings column; returns the panel its rows go into.</summary>
-    private static FlowLayoutPanel Group(string title, Control parent)
+    internal static FlowLayoutPanel Group(string title, Control parent)
     {
         var box = new GroupBox
         {
@@ -246,7 +269,7 @@ internal sealed class MainForm : Form
         return inner;
     }
 
-    private static FlowLayoutPanel Row() => new()
+    internal static FlowLayoutPanel Row() => new()
     {
         FlowDirection = FlowDirection.LeftToRight,
         WrapContents = false,
@@ -255,7 +278,7 @@ internal sealed class MainForm : Form
         Margin = new Padding(0),
     };
 
-    private static RadioButton Radio(string text, Control parent, Action click)
+    internal static RadioButton Radio(string text, Control parent, Action click)
     {
         var r = new RadioButton { Text = text, AutoSize = true, AutoCheck = false };
         r.Click += (_, _) => click();
@@ -263,7 +286,7 @@ internal sealed class MainForm : Form
         return r;
     }
 
-    private static CheckBox Check(string text, Control parent, Action click)
+    internal static CheckBox Check(string text, Control parent, Action click)
     {
         var c = new CheckBox { Text = text, AutoSize = true, AutoCheck = false };
         c.Click += (_, _) => click();
@@ -271,7 +294,7 @@ internal sealed class MainForm : Form
         return c;
     }
 
-    private static Button NewButton(string text, Action click, Control? parent = null)
+    internal static Button NewButton(string text, Action click, Control? parent = null)
     {
         var b = new Button { Text = text, AutoSize = true };
         b.Click += (_, _) => click();
@@ -279,7 +302,7 @@ internal sealed class MainForm : Form
         return b;
     }
 
-    private static Label NewLabel(string text) => new()
+    internal static Label NewLabel(string text) => new()
     {
         Text = text,
         AutoSize = true,

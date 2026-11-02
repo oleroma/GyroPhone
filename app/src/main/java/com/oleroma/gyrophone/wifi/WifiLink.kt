@@ -25,6 +25,7 @@ import com.oleroma.gyrophone.core.net.KeyTakeover
 import com.oleroma.gyrophone.core.net.LinkInfo
 import com.oleroma.gyrophone.core.net.LinkInfoFlags
 import com.oleroma.gyrophone.core.net.LiveSession
+import com.oleroma.gyrophone.core.net.OverlayFeed
 import com.oleroma.gyrophone.core.net.PacketType
 import com.oleroma.gyrophone.core.net.PairFailure
 import com.oleroma.gyrophone.core.net.PairState
@@ -101,6 +102,9 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     private val locks = WifiLocks(appContext)
     private val binder = WifiNetworkBinder(appContext) { post { onNetworkChanged() } }
     private val pump = WifiPump(engine)
+
+    /** The PC's phone overlay: its data is gathered and sent while the PC's HOST_STATUS asks for it. */
+    val overlay = OverlayFeed()
     private val accessory = AccessoryBridge(appContext)
 
     private val _state = MutableStateFlow<LinkState>(LinkState.Off)
@@ -215,11 +219,17 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     @Volatile private var clockOffsetUs = 0L
     @Volatile private var rttMinUs = -1L
     @Volatile private var hostStatus: HostStatus? = null
+        set(v) {
+            field = v
+            overlay.wanted = v != null && v.flags and HostStatusFlags.OVERLAY != 0
+            overlay.compassWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_COMPASS != 0
+        }
     @Volatile private var welcomeHostFlags: Int? = null
 
     init {
         pump.rateHz = rateHz
         pump.linkInfoSource = ::buildLinkInfo
+        pump.overlay = overlay
         // The Keystore key and phone.pub exist from the first start, so update.cmd can fetch it.
         Thread({ keys.publish() }, "gp-keys").start()
     }

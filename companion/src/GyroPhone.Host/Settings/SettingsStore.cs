@@ -63,7 +63,7 @@ public sealed class SettingsStore
                 var s = JsonSerializer.Deserialize(File.ReadAllText(path), HostSettingsJson.Default.HostSettings);
                 if (s == null || s.HostId == null || s.HostId.Length != Protocol.Wire.IdSize) throw new InvalidDataException("missing hostId");
                 if (string.IsNullOrEmpty(s.HostName)) s.HostName = defaultHostName;
-                s.PairedPhones ??= [];
+                s.Normalize();
                 return s;
             }
             catch (Exception e) when (e is JsonException or InvalidDataException or NotSupportedException)

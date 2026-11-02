@@ -21,6 +21,10 @@ public static class PacketType
     public const byte LinkInfo = 0x22;
     /// <summary>STATE with 1/120-notch wheel totals; sent only to a host whose WELCOME has HiresWheel.</summary>
     public const byte StateHires = 0x23;
+    /// <summary>Sent only while HOST_STATUS has <see cref="HostStatusFlags.Overlay"/>: pose, touches, presses.</summary>
+    public const byte Overlay = 0x24;
+    /// <summary>Sent only while HOST_STATUS has <see cref="HostStatusFlags.Overlay"/>: the layout, in pieces.</summary>
+    public const byte OverlayLayout = 0x25;
     public const byte Bye = 0x2F;
     public const byte Pong = 0x30;
     public const byte HostStatus = 0x31;
@@ -66,6 +70,8 @@ public static class PacketType
         HostStatus => Wire.HostStatusPlain,
         Rumble => Wire.RumblePlain,
         Foreground => Wire.ForegroundPlain,
+        Overlay => Wire.OverlayPlain,
+        OverlayLayout => Wire.OverlayLayoutPlain,
         HostBye => Wire.ByePlain,
         _ => -1,
     };

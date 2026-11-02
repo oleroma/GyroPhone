@@ -17,12 +17,45 @@ public sealed class HostSettings
     /// <summary>Switch a phone on the USB cable to accessory mode and use it as a link (Windows only).</summary>
     public bool UsbDirect { get; set; } = true;
     public List<PairedPhone> PairedPhones { get; set; } = [];
+    /// <summary>The overlay windows (phone, 3D shape, attitude indicator, bubble disk), each with its own settings.</summary>
+    public List<OverlaySettings> Overlays { get; set; } = [];
+    /// <summary>Overlay windows can be dragged to move and resize; off, the mouse goes through them to the game.</summary>
+    public bool OverlayEdit { get; set; }
+    /// <summary>The one phone overlay of earlier builds: read once into <see cref="Overlays"/>.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public OverlaySettings? Overlay { get; set; }
+
+    /// <summary>Fills in what an older or hand-edited file lacks.</summary>
+    public void Normalize()
+    {
+        PairedPhones ??= [];
+        Overlays ??= [];
+        if (Overlay != null)
+        {
+            if (Overlays.Count == 0) Overlays.Add(Overlay);
+            Overlay = null;
+        }
+        Overlays.RemoveAll(o => o == null);
+        if (Overlays.Count == 0) Overlays.Add(new OverlaySettings());
+        var ids = new HashSet<string>();
+        foreach (var o in Overlays)
+        {
+            if (string.IsNullOrEmpty(o.Id) || !ids.Add(o.Id))
+            {
+                o.Id = OverlaySettings.NewId();
+                ids.Add(o.Id);
+            }
+            o.Colors ??= [];
+        }
+    }
 
     public static HostSettings CreateDefault(string hostName)
     {
         var id = new byte[Wire.IdSize];
         System.Security.Cryptography.RandomNumberGenerator.Fill(id);
-        return new HostSettings { HostId = id, HostName = hostName };
+        var s = new HostSettings { HostId = id, HostName = hostName };
+        s.Normalize();
+        return s;
     }
 }
 

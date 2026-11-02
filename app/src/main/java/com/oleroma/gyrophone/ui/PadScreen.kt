@@ -56,6 +56,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -137,6 +138,9 @@ import com.oleroma.gyrophone.core.model.WorkspaceMappings
 import com.oleroma.gyrophone.core.model.contains
 import com.oleroma.gyrophone.core.model.heightRatio
 import com.oleroma.gyrophone.core.model.hitOrder
+import com.oleroma.gyrophone.core.net.OverlayControl
+import com.oleroma.gyrophone.core.net.OverlayFeed
+import com.oleroma.gyrophone.core.net.OverlayLayout
 import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.model.ownSurface
 import com.oleroma.gyrophone.core.model.placeSize
@@ -571,6 +575,7 @@ fun PadScreen(
         fingersOnButtons = 0
         for (id in stickPos.keys.toList()) runtime.engine.setTouchStick(id, 0f, 0f)
         stickPos.clear()
+        runtime.wifi.overlay.clearTouches()
         heldSticks = emptySet()
         cornersHeld = emptySet()
         runtime.engine.touchpadCancel()
@@ -1209,6 +1214,7 @@ fun PadScreen(
                 class Extra(val control: TouchControl, val pointer: Long)
 
                 val extras = HashMap<PointerId, List<Extra>>()
+                val overlayFingers = FloatArray(OverlayFeed.MAX_FINGERS * 2)
                 val extraSticks = HashSet<String>()
                 val fingers = HashMap<PointerId, FingerAreas>()
                 val zoneCount = HashMap<String, Int>()
@@ -1255,6 +1261,7 @@ fun PadScreen(
                     if (len > 1f) d /= len
                     runtime.engine.setTouchStick(c.id, d.x, d.y)
                     stickPos[c.id] = d
+                    runtime.wifi.overlay.setStick(c.id, d.x, d.y)
                 }
 
                 /** Finger [pointer] takes stick [c] at [p]: its On touch is held until [dropStick]. */
@@ -1271,6 +1278,7 @@ fun PadScreen(
                     val id = stickOwner.remove(pointer) ?: return
                     runtime.engine.setTouchStick(id, 0f, 0f)
                     stickPos.remove(id)
+                    runtime.wifi.overlay.setStick(id, 0f, 0f)
                     heldSticks = heldSticks - id
                     if (mapped(id, TouchAreaKind.HELD)) runtime.engine.setTouchArea(id, TouchAreaKind.HELD, false)
                 }
@@ -1496,6 +1504,7 @@ fun PadScreen(
                                         extraSticks.remove(id)
                                         runtime.engine.setTouchStick(id, 0f, 0f)
                                         stickPos.remove(id)
+                                        runtime.wifi.overlay.setStick(id, 0f, 0f)
                                         heldSticks = heldSticks - id
                                         if (mapped(id, TouchAreaKind.HELD)) runtime.engine.setTouchArea(
                                             id,
@@ -1555,6 +1564,18 @@ fun PadScreen(
                                 fingers[ch.id]?.let { track(ch.id, it, ch.position, at, landing = false) }
                             }
                             ch.consume()
+                        }
+                        // The PC's phone overlay shows the fingers on the screen.
+                        val overlay = runtime.wifi.overlay
+                        if (overlay.wanted) {
+                            var n = 0
+                            for (ch in event.changes) {
+                                if (!ch.pressed || n >= OverlayFeed.MAX_FINGERS) continue
+                                overlayFingers[n * 2] = ch.position.x / w
+                                overlayFingers[n * 2 + 1] = ch.position.y / h
+                                n++
+                            }
+                            overlay.setFingers(overlayFingers, n)
                         }
                         // Only touch-downs and lifts change ownership; holds, pulses and lift commits
                         // between events are kept right by the highlight poll.
@@ -1640,6 +1661,47 @@ fun PadScreen(
             }
             val labels = remember(ws, editing, controlMappings) {
                 ws.touchControls.associate { it.id to controlLabel(ws, it, editing, controlMappings[it.id]) }
+            }
+            // The PC's phone overlay draws this layout on its phone (the last one in play stays during edit mode).
+            if (!editing) {
+                val setName = if (layers.set == MappingSet.BASE && layers.overrides.isEmpty()) "" else {
+                    fun name(id: Int) = if (id == MappingSet.BASE) "Base" else ws.sets.firstOrNull { it.id == id }?.label ?: "Layer $id"
+                    (listOf(name(layers.set)) + layers.overrides.map { "+ " + name(it) }).joinToString(" ")
+                }
+                val overlayLayout = OverlayLayout(
+                    widthPx = w.roundToInt(),
+                    heightPx = h.roundToInt(),
+                    workspace = ws.name,
+                    layer = setName,
+                    controls = hitOrder(ws.touchControls, portrait).asReversed().sortedBy { it.kind != TouchKind.DISPLAY }.map { c ->
+                        val o = center(c)
+                        OverlayControl(
+                            id = c.id,
+                            kind = when (c.kind) {
+                                TouchKind.STICK -> OverlayControl.STICK
+                                TouchKind.DISPLAY -> OverlayControl.DISPLAY
+                                else -> OverlayControl.BUTTON
+                            },
+                            round = c.shape != TouchShape.SQUARE,
+                            x = o.x / w, y = o.y / h,
+                            w = 2f * half(c) / w, h = 2f * halfH(c) / h,
+                            label = if (c.kind == TouchKind.DISPLAY) "" else liveLabels[c.id] ?: labels[c.id] ?: "",
+                            opacity = ws.controlOpacity,
+                        )
+                    } + shown.shownCorners.map { c ->
+                        val o = center(c)
+                        OverlayControl(
+                            id = c.id, kind = OverlayControl.CORNER, round = c.shape != TouchShape.SQUARE,
+                            x = o.x / w, y = o.y / h, w = 2f * half(c) / w, h = 2f * halfH(c) / h,
+                            label = c.label, opacity = max(shown.cornerOpacity, MIN_CORNER_ALPHA),
+                        )
+                    },
+                )
+                val uiHeld = cornersHeld + heldSticks
+                SideEffect {
+                    runtime.wifi.overlay.setLayout(overlayLayout)
+                    runtime.wifi.overlay.uiHeld = uiHeld
+                }
             }
             // Back first, so the front one (as touches see them) is drawn on top.
             for (c in hitOrder(ws.touchControls, portrait).asReversed()) {

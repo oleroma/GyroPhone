@@ -10,6 +10,7 @@ import com.oleroma.gyrophone.core.engine.GyroCalibration
 import com.oleroma.gyrophone.core.engine.GravityPose
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
+import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.engine.GyroPose
 import com.oleroma.gyrophone.core.engine.GyroSway
 import com.oleroma.gyrophone.core.engine.MappingEngine
@@ -224,7 +225,7 @@ class GamepadRuntime(context: Context) {
     }
 
     /** Some gyro display holds its pose to gravity (and so needs the accelerometer). */
-    private val needsGravity: Boolean get() = vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity } ||
+    private val needsGravity: Boolean get() = vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity } || wifi.overlay.wanted ||
         _activeProfile.value.workspace(_workspaceIndex.value).gyro.gyroSpace != GyroSpace.LOCAL
 
     /** The phone's pose against gravity, for the World and Player gyro spaces ([GyroSpace]). */
@@ -237,7 +238,7 @@ class GamepadRuntime(context: Context) {
     private val upNow = FloatArray(3)
 
     /** Some gyro display holds its heading to north (and so needs the magnetometer). */
-    private val needsCompass: Boolean get() = gyroFeeds.any { it.display.needsCompass }
+    private val needsCompass: Boolean get() = gyroFeeds.any { it.display.needsCompass } || wifi.overlay.compassWanted
 
     /** The gyro axes moving the mouse now ([MappingEngine.gyroAxes]), for the ratchet ring and the edge's tint. */
     @Volatile var gyroLiveAxes = 0
@@ -443,6 +444,11 @@ class GamepadRuntime(context: Context) {
         engine.hapticSink = haptics
         // Every other mouse count turns a trackball 3D shape too, as the camera turns.
         engine.cameraSink = { dx, dy ->
+            val overlay = wifi.overlay
+            if (overlay.wanted) {
+                val deg = GyroDisplayFeed.cameraDegrees(dx, dy, engine.gyroRoutes(), engine.gyroSettings)
+                overlay.camera(deg[0], deg[1], deg[2])
+            }
             val feeds = gyroFeeds
             if (feeds.any { it.display.isTrackball }) {
                 val routes = engine.gyroRoutes()
@@ -535,6 +541,8 @@ class GamepadRuntime(context: Context) {
         // The pad back in play (the app opened, edit mode closed): the compass takes the heading here.
         if (shown && !padShown) aimGyroDisplays()
         padShown = shown; updateInputAllowed()
+        wifi.overlay.padShown = shown
+        if (!shown) wifi.overlay.clearTouches()
     }
 
     /** The gyro displays with a compass take the way the phone faces now as heading 0 ([GyroDisplayFeed.aimHere]). */
@@ -648,6 +656,7 @@ class GamepadRuntime(context: Context) {
         // The same axes as the gyro's: right, up and toward the player in the phone's frame.
         val m = gyroMouse.motion(x, y, z)
         for (f in gyroFeeds) f.north(m.pitch, -m.yaw, -m.roll)
+        if (wifi.overlay.compassWanted) wifi.overlay.north(m.pitch, -m.yaw, -m.roll)
     }
 
     private fun startMotion() {
@@ -669,11 +678,13 @@ class GamepadRuntime(context: Context) {
     private fun onAccelSample(x: Float, y: Float, z: Float, ts: Long) {
         val feeds = gyroFeeds
         val spaced = gyroSpace() != GyroSpace.LOCAL
-        if (vis.gyroNeedsGravity || feeds.isNotEmpty() || spaced) {
+        val overlay = wifi.overlay.wanted
+        if (vis.gyroNeedsGravity || feeds.isNotEmpty() || spaced || overlay) {
             // The same axes as the gyro's: right, up and toward the player in the phone's frame.
             val m = gyroMouse.motion(x, y, z)
             val g = SensorManager.GRAVITY_EARTH * RAD_TO_DEG
             if (vis.gyroNeedsGravity) worldPose.setUp(m.pitch, -m.yaw, -m.roll, g)
+            if (overlay) wifi.overlay.up(m.pitch, -m.yaw, -m.roll, g)
             for (f in feeds) f.up(m.pitch, -m.yaw, -m.roll, g)
             if (spaced) gravityPose.setUp(m.pitch, -m.yaw, -m.roll, g)
         }
@@ -927,7 +938,8 @@ class GamepadRuntime(context: Context) {
     @Synchronized
     private fun updateGyro() {
         updateMotion()
-        if (running && ((inputAllowed && !gyroOff()) || calibration != null)) {
+        // The PC's phone overlay shows the phone turning even where the gyro moves nothing.
+        if (running && ((inputAllowed && (!gyroOff() || wifi.overlay.wanted)) || calibration != null)) {
             startGyro()
         } else if (running) {
             stopGyro()
@@ -980,6 +992,8 @@ class GamepadRuntime(context: Context) {
     init {
         // Profiles from before Toggle gyro buttons: the gyro corner becomes one in every workspace.
         if (stored.corners.any { it.id == NavCorners.GYRO }) editActiveProfile { NavCorners.gyroCornerToButtons(it) }
+        // The PC's phone overlay turned on or off: the gyro and accelerometer may be needed (or no longer).
+        wifi.overlay.onWantedChange = Runnable { main.post { updateGyro() } }
     }
 
     companion object {
@@ -1057,6 +1071,18 @@ class GamepadRuntime(context: Context) {
         val v = vis
         val feeds = gyroFeeds
         if (v.gyroEdge || feeds.isNotEmpty()) feedVisuals(v, feeds, x - biasX, y - biasY, z - biasZ, dt, axes)
+        val overlay = wifi.overlay
+        if (overlay.wanted && !measuring) {
+            // The PC's phone overlay turns its pose from these, with its own settings.
+            val m = gyroMouse.motion(x - biasX, y - biasY, z - biasZ)
+            overlay.gyro(m.yaw, m.pitch, m.roll, dt, axes, inputAllowed && engine.ratchetsHeld != 0)
+            overlay.gyroActive = active
+            val gs = engine.gyroSettings
+            overlay.rws(
+                gs.rwsOf(gs.sensitivityOf(MotionAxis.YAW)) ?: 0f, gs.rwsOf(gs.sensitivityOf(MotionAxis.PITCH)) ?: 0f,
+                gs.rwsOf(gs.sensitivityOf(MotionAxis.ROLL)) ?: 0f,
+            )
+        }
         // World and player space read the phone's pose against gravity.
         val space = gyroSpace()
         if (space != GyroSpace.LOCAL) {
