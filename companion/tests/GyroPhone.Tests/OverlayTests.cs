@@ -315,4 +315,55 @@ public class OverlayTests
         p.Feed(g, s);
         Assert.Equal(0f, HeadingDeg(p), 1);
     }
+
+    [Fact]
+    public void ResetOnRatchetWithGravityShowsTheLevelGripFaceOnEvenLyingFlat()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = true, Ease = false };
+        var p = new GyroPhone.Host.OverlayPose();
+        // Lying flat, screen up: gravity's up is the screen normal.
+        OverlayFrame Flat(float turnDeg, byte presses)
+        {
+            var f = Motion(0f, 0.01f, presses, up: true);
+            f.UpY = 0f; f.UpZ = 1f; f.TurnRoll = turnDeg;
+            return f;
+        }
+        for (int i = 0; i < 100; i++) p.Feed(Flat(0f, 0), s);
+        s.Rest = p.TiltOnly();
+        // Turned 40° round the vertical, which here is about the screen's own axis.
+        for (int i = 0; i < 10; i++) p.Feed(Flat(4f, 0), s);
+        Assert.True(Angle(Shown(p, s.Rest)) > 30f);
+        p.Feed(Flat(0f, 1), s);
+        Assert.True(Angle(Shown(p, s.Rest)) < 2f);
+    }
+
+    [Fact]
+    public void HeadingNeverJumpsAsThePhoneTiltsFlat()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = false, Ease = false };
+        var p = new GyroPhone.Host.OverlayPose();
+        p.Feed(Motion(30f, 0.01f), s);
+        float last = HeadingDeg(p);
+        for (int i = 0; i < 100; i++)
+        {
+            var f = Motion(0f, 0.01f);
+            f.TurnPitch = -1f; // back to flat and a little past
+            p.Feed(f, s);
+            float h = HeadingDeg(p);
+            Assert.True(MathF.Abs(h - last) < 5f, $"jumped from {last} to {h} at {i}°");
+            last = h;
+        }
+    }
+
+    private static (float W, float X, float Y, float Z) Shown(GyroPhone.Host.OverlayPose p, float[] rest)
+    {
+        float rw = rest[0], rx = -rest[1], ry = -rest[2], rz = -rest[3];
+        return (rw * p.W - rx * p.X - ry * p.Y - rz * p.Z,
+            rw * p.X + rx * p.W + ry * p.Z - rz * p.Y,
+            rw * p.Y - rx * p.Z + ry * p.W + rz * p.X,
+            rw * p.Z + rx * p.Y - ry * p.X + rz * p.W);
+    }
+
+    private static float Angle((float W, float X, float Y, float Z) q) =>
+        2f * MathF.Acos(Math.Min(MathF.Abs(q.W), 1f)) * 180f / MathF.PI;
 }

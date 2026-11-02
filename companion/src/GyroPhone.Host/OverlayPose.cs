@@ -12,6 +12,8 @@ namespace GyroPhone.Host;
 /// </summary>
 public sealed class OverlayPose
 {
+    /// <summary>Below this much (screen sideways, now times at rest) the edges help find the heading.</summary>
+    private const float EdgesBelow = 0.5f;
     private const float DegToRad = MathF.PI / 180f;
     private const float Kp = 1.5f;
     private const float KpSettle = 20f;
@@ -33,6 +35,7 @@ public sealed class OverlayPose
     private float _calm;
     private bool _wasGravity, _wasCompass, _wasTrackball, _started;
     private int _lastPresses = -1;
+    private float[]? _rest;
 
     public float W => _w;
     public float X => _x;
@@ -61,6 +64,8 @@ public sealed class OverlayPose
         bool trackball = s.IsTrackball;
         bool gravity = s.Gravity && !trackball;
         bool compass = gravity && s.Compass;
+        // Face-on is the Level grip; it is kept only with gravity (without, Level restarts the pose).
+        _rest = gravity ? s.Rest : null;
         if (!_started || gravity != _wasGravity || trackball != _wasTrackball)
         {
             _started = true;
@@ -88,7 +93,7 @@ public sealed class OverlayPose
             // With gravity the tilt is the world's: only the heading can go back.
             if (gravity || s.ResetHeadingOnly)
             {
-                if (compass) _aimPending = true; else TurnHeading(-Heading());
+                if (compass) _aimPending = true; else TurnVertical(HeadingFrom(_rest));
             }
             else ResetPose();
         }
@@ -192,7 +197,7 @@ public sealed class OverlayPose
                 {
                     if (settled)
                     {
-                        float h = Heading();
+                        float h = HeadingFrom(_rest);
                         _northAt = a - h;
                         TurnVertical(h);
                         _aimPending = false;
@@ -214,15 +219,39 @@ public sealed class OverlayPose
     }
 
     /// <summary>
-    /// The heading in radians (right +): which way the screen faces, round the vertical, 0 while it
-    /// faces up or down. A turn about the screen's own axis (shown yaw) leaves it alone, so easing the
-    /// heading back never undoes that turn (the phone's view uses the right edge instead).
+    /// The heading in radians (right +): how far the pose is turned round the vertical from straight;
+    /// <see cref="TurnVertical"/> by it turns it straight again. See <see cref="HeadingFrom"/>.
     /// </summary>
-    public float Heading()
+    public float Heading() => HeadingFrom(null);
+
+    /// <summary>
+    /// The turn round the vertical that brings the screen back to face the way it faces in the resting
+    /// grip <paramref name="rest"/> (w, x, y, z; null = straight). Measured by where the screen faces,
+    /// so a turn about the screen's own axis is left alone. When the screen (now or at rest) faces
+    /// nearly up or down that says little, so the phone's edges take over, smoothly: no jumps or flips.
+    /// </summary>
+    private float HeadingFrom(float[]? rest)
     {
-        float nx = 2 * (_x * _z + _w * _y);
-        float nz = 1 - 2 * (_x * _x + _y * _y);
-        return nx * nx + nz * nz > 0.04f ? MathF.Atan2(-nx, nz) : 0f;
+        float rw = 1f, rx = 0f, ry = 0f, rz = 0f;
+        if (rest is { Length: 4 } r) { rw = r[0]; rx = r[1]; ry = r[2]; rz = r[3]; }
+        float w = _w, x = _x, y = _y, z = _z;
+        // The phone's axes in the world, now (a) and at rest (b): screen normal, top edge, right edge.
+        float anx = 2 * (x * z + w * y), anz = 1 - 2 * (x * x + y * y);
+        float bnx = 2 * (rx * rz + rw * ry), bnz = 1 - 2 * (rx * rx + ry * ry);
+        float sn = bnx * anz - bnz * anx, cn = bnx * anx + bnz * anz;
+        float m = MathF.Sqrt(sn * sn + cn * cn);
+        float k = Math.Max(0f, 1f - m / EdgesBelow);
+        if (k > 0f)
+        {
+            float aux = 2 * (x * y - w * z), auz = 2 * (y * z + w * x);
+            float bux = 2 * (rx * ry - rw * rz), buz = 2 * (ry * rz + rw * rx);
+            float arx = 1 - 2 * (y * y + z * z), arz = 2 * (x * z - w * y);
+            float brx = 1 - 2 * (ry * ry + rz * rz), brz = 2 * (rx * rz - rw * ry);
+            sn += k * (bux * auz - buz * aux + brx * arz - brz * arx);
+            cn += k * (bux * aux + buz * auz + brx * arx + brz * arz);
+        }
+        if (sn * sn + cn * cn < 1e-8f) return 0f;
+        return MathF.Atan2(sn, cn);
     }
 
     private void TurnHeading(float a)
@@ -232,7 +261,7 @@ public sealed class OverlayPose
 
     private void EaseHeading(bool bySpeed, float amount)
     {
-        float h = Heading();
+        float h = HeadingFrom(_rest);
         if (h == 0f) return;
         TurnHeading(Eased(MathF.Abs(h), bySpeed, amount) * MathF.Sign(h) - h);
     }
