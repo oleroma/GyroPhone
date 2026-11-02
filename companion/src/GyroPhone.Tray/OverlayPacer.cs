@@ -17,15 +17,18 @@ namespace GyroPhone.Tray;
 internal sealed class OverlayPacer : IDisposable
 {
     private readonly Action _tick;
+    // The fastest frame rate any open window wants (0: every screen refresh).
+    private readonly Func<int> _wantHz;
     private readonly Action<string> _log;
     private readonly ManualResetEventSlim _running = new(false);
     private readonly Thread _thread;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private volatile bool _stop;
 
-    public OverlayPacer(Action tick, Action<string> log)
+    public OverlayPacer(Action tick, Func<int> wantHz, Action<string> log)
     {
         _tick = tick;
+        _wantHz = wantHz;
         _log = log;
         _thread = new Thread(Loop) { IsBackground = true, Name = "overlay pacer" };
         _thread.Start();
@@ -53,23 +56,28 @@ internal sealed class OverlayPacer : IDisposable
     private void Run()
     {
         IntPtr timer = CreateWaitableTimerExW(IntPtr.Zero, IntPtr.Zero, CreateWaitableTimerHighResolution, TimerAllAccess);
-        double period = 1000.0 / Math.Clamp(RefreshHz(), 30, 500);
-        _log($"overlay pacer: {1000.0 / period:0} Hz, {(timer == IntPtr.Zero ? "sleep" : "high-resolution timer")}");
+        int refreshHz = Math.Clamp(RefreshHz(), 30, 500);
+        _log($"overlay pacer: screen {refreshHz} Hz, {(timer == IntPtr.Zero ? "sleep" : "high-resolution timer")}");
         bool dwmFailed = false;
-        double lastPost = -period, ended = -period;
+        double lastPost = -1000, ended = -1000;
         while (!_stop)
         {
             _running.Wait();
             if (_stop) return;
-            if (!dwmFailed && DwmFlush() != 0)
+            // As often as the fastest window draws, never faster than the screen: waking at every
+            // refresh of a 165 Hz screen for 60 pictures a second cost CPU for nothing.
+            int want = _wantHz();
+            bool everyRefresh = want <= 0 || want >= refreshHz * 0.9;
+            double period = 1000.0 / (everyRefresh ? refreshHz : Math.Max(want, 1));
+            if (everyRefresh && !dwmFailed && DwmFlush() != 0)
             {
                 _log("overlay: no DwmFlush, pacing by the refresh rate only");
                 dwmFailed = true;
             }
-            // Never sooner than ~a refresh period after the last tick, whatever DwmFlush did, and
-            // a fifth of a period after it ended, so a slow draw still leaves the CPU some rest.
+            // Never sooner than ~a period after the last tick, whatever DwmFlush did, and a fifth
+            // of a period after it ended, so a slow draw still leaves the CPU some rest.
             double now = _clock.Elapsed.TotalMilliseconds;
-            double wait = Math.Max(lastPost + period * 0.9, ended + period * 0.2) - now;
+            double wait = Math.Max(lastPost + period * (everyRefresh ? 0.9 : 1.0), ended + period * 0.2) - now;
             if (wait > 0.2) Wait(timer, wait);
             if (_stop) return;
             lastPost = _clock.Elapsed.TotalMilliseconds;

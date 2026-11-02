@@ -100,6 +100,9 @@ internal sealed class OverlayForm : Form
 
     public string Id => _id;
 
+    /// <summary>Its frame-rate cap (0: every screen refresh).</summary>
+    public int MaxFps => Settings?.MaxFps ?? 60;
+
     /// <summary>This window's settings, or null once removed.</summary>
     // The base Form constructor reads CreateParams before this constructor has set _engine.
     private OverlaySettings? Settings => _engine?.Settings.Overlays.Find(o => o.Id == _id);
@@ -369,7 +372,7 @@ internal sealed class OverlayForm : Form
             !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now);
         if (!changed && now - _lastDrawTicks < 500) return;
         // Frame-rate cap (a little early, so a 60 Hz cap on a 60 Hz screen never skips a refresh).
-        int fps = Settings?.MaxFps ?? 60;
+        int fps = MaxFps;
         if (fps > 0 && !_dirty && _clock.Elapsed.TotalMilliseconds - _lastDrawAt < 1000.0 / fps - 3) return;
         _scene.FrameAgeUs = age;
         _scene.Layout = layout;

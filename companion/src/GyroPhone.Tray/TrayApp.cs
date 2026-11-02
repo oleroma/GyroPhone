@@ -230,7 +230,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _watchdog.Start();
             _usb.Start();
             _log.Write($"listening on UDP {Wire.Port} as '{settings.HostName}'");
-            _pacer = new OverlayPacer(TickOverlays, _log.Write);
+            _pacer = new OverlayPacer(TickOverlays, OverlayWantHz, _log.Write);
             ApplyOverlays(); // shown last time: shown again
             try
             {
@@ -628,6 +628,19 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         if (Volatile.Read(ref _exited) != 0) return;
         foreach (var f in _overlayList)
             if (!f.IsDisposed) f.Tick();
+    }
+
+    /// <summary>The fastest frame rate an open overlay window wants (pacer thread); 0 = every screen refresh.</summary>
+    private int OverlayWantHz()
+    {
+        int want = 1;
+        foreach (var f in _overlayList)
+        {
+            int fps = f.MaxFps;
+            if (fps <= 0) return 0;
+            want = Math.Max(want, fps);
+        }
+        return want;
     }
 
     /// <summary>The open overlay windows changed (UI thread): the pacer's copy of the list, and whether it runs.</summary>
