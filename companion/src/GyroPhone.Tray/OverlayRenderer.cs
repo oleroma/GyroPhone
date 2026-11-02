@@ -117,12 +117,12 @@ internal static class OverlayRenderer
         float sh = portrait ? longSide : longSide / aspect;
         float bw = sw + 2 * Bezel, bh = sh + 2 * Bezel;
 
-        // Size: the slab fills the window's width and height as it rests (face-on), and shrinks
-        // only while turned so far that it would be cut off.
-        float halfW = area.Width / 2f * 0.96f, halfH = area.Height / 2f * 0.96f;
-        var (restX, restY) = Extent(Identity, bw, bh);
-        var (nowX, nowY) = Extent(m, bw, bh);
-        float k = Math.Max(1f, Math.Min(Math.Min(halfW / restX, halfH / restY), Math.Min(halfW / nowX, halfH / nowY)));
+        // Size: fixed, so the slab fits the window however it is turned. Its bounding ball (radius R)
+        // seen from CameraZ in perspective spans R·C/√(C²−R²) at scale 1: that fills the window's
+        // shorter side, with a hair of margin for the edges' smoothing.
+        float radius = MathF.Sqrt(bw * bw + bh * bh + Thickness * Thickness) / 2f;
+        float half = Math.Min(area.Width, area.Height) / 2f - 2f;
+        float k = Math.Max(1f, half * MathF.Sqrt(CameraZ * CameraZ - radius * radius) / (CameraZ * radius));
         var cx = area.X + area.Width / 2f;
         var cy = area.Y + area.Height / 2f;
 
@@ -291,22 +291,6 @@ internal static class OverlayRenderer
             DrawLabel(g, note, 0.5f, 0.5f, pxW * 0.9f, fontPx * 1.3f, pxW, pxH, P, Color.FromArgb(230, 255, 255, 255));
         }
         g.Pop();
-    }
-
-    private static readonly float[] Identity = [1, 0, 0, 0, 1, 0, 0, 0, 1];
-
-    /// <summary>How far the slab's corners reach from the middle, projected at scale 1, under pose <paramref name="m"/>.</summary>
-    private static (float X, float Y) Extent(float[] m, float bw, float bh)
-    {
-        float ex = 1e-3f, ey = 1e-3f;
-        for (int i = 0; i < 8; i++)
-        {
-            var v = Mul(m, ((i & 1) == 0 ? -bw / 2 : bw / 2, (i & 2) == 0 ? -bh / 2 : bh / 2, (i & 4) == 0 ? -Thickness / 2 : Thickness / 2));
-            float s = CameraZ / (CameraZ - v.Z);
-            ex = Math.Max(ex, MathF.Abs(v.X * s));
-            ey = Math.Max(ey, MathF.Abs(v.Y * s));
-        }
-        return (ex, ey);
     }
 
     /// <summary>The pose shown: the window's pose, from the levelled one (if any), its turn scaled.</summary>

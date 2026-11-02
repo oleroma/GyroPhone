@@ -3,7 +3,6 @@ using GyroPhone.Host.Settings;
 using Vortice.Direct2D1;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
-using Vortice.DirectComposition;
 using Vortice.DirectWrite;
 using Vortice.DXGI;
 using Vortice.Mathematics;
@@ -15,94 +14,80 @@ using Rect = Vortice.Mathematics.Rect;
 namespace GyroPhone.Tray;
 
 /// <summary>
-/// One overlay window's graphics-card surface: a Direct3D device, a premultiplied-alpha swap chain
-/// shown in the window by DirectComposition, and a Direct2D context drawing into it. Nothing goes
-/// through the CPU's pixels: the cost no longer grows with the window's area. Throws when the
-/// graphics card can't be used (the window then draws with <see cref="GdiCanvas"/>).
+/// One overlay window's graphics-card surface: a Direct3D device and a GDI-compatible texture that
+/// a Direct2D context draws into; the finished picture goes to the layered window by
+/// UpdateLayeredWindow from the texture's DC, so the window keeps its per-pixel transparency and
+/// click-through exactly as with CPU drawing. Throws when the graphics card can't be used (the
+/// window then draws with <see cref="GdiCanvas"/>).
 /// </summary>
 internal sealed class GpuSurface : IDisposable
 {
     private readonly ID3D11Device _d3d;
     private readonly IDXGIDevice _dxgi;
-    private readonly IDXGISwapChain1 _swap;
     private readonly ID2D1Factory1 _factory;
     private readonly ID2D1Device _device;
     private readonly ID2D1DeviceContext _dc;
-    private readonly IDCompositionDevice _dcomp;
-    private readonly IDCompositionTarget _target;
-    private readonly IDCompositionVisual _visual;
     private readonly IDWriteFactory _write;
     private readonly D2DCanvas _canvas;
+    private ID3D11Texture2D? _texture;
+    private IDXGISurface1? _surface;
     private ID2D1Bitmap1? _bitmap;
     private int _width, _height;
 
-    public GpuSurface(IntPtr hwnd, int width, int height)
+    public GpuSurface()
     {
-        _width = Math.Max(1, width);
-        _height = Math.Max(1, height);
         D3D11.D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport,
             [Vortice.Direct3D.FeatureLevel.Level_11_1, Vortice.Direct3D.FeatureLevel.Level_11_0, Vortice.Direct3D.FeatureLevel.Level_10_1, Vortice.Direct3D.FeatureLevel.Level_10_0],
             out var d3d).CheckError();
         _d3d = d3d ?? throw new InvalidOperationException("no Direct3D device");
         _dxgi = _d3d.QueryInterface<IDXGIDevice>();
-        using (var dxgiFactory = DXGI.CreateDXGIFactory2<IDXGIFactory2>(false))
-        {
-            var desc = new SwapChainDescription1
-            {
-                Width = (uint)_width,
-                Height = (uint)_height,
-                Format = Format.B8G8R8A8_UNorm,
-                BufferCount = 2,
-                BufferUsage = Usage.RenderTargetOutput,
-                SwapEffect = SwapEffect.FlipSequential,
-                AlphaMode = Vortice.DXGI.AlphaMode.Premultiplied,
-                SampleDescription = new SampleDescription(1, 0),
-                Scaling = Scaling.Stretch,
-            };
-            _swap = dxgiFactory.CreateSwapChainForComposition(_d3d, desc);
-        }
         _factory = D2D1.D2D1CreateFactory<ID2D1Factory1>();
         _device = _factory.CreateDevice(_dxgi);
         _dc = _device.CreateDeviceContext(DeviceContextOptions.None);
-        _dcomp = DComp.DCompositionCreateDevice<IDCompositionDevice>(_dxgi);
-        _dcomp.CreateTargetForHwnd(hwnd, true, out _target).CheckError();
-        _visual = _dcomp.CreateVisual();
-        _visual.SetContent(_swap);
-        _target.SetRoot(_visual);
-        _dcomp.Commit();
         _write = DWrite.DWriteCreateFactory<IDWriteFactory>();
         _canvas = new D2DCanvas(_factory, _dc, _write);
-        Bind();
     }
 
-    private void Bind()
+    private void Unbind()
     {
-        using var buffer = _swap.GetBuffer<IDXGISurface>(0);
-        var props = new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied), 96, 96,
-            BitmapOptions.Target | BitmapOptions.CannotDraw);
-        _bitmap = _dc.CreateBitmapFromDxgiSurface(buffer, props);
-        _dc.Target = _bitmap;
+        _dc.Target = null;
+        _bitmap?.Dispose();
+        _bitmap = null;
+        _surface?.Dispose();
+        _surface = null;
+        _texture?.Dispose();
+        _texture = null;
     }
 
-    /// <summary>Draws one picture of <paramref name="width"/>×<paramref name="height"/> and shows it.</summary>
-    public void Draw(int width, int height, float opacity, OverlayQuality quality, Action<ICanvas> draw)
+    private void Bind(int width, int height)
+    {
+        Unbind();
+        var desc = new Texture2DDescription(Format.B8G8R8A8_UNorm, (uint)width, (uint)height, 1, 1,
+            BindFlags.RenderTarget | BindFlags.ShaderResource, ResourceUsage.Default, CpuAccessFlags.None, 1, 0,
+            ResourceOptionFlags.GdiCompatible);
+        _texture = _d3d.CreateTexture2D(desc);
+        _surface = _texture.QueryInterface<IDXGISurface1>();
+        var props = new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied), 96, 96,
+            BitmapOptions.Target | BitmapOptions.GdiCompatible);
+        _bitmap = _dc.CreateBitmapFromDxgiSurface(_surface, props);
+        _dc.Target = _bitmap;
+        _width = width;
+        _height = height;
+    }
+
+    /// <summary>
+    /// Draws one picture of <paramref name="width"/>×<paramref name="height"/>, then hands
+    /// <paramref name="present"/> a DC holding it (valid only during the call).
+    /// </summary>
+    public void Draw(int width, int height, OverlayQuality quality, Action<ICanvas> draw, Action<IntPtr> present)
     {
         width = Math.Max(1, width);
         height = Math.Max(1, height);
-        if (width != _width || height != _height)
-        {
-            _dc.Target = null;
-            _bitmap?.Dispose();
-            _bitmap = null;
-            _swap.ResizeBuffers(2, (uint)width, (uint)height, Format.B8G8R8A8_UNorm, SwapChainFlags.None).CheckError();
-            _width = width;
-            _height = height;
-            Bind();
-        }
+        if (_bitmap == null || width != _width || height != _height) Bind(width, height);
         _dc.BeginDraw();
         try
         {
-            _canvas.Begin(quality, opacity);
+            _canvas.Begin(quality);
             draw(_canvas);
             _canvas.End();
         }
@@ -110,22 +95,25 @@ internal sealed class GpuSurface : IDisposable
         {
             _dc.EndDraw().CheckError();
         }
-        _swap.Present(0, PresentFlags.None).CheckError();
+        IntPtr hdc = _surface!.GetDC(false);
+        try
+        {
+            present(hdc);
+        }
+        finally
+        {
+            _surface.ReleaseDC(null);
+        }
     }
 
     public void Dispose()
     {
-        _dc.Target = null;
-        _bitmap?.Dispose();
+        Unbind();
         _canvas.Dispose();
         _write.Dispose();
-        _visual.Dispose();
-        _target.Dispose();
-        _dcomp.Dispose();
         _dc.Dispose();
         _device.Dispose();
         _factory.Dispose();
-        _swap.Dispose();
         _dxgi.Dispose();
         _d3d.Dispose();
     }
@@ -142,7 +130,6 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
     private readonly Dictionary<(float, bool), IDWriteTextFormat> _formats = [];
     // What each Push did, so Pop undoes it: a transform to restore, or a layer (with its geometry) to pop.
     private readonly Stack<(Matrix3x2? Transform, ID2D1Geometry? Geometry, bool Layer)> _stack = new();
-    private bool _opacityLayer;
 
     public D2DCanvas(ID2D1Factory1 factory, ID2D1DeviceContext dc, IDWriteFactory write)
     {
@@ -161,22 +148,17 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
         _dashed = factory.CreateStrokeStyle(new StrokeStyleProperties { DashStyle = DashStyle.Dash, LineJoin = LineJoin.Round });
     }
 
-    public void Begin(OverlayQuality quality, float opacity)
+    public void Begin(OverlayQuality quality)
     {
         _dc.Transform = Matrix3x2.Identity;
         _dc.AntialiasMode = quality == OverlayQuality.Fast ? AntialiasMode.Aliased : AntialiasMode.PerPrimitive;
         _dc.TextAntialiasMode = quality == OverlayQuality.Fast ? Vortice.Direct2D1.TextAntialiasMode.Aliased : Vortice.Direct2D1.TextAntialiasMode.Grayscale;
         _stack.Clear();
-        _opacityLayer = opacity < 0.999f;
-        if (_opacityLayer)
-            _dc.PushLayer(new LayerParameters1 { ContentBounds = Infinite, Opacity = opacity, MaskTransform = Matrix3x2.Identity }, null!);
     }
 
     public void End()
     {
         while (_stack.Count > 0) Pop();
-        if (_opacityLayer) _dc.PopLayer();
-        _opacityLayer = false;
     }
 
     private static readonly Rect Infinite = new(-1e6f, -1e6f, 2e6f, 2e6f);
