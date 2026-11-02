@@ -28,6 +28,7 @@
    - `ci`, only when the PC can't be reached: `bash .agents/agent-build ci`. Post the download links in the project thread first, then upload the files.
    - `agent-build` stops with `other-build` when the newest build came from another feature whose PR is still open, since Olex may still be testing it. If Olex says to go on, run it again with `--replace`.
    - If checks fail in code this feature didn't change, tell Olex instead of fixing it in the feature.
+   - Post the build summary in the project thread as soon as `agent-build` finishes, before any wait or follow-up check, and say what Olex needs to do next. Only what is posted in the thread reaches Olex. Never end a turn waiting on Olex without telling him there what you're waiting for. A check on a device that needs Olex to act first (such as opening the app) is a separate Remote Control task, started after he says he's done it, never part of the build task.
    - A branch that changes only documentation (`*.md` files and `docs/`) needs no build or test: go straight to step 5 when Olex says so.
 4. **Check.** Wait for Olex. If he asks for changes, go back to 2. When he says the feature works, go to 5.
 5. **Merge.** `bash .agents/agent-merge`. It merges the latest `main` into the branch, then the branch into `main`, keeping the branch.
