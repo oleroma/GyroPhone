@@ -142,6 +142,19 @@ class GamepadRuntime(context: Context) {
     )
     val wifiRateHz: StateFlow<Int> = _wifiRateHz
 
+    private val _gyroPollHz = MutableStateFlow(
+        prefs.getInt(KEY_GYRO_POLL, DirectChannelGyroSource.DEFAULT_POLL_HZ)
+            .takeIf { it in DirectChannelGyroSource.POLL_RATES_HZ } ?: DirectChannelGyroSource.DEFAULT_POLL_HZ,
+    )
+
+    /** How often the gyro direct channel is checked for new samples. */
+    val gyroPollHz: StateFlow<Int> = _gyroPollHz
+
+    private val _gyroPollUsed = MutableStateFlow(true)
+
+    /** False while the gyro runs on the listener, where [gyroPollHz] has no effect. Kept while paused. */
+    val gyroPollUsed: StateFlow<Boolean> = _gyroPollUsed
+
     private val _screenOrientation = MutableStateFlow(
         prefs.getString(KEY_ORIENTATION, null)
             ?.let { name -> ScreenOrientation.entries.firstOrNull { it.name == name } }
@@ -512,6 +525,15 @@ class GamepadRuntime(context: Context) {
         prefs.edit().putInt(KEY_WIFI_RATE, hz).apply()
         _wifiRateHz.value = hz
         wifi.rateHz = hz
+    }
+
+    /** Applies at once to a running direct channel, without restarting the sensor. */
+    @Synchronized
+    fun setGyroPollRate(hz: Int) {
+        if (hz !in DirectChannelGyroSource.POLL_RATES_HZ) return
+        prefs.edit().putInt(KEY_GYRO_POLL, hz).apply()
+        _gyroPollHz.value = hz
+        (gyro as? DirectChannelGyroSource)?.pollHz = hz
     }
 
     fun setIdleStopMinutes(minutes: Int) {
@@ -974,7 +996,7 @@ class GamepadRuntime(context: Context) {
     private fun startGyro() {
         if (gyro != null) return
         val sm = appContext.getSystemService(SensorManager::class.java) ?: return
-        val candidates = GyroSource.candidates(sm)
+        val candidates = GyroSource.candidates(sm, _gyroPollHz.value)
         // While the direct channel is capped the listener goes first; the direct channel stays a last resort.
         val ordered = if (avoidDirect) candidates.sortedBy { it is DirectChannelGyroSource } else candidates
         for (source in ordered) {
@@ -984,6 +1006,7 @@ class GamepadRuntime(context: Context) {
             gyroMouse.reset() // no sub-count remainder or smoothing left from before a pause
             if (source.start { x, y, z, ts -> onGyroSample(source, x, y, z, ts) }) {
                 gyro = source
+                _gyroPollUsed.value = source is DirectChannelGyroSource
                 val name = if (avoidDirect && source !is DirectChannelGyroSource) {
                     "${source.name}; direct channel limited to ~$cappedHz Hz"
                 } else source.name
@@ -1021,6 +1044,7 @@ class GamepadRuntime(context: Context) {
     companion object {
         private const val KEY_RATE = "report_rate_hz"
         private const val KEY_WIFI_RATE = "wifi_rate_hz"
+        private const val KEY_GYRO_POLL = "gyro_poll_hz"
         private const val KEY_TRANSPORT = "transport"
         private const val KEY_ORIENTATION = "screen_orientation"
         private const val KEY_PAD_ONLY_INPUT = "pad_only_input"

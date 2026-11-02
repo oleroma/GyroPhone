@@ -31,9 +31,9 @@ interface GyroSource {
          * high-priority thread, used when the direct channel cannot start (or runs capped, see
          * GamepadRuntime). Empty when the phone has no gyroscope.
          */
-        fun candidates(sensorManager: SensorManager): List<GyroSource> {
+        fun candidates(sensorManager: SensorManager, pollHz: Int = DirectChannelGyroSource.DEFAULT_POLL_HZ): List<GyroSource> {
             val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) ?: return emptyList()
-            val direct = DirectChannelGyroSource(sensorManager, sensor)
+            val direct = DirectChannelGyroSource(sensorManager, sensor).apply { this.pollHz = pollHz }
             val listener = ListenerGyroSource(sensorManager, sensor)
             return if (direct.isSupported) listOf(direct, listener) else listOf(listener)
         }
@@ -88,6 +88,10 @@ class DirectChannelGyroSource(
             else -> "normal"
         } + " (${sensor.name})"
 
+    /** How often the shared memory is checked for new samples; changes apply on the next check. */
+    @Volatile var pollHz: Int = DEFAULT_POLL_HZ
+        set(value) { field = value.coerceIn(POLL_RATES_HZ.first(), POLL_RATES_HZ.last()) }
+
     private var memory: MemoryFile? = null
     private var channel: SensorDirectChannel? = null
     @Volatile private var running = false
@@ -129,8 +133,8 @@ class DirectChannelGyroSource(
                 Log.w(TAG, "read failed", e); break
             }
             for (ev in parser.parse(buf, token)) sink.onGyro(ev.x, ev.y, ev.z, ev.timestampNs)
-            // ~4 kHz polling: well above the HAL rate, so we add <0.25 ms on top of it.
-            LockSupport.parkNanos(POLL_NANOS)
+            // Polling at pollHz (1-4 kHz, above the ~800 Hz HAL rate) adds at most one interval on top of it.
+            LockSupport.parkNanos(1_000_000_000L / pollHz)
         }
     }
 
@@ -147,6 +151,9 @@ class DirectChannelGyroSource(
     companion object {
         private const val TAG = "DirectChannelGyro"
         private const val EVENTS = 64
-        private const val POLL_NANOS = 250_000L
+
+        /** The poll-rate choices offered in the app, lowest first. */
+        val POLL_RATES_HZ = listOf(1000, 2000, 4000)
+        const val DEFAULT_POLL_HZ = 4000
     }
 }

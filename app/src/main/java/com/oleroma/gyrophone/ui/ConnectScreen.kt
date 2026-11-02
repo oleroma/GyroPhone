@@ -47,6 +47,7 @@ import com.oleroma.gyrophone.link.TransportKind
 import com.oleroma.gyrophone.service.GamepadService
 import kotlinx.coroutines.delay
 import com.oleroma.gyrophone.runtime.GamepadRuntime
+import com.oleroma.gyrophone.sensor.DirectChannelGyroSource
 
 @OptIn(ExperimentalMaterial3Api::class)
 /** The Connection page (from the pad's Connection capsule): the PC link and its report rate. */
@@ -57,6 +58,8 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
     val rate by runtime.reportRateHz.collectAsStateWithLifecycle()
     val wifiRate by runtime.wifiRateHz.collectAsStateWithLifecycle()
     val idleStop by runtime.idleStopMinutes.collectAsStateWithLifecycle()
+    val gyroPoll by runtime.gyroPollHz.collectAsStateWithLifecycle()
+    val gyroPollUsed by runtime.gyroPollUsed.collectAsStateWithLifecycle()
     val portrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
     var stats by remember { mutableStateOf(runtime.linkStats()) }
     LaunchedEffect(transport) {
@@ -118,6 +121,22 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
             Text("If the mouse lags behind your hand, pick a lower rate. Bluetooth queues anything faster than the link can carry.",
                 style = MaterialTheme.typography.bodySmall)
         }
+        Text("Gyro poll rate", style = MaterialTheme.typography.titleSmall)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            DirectChannelGyroSource.POLL_RATES_HZ.forEach { hz ->
+                FilterChip(selected = gyroPoll == hz, enabled = gyroPollUsed, onClick = { runtime.setGyroPollRate(hz) },
+                    label = { Text("${hz / 1000} kHz") })
+            }
+        }
+        Text(
+            if (gyroPollUsed) {
+                "How often the app checks the gyro for new samples. Higher means less delay and jitter " +
+                    "(at most 0.25 ms at 4 kHz, 1 ms at 1 kHz) but more CPU and battery."
+            } else {
+                "This phone reads the gyro through the standard sensor listener, so the poll rate has no effect."
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
         Text("Stop when idle", style = MaterialTheme.typography.titleSmall)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             GamepadRuntime.IDLE_STOP_CHOICES.forEach { m ->
