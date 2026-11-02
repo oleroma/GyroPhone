@@ -156,6 +156,19 @@ class GamepadRuntime(context: Context) {
     /** When on (the default), controller, keyboard and gyro input reach the PC only while the pad is on screen. */
     val padOnlyInput: StateFlow<Boolean> = _padOnlyInput
 
+    private val _idleStopMinutes = MutableStateFlow(prefs.getInt(KEY_IDLE_STOP_MINUTES, DEFAULT_IDLE_STOP_MINUTES))
+
+    /**
+     * Minutes the app may stay off screen before GamepadService stops the link and itself; 0 = never.
+     * Opening the app again starts it.
+     */
+    val idleStopMinutes: StateFlow<Int> = _idleStopMinutes
+
+    private val _onScreen = MutableStateFlow(false)
+
+    /** The activity is resumed ([setForeground]); GamepadService times its idle stop from this. */
+    val onScreen: StateFlow<Boolean> = _onScreen
+
     private val _startFullscreen = MutableStateFlow(prefs.getBoolean(KEY_START_FULLSCREEN, false))
 
     /** Open the pad in fullscreen when the app starts. */
@@ -498,6 +511,11 @@ class GamepadRuntime(context: Context) {
         wifi.rateHz = hz
     }
 
+    fun setIdleStopMinutes(minutes: Int) {
+        prefs.edit().putInt(KEY_IDLE_STOP_MINUTES, minutes).apply()
+        _idleStopMinutes.value = minutes
+    }
+
     fun setPadOnlyInput(on: Boolean) {
         prefs.edit().putBoolean(KEY_PAD_ONLY_INPUT, on).apply()
         _padOnlyInput.value = on
@@ -554,6 +572,7 @@ class GamepadRuntime(context: Context) {
     fun setForeground(resumed: Boolean) {
         if (resumed && !foreground) aimGyroDisplays()
         foreground = resumed
+        _onScreen.value = resumed
         // Back in front: try the capped direct channel again (the toggle may be off by now).
         if (resumed && avoidDirect) {
             avoidDirect = false
@@ -1002,6 +1021,11 @@ class GamepadRuntime(context: Context) {
         private const val KEY_TRANSPORT = "transport"
         private const val KEY_ORIENTATION = "screen_orientation"
         private const val KEY_PAD_ONLY_INPUT = "pad_only_input"
+        private const val KEY_IDLE_STOP_MINUTES = "idle_stop_minutes"
+        const val DEFAULT_IDLE_STOP_MINUTES = 10
+
+        /** The choices for [idleStopMinutes]; 0 = Off. */
+        val IDLE_STOP_CHOICES = listOf(0, 5, 10, 30)
         private const val KEY_START_FULLSCREEN = "start_fullscreen"
         private const val KEY_CORNER_AUTO_HIDE = "corner_auto_hide"
         private const val KEY_EDIT_LAYOUT_LOCKED = "edit_layout_locked"
