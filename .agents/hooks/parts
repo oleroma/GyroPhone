@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Prints the parts this branch changed since it left main, one per line: apk and/or companion.
+# Usage: parts [<base commit>]; with a base, the parts changed since that commit instead
+# (cache.yml passes the commit main was at before the push).
 # quick-test, build and full-check test, build and check only these parts, so a change to the
 # app doesn't rebuild or reinstall the companion, and the other way around.
 #   apk:       app/, core/ and the Gradle files
@@ -9,8 +11,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-git fetch -q origin main 2>/dev/null || true
-base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
+if [ $# -gt 0 ]; then
+  base="$(git rev-parse --verify -q "$1^{commit}" || true)"
+else
+  git fetch -q origin main 2>/dev/null || true
+  base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
+fi
 
 apk=0 companion=0
 if [ -n "$base" ]; then
