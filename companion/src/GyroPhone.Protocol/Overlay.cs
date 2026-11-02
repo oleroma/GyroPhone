@@ -3,7 +3,7 @@ using System.Text;
 namespace GyroPhone.Protocol;
 
 /// <summary>
-/// OVERLAY from the phone (see the phone's OverlayFeed for its 112 bytes): the phone's motion since
+/// OVERLAY from the phone (see the phone's OverlayFeed for its 136 bytes): the phone's motion since
 /// the last one (gyro turn, gravity, compass, ratchet), fingers, pressed and latched controls and
 /// stick knobs, for the phone overlay. The PC turns the motion into a pose (<see cref="Qw"/>..)
 /// with its own settings.
@@ -33,6 +33,10 @@ public sealed class OverlayFrame
     public byte Axes;
     /// <summary>Ratchet presses so far (wraps at 256): a change is a press.</summary>
     public byte RatchetPresses;
+    /// <summary>The phone turn (degrees on yaw, pitch, roll) that would send the mouse counts sent since the last OVERLAY by anything but the live gyro (a trackball turns by it).</summary>
+    public float CameraYaw, CameraPitch, CameraRoll;
+    /// <summary>The game's camera degrees per phone degree on yaw, pitch, roll; 0 = unknown.</summary>
+    public float RwsYaw, RwsPitch, RwsRoll;
     /// <summary>The pose the PC made (not on the wire): phone frame (x right, y up, z out of the screen) to the player's view.</summary>
     public float Qw = 1, Qx, Qy, Qz;
     public ushort LayoutVersion;
@@ -93,7 +97,15 @@ public sealed class OverlayFrame
             StickXY[StickCount * 2 + 1] = (sbyte)b[at + 2] / 127f;
             StickCount++;
         }
+        CameraYaw = Finite(BitConverter.Int32BitsToSingle(Le.I32(b, 112)));
+        CameraPitch = Finite(BitConverter.Int32BitsToSingle(Le.I32(b, 116)));
+        CameraRoll = Finite(BitConverter.Int32BitsToSingle(Le.I32(b, 120)));
+        RwsYaw = Gain(BitConverter.Int32BitsToSingle(Le.I32(b, 124)));
+        RwsPitch = Gain(BitConverter.Int32BitsToSingle(Le.I32(b, 128)));
+        RwsRoll = Gain(BitConverter.Int32BitsToSingle(Le.I32(b, 132)));
     }
+
+    private static float Gain(float v) => float.IsFinite(v) && v > 0f ? Math.Min(v, 100f) : 0f;
 
     private static float Finite(float v) => float.IsFinite(v) ? Math.Clamp(v, -3600f, 3600f) : 0f;
 
@@ -105,6 +117,8 @@ public sealed class OverlayFrame
         o.NorthX = NorthX; o.NorthY = NorthY; o.NorthZ = NorthZ;
         o.Axes = Axes;
         o.RatchetPresses = RatchetPresses;
+        o.CameraYaw = CameraYaw; o.CameraPitch = CameraPitch; o.CameraRoll = CameraRoll;
+        o.RwsYaw = RwsYaw; o.RwsPitch = RwsPitch; o.RwsRoll = RwsRoll;
         o.Qw = Qw; o.Qx = Qx; o.Qy = Qy; o.Qz = Qz;
         o.LayoutVersion = LayoutVersion;
         o.Flags = Flags;

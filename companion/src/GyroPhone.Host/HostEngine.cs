@@ -132,7 +132,8 @@ public sealed class HostEngine
     private bool _overlayOn;
     private readonly OverlayFrame _overlayFrame = new();
     private readonly OverlayLayoutAssembler _overlayLayout = new();
-    private readonly OverlayPose _overlayPose = new();
+    // Each overlay window's pose, by its settings id, turned by every OVERLAY while it is shown.
+    private readonly Dictionary<string, OverlayPose> _overlayPoses = [];
     private long _overlayRxUs = long.MinValue;
     private long _lastStatusUs;
     private int _rumbleNext; // (large << 8) | small, plus RumbleDirty while unsent
@@ -159,6 +160,7 @@ public sealed class HostEngine
         Func<int, byte[]>? random = null, Func<P256>? newPairKey = null, P256? hostKey = null)
     {
         _settings = settings;
+        _settings.Normalize();
         _hostKey = hostKey;
         _hostKeyId = hostKey == null ? null : KeyPairing.KeyId(hostKey.PublicKey);
         _pad = pad;
@@ -339,11 +341,12 @@ public sealed class HostEngine
             case PacketType.Overlay:
                 if (!_overlayOn) break;
                 _overlayFrame.Decode(plain);
-                _overlayPose.Feed(_overlayFrame, _settings.Overlay);
-                _overlayFrame.Qw = _overlayPose.W;
-                _overlayFrame.Qx = _overlayPose.X;
-                _overlayFrame.Qy = _overlayPose.Y;
-                _overlayFrame.Qz = _overlayPose.Z;
+                foreach (var o in _settings.Overlays)
+                {
+                    if (!o.Shown) continue;
+                    if (!_overlayPoses.TryGetValue(o.Id, out var pose)) _overlayPoses[o.Id] = pose = new OverlayPose();
+                    pose.Feed(_overlayFrame, o);
+                }
                 _overlayRxUs = nowUs;
                 break;
             case PacketType.OverlayLayout:
@@ -851,17 +854,69 @@ public sealed class HostEngine
         }
     }
 
-    /// <summary>Changes the phone overlay's settings (<see cref="HostSettings.Overlay"/>) and saves them.</summary>
-    public void UpdateOverlaySettings(Action<OverlaySettings> change)
+    /// <summary>Changes overlay window <paramref name="id"/>'s settings and saves them; false when there is none.</summary>
+    public bool UpdateOverlaySettings(string id, Action<OverlaySettings> change)
     {
         lock (_lock)
         {
-            bool compass = _settings.Overlay.NeedsCompass;
-            change(_settings.Overlay);
+            var o = _settings.Overlays.Find(x => x.Id == id);
+            if (o == null) return false;
+            bool compass = OverlayCompassLocked();
+            var kind = o.Kind;
+            change(o);
+            o.Id = id;
+            if (o.Kind != kind) _overlayPoses.Remove(id);
             _settingsDirty = true;
-            // The phone sends compass readings only while asked.
-            if (_overlayOn && compass != _settings.Overlay.NeedsCompass && _sessions.Active is { } a) SendStatus(a, _clock.NowUs);
+            OverlayCompassChanged(compass);
+            return true;
         }
+    }
+
+    /// <summary>A new overlay window of <paramref name="kind"/> (shown), turning as the first one does; returns its id.</summary>
+    public string AddOverlay(OverlayKind kind)
+    {
+        lock (_lock)
+        {
+            bool compass = OverlayCompassLocked();
+            var o = new OverlaySettings { Kind = kind, Shown = true };
+            if (_settings.Overlays.Count > 0)
+            {
+                var f = _settings.Overlays[0];
+                o.Gravity = f.Gravity; o.Compass = f.Compass; o.ResetOnRatchet = f.ResetOnRatchet; o.ResetHeadingOnly = f.ResetHeadingOnly;
+                o.Ease = f.Ease; o.EaseAfterRatchet = f.EaseAfterRatchet; o.EaseDelayMs = f.EaseDelayMs; o.EaseBySpeed = f.EaseBySpeed;
+                o.EaseSeconds = f.EaseSeconds; o.EaseSpeed = f.EaseSpeed; o.LevelDeg = f.LevelDeg; o.MotionScale = f.MotionScale;
+            }
+            if (kind != OverlayKind.Phone) o.Width = o.Height = 260;
+            _settings.Overlays.Add(o);
+            _settingsDirty = true;
+            OverlayCompassChanged(compass);
+            return o.Id;
+        }
+    }
+
+    /// <summary>Removes overlay window <paramref name="id"/> and its settings.</summary>
+    public void RemoveOverlay(string id)
+    {
+        lock (_lock)
+        {
+            bool compass = OverlayCompassLocked();
+            if (_settings.Overlays.RemoveAll(x => x.Id == id) == 0) return;
+            _overlayPoses.Remove(id);
+            _settingsDirty = true;
+            OverlayCompassChanged(compass);
+        }
+    }
+
+    private bool OverlayCompassLocked()
+    {
+        foreach (var o in _settings.Overlays) if (o.Shown && o.NeedsCompass) return true;
+        return false;
+    }
+
+    // The phone sends compass readings only while asked.
+    private void OverlayCompassChanged(bool before)
+    {
+        if (_overlayOn && before != OverlayCompassLocked() && _sessions.Active is { } a) SendStatus(a, _clock.NowUs);
     }
 
     /// <summary>What a left click on the tray icon does; the tray reads it from <see cref="Settings"/>.</summary>
@@ -937,7 +992,7 @@ public sealed class HostEngine
             if (on == _overlayOn) return;
             _overlayOn = on;
             _overlayRxUs = long.MinValue;
-            _overlayPose.Reset();
+            _overlayPoses.Clear();
             if (!on) _overlayLayout.Reset();
             if (_sessions.Active is { } a) SendStatus(a, _clock.NowUs);
         }
@@ -947,15 +1002,32 @@ public sealed class HostEngine
     /// Copies the newest OVERLAY into <paramref name="into"/> and returns how long ago it came (us),
     /// or -1 when none came in this session; <paramref name="layout"/> is the newest complete layout.
     /// </summary>
-    public long OverlaySnapshot(OverlayFrame into, out OverlayLayout? layout)
+    public long OverlaySnapshot(OverlayFrame into, out OverlayLayout? layout) => OverlaySnapshot(into, null, out layout);
+
+    /// <summary>As above, with overlay window <paramref name="id"/>'s pose in <paramref name="into"/> (straight until it has one).</summary>
+    public long OverlaySnapshot(OverlayFrame into, string? id, out OverlayLayout? layout)
     {
         lock (_lock)
         {
             layout = _overlayLayout.Layout;
             if (_overlayRxUs == long.MinValue) return -1;
             _overlayFrame.CopyTo(into);
+            if (id != null && _overlayPoses.TryGetValue(id, out var p))
+            {
+                into.Qw = p.W; into.Qx = p.X; into.Qy = p.Y; into.Qz = p.Z;
+            }
+            else
+            {
+                into.Qw = 1; into.Qx = into.Qy = into.Qz = 0;
+            }
             return Math.Max(0, _clock.NowUs - _overlayRxUs);
         }
+    }
+
+    /// <summary>Overlay window <paramref name="id"/>'s pose now (w, x, y, z), or null before it has one.</summary>
+    public float[]? OverlayPoseOf(string id)
+    {
+        lock (_lock) return _overlayPoses.TryGetValue(id, out var p) ? [p.W, p.X, p.Y, p.Z] : null;
     }
 
     /// <summary>Release-all for external triggers (session switch, suspend, exit).</summary>
@@ -1158,7 +1230,7 @@ public sealed class HostEngine
         _sessions.DropActive();
         _overlayLayout.Reset();
         _overlayRxUs = long.MinValue;
-        _overlayPose.Reset();
+        _overlayPoses.Clear();
         _pad.Unplug();
         _padFrameValid = false;
         _hasPending = false;
@@ -1327,7 +1399,7 @@ public sealed class HostEngine
         if (_elevatedForeground) flags |= HostStatusFlags.ElevatedForeground;
         if (_networkPublic) flags |= HostStatusFlags.NetworkPublic;
         if (_overlayOn) flags |= HostStatusFlags.Overlay;
-        if (_overlayOn && _settings.Overlay.NeedsCompass) flags |= HostStatusFlags.OverlayCompass;
+        if (_overlayOn && OverlayCompassLocked()) flags |= HostStatusFlags.OverlayCompass;
         Span<byte> p = stackalloc byte[Wire.HostStatusPlain];
         WireCodec.EncodeHostStatus(new HostStatus(s.HighestRxSeq, _stats.RxPerSec, _stats.LossPermille,
             _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs, (byte)_settings.OutputMode, flags), p);

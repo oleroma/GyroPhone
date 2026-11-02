@@ -10,6 +10,7 @@ import com.oleroma.gyrophone.core.engine.GyroCalibration
 import com.oleroma.gyrophone.core.engine.GravityPose
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
+import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.engine.GyroPose
 import com.oleroma.gyrophone.core.engine.GyroSway
 import com.oleroma.gyrophone.core.engine.MappingEngine
@@ -443,6 +444,11 @@ class GamepadRuntime(context: Context) {
         engine.hapticSink = haptics
         // Every other mouse count turns a trackball 3D shape too, as the camera turns.
         engine.cameraSink = { dx, dy ->
+            val overlay = wifi.overlay
+            if (overlay.wanted) {
+                val deg = GyroDisplayFeed.cameraDegrees(dx, dy, engine.gyroRoutes(), engine.gyroSettings)
+                overlay.camera(deg[0], deg[1], deg[2])
+            }
             val feeds = gyroFeeds
             if (feeds.any { it.display.isTrackball }) {
                 val routes = engine.gyroRoutes()
@@ -1071,6 +1077,11 @@ class GamepadRuntime(context: Context) {
             val m = gyroMouse.motion(x - biasX, y - biasY, z - biasZ)
             overlay.gyro(m.yaw, m.pitch, m.roll, dt, axes, inputAllowed && engine.ratchetsHeld != 0)
             overlay.gyroActive = active
+            val gs = engine.gyroSettings
+            overlay.rws(
+                gs.rwsOf(gs.sensitivityOf(MotionAxis.YAW)) ?: 0f, gs.rwsOf(gs.sensitivityOf(MotionAxis.PITCH)) ?: 0f,
+                gs.rwsOf(gs.sensitivityOf(MotionAxis.ROLL)) ?: 0f,
+            )
         }
         // World and player space read the phone's pose against gravity.
         val space = gyroSpace()

@@ -100,25 +100,11 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     fun camera(dx: Int, dy: Int, routes: List<Mapping>, gyro: GyroSettings) {
         val d = display
         if (!d.isTrackball) return
-        val deg = FloatArray(3)
-        fun add(n: Int, motion: MouseMotion, fallback: MotionAxis) {
-            if (n == 0) return
-            val m = routes.firstOrNull { it.source is InputSource.Gyro && (it.target as? OutputTarget.MouseAxis)?.motion == motion }
-            val a = (m?.source as? InputSource.Gyro)?.axis ?: fallback
-            val i = when (a) {
-                MotionAxis.YAW -> 0
-                MotionAxis.PITCH -> 1
-                MotionAxis.ROLL -> 2
-                else -> return
-            }
-            // The phone's turn that sends n counts, then as far as that turn spins the trackball.
-            val perDeg = gyro.sensitivityOf(a) * ((m?.target as? OutputTarget.MouseAxis)?.scale ?: 1f)
-            if (perDeg != 0f) deg[i] += n / perDeg * trackballGain(d, gyro, a)
-        }
-        add(dx, MouseMotion.MOVE_X, MotionAxis.ROLL)
-        // The gyro's Y is up +, the counts' down +.
-        add(-dy, MouseMotion.MOVE_Y, MotionAxis.PITCH)
-        pose.counterRotate(deg[0], deg[1], deg[2], 1f)
+        val deg = cameraDegrees(dx, dy, routes, gyro)
+        pose.counterRotate(
+            deg[0] * trackballGain(d, gyro, MotionAxis.YAW), deg[1] * trackballGain(d, gyro, MotionAxis.PITCH),
+            deg[2] * trackballGain(d, gyro, MotionAxis.ROLL), 1f,
+        )
     }
 
     /**
@@ -145,6 +131,32 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     }
 
     companion object {
+        /**
+         * The phone turn (degrees on yaw, pitch, roll) that would send mouse counts [dx], [dy]: about
+         * the gyro axis [routes] map to that mouse axis (roll for X, pitch for Y when none does), at
+         * [gyro]'s sensitivity of that axis.
+         */
+        fun cameraDegrees(dx: Int, dy: Int, routes: List<Mapping>, gyro: GyroSettings): FloatArray {
+            val deg = FloatArray(3)
+            fun add(n: Int, motion: MouseMotion, fallback: MotionAxis) {
+                if (n == 0) return
+                val m = routes.firstOrNull { it.source is InputSource.Gyro && (it.target as? OutputTarget.MouseAxis)?.motion == motion }
+                val a = (m?.source as? InputSource.Gyro)?.axis ?: fallback
+                val i = when (a) {
+                    MotionAxis.YAW -> 0
+                    MotionAxis.PITCH -> 1
+                    MotionAxis.ROLL -> 2
+                    else -> return
+                }
+                val perDeg = gyro.sensitivityOf(a) * ((m?.target as? OutputTarget.MouseAxis)?.scale ?: 1f)
+                if (perDeg != 0f) deg[i] += n / perDeg
+            }
+            add(dx, MouseMotion.MOVE_X, MotionAxis.ROLL)
+            // The gyro's Y is up +, the counts' down +.
+            add(-dy, MouseMotion.MOVE_Y, MotionAxis.PITCH)
+            return deg
+        }
+
         /** How fast the world pose's heading eases back to facing the player. */
         const val HEADING_EASE_S = 0.5f
 

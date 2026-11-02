@@ -7,7 +7,8 @@ public class OverlayTests
 {
     private const string LayoutBlob = "0160093804044d61696e000100010008001033036606800141";
     private const string Frame = "040302010000803f000000bf0000803ee803000000200000000000000180030101003b010080004000000000000000000000000000000000" +
-        "0100000000000000000000000000000000000000000000000000000000000000007fc1ff0000ff0000ff0000ff0000ff0000ff0000ff0000";
+        "0100000000000000000000000000000000000000000000000000000000000000007fc1ff0000ff0000ff0000ff0000ff0000ff0000ff0000" +
+        "0000803f00000000000000c0" + "000000400000000000000000";
 
     private static byte[] Piece(ushort version, int index, int count, ReadOnlySpan<byte> data)
     {
@@ -23,7 +24,7 @@ public class OverlayTests
     [Fact]
     public void Sizes()
     {
-        Assert.Equal(140, PacketType.Size(PacketType.Overlay));
+        Assert.Equal(164, PacketType.Size(PacketType.Overlay));
         Assert.Equal(228, PacketType.Size(PacketType.OverlayLayout));
         Assert.True(PacketType.IsPhoneToHostSealed(PacketType.OverlayLayout));
     }
@@ -50,6 +51,10 @@ public class OverlayTests
         Assert.True(f.HasUp);
         Assert.True(f.HasNorth);
         Assert.True(f.RatchetHeld);
+        Assert.Equal(1f, f.CameraYaw, 4);
+        Assert.Equal(-2f, f.CameraRoll, 4);
+        Assert.Equal(2f, f.RwsYaw, 4);
+        Assert.Equal(0f, f.RwsPitch, 4);
         Assert.Equal(1, f.FingerCount);
         Assert.Equal(0.5f, f.Fingers[0], 3);
         Assert.Equal(0.25f, f.Fingers[1], 3);
@@ -205,14 +210,68 @@ public class OverlayTests
         var phone = h.NewPhone();
         Assert.True(phone.OnWelcome(h.Send(phone, phone.Hello())!));
         h.Send(phone, phone.State());
+        var id = h.Engine.Settings.Overlays[0].Id;
+        h.Engine.UpdateOverlaySettings(id, o => o.Shown = true);
         h.Engine.SetOverlay(true);
         h.Sender.Clear();
-        h.Engine.UpdateOverlaySettings(o => o.Compass = true);
+        h.Engine.UpdateOverlaySettings(id, o => o.Compass = true);
         Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out var st));
         Assert.NotEqual(0, WireCodec.DecodeHostStatus(st).Flags & HostStatusFlags.OverlayCompass);
         h.Sender.Clear();
-        h.Engine.UpdateOverlaySettings(o => o.Gravity = false);
+        h.Engine.UpdateOverlaySettings(id, o => o.Gravity = false);
         Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out st));
         Assert.Equal(0, WireCodec.DecodeHostStatus(st).Flags & HostStatusFlags.OverlayCompass);
+    }
+
+    [Fact]
+    public void TrackballTurnsAgainstTheGyroAndWithOtherMoves()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Trackball = true, TrackballRws = false, TrackballSpin = 2f };
+        var p = new GyroPhone.Host.OverlayPose();
+        // The gyro turns 10° right while moving the mouse: the ball turns 20° the other way.
+        p.Feed(Motion(10f, 0.01f), s);
+        Assert.Equal(-20f, HeadingDeg(p), 1);
+        // Touchpad counts worth a 10° yaw turn turn it as that gyro turn would.
+        var f = Motion(0f, 0.01f);
+        f.CameraYaw = 10f;
+        p.Feed(f, s);
+        Assert.Equal(-40f, HeadingDeg(p), 1);
+    }
+
+    [Fact]
+    public void EachShownOverlayHasItsOwnPose()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        Assert.True(phone.OnWelcome(h.Send(phone, phone.Hello())!));
+        h.Send(phone, phone.State());
+        var a = h.Engine.Settings.Overlays[0].Id;
+        h.Engine.UpdateOverlaySettings(a, o => { o.Shown = true; o.Gravity = false; o.Ease = false; });
+        var b = h.Engine.AddOverlay(GyroPhone.Host.Settings.OverlayKind.Shape);
+        h.Engine.UpdateOverlaySettings(b, o => { o.Trackball = true; o.TrackballRws = false; });
+        h.Engine.SetOverlay(true);
+        var frame = Hex.B(Frame); // 1° yaw, -0.5° pitch, 0.25° roll; axes yaw + pitch
+        h.Send(phone, phone.Sealed(PacketType.Overlay, frame));
+        var fa = new OverlayFrame();
+        var fb = new OverlayFrame();
+        Assert.True(h.Engine.OverlaySnapshot(fa, a, out _) >= 0);
+        h.Engine.OverlaySnapshot(fb, b, out _);
+        Assert.NotEqual(1f, fa.Qw);
+        // Opposite turns: the trackball holds still against the world, and the frame's 1° of
+        // touchpad yaw turns it as far again.
+        Assert.Equal(-2 * fa.Qy, fb.Qy, 3);
+        h.Engine.RemoveOverlay(b);
+        Assert.Single(h.Engine.Settings.Overlays);
+    }
+
+    [Fact]
+    public void OldSingleOverlayIsKept()
+    {
+        var s = new GyroPhone.Host.Settings.HostSettings { Overlay = new GyroPhone.Host.Settings.OverlaySettings { Shown = true, LevelDeg = 45 } };
+        s.Normalize();
+        var o = Assert.Single(s.Overlays);
+        Assert.Equal(45, o.LevelDeg);
+        Assert.Null(s.Overlay);
+        Assert.Equal(unchecked((int)0xFF2A2E35), o.Color("body"));
     }
 }

@@ -44,7 +44,7 @@ data class OverlayLayout(
  * ([layoutSnapshot], [encodeLayoutPiece]) when it changes and every few seconds. The PC turns the
  * motion into a pose with its own settings (gravity, compass, reset on ratchet, ease back).
  *
- * OVERLAY plaintext (112 bytes, little endian): u32 phone time (us); f32 × 3 yaw, pitch, roll
+ * OVERLAY plaintext (136 bytes, little endian): u32 phone time (us); f32 × 3 yaw, pitch, roll
  * turned since the last OVERLAY (degrees, as [com.oleroma.gyrophone.core.engine.GyroMouse.motion]
  * gives them); u16 the time those samples cover (10 us units); i16 × 3 the newest accelerometer
  * reading in the phone frame, right, up, toward the player ([G_SCALE] = 1 g); i16 × 3 the newest
@@ -53,7 +53,10 @@ data class OverlayLayout(
  * u16 layout version; u8 flags ([FLAG_POSE], [FLAG_PAD_SHOWN], [FLAG_GYRO_ACTIVE], [FLAG_UP],
  * [FLAG_NORTH], [FLAG_RATCHET_HELD]); u8 finger count; 5 × (u16 x, u16 y) fingers (0..65535 of the
  * pad area); 16 bytes pressed bitmap and 16 bytes latched bitmap (bit i = control i of the layout);
- * 8 × (u8 control index or 0xFF, i8 x, i8 y) stick knobs (-127..127 of the radius, y down).
+ * 8 × (u8 control index or 0xFF, i8 x, i8 y) stick knobs (-127..127 of the radius, y down); f32 × 3
+ * yaw, pitch, roll the phone would have turned to send the mouse counts sent since the last OVERLAY by
+ * anything but the live gyro ([camera]: touchpad, buttons, glides..., for a trackball); f32 × 3 the
+ * game's camera degrees per phone degree on yaw, pitch, roll (real world sensitivity, 0 = unknown).
  *
  * OVERLAY_LAYOUT plaintext (200 bytes): u16 layout version; u8 piece index; u8 piece count; u8
  * length; then [PIECE_DATA] bytes of the layout blob. The blob: u8 format (1); u16 width px; u16
@@ -114,9 +117,12 @@ class OverlayFeed {
     private var hasUp = false
     private val northXYZ = FloatArray(3)
     private var hasNorth = false
+    private val cameraDeg = FloatArray(3)
+    private val rwsGain = FloatArray(3)
 
     private fun clearMotion() {
         turnYaw = 0f; turnPitch = 0f; turnRoll = 0f; turnSeconds = 0f
+        cameraDeg.fill(0f)
         gyroAtNs = Long.MIN_VALUE
         hasUp = false; hasNorth = false
         ratchetHeld = false
@@ -140,6 +146,24 @@ class OverlayFeed {
     }
 
     /** An accelerometer reading in the phone frame (right, up, toward the player), [g] = 1 g in its units. */
+    /**
+     * Mouse counts sent by anything but the live gyro, as the phone turn (degrees on yaw, pitch,
+     * roll) that would send them ([com.oleroma.gyrophone.core.engine.GyroDisplayFeed.cameraDegrees]),
+     * and the game's camera degrees per phone degree on each axis (0 = unknown).
+     */
+    fun camera(yaw: Float, pitch: Float, roll: Float) {
+        synchronized(lock) {
+            cameraDeg[0] += yaw; cameraDeg[1] += pitch; cameraDeg[2] += roll
+        }
+    }
+
+    /** The game's camera degrees per phone degree on yaw, pitch, roll (0 = unknown). */
+    fun rws(yaw: Float, pitch: Float, roll: Float) {
+        synchronized(lock) {
+            rwsGain[0] = yaw; rwsGain[1] = pitch; rwsGain[2] = roll
+        }
+    }
+
     fun up(x: Float, y: Float, z: Float, g: Float) {
         if (g == 0f) return
         synchronized(lock) {
@@ -247,6 +271,11 @@ class OverlayFeed {
                 out[p + 2] = (v[1].coerceIn(-1f, 1f) * 127f).roundToInt().toByte()
                 n++
             }
+            for (i in 0 until 3) {
+                out.putU32(off + 112 + i * 4, java.lang.Float.floatToRawIntBits(cameraDeg[i]))
+                out.putU32(off + 124 + i * 4, java.lang.Float.floatToRawIntBits(rwsGain[i]))
+            }
+            cameraDeg.fill(0f)
         }
         return Wire.OVERLAY_PLAIN
     }

@@ -60,10 +60,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private PairForm? _pairForm;
     private MainForm? _mainForm;
     private DebugForm? _debugForm;
-    private PhoneOverlayForm? _overlayForm;
-    private readonly ToolStripMenuItem _overlayShowItem, _overlayClickItem, _overlayDotsItem;
-    private readonly ToolStripMenuItem[] _overlayBgItems, _overlayScaleItems;
-    private static readonly float[] OverlayScales = [0.5f, 1f, 1.5f, 2f, 3f];
+    // The open overlay windows, by settings id.
+    private readonly Dictionary<string, OverlayForm> _overlayForms = [];
     private int _refreshQueued;
     private bool? _firewallOk;
     private bool? _usbRuleOk;
@@ -148,34 +146,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _restartAdminItem = new ToolStripMenuItem("Restart as administrator", null, (_, _) => RestartAsAdmin());
         var logItem = new ToolStripMenuItem("Open log folder", null, (_, _) => OpenLogFolder());
         var debugItem = new ToolStripMenuItem("Debug window…", null, (_, _) => ShowDebugForm());
-        _overlayShowItem = new ToolStripMenuItem("Show phone overlay", null, (_, _) => SetOverlayShown(!_engine.Settings.Overlay.Shown));
-        _overlayClickItem = new ToolStripMenuItem("Click-through (off: drag to move and resize)", null,
-            (_, _) => ChangeOverlay(o => o.ClickThrough = !o.ClickThrough));
-        _overlayDotsItem = new ToolStripMenuItem("Finger dots", null, (_, _) => ChangeOverlay(o => o.FingerDots = !o.FingerDots));
-        _overlayBgItems =
-        [
-            new ToolStripMenuItem("Transparent", null, (_, _) => ChangeOverlay(o => o.Background = OverlayBackground.Transparent)),
-            new ToolStripMenuItem("Green (for chroma key)", null, (_, _) => ChangeOverlay(o => o.Background = OverlayBackground.Green)),
-            new ToolStripMenuItem("Dark", null, (_, _) => ChangeOverlay(o => o.Background = OverlayBackground.Dark)),
-        ];
-        var overlayBgItem = new ToolStripMenuItem("Background");
-        overlayBgItem.DropDownItems.AddRange(_overlayBgItems);
-        _overlayScaleItems = OverlayScales.Select(k =>
-            new ToolStripMenuItem($"{k:0.#}×", null, (_, _) => ChangeOverlay(o => o.MotionScale = k))).ToArray();
-        var overlayScaleItem = new ToolStripMenuItem("Turn amount");
-        overlayScaleItem.DropDownItems.AddRange(_overlayScaleItems);
-        var overlayItem = new ToolStripMenuItem("Phone overlay");
-        overlayItem.DropDownItems.AddRange(new ToolStripItem[]
-        {
-            _overlayShowItem,
-            _overlayClickItem,
-            overlayBgItem,
-            overlayScaleItem,
-            _overlayDotsItem,
-            new ToolStripSeparator(),
-            new ToolStripMenuItem("Level: the phone as held now shows straight (Ctrl+Alt+R)", null, (_, _) => RecenterOverlay()),
-            new ToolStripMenuItem("Reset (undo Level)", null, (_, _) => ChangeOverlay(o => o.Center = null)),
-        });
+        // Built each time it opens: one switch per overlay window, then the ones for all of them.
+        var overlayItem = new ToolStripMenuItem("Overlays");
+        overlayItem.DropDownItems.Add(new ToolStripMenuItem("…"));
+        overlayItem.DropDownOpening += (_, _) => BuildOverlayMenu(overlayItem);
         // The phone's Record button: save this PC's side at once (the ring keeps moving).
         _engine.DebugSaveRequested = () => Post(() =>
         {
@@ -250,7 +224,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _watchdog.Start();
             _usb.Start();
             _log.Write($"listening on UDP {Wire.Port} as '{settings.HostName}'");
-            ApplyOverlay(); // shown last time: shown again
+            ApplyOverlays(); // shown last time: shown again
         }
         else
         {
@@ -353,12 +327,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _retryDriverItem.Available = !s.DriverOk;
         _restartAdminItem.Available = !ElevationProbe.IsSelfElevated;
         _clickMainItem.Checked = TrayClick == TrayClickAction.OpenMainWindow;
-        var ov = _engine.Settings.Overlay;
-        _overlayShowItem.Checked = ov.Shown;
-        _overlayClickItem.Checked = ov.ClickThrough;
-        _overlayDotsItem.Checked = ov.FingerDots;
-        for (int i = 0; i < _overlayBgItems.Length; i++) _overlayBgItems[i].Checked = (int)ov.Background == i;
-        for (int i = 0; i < _overlayScaleItems.Length; i++) _overlayScaleItems[i].Checked = MathF.Abs(OverlayScales[i] - ov.MotionScale) < 0.01f;
         _clickPairItem.Checked = TrayClick == TrayClickAction.PairNewPhone;
         RebuildPhones(s.PairedPhones);
         _hostKeyItem.Text = s.HostKeyFingerprint is { } fp ? $"This PC's key: {fp}" : "This PC's key: unavailable (see Status)";
@@ -414,7 +382,17 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     }
 
     internal TrayClickAction TrayClick => _engine.Settings.TrayClick;
-    internal OverlaySettings OverlaySettings => _engine.Settings.Overlay;
+    internal IReadOnlyList<OverlaySettings> Overlays => _engine.Settings.Overlays;
+
+    internal OverlaySettings? OverlayOf(string id) => _engine.Settings.Overlays.Find(o => o.Id == id);
+
+    /// <summary>Its kind's name, numbered when there are several of that kind.</summary>
+    internal string OverlayName(OverlaySettings o)
+    {
+        var same = _engine.Settings.Overlays.Where(x => x.Kind == o.Kind).ToList();
+        var name = OverlaySettings.KindName(o.Kind);
+        return same.Count > 1 ? $"{name} {same.IndexOf(o) + 1}" : name;
+    }
 
     internal void SetTrayClick(TrayClickAction action)
     {
@@ -464,62 +442,140 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _mainForm.Activate();
     }
 
-    /// <summary>Shows or closes the phone overlay window, and remembers it for the next start.</summary>
-    internal void SetOverlayShown(bool shown)
+    private void BuildOverlayMenu(ToolStripMenuItem menu)
     {
-        _engine.UpdateOverlaySettings(o => o.Shown = shown);
-        ApplyOverlay();
+        menu.DropDownItems.Clear();
+        foreach (var o in _engine.Settings.Overlays.ToList())
+        {
+            var id = o.Id;
+            menu.DropDownItems.Add(new ToolStripMenuItem($"Show {OverlayName(o)}", null, (_, _) => SetOverlayShown(id, !(OverlayOf(id)?.Shown ?? false)))
+            {
+                Checked = o.Shown,
+            });
+        }
+        menu.DropDownItems.Add(new ToolStripSeparator());
+        bool allThrough = _engine.Settings.Overlays.All(o => o.ClickThrough);
+        menu.DropDownItems.Add(new ToolStripMenuItem("Click-through (off: drag to move and resize)", null, (_, _) =>
+        {
+            foreach (var o in _engine.Settings.Overlays.ToList()) ChangeOverlay(o.Id, x => x.ClickThrough = !allThrough);
+        })
+        { Checked = allThrough });
+        menu.DropDownItems.Add(new ToolStripMenuItem("Level all: as held now shows straight (Ctrl+Alt+R)", null, (_, _) => LevelAll()));
+        menu.DropDownItems.Add(new ToolStripMenuItem("Reset all (undo Level)", null, (_, _) =>
+        {
+            foreach (var o in _engine.Settings.Overlays.ToList()) ChangeOverlay(o.Id, x => x.Center = null);
+        }));
+        menu.DropDownItems.Add(new ToolStripMenuItem("Overlay settings…", null, (_, _) => ShowMainForm()));
     }
 
-    internal void ChangeOverlay(Action<OverlaySettings> change)
+    /// <summary>Shows or closes overlay window <paramref name="id"/>, and remembers it for the next start.</summary>
+    internal void SetOverlayShown(string id, bool shown)
     {
-        _engine.UpdateOverlaySettings(change);
-        _overlayForm?.SettingsChanged();
+        _engine.UpdateOverlaySettings(id, o => o.Shown = shown);
+        ApplyOverlays();
         Refresh();
     }
 
-    /// <summary>Takes the phone's pose now as the one shown square on (as Ctrl+Alt+R).</summary>
-    internal void RecenterOverlay()
+    internal void ChangeOverlay(string id, Action<OverlaySettings> change)
     {
-        _overlayForm?.Recenter();
+        _engine.UpdateOverlaySettings(id, change);
+        if (_overlayForms.TryGetValue(id, out var f)) f.SettingsChanged();
         Refresh();
     }
 
-    private void ApplyOverlay()
+    /// <summary>A new overlay window of <paramref name="kind"/>, shown; returns its id.</summary>
+    internal string AddOverlay(OverlayKind kind)
     {
-        try
-        {
-            ApplyOverlayCore();
-        }
-        catch (Exception e)
-        {
-            // The overlay must never take the companion down (it reopens at every start while Shown).
-            _log.Write($"overlay failed and was turned off: {e}");
-            _engine.UpdateOverlaySettings(o => o.Shown = false);
-            try { _overlayForm?.Dispose(); } catch (Exception) { }
-            _overlayForm = null;
-            Balloon("Phone overlay failed", "It was turned off. The log has the details.", ToolTipIcon.Warning);
-        }
+        var id = _engine.AddOverlay(kind);
+        ApplyOverlays();
+        Refresh();
+        return id;
     }
 
-    private void ApplyOverlayCore()
+    internal void RemoveOverlay(string id)
     {
-        bool shown = _engine.Settings.Overlay.Shown;
-        if (shown && (_overlayForm == null || _overlayForm.IsDisposed))
+        if (_overlayForms.Remove(id, out var f)) f.Close();
+        _engine.RemoveOverlay(id);
+        ApplyOverlays();
+        Refresh();
+    }
+
+    /// <summary>Level: overlay <paramref name="id"/>'s pose now shows straight.</summary>
+    internal void LevelOverlay(string id)
+    {
+        if (_overlayForms.TryGetValue(id, out var f)) f.Level();
+        Refresh();
+    }
+
+    internal void LevelAll()
+    {
+        foreach (var f in _overlayForms.Values.ToList()) f.Level();
+        Refresh();
+    }
+
+    private void ApplyOverlays()
+    {
+        foreach (var o in _engine.Settings.Overlays.ToList())
         {
-            var form = new PhoneOverlayForm(_engine, _log.Write);
+            try
+            {
+                ApplyOverlay(o);
+            }
+            catch (Exception e)
+            {
+                // An overlay must never take the companion down (it reopens at every start while Shown).
+                _log.Write($"overlay failed and was turned off: {e}");
+                _engine.UpdateOverlaySettings(o.Id, x => x.Shown = false);
+                if (_overlayForms.Remove(o.Id, out var f))
+                    try { f.Dispose(); } catch (Exception) { }
+                Balloon("Overlay failed", "It was turned off. The log has the details.", ToolTipIcon.Warning);
+            }
+        }
+        // Windows whose settings are gone.
+        foreach (var id in _overlayForms.Keys.Where(id => OverlayOf(id) == null).ToList())
+            if (_overlayForms.Remove(id, out var f)) f.Close();
+        _engine.SetOverlay(_overlayForms.Count > 0);
+        EnsureHotkey();
+    }
+
+    private void ApplyOverlay(OverlaySettings o)
+    {
+        _overlayForms.TryGetValue(o.Id, out var open);
+        if (open is { IsDisposed: true })
+        {
+            _overlayForms.Remove(o.Id);
+            open = null;
+        }
+        if (o.Shown && open == null)
+        {
+            var id = o.Id;
+            var form = new OverlayForm(_engine, id, _log.Write, LevelAll);
             form.FormClosed += (_, _) =>
             {
-                if (ReferenceEquals(_overlayForm, form)) _overlayForm = null;
+                if (_overlayForms.TryGetValue(id, out var cur) && ReferenceEquals(cur, form))
+                {
+                    _overlayForms.Remove(id);
+                    _engine.SetOverlay(_overlayForms.Count > 0);
+                }
+                EnsureHotkey();
             };
-            _overlayForm = form;
+            _overlayForms[id] = form;
             form.Show();
         }
-        else if (!shown && _overlayForm is { IsDisposed: false } f)
+        else if (!o.Shown && open != null)
         {
-            f.Close();
-            _overlayForm = null;
+            _overlayForms.Remove(o.Id);
+            open.Close();
         }
+    }
+
+    /// <summary>Ctrl+Alt+R (Level all) held by one open overlay window.</summary>
+    private void EnsureHotkey()
+    {
+        if (_overlayForms.Count == 0 || _overlayForms.Values.Any(f => f.HasHotkey)) return;
+        foreach (var f in _overlayForms.Values)
+            if (f.TryHotkey()) return;
+        _log.Write("overlay: Ctrl+Alt+R is taken by another app; level from the tray menu");
     }
 
     internal void ShowDebugForm()
@@ -961,7 +1017,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _pairForm?.Close();
         _mainForm?.Close();
         _debugForm?.Close();
-        _overlayForm?.Close();
+        foreach (var f in _overlayForms.Values.ToList()) f.Close();
         Shutdown();
         ExitThread();
     }

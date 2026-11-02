@@ -8,15 +8,19 @@ using GyroPhone.Host.Settings;
 namespace GyroPhone.Tray;
 
 /// <summary>
-/// The phone overlay (tray menu "Phone overlay"): a borderless, always-on-top, see-through window
-/// that draws the phone in 3D with its layout and presses (<see cref="PhoneOverlayRenderer"/>). A
-/// per-pixel alpha layered window, so it shows over games running windowed or borderless and OBS
-/// Window Capture records it. It never takes focus. With click-through the mouse goes past it;
-/// without, it can be dragged and resized. Ctrl+Alt+R recentres it while it is shown.
+/// One overlay window (main window "Overlays"): a borderless, always-on-top, see-through window that
+/// draws the phone in 3D with its layout and presses, a 3D shape, an attitude indicator or a bubble
+/// disk (<see cref="OverlayRenderer"/>), turned by its own pose. A per-pixel alpha layered window,
+/// so it shows over games running windowed or borderless and OBS Window Capture records it. It
+/// never takes focus. With click-through the mouse goes past it; without, it can be dragged and
+/// resized. One open window holds Ctrl+Alt+R (Level all) for the tray.
 /// </summary>
-internal sealed class PhoneOverlayForm : Form
+internal sealed class OverlayForm : Form
 {
     private readonly HostEngine _engine;
+    private readonly string _id;
+    private readonly Action _levelAll;
+    private readonly FingerTrails _trails = new();
     private readonly Action<string> _log;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly OverlayScene _scene = new();
@@ -27,12 +31,14 @@ internal sealed class PhoneOverlayForm : Form
     private long _lastDrawTicks;
     private bool _dirty = true;
 
-    public PhoneOverlayForm(HostEngine engine, Action<string> log)
+    public OverlayForm(HostEngine engine, string id, Action<string> log, Action levelAll)
     {
         _engine = engine;
+        _id = id;
         _log = log;
-        var s = engine.Settings.Overlay;
-        Text = $"{Program.AppName} phone overlay";
+        _levelAll = levelAll;
+        var s = Settings ?? new OverlaySettings();
+        Text = $"{Program.AppName} {OverlaySettings.KindName(s.Kind).ToLowerInvariant()} overlay";
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         TopMost = true;
@@ -62,8 +68,23 @@ internal sealed class PhoneOverlayForm : Form
         }
     }
 
+    public string Id => _id;
+
+    /// <summary>This window's settings, or null once removed.</summary>
     // The base Form constructor reads CreateParams before this constructor has set _engine.
-    private bool ClickThrough => _engine?.Settings.Overlay.ClickThrough ?? true;
+    private OverlaySettings? Settings => _engine?.Settings.Overlays.Find(o => o.Id == _id);
+
+    private bool ClickThrough => Settings?.ClickThrough ?? true;
+
+    /// <summary>Holds Ctrl+Alt+R (Level all) if no other window does; true when this one has it.</summary>
+    public bool TryHotkey()
+    {
+        if (_hotkey || !IsHandleCreated) return _hotkey;
+        _hotkey = RegisterHotKey(Handle, HotkeyId, ModControl | ModAlt | ModNoRepeat, (uint)Keys.R);
+        return _hotkey;
+    }
+
+    public bool HasHotkey => _hotkey;
 
     /// <summary>Settings changed (background, scale, dots, click-through): applied at the next frame.</summary>
     public void SettingsChanged()
@@ -76,21 +97,18 @@ internal sealed class PhoneOverlayForm : Form
         Render();
     }
 
-    /// <summary>Takes the phone's pose now as the one shown square on.</summary>
-    public void Recenter()
+    /// <summary>Level: the pose now shows straight.</summary>
+    public void Level()
     {
-        var f = new GyroPhone.Protocol.OverlayFrame();
-        if (_engine.OverlaySnapshot(f, out _) < 0) return;
-        _engine.UpdateOverlaySettings(o => o.Center = [f.Qw, f.Qx, f.Qy, f.Qz]);
+        var q = _engine.OverlayPoseOf(_id);
+        if (q == null) return;
+        _engine.UpdateOverlaySettings(_id, o => o.Center = q);
         _dirty = true;
     }
 
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        _hotkey = RegisterHotKey(Handle, HotkeyId, ModControl | ModAlt | ModNoRepeat, (uint)Keys.R);
-        if (!_hotkey) _log("overlay: Ctrl+Alt+R is taken by another app; recentre from the tray menu");
-        _engine.SetOverlay(true);
         _timer.Start();
         Render();
     }
@@ -100,12 +118,14 @@ internal sealed class PhoneOverlayForm : Form
         _timer.Stop();
         if (_hotkey) UnregisterHotKey(Handle, HotkeyId);
         _hotkey = false;
-        _engine.SetOverlay(false);
         base.OnHandleDestroyed(e);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        // Let go of Ctrl+Alt+R now, so another open window can take it.
+        if (_hotkey) UnregisterHotKey(Handle, HotkeyId);
+        _hotkey = false;
         SaveBounds();
         base.OnFormClosing(e);
     }
@@ -126,7 +146,7 @@ internal sealed class PhoneOverlayForm : Form
     private void SaveBounds()
     {
         var b = Bounds;
-        _engine.UpdateOverlaySettings(o =>
+        _engine.UpdateOverlaySettings(_id, o =>
         {
             o.X = b.X; o.Y = b.Y; o.Width = b.Width; o.Height = b.Height;
         });
@@ -137,7 +157,7 @@ internal sealed class PhoneOverlayForm : Form
         switch (m.Msg)
         {
             case WmHotkey when m.WParam.ToInt32() == HotkeyId:
-                Recenter();
+                _levelAll();
                 return;
             case WmMouseActivate:
                 m.Result = new IntPtr(MaNoActivate);
@@ -169,10 +189,12 @@ internal sealed class PhoneOverlayForm : Form
     private void TickCore()
     {
         // A new OVERLAY, a new layout, or now and then for the status: draw again.
-        long age = _engine.OverlaySnapshot(_scene.Frame, out var layout);
-        bool changed = _dirty || age >= 0 && (_scene.Frame.PhoneTimeUs != _lastTime || _scene.Frame.LayoutVersion != _lastLayout) ||
-            !ReferenceEquals(layout, _scene.Layout);
+        long age = _engine.OverlaySnapshot(_scene.Frame, _id, out var layout);
+        bool fresh = age >= 0 && _scene.Frame.PhoneTimeUs != _lastTime;
         long now = Environment.TickCount64;
+        if (fresh) _trails.Add(_scene.Frame, now);
+        bool changed = _dirty || fresh || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||
+            !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now);
         if (!changed && now - _lastDrawTicks < 500) return;
         _scene.FrameAgeUs = age;
         _scene.Layout = layout;
@@ -209,7 +231,12 @@ internal sealed class PhoneOverlayForm : Form
         {
             try
             {
-                PhoneOverlayRenderer.Draw(g, _bitmap.Size, _scene, _engine.Settings.Overlay);
+                if (Settings is { } settings)
+                {
+                    _scene.Trails = settings.FingerTrails ? _trails : null;
+                    _scene.NowTicks = _lastDrawTicks;
+                    OverlayRenderer.Draw(g, _bitmap.Size, _scene, settings);
+                }
             }
             catch (Exception e)
             {
@@ -223,7 +250,7 @@ internal sealed class PhoneOverlayForm : Form
     /// <summary>The whole window's opacity (setting): Windows applies it while compositing, at no cost. Kept visible while arranging.</summary>
     private byte WindowAlpha()
     {
-        float op = Math.Clamp(_engine?.Settings.Overlay.Opacity ?? 1f, 0.1f, 1f);
+        float op = Math.Clamp(Settings?.Opacity ?? 1f, 0.1f, 1f);
         if (!ClickThrough) op = Math.Max(op, 0.6f);
         return (byte)Math.Round(op * 255);
     }

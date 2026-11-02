@@ -31,7 +31,7 @@ public sealed class OverlayPose
     private float _settling = SettleS;
 
     private float _calm;
-    private bool _wasGravity, _wasCompass, _started;
+    private bool _wasGravity, _wasCompass, _wasTrackball, _started;
     private int _lastPresses = -1;
 
     public float W => _w;
@@ -58,13 +58,21 @@ public sealed class OverlayPose
     /// <summary>One OVERLAY: turns the pose by its motion with settings <paramref name="s"/>.</summary>
     public void Feed(OverlayFrame f, OverlaySettings s)
     {
-        bool gravity = s.Gravity;
+        bool trackball = s.IsTrackball;
+        bool gravity = s.Gravity && !trackball;
         bool compass = gravity && s.Compass;
-        if (!_started || gravity != _wasGravity)
+        if (!_started || gravity != _wasGravity || trackball != _wasTrackball)
         {
             _started = true;
             _wasGravity = gravity;
+            _wasTrackball = trackball;
             ResetPose();
+        }
+        if (trackball)
+        {
+            _lastPresses = f.RatchetPresses;
+            Trackball(f, s);
+            return;
         }
         if (compass && !_wasCompass) _aimPending = true;
         _wasCompass = compass;
@@ -103,6 +111,40 @@ public sealed class OverlayPose
             ? Math.Clamp(s.EaseSpeed, 1f, 3600f) * DegToRad * dt
             : 3f * dt / Math.Max(s.EaseSeconds, 0.05f);
         if (gravity) EaseHeading(s.EaseBySpeed, amount); else EaseAll(s.EaseBySpeed, amount);
+    }
+
+    /// <summary>
+    /// A trackball: while the gyro moves the mouse it holds still against the world (turns the other
+    /// way); every other mouse move turns it as the gyro turn that would send it.
+    /// </summary>
+    private void Trackball(OverlayFrame f, OverlaySettings s)
+    {
+        float Gain(float rws) => s.TrackballRws ? (rws > 0f ? rws : 1f) : Math.Clamp(s.TrackballSpin, 0.05f, 20f);
+        float gy = Gain(f.RwsYaw), gp = Gain(f.RwsPitch), gr = Gain(f.RwsRoll);
+        float yaw = f.CameraYaw * gy, pitch = f.CameraPitch * gp, roll = f.CameraRoll * gr;
+        if (f.PoseLive)
+        {
+            if ((f.Axes & 1) != 0) yaw += f.TurnYaw * gy;
+            if ((f.Axes & 2) != 0) pitch += f.TurnPitch * gp;
+            if ((f.Axes & 4) != 0) roll += f.TurnRoll * gr;
+        }
+        CounterRotate(yaw, pitch, roll);
+    }
+
+    /// <summary>The world as the phone sees it while it turns by these degrees: the opposite turn, about the view's axes (q = b * q).</summary>
+    private void CounterRotate(float yaw, float pitch, float roll)
+    {
+        float ax = -pitch * DegToRad, ay = yaw * DegToRad, az = roll * DegToRad;
+        float angle = MathF.Sqrt(ax * ax + ay * ay + az * az);
+        if (angle == 0f) return;
+        float k = MathF.Sin(angle / 2) / angle;
+        float bw = MathF.Cos(angle / 2), bx = ax * k, by = ay * k, bz = az * k;
+        float nw = bw * _w - bx * _x - by * _y - bz * _z;
+        float nx = bw * _x + bx * _w + by * _z - bz * _y;
+        float ny = bw * _y - bx * _z + by * _w + bz * _x;
+        float nz = bw * _z + bx * _y - by * _x + bz * _w;
+        _w = nw; _x = nx; _y = ny; _z = nz;
+        Normalize();
     }
 
     private void SetUp(float ax, float ay, float az, float g)

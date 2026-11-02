@@ -96,7 +96,7 @@ internal sealed class MainForm : Form
         _autoStart = Check("Start with Windows", startup, () => _app.ToggleAutoStart());
         _watcher = Check("Start when my phone appears", startup, () => _app.ToggleWatcher());
 
-        _overlay = new OverlaySection(_app, Group("Phone overlay", settings));
+        _overlay = new OverlaySection(_app, Group("Overlays", settings));
 
         var phones = Group("Phones", settings);
         phones.Controls.Add(NewButton("Pair new phone…", () => _app.PairNewPhone()));
@@ -184,7 +184,7 @@ internal sealed class MainForm : Form
         _retryDriver.Visible = v.ShowDriver;
         _restartAdmin.Visible = v.ShowRestartAdmin;
         RebuildPhones(s.PairedPhones);
-        _overlay.RefreshNow(_app.OverlaySettings);
+        _overlay.RefreshNow();
     }
 
     private void RebuildPhones(IReadOnlyList<PairedPhoneInfo> phones)

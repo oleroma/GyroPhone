@@ -17,18 +17,21 @@ internal sealed class OverlayScene
     public bool Connected;
     /// <summary>Moving and resizing (click-through off): a frame shows the window's edges.</summary>
     public bool Arranging;
+    /// <summary>The fingers' trails (phone, with Finger trails on), and the time to fade them by (ms).</summary>
+    public FingerTrails? Trails;
+    public long NowTicks;
 }
 
 /// <summary>
-/// Draws the phone overlay: the phone as a rounded slab in perspective, turned by the phone's pose,
-/// seen from the player's side, with the layout on its screen: each control's outline and label,
-/// lit while pressed or latched, stick knobs where the thumb holds them, and finger dots. Plain
-/// GDI+ (every point projected), no 3D library.
+/// Draws an overlay window: its background (and its edges while arranging), then what it shows. The
+/// phone: a rounded slab in perspective, turned by its pose, seen from the player's side, with the
+/// layout on its screen: each control's outline and label, lit while pressed or latched, stick
+/// knobs where the thumb holds them, finger dots and trails. The other kinds: <see cref="ShapeDrawing"/>,
+/// <see cref="DialDrawing"/>. Plain GDI+ (every point projected), no 3D library.
 /// </summary>
-internal static class PhoneOverlayRenderer
+internal static class OverlayRenderer
 {
     private static readonly Color Idle = Color.FromArgb(0x66, 255, 255, 255);
-    private static readonly Color LatchedColor = Color.FromArgb(0x8F, 0xE3, 0x9A);
 
     /// <summary>Camera distance, in slab units (the slab's long side is about 2.2).</summary>
     private const float CameraZ = 5.5f;
@@ -62,13 +65,52 @@ internal static class PhoneOverlayRenderer
             DrawCaption(g, size, "Drag to move · drag the corner to resize");
         }
 
-        var BodyColor = Opaque(settings.BodyColor);
-        var ScreenColor = Opaque(settings.ScreenColor);
-        var PressedColor = Opaque(settings.LitColor);
-
-        var layout = scene.Layout;
         bool live = scene.Connected && scene.FrameAgeUs is >= 0 and < 1_500_000;
+        var raw = live ? Shown(scene.Frame, settings) : (1f, 0f, 0f, 0f);
+        var m = Matrix3(Level(raw, settings.LevelDeg));
+        int top = scene.Arranging ? 18 : 0;
+        var area = new RectangleF(0, 0, size.Width, size.Height - top);
+        string? note = !scene.Connected ? "Waiting for the phone" : !live ? "Waiting for the phone's data" : null;
+        switch (settings.Kind)
+        {
+            case OverlayKind.Phone:
+                DrawPhone(g, area, scene, settings, live, m);
+                return;
+            case OverlayKind.Shape:
+                ShapeDrawing.Draw(g, area, settings, m, live ? scene.Frame.Axes : 0);
+                break;
+            case OverlayKind.Horizon:
+                DialDrawing.DrawHorizon(g, area, settings, m, Matrix3(raw));
+                break;
+            default:
+                DialDrawing.DrawDisk(g, area, settings, m, Matrix3(raw));
+                break;
+        }
+        if (note != null) DrawNote(g, area, note);
+    }
+
+    /// <summary>A short line under the drawing (no phone or no data).</summary>
+    private static void DrawNote(Graphics g, RectangleF area, string text)
+    {
+        using var font = new Font(FontFamily.GenericSansSerif, Math.Max(9f, area.Height * 0.045f), FontStyle.Bold, GraphicsUnit.Pixel);
+        var fmt = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Far };
+        var r = new RectangleF(area.X, area.Y, area.Width, area.Height - 4);
+        using var shadow = new SolidBrush(Color.FromArgb(160, 0, 0, 0));
+        g.DrawString(text, font, shadow, new RectangleF(r.X + 1, r.Y + 1, r.Width, r.Height), fmt);
+        using var brush = new SolidBrush(Color.FromArgb(230, 255, 255, 255));
+        g.DrawString(text, font, brush, r, fmt);
+    }
+
+    private static void DrawPhone(Graphics g, RectangleF area, OverlayScene scene, OverlaySettings settings, bool live, float[] m)
+    {
+        var BodyColor = Opaque(settings.Color("body"));
+        var ScreenColor = Opaque(settings.Color("screen"));
+        var PressedColor = Opaque(settings.Color("lit"));
+        var LatchedColor = Opaque(settings.Color("latched"));
+        var fingerColor = Color.FromArgb(settings.Color("fingers"));
+        var layout = scene.Layout;
         var f = scene.Frame;
+        var size = new Size((int)area.Width, (int)area.Height);
 
         // The slab: the screen's shape (from the layout) plus a thin bezel.
         float aspect = layout is { WidthPx: > 0, HeightPx: > 0 } ? (float)layout.WidthPx / layout.HeightPx : 20f / 9f;
@@ -78,11 +120,9 @@ internal static class PhoneOverlayRenderer
         float sh = portrait ? longSide : longSide / aspect;
         float bw = sw + 2 * Bezel, bh = sh + 2 * Bezel;
 
-        var q = Level(live ? Shown(f, settings) : (1f, 0f, 0f, 0f), settings.LevelDeg);
-        var m = Matrix3(q);
 
         float radius = MathF.Sqrt(bw * bw + bh * bh) / 2f + Thickness;
-        float half = Math.Min(size.Width, size.Height - (scene.Arranging ? 18 : 0)) / 2f * 0.94f;
+        float half = Math.Min(size.Width, size.Height) / 2f * 0.94f;
         float k = half * (CameraZ - radius) / (CameraZ * radius);
         var cx = size.Width / 2f;
         var cy = size.Height / 2f;
@@ -210,9 +250,30 @@ internal static class PhoneOverlayRenderer
                 DrawLabel(g, layout.Layer, 0.5f, 0.05f, pxW * 0.6f, fontPx, pxW, pxH, P, Color.FromArgb(230, 255, 255, 255), pill: true);
         }
 
+        if (live && scene.Trails is { } trails)
+        {
+            // Each trail fades along its length: older points fainter and thinner.
+            float width = Math.Clamp(k * 0.02f, 1.5f, 6f);
+            foreach (var t in trails.All)
+            {
+                var pts = t.Points;
+                for (int i = 1; i < pts.Count; i++)
+                {
+                    float life = 1f - Math.Clamp((scene.NowTicks - pts[i].T) / (float)FingerTrails.LifeMs, 0f, 1f);
+                    if (life <= 0f) continue;
+                    using var pen = new Pen(Color.FromArgb((int)(fingerColor.A * 0.8f * life), fingerColor), width * (0.4f + 0.6f * life))
+                    {
+                        StartCap = LineCap.Round,
+                        EndCap = LineCap.Round,
+                    };
+                    g.DrawLine(pen, P(pts[i - 1].U, pts[i - 1].V), P(pts[i].U, pts[i].V));
+                }
+            }
+        }
+
         if (live && settings.FingerDots)
         {
-            using var dot = new SolidBrush(Color.FromArgb(150, 255, 255, 255));
+            using var dot = new SolidBrush(Color.FromArgb((int)(fingerColor.A * 0.6f), fingerColor));
             float r = 0.035f;
             for (int i = 0; i < f.FingerCount; i++)
             {
@@ -234,7 +295,7 @@ internal static class PhoneOverlayRenderer
         g.Clip = savedClip;
     }
 
-    /// <summary>The pose shown: the phone's, from the recentred pose (if any), its turn scaled.</summary>
+    /// <summary>The pose shown: the window's pose, from the levelled one (if any), its turn scaled.</summary>
     private static (float W, float X, float Y, float Z) Shown(OverlayFrame f, OverlaySettings s)
     {
         var q = (f.Qw, f.Qx, f.Qy, f.Qz);

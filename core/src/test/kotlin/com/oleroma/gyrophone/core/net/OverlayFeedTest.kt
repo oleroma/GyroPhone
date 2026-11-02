@@ -12,7 +12,7 @@ class OverlayFeedTest {
     )
 
     @Test fun sizes() {
-        assertEquals(140, Wire.sizeOf(PacketType.OVERLAY))
+        assertEquals(164, Wire.sizeOf(PacketType.OVERLAY))
         assertEquals(228, Wire.sizeOf(PacketType.OVERLAY_LAYOUT))
         assertEquals(true, PacketType.isPhoneToHost(PacketType.OVERLAY_LAYOUT))
     }
@@ -47,6 +47,9 @@ class OverlayFeedTest {
         f.gyro(100f, -50f, 25f, 0.01f, 3, true)
         f.up(0f, 9.8f, 0f, 9.8f)
         f.north(0f, 0f, -2f)
+        f.camera(0.5f, 0f, 0f)
+        f.camera(0.5f, 0f, -2f)
+        f.rws(2f, 0f, 0f)
         f.setFingers(floatArrayOf(0.5f, 0.25f), 1)
         f.setStick("a", 1f, -0.5f)
         f.setStick("gone", 0.3f, 0.3f) // not in the layout: left out
@@ -58,6 +61,8 @@ class OverlayFeedTest {
         assertEquals(0, out.getI32(4))
         assertEquals(0, out.getU16(16))
         assertEquals(1, out.getU8(31)) // still one press
+        assertEquals(0, out.getI32(112)) // the camera turn too
+        assertEquals(java.lang.Float.floatToRawIntBits(2f), out.getI32(124)) // the gains stay
     }
 
     @Test fun wantedAndCompassTellTheRuntime() {
@@ -75,6 +80,7 @@ class OverlayFeedTest {
     companion object {
         const val LAYOUT_BLOB = "0160093804044d61696e000100010008001033036606800141"
         const val FRAME = "040302010000803f000000bf0000803ee803000000200000000000000180030101003b010080004000000000000000000000000000000000" +
-            "0100000000000000000000000000000000000000000000000000000000000000007fc1ff0000ff0000ff0000ff0000ff0000ff0000ff0000"
+            "0100000000000000000000000000000000000000000000000000000000000000007fc1ff0000ff0000ff0000ff0000ff0000ff0000ff0000" +
+            "0000803f00000000000000c0" + "000000400000000000000000"
     }
 }

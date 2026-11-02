@@ -39,7 +39,7 @@ public static class Wire
     public const int RumblePlain = 4;
     public const int ForegroundPlain = 66;
     /// <summary>OVERLAY: the phone's pose, touches and presses for the phone overlay (<see cref="OverlayFrame"/>).</summary>
-    public const int OverlayPlain = 112;
+    public const int OverlayPlain = 136;
     /// <summary>OVERLAY_LAYOUT: one piece of the layout the overlay draws on the phone's screen.</summary>
     public const int OverlayLayoutPlain = 200;
 
