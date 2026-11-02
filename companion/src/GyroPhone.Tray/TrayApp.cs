@@ -62,6 +62,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private DebugForm? _debugForm;
     // The open overlay windows, by settings id.
     private readonly Dictionary<string, OverlayForm> _overlayForms = [];
+    // The open windows, for the pacer thread (the dictionary is the UI thread's).
+    private volatile OverlayForm[] _overlayList = [];
     // The overlays' global shortcuts; null until the server owns the port (one instance holds them).
     private Hotkeys? _hotkeys;
     private OverlayPacer? _pacer;
@@ -228,7 +230,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _watchdog.Start();
             _usb.Start();
             _log.Write($"listening on UDP {Wire.Port} as '{settings.HostName}'");
-            _pacer = new OverlayPacer(_ui, TickOverlays, _log.Write);
+            _pacer = new OverlayPacer(TickOverlays, _log.Write);
             ApplyOverlays(); // shown last time: shown again
             try
             {
@@ -620,12 +622,19 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         Refresh();
     }
 
-    /// <summary>A screen refresh: each open overlay window draws again if anything changed.</summary>
+    /// <summary>A screen refresh (pacer thread): each open overlay window draws again if anything changed.</summary>
     private void TickOverlays()
     {
         if (Volatile.Read(ref _exited) != 0) return;
-        foreach (var f in _overlayForms.Values.ToList())
+        foreach (var f in _overlayList)
             if (!f.IsDisposed) f.Tick();
+    }
+
+    /// <summary>The open overlay windows changed (UI thread): the pacer's copy of the list, and whether it runs.</summary>
+    private void OverlaysChanged()
+    {
+        _overlayList = [.. _overlayForms.Values];
+        _pacer?.SetRunning(_overlayList.Length > 0);
     }
 
     /// <summary>The open overlay windows' draw times, for the Debug window.</summary>
@@ -654,7 +663,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         foreach (var id in _overlayForms.Keys.Where(id => OverlayOf(id) == null).ToList())
             if (_overlayForms.Remove(id, out var f)) f.Close();
         _engine.SetOverlay(_overlayForms.Count > 0);
-        _pacer?.SetRunning(_overlayForms.Count > 0);
+        OverlaysChanged();
         foreach (var f in _overlayForms.Values)
         {
             f.Title = OverlayOf(f.Id) is { } o ? OverlayName(o) : "";
@@ -681,10 +690,11 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
                 {
                     _overlayForms.Remove(id);
                     _engine.SetOverlay(_overlayForms.Count > 0);
-                    _pacer?.SetRunning(_overlayForms.Count > 0);
+                    OverlaysChanged();
                 }
             };
             _overlayForms[id] = form;
+            OverlaysChanged();
             form.Show();
         }
         else if (!shown && open != null)

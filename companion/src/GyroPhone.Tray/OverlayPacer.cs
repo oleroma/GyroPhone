@@ -5,32 +5,26 @@ namespace GyroPhone.Tray;
 
 /// <summary>
 /// Paces the overlay windows to the screen: a background thread waits for each refresh of the
-/// desktop compositor (DwmFlush) and asks the UI thread to run <see cref="_tick"/> once, never
-/// queueing a second before the first ran. It sleeps while no overlay window is open.
+/// desktop compositor (DwmFlush) and runs <see cref="_tick"/> on itself, so drawing the overlays
+/// never holds up the main window (it glitched while scrolling when they drew on the UI thread).
+/// It sleeps while no overlay window is open.
 /// <para>
-/// DwmFlush can return at once (nothing for the compositor to do), and ticks posted back to back
-/// starve the UI thread: posted messages come before painting and input, so the main window went
-/// blank. So ticks are also spaced by the display's refresh period at least (high-resolution
-/// waitable timer), and the UI thread always gets the rest of each period for itself.
+/// DwmFlush can return at once (nothing for the compositor to do), so ticks are also spaced by the
+/// display's refresh period at least (high-resolution waitable timer), and a fifth of a period
+/// after the last one ended.
 /// </para>
 /// </summary>
 internal sealed class OverlayPacer : IDisposable
 {
-    private readonly Control _ui;
     private readonly Action _tick;
     private readonly Action<string> _log;
     private readonly ManualResetEventSlim _running = new(false);
-    private readonly ManualResetEventSlim _ticked = new(true);
     private readonly Thread _thread;
-    private int _pending;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
-    // When the last tick finished on the UI thread (Stopwatch ticks).
-    private long _tickEnd;
     private volatile bool _stop;
 
-    public OverlayPacer(Control ui, Action tick, Action<string> log)
+    public OverlayPacer(Action tick, Action<string> log)
     {
-        _ui = ui;
         _tick = tick;
         _log = log;
         _thread = new Thread(Loop) { IsBackground = true, Name = "overlay pacer" };
@@ -62,7 +56,7 @@ internal sealed class OverlayPacer : IDisposable
         double period = 1000.0 / Math.Clamp(RefreshHz(), 30, 500);
         _log($"overlay pacer: {1000.0 / period:0} Hz, {(timer == IntPtr.Zero ? "sleep" : "high-resolution timer")}");
         bool dwmFailed = false;
-        double lastPost = -period;
+        double lastPost = -period, ended = -period;
         while (!_stop)
         {
             _running.Wait();
@@ -73,39 +67,21 @@ internal sealed class OverlayPacer : IDisposable
                 dwmFailed = true;
             }
             // Never sooner than ~a refresh period after the last tick, whatever DwmFlush did, and
-            // a fifth of a period after it ended, so a slow draw still leaves the UI thread time.
+            // a fifth of a period after it ended, so a slow draw still leaves the CPU some rest.
             double now = _clock.Elapsed.TotalMilliseconds;
-            double ended = Volatile.Read(ref _tickEnd) * 1000.0 / Stopwatch.Frequency;
             double wait = Math.Max(lastPost + period * 0.9, ended + period * 0.2) - now;
             if (wait > 0.2) Wait(timer, wait);
-            // The last tick must have run (the UI thread may be busy): never queue a second.
-            if (Interlocked.CompareExchange(ref _pending, 1, 0) != 0)
-            {
-                _ticked.Wait(100);
-                continue;
-            }
-            _ticked.Reset();
+            if (_stop) return;
             lastPost = _clock.Elapsed.TotalMilliseconds;
             try
             {
-                _ui.BeginInvoke(() =>
-                {
-                    try
-                    {
-                        _tick();
-                    }
-                    finally
-                    {
-                        Volatile.Write(ref _tickEnd, _clock.ElapsedTicks);
-                        Volatile.Write(ref _pending, 0);
-                        _ticked.Set();
-                    }
-                });
+                _tick();
             }
-            catch (Exception e) when (e is InvalidOperationException or ObjectDisposedException)
+            catch (Exception e)
             {
-                return; // exiting: the marshalling window is gone
+                _log($"overlay tick: {e.GetType().Name}: {e.Message}");
             }
+            ended = _clock.Elapsed.TotalMilliseconds;
         }
     }
 

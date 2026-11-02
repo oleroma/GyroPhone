@@ -26,6 +26,16 @@ internal sealed class OverlayForm : Form
     private readonly Action<string> _log;
     private readonly OverlayScene _scene = new();
     private DibSurface? _surface;
+    // Drawing runs on the pacer's thread (so the main window never waits for it), or on the UI
+    // thread in Edit (the window moves and resizes there) and for settings changes: one at a time.
+    private readonly object _renderLock = new();
+    // The window, for the pacer's thread (Handle is the UI thread's); zero once destroyed.
+    private IntPtr _hwnd;
+    private readonly int _uiThread = Environment.CurrentManagedThreadId;
+    // A tick posted to the UI thread (Edit) and not run yet.
+    private int _uiTickQueued;
+    // UpdateLayeredWindow refused a call from the pacer's thread: this window draws on the UI thread.
+    private bool _uiOnly;
     // The graphics card draws every window unless it failed once in this run; then they draw with the CPU.
     private static bool _gpuBroken;
     private GpuSurface? _gpuSurface;
@@ -141,15 +151,19 @@ internal sealed class OverlayForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        if (!_gpuBroken)
+        lock (_renderLock)
         {
-            try
+            _hwnd = Handle;
+            if (!_gpuBroken)
             {
-                _gpuSurface = new GpuSurface();
-            }
-            catch (Exception ex)
-            {
-                GpuFailed(ex);
+                try
+                {
+                    _gpuSurface = new GpuSurface();
+                }
+                catch (Exception ex)
+                {
+                    GpuFailed(ex);
+                }
             }
         }
         Render();
@@ -157,10 +171,14 @@ internal sealed class OverlayForm : Form
 
     protected override void OnHandleDestroyed(EventArgs e)
     {
-        _surface?.Dispose();
-        _surface = null;
-        _gpuSurface?.Dispose();
-        _gpuSurface = null;
+        lock (_renderLock)
+        {
+            _hwnd = IntPtr.Zero;
+            _surface?.Dispose();
+            _surface = null;
+            _gpuSurface?.Dispose();
+            _gpuSurface = null;
+        }
         base.OnHandleDestroyed(e);
     }
 
@@ -265,12 +283,38 @@ internal sealed class OverlayForm : Form
     /// <summary>Draw times over the last second, e.g. "Phone 640×480: 2.1 ms avg, 4.0 max, 60 fps".</summary>
     public string Stats => _stats;
 
-    /// <summary>One screen refresh (<see cref="OverlayPacer"/>): draws again if anything changed.</summary>
+    /// <summary>
+    /// One screen refresh, on the pacer's thread (<see cref="OverlayPacer"/>): draws again if anything
+    /// changed, right there, or on the UI thread while in Edit (one tick queued at most).
+    /// </summary>
     public void Tick()
+    {
+        if (IsDisposed) return;
+        if (ClickThrough && !_uiOnly)
+        {
+            TickLocked();
+            return;
+        }
+        if (Interlocked.Exchange(ref _uiTickQueued, 1) != 0) return;
+        try
+        {
+            BeginInvoke(() =>
+            {
+                Volatile.Write(ref _uiTickQueued, 0);
+                TickLocked();
+            });
+        }
+        catch (Exception e) when (e is InvalidOperationException or ObjectDisposedException)
+        {
+            Volatile.Write(ref _uiTickQueued, 0); // closing
+        }
+    }
+
+    private void TickLocked()
     {
         try
         {
-            TickCore();
+            lock (_renderLock) TickCore();
         }
         catch (Exception e)
         {
@@ -301,7 +345,7 @@ internal sealed class OverlayForm : Form
     {
         try
         {
-            RenderCore();
+            lock (_renderLock) RenderCore();
         }
         catch (Exception e)
         {
@@ -311,7 +355,12 @@ internal sealed class OverlayForm : Form
 
     private void RenderCore()
     {
-        if (!IsHandleCreated || Width <= 0 || Height <= 0) return;
+        // The window's size as Windows has it now (no message to the UI thread): drawing at exactly
+        // this size, UpdateLayeredWindow never resizes the window from the pacer's thread.
+        IntPtr hwnd = _hwnd;
+        if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var wr)) return;
+        int width = wr.Right - wr.Left, height = wr.Bottom - wr.Top;
+        if (width <= 0 || height <= 0) return;
         _dirty = false;
         _lastTime = _scene.Frame.PhoneTimeUs;
         _lastLayout = _scene.Frame.LayoutVersion;
@@ -329,8 +378,8 @@ internal sealed class OverlayForm : Form
                 {
                     _scene.Trails = gs.FingerTrails ? _trails : null;
                     _scene.NowTicks = _lastDrawTicks;
-                    var size = new Size(Width, Height);
-                    _gpuSurface.Draw(Width, Height, gs.Quality, c => OverlayRenderer.Draw(c, size, _scene, gs), dc => Present(dc, Width, Height));
+                    var size = new Size(width, height);
+                    _gpuSurface.Draw(width, height, gs.Quality, c => OverlayRenderer.Draw(c, size, _scene, gs), dc => Present(hwnd, dc, width, height));
                 }
             }
             catch (Exception e)
@@ -344,10 +393,10 @@ internal sealed class OverlayForm : Form
         }
         // One picture in the format the layered window takes (premultiplied, top-down DIB), kept
         // between frames: no new bitmap, copy or conversion per frame.
-        if (_surface == null || _surface.Width != Width || _surface.Height != Height)
+        if (_surface == null || _surface.Width != width || _surface.Height != height)
         {
             _surface?.Dispose();
-            _surface = new DibSurface(Width, Height);
+            _surface = new DibSurface(width, height);
         }
         var g = _surface.Graphics;
         try
@@ -356,7 +405,7 @@ internal sealed class OverlayForm : Form
             {
                 _scene.Trails = settings.FingerTrails ? _trails : null;
                 _scene.NowTicks = _lastDrawTicks;
-                OverlayRenderer.Draw(new GdiCanvas(g, settings.Quality, _fonts), new Size(Width, Height), _scene, settings);
+                OverlayRenderer.Draw(new GdiCanvas(g, settings.Quality, _fonts), new Size(width, height), _scene, settings);
             }
         }
         catch (Exception e)
@@ -365,7 +414,7 @@ internal sealed class OverlayForm : Form
             _log($"overlay: drawing failed: {e.Message}");
         }
         g.Flush(System.Drawing.Drawing2D.FlushIntention.Sync);
-        Present(_surface);
+        Present(hwnd, _surface.Dc, width, height);
         Count(start);
     }
 
@@ -411,15 +460,22 @@ internal sealed class OverlayForm : Form
     }
 
     /// <summary>Hands the picture, with its alpha, to the layered window.</summary>
-    private void Present(DibSurface surface) => Present(surface.Dc, surface.Width, surface.Height);
-
-    private void Present(IntPtr dc, int width, int height)
+    private void Present(IntPtr hwnd, IntPtr dc, int width, int height)
     {
         var size = new NativeSize { Cx = width, Cy = height };
         var src = new NativePoint();
         var blend = new BlendFunction { BlendOp = AcSrcOver, SourceConstantAlpha = WindowAlpha(), AlphaFormat = AcSrcAlpha };
-        if (!UpdateLayeredWindow(Handle, IntPtr.Zero, IntPtr.Zero, ref size, dc, ref src, 0, ref blend, UlwAlpha))
-            _log($"overlay: UpdateLayeredWindow failed ({new Win32Exception().Message})");
+        if (UpdateLayeredWindow(hwnd, IntPtr.Zero, IntPtr.Zero, ref size, dc, ref src, 0, ref blend, UlwAlpha)) return;
+        string why = new Win32Exception().Message;
+        if (Environment.CurrentManagedThreadId != _uiThread && !_uiOnly)
+        {
+            // Not allowed from this thread here: draw this window on the UI thread from now on.
+            _uiOnly = true;
+            _dirty = true;
+            _log($"overlay: UpdateLayeredWindow failed off the UI thread ({why}), drawing on the UI thread");
+            return;
+        }
+        _log($"overlay: UpdateLayeredWindow failed ({why})");
     }
 
     /// <summary>
@@ -472,12 +528,16 @@ internal sealed class OverlayForm : Form
     {
         if (disposing)
         {
-            _surface?.Dispose();
-            _surface = null;
-            _gpuSurface?.Dispose();
-            _gpuSurface = null;
-            foreach (var f in _fonts.Values) f.Dispose();
-            _fonts.Clear();
+            lock (_renderLock)
+            {
+                _hwnd = IntPtr.Zero;
+                _surface?.Dispose();
+                _surface = null;
+                _gpuSurface?.Dispose();
+                _gpuSurface = null;
+                foreach (var f in _fonts.Values) f.Dispose();
+                _fonts.Clear();
+            }
         }
         base.Dispose(disposing);
     }
@@ -538,6 +598,13 @@ internal sealed class OverlayForm : Form
     [DllImport("gdi32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DeleteObject(IntPtr hObject);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect { public int Left, Top, Right, Bottom; }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(IntPtr hwnd, out NativeRect rect);
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
