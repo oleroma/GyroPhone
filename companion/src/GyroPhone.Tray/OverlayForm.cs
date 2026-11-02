@@ -26,6 +26,13 @@ internal sealed class OverlayForm : Form
     private readonly Action<string> _log;
     private readonly OverlayScene _scene = new();
     private DibSurface? _surface;
+    // The graphics card draws this window (DirectComposition) unless it failed once in this run;
+    // then every window draws with the CPU into a layered window. Set before the handle is made
+    // (field initialisers run before the base Form constructor reads CreateParams).
+    private static bool _gpuBroken;
+    private bool _gpu = !_gpuBroken;
+    private GpuSurface? _gpuSurface;
+    private readonly Dictionary<(float, bool), Font> _fonts = [];
     // Draw times and pictures in the last second, for the Debug window.
     private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
     private double _statStart, _statSumMs, _statMaxMs, _lastDrawAt;
@@ -73,6 +80,7 @@ internal sealed class OverlayForm : Form
         {
             var cp = base.CreateParams;
             cp.ExStyle |= WsExLayered | WsExToolWindow | WsExNoActivate | WsExTopmost;
+            if (_gpu) cp.ExStyle |= WsExNoRedirectionBitmap;
             if (ClickThrough) cp.ExStyle |= WsExTransparent;
             return cp;
         }
@@ -137,6 +145,20 @@ internal sealed class OverlayForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        if (_gpu)
+        {
+            try
+            {
+                // Layered (for click-through) with constant alpha: the picture comes from DirectComposition.
+                SetLayeredWindowAttributes(Handle, 0, 255, LwaAlpha);
+                _gpuSurface = new GpuSurface(Handle, Width, Height);
+            }
+            catch (Exception ex)
+            {
+                GpuFailed(ex);
+                return;
+            }
+        }
         Render();
     }
 
@@ -144,6 +166,8 @@ internal sealed class OverlayForm : Form
     {
         _surface?.Dispose();
         _surface = null;
+        _gpuSurface?.Dispose();
+        _gpuSurface = null;
         base.OnHandleDestroyed(e);
     }
 
@@ -304,6 +328,26 @@ internal sealed class OverlayForm : Form
         _scene.Selected = _selected;
         _scene.Title = _title;
         double start = _clock.Elapsed.TotalMilliseconds;
+        if (_gpuSurface != null)
+        {
+            try
+            {
+                if (Settings is { } gs)
+                {
+                    _scene.Trails = gs.FingerTrails ? _trails : null;
+                    _scene.NowTicks = _lastDrawTicks;
+                    var size = new Size(Width, Height);
+                    _gpuSurface.Draw(Width, Height, WindowAlpha() / 255f, gs.Quality, c => OverlayRenderer.Draw(c, size, _scene, gs));
+                }
+            }
+            catch (Exception e)
+            {
+                GpuFailed(e);
+                return;
+            }
+            Count(start);
+            return;
+        }
         // One picture in the format the layered window takes (premultiplied, top-down DIB), kept
         // between frames: no new bitmap, copy or conversion per frame.
         if (_surface == null || _surface.Width != Width || _surface.Height != Height)
@@ -318,7 +362,7 @@ internal sealed class OverlayForm : Form
             {
                 _scene.Trails = settings.FingerTrails ? _trails : null;
                 _scene.NowTicks = _lastDrawTicks;
-                OverlayRenderer.Draw(g, new Size(Width, Height), _scene, settings);
+                OverlayRenderer.Draw(new GdiCanvas(g, settings.Quality, _fonts), new Size(Width, Height), _scene, settings);
             }
         }
         catch (Exception e)
@@ -328,6 +372,23 @@ internal sealed class OverlayForm : Form
         }
         g.Flush(System.Drawing.Drawing2D.FlushIntention.Sync);
         Present(_surface);
+        Count(start);
+    }
+
+    /// <summary>The graphics card can't draw: log it, and from now on every window draws with the CPU.</summary>
+    private void GpuFailed(Exception e)
+    {
+        _log($"overlay: graphics card drawing failed, drawing with the CPU: {e.GetType().Name}: {e.Message}");
+        _gpuBroken = true;
+        _gpu = false;
+        _gpuSurface?.Dispose();
+        _gpuSurface = null;
+        // A window without a redirection bitmap can't show CPU pictures: make the window again without it.
+        if (IsHandleCreated) BeginInvoke(RecreateHandle);
+    }
+
+    private void Count(double start)
+    {
         double end = _clock.Elapsed.TotalMilliseconds;
         _lastDrawAt = start;
         double took = end - start;
@@ -341,9 +402,10 @@ internal sealed class OverlayForm : Form
         double now = _clock.Elapsed.TotalMilliseconds;
         if (now - _statStart < 1000) return;
         double secs = (now - _statStart) / 1000.0;
+        string by = _gpuSurface != null ? "GPU" : "CPU";
         _stats = _statFrames == 0
-            ? $"{_title} {Width}×{Height}: idle"
-            : $"{_title} {Width}×{Height}: {_statSumMs / _statFrames:0.0} ms avg, {_statMaxMs:0.0} max, {_statFrames / secs:0} fps";
+            ? $"{_title} {Width}×{Height} ({by}): idle"
+            : $"{_title} {Width}×{Height} ({by}): {_statSumMs / _statFrames:0.0} ms avg, {_statMaxMs:0.0} max, {_statFrames / secs:0} fps";
         _statStart = now;
         _statSumMs = _statMaxMs = 0;
         _statFrames = 0;
@@ -419,6 +481,10 @@ internal sealed class OverlayForm : Form
         {
             _surface?.Dispose();
             _surface = null;
+            _gpuSurface?.Dispose();
+            _gpuSurface = null;
+            foreach (var f in _fonts.Values) f.Dispose();
+            _fonts.Clear();
         }
         base.Dispose(disposing);
     }
@@ -431,6 +497,8 @@ internal sealed class OverlayForm : Form
     private const int WsExToolWindow = 0x00000080;
     private const int WsExNoActivate = 0x08000000;
     private const int WsExTopmost = 0x00000008;
+    private const int WsExNoRedirectionBitmap = 0x00200000;
+    private const uint LwaAlpha = 0x2;
     private const int WmNcHitTest = 0x0084;
     private const int WmMouseActivate = 0x0021;
     private const int MaNoActivate = 3;
@@ -448,6 +516,10 @@ internal sealed class OverlayForm : Form
         public short Planes, BitCount;
         public int Compression, SizeImage, XPelsPerMeter, YPelsPerMeter, ClrUsed, ClrImportant;
     }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint key, byte alpha, uint flags);
 
     [DllImport("gdi32.dll", SetLastError = true)]
     private static extern IntPtr CreateDIBSection(IntPtr hdc, ref BitmapInfoHeader info, uint usage, out IntPtr bits, IntPtr section, uint offset);
