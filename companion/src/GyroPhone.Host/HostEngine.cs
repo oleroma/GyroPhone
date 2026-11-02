@@ -127,6 +127,12 @@ public sealed class HostEngine
     private bool _paused, _locked;
     private bool _releasedForSilence;
     private bool _elevatedForeground, _networkPublic;
+
+    // Phone overlay: asked for in HOST_STATUS while on; the newest OVERLAY and layout from the active phone.
+    private bool _overlayOn;
+    private readonly OverlayFrame _overlayFrame = new();
+    private readonly OverlayLayoutAssembler _overlayLayout = new();
+    private long _overlayRxUs = long.MinValue;
     private long _lastStatusUs;
     private int _rumbleNext; // (large << 8) | small, plus RumbleDirty while unsent
     private int _lastRumble;
@@ -328,6 +334,14 @@ public sealed class HostEngine
                 var info = WireCodec.DecodeLinkInfo(plain);
                 _stats.OnLinkInfo(info);
                 OnDebugFlags(info.Flags, nowUs);
+                break;
+            case PacketType.Overlay:
+                if (!_overlayOn) break;
+                _overlayFrame.Decode(plain);
+                _overlayRxUs = nowUs;
+                break;
+            case PacketType.OverlayLayout:
+                if (_overlayOn) _overlayLayout.Add(plain);
                 break;
             case PacketType.Bye:
                 _events.Log($"phone said bye (reason {plain[0]})");
@@ -831,6 +845,16 @@ public sealed class HostEngine
         }
     }
 
+    /// <summary>Changes the phone overlay's settings (<see cref="HostSettings.Overlay"/>) and saves them.</summary>
+    public void UpdateOverlaySettings(Action<OverlaySettings> change)
+    {
+        lock (_lock)
+        {
+            change(_settings.Overlay);
+            _settingsDirty = true;
+        }
+    }
+
     /// <summary>What a left click on the tray icon does; the tray reads it from <see cref="Settings"/>.</summary>
     public void SetTrayClick(TrayClickAction action)
     {
@@ -890,6 +914,37 @@ public sealed class HostEngine
             if (locked) ReleaseAllLocked();
             else if (wasBlocked && !Blocked) ResyncAfterBlock();
             _events.StateChanged();
+        }
+    }
+
+    /// <summary>
+    /// The phone overlay is shown: HOST_STATUS asks the phone for its pose, layout and presses
+    /// (told at once), and they are kept for <see cref="OverlaySnapshot"/>. Off: the phone stops sending them.
+    /// </summary>
+    public void SetOverlay(bool on)
+    {
+        lock (_lock)
+        {
+            if (on == _overlayOn) return;
+            _overlayOn = on;
+            _overlayRxUs = long.MinValue;
+            if (!on) _overlayLayout.Reset();
+            if (_sessions.Active is { } a) SendStatus(a, _clock.NowUs);
+        }
+    }
+
+    /// <summary>
+    /// Copies the newest OVERLAY into <paramref name="into"/> and returns how long ago it came (us),
+    /// or -1 when none came in this session; <paramref name="layout"/> is the newest complete layout.
+    /// </summary>
+    public long OverlaySnapshot(OverlayFrame into, out OverlayLayout? layout)
+    {
+        lock (_lock)
+        {
+            layout = _overlayLayout.Layout;
+            if (_overlayRxUs == long.MinValue) return -1;
+            _overlayFrame.CopyTo(into);
+            return Math.Max(0, _clock.NowUs - _overlayRxUs);
         }
     }
 
@@ -1091,6 +1146,8 @@ public sealed class HostEngine
             RememberEnded(a.SessionId); // in-flight packets cross the HOST_BYE
         }
         _sessions.DropActive();
+        _overlayLayout.Reset();
+        _overlayRxUs = long.MinValue;
         _pad.Unplug();
         _padFrameValid = false;
         _hasPending = false;
@@ -1258,6 +1315,7 @@ public sealed class HostEngine
         if (_paused || _locked) flags |= HostStatusFlags.InputPaused;
         if (_elevatedForeground) flags |= HostStatusFlags.ElevatedForeground;
         if (_networkPublic) flags |= HostStatusFlags.NetworkPublic;
+        if (_overlayOn) flags |= HostStatusFlags.Overlay;
         Span<byte> p = stackalloc byte[Wire.HostStatusPlain];
         WireCodec.EncodeHostStatus(new HostStatus(s.HighestRxSeq, _stats.RxPerSec, _stats.LossPermille,
             _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs, (byte)_settings.OutputMode, flags), p);

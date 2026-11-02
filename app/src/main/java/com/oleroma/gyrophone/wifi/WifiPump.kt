@@ -9,6 +9,7 @@ import com.oleroma.gyrophone.core.net.HostFlags
 import com.oleroma.gyrophone.core.net.LinkInfo
 import com.oleroma.gyrophone.core.net.LiveSession
 import com.oleroma.gyrophone.core.net.MouseTotals
+import com.oleroma.gyrophone.core.net.OverlayFeed
 import com.oleroma.gyrophone.core.net.PacketType
 import com.oleroma.gyrophone.core.net.SendScheduler
 import com.oleroma.gyrophone.core.net.SessionCipher
@@ -44,6 +45,9 @@ class WifiPump(private val engine: MappingEngine) {
     @Volatile var linkInfoSource: (() -> LinkInfo?)? = null
     @Volatile private var linkInfoDue = false
 
+    /** The phone overlay's data: sent while [OverlayFeed.wanted] (the PC's overlay is on). */
+    @Volatile var overlay: OverlayFeed? = null
+
     /** STATE packets handed to / refused by the socket during the last full second. */
     @Volatile var sentPerSecond = 0
         private set
@@ -72,6 +76,9 @@ class WifiPump(private val engine: MappingEngine) {
     private var seq = 0
     private var nextPingNs = 0L
     private var lastLinkInfoNs = 0L
+    private var nextOverlayNs = 0L
+    private var layoutSentVersion = -1
+    private var layoutSentNs = 0L
 
     fun start(socket: DatagramSocket) {
         if (running) return
@@ -177,13 +184,34 @@ class WifiPump(private val engine: MappingEngine) {
                     sendSealed(c, PacketType.LINK_INFO, n)
                 }
             }
-            val wakeAt = minOf(minOf(scheduler.nextDeadline(), nextPingNs), minOf(lastLinkInfoNs + SECOND_NS, engine.touchpadDeadlineNanos()))
+            val ov = overlay?.takeIf { it.wanted }
+            if (ov == null) layoutSentVersion = -1
+            if (ov != null && now >= nextOverlayNs) {
+                nextOverlayNs = now + OVERLAY_NS
+                sendOverlay(c, ov, now)
+            }
+            var wakeAt = minOf(minOf(scheduler.nextDeadline(), nextPingNs), minOf(lastLinkInfoNs + SECOND_NS, engine.touchpadDeadlineNanos()))
+            if (ov != null) wakeAt = minOf(wakeAt, nextOverlayNs)
             val wait = wakeAt - System.nanoTime()
             if (wait > 0) LockSupport.parkNanos(wait)
         }
         cur?.let { goodbye(it, exitByeReason) }
         cur = null
         cipher = null
+    }
+
+    /** One OVERLAY, then the layout's pieces when it changed or every [LAYOUT_REPEAT_NS] (a lost piece comes again). */
+    private fun sendOverlay(c: LiveSession, ov: OverlayFeed, now: Long) {
+        val n = ov.encodeFrame(plain, 0, phoneUs().toInt(), engine.pressedTouches(), engine.latchedTouches())
+        sendSealed(c, PacketType.OVERLAY, n)
+        val (version, blob) = ov.layoutSnapshot() ?: return
+        if (version == layoutSentVersion && now - layoutSentNs < LAYOUT_REPEAT_NS) return
+        layoutSentVersion = version
+        layoutSentNs = now
+        for (i in 0 until OverlayFeed.pieceCount(blob)) {
+            val m = OverlayFeed.encodeLayoutPiece(plain, 0, version, blob, i)
+            sendSealed(c, PacketType.OVERLAY_LAYOUT, m)
+        }
     }
 
     private fun switchTo(session: LiveSession?) {
@@ -198,6 +226,8 @@ class WifiPump(private val engine: MappingEngine) {
         nextPingNs = now
         lastLinkInfoNs = now
         linkInfoDue = false
+        nextOverlayNs = now
+        layoutSentVersion = -1
     }
 
     /** One neutral STATE (totals kept), then BYE x3 at 5 ms intervals. */
@@ -258,6 +288,9 @@ class WifiPump(private val engine: MappingEngine) {
         private const val BYE_COUNT = 3
         private const val BYE_SPACING_NS = 5_000_000L
         private const val STOP_JOIN_MS = 500L
+        /** OVERLAY about 60 times a second. */
+        private const val OVERLAY_NS = 16_666_667L
+        private const val LAYOUT_REPEAT_NS = 2 * SECOND_NS
 
         /** Phone clock for STATE, PING and LINK_INFO: elapsed realtime in microseconds. */
         fun phoneUs(): Long = SystemClock.elapsedRealtimeNanos() / 1000

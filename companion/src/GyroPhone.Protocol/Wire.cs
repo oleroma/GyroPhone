@@ -38,6 +38,10 @@ public static class Wire
     public const int HostStatusPlain = 22;
     public const int RumblePlain = 4;
     public const int ForegroundPlain = 66;
+    /// <summary>OVERLAY: the phone's pose, touches and presses for the phone overlay (<see cref="OverlayFrame"/>).</summary>
+    public const int OverlayPlain = 96;
+    /// <summary>OVERLAY_LAYOUT: one piece of the layout the overlay draws on the phone's screen.</summary>
+    public const int OverlayLayoutPlain = 200;
 
     public static readonly int[] RatesHz = [250, 500, 1000];
     public const int DefaultRateHz = 1000;
@@ -204,6 +208,8 @@ public static class HostStatusFlags
     public const byte InputPaused = 1 << 2;
     public const byte ElevatedForeground = 1 << 3;
     public const byte NetworkPublic = 1 << 4;
+    /// <summary>The phone overlay is on: the phone sends OVERLAY and OVERLAY_LAYOUT.</summary>
+    public const byte Overlay = 1 << 5;
 }
 
 /// <summary>BYE reason (phone to host).</summary>

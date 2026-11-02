@@ -39,6 +39,10 @@ object Wire {
     const val HOST_STATUS_PLAIN = 22
     const val RUMBLE_PLAIN = 4
     const val FOREGROUND_PLAIN = 66
+    /** OVERLAY: the phone's pose, touches and presses for the PC's phone overlay ([OverlayFeed]). */
+    const val OVERLAY_PLAIN = 96
+    /** OVERLAY_LAYOUT: one piece of the layout the overlay draws on the phone's screen. */
+    const val OVERLAY_LAYOUT_PLAIN = 200
 
     /** Sealed packet size for a plaintext of [plain] bytes. */
     fun sealedSize(plain: Int): Int = HEADER + plain + GCM_TAG
@@ -126,6 +130,8 @@ object Wire {
         PacketType.HOST_STATUS -> HOST_STATUS_PLAIN
         PacketType.RUMBLE -> RUMBLE_PLAIN
         PacketType.FOREGROUND -> FOREGROUND_PLAIN
+        PacketType.OVERLAY -> OVERLAY_PLAIN
+        PacketType.OVERLAY_LAYOUT -> OVERLAY_LAYOUT_PLAIN
         PacketType.HOST_BYE -> BYE_PLAIN
         else -> -1
     }
@@ -150,6 +156,10 @@ object PacketType {
     const val LINK_INFO = 0x22
     /** Sent instead of STATE when WELCOME has [HostFlags.HIRES_WHEEL]. */
     const val STATE_HIRES = 0x23
+    /** Sent only while HOST_STATUS has [HostStatusFlags.OVERLAY]: pose, touches, presses. */
+    const val OVERLAY = 0x24
+    /** Sent only while HOST_STATUS has [HostStatusFlags.OVERLAY]: the layout, in pieces. */
+    const val OVERLAY_LAYOUT = 0x25
     const val BYE = 0x2F
     const val PONG = 0x30
     const val HOST_STATUS = 0x31
@@ -267,6 +277,8 @@ object HostStatusFlags {
     const val INPUT_PAUSED = 4
     const val ELEVATED_FOREGROUND = 8
     const val NETWORK_PUBLIC = 16
+    /** The PC's phone overlay is on: the phone sends OVERLAY and OVERLAY_LAYOUT. */
+    const val OVERLAY = 32
 }
 
 /** BYE reason (phone). */

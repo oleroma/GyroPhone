@@ -271,6 +271,12 @@ class GyroPose {
         w *= n; x *= n; y *= n; z *= n
     }
 
+    /** Writes the rotation as a unit quaternion (w, x, y, z) into [out]. */
+    @Synchronized
+    fun quaternion(out: FloatArray) {
+        out[0] = w; out[1] = x; out[2] = y; out[3] = z
+    }
+
     /** Writes the rotation as a row-major 3×3 matrix (phone frame → view frame) into [out]. */
     @Synchronized
     fun matrix(out: FloatArray) {

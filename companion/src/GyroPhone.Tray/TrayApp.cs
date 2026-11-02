@@ -60,6 +60,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     private PairForm? _pairForm;
     private MainForm? _mainForm;
     private DebugForm? _debugForm;
+    private PhoneOverlayForm? _overlayForm;
+    private readonly ToolStripMenuItem _overlayShowItem, _overlayClickItem, _overlayDotsItem;
+    private readonly ToolStripMenuItem[] _overlayBgItems, _overlayScaleItems;
+    private static readonly float[] OverlayScales = [0.5f, 1f, 1.5f, 2f, 3f];
     private int _refreshQueued;
     private bool? _firewallOk;
     private bool? _usbRuleOk;
@@ -144,6 +148,34 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _restartAdminItem = new ToolStripMenuItem("Restart as administrator", null, (_, _) => RestartAsAdmin());
         var logItem = new ToolStripMenuItem("Open log folder", null, (_, _) => OpenLogFolder());
         var debugItem = new ToolStripMenuItem("Debug window…", null, (_, _) => ShowDebugForm());
+        _overlayShowItem = new ToolStripMenuItem("Show phone overlay", null, (_, _) => SetOverlayShown(!_engine.Settings.Overlay.Shown));
+        _overlayClickItem = new ToolStripMenuItem("Click-through (off: drag to move and resize)", null,
+            (_, _) => ChangeOverlay(o => o.ClickThrough = !o.ClickThrough));
+        _overlayDotsItem = new ToolStripMenuItem("Finger dots", null, (_, _) => ChangeOverlay(o => o.FingerDots = !o.FingerDots));
+        _overlayBgItems =
+        [
+            new ToolStripMenuItem("Transparent", null, (_, _) => ChangeOverlay(o => o.Background = OverlayBackground.Transparent)),
+            new ToolStripMenuItem("Green (for chroma key)", null, (_, _) => ChangeOverlay(o => o.Background = OverlayBackground.Green)),
+            new ToolStripMenuItem("Dark", null, (_, _) => ChangeOverlay(o => o.Background = OverlayBackground.Dark)),
+        ];
+        var overlayBgItem = new ToolStripMenuItem("Background");
+        overlayBgItem.DropDownItems.AddRange(_overlayBgItems);
+        _overlayScaleItems = OverlayScales.Select(k =>
+            new ToolStripMenuItem($"{k:0.#}×", null, (_, _) => ChangeOverlay(o => o.MotionScale = k))).ToArray();
+        var overlayScaleItem = new ToolStripMenuItem("Turn amount");
+        overlayScaleItem.DropDownItems.AddRange(_overlayScaleItems);
+        var overlayItem = new ToolStripMenuItem("Phone overlay");
+        overlayItem.DropDownItems.AddRange(new ToolStripItem[]
+        {
+            _overlayShowItem,
+            _overlayClickItem,
+            overlayBgItem,
+            overlayScaleItem,
+            _overlayDotsItem,
+            new ToolStripSeparator(),
+            new ToolStripMenuItem("Recenter: the phone as held now shows square on (Ctrl+Alt+R)", null, (_, _) => _overlayForm?.Recenter()),
+            new ToolStripMenuItem("Level again (undo recenter)", null, (_, _) => ChangeOverlay(o => o.Center = null)),
+        });
         // The phone's Record button: save this PC's side at once (the ring keeps moving).
         _engine.DebugSaveRequested = () => Post(() =>
         {
@@ -167,6 +199,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _autoStartItem,
             _watcherItem,
             _usbDirectItem,
+            overlayItem,
             trayClickItem,
             new ToolStripSeparator(),
             _networkItem,
@@ -217,6 +250,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             _watchdog.Start();
             _usb.Start();
             _log.Write($"listening on UDP {Wire.Port} as '{settings.HostName}'");
+            ApplyOverlay(); // shown last time: shown again
         }
         else
         {
@@ -319,6 +353,12 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _retryDriverItem.Available = !s.DriverOk;
         _restartAdminItem.Available = !ElevationProbe.IsSelfElevated;
         _clickMainItem.Checked = TrayClick == TrayClickAction.OpenMainWindow;
+        var ov = _engine.Settings.Overlay;
+        _overlayShowItem.Checked = ov.Shown;
+        _overlayClickItem.Checked = ov.ClickThrough;
+        _overlayDotsItem.Checked = ov.FingerDots;
+        for (int i = 0; i < _overlayBgItems.Length; i++) _overlayBgItems[i].Checked = (int)ov.Background == i;
+        for (int i = 0; i < _overlayScaleItems.Length; i++) _overlayScaleItems[i].Checked = MathF.Abs(OverlayScales[i] - ov.MotionScale) < 0.01f;
         _clickPairItem.Checked = TrayClick == TrayClickAction.PairNewPhone;
         RebuildPhones(s.PairedPhones);
         _hostKeyItem.Text = s.HostKeyFingerprint is { } fp ? $"This PC's key: {fp}" : "This PC's key: unavailable (see Status)";
@@ -421,6 +461,39 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _mainForm.Show();
         if (_mainForm.WindowState == FormWindowState.Minimized) _mainForm.WindowState = FormWindowState.Normal;
         _mainForm.Activate();
+    }
+
+    /// <summary>Shows or closes the phone overlay window, and remembers it for the next start.</summary>
+    internal void SetOverlayShown(bool shown)
+    {
+        _engine.UpdateOverlaySettings(o => o.Shown = shown);
+        ApplyOverlay();
+    }
+
+    private void ChangeOverlay(Action<OverlaySettings> change)
+    {
+        _engine.UpdateOverlaySettings(change);
+        _overlayForm?.SettingsChanged();
+    }
+
+    private void ApplyOverlay()
+    {
+        bool shown = _engine.Settings.Overlay.Shown;
+        if (shown && (_overlayForm == null || _overlayForm.IsDisposed))
+        {
+            var form = new PhoneOverlayForm(_engine, _log.Write);
+            form.FormClosed += (_, _) =>
+            {
+                if (ReferenceEquals(_overlayForm, form)) _overlayForm = null;
+            };
+            _overlayForm = form;
+            form.Show();
+        }
+        else if (!shown && _overlayForm is { IsDisposed: false } f)
+        {
+            f.Close();
+            _overlayForm = null;
+        }
     }
 
     internal void ShowDebugForm()
@@ -862,6 +935,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         _pairForm?.Close();
         _mainForm?.Close();
         _debugForm?.Close();
+        _overlayForm?.Close();
         Shutdown();
         ExitThread();
     }
