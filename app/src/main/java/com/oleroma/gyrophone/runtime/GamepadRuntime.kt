@@ -142,6 +142,19 @@ class GamepadRuntime(context: Context) {
     )
     val wifiRateHz: StateFlow<Int> = _wifiRateHz
 
+    private val _gyroPollHz = MutableStateFlow(
+        prefs.getInt(KEY_GYRO_POLL, DirectChannelGyroSource.DEFAULT_POLL_HZ)
+            .takeIf { it in DirectChannelGyroSource.POLL_RATES_HZ } ?: DirectChannelGyroSource.DEFAULT_POLL_HZ,
+    )
+
+    /** How often the gyro direct channel is checked for new samples. */
+    val gyroPollHz: StateFlow<Int> = _gyroPollHz
+
+    private val _gyroPollUsed = MutableStateFlow(true)
+
+    /** False while the gyro runs on the listener, where [gyroPollHz] has no effect. Kept while paused. */
+    val gyroPollUsed: StateFlow<Boolean> = _gyroPollUsed
+
     private val _screenOrientation = MutableStateFlow(
         prefs.getString(KEY_ORIENTATION, null)
             ?.let { name -> ScreenOrientation.entries.firstOrNull { it.name == name } }
@@ -446,6 +459,9 @@ class GamepadRuntime(context: Context) {
 
     // Owned by the thread of the running source; reset before each source starts.
     private var lastGyroTs = 0L
+
+    /** Set by the sampling thread on each sample; the main thread checks a fresh direct channel delivers at all. */
+    @Volatile private var gyroSamples = 0L
     private val rateWindow = GyroRateWindow()
 
     /** When set, the next controller input is captured for the mapping editor instead of sent. */
@@ -512,6 +528,15 @@ class GamepadRuntime(context: Context) {
         prefs.edit().putInt(KEY_WIFI_RATE, hz).apply()
         _wifiRateHz.value = hz
         wifi.rateHz = hz
+    }
+
+    /** Applies at once to a running direct channel, without restarting the sensor. */
+    @Synchronized
+    fun setGyroPollRate(hz: Int) {
+        if (hz !in DirectChannelGyroSource.POLL_RATES_HZ) return
+        prefs.edit().putInt(KEY_GYRO_POLL, hz).apply()
+        _gyroPollHz.value = hz
+        (gyro as? DirectChannelGyroSource)?.pollHz = hz
     }
 
     fun setIdleStopMinutes(minutes: Int) {
@@ -974,7 +999,7 @@ class GamepadRuntime(context: Context) {
     private fun startGyro() {
         if (gyro != null) return
         val sm = appContext.getSystemService(SensorManager::class.java) ?: return
-        val candidates = GyroSource.candidates(sm)
+        val candidates = GyroSource.candidates(sm, _gyroPollHz.value)
         // While the direct channel is capped the listener goes first; the direct channel stays a last resort.
         val ordered = if (avoidDirect) candidates.sortedBy { it is DirectChannelGyroSource } else candidates
         for (source in ordered) {
@@ -984,8 +1009,15 @@ class GamepadRuntime(context: Context) {
             gyroMouse.reset() // no sub-count remainder or smoothing left from before a pause
             if (source.start { x, y, z, ts -> onGyroSample(source, x, y, z, ts) }) {
                 gyro = source
+                _gyroPollUsed.value = source is DirectChannelGyroSource
+                if (source is DirectChannelGyroSource) {
+                    // A direct channel that opens but never delivers (seen with gralloc buffers) would leave
+                    // the gyro dead: the rate check below never closes a window without samples.
+                    val before = gyroSamples
+                    main.postDelayed({ if (gyroSamples == before) onDirectCapped(source, 0) }, SILENT_DIRECT_MS)
+                }
                 val name = if (avoidDirect && source !is DirectChannelGyroSource) {
-                    "${source.name}; direct channel limited to ~$cappedHz Hz"
+                    "${source.name}; " + if (cappedHz == 0) "direct channel gave no samples" else "direct channel limited to ~$cappedHz Hz"
                 } else source.name
                 _gyroInfo.value = GyroInfo(source = name)
                 return
@@ -1021,6 +1053,8 @@ class GamepadRuntime(context: Context) {
     companion object {
         private const val KEY_RATE = "report_rate_hz"
         private const val KEY_WIFI_RATE = "wifi_rate_hz"
+        private const val KEY_GYRO_POLL = "gyro_poll_hz"
+        private const val SILENT_DIRECT_MS = 1500L
         private const val KEY_TRANSPORT = "transport"
         private const val KEY_ORIENTATION = "screen_orientation"
         private const val KEY_PAD_ONLY_INPUT = "pad_only_input"
@@ -1077,6 +1111,7 @@ class GamepadRuntime(context: Context) {
     }
 
     private fun onGyroSample(source: GyroSource, x: Float, y: Float, z: Float, ts: Long) {
+        gyroSamples++
         val dt = if (lastGyroTs == 0L) 0f else ((ts - lastGyroTs) / 1e9f).coerceIn(0f, 0.05f)
         lastGyroTs = ts
         debug.trace?.gyro((x - biasX) * RAD_TO_DEG, (y - biasY) * RAD_TO_DEG, (z - biasZ) * RAD_TO_DEG)

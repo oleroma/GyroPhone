@@ -21,6 +21,13 @@ android {
         val sha = System.getenv("GP_COMMIT")?.take(7)
         versionCode = run ?: 1
         versionName = if (run != null) "0.1.$run" + (sha?.let { "-$it" } ?: "") else "0.1.0-dev"
+        // Only phones: the native gyro buffer reader (src/main/cpp) is built for 64-bit ARM alone.
+        ndk { abiFilters += "arm64-v8a" }
+    }
+
+    // The gyro direct channel on phones that offer it only as a gralloc HardwareBuffer.
+    externalNativeBuild {
+        cmake { path = file("src/main/cpp/CMakeLists.txt") }
     }
 
     signingConfigs {
