@@ -992,6 +992,35 @@ public sealed class HostEngine
         }
     }
 
+    /// <summary>Hide all: every overlay window is hidden, each keeping its own Show.</summary>
+    public void SetOverlaysHidden(bool hidden)
+    {
+        lock (_lock)
+        {
+            if (_settings.OverlaysHidden == hidden) return;
+            _settings.OverlaysHidden = hidden;
+            _settingsDirty = true;
+        }
+    }
+
+    /// <summary>
+    /// Sets shortcut <paramref name="action"/> ("" = none). Another action that had the same keys
+    /// loses them, so one press never does two things.
+    /// </summary>
+    public void SetOverlayShortcut(OverlayAction action, string keys)
+    {
+        lock (_lock)
+        {
+            var s = _settings.OverlayShortcuts;
+            keys ??= "";
+            if (keys.Length > 0)
+                foreach (var other in OverlayShortcuts.All)
+                    if (other != action && string.Equals(s.Get(other), keys, StringComparison.OrdinalIgnoreCase)) s.Set(other, "");
+            s.Set(action, keys);
+            _settingsDirty = true;
+        }
+    }
+
     /// <summary>
     /// The phone overlay is shown: HOST_STATUS asks the phone for its pose, layout and presses
     /// (told at once), and they are kept for <see cref="OverlaySnapshot"/>. Off: the phone stops sending them.

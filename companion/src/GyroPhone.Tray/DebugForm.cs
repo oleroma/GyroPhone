@@ -15,6 +15,7 @@ internal sealed class DebugForm : Form
 
     private readonly HostEngine _engine;
     private readonly Func<string?> _save;
+    private readonly Func<string> _overlays;
     private readonly Label _status;
     private readonly TextBox _events;
     private readonly CheckBox _pause;
@@ -28,10 +29,12 @@ internal sealed class DebugForm : Form
         DateTime.Now.Ticks - GyroPhone.Host.Abstractions.StopwatchClock.Instance.NowUs * 10;
 
     /// <param name="save">Saves a recording and returns its path, or null when it could not.</param>
-    public DebugForm(HostEngine engine, Func<string?> save, Action openFolder)
+    /// <param name="overlays">The overlay windows' draw times (one line).</param>
+    public DebugForm(HostEngine engine, Func<string?> save, Action openFolder, Func<string> overlays)
     {
         _engine = engine;
         _save = save;
+        _overlays = overlays;
         Text = $"{Program.AppName} debug";
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -102,7 +105,7 @@ internal sealed class DebugForm : Form
     private void UpdateView()
     {
         if (IsDisposed) return;
-        _status.Text = StatusText(_engine);
+        _status.Text = StatusText(_engine) + "\r\n" + _overlays();
         var d = _engine.Debug;
         if (_pause.Checked || d.Version == _shownVersion) return;
         _shownVersion = d.Version;

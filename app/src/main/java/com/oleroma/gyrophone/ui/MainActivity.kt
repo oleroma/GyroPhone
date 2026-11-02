@@ -105,9 +105,11 @@ class MainActivity : ComponentActivity() {
                 }
                 Surface(Modifier.fillMaxSize()) {
                     // No tabs: the app opens on the pad; Connection and Settings open from its capsules.
-                    // Full-screen pad: the ← and → corners pressed together; Back also leaves.
+                    // Full-screen pad: the ← and → corners pressed together, or Back (both ways; it
+                    // never closes the app from the pad). Menu pages register their own Back later,
+                    // so there it steps back a page instead.
                     var fullscreen by rememberSaveable { mutableStateOf(runtime.startFullscreen.value) }
-                    BackHandler(enabled = fullscreen) { fullscreen = false }
+                    BackHandler { fullscreen = !fullscreen }
                     PadTab(
                         runtime,
                         fullscreen = fullscreen,

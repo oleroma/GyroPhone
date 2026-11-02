@@ -1,5 +1,4 @@
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using GyroPhone.Host.Settings;
 
 namespace GyroPhone.Tray;
@@ -81,7 +80,7 @@ internal static class ShapeDrawing
 
     private static readonly Pen3 P = new();
 
-    public static void Draw(Graphics g, RectangleF area, OverlaySettings s, float[] m, int liveAxes)
+    public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, int liveAxes)
     {
         float r = Math.Min(area.Width, area.Height) / 2f * 0.95f;
         var c = new PointF(area.X + area.Width / 2f, area.Y + area.Height / 2f);
@@ -89,8 +88,8 @@ internal static class ShapeDrawing
         var faint = Color.FromArgb((int)(lines.A * HiddenAlpha), lines);
         var body = Color.FromArgb(s.Color("body"));
         float width = Math.Clamp(r * 0.012f, 1f, 3f);
-        using var linePen = new Pen(lines, width) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
-        using var faintPen = new Pen(faint, width) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+        var linePen = (lines, width);
+        var faintPen = (faint, width);
         P.Begin(m, c, r, s.HiddenEdges);
         var mesh = Meshes.Of(s.Shape, s.Subdivision, s.Smooth);
         if (s.Shape == OverlayShape.Gimbal) DrawGimbal(g, c, r, s, liveAxes, width);
@@ -112,13 +111,12 @@ internal static class ShapeDrawing
             Stroke(g, P.Back, faintPen);
             if (s.FillFaces) DrawBody(g, c, r, body);
             Stroke(g, P.Front, linePen);
-            g.DrawEllipse(linePen, c.X - r, c.Y - r, 2 * r, 2 * r);
+            g.DrawEllipse(lines, width, new RectangleF(c.X - r, c.Y - r, 2 * r, 2 * r));
             if (s.Equator)
             {
                 P.Begin(m, c, r, false);
                 SphereCircle(0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, steps);
-                using var eq = new Pen(Color.FromArgb(s.Color("equator")), width * 2.2f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
-                Stroke(g, P.Front, eq);
+                Stroke(g, P.Front, (Color.FromArgb(s.Color("equator")), width * 2.2f));
             }
         }
         else if (s.Smooth && mesh.OnSphere)
@@ -141,7 +139,7 @@ internal static class ShapeDrawing
             Stroke(g, P.Back, faintPen);
             if (s.FillFaces) DrawBody(g, c, r, body);
             Stroke(g, P.Front, linePen);
-            g.DrawEllipse(linePen, c.X - r, c.Y - r, 2 * r, 2 * r);
+            g.DrawEllipse(lines, width, new RectangleF(c.X - r, c.Y - r, 2 * r, 2 * r));
         }
         else
         {
@@ -150,14 +148,14 @@ internal static class ShapeDrawing
             var e = mesh.Edges;
             if (s.HiddenEdges)
                 for (int k = 0; k < e.Length / 2; k++)
-                    if (!mesh.EdgeFront(k)) g.DrawLine(faintPen, At(e[k * 2]), At(e[k * 2 + 1]));
+                    if (!mesh.EdgeFront(k)) g.DrawLine(faint, width, At(e[k * 2]), At(e[k * 2 + 1]), round: true);
             if (!s.FillFaces || mesh.Convex)
             {
                 if (s.FillFaces)
                     for (int f = 0; f < mesh.Faces.Length; f++)
                         if (mesh.FaceFront[f]) FillFace(g, mesh, f, At, body);
                 for (int k = 0; k < e.Length / 2; k++)
-                    if (mesh.EdgeFront(k)) g.DrawLine(linePen, At(e[k * 2]), At(e[k * 2 + 1]));
+                    if (mesh.EdgeFront(k)) g.DrawLine(lines, width, At(e[k * 2]), At(e[k * 2 + 1]), round: true);
             }
             else
             {
@@ -167,7 +165,7 @@ internal static class ShapeDrawing
                 {
                     if (!mesh.FaceFront[f]) continue;
                     var pts = FillFace(g, mesh, f, At, body);
-                    g.DrawPolygon(linePen, pts);
+                    g.DrawPolygon(lines, width, pts);
                 }
             }
         }
@@ -175,39 +173,30 @@ internal static class ShapeDrawing
         if (s.TopMark) SphereDot(g, c, r, m, 0, 1, 0, Color.FromArgb(s.Color("pole")));
     }
 
-    private static void Stroke(Graphics g, List<List<PointF>> lines, Pen pen)
+    private static void Stroke(ICanvas g, List<List<PointF>> lines, (Color Color, float Width) pen)
     {
-        foreach (var l in lines) if (l.Count >= 2) g.DrawLines(pen, l.ToArray());
+        foreach (var l in lines) if (l.Count >= 2) g.DrawLines(pen.Color, pen.Width, l.ToArray());
     }
 
-    private static PointF[] FillFace(Graphics g, Mesh mesh, int f, Func<int, PointF> at, Color body)
+    private static PointF[] FillFace(ICanvas g, Mesh mesh, int f, Func<int, PointF> at, Color body)
     {
         var face = mesh.Faces[f];
         var pts = new PointF[face.Length];
         for (int i = 0; i < face.Length; i++) pts[i] = at(face[i]);
         float k = 0.45f + 0.55f * mesh.FaceShade[f];
-        using var b = new SolidBrush(Color.FromArgb(body.A, (int)(body.R * k), (int)(body.G * k), (int)(body.B * k)));
-        g.FillPolygon(b, pts);
+        g.FillPolygon(Color.FromArgb(body.A, (int)(body.R * k), (int)(body.G * k), (int)(body.B * k)), pts);
         return pts;
     }
 
     /// <summary>A smooth ball's fill: one disk, lit from the top left.</summary>
-    private static void DrawBody(Graphics g, PointF c, float r, Color body)
+    private static void DrawBody(ICanvas g, PointF c, float r, Color body)
     {
         var lit = Color.FromArgb(body.A, body.R + (int)((255 - body.R) * 0.35f), body.G + (int)((255 - body.G) * 0.35f), body.B + (int)((255 - body.B) * 0.35f));
-        using var path = new GraphicsPath();
-        path.AddEllipse(c.X - r, c.Y - r, 2 * r, 2 * r);
-        using var brush = new PathGradientBrush(path)
-        {
-            CenterPoint = new PointF(c.X - r * 0.35f, c.Y - r * 0.4f),
-            CenterColor = lit,
-            SurroundColors = [body],
-        };
-        g.FillPath(brush, path);
+        g.FillBall(new RectangleF(c.X - r, c.Y - r, 2 * r, 2 * r), new PointF(c.X - r * 0.35f, c.Y - r * 0.4f), lit, body);
     }
 
     /// <summary>Three rings, one per axis (yaw round up, pitch round right, roll round the screen), lit while that axis moves the mouse.</summary>
-    private static void DrawGimbal(Graphics g, PointF c, float r, OverlaySettings s, int liveAxes, float width)
+    private static void DrawGimbal(ICanvas g, PointF c, float r, OverlaySettings s, int liveAxes, float width)
     {
         int steps = s.Smooth ? SphereSteps : PolySteps;
         string[] keys = ["gyaw", "gpitch", "groll"];
@@ -241,13 +230,11 @@ internal static class ShapeDrawing
         if (s.HiddenEdges)
             for (int i = 0; i < 3; i++)
             {
-                using var pen = new Pen(Color.FromArgb((int)(colors[i].A * HiddenAlpha), colors[i]), width * 2.2f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
-                Stroke(g, backs[i], pen);
+                Stroke(g, backs[i], (Color.FromArgb((int)(colors[i].A * HiddenAlpha), colors[i]), width * 2.2f));
             }
         for (int i = 0; i < 3; i++)
         {
-            using var pen = new Pen(colors[i], width * 2.2f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
-            Stroke(g, fronts[i], pen);
+            Stroke(g, fronts[i], (colors[i], width * 2.2f));
         }
     }
 
@@ -265,14 +252,13 @@ internal static class ShapeDrawing
     }
 
     /// <summary>A mark on the ball at the phone-frame direction (px, py, pz), shown while it faces the player.</summary>
-    private static void SphereDot(Graphics g, PointF c, float r, float[] m, float px, float py, float pz, Color color)
+    private static void SphereDot(ICanvas g, PointF c, float r, float[] m, float px, float py, float pz, Color color)
     {
         float z = m[6] * px + m[7] * py + m[8] * pz;
         if (z <= 0f) return;
         float x = c.X + (m[0] * px + m[1] * py + m[2] * pz) * r;
         float y = c.Y - (m[3] * px + m[4] * py + m[5] * pz) * r;
         float d = r * 0.1f * (0.4f + 0.6f * z);
-        using var b = new SolidBrush(color);
-        g.FillEllipse(b, x - d, y - d, 2 * d, 2 * d);
+        g.FillEllipse(color, new RectangleF(x - d, y - d, 2 * d, 2 * d));
     }
 }

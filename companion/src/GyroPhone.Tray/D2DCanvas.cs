@@ -1,0 +1,515 @@
+using System.Numerics;
+using GyroPhone.Host.Settings;
+using Vortice.Direct2D1;
+using Vortice.Direct3D;
+using Vortice.Direct3D11;
+using Vortice.DirectWrite;
+using Vortice.DXGI;
+using Vortice.Mathematics;
+using D2DAlphaMode = Vortice.DCommon.AlphaMode;
+using D2DPixelFormat = Vortice.DCommon.PixelFormat;
+using Color = System.Drawing.Color;
+using Rect = Vortice.Mathematics.Rect;
+
+namespace GyroPhone.Tray;
+
+/// <summary>
+/// One overlay window's graphics-card surface: a Direct3D device that a Direct2D context draws with.
+/// Two ways to the screen:
+/// <list type="bullet">
+/// <item>Swap chain (with a window handle): the picture stays on the graphics card and is presented
+/// to the window, which shows its alpha through the desktop compositor (the frame extended over the
+/// whole window). No copy through the CPU: the cheap way.</item>
+/// <item>Copy (no window handle): a GDI-compatible texture whose DC goes to UpdateLayeredWindow,
+/// the whole picture through the CPU every frame (slowed other windows' drawing, such as the main
+/// window scrolling).</item>
+/// </list>
+/// Throws when the graphics card can't be used (the window then draws with <see cref="GdiCanvas"/>).
+/// </summary>
+internal sealed class GpuSurface : IDisposable
+{
+    private readonly ID3D11Device _d3d;
+    private readonly IDXGIDevice _dxgi;
+    private readonly ID2D1Factory1 _factory;
+    private readonly ID2D1Device _device;
+    private readonly ID2D1DeviceContext _dc;
+    private readonly IDWriteFactory _write;
+    private readonly D2DCanvas _canvas;
+    private ID3D11Texture2D? _texture;
+    private IDXGISurface1? _surface;
+    private ID2D1Bitmap1? _bitmap;
+    private int _width, _height;
+    private readonly IDXGISwapChain1? _swap;
+
+    /// <summary>With <paramref name="hwnd"/>: presented by a swap chain to that window; without: copied (see the class).</summary>
+    public GpuSurface(IntPtr hwnd = default, int width = 1, int height = 1)
+    {
+        D3D11.D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport,
+            [Vortice.Direct3D.FeatureLevel.Level_11_1, Vortice.Direct3D.FeatureLevel.Level_11_0, Vortice.Direct3D.FeatureLevel.Level_10_1, Vortice.Direct3D.FeatureLevel.Level_10_0],
+            out var d3d).CheckError();
+        _d3d = d3d ?? throw new InvalidOperationException("no Direct3D device");
+        _dxgi = _d3d.QueryInterface<IDXGIDevice>();
+        _factory = D2D1.D2D1CreateFactory<ID2D1Factory1>();
+        _device = _factory.CreateDevice(_dxgi);
+        _dc = _device.CreateDeviceContext(DeviceContextOptions.None);
+        _write = DWrite.DWriteCreateFactory<IDWriteFactory>();
+        _canvas = new D2DCanvas(_factory, _device, _dc, _write);
+        if (hwnd == IntPtr.Zero) return;
+        try
+        {
+            using var adapter = _dxgi.GetAdapter();
+            using var dxgiFactory = adapter.GetParent<IDXGIFactory2>();
+            // Bit-block transfer model: the one a layered window takes. Its alpha reaches the screen
+            // through the window's redirection surface (the extended frame), premultiplied.
+            var desc = new SwapChainDescription1
+            {
+                Width = (uint)Math.Max(1, width),
+                Height = (uint)Math.Max(1, height),
+                Format = Format.B8G8R8A8_UNorm,
+                BufferCount = 1,
+                BufferUsage = Usage.RenderTargetOutput,
+                SwapEffect = SwapEffect.Discard,
+                AlphaMode = Vortice.DXGI.AlphaMode.Unspecified,
+                SampleDescription = new SampleDescription(1, 0),
+                Scaling = Scaling.Stretch,
+            };
+            _swap = dxgiFactory.CreateSwapChainForHwnd(_d3d, hwnd, desc);
+            // No Alt+Enter full screen, and DXGI never touches the window (it lives on another thread).
+            dxgiFactory.MakeWindowAssociation(hwnd, WindowAssociationFlags.IgnoreAll);
+            _width = (int)desc.Width;
+            _height = (int)desc.Height;
+            BindSwap();
+        }
+        catch
+        {
+            Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>Presented by a swap chain (no copy through the CPU).</summary>
+    public bool Direct => _swap != null;
+
+    private void BindSwap()
+    {
+        using var buffer = _swap!.GetBuffer<IDXGISurface>(0);
+        var props = new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied), 96, 96,
+            BitmapOptions.Target | BitmapOptions.CannotDraw);
+        _bitmap = _dc.CreateBitmapFromDxgiSurface(buffer, props);
+        _dc.Target = _bitmap;
+    }
+
+    private void Unbind()
+    {
+        _dc.Target = null;
+        _bitmap?.Dispose();
+        _bitmap = null;
+        _surface?.Dispose();
+        _surface = null;
+        _texture?.Dispose();
+        _texture = null;
+    }
+
+    private void Bind(int width, int height)
+    {
+        Unbind();
+        var desc = new Texture2DDescription(Format.B8G8R8A8_UNorm, (uint)width, (uint)height, 1, 1,
+            BindFlags.RenderTarget | BindFlags.ShaderResource, ResourceUsage.Default, CpuAccessFlags.None, 1, 0,
+            ResourceOptionFlags.GdiCompatible);
+        _texture = _d3d.CreateTexture2D(desc);
+        _surface = _texture.QueryInterface<IDXGISurface1>();
+        var props = new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied), 96, 96,
+            BitmapOptions.Target | BitmapOptions.GdiCompatible);
+        _bitmap = _dc.CreateBitmapFromDxgiSurface(_surface, props);
+        _dc.Target = _bitmap;
+        _width = width;
+        _height = height;
+    }
+
+    /// <summary>
+    /// Draws one picture of <paramref name="width"/>×<paramref name="height"/>, then hands
+    /// <paramref name="present"/> a DC holding it (valid only during the call).
+    /// </summary>
+    public void Draw(int width, int height, OverlayQuality quality, Action<ICanvas> draw, Action<IntPtr> present)
+    {
+        width = Math.Max(1, width);
+        height = Math.Max(1, height);
+        if (_swap != null)
+        {
+            if (width != _width || height != _height)
+            {
+                Unbind();
+                _swap.ResizeBuffers(1, (uint)width, (uint)height, Format.B8G8R8A8_UNorm, SwapChainFlags.None).CheckError();
+                _width = width;
+                _height = height;
+                BindSwap();
+            }
+            _dc.BeginDraw();
+            try
+            {
+                _canvas.Begin(quality);
+                draw(_canvas);
+                _canvas.End();
+            }
+            finally
+            {
+                _dc.EndDraw().CheckError();
+            }
+            _swap.Present(0, PresentFlags.None).CheckError();
+            return;
+        }
+        if (_bitmap == null || width != _width || height != _height) Bind(width, height);
+        _dc.BeginDraw();
+        try
+        {
+            _canvas.Begin(quality);
+            draw(_canvas);
+            _canvas.End();
+        }
+        finally
+        {
+            _dc.EndDraw().CheckError();
+        }
+        IntPtr hdc = _surface!.GetDC(false);
+        try
+        {
+            present(hdc);
+        }
+        finally
+        {
+            _surface.ReleaseDC(null);
+        }
+    }
+
+    public void Dispose()
+    {
+        Unbind();
+        _swap?.Dispose();
+        _canvas.Dispose();
+        _write.Dispose();
+        _dc.Dispose();
+        _device.Dispose();
+        _factory.Dispose();
+        _dxgi.Dispose();
+        _d3d.Dispose();
+    }
+}
+
+/// <summary>The graphics-card backend of <see cref="ICanvas"/>: Direct2D on a device context.</summary>
+internal sealed class D2DCanvas : ICanvas, IDisposable
+{
+    private readonly ID2D1Factory1 _factory;
+    private readonly ID2D1DeviceContext _dc;
+    private readonly IDWriteFactory _write;
+    private readonly ID2D1SolidColorBrush _brush;
+    private readonly ID2D1StrokeStyle _round, _joined, _dashed;
+    private readonly Dictionary<(float, bool), IDWriteTextFormat> _formats = [];
+    // Text drawn once into a bitmap, then shown (turned and tilted with the phone) as an image: text
+    // under a tilt is otherwise built from its glyphs' outlines every frame, the dearest part of a
+    // frame. Keyed by everything that changes the picture, the scale rounded to an eighth.
+    private readonly Dictionary<TextKey, ID2D1Bitmap1> _texts = [];
+    private readonly ID2D1DeviceContext _textDc;
+    private readonly ID2D1SolidColorBrush _textBrush;
+    // The geometry of the last filled polygon: an outline of the same points reuses it.
+    private PointF[]? _lastPoints;
+    // Drawing text into a bitmap failed once: text is drawn directly from then on.
+    private bool _noTextCache;
+    private ID2D1PathGeometry? _lastGeo;
+
+    private readonly record struct TextKey(string Text, float Px, bool Bold, int Argb, float W, float H, TextAlign Hz, TextAlign Vt, int Scale8);
+    // What each Push did, so Pop undoes it: a transform to restore, or a layer (with its geometry) to pop.
+    private readonly Stack<(Matrix3x2? Transform, ID2D1Geometry? Geometry, bool Layer)> _stack = new();
+
+    public D2DCanvas(ID2D1Factory1 factory, ID2D1Device device, ID2D1DeviceContext dc, IDWriteFactory write)
+    {
+        _factory = factory;
+        _dc = dc;
+        _write = write;
+        _brush = dc.CreateSolidColorBrush(new Color4(1, 1, 1, 1));
+        _textDc = device.CreateDeviceContext(DeviceContextOptions.None);
+        _textBrush = _textDc.CreateSolidColorBrush(new Color4(1, 1, 1, 1));
+        _round = factory.CreateStrokeStyle(new StrokeStyleProperties
+        {
+            StartCap = CapStyle.Round,
+            EndCap = CapStyle.Round,
+            DashCap = CapStyle.Round,
+            LineJoin = LineJoin.Round,
+        });
+        _joined = factory.CreateStrokeStyle(new StrokeStyleProperties { LineJoin = LineJoin.Round });
+        _dashed = factory.CreateStrokeStyle(new StrokeStyleProperties { DashStyle = DashStyle.Dash, LineJoin = LineJoin.Round });
+    }
+
+    public void Begin(OverlayQuality quality)
+    {
+        _dc.Transform = Matrix3x2.Identity;
+        _dc.AntialiasMode = quality == OverlayQuality.Fast ? AntialiasMode.Aliased : AntialiasMode.PerPrimitive;
+        _dc.TextAntialiasMode = quality == OverlayQuality.Fast ? Vortice.Direct2D1.TextAntialiasMode.Aliased : Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+        _stack.Clear();
+    }
+
+    public void End()
+    {
+        while (_stack.Count > 0) Pop();
+        ForgetLast();
+    }
+
+    private void ForgetLast()
+    {
+        _lastGeo?.Dispose();
+        _lastGeo = null;
+        _lastPoints = null;
+    }
+
+    private static readonly Rect Infinite = new(-1e6f, -1e6f, 2e6f, 2e6f);
+
+    private ID2D1SolidColorBrush Brush(Color c)
+    {
+        _brush.Color = new Color4(c.R / 255f, c.G / 255f, c.B / 255f, c.A / 255f);
+        return _brush;
+    }
+
+    private static Vector2 V(PointF p) => new(p.X, p.Y);
+
+    private static Rect R(RectangleF r) => new(r.X, r.Y, r.Width, r.Height);
+
+    private ID2D1PathGeometry Path(PointF[] points, bool closed)
+    {
+        var geo = _factory.CreatePathGeometry();
+        using var sink = geo.Open();
+        sink.BeginFigure(V(points[0]), closed ? FigureBegin.Filled : FigureBegin.Hollow);
+        for (int i = 1; i < points.Length; i++) sink.AddLine(V(points[i]));
+        sink.EndFigure(closed ? FigureEnd.Closed : FigureEnd.Open);
+        sink.Close();
+        return geo;
+    }
+
+    public void Clear(Color color) => _dc.Clear(new Color4(color.R / 255f * (color.A / 255f), color.G / 255f * (color.A / 255f), color.B / 255f * (color.A / 255f), color.A / 255f));
+
+    public void FillPolygon(Color color, PointF[] points)
+    {
+        if (points.Length < 3 || color.A == 0) return;
+        ForgetLast();
+        _lastGeo = Path(points, true);
+        _lastPoints = points;
+        _dc.FillGeometry(_lastGeo, Brush(color));
+    }
+
+    public void DrawPolygon(Color color, float width, PointF[] points, bool dashed = false)
+    {
+        if (points.Length < 2 || color.A == 0) return;
+        if (ReferenceEquals(points, _lastPoints) && _lastGeo != null)
+        {
+            _dc.DrawGeometry(_lastGeo, Brush(color), width, dashed ? _dashed : _joined);
+            return;
+        }
+        using var geo = Path(points, true);
+        _dc.DrawGeometry(geo, Brush(color), width, dashed ? _dashed : _joined);
+    }
+
+    public void DrawLine(Color color, float width, PointF a, PointF b, bool round = false)
+    {
+        if (color.A == 0) return;
+        _dc.DrawLine(V(a), V(b), Brush(color), width, round ? _round : null);
+    }
+
+    public void DrawLines(Color color, float width, PointF[] points)
+    {
+        if (points.Length < 2 || color.A == 0) return;
+        using var geo = Path(points, false);
+        _dc.DrawGeometry(geo, Brush(color), width, _round);
+    }
+
+    private static Ellipse E(RectangleF r) => new(new Vector2(r.X + r.Width / 2, r.Y + r.Height / 2), r.Width / 2, r.Height / 2);
+
+    public void FillEllipse(Color color, RectangleF r)
+    {
+        if (color.A != 0) _dc.FillEllipse(E(r), Brush(color));
+    }
+
+    public void DrawEllipse(Color color, float width, RectangleF r)
+    {
+        if (color.A != 0) _dc.DrawEllipse(E(r), Brush(color), width);
+    }
+
+    public void FillRectangle(Color color, RectangleF r)
+    {
+        if (color.A != 0) _dc.FillRectangle(R(r), Brush(color));
+    }
+
+    public void DrawRectangle(Color color, float width, RectangleF r, bool dashed = false)
+    {
+        if (color.A != 0) _dc.DrawRectangle(R(r), Brush(color), width, dashed ? _dashed : _joined);
+    }
+
+    private static Color4 C4(Color c) => new(c.R / 255f, c.G / 255f, c.B / 255f, c.A / 255f);
+
+    public void FillBall(RectangleF r, PointF litAt, Color lit, Color body)
+    {
+        var e = E(r);
+        using var stops = _dc.CreateGradientStopCollection([new GradientStop(0f, C4(lit)), new GradientStop(1f, C4(body))]);
+        var props = new RadialGradientBrushProperties(e.Point, new Vector2(litAt.X - e.Point.X, litAt.Y - e.Point.Y), e.RadiusX, e.RadiusY);
+        using var brush = _dc.CreateRadialGradientBrush(props, stops);
+        _dc.FillEllipse(e, brush);
+    }
+
+    private void PushMask(ID2D1Geometry geo, Rect bounds)
+    {
+        _dc.PushLayer(new LayerParameters1
+        {
+            // Only the mask's box, not the whole window: the layer's own surface stays small.
+            ContentBounds = bounds,
+            GeometricMask = geo,
+            MaskAntialiasMode = _dc.AntialiasMode,
+            MaskTransform = Matrix3x2.Identity,
+            Opacity = 1f,
+        }, null!);
+        _stack.Push((null, geo, true));
+    }
+
+    public void PushClip(PointF[] polygon)
+    {
+        float l = float.MaxValue, t = float.MaxValue, r = float.MinValue, b = float.MinValue;
+        foreach (var p in polygon)
+        {
+            l = Math.Min(l, p.X); t = Math.Min(t, p.Y); r = Math.Max(r, p.X); b = Math.Max(b, p.Y);
+        }
+        var bounds = polygon.Length > 0 ? new Rect(l - 2, t - 2, r - l + 4, b - t + 4) : Infinite;
+        PushMask(Path(polygon, true), bounds);
+    }
+
+    public void PushClipEllipse(RectangleF r) => PushMask(_factory.CreateEllipseGeometry(E(r)), new Rect(r.X - 2, r.Y - 2, r.Width + 4, r.Height + 4));
+
+    public void PushClipRect(RectangleF r)
+    {
+        _dc.PushAxisAlignedClip(R(r), _dc.AntialiasMode);
+        _stack.Push((null, null, false));
+    }
+
+    public void PushTransform(Matrix3x2 m)
+    {
+        var now = _dc.Transform;
+        _stack.Push((now, null, false));
+        _dc.Transform = m * now;
+    }
+
+    public void Pop()
+    {
+        if (_stack.Count == 0) return;
+        var (transform, geo, layer) = _stack.Pop();
+        if (transform is { } t) _dc.Transform = t;
+        else if (layer)
+        {
+            _dc.PopLayer();
+            geo?.Dispose();
+        }
+        else _dc.PopAxisAlignedClip();
+    }
+
+    private IDWriteTextFormat Format(float px, bool bold)
+    {
+        px = MathF.Max(1f, MathF.Round(px * 4f) / 4f);
+        if (_formats.TryGetValue((px, bold), out var f)) return f;
+        if (_formats.Count >= 32)
+        {
+            foreach (var old in _formats.Values) old.Dispose();
+            _formats.Clear();
+        }
+        f = _write.CreateTextFormat("Segoe UI", null, bold ? FontWeight.Bold : FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, px, "en-us");
+        f.WordWrapping = WordWrapping.NoWrap;
+        return _formats[(px, bold)] = f;
+    }
+
+    private void Align(IDWriteTextFormat f, TextAlign h, TextAlign v)
+    {
+        f.TextAlignment = h == TextAlign.Near ? TextAlignment.Leading : h == TextAlign.Far ? TextAlignment.Trailing : TextAlignment.Center;
+        f.ParagraphAlignment = v == TextAlign.Near ? ParagraphAlignment.Near : v == TextAlign.Far ? ParagraphAlignment.Far : ParagraphAlignment.Center;
+    }
+
+    public void DrawText(string text, float px, bool bold, Color color, RectangleF r, TextAlign h, TextAlign v)
+    {
+        if (text.Length == 0 || color.A == 0 || r.Width <= 0 || r.Height <= 0) return;
+        // The size it shows at: the transform's scale, to an eighth (at most 4×).
+        var m = _dc.Transform;
+        float scale = MathF.Sqrt(MathF.Abs(m.M11 * m.M22 - m.M12 * m.M21));
+        int scale8 = Math.Clamp((int)MathF.Ceiling(scale * 8f), 1, 32);
+        float q = scale8 / 8f;
+        int bw = (int)MathF.Ceiling(r.Width * q), bh = (int)MathF.Ceiling(r.Height * q);
+        var f = Format(px, bold);
+        if (bw > 2048 || bh > 2048 || _noTextCache)
+        {
+            Align(f, h, v);
+            _dc.DrawText(text, f, R(r), Brush(color), DrawTextOptions.Clip);
+            return;
+        }
+        var key = new TextKey(text, px, bold, color.ToArgb(), r.Width, r.Height, h, v, scale8);
+        if (!_texts.TryGetValue(key, out var bitmap))
+        {
+            if (_texts.Count >= 256)
+            {
+                foreach (var old in _texts.Values) old.Dispose();
+                _texts.Clear();
+            }
+            try
+            {
+                bitmap = TextBitmap(text, f, color, r, h, v, q, bw, bh);
+            }
+            catch (Exception)
+            {
+                _noTextCache = true;
+                Align(f, h, v);
+                _dc.DrawText(text, f, R(r), Brush(color), DrawTextOptions.Clip);
+                return;
+            }
+            _texts[key] = bitmap;
+        }
+        _dc.DrawBitmap(bitmap, new Vortice.RawRectF(r.X, r.Y, r.X + bw / q, r.Y + bh / q), 1f, Vortice.Direct2D1.InterpolationMode.Linear, null, null);
+    }
+
+    /// <summary>The text drawn once, at <paramref name="q"/>× its size, on a separate context (the main one is mid-frame).</summary>
+    private ID2D1Bitmap1 TextBitmap(string text, IDWriteTextFormat f, Color color, RectangleF r, TextAlign h, TextAlign v, float q, int bw, int bh)
+    {
+        {
+            var bitmap = _textDc.CreateBitmap(new SizeI(bw, bh), IntPtr.Zero, 0,
+                new BitmapProperties1(new D2DPixelFormat(Vortice.DXGI.Format.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied), 96, 96, BitmapOptions.Target));
+            Align(f, h, v);
+            _textDc.Target = bitmap;
+            _textDc.BeginDraw();
+            try
+            {
+                _textDc.Clear(new Color4(0, 0, 0, 0));
+                _textDc.Transform = Matrix3x2.CreateScale(q);
+                _textDc.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+                _textBrush.Color = C4(color);
+                _textDc.DrawText(text, f, new Rect(0, 0, r.Width, r.Height), _textBrush, DrawTextOptions.Clip);
+            }
+            finally
+            {
+                _textDc.EndDraw().CheckError();
+                _textDc.Target = null;
+            }
+            return bitmap;
+        }
+    }
+
+    public SizeF MeasureText(string text, float px, bool bold)
+    {
+        using var layout = _write.CreateTextLayout(text, Format(px, bold), 100_000f, 100_000f);
+        var m = layout.Metrics;
+        return new SizeF(m.WidthIncludingTrailingWhitespace, m.Height);
+    }
+
+    public void Dispose()
+    {
+        foreach (var f in _formats.Values) f.Dispose();
+        _formats.Clear();
+        foreach (var b in _texts.Values) b.Dispose();
+        _texts.Clear();
+        ForgetLast();
+        _textBrush.Dispose();
+        _textDc.Dispose();
+        _round.Dispose();
+        _joined.Dispose();
+        _dashed.Dispose();
+        _brush.Dispose();
+    }
+}

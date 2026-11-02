@@ -1,6 +1,5 @@
 using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Drawing.Text;
+using System.Numerics;
 using GyroPhone.Host;
 using GyroPhone.Host.Settings;
 using GyroPhone.Protocol;
@@ -17,6 +16,10 @@ internal sealed class OverlayScene
     public bool Connected;
     /// <summary>Moving and resizing (Edit): a frame shows the window's edges.</summary>
     public bool Arranging;
+    /// <summary>The window picked in Edit: a solid frame instead of a dashed one.</summary>
+    public bool Selected;
+    /// <summary>The window's name, shown while arranging.</summary>
+    public string Title = "";
     /// <summary>The fingers' trails (phone, with Finger trails on), and the time to fade them by (ms).</summary>
     public FingerTrails? Trails;
     public long NowTicks;
@@ -43,11 +46,8 @@ internal static class OverlayRenderer
     // Light from the upper left, toward the screen.
     private static readonly (float X, float Y, float Z) Light = Normalize(-0.35f, 0.55f, 1f);
 
-    public static void Draw(Graphics g, Size size, OverlayScene scene, OverlaySettings settings)
+    public static void Draw(ICanvas g, Size size, OverlayScene scene, OverlaySettings settings)
     {
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.TextRenderingHint = TextRenderingHint.AntiAlias;
-        g.CompositingQuality = CompositingQuality.HighQuality;
         switch (settings.Background)
         {
             case OverlayBackground.Green: g.Clear(Color.FromArgb(0, 255, 0)); break;
@@ -56,20 +56,21 @@ internal static class OverlayRenderer
         }
         if (scene.Arranging)
         {
-            using var shade = new SolidBrush(Color.FromArgb(70, 20, 22, 26));
-            g.FillRectangle(shade, 0, 0, size.Width, size.Height);
-            using var pen = new Pen(Color.FromArgb(200, 124, 196, 255), 2) { DashStyle = DashStyle.Dash };
-            g.DrawRectangle(pen, 1, 1, size.Width - 3, size.Height - 3);
-            using var grip = new SolidBrush(Color.FromArgb(220, 124, 196, 255));
-            g.FillPolygon(grip, new PointF[] { new(size.Width - 2, size.Height - 18), new(size.Width - 2, size.Height - 2), new(size.Width - 18, size.Height - 2) });
-            DrawCaption(g, size, "Drag to move · drag the corner to resize");
+            g.FillRectangle(Color.FromArgb(70, 20, 22, 26), new RectangleF(0, 0, size.Width, size.Height));
+            // Picked: solid amber (as the phone's edit selection); the others dashed blue.
+            var edge = scene.Selected ? Color.FromArgb(240, 255, 183, 77) : Color.FromArgb(200, 124, 196, 255);
+            g.DrawRectangle(edge, scene.Selected ? 3 : 2, new RectangleF(1.5f, 1.5f, size.Width - 3, size.Height - 3), dashed: !scene.Selected);
+            g.FillPolygon(edge, [new(size.Width - 2, size.Height - 18), new(size.Width - 2, size.Height - 2), new(size.Width - 18, size.Height - 2)]);
+            var name = scene.Title.Length > 0 ? scene.Title + " · " : "";
+            g.DrawText(scene.Selected ? $"{name}drag to move · click to pick the one under it" : $"{name}click to pick · drag to move",
+                11f, false, Color.FromArgb(230, 255, 255, 255), new RectangleF(0, size.Height - 17, size.Width, 16), TextAlign.Center, TextAlign.Near);
         }
 
         bool live = scene.Connected && scene.FrameAgeUs is >= 0 and < 1_500_000;
         var raw = live ? Shown(scene.Frame, settings) : (1f, 0f, 0f, 0f);
         var m = Matrix3(raw);
-        int top = scene.Arranging ? 18 : 0;
-        var area = new RectangleF(0, 0, size.Width, size.Height - top);
+        // The same area with Edit on or off, so nothing changes size when it's toggled (the caption lies over it).
+        var area = new RectangleF(0, 0, size.Width, size.Height);
         string? note = !scene.Connected ? "Waiting for the phone" : !live ? "Waiting for the phone's data" : null;
         switch (settings.Kind)
         {
@@ -90,18 +91,15 @@ internal static class OverlayRenderer
     }
 
     /// <summary>A short line under the drawing (no phone or no data).</summary>
-    private static void DrawNote(Graphics g, RectangleF area, string text)
+    private static void DrawNote(ICanvas g, RectangleF area, string text)
     {
-        using var font = new Font(FontFamily.GenericSansSerif, Math.Max(9f, area.Height * 0.045f), FontStyle.Bold, GraphicsUnit.Pixel);
-        var fmt = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Far };
+        float px = Math.Max(9f, area.Height * 0.045f);
         var r = new RectangleF(area.X, area.Y, area.Width, area.Height - 4);
-        using var shadow = new SolidBrush(Color.FromArgb(160, 0, 0, 0));
-        g.DrawString(text, font, shadow, new RectangleF(r.X + 1, r.Y + 1, r.Width, r.Height), fmt);
-        using var brush = new SolidBrush(Color.FromArgb(230, 255, 255, 255));
-        g.DrawString(text, font, brush, r, fmt);
+        g.DrawText(text, px, true, Color.FromArgb(160, 0, 0, 0), new RectangleF(r.X + 1, r.Y + 1, r.Width, r.Height), TextAlign.Center, TextAlign.Far);
+        g.DrawText(text, px, true, Color.FromArgb(230, 255, 255, 255), r, TextAlign.Center, TextAlign.Far);
     }
 
-    private static void DrawPhone(Graphics g, RectangleF area, OverlayScene scene, OverlaySettings settings, bool live, float[] m)
+    private static void DrawPhone(ICanvas g, RectangleF area, OverlayScene scene, OverlaySettings settings, bool live, float[] m)
     {
         var BodyColor = Opaque(settings.Color("body"));
         var ScreenColor = Opaque(settings.Color("screen"));
@@ -110,7 +108,6 @@ internal static class OverlayRenderer
         var fingerColor = Color.FromArgb(settings.Color("fingers"));
         var layout = scene.Layout;
         var f = scene.Frame;
-        var size = new Size((int)area.Width, (int)area.Height);
 
         // The slab: the screen's shape (from the layout) plus a thin bezel.
         float aspect = layout is { WidthPx: > 0, HeightPx: > 0 } ? (float)layout.WidthPx / layout.HeightPx : 20f / 9f;
@@ -120,12 +117,14 @@ internal static class OverlayRenderer
         float sh = portrait ? longSide : longSide / aspect;
         float bw = sw + 2 * Bezel, bh = sh + 2 * Bezel;
 
-
-        float radius = MathF.Sqrt(bw * bw + bh * bh) / 2f + Thickness;
-        float half = Math.Min(size.Width, size.Height) / 2f * 0.94f;
-        float k = half * (CameraZ - radius) / (CameraZ * radius);
-        var cx = size.Width / 2f;
-        var cy = size.Height / 2f;
+        // Size: fixed, so the slab fits the window however it is turned. Its bounding ball (radius R)
+        // seen from CameraZ in perspective spans R·C/√(C²−R²) at scale 1: that fills the window's
+        // shorter side, with a hair of margin for the edges' smoothing.
+        float radius = MathF.Sqrt(bw * bw + bh * bh + Thickness * Thickness) / 2f;
+        float half = Math.Min(area.Width, area.Height) / 2f - 2f;
+        float k = Math.Max(1f, half * MathF.Sqrt(CameraZ * CameraZ - radius * radius) / (CameraZ * radius));
+        var cx = area.X + area.Width / 2f;
+        var cy = area.Y + area.Height / 2f;
 
         PointF Project((float X, float Y, float Z) p)
         {
@@ -163,47 +162,50 @@ internal static class OverlayRenderer
             var n = Normalize(b.Y - a.Y, a.X - b.X, 0f); // outward for a counter-clockwise outline
             var mid = ((a.X + b.X) / 2, (a.Y + b.Y) / 2, 0f);
             if (!Faces(mid, n)) continue;
-            using var brush = new SolidBrush(Tint(BodyColor, Shade(n) * 0.85f));
+            var side = Tint(BodyColor, Shade(n) * 0.85f);
             var quad = new[] { front[i], front[j], back[j], back[i] };
-            g.FillPolygon(brush, quad);
-            using var seam = new Pen(brush.Color, 1f);
-            g.DrawPolygon(seam, quad); // hides hairline gaps between neighbours
+            g.FillPolygon(side, quad);
+            g.DrawPolygon(side, 1f, quad); // hides hairline gaps between neighbours
         }
 
         if (!Faces((0, 0, zf), (0, 0, 1)))
         {
             // The back: the body and a camera island.
-            using var body = new SolidBrush(Tint(BodyColor, Shade((0, 0, -1))));
-            g.FillPolygon(body, back);
+            g.FillPolygon(Tint(BodyColor, Shade((0, 0, -1))), back);
             float cs = Math.Min(bw, bh) * 0.32f;
             // Top left as seen from behind the phone held upright.
             float ix = bw / 2 - cs * 0.8f;
             float iy = bh / 2 - cs * 0.8f;
             var island = RoundedRect(cs, cs, cs * 0.3f, 4).Select(p => Project((p.X + ix, p.Y + iy, zb - 0.002f))).ToArray();
-            using var islandBrush = new SolidBrush(Tint(Color.FromArgb(0x3A, 0x3F, 0x48), Shade((0, 0, -1))));
-            g.FillPolygon(islandBrush, island);
+            g.FillPolygon(Tint(Color.FromArgb(0x3A, 0x3F, 0x48), Shade((0, 0, -1))), island);
             return;
         }
 
-        using (var body = new SolidBrush(Tint(BodyColor, Shade((0, 0, 1)))))
-            g.FillPolygon(body, front);
+        g.FillPolygon(Tint(BodyColor, Shade((0, 0, 1))), front);
 
         float zs = zf + 0.001f;
         (float X, float Y, float Z) OnScreen(float u, float v) => ((u - 0.5f) * sw, (0.5f - v) * sh, zs);
         PointF P(float u, float v) => Project(OnScreen(u, v));
 
         var screen = RoundedRect(sw, sh, Math.Min(sw, sh) * 0.09f, 6).Select(p => Project((p.X, p.Y, zs))).ToArray();
-        using (var sb = new SolidBrush(ScreenColor)) g.FillPolygon(sb, screen);
+        g.FillPolygon(ScreenColor, screen);
         // The front camera: in the top bezel's middle (portrait) or the left one (landscape).
-        var cam = portrait ? OnScreen(0.5f, -Bezel / 2 / sh) : OnScreen(-Bezel / 2 / sw, 0.5f);
-        var camP = Project(cam);
+        var camP = Project(portrait ? OnScreen(0.5f, -Bezel / 2 / sh) : OnScreen(-Bezel / 2 / sw, 0.5f));
         float camR = Math.Max(1.2f, k * 0.012f);
-        using (var cb = new SolidBrush(Color.FromArgb(0x05, 0x06, 0x08))) g.FillEllipse(cb, camP.X - camR, camP.Y - camR, camR * 2, camR * 2);
+        g.FillEllipse(Color.FromArgb(0x05, 0x06, 0x08), new RectangleF(camP.X - camR, camP.Y - camR, camR * 2, camR * 2));
 
-        using var clipPath = new GraphicsPath();
-        clipPath.AddPolygon(screen);
-        var savedClip = g.Clip;
-        g.SetClip(clipPath, CombineMode.Intersect);
+        // Control shapes are cut to the screen here, in pad coordinates, before projecting: a
+        // whole-pixel clip made outlines along the screen's edge flicker as its projected edge moved
+        // by fractions of a pixel. Cut a little inside the edge, so a whole stroke fits on the screen.
+        float penWidth = Math.Clamp(k * 0.008f, 1f, 3f);
+        float inset = (penWidth / 2f + 1.5f) / Math.Max(k, 1f);
+        var screenUv = RoundedRect(sw - 2 * inset, sh - 2 * inset, Math.Max(0f, Math.Min(sw, sh) * 0.09f - inset), 6)
+            .Select(p => (p.X / sw + 0.5f, 0.5f - p.Y / sh)).ToArray();
+        PointF[]? Cut((float X, float Y)[] shape)
+        {
+            var cut = ClipConvex(shape, screenUv);
+            return cut.Length < 3 ? null : cut.Select(p => P(p.X, p.Y)).ToArray();
+        }
 
         float pxW = layout is { WidthPx: > 0 } ? layout.WidthPx : 2400;
         float pxH = layout is { HeightPx: > 0 } ? layout.HeightPx : 1080;
@@ -219,32 +221,36 @@ internal static class OverlayRenderer
                 bool pressed = live && f.IsPressed(i);
                 bool latched = live && !pressed && f.IsLatched(i);
                 var shape = c.Round ? Ellipse(c.X, c.Y, c.W / 2, c.H / 2, 32) : RoundedBox(c, pxW, pxH);
-                var pts = shape.Select(p => P(p.X, p.Y)).ToArray();
+                if (Cut(shape) is not { } pts) continue;
                 float op = Math.Clamp(c.Opacity, 0f, 1f);
                 if (c.Kind == OverlayControlKind.Display)
                 {
-                    using var faint = new Pen(Color.FromArgb((int)(40 * op), 255, 255, 255), 1f) { DashStyle = DashStyle.Dot };
-                    g.DrawPolygon(faint, pts);
+                    g.DrawPolygon(Color.FromArgb((int)(40 * op), 255, 255, 255), 1f, pts, dashed: true);
                     continue;
                 }
                 var tint = pressed ? PressedColor : latched ? LatchedColor : Idle;
-                if (pressed || latched)
-                {
-                    using var fill = new SolidBrush(Color.FromArgb((int)(0.25f * 255 * op), tint));
-                    g.FillPolygon(fill, pts);
-                }
-                using (var pen = new Pen(Color.FromArgb((int)(tint.A * op), tint), Math.Clamp(k * 0.008f, 1f, 3f)))
-                    g.DrawPolygon(pen, pts);
+                if (pressed || latched) g.FillPolygon(Color.FromArgb((int)(0.25f * 255 * op), tint), pts);
+                g.DrawPolygon(Color.FromArgb((int)(tint.A * op), tint), penWidth, pts);
                 if (c.Kind == OverlayControlKind.Stick)
                 {
                     var knob = sticks.TryGetValue(i, out var kv) ? kv : (0f, 0f);
                     float kx = c.X + knob.Item1 * 0.6f * c.W / 2, ky = c.Y + knob.Item2 * 0.6f * c.H / 2;
-                    var kp = Ellipse(kx, ky, c.W / 5, c.H / 5, 24).Select(p => P(p.X, p.Y)).ToArray();
-                    using var kb = new SolidBrush(Color.FromArgb((int)(0.6f * tint.A * op), tint));
-                    g.FillPolygon(kb, kp);
+                    if (Cut(Ellipse(kx, ky, c.W / 5, c.H / 5, 24)) is { } kp)
+                        g.FillPolygon(Color.FromArgb((int)(0.6f * tint.A * op), tint), kp);
                 }
-                if (c.Label.Length > 0)
-                    DrawLabel(g, c.Label, c.X, c.Y, c.W * pxW, fontPx, pxW, pxH, P, Color.FromArgb((int)(255 * Math.Max(op, 0.5f)), 255, 255, 255));
+            }
+        }
+
+        // Labels, trails and dots: cut by the screen's outline (text can't be cut by hand).
+        g.PushClip(screen);
+        if (layout != null)
+        {
+            for (int i = 0; i < layout.Controls.Count; i++)
+            {
+                var c = layout.Controls[i];
+                if (c.Kind == OverlayControlKind.Display || c.Label.Length == 0) continue;
+                float op = Math.Clamp(c.Opacity, 0f, 1f);
+                DrawLabel(g, c.Label, c.X, c.Y, c.W * pxW, fontPx, pxW, pxH, P, Color.FromArgb((int)(255 * Math.Max(op, 0.5f)), 255, 255, 255));
             }
             if (layout.Layer.Length > 0)
                 DrawLabel(g, layout.Layer, 0.5f, 0.05f, pxW * 0.6f, fontPx, pxW, pxH, P, Color.FromArgb(230, 255, 255, 255), pill: true);
@@ -261,25 +267,18 @@ internal static class OverlayRenderer
                 {
                     float life = 1f - Math.Clamp((scene.NowTicks - pts[i].T) / (float)FingerTrails.LifeMs, 0f, 1f);
                     if (life <= 0f) continue;
-                    using var pen = new Pen(Color.FromArgb((int)(fingerColor.A * 0.8f * life), fingerColor), width * (0.4f + 0.6f * life))
-                    {
-                        StartCap = LineCap.Round,
-                        EndCap = LineCap.Round,
-                    };
-                    g.DrawLine(pen, P(pts[i - 1].U, pts[i - 1].V), P(pts[i].U, pts[i].V));
+                    g.DrawLine(Color.FromArgb((int)(fingerColor.A * 0.8f * life), fingerColor), width * (0.4f + 0.6f * life),
+                        P(pts[i - 1].U, pts[i - 1].V), P(pts[i].U, pts[i].V), round: true);
                 }
             }
         }
 
         if (live && settings.FingerDots)
         {
-            using var dot = new SolidBrush(Color.FromArgb((int)(fingerColor.A * 0.6f), fingerColor));
+            var dot = Color.FromArgb((int)(fingerColor.A * 0.6f), fingerColor);
             float r = 0.035f;
             for (int i = 0; i < f.FingerCount; i++)
-            {
-                var dp = Ellipse(f.Fingers[i * 2], f.Fingers[i * 2 + 1], r * pxH / pxW, r, 16).Select(p => P(p.X, p.Y)).ToArray();
-                g.FillPolygon(dot, dp);
-            }
+                g.FillPolygon(dot, Ellipse(f.Fingers[i * 2], f.Fingers[i * 2 + 1], r * pxH / pxW, r, 16).Select(p => P(p.X, p.Y)).ToArray());
         }
 
         string? note = !scene.Connected ? "Waiting for the phone"
@@ -288,11 +287,10 @@ internal static class OverlayRenderer
             : layout == null ? "Getting the layout" : null;
         if (note != null)
         {
-            using var dim = new SolidBrush(Color.FromArgb(150, 0, 0, 0));
-            g.FillPolygon(dim, screen);
+            g.FillPolygon(Color.FromArgb(150, 0, 0, 0), screen);
             DrawLabel(g, note, 0.5f, 0.5f, pxW * 0.9f, fontPx * 1.3f, pxW, pxH, P, Color.FromArgb(230, 255, 255, 255));
         }
-        g.Clip = savedClip;
+        g.Pop();
     }
 
     /// <summary>The pose shown: the window's pose, from the levelled one (if any), its turn scaled.</summary>
@@ -363,6 +361,53 @@ internal static class OverlayRenderer
         return pts.ToArray();
     }
 
+    /// <summary>
+    /// <paramref name="shape"/> cut to convex polygon <paramref name="clip"/> (Sutherland–Hodgman);
+    /// either winding. Empty when nothing is left.
+    /// </summary>
+    internal static (float X, float Y)[] ClipConvex((float X, float Y)[] shape, (float X, float Y)[] clip)
+    {
+        float area = 0;
+        for (int i = 0; i < clip.Length; i++)
+        {
+            var a = clip[i];
+            var b = clip[(i + 1) % clip.Length];
+            area += a.X * b.Y - b.X * a.Y;
+        }
+        float sign = area >= 0 ? 1f : -1f;
+        var output = new List<(float X, float Y)>(shape);
+        for (int e = 0; e < clip.Length && output.Count > 0; e++)
+        {
+            var a = clip[e];
+            var b = clip[(e + 1) % clip.Length];
+            float Side((float X, float Y) p) => sign * ((b.X - a.X) * (p.Y - a.Y) - (b.Y - a.Y) * (p.X - a.X));
+            var input = output;
+            output = new List<(float X, float Y)>(input.Count + 4);
+            for (int i = 0; i < input.Count; i++)
+            {
+                var cur = input[i];
+                var prev = input[(i + input.Count - 1) % input.Count];
+                float sc = Side(cur), sp = Side(prev);
+                if (sc >= 0)
+                {
+                    if (sp < 0) output.Add(Cross(prev, cur, sp, sc));
+                    output.Add(cur);
+                }
+                else if (sp >= 0)
+                {
+                    output.Add(Cross(prev, cur, sp, sc));
+                }
+            }
+        }
+        return output.ToArray();
+
+        static (float X, float Y) Cross((float X, float Y) p, (float X, float Y) q, float sp, float sq)
+        {
+            float t = sp / (sp - sq);
+            return (p.X + (q.X - p.X) * t, p.Y + (q.Y - p.Y) * t);
+        }
+    }
+
     /// <summary>An ellipse in pad coordinates (u right, v down).</summary>
     private static (float X, float Y)[] Ellipse(float u, float v, float ru, float rv, int n)
     {
@@ -387,7 +432,7 @@ internal static class OverlayRenderer
     /// Text lying on the screen, centred at pad point (u, v): drawn in pad pixels under the affine
     /// transform that the projection has around that point.
     /// </summary>
-    private static void DrawLabel(Graphics g, string text, float u, float v, float maxWidthPx, float fontPx,
+    private static void DrawLabel(ICanvas g, string text, float u, float v, float maxWidthPx, float fontPx,
         float pxW, float pxH, Func<float, float, PointF> project, Color color, bool pill = false)
     {
         var p0 = project(u, v);
@@ -397,35 +442,16 @@ internal static class OverlayRenderer
         float bx = (py.X - p0.X) / 100f, by = (py.Y - p0.Y) / 100f;
         // Edge on: too thin to read.
         if (MathF.Abs(ax * by - ay * bx) * fontPx * fontPx < 6f) return;
-        var saved = g.Transform;
-        using var tm = new Matrix(ax, ay, bx, by, p0.X, p0.Y);
-        g.MultiplyTransform(tm);
-        using var font = new Font(FontFamily.GenericSansSerif, Math.Max(1f, fontPx), FontStyle.Bold, GraphicsUnit.Pixel);
-        using var fmt = new StringFormat
-        {
-            Alignment = StringAlignment.Center,
-            LineAlignment = StringAlignment.Center,
-            Trimming = StringTrimming.EllipsisCharacter,
-            FormatFlags = StringFormatFlags.NoWrap,
-        };
+        g.PushTransform(new Matrix3x2(ax, ay, bx, by, p0.X, p0.Y));
         float w = Math.Max(fontPx, maxWidthPx - fontPx * 0.4f);
         var rect = new RectangleF(-w / 2, -fontPx, w, fontPx * 2);
         if (pill)
         {
-            var size = g.MeasureString(text, font, (int)w, fmt);
-            using var bg = new SolidBrush(Color.FromArgb(0xE0, 0x1E, 0x23, 0x2B));
-            g.FillRectangle(bg, -size.Width / 2 - fontPx * 0.5f, -fontPx * 0.75f, size.Width + fontPx, fontPx * 1.5f);
+            var size = g.MeasureText(text, fontPx, true);
+            float tw = Math.Min(size.Width, w);
+            g.FillRectangle(Color.FromArgb(0xE0, 0x1E, 0x23, 0x2B), new RectangleF(-tw / 2 - fontPx * 0.5f, -fontPx * 0.75f, tw + fontPx, fontPx * 1.5f));
         }
-        using var brush = new SolidBrush(color);
-        g.DrawString(text, font, brush, rect, fmt);
-        g.Transform = saved;
-    }
-
-    private static void DrawCaption(Graphics g, Size size, string text)
-    {
-        using var font = new Font(FontFamily.GenericSansSerif, 11f, FontStyle.Regular, GraphicsUnit.Pixel);
-        using var brush = new SolidBrush(Color.FromArgb(230, 255, 255, 255));
-        var fmt = new StringFormat { Alignment = StringAlignment.Center };
-        g.DrawString(text, font, brush, new RectangleF(0, size.Height - 17, size.Width, 16), fmt);
+        g.DrawText(text, fontPx, true, color, rect, TextAlign.Center, TextAlign.Center);
+        g.Pop();
     }
 }

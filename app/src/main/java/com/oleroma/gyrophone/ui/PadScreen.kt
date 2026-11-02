@@ -2753,7 +2753,7 @@ private fun CornerSettings(
     }
     Text(
         "Tap ← for the previous workspace and → for the next. Press both at the same time for " +
-                "fullscreen (the buttons at the top hide); press both again (or Back) to leave it. The corners are " +
+                "fullscreen (the buttons at the top hide); press both again to leave it. Back also switches fullscreen on and off. The corners are " +
                 "the same in every workspace; drag each one where you like.",
         style = MaterialTheme.typography.bodyMedium,
     )

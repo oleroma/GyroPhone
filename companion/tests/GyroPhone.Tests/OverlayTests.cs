@@ -380,6 +380,28 @@ public class OverlayTests
             rw * p.Z + rx * p.Y - ry * p.X + rz * p.W);
     }
 
+    [Fact]
+    public void ShortcutsDefaultAndNeverShareKeys()
+    {
+        var s = new GyroPhone.Host.Settings.HostSettings { OverlayShortcuts = null!, OverlaysHidden = true };
+        s.Normalize();
+        Assert.Equal("Ctrl+Alt+R", s.OverlayShortcuts.LevelAll);
+        Assert.Equal("Ctrl+Alt+O", s.OverlayShortcuts.HideAll);
+        Assert.Equal("Ctrl+Alt+E", s.OverlayShortcuts.Edit);
+        // A cleared one stays cleared.
+        s.OverlayShortcuts.Edit = "";
+        s.Normalize();
+        Assert.Equal("", s.OverlayShortcuts.Edit);
+
+        var h = new Harness();
+        var keys = h.Engine.Settings.OverlayShortcuts;
+        h.Engine.SetOverlayShortcut(GyroPhone.Host.Settings.OverlayAction.Edit, "Ctrl+Alt+R");
+        Assert.Equal("Ctrl+Alt+R", keys.Edit);
+        Assert.Equal("", keys.LevelAll); // one press never does two things
+        h.Engine.SetOverlaysHidden(true);
+        Assert.True(h.Engine.Settings.OverlaysHidden);
+    }
+
     private static float Angle((float W, float X, float Y, float Z) q) =>
         2f * MathF.Acos(Math.Min(MathF.Abs(q.W), 1f)) * 180f / MathF.PI;
 }

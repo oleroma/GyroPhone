@@ -17,4 +17,9 @@
     <ProjectReference Include="../GyroPhone.Host/GyroPhone.Host.csproj" />
     <ProjectReference Include="../GyroPhone.Windows/GyroPhone.Windows.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Overlay windows drawn by the graphics card: Direct2D into a GDI-compatible texture. -->
+    <PackageReference Include="Vortice.Direct2D1" Version="3.6.2" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
+  </ItemGroup>
 </Project>
