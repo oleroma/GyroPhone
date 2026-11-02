@@ -208,11 +208,16 @@ public sealed class OverlayPose
         }
     }
 
-    /// <summary>The pose with its heading taken out (w, x, y, z): only how it is tilted against gravity.</summary>
+    /// <summary>
+    /// The pose with its turn round the vertical taken out (w, x, y, z): only how it is tilted against
+    /// gravity. That turn is the twist of the whole pose about the vertical, so tipping forward or back
+    /// never counts, however far (past flat the screen faces the other way, which the heading by the
+    /// screen would read as a half turn).
+    /// </summary>
     public float[] TiltOnly()
     {
         float w = _w, x = _x, y = _y, z = _z;
-        TurnVertical(Heading());
+        if (y * y + w * w > 1e-8f) TurnVertical(-2f * MathF.Atan2(y, w));
         float[] tilt = [_w, _x, _y, _z];
         _w = w; _x = x; _y = y; _z = z;
         return tilt;

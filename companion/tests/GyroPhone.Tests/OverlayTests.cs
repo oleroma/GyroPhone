@@ -355,6 +355,22 @@ public class OverlayTests
         }
     }
 
+    [Fact]
+    public void LevelWithTheTopTippedPastFlatKeepsTheGrip()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = false, Ease = false };
+        foreach (float tip in new[] { -120f, 120f, -170f })
+        {
+            var p = new GyroPhone.Host.OverlayPose();
+            var f = Motion(0f, 0.01f);
+            f.TurnPitch = tip;
+            p.Feed(f, s);
+            // Only tipped: nothing to take out, so the grip is the pose itself (not turned round).
+            var tilt = p.TiltOnly();
+            Assert.True(Angle(Shown(p, tilt)) < 1f, $"tip {tip}");
+        }
+    }
+
     private static (float W, float X, float Y, float Z) Shown(GyroPhone.Host.OverlayPose p, float[] rest)
     {
         float rw = rest[0], rx = -rest[1], ry = -rest[2], rz = -rest[3];
