@@ -12,7 +12,7 @@ class OverlayFeedTest {
     )
 
     @Test fun sizes() {
-        assertEquals(124, Wire.sizeOf(PacketType.OVERLAY))
+        assertEquals(140, Wire.sizeOf(PacketType.OVERLAY))
         assertEquals(228, Wire.sizeOf(PacketType.OVERLAY_LAYOUT))
         assertEquals(true, PacketType.isPhoneToHost(PacketType.OVERLAY_LAYOUT))
     }
@@ -43,29 +43,38 @@ class OverlayFeedTest {
         f.setLayout(layout)
         f.setLayout(layout.copy()) // the same layout keeps its version
         assertEquals(1, f.layoutSnapshot()!!.first)
-        f.poseTurned()
         f.padShown = true
+        f.gyro(100f, -50f, 25f, 0.01f, 3, true)
+        f.up(0f, 9.8f, 0f, 9.8f)
+        f.north(0f, 0f, -2f)
         f.setFingers(floatArrayOf(0.5f, 0.25f), 1)
         f.setStick("a", 1f, -0.5f)
         f.setStick("gone", 0.3f, 0.3f) // not in the layout: left out
         val out = ByteArray(Wire.OVERLAY_PLAIN)
         assertEquals(Wire.OVERLAY_PLAIN, f.encodeFrame(out, 0, 0x01020304, setOf("a", "unknown"), emptySet()))
         assertEquals(FRAME, out.hex())
+        // The turn is sent once; the next frame starts from 0.
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(0, out.getI32(4))
+        assertEquals(0, out.getU16(16))
+        assertEquals(1, out.getU8(31)) // still one press
     }
 
-    @Test fun wantedStartsThePoseAfresh() {
+    @Test fun wantedAndCompassTellTheRuntime() {
         val f = OverlayFeed()
         var changes = 0
         f.onWantedChange = Runnable { changes++ }
         f.wanted = true
         f.wanted = true
-        f.wanted = false
-        assertEquals(2, changes)
+        f.compassWanted = true
+        f.wanted = false // the compass goes off with it
+        assertEquals(false, f.compassWanted)
+        assertEquals(4, changes)
     }
 
     companion object {
         const val LAYOUT_BLOB = "0160093804044d61696e000100010008001033036606800141"
-        const val FRAME = "04030201ff7f000000000000010003010080004000000000000000000000000000000000010000000000000000000000" +
-            "0000000000000000000000000000000000000000007fc1ff0000ff0000ff0000ff0000ff0000ff0000ff000000000000"
+        const val FRAME = "040302010000803f000000bf0000803ee803000000200000000000000180030101003b010080004000000000000000000000000000000000" +
+            "0100000000000000000000000000000000000000000000000000000000000000007fc1ff0000ff0000ff0000ff0000ff0000ff0000ff0000"
     }
 }

@@ -40,7 +40,7 @@ object Wire {
     const val RUMBLE_PLAIN = 4
     const val FOREGROUND_PLAIN = 66
     /** OVERLAY: the phone's pose, touches and presses for the PC's phone overlay ([OverlayFeed]). */
-    const val OVERLAY_PLAIN = 96
+    const val OVERLAY_PLAIN = 112
     /** OVERLAY_LAYOUT: one piece of the layout the overlay draws on the phone's screen. */
     const val OVERLAY_LAYOUT_PLAIN = 200
 
@@ -279,6 +279,8 @@ object HostStatusFlags {
     const val NETWORK_PUBLIC = 16
     /** The PC's phone overlay is on: the phone sends OVERLAY and OVERLAY_LAYOUT. */
     const val OVERLAY = 32
+    /** With [OVERLAY]: the overlay holds its heading by the compass, so the phone sends magnetometer readings too. */
+    const val OVERLAY_COMPASS = 64
 }
 
 /** BYE reason (phone). */

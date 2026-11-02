@@ -173,7 +173,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             overlayScaleItem,
             _overlayDotsItem,
             new ToolStripSeparator(),
-            new ToolStripMenuItem("Recenter: the phone as held now shows square on (Ctrl+Alt+R)", null, (_, _) => _overlayForm?.Recenter()),
+            new ToolStripMenuItem("Recenter: the phone as held now shows square on (Ctrl+Alt+R)", null, (_, _) => RecenterOverlay()),
             new ToolStripMenuItem("Level again (undo recenter)", null, (_, _) => ChangeOverlay(o => o.Center = null)),
         });
         // The phone's Record button: save this PC's side at once (the ring keeps moving).
@@ -414,6 +414,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     }
 
     internal TrayClickAction TrayClick => _engine.Settings.TrayClick;
+    internal OverlaySettings OverlaySettings => _engine.Settings.Overlay;
 
     internal void SetTrayClick(TrayClickAction action)
     {
@@ -470,10 +471,18 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         ApplyOverlay();
     }
 
-    private void ChangeOverlay(Action<OverlaySettings> change)
+    internal void ChangeOverlay(Action<OverlaySettings> change)
     {
         _engine.UpdateOverlaySettings(change);
         _overlayForm?.SettingsChanged();
+        Refresh();
+    }
+
+    /// <summary>Takes the phone's pose now as the one shown square on (as Ctrl+Alt+R).</summary>
+    internal void RecenterOverlay()
+    {
+        _overlayForm?.Recenter();
+        Refresh();
     }
 
     private void ApplyOverlay()

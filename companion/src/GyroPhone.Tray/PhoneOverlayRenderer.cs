@@ -28,10 +28,7 @@ internal sealed class OverlayScene
 internal static class PhoneOverlayRenderer
 {
     private static readonly Color Idle = Color.FromArgb(0x66, 255, 255, 255);
-    private static readonly Color PressedColor = Color.FromArgb(0x7C, 0xC4, 0xFF);
     private static readonly Color LatchedColor = Color.FromArgb(0x8F, 0xE3, 0x9A);
-    private static readonly Color ScreenColor = Color.FromArgb(0x10, 0x13, 0x18);
-    private static readonly Color BodyColor = Color.FromArgb(0x2A, 0x2E, 0x35);
 
     /// <summary>Camera distance, in slab units (the slab's long side is about 2.2).</summary>
     private const float CameraZ = 5.5f;
@@ -65,6 +62,10 @@ internal static class PhoneOverlayRenderer
             DrawCaption(g, size, "Drag to move · drag the corner to resize");
         }
 
+        var BodyColor = Opaque(settings.BodyColor);
+        var ScreenColor = Opaque(settings.ScreenColor);
+        var PressedColor = Opaque(settings.LitColor);
+
         var layout = scene.Layout;
         bool live = scene.Connected && scene.FrameAgeUs is >= 0 and < 1_500_000;
         var f = scene.Frame;
@@ -77,7 +78,7 @@ internal static class PhoneOverlayRenderer
         float sh = portrait ? longSide : longSide / aspect;
         float bw = sw + 2 * Bezel, bh = sh + 2 * Bezel;
 
-        var q = live && f.PoseLive ? Shown(f, settings) : (1f, 0f, 0f, 0f);
+        var q = Level(live ? Shown(f, settings) : (1f, 0f, 0f, 0f), settings.LevelDeg);
         var m = Matrix3(q);
 
         float radius = MathF.Sqrt(bw * bw + bh * bh) / 2f + Thickness;
@@ -249,6 +250,16 @@ internal static class PhoneOverlayRenderer
         float r = MathF.Sin(a) / sn;
         return (MathF.Cos(a), q.Item2 * r, q.Item3 * r, q.Item4 * r);
     }
+
+    /// <summary>The pose seen from the level angle: the pose <paramref name="deg"/> back from upright shows square on.</summary>
+    private static (float W, float X, float Y, float Z) Level((float W, float X, float Y, float Z) q, int deg)
+    {
+        if (deg == 0) return q;
+        float a = Math.Clamp(deg, 0, 180) * MathF.PI / 360f;
+        return MulQ((MathF.Cos(a), MathF.Sin(a), 0f, 0f), q);
+    }
+
+    private static Color Opaque(int argb) => Color.FromArgb(255, Color.FromArgb(argb));
 
     private static (float, float, float, float) MulQ((float W, float X, float Y, float Z) a, (float W, float X, float Y, float Z) b) => (
         a.W * b.W - a.X * b.X - a.Y * b.Y - a.Z * b.Z,

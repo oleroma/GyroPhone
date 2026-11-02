@@ -3,8 +3,10 @@ using System.Text;
 namespace GyroPhone.Protocol;
 
 /// <summary>
-/// OVERLAY from the phone (see the phone's OverlayFeed for the layout of its 96 bytes): its pose,
-/// fingers, pressed and latched controls and stick knobs, for the phone overlay.
+/// OVERLAY from the phone (see the phone's OverlayFeed for its 112 bytes): the phone's motion since
+/// the last one (gyro turn, gravity, compass, ratchet), fingers, pressed and latched controls and
+/// stick knobs, for the phone overlay. The PC turns the motion into a pose (<see cref="Qw"/>..)
+/// with its own settings.
 /// </summary>
 public sealed class OverlayFrame
 {
@@ -13,10 +15,25 @@ public sealed class OverlayFrame
     public const byte FlagPose = 1;
     public const byte FlagPadShown = 2;
     public const byte FlagGyroActive = 4;
+    public const byte FlagUp = 8;
+    public const byte FlagNorth = 16;
+    public const byte FlagRatchetHeld = 32;
     public const byte NoControl = 0xFF;
+    /// <summary>The accelerometer's 1 g in OVERLAY.</summary>
+    public const float GScale = 8192f;
 
     public uint PhoneTimeUs;
-    /// <summary>Pose quaternion: phone frame (x right, y up, z out of the screen) to the player's view.</summary>
+    /// <summary>Yaw, pitch and roll turned since the last OVERLAY (degrees) over <see cref="TurnSeconds"/>.</summary>
+    public float TurnYaw, TurnPitch, TurnRoll, TurnSeconds;
+    /// <summary>The newest accelerometer reading in the phone frame (right, up, toward the player), in g.</summary>
+    public float UpX, UpY, UpZ;
+    /// <summary>The newest magnetometer reading in the phone frame, unit length.</summary>
+    public float NorthX, NorthY, NorthZ;
+    /// <summary>The gyro axes moving the mouse: 1 yaw, 2 pitch, 4 roll.</summary>
+    public byte Axes;
+    /// <summary>Ratchet presses so far (wraps at 256): a change is a press.</summary>
+    public byte RatchetPresses;
+    /// <summary>The pose the PC made (not on the wire): phone frame (x right, y up, z out of the screen) to the player's view.</summary>
     public float Qw = 1, Qx, Qy, Qz;
     public ushort LayoutVersion;
     public byte Flags;
@@ -33,34 +50,43 @@ public sealed class OverlayFrame
     public bool PoseLive => (Flags & FlagPose) != 0;
     public bool PadShown => (Flags & FlagPadShown) != 0;
     public bool GyroActive => (Flags & FlagGyroActive) != 0;
+    public bool HasUp => (Flags & FlagUp) != 0;
+    public bool HasNorth => (Flags & FlagNorth) != 0;
+    public bool RatchetHeld => (Flags & FlagRatchetHeld) != 0;
 
     public bool IsPressed(int i) => i is >= 0 and < 128 && (Pressed[i >> 3] & (1 << (i & 7))) != 0;
     public bool IsLatched(int i) => i is >= 0 and < 128 && (Latched[i >> 3] & (1 << (i & 7))) != 0;
 
+    /// <summary>Decodes the wire fields; the pose (<see cref="Qw"/>..) is left as it is.</summary>
     public void Decode(ReadOnlySpan<byte> b)
     {
         PhoneTimeUs = Le.U32(b, 0);
-        Qw = Le.I16(b, 4) / 32767f;
-        Qx = Le.I16(b, 6) / 32767f;
-        Qy = Le.I16(b, 8) / 32767f;
-        Qz = Le.I16(b, 10) / 32767f;
-        float n = MathF.Sqrt(Qw * Qw + Qx * Qx + Qy * Qy + Qz * Qz);
-        if (n > 0.5f) { Qw /= n; Qx /= n; Qy /= n; Qz /= n; }
-        else { Qw = 1; Qx = Qy = Qz = 0; }
-        LayoutVersion = Le.U16(b, 12);
-        Flags = b[14];
-        FingerCount = Math.Min((int)b[15], MaxFingers);
+        TurnYaw = Finite(BitConverter.Int32BitsToSingle(Le.I32(b, 4)));
+        TurnPitch = Finite(BitConverter.Int32BitsToSingle(Le.I32(b, 8)));
+        TurnRoll = Finite(BitConverter.Int32BitsToSingle(Le.I32(b, 12)));
+        TurnSeconds = Le.U16(b, 16) / 100_000f;
+        UpX = Le.I16(b, 18) / GScale;
+        UpY = Le.I16(b, 20) / GScale;
+        UpZ = Le.I16(b, 22) / GScale;
+        NorthX = Le.I16(b, 24) / 32767f;
+        NorthY = Le.I16(b, 26) / 32767f;
+        NorthZ = Le.I16(b, 28) / 32767f;
+        Axes = b[30];
+        RatchetPresses = b[31];
+        LayoutVersion = Le.U16(b, 32);
+        Flags = b[34];
+        FingerCount = Math.Min((int)b[35], MaxFingers);
         for (int i = 0; i < FingerCount; i++)
         {
-            Fingers[i * 2] = Le.U16(b, 16 + i * 4) / 65535f;
-            Fingers[i * 2 + 1] = Le.U16(b, 18 + i * 4) / 65535f;
+            Fingers[i * 2] = Le.U16(b, 36 + i * 4) / 65535f;
+            Fingers[i * 2 + 1] = Le.U16(b, 38 + i * 4) / 65535f;
         }
-        b.Slice(36, 16).CopyTo(Pressed);
-        b.Slice(52, 16).CopyTo(Latched);
+        b.Slice(56, 16).CopyTo(Pressed);
+        b.Slice(72, 16).CopyTo(Latched);
         StickCount = 0;
         for (int k = 0; k < MaxSticks; k++)
         {
-            int at = 68 + k * 3;
+            int at = 88 + k * 3;
             if (b[at] == NoControl) continue;
             StickIndex[StickCount] = b[at];
             StickXY[StickCount * 2] = (sbyte)b[at + 1] / 127f;
@@ -69,9 +95,16 @@ public sealed class OverlayFrame
         }
     }
 
+    private static float Finite(float v) => float.IsFinite(v) ? Math.Clamp(v, -3600f, 3600f) : 0f;
+
     public void CopyTo(OverlayFrame o)
     {
         o.PhoneTimeUs = PhoneTimeUs;
+        o.TurnYaw = TurnYaw; o.TurnPitch = TurnPitch; o.TurnRoll = TurnRoll; o.TurnSeconds = TurnSeconds;
+        o.UpX = UpX; o.UpY = UpY; o.UpZ = UpZ;
+        o.NorthX = NorthX; o.NorthY = NorthY; o.NorthZ = NorthZ;
+        o.Axes = Axes;
+        o.RatchetPresses = RatchetPresses;
         o.Qw = Qw; o.Qx = Qx; o.Qy = Qy; o.Qz = Qz;
         o.LayoutVersion = LayoutVersion;
         o.Flags = Flags;

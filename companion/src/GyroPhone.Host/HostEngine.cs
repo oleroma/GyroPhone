@@ -132,6 +132,7 @@ public sealed class HostEngine
     private bool _overlayOn;
     private readonly OverlayFrame _overlayFrame = new();
     private readonly OverlayLayoutAssembler _overlayLayout = new();
+    private readonly OverlayPose _overlayPose = new();
     private long _overlayRxUs = long.MinValue;
     private long _lastStatusUs;
     private int _rumbleNext; // (large << 8) | small, plus RumbleDirty while unsent
@@ -338,6 +339,11 @@ public sealed class HostEngine
             case PacketType.Overlay:
                 if (!_overlayOn) break;
                 _overlayFrame.Decode(plain);
+                _overlayPose.Feed(_overlayFrame, _settings.Overlay);
+                _overlayFrame.Qw = _overlayPose.W;
+                _overlayFrame.Qx = _overlayPose.X;
+                _overlayFrame.Qy = _overlayPose.Y;
+                _overlayFrame.Qz = _overlayPose.Z;
                 _overlayRxUs = nowUs;
                 break;
             case PacketType.OverlayLayout:
@@ -850,8 +856,11 @@ public sealed class HostEngine
     {
         lock (_lock)
         {
+            bool compass = _settings.Overlay.NeedsCompass;
             change(_settings.Overlay);
             _settingsDirty = true;
+            // The phone sends compass readings only while asked.
+            if (_overlayOn && compass != _settings.Overlay.NeedsCompass && _sessions.Active is { } a) SendStatus(a, _clock.NowUs);
         }
     }
 
@@ -928,6 +937,7 @@ public sealed class HostEngine
             if (on == _overlayOn) return;
             _overlayOn = on;
             _overlayRxUs = long.MinValue;
+            _overlayPose.Reset();
             if (!on) _overlayLayout.Reset();
             if (_sessions.Active is { } a) SendStatus(a, _clock.NowUs);
         }
@@ -1148,6 +1158,7 @@ public sealed class HostEngine
         _sessions.DropActive();
         _overlayLayout.Reset();
         _overlayRxUs = long.MinValue;
+        _overlayPose.Reset();
         _pad.Unplug();
         _padFrameValid = false;
         _hasPending = false;
@@ -1316,6 +1327,7 @@ public sealed class HostEngine
         if (_elevatedForeground) flags |= HostStatusFlags.ElevatedForeground;
         if (_networkPublic) flags |= HostStatusFlags.NetworkPublic;
         if (_overlayOn) flags |= HostStatusFlags.Overlay;
+        if (_overlayOn && _settings.Overlay.NeedsCompass) flags |= HostStatusFlags.OverlayCompass;
         Span<byte> p = stackalloc byte[Wire.HostStatusPlain];
         WireCodec.EncodeHostStatus(new HostStatus(s.HighestRxSeq, _stats.RxPerSec, _stats.LossPermille,
             _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs, (byte)_settings.OutputMode, flags), p);

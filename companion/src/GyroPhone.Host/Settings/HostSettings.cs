@@ -63,6 +63,37 @@ public sealed class OverlaySettings
     public int Height { get; set; } = 300;
     /// <summary>The pose shown square on (Recenter), as a quaternion w, x, y, z; null = level, facing the player.</summary>
     public float[]? Center { get; set; }
+
+    // The pose, made on the PC (the phone's own gyro phone view settings are separate).
+    /// <summary>Tilt held to gravity (never drifts); off, turned by the gyro axes that move the mouse.</summary>
+    public bool Gravity { get; set; } = true;
+    /// <summary>With gravity: the heading held by the phone's compass to the way it faced at the start.</summary>
+    public bool Compass { get; set; }
+    /// <summary>A ratchet press sets it straight: the whole pose, or with <see cref="ResetHeadingOnly"/> (always with gravity) the heading.</summary>
+    public bool ResetOnRatchet { get; set; } = true;
+    public bool ResetHeadingOnly { get; set; }
+    /// <summary>Goes back to straight on its own (the heading only with gravity).</summary>
+    public bool Ease { get; set; } = true;
+    /// <summary>Easing starts after a ratchet is let go, instead of after the phone stops turning.</summary>
+    public bool EaseAfterRatchet { get; set; }
+    public int EaseDelayMs { get; set; } = 300;
+    /// <summary>Back at <see cref="EaseSpeed"/> deg/s, instead of over <see cref="EaseSeconds"/>.</summary>
+    public bool EaseBySpeed { get; set; }
+    public float EaseSeconds { get; set; } = 2f;
+    public int EaseSpeed { get; set; } = 90;
+    /// <summary>The pose shown square on: 0 upright facing the player, 90 flat screen up, 180 upright facing away.</summary>
+    public int LevelDeg { get; set; }
+
+    // Looks: ARGB colours and the whole window's opacity.
+    public int BodyColor { get; set; } = unchecked((int)0xFF2A2E35);
+    public int ScreenColor { get; set; } = unchecked((int)0xFF101318);
+    public int LitColor { get; set; } = unchecked((int)0xFF7CC4FF);
+    /// <summary>0.1..1, applied when the window is drawn (costs nothing extra).</summary>
+    public float Opacity { get; set; } = 1f;
+
+    /// <summary>The phone sends its magnetometer readings.</summary>
+    [JsonIgnore]
+    public bool NeedsCompass => Gravity && Compass;
 }
 
 public sealed class PairedPhone

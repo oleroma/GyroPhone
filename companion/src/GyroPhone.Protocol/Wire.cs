@@ -39,7 +39,7 @@ public static class Wire
     public const int RumblePlain = 4;
     public const int ForegroundPlain = 66;
     /// <summary>OVERLAY: the phone's pose, touches and presses for the phone overlay (<see cref="OverlayFrame"/>).</summary>
-    public const int OverlayPlain = 96;
+    public const int OverlayPlain = 112;
     /// <summary>OVERLAY_LAYOUT: one piece of the layout the overlay draws on the phone's screen.</summary>
     public const int OverlayLayoutPlain = 200;
 
@@ -210,6 +210,8 @@ public static class HostStatusFlags
     public const byte NetworkPublic = 1 << 4;
     /// <summary>The phone overlay is on: the phone sends OVERLAY and OVERLAY_LAYOUT.</summary>
     public const byte Overlay = 1 << 5;
+    /// <summary>With <see cref="Overlay"/>: the overlay holds its heading by the compass, so the phone sends magnetometer readings too.</summary>
+    public const byte OverlayCompass = 1 << 6;
 }
 
 /// <summary>BYE reason (phone to host).</summary>

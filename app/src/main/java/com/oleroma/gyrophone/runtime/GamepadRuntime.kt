@@ -237,7 +237,7 @@ class GamepadRuntime(context: Context) {
     private val upNow = FloatArray(3)
 
     /** Some gyro display holds its heading to north (and so needs the magnetometer). */
-    private val needsCompass: Boolean get() = gyroFeeds.any { it.display.needsCompass }
+    private val needsCompass: Boolean get() = gyroFeeds.any { it.display.needsCompass } || wifi.overlay.compassWanted
 
     /** The gyro axes moving the mouse now ([MappingEngine.gyroAxes]), for the ratchet ring and the edge's tint. */
     @Volatile var gyroLiveAxes = 0
@@ -650,6 +650,7 @@ class GamepadRuntime(context: Context) {
         // The same axes as the gyro's: right, up and toward the player in the phone's frame.
         val m = gyroMouse.motion(x, y, z)
         for (f in gyroFeeds) f.north(m.pitch, -m.yaw, -m.roll)
+        if (wifi.overlay.compassWanted) wifi.overlay.north(m.pitch, -m.yaw, -m.roll)
     }
 
     private fun startMotion() {
@@ -677,7 +678,7 @@ class GamepadRuntime(context: Context) {
             val m = gyroMouse.motion(x, y, z)
             val g = SensorManager.GRAVITY_EARTH * RAD_TO_DEG
             if (vis.gyroNeedsGravity) worldPose.setUp(m.pitch, -m.yaw, -m.roll, g)
-            if (overlay) wifi.overlay.pose.setUp(m.pitch, -m.yaw, -m.roll, g)
+            if (overlay) wifi.overlay.up(m.pitch, -m.yaw, -m.roll, g)
             for (f in feeds) f.up(m.pitch, -m.yaw, -m.roll, g)
             if (spaced) gravityPose.setUp(m.pitch, -m.yaw, -m.roll, g)
         }
@@ -1016,9 +1017,6 @@ class GamepadRuntime(context: Context) {
         private const val GYRO_OFF = "Off in this workspace"
         private const val UNAVAILABLE = "Unavailable"
 
-        /** The PC overlay's phone turns back to facing the player over about this long (no compass to hold it). */
-        private const val OVERLAY_HEADING_EASE_S = 2f
-
         /** [GyroMouse.motion] scales by this (it takes rad/s): gravity in its units. */
         private const val RAD_TO_DEG = (180.0 / Math.PI).toFloat()
     }
@@ -1069,11 +1067,9 @@ class GamepadRuntime(context: Context) {
         if (v.gyroEdge || feeds.isNotEmpty()) feedVisuals(v, feeds, x - biasX, y - biasY, z - biasZ, dt, axes)
         val overlay = wifi.overlay
         if (overlay.wanted && !measuring) {
-            if (dt > 0f) {
-                val m = gyroMouse.motion(x - biasX, y - biasY, z - biasZ)
-                overlay.pose.fuse(m.yaw, m.pitch, m.roll, dt, OVERLAY_HEADING_EASE_S)
-            }
-            overlay.poseTurned()
+            // The PC's phone overlay turns its pose from these, with its own settings.
+            val m = gyroMouse.motion(x - biasX, y - biasY, z - biasZ)
+            overlay.gyro(m.yaw, m.pitch, m.roll, dt, axes, inputAllowed && engine.ratchetsHeld != 0)
             overlay.gyroActive = active
         }
         // World and player space read the phone's pose against gravity.

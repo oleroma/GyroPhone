@@ -222,6 +222,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         set(v) {
             field = v
             overlay.wanted = v != null && v.flags and HostStatusFlags.OVERLAY != 0
+            overlay.compassWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_COMPASS != 0
         }
     @Volatile private var welcomeHostFlags: Int? = null
 

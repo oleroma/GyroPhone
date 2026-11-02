@@ -24,7 +24,7 @@ internal sealed record MainView(
 /// </summary>
 internal sealed class MainForm : Form
 {
-    private const int ColumnWidth = 300;
+    internal const int ColumnWidth = 300;
 
     private readonly TrayApp _app;
     private readonly Func<string> _statusText;
@@ -36,6 +36,7 @@ internal sealed class MainForm : Form
     private readonly Button _forget;
     private readonly Label _hostKey;
     private readonly Button _network, _firewall, _usb, _installDriver, _retryDriver, _restartAdmin;
+    private readonly OverlaySection _overlay;
     private readonly TextBox _box;
     private readonly Font _mono;
     private readonly Font _headerFont;
@@ -94,6 +95,8 @@ internal sealed class MainForm : Form
         var startup = Group("Startup", settings);
         _autoStart = Check("Start with Windows", startup, () => _app.ToggleAutoStart());
         _watcher = Check("Start when my phone appears", startup, () => _app.ToggleWatcher());
+
+        _overlay = new OverlaySection(_app, Group("Phone overlay", settings));
 
         var phones = Group("Phones", settings);
         phones.Controls.Add(NewButton("Pair new phone…", () => _app.PairNewPhone()));
@@ -181,6 +184,7 @@ internal sealed class MainForm : Form
         _retryDriver.Visible = v.ShowDriver;
         _restartAdmin.Visible = v.ShowRestartAdmin;
         RebuildPhones(s.PairedPhones);
+        _overlay.RefreshNow(_app.OverlaySettings);
     }
 
     private void RebuildPhones(IReadOnlyList<PairedPhoneInfo> phones)
@@ -222,7 +226,7 @@ internal sealed class MainForm : Form
     }
 
     /// <summary>A titled box in the settings column; returns the panel its rows go into.</summary>
-    private static FlowLayoutPanel Group(string title, Control parent)
+    internal static FlowLayoutPanel Group(string title, Control parent)
     {
         var box = new GroupBox
         {
@@ -246,7 +250,7 @@ internal sealed class MainForm : Form
         return inner;
     }
 
-    private static FlowLayoutPanel Row() => new()
+    internal static FlowLayoutPanel Row() => new()
     {
         FlowDirection = FlowDirection.LeftToRight,
         WrapContents = false,
@@ -255,7 +259,7 @@ internal sealed class MainForm : Form
         Margin = new Padding(0),
     };
 
-    private static RadioButton Radio(string text, Control parent, Action click)
+    internal static RadioButton Radio(string text, Control parent, Action click)
     {
         var r = new RadioButton { Text = text, AutoSize = true, AutoCheck = false };
         r.Click += (_, _) => click();
@@ -263,7 +267,7 @@ internal sealed class MainForm : Form
         return r;
     }
 
-    private static CheckBox Check(string text, Control parent, Action click)
+    internal static CheckBox Check(string text, Control parent, Action click)
     {
         var c = new CheckBox { Text = text, AutoSize = true, AutoCheck = false };
         c.Click += (_, _) => click();
@@ -271,7 +275,7 @@ internal sealed class MainForm : Form
         return c;
     }
 
-    private static Button NewButton(string text, Action click, Control? parent = null)
+    internal static Button NewButton(string text, Action click, Control? parent = null)
     {
         var b = new Button { Text = text, AutoSize = true };
         b.Click += (_, _) => click();
@@ -279,7 +283,7 @@ internal sealed class MainForm : Form
         return b;
     }
 
-    private static Label NewLabel(string text) => new()
+    internal static Label NewLabel(string text) => new()
     {
         Text = text,
         AutoSize = true,

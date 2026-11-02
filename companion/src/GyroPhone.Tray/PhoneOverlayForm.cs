@@ -80,7 +80,7 @@ internal sealed class PhoneOverlayForm : Form
     public void Recenter()
     {
         var f = new GyroPhone.Protocol.OverlayFrame();
-        if (_engine.OverlaySnapshot(f, out _) < 0 || !f.PoseLive) return;
+        if (_engine.OverlaySnapshot(f, out _) < 0) return;
         _engine.UpdateOverlaySettings(o => o.Center = [f.Qw, f.Qx, f.Qy, f.Qz]);
         _dirty = true;
     }
@@ -220,6 +220,14 @@ internal sealed class PhoneOverlayForm : Form
         Present(_bitmap);
     }
 
+    /// <summary>The whole window's opacity (setting): Windows applies it while compositing, at no cost. Kept visible while arranging.</summary>
+    private byte WindowAlpha()
+    {
+        float op = Math.Clamp(_engine?.Settings.Overlay.Opacity ?? 1f, 0.1f, 1f);
+        if (!ClickThrough) op = Math.Max(op, 0.6f);
+        return (byte)Math.Round(op * 255);
+    }
+
     /// <summary>Hands the picture, with its alpha, to the layered window.</summary>
     private void Present(Bitmap bmp)
     {
@@ -231,7 +239,7 @@ internal sealed class PhoneOverlayForm : Form
         {
             var size = new NativeSize { Cx = bmp.Width, Cy = bmp.Height };
             var src = new NativePoint();
-            var blend = new BlendFunction { BlendOp = AcSrcOver, SourceConstantAlpha = 255, AlphaFormat = AcSrcAlpha };
+            var blend = new BlendFunction { BlendOp = AcSrcOver, SourceConstantAlpha = WindowAlpha(), AlphaFormat = AcSrcAlpha };
             if (!UpdateLayeredWindow(Handle, screenDc, IntPtr.Zero, ref size, memDc, ref src, 0, ref blend, UlwAlpha))
                 _log($"overlay: UpdateLayeredWindow failed ({new Win32Exception().Message})");
         }
