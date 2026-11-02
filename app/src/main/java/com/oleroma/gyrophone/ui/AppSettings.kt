@@ -106,7 +106,7 @@ private fun AppTab(runtime: GamepadRuntime) {
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SwitchRow("Start in fullscreen", startFullscreen) { runtime.setStartFullscreen(it) }
-        Hint("The pad opens in fullscreen when the app starts. Press ← and → together (or Back) to leave it.")
+        Hint("The pad opens in fullscreen when the app starts. Press ← and → together, or Back, to leave it.")
         SwitchRow("Hide the ← / → corners after a few seconds", autoHide) { runtime.setCornerAutoHide(it) }
         Hint(
             "Tap the screen 4 times quickly to show them again. Hidden corners still work. " +
