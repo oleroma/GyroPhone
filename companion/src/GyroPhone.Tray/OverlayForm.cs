@@ -44,6 +44,9 @@ internal sealed class OverlayForm : Form
     // The window shows a swap chain (constant alpha + extended frame), not UpdateLayeredWindow pictures.
     private bool _direct;
     private byte _directAlpha;
+    // A swap-chain window starts fully see-through and shows once its first pictures are on screen:
+    // shown at once, it flashed its empty (white) surface for a moment.
+    private bool _revealed;
     private GpuSurface? _gpuSurface;
     private readonly Dictionary<(float, bool), Font> _fonts = [];
     // Draw times and pictures in the last second, for the Debug window.
@@ -143,7 +146,7 @@ internal sealed class OverlayForm : Form
     public void SettingsChanged()
     {
         if (!IsHandleCreated) return;
-        if (_direct && WindowAlpha() is var a && a != _directAlpha)
+        if (_direct && _revealed && WindowAlpha() is var a && a != _directAlpha)
         {
             _directAlpha = a;
             SetLayeredWindowAttributes(Handle, 0, a, LwaAlpha);
@@ -174,8 +177,9 @@ internal sealed class OverlayForm : Form
                 try
                 {
                     // The layered window shows the swap chain's alpha: constant window alpha, frame over it all.
-                    _directAlpha = WindowAlpha();
-                    if (!SetLayeredWindowAttributes(Handle, 0, _directAlpha, LwaAlpha)) throw new Win32Exception();
+                    _directAlpha = 0;
+                    _revealed = false;
+                    if (!SetLayeredWindowAttributes(Handle, 0, 0, LwaAlpha)) throw new Win32Exception();
                     var margins = new Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
                     int hr = DwmExtendFrameIntoClientArea(Handle, ref margins);
                     if (hr < 0) throw new Win32Exception(hr);
@@ -205,6 +209,33 @@ internal sealed class OverlayForm : Form
             }
         }
         Render();
+        // Made again while showing (OnShown won't come again): show it once it has drawn.
+        if (_direct && Visible) BeginInvoke(ScheduleReveal);
+    }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        ScheduleReveal();
+    }
+
+    private void ScheduleReveal()
+    {
+        if (!_direct || _revealed || !IsHandleCreated) return;
+        // Draw now that the window is on screen, and show it a few frames later, when the
+        // compositor has the picture.
+        Render();
+        var reveal = new System.Windows.Forms.Timer { Interval = 50 };
+        reveal.Tick += (_, _) =>
+        {
+            reveal.Dispose();
+            if (!IsHandleCreated || IsDisposed || !_direct) return;
+            Render();
+            _revealed = true;
+            _directAlpha = WindowAlpha();
+            SetLayeredWindowAttributes(Handle, 0, _directAlpha, LwaAlpha);
+        };
+        reveal.Start();
     }
 
     protected override void OnHandleDestroyed(EventArgs e)
