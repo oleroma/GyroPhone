@@ -15,7 +15,7 @@ internal sealed class OverlayScene
     public long FrameAgeUs = -1;
     public OverlayLayout? Layout;
     public bool Connected;
-    /// <summary>Moving and resizing (click-through off): a frame shows the window's edges.</summary>
+    /// <summary>Moving and resizing (Edit): a frame shows the window's edges.</summary>
     public bool Arranging;
     /// <summary>The fingers' trails (phone, with Finger trails on), and the time to fade them by (ms).</summary>
     public FingerTrails? Trails;

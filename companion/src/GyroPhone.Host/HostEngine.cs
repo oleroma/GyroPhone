@@ -981,6 +981,17 @@ public sealed class HostEngine
         }
     }
 
+    /// <summary>Edit: overlay windows can be moved and resized (off: the mouse goes through them).</summary>
+    public void SetOverlayEdit(bool on)
+    {
+        lock (_lock)
+        {
+            if (_settings.OverlayEdit == on) return;
+            _settings.OverlayEdit = on;
+            _settingsDirty = true;
+        }
+    }
+
     /// <summary>
     /// The phone overlay is shown: HOST_STATUS asks the phone for its pose, layout and presses
     /// (told at once), and they are kept for <see cref="OverlaySnapshot"/>. Off: the phone stops sending them.

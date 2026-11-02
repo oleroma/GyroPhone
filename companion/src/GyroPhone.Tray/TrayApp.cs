@@ -454,12 +454,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             });
         }
         menu.DropDownItems.Add(new ToolStripSeparator());
-        bool allThrough = _engine.Settings.Overlays.All(o => o.ClickThrough);
-        menu.DropDownItems.Add(new ToolStripMenuItem("Click-through (off: drag to move and resize)", null, (_, _) =>
+        menu.DropDownItems.Add(new ToolStripMenuItem("Edit: drag the windows to move and resize", null, (_, _) => SetOverlayEdit(!OverlayEdit))
         {
-            foreach (var o in _engine.Settings.Overlays.ToList()) ChangeOverlay(o.Id, x => x.ClickThrough = !allThrough);
-        })
-        { Checked = allThrough });
+            Checked = OverlayEdit,
+        });
         menu.DropDownItems.Add(new ToolStripMenuItem("Level all: as held now shows face-on (Ctrl+Alt+R)", null, (_, _) => LevelAll()));
         menu.DropDownItems.Add(new ToolStripMenuItem("Overlay settings…", null, (_, _) => ShowMainForm()));
     }
@@ -469,6 +467,16 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     {
         _engine.UpdateOverlaySettings(id, o => o.Shown = shown);
         ApplyOverlays();
+        Refresh();
+    }
+
+    internal bool OverlayEdit => _engine.Settings.OverlayEdit;
+
+    /// <summary>Edit: every overlay window can be dragged; off, the mouse goes through them all.</summary>
+    internal void SetOverlayEdit(bool on)
+    {
+        _engine.SetOverlayEdit(on);
+        foreach (var f in _overlayForms.Values.ToList()) f.SettingsChanged();
         Refresh();
     }
 

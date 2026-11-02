@@ -47,8 +47,6 @@ public sealed class OverlaySettings
     public string Id { get; set; } = NewId();
     public OverlayKind Kind { get; set; } = OverlayKind.Phone;
     public bool Shown { get; set; }
-    /// <summary>The mouse goes through the window to the game; off: drag to move, drag the corner to resize.</summary>
-    public bool ClickThrough { get; set; } = true;
     public OverlayBackground Background { get; set; } = OverlayBackground.Transparent;
     /// <summary>Turns are shown this many times larger (0.5..3).</summary>
     public float MotionScale { get; set; } = 1f;

@@ -4,7 +4,7 @@ namespace GyroPhone.Tray;
 
 /// <summary>
 /// The main window's "Overlays" group: the overlay windows (Add a kind, Remove, pick one), and the
-/// picked one's settings in three tabs: Window (showing, click-through, background, opacity), Look
+/// picked one's settings in three tabs: Window (showing, background, opacity), Look
 /// (what its kind draws and its colours) and Turning (its own pose settings, as the phone's gyro
 /// displays have them but the PC's own). Controls ask TrayApp to change a setting; <see cref="RefreshNow"/>
 /// shows what is saved.
@@ -24,7 +24,7 @@ internal sealed class OverlaySection
     private bool _refreshing;
 
     // Window
-    private readonly CheckBox _shown, _clickThrough;
+    private readonly CheckBox _shown, _edit;
     private readonly RadioButton _bgClear, _bgGreen, _bgDark;
     private readonly NumericUpDown _opacity;
 
@@ -86,6 +86,7 @@ internal sealed class OverlaySection
         }, buttons);
         MainForm.NewButton("Level all (Ctrl+Alt+R)", () => _app.LevelAll(), buttons);
         g.Controls.Add(buttons);
+        _edit = MainForm.Check("Edit: drag the windows to move and resize (all of them)", g, () => _app.SetOverlayEdit(!_app.OverlayEdit));
 
         _tabs = new TabControl { Width = TabWidth, Height = TabHeight, Margin = new Padding(0, 6, 0, 0) };
         g.Controls.Add(_tabs);
@@ -93,7 +94,6 @@ internal sealed class OverlaySection
         // Window
         var w = Page("Window");
         _shown = MainForm.Check("Show", w, () => Change(_ => { }, show: true));
-        _clickThrough = MainForm.Check("Click-through (off: drag to move or resize)", w, () => Change(o => o.ClickThrough = !o.ClickThrough));
         w.Controls.Add(Heading("Background"));
         var bg = MainForm.Row();
         _bgClear = MainForm.Radio("Transparent", bg, () => Change(o => o.Background = OverlayBackground.Transparent));
@@ -222,6 +222,7 @@ internal sealed class OverlaySection
             if (_list.SelectedIndex != at) _list.SelectedIndex = at;
             var s = _selected == null ? null : _app.OverlayOf(_selected);
             _remove.Enabled = s != null;
+            _edit.Checked = _app.OverlayEdit;
             _tabs.Visible = s != null;
             if (s != null) ShowSettings(s);
         }
@@ -234,7 +235,6 @@ internal sealed class OverlaySection
     private void ShowSettings(OverlaySettings o)
     {
         _shown.Checked = o.Shown;
-        _clickThrough.Checked = o.ClickThrough;
         _bgClear.Checked = o.Background == OverlayBackground.Transparent;
         _bgGreen.Checked = o.Background == OverlayBackground.Green;
         _bgDark.Checked = o.Background == OverlayBackground.Dark;

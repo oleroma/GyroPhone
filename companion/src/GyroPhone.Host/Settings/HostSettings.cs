@@ -19,6 +19,8 @@ public sealed class HostSettings
     public List<PairedPhone> PairedPhones { get; set; } = [];
     /// <summary>The overlay windows (phone, 3D shape, attitude indicator, bubble disk), each with its own settings.</summary>
     public List<OverlaySettings> Overlays { get; set; } = [];
+    /// <summary>Overlay windows can be dragged to move and resize; off, the mouse goes through them to the game.</summary>
+    public bool OverlayEdit { get; set; }
     /// <summary>The one phone overlay of earlier builds: read once into <see cref="Overlays"/>.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public OverlaySettings? Overlay { get; set; }

@@ -12,7 +12,7 @@ namespace GyroPhone.Tray;
 /// draws the phone in 3D with its layout and presses, a 3D shape, an attitude indicator or a bubble
 /// disk (<see cref="OverlayRenderer"/>), turned by its own pose. A per-pixel alpha layered window,
 /// so it shows over games running windowed or borderless and OBS Window Capture records it. It
-/// never takes focus. With click-through the mouse goes past it; without, it can be dragged and
+/// never takes focus. The mouse goes past it, except in Edit (all windows at once): then it can be dragged and
 /// resized. One open window holds Ctrl+Alt+R (Level all) for the tray.
 /// </summary>
 internal sealed class OverlayForm : Form
@@ -74,7 +74,7 @@ internal sealed class OverlayForm : Form
     // The base Form constructor reads CreateParams before this constructor has set _engine.
     private OverlaySettings? Settings => _engine?.Settings.Overlays.Find(o => o.Id == _id);
 
-    private bool ClickThrough => Settings?.ClickThrough ?? true;
+    private bool ClickThrough => !(_engine?.Settings.OverlayEdit ?? false);
 
     /// <summary>Holds Ctrl+Alt+R (Level all) if no other window does; true when this one has it.</summary>
     public bool TryHotkey()
@@ -86,7 +86,7 @@ internal sealed class OverlayForm : Form
 
     public bool HasHotkey => _hotkey;
 
-    /// <summary>Settings changed (background, scale, dots, click-through): applied at the next frame.</summary>
+    /// <summary>Settings changed (background, scale, dots, Edit): applied at the next frame.</summary>
     public void SettingsChanged()
     {
         if (!IsHandleCreated) return;
