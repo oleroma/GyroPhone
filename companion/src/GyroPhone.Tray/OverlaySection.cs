@@ -34,6 +34,7 @@ internal sealed class OverlaySection
     private readonly List<(OverlayAction Action, TextBox Box, Label Note)> _keys = [];
     private readonly RadioButton _bgClear, _bgGreen, _bgDark;
     private readonly NumericUpDown _opacity;
+    private readonly RadioButton _qHigh, _qBalanced, _qFast, _fpsDisplay, _fps60, _fps30;
 
     // Look
     private readonly Control _phoneLook, _shapeLook, _diskLook;
@@ -113,6 +114,20 @@ internal sealed class OverlaySection
         w.Controls.Add(bg);
         w.Controls.Add(MainForm.NewLabel("Green is for an OBS chroma key."));
         _opacity = Number(w, "Opacity, %", 10, 100, 5, 0, v => Change(o => o.Opacity = (float)v / 100f));
+        w.Controls.Add(Heading("Drawing quality"));
+        var q = MainForm.Row();
+        _qHigh = MainForm.Radio("High", q, () => Change(o => o.Quality = OverlayQuality.High));
+        _qBalanced = MainForm.Radio("Balanced", q, () => Change(o => o.Quality = OverlayQuality.Balanced));
+        _qFast = MainForm.Radio("Fast", q, () => Change(o => o.Quality = OverlayQuality.Fast));
+        w.Controls.Add(q);
+        w.Controls.Add(MainForm.NewLabel("High: smooth edges and text. Balanced: smooth edges, plain text. Fast: no smoothing, the quickest for big windows."));
+        w.Controls.Add(Heading("Frame rate"));
+        var fr = MainForm.Row();
+        _fpsDisplay = MainForm.Radio("Every screen refresh", fr, () => Change(o => o.FrameRate = 0));
+        _fps60 = MainForm.Radio("60 fps", fr, () => Change(o => o.FrameRate = 60));
+        _fps30 = MainForm.Radio("30 fps", fr, () => Change(o => o.FrameRate = 30));
+        w.Controls.Add(fr);
+        w.Controls.Add(MainForm.NewLabel("Draw times per window are in the Debug window (tray menu)."));
 
         // Look
         var l = Page("Look");
@@ -261,6 +276,12 @@ internal sealed class OverlaySection
         _bgGreen.Checked = o.Background == OverlayBackground.Green;
         _bgDark.Checked = o.Background == OverlayBackground.Dark;
         Set(_opacity, (decimal)MathF.Round(o.Opacity * 100f));
+        _qHigh.Checked = o.Quality == OverlayQuality.High;
+        _qBalanced.Checked = o.Quality == OverlayQuality.Balanced;
+        _qFast.Checked = o.Quality == OverlayQuality.Fast;
+        _fpsDisplay.Checked = o.FrameRate is not (60 or 30);
+        _fps60.Checked = o.FrameRate == 60;
+        _fps30.Checked = o.FrameRate == 30;
 
         _phoneLook.Visible = o.Kind == OverlayKind.Phone;
         _shapeLook.Visible = o.Kind == OverlayKind.Shape;

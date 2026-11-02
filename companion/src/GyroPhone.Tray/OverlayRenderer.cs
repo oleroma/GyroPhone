@@ -49,9 +49,29 @@ internal static class OverlayRenderer
 
     public static void Draw(Graphics g, Size size, OverlayScene scene, OverlaySettings settings)
     {
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.TextRenderingHint = TextRenderingHint.AntiAlias;
-        g.CompositingQuality = CompositingQuality.HighQuality;
+        // Quality: smooth edges cost the most on big windows; Fast drops all smoothing.
+        g.CompositingMode = CompositingMode.SourceOver;
+        switch (settings.Quality)
+        {
+            case OverlayQuality.Fast:
+                g.SmoothingMode = SmoothingMode.None;
+                g.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
+                g.CompositingQuality = CompositingQuality.HighSpeed;
+                g.PixelOffsetMode = PixelOffsetMode.HighSpeed;
+                break;
+            case OverlayQuality.Balanced:
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
+                g.CompositingQuality = CompositingQuality.HighSpeed;
+                g.PixelOffsetMode = PixelOffsetMode.HighSpeed;
+                break;
+            default:
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.TextRenderingHint = TextRenderingHint.AntiAlias;
+                g.CompositingQuality = CompositingQuality.HighQuality;
+                g.PixelOffsetMode = PixelOffsetMode.Default;
+                break;
+        }
         switch (settings.Background)
         {
             case OverlayBackground.Green: g.Clear(Color.FromArgb(0, 255, 0)); break;
@@ -478,7 +498,7 @@ internal static class OverlayRenderer
         var saved = g.Transform;
         using var tm = new Matrix(ax, ay, bx, by, p0.X, p0.Y);
         g.MultiplyTransform(tm);
-        using var font = new Font(FontFamily.GenericSansSerif, Math.Max(1f, fontPx), FontStyle.Bold, GraphicsUnit.Pixel);
+        var font = BoldFont(Math.Max(1f, fontPx));
         using var fmt = new StringFormat
         {
             Alignment = StringAlignment.Center,
@@ -497,6 +517,21 @@ internal static class OverlayRenderer
         using var brush = new SolidBrush(color);
         g.DrawString(text, font, brush, rect, fmt);
         g.Transform = saved;
+    }
+
+    // Label fonts by size (the layout's label size rarely changes): made once, not every frame.
+    private static readonly Dictionary<float, Font> Fonts = [];
+
+    private static Font BoldFont(float px)
+    {
+        px = MathF.Round(px * 4f) / 4f;
+        if (Fonts.TryGetValue(px, out var f)) return f;
+        if (Fonts.Count >= 32)
+        {
+            foreach (var old in Fonts.Values) old.Dispose();
+            Fonts.Clear();
+        }
+        return Fonts[px] = new Font(FontFamily.GenericSansSerif, px, FontStyle.Bold, GraphicsUnit.Pixel);
     }
 
     private static void DrawCaption(Graphics g, Size size, string text)

@@ -24,9 +24,13 @@ internal sealed class OverlayForm : Form
     private readonly Action<string> _picked;
     private readonly FingerTrails _trails = new();
     private readonly Action<string> _log;
-    private readonly System.Windows.Forms.Timer _timer;
     private readonly OverlayScene _scene = new();
-    private Bitmap? _bitmap;
+    private DibSurface? _surface;
+    // Draw times and pictures in the last second, for the Debug window.
+    private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+    private double _statStart, _statSumMs, _statMaxMs, _lastDrawAt;
+    private int _statFrames;
+    private string _stats = "";
     private bool _selected;
     private string _title = "";
     // A left press in Edit: where the cursor and the window were, and whether it has become a drag.
@@ -59,8 +63,6 @@ internal sealed class OverlayForm : Form
         if (!Screen.AllScreens.Any(sc => sc.WorkingArea.IntersectsWith(new Rectangle(at, size))))
             at = new Point(area.Right - size.Width - 24, area.Bottom - size.Height - 24);
         Bounds = new Rectangle(at, size);
-        _timer = new System.Windows.Forms.Timer { Interval = 15 };
-        _timer.Tick += (_, _) => Tick();
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -135,13 +137,13 @@ internal sealed class OverlayForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        _timer.Start();
         Render();
     }
 
     protected override void OnHandleDestroyed(EventArgs e)
     {
-        _timer.Stop();
+        _surface?.Dispose();
+        _surface = null;
         base.OnHandleDestroyed(e);
     }
 
@@ -243,7 +245,11 @@ internal sealed class OverlayForm : Form
         base.WndProc(ref m);
     }
 
-    private void Tick()
+    /// <summary>Draw times over the last second, e.g. "Phone 640×480: 2.1 ms avg, 4.0 max, 60 fps".</summary>
+    public string Stats => _stats;
+
+    /// <summary>One screen refresh (<see cref="OverlayPacer"/>): draws again if anything changed.</summary>
+    public void Tick()
     {
         try
         {
@@ -262,9 +268,13 @@ internal sealed class OverlayForm : Form
         bool fresh = age >= 0 && _scene.Frame.PhoneTimeUs != _lastTime;
         long now = Environment.TickCount64;
         if (fresh) _trails.Add(_scene.Frame, now);
+        UpdateStats();
         bool changed = _dirty || fresh || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||
             !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now);
         if (!changed && now - _lastDrawTicks < 500) return;
+        // Frame-rate cap (a little early, so a 60 Hz cap on a 60 Hz screen never skips a refresh).
+        int fps = Settings?.FrameRate ?? 0;
+        if (fps > 0 && !_dirty && _clock.Elapsed.TotalMilliseconds - _lastDrawAt < 1000.0 / fps - 3) return;
         _scene.FrameAgeUs = age;
         _scene.Layout = layout;
         Render();
@@ -293,29 +303,50 @@ internal sealed class OverlayForm : Form
         _scene.Arranging = !ClickThrough;
         _scene.Selected = _selected;
         _scene.Title = _title;
-        if (_bitmap == null || _bitmap.Width != Width || _bitmap.Height != Height)
+        double start = _clock.Elapsed.TotalMilliseconds;
+        // One picture in the format the layered window takes (premultiplied, top-down DIB), kept
+        // between frames: no new bitmap, copy or conversion per frame.
+        if (_surface == null || _surface.Width != Width || _surface.Height != Height)
         {
-            _bitmap?.Dispose();
-            _bitmap = new Bitmap(Width, Height, PixelFormat.Format32bppArgb);
+            _surface?.Dispose();
+            _surface = new DibSurface(Width, Height);
         }
-        using (var g = Graphics.FromImage(_bitmap))
+        var g = _surface.Graphics;
+        try
         {
-            try
+            if (Settings is { } settings)
             {
-                if (Settings is { } settings)
-                {
-                    _scene.Trails = settings.FingerTrails ? _trails : null;
-                    _scene.NowTicks = _lastDrawTicks;
-                    OverlayRenderer.Draw(g, _bitmap.Size, _scene, settings);
-                }
-            }
-            catch (Exception e)
-            {
-                // A drawing failure must never take the companion down: log it and keep the last picture.
-                _log($"overlay: drawing failed: {e.Message}");
+                _scene.Trails = settings.FingerTrails ? _trails : null;
+                _scene.NowTicks = _lastDrawTicks;
+                OverlayRenderer.Draw(g, new Size(Width, Height), _scene, settings);
             }
         }
-        Present(_bitmap);
+        catch (Exception e)
+        {
+            // A drawing failure must never take the companion down: log it and keep the last picture.
+            _log($"overlay: drawing failed: {e.Message}");
+        }
+        g.Flush(System.Drawing.Drawing2D.FlushIntention.Sync);
+        Present(_surface);
+        double end = _clock.Elapsed.TotalMilliseconds;
+        _lastDrawAt = start;
+        double took = end - start;
+        _statSumMs += took;
+        _statMaxMs = Math.Max(_statMaxMs, took);
+        _statFrames++;
+    }
+
+    private void UpdateStats()
+    {
+        double now = _clock.Elapsed.TotalMilliseconds;
+        if (now - _statStart < 1000) return;
+        double secs = (now - _statStart) / 1000.0;
+        _stats = _statFrames == 0
+            ? $"{_title} {Width}×{Height}: idle"
+            : $"{_title} {Width}×{Height}: {_statSumMs / _statFrames:0.0} ms avg, {_statMaxMs:0.0} max, {_statFrames / secs:0} fps";
+        _statStart = now;
+        _statSumMs = _statMaxMs = 0;
+        _statFrames = 0;
     }
 
     /// <summary>The whole window's opacity (setting): Windows applies it while compositing, at no cost. Kept visible while arranging.</summary>
@@ -327,26 +358,58 @@ internal sealed class OverlayForm : Form
     }
 
     /// <summary>Hands the picture, with its alpha, to the layered window.</summary>
-    private void Present(Bitmap bmp)
+    private void Present(DibSurface surface)
     {
-        IntPtr screenDc = GetDC(IntPtr.Zero);
-        IntPtr memDc = CreateCompatibleDC(screenDc);
-        IntPtr hBitmap = bmp.GetHbitmap(Color.FromArgb(0));
-        IntPtr old = SelectObject(memDc, hBitmap);
-        try
+        var size = new NativeSize { Cx = surface.Width, Cy = surface.Height };
+        var src = new NativePoint();
+        var blend = new BlendFunction { BlendOp = AcSrcOver, SourceConstantAlpha = WindowAlpha(), AlphaFormat = AcSrcAlpha };
+        if (!UpdateLayeredWindow(Handle, IntPtr.Zero, IntPtr.Zero, ref size, surface.Dc, ref src, 0, ref blend, UlwAlpha))
+            _log($"overlay: UpdateLayeredWindow failed ({new Win32Exception().Message})");
+    }
+
+    /// <summary>
+    /// A top-down 32-bit DIB selected into its own memory DC, with a GDI+ Graphics drawing straight
+    /// into its pixels as premultiplied ARGB: what UpdateLayeredWindow reads, with nothing in between.
+    /// </summary>
+    private sealed class DibSurface : IDisposable
+    {
+        public readonly int Width, Height;
+        public readonly IntPtr Dc;
+        public readonly Graphics Graphics;
+        private readonly IntPtr _dib, _old;
+        private readonly Bitmap _bitmap;
+
+        public DibSurface(int width, int height)
         {
-            var size = new NativeSize { Cx = bmp.Width, Cy = bmp.Height };
-            var src = new NativePoint();
-            var blend = new BlendFunction { BlendOp = AcSrcOver, SourceConstantAlpha = WindowAlpha(), AlphaFormat = AcSrcAlpha };
-            if (!UpdateLayeredWindow(Handle, screenDc, IntPtr.Zero, ref size, memDc, ref src, 0, ref blend, UlwAlpha))
-                _log($"overlay: UpdateLayeredWindow failed ({new Win32Exception().Message})");
+            Width = width;
+            Height = height;
+            var info = new BitmapInfoHeader
+            {
+                Size = Marshal.SizeOf<BitmapInfoHeader>(),
+                Width = width,
+                Height = -height, // top-down, as a GDI+ bitmap's rows
+                Planes = 1,
+                BitCount = 32,
+            };
+            Dc = CreateCompatibleDC(IntPtr.Zero);
+            _dib = CreateDIBSection(Dc, ref info, 0, out var bits, IntPtr.Zero, 0);
+            if (_dib == IntPtr.Zero)
+            {
+                DeleteDC(Dc);
+                throw new Win32Exception();
+            }
+            _old = SelectObject(Dc, _dib);
+            _bitmap = new Bitmap(width, height, width * 4, PixelFormat.Format32bppPArgb, bits);
+            Graphics = Graphics.FromImage(_bitmap);
         }
-        finally
+
+        public void Dispose()
         {
-            SelectObject(memDc, old);
-            DeleteObject(hBitmap);
-            DeleteDC(memDc);
-            ReleaseDC(IntPtr.Zero, screenDc);
+            Graphics.Dispose();
+            _bitmap.Dispose();
+            SelectObject(Dc, _old);
+            DeleteObject(_dib);
+            DeleteDC(Dc);
         }
     }
 
@@ -354,8 +417,8 @@ internal sealed class OverlayForm : Form
     {
         if (disposing)
         {
-            _timer.Dispose();
-            _bitmap?.Dispose();
+            _surface?.Dispose();
+            _surface = null;
         }
         base.Dispose(disposing);
     }
@@ -379,6 +442,17 @@ internal sealed class OverlayForm : Form
     private const int UlwAlpha = 2;
 
     [StructLayout(LayoutKind.Sequential)]
+    private struct BitmapInfoHeader
+    {
+        public int Size, Width, Height;
+        public short Planes, BitCount;
+        public int Compression, SizeImage, XPelsPerMeter, YPelsPerMeter, ClrUsed, ClrImportant;
+    }
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    private static extern IntPtr CreateDIBSection(IntPtr hdc, ref BitmapInfoHeader info, uint usage, out IntPtr bits, IntPtr section, uint offset);
+
+    [StructLayout(LayoutKind.Sequential)]
     private struct NativeSize { public int Cx, Cy; }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -391,12 +465,6 @@ internal sealed class OverlayForm : Form
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, IntPtr pptDst, ref NativeSize psize,
         IntPtr hdcSrc, ref NativePoint pprSrc, int crKey, ref BlendFunction pblend, int dwFlags);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetDC(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDc);
 
     [DllImport("gdi32.dll")]
     private static extern IntPtr CreateCompatibleDC(IntPtr hDc);

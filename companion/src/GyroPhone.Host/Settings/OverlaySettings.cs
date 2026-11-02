@@ -12,6 +12,17 @@ public enum OverlayBackground
     Dark,
 }
 
+/// <summary>How carefully an overlay window draws.</summary>
+public enum OverlayQuality
+{
+    /// <summary>Smooth edges and text, careful blending.</summary>
+    High,
+    /// <summary>Smooth edges; plain text and quicker blending.</summary>
+    Balanced,
+    /// <summary>No smoothing at all: the quickest.</summary>
+    Fast,
+}
+
 /// <summary>What an overlay window shows (as the phone's gyro displays).</summary>
 public enum OverlayKind
 {
@@ -57,6 +68,10 @@ public sealed class OverlaySettings
     public int Height { get; set; } = 300;
     /// <summary>0.1..1, applied when the window is drawn (costs nothing extra).</summary>
     public float Opacity { get; set; } = 1f;
+    /// <summary>How carefully it draws (smooth edges cost the most on big windows).</summary>
+    public OverlayQuality Quality { get; set; } = OverlayQuality.High;
+    /// <summary>Most pictures per second: 0 = every screen refresh, else 60 or 30.</summary>
+    public int FrameRate { get; set; }
 
     // Phone.
     /// <summary>Dots where the fingers touch the screen.</summary>
