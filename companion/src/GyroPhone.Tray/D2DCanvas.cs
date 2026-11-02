@@ -53,7 +53,7 @@ internal sealed class GpuSurface : IDisposable
         _device = _factory.CreateDevice(_dxgi);
         _dc = _device.CreateDeviceContext(DeviceContextOptions.None);
         _write = DWrite.DWriteCreateFactory<IDWriteFactory>();
-        _canvas = new D2DCanvas(_factory, _dc, _write);
+        _canvas = new D2DCanvas(_factory, _device, _dc, _write);
         if (hwnd == IntPtr.Zero) return;
         try
         {
@@ -204,15 +204,30 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
     private readonly ID2D1SolidColorBrush _brush;
     private readonly ID2D1StrokeStyle _round, _joined, _dashed;
     private readonly Dictionary<(float, bool), IDWriteTextFormat> _formats = [];
+    // Text drawn once into a bitmap, then shown (turned and tilted with the phone) as an image: text
+    // under a tilt is otherwise built from its glyphs' outlines every frame, the dearest part of a
+    // frame. Keyed by everything that changes the picture, the scale rounded to an eighth.
+    private readonly Dictionary<TextKey, ID2D1Bitmap1> _texts = [];
+    private readonly ID2D1DeviceContext _textDc;
+    private readonly ID2D1SolidColorBrush _textBrush;
+    // The geometry of the last filled polygon: an outline of the same points reuses it.
+    private PointF[]? _lastPoints;
+    // Drawing text into a bitmap failed once: text is drawn directly from then on.
+    private bool _noTextCache;
+    private ID2D1PathGeometry? _lastGeo;
+
+    private readonly record struct TextKey(string Text, float Px, bool Bold, int Argb, float W, float H, TextAlign Hz, TextAlign Vt, int Scale8);
     // What each Push did, so Pop undoes it: a transform to restore, or a layer (with its geometry) to pop.
     private readonly Stack<(Matrix3x2? Transform, ID2D1Geometry? Geometry, bool Layer)> _stack = new();
 
-    public D2DCanvas(ID2D1Factory1 factory, ID2D1DeviceContext dc, IDWriteFactory write)
+    public D2DCanvas(ID2D1Factory1 factory, ID2D1Device device, ID2D1DeviceContext dc, IDWriteFactory write)
     {
         _factory = factory;
         _dc = dc;
         _write = write;
         _brush = dc.CreateSolidColorBrush(new Color4(1, 1, 1, 1));
+        _textDc = device.CreateDeviceContext(DeviceContextOptions.None);
+        _textBrush = _textDc.CreateSolidColorBrush(new Color4(1, 1, 1, 1));
         _round = factory.CreateStrokeStyle(new StrokeStyleProperties
         {
             StartCap = CapStyle.Round,
@@ -235,6 +250,14 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
     public void End()
     {
         while (_stack.Count > 0) Pop();
+        ForgetLast();
+    }
+
+    private void ForgetLast()
+    {
+        _lastGeo?.Dispose();
+        _lastGeo = null;
+        _lastPoints = null;
     }
 
     private static readonly Rect Infinite = new(-1e6f, -1e6f, 2e6f, 2e6f);
@@ -265,13 +288,20 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
     public void FillPolygon(Color color, PointF[] points)
     {
         if (points.Length < 3 || color.A == 0) return;
-        using var geo = Path(points, true);
-        _dc.FillGeometry(geo, Brush(color));
+        ForgetLast();
+        _lastGeo = Path(points, true);
+        _lastPoints = points;
+        _dc.FillGeometry(_lastGeo, Brush(color));
     }
 
     public void DrawPolygon(Color color, float width, PointF[] points, bool dashed = false)
     {
         if (points.Length < 2 || color.A == 0) return;
+        if (ReferenceEquals(points, _lastPoints) && _lastGeo != null)
+        {
+            _dc.DrawGeometry(_lastGeo, Brush(color), width, dashed ? _dashed : _joined);
+            return;
+        }
         using var geo = Path(points, true);
         _dc.DrawGeometry(geo, Brush(color), width, dashed ? _dashed : _joined);
     }
@@ -322,11 +352,12 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
         _dc.FillEllipse(e, brush);
     }
 
-    private void PushMask(ID2D1Geometry geo)
+    private void PushMask(ID2D1Geometry geo, Rect bounds)
     {
         _dc.PushLayer(new LayerParameters1
         {
-            ContentBounds = Infinite,
+            // Only the mask's box, not the whole window: the layer's own surface stays small.
+            ContentBounds = bounds,
             GeometricMask = geo,
             MaskAntialiasMode = _dc.AntialiasMode,
             MaskTransform = Matrix3x2.Identity,
@@ -335,9 +366,18 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
         _stack.Push((null, geo, true));
     }
 
-    public void PushClip(PointF[] polygon) => PushMask(Path(polygon, true));
+    public void PushClip(PointF[] polygon)
+    {
+        float l = float.MaxValue, t = float.MaxValue, r = float.MinValue, b = float.MinValue;
+        foreach (var p in polygon)
+        {
+            l = Math.Min(l, p.X); t = Math.Min(t, p.Y); r = Math.Max(r, p.X); b = Math.Max(b, p.Y);
+        }
+        var bounds = polygon.Length > 0 ? new Rect(l - 2, t - 2, r - l + 4, b - t + 4) : Infinite;
+        PushMask(Path(polygon, true), bounds);
+    }
 
-    public void PushClipEllipse(RectangleF r) => PushMask(_factory.CreateEllipseGeometry(E(r)));
+    public void PushClipEllipse(RectangleF r) => PushMask(_factory.CreateEllipseGeometry(E(r)), new Rect(r.X - 2, r.Y - 2, r.Width + 4, r.Height + 4));
 
     public void PushClipRect(RectangleF r)
     {
@@ -379,13 +419,76 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
         return _formats[(px, bold)] = f;
     }
 
-    public void DrawText(string text, float px, bool bold, Color color, RectangleF r, TextAlign h, TextAlign v)
+    private void Align(IDWriteTextFormat f, TextAlign h, TextAlign v)
     {
-        if (text.Length == 0 || color.A == 0) return;
-        var f = Format(px, bold);
         f.TextAlignment = h == TextAlign.Near ? TextAlignment.Leading : h == TextAlign.Far ? TextAlignment.Trailing : TextAlignment.Center;
         f.ParagraphAlignment = v == TextAlign.Near ? ParagraphAlignment.Near : v == TextAlign.Far ? ParagraphAlignment.Far : ParagraphAlignment.Center;
-        _dc.DrawText(text, f, R(r), Brush(color), DrawTextOptions.Clip);
+    }
+
+    public void DrawText(string text, float px, bool bold, Color color, RectangleF r, TextAlign h, TextAlign v)
+    {
+        if (text.Length == 0 || color.A == 0 || r.Width <= 0 || r.Height <= 0) return;
+        // The size it shows at: the transform's scale, to an eighth (at most 4×).
+        var m = _dc.Transform;
+        float scale = MathF.Sqrt(MathF.Abs(m.M11 * m.M22 - m.M12 * m.M21));
+        int scale8 = Math.Clamp((int)MathF.Ceiling(scale * 8f), 1, 32);
+        float q = scale8 / 8f;
+        int bw = (int)MathF.Ceiling(r.Width * q), bh = (int)MathF.Ceiling(r.Height * q);
+        var f = Format(px, bold);
+        if (bw > 2048 || bh > 2048 || _noTextCache)
+        {
+            Align(f, h, v);
+            _dc.DrawText(text, f, R(r), Brush(color), DrawTextOptions.Clip);
+            return;
+        }
+        var key = new TextKey(text, px, bold, color.ToArgb(), r.Width, r.Height, h, v, scale8);
+        if (!_texts.TryGetValue(key, out var bitmap))
+        {
+            if (_texts.Count >= 256)
+            {
+                foreach (var old in _texts.Values) old.Dispose();
+                _texts.Clear();
+            }
+            try
+            {
+                bitmap = TextBitmap(text, f, color, r, h, v, q, bw, bh);
+            }
+            catch (Exception)
+            {
+                _noTextCache = true;
+                Align(f, h, v);
+                _dc.DrawText(text, f, R(r), Brush(color), DrawTextOptions.Clip);
+                return;
+            }
+            _texts[key] = bitmap;
+        }
+        _dc.DrawBitmap(bitmap, new Vortice.RawRectF(r.X, r.Y, r.X + bw / q, r.Y + bh / q), 1f, Vortice.Direct2D1.InterpolationMode.Linear, null, null);
+    }
+
+    /// <summary>The text drawn once, at <paramref name="q"/>× its size, on a separate context (the main one is mid-frame).</summary>
+    private ID2D1Bitmap1 TextBitmap(string text, IDWriteTextFormat f, Color color, RectangleF r, TextAlign h, TextAlign v, float q, int bw, int bh)
+    {
+        {
+            var bitmap = _textDc.CreateBitmap(new SizeI(bw, bh), IntPtr.Zero, 0,
+                new BitmapProperties1(new D2DPixelFormat(Vortice.DXGI.Format.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied), 96, 96, BitmapOptions.Target));
+            Align(f, h, v);
+            _textDc.Target = bitmap;
+            _textDc.BeginDraw();
+            try
+            {
+                _textDc.Clear(new Color4(0, 0, 0, 0));
+                _textDc.Transform = Matrix3x2.CreateScale(q);
+                _textDc.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+                _textBrush.Color = C4(color);
+                _textDc.DrawText(text, f, new Rect(0, 0, r.Width, r.Height), _textBrush, DrawTextOptions.Clip);
+            }
+            finally
+            {
+                _textDc.EndDraw().CheckError();
+                _textDc.Target = null;
+            }
+            return bitmap;
+        }
     }
 
     public SizeF MeasureText(string text, float px, bool bold)
@@ -399,6 +502,11 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
     {
         foreach (var f in _formats.Values) f.Dispose();
         _formats.Clear();
+        foreach (var b in _texts.Values) b.Dispose();
+        _texts.Clear();
+        ForgetLast();
+        _textBrush.Dispose();
+        _textDc.Dispose();
         _round.Dispose();
         _joined.Dispose();
         _dashed.Dispose();
