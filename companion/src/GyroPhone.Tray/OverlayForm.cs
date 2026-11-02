@@ -273,7 +273,7 @@ internal sealed class OverlayForm : Form
             !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now);
         if (!changed && now - _lastDrawTicks < 500) return;
         // Frame-rate cap (a little early, so a 60 Hz cap on a 60 Hz screen never skips a refresh).
-        int fps = Settings?.FrameRate ?? 0;
+        int fps = Settings?.MaxFps ?? 60;
         if (fps > 0 && !_dirty && _clock.Elapsed.TotalMilliseconds - _lastDrawAt < 1000.0 / fps - 3) return;
         _scene.FrameAgeUs = age;
         _scene.Layout = layout;

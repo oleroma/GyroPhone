@@ -70,8 +70,8 @@ public sealed class OverlaySettings
     public float Opacity { get; set; } = 1f;
     /// <summary>How carefully it draws (smooth edges cost the most on big windows).</summary>
     public OverlayQuality Quality { get; set; } = OverlayQuality.High;
-    /// <summary>Most pictures per second: 0 = every screen refresh, else 60 or 30.</summary>
-    public int FrameRate { get; set; }
+    /// <summary>Most pictures per second: 60 (default) or 30, or 0 = every screen refresh (costs more on fast screens).</summary>
+    public int MaxFps { get; set; } = 60;
 
     // Phone.
     /// <summary>Dots where the fingers touch the screen.</summary>

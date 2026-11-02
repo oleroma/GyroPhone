@@ -123,9 +123,9 @@ internal sealed class OverlaySection
         w.Controls.Add(MainForm.NewLabel("High: smooth edges and text. Balanced: smooth edges, plain text. Fast: no smoothing, the quickest for big windows."));
         w.Controls.Add(Heading("Frame rate"));
         var fr = MainForm.Row();
-        _fpsDisplay = MainForm.Radio("Every screen refresh", fr, () => Change(o => o.FrameRate = 0));
-        _fps60 = MainForm.Radio("60 fps", fr, () => Change(o => o.FrameRate = 60));
-        _fps30 = MainForm.Radio("30 fps", fr, () => Change(o => o.FrameRate = 30));
+        _fpsDisplay = MainForm.Radio("Every screen refresh (more work)", fr, () => Change(o => o.MaxFps = 0));
+        _fps60 = MainForm.Radio("60 fps", fr, () => Change(o => o.MaxFps = 60));
+        _fps30 = MainForm.Radio("30 fps", fr, () => Change(o => o.MaxFps = 30));
         w.Controls.Add(fr);
         w.Controls.Add(MainForm.NewLabel("Draw times per window are in the Debug window (tray menu)."));
 
@@ -279,9 +279,9 @@ internal sealed class OverlaySection
         _qHigh.Checked = o.Quality == OverlayQuality.High;
         _qBalanced.Checked = o.Quality == OverlayQuality.Balanced;
         _qFast.Checked = o.Quality == OverlayQuality.Fast;
-        _fpsDisplay.Checked = o.FrameRate is not (60 or 30);
-        _fps60.Checked = o.FrameRate == 60;
-        _fps30.Checked = o.FrameRate == 30;
+        _fpsDisplay.Checked = o.MaxFps is not (60 or 30);
+        _fps60.Checked = o.MaxFps == 60;
+        _fps30.Checked = o.MaxFps == 30;
 
         _phoneLook.Visible = o.Kind == OverlayKind.Phone;
         _shapeLook.Visible = o.Kind == OverlayKind.Shape;
