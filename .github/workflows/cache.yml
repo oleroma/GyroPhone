@@ -1,0 +1,77 @@
+name: Main cache
+
+# Keeps main's build caches warm, so the fallback build (fallback.yml) on a new branch starts
+# from them: GitHub lets a branch read only its own caches and main's. Runs after each push to
+# main and only compiles or restores the parts the push changed (.agents/hooks/parts), with the
+# same cache setup as fallback.yml. It runs no tests or checks, sets no status, and nothing
+# waits for it.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main-cache
+  cancel-in-progress: true
+
+jobs:
+  parts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      parts: ${{ steps.parts.outputs.parts }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: parts
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: echo "parts=$(bash .agents/hooks/parts "$BEFORE" | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+
+  # The Gradle cache: what the apk part's quick-test and build hooks compile, without running
+  # the tests.
+  android:
+    needs: parts
+    if: contains(needs.parts.outputs.parts, 'apk')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+      - run: ./gradlew :app:assembleDebug :core:testClasses
+
+  # The NuGet cache, the only one the companion job keeps: restoring the packages fills it.
+  companion:
+    needs: parts
+    if: contains(needs.parts.outputs.parts, 'companion')
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ hashFiles('companion/**/*.csproj', 'companion/Directory.Build.props') }}
+          restore-keys: nuget-
+      - run: dotnet restore companion/GyroPhone.Companion.sln
+      # The build hook publishes the tray app for win-x64, which needs that runtime's packages.
+      - run: dotnet restore companion/src/GyroPhone.Tray -r win-x64
