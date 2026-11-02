@@ -173,8 +173,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
             overlayScaleItem,
             _overlayDotsItem,
             new ToolStripSeparator(),
-            new ToolStripMenuItem("Recenter: the phone as held now shows square on (Ctrl+Alt+R)", null, (_, _) => RecenterOverlay()),
-            new ToolStripMenuItem("Level again (undo recenter)", null, (_, _) => ChangeOverlay(o => o.Center = null)),
+            new ToolStripMenuItem("Level: the phone as held now shows straight (Ctrl+Alt+R)", null, (_, _) => RecenterOverlay()),
+            new ToolStripMenuItem("Reset (undo Level)", null, (_, _) => ChangeOverlay(o => o.Center = null)),
         });
         // The phone's Record button: save this PC's side at once (the ring keeps moving).
         _engine.DebugSaveRequested = () => Post(() =>

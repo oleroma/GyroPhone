@@ -70,8 +70,8 @@ internal sealed class OverlaySection
         _level = Number(g, "Level at, °", 0, 180, 5, 0, v => Change(o => o.LevelDeg = (int)v));
         g.Controls.Add(MainForm.NewLabel("0 upright facing you, 90 flat screen up, 180 facing away."));
         var center = MainForm.Row();
-        MainForm.NewButton("Recenter (Ctrl+Alt+R)", () => _app.RecenterOverlay(), center);
-        MainForm.NewButton("Level again", () => Change(o => o.Center = null), center);
+        MainForm.NewButton("Level (Ctrl+Alt+R)", () => _app.RecenterOverlay(), center);
+        MainForm.NewButton("Reset", () => Change(o => o.Center = null), center);
         g.Controls.Add(center);
 
         g.Controls.Add(Heading("Looks"));
@@ -143,6 +143,9 @@ internal sealed class OverlaySection
 
     private static void Set(NumericUpDown n, decimal v)
     {
+        // A field being typed in is left alone: reading its Value would commit the half-typed text
+        // (while refreshing, so the change was dropped) and setting it would throw the typing away.
+        if (n.ContainsFocus) return;
         v = Math.Clamp(v, n.Minimum, n.Maximum);
         if (n.Value != v) n.Value = v;
     }
