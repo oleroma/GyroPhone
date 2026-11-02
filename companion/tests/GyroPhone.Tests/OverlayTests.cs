@@ -299,4 +299,20 @@ public class OverlayTests
         // The pose itself is untouched.
         Assert.True(MathF.Abs(HeadingDeg(p)) > 20f);
     }
+
+    [Fact]
+    public void EaseBackLeavesTheTurnAboutTheScreenAlone()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = false, Ease = false };
+        var p = new GyroPhone.Host.OverlayPose();
+        // Tilted back 45° (pitch), then turned 30° about the screen's axis (stored roll): the screen
+        // still faces the same way, so the heading stays 0.
+        var f = Motion(0f, 0.01f);
+        f.TurnPitch = -45f;
+        p.Feed(f, s);
+        var g = Motion(0f, 0.01f);
+        g.TurnRoll = 30f;
+        p.Feed(g, s);
+        Assert.Equal(0f, HeadingDeg(p), 1);
+    }
 }

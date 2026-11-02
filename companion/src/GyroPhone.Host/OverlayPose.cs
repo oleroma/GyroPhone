@@ -213,12 +213,16 @@ public sealed class OverlayPose
         return tilt;
     }
 
-    /// <summary>The heading in radians (right +): the right edge's angle round the vertical.</summary>
+    /// <summary>
+    /// The heading in radians (right +): which way the screen faces, round the vertical, 0 while it
+    /// faces up or down. A turn about the screen's own axis (shown yaw) leaves it alone, so easing the
+    /// heading back never undoes that turn (the phone's view uses the right edge instead).
+    /// </summary>
     public float Heading()
     {
-        float rx = 1 - 2 * (_y * _y + _z * _z);
-        float rz = 2 * (_x * _z - _w * _y);
-        return rx * rx + rz * rz > 0.04f ? MathF.Atan2(rz, rx) : 0f;
+        float nx = 2 * (_x * _z + _w * _y);
+        float nz = 1 - 2 * (_x * _x + _y * _y);
+        return nx * nx + nz * nz > 0.04f ? MathF.Atan2(-nx, nz) : 0f;
     }
 
     private void TurnHeading(float a)
