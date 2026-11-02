@@ -628,7 +628,16 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
         if (Volatile.Read(ref _exited) != 0) return;
         foreach (var f in _overlayList)
             if (!f.IsDisposed) f.Tick();
+        // The draw times in the log now and then, so they can be read without the Debug window.
+        long now = Environment.TickCount64;
+        if (now - _overlayStatsLoggedAt >= 30_000)
+        {
+            if (_overlayStatsLoggedAt != 0) _log.Write(OverlayStats());
+            _overlayStatsLoggedAt = now;
+        }
     }
+
+    private long _overlayStatsLoggedAt;
 
     /// <summary>The fastest frame rate an open overlay window wants (pacer thread); 0 = every screen refresh.</summary>
     private int OverlayWantHz()
@@ -651,8 +660,11 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt
     }
 
     /// <summary>The open overlay windows' draw times, for the Debug window.</summary>
-    internal string OverlayStats() =>
-        _overlayForms.Count == 0 ? "overlays: none open" : "overlays: " + string.Join(" · ", _overlayForms.Values.Select(f => f.Stats).Where(t => t.Length > 0));
+    internal string OverlayStats()
+    {
+        var open = _overlayList;
+        return open.Length == 0 ? "overlays: none open" : "overlays: " + string.Join(" · ", open.Select(f => f.Stats).Where(t => t.Length > 0));
+    }
 
     private void ApplyOverlays()
     {
