@@ -75,8 +75,8 @@ internal static class OverlayRenderer
         bool live = scene.Connected && scene.FrameAgeUs is >= 0 and < 1_500_000;
         var raw = live ? Shown(scene.Frame, settings) : (1f, 0f, 0f, 0f);
         var m = Matrix3(raw);
-        int top = scene.Arranging ? 18 : 0;
-        var area = new RectangleF(0, 0, size.Width, size.Height - top);
+        // The same area with Edit on or off, so nothing changes size when it's toggled (the caption lies over it).
+        var area = new RectangleF(0, 0, size.Width, size.Height);
         string? note = !scene.Connected ? "Waiting for the phone" : !live ? "Waiting for the phone's data" : null;
         switch (settings.Kind)
         {
