@@ -2,7 +2,7 @@
 # Shared rules for all of Olex's repos
 
 ## How agents work
-- `main` is the only long-lived branch. Agents always work on a feature branch made from `main`, and change `main` only through `agent-merge`, after Olex says the feature works.
+- `main` is the only long-lived branch. Agents commit only on a feature branch made from `main` (or a `handoff/` branch, step 1), never on `main` itself, and change `main` only through `agent-merge`, after Olex says the feature works.
 - Work in a cloud session unless Olex asks for local work or no cloud session is available. If the cloud session lacks something it needs, ask Olex whether to work locally. Local work follows the same steps; say that you're working locally and why.
 - Scripts in `.agents/` do the branching, committing, pushing, building, installing and merging. The agent does what needs judgment: code, commit messages, conflicts, and talking to Olex. Never do by hand what a script does; if a script is missing something or seems wrong, tell Olex.
 - Run the scripts with `bash`. Each ends with `result: <word>` and a short summary, and logs to `build/logs/`. Read the log only when the result is `failed`.
@@ -12,22 +12,26 @@
 |---|---|---|
 | `done` | all | Next step |
 | `failed` | all | Read the log, explain to Olex, stop |
-| `other-agent` | `agent-start` | Tell Olex which draft PR is open, ask whether to wait |
+| `other-agent` | `agent-start` | Run `agent-handoff`, then ask Olex: join that feature or wait (step 1) |
 | `checks-failed` | `agent-build` | Fix it, go back to step 2. Olex doesn't test this build |
 | `other-build` | `agent-build` | Tell Olex which build of which feature it would replace, ask whether to go on |
-| `conflicts` | `agent-merge` | Resolve them, run `agent-merge` again |
+| `conflicts` | `agent-start`, `agent-take`, `agent-merge` | Resolve them, run the same script again |
 | `needs-testing` | `agent-merge` | The merge touched this feature: go back to step 3 |
 | `not-built` | `agent-merge` | Something was committed after the last build: go back to step 3 |
 | `stuck` | `agent-merge` | Show Olex the files, ask what to do, stop |
 
 ## Steps
-1. **Start.** `bash .agents/agent-start <feature-name>` makes the branch and a draft PR. If Olex says to go on despite `other-agent`, run it with `--continue`. Watch that PR's activity (subscribe to it) until it's merged: PC builds report there.
+1. **Start.** You may edit on `main` first, without building. When ready to branch, `bash .agents/agent-start <feature-name>` makes the branch from where you are, with your edits as its first commit and the latest `main` merged in, and opens a draft PR. Watch that PR's activity (subscribe to it) until it's merged: PC builds report there.
+   - `other-agent` means another feature holds the repo. Run `bash .agents/agent-handoff <feature-name>`, which pushes your work as `handoff/<feature-name>` (no PR, no build), then ask Olex: join or wait.
+   - Join: send the other feature's thread Olex's answer, asking it to run `bash .agents/agent-take handoff/<feature-name>`. It merges your work into its branch, and its next build tests both. Your part is then done.
+   - Wait: once the other feature is merged, run `agent-start <feature-name>` on your handoff branch. If Olex says to work in parallel anyway, run `agent-start --continue <feature-name>`.
 2. **Edit.** Write the code, then `bash .agents/agent-commit "<message>"`.
 3. **Build.** Every build runs the `quick-test`, `build` and `full-check` hooks once and marks the commit checked; nothing runs them again. Try the PC first through Remote Control (actually try, don't guess):
    - `pc`: in `D:\dev\<repo>`, run `git fetch origin <branch>`, then `git -C build/src checkout --detach origin/<branch>` (the first time: `git worktree add --detach build/src origin/<branch>`), then `bash build/src/.agents/agent-build pc`. Report its summary. If it says a build file wasn't installed because it isn't an APK, ask Olex whether to install it. To install again without building, run `bash build/src/.agents/agent-install [<version>-<commit>]`.
    - `ci`, only when the PC can't be reached: `bash .agents/agent-build ci`. Post the download links in the project thread first, then upload the files.
    - `agent-build` stops with `other-build` when the newest build came from another feature whose PR is still open, since Olex may still be testing it. If Olex says to go on, run it again with `--replace`.
    - If checks fail in code this feature didn't change, tell Olex instead of fixing it in the feature.
+   - Run every script that builds (`agent-build`, `agent-install`) in the background with its output going to a file, never in the foreground or through a pipe such as `| tail`. Build daemons it starts can hold a pipe open after it finishes, so the command never returns, and an agent stuck in a foreground command can't read Olex's messages.
    - Post the build summary in the project thread as soon as `agent-build` finishes, before any wait or follow-up check, and say what Olex needs to do next. Only what is posted in the thread reaches Olex. Never end a turn waiting on Olex without telling him there what you're waiting for. A check on a device that needs Olex to act first (such as opening the app) is a separate Remote Control task, started after he says he's done it, never part of the build task.
    - Don't rely on the Remote Control session's report alone: it can fail to arrive. A PC build posts its result, whatever it is, as a comment on the feature's PR, which wakes the thread agent watching it. As a backup, when a PC build starts, set one reminder for after it should be done. If no result has arrived by then, check whether the head commit has a `build/<n>` tag and a passed check, and post what you find (or that it's still running, and since when) without waiting for Olex to ask.
    - A branch that changes only documentation (`*.md` files and `docs/`) needs no build or test: go straight to step 5 when Olex says so.
