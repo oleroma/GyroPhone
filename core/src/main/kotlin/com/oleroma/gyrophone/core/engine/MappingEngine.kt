@@ -416,6 +416,24 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
 
     private var gyroToggled = false
+
+    // Declared before init, which builds them.
+    /**
+     * The controller's gyro buttons in use, for a controller plugged into the PC ("Use PC
+     * controller for gyro"): one entry per button, `(place shl 8) or kind`, the place an
+     * [com.oleroma.gyrophone.core.net.OverlayFeed] PAD_ bit index, the kind the [gyroBit]s its
+     * ratchets flip plus [PC_GYRO_TOGGLE] for a Toggle gyro. Only plain presses count (no tap,
+     * long press or other gesture). Rebuilt with the layers in use.
+     */
+    @Volatile var pcGyroButtons: IntArray = IntArray(0)
+        private set
+
+    /** Goes up each time a Toggle gyro press stops counting (the workspace or its gyro changed): a PC controller's toggle resets too. */
+    @Volatile var toggleEpoch: Int = 0
+        private set
+
+    private val nonGyro = IntArray(GamepadAxis.entries.size)
+
     private var mouseDx = 0
     private var mouseDy = 0
 
@@ -1202,20 +1220,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             out
         }
 
-    /**
-     * The controller's gyro buttons in use, for a controller plugged into the PC ("Use PC
-     * controller for gyro"): one entry per button, `(place shl 8) or kind`, the place an
-     * [com.oleroma.gyrophone.core.net.OverlayFeed] PAD_ bit index, the kind the [gyroBit]s its
-     * ratchets flip plus [PC_GYRO_TOGGLE] for a Toggle gyro. Only plain presses count (no tap,
-     * long press or other gesture). Rebuilt with the layers in use.
-     */
-    @Volatile var pcGyroButtons: IntArray = IntArray(0)
-        private set
-
-    /** Goes up each time a Toggle gyro press stops counting (the workspace or its gyro changed): a PC controller's toggle resets too. */
-    @Volatile var toggleEpoch: Int = 0
-        private set
-
     private fun pcGyroButtonsOf(ms: List<Mapping>): IntArray {
         val kinds = LinkedHashMap<Int, Int>()
         val seen = HashSet<Pair<Int, OutputTarget>>()
@@ -1264,8 +1268,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     fun nonGyroPad(out: IntArray) {
         synchronized(lock) { nonGyro.copyInto(out, endIndex = minOf(out.size, nonGyro.size)) }
     }
-
-    private val nonGyro = IntArray(GamepadAxis.entries.size)
 
     /** The [gyroBit]s of the axes some held ratchet acts on (flipped or not), as of the last [gyroAxes] read. */
     @Volatile var ratchetsHeld: Int = 0
