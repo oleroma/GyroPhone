@@ -32,6 +32,15 @@ public enum OverlayHandles
     Off,
 }
 
+/// <summary>Which controller the phone overlay's handles show.</summary>
+public enum OverlayHandleSource
+{
+    /// <summary>The controller attached to the phone.</summary>
+    Phone,
+    /// <summary>The controller plugged into this PC, while the phone's "Use PC controller for gyro ratchet" is on.</summary>
+    Pc,
+}
+
 /// <summary>What an overlay window shows (as the phone's gyro displays).</summary>
 public enum OverlayKind
 {
@@ -89,6 +98,8 @@ public sealed class OverlaySettings
     public bool FingerTrails { get; set; } = true;
     /// <summary>Switch-style controller handles on the phone's sides, lit by the attached controller's presses.</summary>
     public OverlayHandles Handles { get; set; } = OverlayHandles.Auto;
+    /// <summary>Which controller the handles show; with <see cref="OverlayHandles.Auto"/>, the one that must be there.</summary>
+    public OverlayHandleSource HandleSource { get; set; } = OverlayHandleSource.Phone;
 
     // 3D shape.
     public OverlayShape Shape { get; set; } = OverlayShape.Globe;

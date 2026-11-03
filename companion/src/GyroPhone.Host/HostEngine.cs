@@ -419,6 +419,24 @@ public sealed class HostEngine
         f.RatchetPresses = unchecked((byte)(f.RatchetPresses + _gate.RatchetPresses));
     }
 
+    /// <summary>
+    /// A window whose handles show the PC controller: its buttons, triggers and sticks in place of the
+    /// phone's controller, none while the phone's "Use PC controller for gyro ratchet" is off.
+    /// </summary>
+    private void PcPadOnHandles(OverlayFrame f)
+    {
+        Span<float> axes = stackalloc float[6];
+        uint held = 0;
+        bool on = _padGyro.Enabled && _pcPad.Read(_handlePresses, out held) && _pcPad.ReadAxes(axes);
+        f.PadFlags = on ? OverlayFrame.PadAttachedFlag : (byte)0;
+        f.PadButtons = on ? held : 0;
+        f.PadL2Pull = on ? axes[4] : 0f;
+        f.PadR2Pull = on ? axes[5] : 0f;
+        for (int i = 0; i < 4; i++) f.PadSticks[i] = on ? axes[i] : 0f;
+    }
+
+    private readonly uint[] _handlePresses = new uint[PadGyroConfig.Places];
+
     /// <summary>Uses <paramref name="pad"/> as the controller plugged into this PC (Windows: XInput).</summary>
     public void SetPcPad(IPcPad pad)
     {
@@ -1131,6 +1149,8 @@ public sealed class HostEngine
             {
                 into.Qw = p.W; into.Qx = p.X; into.Qy = p.Y; into.Qz = p.Z;
             }
+            if (id != null && _settings.Overlays.FirstOrDefault(o => o.Id == id) is { HandleSource: OverlayHandleSource.Pc })
+                PcPadOnHandles(into);
             else
             {
                 into.Qw = 1; into.Qx = into.Qy = into.Qz = 0;

@@ -26,6 +26,7 @@ public sealed class XInputPcPad : IPcPad, IDisposable
     private readonly object _gate = new();
     private readonly uint[] _presses = new uint[Places];
     private uint _held;
+    private readonly float[] _axes = new float[6];
     private int _slot = -1;
     private Func<int> _ownSlot = () => -1;
     private Thread? _thread;
@@ -68,6 +69,7 @@ public sealed class XInputPcPad : IPcPad, IDisposable
         lock (_gate)
         {
             _held = 0;
+            Array.Clear(_axes);
             Volatile.Write(ref _slot, -1);
         }
     }
@@ -78,6 +80,15 @@ public sealed class XInputPcPad : IPcPad, IDisposable
         {
             held = _held;
             Array.Copy(_presses, presses, Math.Min(presses.Length, Places));
+            return _slot >= 0;
+        }
+    }
+
+    public bool ReadAxes(Span<float> axes)
+    {
+        lock (_gate)
+        {
+            _axes.AsSpan(0, Math.Min(axes.Length, _axes.Length)).CopyTo(axes);
             return _slot >= 0;
         }
     }
@@ -123,6 +134,7 @@ public sealed class XInputPcPad : IPcPad, IDisposable
                         lock (_gate)
                         {
                             _held = 0;
+                            Array.Clear(_axes);
                             Volatile.Write(ref _slot, -1);
                         }
                     }
@@ -172,8 +184,17 @@ public sealed class XInputPcPad : IPcPad, IDisposable
             uint down = held & ~_held;
             for (int i = 0; i < Places; i++) if ((down & (1u << i)) != 0) _presses[i]++;
             _held = held;
+            // XInput sticks are y up; the overlay's are y down.
+            _axes[0] = Stick(g.ThumbLX);
+            _axes[1] = -Stick(g.ThumbLY);
+            _axes[2] = Stick(g.ThumbRX);
+            _axes[3] = -Stick(g.ThumbRY);
+            _axes[4] = g.LeftTrigger / 255f;
+            _axes[5] = g.RightTrigger / 255f;
         }
     }
+
+    private static float Stick(short v) => Math.Max(-1f, v / 32767f);
 
     private static uint PlaceBits(in XInputGamepad g)
     {
