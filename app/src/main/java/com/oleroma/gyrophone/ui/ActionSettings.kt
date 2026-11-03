@@ -18,6 +18,10 @@ import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.ButtonGesture
 import com.oleroma.gyrophone.core.model.DevicePreset
+import com.oleroma.gyrophone.core.model.PhysicalSticks
+import com.oleroma.gyrophone.core.model.StickCurve
+import com.oleroma.gyrophone.core.model.StickTuning
+import com.oleroma.gyrophone.core.model.TriggerTuning
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MoveSlot
@@ -392,35 +396,119 @@ internal fun physicalSettings(
     update: ((DevicePreset) -> DevicePreset) -> Unit,
 ) = MappingSettings(
     action = { input ->
+        val axis = input.sources.firstOrNull() as? InputSource.Axis
+        val stickId = axis?.let { a -> PhysicalSticks.sticks.entries.firstOrNull { a.axis == it.value.first || a.axis == it.value.second }?.key }
+        val triggerId = axis?.let { a -> PhysicalSticks.triggers.entries.firstOrNull { a.axis == it.value.first || a.axis == it.value.second }?.key }
         val src = input.sources.firstOrNull() as? InputSource.KeyGesture
         val own = src?.let { preset.timing(it.keyCode) }
         val key = preset.id + ":" + src?.keyCode
-        when (src?.gesture) {
-            ButtonGesture.TAP, ButtonGesture.LONG_PRESS -> ui {
-                MsOverride(
-                    key + "long", "Long press after", own?.longPressMs ?: ws.longPressMs,
-                    Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
-                    overridden = own?.longPressMs != null,
-                    onReset = { update { p -> p.withTiming(src.keyCode) { it.copy(longPressMs = null) } } },
-                    hint = "$LONG_HINT Kept in the preset. Without a time of its own it uses the workspace's.",
-                ) { ms -> update { p -> p.withTiming(src.keyCode) { it.copy(longPressMs = ms) } } }
-            }
+        when {
+            stickId != null -> ui { StickTuningSettings(preset, stickId, update) }
+            triggerId != null -> ui { TriggerTuningSettings(preset, triggerId, update) }
+            else -> when (src?.gesture) {
+                ButtonGesture.TAP, ButtonGesture.LONG_PRESS -> ui {
+                    MsOverride(
+                        key + "long", "Long press after", own?.longPressMs ?: ws.longPressMs,
+                        Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
+                        overridden = own?.longPressMs != null,
+                        onReset = { update { p -> p.withTiming(src.keyCode) { it.copy(longPressMs = null) } } },
+                        hint = "$LONG_HINT Kept in the preset. Without a time of its own it uses the workspace's.",
+                    ) { ms -> update { p -> p.withTiming(src.keyCode) { it.copy(longPressMs = ms) } } }
+                }
 
-            ButtonGesture.DOUBLE_TAP -> ui {
-                MsOverride(
-                    key + "double", "Double tap within", own?.doubleTapMs ?: ws.doubleTapMs,
-                    Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
-                    overridden = own?.doubleTapMs != null,
-                    onReset = { update { p -> p.withTiming(src.keyCode) { it.copy(doubleTapMs = null) } } },
-                    hint = "Kept in the preset. Without a window of its own it uses the workspace's.",
-                ) { ms -> update { p -> p.withTiming(src.keyCode) { it.copy(doubleTapMs = ms) } } }
-            }
+                ButtonGesture.DOUBLE_TAP -> ui {
+                    MsOverride(
+                        key + "double", "Double tap within", own?.doubleTapMs ?: ws.doubleTapMs,
+                        Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
+                        overridden = own?.doubleTapMs != null,
+                        onReset = { update { p -> p.withTiming(src.keyCode) { it.copy(doubleTapMs = null) } } },
+                        hint = "Kept in the preset. Without a window of its own it uses the workspace's.",
+                    ) { ms -> update { p -> p.withTiming(src.keyCode) { it.copy(doubleTapMs = ms) } } }
+                }
 
-            else -> null
+                else -> null
+            }
         }
     },
     shared = null,
 )
+
+/** A physical stick's tuning in [preset] (stick [id]): deadzones, curve, sensitivity, Outer ring and direction pies. */
+@Composable
+private fun StickTuningSettings(preset: DevicePreset, id: String, update: ((DevicePreset) -> DevicePreset) -> Unit) {
+    val t = preset.stick(id)
+    val d = StickTuning()
+    fun set(f: (StickTuning) -> StickTuning) = update { p -> p.withStick(id, f(p.stick(id))) }
+    val key = preset.id + ":" + id + ":"
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            "The whole stick's feel, kept in the preset. Every mapping of this stick follows it.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OverrideSlider(
+            key + "inner", "Inner deadzone %.0f%%", t.inner * 100, 0f..40f, 1f, t.inner != d.inner,
+            { set { it.copy(inner = d.inner) } },
+            "Nothing happens until the stick is pushed this far, the same in every direction.",
+        ) { v -> set { it.copy(inner = v / 100) } }
+        OverrideSlider(
+            key + "outer", "Outer deadzone %.0f%%", t.outer * 100, 60f..100f, 1f, t.outer != d.outer,
+            { set { it.copy(outer = d.outer) } },
+            "From this far on the stick counts as pushed all the way.",
+        ) { v -> set { it.copy(outer = (v / 100).coerceAtLeast(t.inner + 0.05f)) } }
+        OverrideRow(
+            "Curve", t.curve != d.curve, { set { it.copy(curve = d.curve) } },
+            "Soft: finer aim near the centre. Aggressive: quicker off the centre.",
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (c in StickCurve.entries) {
+                    FilterChip(selected = t.curve == c, onClick = { set { it.copy(curve = c) } }, label = { Text(c.label) })
+                }
+            }
+        }
+        OverrideSlider(
+            key + "sens", "Sensitivity %.0f%%", t.sensitivity * 100, 25f..200f, 5f, t.sensitivity != d.sensitivity,
+            { set { it.copy(sensitivity = d.sensitivity) } },
+            "Above 100% the stick reaches full output before it is pushed all the way.",
+        ) { v -> set { it.copy(sensitivity = v / 100) } }
+        OverrideSlider(
+            key + "ring", "Outer ring %.0f%%", t.outerRing * 100, 30f..100f, 1f, t.outerRing != d.outerRing,
+            { set { it.copy(outerRing = d.outerRing) } },
+            "The Outer cards fire while the stick is pushed past this, for example Shift to sprint.",
+        ) { v -> set { it.copy(outerRing = v / 100) } }
+        OverrideSlider(
+            key + "pieX", "Left and right pies %.0f°", t.pieX, StickTuning.MIN_PIE..StickTuning.MAX_PIE, 5f, t.pieX != d.pieX,
+            { set { it.copy(pieX = d.pieX) } },
+            "How wide Left and Right are. Wider than 90° overlaps Up and Down, so a diagonal presses both.",
+        ) { v -> set { it.copy(pieX = v) } }
+        OverrideSlider(
+            key + "pieY", "Up and down pies %.0f°", t.pieY, StickTuning.MIN_PIE..StickTuning.MAX_PIE, 5f, t.pieY != d.pieY,
+            { set { it.copy(pieY = d.pieY) } },
+            "How wide Up and Down are.",
+        ) { v -> set { it.copy(pieY = v) } }
+    }
+}
+
+/** A physical trigger's tuning in [preset] (trigger [id]): where Press and Full pull fire. */
+@Composable
+private fun TriggerTuningSettings(preset: DevicePreset, id: String, update: ((DevicePreset) -> DevicePreset) -> Unit) {
+    val t = preset.trigger(id)
+    val d = TriggerTuning()
+    fun set(f: (TriggerTuning) -> TriggerTuning) = update { p -> p.withTrigger(id, f(p.trigger(id))) }
+    val key = preset.id + ":" + id + ":"
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        OverrideSlider(
+            key + "press", "Press at %.0f%%", t.press * 100, 1f..100f, 1f, t.press != d.press,
+            { set { it.copy(press = d.press) } },
+            "The Press card fires once the trigger is pulled this far.",
+        ) { v -> set { it.copy(press = v / 100) } }
+        OverrideSlider(
+            key + "full", "Full pull at %.0f%%", t.full * 100, 50f..100f, 1f, t.full != d.full,
+            { set { it.copy(full = d.full) } },
+            "The Full pull card fires from here, on top of Press.",
+        ) { v -> set { it.copy(full = v / 100) } }
+    }
+}
 
 /** An area's options: whether it interrupts what a finger sliding in was doing, and resumes it. */
 @Composable

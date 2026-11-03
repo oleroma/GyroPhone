@@ -19,7 +19,23 @@ data class DevicePreset(
     val mouse: List<Mapping> = emptyList(),
     /** Keys and buttons (controller, keyboard, mouse) with gesture timings of their own. */
     val timings: List<KeyTiming> = emptyList(),
+    /** The sticks' tuning by [PhysicalSticks] id ("ls", "rs"); one not listed has the defaults. */
+    val sticks: Map<String, StickTuning> = emptyMap(),
+    /** The triggers' tuning by [PhysicalSticks] id ("lt", "rt"); one not listed has the defaults. */
+    val triggers: Map<String, TriggerTuning> = emptyMap(),
 ) {
+    /** Stick [id]'s tuning in effect. */
+    fun stick(id: String): StickTuning = sticks[id] ?: StickTuning()
+
+    /** Trigger [id]'s tuning in effect. */
+    fun trigger(id: String): TriggerTuning = triggers[id] ?: TriggerTuning()
+
+    fun withStick(id: String, t: StickTuning): DevicePreset =
+        copy(sticks = if (t == StickTuning()) sticks - id else sticks + (id to t))
+
+    fun withTrigger(id: String, t: TriggerTuning): DevicePreset =
+        copy(triggers = if (t == TriggerTuning()) triggers - id else triggers + (id to t))
+
     /** [keyCode]'s own timings, or null: the workspace's. */
     fun timing(keyCode: Int): KeyTiming? = timings.firstOrNull { it.keyCode == keyCode }
 
@@ -50,10 +66,102 @@ data class DevicePreset(
 @Serializable
 data class KeyTiming(val keyCode: Int, val longPressMs: Int? = null, val doubleTapMs: Int? = null)
 
+/** How a stick's travel past its inner deadzone turns into output ([StickTuning.curve]). */
+@Serializable
+enum class StickCurve(val label: String) {
+    LINEAR("Linear"),
+    /** Finer near the centre: travel squared. */
+    SOFT("Soft"),
+    /** Quicker off the centre: the square root of travel. */
+    AGGRESSIVE("Aggressive");
+
+    fun apply(t: Float): Float = when (this) {
+        LINEAR -> t
+        SOFT -> t * t
+        AGGRESSIVE -> kotlin.math.sqrt(t)
+    }
+}
+
+/**
+ * A physical stick's tuning, kept in its [DevicePreset]. The stick is read as one round vector:
+ * nothing below [inner] (a share of full travel), full from [outer] on, travel between them
+ * shaped by [curve] and scaled by [sensitivity]. Its directions (Left, Right, Up, Down) are pies
+ * [pieX] (left and right) and [pieY] (up and down) degrees wide around their axis: wider than 90
+ * overlap, so a diagonal presses both. [outerRing]: how far it is pushed (between the deadzones,
+ * before the curve) for its Outer inputs ([AxisStage.OUTER]).
+ */
+@Serializable
+data class StickTuning(
+    val inner: Float = 0.10f,
+    val outer: Float = 0.95f,
+    val curve: StickCurve = StickCurve.LINEAR,
+    val sensitivity: Float = 1f,
+    val outerRing: Float = 0.85f,
+    val pieX: Float = 135f,
+    val pieY: Float = 135f,
+) {
+    companion object {
+        const val MIN_PIE = 30f
+        const val MAX_PIE = 180f
+    }
+}
+
+/**
+ * A physical trigger's tuning, kept in its [DevicePreset]: its Press ([AxisStage.PRESS]) is on from
+ * [press] of its pull, its Full pull ([AxisStage.FULL_PULL]) from [full].
+ */
+@Serializable
+data class TriggerTuning(val press: Float = 0.5f, val full: Float = 0.95f)
+
+/** The sticks and triggers a [DevicePreset] tunes, by id, with their axes. */
+object PhysicalSticks {
+    /** Stick id to its X and Y axes. */
+    val sticks: Map<String, Pair<Int, Int>> = linkedMapOf(
+        "ls" to (AndroidAxis.X to AndroidAxis.Y),
+        "rs" to (AndroidAxis.Z to AndroidAxis.RZ),
+    )
+
+    /** Trigger id to the axes its pull may come as. */
+    val triggers: Map<String, Pair<Int, Int>> = linkedMapOf(
+        "lt" to (AndroidAxis.LTRIGGER to AndroidAxis.BRAKE),
+        "rt" to (AndroidAxis.RTRIGGER to AndroidAxis.GAS),
+    )
+}
+
 /** The kinds of physical device a [DevicePreset] maps. */
 enum class PhysicalDevice(val label: String) { CONTROLLER("Controller"), KEYBOARD("Keyboard"), MOUSE("Mouse") }
 
 object DevicePresets {
+    /** The id prefix of a physical control's stand-in in the editors ("dev:CONTROLLER:a"). */
+    private const val STAND_IN_PREFIX = "dev:CONTROLLER:"
+
+    /**
+     * [p] with the mappings an older editor saved on a controller button's touch-button stand-in
+     * (InputSource.Touch "dev:CONTROLLER:<id>", which never fire) moved to that button's press;
+     * the stand-in's other touch and surface inputs are dropped.
+     */
+    fun fixStandIns(p: DevicePreset): DevicePreset {
+        fun standIn(s: InputSource): String? = when (s) {
+            is InputSource.Touch -> s.id
+            is InputSource.TouchTap -> s.id
+            is InputSource.TouchDoubleTap -> s.id
+            is InputSource.TouchLongPress -> s.id
+            is InputSource.TouchRelease -> s.id
+            is InputSource.TouchArea -> s.id
+            is InputSource.Surface -> s.id
+            else -> null
+        }?.takeIf { it.startsWith(STAND_IN_PREFIX) }
+        if (p.controller.none { standIn(it.source) != null }) return p
+        val controls = (PhysicalLayouts.controllerFront.controls + PhysicalLayouts.controllerBack.controls).associateBy { it.id }
+        val fixed = p.controller.flatMap { m ->
+            val id = standIn(m.source) ?: return@flatMap listOf(m)
+            if (m.source !is InputSource.Touch) return@flatMap emptyList()
+            val press = controls[id.removePrefix(STAND_IN_PREFIX)]?.inputs?.firstOrNull() ?: return@flatMap emptyList()
+            press.sources.map { m.copy(source = it) }
+        }.distinct()
+        return p.copy(controller = fixed)
+    }
+
     fun newId(taken: Collection<String>): String {
         var n = 1
         while ("preset$n" in taken) n++
@@ -145,6 +253,11 @@ object PhysicalLayouts {
         BindableInput("Right", listOf(InputSource.Axis(x, AxisHalf.POSITIVE))),
         BindableInput("Up", listOf(InputSource.Axis(y, AxisHalf.NEGATIVE))),
         BindableInput("Down", listOf(InputSource.Axis(y, AxisHalf.POSITIVE))),
+        BindableInput("Outer", listOf(InputSource.Axis(x, stage = AxisStage.OUTER))),
+        BindableInput("Outer left", listOf(InputSource.Axis(x, AxisHalf.NEGATIVE, AxisStage.OUTER))),
+        BindableInput("Outer right", listOf(InputSource.Axis(x, AxisHalf.POSITIVE, AxisStage.OUTER))),
+        BindableInput("Outer up", listOf(InputSource.Axis(y, AxisHalf.NEGATIVE, AxisStage.OUTER))),
+        BindableInput("Outer down", listOf(InputSource.Axis(y, AxisHalf.POSITIVE, AxisStage.OUTER))),
     ) + buttonInputs(listOf(click), "Click").let { b -> b.map { if (it.label == "Click") it else it.copy(label = "Click " + it.label.lowercase()) } }
 
     /** A D-pad direction: its key (with gestures) and the hat axis half some pads report instead. */
@@ -206,6 +319,8 @@ object PhysicalLayouts {
             PhysicalControl(id, label, kind, x, y, w / a, h, inputs)
         fun trigger(code: Int, axis: Int, alt: Int) = listOf(
             BindableInput("Pull", listOf(InputSource.Axis(axis), InputSource.Axis(alt), InputSource.Key(code))),
+            BindableInput("Press", listOf(InputSource.Axis(axis, stage = AxisStage.PRESS), InputSource.Axis(alt, stage = AxisStage.PRESS))),
+            BindableInput("Full pull", listOf(InputSource.Axis(axis, stage = AxisStage.FULL_PULL), InputSource.Axis(alt, stage = AxisStage.FULL_PULL))),
         ) + ButtonGesture.entries.map { g -> BindableInput(g.label, listOf(InputSource.KeyGesture(code, g))) }
         fun paddle(id: String, x: Float, y: Float) =
             rect(id, id.uppercase(), PhysicalKind.FACE, x, y, 0.15f, 0.15f, buttonInputs(paddles.getValue(id)))

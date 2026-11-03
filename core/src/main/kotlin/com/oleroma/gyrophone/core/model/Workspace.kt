@@ -58,6 +58,10 @@ data class Workspace(
     val ownSettings: Set<String>? = null,
     /** Physical keys' own gesture timings: filled from [devicePreset] when resolved, like [keyboard]. */
     val keyTimings: List<KeyTiming> = emptyList(),
+    /** Physical sticks' tuning by [PhysicalSticks] id: filled from [devicePreset] when resolved; empty = raw sticks. */
+    val stickTunings: Map<String, StickTuning> = emptyMap(),
+    /** Physical triggers' tuning by [PhysicalSticks] id: filled from [devicePreset] when resolved, like [stickTunings]. */
+    val triggerTunings: Map<String, TriggerTuning> = emptyMap(),
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =

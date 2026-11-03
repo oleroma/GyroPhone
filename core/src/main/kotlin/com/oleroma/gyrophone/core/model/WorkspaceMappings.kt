@@ -23,10 +23,12 @@ object WorkspaceMappings {
         // Old latch settings become Toggle chips ([ToggleUpgrade]); the Defaults' still count for the workspaces.
         val d = set.defaults
         val defaults = ToggleUpgrade.latches(d.copy(mappings = Triggers.upgrade(d.mappings)))
+        val presets = set.devicePresets.map(DevicePresets::fixStandIns)
         return set.copy(
             defaults = defaults,
+            devicePresets = presets,
             workspaces = set.workspaces.map {
-                resolve(ToggleUpgrade.latches(WorkspaceDefaults.apply(it, d)), set.devicePresets)
+                resolve(ToggleUpgrade.latches(WorkspaceDefaults.apply(it, d)), presets)
             },
         )
     }
@@ -40,13 +42,15 @@ object WorkspaceMappings {
                 keyboard = Triggers.upgrade(p?.keyboard.orEmpty()),
                 mouse = Triggers.upgrade(p?.mouse.orEmpty()),
                 keyTimings = p?.timings.orEmpty(),
+                stickTunings = if (p == null) emptyMap() else PhysicalSticks.sticks.keys.associateWith { p.stick(it) },
+                triggerTunings = if (p == null) emptyMap() else PhysicalSticks.triggers.keys.associateWith { p.trigger(it) },
             )
         }
 
     /** [set] as it is stored: the device mappings stay in the presets only. */
     fun store(set: Profile): Profile = set.copy(
         workspaces = set.workspaces.map { w ->
-            w.copy(mappingProfileId = null, pads = emptyList(), keyboard = emptyList(), mouse = emptyList(), keyTimings = emptyList())
+            w.copy(mappingProfileId = null, pads = emptyList(), keyboard = emptyList(), mouse = emptyList(), keyTimings = emptyList(), stickTunings = emptyMap(), triggerTunings = emptyMap())
         },
     )
 

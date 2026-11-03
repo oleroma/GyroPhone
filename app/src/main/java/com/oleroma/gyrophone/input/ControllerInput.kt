@@ -75,8 +75,9 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         if (device.isVirtual) return false
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0) return true
         // A captured mouse's back / forward buttons come as keys too: they are its buttons already.
+        // A game pad that also says it is a mouse (many do) keeps its keys: they are its buttons.
         if (runtime.mouseCaptured && device.supportsSource(InputDevice.SOURCE_MOUSE) &&
-            device.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC
+            device.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC && !isPad(device)
         ) return true
         val pressed = event.action == KeyEvent.ACTION_DOWN
         runtime.keyLearnListener?.let { learn ->
@@ -216,13 +217,12 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         val ids = inputManager.inputDeviceIds.toList()
         val mouse = ids.any { id ->
             val d = inputManager.getInputDevice(id)
-            d != null && !d.isVirtual && d.supportsSource(InputDevice.SOURCE_MOUSE)
+            // A game pad saying it is a mouse too is not one: it would capture the pointer and lose its keys.
+            d != null && !d.isVirtual && d.supportsSource(InputDevice.SOURCE_MOUSE) && !isPad(d)
         }
         val list = ids.mapNotNull { id ->
             val d = inputManager.getInputDevice(id) ?: return@mapNotNull null
-            val isPad = d.sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
-                d.sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
-            if (d.isVirtual || !isPad) return@mapNotNull null
+            if (d.isVirtual || !isPad(d)) return@mapNotNull null
             val has = d.hasKeys(*KEY_CANDIDATES)
             AttachedController(
                 deviceId = d.id,
@@ -236,6 +236,11 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         }
         runtime.onControllersChanged(list, mouse)
     }
+
+    /** Whether [d] is a game pad or joystick. */
+    private fun isPad(d: InputDevice): Boolean =
+        d.sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+            d.sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
 
     private fun source(device: InputDevice): Source =
         sources.get(device.id) ?: Source(padDevice(device)).also { sources.put(device.id, it) }

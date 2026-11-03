@@ -17,7 +17,12 @@ object Describe {
         is InputSource.KeyGesture -> "Controller " + (AndroidKey.names[s.keyCode] ?: "key ${s.keyCode}") + " " +
                 s.gesture.label.lowercase()
 
-        is InputSource.Axis -> (axisNames[s.axis] ?: "Axis ${s.axis}") + half(s.half)
+        is InputSource.Axis -> (axisNames[s.axis] ?: "Axis ${s.axis}") + half(s.half) + when (s.stage) {
+            AxisStage.NONE -> ""
+            AxisStage.OUTER -> " outer"
+            AxisStage.PRESS -> " press"
+            AxisStage.FULL_PULL -> " full pull"
+        }
         is InputSource.Touch -> "Touch ${s.id}"
         is InputSource.TouchStick -> "Touch stick ${s.id} ${s.axis}" + half(s.half)
         is InputSource.TouchStickDiagonal -> "Touch stick ${s.id} ${s.diagonal.label}"
