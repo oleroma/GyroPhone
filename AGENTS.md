@@ -15,6 +15,7 @@
 | `other-agent` | `agent-start` | Run `agent-handoff`, then ask Olex: join that feature or wait (step 1) |
 | `checks-failed` | `agent-build` | Fix it, go back to step 2. Olex doesn't test this build |
 | `other-build` | `agent-build` | Tell Olex which build of which feature it would replace, ask whether to go on |
+| `workflow-change` | `agent-build` | Only pipeline files or docs changed since the last build: tell Olex what changed and how to test it, and don't run it |
 | `conflicts` | `agent-start`, `agent-take`, `agent-merge` | Resolve them, run the same script again |
 | `needs-testing` | `agent-merge` | The merge touched this feature: go back to step 3 |
 | `not-built` | `agent-merge` | Something was committed after the last build: go back to step 3 |
@@ -36,11 +37,13 @@
    - Post the build summary in the project thread as soon as `agent-build` finishes, before any wait or follow-up check, and say what Olex needs to do next. Only what is posted in the thread reaches Olex. Never end a turn waiting on Olex without telling him there what you're waiting for. A check on a device that needs Olex to act first (such as opening the app) is a separate Remote Control task, started after he says he's done it, never part of the build task.
    - Don't rely on the Remote Control session's report alone: it can fail to arrive. A PC build posts its result, whatever it is, as a comment on the feature's PR, which wakes the thread agent watching it. As a backup, when a PC build starts, set one reminder for after it should be done. If no result has arrived by then, check whether the head commit has a `build/<n>` tag and a passed check, and post what you find (or that it's still running, and since when) without waiting for Olex to ask.
    - A branch that changes only documentation (`*.md` files and `docs/`) needs no build or test: go straight to step 5 when Olex says so.
+   - Commits that change only the pipeline (`.agents/`, `.github/workflows/`) or documentation need no build: Olex tests them himself ("Scripts and hooks"). `agent-build` stops with `workflow-change`, and `agent-merge` accepts them without one.
+   - A build request sent to the PC says what the build should show. Before building, the PC agent checks what changed since the last build and that it can show it (for example, that the phone is on adb when installing is the point); if it can't, it says so in the thread instead of building.
 4. **Check.** Wait for Olex. If he asks for changes, go back to 2. When he says the feature works, go to 5.
 5. **Merge.** `bash .agents/agent-merge`. It merges the latest `main` into the branch, then the branch into `main`, keeping the branch.
 
 ## Scripts and hooks
-- The scripts in `.agents/` are the same in every repo, synced with these rules. When an agent finds a problem in them, the shared rules or its repo's workflows, or a useful insight from its work, it suggests the change to Olex. When Olex asks, it may change them, the shared rules, or its repo's workflows in its own repo. It makes the change on its feature branch like any other code and says so in its summary. After the merge it passes the change to the "rulesetter" thread, which copies it to the master and makes the same change in every other repo's rules, scripts and workflows.
+- The scripts in `.agents/` are the same in every repo, synced with these rules. When an agent finds a problem in them, the shared rules or its repo's workflows, or a useful insight from its work, it suggests the change to Olex. When Olex asks, it may change them, the shared rules, or its repo's workflows in its own repo. It makes the change on its feature branch like any other code and says so in its summary. Olex tests every change to the scripts, hooks and workflows himself: the agent commits and pushes it, says in the thread what changed and how to test it, and neither builds nor runs it to check it. After the merge it passes the change to the "rulesetter" thread, which copies it to the master and makes the same change in every other repo's rules, scripts and workflows.
 - Each repo's hooks in `.agents/hooks/` are its only repo-specific part of the pipeline, and part of its code: an agent may change them when its task changes how the repo builds or tests, and says so in its summary.
   - `quick-test`: the quick tests, run before the build.
   - `full-check`: the slower checks, run after the build. Every repo has one, and it doesn't repeat the quick tests.
