@@ -39,6 +39,7 @@ internal sealed class OverlaySection
     // Look
     private readonly Control _phoneLook, _shapeLook, _diskLook;
     private readonly CheckBox _dots, _trails;
+    private readonly RadioButton _handlesAuto, _handlesAlways, _handlesOff;
     private readonly ComboBox _shape;
     private readonly NumericUpDown _subdivision, _diskRange;
     private readonly Control _subdivisionRow;
@@ -134,6 +135,12 @@ internal sealed class OverlaySection
         var phone = Panel(l);
         _dots = MainForm.Check("Finger dots", phone, () => Change(o => o.FingerDots = !o.FingerDots));
         _trails = MainForm.Check("Finger trails", phone, () => Change(o => o.FingerTrails = !o.FingerTrails));
+        phone.Controls.Add(Heading("Controller handles"));
+        var hr = MainForm.Row();
+        _handlesAuto = MainForm.Radio("While a controller is attached", hr, () => Change(o => o.Handles = OverlayHandles.Auto));
+        _handlesAlways = MainForm.Radio("Always", hr, () => Change(o => o.Handles = OverlayHandles.Always));
+        _handlesOff = MainForm.Radio("Off", hr, () => Change(o => o.Handles = OverlayHandles.Off));
+        phone.Controls.Add(hr);
         _phoneLook = phone;
 
         var shape = Panel(l);
@@ -288,6 +295,9 @@ internal sealed class OverlaySection
         _diskLook.Visible = o.Kind == OverlayKind.Disk;
         _dots.Checked = o.FingerDots;
         _trails.Checked = o.FingerTrails;
+        _handlesAuto.Checked = o.Handles == OverlayHandles.Auto;
+        _handlesAlways.Checked = o.Handles == OverlayHandles.Always;
+        _handlesOff.Checked = o.Handles == OverlayHandles.Off;
         if (_shape.SelectedIndex != (int)o.Shape) _shape.SelectedIndex = (int)o.Shape;
         _subdivisionRow.Visible = o.Shape == OverlayShape.Icosphere;
         Set(_subdivision, o.Subdivision);

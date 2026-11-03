@@ -40,7 +40,7 @@ object Wire {
     const val RUMBLE_PLAIN = 4
     const val FOREGROUND_PLAIN = 66
     /** OVERLAY: the phone's pose, touches and presses for the PC's phone overlay ([OverlayFeed]). */
-    const val OVERLAY_PLAIN = 136
+    const val OVERLAY_PLAIN = 152
     /** OVERLAY_LAYOUT: one piece of the layout the overlay draws on the phone's screen. */
     const val OVERLAY_LAYOUT_PLAIN = 200
 

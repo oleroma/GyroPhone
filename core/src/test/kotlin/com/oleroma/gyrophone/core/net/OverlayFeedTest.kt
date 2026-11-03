@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.core.net
 
+import com.oleroma.gyrophone.core.model.AndroidKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -12,7 +13,7 @@ class OverlayFeedTest {
     )
 
     @Test fun sizes() {
-        assertEquals(164, Wire.sizeOf(PacketType.OVERLAY))
+        assertEquals(180, Wire.sizeOf(PacketType.OVERLAY))
         assertEquals(228, Wire.sizeOf(PacketType.OVERLAY_LAYOUT))
         assertEquals(true, PacketType.isPhoneToHost(PacketType.OVERLAY_LAYOUT))
     }
@@ -65,6 +66,35 @@ class OverlayFeedTest {
         assertEquals(java.lang.Float.floatToRawIntBits(2f), out.getI32(124)) // the gains stay
     }
 
+    @Test fun controller() {
+        val f = OverlayFeed()
+        val out = ByteArray(Wire.OVERLAY_PLAIN)
+        f.padKey(AndroidKey.BUTTON_A, true) // nothing attached yet: not sent
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(0, out.getU8(136))
+        f.padAttached = true
+        f.padKey(AndroidKey.BUTTON_A, true)
+        f.padKey(AndroidKey.BUTTON_R1, true)
+        f.padKey(AndroidKey.BUTTON_R1, false)
+        f.padKey(AndroidKey.BUTTON_R2, true) // digital trigger: full
+        f.padAxes(1f, -1f, 0.5f, 0f, 0.5f, 0f, -1f, 1f)
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(OverlayFeed.PAD_ATTACHED, out.getU8(136))
+        assertEquals(128, out.getU8(137))
+        assertEquals(255, out.getU8(138))
+        assertEquals(
+            OverlayFeed.PAD_SOUTH or OverlayFeed.PAD_L2 or OverlayFeed.PAD_R2 or OverlayFeed.PAD_LEFT or OverlayFeed.PAD_DOWN,
+            out.getI32(140),
+        )
+        assertEquals(127, out[144].toInt())
+        assertEquals(-127, out[145].toInt())
+        assertEquals(64, out[146].toInt())
+        f.padAttached = false // a controller left: everything let go
+        f.padAttached = true
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(0, out.getI32(140))
+    }
+
     @Test fun wantedAndCompassTellTheRuntime() {
         val f = OverlayFeed()
         var changes = 0
@@ -81,6 +111,6 @@ class OverlayFeedTest {
         const val LAYOUT_BLOB = "0160093804044d61696e000100010008001033036606800141"
         const val FRAME = "040302010000803f000000bf0000803ee803000000200000000000000180030101003b010080004000000000000000000000000000000000" +
             "0100000000000000000000000000000000000000000000000000000000000000007fc1ff0000ff0000ff0000ff0000ff0000ff0000ff0000" +
-            "0000803f00000000000000c0" + "000000400000000000000000"
+            "0000803f00000000000000c0" + "000000400000000000000000" + "00000000000000000000000000000000"
     }
 }

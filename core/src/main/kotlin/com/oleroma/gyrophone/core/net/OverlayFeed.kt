@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.core.net
 
+import com.oleroma.gyrophone.core.model.AndroidKey
 import kotlin.math.roundToInt
 
 /** One control as the PC's phone overlay draws it. Centre and size are fractions of the pad area. */
@@ -44,7 +45,7 @@ data class OverlayLayout(
  * ([layoutSnapshot], [encodeLayoutPiece]) when it changes and every few seconds. The PC turns the
  * motion into a pose with its own settings (gravity, compass, reset on ratchet, ease back).
  *
- * OVERLAY plaintext (136 bytes, little endian): u32 phone time (us); f32 × 3 yaw, pitch, roll
+ * OVERLAY plaintext (152 bytes, little endian): u32 phone time (us); f32 × 3 yaw, pitch, roll
  * turned since the last OVERLAY (degrees, as [com.oleroma.gyrophone.core.engine.GyroMouse.motion]
  * gives them); u16 the time those samples cover (10 us units); i16 × 3 the newest accelerometer
  * reading in the phone frame, right, up, toward the player ([G_SCALE] = 1 g); i16 × 3 the newest
@@ -56,7 +57,10 @@ data class OverlayLayout(
  * 8 × (u8 control index or 0xFF, i8 x, i8 y) stick knobs (-127..127 of the radius, y down); f32 × 3
  * yaw, pitch, roll the phone would have turned to send the mouse counts sent since the last OVERLAY by
  * anything but the live gyro ([camera]: touchpad, buttons, glides..., for a trackball); f32 × 3 the
- * game's camera degrees per phone degree on yaw, pitch, roll (real world sensitivity, 0 = unknown).
+ * game's camera degrees per phone degree on yaw, pitch, roll (real world sensitivity, 0 = unknown);
+ * then the controller attached to the phone (for the PC phone overlay's handles): u8 flags
+ * ([PAD_ATTACHED]); u8 left and u8 right trigger (0..255); u8 0; u32 buttons held ([PAD_SOUTH]..,
+ * the D-pad from keys or the hat); i8 × 4 left x, y, right x, y stick (-127..127, y down); 4 bytes 0.
  *
  * OVERLAY_LAYOUT plaintext (200 bytes): u16 layout version; u8 piece index; u8 piece count; u8
  * length; then [PIECE_DATA] bytes of the layout blob. The blob: u8 format (1); u16 width px; u16
@@ -119,6 +123,35 @@ class OverlayFeed {
     private var hasNorth = false
     private val cameraDeg = FloatArray(3)
     private val rwsGain = FloatArray(3)
+
+    // The attached controller (under lock): buttons held from keys, sticks, triggers and hat from axes.
+    @Volatile var padAttached = false
+        set(v) {
+            field = v
+            if (!v) clearPad()
+        }
+    private var padKeys = 0
+    private val padAxes = FloatArray(8)
+
+    /** A key of an attached controller went down or up (Android key code). */
+    fun padKey(keyCode: Int, down: Boolean) {
+        val bit = padBit(keyCode)
+        if (bit == 0) return
+        synchronized(lock) { padKeys = if (down) padKeys or bit else padKeys and bit.inv() }
+    }
+
+    /** An attached controller's sticks (-1..1, y down), triggers (0..1) and hat (-1..1). */
+    fun padAxes(lx: Float, ly: Float, rx: Float, ry: Float, lt: Float, rt: Float, hatX: Float, hatY: Float) {
+        synchronized(lock) {
+            padAxes[0] = lx; padAxes[1] = ly; padAxes[2] = rx; padAxes[3] = ry
+            padAxes[4] = lt; padAxes[5] = rt; padAxes[6] = hatX; padAxes[7] = hatY
+        }
+    }
+
+    /** Lets go of every controller button and axis (a controller went away, or focus left). */
+    fun clearPad() {
+        synchronized(lock) { padKeys = 0; padAxes.fill(0f) }
+    }
 
     private fun clearMotion() {
         turnYaw = 0f; turnPitch = 0f; turnRoll = 0f; turnSeconds = 0f
@@ -276,6 +309,24 @@ class OverlayFeed {
                 out.putU32(off + 124 + i * 4, java.lang.Float.floatToRawIntBits(rwsGain[i]))
             }
             cameraDeg.fill(0f)
+            if (padAttached) {
+                var buttons = padKeys
+                if (padAxes[6] < -0.5f) buttons = buttons or PAD_LEFT
+                if (padAxes[6] > 0.5f) buttons = buttons or PAD_RIGHT
+                if (padAxes[7] < -0.5f) buttons = buttons or PAD_UP
+                if (padAxes[7] > 0.5f) buttons = buttons or PAD_DOWN
+                val lt = padAxes[4].coerceIn(0f, 1f)
+                val rt = padAxes[5].coerceIn(0f, 1f)
+                // The analog pull where there is one; a trigger with only a key is all or nothing.
+                fun pull(v: Float, bit: Int) = if (v > 0f) (v * 255f).roundToInt() else if (buttons and bit != 0) 255 else 0
+                out.putU8(off + 136, PAD_ATTACHED)
+                out.putU8(off + 137, pull(lt, PAD_L2))
+                out.putU8(off + 138, pull(rt, PAD_R2))
+                if (lt >= TRIGGER_PRESSED) buttons = buttons or PAD_L2
+                if (rt >= TRIGGER_PRESSED) buttons = buttons or PAD_R2
+                out.putU32(off + 140, buttons)
+                for (i in 0 until 4) out[off + 144 + i] = (padAxes[i].coerceIn(-1f, 1f) * 127f).roundToInt().toByte()
+            }
         }
         return Wire.OVERLAY_PLAIN
     }
@@ -287,6 +338,51 @@ class OverlayFeed {
         const val FLAG_UP = 8
         const val FLAG_NORTH = 16
         const val FLAG_RATCHET_HELD = 32
+        const val PAD_ATTACHED = 1
+
+        // Controller buttons in OVERLAY, by place (Switch layout on the PC): the face buttons by side.
+        const val PAD_SOUTH = 1
+        const val PAD_EAST = 2
+        const val PAD_WEST = 4
+        const val PAD_NORTH = 8
+        const val PAD_L1 = 16
+        const val PAD_R1 = 32
+        const val PAD_L2 = 64
+        const val PAD_R2 = 128
+        const val PAD_MINUS = 256
+        const val PAD_PLUS = 512
+        const val PAD_HOME = 1024
+        const val PAD_CAPTURE = 2048
+        const val PAD_L3 = 4096
+        const val PAD_R3 = 8192
+        const val PAD_UP = 16384
+        const val PAD_DOWN = 32768
+        const val PAD_LEFT = 65536
+        const val PAD_RIGHT = 131072
+        /** An analog trigger pulled this far lights as pressed. */
+        const val TRIGGER_PRESSED = 0.1f
+
+        /** The OVERLAY button of Android key [keyCode], or 0. */
+        fun padBit(keyCode: Int): Int = when (keyCode) {
+            AndroidKey.BUTTON_A -> PAD_SOUTH
+            AndroidKey.BUTTON_B -> PAD_EAST
+            AndroidKey.BUTTON_X -> PAD_WEST
+            AndroidKey.BUTTON_Y -> PAD_NORTH
+            AndroidKey.BUTTON_L1 -> PAD_L1
+            AndroidKey.BUTTON_R1 -> PAD_R1
+            AndroidKey.BUTTON_L2 -> PAD_L2
+            AndroidKey.BUTTON_R2 -> PAD_R2
+            AndroidKey.BUTTON_SELECT, AndroidKey.BACK -> PAD_MINUS
+            AndroidKey.BUTTON_START -> PAD_PLUS
+            AndroidKey.BUTTON_MODE -> PAD_HOME
+            AndroidKey.BUTTON_THUMBL -> PAD_L3
+            AndroidKey.BUTTON_THUMBR -> PAD_R3
+            AndroidKey.DPAD_UP -> PAD_UP
+            AndroidKey.DPAD_DOWN -> PAD_DOWN
+            AndroidKey.DPAD_LEFT -> PAD_LEFT
+            AndroidKey.DPAD_RIGHT -> PAD_RIGHT
+            else -> 0
+        }
         /** The accelerometer's 1 g in OVERLAY. */
         const val G_SCALE = 8192f
         const val MAX_FINGERS = 5
