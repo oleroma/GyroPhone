@@ -124,7 +124,7 @@ internal static class OverlayRenderer
             OverlayHandles.Off => false,
             _ => live && f.PadAttached,
         };
-        var (hw, hh) = HandleDrawing.Size(longSide, (portrait ? longSide * aspect : longSide / aspect) + 2 * Bezel);
+        var (hw, hh) = HandleDrawing.Size((portrait ? longSide * aspect : longSide / aspect) + 2 * Bezel);
         // Size: fixed, so the slab (and its handles) fits the window however it is turned. Its bounding ball (radius R)
         // seen from CameraZ in perspective spans R·C/√(C²−R²) at scale 1: that fills the window's
         // shorter side, with a hair of margin for the edges' smoothing.
