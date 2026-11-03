@@ -57,6 +57,7 @@
 - Everything made by building, testing or running the program (outputs, logs, screenshots, caches, downloads) goes in the repo's gitignored `build/` folder, nowhere else in the repo. Leave files other tools keep in the repo (such as `.delta/` and `.gitstat/`) alone.
 - `build/src` is the one PC build worktree, reused so builds stay incremental. Nothing is ever edited in it.
 - Every build gets the repo's next build number, pushed as a `build/<n>` tag by `.agents/build-number`; never push, move or delete those tags by hand. The version is the hand-bumped version name plus the number, `<name>-<n>` (or `0.1.<n>` where the name holds it), and Android's `versionCode` is the number. A repo may start its count at the number in `.agents/hooks/first-build-number`.
+- When Olex asks to publish builds, run `bash .agents/agent-publish [<n>]` on the PC through Remote Control (from `build/src` when the checkout in `D:\dev\<repo>` doesn't have it yet). It publishes build `<n>` (by default `main`'s newest build) as a GitHub pre-release on its `build/<n>` tag, with every part's current file: a part the build didn't remake comes from the older build it was last made in. Never create releases with `gh release` by hand.
 - Keep builds fast: build caches on and never cleaned, build daemons kept running on the PC, quicker settings for branch builds as long as the build file runs the same way.
 
 ## Destructive actions
