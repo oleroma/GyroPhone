@@ -32,6 +32,10 @@ object Wire {
     const val STATE_PLAIN = 66
     /** STATE_HIRES: STATE with the wheel total in 1/120 notch, plus a horizontal wheel total. */
     const val STATE_HIRES_PLAIN = 70
+    /** STATE_GYRO: STATE_HIRES plus each gyro axis's share of the motion ([PcGyroFeed.encodeExt]). */
+    const val STATE_GYRO_PLAIN = STATE_HIRES_PLAIN + PcGyroFeed.EXT_SIZE
+    /** PAD_GYRO: the controller buttons that ratchet or toggle the gyro ([PcGyroFeed.encodeButtons]). */
+    const val PAD_GYRO_PLAIN = 4 + PcGyroFeed.MAX_BUTTONS * 2
     const val PING_PLAIN = 8
     const val LINK_INFO_PLAIN = 22
     const val BYE_PLAIN = 4
@@ -123,6 +127,8 @@ object Wire {
     fun plainSizeOf(type: Int): Int = when (type) {
         PacketType.STATE -> STATE_PLAIN
         PacketType.STATE_HIRES -> STATE_HIRES_PLAIN
+        PacketType.STATE_GYRO -> STATE_GYRO_PLAIN
+        PacketType.PAD_GYRO -> PAD_GYRO_PLAIN
         PacketType.PING -> PING_PLAIN
         PacketType.LINK_INFO -> LINK_INFO_PLAIN
         PacketType.BYE -> BYE_PLAIN
@@ -160,6 +166,10 @@ object PacketType {
     const val OVERLAY = 0x24
     /** Sent only while HOST_STATUS has [HostStatusFlags.OVERLAY]: the layout, in pieces. */
     const val OVERLAY_LAYOUT = 0x25
+    /** Sent instead of STATE_HIRES while "Use PC controller for gyro" is on and WELCOME has [HostFlags.GYRO_GATE]. */
+    const val STATE_GYRO = 0x26
+    /** Sent once a second (and on change) to a host with [HostFlags.GYRO_GATE]: the controller's gyro buttons. */
+    const val PAD_GYRO = 0x27
     const val BYE = 0x2F
     const val PONG = 0x30
     const val HOST_STATUS = 0x31
@@ -241,6 +251,8 @@ object HostFlags {
     const val FOREGROUND_SUPPORTED = 2
     /** The host accepts STATE_HIRES (smooth vertical and horizontal wheel). */
     const val HIRES_WHEEL = 4
+    /** The host takes STATE_GYRO and PAD_GYRO: a controller plugged into it can ratchet the gyro. */
+    const val GYRO_GATE = 8
 }
 
 /** STATE flags. */

@@ -117,6 +117,24 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
         }
     }
 
+    /// <summary>The XInput slot the plugged Xbox 360 pad took (the driver reports it once Windows assigned one), -1 otherwise.</summary>
+    public int XInputSlot
+    {
+        get
+        {
+            var x = _x360;
+            if (x == null) return -1;
+            try
+            {
+                return x.UserIndex;
+            }
+            catch (Exception)
+            {
+                return -1;
+            }
+        }
+    }
+
     public void Unplug()
     {
         var x = _x360;

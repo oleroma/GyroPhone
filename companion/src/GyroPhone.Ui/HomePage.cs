@@ -19,7 +19,7 @@ internal sealed class HomePage : Page
     private readonly StackPanel _problems = new();
     private string _problemsKey = "\0";
     private readonly Ellipse _phoneDot;
-    private readonly TextBlock _phoneName, _phoneSub, _linkBig, _linkSub, _latBig, _latSub, _padSub;
+    private readonly TextBlock _phoneName, _phoneSub, _linkBig, _linkSub, _latBig, _latSub, _padSub, _pcSub;
     private readonly Button _pair;
     private readonly Sparkline _graph = new() { Margin = new Thickness(0, 10, 0, 0) };
     private readonly Seg<OutputMode> _output;
@@ -96,6 +96,9 @@ internal sealed class HomePage : Page
         gb.Children.Add(_padSub);
         _pause = Parts.Toggle("Pause input", app.TogglePaused, "Stops everything from the phone.");
         gb.Children.Add(_pause);
+        _pcSub = Parts.Text("", "Sub");
+        _pcSub.Margin = new Thickness(0, 6, 0, 0);
+        gb.Children.Add(_pcSub);
         Place(grid, pad, 1, 2);
 
         _root.Children.Add(grid);
@@ -204,6 +207,11 @@ internal sealed class HomePage : Page
             : !s.DriverOk
                 ? $"No gamepad: {v.PadError ?? "the ViGEmBus driver is missing"}."
                 : s.PadPlugged ? "Virtual pad plugged in · ViGEmBus ok." : "Virtual pad plugs in when the phone connects · ViGEmBus ok.";
+        // "Use PC controller for gyro" on the phone.
+        Parts.Show(_pcSub, s.PcController != null);
+        _pcSub.Text = s.PcController is { Length: > 0 } name
+            ? $"Gyro ratchet from the PC controller: {name}."
+            : "Gyro ratchet from the PC controller: no controller found. Plug one in.";
 
         if (_detailsFold.IsChecked == true)
         {

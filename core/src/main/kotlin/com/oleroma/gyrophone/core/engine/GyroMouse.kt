@@ -117,6 +117,38 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
     }
 
     private val routed = Routed()
+
+    /**
+     * Each motion axis's share of one [route] sample, for a PC controller's ratchets
+     * ([com.oleroma.gyrophone.core.net.PcGyroFeed]): by [MotionAxis] ordinal (yaw, pitch, roll),
+     * [onX]..[onH] what the axis would move with it on (mouse counts and wheel units, not rounded),
+     * [glX]..[glH] what its glide moves now while it is off, and [pad] its game pad axes with it on
+     * (by [GamepadAxis] ordinal, not clamped). The mouse shares go through the same filters as the
+     * mouse, by the ratio the filters scaled this sample.
+     */
+    class Parts {
+        val onX = FloatArray(3)
+        val onY = FloatArray(3)
+        val onW = FloatArray(3)
+        val onH = FloatArray(3)
+        val glX = FloatArray(3)
+        val glY = FloatArray(3)
+        val glW = FloatArray(3)
+        val glH = FloatArray(3)
+        val pad = Array(3) { FloatArray(GamepadAxis.entries.size) }
+
+        fun clear() {
+            onX.fill(0f); onY.fill(0f); onW.fill(0f); onH.fill(0f)
+            glX.fill(0f); glY.fill(0f); glW.fill(0f); glH.fill(0f)
+            for (p in pad) p.fill(0f)
+        }
+    }
+
+    // [counts]' last sample: cursor motion before and after the filters (counts, y down).
+    private var rawX = 0f
+    private var rawY = 0f
+    private var filtX = 0f
+    private var filtY = 0f
     private var remWheel = 0f
     private var remHWheel = 0f
 
@@ -139,11 +171,11 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
      * [axes] says move ([MappingEngine.gyroAxes]: a ratchet stops or starts one), scrolling at [DEG_PER_NOTCH] and game pad
      * axes full at [STICK_FULL_DEG_PER_S] at the default sensitivity, faster or slower with the
      * axis's (pitching up pushes a stick up). A target's scale multiplies.
-     * The result is reused by the next call.
+     * The result is reused by the next call. With [parts], each axis's share goes there too.
      */
     fun route(
         gx: Float, gy: Float, gz: Float, dtSeconds: Float, routes: List<Mapping>, axes: Int = MappingEngine.ALL_GYRO,
-        space: GyroSpace = GyroSpace.LOCAL, up: FloatArray? = null,
+        space: GyroSpace = GyroSpace.LOCAL, up: FloatArray? = null, parts: Parts? = null,
     ): Routed {
         val s = settings
         val m = inSpace(motion(gx, gy, gz, resolvedOrientation()), space, up)
@@ -151,11 +183,13 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
         var vx = 0f; var vy = 0f; var w = 0f; var hw = 0f
         val pad = routed.pad
         pad.fill(0f)
+        parts?.clear()
         for (i in routes.indices) {
             val r = routes[i]
             val src = r.source as? InputSource.Gyro ?: continue
             val on = axes and MappingEngine.gyroBit(src.axis) != 0
             val g = if (on) 0f else glideOf(src.axis)
+            if (parts != null && src.axis != MotionAxis.NONE) share(parts, src.axis, r.target, m[src.axis], if (on) 0f else g, s.sensitivityOf(src.axis))
             // Off, only a glide moves it, and only the mouse and wheel.
             if (!on && (g == 0f || r.target !is OutputTarget.MouseAxis)) continue
             val k = s.sensitivityOf(src.axis)
@@ -182,11 +216,51 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
         }
         val c = counts(vx, vy, dtSeconds)
         routed.dx = c.dx; routed.dy = c.dy
+        if (parts != null) scaleParts(parts, dtSeconds)
         val fw = w * dtSeconds * MouseState.WHEEL_UNIT / DEG_PER_NOTCH + remWheel
         val fh = hw * dtSeconds * MouseState.WHEEL_UNIT / DEG_PER_NOTCH + remHWheel
         routed.wheel = fw.toInt(); remWheel = fw - routed.wheel
         routed.hwheel = fh.toInt(); remHWheel = fh - routed.hwheel
         return routed
+    }
+
+    /** Adds one gyro mapping's share of axis [a] to [p]: velocity [v] with it on, its glide [g] (0 = none) off, by [target]. */
+    private fun share(p: Parts, a: MotionAxis, target: OutputTarget, v: Float, g: Float, k: Float) {
+        val i = a.ordinal
+        when (target) {
+            is OutputTarget.MouseAxis -> when (target.motion) {
+                MouseMotion.MOVE_X -> { p.onX[i] += v * k * target.scale; p.glX[i] += g * k * target.scale }
+                MouseMotion.MOVE_Y -> { p.onY[i] += v * k * target.scale; p.glY[i] += g * k * target.scale }
+                MouseMotion.WHEEL -> {
+                    p.onW[i] += v * k / GyroSettings.DEFAULT_SENSITIVITY * target.scale
+                    p.glW[i] += g * k / GyroSettings.DEFAULT_SENSITIVITY * target.scale
+                }
+                MouseMotion.HWHEEL -> {
+                    p.onH[i] += v * k / GyroSettings.DEFAULT_SENSITIVITY * target.scale
+                    p.glH[i] += g * k / GyroSettings.DEFAULT_SENSITIVITY * target.scale
+                }
+            }
+
+            is OutputTarget.PadAxis -> {
+                val up = if (target.axis == GamepadAxis.LY || target.axis == GamepadAxis.RY) -1f else 1f
+                p.pad[i][target.axis.ordinal] += up * v * k / GyroSettings.DEFAULT_SENSITIVITY * target.scale / STICK_FULL_DEG_PER_S
+            }
+
+            else -> Unit
+        }
+    }
+
+    /** Turns [p]'s velocities into this sample's motion: mouse counts scaled like the filters scaled the cursor, wheel units. */
+    private fun scaleParts(p: Parts, dt: Float) {
+        val kx = if (abs(rawX) > RATIO_MIN) filtX / rawX else 1f
+        val ky = if (abs(rawY) > RATIO_MIN) filtY / rawY else 1f
+        val kw = dt * MouseState.WHEEL_UNIT / DEG_PER_NOTCH
+        for (i in 0 until 3) {
+            p.onX[i] *= dt * kx; p.glX[i] *= dt * kx
+            p.onY[i] *= -dt * ky; p.glY[i] *= -dt * ky
+            p.onW[i] *= kw; p.glW[i] *= kw
+            p.onH[i] *= kw; p.glH[i] *= kw
+        }
     }
 
     /**
@@ -215,8 +289,10 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
             vy = vy * direct + bufY.average().toFloat()
         }
 
-        val fx = vx * dtSeconds * GyroSettings.DEFAULT_SENSITIVITY + remX
-        val fy = -vy * dtSeconds * GyroSettings.DEFAULT_SENSITIVITY + remY
+        rawX = vx0 * dtSeconds; rawY = -vy0 * dtSeconds
+        filtX = vx * dtSeconds * GyroSettings.DEFAULT_SENSITIVITY; filtY = -vy * dtSeconds * GyroSettings.DEFAULT_SENSITIVITY
+        val fx = filtX + remX
+        val fy = filtY + remY
         val dx = fx.roundToInt()
         val dy = fy.roundToInt()
         remX = fx - dx
@@ -294,6 +370,9 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
     companion object {
         private const val RAD_TO_DEG = (180.0 / Math.PI).toFloat()
         private const val SMOOTHING_WINDOW = 8
+
+        /** Below this much cursor motion (counts) a sample's filter ratio is taken as 1. */
+        private const val RATIO_MIN = 1e-3f
 
         /** Degrees of turn per wheel notch when gyro scrolls. */
         const val DEG_PER_NOTCH = 15f

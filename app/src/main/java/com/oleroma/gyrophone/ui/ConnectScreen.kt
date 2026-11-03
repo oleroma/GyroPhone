@@ -22,6 +22,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -59,6 +60,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
     val idleStop by runtime.idleStopMinutes.collectAsStateWithLifecycle()
     val gyroPoll by runtime.gyroPollHz.collectAsStateWithLifecycle()
     val gyroPollUsed by runtime.gyroPollUsed.collectAsStateWithLifecycle()
+    val pcControllerGyro by runtime.pcControllerGyro.collectAsStateWithLifecycle()
     var stats by remember { mutableStateOf(runtime.linkStats()) }
     LaunchedEffect(transport) {
         while (true) { stats = runtime.linkStats(); delay(1000) }
@@ -148,6 +150,21 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
                 }
             }
         },
+        if (wifi) category(runtime, "pcControllerGyro", "PC controller for gyro", "Ratchet the gyro from a controller plugged into the PC") {
+            Searchable("Use PC controller for gyro", "controller gamepad plugged PC ratchet toggle gyro Steam Input XInput") {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Use PC controller for gyro", Modifier.weight(1f))
+                        Switch(checked = pcControllerGyro, onCheckedChange = { runtime.setPcControllerGyro(it) })
+                    }
+                    Text(
+                        "Ratchet and Toggle gyro buttons from your controller preset work on a controller plugged into the PC. " +
+                            "Gyro inertia, gyro sensitivity buttons and the phone's ratchet displays don't react to it.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        } else null,
         category(runtime, "idleStop", "Stop when idle", "End the connection while the app is off screen") {
             Searchable("Stop when idle", "background notification screen off minutes battery") {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
