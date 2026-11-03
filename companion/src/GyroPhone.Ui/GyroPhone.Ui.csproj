@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The companion's windows (main window, pair window) in WPF. The tray app (WinForms) hosts them
+       and implements ICompanion. Windows only. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>GyroPhone.Ui</RootNamespace>
+    <AssemblyName>GyroPhone.Ui</AssemblyName>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <ItemGroup>
+    <Using Include="System.IO" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../GyroPhone.Protocol/GyroPhone.Protocol.csproj" />
+    <ProjectReference Include="../GyroPhone.Host/GyroPhone.Host.csproj" />
+  </ItemGroup>
+</Project>
