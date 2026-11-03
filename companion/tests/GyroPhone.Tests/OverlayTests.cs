@@ -8,7 +8,7 @@ public class OverlayTests
     private const string LayoutBlob = "0160093804044d61696e000100010008001033036606800141";
     private const string Frame = "040302010000803f000000bf0000803ee803000000200000000000000180030101003b010080004000000000000000000000000000000000" +
         "0100000000000000000000000000000000000000000000000000000000000000007fc1ff0000ff0000ff0000ff0000ff0000ff0000ff0000" +
-        "0000803f00000000000000c0" + "000000400000000000000000";
+        "0000803f00000000000000c0" + "000000400000000000000000" + "00000000000000000000000000000000";
 
     private static byte[] Piece(ushort version, int index, int count, ReadOnlySpan<byte> data)
     {
@@ -24,9 +24,39 @@ public class OverlayTests
     [Fact]
     public void Sizes()
     {
-        Assert.Equal(164, PacketType.Size(PacketType.Overlay));
+        Assert.Equal(180, PacketType.Size(PacketType.Overlay));
         Assert.Equal(228, PacketType.Size(PacketType.OverlayLayout));
         Assert.True(PacketType.IsPhoneToHostSealed(PacketType.OverlayLayout));
+    }
+
+    [Fact]
+    public void DecodesTheController()
+    {
+        var b = new byte[Wire.OverlayPlain];
+        var f = new OverlayFrame();
+        f.Decode(b);
+        Assert.False(f.PadAttached);
+        b[136] = OverlayFrame.PadAttachedFlag;
+        b[137] = 255;
+        b[138] = 51;
+        Le.PutU32(b, 140, OverlayFrame.PadSouth | OverlayFrame.PadL2 | OverlayFrame.PadLeft);
+        b[144] = 127;
+        b[145] = unchecked((byte)-127);
+        b[146] = unchecked((byte)-128);
+        f.Decode(b);
+        Assert.True(f.PadAttached);
+        Assert.Equal(1f, f.PadL2Pull, 3);
+        Assert.Equal(0.2f, f.PadR2Pull, 3);
+        Assert.True(f.PadHeld(OverlayFrame.PadSouth));
+        Assert.True(f.PadHeld(OverlayFrame.PadLeft));
+        Assert.False(f.PadHeld(OverlayFrame.PadEast));
+        Assert.Equal(1f, f.PadSticks[0], 3);
+        Assert.Equal(-1f, f.PadSticks[1], 3);
+        Assert.Equal(-1f, f.PadSticks[2], 3); // -128 is held at -1
+        var copy = new OverlayFrame();
+        f.CopyTo(copy);
+        Assert.Equal(f.PadButtons, copy.PadButtons);
+        Assert.Equal(f.PadSticks, copy.PadSticks);
     }
 
     [Fact]

@@ -74,6 +74,8 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         val device = event.device ?: return false
         if (device.isVirtual) return false
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0) return true
+        // The PC's phone overlay draws the controller's presses on its handles.
+        if (isPad(device)) runtime.wifi.overlay.padKey(event.keyCode, event.action == KeyEvent.ACTION_DOWN)
         // A captured mouse's back / forward buttons come as keys too: they are its buttons already.
         // A game pad that also says it is a mouse (many do) keeps its keys: they are its buttons.
         if (runtime.mouseCaptured && device.supportsSource(InputDevice.SOURCE_MOUSE) &&
@@ -103,6 +105,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             // Focus left the window (shade, dialog, split screen): the stick's return to rest goes
             // to another window, so let go of this device's axes. Its keys get their own cancel.
             if (runtime.learnListener == null) runtime.engine.clearAxes(event.deviceId)
+            runtime.wifi.overlay.clearPad()
             return true
         }
         if (event.action != MotionEvent.ACTION_MOVE) return false
@@ -133,6 +136,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             axisIds[n] = axis; axisValues[n] = v; n++
         }
         src.seen = true
+        if (runtime.wifi.overlay.wanted) overlayAxes(device, src.last)
         if (learn != null) {
             if (learned != null) {
                 runtime.learnListener = null
@@ -144,6 +148,19 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         // Pad not on screen: nothing is sent ([last] still follows the device for learning).
         if (runtime.inputAllowed) runtime.engine.setAxes(src.pad, axisIds, axisValues, n)
         return true
+    }
+
+    /** Sends [v] (the [AndroidAxis.polled] axes) to the PC's phone overlay, for its handles. */
+    private fun overlayAxes(device: InputDevice, v: FloatArray) {
+        // Pads on Generic.kl put the right stick on RX / RY (and sometimes triggers on Z / RZ).
+        val zStick = device.getMotionRange(AndroidAxis.Z) != null && device.getMotionRange(AndroidAxis.RZ) != null
+        val rx = if (zStick) v[POLLED_Z] else v[POLLED_RX]
+        val ry = if (zStick) v[POLLED_RZ] else v[POLLED_RY]
+        runtime.wifi.overlay.padAxes(
+            v[POLLED_X], v[POLLED_Y], rx, ry,
+            maxOf(v[POLLED_LTRIGGER], v[POLLED_BRAKE]), maxOf(v[POLLED_RTRIGGER], v[POLLED_GAS]),
+            v[POLLED_HAT_X], v[POLLED_HAT_Y],
+        )
     }
 
     /**
@@ -234,6 +251,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
                 axes = d.motionRanges.map { it.axis }.toSet(),
             )
         }
+        runtime.wifi.overlay.padAttached = list.isNotEmpty()
         runtime.onControllersChanged(list, mouse)
     }
 
@@ -267,6 +285,20 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
     companion object {
         /** Added to a device's id for its mouse part, so a keyboard with a touchpad keeps its keys apart. */
         private const val MOUSE_ID_BASE = 1 shl 28
+
+        // Places in AndroidAxis.polled.
+        private val POLLED_X = AndroidAxis.polled.indexOf(AndroidAxis.X)
+        private val POLLED_Y = AndroidAxis.polled.indexOf(AndroidAxis.Y)
+        private val POLLED_Z = AndroidAxis.polled.indexOf(AndroidAxis.Z)
+        private val POLLED_RX = AndroidAxis.polled.indexOf(AndroidAxis.RX)
+        private val POLLED_RY = AndroidAxis.polled.indexOf(AndroidAxis.RY)
+        private val POLLED_RZ = AndroidAxis.polled.indexOf(AndroidAxis.RZ)
+        private val POLLED_HAT_X = AndroidAxis.polled.indexOf(AndroidAxis.HAT_X)
+        private val POLLED_HAT_Y = AndroidAxis.polled.indexOf(AndroidAxis.HAT_Y)
+        private val POLLED_LTRIGGER = AndroidAxis.polled.indexOf(AndroidAxis.LTRIGGER)
+        private val POLLED_RTRIGGER = AndroidAxis.polled.indexOf(AndroidAxis.RTRIGGER)
+        private val POLLED_GAS = AndroidAxis.polled.indexOf(AndroidAxis.GAS)
+        private val POLLED_BRAKE = AndroidAxis.polled.indexOf(AndroidAxis.BRAKE)
 
         /** Keycodes probed with InputDevice.hasKeys: every known controller key plus BUTTON_1..16. */
         private val KEY_CANDIDATES: IntArray =

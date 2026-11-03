@@ -23,6 +23,15 @@ public enum OverlayQuality
     Fast,
 }
 
+/// <summary>When the phone overlay draws controller handles on the phone's sides.</summary>
+public enum OverlayHandles
+{
+    /// <summary>While a controller is attached to the phone.</summary>
+    Auto,
+    Always,
+    Off,
+}
+
 /// <summary>What an overlay window shows (as the phone's gyro displays).</summary>
 public enum OverlayKind
 {
@@ -78,6 +87,8 @@ public sealed class OverlaySettings
     public bool FingerDots { get; set; }
     /// <summary>A fading line behind each finger.</summary>
     public bool FingerTrails { get; set; } = true;
+    /// <summary>Switch-style controller handles on the phone's sides, lit by the attached controller's presses.</summary>
+    public OverlayHandles Handles { get; set; } = OverlayHandles.Auto;
 
     // 3D shape.
     public OverlayShape Shape { get; set; } = OverlayShape.Globe;
@@ -189,6 +200,8 @@ public sealed class OverlaySettings
         new("lit", "Pressed", 0xFF7CC4FF),
         new("latched", "Latched", 0xFF8FE39A),
         new("fingers", "Fingers", 0xFFFFFFFF),
+        new("handles", "Controller handles", 0xFF353A42),
+        new("handlesLit", "Controller pressed", 0xFF7CC4FF),
     ];
 
     private static readonly OverlayColor[] ShapeColors =
