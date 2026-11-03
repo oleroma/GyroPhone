@@ -894,9 +894,7 @@ fun PadScreen(
                         }
                         val pressedAt = first.uptimeMillis
                         var lastAt = pressedAt
-                        // Empty space: a tap opens the touchpad's mappings, a long press its settings;
-                        // with something selected, a tap there only closes it.
-                        val hadSelection = selected != null
+                        // Empty space: a tap clears the selection, a long press opens the touchpad's mappings.
                         // A drag moves the selected control from wherever it starts, never what is under the finger
                         // (with Select on: the picked ones, held by the one under the finger if it is picked).
                         val sel = if (selecting) {
@@ -922,9 +920,10 @@ fun PadScreen(
                             }
                             if (next == null) {
                                 if (mode == EditGesture.EMPTY) {
+                                    // On empty space: the touchpad's mapping editor, like any button's.
                                     mode = EditGesture.NONE
                                     selected = TOUCHPAD_SELECTION
-                                    menu = EditMenu.CONTEXT
+                                    menu = EditMenu.MAPPING
                                 } else {
                                     // A long press opens the mapping editor (a corner or a gyro display: its menu).
                                     mode = EditGesture.HELD
@@ -1171,8 +1170,9 @@ fun PadScreen(
                             }
 
                             mode == EditGesture.EMPTY -> {
-                                selected = if (hadSelection) null else TOUCHPAD_SELECTION
-                                menu = if (hadSelection) EditMenu.NONE else EditMenu.MAPPING
+                                // A tap on empty space only clears the selection (a long press maps the touchpad).
+                                selected = null
+                                menu = EditMenu.NONE
                             }
 
                             else -> Unit
@@ -2341,7 +2341,8 @@ fun PadScreen(
                     selected = null
                     menu = EditMenu.NONE
                 }
-                if (menu == EditMenu.MAPPING) {
+                run {
+                    // Its settings are the workspace's: the editor's Settings shows them.
                     ControlMappingScreen(
                         control = TOUCHPAD_STAND_IN,
                         mappings = ws.mappings,
@@ -2349,7 +2350,7 @@ fun PadScreen(
                         onMappingsChange = { m ->
                             editWorkspace { it.copy(mappings = m) }
                         },
-                        onSettings = { menu = EditMenu.CONTEXT },
+                        onSettings = null,
                         onClose = close,
                         sets = ws.sets,
                         editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
@@ -2366,15 +2367,6 @@ fun PadScreen(
                             Inheritance.defaults(d.defaults)
                         } else emptyList(),
                         parentName = "Defaults",
-                    )
-                } else {
-                    TouchpadSettingsScreen(
-                        workspace = ws,
-                        runtime = runtime,
-                        defaults = d.defaults,
-                        onWorkspaceChange = { change -> editWorkspace(change) },
-                        onEditMappings = { menu = EditMenu.MAPPING },
-                        onClose = close,
                     )
                 }
             } else if (d != null && sel != null && !dragging && menu != EditMenu.NONE) {
@@ -2481,6 +2473,7 @@ fun PadScreen(
                             selected = null
                             menu = EditMenu.NONE
                         },
+                        shared = touchControlSettings(runtime, sel, ws, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE) { change -> updateControl(sel.id, change) },
                         // Back to the mapping screen it was opened from; else the control stays selected
                         // (ready to pinch) and a tap on empty space clears it.
                         onClose = {

@@ -41,6 +41,9 @@ import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 internal class MappingSettings(
     val action: (BindableInput) -> (@Composable () -> Unit)?,
     val shared: (@Composable () -> Unit)?,
+    /** A touch control's shared settings as categories, for its one settings page; [itemsHeader] goes above them (its Reset all). */
+    val items: List<SectionItem> = emptyList(),
+    val itemsHeader: (@Composable () -> Unit)? = null,
 )
 
 /** [content] as a composable value (a branch of a `when` gives it no expected type to infer that from). */
@@ -199,6 +202,20 @@ internal fun touchControlSettings(
     val surface = if (control.swipes) buttonSurfaceLevel(control, ws.touchpad, update) else null
     val zones = Bindings.holdZoneCounts(ws.mappings, control.id)
     val gyro = if (control.kind == TouchKind.BUTTON) ButtonGyroLevel(control, ws, set, update) else null
+    // The settings its actions share, as categories: its gyro, a touchpad button's surface, a stick's own.
+    val gyroCategory = gyro?.let { g ->
+        category(runtime, "buttonGyro", "Gyro", "Its gyro sensitivity while held", prefKey = "button.Gyro") { ButtonGyroSensitivity(g, key) }
+    }
+    val items = listOfNotNull(gyroCategory) + when {
+        surface != null -> surfaceCategories(runtime, surface, key, zones, touchpad = false)
+        control.kind == TouchKind.STICK -> listOf(
+            category(runtime, "stick", "Stick", "Deadzone and directions", defaultOpen = true) { StickSettings(control) { c -> update { c } } },
+        )
+        else -> emptyList()
+    }
+    val header: (@Composable () -> Unit)? = surface?.let { sl ->
+        ui { NotSearching { ResetAllButton(sl.parentName, sl.anyOwn) { sl.resetAll() } } }
+    }
     return MappingSettings(
         action = { input ->
             val src = input.sources.firstOrNull()
@@ -233,26 +250,12 @@ internal fun touchControlSettings(
                 else -> null
             }
         },
-        shared = when {
-            surface != null -> ui {
-                NotSearching { ResetAllButton(surface.parentName, surface.anyOwn) { surface.resetAll() } }
-                val gyroCategory = gyro?.let { g ->
-                    category(runtime, "gyro", "Gyro", "This button's gyro sensitivity while held", defaultOpen = true, prefKey = "button.Gyro") {
-                        ButtonGyroSensitivity(g, key)
-                    }
-                }
-                ReorderableSections(runtime, "workspace", listOfNotNull(gyroCategory) + surfaceCategories(runtime, surface, key, zones, touchpad = false))
-            }
-
-            control.kind == TouchKind.STICK -> ui {
-                ReorderableSections(
-                    runtime, "stick",
-                    listOf(category(runtime, "stick", "Stick", "Deadzone and directions", defaultOpen = true) { StickSettings(control) { c -> update { c } } }),
-                )
-            }
-
-            else -> null
+        shared = if (items.isEmpty()) null else ui {
+            header?.invoke()
+            ReorderableSections(runtime, "control", items)
         },
+        items = items,
+        itemsHeader = header,
     )
 }
 

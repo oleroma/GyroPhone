@@ -65,9 +65,10 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
- * Full-screen settings of a touch control (a long press in edit mode): collapsible sections for
- * its look, behaviour, area, stick, surface and a summary of its mappings ([onEditMappings]
- * opens the mapping screen). [workspace] holds its mappings; edits go through the callbacks.
+ * The one settings page of a touch control (Settings in its mapping editor, or Configure in edit
+ * mode), as categories: the button itself (duplicate, save to library, delete), its look, layers,
+ * then the settings its actions share ([shared], from [touchControlSettings]: gyro, a touchpad
+ * button's surface, a stick's). [onEditMappings] opens the mapping editor. Edits go through the callbacks.
  */
 @Composable
 internal fun ControlSettingsScreen(
@@ -82,6 +83,7 @@ internal fun ControlSettingsScreen(
     onDuplicate: () -> Unit,
     onDelete: () -> Unit,
     onClose: () -> Unit,
+    shared: MappingSettings? = null,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
     val library by runtime.buttonLibrary.collectAsStateWithLifecycle()
@@ -92,21 +94,27 @@ internal fun ControlSettingsScreen(
         subtitle = (if (control.kind == TouchKind.STICK) "Stick" else if (control.swipes) "Touchpad button" else "Button") +
                 " · " + control.id + " · settings",
         onClose = onClose,
-        actions = {
-            TextButton(onClick = onDuplicate) { Text("Duplicate") }
-            if (control.kind != TouchKind.FULLSCREEN) {
-                val saved = savedTo != null && library.any { it.id == savedTo }
-                TextButton(enabled = !saved, onClick = {
-                    val b = ButtonLibrary.save(workspace, control, library.map { it.id })
-                    runtime.addToLibrary(b)
-                    savedTo = b.id
-                }) { Text(if (saved) "In library" else "Save to library") }
-            }
-            TextButton(onClick = { confirmDelete = true }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
-            OutlinedButton(onClick = onEditMappings) { Text("Mappings") }
-        },
+        actions = { OutlinedButton(onClick = onEditMappings) { Text("Mappings") } },
     ) {
+        val kindName = if (control.kind == TouchKind.STICK) "Stick" else "Button"
         val items = listOfNotNull(
+            category(runtime, "button", kindName, "Duplicate, save to library, delete", defaultOpen = true, prefKey = "control.Button") {
+                Searchable(kindName, "duplicate copy save to library delete remove") {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onDuplicate) { Text("Duplicate") }
+                        if (control.kind != TouchKind.FULLSCREEN) {
+                            val saved = savedTo != null && library.any { it.id == savedTo }
+                            OutlinedButton(enabled = !saved, onClick = {
+                                val b = ButtonLibrary.save(workspace, control, library.map { it.id })
+                                runtime.addToLibrary(b)
+                                savedTo = b.id
+                            }) { Text(if (saved) "In library" else "Save to library") }
+                        }
+                        OutlinedButton(onClick = { confirmDelete = true }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                    }
+                }
+                Hint("Duplicate copies its look and mappings. The library keeps it for any workspace: add it from the edit panel.")
+            },
             category(runtime, "look", "Look", "Label, shape, layer, size", defaultOpen = true, prefKey = "control.Look") {
                 LookSettings(control, inPortrait, onControlChange, onSize)
             },
@@ -118,20 +126,8 @@ internal fun ControlSettingsScreen(
                     control.followLayers,
                 ) { onControlChange(control.copy(followLayers = it)) }
             } else null,
-            category(runtime, "mappings", "Mappings", "What each action sends", defaultOpen = true, prefKey = "control.Mappings") {
-                Searchable("Mappings", "actions tap long press double tap swipe sends edit") {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        MappingsSummary(control, workspace.mappings, onEditMappings)
-                        Text(
-                            "Timings, areas" + (if (control.swipes) ", speed and directions" else if (control.kind == TouchKind.STICK) ", deadzone and directions" else "") +
-                                    " are set in Mappings: the ⚙ before an action, or Settings at the top.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            },
-        )
+        ) + shared?.items.orEmpty()
+        shared?.itemsHeader?.invoke()
         ReorderableSections(runtime, "control", items)
     }
     if (confirmDelete) {
@@ -262,51 +258,6 @@ internal fun StickSettings(control: TouchControl, onControlChange: (TouchControl
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     } }
-}
-
-/** Each mapped action of [control] with its targets, and a way into the mapping screen. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-internal fun MappingsSummary(control: TouchControl, mappings: List<Mapping>, onEditMappings: () -> Unit) {
-    val mapped =
-        Bindings.touchInputs(control).map { it to Bindings.targets(mappings, it) }.filter { it.second.isNotEmpty() }
-    if (mapped.isEmpty()) {
-        Text(
-            "Nothing mapped yet.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-    for ((input, targets) in mapped) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                actionLabel(control, input),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.width(96.dp),
-            )
-            FlowRow(
-                Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                for (t in targets) {
-                    Text(
-                        Describe.shortTarget(t),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.secondaryContainer)
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                    )
-                }
-            }
-        }
-    }
-    FilledTonalButton(onClick = onEditMappings) { Text("Edit mappings") }
 }
 
 /**

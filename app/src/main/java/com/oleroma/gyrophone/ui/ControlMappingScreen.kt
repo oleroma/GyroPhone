@@ -1372,16 +1372,16 @@ internal fun ControlMappingScreen(
                         if (inputs.any { (Bindings.targets(view, it).ifEmpty { parentOf(it) }).any { t -> t != OutputTarget.NoOutput } }) {
                             TextButton(onClick = { clearAll() }, contentPadding = compact) { Text("✕ Clear all") }
                         }
-                        // A touch control's shared action settings are its "Button defaults"; its own
-                        // settings (size, shape, look...) sit next to them.
+                        // One Settings: a touch control's own page (its look and the settings its actions
+                        // share), else the shared settings (the touchpad's: the workspace's).
                         val shared = settings?.shared
                         val ownSettings = onSettings != null && !control.isTouchpadStandIn && physicalInputs == null
-                        if (shared != null) TextButton(onClick = { sharedOpen = true }, contentPadding = compact) {
-                            Text(if (ownSettings) "⚙ Button defaults" else "⚙ Settings")
+                        val openSettings: (() -> Unit)? = when {
+                            ownSettings -> onSettings
+                            shared != null -> ({ sharedOpen = true })
+                            else -> onSettings
                         }
-                        if (onSettings != null && (shared == null || ownSettings)) {
-                            TextButton(onClick = onSettings, contentPadding = compact) { Text("Settings") }
-                        }
+                        if (openSettings != null) TextButton(onClick = openSettings, contentPadding = compact) { Text("⚙ Settings") }
                         TextButton(
                             onClick = { undoLast() },
                             enabled = undo.isNotEmpty(),
