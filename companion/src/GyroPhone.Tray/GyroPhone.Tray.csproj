@@ -4,6 +4,8 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- Hosts the WPF windows from GyroPhone.Ui. WPF drops the System.IO implicit using: put it back. -->
+    <UseWPF>true</UseWPF>
     <RootNamespace>GyroPhone.Tray</RootNamespace>
     <AssemblyName>GyroPhoneCompanion</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -16,6 +18,10 @@
     <ProjectReference Include="../GyroPhone.Protocol/GyroPhone.Protocol.csproj" />
     <ProjectReference Include="../GyroPhone.Host/GyroPhone.Host.csproj" />
     <ProjectReference Include="../GyroPhone.Windows/GyroPhone.Windows.csproj" />
+    <ProjectReference Include="../GyroPhone.Ui/GyroPhone.Ui.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="System.IO" />
   </ItemGroup>
   <ItemGroup>
     <!-- Overlay windows drawn by the graphics card: Direct2D into a GDI-compatible texture. -->
