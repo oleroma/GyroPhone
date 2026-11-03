@@ -10,6 +10,10 @@ import com.oleroma.gyrophone.core.hid.MouseState
 import com.oleroma.gyrophone.core.model.AndroidAxis
 import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AxisHalf
+import com.oleroma.gyrophone.core.model.AxisStage
+import com.oleroma.gyrophone.core.model.PhysicalSticks
+import com.oleroma.gyrophone.core.model.StickTuning
+import com.oleroma.gyrophone.core.model.TriggerTuning
 import com.oleroma.gyrophone.core.model.ButtonGesture
 import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.GamepadButton
@@ -99,6 +103,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     val workspace: Workspace get() = synchronized(lock) { ws }
 
     private var ws: Workspace = profile.workspace(0)
+
+    /** Per axis id: the tuning of the physical stick it is part of (null = raw), from the pinned preset ([Workspace.stickTunings]). */
+    private val axisStick = arrayOfNulls<StickTuning>(AXIS_SLOTS)
+
+    /** Per axis id: the tuning of the physical trigger it is part of (null = the defaults). */
+    private val axisTrigger = arrayOfNulls<TriggerTuning>(AXIS_SLOTS)
 
     /**
      * The settings in effect: [ws]'s with the own settings of the layers in use laid over
@@ -552,6 +562,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         // The touchpad mappings it does not set come from the Defaults.
         val w = loaded.copy(mappings = Bindings.upgradeSwipes(Inheritance.workspace(loaded, profile.defaults)))
         ws = w
+        axisStick.fill(null); axisTrigger.fill(null)
+        for ((id, axes) in PhysicalSticks.sticks) w.stickTunings[id]?.let { axisStick[axes.first] = it; axisStick[axes.second] = it }
+        for ((id, axes) in PhysicalSticks.triggers) w.triggerTunings[id]?.let { axisTrigger[axes.first] = it; axisTrigger[axes.second] = it }
         allTouch = w.mappings
         trace?.state("workspace: ${w.name}")
         motionMapped = w.mappings.any { it.source is InputSource.Tilt || it.source is InputSource.Shake }
@@ -1199,6 +1212,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** [s] as the one input it is part of: a trigger's pull axes are its key (they map together). */
     private fun sameInput(s: InputSource): InputSource = when {
+        s is InputSource.Axis && s.stage != AxisStage.NONE -> s.copy(axis = when (s.axis) {
+            AndroidAxis.BRAKE -> AndroidAxis.LTRIGGER
+            AndroidAxis.GAS -> AndroidAxis.RTRIGGER
+            else -> s.axis
+        })
         s is InputSource.Axis && (s.axis == AndroidAxis.LTRIGGER || s.axis == AndroidAxis.BRAKE) -> InputSource.Key(AndroidKey.BUTTON_L2)
         s is InputSource.Axis && (s.axis == AndroidAxis.RTRIGGER || s.axis == AndroidAxis.GAS) -> InputSource.Key(AndroidKey.BUTTON_R2)
         else -> s
@@ -1654,7 +1672,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun mapsTriggerAxis(ms: List<Mapping>, a: Int, b: Int): Boolean = ms.any { m ->
         val src = m.source
         val t = m.target
-        src is InputSource.Axis && (src.axis == a || src.axis == b) &&
+        src is InputSource.Axis && src.stage == AxisStage.NONE && (src.axis == a || src.axis == b) &&
                 t is OutputTarget.PadAxis && (t.axis == GamepadAxis.LT || t.axis == GamepadAxis.RT)
     }
 
@@ -2073,7 +2091,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** An input whose value follows a motion (a full stick or trigger axis, touch motion): it follows the new set at once. */
     private fun continuous(s: InputSource): Boolean = when (s) {
-        is InputSource.Axis -> s.half == AxisHalf.FULL
+        is InputSource.Axis -> s.half == AxisHalf.FULL && s.stage == AxisStage.NONE
         is InputSource.TouchStick -> s.half == AxisHalf.FULL
         is InputSource.Surface -> s.input.motion
         is InputSource.Gyro -> true
@@ -2248,7 +2266,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun value(source: InputSource, dev: Dev?, output: Boolean = false): Float = when (source) {
         is InputSource.Key -> if (dev != null && (if (output) dev.keyForOutput(source.keyCode) else dev.key(source.keyCode))) 1f else 0f
         is InputSource.KeyGesture -> if (dev?.gestures?.get(source.keyCode)?.on(source.gesture) == true) 1f else 0f
-        is InputSource.Axis -> if (dev == null) 0f else half(dev.axis(source.axis), source.half)
+        is InputSource.Axis -> if (dev == null) 0f else axisValue(dev, source)
         is InputSource.Touch -> if (touches.containsKey(source.id)) 1f else 0f
         is InputSource.TouchTap -> if (tapStates[source.id]?.on(ButtonGesture.TAP) == true) 1f else 0f
         is InputSource.TouchLongPress -> if (tapStates[source.id]?.on(ButtonGesture.LONG_PRESS) == true) 1f else 0f
@@ -2309,6 +2327,54 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
     }
 
+    /**
+     * Physical axis [s] of [dev]: raw unless it is part of a tuned stick ([StickTuning]: round
+     * deadzones, curve, sensitivity, direction pies) or one of its stages ([AxisStage]).
+     */
+    private fun axisValue(dev: Dev, s: InputSource.Axis): Float {
+        val a = s.axis
+        val stick = if (a in 0 until AXIS_SLOTS) axisStick[a] else null
+        return when (s.stage) {
+            AxisStage.NONE -> if (stick == null) half(dev.axis(a), s.half) else stickValue(dev, s, stick)
+            AxisStage.OUTER -> stickValue(dev, s, stick ?: DEFAULT_STICK)
+            AxisStage.PRESS, AxisStage.FULL_PULL -> {
+                val t = (if (a in 0 until AXIS_SLOTS) axisTrigger[a] else null) ?: DEFAULT_TRIGGER
+                val at = if (s.stage == AxisStage.PRESS) t.press else t.full
+                if (dev.axis(a) > 0f && dev.axis(a) >= at) 1f else 0f
+            }
+        }
+    }
+
+    /** [s] (a stick axis, half, or Outer) of [dev] with stick tuning [t]. */
+    private fun stickValue(dev: Dev, s: InputSource.Axis, t: StickTuning): Float {
+        val a = s.axis
+        val partner = STICK_PARTNER.getOrElse(a) { -1 }
+        if (partner < 0) return if (s.stage == AxisStage.NONE) half(dev.axis(a), s.half) else 0f
+        val own = dev.axis(a)
+        val other = dev.axis(partner)
+        val r = hypot(own, other)
+        val span = (t.outer - t.inner).coerceAtLeast(0.01f)
+        val travel = ((r - t.inner) / span).coerceIn(0f, 1f)
+        if (travel <= 0f) return 0f
+        if (s.stage == AxisStage.OUTER) {
+            if (travel < t.outerRing) return 0f
+            return if (s.half == AxisHalf.FULL || inPie(s, own, other, t)) 1f else 0f
+        }
+        val mag = (t.curve.apply(travel) * t.sensitivity).coerceAtMost(1f)
+        return when (s.half) {
+            AxisHalf.FULL -> own / r * mag
+            else -> if (inPie(s, own, other, t)) mag else 0f
+        }
+    }
+
+    /** Whether a stick at ([own] on [s]'s axis, [other] on its partner) points into [s]'s direction pie. */
+    private fun inPie(s: InputSource.Axis, own: Float, other: Float, t: StickTuning): Boolean {
+        val along = if (s.half == AxisHalf.NEGATIVE) -own else own
+        if (along <= 0f) return false
+        val pie = (if (STICK_IS_X[s.axis]) t.pieX else t.pieY).coerceIn(StickTuning.MIN_PIE, StickTuning.MAX_PIE)
+        return Math.toDegrees(atan2(abs(other), along).toDouble()) <= pie / 2.0
+    }
+
     private fun half(v: Float, half: AxisHalf): Float = when (half) {
         AxisHalf.FULL -> v
         AxisHalf.POSITIVE -> max(v, 0f)
@@ -2361,6 +2427,16 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
         /** Android axis ids are 0..47 (MotionEvent.AXIS_GENERIC_16). */
         private const val AXIS_SLOTS = 64
+        private val DEFAULT_STICK = StickTuning()
+        private val DEFAULT_TRIGGER = TriggerTuning()
+
+        /** Per axis id: the other axis of its physical stick, or -1. */
+        private val STICK_PARTNER = IntArray(AXIS_SLOTS) { -1 }.also { p ->
+            for ((x, y) in PhysicalSticks.sticks.values) { p[x] = y; p[y] = x }
+        }
+
+        /** Per axis id: it is a physical stick's X axis. */
+        private val STICK_IS_X = BooleanArray(AXIS_SLOTS).also { p -> for ((x, _) in PhysicalSticks.sticks.values) p[x] = true }
 
         private const val MAX_BUTTON_FINGERS = 10
 

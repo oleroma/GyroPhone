@@ -257,7 +257,7 @@ private fun loadRecent(runtime: GamepadRuntime): List<OutputTarget> =
         .orEmpty()
 
 /** Presets of [control]: stick presets, or common button actions (and touchpad set-ups for swipe buttons). */
-private fun presetsFor(control: TouchControl, inputs: List<BindableInput>): List<MapPreset> = buildList {
+private fun presetsFor(control: TouchControl, inputs: List<BindableInput>, physical: Boolean): List<MapPreset> = buildList {
     if (control.kind == TouchKind.STICK) {
         for (p in Bindings.StickPreset.entries) add(MapPreset(p.label) { m -> Bindings.applyStickPreset(m, inputs, p) })
         return@buildList
@@ -290,7 +290,7 @@ private fun presetsFor(control: TouchControl, inputs: List<BindableInput>): List
             )
         })
     }
-    if (control.swipes) {
+    if (control.swipes && !physical) {
         add(MapPreset("Windows touchpad") { m ->
             m.filterNot { (it.source as? InputSource.Surface)?.id == control.id } +
                     Bindings.defaultTouchpadMappings(TouchpadSettings()).map { d ->
@@ -449,7 +449,10 @@ internal fun ControlMappingScreen(
             else -> Bindings.touchInputs(control)
         }
     }
-    val presets = remember(control, inputs) { presetsFor(control, inputs) }
+    // A physical button or stick: only its own inputs, none of a touch button's (touch, moves, swipes).
+    val physical = physicalInputs != null
+    val surfaceCards = control.swipes && !physical
+    val presets = remember(control, inputs) { presetsFor(control, inputs, physical) }
     val extras = remember(inputs) { inputs.flatMap { it.extra }.distinct() }
 
     var fingers by remember(control.id) { mutableIntStateOf(1) }
@@ -488,7 +491,7 @@ internal fun ControlMappingScreen(
     val groups = listOf(
         sorted(
             control,
-            (if (!control.swipes) inputs
+            (if (!surfaceCards) inputs
             else if (fingers == 0) Bindings.gyroInputs(control.id) + Bindings.motionInputs(control.id)
             else Bindings.swipeInputs(control, fingers))
                 .filterNot(Bindings::isTriggerOf)
@@ -990,7 +993,7 @@ internal fun ControlMappingScreen(
             contentPadding = PaddingValues(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (control.kind == TouchKind.STICK) {
+            if (control.kind == TouchKind.STICK && !physical) {
                 item(key = "presets") {
                     Row(
                         Modifier.animateItem().horizontalScroll(rememberScrollState()),
@@ -1007,7 +1010,7 @@ internal fun ControlMappingScreen(
                 }
             }
             shownGroups.forEachIndexed { g, list ->
-                if (control.swipes) {
+                if (surfaceCards) {
                     item(key = "header$g") {
                         Column(
                             Modifier.animateItem().padding(top = if (g == 0) 0.dp else 8.dp),
@@ -1136,12 +1139,14 @@ internal fun ControlMappingScreen(
     }
 
     var query by remember { mutableStateOf("") }
-    val tabs = remember(extras) { LibraryTab.entries.filter { it != LibraryTab.TOUCHPAD || extras.isNotEmpty() } }
+    val tabs = remember(extras, physical) {
+        LibraryTab.entries.filter { (it != LibraryTab.TOUCHPAD || extras.isNotEmpty()) && !(physical && it == LibraryTab.PHONE) }
+    }
     var tab by remember(control.id) {
         mutableStateOf(
             when {
                 recent.isNotEmpty() -> LibraryTab.RECENT
-                control.kind == TouchKind.STICK -> LibraryTab.PRESETS
+                control.kind == TouchKind.STICK && !physical -> LibraryTab.PRESETS
                 else -> LibraryTab.KEYBOARD
             },
         )
