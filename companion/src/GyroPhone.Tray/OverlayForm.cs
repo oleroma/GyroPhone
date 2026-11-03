@@ -95,7 +95,10 @@ internal sealed class OverlayForm : Form
         get
         {
             var cp = base.CreateParams;
-            cp.ExStyle |= WsExLayered | WsExToolWindow | WsExNoActivate | WsExTopmost;
+            // Not a tool window: OBS's Window Capture lists only windows without WS_EX_TOOLWINDOW.
+            // It stays off the taskbar anyway: ShowInTaskbar = false gives it a hidden owner window.
+            cp.ExStyle |= WsExLayered | WsExNoActivate | WsExTopmost;
+            cp.ExStyle &= ~WsExAppWindow;
             if (ClickThrough) cp.ExStyle |= WsExTransparent;
             return cp;
         }
@@ -628,7 +631,7 @@ internal sealed class OverlayForm : Form
     private const int GwlExStyle = -20;
     private const int WsExLayered = 0x00080000;
     private const int WsExTransparent = 0x00000020;
-    private const int WsExToolWindow = 0x00000080;
+    private const int WsExAppWindow = 0x00040000;
     private const int WsExNoActivate = 0x08000000;
     private const int WsExTopmost = 0x00000008;
     private const int WmNcHitTest = 0x0084;
