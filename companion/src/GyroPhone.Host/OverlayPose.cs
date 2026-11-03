@@ -109,7 +109,9 @@ public sealed class OverlayPose
             _easing = true;
             _calm = 0f;
         }
-        // Each ratchet press eases it back until straight, also while the gyro is paused.
+        // Letting the ratchet go stops it at once: the phone's turn takes over, never fought.
+        else if (!f.RatchetHeld) _easing = false;
+        // While a ratchet is held it eases back until straight (the gyro is paused then).
         if (_easing) EaseAfterPress(s, gravity, wall);
 
         float dt = f.TurnSeconds;

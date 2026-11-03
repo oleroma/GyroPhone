@@ -132,7 +132,7 @@ public sealed class OverlaySettings
     /// <summary>Goes back to straight on its own (the heading only with gravity).</summary>
     public bool Ease { get; set; } = true;
     /// <summary>
-    /// Each ratchet press eases it back until straight, instead of easing whenever the phone stops turning.
+    /// While a ratchet is held it eases back until straight (stopping when let go), instead of easing whenever the phone stops turning.
     /// (Replaces Reset on ratchet and "Ratchet let go"; a ratchet press still aims the compass again.)
     /// </summary>
     public bool EaseOnRatchet { get; set; } = true;
