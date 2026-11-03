@@ -3,7 +3,7 @@ using System.Text;
 namespace GyroPhone.Protocol;
 
 /// <summary>
-/// OVERLAY from the phone (see the phone's OverlayFeed for its 136 bytes): the phone's motion since
+/// OVERLAY from the phone (see the phone's OverlayFeed for its 152 bytes): the phone's motion since
 /// the last one (gyro turn, gravity, compass, ratchet), fingers, pressed and latched controls and
 /// stick knobs, for the phone overlay. The PC turns the motion into a pose (<see cref="Qw"/>..)
 /// with its own settings.
@@ -50,6 +50,22 @@ public sealed class OverlayFrame
     public readonly byte[] StickIndex = new byte[MaxSticks];
     /// <summary>Stick knob x, y pairs, -1..1 of the radius, y down.</summary>
     public readonly float[] StickXY = new float[MaxSticks * 2];
+
+    // The controller attached to the phone (the phone overlay's handles).
+    public const byte PadAttachedFlag = 1;
+    public const uint PadSouth = 1, PadEast = 2, PadWest = 4, PadNorth = 8, PadL1 = 16, PadR1 = 32, PadL2 = 64, PadR2 = 128,
+        PadMinus = 256, PadPlus = 512, PadHome = 1024, PadCapture = 2048, PadL3 = 4096, PadR3 = 8192,
+        PadUp = 16384, PadDown = 32768, PadLeft = 65536, PadRight = 131072;
+    public byte PadFlags;
+    /// <summary>Buttons held (<see cref="PadSouth"/>.., by place).</summary>
+    public uint PadButtons;
+    /// <summary>Trigger pulls, 0..1.</summary>
+    public float PadL2Pull, PadR2Pull;
+    /// <summary>Sticks, -1..1 (y down): left x, y, right x, y.</summary>
+    public readonly float[] PadSticks = new float[4];
+
+    public bool PadAttached => (PadFlags & PadAttachedFlag) != 0;
+    public bool PadHeld(uint button) => (PadButtons & button) != 0;
 
     public bool PoseLive => (Flags & FlagPose) != 0;
     public bool PadShown => (Flags & FlagPadShown) != 0;
@@ -103,6 +119,11 @@ public sealed class OverlayFrame
         RwsYaw = Gain(BitConverter.Int32BitsToSingle(Le.I32(b, 124)));
         RwsPitch = Gain(BitConverter.Int32BitsToSingle(Le.I32(b, 128)));
         RwsRoll = Gain(BitConverter.Int32BitsToSingle(Le.I32(b, 132)));
+        PadFlags = b[136];
+        PadL2Pull = b[137] / 255f;
+        PadR2Pull = b[138] / 255f;
+        PadButtons = Le.U32(b, 140);
+        for (int i = 0; i < 4; i++) PadSticks[i] = Math.Max(-1f, (sbyte)b[144 + i] / 127f);
     }
 
     private static float Gain(float v) => float.IsFinite(v) && v > 0f ? Math.Min(v, 100f) : 0f;
@@ -127,6 +148,8 @@ public sealed class OverlayFrame
         Array.Copy(Pressed, o.Pressed, Pressed.Length);
         Array.Copy(Latched, o.Latched, Latched.Length);
         o.StickCount = StickCount;
+        o.PadFlags = PadFlags; o.PadButtons = PadButtons; o.PadL2Pull = PadL2Pull; o.PadR2Pull = PadR2Pull;
+        Array.Copy(PadSticks, o.PadSticks, PadSticks.Length);
         Array.Copy(StickIndex, o.StickIndex, StickIndex.Length);
         Array.Copy(StickXY, o.StickXY, StickXY.Length);
     }
