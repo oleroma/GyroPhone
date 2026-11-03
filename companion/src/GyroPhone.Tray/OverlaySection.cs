@@ -54,7 +54,7 @@ internal sealed class OverlaySection
     private readonly NumericUpDown _spin;
     private readonly Control _spinRow;
     private readonly NumericUpDown _scale;
-    private readonly CheckBox _gravity, _compass, _reset, _headingOnly, _ease;
+    private readonly CheckBox _gravity, _compass, _headingOnly, _ease;
     private readonly RadioButton _whenStill, _whenRatchet, _byTime, _bySpeed;
     private readonly NumericUpDown _delay, _seconds, _speed;
     private readonly Control _easeOptions, _secondsRow, _speedRow;
@@ -192,16 +192,14 @@ internal sealed class OverlaySection
         _gravity = MainForm.Check("Gravity: tilt held to the world (never drifts)", pose, () => Change(o => o.Gravity = !o.Gravity));
         _compass = MainForm.Check("Compass: heading held to where the phone faced", pose, () => Change(o => o.Compass = !o.Compass));
         _compass.Margin = Indent(_compass.Margin);
-        _reset = MainForm.Check("Reset on ratchet", pose, () => Change(o => o.ResetOnRatchet = !o.ResetOnRatchet));
-        _headingOnly = MainForm.Check("Heading only", pose, () => Change(o => o.ResetHeadingOnly = !o.ResetHeadingOnly));
-        _headingOnly.Margin = Indent(_headingOnly.Margin);
         _ease = MainForm.Check("Ease back to straight", pose, () => Change(o => o.Ease = !o.Ease));
         var ease = Panel(pose);
         ease.Margin = new Padding(18, 0, 0, 0);
         var when = MainForm.Row();
-        _whenStill = MainForm.Radio("Phone stops", when, () => Change(o => o.EaseAfterRatchet = false));
-        _whenRatchet = MainForm.Radio("Ratchet let go", when, () => Change(o => o.EaseAfterRatchet = true));
+        _whenRatchet = MainForm.Radio("On ratchet", when, () => Change(o => o.EaseOnRatchet = true));
+        _whenStill = MainForm.Radio("Phone stops", when, () => Change(o => o.EaseOnRatchet = false));
         ease.Controls.Add(when);
+        _headingOnly = MainForm.Check("Heading only", ease, () => Change(o => o.EaseHeadingOnly = !o.EaseHeadingOnly));
         _delay = Number(ease, "Delay, ms", 0, 3000, 50, 0, v => Change(o => o.EaseDelayMs = (int)v));
         var by = MainForm.Row();
         _byTime = MainForm.Radio("By time", by, () => Change(o => o.EaseBySpeed = false));
@@ -324,15 +322,14 @@ internal sealed class OverlaySection
         _gravity.Checked = o.Gravity;
         _compass.Checked = o.Compass;
         _compass.Visible = o.Gravity;
-        _reset.Checked = o.ResetOnRatchet;
-        // With gravity a reset is always the heading only.
-        _headingOnly.Checked = o.ResetHeadingOnly;
-        _headingOnly.Visible = o.ResetOnRatchet && !o.Gravity;
+        // With gravity only the heading eases back.
+        _headingOnly.Checked = o.EaseHeadingOnly;
+        _headingOnly.Visible = !o.Gravity;
         _ease.Checked = o.Ease;
         _ease.Enabled = !o.NeedsCompass;
         _easeOptions.Visible = o.Ease && !o.NeedsCompass;
-        _whenStill.Checked = !o.EaseAfterRatchet;
-        _whenRatchet.Checked = o.EaseAfterRatchet;
+        _whenStill.Checked = !o.EaseOnRatchet;
+        _whenRatchet.Checked = o.EaseOnRatchet;
         Set(_delay, o.EaseDelayMs);
         _byTime.Checked = !o.EaseBySpeed;
         _bySpeed.Checked = o.EaseBySpeed;

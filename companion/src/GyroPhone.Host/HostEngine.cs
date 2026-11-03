@@ -882,8 +882,8 @@ public sealed class HostEngine
             if (_settings.Overlays.Count > 0)
             {
                 var f = _settings.Overlays[0];
-                o.Gravity = f.Gravity; o.Compass = f.Compass; o.ResetOnRatchet = f.ResetOnRatchet; o.ResetHeadingOnly = f.ResetHeadingOnly;
-                o.Ease = f.Ease; o.EaseAfterRatchet = f.EaseAfterRatchet; o.EaseDelayMs = f.EaseDelayMs; o.EaseBySpeed = f.EaseBySpeed;
+                o.Gravity = f.Gravity; o.Compass = f.Compass; o.EaseHeadingOnly = f.EaseHeadingOnly;
+                o.Ease = f.Ease; o.EaseOnRatchet = f.EaseOnRatchet; o.EaseDelayMs = f.EaseDelayMs; o.EaseBySpeed = f.EaseBySpeed;
                 o.EaseSeconds = f.EaseSeconds; o.EaseSpeed = f.EaseSpeed; o.MotionScale = f.MotionScale;
             }
             if (kind != OverlayKind.Phone) o.Width = o.Height = 260;

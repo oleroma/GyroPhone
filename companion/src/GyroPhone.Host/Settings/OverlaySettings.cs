@@ -129,13 +129,15 @@ public sealed class OverlaySettings
     public bool Gravity { get; set; } = true;
     /// <summary>With gravity: the heading held by the phone's compass to the way it faced at the start.</summary>
     public bool Compass { get; set; }
-    /// <summary>A ratchet press sets it straight: the whole pose, or with <see cref="ResetHeadingOnly"/> (always with gravity) the heading.</summary>
-    public bool ResetOnRatchet { get; set; } = true;
-    public bool ResetHeadingOnly { get; set; }
     /// <summary>Goes back to straight on its own (the heading only with gravity).</summary>
     public bool Ease { get; set; } = true;
-    /// <summary>Easing starts after a ratchet is let go, instead of after the phone stops turning.</summary>
-    public bool EaseAfterRatchet { get; set; }
+    /// <summary>
+    /// While a ratchet is held it eases back until straight (stopping when let go), instead of easing whenever the phone stops turning.
+    /// (Replaces Reset on ratchet and "Ratchet let go"; a ratchet press still aims the compass again.)
+    /// </summary>
+    public bool EaseOnRatchet { get; set; } = true;
+    /// <summary>Without gravity, only the heading eases back (with gravity it always is).</summary>
+    public bool EaseHeadingOnly { get; set; }
     public int EaseDelayMs { get; set; } = 300;
     /// <summary>Back at <see cref="EaseSpeed"/> deg/s, instead of over <see cref="EaseSeconds"/>.</summary>
     public bool EaseBySpeed { get; set; }
