@@ -43,43 +43,25 @@ internal fun TouchpadSettingsScreen(
     onEditMappings: () -> Unit,
     onClose: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-            Column(Modifier.fillMaxSize()) {
-                Row(
-                    Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Workspace", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "The empty pad area · " + workspace.name + " · settings",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    OutlinedButton(onClick = onEditMappings) { Text("Mappings") }
-                    TextButton(onClick = onClose) { Text("Done") }
-                }
-                Column(
-                    Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    val section = Modifier.widthIn(max = 720.dp)
-                    RememberedSection(runtime, "touchpad.Mappings", "Mappings", section, defaultOpen = true) {
+    SettingsDialog(
+        title = "Workspace",
+        subtitle = "The empty pad area · " + workspace.name + " · settings",
+        onClose = onClose,
+        actions = { OutlinedButton(onClick = onEditMappings) { Text("Mappings") } },
+    ) {
+        val items = listOf(
+            category(runtime, "touchpadMappings", "Mappings", "What each finger count does", defaultOpen = true, prefKey = "touchpad.Mappings") {
+                Searchable("Mappings", "touchpad finger fingers follow defaults edit") {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         TouchpadMappingsSummary(workspace, defaults, onEditMappings) {
                             // Its own Base touchpad mappings go: each input follows the Defaults again.
                             onWorkspaceChange { w -> w.copy(mappings = w.mappings.filterNot { it.source.isTouchpad && it.set == 0 }) }
                         }
                     }
                 }
-            }
-        }
+            },
+        )
+        ReorderableSections(runtime, "touchpad", items)
     }
 }
 

@@ -118,7 +118,7 @@ internal fun OverrideRow(
     hint: String? = null,
     trailing: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit = {},
-) {
+) = Searchable(title, hint) {
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(10.dp)
     Column(

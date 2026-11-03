@@ -189,6 +189,7 @@ private fun AxisGlideSettings(key: String, axis: MotionAxis, eff: GyroSettings, 
  * stick's. [update] changes the control.
  */
 internal fun touchControlSettings(
+    runtime: GamepadRuntime,
     control: TouchControl,
     ws: Workspace,
     set: Int,
@@ -234,13 +235,21 @@ internal fun touchControlSettings(
         },
         shared = when {
             surface != null -> ui {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (gyro != null) ButtonGyroSensitivity(gyro, key)
-                    SurfaceSharedSettings(surface, key, zones, touchpad = false)
+                NotSearching { ResetAllButton(surface.parentName, surface.anyOwn) { surface.resetAll() } }
+                val gyroCategory = gyro?.let { g ->
+                    category(runtime, "gyro", "Gyro", "This button's gyro sensitivity while held", defaultOpen = true, prefKey = "button.Gyro") {
+                        ButtonGyroSensitivity(g, key)
+                    }
                 }
+                ReorderableSections(runtime, "workspace", listOfNotNull(gyroCategory) + surfaceCategories(runtime, surface, key, zones, touchpad = false))
             }
 
-            control.kind == TouchKind.STICK -> ui { StickSettings(control) { c -> update { c } } }
+            control.kind == TouchKind.STICK -> ui {
+                ReorderableSections(
+                    runtime, "stick",
+                    listOf(category(runtime, "stick", "Stick", "Deadzone and directions", defaultOpen = true) { StickSettings(control) { c -> update { c } } }),
+                )
+            }
 
             else -> null
         },
@@ -288,7 +297,7 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
                 null -> null
             }
         },
-        shared = { WorkspaceSettings(runtime, level, key, touchpadOpen = true) },
+        shared = { WorkspaceSettings(runtime, level, key) },
     )
 }
 

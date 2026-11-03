@@ -118,7 +118,7 @@ private fun g(p: String) = WorkspaceDefaults.gyroKey(p)
  * Every setting of one [level] (a workspace, one of its layers, or the Defaults): gyro, buttons,
  * haptics, and the touchpad and gestures, each highlighted with a ↺ where it differs from the
  * parent, as categories in the order the person put them ([ReorderableSections]); [extra] ones
- * join them. [touchpadOpen]: the touchpad's open (its ⚙ Settings in the mapping editor). [key]
+ * join them. [key]
  * restarts slider drafts when the level changes.
  */
 @Composable
@@ -126,7 +126,6 @@ internal fun WorkspaceSettings(
     runtime: GamepadRuntime,
     level: WorkspaceLevel,
     key: String,
-    touchpadOpen: Boolean = false,
     extra: List<SectionItem> = emptyList(),
 ) {
     val ws = level.ws
@@ -135,10 +134,15 @@ internal fun WorkspaceSettings(
     fun reset(k: String): () -> Unit = { level.reset(k) }
 
     val layer = !level.shows(WorkspaceDefaults.CONTROL_OPACITY)
-    ResetAllButton(level.parentName, WorkspaceDefaults.keys.any { level.shows(it) && level.isOwn(it) }) { level.resetAll() }
+    NotSearching {
+        ResetAllButton(level.parentName, WorkspaceDefaults.keys.any { level.shows(it) && level.isOwn(it) }) { level.resetAll() }
+    }
     val items = ArrayList(extra)
     items += SectionItem("gyro") { card, header ->
-        RememberedSection(runtime, "workspace.Gyro", "Gyro", card, defaultOpen = true, subtitle = ws.gyro.mode.label, headerModifier = header) {
+        RememberedSection(
+            runtime, "workspace.Gyro", "Gyro", card, defaultOpen = true,
+            subtitle = ws.gyro.mode.label + " · sensitivity, game, gyro space, inertia", headerModifier = header,
+        ) {
             OverrideRow(
                 "Gyro to mouse", own(g("mode")), reset(g("mode")),
                 hint = when (ws.gyro.mode) {
@@ -199,6 +203,13 @@ internal fun WorkspaceSettings(
                 key + "gglide", "Glide %.0f ms", ws.gyro.glideMs, GyroMouse.MIN_GLIDE_MS..GyroMouse.MAX_GLIDE_MS, 5f,
                 own(g("glideMs")), reset(g("glideMs")), hint = GLIDE_HINT,
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(glideMs = v)) } }
+        }
+    }
+    items += SectionItem("tilt") { card, header ->
+        RememberedSection(
+            runtime, "workspace.Tilt", "Tilt & shake", card,
+            subtitle = "How far a full tilt leans, its deadzone, how hard a shake is", headerModifier = header,
+        ) {
             OverrideSlider(
                 key + "tiltRange", "Tilt range %.0f°", ws.gyro.tiltRangeDeg,
                 GyroSettings.MIN_TILT_RANGE_DEG..GyroSettings.MAX_TILT_RANGE_DEG, 1f, own(g("tiltRangeDeg")), reset(g("tiltRangeDeg")),
@@ -214,6 +225,13 @@ internal fun WorkspaceSettings(
                 GyroSettings.MIN_SHAKE_STRENGTH..GyroSettings.MAX_SHAKE_STRENGTH, 1f, own(g("shakeStrength")), reset(g("shakeStrength")),
                 hint = "How hard a jolt counts as a shake.",
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(shakeStrength = v)) } }
+        }
+    }
+    items += SectionItem("gyroFilters") { card, header ->
+        RememberedSection(
+            runtime, "workspace.GyroFilters", "Gyro filters & calibration", card,
+            subtitle = "Jitter cutoff, smoothing" + if (layer) "" else ", drift calibration", headerModifier = header,
+        ) {
             // Both filters default to off: raw gyro. Calibration only subtracts a fixed resting bias
             // and suits the phone, not a layer: the whole workspace's only.
             run {
@@ -230,7 +248,7 @@ internal fun WorkspaceSettings(
             }
             if (!layer) {
                 val cal by runtime.calibrationState.collectAsState()
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Searchable("Calibrate", "gyro drift calibration") { Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         when (val c = cal) {
                             GamepadRuntime.CalibrationState.None -> "Not calibrated (phone's own drift correction only)"
@@ -249,7 +267,7 @@ internal fun WorkspaceSettings(
                     ) {
                         Text("Calibrate")
                     }
-                }
+                } }
             }
         }
     }
@@ -296,58 +314,23 @@ internal fun WorkspaceSettings(
             }
         }
     }
-    items += SectionItem("touchpad") { card, header ->
-        TouchpadSection(
-            runtime, level, key, if (touchpadOpen) "touchpad.Touchpad" else "workspace.Touchpad",
-            open = touchpadOpen, card = card, header = header,
-        )
+    items += SectionItem("gestures") { card, header ->
+        RememberedSection(
+            runtime, "workspace.Gestures", "Gesture timings", card,
+            subtitle = "Long press and double tap times", headerModifier = header,
+        ) {
+            MsOverride(
+                key + "long", "Long press after", ws.longPressMs, Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
+                level.isOwn(WorkspaceDefaults.LONG_PRESS), { level.reset(WorkspaceDefaults.LONG_PRESS) },
+                hint = "For the Tap and Long press of the touchpad, touch buttons, controller buttons and keyboard keys without a time of their own.",
+            ) { ms -> level.edit { it.copy(longPressMs = ms) } }
+            MsOverride(
+                key + "double", "Double tap within", ws.doubleTapMs, Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
+                level.isOwn(WorkspaceDefaults.DOUBLE_TAP), { level.reset(WorkspaceDefaults.DOUBLE_TAP) },
+                hint = "The same, for Double tap windows.",
+            ) { ms -> level.edit { it.copy(doubleTapMs = ms) } }
+        }
     }
+    items += surfaceCategories(runtime, workspaceSurfaceLevel(level), key + "tp", Bindings.holdZoneCounts(ws.mappings, ""), touchpad = true)
     ReorderableSections(runtime, "workspace", items)
-}
-
-/** The touchpad and gesture settings of [level]: gesture times, then the touchpad's own. */
-@Composable
-private fun TouchpadSection(
-    runtime: GamepadRuntime,
-    level: WorkspaceLevel,
-    key: String,
-    prefKey: String,
-    open: Boolean,
-    card: Modifier,
-    header: Modifier,
-) {
-    val ws = level.ws
-    RememberedSection(
-        runtime,
-        prefKey,
-        "Touchpad & gestures",
-        card,
-        defaultOpen = open,
-        headerModifier = header,
-        subtitle = "Long press and double tap times, speed, scrolling and directions",
-    ) {
-        MsOverride(
-            key + "long", "Long press after", ws.longPressMs, Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
-            level.isOwn(WorkspaceDefaults.LONG_PRESS), { level.reset(WorkspaceDefaults.LONG_PRESS) },
-            hint = "For the Tap and Long press of the touchpad, touch buttons, controller buttons and keyboard keys without a time of their own.",
-        ) { ms -> level.edit { it.copy(longPressMs = ms) } }
-        MsOverride(
-            key + "double", "Double tap within", ws.doubleTapMs, Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
-            level.isOwn(WorkspaceDefaults.DOUBLE_TAP), { level.reset(WorkspaceDefaults.DOUBLE_TAP) },
-            hint = "The same, for Double tap windows.",
-        ) { ms -> level.edit { it.copy(doubleTapMs = ms) } }
-        SurfaceSharedSettings(
-            workspaceSurfaceLevel(level),
-            key + "tp",
-            Bindings.holdZoneCounts(ws.mappings, ""),
-            touchpad = true,
-            resetAll = false,
-        )
-        Text(
-            "Touchpad buttons use these too, unless they set their own (their Mappings, ⚙ Settings).",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
-        )
-    }
 }

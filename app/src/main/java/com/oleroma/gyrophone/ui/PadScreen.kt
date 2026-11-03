@@ -2396,6 +2396,7 @@ fun PadScreen(
                 } else if (sel.kind == TouchKind.DISPLAY) {
                     // A gyro display: what it shows, how, and its colours.
                     GyroDisplaySettingsScreen(
+                        runtime = runtime,
                         control = sel,
                         // A trackball's RWS needs the workspace's game turn (Gyro → Game).
                         gameKnown = ws.gyro.gameCountsPer360 > 0f,
@@ -2435,7 +2436,7 @@ fun PadScreen(
                         onZoneSettings = { a, b ->
                             updateControl(sel.id) { it.copy(surface = it.ownSurface.copy(holdZones = a, dirHoldZones = b)) }
                         },
-                        settings = touchControlSettings(sel, ws, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE) { change -> updateControl(sel.id, change) },
+                        settings = touchControlSettings(runtime, sel, ws, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE) { change -> updateControl(sel.id, change) },
                         inherited = if (sel.kind == TouchKind.BUTTON) {
                             Inheritance.inherited(Inheritance.workspace(ws, d.defaults), emptyList(), sel.id, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE)
                         } else emptyList(),

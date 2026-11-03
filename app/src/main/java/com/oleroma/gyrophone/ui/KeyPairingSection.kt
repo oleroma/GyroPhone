@@ -44,8 +44,10 @@ fun KeyPairingSection(wifi: WifiLink) {
         message = if (text == null) "Could not read that file" else wifi.importHostKey(text) ?: "PC key added"
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Key pairing", style = MaterialTheme.typography.titleSmall)
+    Searchable(
+        "Key pairing", "connect automatically share my key import PC key trusted PCs fingerprint without a code",
+        *trusted.map { it.name }.toTypedArray(),
+    ) { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             "This phone: " + (fingerprint ?: "no key yet"),
             style = MaterialTheme.typography.bodySmall,
@@ -90,7 +92,7 @@ fun KeyPairingSection(wifi: WifiLink) {
                 OutlinedButton(onClick = { wifi.removeHostKey(host) }) { Text("Remove") }
             }
         }
-    }
+    } }
 }
 
 private const val MAX_KEY_FILE = 4096

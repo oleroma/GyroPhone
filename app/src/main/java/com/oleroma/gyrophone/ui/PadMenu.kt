@@ -176,15 +176,19 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () 
     var tab by rememberSaveable { mutableIntStateOf(MappingSet.BASE) }
     val set = if (ws.sets.any { it.id == tab }) tab else MappingSet.BASE
 
-    Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (ws.sets.isNotEmpty()) {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = set == MappingSet.BASE, onClick = { tab = MappingSet.BASE }, label = { Text("Base") })
-                ws.sets.forEach { st ->
-                    FilterChip(selected = set == st.id, onClick = { tab = st.id }, label = { Text(st.label) })
+    SearchableSettings(
+        modifier,
+        header = {
+            if (ws.sets.isNotEmpty()) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = set == MappingSet.BASE, onClick = { tab = MappingSet.BASE }, label = { Text("Base") })
+                    ws.sets.forEach { st ->
+                        FilterChip(selected = set == st.id, onClick = { tab = st.id }, label = { Text(st.label) })
+                    }
                 }
             }
-        }
+        },
+    ) {
         Hint(
             if (set == MappingSet.BASE) "Each setting follows the Defaults (Settings) unless it is set here: those are " +
                     "highlighted, with ↺ to follow the Defaults again. Long press a category to move it."
@@ -201,14 +205,18 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () 
                 subtitle = "${ws.name} · ${current + 1} of ${profile.workspaces.size}",
                 headerModifier = header,
             ) {
-                WorkspaceActions(profile, current) { p, _ ->
-                    val deleted = p.workspaces.size < profile.workspaces.size
-                    runtime.editActiveProfile { p }
-                    if (deleted) onDeleted()
-                }
-                Hint("Duplicate copies everything, mappings included; the copy can then be changed on its own.")
-                if (profile.workspaces.size > 1) {
-                    OutlinedButton(onClick = { copying = true }) { Text("Copy mappings from…") }
+                Searchable("Workspace", "rename duplicate delete name copy mappings") {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        WorkspaceActions(profile, current) { p, _ ->
+                            val deleted = p.workspaces.size < profile.workspaces.size
+                            runtime.editActiveProfile { p }
+                            if (deleted) onDeleted()
+                        }
+                        Hint("Duplicate copies everything, mappings included; the copy can then be changed on its own.")
+                        if (profile.workspaces.size > 1) {
+                            OutlinedButton(onClick = { copying = true }) { Text("Copy mappings from…") }
+                        }
+                    }
                 }
             }
         }
@@ -225,7 +233,7 @@ private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () 
 }
 
 @Composable
-internal fun Hint(text: String) {
+internal fun Hint(text: String) = NotSearching {
     Text(
         text,
         style = MaterialTheme.typography.bodySmall,

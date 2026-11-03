@@ -1559,33 +1559,12 @@ internal fun ControlMappingScreen(
     }
     val shared = settings?.shared
     if (sharedOpen && shared != null) {
-        Dialog(onDismissRequest = { sharedOpen = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(Modifier.fillMaxSize(), color = colors.surface) {
-                Column(Modifier.fillMaxSize()) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(control.label.ifBlank { control.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                if (control.isTouchpadStandIn) "The empty pad area · this workspace's settings"
-                                else controlKindName(control) + " · settings its actions share",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colors.onSurfaceVariant,
-                            )
-                        }
-                        FilledTonalButton(onClick = { sharedOpen = false }) { Text("Done") }
-                    }
-                    Column(
-                        Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Column(Modifier.widthIn(max = 720.dp)) { shared() }
-                    }
-                }
-            }
-        }
+        SettingsDialog(
+            title = control.label.ifBlank { control.id },
+            subtitle = if (control.isTouchpadStandIn) "The empty pad area · this workspace's settings"
+            else controlKindName(control) + " · settings its actions share",
+            onClose = { sharedOpen = false },
+        ) { shared() }
     }
     layerDraft?.let { (input, t) ->
         LayerTargetDialog(
