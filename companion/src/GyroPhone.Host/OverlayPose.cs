@@ -37,6 +37,11 @@ public sealed class OverlayPose
     private int _lastPresses = -1;
     private float[]? _rest;
 
+    // A ratchet reset gliding back (Reset smoothly): what it turns back, how fast and for how long.
+    private bool _glide, _glideHeading;
+    private float _glideSpeed, _glideLeft;
+    private long _lastFeedAt;
+
     public float W => _w;
     public float X => _x;
     public float Y => _y;
@@ -52,6 +57,7 @@ public sealed class OverlayPose
 
     private void ResetPose()
     {
+        _glide = false;
         _w = 1; _x = _y = _z = 0;
         _hasUp = false;
         _settling = SettleS;
@@ -88,15 +94,21 @@ public sealed class OverlayPose
         if (f.HasUp && gravity) SetUp(f.UpX, f.UpY, f.UpZ, 1f);
         if (f.HasNorth && compass) SetNorth(f.NorthX, f.NorthY, f.NorthZ);
 
+        // Time since the last frame, kept apart from the turn's: the glide goes on while the gyro is paused.
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        float wall = _lastFeedAt == 0 ? 0f : Math.Min((now - _lastFeedAt) / (float)System.Diagnostics.Stopwatch.Frequency, 0.1f);
+        _lastFeedAt = now;
+
         if (pressed && s.ResetOnRatchet)
         {
             // With gravity the tilt is the world's: only the heading can go back.
-            if (gravity || s.ResetHeadingOnly)
-            {
-                if (compass) _aimPending = true; else TurnVertical(HeadingFrom(_rest));
-            }
+            bool headingOnly = gravity || s.ResetHeadingOnly;
+            if (headingOnly && compass) _aimPending = true;
+            else if (s.ResetSmoothly) StartGlide(headingOnly, s.ResetSeconds);
+            else if (headingOnly) TurnVertical(HeadingFrom(_rest));
             else ResetPose();
         }
+        if (_glide) Glide(wall);
 
         float dt = f.TurnSeconds;
         if (!f.PoseLive || dt <= 0f) return;
@@ -107,7 +119,7 @@ public sealed class OverlayPose
             float k = DegToRad * dt;
             Turn(((f.Axes & 2) != 0 ? pitch : 0f) * k, -((f.Axes & 1) != 0 ? yaw : 0f) * k, -((f.Axes & 4) != 0 ? roll : 0f) * k);
         }
-        if (!s.Ease || compass) return;
+        if (!s.Ease || compass || _glide) return;
         bool busy = s.EaseAfterRatchet ? f.RatchetHeld : MathF.Sqrt(yaw * yaw + pitch * pitch + roll * roll) > StillDps;
         _calm = busy ? 0f : _calm + dt;
         if (busy || _calm < Math.Clamp(s.EaseDelayMs, 0, 3000) / 1000f) return;
@@ -257,6 +269,30 @@ public sealed class OverlayPose
         }
         if (sn * sn + cn * cn < 1e-8f) return 0f;
         return MathF.Atan2(sn, cn);
+    }
+
+    /// <summary>Starts gliding back to straight (the heading, or the whole pose) over <paramref name="seconds"/>.</summary>
+    private void StartGlide(bool headingOnly, float seconds)
+    {
+        seconds = Math.Clamp(seconds, 0.05f, 3f);
+        float a = headingOnly ? MathF.Abs(HeadingFrom(_rest)) : 2 * MathF.Acos(Math.Min(MathF.Abs(_w), 1f));
+        _glide = true;
+        _glideHeading = headingOnly;
+        _glideSpeed = a / seconds;
+        _glideLeft = seconds;
+    }
+
+    /// <summary>One step of the glide, at a steady speed; when its time is up whatever is left goes at once.</summary>
+    private void Glide(float dt)
+    {
+        _glideLeft -= dt;
+        if (_glideLeft <= 0f)
+        {
+            _glide = false;
+            if (_glideHeading) TurnVertical(HeadingFrom(_rest)); else ResetPose();
+            return;
+        }
+        if (_glideHeading) EaseHeading(true, _glideSpeed * dt); else EaseAll(true, _glideSpeed * dt);
     }
 
     private void TurnHeading(float a)

@@ -54,7 +54,9 @@ internal sealed class OverlaySection
     private readonly NumericUpDown _spin;
     private readonly Control _spinRow;
     private readonly NumericUpDown _scale;
-    private readonly CheckBox _gravity, _compass, _reset, _headingOnly, _ease;
+    private readonly CheckBox _gravity, _compass, _reset, _headingOnly, _resetSmoothly, _ease;
+    private readonly NumericUpDown _resetSeconds;
+    private readonly Control _resetSecondsRow;
     private readonly RadioButton _whenStill, _whenRatchet, _byTime, _bySpeed;
     private readonly NumericUpDown _delay, _seconds, _speed;
     private readonly Control _easeOptions, _secondsRow, _speedRow;
@@ -195,6 +197,11 @@ internal sealed class OverlaySection
         _reset = MainForm.Check("Reset on ratchet", pose, () => Change(o => o.ResetOnRatchet = !o.ResetOnRatchet));
         _headingOnly = MainForm.Check("Heading only", pose, () => Change(o => o.ResetHeadingOnly = !o.ResetHeadingOnly));
         _headingOnly.Margin = Indent(_headingOnly.Margin);
+        _resetSmoothly = MainForm.Check("Smoothly", pose, () => Change(o => o.ResetSmoothly = !o.ResetSmoothly));
+        _resetSmoothly.Margin = Indent(_resetSmoothly.Margin);
+        _resetSeconds = Number(pose, "Back in, s", 0.1m, 3m, 0.1m, 1, v => Change(o => o.ResetSeconds = (float)v));
+        _resetSecondsRow = _resetSeconds.Parent!;
+        _resetSecondsRow.Margin = Indent(Indent(_resetSecondsRow.Margin));
         _ease = MainForm.Check("Ease back to straight", pose, () => Change(o => o.Ease = !o.Ease));
         var ease = Panel(pose);
         ease.Margin = new Padding(18, 0, 0, 0);
@@ -328,6 +335,12 @@ internal sealed class OverlaySection
         // With gravity a reset is always the heading only.
         _headingOnly.Checked = o.ResetHeadingOnly;
         _headingOnly.Visible = o.ResetOnRatchet && !o.Gravity;
+        // With the compass the heading is the compass's: the reset re-aims at once.
+        _resetSmoothly.Checked = o.ResetSmoothly;
+        bool canGlide = o.ResetOnRatchet && !(o.Gravity && o.Compass);
+        _resetSmoothly.Visible = canGlide;
+        Set(_resetSeconds, (decimal)o.ResetSeconds);
+        _resetSecondsRow.Visible = canGlide && o.ResetSmoothly;
         _ease.Checked = o.Ease;
         _ease.Enabled = !o.NeedsCompass;
         _easeOptions.Visible = o.Ease && !o.NeedsCompass;

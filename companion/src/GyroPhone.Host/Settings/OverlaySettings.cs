@@ -132,6 +132,9 @@ public sealed class OverlaySettings
     /// <summary>A ratchet press sets it straight: the whole pose, or with <see cref="ResetHeadingOnly"/> (always with gravity) the heading.</summary>
     public bool ResetOnRatchet { get; set; } = true;
     public bool ResetHeadingOnly { get; set; }
+    /// <summary>The reset glides back over <see cref="ResetSeconds"/> instead of jumping.</summary>
+    public bool ResetSmoothly { get; set; } = true;
+    public float ResetSeconds { get; set; } = 0.3f;
     /// <summary>Goes back to straight on its own (the heading only with gravity).</summary>
     public bool Ease { get; set; } = true;
     /// <summary>Easing starts after a ratchet is let go, instead of after the phone stops turning.</summary>

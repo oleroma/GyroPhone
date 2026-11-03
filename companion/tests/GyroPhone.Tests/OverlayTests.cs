@@ -194,7 +194,7 @@ public class OverlayTests
     [Fact]
     public void PoseTurnsWithTheGyroAndResetsOnARatchetPress()
     {
-        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = false, Ease = false };
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = false, Ease = false, ResetSmoothly = false };
         var p = new GyroPhone.Host.OverlayPose();
         for (int i = 0; i < 10; i++) p.Feed(Motion(3f, 0.01f), s); // 30° right
         Assert.Equal(30f, HeadingDeg(p), 1);
@@ -205,6 +205,28 @@ public class OverlayTests
         p.Feed(Motion(10f, 0.01f, presses: 1), s);
         p.Feed(Motion(0f, 0.01f, presses: 2), s);
         Assert.Equal(10f, HeadingDeg(p), 1);
+    }
+
+    [Fact]
+    public void ARatchetResetGlidesBackSmoothly()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = false, Ease = false, ResetSmoothly = true, ResetSeconds = 0.3f };
+        var p = new GyroPhone.Host.OverlayPose();
+        for (int i = 0; i < 10; i++) p.Feed(Motion(3f, 0.01f), s); // 30° right
+        p.Feed(Motion(0f, 0.01f, presses: 1), s);
+        // Not straight at once: on its way back.
+        Assert.True(HeadingDeg(p) > 5f);
+        System.Threading.Thread.Sleep(80);
+        p.Feed(Motion(0f, 0.01f, presses: 1), s);
+        float midway = HeadingDeg(p);
+        Assert.True(midway < 30f && midway > 0f);
+        // Straight once its time is up.
+        for (int i = 0; i < 6; i++)
+        {
+            System.Threading.Thread.Sleep(80);
+            p.Feed(Motion(0f, 0.01f, presses: 1), s);
+        }
+        Assert.Equal(1f, p.W, 4);
     }
 
     [Fact]
@@ -349,7 +371,7 @@ public class OverlayTests
     [Fact]
     public void ResetOnRatchetWithGravityShowsTheLevelGripFaceOnEvenLyingFlat()
     {
-        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = true, Ease = false };
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = true, Ease = false, ResetSmoothly = false };
         var p = new GyroPhone.Host.OverlayPose();
         // Lying flat, screen up: gravity's up is the screen normal.
         OverlayFrame Flat(float turnDeg, byte presses)
