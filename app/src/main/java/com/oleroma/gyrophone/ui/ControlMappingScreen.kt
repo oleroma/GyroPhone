@@ -1490,10 +1490,14 @@ internal fun ControlMappingScreen(
         // A card's triggers that map something: their timing settings (long press time, double tap window), once each.
         val mappedTriggers = wheresOf(input).filterNotNull().flatMap { trigInputs(it) }
             .filter { (t, ti) -> t != Trigger.HOLD && Bindings.targets(view, ti).isNotEmpty() }
-        val timingContents = listOfNotNull(
-            mappedTriggers.firstOrNull { it.first == Trigger.TAP || it.first == Trigger.LONG_PRESS }?.second,
-            // A swipe's double has its quick swipe's settings.
-            mappedTriggers.firstOrNull { it.first == Trigger.DOUBLE_TAP && !Triggers.isSwipe(input.sources.first()) }?.second,
+        fun mapped(vararg ts: Trigger) = mappedTriggers.firstOrNull { it.first in ts }?.second
+        val timingContents = (
+            if (Triggers.isSwipe(input.sources.first())) {
+                // A swipe: its Quick swipe's settings, then its Long hold and Double swipe times.
+                listOfNotNull(mapped(Trigger.TAP), mapped(Trigger.LONG_PRESS), mapped(Trigger.DOUBLE_TAP))
+            } else {
+                listOfNotNull(mapped(Trigger.TAP, Trigger.LONG_PRESS), mapped(Trigger.DOUBLE_TAP))
+            }
         ).mapNotNull { settings?.action?.invoke(it) } + areaGears(input)
         if (content != null || timingContents.isNotEmpty()) AlertDialog(
             onDismissRequest = { actionDialog = null },

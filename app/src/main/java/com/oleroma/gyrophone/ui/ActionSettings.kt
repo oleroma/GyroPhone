@@ -61,13 +61,35 @@ private fun timingOf(input: BindableInput): Timing? = when (val s = input.source
         Trigger.DOUBLE_TAP -> Timing.DOUBLE_TAP
         else -> null
     }
-    is InputSource.Surface -> when (s.input) {
-        SurfaceInput.TAP, SurfaceInput.LONG_PRESS -> Timing.LONG_PRESS
-        SurfaceInput.DOUBLE_TAP -> Timing.DOUBLE_TAP
+    // A swipe's Long hold and Double swipe: the surface's long press and double tap times.
+    is InputSource.Surface -> when {
+        s.on == Trigger.LONG_PRESS -> Timing.LONG_PRESS
+        s.on == Trigger.DOUBLE_TAP -> Timing.DOUBLE_TAP
+        s.input == SurfaceInput.TAP || s.input == SurfaceInput.LONG_PRESS -> Timing.LONG_PRESS
+        s.input == SurfaceInput.DOUBLE_TAP -> Timing.DOUBLE_TAP
         else -> null
     }
     else -> null
 }
+
+/** [input] is a swipe direction's Long hold or Double swipe (its timing settings are named for swipes). */
+private fun isSwipeTiming(input: BindableInput): Boolean {
+    val s = input.sources.firstOrNull() as? InputSource.Surface ?: return false
+    return s.on != Trigger.HOLD && (s.input.swipeDirection != null || s.input.holdDirection != null)
+}
+
+/** The long press time's name and hint for [input] ([swipe]: a Long hold); [whose]: whose time it is. */
+private fun longLabel(swipe: Boolean) = if (swipe) "Long hold after" else "Long press after"
+
+private fun longHint(swipe: Boolean, whose: String) =
+    if (swipe) "How long a held direction is held before its Long hold fires. It is $whose long press time, shared by its taps and long presses."
+    else "$LONG_HINT It is $whose."
+
+private fun doubleLabel(swipe: Boolean) = if (swipe) "Double swipe within" else "Double tap within"
+
+private fun doubleHint(swipe: Boolean, whose: String) =
+    if (swipe) "The longest gap between the two quick swipes of a Double swipe. It is $whose double tap window, shared by its double taps."
+    else "The longest gap between the taps. A tap waits this long when a double tap does something else. It is $whose."
 
 /**
  * The ⚙ of a Swipe or Swipe hold [input] of a surface at [level] ([zones]: as mapped), or of a
@@ -75,6 +97,8 @@ private fun timingOf(input: BindableInput): Timing? = when (val s = input.source
  */
 private fun directionGear(level: SurfaceLevel, key: String, input: BindableInput, zones: IntArray, touchpad: Boolean = false): (@Composable () -> Unit)? {
     val src = input.sources.firstOrNull() as? InputSource.Surface ?: return null
+    // A Long hold or Double swipe: its timing instead ([timingOf]).
+    if (src.on != Trigger.HOLD) return null
     val s = src.input
     if (s == SurfaceInput.MOTION_X || s == SurfaceInput.MOTION_Y) {
         val m = MoveSlot.of(src.fingers, s == SurfaceInput.MOTION_X)
@@ -184,21 +208,22 @@ internal fun touchControlSettings(
 
                 timingOf(input) == Timing.LONG_PRESS -> ui {
                     MsOverride(
-                        key + "long", "Long press after", control.longPress(ws),
+                        key + "long", longLabel(isSwipeTiming(input)), control.longPress(ws),
                         Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
                         overridden = control.longPressMs != null,
                         onReset = { update { it.copy(longPressMs = null) } },
-                        hint = LONG_HINT,
+                        hint = if (isSwipeTiming(input)) longHint(true, "this button's") else LONG_HINT,
                     ) { ms -> update { it.copy(longPressMs = ms) } }
                 }
 
                 timingOf(input) == Timing.DOUBLE_TAP -> ui {
                     MsOverride(
-                        key + "double", "Double tap within", control.doubleTap(ws),
+                        key + "double", doubleLabel(isSwipeTiming(input)), control.doubleTap(ws),
                         Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
                         overridden = control.doubleTapMs != null,
                         onReset = { update { it.copy(doubleTapMs = null) } },
-                        hint = "The longest gap between the taps. A tap waits this long when a double tap does something else.",
+                        hint = if (isSwipeTiming(input)) doubleHint(true, "this button's")
+                        else "The longest gap between the taps. A tap waits this long when a double tap does something else.",
                     ) { ms -> update { it.copy(doubleTapMs = ms) } }
                 }
 
@@ -242,21 +267,21 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
             } ?: directionGear(surface, key, input, zones, touchpad = true) ?: when (timingOf(input)) {
                 Timing.LONG_PRESS -> ui {
                     MsOverride(
-                        key + "long", "Long press after", ws.longPressMs,
+                        key + "long", longLabel(isSwipeTiming(input)), ws.longPressMs,
                         Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
                         overridden = level.isOwn(WorkspaceDefaults.LONG_PRESS),
                         onReset = { level.reset(WorkspaceDefaults.LONG_PRESS) },
-                        hint = "$LONG_HINT The workspace's: every button and key without a time of its own uses it.",
+                        hint = longHint(isSwipeTiming(input), "the workspace's: every button and key without a time of its own uses it"),
                     ) { ms -> level.edit { it.copy(longPressMs = ms) } }
                 }
 
                 Timing.DOUBLE_TAP -> ui {
                     MsOverride(
-                        key + "double", "Double tap within", ws.doubleTapMs,
+                        key + "double", doubleLabel(isSwipeTiming(input)), ws.doubleTapMs,
                         Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
                         overridden = level.isOwn(WorkspaceDefaults.DOUBLE_TAP),
                         onReset = { level.reset(WorkspaceDefaults.DOUBLE_TAP) },
-                        hint = "The workspace's: every button and key without a window of its own uses it.",
+                        hint = doubleHint(isSwipeTiming(input), "the workspace's: every button and key without a window of its own uses it"),
                     ) { ms -> level.edit { it.copy(doubleTapMs = ms) } }
                 }
 
