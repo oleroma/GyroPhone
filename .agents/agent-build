@@ -171,8 +171,31 @@ build_pc() {
   printf '%s\n' "${names[@]}" >"$BUILD_DIR/.newest"
   echo "$version-$commit" >"$BUILD_DIR/.newest-build"
 
-  # Keep the last 4 builds. Old-style build folders may hold a worktree; prune forgets those.
-  ls -1dt "$BUILD_DIR"/builds/*/ | tail -n +5 | while read -r old; do rm -rf "$old"; done
+  # Keep the last 4 builds, plus the newest build of each part (and the newest one on main) that
+  # they don't have, so agent-publish still finds a part that hasn't been rebuilt for a while.
+  # A part is a file name without its build's version. Old-style build folders may hold a
+  # worktree; prune forgets those.
+  local seen=" " seen_main=" " i=0 d dv dc f p keep
+  git fetch -q origin main || true
+  while read -r d; do
+    d="${d%/}"
+    i=$((i + 1))
+    dv="$(basename "$d")"
+    dc="${dv##*-}"
+    dv="${dv%-*}"
+    keep=0
+    if [ "$i" -le 4 ]; then keep=1; fi
+    for f in "$d"/*; do
+      [ -f "$f" ] || continue
+      p="$(basename "$f")"
+      p="${p//"$dv"/}"
+      case "$seen" in *" $p "*) ;; *) keep=1 seen+="$p " ;; esac
+      if git merge-base --is-ancestor "$dc" origin/main 2>/dev/null; then
+        case "$seen_main" in *" $p "*) ;; *) keep=1 seen_main+="$p " ;; esac
+      fi
+    done
+    if [ "$keep" = 0 ]; then rm -rf "$d"; fi
+  done < <(ls -1dt "$BUILD_DIR"/builds/*/)
   git -C "$MAIN_REPO" worktree prune
 
   local summary=("Built $version-$commit:") name

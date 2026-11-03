@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Publishes a PC build as a GitHub pre-release on its build/<n> tag, when Olex asks for one.
-# Runs on the PC, where build/builds keeps the last 4 builds' files.
+# Runs on the PC, where build/builds keeps the last 4 builds' files and each part's newest build.
 # Usage: .agents/agent-publish [<build number>]
 #   no number: the newest build of main (the highest build/<n> tag on a commit in origin/main)
 # Publishes every file of that build. A part the build didn't make (its sources were unchanged,
@@ -29,7 +29,7 @@ dir=""
 for d in "$BUILD_DIR"/builds/*-"$short"/; do
   if [ -d "$d" ]; then dir="${d%/}"; fi
 done
-[ -n "$dir" ] || die "Build $n ($short) isn't in $BUILD_DIR/builds, which keeps only the last 4 PC builds." \
+[ -n "$dir" ] || die "Build $n ($short) isn't in $BUILD_DIR/builds, which keeps only the last 4 PC builds (and each part's newest)." \
   "Build it again, or run fallback.yml, which publishes its own builds."
 version="$(basename "$dir")"
 version="${version%-"$short"}"
