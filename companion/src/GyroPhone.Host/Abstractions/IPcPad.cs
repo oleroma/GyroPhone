@@ -1,7 +1,7 @@
 namespace GyroPhone.Host.Abstractions;
 
 /// <summary>
-/// A controller plugged into this PC, read for "Use PC controller for gyro" (XInput on Windows).
+/// A controller plugged into this PC, read for "Use PC controller for gyro ratchet" (XInput on Windows).
 /// Reads run on the implementation's own thread; <see cref="Read"/> only copies the latest state.
 /// </summary>
 public interface IPcPad

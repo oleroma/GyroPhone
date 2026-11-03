@@ -153,7 +153,7 @@ class GamepadRuntime(context: Context) {
     private val _pcControllerGyro = MutableStateFlow(prefs.getBoolean(KEY_PC_CONTROLLER_GYRO, false))
         .also { wifi.pcGyro.enabled = it.value }
 
-    /** "Use PC controller for gyro": a controller plugged into the PC ratchets and toggles the gyro ([com.oleroma.gyrophone.core.net.PcGyroFeed]). */
+    /** "Use PC controller for gyro ratchet": a controller plugged into the PC ratchets and toggles the gyro ([com.oleroma.gyrophone.core.net.PcGyroFeed]). */
     val pcControllerGyro: StateFlow<Boolean> = _pcControllerGyro
 
     private val _gyroPollUsed = MutableStateFlow(true)

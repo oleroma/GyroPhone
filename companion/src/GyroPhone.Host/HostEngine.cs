@@ -36,7 +36,7 @@ public sealed record HostSnapshot(
     string? HostKeyFingerprint = null,
     int QrPairingS = 0,
     string? QrEnrolledPhone = null,
-    // "Use PC controller for gyro": null while the phone's switch is off, "" while no controller is found.
+    // "Use PC controller for gyro ratchet": null while the phone's switch is off, "" while no controller is found.
     string? PcController = null);
 
 /// <summary>A paired phone for the tray: code-paired (in settings) or key-paired (a file in authorized_phones).</summary>
@@ -93,7 +93,7 @@ public sealed class HostEngine
     private readonly byte[] _reply = new byte[Wire.MaxDatagram];
     private readonly StateFrame _rxFrame = new();
 
-    // "Use PC controller for gyro": the phone's controller gyro buttons, the controller plugged into
+    // "Use PC controller for gyro ratchet": the phone's controller gyro buttons, the controller plugged into
     // this PC, and the gate that rewrites STATE_GYRO for it.
     private IPcPad _pcPad = NullPcPad.Instance;
     private readonly PadGyroConfig _padGyro = new();
@@ -391,7 +391,7 @@ public sealed class HostEngine
         if (_pcReading) return;
         _pcReading = true;
         _pcPad.Start(() => _pad.XInputSlot);
-        _events.Log("PC controller for gyro: on");
+        _events.Log("PC controller for gyro ratchet: on");
     }
 
     private void StopPcPad()
@@ -399,7 +399,7 @@ public sealed class HostEngine
         if (!_pcReading) return;
         _pcReading = false;
         _pcPad.Stop();
-        _events.Log("PC controller for gyro: off");
+        _events.Log("PC controller for gyro ratchet: off");
     }
 
     private void ReadPcPad()

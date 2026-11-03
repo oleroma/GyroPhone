@@ -26,7 +26,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
 
-/** "Use PC controller for gyro": each gyro axis's share, the controller's gyro buttons and STATE_GYRO. */
+/** "Use PC controller for gyro ratchet": each gyro axis's share, the controller's gyro buttons and STATE_GYRO. */
 class PcGyroTest {
     private val routes = Bindings.gyroMouseMappings()
     private val yaw = MotionAxis.YAW.ordinal

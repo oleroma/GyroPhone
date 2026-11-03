@@ -4,7 +4,7 @@ using GyroPhone.Host.Abstractions;
 namespace GyroPhone.Windows;
 
 /// <summary>
-/// "Use PC controller for gyro": reads the first XInput controller that is not our own virtual
+/// "Use PC controller for gyro ratchet": reads the first XInput controller that is not our own virtual
 /// pad, every millisecond on its own thread, and counts each button's presses so a short one
 /// between two STATEs is not lost. Free slots are looked at only once a second (a query on an
 /// empty slot is slow). Reading never takes the controller away from games or Steam Input.
@@ -101,7 +101,7 @@ public sealed class XInputPcPad : IPcPad, IDisposable
                     lastScan = now;
                     if (OwnSlot() == slot)
                     {
-                        _log?.Invoke($"PC controller for gyro: controller {slot + 1} is our own pad, looking again");
+                        _log?.Invoke($"PC controller for gyro ratchet: controller {slot + 1} is our own pad, looking again");
                         slot = -1;
                         lastScan = -RescanMs;
                     }
@@ -111,14 +111,14 @@ public sealed class XInputPcPad : IPcPad, IDisposable
                     lastScan = now;
                     slot = Scan();
                     lock (_gate) Volatile.Write(ref _slot, slot);
-                    if (slot >= 0) _log?.Invoke($"PC controller for gyro: reading XInput controller {slot + 1}");
+                    if (slot >= 0) _log?.Invoke($"PC controller for gyro ratchet: reading XInput controller {slot + 1}");
                 }
                 if (slot >= 0)
                 {
                     if (TryGet(slot, out var g)) Store(g);
                     else
                     {
-                        _log?.Invoke($"PC controller for gyro: controller {slot + 1} went away");
+                        _log?.Invoke($"PC controller for gyro ratchet: controller {slot + 1} went away");
                         slot = -1;
                         lock (_gate)
                         {
@@ -132,7 +132,7 @@ public sealed class XInputPcPad : IPcPad, IDisposable
         }
         catch (Exception e)
         {
-            _log?.Invoke($"PC controller for gyro stopped: {e.GetType().Name}: {e.Message}");
+            _log?.Invoke($"PC controller for gyro ratchet stopped: {e.GetType().Name}: {e.Message}");
         }
         finally
         {

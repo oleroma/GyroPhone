@@ -166,7 +166,7 @@ object PacketType {
     const val OVERLAY = 0x24
     /** Sent only while HOST_STATUS has [HostStatusFlags.OVERLAY]: the layout, in pieces. */
     const val OVERLAY_LAYOUT = 0x25
-    /** Sent instead of STATE_HIRES while "Use PC controller for gyro" is on and WELCOME has [HostFlags.GYRO_GATE]. */
+    /** Sent instead of STATE_HIRES while "Use PC controller for gyro ratchet" is on and WELCOME has [HostFlags.GYRO_GATE]. */
     const val STATE_GYRO = 0x26
     /** Sent once a second (and on change) to a host with [HostFlags.GYRO_GATE]: the controller's gyro buttons. */
     const val PAD_GYRO = 0x27

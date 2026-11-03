@@ -2,7 +2,7 @@ using GyroPhone.Protocol;
 
 namespace GyroPhone.Tests;
 
-/// <summary>"Use PC controller for gyro": STATE_GYRO rewritten for a controller plugged into the PC.</summary>
+/// <summary>"Use PC controller for gyro ratchet": STATE_GYRO rewritten for a controller plugged into the PC.</summary>
 public class GyroGateTests
 {
     private const int L1 = 4, North = 3;

@@ -2,7 +2,7 @@ namespace GyroPhone.Protocol;
 
 /// <summary>
 /// The STATE_GYRO tail after STATE_HIRES: what the phone's gyro moved and each gyro axis's share,
-/// so a controller plugged into the host can ratchet the gyro ("Use PC controller for gyro").
+/// so a controller plugged into the host can ratchet the gyro ("Use PC controller for gyro ratchet").
 /// Mouse and wheel shares are cumulative wrapping i16 totals; pad shares are absolute.
 /// </summary>
 public sealed class GyroShares
@@ -86,7 +86,7 @@ public sealed class PadGyroConfig
     /// <summary>A kind bit: the button toggles the gyro (the low 3 bits are the axes its ratchets flip).</summary>
     public const byte KindToggle = 8;
 
-    /// <summary>"Use PC controller for gyro" is on at the phone.</summary>
+    /// <summary>"Use PC controller for gyro ratchet" is on at the phone.</summary>
     public bool Enabled;
     /// <summary>Changes when the phone's own Toggle gyro resets (workspace or its gyro changed).</summary>
     public byte Epoch;

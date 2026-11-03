@@ -4,7 +4,7 @@ import com.oleroma.gyrophone.core.engine.GyroMouse
 import kotlin.math.roundToInt
 
 /**
- * "Use PC controller for gyro": what the PC needs to ratchet the gyro from a controller plugged
+ * "Use PC controller for gyro ratchet": what the PC needs to ratchet the gyro from a controller plugged
  * into it, without sending its presses back. STATE goes out as STATE_GYRO with each gyro axis's
  * share of the motion ([encodeExt]), so the PC can take out an axis its controller ratchets or
  * put in one it engages; PAD_GYRO ([encodeButtons]) says which controller buttons do that.
@@ -15,7 +15,7 @@ import kotlin.math.roundToInt
  * pad shares absolute.
  */
 class PcGyroFeed {
-    /** The user's switch ("Use PC controller for gyro"). */
+    /** The user's switch ("Use PC controller for gyro ratchet"). */
     @Volatile var enabled = false
 
     /** The PC in this session takes STATE_GYRO and PAD_GYRO (WELCOME has [HostFlags.GYRO_GATE] and STATE_HIRES). */

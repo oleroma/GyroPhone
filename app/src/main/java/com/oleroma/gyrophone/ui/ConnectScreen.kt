@@ -150,11 +150,11 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
                 }
             }
         },
-        if (wifi) category(runtime, "pcControllerGyro", "PC controller for gyro", "Ratchet the gyro from a controller plugged into the PC") {
-            Searchable("Use PC controller for gyro", "controller gamepad plugged PC ratchet toggle gyro Steam Input XInput") {
+        if (wifi) category(runtime, "pcControllerGyro", "PC controller for gyro ratchet", "Ratchet the gyro from a controller plugged into the PC") {
+            Searchable("Use PC controller for gyro ratchet", "controller gamepad plugged PC ratchet toggle gyro Steam Input XInput") {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Use PC controller for gyro", Modifier.weight(1f))
+                        Text("Use PC controller for gyro ratchet", Modifier.weight(1f))
                         Switch(checked = pcControllerGyro, onCheckedChange = { runtime.setPcControllerGyro(it) })
                     }
                     Text(

@@ -207,7 +207,7 @@ internal sealed class HomePage : Page
             : !s.DriverOk
                 ? $"No gamepad: {v.PadError ?? "the ViGEmBus driver is missing"}."
                 : s.PadPlugged ? "Virtual pad plugged in · ViGEmBus ok." : "Virtual pad plugs in when the phone connects · ViGEmBus ok.";
-        // "Use PC controller for gyro" on the phone.
+        // "Use PC controller for gyro ratchet" on the phone.
         Parts.Show(_pcSub, s.PcController != null);
         _pcSub.Text = s.PcController is { Length: > 0 } name
             ? $"Gyro ratchet from the PC controller: {name}."

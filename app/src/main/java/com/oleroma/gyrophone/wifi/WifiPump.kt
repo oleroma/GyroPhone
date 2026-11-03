@@ -49,7 +49,7 @@ class WifiPump(private val engine: MappingEngine) {
     /** The phone overlay's data: sent while [OverlayFeed.wanted] (the PC's overlay is on). */
     @Volatile var overlay: OverlayFeed? = null
 
-    /** "Use PC controller for gyro": STATE_GYRO and PAD_GYRO for a PC that takes them. */
+    /** "Use PC controller for gyro ratchet": STATE_GYRO and PAD_GYRO for a PC that takes them. */
     @Volatile var pcGyro: PcGyroFeed? = null
 
     /** STATE packets handed to / refused by the socket during the last full second. */

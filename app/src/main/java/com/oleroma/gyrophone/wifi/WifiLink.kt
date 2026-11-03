@@ -107,7 +107,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** The PC's phone overlay: its data is gathered and sent while the PC's HOST_STATUS asks for it. */
     val overlay = OverlayFeed()
 
-    /** "Use PC controller for gyro": the gyro's shares and the controller's gyro buttons for the PC. */
+    /** "Use PC controller for gyro ratchet": the gyro's shares and the controller's gyro buttons for the PC. */
     val pcGyro = PcGyroFeed()
     private val accessory = AccessoryBridge(appContext)
 
