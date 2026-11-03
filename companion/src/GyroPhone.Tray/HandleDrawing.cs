@@ -6,7 +6,7 @@ namespace GyroPhone.Tray;
 /// <summary>
 /// The phone overlay's controller handles: two rounded slabs on the phone's left and right sides
 /// (Switch style, one layout for every controller), as thick as the phone, with the face buttons,
-/// D-pad, sticks, − + Home Capture on the front, L1 / R1 on the top edge and L2 / R2 on the back
+/// D-pad, sticks, − + Home on the front, L1 / R1 on the top edge and L2 / R2 on the back
 /// near the top. The shoulder buttons barely show from the screen side, so each handle's front also
 /// has two pills by its top edge: the bumper's lights while pressed, the trigger's fills as it's pulled.
 /// </summary>
@@ -95,17 +95,16 @@ internal static class HandleDrawing
         Pill(g, v, zs, X(0.04f * h), X(0.18f * h), Y(0.04f), Y(0.085f), l1 ? 1f : 0f, lit, idleFill, idle, penWidth);
         Pill(g, v, zs, X(0.20f * h), X(0.34f * h), Y(0.04f), Y(0.085f), pull, lit, idleFill, idle, penWidth);
 
-        // − / +, Capture / Home near the phone.
+        // − / + and Home near the phone.
         float mid = X(Width / 2 * h); // every button and stick on the handle's middle line
-        float near = X(0.07f * h); // −, +, Capture and Home by the phone's edge
+        float near = X(0.07f * h); // −, + and Home by the phone's edge
         float sx = near, sy = Y(0.14f);
         float bl = 0.035f * h, bt = 0.011f * h;
         bool menu = Held(side < 0 ? OverlayFrame.PadMinus : OverlayFrame.PadPlus);
         Box(sx - bl, sy - bt, sx + bl, sy + bt, menu);
         if (side > 0) Box(sx - bt, sy - bl, sx + bt, sy + bl, menu);
         float hx = near, hy = Y(0.92f);
-        if (side < 0) Box(hx - 0.025f * h, hy - 0.025f * h, hx + 0.025f * h, hy + 0.025f * h, Held(OverlayFrame.PadCapture));
-        else Round(hx, hy, 0.03f * h, Held(OverlayFrame.PadHome));
+        if (side > 0) Round(hx, hy, 0.03f * h, Held(OverlayFrame.PadHome)); // no Capture: Android has no key for it
 
         // Left: stick above the D-pad. Right: the face buttons above the stick.
         float stickB = side < 0 ? 0.33f : 0.68f, padB = side < 0 ? 0.68f : 0.33f;
