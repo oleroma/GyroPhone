@@ -97,12 +97,13 @@ internal static class HandleDrawing
 
         // − / +, Capture / Home near the phone.
         float mid = X(Width / 2 * h); // every button and stick on the handle's middle line
-        float sx = mid, sy = Y(0.14f);
+        float near = X(0.07f * h); // −, +, Capture and Home by the phone's edge
+        float sx = near, sy = Y(0.14f);
         float bl = 0.035f * h, bt = 0.011f * h;
         bool menu = Held(side < 0 ? OverlayFrame.PadMinus : OverlayFrame.PadPlus);
         Box(sx - bl, sy - bt, sx + bl, sy + bt, menu);
         if (side > 0) Box(sx - bt, sy - bl, sx + bt, sy + bl, menu);
-        float hx = mid, hy = Y(0.92f);
+        float hx = near, hy = Y(0.92f);
         if (side < 0) Box(hx - 0.025f * h, hy - 0.025f * h, hx + 0.025f * h, hy + 0.025f * h, Held(OverlayFrame.PadCapture));
         else Round(hx, hy, 0.03f * h, Held(OverlayFrame.PadHome));
 
