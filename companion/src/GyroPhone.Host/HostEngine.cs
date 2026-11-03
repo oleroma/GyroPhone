@@ -1149,12 +1149,12 @@ public sealed class HostEngine
             {
                 into.Qw = p.W; into.Qx = p.X; into.Qy = p.Y; into.Qz = p.Z;
             }
-            if (id != null && _settings.Overlays.FirstOrDefault(o => o.Id == id) is { HandleSource: OverlayHandleSource.Pc })
-                PcPadOnHandles(into);
             else
             {
                 into.Qw = 1; into.Qx = into.Qy = into.Qz = 0;
             }
+            if (id != null && _settings.Overlays.FirstOrDefault(o => o.Id == id) is { HandleSource: OverlayHandleSource.Pc })
+                PcPadOnHandles(into);
             return Math.Max(0, _clock.NowUs - _overlayRxUs);
         }
     }
