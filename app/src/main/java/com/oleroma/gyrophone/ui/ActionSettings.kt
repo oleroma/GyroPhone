@@ -477,12 +477,12 @@ private fun StickTuningSettings(preset: DevicePreset, id: String, update: ((Devi
             "The Outer cards fire while the stick is pushed past this, for example Shift to sprint.",
         ) { v -> set { it.copy(outerRing = v / 100) } }
         OverrideSlider(
-            key + "pieX", "Left and right pies %.0f°", t.pieX, StickTuning.MIN_PIE, StickTuning.MAX_PIE, 5f, t.pieX != d.pieX,
+            key + "pieX", "Left and right pies %.0f°", t.pieX, StickTuning.MIN_PIE..StickTuning.MAX_PIE, 5f, t.pieX != d.pieX,
             { set { it.copy(pieX = d.pieX) } },
             "How wide Left and Right are. Wider than 90° overlaps Up and Down, so a diagonal presses both.",
         ) { v -> set { it.copy(pieX = v) } }
         OverrideSlider(
-            key + "pieY", "Up and down pies %.0f°", t.pieY, StickTuning.MIN_PIE, StickTuning.MAX_PIE, 5f, t.pieY != d.pieY,
+            key + "pieY", "Up and down pies %.0f°", t.pieY, StickTuning.MIN_PIE..StickTuning.MAX_PIE, 5f, t.pieY != d.pieY,
             { set { it.copy(pieY = d.pieY) } },
             "How wide Up and Down are.",
         ) { v -> set { it.copy(pieY = v) } }
