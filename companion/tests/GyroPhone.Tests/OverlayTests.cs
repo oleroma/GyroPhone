@@ -191,48 +191,44 @@ public class OverlayTests
 
     private static float HeadingDeg(GyroPhone.Host.OverlayPose p) => p.Heading() * 180f / MathF.PI;
 
-    [Fact]
-    public void PoseTurnsWithTheGyroAndResetsOnARatchetPress()
+    // Easing on a ratchet press runs by the PC's clock (it goes on while the gyro is paused): these sleep.
+    private static void FeedFor(GyroPhone.Host.OverlayPose p, GyroPhone.Host.Settings.OverlaySettings s, OverlayFrame f, int ms)
     {
-        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = false, Ease = false, ResetSmoothly = false };
+        for (int t = 0; t < ms; t += 20)
+        {
+            System.Threading.Thread.Sleep(20);
+            p.Feed(f, s);
+        }
+    }
+
+    [Fact]
+    public void PoseTurnsWithTheGyroAndEasesBackOnARatchetPress()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings
+        {
+            Gravity = false, Ease = true, EaseOnRatchet = true, EaseDelayMs = 0, EaseBySpeed = true, EaseSpeed = 720,
+        };
         var p = new GyroPhone.Host.OverlayPose();
         for (int i = 0; i < 10; i++) p.Feed(Motion(3f, 0.01f), s); // 30° right
+        // Still, but no press: it stays.
+        FeedFor(p, s, Motion(0f, 0.01f), 100);
         Assert.Equal(30f, HeadingDeg(p), 1);
-        // The press counter changing is a press.
+        // The press counter changing is a press: it eases back, not at once.
         p.Feed(Motion(0f, 0.01f, presses: 1), s);
+        Assert.True(HeadingDeg(p) > 10f);
+        FeedFor(p, s, Motion(0f, 0.01f, presses: 1), 200);
         Assert.Equal(1f, p.W, 4);
-        s.ResetOnRatchet = false;
+        // Easing off: a press does nothing.
+        s.Ease = false;
         p.Feed(Motion(10f, 0.01f, presses: 1), s);
         p.Feed(Motion(0f, 0.01f, presses: 2), s);
         Assert.Equal(10f, HeadingDeg(p), 1);
     }
 
     [Fact]
-    public void ARatchetResetGlidesBackSmoothly()
-    {
-        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = false, Ease = false, ResetSmoothly = true, ResetSeconds = 0.3f };
-        var p = new GyroPhone.Host.OverlayPose();
-        for (int i = 0; i < 10; i++) p.Feed(Motion(3f, 0.01f), s); // 30° right
-        p.Feed(Motion(0f, 0.01f, presses: 1), s);
-        // Not straight at once: on its way back.
-        Assert.True(HeadingDeg(p) > 5f);
-        System.Threading.Thread.Sleep(80);
-        p.Feed(Motion(0f, 0.01f, presses: 1), s);
-        float midway = HeadingDeg(p);
-        Assert.True(midway < 30f && midway > 0f);
-        // Straight once its time is up.
-        for (int i = 0; i < 6; i++)
-        {
-            System.Threading.Thread.Sleep(80);
-            p.Feed(Motion(0f, 0.01f, presses: 1), s);
-        }
-        Assert.Equal(1f, p.W, 4);
-    }
-
-    [Fact]
     public void PoseEasesBackAfterTheDelay()
     {
-        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = false, Ease = true, EaseDelayMs = 100, EaseSeconds = 0.5f };
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = false, Ease = true, EaseOnRatchet = false, EaseDelayMs = 100, EaseSeconds = 0.5f };
         var p = new GyroPhone.Host.OverlayPose();
         p.Feed(Motion(40f, 0.05f), s);
         float start = HeadingDeg(p);
@@ -246,7 +242,7 @@ public class OverlayTests
     [Fact]
     public void GravityHoldsTiltAndEasesTheHeading()
     {
-        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = true, Ease = true, EaseDelayMs = 0, EaseSeconds = 0.2f };
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = true, Ease = true, EaseOnRatchet = false, EaseDelayMs = 0, EaseSeconds = 0.2f };
         var p = new GyroPhone.Host.OverlayPose();
         p.Feed(Motion(30f, 0.01f, up: true), s);
         for (int i = 0; i < 100; i++) p.Feed(Motion(0f, 0.01f, up: true), s);
@@ -369,9 +365,12 @@ public class OverlayTests
     }
 
     [Fact]
-    public void ResetOnRatchetWithGravityShowsTheLevelGripFaceOnEvenLyingFlat()
+    public void EaseOnRatchetWithGravityShowsTheLevelGripFaceOnEvenLyingFlat()
     {
-        var s = new GyroPhone.Host.Settings.OverlaySettings { Gravity = true, Ease = false, ResetSmoothly = false };
+        var s = new GyroPhone.Host.Settings.OverlaySettings
+        {
+            Gravity = true, Ease = true, EaseOnRatchet = true, EaseDelayMs = 0, EaseBySpeed = true, EaseSpeed = 720,
+        };
         var p = new GyroPhone.Host.OverlayPose();
         // Lying flat, screen up: gravity's up is the screen normal.
         OverlayFrame Flat(float turnDeg, byte presses)
@@ -386,6 +385,7 @@ public class OverlayTests
         for (int i = 0; i < 10; i++) p.Feed(Flat(4f, 0), s);
         Assert.True(Angle(Shown(p, s.Rest)) > 30f);
         p.Feed(Flat(0f, 1), s);
+        FeedFor(p, s, Flat(0f, 1), 200);
         Assert.True(Angle(Shown(p, s.Rest)) < 2f);
     }
 

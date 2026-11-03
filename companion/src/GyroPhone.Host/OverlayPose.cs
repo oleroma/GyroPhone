@@ -22,6 +22,8 @@ public sealed class OverlayPose
     private const float GSlack = 0.15f;
     /// <summary>Slower than this (deg/s, all axes) counts as the phone being still.</summary>
     private const float StillDps = 5f;
+    /// <summary>Eased this close (radians), it is straight.</summary>
+    private const float StraightRad = 0.2f * DegToRad;
 
     private float _w = 1, _x, _y, _z;
     private float _upX, _upY, _upZ;
@@ -37,9 +39,8 @@ public sealed class OverlayPose
     private int _lastPresses = -1;
     private float[]? _rest;
 
-    // A ratchet reset gliding back (Reset smoothly): what it turns back, how fast and for how long.
-    private bool _glide, _glideHeading;
-    private float _glideSpeed, _glideLeft;
+    /// <summary>Easing back after a ratchet press (Ease on ratchet), until straight.</summary>
+    private bool _easing;
     private long _lastFeedAt;
 
     public float W => _w;
@@ -57,7 +58,7 @@ public sealed class OverlayPose
 
     private void ResetPose()
     {
-        _glide = false;
+        _easing = false;
         _w = 1; _x = _y = _z = 0;
         _hasUp = false;
         _settling = SettleS;
@@ -94,21 +95,22 @@ public sealed class OverlayPose
         if (f.HasUp && gravity) SetUp(f.UpX, f.UpY, f.UpZ, 1f);
         if (f.HasNorth && compass) SetNorth(f.NorthX, f.NorthY, f.NorthZ);
 
-        // Time since the last frame, kept apart from the turn's: the glide goes on while the gyro is paused.
+        // Time since the last frame, kept apart from the turn's: easing after a press goes on while the gyro is paused.
         long now = System.Diagnostics.Stopwatch.GetTimestamp();
         float wall = _lastFeedAt == 0 ? 0f : Math.Min((now - _lastFeedAt) / (float)System.Diagnostics.Stopwatch.Frequency, 0.1f);
         _lastFeedAt = now;
 
-        if (pressed && s.ResetOnRatchet)
+        // With the compass the heading is the compass's: a ratchet press aims it again.
+        if (pressed && compass) _aimPending = true;
+        bool onRatchet = s.Ease && s.EaseOnRatchet && !compass;
+        if (!onRatchet) _easing = false;
+        else if (pressed)
         {
-            // With gravity the tilt is the world's: only the heading can go back.
-            bool headingOnly = gravity || s.ResetHeadingOnly;
-            if (headingOnly && compass) _aimPending = true;
-            else if (s.ResetSmoothly) StartGlide(headingOnly, s.ResetSeconds);
-            else if (headingOnly) TurnVertical(HeadingFrom(_rest));
-            else ResetPose();
+            _easing = true;
+            _calm = 0f;
         }
-        if (_glide) Glide(wall);
+        // Each ratchet press eases it back until straight, also while the gyro is paused.
+        if (_easing) EaseAfterPress(s, gravity, wall);
 
         float dt = f.TurnSeconds;
         if (!f.PoseLive || dt <= 0f) return;
@@ -119,15 +121,38 @@ public sealed class OverlayPose
             float k = DegToRad * dt;
             Turn(((f.Axes & 2) != 0 ? pitch : 0f) * k, -((f.Axes & 1) != 0 ? yaw : 0f) * k, -((f.Axes & 4) != 0 ? roll : 0f) * k);
         }
-        if (!s.Ease || compass || _glide) return;
-        bool busy = s.EaseAfterRatchet ? f.RatchetHeld : MathF.Sqrt(yaw * yaw + pitch * pitch + roll * roll) > StillDps;
+        if (!s.Ease || compass || s.EaseOnRatchet) return;
+        bool busy = MathF.Sqrt(yaw * yaw + pitch * pitch + roll * roll) > StillDps;
         _calm = busy ? 0f : _calm + dt;
         if (busy || _calm < Math.Clamp(s.EaseDelayMs, 0, 3000) / 1000f) return;
+        EaseBack(s, gravity, dt);
+    }
+
+    /// <summary>One step of easing back over <paramref name="dt"/> seconds: the heading (always with gravity) or the whole pose.</summary>
+    private void EaseBack(OverlaySettings s, bool gravity, float dt)
+    {
         // By time: an exponential, 95% of the way back after EaseSeconds.
         float amount = s.EaseBySpeed
             ? Math.Clamp(s.EaseSpeed, 1f, 3600f) * DegToRad * dt
             : 3f * dt / Math.Max(s.EaseSeconds, 0.05f);
-        if (gravity) EaseHeading(s.EaseBySpeed, amount); else EaseAll(s.EaseBySpeed, amount);
+        if (gravity || s.EaseHeadingOnly) EaseHeading(s.EaseBySpeed, amount); else EaseAll(s.EaseBySpeed, amount);
+    }
+
+    /// <summary>Easing after a ratchet press: after the delay, until it is (nearly) straight, then exactly straight.</summary>
+    private void EaseAfterPress(OverlaySettings s, bool gravity, float dt)
+    {
+        _calm += dt;
+        if (_calm < Math.Clamp(s.EaseDelayMs, 0, 3000) / 1000f) return;
+        EaseBack(s, gravity, dt);
+        bool heading = gravity || s.EaseHeadingOnly;
+        float left = heading ? MathF.Abs(HeadingFrom(_rest)) : 2 * MathF.Acos(Math.Min(MathF.Abs(_w), 1f));
+        if (left > StraightRad) return;
+        _easing = false;
+        if (heading) TurnVertical(HeadingFrom(_rest));
+        else
+        {
+            _w = 1; _x = _y = _z = 0;
+        }
     }
 
     /// <summary>
@@ -269,30 +294,6 @@ public sealed class OverlayPose
         }
         if (sn * sn + cn * cn < 1e-8f) return 0f;
         return MathF.Atan2(sn, cn);
-    }
-
-    /// <summary>Starts gliding back to straight (the heading, or the whole pose) over <paramref name="seconds"/>.</summary>
-    private void StartGlide(bool headingOnly, float seconds)
-    {
-        seconds = Math.Clamp(seconds, 0.05f, 3f);
-        float a = headingOnly ? MathF.Abs(HeadingFrom(_rest)) : 2 * MathF.Acos(Math.Min(MathF.Abs(_w), 1f));
-        _glide = true;
-        _glideHeading = headingOnly;
-        _glideSpeed = a / seconds;
-        _glideLeft = seconds;
-    }
-
-    /// <summary>One step of the glide, at a steady speed; when its time is up whatever is left goes at once.</summary>
-    private void Glide(float dt)
-    {
-        _glideLeft -= dt;
-        if (_glideLeft <= 0f)
-        {
-            _glide = false;
-            if (_glideHeading) TurnVertical(HeadingFrom(_rest)); else ResetPose();
-            return;
-        }
-        if (_glideHeading) EaseHeading(true, _glideSpeed * dt); else EaseAll(true, _glideSpeed * dt);
     }
 
     private void TurnHeading(float a)
