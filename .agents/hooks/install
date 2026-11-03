@@ -92,7 +92,7 @@ swap_keys() {
   gp_data="$(cygpath -u "$APPDATA")/GyroPhone"
 
   if ! command -v adb >/dev/null 2>&1 ||
-    [ "$(adb devices | awk 'NR > 1 && $2 == "device"' | wc -l | tr -d ' ')" != 1 ]; then
+    [ "$(adb devices | awk -F'\t' 'NR > 1 && $2 == "device"' | wc -l | tr -d ' ')" != 1 ]; then
     note "Key pairing skipped: no single phone connected over adb."
     return
   fi

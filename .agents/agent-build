@@ -164,18 +164,18 @@ build_pc() {
   for name in "${names[@]}"; do summary+=("File: $BUILD_DIR/$name"); done
 
   # Install it. agent-install prints its own result and summary; keep the summary lines.
-  local out away=()
-  if out="$(bash "$AGENTS_DIR/agent-install" "$version-$commit")"; then
-    while IFS= read -r line; do
-      case "$line" in
-        "result: "* | "log: "* | "Installed build "*) ;;
-        "phone-away: "*) away+=("${line#phone-away: }") ;;
-        *) summary+=("$line") ;;
-      esac
-    done <<<"$out"
-  else
-    summary+=("Install failed: $(grep -v -e '^result: ' -e '^log: ' <<<"$out" | head -n 1)" "Install log: $(sed -n 's/^log: //p' <<<"$out")")
-  fi
+  # A failed install doesn't fail the build: it was built (and is checked below); the summary
+  # says why the phone didn't get it, and an APK it couldn't install is published for Obtainium.
+  local out away=() installed=1
+  out="$(bash "$AGENTS_DIR/agent-install" "$version-$commit")" || installed=0
+  while IFS= read -r line; do
+    case "$line" in
+      "result: "* | "Installed build "* | "Install of build "*) ;;
+      "log: "*) if [ "$installed" = 0 ]; then summary+=("Install log: ${line#log: }"); fi ;;
+      "phone-away: "*) away+=("${line#phone-away: }") ;;
+      *) summary+=("$line") ;;
+    esac
+  done <<<"$out"
   echo "$out"
 
   # The full checks, after the install so the phone gets the build first. A CI build of this
