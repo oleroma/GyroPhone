@@ -1372,16 +1372,16 @@ internal fun ControlMappingScreen(
                         if (inputs.any { (Bindings.targets(view, it).ifEmpty { parentOf(it) }).any { t -> t != OutputTarget.NoOutput } }) {
                             TextButton(onClick = { clearAll() }, contentPadding = compact) { Text("✕ Clear all") }
                         }
-                        // A touch control's shared action settings are its "Button defaults"; its own
-                        // settings (size, shape, look...) sit next to them.
+                        // One Settings: a touch control's own page (its look and the settings its actions
+                        // share), else the shared settings (the touchpad's: the workspace's).
                         val shared = settings?.shared
                         val ownSettings = onSettings != null && !control.isTouchpadStandIn && physicalInputs == null
-                        if (shared != null) TextButton(onClick = { sharedOpen = true }, contentPadding = compact) {
-                            Text(if (ownSettings) "⚙ Button defaults" else "⚙ Settings")
+                        val openSettings: (() -> Unit)? = when {
+                            ownSettings -> onSettings
+                            shared != null -> ({ sharedOpen = true })
+                            else -> onSettings
                         }
-                        if (onSettings != null && (shared == null || ownSettings)) {
-                            TextButton(onClick = onSettings, contentPadding = compact) { Text("Settings") }
-                        }
+                        if (openSettings != null) TextButton(onClick = openSettings, contentPadding = compact) { Text("⚙ Settings") }
                         TextButton(
                             onClick = { undoLast() },
                             enabled = undo.isNotEmpty(),
@@ -1559,33 +1559,12 @@ internal fun ControlMappingScreen(
     }
     val shared = settings?.shared
     if (sharedOpen && shared != null) {
-        Dialog(onDismissRequest = { sharedOpen = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(Modifier.fillMaxSize(), color = colors.surface) {
-                Column(Modifier.fillMaxSize()) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(control.label.ifBlank { control.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                if (control.isTouchpadStandIn) "The empty pad area · this workspace's settings"
-                                else controlKindName(control) + " · settings its actions share",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colors.onSurfaceVariant,
-                            )
-                        }
-                        FilledTonalButton(onClick = { sharedOpen = false }) { Text("Done") }
-                    }
-                    Column(
-                        Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Column(Modifier.widthIn(max = 720.dp)) { shared() }
-                    }
-                }
-            }
-        }
+        SettingsDialog(
+            title = control.label.ifBlank { control.id },
+            subtitle = if (control.isTouchpadStandIn) "The empty pad area · this workspace's settings"
+            else controlKindName(control) + " · settings its actions share",
+            onClose = { sharedOpen = false },
+        ) { shared() }
     }
     layerDraft?.let { (input, t) ->
         LayerTargetDialog(

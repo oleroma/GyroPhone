@@ -51,7 +51,10 @@ fun WifiPanel(runtime: GamepadRuntime, stats: LinkStats, modifier: Modifier = Mo
     val connected = state is LinkState.Connected
     val sessionActive = state is LinkState.Connected || state is LinkState.Connecting || state is LinkState.HostSilent
 
-    Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Searchable(
+        "Wi-Fi", "PC connection status scan QR code pair new phone paired PCs found on this network enter PC address IP connect disconnect forget",
+        *paired.map { it.name }.toTypedArray(), *found.map { it.name }.toTypedArray(),
+    ) { Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(statusLine(state))
         notice?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (sessionActive && pairedByKey) {
@@ -157,37 +160,7 @@ fun WifiPanel(runtime: GamepadRuntime, stats: LinkStats, modifier: Modifier = Mo
             OutlinedButton(onClick = { wifi.connectByIp(address) }, enabled = address.isNotBlank()) { Text("Find") }
         }
 
-        KeyPairingSection(wifi)
-
-        Text("Link", style = MaterialTheme.typography.titleSmall)
-        Text(
-            "Sent ${stats.sentPerSecond}/s" +
-                (stats.hostRxPerSecond?.let { " · PC got $it/s" } ?: "") +
-                (stats.lossPercent?.let { " · loss " + "%.1f".format(it) + " %" } ?: ""),
-        )
-        if (stats.latP50Ms != null || stats.rttMs != null) {
-            Text(
-                listOfNotNull(
-                    stats.latP50Ms?.let { "latency p50 " + "%.1f".format(it) + " ms" },
-                    stats.latP99Ms?.let { "p99 " + "%.1f".format(it) + " ms" },
-                    stats.rttMs?.let { "RTT " + "%.1f".format(it) + " ms" },
-                ).joinToString(" · ").replaceFirstChar { it.uppercase() },
-            )
-        }
-        Text(
-            if (stats.usb) "Over " + (if (stats.usbDirect) "the USB cable" else "USB tethering") + " (Wi-Fi takes over when the cable comes out)"
-            else "Low-latency Wi-Fi: " + (if (stats.lowLatencyLock == true) "on" else "off") + " (keep GyroPhone on screen)",
-            style = MaterialTheme.typography.bodySmall,
-        )
-        if (!stats.usb) {
-            Text(
-                "Faster by cable: plug the phone into the PC. With USB debugging on, the PC app switches it to a " +
-                    "direct link by itself (allow GyroPhone when the phone asks). USB tethering works too.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
+    } }
 
     pairing?.let { view ->
         PairDialog(view, onConfirm = { wifi.confirmPair() }, onCancel = { wifi.cancelPair() }, onDismiss = { wifi.dismissPair() })
@@ -220,3 +193,37 @@ private fun warnings(stats: LinkStats): List<String> = listOfNotNull(
         null
     },
 )
+
+/** Connect tab, Wi-Fi: how the link does (rates, loss, latency) and whether it runs over USB. */
+@Composable
+fun WifiLinkSection(stats: LinkStats) = Searchable(
+    "Link quality", "sent loss latency RTT USB cable tethering low-latency Wi-Fi faster by cable",
+) { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "Sent ${stats.sentPerSecond}/s" +
+                (stats.hostRxPerSecond?.let { " · PC got $it/s" } ?: "") +
+                (stats.lossPercent?.let { " · loss " + "%.1f".format(it) + " %" } ?: ""),
+        )
+        if (stats.latP50Ms != null || stats.rttMs != null) {
+            Text(
+                listOfNotNull(
+                    stats.latP50Ms?.let { "latency p50 " + "%.1f".format(it) + " ms" },
+                    stats.latP99Ms?.let { "p99 " + "%.1f".format(it) + " ms" },
+                    stats.rttMs?.let { "RTT " + "%.1f".format(it) + " ms" },
+                ).joinToString(" · ").replaceFirstChar { it.uppercase() },
+            )
+        }
+        Text(
+            if (stats.usb) "Over " + (if (stats.usbDirect) "the USB cable" else "USB tethering") + " (Wi-Fi takes over when the cable comes out)"
+            else "Low-latency Wi-Fi: " + (if (stats.lowLatencyLock == true) "on" else "off") + " (keep GyroPhone on screen)",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        if (!stats.usb) {
+            Text(
+                "Faster by cable: plug the phone into the PC. With USB debugging on, the PC app switches it to a " +
+                    "direct link by itself (allow GyroPhone when the phone asks). USB tethering works too.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+} }

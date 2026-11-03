@@ -894,9 +894,7 @@ fun PadScreen(
                         }
                         val pressedAt = first.uptimeMillis
                         var lastAt = pressedAt
-                        // Empty space: a tap opens the touchpad's mappings, a long press its settings;
-                        // with something selected, a tap there only closes it.
-                        val hadSelection = selected != null
+                        // Empty space: a tap clears the selection, a long press opens the touchpad's mappings.
                         // A drag moves the selected control from wherever it starts, never what is under the finger
                         // (with Select on: the picked ones, held by the one under the finger if it is picked).
                         val sel = if (selecting) {
@@ -922,9 +920,10 @@ fun PadScreen(
                             }
                             if (next == null) {
                                 if (mode == EditGesture.EMPTY) {
+                                    // On empty space: the touchpad's mapping editor, like any button's.
                                     mode = EditGesture.NONE
                                     selected = TOUCHPAD_SELECTION
-                                    menu = EditMenu.CONTEXT
+                                    menu = EditMenu.MAPPING
                                 } else {
                                     // A long press opens the mapping editor (a corner or a gyro display: its menu).
                                     mode = EditGesture.HELD
@@ -1171,8 +1170,9 @@ fun PadScreen(
                             }
 
                             mode == EditGesture.EMPTY -> {
-                                selected = if (hadSelection) null else TOUCHPAD_SELECTION
-                                menu = if (hadSelection) EditMenu.NONE else EditMenu.MAPPING
+                                // A tap on empty space only clears the selection (a long press maps the touchpad).
+                                selected = null
+                                menu = EditMenu.NONE
                             }
 
                             else -> Unit
@@ -2058,24 +2058,10 @@ fun PadScreen(
                         fun addAt(at: Offset?, c: TouchControl) =
                             if (at == null) place(c, 0.5f, 0.5f) else placeSnapped(c, at.x / w, at.y / h)
 
-                        // Fixed: dots (move), ⚙ (this workspace's settings), undo, redo, lock, Done, Cancel, Select, Group / Ungroup.
-                        // Then a scrolling strip of the layout tools.
+                        // Fixed: dots (move), undo, redo. Then a scrolling strip: ⚙ (this workspace's settings), lock,
+                        // Done, Cancel, Select, Group / Ungroup, and the layout tools.
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             DragDots()
-                            Text(
-                                "⚙",
-                                color = Color.White,
-                                style = MaterialTheme.typography.titleLarge,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .clickable {
-                                        // The settings page edits the saved workspace: keep the layout edits first.
-                                        finishEditing()
-                                        releaseAll()
-                                        onWorkspaceSettings()
-                                    }
-                                    .padding(horizontal = 8.dp, vertical = 2.dp),
-                            )
                             // Undo, redo, and the lock that keeps drags and pinches from changing the layout.
                             @Composable
                             fun MenuIcon(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) = Icon(
@@ -2094,71 +2080,86 @@ fun PadScreen(
                                 undoSteps.isNotEmpty() || (undoBase[0] != null && draft !== undoBase[0]),
                             ) { undoEdit() }
                             MenuIcon(EditIcons.Redo, "Redo", redoSteps.isNotEmpty()) { redoEdit() }
-                            MenuIcon(
-                                if (layoutLocked) EditIcons.Lock else EditIcons.LockOpen,
-                                if (layoutLocked) "Unlock layout" else "Lock layout",
-                                true,
-                            ) { runtime.setEditLayoutLocked(!layoutLocked) }
-                            Row(
-                                Modifier.padding(start = 2.dp, end = 6.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                FilledTonalButton(
-                                    contentPadding = compact,
-                                    onClick = { finishEditing() }) { Text("Done") }
-                                OutlinedButton(contentPadding = compact, onClick = {
-                                    // Nothing changed: leave at once; else ask first.
-                                    if (draft == profile) discardEdits() else confirmingCancel = true
-                                }) { Text("Cancel") }
-                                val pickColors = ButtonDefaults.filledTonalButtonColors(
-                                    containerColor = PICKED_COLOR,
-                                    contentColor = Color.Black,
+                            ScrollStrip {
+                                // Everything but undo and redo scrolls, so a narrow (portrait) panel reaches it all.
+                                Text(
+                                    "⚙",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .clickable {
+                                            // The workspace's settings, the same page as the touchpad's Settings
+                                            // in its mapping editor, on the draft like the rest of edit mode.
+                                            selected = TOUCHPAD_SELECTION
+                                            menu = EditMenu.CONTEXT
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 2.dp),
                                 )
-                                // Select: taps pick several controls to move together, and Group joins them.
-                                // Turning it off keeps a group that was picked selected (ready to pinch).
-                                if (selectMode) {
-                                    FilledTonalButton(contentPadding = compact, colors = pickColors, onClick = {
-                                        val controls = editControls()
-                                        val left = picked.filterTo(LinkedHashSet()) { id -> controls.any { it.id == id } }
-                                        selected = if (ControlGroups.units(controls, left) == 1) left.first() else null
-                                        picked = emptySet()
-                                        selectMode = false
-                                    }) { Text("Select") }
-                                    val controls = editControls()
-                                    if (ControlGroups.units(controls, picked) >= 2) {
-                                        FilledTonalButton(
-                                            contentPadding = compact,
-                                            colors = pickColors,
-                                            onClick = { editWorkspace { ControlGroups.group(it, picked) } }) { Text("Group") }
-                                    }
-                                    if (ControlGroups.anyGrouped(controls, picked)) {
-                                        FilledTonalButton(
-                                            contentPadding = compact,
-                                            colors = pickColors,
-                                            onClick = { editWorkspace { ControlGroups.ungroup(it, picked) } }) { Text("Ungroup") }
-                                    }
-                                } else {
-                                    OutlinedButton(contentPadding = compact, onClick = {
-                                        val s = findControl(selected)
-                                        picked = if (s != null && draft?.let { isCorner(it, s.id) } == false) {
-                                            ControlGroups.unitOf(editControls(), s.id)
-                                        } else emptySet()
-                                        selected = null
-                                        menu = EditMenu.NONE
-                                        selectMode = true
-                                    }) { Text("Select") }
-                                }
-                                // A selected control in a group: Ungroup (amber, like its other buttons).
-                                val grouped = if (selectMode) null else findControl(selected)?.takeIf { it.group != null }
-                                if (grouped != null) {
+                                MenuIcon(
+                                    if (layoutLocked) EditIcons.Lock else EditIcons.LockOpen,
+                                    if (layoutLocked) "Unlock layout" else "Lock layout",
+                                    true,
+                                ) { runtime.setEditLayoutLocked(!layoutLocked) }
+                                Row(
+                                    Modifier.padding(start = 2.dp, end = 6.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
                                     FilledTonalButton(
                                         contentPadding = compact,
-                                        colors = ButtonDefaults.filledTonalButtonColors(containerColor = SELECTED_COLOR, contentColor = Color.Black),
-                                        onClick = { editWorkspace { ControlGroups.ungroup(it, listOf(grouped.id)) } }) { Text("Ungroup") }
+                                        onClick = { finishEditing() }) { Text("Done") }
+                                    OutlinedButton(contentPadding = compact, onClick = {
+                                        // Nothing changed: leave at once; else ask first.
+                                        if (draft == profile) discardEdits() else confirmingCancel = true
+                                    }) { Text("Cancel") }
+                                    val pickColors = ButtonDefaults.filledTonalButtonColors(
+                                        containerColor = PICKED_COLOR,
+                                        contentColor = Color.Black,
+                                    )
+                                    // Select: taps pick several controls to move together, and Group joins them.
+                                    // Turning it off keeps a group that was picked selected (ready to pinch).
+                                    if (selectMode) {
+                                        FilledTonalButton(contentPadding = compact, colors = pickColors, onClick = {
+                                            val controls = editControls()
+                                            val left = picked.filterTo(LinkedHashSet()) { id -> controls.any { it.id == id } }
+                                            selected = if (ControlGroups.units(controls, left) == 1) left.first() else null
+                                            picked = emptySet()
+                                            selectMode = false
+                                        }) { Text("Select") }
+                                        val controls = editControls()
+                                        if (ControlGroups.units(controls, picked) >= 2) {
+                                            FilledTonalButton(
+                                                contentPadding = compact,
+                                                colors = pickColors,
+                                                onClick = { editWorkspace { ControlGroups.group(it, picked) } }) { Text("Group") }
+                                        }
+                                        if (ControlGroups.anyGrouped(controls, picked)) {
+                                            FilledTonalButton(
+                                                contentPadding = compact,
+                                                colors = pickColors,
+                                                onClick = { editWorkspace { ControlGroups.ungroup(it, picked) } }) { Text("Ungroup") }
+                                        }
+                                    } else {
+                                        OutlinedButton(contentPadding = compact, onClick = {
+                                            val s = findControl(selected)
+                                            picked = if (s != null && draft?.let { isCorner(it, s.id) } == false) {
+                                                ControlGroups.unitOf(editControls(), s.id)
+                                            } else emptySet()
+                                            selected = null
+                                            menu = EditMenu.NONE
+                                            selectMode = true
+                                        }) { Text("Select") }
+                                    }
+                                    // A selected control in a group: Ungroup (amber, like its other buttons).
+                                    val grouped = if (selectMode) null else findControl(selected)?.takeIf { it.group != null }
+                                    if (grouped != null) {
+                                        FilledTonalButton(
+                                            contentPadding = compact,
+                                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = SELECTED_COLOR, contentColor = Color.Black),
+                                            onClick = { editWorkspace { ControlGroups.ungroup(it, listOf(grouped.id)) } }) { Text("Ungroup") }
+                                    }
                                 }
-                            }
-                            ScrollStrip {
                                 // The selected control's settings and mappings (a long press opens the mappings).
                                 val chosen = if (selectMode) null else findControl(selected)
                                 if (chosen != null) {
@@ -2341,7 +2342,27 @@ fun PadScreen(
                     selected = null
                     menu = EditMenu.NONE
                 }
-                if (menu == EditMenu.MAPPING) {
+                // The workspace's settings page: edit mode's ⚙ and the touchpad editor's Settings.
+                val workspacePage: @Composable () -> Unit = {
+                    WorkspaceSettingsPage(
+                        runtime, d, editIndex, mapSet, { mapSet = it },
+                        onProfileChange = { p, at ->
+                            val deleted = p.workspaces.size < d.workspaces.size
+                            draft = p
+                            // Rename and duplicate keep editing this one; a delete moves on and closes the page.
+                            if (deleted) {
+                                editIndex = at.coerceIn(0, p.workspaces.lastIndex)
+                                close()
+                            }
+                        },
+                        onWorkspaceChange = { change -> editWorkspace(change) },
+                        draft = true,
+                    )
+                }
+                if (menu != EditMenu.MAPPING) {
+                    SettingsDialog(title = ws.name, subtitle = "Workspace settings", onClose = close) { workspacePage() }
+                } else {
+                    // Its settings are the workspace's: the editor's Settings shows them.
                     ControlMappingScreen(
                         control = TOUCHPAD_STAND_IN,
                         mappings = ws.mappings,
@@ -2349,7 +2370,7 @@ fun PadScreen(
                         onMappingsChange = { m ->
                             editWorkspace { it.copy(mappings = m) }
                         },
-                        onSettings = { menu = EditMenu.CONTEXT },
+                        onSettings = null,
                         onClose = close,
                         sets = ws.sets,
                         editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
@@ -2360,21 +2381,13 @@ fun PadScreen(
                             editWorkspace { it.copy(touchpad = it.touchpad.copy(holdZones = a, dirHoldZones = b)) }
                         },
                         // ⚙ edits the settings of the layer picked in the set bar.
-                        settings = touchpadSettings(runtime, setLevel(ws, d.defaults, mapSet) { change -> editWorkspace(change) }),
+                        settings = touchpadSettings(runtime, setLevel(ws, d.defaults, mapSet) { change -> editWorkspace(change) })
+                            .let { t -> MappingSettings(t.action, shared = workspacePage) },
                         // Base takes the Defaults' mappings of what it does not map; a layer shows Base's greyed.
                         inherited = if (mapSet == MappingSet.BASE || ws.sets.none { s -> s.id == mapSet }) {
                             Inheritance.defaults(d.defaults)
                         } else emptyList(),
                         parentName = "Defaults",
-                    )
-                } else {
-                    TouchpadSettingsScreen(
-                        workspace = ws,
-                        runtime = runtime,
-                        defaults = d.defaults,
-                        onWorkspaceChange = { change -> editWorkspace(change) },
-                        onEditMappings = { menu = EditMenu.MAPPING },
-                        onClose = close,
                     )
                 }
             } else if (d != null && sel != null && !dragging && menu != EditMenu.NONE) {
@@ -2396,6 +2409,7 @@ fun PadScreen(
                 } else if (sel.kind == TouchKind.DISPLAY) {
                     // A gyro display: what it shows, how, and its colours.
                     GyroDisplaySettingsScreen(
+                        runtime = runtime,
                         control = sel,
                         // A trackball's RWS needs the workspace's game turn (Gyro → Game).
                         gameKnown = ws.gyro.gameCountsPer360 > 0f,
@@ -2435,7 +2449,7 @@ fun PadScreen(
                         onZoneSettings = { a, b ->
                             updateControl(sel.id) { it.copy(surface = it.ownSurface.copy(holdZones = a, dirHoldZones = b)) }
                         },
-                        settings = touchControlSettings(sel, ws, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE) { change -> updateControl(sel.id, change) },
+                        settings = touchControlSettings(runtime, sel, ws, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE) { change -> updateControl(sel.id, change) },
                         inherited = if (sel.kind == TouchKind.BUTTON) {
                             Inheritance.inherited(Inheritance.workspace(ws, d.defaults), emptyList(), sel.id, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE)
                         } else emptyList(),
@@ -2480,6 +2494,7 @@ fun PadScreen(
                             selected = null
                             menu = EditMenu.NONE
                         },
+                        shared = touchControlSettings(runtime, sel, ws, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE) { change -> updateControl(sel.id, change) },
                         // Back to the mapping screen it was opened from; else the control stays selected
                         // (ready to pinch) and a tap on empty space clears it.
                         onClose = {

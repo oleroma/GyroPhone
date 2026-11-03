@@ -124,6 +124,29 @@ internal fun RememberedSection(
     var open by remember(prefKey) {
         mutableStateOf(runtime.uiPref("section." + prefKey)?.let { it == "1" } ?: defaultOpen)
     }
+    val gap = LocalCardGap.current
+    val query = LocalSettingsQuery.current
+    if (query.isNotEmpty()) {
+        // Searching: open, showing only its matching settings (all of them when its own name
+        // matches), and hidden, though still drawn so it keeps counting, when none match.
+        val titleHit = searchMatches(query, title, subtitle)
+        val hits = remember { SearchHits() }
+        val shown = titleHit || hits.count > 0
+        if (titleHit) RegisterHit()
+        CollapsibleSection(
+            title = title,
+            expanded = true,
+            onToggle = {},
+            modifier = if (shown) Modifier.padding(bottom = gap).then(modifier) else Modifier.hiddenLayout(),
+            subtitle = subtitle,
+            headerModifier = headerModifier,
+        ) {
+            CountHits(hits) {
+                CompositionLocalProvider(LocalSettingsQuery provides if (titleHit) "" else query) { content() }
+            }
+        }
+        return
+    }
     CollapsibleSection(
         title = title,
         expanded = open && !LocalSectionsCollapsed.current,
@@ -131,7 +154,7 @@ internal fun RememberedSection(
             open = !open
             runtime.setUiPref("section." + prefKey, if (open) "1" else "0")
         },
-        modifier = modifier,
+        modifier = Modifier.padding(bottom = gap).then(modifier),
         subtitle = subtitle,
         headerModifier = headerModifier,
         content = content,
@@ -201,14 +224,16 @@ internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, item
     // The gesture lives on the column, which never moves: a category's own node moves as the
     // row reorders, and a gesture on it would end at the first move.
     val ids by rememberUpdatedState(items.map { it.id })
+    val searching by rememberUpdatedState(LocalSettingsQuery.current.isNotEmpty())
     var column by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    CompositionLocalProvider(LocalSectionsCollapsed provides (dragged != null)) {
+    CompositionLocalProvider(LocalSectionsCollapsed provides (dragged != null), LocalCardGap provides gap) {
         Column(
             Modifier
                 .onGloballyPositioned { column = it }
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        if (searching) return@awaitEachGesture
                         val col = column ?: return@awaitEachGesture
                         val y = col.localToRoot(down.position).y
                         val id = ids.firstOrNull { i ->
@@ -232,7 +257,6 @@ internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, item
                         drop()
                     }
                 },
-            verticalArrangement = Arrangement.spacedBy(gap),
         ) {
             for (id in shown) {
                 val item = byId[id] ?: continue
