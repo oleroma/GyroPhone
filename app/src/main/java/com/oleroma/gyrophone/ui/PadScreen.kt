@@ -2069,10 +2069,10 @@ fun PadScreen(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(50))
                                     .clickable {
-                                        // The settings page edits the saved workspace: keep the layout edits first.
-                                        finishEditing()
-                                        releaseAll()
-                                        onWorkspaceSettings()
+                                        // The workspace's settings, the same page as the touchpad's Settings
+                                        // in its mapping editor, on the draft like the rest of edit mode.
+                                        selected = TOUCHPAD_SELECTION
+                                        menu = EditMenu.CONTEXT
                                     }
                                     .padding(horizontal = 8.dp, vertical = 2.dp),
                             )
@@ -2341,7 +2341,26 @@ fun PadScreen(
                     selected = null
                     menu = EditMenu.NONE
                 }
-                run {
+                // The workspace's settings page: edit mode's ⚙ and the touchpad editor's Settings.
+                val workspacePage: @Composable () -> Unit = {
+                    WorkspaceSettingsPage(
+                        runtime, d, editIndex, mapSet, { mapSet = it },
+                        onProfileChange = { p, at ->
+                            val deleted = p.workspaces.size < d.workspaces.size
+                            draft = p
+                            // Rename and duplicate keep editing this one; a delete moves on and closes the page.
+                            if (deleted) {
+                                editIndex = at.coerceIn(0, p.workspaces.lastIndex)
+                                close()
+                            }
+                        },
+                        onWorkspaceChange = { change -> editWorkspace(change) },
+                        draft = true,
+                    )
+                }
+                if (menu != EditMenu.MAPPING) {
+                    SettingsDialog(title = ws.name, subtitle = "Workspace settings", onClose = close) { workspacePage() }
+                } else {
                     // Its settings are the workspace's: the editor's Settings shows them.
                     ControlMappingScreen(
                         control = TOUCHPAD_STAND_IN,
@@ -2361,7 +2380,8 @@ fun PadScreen(
                             editWorkspace { it.copy(touchpad = it.touchpad.copy(holdZones = a, dirHoldZones = b)) }
                         },
                         // ⚙ edits the settings of the layer picked in the set bar.
-                        settings = touchpadSettings(runtime, setLevel(ws, d.defaults, mapSet) { change -> editWorkspace(change) }),
+                        settings = touchpadSettings(runtime, setLevel(ws, d.defaults, mapSet) { change -> editWorkspace(change) })
+                            .let { t -> MappingSettings(t.action, shared = workspacePage) },
                         // Base takes the Defaults' mappings of what it does not map; a layer shows Base's greyed.
                         inherited = if (mapSet == MappingSet.BASE || ws.sets.none { s -> s.id == mapSet }) {
                             Inheritance.defaults(d.defaults)
