@@ -12,11 +12,11 @@ namespace GyroPhone.Tray;
 /// </summary>
 internal static class HandleDrawing
 {
-    /// <summary>Each handle's length beside the phone, as a fraction of the phone's long side.</summary>
-    public const float WidthOfPhone = 0.35f;
+    /// <summary>Each handle's width beside the phone, in handle heights: just room for a stick or the face buttons.</summary>
+    public const float Width = 0.38f;
     /// <summary>How far L1 / R1 stand above the top edge, and L2 / R2 out of the back, in handle heights.</summary>
     public const float ShoulderDepth = 0.035f;
-    private const float OuterRadius = 0.22f;
+    private const float OuterRadius = 0.12f;
     private const float InnerRadius = 0.015f;
 
     /// <summary>The projection the phone is drawn with: phone-frame point to window point, a face's visibility, its shading.</summary>
@@ -26,7 +26,7 @@ internal static class HandleDrawing
         Func<(float X, float Y, float Z), float> Shade);
 
     /// <summary>The handles' sizes: their height <paramref name="h"/> (the phone's short side held landscape) and length <paramref name="w"/>.</summary>
-    public static (float W, float H) Size(float longSide, float landscapeHeight) => (longSide * WidthOfPhone, landscapeHeight);
+    public static (float W, float H) Size(float landscapeHeight) => (landscapeHeight * Width, landscapeHeight);
 
     /// <summary>
     /// Whether the handle on side <paramref name="side"/> (−1 left, 1 right) is nearer the viewer
@@ -52,7 +52,7 @@ internal static class HandleDrawing
 
         // Shoulder buttons: L1 / R1 on the top edge, L2 / R2 out of the back near the top.
         float d = ShoulderDepth * h;
-        float ba = 0.12f * h, bb = 0.5f * h; // inside the outer corner's curve
+        float ba = 0.03f * h, bb = 0.25f * h; // inside the outer corner's curve
         var bumper = Rect(Math.Min(X(ba), X(bb)), h / 2, Math.Max(X(ba), X(bb)), h / 2 + d);
         var trigger = Rect(Math.Min(X(ba), X(bb)), h / 2 - 0.2f * h, Math.Max(X(ba), X(bb)), h / 2);
         var bumperColor = l1 ? lit : Mix(body, Color.White, 0.08f);
@@ -92,23 +92,24 @@ internal static class HandleDrawing
         bool Held(uint b) => f?.PadHeld(b) == true;
 
         // Pills by the top edge, under the shoulder buttons: bumper (inner), trigger (outer, filled by the pull).
-        Pill(g, v, zs, X(0.19f * h), X(0.40f * h), Y(0.06f), Y(0.11f), l1 ? 1f : 0f, lit, idleFill, idle, penWidth);
-        Pill(g, v, zs, X(0.44f * h), X(0.62f * h), Y(0.06f), Y(0.11f), pull, lit, idleFill, idle, penWidth);
+        Pill(g, v, zs, X(0.04f * h), X(0.18f * h), Y(0.04f), Y(0.085f), l1 ? 1f : 0f, lit, idleFill, idle, penWidth);
+        Pill(g, v, zs, X(0.20f * h), X(0.34f * h), Y(0.04f), Y(0.085f), pull, lit, idleFill, idle, penWidth);
 
         // − / +, Capture / Home near the phone.
-        float sx = X(0.09f * h), sy = Y(0.09f);
+        float mid = X(Width / 2 * h); // every button and stick on the handle's middle line
+        float sx = mid, sy = Y(0.14f);
         float bl = 0.035f * h, bt = 0.011f * h;
         bool menu = Held(side < 0 ? OverlayFrame.PadMinus : OverlayFrame.PadPlus);
         Box(sx - bl, sy - bt, sx + bl, sy + bt, menu);
         if (side > 0) Box(sx - bt, sy - bl, sx + bt, sy + bl, menu);
-        float hx = X(0.10f * h), hy = Y(0.90f);
+        float hx = mid, hy = Y(0.92f);
         if (side < 0) Box(hx - 0.025f * h, hy - 0.025f * h, hx + 0.025f * h, hy + 0.025f * h, Held(OverlayFrame.PadCapture));
         else Round(hx, hy, 0.03f * h, Held(OverlayFrame.PadHome));
 
         // Left: stick above the D-pad. Right: the face buttons above the stick.
         float stickB = side < 0 ? 0.33f : 0.68f, padB = side < 0 ? 0.68f : 0.33f;
-        Stick(X(0.39f * h), Y(stickB), side < 0 ? 0 : 2, side < 0 ? OverlayFrame.PadL3 : OverlayFrame.PadR3);
-        float px = X(0.37f * h), py = Y(padB), o = 0.095f * h, r = 0.048f * h;
+        Stick(mid, Y(stickB), side < 0 ? 0 : 2, side < 0 ? OverlayFrame.PadL3 : OverlayFrame.PadR3);
+        float px = mid, py = Y(padB), o = 0.095f * h, r = 0.048f * h;
         if (side < 0)
         {
             Round(px, py + o, r, Held(OverlayFrame.PadUp));
