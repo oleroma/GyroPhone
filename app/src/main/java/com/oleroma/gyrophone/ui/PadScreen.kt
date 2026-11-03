@@ -589,9 +589,15 @@ fun PadScreen(
         runtime.setPadShown(!editing)
         onDispose { runtime.setPadShown(false) }
     }
+    val view = LocalView.current
+    // The phone doesn't dim or lock while the pad is shown, in play and edit mode ([GamepadRuntime.keepScreenOn]).
+    val keepAwake by runtime.keepScreenOn.collectAsStateWithLifecycle()
+    DisposableEffect(view, keepAwake) {
+        view.keepScreenOn = keepAwake
+        onDispose { view.keepScreenOn = false }
+    }
     // Play-mode touch reaches the engine as it arrives, not once per frame. Asked on the decor view:
     // ViewRootImpl reads its request, and a child's pointer request alone would not carry the joystick bit.
-    val view = LocalView.current
     DisposableEffect(view, editing) {
         val decor = view.rootView
         if (!editing) TouchStream.setPlayUnbuffered(decor, true)

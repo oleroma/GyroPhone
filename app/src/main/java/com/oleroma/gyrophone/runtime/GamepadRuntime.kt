@@ -187,6 +187,11 @@ class GamepadRuntime(context: Context) {
     /** Open the pad in fullscreen when the app starts. */
     val startFullscreen: StateFlow<Boolean> = _startFullscreen
 
+    private val _keepScreenOn = MutableStateFlow(prefs.getBoolean(KEY_KEEP_SCREEN_ON, true))
+
+    /** When on (the default), the screen stays on, so the phone doesn't lock, while the pad is shown. */
+    val keepScreenOn: StateFlow<Boolean> = _keepScreenOn
+
     private val _cornerAutoHide = MutableStateFlow(prefs.getBoolean(KEY_CORNER_AUTO_HIDE, false))
 
     /** The ← / → corners fade out after a few seconds in play; four quick taps show them again. */
@@ -553,6 +558,11 @@ class GamepadRuntime(context: Context) {
     fun setStartFullscreen(on: Boolean) {
         prefs.edit().putBoolean(KEY_START_FULLSCREEN, on).apply()
         _startFullscreen.value = on
+    }
+
+    fun setKeepScreenOn(on: Boolean) {
+        prefs.edit().putBoolean(KEY_KEEP_SCREEN_ON, on).apply()
+        _keepScreenOn.value = on
     }
 
     fun setCornerAutoHide(on: Boolean) {
@@ -1064,6 +1074,7 @@ class GamepadRuntime(context: Context) {
         /** The choices for [idleStopMinutes]; 0 = Off. */
         val IDLE_STOP_CHOICES = listOf(0, 5, 10, 30)
         private const val KEY_START_FULLSCREEN = "start_fullscreen"
+        private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         private const val KEY_CORNER_AUTO_HIDE = "corner_auto_hide"
         private const val KEY_EDIT_LAYOUT_LOCKED = "edit_layout_locked"
         private const val KEY_CAPSULE_ORDER = "capsule_order"
