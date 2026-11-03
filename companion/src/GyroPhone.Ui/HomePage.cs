@@ -91,11 +91,11 @@ internal sealed class HomePage : Page
         _output = new Seg<OutputMode>(app.SetOutputMode, false,
             ("Xbox 360", OutputMode.Xbox360), ("DualShock 4", OutputMode.DualShock4), ("Off", OutputMode.None));
         gb.Children.Add(_output.View);
-        _pause = Parts.Toggle("Pause input", app.TogglePaused);
-        gb.Children.Add(_pause);
         _padSub = Parts.Text("", "Sub");
-        _padSub.Margin = new Thickness(0, 0, 0, 0);
+        _padSub.Margin = new Thickness(0, 0, 0, 6);
         gb.Children.Add(_padSub);
+        _pause = Parts.Toggle("Pause input", app.TogglePaused, "Stops everything from the phone.");
+        gb.Children.Add(_pause);
         Place(grid, pad, 1, 2);
 
         _root.Children.Add(grid);
@@ -199,10 +199,8 @@ internal sealed class HomePage : Page
         // Gamepad
         _output.Set(s.OutputMode);
         Parts.SetChecked(_pause, s.Paused);
-        _padSub.Text = s.Paused
-            ? "Paused: nothing from the phone reaches the PC."
-            : s.OutputMode == OutputMode.None
-            ? "Gamepad off: the phone sends keyboard and mouse only."
+        _padSub.Text = s.OutputMode == OutputMode.None
+            ? "No gamepad: the phone sends keyboard and mouse only."
             : !s.DriverOk
                 ? $"No gamepad: {v.PadError ?? "the ViGEmBus driver is missing"}."
                 : s.PadPlugged ? "Virtual pad plugged in · ViGEmBus ok." : "Virtual pad plugs in when the phone connects · ViGEmBus ok.";
