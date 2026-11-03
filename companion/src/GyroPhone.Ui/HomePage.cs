@@ -199,8 +199,10 @@ internal sealed class HomePage : Page
         // Gamepad
         _output.Set(s.OutputMode);
         Parts.SetChecked(_pause, s.Paused);
-        _padSub.Text = s.OutputMode == OutputMode.None
-            ? "Keyboard and mouse only."
+        _padSub.Text = s.Paused
+            ? "Paused: nothing from the phone reaches the PC."
+            : s.OutputMode == OutputMode.None
+            ? "Gamepad off: the phone sends keyboard and mouse only."
             : !s.DriverOk
                 ? $"No gamepad: {v.PadError ?? "the ViGEmBus driver is missing"}."
                 : s.PadPlugged ? "Virtual pad plugged in · ViGEmBus ok." : "Virtual pad plugs in when the phone connects · ViGEmBus ok.";
