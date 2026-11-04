@@ -156,7 +156,10 @@ object DevicePresets {
         val fixed = p.controller.flatMap { m ->
             val id = standIn(m.source) ?: return@flatMap listOf(m)
             if (m.source !is InputSource.Touch) return@flatMap emptyList()
-            val press = controls[id.removePrefix(STAND_IN_PREFIX)]?.inputs?.firstOrNull() ?: return@flatMap emptyList()
+            // A stick's press is its Click; a button's its first input (Press), a trigger's its Pull.
+            val inputs = controls[id.removePrefix(STAND_IN_PREFIX)]?.inputs.orEmpty()
+            val press = inputs.firstOrNull { it.label == "Click" } ?: inputs.firstOrNull()
+                ?: return@flatMap emptyList()
             press.sources.map { m.copy(source = it) }
         }.distinct()
         return p.copy(controller = fixed)

@@ -155,4 +155,13 @@ class StickTuningTest {
             fixed,
         )
     }
+
+    @Test fun aSticksStandInMovesToItsClick() {
+        val right = OutputTarget.Mouse(com.oleroma.gyrophone.core.model.MouseButton.RIGHT)
+        val p = DevicePreset("p1", "P", controller = listOf(Mapping(InputSource.Touch("dev:CONTROLLER:ls"), right)))
+        assertEquals(
+            listOf(Mapping(InputSource.Key(com.oleroma.gyrophone.core.model.AndroidKey.BUTTON_THUMBL), right)),
+            com.oleroma.gyrophone.core.model.DevicePresets.fixStandIns(p).controller,
+        )
+    }
 }

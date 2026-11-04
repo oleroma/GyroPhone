@@ -93,4 +93,18 @@ class InheritanceTest {
             (m.source as? InputSource.Surface)?.id == "b" && m.target != OutputTarget.NoOutput
         })
     }
+
+    @Test fun eachTriggerOfASwipeDirectionIsInheritedOnItsOwn() {
+        val release = InputSource.Surface(1, SurfaceInput.HOLD_UP, on = com.oleroma.gyrophone.core.model.Trigger.RELEASE)
+        // The Defaults map On swipe, the workspace only Release: it keeps the Defaults' On swipe.
+        val d = WorkspaceDefaults.builtin.copy(mappings = listOf(pad(1, SurfaceInput.HOLD_UP, key)))
+        val w = Workspace("w", "w", mappings = listOf(Mapping(release, left)))
+        val out = Inheritance.workspace(w, d)
+        assertEquals(listOf<OutputTarget>(key), targetOf(out, InputSource.Surface(1, SurfaceInput.HOLD_UP)))
+        // A button that maps only Release on Swipe up takes the touchpad's On swipe.
+        val inUse = listOf(pad(1, SurfaceInput.HOLD_UP, key), Mapping(release.copy(id = "b"), left))
+        val buttons = Inheritance.toButtons(inUse, listOf("b"))
+        assertEquals(listOf<OutputTarget>(key), targetOf(buttons, InputSource.Surface(1, SurfaceInput.HOLD_UP, "b")))
+        assertEquals(listOf<OutputTarget>(left), targetOf(buttons, release.copy(id = "b")))
+    }
 }

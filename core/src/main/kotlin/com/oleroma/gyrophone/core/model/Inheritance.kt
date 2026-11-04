@@ -4,7 +4,7 @@ package com.oleroma.gyrophone.core.model
  * How touch mappings pass down the levels: Defaults ([Profile.defaults]) → workspace
  * → button. A level maps each touch input itself or takes its parent's mapping of it, one input
  * at a time; a level that maps an input to [OutputTarget.NoOutput] has cleared it. An input is a
- * finger count, a [SurfaceInput] and a hold zone, whoever's surface it is; a button's one-finger
+ * finger count, a [SurfaceInput], a hold zone and a trigger, whoever's surface it is; a button's one-finger
  * Hold is its press ([InputSource.Touch]).
  *
  * Defaults have no layers: their mappings fill in the Base of a workspace. A button takes the
@@ -12,10 +12,13 @@ package com.oleroma.gyrophone.core.model
  * button's own mapping beats the workspace's in every layer ([toButtons]).
  */
 object Inheritance {
+    /** A touch input on any surface: finger count, input, hold zone and trigger ([InputSource.Surface.on]). */
+    private data class TouchInput(val fingers: Int, val input: SurfaceInput, val zone: Int, val on: Trigger)
+
     /** The touch input [s] stands for on its surface, or null for a source that is not one. */
-    private fun inputOf(s: InputSource): Triple<Int, SurfaceInput, Int>? = when (s) {
-        is InputSource.Surface -> Triple(s.fingers, s.input, s.zone)
-        is InputSource.Touch -> Triple(1, SurfaceInput.HOLD, 0)
+    private fun inputOf(s: InputSource): TouchInput? = when (s) {
+        is InputSource.Surface -> TouchInput(s.fingers, s.input, s.zone, s.on)
+        is InputSource.Touch -> TouchInput(1, SurfaceInput.HOLD, 0, Trigger.HOLD)
         else -> null
     }
 
@@ -41,8 +44,8 @@ object Inheritance {
     fun workspace(w: Workspace, defaults: Workspace): List<Mapping> = fill(w.mappings, defaults(defaults))
 
     /** Which of [inputOf] the mappings of [id] in [ms] cover. */
-    private fun inputsOf(ms: List<Mapping>, id: String): Set<Triple<Int, SurfaceInput, Int>> {
-        val out = HashSet<Triple<Int, SurfaceInput, Int>>()
+    private fun inputsOf(ms: List<Mapping>, id: String): Set<TouchInput> {
+        val out = HashSet<TouchInput>()
         for (m in ms) {
             val s = m.source
             val owner = when (s) {
@@ -58,7 +61,7 @@ object Inheritance {
     /** [m] (a touchpad mapping) as button [id]'s: its one-finger Hold is the button's press. */
     fun forButton(m: Mapping, id: String): Mapping {
         val s = m.source as InputSource.Surface
-        val src = if (s.fingers == 1 && s.input == SurfaceInput.HOLD && s.zone == 0) InputSource.Touch(id)
+        val src = if (s.fingers == 1 && s.input == SurfaceInput.HOLD && s.zone == 0 && s.on == Trigger.HOLD) InputSource.Touch(id)
         else s.copy(id = id)
         return m.copy(source = src)
     }
