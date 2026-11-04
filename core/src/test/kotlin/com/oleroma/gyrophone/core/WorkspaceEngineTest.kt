@@ -131,6 +131,17 @@ class WorkspaceEngineTest {
         assertEquals((0.5f * 32767).toInt(), e.snapshot().gamepad.lx)
     }
 
+    @Test fun activeMappingsAreThoseWhoseInputIsOn() {
+        val a = touch("a", OutputTarget.Key(0x04))
+        val b = touch("b", OutputTarget.Key(0x05))
+        val e = MappingEngine(single(ws("w", emptyList(), mappings = listOf(a, b))))
+        assertTrue(e.activeMappings(listOf(a, b)).isEmpty())
+        e.setTouch("b", true)
+        assertEquals(listOf(b), e.activeMappings(listOf(a, b)))
+        e.setTouch("a", true)
+        assertEquals(listOf(a, b), e.activeMappings(listOf(a, b)))
+    }
+
     @Test fun legacySourceActsOnEveryPad() {
         val e = MappingEngine(twoPads())
         assertTrue(e.setKey(AndroidKey.BUTTON_A, true))
@@ -284,6 +295,11 @@ class WorkspaceEngineTest {
         e.buttonDown(1, "a", 100f, 100f)
         assertEquals(listOf(A), keys(e))
         assertEquals(setOf("a"), e.pressedTouches())
+        val pressed = hashSetOf("old")
+        val latched = hashSetOf("old")
+        e.touchesInto(pressed, latched)
+        assertEquals(setOf("a"), pressed)
+        assertTrue(latched.isEmpty())
         e.buttonMove(1, 400f, 100f) // moving does not matter
         now = 1000 * MS
         assertEquals(listOf(A), keys(e))
@@ -415,6 +431,35 @@ class WorkspaceEngineTest {
         assertEquals(0x02, mods(e))
         press(e, "ts")
         assertEquals(0, mods(e))
+    }
+
+    @Test fun aToggledKeyIsNotTheNextKey() {
+        var now = 0L
+        val e = buttons(listOf(
+            touch("ns", OutputTarget.Key(HidUsage.LEFT_SHIFT, KeyMode.NEXT_KEY)),
+            touch("tb", OutputTarget.Key(B, KeyMode.TOGGLE)),
+        )) { now }
+        press(e, "tb"); press(e, "ns")
+        repeat(3) { assertEquals(0x02, mods(e)) } // still waiting for a key
+        press(e, "a")
+        val s = e.snapshot().keyboard
+        assertEquals(0, s.modifiers) // used up by A, though B stays on
+        assertEquals(listOf(B), s.keys)
+    }
+
+    @Test fun twoMatchingPadsDoNotFlipOneToggle() {
+        val pad = AttachedPad(
+            id = "xb", match = DeviceMatch(vendorId = 0x045E, productId = 0x0B13), name = "Xbox",
+            mappings = listOf(key(AndroidKey.BUTTON_A, OutputTarget.Key(A, KeyMode.TOGGLE))),
+        )
+        val e = MappingEngine(single(ws("w", listOf(pad))))
+        e.setKey(xbox, AndroidKey.BUTTON_A, true)
+        e.setAxis(xbox2, AndroidAxis.X, 0.01f) // the other one is in use too, holding nothing
+        repeat(5) { assertEquals(listOf(A), keys(e)) }
+        e.setKey(xbox, AndroidKey.BUTTON_A, false)
+        repeat(3) { assertEquals(listOf(A), keys(e)) }
+        e.setKey(xbox, AndroidKey.BUTTON_A, true); keys(e); e.setKey(xbox, AndroidKey.BUTTON_A, false)
+        assertTrue(keys(e).isEmpty())
     }
 
     @Test fun workspaceChangeLetsKeyModesGo() {

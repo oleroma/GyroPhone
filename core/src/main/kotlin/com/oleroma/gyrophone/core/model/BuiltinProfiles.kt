@@ -321,8 +321,14 @@ object BuiltinProfiles {
     /** An empty workspace: touchpad only, no controls, no pads. */
     fun blankWorkspace(name: String = "Workspace") = Workspace(id = "ws", name = name, gyro = gyro(GyroMode.OFF))
 
-    /** A new profile with the three preset workspaces. */
-    fun newProfile(id: String, name: String) = Profile(id = id, name = name, workspaces = presets)
+    /**
+     * A new profile with the three preset workspaces, their pad mappings as device presets they
+     * pin, as when they are added ([WorkspaceMappings.settle]).
+     */
+    fun newProfile(id: String, name: String): Profile {
+        val empty = Profile(id = id, name = name, workspaces = emptyList())
+        return WorkspaceMappings.settle(empty, empty.copy(workspaces = presets), null)
+    }
 
     /** The profile a fresh install starts in: Controller, WASD and Keyboard workspaces. */
     val default = newProfile("builtin.default", "Default")

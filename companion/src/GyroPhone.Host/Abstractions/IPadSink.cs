@@ -24,8 +24,13 @@ public interface IPadSink
     /// <summary>Raised from the driver's thread when the game changes rumble (large, small motor).</summary>
     event Action<byte, byte>? Rumble;
 
-    /// <summary>The XInput slot (0..3) our plugged Xbox 360 pad took, -1 when none or unknown. May block briefly: not under the engine lock.</summary>
+    /// <summary>
+    /// The XInput slot (0..3) our plugged Xbox 360 pad took, -1 when none is plugged, <see cref="SlotUnknown"/>
+    /// while it is plugged but Windows hasn't given it a slot yet. May block briefly: not under the engine lock.
+    /// </summary>
     int XInputSlot => -1;
+
+    const int SlotUnknown = -2;
 }
 
 /// <summary>Pad sink used when the ViGEmBus driver is missing (or --no-vigem): nothing is plugged, nothing is sent.</summary>

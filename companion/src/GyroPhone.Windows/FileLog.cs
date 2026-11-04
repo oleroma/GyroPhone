@@ -54,8 +54,7 @@ public sealed class FileLog : IDisposable
         try
         {
             System.IO.Directory.CreateDirectory(Directory);
-            if (File.Exists(Path) && new FileInfo(Path).Length > MaxBytes)
-                File.Move(Path, Path + ".old", overwrite: true);
+            if (File.Exists(Path) && new FileInfo(Path).Length > MaxBytes) Rotate();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -67,13 +66,37 @@ public sealed class FileLog : IDisposable
             _echo?.Invoke(line);
             try
             {
-                File.AppendAllText(Path, line + Environment.NewLine);
+                if (Append(line + Environment.NewLine) > MaxBytes) Rotate();
                 _lastError = null;
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 _lastError = $"{e.GetType().Name}: {e.Message}";
             }
+        }
+    }
+
+    /// <summary>
+    /// Appends one line and returns the file's length. The tray and the watcher write the same file, so
+    /// it is opened only for the line and shared, including for the other one's rotation.
+    /// </summary>
+    private long Append(string text)
+    {
+        using var f = new FileStream(Path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+        f.Write(bytes);
+        return f.Length;
+    }
+
+    private void Rotate()
+    {
+        try
+        {
+            File.Move(Path, Path + ".old", overwrite: true);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // open in another program: tried again after the next line
         }
     }
 

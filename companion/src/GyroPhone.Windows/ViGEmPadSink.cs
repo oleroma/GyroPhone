@@ -31,6 +31,8 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
     private readonly Action<string>? _log;
     private IXbox360Controller? _x360;
     private IDualShock4Controller? _ds4;
+    private const long ReplugGapMs = 1000;
+    private long _replugAtMs = -ReplugGapMs;
 
     private ViGEmPadSink(ViGEmClient client, Action<string>? log)
     {
@@ -117,7 +119,10 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
         }
     }
 
-    /// <summary>The XInput slot the plugged Xbox 360 pad took (the driver reports it once Windows assigned one), -1 otherwise.</summary>
+    /// <summary>
+    /// The XInput slot the plugged Xbox 360 pad took (the driver reports it once Windows assigned one),
+    /// <see cref="IPadSink.SlotUnknown"/> until then, -1 when none is plugged.
+    /// </summary>
     public int XInputSlot
     {
         get
@@ -130,7 +135,7 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
             }
             catch (Exception)
             {
-                return -1;
+                return IPadSink.SlotUnknown;
             }
         }
     }
@@ -181,7 +186,9 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
         }
         catch (VigemTargetNotPluggedInException)
         {
-            // Unplugged underneath us (driver reset); the next Plug recreates it.
+            // Unplugged underneath us (driver reset): plug a new one, and fail so the engine sends the frame again.
+            Replug();
+            throw;
         }
     }
 
@@ -204,7 +211,24 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
         }
         catch (VigemTargetNotPluggedInException)
         {
+            Replug();
+            throw;
         }
+    }
+
+    /// <summary>
+    /// The pad was removed underneath (disabled in Device Manager, driver reset): Plugged still says it is
+    /// in, so nothing else would make a new one. At most once a second; a failed Plug leaves it unplugged.
+    /// </summary>
+    private void Replug()
+    {
+        long now = Environment.TickCount64;
+        if (now - _replugAtMs < ReplugGapMs) return;
+        _replugAtMs = now;
+        var mode = Plugged;
+        _log?.Invoke($"{mode} pad was unplugged underneath; plugging it again");
+        Unplug();
+        Plug(mode);
     }
 
     private void OnX360Feedback(object sender, Xbox360FeedbackReceivedEventArgs e) => Rumble?.Invoke(e.LargeMotor, e.SmallMotor);

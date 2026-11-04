@@ -36,8 +36,20 @@ internal sealed class OverlayForm : Form
     private int _uiTickQueued;
     // UpdateLayeredWindow refused a call from the pacer's thread: this window draws on the UI thread.
     private bool _uiOnly;
-    // The graphics card draws every window unless it failed once in this run; then they draw with the CPU.
-    private static bool _gpuBroken;
+    // The graphics card draws every window. A window whose graphics card surface fails makes a new one
+    // (a lost device after sleep, a driver update); after 3 failures of its own in a minute it draws
+    // with the CPU for 5 minutes, then tries the graphics card again. Counted per window. The windows
+    // share one device (GpuDevice): a lost one counts in the window that found it, and the others
+    // just make new surfaces on the new device. Guarded by _renderLock.
+    private readonly Queue<long> _gpuFailures = new();
+    private long _gpuOffUntil;
+    // This window's next try at a new graphics card surface, and whether its handle is being made
+    // again for one (a swap-chain window).
+    private long _gpuRetryAt;
+    private bool _recreating;
+    // This window showed a swap chain before its surface failed: its next try makes its handle
+    // again for a new swap chain, not a copied surface.
+    private bool _wasDirect;
     // The swap chain (picture shown straight from the graphics card) failed once in this run: every
     // window copies its picture through the CPU (UpdateLayeredWindow) instead.
     private static bool _directBroken;
@@ -60,7 +72,7 @@ internal sealed class OverlayForm : Form
     private Point? _pressAt;
     private Point _pressWindow;
     private bool _dragging;
-    private uint _lastTime;
+    private uint _lastTime, _lastTrailTime;
     private ushort _lastLayout;
     private long _lastDrawTicks;
     private bool _dirty = true;
@@ -175,7 +187,9 @@ internal sealed class OverlayForm : Form
         {
             _hwnd = Handle;
             _direct = false;
-            if (!_gpuBroken && !_directBroken)
+            _recreating = false;
+            bool gpuOff = GpuOff;
+            if (!gpuOff && !_directBroken)
             {
                 try
                 {
@@ -188,6 +202,7 @@ internal sealed class OverlayForm : Form
                     if (hr < 0) throw new Win32Exception(hr);
                     _gpuSurface = new GpuSurface(Handle, Width, Height);
                     _direct = true;
+                    _wasDirect = true;
                 }
                 catch (Exception ex)
                 {
@@ -199,7 +214,7 @@ internal sealed class OverlayForm : Form
                     SetWindowLongPtr(Handle, GwlExStyle, new IntPtr(ex0));
                 }
             }
-            if (!_direct && !_gpuBroken)
+            if (!_direct && !gpuOff)
             {
                 try
                 {
@@ -400,7 +415,12 @@ internal sealed class OverlayForm : Form
         long age = _engine.OverlaySnapshot(_scene.Frame, _id, out var layout);
         bool fresh = age >= 0 && _scene.Frame.PhoneTimeUs != _lastTime;
         long now = Environment.TickCount64;
-        if (fresh) _trails.Add(_scene.Frame, now);
+        // Each frame goes into the trails once: a frame-capped tick leaves it fresh for the next one.
+        if (fresh && _scene.Frame.PhoneTimeUs != _lastTrailTime)
+        {
+            _lastTrailTime = _scene.Frame.PhoneTimeUs;
+            _trails.Add(_scene.Frame, now);
+        }
         UpdateStats();
         bool changed = _dirty || fresh || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||
             !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now);
@@ -437,11 +457,44 @@ internal sealed class OverlayForm : Form
         _lastTime = _scene.Frame.PhoneTimeUs;
         _lastLayout = _scene.Frame.LayoutVersion;
         _lastDrawTicks = Environment.TickCount64;
-        _scene.Connected = _engine.Snapshot().Connected;
+        _scene.Connected = _engine.Connected;
         _scene.Arranging = !ClickThrough;
         _scene.Selected = _selected;
         _scene.Title = _title;
         double start = _clock.Elapsed.TotalMilliseconds;
+        // Another window found the shared device lost: move to the new one now (not a failure of this window's).
+        if (_gpuSurface is { Lost: true })
+        {
+            DropGpuSurface();
+            _gpuRetryAt = 0;
+            if (_recreating)
+            {
+                _dirty = true;
+                return;
+            }
+        }
+        // A window drawing with the CPU (its surface failed, or the graphics card was off) tries the
+        // graphics card again now and then. A window that showed a swap chain makes its handle again
+        // for a new one (OnHandleCreated); the others make a new copied surface here.
+        if (_gpuSurface == null && !_direct && !_recreating && _lastDrawTicks >= _gpuRetryAt && !GpuOff)
+        {
+            if (_wasDirect && !_directBroken)
+            {
+                _recreating = true;
+                try { BeginInvoke(RecreateHandle); } catch (Exception) { _recreating = false; }
+            }
+            else
+            {
+                try
+                {
+                    _gpuSurface = new GpuSurface();
+                }
+                catch (Exception e)
+                {
+                    GpuFailed(e);
+                }
+            }
+        }
         if (_gpuSurface != null)
         {
             try
@@ -451,7 +504,19 @@ internal sealed class OverlayForm : Form
                     _scene.Trails = gs.FingerTrails ? _trails : null;
                     _scene.NowTicks = _lastDrawTicks;
                     var size = new Size(width, height);
-                    _gpuSurface.Draw(width, height, gs.Quality, c => OverlayRenderer.Draw(c, size, _scene, gs), dc => Present(hwnd, dc, width, height));
+                    _gpuSurface.Draw(width, height, gs.Quality, c =>
+                    {
+                        try
+                        {
+                            OverlayRenderer.Draw(c, size, _scene, gs);
+                        }
+                        catch (Exception e) when (e is not SharpGen.Runtime.SharpGenException)
+                        {
+                            // A bug in the drawing, not the graphics card: keep the surface (its End
+                            // undoes any clips and transforms left pushed).
+                            _log($"overlay: drawing failed: {e.GetType().Name}: {e.Message}");
+                        }
+                    }, dc => Present(hwnd, dc, width, height));
                 }
             }
             catch (Exception e)
@@ -484,23 +549,61 @@ internal sealed class OverlayForm : Form
         {
             // A drawing failure must never take the companion down: log it and keep the last picture.
             _log($"overlay: drawing failed: {e.Message}");
+            // The Graphics is kept for the next frame: drop the clips and transforms left pushed.
+            g.ResetClip();
+            g.ResetTransform();
         }
         g.Flush(System.Drawing.Drawing2D.FlushIntention.Sync);
         Present(hwnd, _surface.Dc, width, height);
         Count(start);
     }
 
-    /// <summary>The graphics card can't draw: log it, and from now on every window draws with the CPU.</summary>
+    /// <summary>This window draws with the CPU for now: its graphics card surface failed 3 times in a minute.</summary>
+    private bool GpuOff => Environment.TickCount64 < _gpuOffUntil;
+
+    /// <summary>
+    /// The graphics card couldn't draw: log it and drop this window's surface. It makes a new one
+    /// in 2 seconds; after 3 failures in a minute this window draws with the CPU for 5 minutes.
+    /// Called with _renderLock held.
+    /// </summary>
     private void GpuFailed(Exception e)
     {
-        _log($"overlay: graphics card drawing failed, drawing with the CPU: {e.GetType().Name}: {e.Message}");
-        _gpuBroken = true;
+        long now = Environment.TickCount64;
+        // Its device already found lost by another window: just move to the new one.
+        if (_gpuSurface is { Lost: true })
+        {
+            _log($"overlay: graphics card device lost, making a new surface: {e.GetType().Name}: {e.Message}");
+            _gpuRetryAt = 0;
+            DropGpuSurface();
+            return;
+        }
+        _gpuSurface?.CheckLost(e);
+        _gpuFailures.Enqueue(now);
+        while (_gpuFailures.Count > 0 && now - _gpuFailures.Peek() > 60_000) _gpuFailures.Dequeue();
+        if (_gpuFailures.Count >= 3)
+        {
+            _gpuFailures.Clear();
+            _gpuOffUntil = now + 5 * 60_000;
+        }
+        bool off = now < _gpuOffUntil;
+        _log(off
+            ? $"overlay: graphics card drawing failed again, drawing with the CPU for 5 minutes: {e.GetType().Name}: {e.Message}"
+            : $"overlay: graphics card drawing failed, trying a new surface: {e.GetType().Name}: {e.Message}");
+        _gpuRetryAt = now + 2000;
+        DropGpuSurface();
+    }
+
+    /// <summary>Disposes this window's surface (its device goes with the last window's); a swap-chain window makes its handle again. Called with _renderLock held.</summary>
+    private void DropGpuSurface()
+    {
         try { _gpuSurface?.Dispose(); } catch (Exception) { }
         _gpuSurface = null;
         if (_direct)
         {
-            // Made again (UI thread) without the swap chain: UpdateLayeredWindow pictures from then on.
+            // Made again (UI thread): with a new swap chain, or with UpdateLayeredWindow pictures
+            // while the graphics card is off.
             _direct = false;
+            _recreating = true;
             try { BeginInvoke(RecreateHandle); } catch (Exception) { }
         }
     }

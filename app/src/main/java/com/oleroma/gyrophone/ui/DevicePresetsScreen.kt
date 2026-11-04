@@ -201,7 +201,20 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
             sets = ws.sets,
             editSet = if (ws.sets.any { it.id == mapSet }) mapSet else MappingSet.BASE,
             onEditSet = { mapSet = it },
-            onSetsChange = { sets, removed -> runtime.editActiveProfile { p -> p.updateWorkspace(current) { it.withSets(sets, removed) } } },
+            onSetsChange = { sets, removed ->
+                runtime.editActiveProfile { p ->
+                    val next = p.updateWorkspace(current) { it.withSets(sets, removed) }
+                    val now = next.devicePresets.firstOrNull { it.id == preset.id }
+                    // The layer's mappings in the preset go too, and the Layer actions to it, unless
+                    // another workspace using the preset still has a layer with that id.
+                    if (removed == null || now == null ||
+                        next.workspaces.any { w -> w.devicePreset == now.id && w.sets.any { it.id == removed } }) next
+                    else DevicePresets.put(
+                        next,
+                        PhysicalDevice.entries.fold(now) { d, dev -> d.withMappings(dev, Bindings.dropSet(d.mappings(dev), removed)) },
+                    )
+                }
+            },
             physicalInputs = e.inputs,
             settings = physicalSettings(preset, ws) { change ->
                 runtime.editActiveProfile { p ->

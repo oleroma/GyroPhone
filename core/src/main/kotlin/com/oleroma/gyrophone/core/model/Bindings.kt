@@ -24,11 +24,11 @@ data class BindableInput(
 object Bindings {
     private val triggerAxes = setOf(AndroidAxis.LTRIGGER, AndroidAxis.RTRIGGER, AndroidAxis.GAS, AndroidAxis.BRAKE)
 
-    /** Equality of sources, treating FULL and POSITIVE of a trigger axis as the same source. */
+    /** Equality of sources, treating FULL and POSITIVE of a trigger axis (at one stage) as the same source. */
     fun sameSource(a: InputSource, b: InputSource): Boolean {
         if (a == b) return true
         if (a !is InputSource.Axis || b !is InputSource.Axis) return false
-        return a.axis == b.axis && a.axis in triggerAxes &&
+        return a.axis == b.axis && a.stage == b.stage && a.axis in triggerAxes &&
                 a.half != AxisHalf.NEGATIVE && b.half != AxisHalf.NEGATIVE
     }
 
@@ -74,19 +74,21 @@ object Bindings {
 
     /**
      * [mappings] with no empty length zone before a used one: per surface, finger count and held
-     * direction, the zones mapped in any set are numbered again from 0 in order.
+     * direction, the zones mapped in any set and with any trigger are numbered again from 0 in order.
      */
     fun compactZones(mappings: List<Mapping>): List<Mapping> {
+        // A direction's triggers (On swipe, Long hold, Release) share its zones.
+        fun key(s: InputSource.Surface) = s.copy(zone = 0, on = Trigger.HOLD)
         val used = HashMap<InputSource.Surface, java.util.TreeSet<Int>>()
         for (m in mappings) {
             val s = m.source as? InputSource.Surface ?: continue
             if (s.input.holdDirection == null) continue
-            used.getOrPut(s.copy(zone = 0)) { java.util.TreeSet() }.add(s.zone)
+            used.getOrPut(key(s)) { java.util.TreeSet() }.add(s.zone)
         }
         if (used.values.all { it.last() == it.size - 1 }) return mappings
         return mappings.map { m ->
             val s = m.source as? InputSource.Surface ?: return@map m
-            val zones = used[s.copy(zone = 0)] ?: return@map m
+            val zones = used[key(s)] ?: return@map m
             val z = zones.headSet(s.zone).size
             if (z == s.zone) m else m.copy(source = s.copy(zone = z))
         }

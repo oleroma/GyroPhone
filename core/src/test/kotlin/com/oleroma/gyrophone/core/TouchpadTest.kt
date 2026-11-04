@@ -398,6 +398,28 @@ class TouchpadTest {
     }
 
     @Test
+    fun aWaitingTapsDeadlineIsNeverPast() {
+        val map = com.oleroma.gyrophone.core.engine.SurfaceMap(listOf(
+            com.oleroma.gyrophone.core.model.Mapping(
+                com.oleroma.gyrophone.core.model.InputSource.Surface(2, com.oleroma.gyrophone.core.model.SurfaceInput.TAP),
+                com.oleroma.gyrophone.core.model.OutputTarget.Mouse(MouseButton.RIGHT),
+            ),
+            com.oleroma.gyrophone.core.model.Mapping(
+                com.oleroma.gyrophone.core.model.InputSource.Surface(2, com.oleroma.gyrophone.core.model.SurfaceInput.DOUBLE_TAP),
+                com.oleroma.gyrophone.core.model.OutputTarget.Mouse(MouseButton.MIDDLE),
+            ),
+        ))
+        val p = Touchpad(TouchpadSettings(acceleration = 0f), map).apply { pxPerDp = 1f; minPulseNanos = 40 * MS }
+        // A two-finger tap waits for a double tap.
+        p.down(1, 0f, 0f, 0); p.down(2, 100f, 0f, 2 * MS); p.up(1, 60 * MS); p.up(2, 60 * MS)
+        // Two fingers down again and held: past the tap time they are no second tap.
+        p.down(1, 0f, 0f, 90 * MS); p.down(2, 100f, 0f, 92 * MS)
+        p.poll(350 * MS)
+        assertEquals(60 * MS + p.doubleTapNanos + 1, p.nextDeadline())
+        assertEquals(R, p.poll(60 * MS + p.doubleTapNanos + 1)) // the tap at the window's end
+    }
+
+    @Test
     fun minPulseForRates() {
         assertEquals(1_000_000_000L / 30 + 12 * MS, Touchpad.minPulseFor(1_000_000_000L / 30))
         assertEquals(40 * MS, Touchpad.minPulseFor(1_000_000_000L / 90))

@@ -314,22 +314,39 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
  */
 private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Composable () -> Unit = ui {
     val g = level.ws.gyro
+    // level.ws has the parent's values filled in, so what this level sets comes from its own keys.
+    fun k(prop: String) = WorkspaceDefaults.gyroKey(axis.name.lowercase() + prop)
+    val ownGlide = g.ownGlide(axis).let { a ->
+        AxisGlide(
+            a.inertia.takeIf { level.isOwn(k("Inertia")) },
+            a.glideMs.takeIf { level.isOwn(k("GlideMs")) },
+            a.curve.takeIf { level.isOwn(k("Curve")) },
+        )
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         RatchetModeRow(
-            axis, g.ownMode(axis) ?: g.mode, g.ownMode(axis) != null,
-            onReset = { level.edit { it.copy(gyro = it.gyro.withMode(axis, null)) } },
+            axis, g.ownMode(axis) ?: g.mode, level.isOwn(k("Mode")),
+            onReset = { level.reset(k("Mode")) },
             hint = "Unset, it follows the gyro mode in Settings." + if (g.mode == GyroMode.SENSOR_OFF) " Gyro is off there now." else "",
         ) { m -> level.edit { it.copy(gyro = it.gyro.withMode(axis, m)) } }
         GyroSensSlider(
             key + "sens" + axis.name, "${axis.label} sensitivity", g.sensitivityOf(axis), g,
-            overridden = g.ownSensitivity(axis) != null,
-            onReset = { level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, null)) } },
+            overridden = level.isOwn(k("Sensitivity")),
+            onReset = { level.reset(k("Sensitivity")) },
             hint = "How fast ${axis.label.lowercase()} turns; scrolling and sticks go faster or slower with it too. " +
                 "Unset, it follows the shared Sensitivity (${g.rwsOf(g.sensitivity)?.let { "%.2f RWS".format(it) } ?: "%.0f".format(g.sensitivity)}) in Settings.",
         ) { v -> level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, v)) } }
         AxisGlideSettings(
-            key, axis, g, g.ownGlide(axis), unset = "Unset, it follows the shared Inertia in Settings.",
-        ) { a -> level.edit { it.copy(gyro = it.gyro.withGlide(axis, a)) } }
+            key, axis, g, ownGlide, unset = "Unset, it follows the shared Inertia in Settings.",
+        ) { a ->
+            when {
+                a.inertia == null && ownGlide.inertia != null -> level.reset(k("Inertia"))
+                a.curve == null && ownGlide.curve != null -> level.reset(k("Curve"))
+                a.glideMs == null && ownGlide.glideMs != null -> level.reset(k("GlideMs"))
+                // Only the field set changes; the ones this level doesn't set keep the parent's.
+                else -> level.edit { it.copy(gyro = it.gyro.withGlide(axis, it.gyro.ownGlide(axis).under(a))) }
+            }
+        }
     }
 }
 
@@ -337,20 +354,22 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
 private fun tiltGear(level: WorkspaceLevel, key: String, x: Boolean): @Composable () -> Unit = ui {
     val g = level.ws.gyro
     val what = if (x) "Sideways tilt" else "Forward and back tilt"
+    val rangeKey = WorkspaceDefaults.gyroKey(if (x) "tiltXRangeDeg" else "tiltYRangeDeg")
+    val dzKey = WorkspaceDefaults.gyroKey(if (x) "tiltXDeadzoneDeg" else "tiltYDeadzoneDeg")
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OverrideSlider(
             key + "tiltRange" + x, "$what: full at %.0f°", g.tiltRangeOf(x),
             GyroSettings.MIN_TILT_RANGE_DEG..GyroSettings.MAX_TILT_RANGE_DEG, 1f,
-            overridden = (if (x) g.tiltXRangeDeg else g.tiltYRangeDeg) != null,
-            onReset = { level.edit { it.copy(gyro = if (x) it.gyro.copy(tiltXRangeDeg = null) else it.gyro.copy(tiltYRangeDeg = null)) } },
+            overridden = level.isOwn(rangeKey),
+            onReset = { level.reset(rangeKey) },
             hint = "How far it leans for a full push. Unset, the shared Tilt range in Settings (%.0f°).".format(g.tiltRangeDeg),
         ) { v -> level.edit { it.copy(gyro = if (x) it.gyro.copy(tiltXRangeDeg = v) else it.gyro.copy(tiltYRangeDeg = v)) } }
         val dz = g.tiltDeadzoneOf(x)
         OverrideSlider(
             key + "tiltDz" + x, if (dz < 0.5f) "$what deadzone: off" else "$what deadzone %.0f°", dz,
             0f..GyroSettings.MAX_TILT_DEADZONE_DEG, 1f,
-            overridden = (if (x) g.tiltXDeadzoneDeg else g.tiltYDeadzoneDeg) != null,
-            onReset = { level.edit { it.copy(gyro = if (x) it.gyro.copy(tiltXDeadzoneDeg = null) else it.gyro.copy(tiltYDeadzoneDeg = null)) } },
+            overridden = level.isOwn(dzKey),
+            onReset = { level.reset(dzKey) },
             hint = "Leaning less than this counts as level. Unset, the shared Tilt deadzone in Settings.",
         ) { v -> level.edit { it.copy(gyro = if (x) it.gyro.copy(tiltXDeadzoneDeg = v) else it.gyro.copy(tiltYDeadzoneDeg = v)) } }
     }
@@ -495,18 +514,21 @@ private fun TriggerTuningSettings(preset: DevicePreset, id: String, update: ((De
     val t = preset.trigger(id)
     val d = TriggerTuning()
     fun set(f: (TriggerTuning) -> TriggerTuning) = update { p -> p.withTrigger(id, f(p.trigger(id))) }
+    // Press stays at or below Full pull: setting one past the other moves the other along.
+    fun press(v: Float) = set { it.copy(press = v, full = it.full.coerceIn(v.coerceAtLeast(0.5f), 1f)) }
+    fun full(v: Float) = set { it.copy(full = v, press = it.press.coerceAtMost(v)) }
     val key = preset.id + ":" + id + ":"
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         OverrideSlider(
             key + "press", "Press at %.0f%%", t.press * 100, 1f..100f, 1f, t.press != d.press,
-            { set { it.copy(press = d.press) } },
+            { press(d.press) },
             "The Press card fires once the trigger is pulled this far.",
-        ) { v -> set { it.copy(press = v / 100) } }
+        ) { v -> press(v / 100) }
         OverrideSlider(
             key + "full", "Full pull at %.0f%%", t.full * 100, 50f..100f, 1f, t.full != d.full,
-            { set { it.copy(full = d.full) } },
+            { full(d.full) },
             "The Full pull card fires from here, on top of Press.",
-        ) { v -> set { it.copy(full = v / 100) } }
+        ) { v -> full(v / 100) }
     }
 }
 

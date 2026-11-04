@@ -71,6 +71,21 @@ public sealed class SettingsAndStatsTests : IDisposable
     }
 
     [Fact]
+    public void LockedSettingsAreNeverReplaced()
+    {
+        var store = new SettingsStore(Path.Combine(_dir, "settings.json"));
+        var s = store.Load("PC");
+        s.PairedPhones.Add(new PairedPhone { PhoneId = Hex.Range(0, 16), Name = "A", ProtectedKey = [1] });
+        store.Save(s);
+        store.Save(s);
+        var before = File.ReadAllText(store.Path);
+        using (new FileStream(store.Path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Assert.Throws<IOException>(() => new SettingsStore(store.Path).Load("other"));
+        Assert.Equal(before, File.ReadAllText(store.Path));
+        Assert.Equal("A", Assert.Single(new SettingsStore(store.Path).Load("other").PairedPhones).Name);
+    }
+
+    [Fact]
     public void FailedSettingsWriteIsRetried()
     {
         var store = new SettingsStore(Path.Combine(_dir, "settings.json"));
@@ -131,6 +146,43 @@ public sealed class SettingsAndStatsTests : IDisposable
         Assert.Equal(2025u, s.LatP99Us);
         s.Roll();
         Assert.Equal(HostStatus.Unknown, s.LatP50Us);
+    }
+
+    [Fact]
+    public void OldRatchetSettingsCarryOverAndAreNotWrittenBack()
+    {
+        Directory.CreateDirectory(_dir);
+        var path = Path.Combine(_dir, "settings.json");
+        var id = Convert.ToBase64String(new byte[16]);
+        // Reset on ratchet (heading only) with easing off; reset off with easing after the ratchet; and a new one.
+        File.WriteAllText(path, $$"""
+            { "HostId": "{{id}}", "HostName": "PC", "Overlays": [
+              { "Id": "a", "Gravity": false, "ResetOnRatchet": true, "ResetHeadingOnly": true, "ResetSmoothly": true, "ResetSeconds": 0.3, "Ease": false, "EaseAfterRatchet": false },
+              { "Id": "b", "Gravity": false, "ResetOnRatchet": false, "ResetHeadingOnly": true, "Ease": true, "EaseAfterRatchet": true },
+              { "Id": "c", "Ease": false, "EaseOnRatchet": false, "EaseHeadingOnly": true } ] }
+            """);
+        var store = new SettingsStore(path);
+        var s = store.Load("PC");
+        var a = s.Overlays.Find(o => o.Id == "a")!;
+        Assert.True(a.Ease);
+        Assert.True(a.EaseOnRatchet);
+        Assert.True(a.EaseHeadingOnly);
+        var b = s.Overlays.Find(o => o.Id == "b")!;
+        Assert.True(b.Ease);
+        Assert.False(b.EaseOnRatchet); // "Ratchet let go" is gone: easing when the phone stops
+        Assert.False(b.EaseHeadingOnly);
+        var c = s.Overlays.Find(o => o.Id == "c")!;
+        Assert.False(c.Ease);
+        Assert.False(c.EaseOnRatchet);
+        Assert.True(c.EaseHeadingOnly);
+
+        store.Save(s);
+        var json = File.ReadAllText(path);
+        Assert.DoesNotContain("ResetOnRatchet", json);
+        Assert.DoesNotContain("ResetHeadingOnly", json);
+        Assert.DoesNotContain("EaseAfterRatchet", json);
+        var back = new SettingsStore(path).Load("PC").Overlays.Find(o => o.Id == "a")!;
+        Assert.True(back.EaseOnRatchet && back.EaseHeadingOnly);
     }
 
     public void Dispose()

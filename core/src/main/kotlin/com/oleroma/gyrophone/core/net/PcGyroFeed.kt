@@ -131,6 +131,8 @@ class PcGyroFeed {
         const val PAD_AXES = 6
         const val AXIS_SIZE = 28
         const val EXT_SIZE = 10 + 3 * AXIS_SIZE + PAD_AXES * 2
+        /** Where the first axis's pad share starts in the ext; each axis's is [AXIS_SIZE] further. */
+        const val PAD_SHARE_OFFSET = 10 + 16
         const val FLAG_MAY_MOVE = 1
         const val FLAG_ENABLED = 1
         const val MAX_BUTTONS = 18

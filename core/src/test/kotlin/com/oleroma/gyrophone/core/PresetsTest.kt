@@ -161,7 +161,9 @@ class PresetsTest {
             assertEquals(p, ProfileJson.decode(ProfileJson.encode(p)))
         }
         val p = BuiltinProfiles.newProfile("p1", "Game")
-        assertEquals(presets, p.workspaces)
+        // Each pins its pads as a device preset of its own.
+        assertEquals(presets, p.workspaces.map { it.copy(devicePreset = null) })
+        assertEquals(listOf("preset1", "preset2", null), p.workspaces.map { it.devicePreset })
         assertEquals(p, ProfileJson.decode(ProfileJson.encode(p)))
     }
 }

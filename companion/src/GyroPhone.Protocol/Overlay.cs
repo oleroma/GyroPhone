@@ -6,7 +6,8 @@ namespace GyroPhone.Protocol;
 /// OVERLAY from the phone (see the phone's OverlayFeed for its 152 bytes): the phone's motion since
 /// the last one (gyro turn, gravity, compass, ratchet), fingers, pressed and latched controls and
 /// stick knobs, for the phone overlay. The PC turns the motion into a pose (<see cref="Qw"/>..)
-/// with its own settings.
+/// with its own settings. With <see cref="FlagTotals"/> the turn, time and camera degrees are
+/// running totals instead; <see cref="OverlayTotals"/> turns them back into the motion since the last one.
 /// </summary>
 public sealed class OverlayFrame
 {
@@ -18,6 +19,8 @@ public sealed class OverlayFrame
     public const byte FlagUp = 8;
     public const byte FlagNorth = 16;
     public const byte FlagRatchetHeld = 32;
+    /// <summary>The turn, time and camera degrees are running totals (sent only while HOST_STATUS has <see cref="HostStatusFlags.OverlayTotals"/>).</summary>
+    public const byte FlagTotals = 64;
     public const byte NoControl = 0xFF;
     /// <summary>The accelerometer's 1 g in OVERLAY.</summary>
     public const float GScale = 8192f;
@@ -73,6 +76,7 @@ public sealed class OverlayFrame
     public bool HasUp => (Flags & FlagUp) != 0;
     public bool HasNorth => (Flags & FlagNorth) != 0;
     public bool RatchetHeld => (Flags & FlagRatchetHeld) != 0;
+    public bool Totals => (Flags & FlagTotals) != 0;
 
     public bool IsPressed(int i) => i is >= 0 and < 128 && (Pressed[i >> 3] & (1 << (i & 7))) != 0;
     public bool IsLatched(int i) => i is >= 0 and < 128 && (Latched[i >> 3] & (1 << (i & 7))) != 0;
@@ -216,6 +220,7 @@ public sealed class OverlayLayoutAssembler
     private int _version = -1;
     private int _count;
     private byte[]?[] _pieces = [];
+    private bool _renew;
 
     /// <summary>The newest complete layout, or null before one arrived.</summary>
     public OverlayLayout? Layout { get; private set; }
@@ -228,7 +233,7 @@ public sealed class OverlayLayoutAssembler
         int count = plain[3];
         int len = plain[4];
         if (count == 0 || index >= count || len > PieceData) return false;
-        if (Layout != null && Layout.Version == version) return false; // already have it
+        if (Layout != null && Layout.Version == version && !_renew) return false; // already have it
         if (version != _version || count != _count)
         {
             _version = version;
@@ -248,6 +253,7 @@ public sealed class OverlayLayoutAssembler
         _pieces = new byte[]?[count];
         if (l == null) return false;
         Layout = l;
+        _renew = false;
         return true;
     }
 
@@ -256,6 +262,83 @@ public sealed class OverlayLayoutAssembler
         _version = -1;
         _count = 0;
         _pieces = [];
+        _renew = false;
         Layout = null;
+    }
+
+    /// <summary>
+    /// Keeps <see cref="Layout"/> until the next complete one, which is taken even with the same
+    /// version: the phone's app may have restarted, counting its versions from 1 again.
+    /// </summary>
+    public void Renew()
+    {
+        _version = -1;
+        _count = 0;
+        _pieces = [];
+        _renew = Layout != null;
+    }
+}
+
+/// <summary>
+/// Turns OVERLAY frames with running totals (<see cref="OverlayFrame.FlagTotals"/>) back into the
+/// motion since the last frame that came, so a lost OVERLAY loses no turn. The phone keeps the
+/// angles modulo 360 and the time modulo 65536 units of 10 us: the difference is taken to the
+/// nearest equivalent (one axis turning more than 180 degrees between two frames that come is
+/// misread). The first totals frame (after <see cref="Reset"/> or a per-frame one) only sets the
+/// base and carries no motion. Frames without the flag pass as they are.
+/// </summary>
+public sealed class OverlayTotals
+{
+    private bool _has;
+    private uint _time;
+    private int _units;
+    private float _yaw, _pitch, _roll, _camYaw, _camPitch, _camRoll;
+
+    /// <summary>A new session, or the overlay was off: the next totals frame is the base.</summary>
+    public void Reset() => _has = false;
+
+    /// <summary>True when OVERLAY <paramref name="b"/> has totals older than the last ones (it came late): drop it.</summary>
+    public bool IsLate(ReadOnlySpan<byte> b) => _has && (b[34] & OverlayFrame.FlagTotals) != 0 && (int)(Le.U32(b, 0) - _time) < 0;
+
+    /// <summary>Puts the motion since the last frame into decoded frame <paramref name="f"/> in place of its totals.</summary>
+    public void ToDeltas(OverlayFrame f)
+    {
+        if (!f.Totals)
+        {
+            _has = false;
+            return;
+        }
+        int units = (int)MathF.Round(f.TurnSeconds * 100_000f);
+        float yaw = f.TurnYaw, pitch = f.TurnPitch, roll = f.TurnRoll;
+        float camYaw = f.CameraYaw, camPitch = f.CameraPitch, camRoll = f.CameraRoll;
+        if (_has)
+        {
+            f.TurnYaw = Diff(yaw, _yaw);
+            f.TurnPitch = Diff(pitch, _pitch);
+            f.TurnRoll = Diff(roll, _roll);
+            f.TurnSeconds = ((units - _units) & 0xFFFF) / 100_000f;
+            f.CameraYaw = Diff(camYaw, _camYaw);
+            f.CameraPitch = Diff(camPitch, _camPitch);
+            f.CameraRoll = Diff(camRoll, _camRoll);
+        }
+        else
+        {
+            f.TurnYaw = f.TurnPitch = f.TurnRoll = f.TurnSeconds = 0f;
+            f.CameraYaw = f.CameraPitch = f.CameraRoll = 0f;
+        }
+        _has = true;
+        _time = f.PhoneTimeUs;
+        _units = units;
+        _yaw = yaw; _pitch = pitch; _roll = roll;
+        _camYaw = camYaw; _camPitch = camPitch; _camRoll = camRoll;
+    }
+
+    /// <summary><paramref name="now"/> - <paramref name="before"/> degrees, to the nearest equivalent modulo 360.</summary>
+    private static float Diff(float now, float before)
+    {
+        double d = ((double)now - before) % 360.0;
+        if (d >= 180.0) d -= 360.0;
+        else if (d < -180.0) d += 360.0;
+        return (float)d;
     }
 }

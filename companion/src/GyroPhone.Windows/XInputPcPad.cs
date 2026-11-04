@@ -6,8 +6,8 @@ namespace GyroPhone.Windows;
 /// <summary>
 /// "Use PC controller for gyro ratchet": reads the first XInput controller that is not our own virtual
 /// pad, every millisecond on its own thread, and counts each button's presses so a short one
-/// between two STATEs is not lost. Free slots are looked at only once a second (a query on an
-/// empty slot is slow). Reading never takes the controller away from games or Steam Input.
+/// between two STATEs is not lost. Free slots are looked at only every few seconds (a query on an
+/// empty slot is slow), and not while our own pad is plugged but has no slot yet (it could be any). Reading never takes the controller away from games or Steam Input.
 /// </summary>
 public sealed class XInputPcPad : IPcPad, IDisposable
 {
@@ -20,6 +20,8 @@ public sealed class XInputPcPad : IPcPad, IDisposable
     private const byte TriggerPressed = 128;
 
     private const long RescanMs = 1000;
+    /// <summary>How long after a scan that found nothing the empty slots are queried again.</summary>
+    private const long EmptyRescanMs = 3000;
     private const double PollMs = 1.0;
 
     private readonly Action<string>? _log;
@@ -30,7 +32,8 @@ public sealed class XInputPcPad : IPcPad, IDisposable
     private int _slot = -1;
     private Func<int> _ownSlot = () => -1;
     private Thread? _thread;
-    private volatile bool _stop = true;
+    /// <summary>The running reader's stop flag: each reader has its own, so a new one never revives an old one.</summary>
+    private RunFlag? _run;
     private bool _useEx = true;
 
     public XInputPcPad(Action<string>? log = null) => _log = log;
@@ -50,28 +53,34 @@ public sealed class XInputPcPad : IPcPad, IDisposable
         {
             _ownSlot = ownSlot;
             if (_thread != null) return;
-            _stop = false;
-            _thread = new Thread(Run) { IsBackground = true, Name = "gp-pc-pad", Priority = ThreadPriority.AboveNormal };
+            var run = new RunFlag();
+            _run = run;
+            _thread = new Thread(() => Run(run)) { IsBackground = true, Name = "gp-pc-pad", Priority = ThreadPriority.AboveNormal };
             _thread.Start();
         }
     }
 
+    /// <summary>
+    /// Stops the reader without waiting for its thread (the engine calls this under its lock, and
+    /// the thread may be in a 100 ms wait or a slow scan): it ends on its own, and writes nothing
+    /// once stopped.
+    /// </summary>
     public void Stop()
     {
-        Thread? t;
         lock (_gate)
         {
-            t = _thread;
+            if (_run != null) _run.Stopped = true;
+            _run = null;
             _thread = null;
-            _stop = true;
-        }
-        t?.Join(500);
-        lock (_gate)
-        {
             _held = 0;
             Array.Clear(_axes);
             Volatile.Write(ref _slot, -1);
         }
+    }
+
+    private sealed class RunFlag
+    {
+        public volatile bool Stopped;
     }
 
     public bool Read(uint[] presses, out uint held)
@@ -95,15 +104,16 @@ public sealed class XInputPcPad : IPcPad, IDisposable
 
     public void Dispose() => Stop();
 
-    private void Run()
+    private void Run(RunFlag run)
     {
         IntPtr timer = CreateWaitableTimerExW(IntPtr.Zero, IntPtr.Zero, CreateWaitableTimerHighResolution, TimerAllAccess);
         long lastScan = -RescanMs;
+        long nextScan = 0;
         var clock = System.Diagnostics.Stopwatch.StartNew();
         int slot = -1;
         try
         {
-            while (!_stop)
+            while (!run.Stopped)
             {
                 long now = clock.ElapsedMilliseconds;
                 // Our own pad may have taken the slot read (it was plugged after the scan): never read it.
@@ -114,25 +124,31 @@ public sealed class XInputPcPad : IPcPad, IDisposable
                     {
                         _log?.Invoke($"PC controller for gyro ratchet: controller {slot + 1} is our own pad, looking again");
                         slot = -1;
-                        lastScan = -RescanMs;
+                        nextScan = 0;
                     }
                 }
-                if (slot < 0 && now - lastScan >= RescanMs)
+                if (slot < 0 && now >= nextScan)
                 {
                     lastScan = now;
-                    slot = Scan();
-                    lock (_gate) Volatile.Write(ref _slot, slot);
+                    slot = Scan(out bool ownUnknown);
+                    nextScan = now + (slot < 0 && !ownUnknown ? EmptyRescanMs : RescanMs);
+                    lock (_gate)
+                    {
+                        if (run.Stopped) return;
+                        Volatile.Write(ref _slot, slot);
+                    }
                     if (slot >= 0) _log?.Invoke($"PC controller for gyro ratchet: reading XInput controller {slot + 1}");
                 }
                 if (slot >= 0)
                 {
-                    if (TryGet(slot, out var g)) Store(g);
+                    if (TryGet(slot, out var g)) Store(run, g);
                     else
                     {
                         _log?.Invoke($"PC controller for gyro ratchet: controller {slot + 1} went away");
                         slot = -1;
                         lock (_gate)
                         {
+                            if (run.Stopped) return;
                             _held = 0;
                             Array.Clear(_axes);
                             Volatile.Write(ref _slot, -1);
@@ -152,10 +168,12 @@ public sealed class XInputPcPad : IPcPad, IDisposable
         }
     }
 
-    /// <summary>The first connected slot that is not ours, or -1.</summary>
-    private int Scan()
+    /// <summary>The first connected slot that is not ours, or -1 (also while our own pad's slot is unknown).</summary>
+    private int Scan(out bool ownUnknown)
     {
         int own = OwnSlot();
+        ownUnknown = own == IPadSink.SlotUnknown;
+        if (ownUnknown) return -1;
         for (int i = 0; i < 4; i++)
         {
             if (i == own) continue;
@@ -176,11 +194,12 @@ public sealed class XInputPcPad : IPcPad, IDisposable
         }
     }
 
-    private void Store(in XInputGamepad g)
+    private void Store(RunFlag run, in XInputGamepad g)
     {
         uint held = PlaceBits(g);
         lock (_gate)
         {
+            if (run.Stopped) return;
             uint down = held & ~_held;
             for (int i = 0; i < Places; i++) if ((down & (1u << i)) != 0) _presses[i]++;
             _held = held;
@@ -222,21 +241,21 @@ public sealed class XInputPcPad : IPcPad, IDisposable
 
     private bool TryGet(int slot, out XInputGamepad g)
     {
-        XInputState s;
         uint r;
         if (_useEx)
         {
             try
             {
-                r = XInputGetStateEx((uint)slot, out s);
+                r = XInputGetStateEx((uint)slot, out XInputStateEx ex);
+                g = ex.Gamepad;
+                return r == 0;
             }
             catch (EntryPointNotFoundException)
             {
                 _useEx = false;
-                r = XInputGetState((uint)slot, out s);
             }
         }
-        else r = XInputGetState((uint)slot, out s);
+        r = XInputGetState((uint)slot, out XInputState s);
         g = s.Gamepad;
         return r == 0;
     }
@@ -271,6 +290,19 @@ public sealed class XInputPcPad : IPcPad, IDisposable
         public XInputGamepad Gamepad;
     }
 
+    /// <summary>
+    /// What ordinal 100 writes: XINPUT_STATE with 4 more bytes at the end of the gamepad
+    /// (dwPaddingReserved), 20 bytes in all. Passing the 16-byte <see cref="XInputState"/> let it
+    /// write past the end of the variable.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct XInputStateEx
+    {
+        public uint PacketNumber;
+        public XInputGamepad Gamepad;
+        public uint PaddingReserved;
+    }
+
     private const uint CreateWaitableTimerHighResolution = 0x2;
     private const uint TimerAllAccess = 0x1F0003;
 
@@ -279,7 +311,7 @@ public sealed class XInputPcPad : IPcPad, IDisposable
 
     /// <summary>Undocumented ordinal 100: like XInputGetState, with the Guide button.</summary>
     [DllImport("xinput1_4.dll", EntryPoint = "#100")]
-    private static extern uint XInputGetStateEx(uint userIndex, out XInputState state);
+    private static extern uint XInputGetStateEx(uint userIndex, out XInputStateEx state);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr CreateWaitableTimerExW(IntPtr attributes, IntPtr name, uint flags, uint access);

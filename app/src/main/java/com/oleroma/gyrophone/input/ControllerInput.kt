@@ -12,6 +12,7 @@ import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownLayouts
+import com.oleroma.gyrophone.core.model.PhysicalSticks
 import com.oleroma.gyrophone.runtime.AttachedController
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
@@ -153,7 +154,12 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
     /** Sends [v] (the [AndroidAxis.polled] axes) to the PC's phone overlay, for its handles. */
     private fun overlayAxes(device: InputDevice, v: FloatArray) {
         // Pads on Generic.kl put the right stick on RX / RY (and sometimes triggers on Z / RZ).
-        val zStick = device.getMotionRange(AndroidAxis.Z) != null && device.getMotionRange(AndroidAxis.RZ) != null
+        // So Z / RZ are the stick only without RX / RY, or when the triggers have axes of their own.
+        // The engine's PadDevice.rightStickRx uses the same rule (PhysicalSticks.rightStickOnRx).
+        fun has(axis: Int) = device.getMotionRange(axis) != null
+        val triggers = has(AndroidAxis.LTRIGGER) || has(AndroidAxis.RTRIGGER) || has(AndroidAxis.GAS) || has(AndroidAxis.BRAKE)
+        val zStick = has(AndroidAxis.Z) && has(AndroidAxis.RZ) &&
+            (!has(AndroidAxis.RX) || !has(AndroidAxis.RY) || triggers)
         val rx = if (zStick) v[POLLED_Z] else v[POLLED_RX]
         val ry = if (zStick) v[POLLED_RZ] else v[POLLED_RY]
         runtime.wifi.overlay.padAxes(
@@ -276,6 +282,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             device.getMotionRange(AndroidAxis.BRAKE) != null,
         analogRightTrigger = device.getMotionRange(AndroidAxis.RTRIGGER) != null ||
             device.getMotionRange(AndroidAxis.GAS) != null,
+        rightStickRx = PhysicalSticks.rightStickOnRx { device.getMotionRange(it) != null },
     )
 
     /** The engine's view of a mouse: its own device (id apart from the same device's keys), with the mouse mappings. */

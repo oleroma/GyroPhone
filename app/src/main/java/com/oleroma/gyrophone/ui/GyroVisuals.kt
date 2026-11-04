@@ -8,6 +8,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Modifier
@@ -64,8 +65,26 @@ fun GyroDisplaysLayer(
     modifier: Modifier = Modifier,
 ) {
     var frame by remember { mutableLongStateOf(0L) }
+    val shown by rememberUpdatedState(boxes)
+    // Redraws only while some display's data changes (and a moment after, so ghost trails catch up):
+    // a still pose, as in edit mode or with the gyro off, draws nothing new.
     LaunchedEffect(Unit) {
-        while (true) withFrameMillis { frame = it }
+        var last = 0L
+        var until = 0L
+        while (true) withFrameMillis { t ->
+            var sig = runtime.gyroLiveAxes.toLong()
+            for (b in shown) {
+                val f = runtime.gyroFeed(b.control.id)
+                sig = sig * 31 + System.identityHashCode(f)
+                sig = sig * 31 + (f?.pose?.version ?: 0L)
+                sig = sig * 31 + (f?.trace?.version ?: 0L)
+            }
+            if (sig != last || frame == 0L) {
+                last = sig
+                until = t + (GHOSTS + 2) * GHOST_MS
+            }
+            if (t <= until) frame = t
+        }
     }
     val st = remember { VisState() }
     Canvas(modifier) {

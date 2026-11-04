@@ -223,7 +223,16 @@ private fun BluetoothPanel(runtime: GamepadRuntime, onRetry: () -> Unit) {
                 OutlinedButton(onClick = { runtime.hid.disconnect() }) { Text("Disconnect") }
             }
             if (state is HidDeviceManager.State.Failed || state == HidDeviceManager.State.Off) {
-                OutlinedButton(onClick = { onRetry(); runtime.hid.start() }) { Text("Retry") }
+                OutlinedButton(onClick = {
+                    onRetry()
+                    // Without the permission HID would register before the dialog is answered and
+                    // crash; the permission callback starts it once granted.
+                    if (context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) ==
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        runtime.hid.start()
+                    }
+                }) { Text("Retry") }
             }
         }
         Text("Paired devices", style = MaterialTheme.typography.titleSmall)

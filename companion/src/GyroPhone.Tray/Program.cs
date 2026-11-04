@@ -85,7 +85,19 @@ internal static class Program
         GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
         try
         {
-            using var app = new TrayApp();
+            TrayApp created;
+            try
+            {
+                created = new TrayApp();
+            }
+            catch (IOException e)
+            {
+                // settings.json stayed locked: starting on defaults would overwrite the pairings.
+                MessageBox.Show($"GyroPhone Companion could not start: {e.Message}. Try again in a moment.",
+                    AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return 1;
+            }
+            using var app = created;
             Application.Run(app);
         }
         finally

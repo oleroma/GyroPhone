@@ -45,6 +45,15 @@ class GravityPose {
     }
 
     /**
+     * Forgets the pose (the screen turned, so the phone's frame changed, or the gyro space did):
+     * the next accelerometer reading sets it at once. Until then up is the screen's up.
+     */
+    fun reset() = synchronized(this) {
+        ux = 0f; uy = 1f; uz = 0f
+        hasUp = false; accelFresh = false
+    }
+
+    /**
      * Turns the pose by the phone's rates [yaw], [pitch], [roll] (deg/s, as [GyroMouse.motion]) over
      * [dtSeconds] and pulls it toward gravity.
      */

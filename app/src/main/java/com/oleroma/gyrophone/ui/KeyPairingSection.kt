@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -23,6 +24,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.wifi.WifiLink
+import java.io.InputStream
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Connect tab, Wi-Fi: key file pairing. Shows this phone's key fingerprint, shares phone.pub,
@@ -36,12 +41,18 @@ fun KeyPairingSection(wifi: WifiLink) {
     val trusted by wifi.keys.trusted.collectAsStateWithLifecycle()
     val autoConnect by wifi.autoConnect.collectAsStateWithLifecycle()
     var message by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val text = runCatching {
-            context.contentResolver.openInputStream(uri)?.use { it.readBytes().take(MAX_KEY_FILE).toByteArray().toString(Charsets.UTF_8) }
-        }.getOrNull()
-        message = if (text == null) "Could not read that file" else wifi.importHostKey(text) ?: "PC key added"
+        // Off the main thread, and only the start of the file: any file can be picked, even a large or cloud one.
+        scope.launch {
+            val text = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { readAtMost(it, MAX_KEY_FILE).toString(Charsets.UTF_8) }
+                }.getOrNull()
+            }
+            message = if (text == null) "Could not read that file" else wifi.importHostKey(text) ?: "PC key added"
+        }
     }
 
     Searchable(
@@ -96,3 +107,15 @@ fun KeyPairingSection(wifi: WifiLink) {
 }
 
 private const val MAX_KEY_FILE = 4096
+
+/** Up to [limit] bytes from the start of [input]. */
+private fun readAtMost(input: InputStream, limit: Int): ByteArray {
+    val buf = ByteArray(limit)
+    var n = 0
+    while (n < limit) {
+        val r = input.read(buf, n, limit - n)
+        if (r < 0) break
+        n += r
+    }
+    return buf.copyOf(n)
+}

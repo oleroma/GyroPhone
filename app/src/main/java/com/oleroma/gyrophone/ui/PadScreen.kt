@@ -60,6 +60,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -67,6 +68,8 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
@@ -158,6 +161,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import kotlinx.serialization.json.Json
 
 private const val GRID = 0.02f
 private const val NEW_BUTTON_SIZE = 0.14f
@@ -208,6 +212,17 @@ private const val UNDO_SETTLE_MS = 400L
 
 /** Edit mode undo: the most steps kept. */
 private const val UNDO_MAX = 100
+
+/** Longest edit mode draft (JSON chars) kept in the saved state; a larger one is not kept. */
+private const val MAX_SAVED_DRAFT = 100_000
+
+private val draftJson = Json { ignoreUnknownKeys = true }
+
+/** Keeps edit mode's draft when the activity is recreated or the process is stopped in the background. */
+private val DraftSaver = Saver<MutableState<Profile?>, String>(
+    save = { s -> s.value?.let { draftJson.encodeToString(Profile.serializer(), it) }?.takeIf { it.length <= MAX_SAVED_DRAFT } },
+    restore = { t -> mutableStateOf(runCatching { draftJson.decodeFromString(Profile.serializer(), t) }.getOrNull()) },
+)
 
 /**
  * PRESS: on a control, not yet moved; HELD: the same after a long press (settings screen open);
@@ -343,10 +358,16 @@ fun PadScreen(
      * touch handler because the toggle resizes the pad, which restarts the handler mid-press.
      */
     val chordFired = remember { BooleanArray(1) }
-    var draft by remember { mutableStateOf<Profile?>(null) }
+    // Saved, so unsaved edits survive a recreated activity (dark theme, font size) or a stopped process.
+    var draft by rememberSaveable(saver = DraftSaver) { mutableStateOf<Profile?>(null) }
+    // A draft brought back for another profile than the active one is dropped.
+    LaunchedEffect(profile.id) {
+        val d = draft
+        if (d != null && d.id != profile.id) draft = null
+    }
 
     /** Workspace shown while editing (index into the draft). */
-    var editIndex by remember { mutableIntStateOf(0) }
+    var editIndex by rememberSaveable { mutableIntStateOf(0) }
     var selected by remember { mutableStateOf<String?>(null) }
     var menu by remember { mutableStateOf(EditMenu.NONE) }
 
@@ -387,7 +408,9 @@ fun PadScreen(
      * The controls (and corners) there were when edit mode opened: the only ones the lock holds, so
      * what is added in this session can still be moved and sized until edit mode opens again.
      */
-    val lockableIds = remember { arrayOf<Set<String>>(emptySet()) }
+    fun lockIds(p: Profile): Set<String> =
+        p.corners.mapTo(HashSet()) { it.id } + p.workspaces.flatMap { w -> w.touchControls.map { it.id } }
+    val lockableIds = remember { arrayOf(if (draft != null) lockIds(profile) else emptySet()) }
 
     /** Whether the lock keeps [id] from being moved or sized. */
     fun lockedOut(id: String?) = layoutLocked && id != null && id in lockableIds[0]
@@ -517,7 +540,10 @@ fun PadScreen(
             .groupBy { MappingProfiles.touchId(it.source) }
     }
     val inUseCache = remember { arrayOfNulls<List<Mapping>>(1) }
-    val inUseGroups = remember { arrayOf<Map<String?, List<Mapping>>>(emptyMap()) }
+    val inUseShown = remember { arrayOf<List<Mapping>>(emptyList()) }
+    // The mappings on at the last poll, and the label text per control they make.
+    val activeCache = remember { arrayOf<List<Mapping>>(emptyList()) }
+    val activeText = remember { arrayOf<Map<String, String>>(emptyMap()) }
     val liveLabels = remember { mutableStateMapOf<String, String>() }
     val liveUntil = remember { HashMap<String, Long>() }
     val liveWatchUntil = remember { LongArray(1) }
@@ -532,20 +558,29 @@ fun PadScreen(
         val inUse = runtime.engine.touchMappingsInUse
         if (inUse !== inUseCache[0]) {
             inUseCache[0] = inUse
-            inUseGroups[0] = inUse.filterNot { Describe.isHaptic(it.target) || it.target == OutputTarget.NoOutput }
-                .groupBy { MappingProfiles.touchId(it.source) }
+            inUseShown[0] = inUse.filter { MappingProfiles.touchId(it.source) != null }
+                .filterNot { Describe.isHaptic(it.target) || it.target == OutputTarget.NoOutput }
         }
-        val groups = inUseGroups[0]
-        for (id in groups.keys + liveLabels.keys.toList()) {
-            if (id == null) continue
-            val ms = groups[id].orEmpty()
-            val text = ms.filter { abs(runtime.sourceValue(it.source)) >= 0.5f }
-                .map { Describe.shortTarget(it.target) }.distinct().joinToString(" + ")
-            if (text.isNotEmpty()) {
-                if (liveLabels[id] != text) liveLabels[id] = text
-                liveUntil[id] = now + LIVE_LINGER_MS
-            } else if ((liveUntil[id] ?: 0L) < now) {
-                liveUntil.remove(id)
+        // One engine call per poll; the labels are rebuilt only when what is on changes.
+        val active = runtime.engine.activeMappings(inUseShown[0])
+        val last = activeCache[0]
+        if (active.size != last.size || active.indices.any { active[it] !== last[it] }) {
+            activeCache[0] = active
+            activeText[0] = active.groupBy { MappingProfiles.touchId(it.source)!! }
+                .mapValues { (_, ms) -> ms.map { Describe.shortTarget(it.target) }.distinct().joinToString(" + ") }
+                .filterValues { it.isNotEmpty() }
+        }
+        val texts = activeText[0]
+        for ((id, text) in texts) {
+            if (liveLabels[id] != text) liveLabels[id] = text
+            liveUntil[id] = now + LIVE_LINGER_MS
+        }
+        if (liveUntil.size > texts.size) {
+            val entries = liveUntil.entries.iterator()
+            while (entries.hasNext()) {
+                val (id, until) = entries.next()
+                if (id in texts || until >= now) continue
+                entries.remove()
                 if (id in liveLabels) liveLabels.remove(id)
             }
         }
@@ -635,8 +670,7 @@ fun PadScreen(
         picked = emptySet()
         dragging = false
         editIndex = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
-        lockableIds[0] = profile.corners.mapTo(HashSet()) { it.id } +
-            profile.workspaces.flatMap { w -> w.touchControls.map { it.id } }
+        lockableIds[0] = lockIds(profile)
         draft = profile
     }
 
@@ -1616,10 +1650,9 @@ fun PadScreen(
         }
         val litColor: (String) -> Color = { id -> if (!selectMode && id == selected) SELECTED_COLOR else PICKED_COLOR }
         val displays = ws.touchControls.filter { it.kind == TouchKind.DISPLAY }
-        DisposableEffect(displays) {
-            runtime.setGyroDisplays(displays)
-            onDispose { runtime.setGyroDisplays(emptyList()) }
-        }
+        // Cleared only when the pad goes: a display that stays across a change keeps its data and sensors.
+        LaunchedEffect(displays) { runtime.setGyroDisplays(displays) }
+        DisposableEffect(Unit) { onDispose { runtime.setGyroDisplays(emptyList()) } }
         if (displays.isNotEmpty()) {
             val boxes = displays.map { c ->
                 val o = center(c)
@@ -1867,7 +1900,8 @@ fun PadScreen(
             fun finishEditing() {
                 val d = draft ?: return
                 val idx = editIndex.coerceIn(0, d.workspaces.lastIndex)
-                runtime.editActiveProfile { d }
+                // Game presets are saved as they change (the Game dialog), so the live ones are kept.
+                runtime.editActiveProfile { d.copy(gamePresets = it.gamePresets) }
                 if (runtime.workspaceIndex.value != idx) runtime.switchWorkspace(idx)
                 draft = null
                 selected = null
@@ -2117,7 +2151,7 @@ fun PadScreen(
                                         onClick = { finishEditing() }) { Text("Done") }
                                     OutlinedButton(contentPadding = compact, onClick = {
                                         // Nothing changed: leave at once; else ask first.
-                                        if (draft == profile) discardEdits() else confirmingCancel = true
+                                        if (draft?.copy(gamePresets = profile.gamePresets) == profile) discardEdits() else confirmingCancel = true
                                     }) { Text("Cancel") }
                                     val pickColors = ButtonDefaults.filledTonalButtonColors(
                                         containerColor = PICKED_COLOR,

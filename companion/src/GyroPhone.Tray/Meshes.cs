@@ -8,7 +8,7 @@ namespace GyroPhone.Tray;
 /// normal and centre, and its edges with the faces either side. <see cref="TwoSided"/>: an open
 /// sheet (the paper plane). <see cref="Convex"/>: no face hides another that faces the viewer.
 /// <see cref="OnSphere"/>: its vertices lie on the unit ball, so it can be drawn smooth. The scratch
-/// arrays hold one frame's projection (UI thread only).
+/// arrays hold one frame's projection (only while ShapeDrawing holds its lock).
 /// </summary>
 internal sealed class Mesh
 {

@@ -218,6 +218,8 @@ public static class HostStatusFlags
     public const byte Overlay = 1 << 5;
     /// <summary>With <see cref="Overlay"/>: the overlay holds its heading by the compass, so the phone sends magnetometer readings too.</summary>
     public const byte OverlayCompass = 1 << 6;
+    /// <summary>With <see cref="Overlay"/>: the PC takes OVERLAY's turn, time and camera degrees as running totals (<see cref="OverlayFrame.FlagTotals"/>).</summary>
+    public const byte OverlayTotals = 1 << 7;
 }
 
 /// <summary>BYE reason (phone to host).</summary>

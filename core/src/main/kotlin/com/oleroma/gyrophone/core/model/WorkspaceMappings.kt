@@ -147,8 +147,8 @@ object WorkspaceMappings {
     }
 
     /**
-     * [target] with [source]'s touch mappings. Touchpad mappings are copied as they are, and
-     * [source]'s sets join [target]'s (a set id both have takes [source]'s name).
+     * [target] with [source]'s touch mappings. Touchpad, gyro, tilt and shake mappings of the
+     * workspace itself are copied as they are, and [source]'s sets join [target]'s (a set id both have takes [source]'s name).
      * [withButtons]: [target]'s buttons are replaced by [source]'s, with their places and mappings.
      * Else [target] keeps its buttons; each takes the mappings of the [source] button of the same
      * kind and name ([buttonName], ignoring case), and one with no match keeps its own.
@@ -181,6 +181,8 @@ object WorkspaceMappings {
                 touch += rekeyAll(src.mappings, match.id, c.id)
             }
         }
-        return Copied(base.copy(mappings = touch + touchpadMappings), unmatched)
+        // The workspace's own gyro, tilt and shake mappings belong to no button: they come as they are, like the touchpad's.
+        val own = src.mappings.filter { it.source.isWorkspaceInput && !it.source.isTouchpad }
+        return Copied(base.copy(mappings = touch + own + touchpadMappings), unmatched)
     }
 }

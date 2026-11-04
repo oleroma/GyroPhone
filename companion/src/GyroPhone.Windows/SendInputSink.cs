@@ -32,8 +32,9 @@ public sealed unsafe class SendInputSink : IKeyMouseSink
     /// <summary>SendInput calls that inserted fewer events than asked (UIPI block, secure desktop).</summary>
     public long ShortWrites => Interlocked.Read(ref _shortWrites);
 
-    public void Inject(ReadOnlySpan<InjectEvent> events)
+    public bool Inject(ReadOnlySpan<InjectEvent> events)
     {
+        bool all = true;
         while (!events.IsEmpty)
         {
             int n = Math.Min(events.Length, Capacity);
@@ -43,6 +44,7 @@ public sealed unsafe class SendInputSink : IKeyMouseSink
             Interlocked.Increment(ref _calls);
             if (sent != n)
             {
+                all = false;
                 Interlocked.Increment(ref _shortWrites);
                 if (!_loggedFailure)
                 {
@@ -53,6 +55,7 @@ public sealed unsafe class SendInputSink : IKeyMouseSink
             }
             events = events[n..];
         }
+        return all;
     }
 
     private static void Fill(ref INPUT input, in InjectEvent e)

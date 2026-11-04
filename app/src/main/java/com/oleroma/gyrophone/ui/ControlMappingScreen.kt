@@ -292,7 +292,8 @@ private fun presetsFor(control: TouchControl, inputs: List<BindableInput>, physi
     }
     if (control.swipes && !physical) {
         add(MapPreset("Windows touchpad") { m ->
-            m.filterNot { (it.source as? InputSource.Surface)?.id == control.id } +
+            // Only the edited set's (Base in this view) surface mappings are replaced.
+            m.filterNot { it.set == MappingSet.BASE && (it.source as? InputSource.Surface)?.id == control.id } +
                     Bindings.defaultTouchpadMappings(TouchpadSettings()).map { d ->
                         val s = d.source
                         if (s is InputSource.Surface) d.copy(source = s.copy(id = control.id)) else d
@@ -307,8 +308,8 @@ private fun presetsFor(control: TouchControl, inputs: List<BindableInput>, physi
             Bindings.setTargets(x, move(SurfaceInput.MOTION_Y), listOf(OutputTarget.MouseAxis(MouseMotion.MOVE_Y)))
         })
     }
-    // Sets roll and pitch only; the other gyro axes stay.
-    add(MapPreset("Gyro mouse") { m ->
+    // Sets roll and pitch only; the other gyro axes stay. A physical control has no gyro.
+    if (!physical) add(MapPreset("Gyro mouse") { m ->
         Bindings.gyroMouseMappings(control.id).fold(m) { r, g ->
             val input = Bindings.gyroInputs(control.id).first { it.sources.single() == g.source }
             Bindings.setTargets(r, input, listOf(g.target))
@@ -415,6 +416,10 @@ internal fun ControlMappingScreen(
     // The edited set seen as Base, so the Base-only Bindings helpers edit it.
     val view = remember(mappings, editSet) { Bindings.viewSet(mappings, editSet) }
     val parentView = remember(inherited) { inherited.map { it.copy(set = MappingSet.BASE) }.distinct() }
+    // Every other set seen as Base, for the greyed chips: made once per change, not per card and frame.
+    val otherViews = remember(mappings, sets, editSet) {
+        (listOf(MappingSet.BASE) + sets.map { it.id }).filter { it != editSet }.map { n -> n to Bindings.viewSet(mappings, n) }
+    }
 
     /** [input] firing on [t] (itself for Hold). */
     fun trig(input: BindableInput, t: Trigger): BindableInput = Bindings.triggerInput(input, t) ?: input
@@ -537,6 +542,8 @@ internal fun ControlMappingScreen(
 
     fun undoLast() {
         val prev = undo.removeLastOrNull() ?: return
+        // Its snackbar's Undo would undo the change before it.
+        snackbar.currentSnackbarData?.dismiss()
         emit(prev)
     }
 
@@ -601,23 +608,6 @@ internal fun ControlMappingScreen(
         actionTitle(currentControl, input) + " follows " + parentName,
     )
 
-    /** Every action the level above maps follows it again. */
-    fun followAll() {
-        val overridden = inputs.filter { Bindings.targets(parentView, it).isNotEmpty() && Bindings.targets(currentMappings, it).isNotEmpty() }
-        change(
-            overridden.fold(currentMappings) { m, input -> Bindings.setTargets(m, input, emptyList()) },
-            "Every action follows " + parentName,
-        )
-    }
-
-    /** Every action does nothing: cleared where the level above maps it, its own mappings gone. */
-    fun clearAll() = change(
-        inputs.fold(currentMappings) { m, input ->
-            Bindings.setTargets(m, input, if (Bindings.targets(parentView, input).isNotEmpty()) listOf(OutputTarget.NoOutput) else emptyList())
-        },
-        "Cleared every action",
-    )
-
     // Drag & drop geometry, in root coordinates.
     val cardBounds = remember { mutableStateMapOf<InputSource, Rect>() }
     // Each card's row items (chips and dividers), by the card's source; read only by drag code.
@@ -662,6 +652,28 @@ internal fun ControlMappingScreen(
         if (zoneSettings == null || src.input.holdDirection == null) return false
         return allMappings.any { (it.source as? InputSource.Surface)?.copy(zone = 0, on = Trigger.HOLD) == src }
     }
+
+    /** Every input the cards show chips of: each card's Wheres and zones, on each trigger. */
+    fun bulkInputs(): List<BindableInput> = inputs.filterNot(Bindings::isTriggerOf).flatMap { card ->
+        (0 until zonesOf(card)).flatMap { z -> if (z == 0) wheresOf(card).filterNotNull() else listOf(zin(card, z)) }
+    }.flatMap { trigInputs(it).map { (_, ti) -> ti } }.distinctBy { it.sources }
+
+    /** Every action the level above maps follows it again. */
+    fun followAll() {
+        val overridden = bulkInputs().filter { Bindings.targets(parentView, it).isNotEmpty() && Bindings.targets(currentMappings, it).isNotEmpty() }
+        change(
+            overridden.fold(currentMappings) { m, input -> Bindings.setTargets(m, input, emptyList()) },
+            "Every action follows " + parentName,
+        )
+    }
+
+    /** Every action does nothing: cleared where the level above maps it, its own mappings gone. */
+    fun clearAll() = change(
+        bulkInputs().fold(currentMappings) { m, input ->
+            Bindings.setTargets(m, input, if (Bindings.targets(parentView, input).isNotEmpty()) listOf(OutputTarget.NoOutput) else emptyList())
+        },
+        "Cleared every action",
+    )
 
     /** [input]'s row as mapped: each zone's chips of the edited set, divided, then the end divider. */
     fun rowOf(input: BindableInput): List<RowItem> = buildList {
@@ -740,9 +752,16 @@ internal fun ControlMappingScreen(
 
     /**
      * [m] (the edited set's view) with [card]'s chips as [row] has them: each in the zone of the
-     * dividers before it, in its order. Zones left empty close up in [change].
+     * dividers before it, in its order. Zones left empty close up in [change]. A chip keeps the
+     * options it had where [m] maps it ([RowItem.Chip.zone] is where it came from); [carry] gives
+     * a chip brought from another card its options.
      */
-    fun withRow(m: List<Mapping>, card: BindableInput, row: List<RowItem>): List<Mapping> {
+    fun withRow(
+        m: List<Mapping>,
+        card: BindableInput,
+        row: List<RowItem>,
+        carry: Pair<OutputTarget, MapOptions?>? = null,
+    ): List<Mapping> {
         val lists = mutableListOf(mutableListOf<RowItem.Chip>())
         for (item in row) when (item) {
             is RowItem.Chip -> lists.last().add(item)
@@ -756,8 +775,12 @@ internal fun ControlMappingScreen(
             val wheres = if (z == 0) wheresOf(card) else listOf(zin(card, z))
             for ((w, wi) in wheres.withIndex()) for ((tr, ti) in trigInputs(wi ?: continue)) {
                 val was = out
-                out = Bindings.setTargets(out, ti, chips.filter { it.trigger == tr && it.where == w }.map { it.target }) { t ->
-                    Bindings.options(was, ti, t)
+                val here = chips.filter { it.trigger == tr && it.where == w }
+                out = Bindings.setTargets(out, ti, here.map { it.target }) { t ->
+                    if (t in Bindings.targets(was, ti)) Bindings.options(was, ti, t)
+                    // Moved here from another zone or Where: the options it had there.
+                    else here.firstOrNull { it.target == t }?.let { c -> Bindings.options(m, trig(chipInput(card, c), c.trigger), t) }
+                        ?: carry?.takeIf { it.first == t }?.second
                 }
             }
         }
@@ -902,13 +925,15 @@ internal fun ControlMappingScreen(
                         val fresh = if (from == null && maps(tr0)) Bindings.triggersOf(zi).firstOrNull { !maps(it) } else null
                         val tr = fresh ?: tr0
                         row.add(i, RowItem.Chip(zone, d.target, tr, w))
+                        // A moved chip keeps its options (Toggle, Once, delays...).
+                        val carry = from?.let { d.target to Bindings.options(currentMappings, it, d.target) }
                         val base = if (from == null || c != null) currentMappings else Bindings.removeTarget(currentMappings, from, d.target)
                         // Already in the zone it lands in: just moved there, not twice.
                         val cleaned = if (c == null) row.filterIndexed { j, it ->
                             j == i || !(it is RowItem.Chip && it.target == d.target && it.trigger == tr && it.where == w && zoneIn(row, j) == zone)
                         } else row
                         change(
-                            withRow(base, card, cleaned),
+                            withRow(base, card, cleaned, carry),
                             (if (from == null) "Mapped " else "Moved ") + Describe.shortTarget(d.target) + " to " + actionTitle(currentControl, zi),
                         )
                         if (fresh != null) chipDialog = card to RowItem.Chip(zone, d.target, tr, w)
@@ -925,7 +950,14 @@ internal fun ControlMappingScreen(
                 val (card, at) = l
                 val row = rowOf(card).filter { it != carried(card) }.toMutableList()
                 row.add(at.coerceIn(0, row.size), RowItem.Divider(d.k))
-                change(withRow(currentMappings, card, row), "Moved a zone divider of " + actionTitle(currentControl, card))
+                // A chip passed into a later zone fires on Hold there when that zone doesn't offer its trigger
+                // (a Quick or Double swipe), as a dropped chip does.
+                val moved = row.mapIndexed { j, item ->
+                    val z = zoneIn(row, j)
+                    if (item is RowItem.Chip && z > 0 && item.trigger !in Bindings.triggersOf(zin(card, z))) item.copy(trigger = Trigger.HOLD)
+                    else item
+                }
+                change(withRow(currentMappings, card, moved), "Moved a zone divider of " + actionTitle(currentControl, card))
                 done = true
             }
 
@@ -1071,8 +1103,12 @@ internal fun ControlMappingScreen(
                     val tis = trigInputs(input)
                     val own = tis.flatMap { (_, ti) -> Bindings.targets(view, ti) }
                     val parent = parentOf(input)
-                    // Mapped in Base, a layer's action does that: the level above shows only where Base maps nothing.
-                    val ownBase = editSet != MappingSet.BASE && tis.any { (_, ti) -> Bindings.targets(mappings, ti).isNotEmpty() }
+                    // The level above passes down each touch input (Inheritance.inputOf) the card doesn't map
+                    // itself, here or, in a layer, in Base: Base's mapping is what the layer does there.
+                    fun inhKey(ti: BindableInput): Any = ti.sources.first().let { Inheritance.inputOf(it) ?: it }
+                    val ownKeys = tis.filter { (_, ti) ->
+                        Bindings.targets(view, ti).isNotEmpty() || (editSet != MappingSet.BASE && Bindings.targets(mappings, ti).isNotEmpty())
+                    }.mapTo(HashSet()) { (_, ti) -> inhKey(ti) }
                     ActionCard(
                         title = when {
                             isSurface(input) && (src as InputSource.Surface).input == SurfaceInput.HOLD -> "Touch"
@@ -1080,13 +1116,12 @@ internal fun ControlMappingScreen(
                             else -> actionLabel(control, input)
                         },
                         row = row,
-                        inherited = if (own.isEmpty() && !ownBase) parent else emptyList(),
+                        inherited = parent.filter { (t, _) -> inhKey(trig(input, t)) !in ownKeys },
                         parentName = parentName,
                         onClear = if (parent.isNotEmpty() && !(own.isNotEmpty() && own.all { it == OutputTarget.NoOutput })) ({ clear(input) }) else null,
                         onFollow = if (parent.isNotEmpty() && own.isNotEmpty()) ({ follow(input) }) else null,
-                        others = zoneInputs.mapIndexed { z, zi ->
-                            (listOf(MappingSet.BASE) + sets.map { it.id }).filter { it != editSet }.flatMap { n ->
-                                val inSet = Bindings.viewSet(mappings, n)
+                        others = zoneInputs.map { zi ->
+                            otherViews.flatMap { (n, inSet) ->
                                 trigInputs(zi).flatMap { (tr, ti) -> Bindings.targets(inSet, ti).map { Triple(n, it, tr) } }
                             }
                         },
@@ -1152,7 +1187,8 @@ internal fun ControlMappingScreen(
         )
     }
     val chipCarried = (dragged as? Dragged.Target)?.from != null
-    val overLibrary = chipCarried && libraryBounds.contains(dragPos)
+    // Read through derived state, so a moving finger doesn't recompose the panes every frame.
+    val overLibrary by remember { derivedStateOf { (dragged as? Dragged.Target)?.from != null && libraryBounds.contains(dragPos) } }
     val libraryPane: @Composable () -> Unit = {
         val q = query.trim()
         val shownPresets = when {
@@ -1366,7 +1402,8 @@ internal fun ControlMappingScreen(
                                 )
                             }
                         }
-                        if (inputs.any { parentOf(it).isNotEmpty() && Bindings.targets(view, it).isNotEmpty() }) {
+                        val bulk = bulkInputs()
+                        if (bulk.any { Bindings.targets(parentView, it).isNotEmpty() && Bindings.targets(view, it).isNotEmpty() }) {
                             var asking by remember { mutableStateOf(false) }
                             TextButton(onClick = { asking = true }, contentPadding = compact) { Text("↺ Reset all") }
                             if (asking) ConfirmResetAll(
@@ -1374,7 +1411,7 @@ internal fun ControlMappingScreen(
                                 { asking = false },
                             ) { asking = false; followAll() }
                         }
-                        if (inputs.any { (Bindings.targets(view, it).ifEmpty { parentOf(it) }).any { t -> t != OutputTarget.NoOutput } }) {
+                        if (bulk.any { (Bindings.targets(view, it).ifEmpty { Bindings.targets(parentView, it) }).any { t -> t != OutputTarget.NoOutput } }) {
                             TextButton(onClick = { clearAll() }, contentPadding = compact) { Text("✕ Clear all") }
                         }
                         // One Settings: a touch control's own page (its look and the settings its actions
@@ -1613,6 +1650,9 @@ internal fun ControlMappingScreen(
                         setMenu = null
                         if (editSet == st.id) onEditSet(MappingSet.BASE)
                         onSetsChange?.invoke(sets.filterNot { it.id == st.id }, st.id)
+                        // The undo steps hold the deleted layer's mappings: undoing one would bring them back without it.
+                        undo.clear()
+                        snackbar.currentSnackbarData?.dismiss()
                     }) { Text("Delete", color = colors.error) }
                 } else {
                     TextButton(onClick = {

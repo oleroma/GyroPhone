@@ -152,4 +152,26 @@ class WorkspaceMappingsTest {
         }.toSet())
         assertEquals(listOf(MappingSet(2, "Aim")), added.sets)
     }
+
+    @Test fun copyMappingsOnlyBringsTheWorkspacesGyro() {
+        val gyro = Mapping(
+            InputSource.Gyro(com.oleroma.gyrophone.core.model.MotionAxis.ROLL),
+            OutputTarget.MouseAxis(com.oleroma.gyrophone.core.model.MouseMotion.MOVE_X),
+        )
+        val resolved = live()
+        val source = resolved.workspaces[0].let { it.copy(mappings = it.mappings + gyro) }
+        val c = WorkspaceMappings.copy(resolved.workspaces[1], source, withButtons = false)
+        assertTrue(gyro in c.workspace.mappings)
+    }
+
+    @Test fun theDefaultProfilesPadsComeAsPresetsTheyPin() {
+        val builtin = com.oleroma.gyrophone.core.model.BuiltinProfiles
+        val stored = WorkspaceMappings.store(com.oleroma.gyrophone.core.model.WorkspaceSet.merge(builtin.default, emptyList()))
+        val resolved = WorkspaceMappings.resolve(stored)
+        val controller = resolved.workspaces.first { it.id == "controller" }
+        assertEquals(listOf(builtin.controllerWorkspace.pads.first().mappings), controller.pads.map { it.mappings })
+        val wasd = resolved.workspaces.first { it.id == "wasd" }
+        assertEquals(listOf(builtin.kbmPadMappings()), wasd.pads.map { it.mappings })
+        assertEquals(null, resolved.workspaces.first { it.id == "keyboard" }.devicePreset)
+    }
 }

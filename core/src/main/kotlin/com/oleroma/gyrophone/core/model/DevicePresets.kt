@@ -121,6 +121,24 @@ object PhysicalSticks {
         "rs" to (AndroidAxis.Z to AndroidAxis.RZ),
     )
 
+    /** [sticks] on a pad whose right stick is RX / RY ([rightStickOnRx]); its Z / RZ are then triggers. */
+    val sticksRx: Map<String, Pair<Int, Int>> = linkedMapOf(
+        "ls" to (AndroidAxis.X to AndroidAxis.Y),
+        "rs" to (AndroidAxis.RX to AndroidAxis.RY),
+    )
+
+    /**
+     * Whether a pad puts its right stick on RX / RY ([has]: it reports that axis). Pads on
+     * Generic.kl do (and sometimes put triggers on Z / RZ); Z / RZ are the stick only without
+     * RX / RY, or when the triggers have axes of their own (LTRIGGER, RTRIGGER, GAS, BRAKE).
+     */
+    fun rightStickOnRx(has: (Int) -> Boolean): Boolean {
+        val triggers = has(AndroidAxis.LTRIGGER) || has(AndroidAxis.RTRIGGER) || has(AndroidAxis.GAS) || has(AndroidAxis.BRAKE)
+        val zStick = has(AndroidAxis.Z) && has(AndroidAxis.RZ) &&
+            (!has(AndroidAxis.RX) || !has(AndroidAxis.RY) || triggers)
+        return !zStick && has(AndroidAxis.RX) && has(AndroidAxis.RY)
+    }
+
     /** Trigger id to the axes its pull may come as. */
     val triggers: Map<String, Pair<Int, Int>> = linkedMapOf(
         "lt" to (AndroidAxis.LTRIGGER to AndroidAxis.BRAKE),
@@ -156,7 +174,10 @@ object DevicePresets {
         val fixed = p.controller.flatMap { m ->
             val id = standIn(m.source) ?: return@flatMap listOf(m)
             if (m.source !is InputSource.Touch) return@flatMap emptyList()
-            val press = controls[id.removePrefix(STAND_IN_PREFIX)]?.inputs?.firstOrNull() ?: return@flatMap emptyList()
+            // A stick's press is its Click; a button's its first input (Press), a trigger's its Pull.
+            val inputs = controls[id.removePrefix(STAND_IN_PREFIX)]?.inputs.orEmpty()
+            val press = inputs.firstOrNull { it.label == "Click" } ?: inputs.firstOrNull()
+                ?: return@flatMap emptyList()
             press.sources.map { m.copy(source = it) }
         }.distinct()
         return p.copy(controller = fixed)

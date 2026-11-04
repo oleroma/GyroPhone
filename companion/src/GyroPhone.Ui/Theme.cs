@@ -21,13 +21,22 @@ public static class Theme
     public static void Start()
     {
         if (_started) return;
-        _started = true;
         var app = Application.Current ?? new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
-        app.Resources.MergedDictionaries.Add(new ResourceDictionary
+        var styles = new ResourceDictionary
         {
             Source = new Uri("pack://application:,,,/GyroPhone.Ui;component/Styles.xaml", UriKind.Absolute),
-        });
-        Apply(ReadDark());
+        };
+        app.Resources.MergedDictionaries.Add(styles);
+        try
+        {
+            Apply(ReadDark());
+        }
+        catch
+        {
+            app.Resources.MergedDictionaries.Remove(styles); // so a retry doesn't load them twice
+            throw;
+        }
+        _started = true; // only once loaded, so a failed load is tried again by the next window
         SystemEvents.UserPreferenceChanged += (_, e) =>
         {
             if (e.Category != UserPreferenceCategory.General) return;

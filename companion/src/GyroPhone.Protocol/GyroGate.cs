@@ -185,14 +185,26 @@ public sealed class GyroGate
     /// <summary>A new session: totals start from zero, the toggle is off.</summary>
     public void Reset()
     {
-        _hasBase = false;
-        _adjX = _adjY = _adjW = _adjH = 0;
-        _seenValid = false;
-        Toggled = false;
-        Flips = 0;
+        Rebase();
+        ClearPc();
         MayMove = false;
         Effective = 0;
         _epoch = -1;
+    }
+
+    /// <summary>The same phone in a new session: its totals start from zero, the PC toggle stays.</summary>
+    public void Rebase()
+    {
+        _hasBase = false;
+        _adjX = _adjY = _adjW = _adjH = 0;
+    }
+
+    /// <summary>The PC controller is no longer read: its toggle and held ratchets flip nothing.</summary>
+    public void ClearPc()
+    {
+        _seenValid = false;
+        Toggled = false;
+        Flips = 0;
     }
 
     /// <summary>

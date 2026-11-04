@@ -12,12 +12,14 @@ import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.PhysicalSticks
 import com.oleroma.gyrophone.core.model.StickCurve
 import com.oleroma.gyrophone.core.model.StickTuning
 import com.oleroma.gyrophone.core.model.TriggerTuning
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceMappings
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -128,6 +130,59 @@ class StickTuningTest {
         assertTrue(0xE1 in e.snapshot().keyboard.keys || e.snapshot().keyboard.modifiers != 0)
     }
 
+    private fun rightStickEngine() = MappingEngine(
+        single(
+            Workspace(
+                id = "w", name = "w",
+                pads = listOf(AttachedPad(id = "p", match = DeviceMatch(vendorId = 0x045E, productId = 0x0B13))),
+                stickTunings = mapOf("rs" to StickTuning()),
+            ),
+        ),
+    )
+
+    @Test fun rightStickOnZRzIsTunedAsOneStick() {
+        // GameSir / Xbox style: Z / RZ stick, triggers on LTRIGGER / RTRIGGER.
+        val p = pad.copy(analogLeftTrigger = true, analogRightTrigger = true)
+        val e = rightStickEngine()
+        e.setAxis(p, AndroidAxis.Z, 0.06f); e.setAxis(p, AndroidAxis.RZ, 0.06f)
+        assertEquals(0f, e.v(InputSource.Axis(AndroidAxis.Z)), 0f)
+        e.setAxis(p, AndroidAxis.Z, 0.525f); e.setAxis(p, AndroidAxis.RZ, 0f)
+        assertEquals(0.5f, e.v(InputSource.Axis(AndroidAxis.Z)), 1e-4f)
+        e.setAxis(p, AndroidAxis.RX, 0.05f)
+        assertEquals(0.05f, e.v(InputSource.Axis(AndroidAxis.RX)), 1e-6f)
+    }
+
+    @Test fun rightStickOnRxRyLeavesZRzRaw() {
+        // Generic.kl pad: RX / RY stick, triggers on Z / RZ.
+        val p = pad.copy(rightStickRx = true)
+        val e = rightStickEngine()
+        e.setAxis(p, AndroidAxis.Z, 0.05f)
+        assertEquals(0.05f, e.v(InputSource.Axis(AndroidAxis.Z)), 1e-6f)
+        // One trigger does not scale the other.
+        e.setAxis(p, AndroidAxis.Z, 0.5f); e.setAxis(p, AndroidAxis.RZ, 0.8f)
+        assertEquals(0.5f, e.v(InputSource.Axis(AndroidAxis.Z)), 1e-6f)
+        assertEquals(0.8f, e.v(InputSource.Axis(AndroidAxis.RZ)), 1e-6f)
+        e.setAxis(p, AndroidAxis.RX, 0.06f); e.setAxis(p, AndroidAxis.RY, 0.06f)
+        assertEquals(0f, e.v(InputSource.Axis(AndroidAxis.RX)), 0f)
+        e.setAxis(p, AndroidAxis.RX, 0.525f); e.setAxis(p, AndroidAxis.RY, 0f)
+        assertEquals(0.5f, e.v(InputSource.Axis(AndroidAxis.RX)), 1e-4f)
+        val up = InputSource.Axis(AndroidAxis.RY, AxisHalf.NEGATIVE, AxisStage.OUTER)
+        e.setAxis(p, AndroidAxis.RX, 0f); e.setAxis(p, AndroidAxis.RY, -0.9f)
+        assertEquals(1f, e.v(up), 0f)
+    }
+
+    @Test fun rightStickAxesFollowTheReportedAxes() {
+        fun rx(vararg axes: Int) = PhysicalSticks.rightStickOnRx { it in axes }
+        val a = AndroidAxis
+        // Xbox / GameSir: Z / RZ stick even with RX / RY, since the triggers have their own axes.
+        assertFalse(rx(a.X, a.Y, a.Z, a.RZ, a.LTRIGGER, a.RTRIGGER))
+        assertFalse(rx(a.X, a.Y, a.Z, a.RZ, a.RX, a.RY, a.GAS, a.BRAKE))
+        // Generic.kl: RX / RY stick, Z / RZ triggers or nothing.
+        assertTrue(rx(a.X, a.Y, a.Z, a.RZ, a.RX, a.RY))
+        assertTrue(rx(a.X, a.Y, a.RX, a.RY))
+        assertFalse(rx(a.X, a.Y))
+    }
+
     @Test fun presetTuningReachesTheWorkspace() {
         val preset = DevicePreset("p1", "P").withStick("ls", StickTuning(inner = 0.2f))
         val w = WorkspaceMappings.resolve(Workspace(id = "w", name = "w", devicePreset = "p1"), listOf(preset))
@@ -153,6 +208,15 @@ class StickTuningTest {
                 Mapping(InputSource.Key(com.oleroma.gyrophone.core.model.AndroidKey.BUTTON_B), OutputTarget.Key(5)),
             ),
             fixed,
+        )
+    }
+
+    @Test fun aSticksStandInMovesToItsClick() {
+        val right = OutputTarget.Mouse(com.oleroma.gyrophone.core.model.MouseButton.RIGHT)
+        val p = DevicePreset("p1", "P", controller = listOf(Mapping(InputSource.Touch("dev:CONTROLLER:ls"), right)))
+        assertEquals(
+            listOf(Mapping(InputSource.Key(com.oleroma.gyrophone.core.model.AndroidKey.BUTTON_THUMBL), right)),
+            com.oleroma.gyrophone.core.model.DevicePresets.fixStandIns(p).controller,
         )
     }
 }

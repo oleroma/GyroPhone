@@ -179,8 +179,7 @@ internal val LocalSectionsCollapsed = compositionLocalOf { false }
 internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, items: List<SectionItem>) {
     val gap = 8.dp
     fun kept(): List<String> = runtime.uiPref("order.$orderKey")?.split(',')?.filter { it.isNotEmpty() }.orEmpty()
-    fun ordered(): List<String> {
-        val ids = items.map { it.id }
+    fun ordered(ids: List<String>): List<String> {
         val known = kept().filter { it in ids }
         // A category the kept order lacks goes after the one before it in [items].
         val out = known.toMutableList()
@@ -198,13 +197,19 @@ internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, item
     val tops = remember { mutableStateMapOf<String, Float>() }
     val heights = remember { mutableStateMapOf<String, Int>() }
     val headers = remember { HashMap<String, Int>() }
-    val shown = if (dragged == null) ordered() else row.toList()
+    val shown = if (dragged == null) ordered(items.map { it.id }) else row.toList()
     val byId = items.associateBy { it.id }
 
     fun drop() {
-        // Keep ids of categories not shown here too, so another list's order stays.
-        val rest = kept().filter { it !in row }
-        runtime.setUiPref("order.$orderKey", (row + rest).joinToString(","))
+        // Keep ids of categories not shown here too, each after the one it followed, so another list's order stays.
+        val old = kept()
+        val out = row.toMutableList()
+        old.forEachIndexed { i, id ->
+            if (id in out) return@forEachIndexed
+            val before = old.subList(0, i).lastOrNull { it in out }
+            out.add(if (before == null) 0 else out.indexOf(before) + 1, id)
+        }
+        runtime.setUiPref("order.$orderKey", out.joinToString(","))
         dragged = null
     }
 
@@ -243,7 +248,8 @@ internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, item
                         val long = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
                         fingerY = col.localToRoot(long.position).y
                         grab = fingerY - (tops[id] ?: 0f)
-                        row.clear(); row.addAll(ordered())
+                        // The latest items: the gesture outlives the composition that started it.
+                        row.clear(); row.addAll(ordered(ids))
                         dragged = id
                         // Ahead of the header's own click and the scrolling list: the finger is ours now.
                         while (true) {
