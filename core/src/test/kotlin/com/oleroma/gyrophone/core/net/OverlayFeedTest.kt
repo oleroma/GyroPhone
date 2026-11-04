@@ -97,6 +97,21 @@ class OverlayFeedTest {
         assertEquals(0, out.getI32(140))
     }
 
+    @Test fun overlayOffLetsGoOfControllerAxes() {
+        val f = OverlayFeed()
+        val out = ByteArray(Wire.OVERLAY_PLAIN)
+        f.padAttached = true
+        f.wanted = true
+        f.padKey(AndroidKey.BUTTON_A, true)
+        f.padAxes(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f)
+        f.wanted = false // axes stop being fed now
+        f.wanted = true
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(0, out.getU8(137))
+        assertEquals(0, out[144].toInt())
+        assertEquals(OverlayFeed.PAD_SOUTH, out.getI32(140)) // keys are fed all the time: kept
+    }
+
     @Test fun wantedAndCompassTellTheRuntime() {
         val f = OverlayFeed()
         var changes = 0

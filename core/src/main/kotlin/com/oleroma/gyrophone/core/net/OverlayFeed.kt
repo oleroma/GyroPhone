@@ -75,7 +75,11 @@ class OverlayFeed {
             if (v == field) return
             field = v
             if (!v) compassWanted = false
-            synchronized(lock) { clearMotion() }
+            synchronized(lock) {
+                clearMotion()
+                // Axes are fed only while wanted, so they would be stale when it turns on again.
+                if (!v) padAxes.fill(0f)
+            }
             onWantedChange?.run()
         }
 

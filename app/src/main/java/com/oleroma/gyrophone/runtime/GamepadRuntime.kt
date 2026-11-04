@@ -1057,6 +1057,9 @@ class GamepadRuntime(context: Context) {
     private fun stopGyro() {
         gyro?.stop()
         gyro = null
+        // No sample comes to bring the gyro's stick or trigger back to rest, and a last one may
+        // have set it after an engine reset. Clearing axes already at rest changes nothing.
+        clearGyroPad()
     }
 
     /** The direct channel [source] stayed below the listener's rate: switch to the listener. */

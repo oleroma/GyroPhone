@@ -153,7 +153,11 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
     /** Sends [v] (the [AndroidAxis.polled] axes) to the PC's phone overlay, for its handles. */
     private fun overlayAxes(device: InputDevice, v: FloatArray) {
         // Pads on Generic.kl put the right stick on RX / RY (and sometimes triggers on Z / RZ).
-        val zStick = device.getMotionRange(AndroidAxis.Z) != null && device.getMotionRange(AndroidAxis.RZ) != null
+        // So Z / RZ are the stick only without RX / RY, or when the triggers have axes of their own.
+        fun has(axis: Int) = device.getMotionRange(axis) != null
+        val triggers = has(AndroidAxis.LTRIGGER) || has(AndroidAxis.RTRIGGER) || has(AndroidAxis.GAS) || has(AndroidAxis.BRAKE)
+        val zStick = has(AndroidAxis.Z) && has(AndroidAxis.RZ) &&
+            (!has(AndroidAxis.RX) || !has(AndroidAxis.RY) || triggers)
         val rx = if (zStick) v[POLLED_Z] else v[POLLED_RX]
         val ry = if (zStick) v[POLLED_RZ] else v[POLLED_RY]
         runtime.wifi.overlay.padAxes(
