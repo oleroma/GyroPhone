@@ -7,7 +7,7 @@ namespace GyroPhone.Tray;
 /// The 3D shape overlay (the phone's 3D shape display, ported): a globe, a solid, a torus, gimbal
 /// rings or a paper plane, turned by the window's pose, drawn flat-on (no perspective) as on the
 /// phone. Lines in front are solid, lines behind faint (Hidden edges), faces filled and shaded.
-/// UI thread only.
+/// Any thread: one drawing at a time.
 /// </summary>
 internal static class ShapeDrawing
 {
@@ -79,8 +79,16 @@ internal static class ShapeDrawing
     }
 
     private static readonly Pen3 P = new();
+    // P and the meshes' projection arrays are shared: one window draws a shape at a time (the pacer's
+    // thread and the UI thread both draw windows).
+    private static readonly object DrawLock = new();
 
     public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, int liveAxes)
+    {
+        lock (DrawLock) DrawLocked(g, area, s, m, liveAxes);
+    }
+
+    private static void DrawLocked(ICanvas g, RectangleF area, OverlaySettings s, float[] m, int liveAxes)
     {
         float r = Math.Min(area.Width, area.Height) / 2f * 0.95f;
         var c = new PointF(area.X + area.Width / 2f, area.Y + area.Height / 2f);

@@ -391,7 +391,8 @@ internal static class OverlayRenderer
 
     /// <summary>
     /// <paramref name="shape"/> cut to convex polygon <paramref name="clip"/> (Sutherland–Hodgman);
-    /// either winding. Empty when nothing is left.
+    /// either winding. Empty when nothing is left. <paramref name="shape"/> itself when it lies wholly
+    /// inside (most controls): nothing is allocated then.
     /// </summary>
     internal static (float X, float Y)[] ClipConvex((float X, float Y)[] shape, (float X, float Y)[] clip)
     {
@@ -403,14 +404,26 @@ internal static class OverlayRenderer
             area += a.X * b.Y - b.X * a.Y;
         }
         float sign = area >= 0 ? 1f : -1f;
-        var output = new List<(float X, float Y)>(shape);
+        bool inside = true;
+        for (int e = 0; e < clip.Length && inside; e++)
+        {
+            var a = clip[e];
+            var b = clip[(e + 1) % clip.Length];
+            foreach (var p in shape)
+                if (sign * ((b.X - a.X) * (p.Y - a.Y) - (b.Y - a.Y) * (p.X - a.X)) < 0) { inside = false; break; }
+        }
+        if (inside) return shape;
+        // Two lists used in turn, one edge after another.
+        var output = new List<(float X, float Y)>(shape.Length * 2);
+        output.AddRange(shape);
+        var input = new List<(float X, float Y)>(shape.Length * 2);
         for (int e = 0; e < clip.Length && output.Count > 0; e++)
         {
             var a = clip[e];
             var b = clip[(e + 1) % clip.Length];
             float Side((float X, float Y) p) => sign * ((b.X - a.X) * (p.Y - a.Y) - (b.Y - a.Y) * (p.X - a.X));
-            var input = output;
-            output = new List<(float X, float Y)>(input.Count + 4);
+            (input, output) = (output, input);
+            output.Clear();
             for (int i = 0; i < input.Count; i++)
             {
                 var cur = input[i];
