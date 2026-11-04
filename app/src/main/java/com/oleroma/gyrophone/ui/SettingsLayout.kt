@@ -1,6 +1,16 @@
 package com.oleroma.gyrophone.ui
 
+import android.os.Build
+import android.view.WindowManager
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -184,9 +194,9 @@ internal fun SettingsDialog(
     actions: @Composable RowScope.() -> Unit = {},
     content: @Composable ColumnScope.(searching: Boolean) -> Unit,
 ) {
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    FullScreenDialog(onDismiss = onClose) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-            Column(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
                 Row(
                     Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -210,6 +220,56 @@ internal fun SettingsDialog(
                     Modifier.weight(1f).fillMaxWidth().imePadding().padding(horizontal = 12.dp, vertical = 4.dp),
                     content = content,
                 )
+            }
+        }
+    }
+}
+
+/**
+ * A full-screen dialog whose window also covers the camera cutout, so the pad behind doesn't show
+ * through there. [content] fills the whole screen: pad its controls by WindowInsets.safeDrawing.
+ */
+@Composable
+internal fun FullScreenDialog(onDismiss: () -> Unit, content: @Composable () -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        val view = LocalView.current
+        SideEffect {
+            val w = (view.parent as? DialogWindowProvider)?.window
+            if (w != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                else WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                if (w.attributes.layoutInDisplayCutoutMode != mode) w.attributes = w.attributes.also { it.layoutInDisplayCutoutMode = mode }
+            }
+        }
+        content()
+    }
+}
+
+/**
+ * A setting's context card (an action's ⚙): floating over the editor, but wide (the whole width in
+ * portrait less a margin, wider still in landscape) so graphs and sliders have room. Scrolls when tall.
+ */
+@Composable
+internal fun ContextCard(title: String, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        val conf = LocalConfiguration.current
+        val landscape = conf.screenWidthDp > conf.screenHeightDp
+        Surface(
+            Modifier
+                .padding(horizontal = if (landscape) 20.dp else 8.dp, vertical = if (landscape) 8.dp else 24.dp)
+                .widthIn(max = 1000.dp)
+                .fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 6.dp,
+            shadowElevation = 8.dp,
+        ) {
+            Column(Modifier.padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = 8.dp)) {
+                Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(end = 8.dp))
+                Column(Modifier.weight(1f, fill = false).padding(top = 12.dp, end = 8.dp).verticalScroll(rememberScrollState()), content = content)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("Done") }
+                }
             }
         }
     }

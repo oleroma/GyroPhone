@@ -73,6 +73,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
@@ -95,7 +98,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.oleroma.gyrophone.core.hid.HidUsage
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
@@ -1315,11 +1317,12 @@ internal fun ControlMappingScreen(
         }
     }
 
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    FullScreenDialog(onDismiss = onClose) {
         Surface(Modifier.fillMaxSize(), color = colors.surface) {
             Box(
                 Modifier
                     .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
                     .onGloballyPositioned { origin = it.positionInRoot() }
                     .pointerInput(Unit) {
                         // Once a source starts a drag, the finger is followed here, before the panes see it.
@@ -1515,16 +1518,9 @@ internal fun ControlMappingScreen(
         val dir = src?.input?.holdDirection
         val zs = zoneSettings
         if (src != null && dir != null && zs != null && onZoneSettings != null) {
-            AlertDialog(
-                onDismissRequest = { zoneDialog = null },
-                title = { Text(actionTitle(control, input) + if (zone == null) " · zones" else " · zone " + (zone + 1)) },
-                text = {
-                    Column(Modifier.verticalScroll(rememberScrollState())) {
-                        HoldZoneSettings(zs, Bindings.holdZoneCounts(mappings, src.id), control.id + "dlg", only = dir, zone = zone, onChange = onZoneSettings)
-                    }
-                },
-                confirmButton = { TextButton(onClick = { zoneDialog = null }) { Text("Done") } },
-            )
+            ContextCard(actionTitle(control, input) + if (zone == null) " · zones" else " · zone " + (zone + 1), onDismiss = { zoneDialog = null }) {
+                HoldZoneSettings(zs, Bindings.holdZoneCounts(mappings, src.id), control.id + "dlg", only = dir, zone = zone, onChange = onZoneSettings)
+            }
         }
     }
     actionDialog?.let { input ->
@@ -1541,17 +1537,10 @@ internal fun ControlMappingScreen(
                 listOfNotNull(mapped(Trigger.TAP, Trigger.LONG_PRESS), mapped(Trigger.DOUBLE_TAP))
             }
         ).mapNotNull { settings?.action?.invoke(it) } + areaGears(input)
-        if (content != null || timingContents.isNotEmpty()) AlertDialog(
-            onDismissRequest = { actionDialog = null },
-            title = { Text("⚙ " + actionTitle(control, input)) },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    content?.invoke()
-                    for (c in timingContents) c()
-                }
-            },
-            confirmButton = { TextButton(onClick = { actionDialog = null }) { Text("Done") } },
-        )
+        if (content != null || timingContents.isNotEmpty()) ContextCard("⚙ " + actionTitle(control, input), onDismiss = { actionDialog = null }) {
+            content?.invoke()
+            for (c in timingContents) c()
+        }
     }
     chipDialog?.let { (input, chip) ->
         val zi = chipInput(input, chip)
