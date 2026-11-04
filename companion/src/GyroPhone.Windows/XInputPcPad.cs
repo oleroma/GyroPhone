@@ -30,7 +30,8 @@ public sealed class XInputPcPad : IPcPad, IDisposable
     private int _slot = -1;
     private Func<int> _ownSlot = () => -1;
     private Thread? _thread;
-    private volatile bool _stop = true;
+    /// <summary>The running reader's stop flag: each reader has its own, so a new one never revives an old one.</summary>
+    private RunFlag? _run;
     private bool _useEx = true;
 
     public XInputPcPad(Action<string>? log = null) => _log = log;
@@ -50,28 +51,34 @@ public sealed class XInputPcPad : IPcPad, IDisposable
         {
             _ownSlot = ownSlot;
             if (_thread != null) return;
-            _stop = false;
-            _thread = new Thread(Run) { IsBackground = true, Name = "gp-pc-pad", Priority = ThreadPriority.AboveNormal };
+            var run = new RunFlag();
+            _run = run;
+            _thread = new Thread(() => Run(run)) { IsBackground = true, Name = "gp-pc-pad", Priority = ThreadPriority.AboveNormal };
             _thread.Start();
         }
     }
 
+    /// <summary>
+    /// Stops the reader without waiting for its thread (the engine calls this under its lock, and
+    /// the thread may be in a 100 ms wait or a slow scan): it ends on its own, and writes nothing
+    /// once stopped.
+    /// </summary>
     public void Stop()
     {
-        Thread? t;
         lock (_gate)
         {
-            t = _thread;
+            if (_run != null) _run.Stopped = true;
+            _run = null;
             _thread = null;
-            _stop = true;
-        }
-        t?.Join(500);
-        lock (_gate)
-        {
             _held = 0;
             Array.Clear(_axes);
             Volatile.Write(ref _slot, -1);
         }
+    }
+
+    private sealed class RunFlag
+    {
+        public volatile bool Stopped;
     }
 
     public bool Read(uint[] presses, out uint held)
@@ -95,7 +102,7 @@ public sealed class XInputPcPad : IPcPad, IDisposable
 
     public void Dispose() => Stop();
 
-    private void Run()
+    private void Run(RunFlag run)
     {
         IntPtr timer = CreateWaitableTimerExW(IntPtr.Zero, IntPtr.Zero, CreateWaitableTimerHighResolution, TimerAllAccess);
         long lastScan = -RescanMs;
@@ -103,7 +110,7 @@ public sealed class XInputPcPad : IPcPad, IDisposable
         int slot = -1;
         try
         {
-            while (!_stop)
+            while (!run.Stopped)
             {
                 long now = clock.ElapsedMilliseconds;
                 // Our own pad may have taken the slot read (it was plugged after the scan): never read it.
@@ -121,18 +128,23 @@ public sealed class XInputPcPad : IPcPad, IDisposable
                 {
                     lastScan = now;
                     slot = Scan();
-                    lock (_gate) Volatile.Write(ref _slot, slot);
+                    lock (_gate)
+                    {
+                        if (run.Stopped) return;
+                        Volatile.Write(ref _slot, slot);
+                    }
                     if (slot >= 0) _log?.Invoke($"PC controller for gyro ratchet: reading XInput controller {slot + 1}");
                 }
                 if (slot >= 0)
                 {
-                    if (TryGet(slot, out var g)) Store(g);
+                    if (TryGet(slot, out var g)) Store(run, g);
                     else
                     {
                         _log?.Invoke($"PC controller for gyro ratchet: controller {slot + 1} went away");
                         slot = -1;
                         lock (_gate)
                         {
+                            if (run.Stopped) return;
                             _held = 0;
                             Array.Clear(_axes);
                             Volatile.Write(ref _slot, -1);
@@ -176,11 +188,12 @@ public sealed class XInputPcPad : IPcPad, IDisposable
         }
     }
 
-    private void Store(in XInputGamepad g)
+    private void Store(RunFlag run, in XInputGamepad g)
     {
         uint held = PlaceBits(g);
         lock (_gate)
         {
+            if (run.Stopped) return;
             uint down = held & ~_held;
             for (int i = 0; i < Places; i++) if ((down & (1u << i)) != 0) _presses[i]++;
             _held = held;
