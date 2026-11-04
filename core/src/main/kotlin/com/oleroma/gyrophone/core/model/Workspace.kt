@@ -51,6 +51,11 @@ data class Workspace(
     /** A mouse's mappings: like [pads] and [keyboard], filled from [devicePreset] when resolved ([WorkspaceMappings.resolve]). */
     val mouse: List<Mapping> = emptyList(),
     /**
+     * The phone's own keys' mappings (its volume rocker): like [mouse], filled from [devicePreset]
+     * when resolved, with an unmapped rocker key turning the PC's volume even with no preset.
+     */
+    val phone: List<Mapping> = emptyList(),
+    /**
      * The settings ([WorkspaceDefaults.keys]) this workspace sets itself; the others follow the
      * workspace defaults ([Profile.defaults]) when resolved. Null: one from before the defaults,
      * which sets each that differs from the built-in values ([WorkspaceDefaults.own]).

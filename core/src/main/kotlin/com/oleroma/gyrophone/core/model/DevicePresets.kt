@@ -1,12 +1,13 @@
 package com.oleroma.gyrophone.core.model
 
 import com.oleroma.gyrophone.core.hid.AndroidKeyToHid
+import com.oleroma.gyrophone.core.hid.HidUsage
 import kotlinx.serialization.Serializable
 
 /**
  * What the physical devices attached to the phone do: any game pad's buttons and sticks
  * ([controller]), a keyboard's keys ([keyboard]) and a mouse's buttons, wheel and movement
- * ([mouse]). Presets live beside the workspaces, not in them: a workspace pins one
+ * ([mouse]), and the phone's own volume rocker ([phone]). Presets live beside the workspaces, not in them: a workspace pins one
  * ([Workspace.devicePreset]) and uses it while it is active; a workspace pinning none leaves the
  * devices doing nothing. Mappings use the workspace's layer numbers ([Mapping.set]).
  */
@@ -17,7 +18,13 @@ data class DevicePreset(
     val controller: List<Mapping> = emptyList(),
     val keyboard: List<Mapping> = emptyList(),
     val mouse: List<Mapping> = emptyList(),
-    /** Keys and buttons (controller, keyboard, mouse) with gesture timings of their own. */
+    /**
+     * The phone's own keys: its volume rocker ([AndroidKey.VOLUME_UP], [AndroidKey.VOLUME_DOWN]),
+     * read while the pad is open. A rocker key with no mapping here turns the PC's volume
+     * ([DevicePresets.withPhoneDefaults]).
+     */
+    val phone: List<Mapping> = emptyList(),
+    /** Keys and buttons (controller, keyboard, mouse, phone) with gesture timings of their own. */
     val timings: List<KeyTiming> = emptyList(),
     /** The sticks' tuning by [PhysicalSticks] id ("ls", "rs"); one not listed has the defaults. */
     val sticks: Map<String, StickTuning> = emptyMap(),
@@ -62,12 +69,14 @@ data class DevicePreset(
         PhysicalDevice.CONTROLLER -> controller
         PhysicalDevice.KEYBOARD -> keyboard
         PhysicalDevice.MOUSE -> mouse
+        PhysicalDevice.PHONE -> phone
     }
 
     fun withMappings(device: PhysicalDevice, m: List<Mapping>): DevicePreset = when (device) {
         PhysicalDevice.CONTROLLER -> copy(controller = m)
         PhysicalDevice.KEYBOARD -> copy(keyboard = m)
         PhysicalDevice.MOUSE -> copy(mouse = m)
+        PhysicalDevice.PHONE -> copy(phone = m)
     }
 }
 
@@ -177,7 +186,7 @@ object PhysicalSticks {
 }
 
 /** The kinds of physical device a [DevicePreset] maps. */
-enum class PhysicalDevice(val label: String) { CONTROLLER("Controller"), KEYBOARD("Keyboard"), MOUSE("Mouse") }
+enum class PhysicalDevice(val label: String) { CONTROLLER("Controller"), KEYBOARD("Keyboard"), MOUSE("Mouse"), PHONE("Phone") }
 
 object DevicePresets {
     /** The id prefix of a physical control's stand-in in the editors ("dev:CONTROLLER:a"). */
@@ -226,9 +235,35 @@ object DevicePresets {
         return "Preset $n"
     }
 
-    /** A new preset where every device does what it is: pad to pad, keys to the same keys, mouse to mouse. */
+    /** A new preset where every device does what it is: pad to pad, keys to the same keys, mouse to mouse, rocker to PC volume. */
     fun standard(id: String, name: String): DevicePreset =
-        DevicePreset(id, name, KnownLayouts.standardControllerMappings(), standardKeyboard(), standardMouse())
+        DevicePreset(id, name, KnownLayouts.standardControllerMappings(), standardKeyboard(), standardMouse(), standardPhone())
+
+    /** The phone's volume rocker to the PC's volume keys. */
+    fun standardPhone(): List<Mapping> = listOf(
+        Mapping(InputSource.Key(AndroidKey.VOLUME_UP), OutputTarget.Key(HidUsage.VOLUME_UP)),
+        Mapping(InputSource.Key(AndroidKey.VOLUME_DOWN), OutputTarget.Key(HidUsage.VOLUME_DOWN)),
+    )
+
+    /**
+     * [phone] mappings with each rocker key that nothing maps (no press or gesture of it, in any
+     * set) turning the PC's volume ([standardPhone]): an unmapped rocker is the PC's volume.
+     */
+    fun withPhoneDefaults(phone: List<Mapping>): List<Mapping> {
+        fun maps(m: Mapping, code: Int) = when (val s = m.source) {
+            is InputSource.Key -> s.keyCode == code
+            is InputSource.KeyGesture -> s.keyCode == code
+            else -> false
+        }
+        val missing = standardPhone().filter { d -> phone.none { maps(it, (d.source as InputSource.Key).keyCode) } }
+        return if (missing.isEmpty()) phone else phone + missing
+    }
+
+    /** [p] with [withPhoneDefaults] filled in, so its editor shows what the rocker does. */
+    fun withPhoneDefaults(p: DevicePreset): DevicePreset {
+        val phone = withPhoneDefaults(p.phone)
+        return if (phone === p.phone) p else p.copy(phone = phone)
+    }
 
     /** Every key of a keyboard to the same key on the PC. */
     fun standardKeyboard(): List<Mapping> =
@@ -436,6 +471,22 @@ object PhysicalLayouts {
     data class MouseControl(val id: String, val label: String, val x: Float, val y: Float, val w: Float, val h: Float, val inputs: List<BindableInput>)
 
     const val MOUSE_ASPECT = 0.8f
+
+    /**
+     * The phone's own keys, drawn on its top edge as held in landscape (the phone's [PHONE_TOP] and
+     * down is its body): Vol + and Vol − of the rocker.
+     * Each is a button like a controller's (press, tap, double tap, long press, release).
+     */
+    val phoneControls: List<MouseControl> = listOf(
+        MouseControl("volup", "Vol +", 0.30f, 0.13f, 0.18f, 0.22f, buttonInputs(listOf(AndroidKey.VOLUME_UP))),
+        MouseControl("voldown", "Vol −", 0.50f, 0.13f, 0.18f, 0.22f, buttonInputs(listOf(AndroidKey.VOLUME_DOWN))),
+    )
+
+    /** The phone drawing's box: width / height (the phone in landscape, the rocker above it). */
+    const val PHONE_ASPECT = 2.2f
+
+    /** Where the phone's body starts in its box, as a fraction of the height (the rocker sits above). */
+    const val PHONE_TOP = 0.24f
 
     val mouseControls: List<MouseControl> = listOf(
         MouseControl("left", "Left", 0.31f, 0.2f, 0.27f, 0.3f, buttonInputs(listOf(AndroidKey.MOUSE_LEFT))),

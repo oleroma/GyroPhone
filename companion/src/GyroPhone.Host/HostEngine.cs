@@ -117,6 +117,7 @@ public sealed class HostEngine
     private readonly byte[] _blockedUps = new byte[StateFrame.KeyBitmapSize];
     private byte _blockedMouseUps;
     private readonly InjectEvent[] _inject = new InjectEvent[InputDiff.MaxEvents];
+    private readonly KeyRepeat _keyRepeat = new();
     private readonly InjectEvent[] _releaseEvents = new InjectEvent[256 + 8];
     private X360Frame _lastX360;
     private Ds4Frame _lastDs4;
@@ -838,6 +839,12 @@ public sealed class HostEngine
             }
             // Ups Windows dropped are sent again as soon as it takes input.
             if (_injectFailed && !Blocked) ResyncAfterBlock();
+            // Held volume keys repeat, as a keyboard's do.
+            if (!_paused && !Blocked)
+            {
+                int r = _keyRepeat.Due(_injectedKeys, nowUs, _inject);
+                if (r > 0 && !_keyMouse.Inject(_inject.AsSpan(0, r))) InjectFailed();
+            }
             // A pad button held from a burst is let go even when no STATE follows.
             if (_padHeld && nowUs >= _padHoldUntilUs && !_hasPending && !_paused && !_locked) SubmitPad(_pending, nowUs);
             _sessions.ExpirePending(nowUs);

@@ -9,6 +9,9 @@ import kotlin.math.sign
  */
 object AndroidKey {
     const val BACK = 4
+    /** The phone's own volume rocker ([com.oleroma.gyrophone.core.model.PhysicalDevice.PHONE]). */
+    const val VOLUME_UP = 24
+    const val VOLUME_DOWN = 25
     const val DPAD_UP = 19
     const val DPAD_DOWN = 20
     const val DPAD_LEFT = 21

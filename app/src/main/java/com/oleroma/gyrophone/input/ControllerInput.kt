@@ -74,6 +74,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
     fun onKeyEvent(event: KeyEvent): Boolean {
         val device = event.device ?: return false
         if (device.isVirtual) return false
+        if (isRocker(event, device)) return onRocker(event)
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0) return true
         // The PC's phone overlay draws the controller's presses on its handles.
         if (isPad(device)) runtime.wifi.overlay.padKey(event.keyCode, event.action == KeyEvent.ACTION_DOWN)
@@ -98,6 +99,30 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         if (!runtime.inputAllowed) return fromPad
         val mapped = runtime.engine.setKey(source(device).pad, event.keyCode, pressed)
         return mapped || fromPad
+    }
+
+    /** Whether [event] is the phone's own volume rocker (a built-in key device, not an attached pad or keyboard). */
+    private fun isRocker(event: KeyEvent, device: InputDevice): Boolean =
+        (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
+            !device.isExternal && !isPad(device) && device.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC
+
+    /**
+     * The volume rocker while the pad is open: a key of the phone's own device ([PHONE_PAD]),
+     * mapped by the workspace's phone mappings (unmapped, the PC's volume keys). Consumed, so the
+     * phone's volume doesn't change or show its slider. With the pad closed, in a menu or while
+     * learning a key it is the phone's volume as usual. Android's repeats of a held key are
+     * swallowed: the key stays held, as any button.
+     */
+    private fun onRocker(event: KeyEvent): Boolean {
+        val pressed = event.action == KeyEvent.ACTION_DOWN
+        if (!runtime.inputAllowed || runtime.learnListener != null || runtime.keyLearnListener != null) {
+            // A press taken while the pad was open still gets its release.
+            if (!pressed) runtime.engine.setKey(PHONE_PAD, event.keyCode, false)
+            return false
+        }
+        if (pressed && event.repeatCount > 0) return true
+        runtime.engine.setKey(PHONE_PAD, event.keyCode, pressed)
+        return true
     }
 
     fun onGenericMotionEvent(event: MotionEvent): Boolean {
@@ -292,6 +317,9 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
     companion object {
         /** Added to a device's id for its mouse part, so a keyboard with a touchpad keeps its keys apart. */
         private const val MOUSE_ID_BASE = 1 shl 28
+
+        /** The phone's own keys (the volume rocker) as the engine sees them: one device, apart from every Android device id. */
+        private val PHONE_PAD = PadDevice(1 shl 29, 0, 0, "Phone", phone = true)
 
         // Places in AndroidAxis.polled.
         private val POLLED_X = AndroidAxis.polled.indexOf(AndroidAxis.X)

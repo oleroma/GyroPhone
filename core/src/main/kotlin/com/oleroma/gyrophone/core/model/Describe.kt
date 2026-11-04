@@ -227,8 +227,9 @@ object Describe {
             OutputTarget.Haptic(held = true),
             OutputTarget.HapticStep()
         ),
+        "Media" to HidUsage.media.map { OutputTarget.Key(it) },
         "Keyboard" to (keyboardOrder.filter { it in HidUsage.names } + HidUsage.names.keys.sorted())
-            .distinct().map { OutputTarget.Key(it) },
+            .distinct().filter { it !in HidUsage.media }.map { OutputTarget.Key(it) },
     )
 
     /** Every target the picker offers, in display order. */

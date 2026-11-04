@@ -668,11 +668,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         allTouch = w.mappings
         trace?.state("workspace: ${w.name}")
         motionMapped = w.mappings.any { it.source is InputSource.Tilt || it.source is InputSource.Shake }
-        allPads = Array(w.pads.size + 2) {
+        allPads = Array(w.pads.size + 3) {
             when {
                 it < w.pads.size -> w.pads[it].mappings
                 it == w.pads.size -> w.keyboard
-                else -> w.mouse
+                it == w.pads.size + 1 -> w.mouse
+                else -> w.phone
             }
         }
         touchMappings = allTouch
@@ -756,6 +757,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (device == null) return -1
         if (device.keyboard) return ws.pads.size
         if (device.mouse) return ws.pads.size + 1
+        if (device.phone) return ws.pads.size + 2
         return ws.pads.indexOfFirst { it.matches(device.vendorId, device.productId, device.name) }
     }
 

@@ -169,6 +169,7 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
                     }
                     PhysicalDevice.KEYBOARD -> KeyboardView(view, open)
                     PhysicalDevice.MOUSE -> MouseView(view, open)
+                    PhysicalDevice.PHONE -> PhoneView(view, open)
                 }
             }
         }
@@ -535,6 +536,50 @@ private fun MouseView(view: List<Mapping>, onOpen: (Element) -> Unit) {
                 ) { onOpen(Element(c.id, c.label, false, c.inputs)) }
             }
         }
+    }
+}
+
+/**
+ * The phone in landscape with its volume rocker on the top edge. The rocker acts while the pad is
+ * open; a key mapped to nothing turns the PC's volume.
+ */
+@Composable
+private fun PhoneView(view: List<Mapping>, onOpen: (Element) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val body = colors.surfaceVariant
+    val line = colors.outline
+    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val h = min(maxHeight, maxWidth / PhysicalLayouts.PHONE_ASPECT)
+            val w = h * PhysicalLayouts.PHONE_ASPECT
+            Box(Modifier.align(Alignment.Center).size(w, h)) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val sw = size.width
+                    val sh = size.height
+                    val top = sh * PhysicalLayouts.PHONE_TOP
+                    val r = CornerRadius(sh * 0.12f, sh * 0.12f)
+                    drawRoundRect(body, Offset(sw * 0.02f, top), androidx.compose.ui.geometry.Size(sw * 0.96f, sh - top - sh * 0.02f), r)
+                    drawRoundRect(
+                        line, Offset(sw * 0.06f, top + sh * 0.08f),
+                        androidx.compose.ui.geometry.Size(sw * 0.88f, sh - top - sh * 0.18f),
+                        CornerRadius(sh * 0.06f, sh * 0.06f), style = androidx.compose.ui.graphics.drawscope.Stroke(2f),
+                    )
+                }
+                for (c in PhysicalLayouts.phoneControls) {
+                    ElementBox(
+                        c.label, summary(view, c.inputs, c.label), round = false, enabled = true,
+                        modifier = Modifier.offset(w * (c.x - c.w / 2f), h * (c.y - c.h / 2f)).size(w * c.w, h * c.h),
+                    ) { onOpen(Element(c.id, c.label, false, c.inputs)) }
+                }
+            }
+        }
+        Text(
+            "The volume rocker acts while the pad is open. A key mapped to nothing turns the PC's volume.",
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp),
+        )
     }
 }
 

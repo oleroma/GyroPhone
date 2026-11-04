@@ -19,6 +19,8 @@ data class PadDevice(
     val name: String,
     val keyboard: Boolean = false,
     val mouse: Boolean = false,
+    /** The phone's own keys (its volume rocker): mapped by [com.oleroma.gyrophone.core.model.Workspace.phone]. */
+    val phone: Boolean = false,
     val analogLeftTrigger: Boolean = false,
     val analogRightTrigger: Boolean = false,
     val rightStickRx: Boolean = false,

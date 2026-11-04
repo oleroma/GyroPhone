@@ -525,7 +525,7 @@ fun PadScreen(
     // Mapping sets: the set in use and its overrides, watched while this workspace has layer actions.
     var layers by remember { mutableStateOf(MappingEngine.Layers(MappingSet.BASE, emptyList())) }
     val hasLayers = remember(ws) {
-        (ws.mappings + ws.keyboard + ws.mouse + ws.pads.flatMap { it.mappings }).any { it.target is OutputTarget.Layer }
+        (ws.mappings + ws.keyboard + ws.mouse + ws.phone + ws.pads.flatMap { it.mappings }).any { it.target is OutputTarget.Layer }
     }
     LaunchedEffect(hasLayers, editing) {
         if (!hasLayers || editing) {

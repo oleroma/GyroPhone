@@ -1,6 +1,6 @@
 namespace GyroPhone.Protocol.Mapping;
 
-/// <summary>A Set 1 scan code, or a virtual key when <see cref="Vk"/> is non-zero (Pause).</summary>
+/// <summary>A Set 1 scan code, or a virtual key when <see cref="Vk"/> is non-zero (Pause, the media keys).</summary>
 public readonly record struct ScanCode(ushort Scan, bool Extended, ushort Vk = 0)
 {
     public bool IsMapped => Scan != 0 || Vk != 0;
@@ -16,6 +16,9 @@ public static class HidScanCodes
 
     /// <summary>Modifier usages 0xE0..0xE7.</summary>
     public static bool IsModifier(int usage) => usage is >= 0xE0 and <= 0xE7;
+
+    /// <summary>Volume up and down: held, they repeat like a keyboard's (Windows doesn't repeat injected keys).</summary>
+    public static bool Repeats(int usage) => usage is 0x80 or 0x81;
 
     private static ScanCode[] Build()
     {
@@ -51,6 +54,10 @@ public static class HidScanCodes
         Run(0x59, 0x4F, 0x50, 0x51, 0x4B, 0x4C, 0x4D, 0x47, 0x48, 0x49, 0x52, 0x53); // KP1..9, KP0, KP.
         S(0x64, 0x56);                                               // Non-US backslash
         E(0x65, 0x5D);                                               // Application
+        // Media keys (the phone's HidUsage.media): Windows' media virtual keys, extended like a keyboard's.
+        void M(int usage, ushort vk) => t[usage] = new ScanCode(0, true, vk);
+        M(0x7F, InjectEvent.VkVolumeMute); M(0x80, InjectEvent.VkVolumeUp); M(0x81, InjectEvent.VkVolumeDown);
+        M(0xE8, InjectEvent.VkMediaPlayPause); M(0xEA, InjectEvent.VkMediaPrev); M(0xEB, InjectEvent.VkMediaNext);
         Run(0x68, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x76); // F13..F24
         S(0xE0, 0x1D); S(0xE1, 0x2A); S(0xE2, 0x38); E(0xE3, 0x5B);  // LCtrl LShift LAlt LWin
         E(0xE4, 0x1D); S(0xE5, 0x36); E(0xE6, 0x38); E(0xE7, 0x5C);  // RCtrl RShift RAlt RWin
