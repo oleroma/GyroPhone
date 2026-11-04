@@ -155,6 +155,14 @@ public sealed class OverlaySettings
     public float EaseSeconds { get; set; } = 2f;
     public int EaseSpeed { get; set; } = 90;
 
+    // Ratchet settings of earlier builds: read once by MigrateOld, never written back.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ResetOnRatchet { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ResetHeadingOnly { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? EaseAfterRatchet { get; set; }
+
     /// <summary>ARGB per <see cref="OverlayColor.Key"/> of this kind; missing = its default.</summary>
     public Dictionary<string, int> Colors { get; set; } = [];
 
@@ -167,6 +175,27 @@ public sealed class OverlaySettings
     public bool NeedsCompass => Gravity && Compass && !IsTrackball;
 
     public static string NewId() => Guid.NewGuid().ToString("N")[..12];
+
+    /// <summary>
+    /// Carries the ratchet settings of earlier builds over: Reset on ratchet becomes Ease on ratchet
+    /// (its Heading only with it); off, easing stays as it was, when the phone stops ("Ratchet let go" is gone).
+    /// </summary>
+    public void MigrateOld()
+    {
+        if (ResetOnRatchet == null && ResetHeadingOnly == null && EaseAfterRatchet == null) return;
+        if (ResetOnRatchet ?? true) // its old default
+        {
+            Ease = true;
+            EaseOnRatchet = true;
+            EaseHeadingOnly = ResetHeadingOnly ?? false;
+        }
+        else
+        {
+            EaseOnRatchet = false;
+            EaseHeadingOnly = false; // easing used to turn the whole pose back without gravity
+        }
+        ResetOnRatchet = ResetHeadingOnly = EaseAfterRatchet = null;
+    }
 
     /// <summary>The colour <paramref name="key"/> (ARGB), or its default.</summary>
     public int Color(string key)
