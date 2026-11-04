@@ -65,6 +65,8 @@ import com.oleroma.gyrophone.core.model.ControllerDiagram
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.DevicePreset
 import com.oleroma.gyrophone.core.model.DevicePresets
+import com.oleroma.gyrophone.core.model.HeldButton
+import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.PhysicalDevice
@@ -187,6 +189,9 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
 
     val e = editing
     if (e != null && preset != null) {
+        // A key or button (not a stick or a wheel axis): what presses it, for its settings and gyro while held.
+        val held = e.inputs.firstOrNull { !it.analog }?.takeIf { !e.stick }?.let { PhysicalHeld(device.name + ":" + e.id, it.sources) }
+        val editSet = if (ws.sets.any { it.id == mapSet }) mapSet else MappingSet.BASE
         ControlMappingScreen(
             control = physicalStandIn(device, e.id, e.label, e.stick),
             mappings = preset.mappings(device),
@@ -194,7 +199,9 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
             onMappingsChange = { m ->
                 runtime.editActiveProfile { p ->
                     val now = p.devicePresets.firstOrNull { it.id == preset.id } ?: return@editActiveProfile p
-                    DevicePresets.put(p, now.withMappings(device, m))
+                    val next = now.withMappings(device, m)
+                    // Gyro mapped while held needs what presses the button.
+                    DevicePresets.put(p, if (held == null) next else next.syncHeld(held.id, held.sources))
                 }
             },
             onSettings = null,
@@ -217,12 +224,10 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
                 }
             },
             physicalInputs = e.inputs,
-            settings = physicalSettings(
-                runtime, preset, ws,
-                // A key or button (not a stick or a wheel axis): what presses it.
-                e.inputs.firstOrNull { !it.analog }?.takeIf { !e.stick }?.let { PhysicalHeld(device.name + ":" + e.id, it.sources) },
-                if (ws.sets.any { it.id == mapSet }) mapSet else MappingSet.BASE,
-            ) { change ->
+            physicalMotionId = held?.let { HeldButton.GYRO_ID + it.id },
+            inherited = held?.let { h -> Inheritance.gyroInherited(Inheritance.workspace(ws, profile.defaults), HeldButton.GYRO_ID + h.id, editSet) }.orEmpty(),
+            parentName = "Workspace",
+            settings = physicalSettings(runtime, preset, ws, held, editSet) { change ->
                 runtime.editActiveProfile { p ->
                     val now = p.devicePresets.firstOrNull { it.id == preset.id } ?: return@editActiveProfile p
                     DevicePresets.put(p, change(now))

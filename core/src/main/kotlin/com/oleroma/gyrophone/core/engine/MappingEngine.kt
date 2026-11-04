@@ -137,7 +137,16 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private var heldPhys: List<HeldButton> = heldOf(ws)
     private val physDown = HashSet<String>()
 
-    private fun heldOf(w: Workspace): List<HeldButton> = w.heldButtons.filter { b -> b.gyro.any { it.any } }
+    private fun heldOf(w: Workspace): List<HeldButton> {
+        val mapped = physGyroOf(w).mapTo(HashSet()) { (it.source as InputSource.Gyro).id }
+        return w.heldButtons.filter { b -> b.gyro.any { it.any } || HeldButton.GYRO_ID + b.id in mapped }
+    }
+
+    /** The physical devices' gyro mappings of [w] (a held button's, [HeldButton.GYRO_ID]). */
+    private fun physGyroOf(w: Workspace): List<Mapping> =
+        (w.pads.flatMap { it.mappings } + w.keyboard + w.mouse + w.phone).filter { m ->
+            (m.source as? InputSource.Gyro)?.id?.startsWith(HeldButton.GYRO_ID) == true
+        }.distinct()
 
     /** Sets [gyroNow] for the settings in effect and the buttons held. */
     private fun updateGyroNow() {
@@ -665,7 +674,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for ((id, axes) in PhysicalSticks.sticks) w.stickTunings[id]?.let { axisStick[axes.first] = it; axisStick[axes.second] = it }
         for ((id, axes) in PhysicalSticks.sticksRx) w.stickTunings[id]?.let { axisStickRx[axes.first] = it; axisStickRx[axes.second] = it }
         for ((id, axes) in PhysicalSticks.triggers) w.triggerTunings[id]?.let { axisTrigger[axes.first] = it; axisTrigger[axes.second] = it }
-        allTouch = w.mappings
+        // A physical button's gyro mappings while held (its Motion tab) route with the touch buttons' ([gyroRoutes]).
+        val physGyro = physGyroOf(w)
+        allTouch = if (physGyro.isEmpty()) w.mappings else w.mappings + physGyro
         trace?.state("workspace: ${w.name}")
         motionMapped = w.mappings.any { it.source is InputSource.Tilt || it.source is InputSource.Shake }
         allPads = Array(w.pads.size + 3) {
@@ -674,7 +685,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 it == w.pads.size -> w.keyboard
                 it == w.pads.size + 1 -> w.mouse
                 else -> w.phone
-            }
+            }.let { l -> if (physGyro.isEmpty()) l else l.filterNot { m -> m.source is InputSource.Gyro } }
         }
         touchMappings = allTouch
         padMappings = allPads
@@ -2688,7 +2699,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         const val PRESS_THRESHOLD = 0.5f
 
         /** [pressOrder]'s prefix of a physical key or button ([HeldButton]). */
-        private const val PHYS = "phys:"
+        private const val PHYS = HeldButton.GYRO_ID
 
         /** [moveTrack]: inertia carries the Moves on. */
         const val MOVES_GLIDING = 4

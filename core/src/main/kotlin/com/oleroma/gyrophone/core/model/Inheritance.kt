@@ -101,6 +101,19 @@ object Inheritance {
     }
 
     /**
+     * What the workspace's gyro mappings ([workspace]: its touch mappings with the inherited ones,
+     * [workspace]) do in mapping set [set], as owner [id]'s gyro inputs: while a button is held each
+     * axis does that unless the button maps it itself, so its Motion tab shows them faded.
+     */
+    fun gyroInherited(workspace: List<Mapping>, id: String, set: Int): List<Mapping> {
+        val over = if (set == MappingSet.BASE) emptyList() else listOf(set)
+        val gyro = workspace.filter { (it.source as? InputSource.Gyro)?.id?.isEmpty() == true }
+        return layered(gyro, MappingSet.BASE, over, keepNothing = true)
+            .filter { it.target != OutputTarget.NoOutput }
+            .map { it.copy(source = (it.source as InputSource.Gyro).copy(id = id)) }
+    }
+
+    /**
      * [ms] without the [OutputTarget.NoOutput] of each input (source, set) that maps something
      * else too: mapping an action that was cleared overrides it with that instead.
      */

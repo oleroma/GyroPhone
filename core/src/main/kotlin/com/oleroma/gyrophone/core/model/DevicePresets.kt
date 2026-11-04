@@ -36,11 +36,33 @@ data class DevicePreset(
     /** Control [id]'s settings while held, or null. */
     fun held(id: String): HeldButton? = held.firstOrNull { it.id == id }
 
-    /** Control [id] (pressed by [sources]) with its settings in mapping set [set] [change]d; one left with none is dropped. */
+    /**
+     * Control [id] (pressed by [sources]) with its settings in mapping set [set] [change]d; one left
+     * with none, and no gyro mappings of its own ([motionMapped]), is dropped.
+     */
     fun withHeld(id: String, sources: List<InputSource>, set: Int, change: (ButtonGyro) -> ButtonGyro): DevicePreset {
         val h = (held(id) ?: HeldButton(id, sources)).withGyro(set, change).copy(sources = sources)
         val rest = held.filter { it.id != id }
-        return copy(held = if (h.gyro.isEmpty()) rest else rest + h)
+        return copy(held = if (h.gyro.isEmpty() && !motionMapped(id)) rest else rest + h)
+    }
+
+    /** Control [id] maps gyro axes of its own while held (its Motion tab). */
+    fun motionMapped(id: String): Boolean = PhysicalDevice.entries.any { d ->
+        mappings(d).any { (it.source as? InputSource.Gyro)?.id == HeldButton.GYRO_ID + id }
+    }
+
+    /**
+     * These after control [id]'s (pressed by [sources]) mappings changed: kept as held while it
+     * maps gyro axes of its own, so the engine knows what presses it; dropped once it has nothing.
+     */
+    fun syncHeld(id: String, sources: List<InputSource>): DevicePreset {
+        val h = held(id)
+        val rest = held.filter { it.id != id }
+        return when {
+            motionMapped(id) -> copy(held = rest + (h?.copy(sources = sources) ?: HeldButton(id, sources)))
+            h != null && h.gyro.isEmpty() -> copy(held = rest)
+            else -> this
+        }
     }
 
     /** Stick [id]'s tuning in effect. */
@@ -87,6 +109,14 @@ data class DevicePreset(
  */
 @Serializable
 data class HeldButton(val id: String, val sources: List<InputSource>, val gyro: List<ButtonGyro> = emptyList()) {
+    companion object {
+        /**
+         * Before [id]: the button as a gyro mapping's owner ([InputSource.Gyro.id]), mapped in its
+         * Motion tab: that axis does this instead while it is held.
+         */
+        const val GYRO_ID = "phys:"
+    }
+
     /** Its settings with mapping sets [sets] in use (Base first): each set's own over the ones below. */
     fun gyroIn(sets: List<Int>): ButtonGyro =
         sets.fold(ButtonGyro()) { r, s -> gyro.firstOrNull { it.set == s }?.let { r.under(it) } ?: r }
