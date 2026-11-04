@@ -268,6 +268,9 @@ class GamepadRuntime(context: Context) {
     /** The phone's pose against gravity, for the World and Player gyro spaces ([GyroSpace]). */
     private val gravityPose = GravityPose()
 
+    /** [gravityPose] followed the gyro last sample (World or Player space). Gyro thread only. */
+    private var gravityPoseUsed = false
+
     /** The gyro space ([GyroSpace]) yaw, pitch and roll are measured in now: the workspace's. */
     private fun gyroSpace(): GyroSpace = _activeProfile.value.workspace(_workspaceIndex.value).gyro.gyroSpace
 
@@ -692,6 +695,8 @@ class GamepadRuntime(context: Context) {
         gyroMouse.reset()
         tiltShake.displayRotation = degrees
         tiltShake.reset()
+        // The pose is kept in the screen's frame, which just turned.
+        gravityPose.reset()
     }
 
     private val tiltShake = TiltShake()
@@ -1178,6 +1183,11 @@ class GamepadRuntime(context: Context) {
             val m = gyroMouse.motion(x - biasX, y - biasY, z - biasZ)
             gravityPose.rotate(m.yaw, m.pitch, m.roll, dt)
             gravityPose.up(upNow)
+            gravityPoseUsed = true
+        } else if (gravityPoseUsed) {
+            // Not followed in local space: switched back, it starts again from gravity.
+            gravityPose.reset()
+            gravityPoseUsed = false
         }
         // A controller plugged into the PC may turn on an axis that is off here: every axis's share is sent while the gyro may move.
         val pc = wifi.pcGyro

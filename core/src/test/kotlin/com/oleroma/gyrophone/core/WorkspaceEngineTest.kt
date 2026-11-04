@@ -417,6 +417,35 @@ class WorkspaceEngineTest {
         assertEquals(0, mods(e))
     }
 
+    @Test fun aToggledKeyIsNotTheNextKey() {
+        var now = 0L
+        val e = buttons(listOf(
+            touch("ns", OutputTarget.Key(HidUsage.LEFT_SHIFT, KeyMode.NEXT_KEY)),
+            touch("tb", OutputTarget.Key(B, KeyMode.TOGGLE)),
+        )) { now }
+        press(e, "tb"); press(e, "ns")
+        repeat(3) { assertEquals(0x02, mods(e)) } // still waiting for a key
+        press(e, "a")
+        val s = e.snapshot().keyboard
+        assertEquals(0, s.modifiers) // used up by A, though B stays on
+        assertEquals(listOf(B), s.keys)
+    }
+
+    @Test fun twoMatchingPadsDoNotFlipOneToggle() {
+        val pad = AttachedPad(
+            id = "xb", match = DeviceMatch(vendorId = 0x045E, productId = 0x0B13), name = "Xbox",
+            mappings = listOf(key(AndroidKey.BUTTON_A, OutputTarget.Key(A, KeyMode.TOGGLE))),
+        )
+        val e = MappingEngine(single(ws("w", listOf(pad))))
+        e.setKey(xbox, AndroidKey.BUTTON_A, true)
+        e.setAxis(xbox2, AndroidAxis.X, 0.01f) // the other one is in use too, holding nothing
+        repeat(5) { assertEquals(listOf(A), keys(e)) }
+        e.setKey(xbox, AndroidKey.BUTTON_A, false)
+        repeat(3) { assertEquals(listOf(A), keys(e)) }
+        e.setKey(xbox, AndroidKey.BUTTON_A, true); keys(e); e.setKey(xbox, AndroidKey.BUTTON_A, false)
+        assertTrue(keys(e).isEmpty())
+    }
+
     @Test fun workspaceChangeLetsKeyModesGo() {
         var now = 0L
         val e = modes { now }

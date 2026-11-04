@@ -102,4 +102,31 @@ class TiltShakeTest {
         assertTrue(e.snapshot().keyboard.keys.isEmpty())
         assertFalse(MappingEngine(single(Workspace("w", "w"))).motionMapped)
     }
+
+    @Test fun aShakeHoldingALayerLetsGoAfterItsPulse() {
+        var now = 0L
+        val ws = Workspace(
+            "w", "w", sets = listOf(com.oleroma.gyrophone.core.model.MappingSet(1)),
+            mappings = listOf(Mapping(InputSource.Shake(), OutputTarget.Layer(1, whileHeld = true))),
+        )
+        val e = MappingEngine(single(ws)) { now }
+        e.shake()
+        e.snapshot()
+        assertEquals(1, e.layers.set)
+        now = MappingEngine.SHAKE_PULSE_NS + MS
+        e.snapshot()
+        assertEquals(0, e.layers.set)
+    }
+
+    @Test fun twoQuickShakesAreTwoPresses() {
+        var now = 0L
+        val ws = Workspace("w", "w", mappings = listOf(Mapping(InputSource.Shake(), OutputTarget.Wheel(1))))
+        val e = MappingEngine(single(ws)) { now }
+        e.shake()
+        var wheel = e.snapshot().mouse.wheel
+        now = 50 * MS // within the first one's pulse
+        e.shake()
+        wheel += e.snapshot().mouse.wheel
+        assertEquals(2 * com.oleroma.gyrophone.core.hid.MouseState.WHEEL_UNIT, wheel)
+    }
 }

@@ -252,8 +252,9 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
 
     /** Turns [p]'s velocities into this sample's motion: mouse counts scaled like the filters scaled the cursor, wheel units. */
     private fun scaleParts(p: Parts, dt: Float) {
-        val kx = if (abs(rawX) > RATIO_MIN) filtX / rawX else 1f
-        val ky = if (abs(rawY) > RATIO_MIN) filtY / rawY else 1f
+        // Near zero motion the ratio can be huge or negative (smoothing still sends earlier motion): kept to 0..RATIO_MAX.
+        val kx = if (abs(rawX) > RATIO_MIN) (filtX / rawX).coerceIn(0f, RATIO_MAX) else 1f
+        val ky = if (abs(rawY) > RATIO_MIN) (filtY / rawY).coerceIn(0f, RATIO_MAX) else 1f
         val kw = dt * MouseState.WHEEL_UNIT / DEG_PER_NOTCH
         for (i in 0 until 3) {
             p.onX[i] *= dt * kx; p.glX[i] *= dt * kx
@@ -373,6 +374,9 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
 
         /** Below this much cursor motion (counts) a sample's filter ratio is taken as 1. */
         private const val RATIO_MIN = 1e-3f
+
+        /** The most the filter ratio scales an axis's share by. */
+        private const val RATIO_MAX = 2f
 
         /** Degrees of turn per wheel notch when gyro scrolls. */
         const val DEG_PER_NOTCH = 15f
