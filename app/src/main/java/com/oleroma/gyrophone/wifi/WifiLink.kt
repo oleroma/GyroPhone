@@ -110,7 +110,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** The PC's phone overlay: its data is gathered and sent while the PC's HOST_STATUS asks for it. */
     val overlay = OverlayFeed()
 
-    /** "Use PC controller for gyro ratchet": the gyro's shares and the controller's gyro buttons for the PC. */
+    /** "Use PC controller for gyro ratchet": the gyro's samples and the controller's gyro buttons for a PC that runs the gyro. */
     val pcGyro = PcGyroFeed()
     private val accessory = AccessoryBridge(appContext)
 
@@ -926,6 +926,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                     usbPending = false
                     usbSocket?.let { pump.useSocket(it) }
                 }
+                // The gyro's sample times go out in the phone's clock until this session's first PONG.
+                pump.clockOffsetUs = null
                 // A replacement (rekey, new HELLO after silence) needs no BYE; neither does a
                 // session the PC ended with HOST_BYE.
                 pump.setSession(s)
@@ -959,6 +961,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             rttMinUs = clock.rttMinUs
             pump.requestLinkInfo()
         }
+        // Every sample, not only a faster one: the best sample in the window changes as old ones leave it.
+        if (clock.hasSample) pump.clockOffsetUs = clock.offsetUs
     }
 
 

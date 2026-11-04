@@ -25,9 +25,9 @@ public sealed class StateFrame
     public int HWheelTotal;
     /// <summary>Encoded / decoded as STATE_HIRES.</summary>
     public bool Hires;
-    /// <summary>Decoded from STATE_GYRO: <see cref="Shares"/> holds the gyro's shares.</summary>
-    public bool HasShares;
-    public readonly GyroShares Shares = new();
+    /// <summary>Decoded from STATE_GYRO: <see cref="Tail"/> holds the phone's raw gyro samples and settings.</summary>
+    public bool HasPcGyro;
+    public readonly PcGyroTail Tail = new();
 
     public byte Modifiers
     {
@@ -67,8 +67,8 @@ public sealed class StateFrame
         o.Keys.CopyTo(Keys, 0);
         MouseTotalX = o.MouseTotalX; MouseTotalY = o.MouseTotalY; WheelTotal = o.WheelTotal;
         HWheelTotal = o.HWheelTotal; Hires = o.Hires;
-        HasShares = o.HasShares;
-        if (HasShares) Shares.CopyFrom(o.Shares);
+        HasPcGyro = o.HasPcGyro;
+        if (HasPcGyro) Tail.CopyFrom(o.Tail);
     }
 
     public int Encode(Span<byte> b)
@@ -116,7 +116,7 @@ public sealed class StateFrame
         WheelTotal = Le.I32(b, 62);
         Hires = b.Length >= Wire.StateHiresPlain;
         HWheelTotal = Hires ? Le.I32(b, 66) : 0;
-        HasShares = b.Length >= Wire.StateGyroPlain;
-        if (HasShares) Shares.Decode(b.Slice(Wire.StateHiresPlain, GyroShares.Size));
+        HasPcGyro = b.Length >= Wire.StateGyroPlain;
+        if (HasPcGyro) Tail.Decode(b.Slice(Wire.StateHiresPlain, PcGyroTail.Size));
     }
 }

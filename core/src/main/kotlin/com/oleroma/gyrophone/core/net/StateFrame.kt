@@ -35,9 +35,9 @@ class StateFrame : WirePacket {
     /** Sent as STATE_HIRES. */
     var hires = false
 
-    /** With [hires]: sent as STATE_GYRO, [ext] after the STATE_HIRES bytes ([PcGyroFeed.encodeExt]). */
+    /** With [hires]: sent as STATE_GYRO, the [PcGyroFeed.TAIL_SIZE] bytes of [ext] after the STATE_HIRES bytes ([PcGyroFeed.encodeTail]). */
     var gyroExt = false
-    val ext = ByteArray(PcGyroFeed.EXT_SIZE)
+    val ext = ByteArray(PcGyroFeed.TAIL_SIZE)
 
     /** Builds the frame from an engine snapshot; time and REPEAT/KEEPALIVE flags are left to the sender. */
     fun fill(s: HidState, totals: MouseTotals, gyroActive: Boolean, hires: Boolean = false) {
@@ -83,30 +83,7 @@ class StateFrame : WirePacket {
 
     fun totalsEqual(o: StateFrame): Boolean =
         mouseTotalX == o.mouseTotalX && mouseTotalY == o.mouseTotalY && wheelTotal == o.wheelTotal &&
-            hwheelTotal == o.hwheelTotal && hires == o.hires && gyroExt == o.gyroExt && (!gyroExt || extEqual(o.ext))
-
-    /**
-     * The gyro ext matches [o] closely enough not to send for it: everything exact except the pad
-     * shares, which follow sensor noise even while an axis is off and so may differ by less than
-     * [PAD_SHARE_STEP]. Every STATE (the keepalive too) still carries the exact shares.
-     */
-    private fun extEqual(o: ByteArray): Boolean {
-        var off = 0
-        for (i in 0 until 3) {
-            val pad = PcGyroFeed.PAD_SHARE_OFFSET + i * PcGyroFeed.AXIS_SIZE
-            if (!rangeEquals(ext, o, off, pad)) return false
-            for (k in 0 until PcGyroFeed.PAD_AXES) {
-                if (kotlin.math.abs(ext.getI16(pad + k * 2) - o.getI16(pad + k * 2)) >= PAD_SHARE_STEP) return false
-            }
-            off = pad + PcGyroFeed.PAD_AXES * 2
-        }
-        return rangeEquals(ext, o, off, ext.size)
-    }
-
-    private fun rangeEquals(a: ByteArray, b: ByteArray, from: Int, to: Int): Boolean {
-        for (j in from until to) if (a[j] != b[j]) return false
-        return true
-    }
+            hwheelTotal == o.hwheelTotal && hires == o.hires && gyroExt == o.gyroExt && (!gyroExt || ext.contentEquals(o.ext))
 
     fun copyFrom(o: StateFrame) {
         phoneTimeUs = o.phoneTimeUs; flags = o.flags; buttons = o.buttons; hat = o.hat
@@ -145,7 +122,5 @@ class StateFrame : WirePacket {
         const val KEY_BITMAP_SIZE = 32
         const val MODIFIER_BYTE = 28
         private const val FIRST_KEY_USAGE = 4
-        /** A pad share change smaller than this (of ±32767, about 0.4 %) alone does not send a STATE. */
-        const val PAD_SHARE_STEP = 128
     }
 }

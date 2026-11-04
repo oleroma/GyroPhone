@@ -30,12 +30,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.GamePreset
 import com.oleroma.gyrophone.core.model.GameSens
 import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.runtime
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.roundToLong
 
@@ -57,13 +59,15 @@ internal fun GyroSensSlider(
     hint: String,
     onDone: (Float) -> Unit,
 ) {
+    // The app's jitter cutoff (Settings, App, Gyro), the same in every workspace.
+    val tightening by LocalContext.current.runtime.gyroTightening.collectAsStateWithLifecycle()
     val c = g.gameCountsPer360
     if (c <= 0f) {
         OverrideSlider(key, "$label %.0f", sens, 0f..MAX_GYRO_SENS, 1f, overridden, onReset, hint, onDone = onDone)
         return
     }
-    val tight = if (g.tighteningThreshold > 0f) {
-        " Exact above the jitter cutoff (%.1f°/s): slower turns move less.".format(g.tighteningThreshold)
+    val tight = if (tightening > 0f) {
+        " Exact above the jitter cutoff (%.1f°/s): slower turns move less.".format(tightening)
     } else ""
     OverrideSlider(
         key + "rws", "$label %.2f RWS", GameSens.rws(sens, c), 0f..GameSens.rws(MAX_GYRO_SENS, c), 0.01f, overridden, onReset,

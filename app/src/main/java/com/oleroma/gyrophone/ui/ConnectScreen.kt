@@ -159,7 +159,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
                     }
                     Text(
                         "Ratchet and Toggle gyro buttons from your controller preset work on a controller plugged into the PC. " +
-                            "Gyro inertia, gyro sensitivity buttons and the phone's ratchet displays don't react to it.",
+                            "In this mode the PC does the gyro math, and the phone's own gyro displays are off.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

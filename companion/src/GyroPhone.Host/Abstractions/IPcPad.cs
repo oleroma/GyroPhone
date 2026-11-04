@@ -24,6 +24,13 @@ public interface IPcPad
     /// </summary>
     bool ReadAxes(Span<float> axes);
 
+    /// <summary>
+    /// The buttons held by place at host time <paramref name="us"/> (the engine's clock, the one PONG
+    /// uses), from a history of the last changes: what the PC gyro ratchets each sample by. 0 when no
+    /// controller was read then.
+    /// </summary>
+    uint HeldAt(long us);
+
     /// <summary>What is read, for the main window: "Controller 2", or null when none is.</summary>
     string? Name { get; }
 }
@@ -48,6 +55,8 @@ public sealed class NullPcPad : IPcPad
         axes.Clear();
         return false;
     }
+
+    public uint HeldAt(long us) => 0;
 
     public string? Name => null;
 }

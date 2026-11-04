@@ -82,20 +82,17 @@ class StateFrameTest {
         assertFalse(a.discreteEquals(b))
     }
 
-    @Test fun gyroExtPadShareNoiseIsNotAChange() {
+    @Test fun anyGyroTailChangeIsAChange() {
         val a = StateFrame().apply { hires = true; gyroExt = true }
         val b = StateFrame().apply { copyFrom(a) }
-        val pad = PcGyroFeed.PAD_SHARE_OFFSET + PcGyroFeed.AXIS_SIZE // pitch's first pad share
-        b.ext.putI16(pad, StateFrame.PAD_SHARE_STEP - 1)
         assertTrue(a.totalsEqual(b))
-        b.ext.putI16(pad, -StateFrame.PAD_SHARE_STEP)
+        b.ext[PcGyroFeed.TAIL_SIZE - 1] = 1 // the last route's scale
         assertFalse(a.totalsEqual(b))
         b.copyFrom(a)
-        b.ext.putI16(pad - 2, 1) // a glide total right before it
+        b.ext.putI16(2, 1) // the newest seq
         assertFalse(a.totalsEqual(b))
         b.copyFrom(a)
-        b.ext[PcGyroFeed.EXT_SIZE - 1] = 1 // the pad without the gyro
-        assertFalse(a.totalsEqual(b))
+        assertTrue(a.totalsEqual(b))
     }
 
     @Test fun neutralizeKeepsTotals() {

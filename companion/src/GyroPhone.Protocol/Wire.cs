@@ -8,7 +8,11 @@ public static class Wire
     public const int Header = 12;
     public const int GcmTag = 16;
     public const int HelloMac = 16;
-    public const int MaxDatagram = 256;
+    /// <summary>
+    /// The largest datagram either side sends or takes. 512 since PC gyro mode: a STATE_GYRO is
+    /// 12 + 280 + 16 = 308 bytes. Every other packet still fits in 256.
+    /// </summary>
+    public const int MaxDatagram = 512;
 
     public const byte Magic0 = 0x47; // 'G'
     public const byte Magic1 = 0x50; // 'P'
@@ -31,8 +35,8 @@ public static class Wire
     public const int StatePlain = 66;
     /// <summary>STATE_HIRES: STATE with the wheel total in 1/120 notch plus a horizontal wheel total.</summary>
     public const int StateHiresPlain = 70;
-    /// <summary>STATE_GYRO: STATE_HIRES plus each gyro axis's share of the motion (<see cref="GyroShares"/>).</summary>
-    public const int StateGyroPlain = StateHiresPlain + GyroShares.Size;
+    /// <summary>STATE_GYRO: STATE_HIRES plus the phone's raw gyro samples and settings (<see cref="PcGyroTail"/>).</summary>
+    public const int StateGyroPlain = StateHiresPlain + PcGyroTail.Size;
     /// <summary>PAD_GYRO: u8 flags, u8 toggle epoch, u8 count, u8 0, 18 × (u8 place, u8 kind).</summary>
     public const int PadGyroPlain = 4 + PadGyroConfig.MaxButtons * 2;
     public const int PingPlain = 8;
@@ -167,8 +171,12 @@ public static class WelcomeFlags
     public const byte ForegroundSupported = 1 << 1;
     /// <summary>The host takes STATE_HIRES (smooth vertical and horizontal wheel).</summary>
     public const byte HiresWheel = 1 << 2;
-    /// <summary>The host takes STATE_GYRO and PAD_GYRO: a controller plugged into it can ratchet the phone's gyro.</summary>
-    public const byte GyroGate = 1 << 3;
+    /// <summary>
+    /// The host takes STATE_GYRO (raw gyro samples, <see cref="PcGyroTail"/>) and PAD_GYRO: in "Use PC
+    /// controller for gyro ratchet" mode it runs the phone's gyro math, ratcheted by a controller
+    /// plugged into it. Bit 3 (the old share-rewriting GyroGate) is retired and never set.
+    /// </summary>
+    public const byte PcGyro = 1 << 4;
 }
 
 /// <summary>Output device the host exposes. Values are the wire outputMode byte.</summary>

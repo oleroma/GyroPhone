@@ -54,6 +54,9 @@ class WifiPump(private val engine: MappingEngine) {
     /** "Use PC controller for gyro ratchet": STATE_GYRO and PAD_GYRO for a PC that takes them. */
     @Volatile var pcGyro: PcGyroFeed? = null
 
+    /** The clock offset (host us - phone us, [com.oleroma.gyrophone.core.net.ClockSync]) of this session, or null before a clock sample. */
+    @Volatile var clockOffsetUs: Long? = null
+
     /** STATE packets handed to / refused by the socket during the last full second. */
     @Volatile var sentPerSecond = 0
         private set
@@ -88,7 +91,6 @@ class WifiPump(private val engine: MappingEngine) {
     /** Reused for each OVERLAY's pressed and latched controls. */
     private val overlayPressed = HashSet<String>()
     private val overlayLatched = HashSet<String>()
-    private val nonGyro = IntArray(PcGyroFeed.PAD_AXES)
     private var gyroSnapshot = false
     private var padGyroNs = 0L
     private var padGyroSent: IntArray? = null
@@ -166,7 +168,7 @@ class WifiPump(private val engine: MappingEngine) {
                     continue
                 }
             }
-            // Switch first: switchTo resets the gyro's shares, so the ext below starts from the new session's.
+            // Switch first: switchTo resets the gyro's samples, so the tail below starts from the new session's.
             val t = target
             if (t.session !== cur) {
                 val old = cur
@@ -174,14 +176,10 @@ class WifiPump(private val engine: MappingEngine) {
                 switchTo(t.session)
             }
             if (taken !== t) taken = t
-            // always drain motion, even with no session; with PC controller gyro, together with the gyro's shares
+            // always drain motion, even with no session; with the PC running the gyro, its samples go along
+            val s = engine.snapshot()
             val g = pcGyro?.takeIf { it.active }
-            val s = if (g == null) engine.snapshot() else synchronized(g.lock) {
-                engine.snapshot().also {
-                    engine.nonGyroPad(nonGyro)
-                    g.encodeExt(frame.ext, 0, nonGyro)
-                }
-            }
+            if (g != null) g.encodeTail(frame.ext, 0, clockOffsetUs)
             gyroSnapshot = g != null
             totals.add(s.mouse)
             val now = System.nanoTime()
@@ -270,7 +268,7 @@ class WifiPump(private val engine: MappingEngine) {
         cur = session
         hires = session != null && session.hostFlags and HostFlags.HIRES_WHEEL != 0
         pcGyro?.let {
-            it.hostTakes = hires && session!!.hostFlags and HostFlags.GYRO_GATE != 0
+            it.hostTakes = hires && session!!.hostFlags and HostFlags.PC_GYRO != 0
             it.reset()
         }
         padGyroSent = null; padGyroSentEpoch = -1

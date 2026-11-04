@@ -2,15 +2,13 @@ using GyroPhone.Protocol;
 
 namespace GyroPhone.Tests;
 
-/// <summary>"Use PC controller for gyro ratchet": STATE_GYRO rewritten for a controller plugged into the PC.</summary>
+/// <summary>"Use PC controller for gyro ratchet": the wire parts, and reading the controller plugged into the PC.</summary>
 public class GyroGateTests
 {
     private const int L1 = 4, North = 3;
-    private const byte Yaw = 1, Pitch = 2, Roll = 4;
 
     private readonly uint[] _presses = new uint[PadGyroConfig.Places];
     private uint _held;
-    private long _now;
 
     private static PadGyroConfig Config()
     {
@@ -30,45 +28,73 @@ public class GyroGateTests
 
     private PcPadState Pad => new() { Connected = true, Held = _held, Presses = _presses };
 
-    /// <summary>A frame where roll moved the cursor <paramref name="totalX"/> so far (gyro on: phone axes all), plus 1000 from the touchpad.</summary>
-    private static StateFrame Frame(short gyroX, short rollOnX, byte axes = 7, short rollGlideX = 0)
-    {
-        var f = new StateFrame { Hires = true, HasShares = true, MouseTotalX = 1000 + gyroX };
-        f.Shares.Flags = GyroShares.FlagMayMove;
-        f.Shares.Axes = axes;
-        f.Shares.Gyro[0] = gyroX;
-        f.Shares.On[2 * 4] = rollOnX;
-        f.Shares.Glide[2 * 4] = rollGlideX;
-        return f;
-    }
-
-    private int Run(GyroGate g, PadGyroConfig c, StateFrame f)
-    {
-        _now += 1000;
-        g.Update(Pad, c);
-        g.Apply(f, _now);
-        return f.MouseTotalX;
-    }
-
     [Fact]
     public void SizesAndRoundTrip()
     {
-        Assert.Equal(176, Wire.StateGyroPlain);
-        Assert.Equal(204, PacketType.Size(PacketType.StateGyro));
+        Assert.Equal(210, PcGyroTail.Size);
+        Assert.Equal(280, Wire.StateGyroPlain);
+        Assert.Equal(308, PacketType.Size(PacketType.StateGyro));
         Assert.True(PacketType.Size(PacketType.StateGyro) <= Wire.MaxDatagram);
+        Assert.Equal(16, WelcomeFlags.PcGyro);
         Assert.Equal(40, Wire.PadGyroPlain);
-        var s = new GyroShares { Flags = 1, Axes = 5 };
-        s.Gyro[1] = -7; s.On[11] = 300; s.Glide[4] = -2; s.Pad[17] = 32767; s.NonGyro[5] = 1023;
-        var b = new byte[GyroShares.Size];
-        s.Encode(b);
-        var d = new GyroShares();
+
+        var t = new PcGyroTail { Flags = PcGyroTail.FlagMayMove | PcGyroTail.FlagClock, Count = 2, NewestSeq = 65535, NewestTimeUs = 0xFEDCBA98 };
+        t.DtUs[0] = 1000; t.DtUs[1] = 50000;
+        t.Rate[0] = -32768; t.Rate[4] = 32767; t.Rate[5] = -5;
+        t.Axes[0] = 7; t.Axes[1] = 4;
+        t.Totals[0] = long.MinValue; t.Totals[1] = -1; t.Totals[2] = 123456789012;
+        t.Config.Sensitivity[1] = 20.5f; t.Config.GlideMs[2] = 500f;
+        t.Config.Inertia[0] = true; t.Config.Linear[2] = true;
+        t.Config.Routes.Add(new GyroMath.Route(2, GyroMath.Route.MouseX, -1f));
+        t.Config.Routes.Add(new GyroMath.Route(1, GyroMath.Route.Pad + 3, 0.5f));
+        t.Tightening = 2.5f; t.Smoothing = 8f;
+        var b = new byte[PcGyroTail.Size];
+        t.Encode(b);
+        // Layout: flags, n, seq, time, then sample 1 at 8 + 9, totals at 80, config at 104, routes at 138.
+        Assert.Equal(3, b[0]);
+        Assert.Equal(2, b[1]);
+        Assert.Equal(0x98, b[4]);
+        Assert.Equal(0x50, b[8 + 9]); // 50000 = 0xC350
+        Assert.Equal(4, b[8 + 9 + 8]);
+        Assert.Equal(0x80, b[87]); // long.MinValue's top byte
+        Assert.Equal(1 | 32, b[128]);
+        Assert.Equal(2, b[129]);
+        Assert.Equal(2, b[138]);
+        Assert.Equal(GyroMath.Route.Pad + 3, b[145]);
+
+        var d = new PcGyroTail();
         d.Decode(b);
-        Assert.Equal(5, d.Axes);
-        Assert.Equal(-7, d.Gyro[1]);
-        Assert.Equal(300, d.On[11]);
-        Assert.Equal(-2, d.Glide[4]);
-        Assert.Equal(32767, d.Pad[17]);
-        Assert.Equal(1023, d.NonGyro[5]);
+        Assert.True(d.MayMove);
+        Assert.True(d.Clock);
+        Assert.Equal(2, d.Count);
+        Assert.Equal(65535, d.NewestSeq);
+        Assert.Equal(0xFEDCBA98u, d.NewestTimeUs);
+        Assert.Equal(t.DtUs, d.DtUs);
+        Assert.Equal(t.Rate, d.Rate);
+        Assert.Equal(t.Axes, d.Axes);
+        Assert.Equal(t.Totals, d.Totals);
+        Assert.Equal(t.Config.Sensitivity, d.Config.Sensitivity);
+        Assert.Equal(t.Config.GlideMs, d.Config.GlideMs);
+        Assert.Equal(t.Config.Inertia, d.Config.Inertia);
+        Assert.Equal(t.Config.Linear, d.Config.Linear);
+        Assert.Equal(t.Config.Routes, d.Config.Routes);
+        Assert.Equal(2.5f, d.Tightening);
+        Assert.Equal(8f, d.Smoothing);
+
+        // In a STATE_GYRO, after the 70 STATE_HIRES bytes.
+        var f = new StateFrame { Hires = true, MouseTotalX = 5 };
+        var plain = new byte[Wire.StateGyroPlain];
+        f.Encode(plain);
+        b.CopyTo(plain, Wire.StateHiresPlain);
+        var g = new StateFrame();
+        g.Decode(plain);
+        Assert.True(g.HasPcGyro);
+        Assert.Equal(5, g.MouseTotalX);
+        Assert.Equal(65535, g.Tail.NewestSeq);
+        var h = new StateFrame();
+        h.Decode(plain.AsSpan(0, Wire.StateHiresPlain));
+        Assert.False(h.HasPcGyro);
+
         var c = Config();
         var cb = new byte[Wire.PadGyroPlain];
         c.Encode(cb);
@@ -80,44 +106,48 @@ public class GyroGateTests
     }
 
     [Fact]
-    public void UntouchedWithoutAPcRatchet()
+    public void RoutesTheHostCannotFollowAreLeftOut()
     {
-        var g = new GyroGate();
-        var c = Config();
-        Assert.Equal(1000, Run(g, c, Frame(0, 0)));
-        Assert.Equal(1100, Run(g, c, Frame(100, 101)));
-        Assert.Equal(1250, Run(g, c, Frame(250, 249)));
+        var t = new PcGyroTail();
+        t.Config.Routes.Add(new GyroMath.Route(3, 0, 1f));
+        t.Config.Routes.Add(new GyroMath.Route(0, GyroMath.Route.Pad + 6, 1f));
+        t.Config.Routes.Add(new GyroMath.Route(0, GyroMath.Route.Wheel, 1f));
+        var b = new byte[PcGyroTail.Size];
+        t.Encode(b);
+        var d = new PcGyroTail();
+        d.Decode(b);
+        Assert.Equal([new GyroMath.Route(0, GyroMath.Route.Wheel, 1f)], d.Config.Routes);
     }
 
     [Fact]
-    public void HeldRatchetTakesTheGyroOut()
+    public void HeldRatchetFlipsEveryAxis()
     {
         var g = new GyroGate();
         var c = Config();
-        Run(g, c, Frame(0, 0));
-        Run(g, c, Frame(100, 100));
+        g.Update(Pad, c);
+        Assert.Equal(7, g.EffectiveOf(7, true));
         Press(L1);
-        // The gyro moved 100 more: the cursor stays where it was.
-        Assert.Equal(1100, Run(g, c, Frame(200, 200)));
-        Assert.Equal(1100, Run(g, c, Frame(300, 300)));
-        Assert.Equal(0, g.Effective);
+        g.Update(Pad, c);
+        Assert.Equal(7, g.Flips);
+        Assert.Equal(0, g.EffectiveOf(7, true));
+        Assert.Equal(7, g.EffectiveOf(0, true));
+        Assert.Equal(1, g.RatchetPresses);
         Release(L1);
-        Assert.Equal(1150, Run(g, c, Frame(350, 350)));
+        g.Update(Pad, c);
+        Assert.Equal(0, g.Flips);
+        Assert.Equal(0, g.EffectiveOf(7, false));
     }
 
     [Fact]
-    public void RatchetEnablesPutsTheGyroIn()
+    public void FlipsOfFollowsTheConfig()
     {
-        // "Ratchet enables": the phone has every axis off and sends only what they would move.
-        var g = new GyroGate();
         var c = Config();
-        Run(g, c, Frame(0, 0, axes: 0));
-        Assert.Equal(1000, Run(g, c, Frame(0, 50, axes: 0)));
-        Press(L1);
-        Assert.Equal(1080, Run(g, c, Frame(0, 130, axes: 0)));
-        Assert.Equal(7, g.Effective);
-        Release(L1);
-        Assert.Equal(1080, Run(g, c, Frame(0, 200, axes: 0)));
+        c.Kind[0] = 4; // south ratchets roll
+        Assert.Equal(7, GyroGate.FlipsOf(1u << L1, c));
+        Assert.Equal(3, GyroGate.FlipsOf((1u << L1) | 1u, c));
+        Assert.Equal(0, GyroGate.FlipsOf(1u << North, c));
+        c.Enabled = false;
+        Assert.Equal(0, GyroGate.FlipsOf(1u << L1, c));
     }
 
     [Fact]
@@ -125,80 +155,32 @@ public class GyroGateTests
     {
         var g = new GyroGate();
         var c = Config();
-        Run(g, c, Frame(0, 0));
+        g.Update(Pad, c);
         Press(North);
         Release(North);
-        Assert.Equal(1000, Run(g, c, Frame(100, 100)));
+        g.Update(Pad, c);
         Assert.True(g.Toggled);
+        Assert.Equal(0, g.EffectiveOf(7, true));
         c.Epoch++;
-        Assert.Equal(1050, Run(g, c, Frame(150, 150)));
+        g.Update(Pad, c);
         Assert.False(g.Toggled);
     }
 
     [Fact]
-    public void RebaseKeepsTheToggleAndClearPcEndsIt()
+    public void ClearPcEndsTheToggle()
     {
         var g = new GyroGate();
         var c = Config();
-        Run(g, c, Frame(0, 0));
+        g.Update(Pad, c);
         Press(North);
         Release(North);
-        Assert.Equal(1000, Run(g, c, Frame(100, 100)));
-        // The same phone in a new session: totals from zero, still toggled off.
-        g.Rebase();
-        Assert.Equal(1000, Run(g, c, Frame(0, 0)));
-        Assert.Equal(1000, Run(g, c, Frame(100, 100)));
+        g.Update(Pad, c);
         Assert.True(g.Toggled);
-        // The phone's switch goes off: nothing of the PC controller is left.
         g.ClearPc();
         Assert.False(g.Toggled);
         Assert.Equal(7, g.EffectiveOf(7, true));
-    }
-
-    [Fact]
-    public void PhoneGlideStaysWhenThePcLeavesTheAxisOff()
-    {
-        // The phone ratcheted roll (it glides); the PC ratchet flips it back on.
-        var g = new GyroGate();
-        var c = Config();
-        c.Kind[L1] = Roll;
-        Run(g, c, Frame(0, 0, axes: Yaw | Pitch));
-        Press(L1);
-        // Roll on through the PC: its "on" total counts, not the glide the phone put in.
-        Assert.Equal(1060, Run(g, c, Frame(20, 60, axes: Yaw | Pitch, rollGlideX: 20)));
-    }
-
-    [Fact]
-    public void StickShareFollowsTheEffectiveAxes()
-    {
-        var g = new GyroGate();
-        var c = Config();
-        var f = Frame(0, 0);
-        f.Rx = 20000;
-        f.Shares.Pad[2 * 6 + 2] = 20000; // roll pushes RX
-        f.Shares.NonGyro[2] = 5000;
-        Run(g, c, f);
-        Assert.Equal(20000, f.Rx);
-        Press(L1);
-        var f2 = Frame(0, 0);
-        f2.Rx = 20000;
-        f2.Shares.Pad[2 * 6 + 2] = 20000;
-        f2.Shares.NonGyro[2] = 5000;
-        Run(g, c, f2);
-        Assert.Equal(5000, f2.Rx);
-    }
-
-    [Fact]
-    public void NothingMovesWhileTheGyroMayNot()
-    {
-        var g = new GyroGate();
-        var c = Config();
-        var f = Frame(0, 0, axes: 0);
-        f.Shares.Flags = 0;
-        Run(g, c, f);
-        Press(North);
-        var f2 = Frame(0, 100, axes: 0);
-        f2.Shares.Flags = 0;
-        Assert.Equal(1000, Run(g, c, f2));
+        // The first read after clearing counts no press.
+        g.Update(Pad, c);
+        Assert.False(g.Toggled);
     }
 }

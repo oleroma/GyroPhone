@@ -135,7 +135,9 @@ internal fun WorkspaceSettings(
 
     val layer = !level.shows(WorkspaceDefaults.CONTROL_OPACITY)
     NotSearching {
-        ResetAllButton(level.parentName, WorkspaceDefaults.keys.any { level.shows(it) && level.isOwn(it) }) { level.resetAll() }
+        // The jitter cutoff and smoothing are no longer shown or used here, so an old own value of theirs does not light the button.
+        val retired = setOf(g("tighteningThreshold"), g("smoothingThreshold"))
+        ResetAllButton(level.parentName, WorkspaceDefaults.keys.any { it !in retired && level.shows(it) && level.isOwn(it) }) { level.resetAll() }
     }
     val items = ArrayList(extra)
     items += SectionItem("gyro") { card, header ->
@@ -227,48 +229,35 @@ internal fun WorkspaceSettings(
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(shakeStrength = v)) } }
         }
     }
-    items += SectionItem("gyroFilters") { card, header ->
+    // The jitter cutoff and smoothing are the app's (Settings, App, Gyro), the same in every workspace.
+    // Calibration only subtracts a fixed resting bias and suits the phone, not a layer: the whole workspace's only.
+    if (!layer) items += SectionItem("gyroFilters") { card, header ->
         RememberedSection(
-            runtime, "workspace.GyroFilters", "Gyro filters & calibration", card,
-            subtitle = "Jitter cutoff, smoothing" + if (layer) "" else ", drift calibration", headerModifier = header,
+            runtime, "workspace.GyroFilters", "Gyro calibration", card,
+            subtitle = "Drift calibration", headerModifier = header,
         ) {
-            // Both filters default to off: raw gyro. Calibration only subtracts a fixed resting bias
-            // and suits the phone, not a layer: the whole workspace's only.
-            run {
-                val tight = ws.gyro.tighteningThreshold
-                OverrideSlider(
-                    key + "tight", if (tight < 0.05f) "Jitter cutoff off" else "Jitter cutoff %.1f°/s", tight, 0f..5f, 0.1f,
-                    own(g("tighteningThreshold")), reset(g("tighteningThreshold")),
-                ) { v -> editWs { it.copy(gyro = it.gyro.copy(tighteningThreshold = if (v < 0.05f) 0f else v)) } }
-                val smooth = ws.gyro.smoothingThreshold
-                OverrideSlider(
-                    key + "smooth", if (smooth < 0.05f) "Smoothing off" else "Smoothing below %.1f°/s", smooth, 0f..10f, 0.1f,
-                    own(g("smoothingThreshold")), reset(g("smoothingThreshold")),
-                ) { v -> editWs { it.copy(gyro = it.gyro.copy(smoothingThreshold = if (v < 0.05f) 0f else v)) } }
-            }
-            if (!layer) {
-                val cal by runtime.calibrationState.collectAsState()
-                Searchable("Calibrate", "gyro drift calibration") { Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        when (val c = cal) {
-                            GamepadRuntime.CalibrationState.None -> "Not calibrated (phone's own drift correction only)"
-                            GamepadRuntime.CalibrationState.Running -> "Calibrating: keep the phone still…"
-                            GamepadRuntime.CalibrationState.Moved -> "The phone moved. Lay it flat and try again."
-                            is GamepadRuntime.CalibrationState.Calibrated -> "Calibrated (removes %.2f°/s drift)".format(c.degPerSec)
-                        },
-                        Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
-                    )
-                    if (cal is GamepadRuntime.CalibrationState.Calibrated) {
-                        TextButton(onClick = { runtime.clearGyroCalibration() }) { Text("Clear") }
-                    }
-                    TextButton(
-                        onClick = { runtime.calibrateGyro() },
-                        enabled = cal != GamepadRuntime.CalibrationState.Running
-                    ) {
-                        Text("Calibrate")
-                    }
-                } }
-            }
+            Hint("Jitter cutoff and smoothing are in Settings, App, Gyro: one setting for every workspace.")
+            val cal by runtime.calibrationState.collectAsState()
+            Searchable("Calibrate", "gyro drift calibration") { Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    when (val c = cal) {
+                        GamepadRuntime.CalibrationState.None -> "Not calibrated (phone's own drift correction only)"
+                        GamepadRuntime.CalibrationState.Running -> "Calibrating: keep the phone still…"
+                        GamepadRuntime.CalibrationState.Moved -> "The phone moved. Lay it flat and try again."
+                        is GamepadRuntime.CalibrationState.Calibrated -> "Calibrated (removes %.2f°/s drift)".format(c.degPerSec)
+                    },
+                    Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                )
+                if (cal is GamepadRuntime.CalibrationState.Calibrated) {
+                    TextButton(onClick = { runtime.clearGyroCalibration() }) { Text("Clear") }
+                }
+                TextButton(
+                    onClick = { runtime.calibrateGyro() },
+                    enabled = cal != GamepadRuntime.CalibrationState.Running
+                ) {
+                    Text("Calibrate")
+                }
+            } }
         }
     }
     if (!layer) items += SectionItem("controls") { card, header ->
