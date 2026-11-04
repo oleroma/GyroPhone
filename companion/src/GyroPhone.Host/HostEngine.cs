@@ -95,10 +95,12 @@ public sealed class HostEngine
     private readonly StateFrame _rxFrame = new();
 
     // "Use PC controller for gyro ratchet": the phone's controller gyro buttons, the controller plugged into
-    // this PC, and the gate that rewrites STATE_GYRO for it.
+    // this PC, the gate that reads it, and the gyro run here on the phone's raw samples (STATE_GYRO).
     private IPcPad _pcPad = NullPcPad.Instance;
     private readonly PadGyroConfig _padGyro = new();
     private readonly GyroGate _gate = new();
+    private readonly PcGyro _pcGyro = new();
+    private readonly Func<long, uint> _pcHeldAt;
     private readonly uint[] _pcPresses = new uint[PadGyroConfig.Places];
     private bool _pcReading;
     private readonly StateFrame _pending = new();
@@ -183,6 +185,7 @@ public sealed class HostEngine
         _keyMouse = keyMouse;
         _protector = protector;
         _clock = clock ?? StopwatchClock.Instance;
+        _pcHeldAt = us => _pcPad.HeldAt(us);
         Debug = new DebugTrace(() => _clock.NowUs);
         _events = new TracedEvents(events ?? NullHostEvents.Instance, Debug);
         _sessions = new SessionManager(random);
@@ -423,7 +426,7 @@ public sealed class HostEngine
     private void GateOverlay(OverlayFrame f)
     {
         ReadPcPad();
-        int eff = _gate.EffectiveOf(f.Axes, _gate.MayMove);
+        int eff = _gate.EffectiveOf(f.Axes, _pcGyro.MayMove);
         f.Axes = (byte)eff;
         f.Flags = (byte)(eff != 0 ? f.Flags | OverlayFrame.FlagGyroActive : f.Flags & ~OverlayFrame.FlagGyroActive);
         if (_gate.Flips != 0) f.Flags |= OverlayFrame.FlagRatchetHeld;
@@ -497,7 +500,8 @@ public sealed class HostEngine
         _states++;
         _rxFrame.Decode(plain);
         if (_padGyro.Enabled) ReadPcPad();
-        _gate.Apply(_rxFrame, nowUs);
+        // The PC controller ratchets each sample by what it held then (same clock as nowUs).
+        _pcGyro.Apply(_rxFrame, nowUs, _gate, _padGyro, _padGyro.Enabled ? _pcHeldAt : null);
         // A burst can hold a press and its release: inject the older frame first so no edge is lost.
         // Frames that differ only in motion still merge into one injection.
         // Flush re-enters the engine lock OnDatagram holds.
@@ -548,7 +552,7 @@ public sealed class HostEngine
             return;
         }
         var s = _sessions.CreatePending(hello, name, pairKey, _settings.HostId,
-            (byte)_settings.OutputMode, (byte)((_pad.DriverOk ? WelcomeFlags.VigemOk : 0) | WelcomeFlags.HiresWheel | WelcomeFlags.GyroGate),
+            (byte)_settings.OutputMode, (byte)((_pad.DriverOk ? WelcomeFlags.VigemOk : 0) | WelcomeFlags.HiresWheel | WelcomeFlags.PcGyro),
             from, nowUs);
         Reply(s.Welcome, from);
     }
@@ -584,12 +588,13 @@ public sealed class HostEngine
                 StopPcPad();
                 _padGyro.Enabled = false;
                 _gate.Reset();
+                _pcGyro.Reset();
             }
             old.Dispose();
         }
-        // The phone restarts its totals at 0 for a new session; the PC controller's toggle stays.
+        // The phone restarts its totals and gyro samples at 0 for a new session; the PC controller's toggle stays.
         _mouse.Reset();
-        _gate.Rebase();
+        _pcGyro.Rebase();
         _accDx = _accDy = _accWheel = _accHWheel = 0;
         _stats.Reset();
         _releasedForSilence = false;
@@ -1438,6 +1443,7 @@ public sealed class HostEngine
         StopPcPad();
         _padGyro.Enabled = false;
         _gate.Reset();
+        _pcGyro.Reset();
         _overlayLayout.Reset();
         _overlayRxUs = long.MinValue;
         _overlayPoses.Clear();

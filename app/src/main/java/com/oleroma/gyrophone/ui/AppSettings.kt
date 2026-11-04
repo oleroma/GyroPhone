@@ -119,6 +119,8 @@ private fun AppTab(runtime: GamepadRuntime) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val visuals by runtime.touchVisuals.collectAsStateWithLifecycle()
     val debugOn by runtime.debug.enabled.collectAsStateWithLifecycle()
+    val tight by runtime.gyroTightening.collectAsStateWithLifecycle()
+    val smooth by runtime.gyroSmoothing.collectAsStateWithLifecycle()
     val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?" }
 
     val items = listOf(
@@ -225,6 +227,19 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "the swipe line. The ticks slide as the axis moves, stay dim while a Move is held back, and keep " +
                         "sliding while inertia glides after the lift.",
             ) { runtime.setTouchVisuals(visuals.copy(moveRulers = it)) }
+        },
+        category(runtime, "gyro", "Gyro", "Jitter cutoff and smoothing, for every workspace") {
+            // Both default to off: raw gyro. One setting for the whole app, also what the PC uses when it runs the gyro.
+            OverrideSlider(
+                "appGyroTight", if (tight < 0.05f) "Jitter cutoff off" else "Jitter cutoff %.1f°/s", tight, 0f..5f, 0.1f,
+                overridden = false, onReset = null,
+                hint = "Turns slower than this move less, which hides hand shake. Every workspace uses it.",
+            ) { v -> runtime.setGyroTightening(v) }
+            OverrideSlider(
+                "appGyroSmooth", if (smooth < 0.05f) "Smoothing off" else "Smoothing below %.1f°/s", smooth, 0f..10f, 0.1f,
+                overridden = false, onReset = null,
+                hint = "Turns slower than this are averaged over a few samples, which steadies slow aim. Every workspace uses it.",
+            ) { v -> runtime.setGyroSmoothing(v) }
         },
         category(runtime, "gyroDisplay", "Gyro display", "The parallax edge; other gyro displays are placed in edit mode") {
             GyroVisualsSettings(visuals) { runtime.setTouchVisuals(it) }

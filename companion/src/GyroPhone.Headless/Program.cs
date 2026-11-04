@@ -72,7 +72,7 @@ internal static class Program
         var hostKey = keyFiles.LoadOrCreateHostKey(protector, settings.HostName, log.Write);
         var engine = new HostEngine(settings, pad, keyMouse, prompt, protector, clock, events, hostKey: hostKey);
         prompt.Engine = engine;
-        engine.SetPcPad(new XInputPcPad(log.Write));
+        engine.SetPcPad(new XInputPcPad(log.Write, clock));
         using var authorized = new AuthorizedPhonesWatcher(keyFiles, engine.SetAuthorizedPhones, log.Write);
         log.Write($"key file pairing: {KeyPairing.Fingerprint(hostKey.PublicKey)}, phones in {keyFiles.AuthorizedDirectory}");
 

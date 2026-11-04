@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using GyroPhone.Host.Abstractions;
+using GyroPhone.Protocol;
 
 namespace GyroPhone.Windows;
 
@@ -8,6 +9,8 @@ namespace GyroPhone.Windows;
 /// pad, every millisecond on its own thread, and counts each button's presses so a short one
 /// between two STATEs is not lost. Free slots are looked at only every few seconds (a query on an
 /// empty slot is slow), and not while our own pad is plugged but has no slot yet (it could be any). Reading never takes the controller away from games or Steam Input.
+/// Each change of the held buttons is noted with its time on the engine's clock, so the PC gyro
+/// ratchets each sample by what was held when it was measured (<see cref="HeldAt"/>).
 /// </summary>
 public sealed class XInputPcPad : IPcPad, IDisposable
 {
@@ -25,7 +28,9 @@ public sealed class XInputPcPad : IPcPad, IDisposable
     private const double PollMs = 1.0;
 
     private readonly Action<string>? _log;
+    private readonly IClock _clock;
     private readonly object _gate = new();
+    private readonly PadHeldHistory _history = new();
     private readonly uint[] _presses = new uint[Places];
     private uint _held;
     private readonly float[] _axes = new float[6];
@@ -36,7 +41,12 @@ public sealed class XInputPcPad : IPcPad, IDisposable
     private RunFlag? _run;
     private bool _useEx = true;
 
-    public XInputPcPad(Action<string>? log = null) => _log = log;
+    /// <param name="clock">The engine's clock (HostEngine's, the one PONG uses): held times are on it.</param>
+    public XInputPcPad(Action<string>? log = null, IClock? clock = null)
+    {
+        _log = log;
+        _clock = clock ?? StopwatchClock.Instance;
+    }
 
     public string? Name
     {
@@ -73,6 +83,7 @@ public sealed class XInputPcPad : IPcPad, IDisposable
             _run = null;
             _thread = null;
             _held = 0;
+            _history.Clear();
             Array.Clear(_axes);
             Volatile.Write(ref _slot, -1);
         }
@@ -99,6 +110,14 @@ public sealed class XInputPcPad : IPcPad, IDisposable
         {
             _axes.AsSpan(0, Math.Min(axes.Length, _axes.Length)).CopyTo(axes);
             return _slot >= 0;
+        }
+    }
+
+    public uint HeldAt(long us)
+    {
+        lock (_gate)
+        {
+            return _history.At(us);
         }
     }
 
@@ -150,6 +169,7 @@ public sealed class XInputPcPad : IPcPad, IDisposable
                         {
                             if (run.Stopped) return;
                             _held = 0;
+                            _history.Add(_clock.NowUs, 0);
                             Array.Clear(_axes);
                             Volatile.Write(ref _slot, -1);
                         }
@@ -197,12 +217,14 @@ public sealed class XInputPcPad : IPcPad, IDisposable
     private void Store(RunFlag run, in XInputGamepad g)
     {
         uint held = PlaceBits(g);
+        long now = _clock.NowUs;
         lock (_gate)
         {
             if (run.Stopped) return;
             uint down = held & ~_held;
             for (int i = 0; i < Places; i++) if ((down & (1u << i)) != 0) _presses[i]++;
             _held = held;
+            _history.Add(now, held);
             // XInput sticks are y up; the overlay's are y down.
             _axes[0] = Stick(g.ThumbLX);
             _axes[1] = -Stick(g.ThumbLY);

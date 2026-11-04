@@ -469,8 +469,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     @Volatile var toggleEpoch: Int = 0
         private set
 
-    private val nonGyro = IntArray(GamepadAxis.entries.size)
-
     private var mouseDx = 0
     private var mouseDy = 0
 
@@ -1339,11 +1337,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         return if (bit == 0) -1 else Integer.numberOfTrailingZeros(bit)
     }
 
-    /** The game pad as the last [snapshot] made it without the gyro's part: lx, ly, rx, ry, lt, rt in STATE units. */
-    fun nonGyroPad(out: IntArray) {
-        synchronized(lock) { nonGyro.copyInto(out, endIndex = minOf(out.size, nonGyro.size)) }
-    }
-
     /** The [gyroBit]s of the axes some held ratchet acts on (flipped or not), as of the last [gyroAxes] read. */
     @Volatile var ratchetsHeld: Int = 0
         private set
@@ -1486,8 +1479,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (!anyDevice.modeSeen) anyDevice.modeHeld.clear()
         anyDevice.modeSeen = false
         shakeShown = true
-        for (a in 0 until 4) nonGyro[a] = toStick(stick[a])
-        nonGyro[4] = toTrigger(trigger[0]); nonGyro[5] = toTrigger(trigger[1])
         for (a in 0 until 4) if (abs(gyroPad[a]) > abs(stick[a])) stick[a] = gyroPad[a]
         trigger[0] = max(trigger[0], abs(gyroPad[GamepadAxis.LT.ordinal]))
         trigger[1] = max(trigger[1], abs(gyroPad[GamepadAxis.RT.ordinal]))

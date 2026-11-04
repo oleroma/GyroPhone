@@ -12,7 +12,8 @@ object Wire {
     const val HEADER = 12
     const val GCM_TAG = 16
     const val HELLO_MAC = 16
-    const val MAX_DATAGRAM = 256
+    /** The largest datagram: a sealed STATE_GYRO ([STATE_GYRO_PLAIN]) with room to spare. */
+    const val MAX_DATAGRAM = 512
 
     const val DISCOVER_SIZE = 64
     const val ANNOUNCE_SIZE = 64
@@ -32,8 +33,8 @@ object Wire {
     const val STATE_PLAIN = 66
     /** STATE_HIRES: STATE with the wheel total in 1/120 notch, plus a horizontal wheel total. */
     const val STATE_HIRES_PLAIN = 70
-    /** STATE_GYRO: STATE_HIRES plus each gyro axis's share of the motion ([PcGyroFeed.encodeExt]). */
-    const val STATE_GYRO_PLAIN = STATE_HIRES_PLAIN + PcGyroFeed.EXT_SIZE
+    /** STATE_GYRO: STATE_HIRES plus the raw gyro samples and the gyro settings for the PC ([PcGyroFeed.encodeTail]). */
+    const val STATE_GYRO_PLAIN = STATE_HIRES_PLAIN + PcGyroFeed.TAIL_SIZE
     /** PAD_GYRO: the controller buttons that ratchet or toggle the gyro ([PcGyroFeed.encodeButtons]). */
     const val PAD_GYRO_PLAIN = 4 + PcGyroFeed.MAX_BUTTONS * 2
     const val PING_PLAIN = 8
@@ -166,9 +167,9 @@ object PacketType {
     const val OVERLAY = 0x24
     /** Sent only while HOST_STATUS has [HostStatusFlags.OVERLAY]: the layout, in pieces. */
     const val OVERLAY_LAYOUT = 0x25
-    /** Sent instead of STATE_HIRES while "Use PC controller for gyro ratchet" is on and WELCOME has [HostFlags.GYRO_GATE]. */
+    /** Sent instead of STATE_HIRES while "Use PC controller for gyro ratchet" is on and WELCOME has [HostFlags.PC_GYRO]: the PC runs the gyro. */
     const val STATE_GYRO = 0x26
-    /** Sent once a second (and on change) to a host with [HostFlags.GYRO_GATE]: the controller's gyro buttons. */
+    /** Sent once a second (and on change) to a host with [HostFlags.PC_GYRO]: the controller's gyro buttons. */
     const val PAD_GYRO = 0x27
     const val BYE = 0x2F
     const val PONG = 0x30
@@ -251,8 +252,11 @@ object HostFlags {
     const val FOREGROUND_SUPPORTED = 2
     /** The host accepts STATE_HIRES (smooth vertical and horizontal wheel). */
     const val HIRES_WHEEL = 4
-    /** The host takes STATE_GYRO and PAD_GYRO: a controller plugged into it can ratchet the gyro. */
-    const val GYRO_GATE = 8
+    /**
+     * The host takes STATE_GYRO and PAD_GYRO and runs the gyro math on the phone's raw samples, so a
+     * controller plugged into it can ratchet the gyro. Bit 8 (the old share-based gate) is no longer used.
+     */
+    const val PC_GYRO = 16
 }
 
 /** STATE flags. */
