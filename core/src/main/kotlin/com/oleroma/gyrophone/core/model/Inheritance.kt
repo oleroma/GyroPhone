@@ -13,10 +13,13 @@ package com.oleroma.gyrophone.core.model
  */
 object Inheritance {
     /** A touch input on any surface: finger count, input, hold zone and trigger ([InputSource.Surface.on]). */
-    private data class TouchInput(val fingers: Int, val input: SurfaceInput, val zone: Int, val on: Trigger)
+    data class TouchInput(val fingers: Int, val input: SurfaceInput, val zone: Int, val on: Trigger)
 
-    /** The touch input [s] stands for on its surface, or null for a source that is not one. */
-    private fun inputOf(s: InputSource): TouchInput? = when (s) {
+    /**
+     * The touch input [s] stands for on its surface, or null for a source that is not one: a level
+     * maps or inherits each one, with each trigger on its own (the mapping editor shows it the same way).
+     */
+    fun inputOf(s: InputSource): TouchInput? = when (s) {
         is InputSource.Surface -> TouchInput(s.fingers, s.input, s.zone, s.on)
         is InputSource.Touch -> TouchInput(1, SurfaceInput.HOLD, 0, Trigger.HOLD)
         else -> null
