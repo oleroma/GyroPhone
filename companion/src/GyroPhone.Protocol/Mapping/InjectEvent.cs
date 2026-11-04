@@ -32,6 +32,12 @@ public struct InjectEvent
     public const int WheelDelta = 120;
 
     public const ushort VkPause = 0x13;
+    public const ushort VkVolumeMute = 0xAD;
+    public const ushort VkVolumeDown = 0xAE;
+    public const ushort VkVolumeUp = 0xAF;
+    public const ushort VkMediaNext = 0xB0;
+    public const ushort VkMediaPrev = 0xB1;
+    public const ushort VkMediaPlayPause = 0xB3;
 
     public InjectKind Kind;
     /// <summary>HID usage of a key event (diagnostics and the held-keys marker).</summary>
@@ -53,6 +59,7 @@ public struct InjectEvent
         if (sc.Vk != 0)
         {
             e.Vk = sc.Vk;
+            if (sc.Extended) e.Flags = KeyExtended;
         }
         else
         {

@@ -1,8 +1,12 @@
 package com.oleroma.gyrophone.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.View
+import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -84,6 +88,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
@@ -520,7 +525,7 @@ fun PadScreen(
     // Mapping sets: the set in use and its overrides, watched while this workspace has layer actions.
     var layers by remember { mutableStateOf(MappingEngine.Layers(MappingSet.BASE, emptyList())) }
     val hasLayers = remember(ws) {
-        (ws.mappings + ws.keyboard + ws.mouse + ws.pads.flatMap { it.mappings }).any { it.target is OutputTarget.Layer }
+        (ws.mappings + ws.keyboard + ws.mouse + ws.phone + ws.pads.flatMap { it.mappings }).any { it.target is OutputTarget.Layer }
     }
     LaunchedEffect(hasLayers, editing) {
         if (!hasLayers || editing) {
@@ -627,8 +632,59 @@ fun PadScreen(
     val view = LocalView.current
     // The phone doesn't dim or lock while the pad is shown, in play and edit mode ([GamepadRuntime.keepScreenOn]).
     val keepAwake by runtime.keepScreenOn.collectAsStateWithLifecycle()
-    DisposableEffect(view, keepAwake) {
-        view.keepScreenOn = keepAwake
+
+    // Black screen ([GamepadRuntime.blackScreenIdle]): in play, after a while without a screen touch
+    // or when a Black screen mapping fires, the pad goes black at minimum brightness and its touch
+    // controls stop. The app stays in front, so gyro, controllers and the PC link keep working. A tap
+    // brings the pad back and presses nothing.
+    val blackIdle by runtime.blackScreenIdle.collectAsStateWithLifecycle()
+    val blackSeconds by runtime.blackScreenSeconds.collectAsStateWithLifecycle()
+    val blackRequests by runtime.blackScreenRequests.collectAsStateWithLifecycle()
+    var black by remember { mutableStateOf(false) }
+    // The last screen touch (uptime ms) and the fingers down now, seen before the pad's handlers.
+    val lastTouchMs = remember { longArrayOf(SystemClock.uptimeMillis()) }
+    val fingersDown = remember { IntArray(1) }
+    val seenRequests = remember { IntArray(1) { blackRequests } }
+    LaunchedEffect(blackRequests) {
+        if (blackRequests != seenRequests[0]) {
+            seenRequests[0] = blackRequests
+            if (!editing) black = true
+        }
+    }
+    LaunchedEffect(editing) { if (editing) black = false }
+    LaunchedEffect(blackIdle, blackSeconds, editing, black) {
+        if (!blackIdle || editing || black) return@LaunchedEffect
+        lastTouchMs[0] = SystemClock.uptimeMillis()
+        val idleMs = blackSeconds * 1000L
+        while (true) {
+            val now = SystemClock.uptimeMillis()
+            if (fingersDown[0] > 0) lastTouchMs[0] = now
+            val left = lastTouchMs[0] + idleMs - now
+            if (left <= 0) break
+            delay(left)
+        }
+        black = true
+    }
+    DisposableEffect(view, black) {
+        val window = view.context.findActivity()?.window
+        if (black && window != null) {
+            val attrs = window.attributes
+            attrs.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_OFF
+            window.attributes = attrs
+        }
+        onDispose {
+            if (black && window != null) {
+                val attrs = window.attributes
+                attrs.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                window.attributes = attrs
+            }
+        }
+    }
+
+    // A black pad keeps the screen on even with Keep the screen on off: if the phone locked, the app
+    // would stop reading the controller.
+    DisposableEffect(view, keepAwake, black) {
+        view.keepScreenOn = keepAwake || black
         onDispose { view.keepScreenOn = false }
     }
     // Play-mode touch reaches the engine as it arrives, not once per frame. Asked on the decor view:
@@ -713,6 +769,7 @@ fun PadScreen(
             .fillMaxSize()
             .background(Color(0xFF101318))
             .recordTouches(trails, visuals, showTouchVisuals)
+            .watchTouches(lastTouchMs, fingersDown)
             .onGloballyPositioned { padOrigin = it.positionInWindow() },
     ) {
         val density = LocalDensity.current
@@ -1863,6 +1920,8 @@ fun PadScreen(
 
         if (!editing) DebugOverlay(runtime, Modifier.align(Alignment.BottomStart))
 
+        if (black) BlackScreen { black = false }
+
         if (!editing) {
             if (!fullscreen) {
                 CapsuleRow(
@@ -2882,4 +2941,45 @@ private fun PanelMenuItem(text: String, chosen: Boolean, onClick: () -> Unit) {
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
         )
     }
+}
+
+/** Notes every screen touch into [lastTouchMs] (uptime ms) and the fingers down into [fingersDown], consuming nothing. */
+private fun Modifier.watchTouches(lastTouchMs: LongArray, fingersDown: IntArray): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            lastTouchMs[0] = SystemClock.uptimeMillis()
+            fingersDown[0] = event.changes.count { it.pressed }
+        }
+    }
+}
+
+/**
+ * The black pad ([GamepadRuntime.blackScreenIdle]): covers everything and takes every touch, so
+ * nothing below is pressed. Lifting the last finger calls [onWake].
+ */
+@Composable
+private fun BlackScreen(onWake: () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false).consume()
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        event.changes.forEach { it.consume() }
+                        if (event.changes.none { it.pressed }) break
+                    }
+                    onWake()
+                }
+            },
+    )
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

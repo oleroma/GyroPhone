@@ -577,6 +577,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     var onChange: Runnable? = null
 
     /**
+     * Called when a [OutputTarget.BlackScreen] mapping fires, inside the engine lock: it must only
+     * hand the request on (the phone's pad screen goes black), never call back into the engine.
+     */
+    @Volatile
+    var onBlackScreen: Runnable? = null
+
+    /**
      * Gets the mouse counts each [snapshot] sends other than the live gyro's (touchpad and its
      * glide, touch buttons, controllers, keys, a gyro glide), on the pump's thread and outside the
      * engine lock: what turns the camera besides the gyro (a trackball 3D shape adds them).
@@ -661,11 +668,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         allTouch = w.mappings
         trace?.state("workspace: ${w.name}")
         motionMapped = w.mappings.any { it.source is InputSource.Tilt || it.source is InputSource.Shake }
-        allPads = Array(w.pads.size + 2) {
+        allPads = Array(w.pads.size + 3) {
             when {
                 it < w.pads.size -> w.pads[it].mappings
                 it == w.pads.size -> w.keyboard
-                else -> w.mouse
+                it == w.pads.size + 1 -> w.mouse
+                else -> w.phone
             }
         }
         touchMappings = allTouch
@@ -749,6 +757,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (device == null) return -1
         if (device.keyboard) return ws.pads.size
         if (device.mouse) return ws.pads.size + 1
+        if (device.phone) return ws.pads.size + 2
         return ws.pads.indexOfFirst { it.matches(device.vendorId, device.productId, device.name) }
     }
 
@@ -1706,7 +1715,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 is OutputTarget.Wheel, is OutputTarget.MouseAxis,
                 OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause, is OutputTarget.GyroPauseAxis,
                 OutputTarget.SwitchApps, OutputTarget.Zoom, is OutputTarget.Layer, OutputTarget.LayerBack,
-                OutputTarget.LetGo, OutputTarget.NoOutput -> Unit
+                OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.NoOutput -> Unit
 
                 is OutputTarget.Haptic, is OutputTarget.HapticStep -> {
                     val a = min(1f, abs(v))
@@ -2118,7 +2127,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** [t] fires when it is pressed ([onPress]) rather than being held. */
     private fun isEvent(t: OutputTarget) = t is OutputTarget.Wheel || t == OutputTarget.GyroToggle || t is OutputTarget.Layer ||
-            t == OutputTarget.LayerBack || t == OutputTarget.LetGo
+            t == OutputTarget.LayerBack || t == OutputTarget.LetGo || t == OutputTarget.BlackScreen
 
     /** [m]'s shaper in [dev]'s group (the touch group for null). */
     private fun shaperOf(m: Mapping, dev: Dev?): Shaper =
@@ -2257,6 +2266,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             is OutputTarget.Layer -> layerPressed(t)
             OutputTarget.LayerBack -> layerBack()
             OutputTarget.LetGo -> letGoAll(clock())
+            OutputTarget.BlackScreen -> onBlackScreen?.run()
             else -> Unit
         }
     }

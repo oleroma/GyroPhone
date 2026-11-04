@@ -354,16 +354,26 @@ public class GoldenVectorTests
     public void KeyboardUsagesAllMap()
     {
         var usages = Vectors.Root.GetProperty("keyboardUsages").EnumerateArray().Select(e => e.GetInt32()).ToList();
-        Assert.Equal(116, usages.Count);
+        Assert.Equal(122, usages.Count);
+        // Pause and the media keys go as virtual keys, everything else as scan codes.
+        int[] vkPath = { 0x48, 0x7F, 0x80, 0x81, 0xE8, 0xEA, 0xEB };
         foreach (var u in usages)
         {
             var sc = HidScanCodes.For(u);
             Assert.True(sc.IsMapped, $"usage 0x{u:X2} has no scan code");
-            if (u == 0x48)
+            if (vkPath.Contains(u))
                 Assert.Equal((ushort)0, sc.Scan);
             else
                 Assert.Equal((ushort)0, sc.Vk);
         }
+        Assert.Equal(InjectEvent.VkVolumeUp, HidScanCodes.For(0x80).Vk);
+        Assert.Equal(InjectEvent.VkVolumeDown, HidScanCodes.For(0x81).Vk);
+        Assert.Equal(InjectEvent.VkVolumeMute, HidScanCodes.For(0x7F).Vk);
+        Assert.Equal(InjectEvent.VkMediaPlayPause, HidScanCodes.For(0xE8).Vk);
+        Assert.Equal(InjectEvent.VkMediaPrev, HidScanCodes.For(0xEA).Vk);
+        Assert.Equal(InjectEvent.VkMediaNext, HidScanCodes.For(0xEB).Vk);
+        var vol = InjectEvent.Key(0x80, HidScanCodes.For(0x80), up: false);
+        Assert.Equal(InjectEvent.KeyExtended, vol.Flags);
         var pause = HidScanCodes.For(0x48);
         Assert.Equal(InjectEvent.VkPause, pause.Vk);
         var e = InjectEvent.Key(0x48, pause, up: false);

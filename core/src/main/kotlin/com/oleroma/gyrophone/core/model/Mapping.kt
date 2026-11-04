@@ -390,6 +390,14 @@ sealed interface OutputTarget {
     @SerialName("let_go")
     data object LetGo : OutputTarget
 
+    /**
+     * The phone's pad screen goes black (touch buttons off) until it is tapped: saves battery while
+     * only a controller is used. Nothing is sent to the PC.
+     */
+    @Serializable
+    @SerialName("black_screen")
+    data object BlackScreen : OutputTarget
+
     /** Does nothing: in a set used as an override, it stops an input falling through to the set below. */
     @Serializable
     @SerialName("nothing")

@@ -150,7 +150,7 @@ class GoldenVectorsTest {
 
     @Test fun keyboardUsagesMatchHidUsageNames() {
         val usages = root["keyboardUsages"]!!.jsonArray.map { it.jsonPrimitive.int }
-        assertEquals(116, usages.size)
+        assertEquals(122, usages.size)
         assertEquals(HidUsage.names.keys.sorted(), usages)
     }
 
