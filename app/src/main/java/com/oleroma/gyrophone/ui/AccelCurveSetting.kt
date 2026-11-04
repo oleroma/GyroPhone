@@ -219,12 +219,17 @@ internal fun AccelCurveSetting(
                 }
             }
             val d = dragged.takeIf { it in pts.indices }?.let { pts[it] }
-            val now = live.maxOrNull()
+            val now = live.maxOrNull() ?: 0f
+            // One line that always shows, so the layout doesn't jump: the dragged point, else the speed now.
             Text(
-                if (d != null) "%.0f°/s: %s (×%.2f)".format(d.speed, shown(d.gain), d.gain)
-                else if (now != null && now >= 1f) "Now %.0f°/s: %s (×%.2f), the line on the graph.".format(now, shown(draft.gainAt(now)), draft.gainAt(now))
-                else "Across: turning speed, 0 to %.0f°/s. Up: sensitivity; dashed = %s. ".format(maxSpeed, shown(1f)) +
-                    pts.joinToString(", ") { "%.0f°/s → %s".format(it.speed, shown(it.gain)) },
+                if (d != null) "Point %.0f°/s: %s (×%.2f)".format(d.speed, shown(d.gain), d.gain)
+                else "Now %.0f°/s: %s (×%.2f)".format(now, shown(draft.gainAt(now)), draft.gainAt(now)),
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.onSurfaceVariant,
+                maxLines = 1,
+            )
+            Text(
+                "Across: turning speed, 0 to %.0f°/s; the coloured line is the speed now. Up: sensitivity; dashed = %s.".format(maxSpeed, shown(1f)),
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.onSurfaceVariant,
             )
