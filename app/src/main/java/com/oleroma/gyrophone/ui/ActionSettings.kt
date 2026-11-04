@@ -212,6 +212,7 @@ private fun buttonGyroGear(g: ButtonGyroLevel, key: String, axis: MotionAxis): @
             onReset = { g.edit { it.withAccel(axis, null) } },
             hint = "While this is held${g.where}. Unset, it follows this button's Gyro acceleration (in Settings), else the workspace's.",
             perAxis = true,
+            axis = axis,
         ) { c -> g.edit { it.withAccel(axis, c) } }
         val eff = g.inUse.over(g.parent)
         AxisGlideSettings(
@@ -399,6 +400,7 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
             onReset = { level.reset(k("Accel")) },
             hint = "Unset, it follows the shared Acceleration in Settings. $ACCEL_HINT",
             perAxis = true,
+            axis = axis,
         ) { c -> level.edit { it.copy(gyro = it.gyro.withAccel(axis, c)) } }
         AxisGlideSettings(
             key, axis, g, ownGlide, unset = "Unset, it follows the shared Inertia in Settings.",

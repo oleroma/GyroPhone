@@ -13,6 +13,9 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -24,11 +27,14 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.model.CurvePoint
 import com.oleroma.gyrophone.core.model.GameSens
 import com.oleroma.gyrophone.core.model.GyroCurve
 import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.core.model.MotionAxis
+import com.oleroma.gyrophone.runtime
 import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.max
@@ -52,6 +58,7 @@ internal fun AccelCurveSetting(
     onReset: (() -> Unit)?,
     hint: String,
     perAxis: Boolean = false,
+    axis: MotionAxis? = null,
     onSet: (GyroCurve) -> Unit,
 ) {
     var draft by remember(key, curve) { mutableStateOf(curve) }
@@ -77,6 +84,25 @@ internal fun AccelCurveSetting(
         }
         if (!draft.isOff) {
             val pts = draft.points
+            // Live: how fast the phone turns now, as a line across the graph (one per axis for a shared per-axis curve).
+            val runtime = LocalContext.current.runtime
+            DisposableEffect(runtime) {
+                runtime.watchAccel()
+                onDispose { runtime.unwatchAccel() }
+            }
+            val axes: List<MotionAxis?> = when {
+                !draft.axisSpeed -> listOf(null)
+                axis != null -> listOf(axis)
+                else -> MotionAxis.shown
+            }
+            var live by remember { mutableStateOf(FloatArray(0)) }
+            LaunchedEffect(runtime, axes) {
+                while (true) {
+                    withFrameNanos { }
+                    val now = axes.mapNotNull { runtime.liveGyroSpeed(it) }.toFloatArray()
+                    if (!now.contentEquals(live)) live = now
+                }
+            }
             // The graph's span stays put while a point is dragged, so it doesn't run away under the finger.
             val maxSpeed = remember(key, curve) { niceCeil(max(200f, (curve.points.maxOfOrNull { it.speed } ?: 0f) * 1.3f)) }
             val maxGain = remember(key, curve) { max(2f, (curve.points.maxOfOrNull { it.gain } ?: 1f) * 1.3f) }
@@ -166,13 +192,20 @@ internal fun AccelCurveSetting(
                 for (p in pts) path.lineTo(x(p.speed), y(p.gain))
                 path.lineTo(w, y(pts.last().gain))
                 drawPath(path, colors.primary, style = Stroke(width = 5f))
+                for (v in live) {
+                    val lx = x(v.coerceAtMost(maxSpeed))
+                    drawLine(colors.tertiary, Offset(lx, 0f), Offset(lx, h), 3f)
+                    drawCircle(colors.tertiary, 9f, Offset(lx, y(draft.gainAt(v))))
+                }
                 pts.forEachIndexed { i, p ->
                     drawCircle(if (i == dragged) colors.tertiary else colors.primary, if (i == dragged) 16f else 12f, Offset(x(p.speed), y(p.gain)))
                 }
             }
             val d = dragged.takeIf { it in pts.indices }?.let { pts[it] }
+            val now = live.maxOrNull()
             Text(
                 if (d != null) "%.0f°/s: %s (×%.2f)".format(d.speed, shown(d.gain), d.gain)
+                else if (now != null && now >= 1f) "Now %.0f°/s: %s (×%.2f), the line on the graph.".format(now, shown(draft.gainAt(now)), draft.gainAt(now))
                 else "Across: turning speed, 0 to %.0f°/s. Up: sensitivity; dashed = %s. ".format(maxSpeed, shown(1f)) +
                     pts.joinToString(", ") { "%.0f°/s → %s".format(it.speed, shown(it.gain)) },
                 style = MaterialTheme.typography.bodySmall,
