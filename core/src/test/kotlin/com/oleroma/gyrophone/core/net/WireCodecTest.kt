@@ -57,6 +57,16 @@ class WireCodecTest {
         assertEquals(WireCodec.INVALID, WireCodec.classify(buf, n))
     }
 
+    @Test fun errorDecodesWithAnyVersionByte() {
+        val n = WireCodec.encodeError(ErrorPacket(ErrorCode.VERSION, 3), buf)
+        buf[2] = 3 // a newer host
+        assertNull(WireCodec.decodePlain(buf, n))
+        assertEquals(ErrorPacket(ErrorCode.VERSION, 3), WireCodec.decodeError(buf, n))
+        assertNull(WireCodec.decodeError(buf, n - 1))
+        buf[3] = PacketType.ANNOUNCE.toByte()
+        assertNull(WireCodec.decodeError(buf, n))
+    }
+
     @Test fun sealedTypesAreNotDecodedAsPlain() {
         WireCodec.writeHeader(buf, PacketType.STATE, 1, 1)
         assertEquals(PacketType.STATE, WireCodec.classify(buf, 94))

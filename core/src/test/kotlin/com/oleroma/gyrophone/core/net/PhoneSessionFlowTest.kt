@@ -223,6 +223,33 @@ class PhoneSessionFlowTest {
         assertTrue(hellos(f.onTick(5200)).isEmpty())
     }
 
+    @Test fun aSilentHostEndsTheSessionAfterTheTimeout() {
+        val f = flow()
+        goLive(f)
+        f.onTick(Wire.HOST_SILENT_MS.toLong() + 5)
+        assertEquals(SessionStatus.HOST_SILENT, f.status)
+        assertTrue(f.onTick(Wire.SESSION_TIMEOUT_MS.toLong() + 4).none { it is PhoneSessionFlow.Out.Live })
+        val out = f.onTick(Wire.SESSION_TIMEOUT_MS.toLong() + 5)
+        assertTrue(out.contains(PhoneSessionFlow.Out.Live(null)))
+        assertNull(f.live)
+        assertFalse(KeyTakeover.isUp(f.status))
+        assertTrue(f.isRunning) // HELLOs go on
+        var t = Wire.SESSION_TIMEOUT_MS.toLong() + 5
+        var hellos = 0
+        while (t < Wire.SESSION_TIMEOUT_MS + 3000L) { t += 10; hellos += hellos(f.onTick(t)).size }
+        assertTrue(hellos > 0)
+    }
+
+    @Test fun aNewerHostsVersionErrorIsShown() {
+        val f = flow()
+        f.connect(0)
+        val n = WireCodec.encodeError(ErrorPacket(ErrorCode.VERSION, 2), buf)
+        val err = buf.copyOf(n).also { it[2] = 2 } // the newer host's own version
+        assertEquals(WireCodec.BAD_VERSION, WireCodec.classify(err, err.size))
+        f.deliver(err, 10)
+        assertEquals(SessionStatus.VERSION_MISMATCH, f.status)
+    }
+
     @Test fun sealedReplayAndForeignSessionAreDropped() {
         val f = flow()
         val live = goLive(f)

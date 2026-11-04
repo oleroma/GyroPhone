@@ -284,6 +284,11 @@ class WorkspaceEngineTest {
         e.buttonDown(1, "a", 100f, 100f)
         assertEquals(listOf(A), keys(e))
         assertEquals(setOf("a"), e.pressedTouches())
+        val pressed = hashSetOf("old")
+        val latched = hashSetOf("old")
+        e.touchesInto(pressed, latched)
+        assertEquals(setOf("a"), pressed)
+        assertTrue(latched.isEmpty())
         e.buttonMove(1, 400f, 100f) // moving does not matter
         now = 1000 * MS
         assertEquals(listOf(A), keys(e))

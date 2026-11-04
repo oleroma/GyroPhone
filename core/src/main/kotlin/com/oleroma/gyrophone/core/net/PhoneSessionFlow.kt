@@ -50,7 +50,10 @@ enum class SessionStatus {
     /** No WELCOME yet; broadcasting DISCOVER to find the PC's address. */
     DISCOVERING,
     LIVE,
-    /** Live, but no PONG or HOST_STATUS for [Wire.HOST_SILENT_MS]; a new HELLO is running. */
+    /**
+     * Live, but no PONG or HOST_STATUS for [Wire.HOST_SILENT_MS]; a new HELLO is running. After
+     * [Wire.SESSION_TIMEOUT_MS] of silence the session ends and the flow goes back to CONNECTING.
+     */
     HOST_SILENT,
     /** ERROR NOT_PAIRED: offer to pair again, never delete the key automatically. */
     NOT_PAIRED,
@@ -168,6 +171,15 @@ class PhoneSessionFlow(
                 setStatus(SessionStatus.HOST_SILENT, out)
                 if (attempt == null) startAttempt(nowMs, out)
             }
+            if (silent && nowMs - lastHeardMs >= Wire.SESSION_TIMEOUT_MS) {
+                // The PC is gone without a HOST_BYE (asleep, off the network): the session is down,
+                // so the pump stops sending and another PC may take over. The HELLO attempt goes on.
+                live = null
+                silent = false
+                out.add(Out.Live(null))
+                setStatus(SessionStatus.CONNECTING, out)
+                if (attempt == null) startAttempt(nowMs, out)
+            }
         }
         tickAttempt(nowMs, out)
         return out
@@ -176,12 +188,13 @@ class PhoneSessionFlow(
     fun onDatagram(data: ByteArray, len: Int, from: InetSocketAddress, nowMs: Long): List<Out> {
         if (!running) return emptyList()
         val type = WireCodec.classify(data, len)
-        if (type < 0) return emptyList()
+        // A newer host writes its own version in the ERROR VERSION it sends us.
+        if (type < 0 && type != WireCodec.BAD_VERSION) return emptyList()
         val out = ArrayList<Out>()
         when {
+            type == WireCodec.BAD_VERSION || type == PacketType.ERROR -> WireCodec.decodeError(data, len)?.let { onError(it, nowMs, out) }
             type == PacketType.ANNOUNCE -> (WireCodec.decodePlain(data, len) as? Announce)?.let { onAnnounce(it, from, nowMs, out) }
             type == PacketType.WELCOME -> onWelcome(data, len, from, nowMs, out)
-            type == PacketType.ERROR -> (WireCodec.decodePlain(data, len) as? ErrorPacket)?.let { onError(it, nowMs, out) }
             PacketType.isSealed(type) && !PacketType.isPhoneToHost(type) -> onSealed(data, len, from, nowMs, out)
         }
         return out

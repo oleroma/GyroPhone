@@ -41,9 +41,11 @@ class OverlayFeedTest {
     @Test fun frame() {
         val f = OverlayFeed()
         assertNull(f.layoutSnapshot())
+        assertEquals(-1, f.layoutVersion())
         f.setLayout(layout)
         f.setLayout(layout.copy()) // the same layout keeps its version
         assertEquals(1, f.layoutSnapshot()!!.first)
+        assertEquals(1, f.layoutVersion())
         f.padShown = true
         f.gyro(100f, -50f, 25f, 0.01f, 3, true)
         f.up(0f, 9.8f, 0f, 9.8f)

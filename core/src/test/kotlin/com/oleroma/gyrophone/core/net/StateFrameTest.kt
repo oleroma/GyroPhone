@@ -82,6 +82,22 @@ class StateFrameTest {
         assertFalse(a.discreteEquals(b))
     }
 
+    @Test fun gyroExtPadShareNoiseIsNotAChange() {
+        val a = StateFrame().apply { hires = true; gyroExt = true }
+        val b = StateFrame().apply { copyFrom(a) }
+        val pad = PcGyroFeed.PAD_SHARE_OFFSET + PcGyroFeed.AXIS_SIZE // pitch's first pad share
+        b.ext.putI16(pad, StateFrame.PAD_SHARE_STEP - 1)
+        assertTrue(a.totalsEqual(b))
+        b.ext.putI16(pad, -StateFrame.PAD_SHARE_STEP)
+        assertFalse(a.totalsEqual(b))
+        b.copyFrom(a)
+        b.ext.putI16(pad - 2, 1) // a glide total right before it
+        assertFalse(a.totalsEqual(b))
+        b.copyFrom(a)
+        b.ext[PcGyroFeed.EXT_SIZE - 1] = 1 // the pad without the gyro
+        assertFalse(a.totalsEqual(b))
+    }
+
     @Test fun neutralizeKeepsTotals() {
         totals.add(9, 9, 9)
         val f = StateFrame().apply { fill(HidState(gamepad = GamepadState(buttons = 1), keyboard = KeyboardState(1, listOf(4))), totals, false) }

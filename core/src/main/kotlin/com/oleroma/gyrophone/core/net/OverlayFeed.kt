@@ -249,6 +249,9 @@ class OverlayFeed {
         }
     }
 
+    /** The layout version now, or -1 with no layout; read without allocating before a [layoutSnapshot]. */
+    fun layoutVersion(): Int = synchronized(lock) { if (layout == null) -1 else version }
+
     /** The layout version and blob now, for one round of OVERLAY_LAYOUT pieces. */
     fun layoutSnapshot(): Pair<Int, ByteArray>? = synchronized(lock) { if (layout == null) null else version to blob }
 

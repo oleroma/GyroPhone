@@ -944,6 +944,21 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     /**
+     * [pressedTouches] and [latchedTouches] in one lock trip, into the caller's own sets (cleared
+     * first), for the 60 Hz PC overlay send.
+     */
+    fun touchesInto(pressed: MutableSet<String>, latched: MutableSet<String>) {
+        synchronized(lock) {
+            resolveIfDue(clock())
+            pressed.clear(); latched.clear()
+            pressed.addAll(touches.keys)
+            val zone = areas[TouchAreaKind.ZONE.ordinal]
+            pressed.addAll(zone.since.keys); pressed.addAll(zone.late.keys)
+            for ((id, s) in surfaces) if (s.latched) latched.add(id)
+        }
+    }
+
+    /**
      * A key from the "any device" source, evaluated against every pad of the workspace. Returns
      * true if one of them maps it. App code uses the [PadDevice] overload.
      */

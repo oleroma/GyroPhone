@@ -27,14 +27,16 @@ import java.util.concurrent.locks.LockSupport
  * The Wi-Fi send loop on its own thread. Event-driven: the engine's onChange unparks it, and
  * [SendScheduler] decides between a normal STATE, the +2/+6 ms repeats after a discrete change
  * and the 20 ms keepalive, capped at [rateHz]. It is the only thread that seals P->H packets,
- * BYE included (sent on its way out). The loop allocates nothing except `engine.snapshot()`
- * and the once-a-second PING / LINK_INFO.
+ * BYE included (sent on its way out). The loop allocates little besides `engine.snapshot()`,
+ * the once-a-second PING / LINK_INFO and the overlay's set entries while the PC overlay is on.
  */
 class WifiPump(private val engine: MappingEngine) {
     /** The session to send on; [byeReason] >= 0 says the previous one gets a goodbye first. */
     private class Target(val session: LiveSession?, val byeReason: Int)
 
     @Volatile private var target = Target(null, NO_BYE)
+    /** The last [target] the loop has taken (its goodbye said). */
+    @Volatile private var taken: Target? = null
     @Volatile private var running = false
     @Volatile private var exitByeReason = ByeReason.SHUTDOWN
     @Volatile private var socket: DatagramSocket? = null
@@ -83,6 +85,9 @@ class WifiPump(private val engine: MappingEngine) {
     private var nextOverlayNs = 0L
     private var layoutSentVersion = -1
     private var layoutSentNs = 0L
+    /** Reused for each OVERLAY's pressed and latched controls. */
+    private val overlayPressed = HashSet<String>()
+    private val overlayLatched = HashSet<String>()
     private val nonGyro = IntArray(PcGyroFeed.PAD_AXES)
     private var gyroSnapshot = false
     private var padGyroNs = 0L
@@ -133,6 +138,16 @@ class WifiPump(private val engine: MappingEngine) {
         LockSupport.unpark(thread)
     }
 
+    /**
+     * Waits up to [timeoutMs] until the loop has taken the last [setSession], so its goodbye has
+     * gone out on the socket in use before the caller changes or closes it.
+     */
+    fun awaitSession(timeoutMs: Long) {
+        val t = target
+        val until = System.nanoTime() + timeoutMs * 1_000_000L
+        while (running && thread != null && taken !== t && System.nanoTime() < until) LockSupport.parkNanos(1_000_000L)
+    }
+
     /** A PONG lowered the minimum round trip: send LINK_INFO with the better clock offset now. */
     fun requestLinkInfo() {
         linkInfoDue = true
@@ -151,6 +166,14 @@ class WifiPump(private val engine: MappingEngine) {
                     continue
                 }
             }
+            // Switch first: switchTo resets the gyro's shares, so the ext below starts from the new session's.
+            val t = target
+            if (t.session !== cur) {
+                val old = cur
+                if (old != null && t.byeReason >= 0) goodbye(old, t.byeReason)
+                switchTo(t.session)
+            }
+            if (taken !== t) taken = t
             // always drain motion, even with no session; with PC controller gyro, together with the gyro's shares
             val g = pcGyro?.takeIf { it.active }
             val s = if (g == null) engine.snapshot() else synchronized(g.lock) {
@@ -161,12 +184,6 @@ class WifiPump(private val engine: MappingEngine) {
             }
             gyroSnapshot = g != null
             totals.add(s.mouse)
-            val t = target
-            if (t.session !== cur) {
-                val old = cur
-                if (old != null && t.byeReason >= 0) goodbye(old, t.byeReason)
-                switchTo(t.session)
-            }
             val now = System.nanoTime()
             updateStats(now)
             val c = cur
@@ -235,10 +252,12 @@ class WifiPump(private val engine: MappingEngine) {
 
     /** One OVERLAY, then the layout's pieces when it changed or every [LAYOUT_REPEAT_NS] (a lost piece comes again). */
     private fun sendOverlay(c: LiveSession, ov: OverlayFeed, now: Long) {
-        val n = ov.encodeFrame(plain, 0, phoneUs().toInt(), engine.pressedTouches(), engine.latchedTouches())
+        engine.touchesInto(overlayPressed, overlayLatched)
+        val n = ov.encodeFrame(plain, 0, phoneUs().toInt(), overlayPressed, overlayLatched)
         sendSealed(c, PacketType.OVERLAY, n)
+        val v = ov.layoutVersion()
+        if (v < 0 || v == layoutSentVersion && now - layoutSentNs < LAYOUT_REPEAT_NS) return
         val (version, blob) = ov.layoutSnapshot() ?: return
-        if (version == layoutSentVersion && now - layoutSentNs < LAYOUT_REPEAT_NS) return
         layoutSentVersion = version
         layoutSentNs = now
         for (i in 0 until OverlayFeed.pieceCount(blob)) {
