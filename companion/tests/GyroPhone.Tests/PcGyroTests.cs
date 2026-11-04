@@ -156,6 +156,44 @@ public class PcGyroTests
         Assert.Equal(7, _gyro.Effective);
     }
 
+    /// <summary>Gives place <paramref name="place"/> its own settings while held: sensitivity <paramref name="sens"/>, through PAD_GYRO_SET.</summary>
+    private void HeldSettings(int place, float sens)
+    {
+        _cfg.Kind[place] |= PadGyroConfig.KindSettings;
+        var c = new GyroMath.Config();
+        c.Routes.Add(new GyroMath.Route(0, GyroMath.Route.MouseX, 1f));
+        c.Sensitivity[0] = sens;
+        var b = new byte[Wire.PadGyroSetPlain];
+        b[0] = (byte)place;
+        PcGyroTail.EncodeConfig(b.AsSpan(2), c, 0f, 0f);
+        _cfg.DecodeHeld(b);
+    }
+
+    [Fact]
+    public void AHeldButtonsOwnSettingsApplyAtTheSampleItWasHeldFor()
+    {
+        const int Lt = 6;
+        HeldSettings(Lt, 4f);
+        var p = new Phone();
+        // 100 deg/s for 10 ms = 16 counts at 16, 4 at 4; held from 35 to 65 ms: 40, 50 and 60 at 4.
+        _heldAt = us => us >= T0 + 35_000 && us < T0 + 65_000 ? 1u << Lt : 0;
+        p.Add(100f, count: 8);
+        Assert.Equal(5 * 16 + 3 * 4, Run(p.Frame()));
+    }
+
+    [Fact]
+    public void TheLastPressedButtonWithSettingsWins()
+    {
+        const int A = 6, B = 7;
+        HeldSettings(A, 4f);
+        HeldSettings(B, 8f);
+        var p = new Phone();
+        // A from 5 ms on, B 25..55 ms: 10, 20 at 4; 30, 40, 50 at 8; 60, 70, 80 at 4.
+        _heldAt = us => (us >= T0 + 5_000 ? 1u << A : 0) | (us >= T0 + 25_000 && us < T0 + 55_000 ? 1u << B : 0);
+        p.Add(100f, count: 8);
+        Assert.Equal(5 * 4 + 3 * 8, Run(p.Frame()));
+    }
+
     [Fact]
     public void WithoutTheClockSamplesAreTimedByArrival()
     {

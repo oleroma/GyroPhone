@@ -41,6 +41,9 @@ public sealed class GyroMath
     public const float MinGlideMs = 100f;
     public const float MaxGlideMs = 1000f;
 
+    /// <summary>The phone's GyroCurve.MAX_POINTS.</summary>
+    public const int MaxCurvePoints = 6;
+
     /// <summary>
     /// What one gyro configuration does, resolved on the phone (inheritance and held buttons
     /// applied): per axis (yaw, pitch, roll) its sensitivity (counts per degree) and glide, and
@@ -53,6 +56,14 @@ public sealed class GyroMath
         public readonly float[] GlideMs = [DefaultGlideMs, DefaultGlideMs, DefaultGlideMs];
         public readonly bool[] Linear = new bool[3];
         public readonly List<Route> Routes = [];
+        /// <summary>
+        /// Per axis its acceleration: <see cref="CurvePoints"/> points, speeds (deg/s) and gains
+        /// interleaved in <see cref="Curves"/> (on the wire's grid; none = gain 1), and whether the
+        /// speed is the axis's own (<see cref="AxisSpeed"/>) or the whole phone's.
+        /// </summary>
+        public readonly float[][] Curves = [new float[MaxCurvePoints * 2], new float[MaxCurvePoints * 2], new float[MaxCurvePoints * 2]];
+        public readonly int[] CurvePoints = new int[3];
+        public readonly bool[] AxisSpeed = new bool[3];
 
         public void CopyFrom(Config o)
         {
@@ -62,6 +73,18 @@ public sealed class GyroMath
             o.Linear.CopyTo(Linear, 0);
             Routes.Clear();
             Routes.AddRange(o.Routes);
+            for (int a = 0; a < 3; a++) o.Curves[a].CopyTo(Curves[a], 0);
+            o.CurvePoints.CopyTo(CurvePoints, 0);
+            o.AxisSpeed.CopyTo(AxisSpeed, 0);
+        }
+
+        /// <summary>Sets axis <paramref name="axis"/>'s curve to <paramref name="flat"/> (speeds and gains interleaved).</summary>
+        public void SetCurve(int axis, ReadOnlySpan<float> flat, bool axisSpeed)
+        {
+            int n = Math.Min(flat.Length / 2, MaxCurvePoints);
+            flat[..(n * 2)].CopyTo(Curves[axis]);
+            CurvePoints[axis] = n;
+            AxisSpeed[axis] = axisSpeed && n > 0;
         }
     }
 
@@ -99,6 +122,9 @@ public sealed class GyroMath
     private readonly float[] _glideOut = new float[3];
     private int _lastAxes;
 
+    // Acceleration, per axis: the gain of this sample; an axis off keeps the one it had when it was last on, so a glide keeps its boost.
+    private readonly float[] _gain = [1f, 1f, 1f];
+
     /// <summary>An axis glides, or one was on last sample (turning it off may start a glide): <see cref="Step"/> wants every sample.</summary>
     public bool Coasting => _lastAxes != 0 || _glideV[0] != 0f || _glideV[1] != 0f || _glideV[2] != 0f;
 
@@ -114,6 +140,7 @@ public sealed class GyroMath
     public Routed Step(float yaw, float pitch, float roll, float dt, Config c, int axes, float tightening, float smoothing)
     {
         Coast(c, yaw, pitch, roll, axes, dt);
+        Accelerate(c, yaw, pitch, roll, axes);
         float vx = 0f, vy = 0f, w = 0f, hw = 0f;
         var pad = _routed.Pad;
         Array.Clear(pad);
@@ -125,7 +152,7 @@ public sealed class GyroMath
             float g = on ? 0f : _glideOut[r.Axis];
             if (!on && (g == 0f || r.Target >= Route.Pad)) continue;
             float k = c.Sensitivity[r.Axis];
-            float v = on ? r.Axis switch { 0 => yaw, 1 => pitch, _ => roll } : g;
+            float v = (on ? r.Axis switch { 0 => yaw, 1 => pitch, _ => roll } : g) * _gain[r.Axis];
             switch (r.Target)
             {
                 case Route.MouseX: vx += v * k * r.Scale; break;
@@ -188,6 +215,45 @@ public sealed class GyroMath
     }
 
     /// <summary>The mean of <paramref name="b"/>, summed in double like the Kotlin side.</summary>
+    /// <summary>
+    /// Each axis's acceleration gain for this sample: an axis on takes its curve's gain at its own
+    /// speed or the whole phone's; one off keeps its last.
+    /// </summary>
+    private void Accelerate(Config c, float yaw, float pitch, float roll, int axes)
+    {
+        float whole = MathF.Sqrt(yaw * yaw + pitch * pitch + roll * roll);
+        for (int i = 0; i < 3; i++)
+        {
+            if ((axes & (1 << i)) == 0) continue;
+            int n = c.CurvePoints[i];
+            if (n == 0) { _gain[i] = 1f; continue; }
+            float speed = c.AxisSpeed[i] ? MathF.Abs(i switch { 0 => yaw, 1 => pitch, _ => roll }) : whole;
+            _gain[i] = Gain(c.Curves[i], n, speed);
+        }
+    }
+
+    /// <summary>
+    /// The gain of a curve of <paramref name="n"/> points (speeds and gains interleaved, speeds
+    /// rising) at <paramref name="speed"/>: the phone's GyroCurves.gain, float math in the same order.
+    /// </summary>
+    public static float Gain(float[] c, int n, float speed)
+    {
+        if (n == 0) return 1f;
+        if (speed <= c[0]) return c[1];
+        for (int j = 1; j < n; j++)
+        {
+            float s1 = c[2 * j];
+            if (speed <= s1)
+            {
+                float s0 = c[2 * j - 2];
+                float g0 = c[2 * j - 1];
+                float t = (speed - s0) / (s1 - s0);
+                return g0 + (c[2 * j + 1] - g0) * t;
+            }
+        }
+        return c[2 * n - 1];
+    }
+
     private static float Mean(float[] b)
     {
         double s = 0.0;
@@ -200,6 +266,7 @@ public sealed class GyroMath
         _remX = 0f; _remY = 0f; _remWheel = 0f; _remHWheel = 0f;
         Array.Clear(_bufX); Array.Clear(_bufY); _bufIndex = 0;
         Array.Clear(_speed); Array.Clear(_glideV); Array.Clear(_glideOut); _lastAxes = 0;
+        _gain[0] = 1f; _gain[1] = 1f; _gain[2] = 1f;
     }
 
     /// <summary>

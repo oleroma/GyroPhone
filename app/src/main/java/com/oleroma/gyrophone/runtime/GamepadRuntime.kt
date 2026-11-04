@@ -31,6 +31,7 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TriggerReset
 import com.oleroma.gyrophone.core.model.GyroMode
+import com.oleroma.gyrophone.core.engine.GyroMath
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.GyroSpace
 import com.oleroma.gyrophone.core.model.HapticFeel
@@ -1202,6 +1203,9 @@ class GamepadRuntime(context: Context) {
      * move ([allowed] and not "Gyro off"); otherwise [pc] is told it is still. The phone adds no
      * gyro motion itself: entering this, its gyro mouse motion and stick deflection are cleared once.
      */
+    private var pcHeldFor: List<Pair<Int, GyroSettings>>? = null
+    private var pcHeldRoutes: List<Mapping>? = null
+
     private fun pcGyroSample(pc: PcGyroFeed, allowed: Boolean, axes: Int, gx: Float, gy: Float, gz: Float, dt: Float, ts: Long, space: GyroSpace) {
         if (!pcGyroRouting) {
             pcGyroRouting = true
@@ -1215,7 +1219,15 @@ class GamepadRuntime(context: Context) {
             return
         }
         val m = gyroMouse.inSpace(gyroMouse.motion(gx, gy, gz), space, upNow)
-        val cfg = gyroMouse.config(gs, engine.gyroRoutes())
+        val routes = engine.gyroRoutes()
+        val cfg = gyroMouse.config(gs, routes)
+        // The PC controller's buttons with their own settings while held: made again only when they or the routes change.
+        val held = engine.pcHeldGyro
+        if (held !== pcHeldFor || routes !== pcHeldRoutes) {
+            pcHeldFor = held; pcHeldRoutes = routes
+            pc.held = held.map { (place, s) -> place to GyroMath.Config.of(s, routes) }
+            engine.onChange?.run()
+        }
         // Sensor time is elapsed realtime on current phones (the clock PING and the clock offset use);
         // a sensor on another clock gets the time it arrived instead.
         val now = WifiPump.phoneUs()

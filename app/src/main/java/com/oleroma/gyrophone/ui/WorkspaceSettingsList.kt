@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
+import com.oleroma.gyrophone.core.model.GyroCurve
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.GyroSpace
@@ -143,7 +144,7 @@ internal fun WorkspaceSettings(
     items += SectionItem("gyro") { card, header ->
         RememberedSection(
             runtime, "workspace.Gyro", "Gyro", card, defaultOpen = true,
-            subtitle = ws.gyro.mode.label + " · sensitivity, game, gyro space, inertia", headerModifier = header,
+            subtitle = ws.gyro.mode.label + " · sensitivity, acceleration, game, gyro space, inertia", headerModifier = header,
         ) {
             OverrideRow(
                 "Gyro to mouse", own(g("mode")), reset(g("mode")),
@@ -192,6 +193,11 @@ internal fun WorkspaceSettings(
                 key + "gs", "Sensitivity", ws.gyro.sensitivity, ws.gyro, own(g("sensitivity")), reset(g("sensitivity")),
                 hint = "Yaw, pitch and roll each follow it unless their ⚙ in the mapping editor sets their own; scrolling and sticks go faster or slower with it too.",
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(sensitivity = v)) } }
+            AccelCurveSetting(
+                key + "gaccel", "Acceleration", ws.gyro.accel ?: GyroCurve.OFF, ws.gyro.sensitivity, ws.gyro,
+                own(g("accel")), reset(g("accel")),
+                hint = "Yaw, pitch and roll each follow it unless their ⚙ in the mapping editor sets their own; a button can set its own while held. $ACCEL_HINT",
+            ) { c -> editWs { it.copy(gyro = it.gyro.copy(accel = c)) } }
             OverrideSwitch(
                 "Inertia",
                 (if (ws.gyro.inertia) "When a ratchet turns gyro off, the mouse and scrolling glide on and slow down; turning it on again stops the glide."

@@ -62,6 +62,8 @@ data class Workspace(
     val stickTunings: Map<String, StickTuning> = emptyMap(),
     /** Physical triggers' tuning by [PhysicalSticks] id: filled from [devicePreset] when resolved, like [stickTunings]. */
     val triggerTunings: Map<String, TriggerTuning> = emptyMap(),
+    /** Physical keys' and buttons' own settings while held: filled from [devicePreset] when resolved, like [keyTimings]. */
+    val heldButtons: List<HeldButton> = emptyList(),
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =

@@ -31,9 +31,9 @@ public class GyroGateTests
     [Fact]
     public void SizesAndRoundTrip()
     {
-        Assert.Equal(210, PcGyroTail.Size);
-        Assert.Equal(280, Wire.StateGyroPlain);
-        Assert.Equal(308, PacketType.Size(PacketType.StateGyro));
+        Assert.Equal(285, PcGyroTail.Size);
+        Assert.Equal(355, Wire.StateGyroPlain);
+        Assert.Equal(383, PacketType.Size(PacketType.StateGyro));
         Assert.True(PacketType.Size(PacketType.StateGyro) <= Wire.MaxDatagram);
         Assert.Equal(16, WelcomeFlags.PcGyro);
         Assert.Equal(40, Wire.PadGyroPlain);

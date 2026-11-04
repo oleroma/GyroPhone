@@ -23,7 +23,19 @@ data class DevicePreset(
     val sticks: Map<String, StickTuning> = emptyMap(),
     /** The triggers' tuning by [PhysicalSticks] id ("lt", "rt"); one not listed has the defaults. */
     val triggers: Map<String, TriggerTuning> = emptyMap(),
+    /** Keys and buttons with settings of their own while held ([HeldButton]): gyro sensitivity and acceleration, touchpad speed. */
+    val held: List<HeldButton> = emptyList(),
 ) {
+    /** Control [id]'s settings while held, or null. */
+    fun held(id: String): HeldButton? = held.firstOrNull { it.id == id }
+
+    /** Control [id] (pressed by [sources]) with its settings in mapping set [set] [change]d; one left with none is dropped. */
+    fun withHeld(id: String, sources: List<InputSource>, set: Int, change: (ButtonGyro) -> ButtonGyro): DevicePreset {
+        val h = (held(id) ?: HeldButton(id, sources)).withGyro(set, change).copy(sources = sources)
+        val rest = held.filter { it.id != id }
+        return copy(held = if (h.gyro.isEmpty()) rest else rest + h)
+    }
+
     /** Stick [id]'s tuning in effect. */
     fun stick(id: String): StickTuning = sticks[id] ?: StickTuning()
 
@@ -56,6 +68,24 @@ data class DevicePreset(
         PhysicalDevice.CONTROLLER -> copy(controller = m)
         PhysicalDevice.KEYBOARD -> copy(keyboard = m)
         PhysicalDevice.MOUSE -> copy(mouse = m)
+    }
+}
+
+/**
+ * A physical key's or button's own settings while held, per mapping set ([ButtonGyro], like a touch
+ * button's [TouchControl.gyro]): [id] is its device and drawing's control ("CONTROLLER:lt"),
+ * [sources] the inputs that press it (any of them held = it is held).
+ */
+@Serializable
+data class HeldButton(val id: String, val sources: List<InputSource>, val gyro: List<ButtonGyro> = emptyList()) {
+    /** Its settings with mapping sets [sets] in use (Base first): each set's own over the ones below. */
+    fun gyroIn(sets: List<Int>): ButtonGyro =
+        sets.fold(ButtonGyro()) { r, s -> gyro.firstOrNull { it.set == s }?.let { r.under(it) } ?: r }
+
+    /** Copy with set [set]'s settings changed by [change] (one that sets nothing goes). */
+    fun withGyro(set: Int, change: (ButtonGyro) -> ButtonGyro): HeldButton {
+        val g = change(gyro.firstOrNull { it.set == set } ?: ButtonGyro(set))
+        return copy(gyro = gyro.filterNot { it.set == set } + listOfNotNull(g.takeIf { it.any }))
     }
 }
 

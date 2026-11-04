@@ -158,7 +158,9 @@ public sealed class PcGyro
     private void Sample(float yawQ, float pitchQ, float rollQ, float dt, int phoneAxes, long atUs, int toggle,
         PcGyroTail t, PadGyroConfig cfg, Func<long, uint>? heldAt)
     {
-        int flips = heldAt == null ? 0 : GyroGate.FlipsOf(heldAt(atUs), cfg);
+        uint held = heldAt == null ? 0u : heldAt(atUs);
+        int flips = heldAt == null ? 0 : GyroGate.FlipsOf(held, cfg);
+        var config = HeldConfig(held, cfg) ?? t.Config;
         int eff = (phoneAxes ^ flips ^ toggle) & 7;
         Effective = eff;
         Samples = unchecked(Samples + 1);
@@ -169,7 +171,7 @@ public sealed class PcGyro
             return;
         }
         var o = _math.Step(yawQ / PcGyroTail.RateScale, pitchQ / PcGyroTail.RateScale, rollQ / PcGyroTail.RateScale,
-            dt, t.Config, eff, t.Tightening, t.Smoothing);
+            dt, config, eff, t.Tightening, t.Smoothing);
         _adjX = unchecked(_adjX + o.Dx);
         _adjY = unchecked(_adjY + o.Dy);
         _adjW = unchecked(_adjW + o.Wheel);
@@ -178,6 +180,27 @@ public sealed class PcGyro
     }
 
     /// <summary>Host time of each sample in <paramref name="t"/> into <see cref="_hostUs"/>: its own clock's when the phone synced, else by arrival.</summary>
+    // PC controller buttons with gyro settings of their own, held now, in the order they were pressed.
+    private readonly List<int> _heldOrder = new(PadGyroConfig.Places);
+
+    /// <summary>
+    /// The settings of the last pressed of the PC controller buttons in <paramref name="held"/> that
+    /// have their own (<see cref="PadGyroConfig.KindSettings"/>), or null: the phone's.
+    /// </summary>
+    private GyroMath.Config? HeldConfig(uint held, PadGyroConfig cfg)
+    {
+        for (int k = _heldOrder.Count - 1; k >= 0; k--)
+        {
+            int p = _heldOrder[k];
+            if ((held & (1u << p)) == 0 || cfg.HeldConfig(p) == null) _heldOrder.RemoveAt(k);
+        }
+        for (int p = 0; p < PadGyroConfig.Places; p++)
+        {
+            if ((held & (1u << p)) != 0 && cfg.HeldConfig(p) != null && !_heldOrder.Contains(p)) _heldOrder.Add(p);
+        }
+        return _heldOrder.Count == 0 ? null : cfg.HeldConfig(_heldOrder[^1]);
+    }
+
     private void HostTimes(PcGyroTail t, long nowUs)
     {
         long newest = t.Clock ? nowUs + unchecked((int)(t.NewestTimeUs - (uint)nowUs)) : nowUs;

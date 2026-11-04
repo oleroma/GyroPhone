@@ -11,6 +11,8 @@ public sealed class PadGyroConfig
     public const byte FlagEnabled = 1;
     /// <summary>A kind bit: the button toggles the gyro (the low 3 bits are the axes its ratchets flip).</summary>
     public const byte KindToggle = 8;
+    /// <summary>A kind bit: the button has gyro settings of its own while held (<see cref="Held"/>, from PAD_GYRO_SET).</summary>
+    public const byte KindSettings = 16;
 
     /// <summary>"Use PC controller for gyro ratchet" is on at the phone.</summary>
     public bool Enabled;
@@ -30,6 +32,25 @@ public sealed class PadGyroConfig
         }
     }
 
+    /// <summary>
+    /// By place: the gyro settings to use while that button is the last pressed of those held that
+    /// have their own (<see cref="KindSettings"/>); null until its PAD_GYRO_SET came.
+    /// </summary>
+    public readonly GyroMath.Config?[] Held = new GyroMath.Config?[Places];
+
+    /// <summary>PAD_GYRO_SET: u8 place, u8 0, then a config block (<see cref="PcGyroTail.DecodeConfig"/>).</summary>
+    public void DecodeHeld(ReadOnlySpan<byte> b)
+    {
+        int place = b[0];
+        if (place >= Places) return;
+        var c = Held[place] ?? new GyroMath.Config();
+        PcGyroTail.DecodeConfig(b[2..], c, out _, out _);
+        Held[place] = c;
+    }
+
+    /// <summary>The settings of place <paramref name="place"/> while held, or null: none (any more).</summary>
+    public GyroMath.Config? HeldConfig(int place) => (Kind[place] & KindSettings) != 0 ? Held[place] : null;
+
     public void Decode(ReadOnlySpan<byte> b)
     {
         Enabled = (b[0] & FlagEnabled) != 0;
@@ -39,7 +60,7 @@ public sealed class PadGyroConfig
         for (int i = 0; i < n; i++)
         {
             int place = b[4 + i * 2];
-            if (place < Places) Kind[place] = (byte)(b[5 + i * 2] & 0x0F);
+            if (place < Places) Kind[place] = (byte)(b[5 + i * 2] & 0x1F);
         }
     }
 

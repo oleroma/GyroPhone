@@ -216,7 +216,12 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
                 }
             },
             physicalInputs = e.inputs,
-            settings = physicalSettings(preset, ws) { change ->
+            settings = physicalSettings(
+                runtime, preset, ws,
+                // A key or button (not a stick or a wheel axis): what presses it.
+                e.inputs.firstOrNull { !it.analog }?.takeIf { !e.stick }?.let { PhysicalHeld(device.name + ":" + e.id, it.sources) },
+                if (ws.sets.any { it.id == mapSet }) mapSet else MappingSet.BASE,
+            ) { change ->
                 runtime.editActiveProfile { p ->
                     val now = p.devicePresets.firstOrNull { it.id == preset.id } ?: return@editActiveProfile p
                     DevicePresets.put(p, change(now))

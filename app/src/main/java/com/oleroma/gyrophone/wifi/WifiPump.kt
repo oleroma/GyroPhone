@@ -96,6 +96,7 @@ class WifiPump(private val engine: MappingEngine) {
     private var padGyroSent: IntArray? = null
     private var padGyroSentEpoch = -1
     private var padGyroSentOn = false
+    private var padGyroHeldSent: List<Pair<Int, com.oleroma.gyrophone.core.engine.GyroMath.Config>>? = null
 
     fun start(socket: DatagramSocket) {
         if (running) return
@@ -240,12 +241,16 @@ class WifiPump(private val engine: MappingEngine) {
         g.buttons = engine.pcGyroButtons
         g.epoch = engine.toggleEpoch
         val b = g.buttons
-        val changed = b !== padGyroSent || g.epoch != padGyroSentEpoch || g.enabled != padGyroSentOn
+        val changed = b !== padGyroSent || g.epoch != padGyroSentEpoch || g.enabled != padGyroSentOn || g.held !== padGyroHeldSent
         if (!changed && now - padGyroNs < SECOND_NS) return
         padGyroNs = now
         padGyroSent = b; padGyroSentEpoch = g.epoch; padGyroSentOn = g.enabled
         val n = g.encodeButtons(plain, 0)
         sendSealed(c, PacketType.PAD_GYRO, n)
+        // Then the settings of each button that has its own while held (after PAD_GYRO, which says which have).
+        val held = g.held
+        for (i in held.indices) sendSealed(c, PacketType.PAD_GYRO_SET, g.encodeHeld(plain, 0, i))
+        padGyroHeldSent = held
     }
 
     /** One OVERLAY, then the layout's pieces when it changed or every [LAYOUT_REPEAT_NS] (a lost piece comes again). */
@@ -271,7 +276,7 @@ class WifiPump(private val engine: MappingEngine) {
             it.hostTakes = hires && session!!.hostFlags and HostFlags.PC_GYRO != 0
             it.reset()
         }
-        padGyroSent = null; padGyroSentEpoch = -1
+        padGyroSent = null; padGyroSentEpoch = -1; padGyroHeldSent = null
         cipher = session?.let { SessionCipher(it.kPH, Wire.DIR_P2H) }
         seq = 0
         totals.reset()

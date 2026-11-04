@@ -5,11 +5,13 @@ namespace GyroPhone.Protocol;
 /// takes <see cref="WelcomeFlags.PcGyro"/>): the phone's raw gyro samples and its resolved gyro
 /// settings, so the PC runs the gyro math (<see cref="PcGyro"/>). Fixed size, little-endian:
 /// u8 flags, u8 count, u16 newest seq, u32 newest time (µs), 8 × 9-byte sample slots (u16 dt µs,
-/// i16 yaw, pitch, roll in 1/16 deg/s, u8 axes), 3 × i64 running totals, then the 106-byte config.
+/// i16 yaw, pitch, roll in 1/16 deg/s, u8 axes), 3 × i64 running totals, then the 181-byte config
+/// (its last 75 bytes: per axis an acceleration curve, u8 point count with bit 7 = speed from the
+/// axis, then 6 × (u16 speed in 0.1 deg/s, u16 gain in 0.001)).
 /// </summary>
 public sealed class PcGyroTail
 {
-    public const int Size = 210;
+    public const int Size = 285;
     public const int MaxSamples = 8;
     public const int MaxRoutes = 12;
     /// <summary>Rates are sent in 1/16 deg/s.</summary>
@@ -20,7 +22,11 @@ public sealed class PcGyroTail
     /// <summary>Sample times are host time (phone time plus the clock sync offset); else phone time.</summary>
     public const byte FlagClock = 2;
 
-    private const int SampleOff = 8, SampleSize = 9, TotalsOff = 80, ConfigOff = 104, RoutesOff = 138, RouteSize = 6;
+    private const int SampleOff = 8, SampleSize = 9, TotalsOff = 80, ConfigOff = 104, RoutesOff = 138, RouteSize = 6, RoutesRel = RoutesOff - ConfigOff;
+    private const int CurvesRel = RoutesRel + MaxRoutes * RouteSize, CurveSize = 1 + GyroMath.MaxCurvePoints * 4;
+    /// <summary>Bytes of the config block.</summary>
+    public const int ConfigSize = CurvesRel + 3 * CurveSize;
+    private const byte CurveAxisSpeed = 0x80;
 
     public byte Flags;
     /// <summary>Samples in this packet, oldest first (0..8).</summary>
@@ -59,31 +65,7 @@ public sealed class PcGyroTail
             Axes[i] = (byte)(b[o + 8] & 7);
         }
         for (int a = 0; a < 3; a++) Totals[a] = Le.I64(b, TotalsOff + a * 8);
-        var c = Config;
-        for (int a = 0; a < 3; a++)
-        {
-            c.Sensitivity[a] = F32(b, ConfigOff + a * 4);
-            c.GlideMs[a] = F32(b, ConfigOff + 12 + a * 4);
-        }
-        byte glide = b[ConfigOff + 24];
-        for (int a = 0; a < 3; a++)
-        {
-            c.Inertia[a] = (glide & (1 << a)) != 0;
-            c.Linear[a] = (glide & (1 << (3 + a))) != 0;
-        }
-        int r = Math.Min((int)b[ConfigOff + 25], MaxRoutes);
-        Tightening = F32(b, ConfigOff + 26);
-        Smoothing = F32(b, ConfigOff + 30);
-        c.Routes.Clear();
-        for (int i = 0; i < r; i++)
-        {
-            int o = RoutesOff + i * RouteSize;
-            int axis = b[o];
-            int target = b[o + 1];
-            // A route this host cannot follow (a newer phone) is left out, not guessed.
-            if (axis > 2 || target >= GyroMath.Route.Pad + GyroMath.PadAxes) continue;
-            c.Routes.Add(new GyroMath.Route(axis, target, F32(b, o + 2)));
-        }
+        DecodeConfig(b[ConfigOff..], Config, out Tightening, out Smoothing);
     }
 
     /// <summary>Writes <see cref="Size"/> bytes (tests and tools).</summary>
@@ -102,27 +84,7 @@ public sealed class PcGyroTail
             b[o + 8] = Axes[i];
         }
         for (int a = 0; a < 3; a++) Le.PutI64(b, TotalsOff + a * 8, Totals[a]);
-        var c = Config;
-        byte glide = 0;
-        for (int a = 0; a < 3; a++)
-        {
-            PutF32(b, ConfigOff + a * 4, c.Sensitivity[a]);
-            PutF32(b, ConfigOff + 12 + a * 4, c.GlideMs[a]);
-            if (c.Inertia[a]) glide |= (byte)(1 << a);
-            if (c.Linear[a]) glide |= (byte)(1 << (3 + a));
-        }
-        b[ConfigOff + 24] = glide;
-        int r = Math.Min(c.Routes.Count, MaxRoutes);
-        b[ConfigOff + 25] = (byte)r;
-        PutF32(b, ConfigOff + 26, Tightening);
-        PutF32(b, ConfigOff + 30, Smoothing);
-        for (int i = 0; i < r; i++)
-        {
-            int o = RoutesOff + i * RouteSize;
-            b[o] = (byte)c.Routes[i].Axis;
-            b[o + 1] = (byte)c.Routes[i].Target;
-            PutF32(b, o + 2, c.Routes[i].Scale);
-        }
+        EncodeConfig(b[ConfigOff..], Config, Tightening, Smoothing);
     }
 
     public void CopyFrom(PcGyroTail o)
@@ -138,6 +100,84 @@ public sealed class PcGyroTail
         Config.CopyFrom(o.Config);
         Tightening = o.Tightening;
         Smoothing = o.Smoothing;
+    }
+
+    /// <summary>A config block (STATE_GYRO's, or PAD_GYRO_SET's after its 2 bytes) into <paramref name="c"/>.</summary>
+    public static void DecodeConfig(ReadOnlySpan<byte> b, GyroMath.Config c, out float tightening, out float smoothing)
+    {
+        for (int a = 0; a < 3; a++)
+        {
+            c.Sensitivity[a] = F32(b, a * 4);
+            c.GlideMs[a] = F32(b, 12 + a * 4);
+        }
+        byte glide = b[24];
+        for (int a = 0; a < 3; a++)
+        {
+            c.Inertia[a] = (glide & (1 << a)) != 0;
+            c.Linear[a] = (glide & (1 << (3 + a))) != 0;
+        }
+        int r = Math.Min((int)b[25], MaxRoutes);
+        tightening = F32(b, 26);
+        smoothing = F32(b, 30);
+        c.Routes.Clear();
+        for (int i = 0; i < r; i++)
+        {
+            int o = RoutesRel + i * RouteSize;
+            int axis = b[o];
+            int target = b[o + 1];
+            // A route this host cannot follow (a newer phone) is left out, not guessed.
+            if (axis > 2 || target >= GyroMath.Route.Pad + GyroMath.PadAxes) continue;
+            c.Routes.Add(new GyroMath.Route(axis, target, F32(b, o + 2)));
+        }
+        Span<float> flat = stackalloc float[GyroMath.MaxCurvePoints * 2];
+        for (int a = 0; a < 3; a++)
+        {
+            int o = CurvesRel + a * CurveSize;
+            int n = Math.Min(b[o] & 0x0F, GyroMath.MaxCurvePoints);
+            for (int j = 0; j < n; j++)
+            {
+                flat[2 * j] = Le.U16(b, o + 1 + j * 4) / 10f;
+                flat[2 * j + 1] = Le.U16(b, o + 3 + j * 4) / 1000f;
+            }
+            c.SetCurve(a, flat[..(n * 2)], (b[o] & CurveAxisSpeed) != 0);
+        }
+    }
+
+    /// <summary>Writes <see cref="ConfigSize"/> bytes of config block.</summary>
+    public static void EncodeConfig(Span<byte> b, GyroMath.Config c, float tightening, float smoothing)
+    {
+        b[..ConfigSize].Clear();
+        byte glide = 0;
+        for (int a = 0; a < 3; a++)
+        {
+            PutF32(b, a * 4, c.Sensitivity[a]);
+            PutF32(b, 12 + a * 4, c.GlideMs[a]);
+            if (c.Inertia[a]) glide |= (byte)(1 << a);
+            if (c.Linear[a]) glide |= (byte)(1 << (3 + a));
+        }
+        b[24] = glide;
+        int r = Math.Min(c.Routes.Count, MaxRoutes);
+        b[25] = (byte)r;
+        PutF32(b, 26, tightening);
+        PutF32(b, 30, smoothing);
+        for (int i = 0; i < r; i++)
+        {
+            int o = RoutesRel + i * RouteSize;
+            b[o] = (byte)c.Routes[i].Axis;
+            b[o + 1] = (byte)c.Routes[i].Target;
+            PutF32(b, o + 2, c.Routes[i].Scale);
+        }
+        for (int a = 0; a < 3; a++)
+        {
+            int o = CurvesRel + a * CurveSize;
+            int n = c.CurvePoints[a];
+            b[o] = (byte)(n | (c.AxisSpeed[a] ? CurveAxisSpeed : 0));
+            for (int j = 0; j < n; j++)
+            {
+                Le.PutU16(b, o + 1 + j * 4, (ushort)MathF.Round(c.Curves[a][2 * j] * 10f, MidpointRounding.AwayFromZero));
+                Le.PutU16(b, o + 3 + j * 4, (ushort)MathF.Round(c.Curves[a][2 * j + 1] * 1000f, MidpointRounding.AwayFromZero));
+            }
+        }
     }
 
     private static float F32(ReadOnlySpan<byte> b, int off) => BitConverter.Int32BitsToSingle(Le.I32(b, off));
