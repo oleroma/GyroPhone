@@ -144,6 +144,8 @@ public sealed class HostEngine
     // Phone overlay: asked for in HOST_STATUS while on; the newest OVERLAY and layout from the active phone.
     private bool _overlayOn;
     private readonly OverlayFrame _overlayFrame = new();
+    /// <summary>The last OVERLAY totals of this session, for the motion since then.</summary>
+    private readonly OverlayTotals _overlayTotals = new();
     private readonly OverlayLayoutAssembler _overlayLayout = new();
     // Each overlay window's pose, by its settings id, turned by every OVERLAY while it is shown.
     private readonly Dictionary<string, OverlayPose> _overlayPoses = [];
@@ -357,8 +359,9 @@ public sealed class HostEngine
                 OnDebugFlags(info.Flags, nowUs);
                 break;
             case PacketType.Overlay:
-                if (!_overlayOn) break;
+                if (!_overlayOn || _overlayTotals.IsLate(plain)) break;
                 _overlayFrame.Decode(plain);
+                _overlayTotals.ToDeltas(_overlayFrame);
                 if (_padGyro.Enabled) GateOverlay(_overlayFrame);
                 foreach (var o in _settings.Overlays)
                 {
@@ -554,6 +557,8 @@ public sealed class HostEngine
     {
         _debugSaves = -1;
         var old = _sessions.Promote(s);
+        // A new session's OVERLAY totals start from a new base.
+        _overlayTotals.Reset();
         if (old != null)
         {
             if (old.SamePhone(s.PhoneId))
@@ -1159,6 +1164,7 @@ public sealed class HostEngine
             _overlayOn = on;
             _overlayRxUs = long.MinValue;
             _overlayPoses.Clear();
+            _overlayTotals.Reset();
             if (!on) _overlayLayout.Reset();
             if (_sessions.Active is { } a) SendStatus(a, _clock.NowUs);
         }
@@ -1435,6 +1441,7 @@ public sealed class HostEngine
         _overlayLayout.Reset();
         _overlayRxUs = long.MinValue;
         _overlayPoses.Clear();
+        _overlayTotals.Reset();
         _pad.Unplug();
         _padFrameValid = false;
         _hasPending = false;
@@ -1628,7 +1635,7 @@ public sealed class HostEngine
         if (_paused || _locked) flags |= HostStatusFlags.InputPaused;
         if (_elevatedForeground) flags |= HostStatusFlags.ElevatedForeground;
         if (_networkPublic) flags |= HostStatusFlags.NetworkPublic;
-        if (_overlayOn) flags |= HostStatusFlags.Overlay;
+        if (_overlayOn) flags |= HostStatusFlags.Overlay | HostStatusFlags.OverlayTotals;
         if (_overlayOn && OverlayCompassLocked()) flags |= HostStatusFlags.OverlayCompass;
         Span<byte> p = stackalloc byte[Wire.HostStatusPlain];
         WireCodec.EncodeHostStatus(new HostStatus(s.HighestRxSeq, _stats.RxPerSec, _stats.LossPermille,
