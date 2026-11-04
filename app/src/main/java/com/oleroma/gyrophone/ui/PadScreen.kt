@@ -1,12 +1,8 @@
 package com.oleroma.gyrophone.ui
 
-import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.View
-import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -634,9 +630,10 @@ fun PadScreen(
     val keepAwake by runtime.keepScreenOn.collectAsStateWithLifecycle()
 
     // Black screen ([GamepadRuntime.blackScreenIdle]): in play, after a while without a screen touch
-    // or when a Black screen mapping fires, the pad goes black at minimum brightness and its touch
-    // controls stop. The app stays in front, so gyro, controllers and the PC link keep working. A tap
-    // brings the pad back and presses nothing.
+    // or when a Black screen mapping fires, the pad goes black and its touch controls stop. The app
+    // stays in front, so gyro, controllers and the PC link keep working. A tap brings the pad back and
+    // presses nothing. Brightness is left to the phone: black OLED pixels are off anyway, and a window
+    // brightness override left auto-brightness low after waking (OnePlus 15).
     val blackIdle by runtime.blackScreenIdle.collectAsStateWithLifecycle()
     val blackSeconds by runtime.blackScreenSeconds.collectAsStateWithLifecycle()
     val blackRequests by runtime.blackScreenRequests.collectAsStateWithLifecycle()
@@ -665,22 +662,6 @@ fun PadScreen(
         }
         black = true
     }
-    DisposableEffect(view, black) {
-        val window = view.context.findActivity()?.window
-        if (black && window != null) {
-            val attrs = window.attributes
-            attrs.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_OFF
-            window.attributes = attrs
-        }
-        onDispose {
-            if (black && window != null) {
-                val attrs = window.attributes
-                attrs.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-                window.attributes = attrs
-            }
-        }
-    }
-
     // A black pad keeps the screen on even with Keep the screen on off: if the phone locked, the app
     // would stop reading the controller.
     DisposableEffect(view, keepAwake, black) {
@@ -2980,10 +2961,4 @@ private fun BlackScreen(onWake: () -> Unit) {
                 }
             },
     )
-}
-
-private tailrec fun Context.findActivity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.findActivity()
-    else -> null
 }
