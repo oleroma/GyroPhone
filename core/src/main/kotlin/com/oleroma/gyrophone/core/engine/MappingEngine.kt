@@ -912,6 +912,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     val touchMappingsInUse: List<Mapping> get() = synchronized(lock) { touchMappings }
 
+    /** Those of [mappings] whose input is on now (at least half way), under one lock: for live mapping labels. */
+    fun activeMappings(mappings: List<Mapping>): List<Mapping> = synchronized(lock) {
+        mappings.filter { abs(sourceValue(it.source)) >= 0.5f }
+    }
+
     /**
      * Every input held now, for the debug panel: touch controls pressed (by label), then each
      * device's held keys ("Gamepad: A"), then touchpad fingers.

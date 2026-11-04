@@ -131,6 +131,17 @@ class WorkspaceEngineTest {
         assertEquals((0.5f * 32767).toInt(), e.snapshot().gamepad.lx)
     }
 
+    @Test fun activeMappingsAreThoseWhoseInputIsOn() {
+        val a = touch("a", OutputTarget.Key(0x04))
+        val b = touch("b", OutputTarget.Key(0x05))
+        val e = MappingEngine(single(ws("w", emptyList(), mappings = listOf(a, b))))
+        assertTrue(e.activeMappings(listOf(a, b)).isEmpty())
+        e.setTouch("b", true)
+        assertEquals(listOf(b), e.activeMappings(listOf(a, b)))
+        e.setTouch("a", true)
+        assertEquals(listOf(a, b), e.activeMappings(listOf(a, b)))
+    }
+
     @Test fun legacySourceActsOnEveryPad() {
         val e = MappingEngine(twoPads())
         assertTrue(e.setKey(AndroidKey.BUTTON_A, true))

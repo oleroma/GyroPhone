@@ -127,7 +127,8 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier
                             .horizontalScroll(rememberScrollState())
-                            .pointerInput(Unit) {
+                            // Keyed on the bounds: rotating keeps this composition, and the drag must use the new ones.
+                            .pointerInput(maxW, maxH, wPx, hPx) {
                                 detectDragGestures(onDragEnd = { saveBox() }) { change, drag ->
                                     change.consume()
                                     pos = Offset(
@@ -215,7 +216,7 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
                         .align(Alignment.BottomEnd)
                         .size(28.dp)
                         .padding(6.dp)
-                        .pointerInput(Unit) {
+                        .pointerInput(areaW, areaH, minSize) {
                             detectDragGestures(onDragEnd = { saveBox() }) { change, drag ->
                                 change.consume()
                                 val dw = with(density) { drag.x.toDp() }
