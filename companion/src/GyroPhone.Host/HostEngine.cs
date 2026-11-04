@@ -35,7 +35,9 @@ public sealed record HostSnapshot(
     HostCounters Counters,
     string? HostKeyFingerprint = null,
     int QrPairingS = 0,
-    string? QrEnrolledPhone = null);
+    string? QrEnrolledPhone = null,
+    // "Use PC controller for gyro ratchet": null while the phone's switch is off, "" while no controller is found.
+    string? PcController = null);
 
 /// <summary>A paired phone for the tray: code-paired (in settings) or key-paired (a file in authorized_phones).</summary>
 public sealed record PairedPhoneInfo(byte[] PhoneId, string Name, DateTime LastSeenUtc, bool ByKey = false,
@@ -90,6 +92,14 @@ public sealed class HostEngine
     private readonly byte[] _plain = new byte[Wire.MaxDatagram];
     private readonly byte[] _reply = new byte[Wire.MaxDatagram];
     private readonly StateFrame _rxFrame = new();
+
+    // "Use PC controller for gyro ratchet": the phone's controller gyro buttons, the controller plugged into
+    // this PC, and the gate that rewrites STATE_GYRO for it.
+    private IPcPad _pcPad = NullPcPad.Instance;
+    private readonly PadGyroConfig _padGyro = new();
+    private readonly GyroGate _gate = new();
+    private readonly uint[] _pcPresses = new uint[PadGyroConfig.Places];
+    private bool _pcReading;
     private readonly StateFrame _pending = new();
     private bool _hasPending;
     private readonly MouseDeltaTracker _mouse = new();
@@ -315,7 +325,7 @@ public sealed class HostEngine
 
         if (!s.Promoted)
         {
-            if (type != PacketType.State && type != PacketType.StateHires)
+            if (type != PacketType.State && type != PacketType.StateHires && type != PacketType.StateGyro)
             {
                 HandlePendingControl(s, type, plain, nowUs);
                 return;
@@ -328,7 +338,11 @@ public sealed class HostEngine
         {
             case PacketType.State:
             case PacketType.StateHires:
+            case PacketType.StateGyro:
                 OnState(plain, seq, nowUs);
+                break;
+            case PacketType.PadGyro:
+                OnPadGyro(plain);
                 break;
             case PacketType.Ping:
                 SendPong(s, plain, nowUs);
@@ -341,6 +355,7 @@ public sealed class HostEngine
             case PacketType.Overlay:
                 if (!_overlayOn) break;
                 _overlayFrame.Decode(plain);
+                if (_padGyro.Enabled) GateOverlay(_overlayFrame);
                 foreach (var o in _settings.Overlays)
                 {
                     if (!o.Shown) continue;
@@ -357,6 +372,80 @@ public sealed class HostEngine
                 RememberEnded(s.SessionId);
                 EndActive(hostByeReason: null);
                 break;
+        }
+    }
+
+    /// <summary>PAD_GYRO: which controller buttons ratchet or toggle the gyro; reads the PC controller while the phone's switch is on.</summary>
+    private void OnPadGyro(ReadOnlySpan<byte> plain)
+    {
+        bool was = _padGyro.Enabled;
+        _padGyro.Decode(plain);
+        if (_padGyro.Enabled == was) return;
+        if (_padGyro.Enabled) StartPcPad();
+        else StopPcPad();
+        _events.StateChanged();
+    }
+
+    private void StartPcPad()
+    {
+        if (_pcReading) return;
+        _pcReading = true;
+        _pcPad.Start(() => _pad.XInputSlot);
+        _events.Log("PC controller for gyro ratchet: on");
+    }
+
+    private void StopPcPad()
+    {
+        if (!_pcReading) return;
+        _pcReading = false;
+        _pcPad.Stop();
+        _events.Log("PC controller for gyro ratchet: off");
+    }
+
+    private void ReadPcPad()
+    {
+        bool connected = _pcPad.Read(_pcPresses, out uint held);
+        _gate.Update(new PcPadState { Connected = connected, Held = held, Presses = _pcPresses }, _padGyro);
+    }
+
+    /// <summary>The overlays turn with the axes on after the PC controller, and its ratchets count for "On ratchet".</summary>
+    private void GateOverlay(OverlayFrame f)
+    {
+        ReadPcPad();
+        int eff = _gate.EffectiveOf(f.Axes, _gate.MayMove);
+        f.Axes = (byte)eff;
+        f.Flags = (byte)(eff != 0 ? f.Flags | OverlayFrame.FlagGyroActive : f.Flags & ~OverlayFrame.FlagGyroActive);
+        if (_gate.Flips != 0) f.Flags |= OverlayFrame.FlagRatchetHeld;
+        f.RatchetPresses = unchecked((byte)(f.RatchetPresses + _gate.RatchetPresses));
+    }
+
+    /// <summary>
+    /// A window whose handles show the PC controller: its buttons, triggers and sticks in place of the
+    /// phone's controller, none while the phone's "Use PC controller for gyro ratchet" is off.
+    /// </summary>
+    private void PcPadOnHandles(OverlayFrame f)
+    {
+        Span<float> axes = stackalloc float[6];
+        uint held = 0;
+        bool on = _padGyro.Enabled && _pcPad.Read(_handlePresses, out held) && _pcPad.ReadAxes(axes);
+        f.PadFlags = on ? OverlayFrame.PadAttachedFlag : (byte)0;
+        f.PadButtons = on ? held : 0;
+        f.PadL2Pull = on ? axes[4] : 0f;
+        f.PadR2Pull = on ? axes[5] : 0f;
+        for (int i = 0; i < 4; i++) f.PadSticks[i] = on ? axes[i] : 0f;
+    }
+
+    private readonly uint[] _handlePresses = new uint[PadGyroConfig.Places];
+
+    /// <summary>Uses <paramref name="pad"/> as the controller plugged into this PC (Windows: XInput).</summary>
+    public void SetPcPad(IPcPad pad)
+    {
+        lock (_lock)
+        {
+            bool reading = _pcReading;
+            StopPcPad();
+            _pcPad = pad;
+            if (reading) StartPcPad();
         }
     }
 
@@ -396,6 +485,8 @@ public sealed class HostEngine
     {
         _states++;
         _rxFrame.Decode(plain);
+        if (_padGyro.Enabled) ReadPcPad();
+        _gate.Apply(_rxFrame, nowUs);
         // A burst can hold a press and its release: inject the older frame first so no edge is lost.
         // Frames that differ only in motion still merge into one injection.
         // Flush re-enters the engine lock OnDatagram holds.
@@ -446,7 +537,8 @@ public sealed class HostEngine
             return;
         }
         var s = _sessions.CreatePending(hello, name, pairKey, _settings.HostId,
-            (byte)_settings.OutputMode, (byte)((_pad.DriverOk ? WelcomeFlags.VigemOk : 0) | WelcomeFlags.HiresWheel), from, nowUs);
+            (byte)_settings.OutputMode, (byte)((_pad.DriverOk ? WelcomeFlags.VigemOk : 0) | WelcomeFlags.HiresWheel | WelcomeFlags.GyroGate),
+            from, nowUs);
         Reply(s.Welcome, from);
     }
 
@@ -473,6 +565,7 @@ public sealed class HostEngine
         }
         // The phone restarts its totals at 0 for a new session.
         _mouse.Reset();
+        _gate.Reset();
         _accDx = _accDy = _accWheel = _accHWheel = 0;
         _stats.Reset();
         _releasedForSilence = false;
@@ -1060,6 +1153,8 @@ public sealed class HostEngine
             {
                 into.Qw = 1; into.Qx = into.Qy = into.Qz = 0;
             }
+            if (id != null && _settings.Overlays.FirstOrDefault(o => o.Id == id) is { HandleSource: OverlayHandleSource.Pc })
+                PcPadOnHandles(into);
             return Math.Max(0, _clock.NowUs - _overlayRxUs);
         }
     }
@@ -1200,7 +1295,8 @@ public sealed class HostEngine
                 new HostCounters(_datagrams, _dropped, _badAuth, _states, _injections, _unknownUsages, _errors, _exceptions),
                 _hostKey == null ? null : KeyPairing.Fingerprint(_hostKey.PublicKey),
                 _qr != null && now < _qr.ExpiresUs ? (int)((_qr.ExpiresUs - now + 999_999) / 1_000_000) : 0,
-                _qr?.EnrolledName);
+                _qr?.EnrolledName,
+                _padGyro.Enabled ? _pcPad.Name ?? "" : null);
         }
     }
 
@@ -1294,6 +1390,9 @@ public sealed class HostEngine
             RememberEnded(a.SessionId); // in-flight packets cross the HOST_BYE
         }
         _sessions.DropActive();
+        StopPcPad();
+        _padGyro.Enabled = false;
+        _gate.Reset();
         _overlayLayout.Reset();
         _overlayRxUs = long.MinValue;
         _overlayPoses.Clear();

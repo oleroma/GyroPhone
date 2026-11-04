@@ -46,6 +46,7 @@ internal sealed class OverlaysPage : Page
     private readonly Border _phoneLook, _shapeLook, _diskLook;
     private readonly CheckBox _dots, _trails;
     private readonly Seg<OverlayHandles> _handles;
+    private readonly Seg<OverlayHandleSource> _handleSource;
     private readonly Seg<OverlayShape> _shape;
     private readonly SliderRow _subdivision, _diskRange;
     private readonly CheckBox _smooth, _hiddenEdges, _fillFaces, _equator, _screenMark, _topMark, _crosshair;
@@ -197,6 +198,12 @@ internal sealed class OverlaysPage : Page
             ("While a controller is attached", OverlayHandles.Auto), ("Always", OverlayHandles.Always), ("Off", OverlayHandles.Off));
         _handles.View.Margin = new Thickness(0, 6, 0, 2);
         pb.Children.Add(_handles.View);
+        pb.Children.Add(Parts.Text("Controller"));
+        _handleSource = new Seg<OverlayHandleSource>(h => Change(o => o.HandleSource = h), false,
+            ("Phone", OverlayHandleSource.Phone), ("PC", OverlayHandleSource.Pc));
+        _handleSource.View.Margin = new Thickness(0, 6, 0, 2);
+        pb.Children.Add(_handleSource.View);
+        pb.Children.Add(Parts.Text("PC: the controller plugged into this PC, while \"Use PC controller for gyro ratchet\" is on in the phone's Connection settings.", "Hint"));
         _phoneLook = phone;
         _lookTab.Children.Add(phone);
 
@@ -405,6 +412,7 @@ internal sealed class OverlaysPage : Page
         Parts.SetChecked(_dots, o.FingerDots);
         Parts.SetChecked(_trails, o.FingerTrails);
         _handles.Set(o.Handles);
+        _handleSource.Set(o.HandleSource);
         _shape.Set(o.Shape);
         Parts.Show(_subdivision.View, o.Shape == OverlayShape.Icosphere);
         _subdivision.Set(o.Subdivision);

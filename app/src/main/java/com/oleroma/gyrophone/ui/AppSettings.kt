@@ -114,6 +114,7 @@ private fun AppTab(runtime: GamepadRuntime) {
     val orientation by runtime.screenOrientation.collectAsStateWithLifecycle()
     val padOnly by runtime.padOnlyInput.collectAsStateWithLifecycle()
     val startFullscreen by runtime.startFullscreen.collectAsStateWithLifecycle()
+    val keepScreenOn by runtime.keepScreenOn.collectAsStateWithLifecycle()
     val autoHide by runtime.cornerAutoHide.collectAsStateWithLifecycle()
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val visuals by runtime.touchVisuals.collectAsStateWithLifecycle()
@@ -121,11 +122,16 @@ private fun AppTab(runtime: GamepadRuntime) {
     val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?" }
 
     val items = listOf(
-        category(runtime, "pad", "Pad", "Fullscreen, screen rotation, when input is sent", defaultOpen = true) {
+        category(runtime, "pad", "Pad", "Fullscreen, screen on, screen rotation, when input is sent", defaultOpen = true) {
             SwitchRow(
                 "Start in fullscreen", startFullscreen,
                 hint = "The pad opens in fullscreen when the app starts. Press ← and → together, or Back, to leave it.",
             ) { runtime.setStartFullscreen(it) }
+            SwitchRow(
+                "Keep the screen on while the pad is open", keepScreenOn,
+                hint = if (keepScreenOn) "The phone doesn't dim or lock while the pad is on screen. Its pages and other apps lock as usual."
+                else "The phone dims and locks after its usual screen timeout, also on the pad.",
+            ) { runtime.setKeepScreenOn(it) }
             Searchable(
                 "Screen rotation", "Auto Landscape Portrait rotation lock turn", *ScreenOrientation.entries.map { it.label }.toTypedArray(),
             ) {

@@ -99,6 +99,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _log.Write($"key file pairing off: {_keyError}");
         }
         _engine = new HostEngine(settings, _pad, _keyMouse, this, protector, _clock, this, hostKey: hostKey);
+        _engine.SetPcPad(new XInputPcPad(_log.Write));
         if (hostKey != null) _authorized = new AuthorizedPhonesWatcher(_keyFiles, _engine.SetAuthorizedPhones, _log.Write);
         PowerQos.TryDisableForProcess(_log.Write);
         _server = new UdpHostServer(_engine, _clock,

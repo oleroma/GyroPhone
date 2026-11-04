@@ -49,6 +49,7 @@ import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.surfaceSettings
+import com.oleroma.gyrophone.core.net.OverlayFeed
 import java.util.BitSet
 import kotlin.math.PI
 import kotlin.math.abs
@@ -415,6 +416,24 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
 
     private var gyroToggled = false
+
+    // Declared before init, which builds them.
+    /**
+     * The controller's gyro buttons in use, for a controller plugged into the PC ("Use PC
+     * controller for gyro"): one entry per button, `(place shl 8) or kind`, the place an
+     * [com.oleroma.gyrophone.core.net.OverlayFeed] PAD_ bit index, the kind the [gyroBit]s its
+     * ratchets flip plus [PC_GYRO_TOGGLE] for a Toggle gyro. Only plain presses count (no tap,
+     * long press or other gesture). Rebuilt with the layers in use.
+     */
+    @Volatile var pcGyroButtons: IntArray = IntArray(0)
+        private set
+
+    /** Goes up each time a Toggle gyro press stops counting (the workspace or its gyro changed): a PC controller's toggle resets too. */
+    @Volatile var toggleEpoch: Int = 0
+        private set
+
+    private val nonGyro = IntArray(GamepadAxis.entries.size)
+
     private var mouseDx = 0
     private var mouseDy = 0
 
@@ -647,6 +666,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         clearShapers()
         for (t in tapList) t.reset()
         gyroToggled = false
+        toggleEpoch++
         keyOrderSize = 0; inKeyOrder.fill(false)
     }
 
@@ -1200,6 +1220,55 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             out
         }
 
+    private fun pcGyroButtonsOf(ms: List<Mapping>): IntArray {
+        val kinds = LinkedHashMap<Int, Int>()
+        val seen = HashSet<Pair<Int, OutputTarget>>()
+        for (m in ms) {
+            val t = m.target
+            val kind = when (t) {
+                OutputTarget.GyroPause, OutputTarget.GyroHold -> ALL_GYRO
+                is OutputTarget.GyroPauseAxis -> gyroBit(t.axis)
+                OutputTarget.GyroToggle -> PC_GYRO_TOGGLE
+                else -> continue
+            }
+            val place = pcPlace(m.source)
+            if (place < 0 || !seen.add(place to t)) continue
+            // Two ratchets on one button cancel on an axis, like on the phone; two toggles count as one.
+            val k = kinds[place] ?: 0
+            kinds[place] = if (kind == PC_GYRO_TOGGLE) k or kind else k xor kind
+        }
+        return kinds.map { (place, kind) -> (place shl 8) or kind }.toIntArray()
+    }
+
+    /** The PAD_ bit index of a controller press source, -1 for anything else. */
+    private fun pcPlace(src: InputSource): Int {
+        val bit = when (src) {
+            is InputSource.Key -> OverlayFeed.padBit(src.keyCode)
+            is InputSource.Axis -> when (src.axis) {
+                AndroidAxis.LTRIGGER, AndroidAxis.BRAKE -> OverlayFeed.PAD_L2
+                AndroidAxis.RTRIGGER, AndroidAxis.GAS -> OverlayFeed.PAD_R2
+                AndroidAxis.HAT_X -> when (src.half) {
+                    AxisHalf.NEGATIVE -> OverlayFeed.PAD_LEFT
+                    AxisHalf.POSITIVE -> OverlayFeed.PAD_RIGHT
+                    AxisHalf.FULL -> 0
+                }
+                AndroidAxis.HAT_Y -> when (src.half) {
+                    AxisHalf.NEGATIVE -> OverlayFeed.PAD_UP
+                    AxisHalf.POSITIVE -> OverlayFeed.PAD_DOWN
+                    AxisHalf.FULL -> 0
+                }
+                else -> 0
+            }
+            else -> 0
+        }
+        return if (bit == 0) -1 else Integer.numberOfTrailingZeros(bit)
+    }
+
+    /** The game pad as the last [snapshot] made it without the gyro's part: lx, ly, rx, ry, lt, rt in STATE units. */
+    fun nonGyroPad(out: IntArray) {
+        synchronized(lock) { nonGyro.copyInto(out, endIndex = minOf(out.size, nonGyro.size)) }
+    }
+
     /** The [gyroBit]s of the axes some held ratchet acts on (flipped or not), as of the last [gyroAxes] read. */
     @Volatile var ratchetsHeld: Int = 0
         private set
@@ -1260,6 +1329,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             ws = ws.copy(gyro = settings)
             current = current.updateWorkspace(workspaceIndex) { it.copy(gyro = settings) }
             gyroToggled = false
+            toggleEpoch++
             applyLayerSettings()
         }
         onChange?.run()
@@ -1325,6 +1395,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         hapticNow.clear()
         forEachGroup { ms, dev -> accumulate(ms, dev) }
         shakeShown = true
+        for (a in 0 until 4) nonGyro[a] = toStick(stick[a])
+        nonGyro[4] = toTrigger(trigger[0]); nonGyro[5] = toTrigger(trigger[1])
         for (a in 0 until 4) if (abs(gyroPad[a]) > abs(stick[a])) stick[a] = gyroPad[a]
         trigger[0] = max(trigger[0], abs(gyroPad[GamepadAxis.LT.ordinal]))
         trigger[1] = max(trigger[1], abs(gyroPad[GamepadAxis.RT.ordinal]))
@@ -2156,6 +2228,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val src = m.source
             if (src is InputSource.TouchStickDiagonal) stickCfgs[src.id]?.diagonalMapped?.set(src.diagonal.ordinal, true)
         }
+        pcGyroButtons = if (ws.pads.isEmpty()) IntArray(0) else pcGyroButtonsOf(padMappings[0])
         ratchetMapped = (padMappings.asSequence() + sequenceOf(touchMappings)).any { ms ->
             ms.any { it.target == OutputTarget.GyroPause || it.target == OutputTarget.GyroHold || it.target is OutputTarget.GyroPauseAxis }
         }
@@ -2454,6 +2527,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
         /** Every gyro axis's [gyroBit]. */
         const val ALL_GYRO = 7
+
+        /** A [pcGyroButtons] kind bit: the button toggles the gyro. */
+        const val PC_GYRO_TOGGLE = 8
 
 
         /** Pressed: a finger on a control without a surface. */

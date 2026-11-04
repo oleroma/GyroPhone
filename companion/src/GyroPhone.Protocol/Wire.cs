@@ -31,6 +31,10 @@ public static class Wire
     public const int StatePlain = 66;
     /// <summary>STATE_HIRES: STATE with the wheel total in 1/120 notch plus a horizontal wheel total.</summary>
     public const int StateHiresPlain = 70;
+    /// <summary>STATE_GYRO: STATE_HIRES plus each gyro axis's share of the motion (<see cref="GyroShares"/>).</summary>
+    public const int StateGyroPlain = StateHiresPlain + GyroShares.Size;
+    /// <summary>PAD_GYRO: u8 flags, u8 toggle epoch, u8 count, u8 0, 18 × (u8 place, u8 kind).</summary>
+    public const int PadGyroPlain = 4 + PadGyroConfig.MaxButtons * 2;
     public const int PingPlain = 8;
     public const int LinkInfoPlain = 22;
     public const int ByePlain = 4;
@@ -163,6 +167,8 @@ public static class WelcomeFlags
     public const byte ForegroundSupported = 1 << 1;
     /// <summary>The host takes STATE_HIRES (smooth vertical and horizontal wheel).</summary>
     public const byte HiresWheel = 1 << 2;
+    /// <summary>The host takes STATE_GYRO and PAD_GYRO: a controller plugged into it can ratchet the phone's gyro.</summary>
+    public const byte GyroGate = 1 << 3;
 }
 
 /// <summary>Output device the host exposes. Values are the wire outputMode byte.</summary>

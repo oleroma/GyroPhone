@@ -11,6 +11,7 @@ import com.oleroma.gyrophone.core.net.LiveSession
 import com.oleroma.gyrophone.core.net.MouseTotals
 import com.oleroma.gyrophone.core.net.OverlayFeed
 import com.oleroma.gyrophone.core.net.PacketType
+import com.oleroma.gyrophone.core.net.PcGyroFeed
 import com.oleroma.gyrophone.core.net.SendScheduler
 import com.oleroma.gyrophone.core.net.SessionCipher
 import com.oleroma.gyrophone.core.net.StateFrame
@@ -48,6 +49,9 @@ class WifiPump(private val engine: MappingEngine) {
     /** The phone overlay's data: sent while [OverlayFeed.wanted] (the PC's overlay is on). */
     @Volatile var overlay: OverlayFeed? = null
 
+    /** "Use PC controller for gyro ratchet": STATE_GYRO and PAD_GYRO for a PC that takes them. */
+    @Volatile var pcGyro: PcGyroFeed? = null
+
     /** STATE packets handed to / refused by the socket during the last full second. */
     @Volatile var sentPerSecond = 0
         private set
@@ -79,6 +83,12 @@ class WifiPump(private val engine: MappingEngine) {
     private var nextOverlayNs = 0L
     private var layoutSentVersion = -1
     private var layoutSentNs = 0L
+    private val nonGyro = IntArray(PcGyroFeed.PAD_AXES)
+    private var gyroSnapshot = false
+    private var padGyroNs = 0L
+    private var padGyroSent: IntArray? = null
+    private var padGyroSentEpoch = -1
+    private var padGyroSentOn = false
 
     fun start(socket: DatagramSocket) {
         if (running) return
@@ -141,7 +151,15 @@ class WifiPump(private val engine: MappingEngine) {
                     continue
                 }
             }
-            val s = engine.snapshot() // always drain motion, even with no session
+            // always drain motion, even with no session; with PC controller gyro, together with the gyro's shares
+            val g = pcGyro?.takeIf { it.active }
+            val s = if (g == null) engine.snapshot() else synchronized(g.lock) {
+                engine.snapshot().also {
+                    engine.nonGyroPad(nonGyro)
+                    g.encodeExt(frame.ext, 0, nonGyro)
+                }
+            }
+            gyroSnapshot = g != null
             totals.add(s.mouse)
             val t = target
             if (t.session !== cur) {
@@ -160,6 +178,7 @@ class WifiPump(private val engine: MappingEngine) {
             if (scheduler.rateHz != hz) scheduler.rateHz = hz
 
             frame.fill(s, totals, engine.gyroActive, hires)
+            frame.gyroExt = hires && gyroSnapshot
             val discrete = !frame.discreteEquals(lastSent)
             val dirty = discrete || !frame.totalsEqual(lastSent)
             val kind = scheduler.poll(now, dirty, discrete)
@@ -184,6 +203,7 @@ class WifiPump(private val engine: MappingEngine) {
                     sendSealed(c, PacketType.LINK_INFO, n)
                 }
             }
+            pcGyro?.let { if (it.hostTakes) sendPadGyro(c, it, now) }
             val ov = overlay?.takeIf { it.wanted }
             if (ov == null) layoutSentVersion = -1
             if (ov != null && now >= nextOverlayNs) {
@@ -198,6 +218,19 @@ class WifiPump(private val engine: MappingEngine) {
         cur?.let { goodbye(it, exitByeReason) }
         cur = null
         cipher = null
+    }
+
+    /** PAD_GYRO when the switch, the buttons or the toggle epoch changed, else once a second (a lost one comes again). */
+    private fun sendPadGyro(c: LiveSession, g: PcGyroFeed, now: Long) {
+        g.buttons = engine.pcGyroButtons
+        g.epoch = engine.toggleEpoch
+        val b = g.buttons
+        val changed = b !== padGyroSent || g.epoch != padGyroSentEpoch || g.enabled != padGyroSentOn
+        if (!changed && now - padGyroNs < SECOND_NS) return
+        padGyroNs = now
+        padGyroSent = b; padGyroSentEpoch = g.epoch; padGyroSentOn = g.enabled
+        val n = g.encodeButtons(plain, 0)
+        sendSealed(c, PacketType.PAD_GYRO, n)
     }
 
     /** One OVERLAY, then the layout's pieces when it changed or every [LAYOUT_REPEAT_NS] (a lost piece comes again). */
@@ -217,6 +250,11 @@ class WifiPump(private val engine: MappingEngine) {
     private fun switchTo(session: LiveSession?) {
         cur = session
         hires = session != null && session.hostFlags and HostFlags.HIRES_WHEEL != 0
+        pcGyro?.let {
+            it.hostTakes = hires && session!!.hostFlags and HostFlags.GYRO_GATE != 0
+            it.reset()
+        }
+        padGyroSent = null; padGyroSentEpoch = -1
         cipher = session?.let { SessionCipher(it.kPH, Wire.DIR_P2H) }
         seq = 0
         totals.reset()

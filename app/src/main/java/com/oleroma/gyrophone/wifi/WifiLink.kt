@@ -26,6 +26,7 @@ import com.oleroma.gyrophone.core.net.LinkInfo
 import com.oleroma.gyrophone.core.net.LinkInfoFlags
 import com.oleroma.gyrophone.core.net.LiveSession
 import com.oleroma.gyrophone.core.net.OverlayFeed
+import com.oleroma.gyrophone.core.net.PcGyroFeed
 import com.oleroma.gyrophone.core.net.PacketType
 import com.oleroma.gyrophone.core.net.PairFailure
 import com.oleroma.gyrophone.core.net.PairState
@@ -105,6 +106,9 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     /** The PC's phone overlay: its data is gathered and sent while the PC's HOST_STATUS asks for it. */
     val overlay = OverlayFeed()
+
+    /** "Use PC controller for gyro ratchet": the gyro's shares and the controller's gyro buttons for the PC. */
+    val pcGyro = PcGyroFeed()
     private val accessory = AccessoryBridge(appContext)
 
     private val _state = MutableStateFlow<LinkState>(LinkState.Off)
@@ -230,6 +234,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         pump.rateHz = rateHz
         pump.linkInfoSource = ::buildLinkInfo
         pump.overlay = overlay
+        pump.pcGyro = pcGyro
         // The Keystore key and phone.pub exist from the first start, so update.cmd can fetch it.
         Thread({ keys.publish() }, "gp-keys").start()
     }
