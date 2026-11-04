@@ -222,21 +222,21 @@ public sealed class XInputPcPad : IPcPad, IDisposable
 
     private bool TryGet(int slot, out XInputGamepad g)
     {
-        XInputState s;
         uint r;
         if (_useEx)
         {
             try
             {
-                r = XInputGetStateEx((uint)slot, out s);
+                r = XInputGetStateEx((uint)slot, out XInputStateEx ex);
+                g = ex.Gamepad;
+                return r == 0;
             }
             catch (EntryPointNotFoundException)
             {
                 _useEx = false;
-                r = XInputGetState((uint)slot, out s);
             }
         }
-        else r = XInputGetState((uint)slot, out s);
+        r = XInputGetState((uint)slot, out XInputState s);
         g = s.Gamepad;
         return r == 0;
     }
@@ -271,6 +271,19 @@ public sealed class XInputPcPad : IPcPad, IDisposable
         public XInputGamepad Gamepad;
     }
 
+    /// <summary>
+    /// What ordinal 100 writes: XINPUT_STATE with 4 more bytes at the end of the gamepad
+    /// (dwPaddingReserved), 20 bytes in all. Passing the 16-byte <see cref="XInputState"/> let it
+    /// write past the end of the variable.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct XInputStateEx
+    {
+        public uint PacketNumber;
+        public XInputGamepad Gamepad;
+        public uint PaddingReserved;
+    }
+
     private const uint CreateWaitableTimerHighResolution = 0x2;
     private const uint TimerAllAccess = 0x1F0003;
 
@@ -279,7 +292,7 @@ public sealed class XInputPcPad : IPcPad, IDisposable
 
     /// <summary>Undocumented ordinal 100: like XInputGetState, with the Guide button.</summary>
     [DllImport("xinput1_4.dll", EntryPoint = "#100")]
-    private static extern uint XInputGetStateEx(uint userIndex, out XInputState state);
+    private static extern uint XInputGetStateEx(uint userIndex, out XInputStateEx state);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr CreateWaitableTimerExW(IntPtr attributes, IntPtr name, uint flags, uint access);
