@@ -14,7 +14,121 @@ using Rect = Vortice.Mathematics.Rect;
 namespace GyroPhone.Tray;
 
 /// <summary>
-/// One overlay window's graphics-card surface: a Direct3D device that a Direct2D context draws with.
+/// The graphics card objects every overlay window shares: one Direct3D device, one Direct2D factory
+/// and device, one DirectWrite factory. The Direct2D factory is multithreaded, so the pacer's thread
+/// and the UI thread can draw different windows at once; direct Direct3D/DXGI calls go between
+/// <see cref="Enter"/> and <see cref="Leave"/>. Each window's surface holds a reference and the last
+/// to let go disposes them. A lost device (sleep, a driver update) is retired once: the next surface
+/// made gets a new device, and the old one goes when every surface on it has let go, so no window's
+/// objects are disposed while another window is drawing with them.
+/// </summary>
+internal sealed class GpuDevice
+{
+    // Guards _current and every _refs. Never held while calling Enter.
+    private static readonly object Gate = new();
+    private static GpuDevice? _current;
+    private int _refs;
+    public readonly ID3D11Device D3D;
+    public readonly IDXGIDevice Dxgi;
+    public readonly ID2D1Factory1 Factory;
+    public readonly ID2D1Device Device;
+    public readonly IDWriteFactory Write;
+    private readonly ID2D1Multithread _lock;
+
+    private GpuDevice()
+    {
+        D3D11.D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport,
+            [Vortice.Direct3D.FeatureLevel.Level_11_1, Vortice.Direct3D.FeatureLevel.Level_11_0, Vortice.Direct3D.FeatureLevel.Level_10_1, Vortice.Direct3D.FeatureLevel.Level_10_0],
+            out var d3d).CheckError();
+        D3D = d3d ?? throw new InvalidOperationException("no Direct3D device");
+        try
+        {
+            Dxgi = D3D.QueryInterface<IDXGIDevice>();
+            Factory = D2D1.D2D1CreateFactory<ID2D1Factory1>(Vortice.Direct2D1.FactoryType.MultiThreaded, Vortice.Direct2D1.DebugLevel.None);
+            _lock = Factory.QueryInterface<ID2D1Multithread>();
+            Device = Factory.CreateDevice(Dxgi);
+            Write = DWrite.DWriteCreateFactory<IDWriteFactory>();
+        }
+        catch
+        {
+            DisposeAll();
+            throw;
+        }
+    }
+
+    /// <summary>The shared device (made if there is none), with one more reference: let go with <see cref="Release"/>.</summary>
+    public static GpuDevice Acquire()
+    {
+        lock (Gate)
+        {
+            _current ??= new GpuDevice();
+            _current._refs++;
+            return _current;
+        }
+    }
+
+    /// <summary>One reference less; the last one disposes it.</summary>
+    public void Release()
+    {
+        lock (Gate)
+        {
+            if (--_refs > 0) return;
+            if (ReferenceEquals(_current, this)) _current = null;
+        }
+        // No references and no longer current: nobody else can reach it.
+        DisposeAll();
+    }
+
+    /// <summary>Retired (found lost): surfaces on it make new ones, on the next device.</summary>
+    public bool Lost
+    {
+        get
+        {
+            lock (Gate) return !ReferenceEquals(_current, this);
+        }
+    }
+
+    /// <summary>
+    /// After a failure: if the device was removed or Direct2D asks for new targets, retires it so
+    /// the next surface made gets a new device (once, however many windows saw it fail).
+    /// </summary>
+    public void CheckLost(Exception? e)
+    {
+        bool lost = e is SharpGen.Runtime.SharpGenException s && s.ResultCode == Vortice.Direct2D1.ResultCode.RecreateTarget;
+        try
+        {
+            lost |= D3D.DeviceRemovedReason.Failure;
+        }
+        catch (Exception)
+        {
+            lost = true;
+        }
+        if (!lost) return;
+        lock (Gate)
+        {
+            if (ReferenceEquals(_current, this)) _current = null;
+        }
+    }
+
+    /// <summary>Takes Direct2D's lock for direct Direct3D/DXGI calls on the shared device (another thread may be drawing).</summary>
+    public void Enter() => _lock.Enter();
+
+    public void Leave() => _lock.Leave();
+
+    private void DisposeAll()
+    {
+        Write?.Dispose();
+        Device?.Dispose();
+        _lock?.Dispose();
+        Factory?.Dispose();
+        Dxgi?.Dispose();
+        D3D.Dispose();
+    }
+}
+
+/// <summary>
+/// One overlay window's graphics-card surface: its own Direct2D context, swap chain or texture and
+/// canvas, on the shared <see cref="GpuDevice"/>.
 /// Two ways to the screen:
 /// <list type="bullet">
 /// <item>Swap chain (with a window handle): the picture stays on the graphics card and is presented
@@ -28,37 +142,25 @@ namespace GyroPhone.Tray;
 /// </summary>
 internal sealed class GpuSurface : IDisposable
 {
-    private readonly ID3D11Device _d3d;
-    private readonly IDXGIDevice _dxgi;
-    private readonly ID2D1Factory1 _factory;
-    private readonly ID2D1Device _device;
-    private readonly ID2D1DeviceContext _dc;
-    private readonly IDWriteFactory _write;
-    private readonly D2DCanvas _canvas;
+    private readonly GpuDevice _shared;
+    private readonly ID2D1DeviceContext _dc = null!;
+    private readonly D2DCanvas _canvas = null!;
     private ID3D11Texture2D? _texture;
     private IDXGISurface1? _surface;
     private ID2D1Bitmap1? _bitmap;
     private int _width, _height;
     private readonly IDXGISwapChain1? _swap;
+    private bool _disposed;
 
     /// <summary>With <paramref name="hwnd"/>: presented by a swap chain to that window; without: copied (see the class).</summary>
     public GpuSurface(IntPtr hwnd = default, int width = 1, int height = 1)
     {
-        D3D11.D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport,
-            [Vortice.Direct3D.FeatureLevel.Level_11_1, Vortice.Direct3D.FeatureLevel.Level_11_0, Vortice.Direct3D.FeatureLevel.Level_10_1, Vortice.Direct3D.FeatureLevel.Level_10_0],
-            out var d3d).CheckError();
-        _d3d = d3d ?? throw new InvalidOperationException("no Direct3D device");
-        _dxgi = _d3d.QueryInterface<IDXGIDevice>();
-        _factory = D2D1.D2D1CreateFactory<ID2D1Factory1>();
-        _device = _factory.CreateDevice(_dxgi);
-        _dc = _device.CreateDeviceContext(DeviceContextOptions.None);
-        _write = DWrite.DWriteCreateFactory<IDWriteFactory>();
-        _canvas = new D2DCanvas(_factory, _device, _dc, _write);
-        if (hwnd == IntPtr.Zero) return;
+        _shared = GpuDevice.Acquire();
         try
         {
-            using var adapter = _dxgi.GetAdapter();
-            using var dxgiFactory = adapter.GetParent<IDXGIFactory2>();
+            _dc = _shared.Device.CreateDeviceContext(DeviceContextOptions.None);
+            _canvas = new D2DCanvas(_shared.Factory, _shared.Device, _dc, _shared.Write);
+            if (hwnd == IntPtr.Zero) return;
             // Bit-block transfer model: the one a layered window takes. Its alpha reaches the screen
             // through the window's redirection surface (the extended frame), premultiplied.
             var desc = new SwapChainDescription1
@@ -73,15 +175,26 @@ internal sealed class GpuSurface : IDisposable
                 SampleDescription = new SampleDescription(1, 0),
                 Scaling = Scaling.Stretch,
             };
-            _swap = dxgiFactory.CreateSwapChainForHwnd(_d3d, hwnd, desc);
-            // No Alt+Enter full screen, and DXGI never touches the window (it lives on another thread).
-            dxgiFactory.MakeWindowAssociation(hwnd, WindowAssociationFlags.IgnoreAll);
-            _width = (int)desc.Width;
-            _height = (int)desc.Height;
-            BindSwap();
+            _shared.Enter();
+            try
+            {
+                using var adapter = _shared.Dxgi.GetAdapter();
+                using var dxgiFactory = adapter.GetParent<IDXGIFactory2>();
+                _swap = dxgiFactory.CreateSwapChainForHwnd(_shared.D3D, hwnd, desc);
+                // No Alt+Enter full screen, and DXGI never touches the window (it lives on another thread).
+                dxgiFactory.MakeWindowAssociation(hwnd, WindowAssociationFlags.IgnoreAll);
+                _width = (int)desc.Width;
+                _height = (int)desc.Height;
+                BindSwap();
+            }
+            finally
+            {
+                _shared.Leave();
+            }
         }
-        catch
+        catch (Exception e)
         {
+            _shared.CheckLost(e);
             Dispose();
             throw;
         }
@@ -89,6 +202,12 @@ internal sealed class GpuSurface : IDisposable
 
     /// <summary>Presented by a swap chain (no copy through the CPU).</summary>
     public bool Direct => _swap != null;
+
+    /// <summary>Its device was found lost (by any window): make a new surface, which gets the new device.</summary>
+    public bool Lost => _shared.Lost;
+
+    /// <summary>After a failure of this surface: retires the shared device if it was lost (<see cref="GpuDevice.CheckLost"/>).</summary>
+    public void CheckLost(Exception e) => _shared.CheckLost(e);
 
     private void BindSwap()
     {
@@ -101,7 +220,7 @@ internal sealed class GpuSurface : IDisposable
 
     private void Unbind()
     {
-        _dc.Target = null;
+        if (_dc != null) _dc.Target = null;
         _bitmap?.Dispose();
         _bitmap = null;
         _surface?.Dispose();
@@ -116,7 +235,7 @@ internal sealed class GpuSurface : IDisposable
         var desc = new Texture2DDescription(Format.B8G8R8A8_UNorm, (uint)width, (uint)height, 1, 1,
             BindFlags.RenderTarget | BindFlags.ShaderResource, ResourceUsage.Default, CpuAccessFlags.None, 1, 0,
             ResourceOptionFlags.GdiCompatible);
-        _texture = _d3d.CreateTexture2D(desc);
+        _texture = _shared.D3D.CreateTexture2D(desc);
         _surface = _texture.QueryInterface<IDXGISurface1>();
         var props = new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied), 96, 96,
             BitmapOptions.Target | BitmapOptions.GdiCompatible);
@@ -138,11 +257,19 @@ internal sealed class GpuSurface : IDisposable
         {
             if (width != _width || height != _height)
             {
-                Unbind();
-                _swap.ResizeBuffers(1, (uint)width, (uint)height, Format.B8G8R8A8_UNorm, SwapChainFlags.None).CheckError();
-                _width = width;
-                _height = height;
-                BindSwap();
+                _shared.Enter();
+                try
+                {
+                    Unbind();
+                    _swap.ResizeBuffers(1, (uint)width, (uint)height, Format.B8G8R8A8_UNorm, SwapChainFlags.None).CheckError();
+                    _width = width;
+                    _height = height;
+                    BindSwap();
+                }
+                finally
+                {
+                    _shared.Leave();
+                }
             }
             _dc.BeginDraw();
             try
@@ -155,7 +282,15 @@ internal sealed class GpuSurface : IDisposable
             {
                 _dc.EndDraw().CheckError();
             }
-            _swap.Present(0, PresentFlags.None).CheckError();
+            _shared.Enter();
+            try
+            {
+                _swap.Present(0, PresentFlags.None).CheckError();
+            }
+            finally
+            {
+                _shared.Leave();
+            }
             return;
         }
         if (_bitmap == null || width != _width || height != _height) Bind(width, height);
@@ -170,28 +305,44 @@ internal sealed class GpuSurface : IDisposable
         {
             _dc.EndDraw().CheckError();
         }
-        IntPtr hdc = _surface!.GetDC(false);
+        // No other window's Direct3D work on the shared device while the DC is out.
+        _shared.Enter();
         try
         {
-            present(hdc);
+            IntPtr hdc = _surface!.GetDC(false);
+            try
+            {
+                present(hdc);
+            }
+            finally
+            {
+                _surface.ReleaseDC(null);
+            }
         }
         finally
         {
-            _surface.ReleaseDC(null);
+            _shared.Leave();
         }
     }
 
     public void Dispose()
     {
-        Unbind();
-        _swap?.Dispose();
-        _canvas.Dispose();
-        _write.Dispose();
-        _dc.Dispose();
-        _device.Dispose();
-        _factory.Dispose();
-        _dxgi.Dispose();
-        _d3d.Dispose();
+        if (_disposed) return;
+        _disposed = true;
+        _shared.Enter();
+        try
+        {
+            Unbind();
+            _swap?.Dispose();
+            _canvas?.Dispose();
+            _dc?.Dispose();
+        }
+        finally
+        {
+            _shared.Leave();
+            // The last surface on the device disposes it (outside Direct2D's lock).
+            _shared.Release();
+        }
     }
 }
 
