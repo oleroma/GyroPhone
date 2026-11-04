@@ -1,6 +1,8 @@
 package com.oleroma.gyrophone.core.engine
 
 import com.oleroma.gyrophone.core.engine.GyroMath.Route
+import com.oleroma.gyrophone.core.model.CurvePoint
+import com.oleroma.gyrophone.core.model.GyroCurve
 import com.oleroma.gyrophone.core.net.PcGyroFeed
 import com.oleroma.gyrophone.core.net.getI16
 import com.oleroma.gyrophone.core.net.getI32
@@ -52,7 +54,12 @@ class GyroMathVectorsTest {
         glideMs: FloatArray = floatArrayOf(325f, 325f, 325f),
         linear: BooleanArray = BooleanArray(3),
         routes: List<Route> = MOUSE,
-    ) = GyroMath.Config(sens, inertia, glideMs, linear, routes)
+        accel: List<GyroCurve> = List(3) { GyroCurve.OFF },
+    ) = GyroMath.Config(
+        sens, inertia, glideMs, linear, routes,
+        Array(3) { accel[it].flat() }, BooleanArray(3) { !accel[it].isOff && accel[it].axisSpeed },
+        BooleanArray(3) { !accel[it].isOff && accel[it].smooth },
+    )
 
     /** [n] steps of motion from [rnd] around [base] deg/s (± [spread]) over [dt] with [axes]. */
     private fun walk(rnd: Random, n: Int, base: FloatArray, spread: Float, dt: Float, axes: (Int) -> Int = { ALL }): List<Step> =
@@ -140,6 +147,45 @@ class GyroMathVectorsTest {
                 Step(r(), r(), r(), (1 + rnd.nextInt(4)) / 1000f, rnd.nextInt(8))
             }
         }
+        val strong = GyroCurve.STRONG
+        val wide = GyroCurve(listOf(CurvePoint(5f, 0.6f), CurvePoint(40.3f, 1f), CurvePoint(90f, 1.75f), CurvePoint(180f, 2.4f), CurvePoint(400f, 4f), CurvePoint(800f, 4.5f)))
+        add("accel-whole-phone", cfg(accel = List(3) { strong }), 0f, 0f, 17) { rnd ->
+            walk(rnd, 12, floatArrayOf(2f, -3f, 4f), 6f, 0.002f) + walk(rnd, 12, floatArrayOf(60f, -80f, 150f), 120f, 0.002f) +
+                walk(rnd, 12, floatArrayOf(-300f, 200f, -500f), 200f, 0.001f)
+        }
+        add("accel-axis-speed-per-axis", cfg(
+            sens = floatArrayOf(12f, 16f, 20f),
+            accel = listOf(GyroCurve.OFF, wide.copy(axisSpeed = true), GyroCurve.LIGHT.copy(axisSpeed = true)),
+            routes = MOUSE + listOf(Route(0, Route.WHEEL, 1f), Route(1, Route.PAD + 1, 0.5f)),
+        ), 0f, 0f, 18) { rnd ->
+            List(40) {
+                fun r() = (rnd.nextFloat() * 2f - 1f) * (if (rnd.nextInt(3) == 0) 600f else 40f)
+                Step(r(), r(), r(), (1 + rnd.nextInt(3)) / 1000f, ALL)
+            }
+        }
+        add("accel-glide-keeps-gain", cfg(
+            inertia = booleanArrayOf(true, true, true), glideMs = floatArrayOf(300f, 300f, 300f),
+            linear = booleanArrayOf(false, true, false), accel = List(3) { wide },
+        ), 0f, 0f, 19) { rnd ->
+            val masks = intArrayOf(ALL, ALL, ALL, 0, 0, 0, ALL, 0b100, 0b100, 0, 0)
+            walk(rnd, 33, floatArrayOf(40f, -120f, 250f), 60f, 0.002f) { i -> masks[i / 3] }
+        }
+        add("accel-filters-and-sticks", cfg(
+            sens = floatArrayOf(16f, 10f, 22f), accel = listOf(strong, wide, strong.copy(axisSpeed = true)),
+            routes = listOf(Route(2, Route.MOUSE_X, 1f), Route(1, Route.MOUSE_Y, -1f), Route(2, Route.PAD + 2, 1f), Route(0, Route.PAD + 4, 1f)),
+        ), 1.5f, 5f, 20) { rnd ->
+            walk(rnd, 15, floatArrayOf(0.5f, 1f, -1.5f), 2f, 0.004f) + walk(rnd, 15, floatArrayOf(30f, -90f, 200f), 150f, 0.002f)
+        }
+        add("accel-smooth", cfg(
+            sens = floatArrayOf(16f, 12f, 20f),
+            accel = listOf(wide.copy(smooth = true), strong.copy(smooth = true, axisSpeed = true), GyroCurve(listOf(CurvePoint(30f, 2f), CurvePoint(60f, 0.8f), CurvePoint(120f, 1.6f)), smooth = true)),
+            routes = MOUSE + listOf(Route(0, Route.WHEEL, 1f), Route(0, Route.PAD + 0, 1f)),
+        ), 0f, 0f, 21) { rnd ->
+            List(48) {
+                fun r() = (rnd.nextFloat() * 2f - 1f) * (if (rnd.nextInt(3) == 0) 700f else 60f)
+                Step(r(), r(), r(), (1 + rnd.nextInt(3)) / 1000f, ALL)
+            }
+        }
         return list
     }
 
@@ -163,6 +209,10 @@ class GyroMathVectorsTest {
             sb.append(", \"inertia\": ").append(cfg.inertia.joinToString(", ", "[", "]"))
             sb.append(", \"glideMs\": ").append(floats(cfg.glideMs)).append(", \"glideMsBits\": ").append(bits(cfg.glideMs))
             sb.append(", \"linear\": ").append(cfg.linear.joinToString(", ", "[", "]"))
+            sb.append(", \"curves\": ").append(cfg.curves.joinToString(", ", "[", "]") { floats(it) })
+            sb.append(", \"curvesBits\": ").append(cfg.curves.joinToString(", ", "[", "]") { bits(it) })
+            sb.append(", \"axisSpeed\": ").append(cfg.axisSpeed.joinToString(", ", "[", "]"))
+            sb.append(", \"smooth\": ").append(cfg.smooth.joinToString(", ", "[", "]"))
             sb.append(", \"routes\": [")
             sb.append(cfg.routes.joinToString(", ") { r ->
                 "{\"axis\": ${r.axis}, \"target\": ${r.target}, \"scale\": ${f(r.scale)}, \"scaleBits\": ${r.scale.toRawBits()}}"
@@ -220,6 +270,7 @@ class GyroMathVectorsTest {
                 Route(2, Route.MOUSE_X, 1f), Route(1, Route.MOUSE_Y, -0.5f), Route(0, Route.WHEEL, 2f),
                 Route(0, Route.HWHEEL, 1f), Route(1, Route.PAD + 3, 1.5f),
             ),
+            accel = listOf(GyroCurve.STRONG, GyroCurve.OFF, GyroCurve.LIGHT.copy(axisSpeed = true, smooth = true)),
         )
         feed.setConfig(cfg, 1.5f, 4f)
         val offset = -123_456_789L
@@ -254,6 +305,13 @@ class GyroMathVectorsTest {
         sb.append((0 until b.getU8(c + 25)).joinToString(", ") {
             val o = c + PcGyroFeed.ROUTES_OFFSET + it * PcGyroFeed.ROUTE_SIZE
             "{\"axis\": ${b.getU8(o)}, \"target\": ${b.getU8(o + 1)}, \"scale\": ${f(f32(o + 2))}}"
+        })
+        sb.append("], \"curves\": [")
+        sb.append((0 until 3).joinToString(", ") { a ->
+            val o = c + PcGyroFeed.CURVES_OFFSET + a * PcGyroFeed.CURVE_SIZE
+            val head = b.getU8(o)
+            val pts = (0 until (head and 0x0F)).joinToString(", ") { j -> "${b.getU16(o + 1 + j * 4)}, ${b.getU16(o + 3 + j * 4)}" }
+            "{\"axisSpeed\": ${head and PcGyroFeed.CURVE_AXIS_SPEED != 0}, \"smooth\": ${head and PcGyroFeed.CURVE_SMOOTH != 0}, \"q\": [$pts]}"
         })
         sb.append("]}\n")
         sb.append(" }")

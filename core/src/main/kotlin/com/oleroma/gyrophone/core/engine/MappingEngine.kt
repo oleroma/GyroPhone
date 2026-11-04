@@ -44,6 +44,9 @@ import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.model.ButtonGyro
+import com.oleroma.gyrophone.core.model.HeldButton
+import com.oleroma.gyrophone.core.model.TouchpadSettings
+import com.oleroma.gyrophone.core.model.PhysicalDevice
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
@@ -130,6 +133,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     @Volatile
     private var gyroNow: GyroSettings = ws.gyro
 
+    /** Physical keys and buttons with settings of their own while held ([physHeldChanged]), and those held now. */
+    private var heldPhys: List<HeldButton> = heldOf(ws)
+    private val physDown = HashSet<String>()
+
+    private fun heldOf(w: Workspace): List<HeldButton> = w.heldButtons.filter { b -> b.gyro.any { it.any } }
+
     /** Sets [gyroNow] for the settings in effect and the buttons held. */
     private fun updateGyroNow() {
         val sets = buildList {
@@ -138,13 +147,28 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             for (o in layerOverrides) if (o != layerSet && o != MappingSet.BASE) add(o)
         }
         var held: ButtonGyro? = null
-        if (ws.touchControls.any { it.gyro.isNotEmpty() }) for (id in pressOrder) {
-            val c = ws.touchControls.firstOrNull { it.id == id } ?: continue
-            if (c.gyro.isEmpty()) continue
-            val g = c.gyroIn(sets)
-            if (g.any) held = g
+        var heldTouch: ButtonGyro? = null
+        if (pressOrder.isNotEmpty() && (heldPhys.isNotEmpty() || ws.touchControls.any { it.gyro.isNotEmpty() })) for (id in pressOrder) {
+            val g = if (id.startsWith(PHYS)) {
+                heldPhys.firstOrNull { PHYS + it.id == id }?.gyroIn(sets) ?: continue
+            } else {
+                val c = ws.touchControls.firstOrNull { it.id == id } ?: continue
+                if (c.gyro.isEmpty()) continue
+                c.gyroIn(sets)
+            }
+            if (g.anyGyro) held = g
+            if (g.anyTouch) heldTouch = g
         }
         gyroNow = held?.over(eff.gyro) ?: eff.gyro
+        pcHeldGyro = if (heldPhys.isEmpty() || ws.pads.isEmpty()) emptyList() else heldPhys.mapNotNull { b ->
+            if (!b.id.startsWith(PhysicalDevice.CONTROLLER.name + ":")) return@mapNotNull null
+            val g = b.gyroIn(sets).takeIf { it.anyGyro } ?: return@mapNotNull null
+            val place = b.sources.firstNotNullOfOrNull { src -> pcPlace(src).takeIf { it >= 0 } } ?: return@mapNotNull null
+            // Over the settings in effect with the phone's own held button, if any: the PC's wins while held.
+            place to g.over(gyroNow)
+        }.distinctBy { it.first }
+        val t = heldTouch?.over(eff.touchpad) ?: eff.touchpad
+        if (t != touchpad.settings) touchpad.settings = t
         // Every change of the buttons held or the mappings in use comes through here.
         routesCache = null
     }
@@ -465,6 +489,17 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     @Volatile var pcGyroButtons: IntArray = IntArray(0)
         private set
 
+    /**
+     * "Use PC controller for gyro ratchet": the controller buttons (PAD_ place) with gyro settings of
+     * their own while held ([HeldButton]), each with the gyro settings in effect while it is held.
+     * The PC uses the last pressed of them that is held, over what the phone sends.
+     */
+    @Volatile var pcHeldGyro: List<Pair<Int, GyroSettings>> = emptyList()
+        private set
+
+    /** The touchpad's settings in effect now, a held button's own over them (tests). */
+    internal val touchpadSettingsNow: TouchpadSettings get() = touchpad.settings
+
     /** Goes up each time a Toggle gyro press stops counting (the workspace or its gyro changed): a PC controller's toggle resets too. */
     @Volatile var toggleEpoch: Int = 0
         private set
@@ -616,6 +651,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         // The touchpad mappings it does not set come from the Defaults.
         val w = loaded.copy(mappings = Bindings.upgradeSwipes(Inheritance.workspace(loaded, profile.defaults)))
         ws = w
+        heldPhys = heldOf(w)
+        for (id in physDown) pressOrder.remove(PHYS + id)
+        physDown.clear()
         axisStick.fill(null); axisStickRx.fill(null); axisTrigger.fill(null)
         for ((id, axes) in PhysicalSticks.sticks) w.stickTunings[id]?.let { axisStick[axes.first] = it; axisStick[axes.second] = it }
         for ((id, axes) in PhysicalSticks.sticksRx) w.stickTunings[id]?.let { axisStickRx[axes.first] = it; axisStickRx[axes.second] = it }
@@ -691,7 +729,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun releaseHeld() {
         for (d in deviceList) d.clear()
         anyDevice.clear()
-        touches.clear(); pressOrder.clear(); setTouchHeld.clear(); touchSticks.clear()
+        touches.clear(); pressOrder.clear(); physDown.clear(); setTouchHeld.clear(); touchSticks.clear()
         updateGyroNow()
         for (s in surfaceList) s.reset()
         for (a in areas) a.clear()
@@ -1310,6 +1348,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val k = kinds[place] ?: 0
             kinds[place] = if (kind == PC_GYRO_TOGGLE) k or kind else k xor kind
         }
+        for (b in heldPhys) {
+            if (!b.id.startsWith(PhysicalDevice.CONTROLLER.name + ":") || b.gyro.none { it.anyGyro }) continue
+            val place = b.sources.firstNotNullOfOrNull { src -> pcPlace(src).takeIf { it >= 0 } } ?: continue
+            kinds[place] = (kinds[place] ?: 0) or PC_GYRO_SETTINGS
+        }
         return kinds.map { (place, kind) -> (place shl 8) or kind }.toIntArray()
     }
 
@@ -1927,6 +1970,31 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (eventsAfter.isNotEmpty()) for (t in eventsAfter) if (t !in eventsBefore) onPress(t)
         if (eventsBefore.isNotEmpty()) for (t in eventsBefore) if (t is OutputTarget.Layer && t !in eventsAfter) layerReleased(t)
         if (anyCarried) pruneCarried()
+        if (heldPhys.isNotEmpty()) physHeldChanged()
+    }
+
+    /**
+     * Physical keys and buttons with settings of their own while held ([Workspace.heldButtons]),
+     * and which of them are held: one going down or up joins or leaves [pressOrder] (as
+     * [PHYS] + its id), so the last pressed of them and the touch buttons wins.
+     */
+
+    private fun physHeldChanged() {
+        var changed = false
+        for (b in heldPhys) {
+            var on = false
+            for (src in b.sources) {
+                for (i in deviceList.indices) {
+                    val d = deviceList[i]
+                    if (d.pad >= 0 && value(src, d) >= PRESS_THRESHOLD) { on = true; break }
+                }
+                if (on) break
+            }
+            if (on == (b.id in physDown)) continue
+            changed = true
+            if (on) { physDown.add(b.id); pressOrder.add(PHYS + b.id) } else { physDown.remove(b.id); pressOrder.remove(PHYS + b.id) }
+        }
+        if (changed) updateGyroNow()
     }
 
     /** Resolves due holds and tap releases outside an input change (snapshot, touchpad input). */
@@ -2407,6 +2475,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val e = WorkspaceDefaults.layered(ws, layerSet, layerOverrides)
         eff = e
         touchpad.settings = e.touchpad
+        updateGyroNow()
         touchpad.doubleTapNanos = e.doubleTapMs.coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L
         touchpad.longPressNanos = e.longPressMs.coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
         for (c in ws.touchControls) {
@@ -2608,6 +2677,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     companion object {
         const val PRESS_THRESHOLD = 0.5f
 
+        /** [pressOrder]'s prefix of a physical key or button ([HeldButton]). */
+        private const val PHYS = "phys:"
+
         /** [moveTrack]: inertia carries the Moves on. */
         const val MOVES_GLIDING = 4
         private val NO_OPTIONS = MapOptions()
@@ -2671,6 +2743,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
         /** Every gyro axis's [gyroBit]. */
         const val ALL_GYRO = 7
+
+        /** A [pcGyroButtons] kind bit: the button has gyro settings of its own while held ([pcHeldGyro]). */
+        const val PC_GYRO_SETTINGS = 16
 
         /** A [pcGyroButtons] kind bit: the button toggles the gyro. */
         const val PC_GYRO_TOGGLE = 8

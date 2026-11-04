@@ -180,13 +180,14 @@ class PcGyroTest {
         assertEquals(2, t.getU8(last))
         assertEquals(1, t.getU8(last + 1))
         assertEquals(11.5f, f32(last + 2), 0f)
-        assertEquals(PcGyroFeed.TAIL_SIZE, last + PcGyroFeed.ROUTE_SIZE)
+        assertEquals(PcGyroFeed.CONFIG_OFFSET + PcGyroFeed.CURVES_OFFSET, last + PcGyroFeed.ROUTE_SIZE)
+        assertEquals(PcGyroFeed.TAIL_SIZE, PcGyroFeed.CONFIG_OFFSET + PcGyroFeed.CURVES_OFFSET + 3 * PcGyroFeed.CURVE_SIZE)
     }
 
     @Test
     fun stateGyroCarriesTheTail() {
-        assertEquals(210, PcGyroFeed.TAIL_SIZE)
-        assertEquals(280, Wire.STATE_GYRO_PLAIN)
+        assertEquals(285, PcGyroFeed.TAIL_SIZE)
+        assertEquals(355, Wire.STATE_GYRO_PLAIN)
         val feed = PcGyroFeed()
         repeat(5) { feed.add(3f, 2f, 1f, 0.001f, 5, 1000L * it) }
         val f = StateFrame()

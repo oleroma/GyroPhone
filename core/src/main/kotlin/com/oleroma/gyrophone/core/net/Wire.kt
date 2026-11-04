@@ -37,6 +37,8 @@ object Wire {
     const val STATE_GYRO_PLAIN = STATE_HIRES_PLAIN + PcGyroFeed.TAIL_SIZE
     /** PAD_GYRO: the controller buttons that ratchet or toggle the gyro ([PcGyroFeed.encodeButtons]). */
     const val PAD_GYRO_PLAIN = 4 + PcGyroFeed.MAX_BUTTONS * 2
+    /** PAD_GYRO_SET: u8 place, u8 0, then a config block ([PcGyroFeed.CONFIG_SIZE]). */
+    const val PAD_GYRO_SET_PLAIN = 2 + PcGyroFeed.CONFIG_SIZE
     const val PING_PLAIN = 8
     const val LINK_INFO_PLAIN = 22
     const val BYE_PLAIN = 4
@@ -130,6 +132,7 @@ object Wire {
         PacketType.STATE_HIRES -> STATE_HIRES_PLAIN
         PacketType.STATE_GYRO -> STATE_GYRO_PLAIN
         PacketType.PAD_GYRO -> PAD_GYRO_PLAIN
+        PacketType.PAD_GYRO_SET -> PAD_GYRO_SET_PLAIN
         PacketType.PING -> PING_PLAIN
         PacketType.LINK_INFO -> LINK_INFO_PLAIN
         PacketType.BYE -> BYE_PLAIN
@@ -171,6 +174,8 @@ object PacketType {
     const val STATE_GYRO = 0x26
     /** Sent once a second (and on change) to a host with [HostFlags.PC_GYRO]: the controller's gyro buttons. */
     const val PAD_GYRO = 0x27
+    /** With PAD_GYRO, per PC controller button with gyro settings of its own while held: those settings ([PcGyroFeed.encodeHeld]). */
+    const val PAD_GYRO_SET = 0x28
     const val BYE = 0x2F
     const val PONG = 0x30
     const val HOST_STATUS = 0x31

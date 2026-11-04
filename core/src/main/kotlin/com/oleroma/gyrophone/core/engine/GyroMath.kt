@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.core.engine
 
 import com.oleroma.gyrophone.core.hid.MouseState
 import com.oleroma.gyrophone.core.model.GamepadAxis
+import com.oleroma.gyrophone.core.model.GyroCurves
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.InertiaCurve
 import com.oleroma.gyrophone.core.model.InputSource
@@ -40,10 +41,19 @@ class GyroMath {
         val glideMs: FloatArray = FloatArray(3) { GyroSettings.DEFAULT_GLIDE_MS },
         val linear: BooleanArray = BooleanArray(3),
         val routes: List<Route> = emptyList(),
+        /**
+         * Per axis its acceleration ([GyroCurve.flat]: speeds and gains interleaved, on the wire's
+         * grid; empty = none) and whether the speed is the axis's own ([axisSpeed]) or the whole phone's.
+         */
+        val curves: Array<FloatArray> = Array(3) { FloatArray(0) },
+        val axisSpeed: BooleanArray = BooleanArray(3),
+        /** Per axis: its curve is smooth ([GyroCurve.smooth]) rather than straight lines. */
+        val smooth: BooleanArray = BooleanArray(3),
     ) {
         override fun equals(other: Any?): Boolean = other is Config &&
             sensitivity.contentEquals(other.sensitivity) && inertia.contentEquals(other.inertia) &&
-            glideMs.contentEquals(other.glideMs) && linear.contentEquals(other.linear) && routes == other.routes
+            glideMs.contentEquals(other.glideMs) && linear.contentEquals(other.linear) && routes == other.routes &&
+            curves.contentDeepEquals(other.curves) && axisSpeed.contentEquals(other.axisSpeed) && smooth.contentEquals(other.smooth)
 
         override fun hashCode(): Int = sensitivity.contentHashCode() * 31 + routes.hashCode()
 
@@ -77,6 +87,9 @@ class GyroMath {
                     FloatArray(3) { s.glideMsOf(AXES[it]) },
                     BooleanArray(3) { s.curveOf(AXES[it]) == InertiaCurve.LINEAR },
                     routes,
+                    Array(3) { s.accelOf(AXES[it]).flat() },
+                    BooleanArray(3) { s.accelOf(AXES[it]).let { c -> !c.isOff && c.axisSpeed } },
+                    BooleanArray(3) { s.accelOf(AXES[it]).let { c -> !c.isOff && c.smooth } },
                 )
             }
         }
@@ -121,6 +134,9 @@ class GyroMath {
     private val glideOut = FloatArray(3)
     private var lastAxes = 0
 
+    // Acceleration, per axis: the gain of this sample; an axis off keeps the one it had when it was last on, so a glide keeps its boost.
+    private val gain = floatArrayOf(1f, 1f, 1f)
+
     /** An axis glides, or one was on last sample (turning it off may start a glide): [step] wants every sample. */
     val coasting: Boolean get() = lastAxes != 0 || glideV[0] != 0f || glideV[1] != 0f || glideV[2] != 0f
 
@@ -134,6 +150,7 @@ class GyroMath {
      */
     fun step(yaw: Float, pitch: Float, roll: Float, dt: Float, c: Config, axes: Int, tightening: Float, smoothing: Float): Routed {
         coast(c, yaw, pitch, roll, axes, dt)
+        accelerate(c, yaw, pitch, roll, axes)
         var vx = 0f; var vy = 0f; var w = 0f; var hw = 0f
         val pad = routed.pad
         pad.fill(0f)
@@ -144,7 +161,7 @@ class GyroMath {
             val g = if (on) 0f else glideOut[r.axis]
             if (!on && (g == 0f || r.target >= Route.PAD)) continue
             val k = c.sensitivity[r.axis]
-            val v = if (on) when (r.axis) { 0 -> yaw; 1 -> pitch; else -> roll } else g
+            val v = (if (on) when (r.axis) { 0 -> yaw; 1 -> pitch; else -> roll } else g) * gain[r.axis]
             when (r.target) {
                 Route.MOUSE_X -> vx += v * k * r.scale
                 Route.MOUSE_Y -> vy += v * k * r.scale
@@ -201,6 +218,21 @@ class GyroMath {
         routed.dx = dx; routed.dy = dy
     }
 
+    /**
+     * Each axis's acceleration gain for this sample: an axis on takes its curve's gain at its own
+     * speed or the whole phone's ([Config.axisSpeed]); one off keeps its last.
+     */
+    private fun accelerate(c: Config, yaw: Float, pitch: Float, roll: Float, axes: Int) {
+        val whole = sqrt(yaw * yaw + pitch * pitch + roll * roll)
+        for (i in 0 until 3) {
+            if (axes and (1 shl i) == 0) continue
+            val curve = c.curves[i]
+            if (curve.isEmpty()) { gain[i] = 1f; continue }
+            val speed = if (c.axisSpeed[i]) abs(when (i) { 0 -> yaw; 1 -> pitch; else -> roll }) else whole
+            gain[i] = GyroCurves.gain(curve, speed, c.smooth[i])
+        }
+    }
+
     /** The mean of [b], summed in double like the C# side. */
     private fun mean(b: FloatArray): Float {
         var s = 0.0
@@ -212,6 +244,7 @@ class GyroMath {
         remX = 0f; remY = 0f; remWheel = 0f; remHWheel = 0f
         bufX.fill(0f); bufY.fill(0f); bufIndex = 0
         speed.fill(0f); glideV.fill(0f); glideOut.fill(0f); lastAxes = 0
+        gain.fill(1f)
     }
 
     /**

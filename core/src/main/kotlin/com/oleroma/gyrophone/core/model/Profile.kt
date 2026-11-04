@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 @Serializable
 /**
@@ -600,10 +601,59 @@ data class ButtonGyro(
     val yawGlide: AxisGlide? = null,
     val pitchGlide: AxisGlide? = null,
     val rollGlide: AxisGlide? = null,
+    /** Acceleration while held, for every axis without its own ([GyroCurve.OFF]: none); null = the workspace's. */
+    val accel: GyroCurve? = null,
+    /** Yaw's, pitch's and roll's own acceleration while held; null = [accel], else the workspace's. */
+    val yawAccel: GyroCurve? = null,
+    val pitchAccel: GyroCurve? = null,
+    val rollAccel: GyroCurve? = null,
+    /** The touchpad cursor's sensitivity and acceleration while held, over every finger count's; null = the workspace's. */
+    val touchSensitivity: Float? = null,
+    val touchAcceleration: Float? = null,
 ) {
     /** It sets something. */
-    val any: Boolean get() = sensitivity != null || yaw != null || pitch != null || roll != null ||
-        yawMode != null || pitchMode != null || rollMode != null || yawGlide != null || pitchGlide != null || rollGlide != null
+    val any: Boolean get() = anyGyro || anyTouch
+
+    /** It sets something of the gyro's. */
+    val anyGyro: Boolean get() = sensitivity != null || yaw != null || pitch != null || roll != null ||
+        yawMode != null || pitchMode != null || rollMode != null || yawGlide != null || pitchGlide != null || rollGlide != null ||
+        accel != null || yawAccel != null || pitchAccel != null || rollAccel != null
+
+    /** It sets something of the touchpad's. */
+    val anyTouch: Boolean get() = touchSensitivity != null || touchAcceleration != null
+
+    /** Axis [a]'s own acceleration. */
+    fun ownAccel(a: MotionAxis): GyroCurve? = when (a) {
+        MotionAxis.YAW -> yawAccel
+        MotionAxis.PITCH -> pitchAccel
+        MotionAxis.ROLL -> rollAccel
+        MotionAxis.NONE -> null
+    }
+
+    /** Copy with axis [a]'s own acceleration [c]. */
+    fun withAccel(a: MotionAxis, c: GyroCurve?): ButtonGyro = when (a) {
+        MotionAxis.YAW -> copy(yawAccel = c)
+        MotionAxis.PITCH -> copy(pitchAccel = c)
+        MotionAxis.ROLL -> copy(rollAccel = c)
+        MotionAxis.NONE -> this
+    }
+
+    /** Axis [a]'s acceleration with these over [g]: its own, these' shared, then [g]'s. */
+    fun accelOf(a: MotionAxis, g: GyroSettings): GyroCurve = ownAccel(a) ?: accel ?: g.accelOf(a)
+
+    /** [t] with the touchpad cursor's sensitivity and acceleration of these over it, every finger count's own included. */
+    fun over(t: TouchpadSettings): TouchpadSettings {
+        if (!anyTouch) return t
+        val s = touchSensitivity
+        val a = touchAcceleration
+        return t.copy(
+            sensitivity = s ?: t.sensitivity,
+            acceleration = a ?: t.acceleration,
+            moves = t.moves?.map { m ->
+                m.copy(sensitivity = if (s != null) null else m.sensitivity, acceleration = if (a != null) null else m.acceleration)
+            }?.takeUnless { l -> l.all { it.isEmpty } },
+        )
+    }
 
     /** Axis [a]'s own inertia, glide and curve. */
     fun ownGlide(a: MotionAxis): AxisGlide = when (a) {
@@ -661,18 +711,132 @@ data class ButtonGyro(
         set, o.sensitivity ?: sensitivity, o.yaw ?: yaw, o.pitch ?: pitch, o.roll ?: roll,
         o.yawMode ?: yawMode, o.pitchMode ?: pitchMode, o.rollMode ?: rollMode,
         AxisGlide.merge(yawGlide, o.yawGlide), AxisGlide.merge(pitchGlide, o.pitchGlide), AxisGlide.merge(rollGlide, o.rollGlide),
+        o.accel ?: accel, o.yawAccel ?: yawAccel, o.pitchAccel ?: pitchAccel, o.rollAccel ?: rollAccel,
+        o.touchSensitivity ?: touchSensitivity, o.touchAcceleration ?: touchAcceleration,
     )
 
     /** Axis [a]'s sensitivity with these over [g]: its own, these' shared, then [g]'s. */
     fun sensitivityOf(a: MotionAxis, g: GyroSettings): Float = own(a) ?: sensitivity ?: g.sensitivityOf(a)
 
     /** [g] with these over it. */
-    fun over(g: GyroSettings): GyroSettings = if (!any) g else g.copy(
+    fun over(g: GyroSettings): GyroSettings = if (!anyGyro) g else g.copy(
         yawSensitivity = sensitivityOf(MotionAxis.YAW, g), pitchSensitivity = sensitivityOf(MotionAxis.PITCH, g),
         rollSensitivity = sensitivityOf(MotionAxis.ROLL, g),
         yawMode = yawMode ?: g.yawMode, pitchMode = pitchMode ?: g.pitchMode, rollMode = rollMode ?: g.rollMode,
+        accel = accel ?: g.accel,
+        yawAccel = accelOf(MotionAxis.YAW, g), pitchAccel = accelOf(MotionAxis.PITCH, g), rollAccel = accelOf(MotionAxis.ROLL, g),
     ).let { r ->
         listOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL).fold(r) { acc, a -> acc.withGlide(a, g.ownGlide(a).under(ownGlide(a))) }
+    }
+}
+
+/**
+ * Gyro acceleration: how sensitivity grows with turning speed. Each point is a turning speed
+ * (deg/s) and a gain the sensitivity is multiplied by there; between points the gain changes in a
+ * straight line, below the first and past the last it stays at theirs. No points = no
+ * acceleration (gain 1), also over a parent's curve. [axisSpeed]: the speed is the axis's own
+ * turning speed; off, the whole phone's (all three axes together), so a diagonal flick speeds up
+ * both directions alike.
+ */
+@Serializable
+data class GyroCurve(
+    val points: List<CurvePoint> = emptyList(),
+    val axisSpeed: Boolean = false,
+    /** Through the points in a smooth bend (monotone, no overshoot, flat at both ends) instead of straight lines. */
+    val smooth: Boolean = false,
+    /** How far the editor's graph reaches (deg/s); 0 = to fit the points. Only for showing. */
+    val range: Float = 0f,
+) {
+    val isOff: Boolean get() = points.isEmpty()
+
+    /** The points sorted, at most [MAX_POINTS], each on the wire's grid ([CurvePoint.quantized]), speeds at least [MIN_GAP] apart. */
+    fun tidy(): GyroCurve {
+        val out = ArrayList<CurvePoint>()
+        for (p in points.map { it.quantized() }.sortedBy { it.speed }) {
+            if (out.size == MAX_POINTS) break
+            if (out.isNotEmpty() && p.speed - out.last().speed < MIN_GAP) continue
+            out.add(p)
+        }
+        return copy(points = out)
+    }
+
+    /** The gain at [speed] deg/s. */
+    fun gainAt(speed: Float): Float = GyroCurves.gain(flat(), speed, smooth)
+
+    /** Speeds and gains, interleaved, as [com.oleroma.gyrophone.core.engine.GyroMath] takes them. */
+    fun flat(): FloatArray {
+        val t = tidy().points
+        return FloatArray(t.size * 2) { if (it % 2 == 0) t[it / 2].speed else t[it / 2].gain }
+    }
+
+    companion object {
+        const val MAX_POINTS = 6
+        const val MIN_GAP = 1f
+        const val MAX_SPEED = 2000f
+        const val MIN_GAIN = 0.1f
+        const val MAX_GAIN = 10f
+        const val MIN_RANGE = 100f
+
+        /** A curve that is off: over a parent's, it turns that off. */
+        val OFF = GyroCurve()
+        val LIGHT = GyroCurve(listOf(CurvePoint(20f, 1f), CurvePoint(150f, 1.5f)))
+        val STRONG = GyroCurve(listOf(CurvePoint(10f, 1f), CurvePoint(100f, 2f), CurvePoint(250f, 3f)))
+    }
+}
+
+/** One point of a [GyroCurve]: at [speed] deg/s the sensitivity times [gain]. */
+@Serializable
+data class CurvePoint(val speed: Float, val gain: Float) {
+    /** On the wire's grid: speed in 0.1 deg/s, gain in 0.001, both clamped to what the wire carries. */
+    fun quantized(): CurvePoint = CurvePoint(
+        GyroCurves.speedQ(speed) / 10f,
+        GyroCurves.gainQ(gain) / 1000f,
+    )
+}
+
+object GyroCurves {
+    fun speedQ(v: Float): Int = if (v.isNaN()) 0 else (v.coerceIn(0f, GyroCurve.MAX_SPEED) * 10f).roundToInt()
+    fun gainQ(v: Float): Int = if (v.isNaN()) 1000 else (v.coerceIn(GyroCurve.MIN_GAIN, GyroCurve.MAX_GAIN) * 1000f).roundToInt()
+
+    /**
+     * The gain of curve [c] (speeds and gains interleaved, speeds rising) at [speed]: 1 with no
+     * points; flat before the first and after the last; between them straight, or with [smooth] a
+     * monotone cubic (Fritsch–Butland slopes, zero at both ends so it meets the flat parts without
+     * a kink). The PC runs the same (companion GyroMath.Gain): Float math in the same order.
+     */
+    fun gain(c: FloatArray, speed: Float, smooth: Boolean): Float {
+        val n = c.size / 2
+        if (n == 0) return 1f
+        if (speed <= c[0]) return c[1]
+        for (j in 1 until n) {
+            val s1 = c[2 * j]
+            if (speed <= s1) {
+                val s0 = c[2 * j - 2]
+                val g0 = c[2 * j - 1]
+                val g1 = c[2 * j + 1]
+                val h = s1 - s0
+                val t = (speed - s0) / h
+                if (!smooth) return g0 + (g1 - g0) * t
+                val m0 = slope(c, n, j - 1)
+                val m1 = slope(c, n, j)
+                val u = 1f - t
+                val h00 = (1f + 2f * t) * u * u
+                val h10 = t * u * u
+                val h01 = t * t * (3f - 2f * t)
+                val h11 = t * t * (t - 1f)
+                return h00 * g0 + h10 * h * m0 + h01 * g1 + h11 * h * m1
+            }
+        }
+        return c[2 * n - 1]
+    }
+
+    /** The smooth curve's slope at point [k] of [n]: 0 at the ends and where the gain turns, else the harmonic mean of the two sides. */
+    private fun slope(c: FloatArray, n: Int, k: Int): Float {
+        if (k == 0 || k == n - 1) return 0f
+        val d0 = (c[2 * k + 1] - c[2 * k - 1]) / (c[2 * k] - c[2 * k - 2])
+        val d1 = (c[2 * k + 3] - c[2 * k + 1]) / (c[2 * k + 2] - c[2 * k])
+        if (d0 * d1 <= 0f) return 0f
+        return 2f * d0 * d1 / (d0 + d1)
     }
 }
 
@@ -779,7 +943,32 @@ data class GyroSettings(
     val yawCurve: InertiaCurve? = null,
     val pitchCurve: InertiaCurve? = null,
     val rollCurve: InertiaCurve? = null,
+    /** Acceleration ([GyroCurve]) of every axis without its own; null = none. */
+    val accel: GyroCurve? = null,
+    /** Yaw's, pitch's and roll's own acceleration; null = [accel]. */
+    val yawAccel: GyroCurve? = null,
+    val pitchAccel: GyroCurve? = null,
+    val rollAccel: GyroCurve? = null,
 ) {
+    /** Axis [a]'s own acceleration, null when it follows [accel]. */
+    fun ownAccel(a: MotionAxis): GyroCurve? = when (a) {
+        MotionAxis.YAW -> yawAccel
+        MotionAxis.PITCH -> pitchAccel
+        MotionAxis.ROLL -> rollAccel
+        MotionAxis.NONE -> null
+    }
+
+    /** Axis [a]'s acceleration in effect ([GyroCurve.OFF] for none). */
+    fun accelOf(a: MotionAxis): GyroCurve = ownAccel(a) ?: accel ?: GyroCurve.OFF
+
+    /** Copy with axis [a]'s own acceleration [c] (null: it follows [accel]). */
+    fun withAccel(a: MotionAxis, c: GyroCurve?): GyroSettings = when (a) {
+        MotionAxis.YAW -> copy(yawAccel = c)
+        MotionAxis.PITCH -> copy(pitchAccel = c)
+        MotionAxis.ROLL -> copy(rollAccel = c)
+        MotionAxis.NONE -> this
+    }
+
     /** Axis [a]'s own inertia, glide and curve ([AxisGlide]: null = the shared one). */
     fun ownGlide(a: MotionAxis): AxisGlide = when (a) {
         MotionAxis.YAW -> AxisGlide(yawInertia, yawGlideMs, yawCurve)
@@ -867,6 +1056,14 @@ data class GyroSettings(
             MotionAxis.YAW -> "yawSensitivity"
             MotionAxis.PITCH -> "pitchSensitivity"
             MotionAxis.ROLL -> "rollSensitivity"
+            MotionAxis.NONE -> null
+        }
+
+        /** The property of axis [a]'s own acceleration ([WorkspaceDefaults.gyroKey]). */
+        fun accelProp(a: MotionAxis): String? = when (a) {
+            MotionAxis.YAW -> "yawAccel"
+            MotionAxis.PITCH -> "pitchAccel"
+            MotionAxis.ROLL -> "rollAccel"
             MotionAxis.NONE -> null
         }
     }

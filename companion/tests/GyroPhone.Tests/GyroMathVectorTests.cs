@@ -44,6 +44,18 @@ public class GyroMathVectorTests
         Bools(c, "linear").CopyTo(cfg.Linear, 0);
         foreach (var r in c.GetProperty("routes").EnumerateArray())
             cfg.Routes.Add(new GyroMath.Route(r.GetProperty("axis").GetInt32(), r.GetProperty("target").GetInt32(), F(r, "scale")));
+        if (c.TryGetProperty("curvesBits", out var curves))
+        {
+            var axisSpeed = Bools(c, "axisSpeed");
+            var smooth = c.TryGetProperty("smooth", out _) ? Bools(c, "smooth") : new bool[3];
+            int a = 0;
+            foreach (var curve in curves.EnumerateArray())
+            {
+                var flat = curve.EnumerateArray().Select(v => BitConverter.Int32BitsToSingle(v.GetInt32())).ToArray();
+                cfg.SetCurve(a, flat, axisSpeed[a], smooth[a]);
+                a++;
+            }
+        }
         return cfg;
     }
 
@@ -152,6 +164,23 @@ public class GyroMathVectorTests
                     var routes = c.GetProperty("routes").EnumerateArray()
                         .Select(r => new GyroMath.Route(r.GetProperty("axis").GetInt32(), r.GetProperty("target").GetInt32(), F(r, "scale")));
                     Assert.Equal(routes, t.Config.Routes);
+                    if (c.TryGetProperty("curves", out var curves))
+                    {
+                        int a = 0;
+                        foreach (var curve in curves.EnumerateArray())
+                        {
+                            var q = curve.GetProperty("q").EnumerateArray().Select(v => v.GetInt32()).ToArray();
+                            Assert.Equal(q.Length / 2, t.Config.CurvePoints[a]);
+                            Assert.Equal(curve.GetProperty("axisSpeed").GetBoolean(), t.Config.AxisSpeed[a]);
+                            if (curve.TryGetProperty("smooth", out var sm)) Assert.Equal(sm.GetBoolean(), t.Config.Smooth[a]);
+                            for (int j = 0; j < q.Length / 2; j++)
+                            {
+                                Assert.Equal(q[2 * j] / 10f, t.Config.Curves[a][2 * j]);
+                                Assert.Equal(q[2 * j + 1] / 1000f, t.Config.Curves[a][2 * j + 1]);
+                            }
+                            a++;
+                        }
+                    }
                     break;
             }
         }

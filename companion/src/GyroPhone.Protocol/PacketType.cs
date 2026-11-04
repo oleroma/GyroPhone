@@ -29,6 +29,8 @@ public static class PacketType
     public const byte StateGyro = 0x26;
     /// <summary>The phone's controller buttons that ratchet or toggle the gyro, for a controller plugged into the host.</summary>
     public const byte PadGyro = 0x27;
+    /// <summary>With PAD_GYRO: one controller button's gyro settings while held (<see cref="PadGyroConfig.DecodeHeld"/>).</summary>
+    public const byte PadGyroSet = 0x28;
     public const byte Bye = 0x2F;
     public const byte Pong = 0x30;
     public const byte HostStatus = 0x31;
@@ -69,6 +71,7 @@ public static class PacketType
         StateHires => Wire.StateHiresPlain,
         StateGyro => Wire.StateGyroPlain,
         PadGyro => Wire.PadGyroPlain,
+        PadGyroSet => Wire.PadGyroSetPlain,
         Ping => Wire.PingPlain,
         LinkInfo => Wire.LinkInfoPlain,
         Bye => Wire.ByePlain,

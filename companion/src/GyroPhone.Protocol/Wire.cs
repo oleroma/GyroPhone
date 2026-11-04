@@ -10,7 +10,7 @@ public static class Wire
     public const int HelloMac = 16;
     /// <summary>
     /// The largest datagram either side sends or takes. 512 since PC gyro mode: a STATE_GYRO is
-    /// 12 + 280 + 16 = 308 bytes. Every other packet still fits in 256.
+    /// 12 + 355 + 16 = 383 bytes. Every other packet still fits in 256.
     /// </summary>
     public const int MaxDatagram = 512;
 
@@ -39,6 +39,8 @@ public static class Wire
     public const int StateGyroPlain = StateHiresPlain + PcGyroTail.Size;
     /// <summary>PAD_GYRO: u8 flags, u8 toggle epoch, u8 count, u8 0, 18 × (u8 place, u8 kind).</summary>
     public const int PadGyroPlain = 4 + PadGyroConfig.MaxButtons * 2;
+    /// <summary>PAD_GYRO_SET: u8 place, u8 0, a gyro config block.</summary>
+    public const int PadGyroSetPlain = 2 + PcGyroTail.ConfigSize;
     public const int PingPlain = 8;
     public const int LinkInfoPlain = 22;
     public const int ByePlain = 4;

@@ -353,6 +353,9 @@ public sealed class HostEngine
             case PacketType.PadGyro:
                 OnPadGyro(plain);
                 break;
+            case PacketType.PadGyroSet:
+                _padGyro.DecodeHeld(plain);
+                break;
             case PacketType.Ping:
                 SendPong(s, plain, nowUs);
                 break;

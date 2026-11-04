@@ -31,6 +31,7 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TriggerReset
 import com.oleroma.gyrophone.core.model.GyroMode
+import com.oleroma.gyrophone.core.engine.GyroMath
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.GyroSpace
 import com.oleroma.gyrophone.core.model.HapticFeel
@@ -66,6 +67,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.sqrt
 
 /** A game controller attached to the phone (e.g. a clip-on controller). */
 data class AttachedController(
@@ -86,6 +88,8 @@ data class AttachedController(
  * GamepadService; the UI reads its state flows.
  */
 class GamepadRuntime(context: Context) {
+    // Acceleration graphs on screen ([watchAccel]); first, as the gyro's start check reads it.
+    private val accelWatchers = java.util.concurrent.atomic.AtomicInteger()
     private val appContext = context.applicationContext
 
     val store = ProfileStore(appContext)
@@ -1055,7 +1059,8 @@ class GamepadRuntime(context: Context) {
     private fun updateGyro() {
         updateMotion()
         // The PC's phone overlay shows the phone turning even where the gyro moves nothing.
-        if (running && ((inputAllowed && (!gyroOff() || wifi.overlay.wanted)) || calibration != null)) {
+        // An acceleration graph on screen reads the gyro too (its live line), moving nothing while input isn't allowed.
+        if (running && ((inputAllowed && (!gyroOff() || wifi.overlay.wanted)) || calibration != null || accelWatchers.get() > 0)) {
             startGyro()
         } else if (running) {
             stopGyro()
@@ -1202,6 +1207,9 @@ class GamepadRuntime(context: Context) {
      * move ([allowed] and not "Gyro off"); otherwise [pc] is told it is still. The phone adds no
      * gyro motion itself: entering this, its gyro mouse motion and stick deflection are cleared once.
      */
+    private var pcHeldFor: List<Pair<Int, GyroSettings>>? = null
+    private var pcHeldRoutes: List<Mapping>? = null
+
     private fun pcGyroSample(pc: PcGyroFeed, allowed: Boolean, axes: Int, gx: Float, gy: Float, gz: Float, dt: Float, ts: Long, space: GyroSpace) {
         if (!pcGyroRouting) {
             pcGyroRouting = true
@@ -1215,7 +1223,15 @@ class GamepadRuntime(context: Context) {
             return
         }
         val m = gyroMouse.inSpace(gyroMouse.motion(gx, gy, gz), space, upNow)
-        val cfg = gyroMouse.config(gs, engine.gyroRoutes())
+        val routes = engine.gyroRoutes()
+        val cfg = gyroMouse.config(gs, routes)
+        // The PC controller's buttons with their own settings while held: made again only when they or the routes change.
+        val held = engine.pcHeldGyro
+        if (held !== pcHeldFor || routes !== pcHeldRoutes) {
+            pcHeldFor = held; pcHeldRoutes = routes
+            pc.held = held.map { (place, s) -> place to GyroMath.Config.of(s, routes) }
+            engine.onChange?.run()
+        }
         // Sensor time is elapsed realtime on current phones (the clock PING and the clock offset use);
         // a sensor on another clock gets the time it arrived instead.
         val now = WifiPump.phoneUs()
@@ -1228,6 +1244,34 @@ class GamepadRuntime(context: Context) {
         // Nothing else changes in the engine for a sample here, so wake the sender for it: the tail
         // holds only the last few samples, and a sender waiting for the keepalive would skip most.
         engine.onChange?.run()
+    }
+
+    // The acceleration graphs' live line: turning speed (deg/s, smoothed over ~40 ms) of the whole
+    // phone and of yaw, pitch and roll (by MotionAxis ordinal), in the workspace's gyro space.
+    private val liveRates = FloatArray(4)
+    @Volatile private var liveRatesNs = 0L
+
+    /** An acceleration graph is shown: the gyro thread keeps [liveGyroSpeed] up to date until [unwatchAccel]. */
+    fun watchAccel() { accelWatchers.incrementAndGet(); main.post { updateGyro() } }
+    fun unwatchAccel() { accelWatchers.decrementAndGet(); main.post { updateGyro() } }
+
+    /**
+     * The turning speed now (deg/s): the whole phone's ([axis] null) or one axis's, or null when no
+     * gyro sample came lately (the sensor is off, or nothing watches).
+     */
+    fun liveGyroSpeed(axis: MotionAxis?): Float? {
+        if (System.nanoTime() - liveRatesNs > 250_000_000L) return null
+        return liveRates[if (axis == null || axis == MotionAxis.NONE) 3 else axis.ordinal]
+    }
+
+    private fun liveSpeed(yaw: Float, pitch: Float, roll: Float, dt: Float, @Suppress("UNUSED_PARAMETER") ts: Long) {
+        val k = if (dt <= 0f) 1f else (dt / 0.04f).coerceAtMost(1f)
+        val r = liveRates
+        r[0] += k * (abs(yaw) - r[0])
+        r[1] += k * (abs(pitch) - r[1])
+        r[2] += k * (abs(roll) - r[2])
+        r[3] += k * (sqrt(yaw * yaw + pitch * pitch + roll * roll) - r[3])
+        liveRatesNs = System.nanoTime()
     }
 
     private fun onGyroSample(source: GyroSource, x: Float, y: Float, z: Float, ts: Long) {
@@ -1280,6 +1324,10 @@ class GamepadRuntime(context: Context) {
             // Not followed in local space: switched back, it starts again from gravity.
             gravityPose.reset()
             gravityPoseUsed = false
+        }
+        if (accelWatchers.get() > 0) {
+            val m = gyroMouse.inSpace(gyroMouse.motion(x - biasX, y - biasY, z - biasZ), space, upNow)
+            liveSpeed(m.yaw, m.pitch, m.roll, dt, ts)
         }
         if (pcMode) {
             pcGyroSample(pc, allowed, axes, x - biasX, y - biasY, z - biasZ, dt, ts, space)

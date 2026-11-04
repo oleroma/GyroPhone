@@ -44,13 +44,14 @@ object WorkspaceMappings {
                 keyTimings = p?.timings.orEmpty(),
                 stickTunings = if (p == null) emptyMap() else PhysicalSticks.sticks.keys.associateWith { p.stick(it) },
                 triggerTunings = if (p == null) emptyMap() else PhysicalSticks.triggers.keys.associateWith { p.trigger(it) },
+                heldButtons = p?.held.orEmpty(),
             )
         }
 
     /** [set] as it is stored: the device mappings stay in the presets only. */
     fun store(set: Profile): Profile = set.copy(
         workspaces = set.workspaces.map { w ->
-            w.copy(mappingProfileId = null, pads = emptyList(), keyboard = emptyList(), mouse = emptyList(), keyTimings = emptyList(), stickTunings = emptyMap(), triggerTunings = emptyMap())
+            w.copy(mappingProfileId = null, pads = emptyList(), keyboard = emptyList(), mouse = emptyList(), keyTimings = emptyList(), stickTunings = emptyMap(), triggerTunings = emptyMap(), heldButtons = emptyList())
         },
     )
 

@@ -1,6 +1,8 @@
 package com.oleroma.gyrophone.core.net
 
 import com.oleroma.gyrophone.core.engine.GyroMath
+import com.oleroma.gyrophone.core.model.GyroCurve
+import com.oleroma.gyrophone.core.model.GyroCurves
 import kotlin.math.roundToInt
 
 /**
@@ -121,6 +123,24 @@ class PcGyroFeed {
         }
     }
 
+    /**
+     * PC controller buttons ([com.oleroma.gyrophone.core.engine.MappingEngine.pcHeldGyro]) with gyro
+     * settings of their own while held: place and the config to use while it is the last pressed.
+     */
+    @Volatile var held: List<Pair<Int, GyroMath.Config>> = emptyList()
+
+    /**
+     * PAD_GYRO_SET plaintext for [held] entry [i] ([Wire.PAD_GYRO_SET_PLAIN]): u8 place, u8 0, then
+     * the config block as in STATE_GYRO (its tightening and smoothing unused: the tail's count).
+     */
+    fun encodeHeld(out: ByteArray, off: Int, i: Int): Int {
+        val (place, c) = held[i]
+        out.putU8(off, place)
+        out.putU8(off + 1, 0)
+        encodeConfig(out, off + 2, c, 0f, 0f)
+        return Wire.PAD_GYRO_SET_PLAIN
+    }
+
     /** A new session: no samples, seq and totals from zero. */
     fun reset() {
         synchronized(lock) {
@@ -162,13 +182,16 @@ class PcGyroFeed {
                 }
             }
             for (k in 0 until 3) out.putI64(off + TOTALS_OFFSET + k * 8, totals[k])
-            encodeConfig(out, off + CONFIG_OFFSET)
+            encodeConfig(out, off + CONFIG_OFFSET, cfg, tightening, smoothing)
         }
     }
 
-    /** The config block: f32 × 3 sensitivity, f32 × 3 glide ms, u8 glide bits, u8 route count, f32 tightening, f32 smoothing, [MAX_ROUTES] × (u8 axis, u8 target, f32 scale). */
-    private fun encodeConfig(out: ByteArray, off: Int) {
-        val c = cfg
+    /**
+     * The config block: f32 × 3 sensitivity, f32 × 3 glide ms, u8 glide bits, u8 route count, f32
+     * tightening, f32 smoothing, [MAX_ROUTES] × (u8 axis, u8 target, f32 scale), then 3 × the
+     * axis's acceleration curve ([CURVES_OFFSET]).
+     */
+    private fun encodeConfig(out: ByteArray, off: Int, c: GyroMath.Config, tightening: Float, smoothing: Float) {
         var glide = 0
         for (k in 0 until 3) {
             out.putF32(off + k * 4, c.sensitivity[k])
@@ -191,6 +214,21 @@ class PcGyroFeed {
                 out.putF32(o + 2, r.scale)
             } else {
                 out.fill(0, o, o + ROUTE_SIZE)
+            }
+        }
+        for (k in 0 until 3) {
+            val o = off + CURVES_OFFSET + k * CURVE_SIZE
+            val curve = c.curves[k]
+            val pts = minOf(curve.size / 2, GyroCurve.MAX_POINTS)
+            out.putU8(o, pts or (if (c.axisSpeed[k]) CURVE_AXIS_SPEED else 0) or (if (c.smooth[k]) CURVE_SMOOTH else 0))
+            for (j in 0 until GyroCurve.MAX_POINTS) {
+                val q = o + 1 + j * 4
+                if (j < pts) {
+                    out.putU16(q, GyroCurves.speedQ(curve[2 * j]))
+                    out.putU16(q + 2, GyroCurves.gainQ(curve[2 * j + 1]))
+                } else {
+                    out.fill(0, q, q + 4)
+                }
             }
         }
     }
@@ -225,7 +263,12 @@ class PcGyroFeed {
         const val MAX_ROUTES = 12
         const val ROUTE_SIZE = 6
         const val ROUTES_OFFSET = 34
-        const val CONFIG_SIZE = ROUTES_OFFSET + MAX_ROUTES * ROUTE_SIZE
+        /** Per axis: u8 point count (bit 7: [CURVE_AXIS_SPEED], bit 6: [CURVE_SMOOTH]), then [GyroCurve.MAX_POINTS] × (u16 speed in 0.1 deg/s, u16 gain in 0.001). */
+        const val CURVES_OFFSET = ROUTES_OFFSET + MAX_ROUTES * ROUTE_SIZE
+        const val CURVE_SIZE = 1 + GyroCurve.MAX_POINTS * 4
+        const val CURVE_AXIS_SPEED = 0x80
+        const val CURVE_SMOOTH = 0x40
+        const val CONFIG_SIZE = CURVES_OFFSET + 3 * CURVE_SIZE
         /** Bytes STATE_GYRO adds after STATE_HIRES. */
         const val TAIL_SIZE = CONFIG_OFFSET + CONFIG_SIZE
 
