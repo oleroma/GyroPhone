@@ -38,9 +38,9 @@ internal sealed class OverlayForm : Form
     private bool _uiOnly;
     // The graphics card draws every window. A window whose graphics card surface fails makes a new one
     // (a lost device after sleep, a driver update); after 3 failures of its own in a minute it draws
-    // with the CPU for 5 minutes, then tries the graphics card again. Counted per window: each has
-    // its own device, so one lost device fails every open window once, at the same moment.
-    // Guarded by _renderLock.
+    // with the CPU for 5 minutes, then tries the graphics card again. Counted per window. The windows
+    // share one device (GpuDevice): a lost one counts in the window that found it, and the others
+    // just make new surfaces on the new device. Guarded by _renderLock.
     private readonly Queue<long> _gpuFailures = new();
     private long _gpuOffUntil;
     // This window's next try at a new graphics card surface, and whether its handle is being made
@@ -462,6 +462,17 @@ internal sealed class OverlayForm : Form
         _scene.Selected = _selected;
         _scene.Title = _title;
         double start = _clock.Elapsed.TotalMilliseconds;
+        // Another window found the shared device lost: move to the new one now (not a failure of this window's).
+        if (_gpuSurface is { Lost: true })
+        {
+            DropGpuSurface();
+            _gpuRetryAt = 0;
+            if (_recreating)
+            {
+                _dirty = true;
+                return;
+            }
+        }
         // A window drawing with the CPU (its surface failed, or the graphics card was off) tries the
         // graphics card again now and then. A window that showed a swap chain makes its handle again
         // for a new one (OnHandleCreated); the others make a new copied surface here.
@@ -558,6 +569,15 @@ internal sealed class OverlayForm : Form
     private void GpuFailed(Exception e)
     {
         long now = Environment.TickCount64;
+        // Its device already found lost by another window: just move to the new one.
+        if (_gpuSurface is { Lost: true })
+        {
+            _log($"overlay: graphics card device lost, making a new surface: {e.GetType().Name}: {e.Message}");
+            _gpuRetryAt = 0;
+            DropGpuSurface();
+            return;
+        }
+        _gpuSurface?.CheckLost(e);
         _gpuFailures.Enqueue(now);
         while (_gpuFailures.Count > 0 && now - _gpuFailures.Peek() > 60_000) _gpuFailures.Dequeue();
         if (_gpuFailures.Count >= 3)
@@ -570,6 +590,12 @@ internal sealed class OverlayForm : Form
             ? $"overlay: graphics card drawing failed again, drawing with the CPU for 5 minutes: {e.GetType().Name}: {e.Message}"
             : $"overlay: graphics card drawing failed, trying a new surface: {e.GetType().Name}: {e.Message}");
         _gpuRetryAt = now + 2000;
+        DropGpuSurface();
+    }
+
+    /// <summary>Disposes this window's surface (its device goes with the last window's); a swap-chain window makes its handle again. Called with _renderLock held.</summary>
+    private void DropGpuSurface()
+    {
         try { _gpuSurface?.Dispose(); } catch (Exception) { }
         _gpuSurface = null;
         if (_direct)
