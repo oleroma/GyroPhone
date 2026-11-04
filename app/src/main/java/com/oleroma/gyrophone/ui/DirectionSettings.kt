@@ -351,11 +351,28 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         ResetAllButton("Settings", fields.any(::own)) { fields.forEach { reset(it)() } }
         SectionTitle("Cursor and sticks")
-        OverrideSlider(
-            k + "sens", "Sensitivity %.1f", if (x) f.sensitivityX else f.sensitivityY, 0f..MAX_SURFACE_SENS, 0.1f,
-            own(MoveField.SENSITIVITY), reset(MoveField.SENSITIVITY),
-            hint = "Counts per dp of travel $axis. 0 turns it off.",
-        ) { v -> edit(MoveField.SENSITIVITY) { it.copy(sensitivity = v) } }
+        val mv = s.move(m)
+        val sensNow = if (x) f.sensitivityX else f.sensitivityY
+        val sensOwn = own(MoveField.SENSITIVITY) || own(MoveField.SCALE)
+        val resetSens = { reset(MoveField.SCALE)(); reset(MoveField.SENSITIVITY)() }
+        val sensHint = "Counts per dp of travel $axis. 0 turns it off."
+        ScaledSens(
+            k + "scale", "Sensitivity", mv.scale, mv.sensitivity ?: s.sensitivity, { "%.1f".format(it) },
+            overridden = sensOwn, onReset = resetSens, hint = sensHint,
+            onMode = { scaled ->
+                if (scaled) {
+                    // The factor multiplies the parent's exact value: this level's own one goes.
+                    if (own(MoveField.SENSITIVITY)) reset(MoveField.SENSITIVITY)()
+                    edit(MoveField.SCALE) { it.copy(scale = 1f) }
+                } else edit(MoveField.SENSITIVITY) { it.copy(sensitivity = sensNow, scale = null) }
+            },
+            onScale = { v -> edit(MoveField.SCALE) { it.copy(scale = v) } },
+        ) {
+            OverrideSlider(
+                k + "sens", "Sensitivity %.1f", sensNow, 0f..MAX_SURFACE_SENS, 0.1f,
+                sensOwn, resetSens, hint = sensHint,
+            ) { v -> edit(MoveField.SENSITIVITY) { it.copy(sensitivity = v, scale = null) } }
+        }
         OverrideSlider(
             k + "acc", "Acceleration %.1f", if (x) f.accelerationX else f.accelerationY, 0f..2f, 0.1f,
             own(MoveField.ACCELERATION), reset(MoveField.ACCELERATION),

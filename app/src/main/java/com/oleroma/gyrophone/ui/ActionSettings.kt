@@ -118,6 +118,11 @@ private fun directionGear(level: SurfaceLevel, key: String, input: BindableInput
     return null
 }
 
+/** How a gyro sensitivity of [g]'s workspace reads: as RWS when the game's turn is known, else counts per degree. */
+internal fun gyroShow(g: GyroSettings): (Float) -> String = { s ->
+    g.rwsOf(s)?.let { "%.2f RWS".format(it) } ?: "%.1f".format(s).removeSuffix(".0").removeSuffix(",0")
+}
+
 private const val LONG_HINT = "How long a press is held to be a long press; a shorter one is a tap."
 
 /**
@@ -165,13 +170,26 @@ private fun ButtonGyroSensitivity(g: ButtonGyroLevel, key: String) {
         hint = "While this is held${g.where}: Off aims without acceleration (for example while aiming down sights). " +
             "Unset, the workspace's. $ACCEL_HINT",
     ) { c -> g.edit { it.copy(accel = c) } }
-    OverrideSlider(
-        key + "touchSens" + g.set, "Touchpad sensitivity %.1f", g.inUse.touchSensitivity ?: g.touchpad.sensitivity,
-        0f..MAX_SURFACE_SENS, 0.1f,
-        overridden = g.own.touchSensitivity != null,
-        onReset = { g.edit { it.copy(touchSensitivity = null) } },
-        hint = "While this is held${g.where}, the touchpad cursor moves at this speed, for every finger count. Unset, the workspace's.",
-    ) { v -> g.edit { it.copy(touchSensitivity = v) } }
+    val touchHint = "While this is held${g.where}, the touchpad cursor moves at this speed, for every finger count. Unset, the workspace's."
+    val touchOwn = g.own.touchSensitivity != null || g.own.touchScale != null
+    val touchReset = { g.edit { it.withTouch(null) } }
+    val touchBase = g.inUse.touchSensitivity ?: g.touchpad.sensitivity
+    ScaledSens(
+        key + "touchScale" + g.set, "Touchpad sensitivity", g.inUse.touchScale, touchBase, { "%.1f".format(it) },
+        overridden = touchOwn, onReset = touchReset,
+        hint = "$touchHint With × Parent each finger count's own speed is scaled.",
+        onMode = { scaled ->
+            val now = g.inUse.touchScale?.let { it * touchBase } ?: touchBase
+            g.edit { if (scaled) it.withTouchScale(1f) else it.withTouch(now) }
+        },
+        onScale = { f -> g.edit { it.withTouchScale(f) } },
+    ) {
+        OverrideSlider(
+            key + "touchSens" + g.set, "Touchpad sensitivity %.1f", g.inUse.touchSensitivity ?: g.touchpad.sensitivity,
+            0f..MAX_SURFACE_SENS, 0.1f,
+            overridden = touchOwn, onReset = touchReset, hint = touchHint,
+        ) { v -> g.edit { it.withTouch(v) } }
+    }
     OverrideSlider(
         key + "touchAcc" + g.set, "Touchpad acceleration %.1f", g.inUse.touchAcceleration ?: g.touchpad.acceleration,
         0f..2f, 0.1f,
@@ -179,15 +197,6 @@ private fun ButtonGyroSensitivity(g: ButtonGyroLevel, key: String) {
         onReset = { g.edit { it.copy(touchAcceleration = null) } },
         hint = "While this is held${g.where}: the touchpad cursor's extra speed for fast swipes (0 = none). Unset, the workspace's.",
     ) { v -> g.edit { it.copy(touchAcceleration = v) } }
-}
-
-/** Per gyro axis, its settings while held: ratchet mode, sensitivity, acceleration and glide (a physical button's, which has no gyro cards). */
-@Composable
-private fun ButtonGyroAxes(g: ButtonGyroLevel, key: String) {
-    for (axis in MotionAxis.shown) {
-        Text(axis.label, style = MaterialTheme.typography.titleSmall)
-        buttonGyroGear(g, key, axis)()
-    }
 }
 
 /** The ⚙ of gyro [axis] of a button: its ratchet mode and sensitivity while held, its own or else the workspace's. */
@@ -198,13 +207,25 @@ private fun buttonGyroGear(g: ButtonGyroLevel, key: String, axis: MotionAxis): @
             onReset = { g.edit { it.withMode(axis, null) } },
             hint = "While this is held${g.where}. Unset, the workspace's.",
         ) { m -> g.edit { it.withMode(axis, m) } }
-        GyroSensSlider(
-            key + "gyro" + g.set + axis.name, "${axis.label} sensitivity", g.inUse.sensitivityOf(axis, g.parent), g.parent,
-            overridden = g.own.own(axis) != null,
-            onReset = { g.edit { it.with(axis, null) } },
-            hint = "While this is held: how fast ${axis.label.lowercase()} turns${g.where}. Unset, it follows this button's " +
-                "Gyro sensitivity (in Settings), else the workspace's.",
-        ) { v -> g.edit { it.with(axis, v) } }
+        val hint = "While this is held: how fast ${axis.label.lowercase()} turns${g.where}. Unset, it follows this button's " +
+            "Gyro sensitivity (in Settings), else the workspace's."
+        val own = g.own.own(axis) != null || g.own.ownScale(axis) != null
+        val reset = { g.edit { it.with(axis, null).withScale(axis, null) } }
+        ScaledSens(
+            key + "gyroScale" + g.set + axis.name, "${axis.label} sensitivity", g.inUse.ownScale(axis),
+            g.inUse.own(axis) ?: g.inUse.sensitivity ?: g.parent.exactOf(axis), gyroShow(g.parent),
+            overridden = own, onReset = reset, hint = hint,
+            onMode = { scaled ->
+                val now = g.inUse.sensitivityOf(axis, g.parent)
+                g.edit { if (scaled) it.withScale(axis, 1f) else it.with(axis, now) }
+            },
+            onScale = { f -> g.edit { it.withScale(axis, f) } },
+        ) {
+            GyroSensSlider(
+                key + "gyro" + g.set + axis.name, "${axis.label} sensitivity", g.inUse.sensitivityOf(axis, g.parent), g.parent,
+                overridden = own, onReset = reset, hint = hint,
+            ) { v -> g.edit { it.with(axis, v) } }
+        }
         AccelCurveSetting(
             key + "gyroAccel" + g.set + axis.name, "${axis.label} acceleration", g.inUse.accelOf(axis, g.parent),
             g.inUse.sensitivityOf(axis, g.parent), g.parent,
@@ -387,13 +408,30 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
             onReset = { level.reset(k("Mode")) },
             hint = "Unset, it follows the gyro mode in Settings." + if (g.mode == GyroMode.SENSOR_OFF) " Gyro is off there now." else "",
         ) { m -> level.edit { it.copy(gyro = it.gyro.withMode(axis, m)) } }
-        GyroSensSlider(
-            key + "sens" + axis.name, "${axis.label} sensitivity", g.sensitivityOf(axis), g,
-            overridden = level.isOwn(k("Sensitivity")),
-            onReset = { level.reset(k("Sensitivity")) },
-            hint = "How fast ${axis.label.lowercase()} turns; scrolling and sticks go faster or slower with it too. " +
-                "Unset, it follows the shared Sensitivity (${g.rwsOf(g.sensitivity)?.let { "%.2f RWS".format(it) } ?: "%.0f".format(g.sensitivity)}) in Settings.",
-        ) { v -> level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, v)) } }
+        val sensHint = "How fast ${axis.label.lowercase()} turns; scrolling and sticks go faster or slower with it too. " +
+            "Unset, it follows the shared Sensitivity (${gyroShow(g)(g.sensitivity)}) in Settings."
+        val sensOwn = level.isOwn(k("Sensitivity")) || level.isOwn(k("Scale"))
+        val resetSens = { level.reset(k("Scale")); level.reset(k("Sensitivity")) }
+        ScaledSens(
+            key + "scale" + axis.name, "${axis.label} sensitivity", g.ownScale(axis), g.exactOf(axis), gyroShow(g),
+            overridden = sensOwn, onReset = resetSens, hint = sensHint,
+            onMode = { scaled ->
+                if (scaled) {
+                    // The factor multiplies the parent's exact value: this level's own one goes.
+                    if (level.isOwn(k("Sensitivity"))) level.reset(k("Sensitivity"))
+                    level.edit { it.copy(gyro = it.gyro.withScale(axis, 1f)) }
+                } else {
+                    val now = g.sensitivityOf(axis)
+                    level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, now)) }
+                }
+            },
+            onScale = { f -> level.edit { it.copy(gyro = it.gyro.withScale(axis, f)) } },
+        ) {
+            GyroSensSlider(
+                key + "sens" + axis.name, "${axis.label} sensitivity", g.sensitivityOf(axis), g,
+                overridden = sensOwn, onReset = resetSens, hint = sensHint,
+            ) { v -> level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, v)) } }
+        }
         AccelCurveSetting(
             key + "accel" + axis.name, "${axis.label} acceleration", g.accelOf(axis), g.sensitivityOf(axis), g,
             overridden = level.isOwn(k("Accel")),
@@ -491,13 +529,14 @@ internal fun physicalSettings(
         category(runtime, "heldGyro", "While held", "Gyro sensitivity and acceleration, touchpad speed", prefKey = "physical.Held", defaultOpen = true) {
             ButtonGyroSensitivity(level, key)
         },
-        category(runtime, "heldAxes", "Yaw, pitch and roll while held", "Each axis's own ratchet, sensitivity, acceleration and glide", prefKey = "physical.HeldAxes") {
-            ButtonGyroAxes(level, key)
-        },
     )
     return physicalActionSettings(preset, ws, update).let { a ->
         MappingSettings(
-            action = a.action,
+            // A gyro axis of its Motion tab: its ratchet, sensitivity (or factor), acceleration and glide while held.
+            action = { input ->
+                val src = input.sources.firstOrNull()
+                if (level != null && src is InputSource.Gyro) buttonGyroGear(level, key, src.axis) else a.action(input)
+            },
             shared = if (items.isEmpty()) null else ui { ReorderableSections(runtime, "physical", items) },
             items = items,
         )

@@ -404,6 +404,11 @@ internal fun ControlMappingScreen(
     onZoneSettings: ((List<HoldZone>, List<List<HoldZone>>?) -> Unit)? = null,
     /** A physical control's inputs ([physicalStandIn]): its cards, instead of the touch control's. */
     physicalInputs: List<BindableInput>? = null,
+    /**
+     * A physical key or button that can be held: its gyro owner id ([HeldButton.GYRO_ID] + its preset
+     * id). Its Motion tab then maps gyro axes while it is held; null = no Motion tab.
+     */
+    physicalMotionId: String? = null,
     /** The actions' own settings (their ⚙) and the shared ones (Settings); null = none. */
     settings: MappingSettings? = null,
     /**
@@ -499,7 +504,7 @@ internal fun ControlMappingScreen(
     val groups = listOf(
         sorted(
             control,
-            (if (!surfaceCards) inputs
+            (if (!surfaceCards) (if (physicalMotionId != null && fingers == 0) Bindings.gyroInputs(physicalMotionId) else inputs)
             else if (fingers == 0) Bindings.gyroInputs(control.id) + Bindings.motionInputs(control.id)
             else Bindings.swipeInputs(control, fingers))
                 .filterNot(Bindings::isTriggerOf)
@@ -1045,6 +1050,24 @@ internal fun ControlMappingScreen(
                 }
             }
             shownGroups.forEachIndexed { g, list ->
+                if (!surfaceCards && physicalMotionId != null) {
+                    item(key = "header$g") {
+                        Column(Modifier.animateItem(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                FilterChip(selected = fingers != 0, onClick = { fingers = 1 }, label = { Text("Button") })
+                                FilterChip(selected = fingers == 0, onClick = { fingers = 0 }, label = { Text("Motion") })
+                            }
+                            if (fingers == 0) {
+                                Text(
+                                    "While this is held: a gyro axis it maps does that instead of what the workspace maps it to " +
+                                        "(faded until it maps its own); ⚙ sets the axis's sensitivity while held.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
                 if (surfaceCards) {
                     item(key = "header$g") {
                         Column(

@@ -2549,9 +2549,13 @@ fun PadScreen(
                             updateControl(sel.id) { it.copy(surface = it.ownSurface.copy(holdZones = a, dirHoldZones = b)) }
                         },
                         settings = touchControlSettings(runtime, sel, ws, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE) { change -> updateControl(sel.id, change) },
-                        inherited = if (sel.kind == TouchKind.BUTTON) {
-                            Inheritance.inherited(Inheritance.workspace(ws, d.defaults), emptyList(), sel.id, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE)
-                        } else emptyList(),
+                        inherited = run {
+                            val inSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE
+                            val wsMappings = Inheritance.workspace(ws, d.defaults)
+                            // The workspace's gyro mappings show faded on its Motion tab too.
+                            (if (sel.kind == TouchKind.BUTTON) Inheritance.inherited(wsMappings, emptyList(), sel.id, inSet) else emptyList()) +
+                                Inheritance.gyroInherited(wsMappings, sel.id, inSet)
+                        },
                         parentName = "Workspace",
                         timing = { sel.longPress(ws) to sel.doubleTap(ws) },
                     )
