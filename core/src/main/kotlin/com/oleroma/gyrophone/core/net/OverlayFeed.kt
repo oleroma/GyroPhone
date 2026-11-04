@@ -67,6 +67,14 @@ data class OverlayLayout(
  * height px; str8 workspace; str8 layer; u8 control count; per control u8 kind, u8 flags (1 =
  * round), i16 x, y, w, h (× [COORD_SCALE] of the pad area's width / height), u8 opacity (0..255),
  * str8 label. str8 = u8 byte length + UTF-8.
+ *
+ * Totals ([FLAG_TOTALS], only while HOST_STATUS has [HostStatusFlags.OVERLAY_TOTALS]; older PCs get
+ * the per-frame form above): the yaw, pitch, roll and the camera degrees are running totals since
+ * the feed was cleared ([wanted] off, which a session's end also does), kept in doubles and sent
+ * modulo 360 in -180..180; the time covered is a running total too, modulo 65536 units (0.65536 s).
+ * The PC takes the difference from the last frame it got (the angles to the nearest equivalent
+ * modulo 360, the time modulo 65536), so a lost OVERLAY no longer loses its turn. Only more than
+ * 180 degrees on one axis, or 0.65 s of gyro time, between two frames that arrive is misread.
  */
 class OverlayFeed {
     /** The PC's overlay is on and the phone should send its data. */
@@ -90,6 +98,9 @@ class OverlayFeed {
             field = v
             onWantedChange?.run()
         }
+
+    /** The PC takes running totals ([HostStatusFlags.OVERLAY_TOTALS]): OVERLAY carries [FLAG_TOTALS]. */
+    @Volatile var totalsWanted = false
 
     /** Runs (on the link's thread) when [wanted] or [compassWanted] changes, so the runtime can start or stop the sensors. */
     @Volatile var onWantedChange: Runnable? = null
@@ -127,6 +138,10 @@ class OverlayFeed {
     private var hasNorth = false
     private val cameraDeg = FloatArray(3)
     private val rwsGain = FloatArray(3)
+    // Running totals (under lock): turn and camera degrees modulo 360, seconds modulo TIME_WRAP.
+    private val totalTurn = DoubleArray(3)
+    private val totalCamera = DoubleArray(3)
+    private var totalSeconds = 0.0
 
     // The attached controller (under lock): buttons held from keys, sticks, triggers and hat from axes.
     @Volatile var padAttached = false
@@ -160,6 +175,7 @@ class OverlayFeed {
     private fun clearMotion() {
         turnYaw = 0f; turnPitch = 0f; turnRoll = 0f; turnSeconds = 0f
         cameraDeg.fill(0f)
+        totalTurn.fill(0.0); totalCamera.fill(0.0); totalSeconds = 0.0
         gyroAtNs = Long.MIN_VALUE
         hasUp = false; hasNorth = false
         ratchetHeld = false
@@ -259,17 +275,28 @@ class OverlayFeed {
     /** The layout version and blob now, for one round of OVERLAY_LAYOUT pieces. */
     fun layoutSnapshot(): Pair<Int, ByteArray>? = synchronized(lock) { if (layout == null) null else version to blob }
 
-    /** Encodes OVERLAY into [out] at [off] and returns its length ([Wire.OVERLAY_PLAIN]); the motion starts again from 0. */
+    /** Encodes OVERLAY into [out] at [off] and returns its length ([Wire.OVERLAY_PLAIN]); the motion since the last one starts again from 0. */
     fun encodeFrame(out: ByteArray, off: Int, phoneTimeUs: Int, pressed: Set<String>, latched: Set<String>): Int {
         out.fill(0, off, off + Wire.OVERLAY_PLAIN)
         out.putU32(off, phoneTimeUs)
         synchronized(lock) {
             val at = gyroAtNs
             val live = at != Long.MIN_VALUE && System.nanoTime() - at < POSE_STALE_NS
-            out.putU32(off + 4, java.lang.Float.floatToRawIntBits(turnYaw))
-            out.putU32(off + 8, java.lang.Float.floatToRawIntBits(turnPitch))
-            out.putU32(off + 12, java.lang.Float.floatToRawIntBits(turnRoll))
-            out.putU16(off + 16, (turnSeconds * 100_000f).roundToInt().coerceIn(0, 0xFFFF))
+            val totals = totalsWanted
+            totalTurn[0] = wrap(totalTurn[0] + turnYaw)
+            totalTurn[1] = wrap(totalTurn[1] + turnPitch)
+            totalTurn[2] = wrap(totalTurn[2] + turnRoll)
+            totalSeconds = (totalSeconds + turnSeconds) % TIME_WRAP
+            for (i in 0 until 3) totalCamera[i] = wrap(totalCamera[i] + cameraDeg[i])
+            if (totals) {
+                for (i in 0 until 3) out.putU32(off + 4 + i * 4, java.lang.Float.floatToRawIntBits(totalTurn[i].toFloat()))
+                out.putU16(off + 16, (totalSeconds * 100_000.0).roundToInt() and 0xFFFF)
+            } else {
+                out.putU32(off + 4, java.lang.Float.floatToRawIntBits(turnYaw))
+                out.putU32(off + 8, java.lang.Float.floatToRawIntBits(turnPitch))
+                out.putU32(off + 12, java.lang.Float.floatToRawIntBits(turnRoll))
+                out.putU16(off + 16, (turnSeconds * 100_000f).roundToInt().coerceIn(0, 0xFFFF))
+            }
             turnYaw = 0f; turnPitch = 0f; turnRoll = 0f; turnSeconds = 0f
             for (i in 0 until 3) {
                 out.putI16(off + 18 + i * 2, (upXYZ[i] * G_SCALE).roundToInt().coerceIn(-32767, 32767))
@@ -285,6 +312,7 @@ class OverlayFeed {
             if (hasUp) flags = flags or FLAG_UP
             if (hasNorth) flags = flags or FLAG_NORTH
             if (ratchetHeld) flags = flags or FLAG_RATCHET_HELD
+            if (totals) flags = flags or FLAG_TOTALS
             out.putU8(off + 34, flags)
             out.putU8(off + 35, fingerCount)
             for (i in 0 until fingerCount) {
@@ -312,7 +340,8 @@ class OverlayFeed {
                 n++
             }
             for (i in 0 until 3) {
-                out.putU32(off + 112 + i * 4, java.lang.Float.floatToRawIntBits(cameraDeg[i]))
+                val cam = if (totals) totalCamera[i].toFloat() else cameraDeg[i]
+                out.putU32(off + 112 + i * 4, java.lang.Float.floatToRawIntBits(cam))
                 out.putU32(off + 124 + i * 4, java.lang.Float.floatToRawIntBits(rwsGain[i]))
             }
             cameraDeg.fill(0f)
@@ -345,6 +374,8 @@ class OverlayFeed {
         const val FLAG_UP = 8
         const val FLAG_NORTH = 16
         const val FLAG_RATCHET_HELD = 32
+        /** The turn, time and camera degrees are running totals (see the class comment). */
+        const val FLAG_TOTALS = 64
         const val PAD_ATTACHED = 1
 
         // Controller buttons in OVERLAY, by place (Switch layout on the PC): the face buttons by side.
@@ -401,8 +432,16 @@ class OverlayFeed {
         const val PIECE_DATA = Wire.OVERLAY_LAYOUT_PLAIN - 5
         const val MAX_PIECES = 255
         private const val POSE_STALE_NS = 250_000_000L
+        /** The time total wraps here: 65536 units of 10 us. */
+        private const val TIME_WRAP = 0.65536
         private const val NAME_MAX = 48
         private const val LABEL_MAX = 32
+
+        /** [d] degrees as the same angle in -180..180. */
+        private fun wrap(d: Double): Double {
+            val r = d % 360.0
+            return if (r >= 180.0) r - 360.0 else if (r < -180.0) r + 360.0 else r
+        }
 
         private fun unit16(v: Float): Int = (v.coerceIn(0f, 1f) * 65535f).roundToInt()
 

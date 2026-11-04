@@ -293,6 +293,8 @@ object HostStatusFlags {
     const val OVERLAY = 32
     /** With [OVERLAY]: the overlay holds its heading by the compass, so the phone sends magnetometer readings too. */
     const val OVERLAY_COMPASS = 64
+    /** With [OVERLAY]: the PC takes OVERLAY's turn, time and camera degrees as running totals ([OverlayFeed.FLAG_TOTALS]). */
+    const val OVERLAY_TOTALS = 128
 }
 
 /** BYE reason (phone). */

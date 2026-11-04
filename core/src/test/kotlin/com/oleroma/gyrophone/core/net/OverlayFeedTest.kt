@@ -112,6 +112,42 @@ class OverlayFeedTest {
         assertEquals(OverlayFeed.PAD_SOUTH, out.getI32(140)) // keys are fed all the time: kept
     }
 
+    @Test fun totalsOnlyWhenThePcTakesThem() {
+        val f = OverlayFeed()
+        val out = ByteArray(Wire.OVERLAY_PLAIN)
+        fun yaw() = java.lang.Float.intBitsToFloat(out.getI32(4))
+        fun cam() = java.lang.Float.intBitsToFloat(out.getI32(112))
+        f.wanted = true
+        f.gyro(100f, 0f, 0f, 0.01f, 1, false)
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(0, out.getU8(34) and OverlayFeed.FLAG_TOTALS) // an older PC: per frame
+        assertEquals(1f, yaw(), 1e-4f)
+        f.totalsWanted = true
+        for (i in 0 until 3) {
+            f.gyro(100f, 0f, 0f, 0.01f, 1, false)
+            f.camera(2f, 0f, 0f)
+            f.encodeFrame(out, 0, i, emptySet(), emptySet())
+        }
+        // The first frame's turn counts too: the totals start when the feed was cleared.
+        assertEquals(OverlayFeed.FLAG_TOTALS, out.getU8(34) and OverlayFeed.FLAG_TOTALS)
+        assertEquals(4f, yaw(), 1e-4f)
+        assertEquals(4000, out.getU16(16))
+        assertEquals(6f, cam(), 1e-4f)
+        // Kept modulo 360 in -180..180, the time modulo 65536 units.
+        f.gyro(100f, 0f, 0f, 1.8f, 1, false)
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(-176f, yaw(), 1e-3f)
+        assertEquals((184_000 - 65536 * 2), out.getU16(16))
+        // Clearing the feed restarts them from 0.
+        f.wanted = false
+        f.wanted = true
+        f.gyro(100f, 0f, 0f, 0.01f, 1, false)
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(1f, yaw(), 1e-4f)
+        assertEquals(1000, out.getU16(16))
+        assertEquals(0f, cam(), 0f)
+    }
+
     @Test fun wantedAndCompassTellTheRuntime() {
         val f = OverlayFeed()
         var changes = 0
