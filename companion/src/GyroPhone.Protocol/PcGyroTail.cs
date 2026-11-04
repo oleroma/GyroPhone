@@ -7,7 +7,7 @@ namespace GyroPhone.Protocol;
 /// u8 flags, u8 count, u16 newest seq, u32 newest time (µs), 8 × 9-byte sample slots (u16 dt µs,
 /// i16 yaw, pitch, roll in 1/16 deg/s, u8 axes), 3 × i64 running totals, then the 181-byte config
 /// (its last 75 bytes: per axis an acceleration curve, u8 point count with bit 7 = speed from the
-/// axis, then 6 × (u16 speed in 0.1 deg/s, u16 gain in 0.001)).
+/// axis, bit 6 = smooth, then 6 × (u16 speed in 0.1 deg/s, u16 gain in 0.001)).
 /// </summary>
 public sealed class PcGyroTail
 {
@@ -26,7 +26,7 @@ public sealed class PcGyroTail
     private const int CurvesRel = RoutesRel + MaxRoutes * RouteSize, CurveSize = 1 + GyroMath.MaxCurvePoints * 4;
     /// <summary>Bytes of the config block.</summary>
     public const int ConfigSize = CurvesRel + 3 * CurveSize;
-    private const byte CurveAxisSpeed = 0x80;
+    private const byte CurveAxisSpeed = 0x80, CurveSmooth = 0x40;
 
     public byte Flags;
     /// <summary>Samples in this packet, oldest first (0..8).</summary>
@@ -139,7 +139,7 @@ public sealed class PcGyroTail
                 flat[2 * j] = Le.U16(b, o + 1 + j * 4) / 10f;
                 flat[2 * j + 1] = Le.U16(b, o + 3 + j * 4) / 1000f;
             }
-            c.SetCurve(a, flat[..(n * 2)], (b[o] & CurveAxisSpeed) != 0);
+            c.SetCurve(a, flat[..(n * 2)], (b[o] & CurveAxisSpeed) != 0, (b[o] & CurveSmooth) != 0);
         }
     }
 
@@ -171,7 +171,7 @@ public sealed class PcGyroTail
         {
             int o = CurvesRel + a * CurveSize;
             int n = c.CurvePoints[a];
-            b[o] = (byte)(n | (c.AxisSpeed[a] ? CurveAxisSpeed : 0));
+            b[o] = (byte)(n | (c.AxisSpeed[a] ? CurveAxisSpeed : 0) | (c.Smooth[a] ? CurveSmooth : 0));
             for (int j = 0; j < n; j++)
             {
                 Le.PutU16(b, o + 1 + j * 4, (ushort)MathF.Round(c.Curves[a][2 * j] * 10f, MidpointRounding.AwayFromZero));

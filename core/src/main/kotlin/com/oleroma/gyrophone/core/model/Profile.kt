@@ -742,6 +742,10 @@ data class ButtonGyro(
 data class GyroCurve(
     val points: List<CurvePoint> = emptyList(),
     val axisSpeed: Boolean = false,
+    /** Through the points in a smooth bend (monotone, no overshoot, flat at both ends) instead of straight lines. */
+    val smooth: Boolean = false,
+    /** How far the editor's graph reaches (deg/s); 0 = to fit the points. Only for showing. */
+    val range: Float = 0f,
 ) {
     val isOff: Boolean get() = points.isEmpty()
 
@@ -757,7 +761,7 @@ data class GyroCurve(
     }
 
     /** The gain at [speed] deg/s. */
-    fun gainAt(speed: Float): Float = GyroCurves.gain(flat(), speed)
+    fun gainAt(speed: Float): Float = GyroCurves.gain(flat(), speed, smooth)
 
     /** Speeds and gains, interleaved, as [com.oleroma.gyrophone.core.engine.GyroMath] takes them. */
     fun flat(): FloatArray {
@@ -771,6 +775,7 @@ data class GyroCurve(
         const val MAX_SPEED = 2000f
         const val MIN_GAIN = 0.1f
         const val MAX_GAIN = 10f
+        const val MIN_RANGE = 100f
 
         /** A curve that is off: over a parent's, it turns that off. */
         val OFF = GyroCurve()
@@ -795,9 +800,11 @@ object GyroCurves {
 
     /**
      * The gain of curve [c] (speeds and gains interleaved, speeds rising) at [speed]: 1 with no
-     * points. The PC runs the same (companion GyroMath.Gain): Float math in the same order.
+     * points; flat before the first and after the last; between them straight, or with [smooth] a
+     * monotone cubic (Fritsch–Butland slopes, zero at both ends so it meets the flat parts without
+     * a kink). The PC runs the same (companion GyroMath.Gain): Float math in the same order.
      */
-    fun gain(c: FloatArray, speed: Float): Float {
+    fun gain(c: FloatArray, speed: Float, smooth: Boolean): Float {
         val n = c.size / 2
         if (n == 0) return 1f
         if (speed <= c[0]) return c[1]
@@ -806,11 +813,30 @@ object GyroCurves {
             if (speed <= s1) {
                 val s0 = c[2 * j - 2]
                 val g0 = c[2 * j - 1]
-                val t = (speed - s0) / (s1 - s0)
-                return g0 + (c[2 * j + 1] - g0) * t
+                val g1 = c[2 * j + 1]
+                val h = s1 - s0
+                val t = (speed - s0) / h
+                if (!smooth) return g0 + (g1 - g0) * t
+                val m0 = slope(c, n, j - 1)
+                val m1 = slope(c, n, j)
+                val u = 1f - t
+                val h00 = (1f + 2f * t) * u * u
+                val h10 = t * u * u
+                val h01 = t * t * (3f - 2f * t)
+                val h11 = t * t * (t - 1f)
+                return h00 * g0 + h10 * h * m0 + h01 * g1 + h11 * h * m1
             }
         }
         return c[2 * n - 1]
+    }
+
+    /** The smooth curve's slope at point [k] of [n]: 0 at the ends and where the gain turns, else the harmonic mean of the two sides. */
+    private fun slope(c: FloatArray, n: Int, k: Int): Float {
+        if (k == 0 || k == n - 1) return 0f
+        val d0 = (c[2 * k + 1] - c[2 * k - 1]) / (c[2 * k] - c[2 * k - 2])
+        val d1 = (c[2 * k + 3] - c[2 * k + 1]) / (c[2 * k + 2] - c[2 * k])
+        if (d0 * d1 <= 0f) return 0f
+        return 2f * d0 * d1 / (d0 + d1)
     }
 }
 

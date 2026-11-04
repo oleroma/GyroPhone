@@ -47,11 +47,13 @@ class GyroMath {
          */
         val curves: Array<FloatArray> = Array(3) { FloatArray(0) },
         val axisSpeed: BooleanArray = BooleanArray(3),
+        /** Per axis: its curve is smooth ([GyroCurve.smooth]) rather than straight lines. */
+        val smooth: BooleanArray = BooleanArray(3),
     ) {
         override fun equals(other: Any?): Boolean = other is Config &&
             sensitivity.contentEquals(other.sensitivity) && inertia.contentEquals(other.inertia) &&
             glideMs.contentEquals(other.glideMs) && linear.contentEquals(other.linear) && routes == other.routes &&
-            curves.contentDeepEquals(other.curves) && axisSpeed.contentEquals(other.axisSpeed)
+            curves.contentDeepEquals(other.curves) && axisSpeed.contentEquals(other.axisSpeed) && smooth.contentEquals(other.smooth)
 
         override fun hashCode(): Int = sensitivity.contentHashCode() * 31 + routes.hashCode()
 
@@ -87,6 +89,7 @@ class GyroMath {
                     routes,
                     Array(3) { s.accelOf(AXES[it]).flat() },
                     BooleanArray(3) { s.accelOf(AXES[it]).let { c -> !c.isOff && c.axisSpeed } },
+                    BooleanArray(3) { s.accelOf(AXES[it]).let { c -> !c.isOff && c.smooth } },
                 )
             }
         }
@@ -226,7 +229,7 @@ class GyroMath {
             val curve = c.curves[i]
             if (curve.isEmpty()) { gain[i] = 1f; continue }
             val speed = if (c.axisSpeed[i]) abs(when (i) { 0 -> yaw; 1 -> pitch; else -> roll }) else whole
-            gain[i] = GyroCurves.gain(curve, speed)
+            gain[i] = GyroCurves.gain(curve, speed, c.smooth[i])
         }
     }
 

@@ -3,7 +3,7 @@
  "cases": [
   {
    "name": "mouse-slow-2ms",
-   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
+   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
    "tightening": 0.0, "tighteningBits": 0,
    "smoothing": 0.0, "smoothingBits": 0,
    "steps": [
@@ -35,7 +35,7 @@
   },
   {
    "name": "mouse-fast-2ms",
-   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
+   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
    "tightening": 0.0, "tighteningBits": 0,
    "smoothing": 0.0, "smoothingBits": 0,
    "steps": [
@@ -67,7 +67,7 @@
   },
   {
    "name": "sensitivity-per-axis-and-scales",
-   "config": {"sensitivity": [5.0, 12.5, 30.25], "sensitivityBits": [1084227584, 1095237632, 1106378752], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 0.7, "scaleBits": 1060320051}, {"axis": 1, "target": 1, "scale": -1.3, "scaleBits": -1079613850}, {"axis": 0, "target": 0, "scale": 2.0, "scaleBits": 1073741824}]},
+   "config": {"sensitivity": [5.0, 12.5, 30.25], "sensitivityBits": [1084227584, 1095237632, 1106378752], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 0.7, "scaleBits": 1060320051}, {"axis": 1, "target": 1, "scale": -1.3, "scaleBits": -1079613850}, {"axis": 0, "target": 0, "scale": 2.0, "scaleBits": 1073741824}]},
    "tightening": 0.0, "tighteningBits": 0,
    "smoothing": 0.0, "smoothingBits": 0,
    "steps": [
@@ -99,7 +99,7 @@
   },
   {
    "name": "wheel-and-hwheel",
-   "config": {"sensitivity": [16.0, 9.0, 24.0], "sensitivityBits": [1098907648, 1091567616, 1103101952], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 1, "target": 2, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 2, "target": 3, "scale": -0.5, "scaleBits": -1090519040}, {"axis": 0, "target": 2, "scale": 0.25, "scaleBits": 1048576000}]},
+   "config": {"sensitivity": [16.0, 9.0, 24.0], "sensitivityBits": [1098907648, 1091567616, 1103101952], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 1, "target": 2, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 2, "target": 3, "scale": -0.5, "scaleBits": -1090519040}, {"axis": 0, "target": 2, "scale": 0.25, "scaleBits": 1048576000}]},
    "tightening": 0.0, "tighteningBits": 0,
    "smoothing": 0.0, "smoothingBits": 0,
    "steps": [
@@ -131,7 +131,7 @@
   },
   {
    "name": "pad-every-axis",
-   "config": {"sensitivity": [16.0, 20.0, 12.0], "sensitivityBits": [1098907648, 1101004800, 1094713344], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 4, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 5, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 2, "target": 6, "scale": 0.6, "scaleBits": 1058642330}, {"axis": 1, "target": 7, "scale": -1.5, "scaleBits": -1077936128}, {"axis": 0, "target": 8, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 9, "scale": -2.0, "scaleBits": -1073741824}]},
+   "config": {"sensitivity": [16.0, 20.0, 12.0], "sensitivityBits": [1098907648, 1101004800, 1094713344], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 4, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 5, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 2, "target": 6, "scale": 0.6, "scaleBits": 1058642330}, {"axis": 1, "target": 7, "scale": -1.5, "scaleBits": -1077936128}, {"axis": 0, "target": 8, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 9, "scale": -2.0, "scaleBits": -1073741824}]},
    "tightening": 0.0, "tighteningBits": 0,
    "smoothing": 0.0, "smoothingBits": 0,
    "steps": [
@@ -163,7 +163,7 @@
   },
   {
    "name": "every-target-mixed",
-   "config": {"sensitivity": [10.0, 16.0, 22.0], "sensitivityBits": [1092616192, 1098907648, 1102053376], "inertia": [true, true, true], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 2, "scale": 0.5, "scaleBits": 1056964608}, {"axis": 0, "target": 3, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 2, "target": 6, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 7, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 8, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 2, "target": 0, "scale": -0.25, "scaleBits": -1098907648}]},
+   "config": {"sensitivity": [10.0, 16.0, 22.0], "sensitivityBits": [1092616192, 1098907648, 1102053376], "inertia": [true, true, true], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 2, "scale": 0.5, "scaleBits": 1056964608}, {"axis": 0, "target": 3, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 2, "target": 6, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 7, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 8, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 2, "target": 0, "scale": -0.25, "scaleBits": -1098907648}]},
    "tightening": 0.0, "tighteningBits": 0,
    "smoothing": 0.0, "smoothingBits": 0,
    "steps": [
@@ -201,7 +201,7 @@
   },
   {
    "name": "tightening",
-   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
+   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
    "tightening": 2.5, "tighteningBits": 1075838976,
    "smoothing": 0.0, "smoothingBits": 0,
    "steps": [
@@ -239,7 +239,7 @@
   },
   {
    "name": "smoothing",
-   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
+   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
    "tightening": 0.0, "tighteningBits": 0,
    "smoothing": 4.0, "smoothingBits": 1082130432,
    "steps": [
@@ -277,7 +277,7 @@
   },
   {
    "name": "tightening-and-smoothing",
-   "config": {"sensitivity": [8.0, 24.0, 16.0], "sensitivityBits": [1090519040, 1103101952, 1098907648], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
+   "config": {"sensitivity": [8.0, 24.0, 16.0], "sensitivityBits": [1090519040, 1103101952, 1098907648], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
    "tightening": 1.25, "tighteningBits": 1067450368,
    "smoothing": 6.0, "smoothingBits": 1086324736,
    "steps": [
@@ -315,7 +315,7 @@
   },
   {
    "name": "glide-smooth",
-   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [true, true, true], "glideMs": [250.0, 250.0, 250.0], "glideMsBits": [1132068864, 1132068864, 1132068864], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
+   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [true, true, true], "glideMs": [250.0, 250.0, 250.0], "glideMsBits": [1132068864, 1132068864, 1132068864], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
    "tightening": 0.0, "tighteningBits": 0,
    "smoothing": 0.0, "smoothingBits": 0,
    "steps": [
@@ -358,7 +358,7 @@
   },
   {
    "name": "glide-linear",
-   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [true, true, true], "glideMs": [400.0, 400.0, 400.0], "glideMsBits": [1137180672, 1137180672, 1137180672], "linear": [true, true, true], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
+   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [true, true, true], "glideMs": [400.0, 400.0, 400.0], "glideMsBits": [1137180672, 1137180672, 1137180672], "linear": [true, true, true], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
    "tightening": 0.0, "tighteningBits": 0,
    "smoothing": 0.0, "smoothingBits": 0,
    "steps": [
@@ -401,7 +401,7 @@
   },
   {
    "name": "glide-clamped-and-mixed",
-   "config": {"sensitivity": [16.0, 12.0, 20.0], "sensitivityBits": [1098907648, 1094713344, 1101004800], "inertia": [false, true, true], "glideMs": [325.0, 50.0, 3000.0], "glideMsBits": [1134723072, 1112014848, 1161527296], "linear": [false, false, true], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
+   "config": {"sensitivity": [16.0, 12.0, 20.0], "sensitivityBits": [1098907648, 1094713344, 1101004800], "inertia": [false, true, true], "glideMs": [325.0, 50.0, 3000.0], "glideMsBits": [1134723072, 1112014848, 1161527296], "linear": [false, false, true], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
    "tightening": 0.0, "tighteningBits": 0,
    "smoothing": 0.0, "smoothingBits": 0,
    "steps": [
@@ -437,7 +437,7 @@
   },
   {
    "name": "ratchet-toggling",
-   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [true, true, true], "glideMs": [150.0, 200.0, 300.0], "glideMsBits": [1125515264, 1128792064, 1133903872], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
+   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [true, true, true], "glideMs": [150.0, 200.0, 300.0], "glideMsBits": [1125515264, 1128792064, 1133903872], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
    "tightening": 0.0, "tighteningBits": 0,
    "smoothing": 0.0, "smoothingBits": 0,
    "steps": [
@@ -477,7 +477,7 @@
   },
   {
    "name": "glide-too-slow-to-start",
-   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [true, true, true], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
+   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [true, true, true], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
    "tightening": 0.0, "tighteningBits": 0,
    "smoothing": 0.0, "smoothingBits": 0,
    "steps": [
@@ -505,7 +505,7 @@
   },
   {
    "name": "dt-0-1-2-50ms",
-   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [true, true, true], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 2, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 5, "scale": 1.0, "scaleBits": 1065353216}]},
+   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [true, true, true], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 2, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 5, "scale": 1.0, "scaleBits": 1065353216}]},
    "tightening": 1.0, "tighteningBits": 1065353216,
    "smoothing": 3.0, "smoothingBits": 1077936128,
    "steps": [
@@ -545,7 +545,7 @@
   },
   {
    "name": "long-random",
-   "config": {"sensitivity": [14.0, 18.0, 11.0], "sensitivityBits": [1096810496, 1099956224, 1093664768], "inertia": [true, false, true], "glideMs": [200.0, 325.0, 500.0], "glideMsBits": [1128792064, 1134723072, 1140457472], "linear": [false, false, true], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 3, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 2, "target": 6, "scale": 0.8, "scaleBits": 1061997773}, {"axis": 1, "target": 9, "scale": 1.0, "scaleBits": 1065353216}]},
+   "config": {"sensitivity": [14.0, 18.0, 11.0], "sensitivityBits": [1096810496, 1099956224, 1093664768], "inertia": [true, false, true], "glideMs": [200.0, 325.0, 500.0], "glideMsBits": [1128792064, 1134723072, 1140457472], "linear": [false, false, true], "curves": [[], [], []], "curvesBits": [[], [], []], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 3, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 2, "target": 6, "scale": 0.8, "scaleBits": 1061997773}, {"axis": 1, "target": 9, "scale": 1.0, "scaleBits": 1065353216}]},
    "tightening": 0.75, "tighteningBits": 1061158912,
    "smoothing": 2.5, "smoothingBits": 1075838976,
    "steps": [
@@ -601,7 +601,7 @@
   },
   {
    "name": "accel-whole-phone",
-   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[10.0, 1.0, 100.0, 2.0, 250.0, 3.0], [10.0, 1.0, 100.0, 2.0, 250.0, 3.0], [10.0, 1.0, 100.0, 2.0, 250.0, 3.0]], "curvesBits": [[1092616192, 1065353216, 1120403456, 1073741824, 1132068864, 1077936128], [1092616192, 1065353216, 1120403456, 1073741824, 1132068864, 1077936128], [1092616192, 1065353216, 1120403456, 1073741824, 1132068864, 1077936128]], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
+   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[10.0, 1.0, 100.0, 2.0, 250.0, 3.0], [10.0, 1.0, 100.0, 2.0, 250.0, 3.0], [10.0, 1.0, 100.0, 2.0, 250.0, 3.0]], "curvesBits": [[1092616192, 1065353216, 1120403456, 1073741824, 1132068864, 1077936128], [1092616192, 1065353216, 1120403456, 1073741824, 1132068864, 1077936128], [1092616192, 1065353216, 1120403456, 1073741824, 1132068864, 1077936128]], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
    "tightening": 0.0, "tighteningBits": 0,
    "smoothing": 0.0, "smoothingBits": 0,
    "steps": [
@@ -645,7 +645,7 @@
   },
   {
    "name": "accel-axis-speed-per-axis",
-   "config": {"sensitivity": [12.0, 16.0, 20.0], "sensitivityBits": [1094713344, 1098907648, 1101004800], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [5.0, 0.6, 40.3, 1.0, 90.0, 1.75, 180.0, 2.4, 400.0, 4.0, 800.0, 4.5], [20.0, 1.0, 150.0, 1.5]], "curvesBits": [[], [1084227584, 1058642330, 1109472051, 1065353216, 1119092736, 1071644672, 1127481344, 1075419546, 1137180672, 1082130432, 1145569280, 1083179008], [1101004800, 1065353216, 1125515264, 1069547520]], "axisSpeed": [false, true, true], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 2, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 5, "scale": 0.5, "scaleBits": 1056964608}]},
+   "config": {"sensitivity": [12.0, 16.0, 20.0], "sensitivityBits": [1094713344, 1098907648, 1101004800], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[], [5.0, 0.6, 40.3, 1.0, 90.0, 1.75, 180.0, 2.4, 400.0, 4.0, 800.0, 4.5], [20.0, 1.0, 150.0, 1.5]], "curvesBits": [[], [1084227584, 1058642330, 1109472051, 1065353216, 1119092736, 1071644672, 1127481344, 1075419546, 1137180672, 1082130432, 1145569280, 1083179008], [1101004800, 1065353216, 1125515264, 1069547520]], "axisSpeed": [false, true, true], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 2, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 5, "scale": 0.5, "scaleBits": 1056964608}]},
    "tightening": 0.0, "tighteningBits": 0,
    "smoothing": 0.0, "smoothingBits": 0,
    "steps": [
@@ -693,7 +693,7 @@
   },
   {
    "name": "accel-glide-keeps-gain",
-   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [true, true, true], "glideMs": [300.0, 300.0, 300.0], "glideMsBits": [1133903872, 1133903872, 1133903872], "linear": [false, true, false], "curves": [[5.0, 0.6, 40.3, 1.0, 90.0, 1.75, 180.0, 2.4, 400.0, 4.0, 800.0, 4.5], [5.0, 0.6, 40.3, 1.0, 90.0, 1.75, 180.0, 2.4, 400.0, 4.0, 800.0, 4.5], [5.0, 0.6, 40.3, 1.0, 90.0, 1.75, 180.0, 2.4, 400.0, 4.0, 800.0, 4.5]], "curvesBits": [[1084227584, 1058642330, 1109472051, 1065353216, 1119092736, 1071644672, 1127481344, 1075419546, 1137180672, 1082130432, 1145569280, 1083179008], [1084227584, 1058642330, 1109472051, 1065353216, 1119092736, 1071644672, 1127481344, 1075419546, 1137180672, 1082130432, 1145569280, 1083179008], [1084227584, 1058642330, 1109472051, 1065353216, 1119092736, 1071644672, 1127481344, 1075419546, 1137180672, 1082130432, 1145569280, 1083179008]], "axisSpeed": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
+   "config": {"sensitivity": [16.0, 16.0, 16.0], "sensitivityBits": [1098907648, 1098907648, 1098907648], "inertia": [true, true, true], "glideMs": [300.0, 300.0, 300.0], "glideMsBits": [1133903872, 1133903872, 1133903872], "linear": [false, true, false], "curves": [[5.0, 0.6, 40.3, 1.0, 90.0, 1.75, 180.0, 2.4, 400.0, 4.0, 800.0, 4.5], [5.0, 0.6, 40.3, 1.0, 90.0, 1.75, 180.0, 2.4, 400.0, 4.0, 800.0, 4.5], [5.0, 0.6, 40.3, 1.0, 90.0, 1.75, 180.0, 2.4, 400.0, 4.0, 800.0, 4.5]], "curvesBits": [[1084227584, 1058642330, 1109472051, 1065353216, 1119092736, 1071644672, 1127481344, 1075419546, 1137180672, 1082130432, 1145569280, 1083179008], [1084227584, 1058642330, 1109472051, 1065353216, 1119092736, 1071644672, 1127481344, 1075419546, 1137180672, 1082130432, 1145569280, 1083179008], [1084227584, 1058642330, 1109472051, 1065353216, 1119092736, 1071644672, 1127481344, 1075419546, 1137180672, 1082130432, 1145569280, 1083179008]], "axisSpeed": [false, false, false], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}]},
    "tightening": 0.0, "tighteningBits": 0,
    "smoothing": 0.0, "smoothingBits": 0,
    "steps": [
@@ -734,7 +734,7 @@
   },
   {
    "name": "accel-filters-and-sticks",
-   "config": {"sensitivity": [16.0, 10.0, 22.0], "sensitivityBits": [1098907648, 1092616192, 1102053376], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[10.0, 1.0, 100.0, 2.0, 250.0, 3.0], [5.0, 0.6, 40.3, 1.0, 90.0, 1.75, 180.0, 2.4, 400.0, 4.0, 800.0, 4.5], [10.0, 1.0, 100.0, 2.0, 250.0, 3.0]], "curvesBits": [[1092616192, 1065353216, 1120403456, 1073741824, 1132068864, 1077936128], [1084227584, 1058642330, 1109472051, 1065353216, 1119092736, 1071644672, 1127481344, 1075419546, 1137180672, 1082130432, 1145569280, 1083179008], [1092616192, 1065353216, 1120403456, 1073741824, 1132068864, 1077936128]], "axisSpeed": [false, false, true], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": -1.0, "scaleBits": -1082130432}, {"axis": 2, "target": 6, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 8, "scale": 1.0, "scaleBits": 1065353216}]},
+   "config": {"sensitivity": [16.0, 10.0, 22.0], "sensitivityBits": [1098907648, 1092616192, 1102053376], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[10.0, 1.0, 100.0, 2.0, 250.0, 3.0], [5.0, 0.6, 40.3, 1.0, 90.0, 1.75, 180.0, 2.4, 400.0, 4.0, 800.0, 4.5], [10.0, 1.0, 100.0, 2.0, 250.0, 3.0]], "curvesBits": [[1092616192, 1065353216, 1120403456, 1073741824, 1132068864, 1077936128], [1084227584, 1058642330, 1109472051, 1065353216, 1119092736, 1071644672, 1127481344, 1075419546, 1137180672, 1082130432, 1145569280, 1083179008], [1092616192, 1065353216, 1120403456, 1073741824, 1132068864, 1077936128]], "axisSpeed": [false, false, true], "smooth": [false, false, false], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": -1.0, "scaleBits": -1082130432}, {"axis": 2, "target": 6, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 8, "scale": 1.0, "scaleBits": 1065353216}]},
    "tightening": 1.5, "tighteningBits": 1069547520,
    "smoothing": 5.0, "smoothingBits": 1084227584,
    "steps": [
@@ -769,10 +769,66 @@
     {"yaw": -34.605186, "yawBits": -1039504458, "pitch": 41.181046, "pitchBits": 1109703012, "roll": 310.07635, "rollBits": 1134234054, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": 41, "dy": 3, "wheel": 0, "hwheel": 0, "pad": [0.0, 0.0, 1.0, 0.0, 1.0, 0.0], "padBits": [0, 0, 1065353216, 0, 1065353216, 0], "coasting": true},
     {"yaw": 117.675385, "yawBits": 1122720204, "pitch": -24.04071, "pitchBits": -1044360352, "roll": 137.11978, "rollBits": 1124671146, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": 14, "dy": -1, "wheel": 0, "hwheel": 0, "pad": [0.0, 0.0, 1.0, 0.0, 1.0, 0.0], "padBits": [0, 0, 1065353216, 0, 1065353216, 0], "coasting": true}
    ]
+  },
+  {
+   "name": "accel-smooth",
+   "config": {"sensitivity": [16.0, 12.0, 20.0], "sensitivityBits": [1098907648, 1094713344, 1101004800], "inertia": [false, false, false], "glideMs": [325.0, 325.0, 325.0], "glideMsBits": [1134723072, 1134723072, 1134723072], "linear": [false, false, false], "curves": [[5.0, 0.6, 40.3, 1.0, 90.0, 1.75, 180.0, 2.4, 400.0, 4.0, 800.0, 4.5], [10.0, 1.0, 100.0, 2.0, 250.0, 3.0], [30.0, 2.0, 60.0, 0.8, 120.0, 1.6]], "curvesBits": [[1084227584, 1058642330, 1109472051, 1065353216, 1119092736, 1071644672, 1127481344, 1075419546, 1137180672, 1082130432, 1145569280, 1083179008], [1092616192, 1065353216, 1120403456, 1073741824, 1132068864, 1077936128], [1106247680, 1073741824, 1114636288, 1061997773, 1123024896, 1070386381]], "axisSpeed": [false, true, false], "smooth": [true, true, true], "routes": [{"axis": 2, "target": 0, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 1, "target": 1, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 2, "scale": 1.0, "scaleBits": 1065353216}, {"axis": 0, "target": 4, "scale": 1.0, "scaleBits": 1065353216}]},
+   "tightening": 0.0, "tighteningBits": 0,
+   "smoothing": 0.0, "smoothingBits": 0,
+   "steps": [
+    {"yaw": 324.7344, "yawBits": 1134714369, "pitch": -14.934239, "pitchBits": -1049693531, "roll": -16.30251, "rollBits": -1048417398, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": -1, "dy": 0, "wheel": 9, "hwheel": 0, "pad": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1065353216, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -480.84454, "yawBits": -1007653862, "pitch": 7.233553, "pitchBits": 1088911684, "roll": -17.614101, "rollBits": -1047729746, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": -1, "dy": 0, "wheel": -31, "hwheel": 0, "pad": [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082130432, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -28.589272, "yawBits": -1041975596, "pitch": -44.274467, "pitchBits": -1036969714, "roll": 681.9212, "rollBits": 1143634677, "dt": 0.003, "dtBits": 994352038, "axes": 7, "dx": 66, "dy": 2, "wheel": -3, "hwheel": 0, "pad": [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082130432, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 24.1968, "yawBits": 1103205132, "pitch": 19.556887, "pitchBits": 1100772481, "roll": -11.631732, "rollBits": -1053156461, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": -1, "dy": 0, "wheel": 0, "hwheel": 0, "pad": [0.24184547, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1048028759, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -25.771315, "yawBits": -1043453017, "pitch": -48.246296, "pitchBits": -1035928523, "roll": 693.0957, "rollBits": 1143817760, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": 23, "dy": 1, "wheel": -1, "hwheel": 0, "pad": [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082130432, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -53.707703, "yawBits": -1034496848, "pitch": -22.14876, "pitchBits": -1045352279, "roll": -54.18223, "rollBits": -1034372453, "dt": 0.003, "dtBits": 994352038, "axes": 7, "dx": -4, "dy": 0, "wheel": -2, "hwheel": 0, "pad": [-0.96775895, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082671347, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 58.714622, "yawBits": 1114299334, "pitch": 47.954376, "pitchBits": 1111478600, "roll": -54.799446, "rollBits": -1034210654, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": -1, "dy": 0, "wheel": 0, "hwheel": 0, "pad": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1065353216, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -142.00175, "yawBits": -1022492557, "pitch": 50.554012, "pitchBits": 1112160079, "roll": 45.603905, "rollBits": 1110862438, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": 1, "dy": -1, "wheel": -2, "hwheel": 0, "pad": [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082130432, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -28.898972, "yawBits": -1041813224, "pitch": 29.123962, "pitchBits": 1105788384, "roll": 540.2461, "rollBits": 1141313472, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": 35, "dy": -1, "wheel": -2, "hwheel": 0, "pad": [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082130432, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -645.9173, "yawBits": -1004438859, "pitch": -29.701002, "pitchBits": -1041392729, "roll": 55.335445, "rollBits": 1113413503, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": 2, "dy": 0, "wheel": -23, "hwheel": 0, "pad": [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082130432, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -46.864872, "yawBits": -1036290655, "pitch": -42.503326, "pitchBits": -1037434008, "roll": -26.109325, "rollBits": -1043275802, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": -1, "dy": 1, "wheel": 0, "hwheel": 0, "pad": [-0.7551085, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1086239030, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 57.034042, "yawBits": 1113858780, "pitch": 25.976135, "pitchBits": 1104138016, "roll": -1.7674899, "rollBits": -1075692260, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": 0, "dy": 0, "wheel": 0, "hwheel": 0, "pad": [0.8573845, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1062960525, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 7.4372363, "yawBits": 1089338839, "pitch": 27.151207, "pitchBits": 1104754092, "roll": -567.4576, "rollBits": -1005724343, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": -36, "dy": -1, "wheel": 0, "hwheel": 0, "pad": [0.35626936, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1052141808, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -32.739567, "yawBits": -1039993519, "pitch": -606.7569, "pitchBits": -1005080463, "roll": 8.679979, "rollBits": 1091232050, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": 0, "dy": 44, "wheel": -1, "hwheel": 0, "pad": [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082130432, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -310.60892, "yawBits": -1013232143, "pitch": -10.358391, "pitchBits": -1054491656, "roll": -23.968534, "rollBits": -1044398193, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": 0, "dy": 0, "wheel": -9, "hwheel": 0, "pad": [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082130432, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -57.815903, "yawBits": -1033419908, "pitch": 42.73931, "pitchBits": 1110111502, "roll": -250.78645, "rollBits": -1015363243, "dt": 0.003, "dtBits": 994352038, "axes": 7, "dx": -24, "dy": -2, "wheel": -4, "hwheel": 0, "pad": [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082130432, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -2.7219415, "yawBits": -1070713782, "pitch": 49.94869, "pitchBits": 1112001397, "roll": -58.440742, "rollBits": -1033256110, "dt": 0.003, "dtBits": 994352038, "axes": 7, "dx": -4, "dy": -2, "wheel": 0, "hwheel": 0, "pad": [-0.04793786, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1119593859, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -7.011931, "yawBits": -1059036739, "pitch": 33.872017, "pitchBits": 1107786994, "roll": 41.38241, "rollBits": 1109755798, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": 1, "dy": -1, "wheel": 0, "hwheel": 0, "pad": [-0.09386559, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1111475046, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -52.05789, "yawBits": -1034929336, "pitch": 59.12414, "pitchBits": 1114406687, "roll": 204.28647, "rollBits": 1129072982, "dt": 0.003, "dtBits": 994352038, "axes": 7, "dx": 20, "dy": -3, "wheel": -4, "hwheel": 0, "pad": [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082130432, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 41.41503, "yawBits": 1109764350, "pitch": -18.389633, "pitchBits": -1047323144, "roll": -46.729023, "rollBits": -1036326267, "dt": 0.003, "dtBits": 994352038, "axes": 7, "dx": -3, "dy": 1, "wheel": 1, "hwheel": 0, "pad": [0.64135337, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1059336124, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 5.7840014, "yawBits": 1085871754, "pitch": -22.056091, "pitchBits": -1045400864, "roll": -622.3285, "rollBits": -1004825338, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": -20, "dy": 0, "wheel": 0, "hwheel": 0, "pad": [0.28185937, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1049645023, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -8.004934, "yawBits": -1056959434, "pitch": -128.93936, "pitchBits": -1023348614, "roll": 7.6477146, "rollBits": 1089780244, "dt": 0.003, "dtBits": 994352038, "axes": 7, "dx": 1, "dy": 10, "wheel": 0, "hwheel": 0, "pad": [-0.18376863, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1103352360, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -58.819126, "yawBits": -1033156919, "pitch": -33.28447, "pitchBits": -1039850676, "roll": -53.540154, "rollBits": -1034540770, "dt": 0.003, "dtBits": 994352038, "axes": 7, "dx": -3, "dy": 2, "wheel": -2, "hwheel": 0, "pad": [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082130432, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 25.393896, "yawBits": 1103832755, "pitch": 14.152401, "pitchBits": 1096970300, "roll": -350.53265, "rollBits": -1011923922, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": -12, "dy": 0, "wheel": 0, "hwheel": 0, "pad": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1065353216, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -3.7501073, "yawBits": -1066401342, "pitch": -49.948082, "pitchBits": -1035482410, "roll": 139.04224, "rollBits": 1124797136, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": 5, "dy": 0, "wheel": 0, "hwheel": 0, "pad": [-0.0910811, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1111848774, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -18.503057, "yawBits": -1047263677, "pitch": 696.3118, "pitchBits": 1143870453, "roll": -405.18634, "rollBits": -1010133030, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": -13, "dy": -25, "wheel": 0, "hwheel": 0, "pad": [-0.92515284, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1083386159, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 55.9364, "yawBits": 1113571040, "pitch": 24.561747, "pitchBits": 1103396469, "roll": -674.67084, "rollBits": -1003967761, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": -43, "dy": 0, "wheel": 3, "hwheel": 0, "pad": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1065353216, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -49.76075, "yawBits": -1035531518, "pitch": -32.523808, "pitchBits": -1040050079, "roll": 26.438255, "rollBits": 1104380300, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": 1, "dy": 1, "wheel": 0, "hwheel": 0, "pad": [-0.7703016, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1085984132, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -26.744057, "yawBits": -1042943020, "pitch": -7.951362, "pitchBits": -1057066609, "roll": 50.04472, "rollBits": 1112026571, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": 1, "dy": 0, "wheel": -1, "hwheel": 0, "pad": [-0.37472808, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1094722468, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 340.1605, "yawBits": 1135219851, "pitch": 541.4952, "pitchBits": 1141333937, "roll": -26.8655, "rollBits": -1042879349, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": -1, "dy": -20, "wheel": 11, "hwheel": 0, "pad": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1065353216, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 39.30117, "yawBits": 1109210214, "pitch": 323.68924, "pitchBits": 1134680121, "roll": 17.590778, "rollBits": 1099741674, "dt": 0.003, "dtBits": 994352038, "axes": 7, "dx": 2, "dy": -35, "wheel": 4, "hwheel": 0, "pad": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1065353216, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 562.0479, "yawBits": 1141670673, "pitch": -584.46313, "pitchBits": -1005445724, "roll": -18.49828, "rollBits": -1047266182, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": -1, "dy": 42, "wheel": 40, "hwheel": 0, "pad": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1065353216, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -57.7321, "yawBits": -1033441876, "pitch": -9.052641, "pitchBits": -1055860834, "roll": -32.031147, "rollBits": -1040179227, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": -1, "dy": 1, "wheel": 0, "hwheel": 0, "pad": [-0.9108293, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1083626468, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 50.65863, "yawBits": 1112187504, "pitch": -451.39743, "pitchBits": -1008618785, "roll": 15.782919, "rollBits": 1098680022, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": 1, "dy": 32, "wheel": 2, "hwheel": 0, "pad": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1065353216, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 468.44638, "yawBits": 1139423523, "pitch": -17.231777, "pitchBits": -1047930194, "roll": 47.278603, "rollBits": 1111301450, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": 1, "dy": 0, "wheel": 16, "hwheel": 0, "pad": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1065353216, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -45.20587, "yawBits": -1036725552, "pitch": 639.1483, "pitchBits": 1142933886, "roll": 1.8743706, "rollBits": 1072687968, "dt": 0.003, "dtBits": 994352038, "axes": 7, "dx": 0, "dy": -69, "wheel": -4, "hwheel": 0, "pad": [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082130432, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 0.31916142, "yawBits": 1050896672, "pitch": 652.32983, "pitchBits": 1143149852, "roll": 15.63298, "rollBits": 1098522800, "dt": 0.003, "dtBits": 994352038, "axes": 7, "dx": 2, "dy": -70, "wheel": 0, "hwheel": 0, "pad": [0.015672388, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1015047009, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -502.52603, "yawBits": -1006943403, "pitch": 8.261604, "pitchBits": 1090793352, "roll": -32.499897, "rollBits": -1040056347, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": -1, "dy": 0, "wheel": -17, "hwheel": 0, "pad": [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082130432, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 14.907203, "yawBits": 1097761767, "pitch": 13.928097, "pitchBits": 1096735100, "roll": 305.52286, "rollBits": 1134084845, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": 10, "dy": 0, "wheel": 0, "hwheel": 0, "pad": [0.5757318, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1058235177, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 468.36646, "yawBits": 1139420904, "pitch": -4.0994954, "pitchBits": -1065144559, "roll": -52.70437, "rollBits": -1034759866, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": -4, "dy": 0, "wheel": 31, "hwheel": 0, "pad": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1065353216, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -57.665783, "yawBits": -1033459261, "pitch": 1.5811801, "pitchBits": 1070228508, "roll": 43.867756, "rollBits": 1110407317, "dt": 0.003, "dtBits": 994352038, "axes": 7, "dx": 3, "dy": 0, "wheel": -1, "hwheel": 0, "pad": [-0.97134185, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082611236, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -195.72762, "yawBits": -1018971579, "pitch": 15.759537, "pitchBits": 1098655504, "roll": -169.5285, "rollBits": -1020688564, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": -6, "dy": -1, "wheel": -5, "hwheel": 0, "pad": [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082130432, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -9.292417, "yawBits": -1055609411, "pitch": -17.652554, "pitchBits": -1047709586, "roll": -36.970123, "rollBits": -1038884504, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": -2, "dy": 1, "wheel": 0, "hwheel": 0, "pad": [-0.10558971, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1109901461, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 189.28621, "yawBits": 1128089925, "pitch": 8.716658, "pitchBits": 1091270510, "roll": 20.8666, "rollBits": 1101459148, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": 1, "dy": 0, "wheel": 2, "hwheel": 0, "pad": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1065353216, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 600.46985, "yawBits": 1142300178, "pitch": 2.6240158, "pitchBits": 1076359136, "roll": -9.150574, "rollBits": -1055758144, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": -1, "dy": 0, "wheel": 42, "hwheel": 0, "pad": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1065353216, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -488.63693, "yawBits": -1007398521, "pitch": 32.766808, "pitchBits": 1107497270, "roll": 47.788902, "rollBits": 1111435222, "dt": 0.001, "dtBits": 981668463, "axes": 7, "dx": 2, "dy": -1, "wheel": -15, "hwheel": 0, "pad": [-1.0, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1082130432, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": -15.734696, "yawBits": -1048854191, "pitch": 314.70822, "pitchBits": 1134385831, "roll": 14.589464, "rollBits": 1097428594, "dt": 0.002, "dtBits": 990057071, "axes": 7, "dx": 0, "dy": -22, "wheel": -1, "hwheel": 0, "pad": [-0.6205091, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [-1088497233, 0, 0, 0, 0, 0], "coasting": true},
+    {"yaw": 21.781233, "yawBits": 1101938679, "pitch": -27.001333, "pitchBits": -1042808133, "roll": -8.558929, "rollBits": -1056378528, "dt": 0.003, "dtBits": 994352038, "axes": 7, "dx": 0, "dy": 1, "wheel": 0, "hwheel": 0, "pad": [0.22672313, 0.0, 0.0, 0.0, 0.0, 0.0], "padBits": [1047013916, 0, 0, 0, 0, 0], "coasting": true}
+   ]
   }
  ],
  "tail": {
-  "hex": "03080b002351f1f8b1094c01f407b1f603460326fbb401ae08046506a5fceb0ec901058504140a2f108312064102d8fa78010d00071c0b87f605f266ff009b02090ea8f84408010000c50074fc000006608060ffffffffff12cd6a0000000000de9b6e000000000000008041000048410000f04100007a430080a2430000164435050000c03f0000804002000000803f0101000000bf00020000004000030000803f01070000c03f000000000000000000000000000000000000000000000000000000000000000000000000000000000000036400e803e803d007c409b80b0000000000000000000000000000000000000000000000000000000000000000000000000082c800e803dc05dc0500000000000000000000000000000000",
+  "hex": "03080b002351f1f8b1094c01f407b1f603460326fbb401ae08046506a5fceb0ec901058504140a2f108312064102d8fa78010d00071c0b87f605f266ff009b02090ea8f84408010000c50074fc000006608060ffffffffff12cd6a0000000000de9b6e000000000000008041000048410000f04100007a430080a2430000164435050000c03f0000804002000000803f0101000000bf00020000004000030000803f01070000c03f000000000000000000000000000000000000000000000000000000000000000000000000000000000000036400e803e803d007c409b80b00000000000000000000000000000000000000000000000000000000000000000000000000c2c800e803dc05dc0500000000000000000000000000000000",
   "clockOffsetUs": -123456789,
   "flags": 3, "n": 8, "seq": 11, "timeUs": 4176564515,
   "samples": [
@@ -786,6 +842,6 @@
    {"dtUs": 0, "yaw": 197, "pitch": -908, "roll": 0, "axes": 6}
   ],
   "totals": [-10452896, 6999314, 7248862],
-  "config": {"sensitivity": [16.0, 12.5, 30.0], "glideMs": [250.0, 325.0, 600.0], "glideBits": 53, "routeCount": 5, "tightening": 1.5, "smoothing": 4.0, "routes": [{"axis": 2, "target": 0, "scale": 1.0}, {"axis": 1, "target": 1, "scale": -0.5}, {"axis": 0, "target": 2, "scale": 2.0}, {"axis": 0, "target": 3, "scale": 1.0}, {"axis": 1, "target": 7, "scale": 1.5}], "curves": [{"axisSpeed": false, "q": [100, 1000, 1000, 2000, 2500, 3000]}, {"axisSpeed": false, "q": []}, {"axisSpeed": true, "q": [200, 1000, 1500, 1500]}]}
+  "config": {"sensitivity": [16.0, 12.5, 30.0], "glideMs": [250.0, 325.0, 600.0], "glideBits": 53, "routeCount": 5, "tightening": 1.5, "smoothing": 4.0, "routes": [{"axis": 2, "target": 0, "scale": 1.0}, {"axis": 1, "target": 1, "scale": -0.5}, {"axis": 0, "target": 2, "scale": 2.0}, {"axis": 0, "target": 3, "scale": 1.0}, {"axis": 1, "target": 7, "scale": 1.5}], "curves": [{"axisSpeed": false, "smooth": false, "q": [100, 1000, 1000, 2000, 2500, 3000]}, {"axisSpeed": false, "smooth": false, "q": []}, {"axisSpeed": true, "smooth": true, "q": [200, 1000, 1500, 1500]}]}
  }
 }

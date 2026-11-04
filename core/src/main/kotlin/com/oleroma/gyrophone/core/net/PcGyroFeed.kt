@@ -220,7 +220,7 @@ class PcGyroFeed {
             val o = off + CURVES_OFFSET + k * CURVE_SIZE
             val curve = c.curves[k]
             val pts = minOf(curve.size / 2, GyroCurve.MAX_POINTS)
-            out.putU8(o, pts or (if (c.axisSpeed[k]) CURVE_AXIS_SPEED else 0))
+            out.putU8(o, pts or (if (c.axisSpeed[k]) CURVE_AXIS_SPEED else 0) or (if (c.smooth[k]) CURVE_SMOOTH else 0))
             for (j in 0 until GyroCurve.MAX_POINTS) {
                 val q = o + 1 + j * 4
                 if (j < pts) {
@@ -263,10 +263,11 @@ class PcGyroFeed {
         const val MAX_ROUTES = 12
         const val ROUTE_SIZE = 6
         const val ROUTES_OFFSET = 34
-        /** Per axis: u8 point count (bit 7: [CURVE_AXIS_SPEED]), then [GyroCurve.MAX_POINTS] × (u16 speed in 0.1 deg/s, u16 gain in 0.001). */
+        /** Per axis: u8 point count (bit 7: [CURVE_AXIS_SPEED], bit 6: [CURVE_SMOOTH]), then [GyroCurve.MAX_POINTS] × (u16 speed in 0.1 deg/s, u16 gain in 0.001). */
         const val CURVES_OFFSET = ROUTES_OFFSET + MAX_ROUTES * ROUTE_SIZE
         const val CURVE_SIZE = 1 + GyroCurve.MAX_POINTS * 4
         const val CURVE_AXIS_SPEED = 0x80
+        const val CURVE_SMOOTH = 0x40
         const val CONFIG_SIZE = CURVES_OFFSET + 3 * CURVE_SIZE
         /** Bytes STATE_GYRO adds after STATE_HIRES. */
         const val TAIL_SIZE = CONFIG_OFFSET + CONFIG_SIZE

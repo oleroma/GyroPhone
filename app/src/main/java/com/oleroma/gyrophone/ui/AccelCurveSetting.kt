@@ -11,12 +11,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.model.CurvePoint
 import com.oleroma.gyrophone.core.model.GameSens
 import com.oleroma.gyrophone.core.model.GyroCurve
+import com.oleroma.gyrophone.core.model.GyroCurves
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.runtime
@@ -72,13 +75,13 @@ internal fun AccelCurveSetting(
             for ((name, p) in PRESETS) {
                 FilterChip(
                     selected = draft.points == p.points,
-                    onClick = { onSet(p.copy(axisSpeed = draft.axisSpeed)) },
+                    onClick = { onSet(p.copy(axisSpeed = draft.axisSpeed, smooth = draft.smooth, range = draft.range)) },
                     label = { Text(name) },
                 )
             }
             FilterChip(
                 selected = !draft.isOff && PRESETS.none { it.second.points == draft.points },
-                onClick = { if (draft.isOff) onSet(GyroCurve.LIGHT) },
+                onClick = { if (draft.isOff) onSet(GyroCurve.LIGHT.copy(axisSpeed = draft.axisSpeed, smooth = draft.smooth, range = draft.range)) },
                 label = { Text("Own") },
             )
         }
@@ -104,7 +107,11 @@ internal fun AccelCurveSetting(
                 }
             }
             // The graph's span stays put while a point is dragged, so it doesn't run away under the finger.
-            val maxSpeed = remember(key, curve) { niceCeil(max(200f, (curve.points.maxOfOrNull { it.speed } ?: 0f) * 1.3f)) }
+            // The "°/s cap" sets it; unset, it fits the points. It never cuts off a point.
+            val lastSpeed = curve.points.maxOfOrNull { it.speed } ?: 0f
+            val maxSpeed = remember(key, curve) {
+                if (curve.range > 0f) max(curve.range, niceCeil(lastSpeed)) else niceCeil(max(200f, lastSpeed * 1.3f))
+            }
             val maxGain = remember(key, curve) { max(2f, (curve.points.maxOfOrNull { it.gain } ?: 1f) * 1.3f) }
             val colors = MaterialTheme.colorScheme
             Canvas(
@@ -189,7 +196,17 @@ internal fun AccelCurveSetting(
                 drawLine(colors.outline, Offset(0f, 0f), Offset(0f, h), 2f)
                 val path = Path()
                 path.moveTo(0f, y(pts.first().gain))
-                for (p in pts) path.lineTo(x(p.speed), y(p.gain))
+                if (draft.smooth) {
+                    // Sampled every few pixels through the same math the gyro uses.
+                    val flat = draft.flat()
+                    var px = 0f
+                    while (px < w) {
+                        path.lineTo(px, y(GyroCurves.gain(flat, px / w * maxSpeed, true)))
+                        px += 3f
+                    }
+                } else {
+                    for (p in pts) path.lineTo(x(p.speed), y(p.gain))
+                }
                 path.lineTo(w, y(pts.last().gain))
                 drawPath(path, colors.primary, style = Stroke(width = 5f))
                 for (v in live) {
@@ -215,6 +232,20 @@ internal fun AccelCurveSetting(
                 "Tap to add a point (up to ${GyroCurve.MAX_POINTS}), drag one to move it, long-press one to remove it.",
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Between points", Modifier.padding(top = 14.dp), style = MaterialTheme.typography.bodyMedium)
+                FilterChip(selected = !draft.smooth, onClick = { onSet(draft.copy(smooth = false)) }, label = { Text("Lines") })
+                FilterChip(selected = draft.smooth, onClick = { onSet(draft.copy(smooth = true)) }, label = { Text("Smooth") })
+            }
+            // How far the graph reaches, so points can sit at fast flicks too. Only the graph: past the last point the gain stays flat.
+            var cap by remember(key, curve) { mutableFloatStateOf(maxSpeed) }
+            Text("°/s cap: %.0f°/s".format(cap), Modifier.padding(top = 6.dp), style = MaterialTheme.typography.bodyMedium)
+            Slider(
+                value = cap,
+                onValueChange = { cap = (Math.round(it / 50f) * 50f).coerceIn(max(GyroCurve.MIN_RANGE, niceCeil(lastSpeed)), GyroCurve.MAX_SPEED) },
+                onValueChangeFinished = { if (cap != maxSpeed) onSet(draft.copy(range = cap)) },
+                valueRange = GyroCurve.MIN_RANGE..GyroCurve.MAX_SPEED,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Speed from", Modifier.padding(top = 14.dp), style = MaterialTheme.typography.bodyMedium)

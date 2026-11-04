@@ -58,6 +58,7 @@ class GyroMathVectorsTest {
     ) = GyroMath.Config(
         sens, inertia, glideMs, linear, routes,
         Array(3) { accel[it].flat() }, BooleanArray(3) { !accel[it].isOff && accel[it].axisSpeed },
+        BooleanArray(3) { !accel[it].isOff && accel[it].smooth },
     )
 
     /** [n] steps of motion from [rnd] around [base] deg/s (± [spread]) over [dt] with [axes]. */
@@ -175,6 +176,16 @@ class GyroMathVectorsTest {
         ), 1.5f, 5f, 20) { rnd ->
             walk(rnd, 15, floatArrayOf(0.5f, 1f, -1.5f), 2f, 0.004f) + walk(rnd, 15, floatArrayOf(30f, -90f, 200f), 150f, 0.002f)
         }
+        add("accel-smooth", cfg(
+            sens = floatArrayOf(16f, 12f, 20f),
+            accel = listOf(wide.copy(smooth = true), strong.copy(smooth = true, axisSpeed = true), GyroCurve(listOf(CurvePoint(30f, 2f), CurvePoint(60f, 0.8f), CurvePoint(120f, 1.6f)), smooth = true)),
+            routes = MOUSE + listOf(Route(0, Route.WHEEL, 1f), Route(0, Route.PAD + 0, 1f)),
+        ), 0f, 0f, 21) { rnd ->
+            List(48) {
+                fun r() = (rnd.nextFloat() * 2f - 1f) * (if (rnd.nextInt(3) == 0) 700f else 60f)
+                Step(r(), r(), r(), (1 + rnd.nextInt(3)) / 1000f, ALL)
+            }
+        }
         return list
     }
 
@@ -201,6 +212,7 @@ class GyroMathVectorsTest {
             sb.append(", \"curves\": ").append(cfg.curves.joinToString(", ", "[", "]") { floats(it) })
             sb.append(", \"curvesBits\": ").append(cfg.curves.joinToString(", ", "[", "]") { bits(it) })
             sb.append(", \"axisSpeed\": ").append(cfg.axisSpeed.joinToString(", ", "[", "]"))
+            sb.append(", \"smooth\": ").append(cfg.smooth.joinToString(", ", "[", "]"))
             sb.append(", \"routes\": [")
             sb.append(cfg.routes.joinToString(", ") { r ->
                 "{\"axis\": ${r.axis}, \"target\": ${r.target}, \"scale\": ${f(r.scale)}, \"scaleBits\": ${r.scale.toRawBits()}}"
@@ -258,7 +270,7 @@ class GyroMathVectorsTest {
                 Route(2, Route.MOUSE_X, 1f), Route(1, Route.MOUSE_Y, -0.5f), Route(0, Route.WHEEL, 2f),
                 Route(0, Route.HWHEEL, 1f), Route(1, Route.PAD + 3, 1.5f),
             ),
-            accel = listOf(GyroCurve.STRONG, GyroCurve.OFF, GyroCurve.LIGHT.copy(axisSpeed = true)),
+            accel = listOf(GyroCurve.STRONG, GyroCurve.OFF, GyroCurve.LIGHT.copy(axisSpeed = true, smooth = true)),
         )
         feed.setConfig(cfg, 1.5f, 4f)
         val offset = -123_456_789L
@@ -299,7 +311,7 @@ class GyroMathVectorsTest {
             val o = c + PcGyroFeed.CURVES_OFFSET + a * PcGyroFeed.CURVE_SIZE
             val head = b.getU8(o)
             val pts = (0 until (head and 0x0F)).joinToString(", ") { j -> "${b.getU16(o + 1 + j * 4)}, ${b.getU16(o + 3 + j * 4)}" }
-            "{\"axisSpeed\": ${head and PcGyroFeed.CURVE_AXIS_SPEED != 0}, \"q\": [$pts]}"
+            "{\"axisSpeed\": ${head and PcGyroFeed.CURVE_AXIS_SPEED != 0}, \"smooth\": ${head and PcGyroFeed.CURVE_SMOOTH != 0}, \"q\": [$pts]}"
         })
         sb.append("]}\n")
         sb.append(" }")

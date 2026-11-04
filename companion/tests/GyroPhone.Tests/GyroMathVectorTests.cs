@@ -47,11 +47,12 @@ public class GyroMathVectorTests
         if (c.TryGetProperty("curvesBits", out var curves))
         {
             var axisSpeed = Bools(c, "axisSpeed");
+            var smooth = c.TryGetProperty("smooth", out _) ? Bools(c, "smooth") : new bool[3];
             int a = 0;
             foreach (var curve in curves.EnumerateArray())
             {
                 var flat = curve.EnumerateArray().Select(v => BitConverter.Int32BitsToSingle(v.GetInt32())).ToArray();
-                cfg.SetCurve(a, flat, axisSpeed[a]);
+                cfg.SetCurve(a, flat, axisSpeed[a], smooth[a]);
                 a++;
             }
         }
@@ -171,6 +172,7 @@ public class GyroMathVectorTests
                             var q = curve.GetProperty("q").EnumerateArray().Select(v => v.GetInt32()).ToArray();
                             Assert.Equal(q.Length / 2, t.Config.CurvePoints[a]);
                             Assert.Equal(curve.GetProperty("axisSpeed").GetBoolean(), t.Config.AxisSpeed[a]);
+                            if (curve.TryGetProperty("smooth", out var sm)) Assert.Equal(sm.GetBoolean(), t.Config.Smooth[a]);
                             for (int j = 0; j < q.Length / 2; j++)
                             {
                                 Assert.Equal(q[2 * j] / 10f, t.Config.Curves[a][2 * j]);

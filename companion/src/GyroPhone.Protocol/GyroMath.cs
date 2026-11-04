@@ -64,6 +64,8 @@ public sealed class GyroMath
         public readonly float[][] Curves = [new float[MaxCurvePoints * 2], new float[MaxCurvePoints * 2], new float[MaxCurvePoints * 2]];
         public readonly int[] CurvePoints = new int[3];
         public readonly bool[] AxisSpeed = new bool[3];
+        /// <summary>Per axis: its curve is a smooth bend through the points rather than straight lines.</summary>
+        public readonly bool[] Smooth = new bool[3];
 
         public void CopyFrom(Config o)
         {
@@ -76,15 +78,17 @@ public sealed class GyroMath
             for (int a = 0; a < 3; a++) o.Curves[a].CopyTo(Curves[a], 0);
             o.CurvePoints.CopyTo(CurvePoints, 0);
             o.AxisSpeed.CopyTo(AxisSpeed, 0);
+            o.Smooth.CopyTo(Smooth, 0);
         }
 
         /// <summary>Sets axis <paramref name="axis"/>'s curve to <paramref name="flat"/> (speeds and gains interleaved).</summary>
-        public void SetCurve(int axis, ReadOnlySpan<float> flat, bool axisSpeed)
+        public void SetCurve(int axis, ReadOnlySpan<float> flat, bool axisSpeed, bool smooth = false)
         {
             int n = Math.Min(flat.Length / 2, MaxCurvePoints);
             flat[..(n * 2)].CopyTo(Curves[axis]);
             CurvePoints[axis] = n;
             AxisSpeed[axis] = axisSpeed && n > 0;
+            Smooth[axis] = smooth && n > 0;
         }
     }
 
@@ -228,15 +232,16 @@ public sealed class GyroMath
             int n = c.CurvePoints[i];
             if (n == 0) { _gain[i] = 1f; continue; }
             float speed = c.AxisSpeed[i] ? MathF.Abs(i switch { 0 => yaw, 1 => pitch, _ => roll }) : whole;
-            _gain[i] = Gain(c.Curves[i], n, speed);
+            _gain[i] = Gain(c.Curves[i], n, speed, c.Smooth[i]);
         }
     }
 
     /// <summary>
     /// The gain of a curve of <paramref name="n"/> points (speeds and gains interleaved, speeds
-    /// rising) at <paramref name="speed"/>: the phone's GyroCurves.gain, float math in the same order.
+    /// rising) at <paramref name="speed"/>, straight or <paramref name="smooth"/>: the phone's
+    /// GyroCurves.gain, float math in the same order.
     /// </summary>
-    public static float Gain(float[] c, int n, float speed)
+    public static float Gain(float[] c, int n, float speed, bool smooth = false)
     {
         if (n == 0) return 1f;
         if (speed <= c[0]) return c[1];
@@ -247,11 +252,31 @@ public sealed class GyroMath
             {
                 float s0 = c[2 * j - 2];
                 float g0 = c[2 * j - 1];
-                float t = (speed - s0) / (s1 - s0);
-                return g0 + (c[2 * j + 1] - g0) * t;
+                float g1 = c[2 * j + 1];
+                float h = s1 - s0;
+                float t = (speed - s0) / h;
+                if (!smooth) return g0 + (g1 - g0) * t;
+                float m0 = Slope(c, n, j - 1);
+                float m1 = Slope(c, n, j);
+                float u = 1f - t;
+                float h00 = (1f + 2f * t) * u * u;
+                float h10 = t * u * u;
+                float h01 = t * t * (3f - 2f * t);
+                float h11 = t * t * (t - 1f);
+                return h00 * g0 + h10 * h * m0 + h01 * g1 + h11 * h * m1;
             }
         }
         return c[2 * n - 1];
+    }
+
+    /// <summary>The smooth curve's slope at point <paramref name="k"/> of <paramref name="n"/> (the phone's GyroCurves.slope).</summary>
+    private static float Slope(float[] c, int n, int k)
+    {
+        if (k == 0 || k == n - 1) return 0f;
+        float d0 = (c[2 * k + 1] - c[2 * k - 1]) / (c[2 * k] - c[2 * k - 2]);
+        float d1 = (c[2 * k + 3] - c[2 * k + 1]) / (c[2 * k + 2] - c[2 * k]);
+        if (d0 * d1 <= 0f) return 0f;
+        return 2f * d0 * d1 / (d0 + d1);
     }
 
     private static float Mean(float[] b)

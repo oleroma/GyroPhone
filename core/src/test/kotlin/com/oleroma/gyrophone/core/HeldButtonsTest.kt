@@ -88,4 +88,21 @@ class HeldButtonsTest {
         assertEquals(2f, curve.gainAt(500f), 0f)
         assertEquals(1f, GyroCurve.OFF.gainAt(300f), 0f)
     }
+
+    @Test fun smoothCurvePassesThePointsWithoutOvershoot() {
+        val c = GyroCurve(listOf(CurvePoint(10f, 1f), CurvePoint(50f, 1.2f), CurvePoint(100f, 3f), CurvePoint(150f, 3f)), smooth = true)
+        for (p in c.points) assertEquals(p.gain, c.gainAt(p.speed), 1e-5f)
+        var last = 0f
+        var s = 0f
+        while (s <= 200f) {
+            val g = c.gainAt(s)
+            assertTrue("rises at $s", g >= last - 1e-5f)
+            assertTrue("within the points at $s: $g", g in 0.99999f..3.00001f)
+            last = g
+            s += 0.5f
+        }
+        // Flat ends meet without a kink: just inside the first and last segments it barely moves.
+        assertEquals(1f, c.gainAt(10.5f), 1e-3f)
+        assertEquals(3f, c.gainAt(149.5f), 1e-3f)
+    }
 }
