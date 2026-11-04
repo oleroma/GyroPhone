@@ -80,6 +80,7 @@ object Describe {
         is OutputTarget.Layer -> layer(t) + if (t.set < 0) "" else " → " + setName(t.set)
         OutputTarget.LayerBack -> "Layer back (to the layers before the last change)"
         OutputTarget.LetGo -> "(Let go): ends the toggles set to end on it"
+        OutputTarget.BlackScreen -> "Black screen (the phone's screen goes black until tapped)"
         OutputTarget.NoOutput -> "Nothing (blocks the layer below)"
     }
 
@@ -90,8 +91,8 @@ object Describe {
         OutputTarget.LayerBack, OutputTarget.NoOutput,
     )
 
-    /** The "Other" picker group: (Let go). */
-    val otherTargets: List<OutputTarget> = listOf(OutputTarget.LetGo)
+    /** The "Other" picker group: (Let go) and Black screen. */
+    val otherTargets: List<OutputTarget> = listOf(OutputTarget.LetGo, OutputTarget.BlackScreen)
 
     /** "Layer set", "Layer hold", "Override layer set" or "Override layer hold". */
     fun layer(t: OutputTarget.Layer): String = when {
@@ -180,6 +181,7 @@ object Describe {
         is OutputTarget.Layer -> layer(t) + if (t.set < 0) "" else " " + (if (t.set == MappingSet.BASE) "Base" else t.set.toString())
         OutputTarget.LayerBack -> "Layer back"
         OutputTarget.LetGo -> "(Let go)"
+        OutputTarget.BlackScreen -> "Black screen"
 
         OutputTarget.NoOutput -> "Nothing"
     }

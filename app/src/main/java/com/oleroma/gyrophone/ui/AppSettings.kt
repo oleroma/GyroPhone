@@ -116,6 +116,8 @@ private fun AppTab(runtime: GamepadRuntime) {
     val startFullscreen by runtime.startFullscreen.collectAsStateWithLifecycle()
     val keepScreenOn by runtime.keepScreenOn.collectAsStateWithLifecycle()
     val autoHide by runtime.cornerAutoHide.collectAsStateWithLifecycle()
+    val blackIdle by runtime.blackScreenIdle.collectAsStateWithLifecycle()
+    val blackSeconds by runtime.blackScreenSeconds.collectAsStateWithLifecycle()
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val visuals by runtime.touchVisuals.collectAsStateWithLifecycle()
     val debugOn by runtime.debug.enabled.collectAsStateWithLifecycle()
@@ -124,7 +126,7 @@ private fun AppTab(runtime: GamepadRuntime) {
     val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?" }
 
     val items = listOf(
-        category(runtime, "pad", "Pad", "Fullscreen, screen on, screen rotation, when input is sent", defaultOpen = true) {
+        category(runtime, "pad", "Pad", "Fullscreen, screen on, black screen, screen rotation, when input is sent", defaultOpen = true) {
             SwitchRow(
                 "Start in fullscreen", startFullscreen,
                 hint = "The pad opens in fullscreen when the app starts. Press ← and → together, or Back, to leave it.",
@@ -134,6 +136,26 @@ private fun AppTab(runtime: GamepadRuntime) {
                 hint = if (keepScreenOn) "The phone doesn't dim or lock while the pad is on screen. Its pages and other apps lock as usual."
                 else "The phone dims and locks after its usual screen timeout, also on the pad.",
             ) { runtime.setKeepScreenOn(it) }
+            SwitchRow(
+                "Black screen when idle", blackIdle,
+                hint = "In play, the pad goes black after a while without a screen touch, to save battery when you only use a " +
+                        "controller. Gyro, controllers and the PC connection keep working. Tap the screen to bring the pad back: " +
+                        "that tap presses nothing. A controller button mapped to Black screen (Other) blacks it out at once." +
+                        if (keepScreenOn) "" else " With the screen not kept on, the phone may lock first.",
+            ) { runtime.setBlackScreenIdle(it) }
+            if (blackIdle) Searchable("Black screen after", "idle timeout seconds minutes") {
+                Column {
+                    Text("Black screen after", style = MaterialTheme.typography.titleSmall)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        GamepadRuntime.BLACK_SCREEN_SECONDS.forEach { s ->
+                            FilterChip(
+                                selected = blackSeconds == s,
+                                onClick = { runtime.setBlackScreenSeconds(s) },
+                                label = { Text(if (s < 60) "$s s" else "${s / 60} min") })
+                        }
+                    }
+                }
+            }
             Searchable(
                 "Screen rotation", "Auto Landscape Portrait rotation lock turn", *ScreenOrientation.entries.map { it.label }.toTypedArray(),
             ) {

@@ -65,6 +65,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -243,6 +244,21 @@ class GamepadRuntime(context: Context) {
 
     /** When on (the default), the screen stays on, so the phone doesn't lock, while the pad is shown. */
     val keepScreenOn: StateFlow<Boolean> = _keepScreenOn
+
+    private val _blackScreenIdle = MutableStateFlow(prefs.getBoolean(KEY_BLACK_SCREEN_IDLE, false))
+
+    /** In play, the pad goes black (touch buttons off) after [blackScreenSeconds] without a touch; a tap brings it back. */
+    val blackScreenIdle: StateFlow<Boolean> = _blackScreenIdle
+
+    private val _blackScreenSeconds = MutableStateFlow(prefs.getInt(KEY_BLACK_SCREEN_SECONDS, DEFAULT_BLACK_SCREEN_SECONDS))
+
+    /** How long the pad waits without a touch before going black ([blackScreenIdle]). */
+    val blackScreenSeconds: StateFlow<Int> = _blackScreenSeconds
+
+    private val _blackScreenRequests = MutableStateFlow(0)
+
+    /** Goes up each time a Black screen mapping fires ([OutputTarget.BlackScreen]): the pad goes black at once. */
+    val blackScreenRequests: StateFlow<Int> = _blackScreenRequests
 
     private val _cornerAutoHide = MutableStateFlow(prefs.getBoolean(KEY_CORNER_AUTO_HIDE, false))
 
@@ -534,6 +550,8 @@ class GamepadRuntime(context: Context) {
 
     init {
         engine.hapticSink = haptics
+        // Inside the engine lock: only bump the counter the pad watches.
+        engine.onBlackScreen = Runnable { _blackScreenRequests.update { it + 1 } }
         // Every other mouse count turns a trackball 3D shape too, as the camera turns.
         engine.cameraSink = { dx, dy ->
             val overlay = wifi.overlay
@@ -624,6 +642,16 @@ class GamepadRuntime(context: Context) {
     fun setKeepScreenOn(on: Boolean) {
         prefs.edit().putBoolean(KEY_KEEP_SCREEN_ON, on).apply()
         _keepScreenOn.value = on
+    }
+
+    fun setBlackScreenIdle(on: Boolean) {
+        prefs.edit().putBoolean(KEY_BLACK_SCREEN_IDLE, on).apply()
+        _blackScreenIdle.value = on
+    }
+
+    fun setBlackScreenSeconds(seconds: Int) {
+        prefs.edit().putInt(KEY_BLACK_SCREEN_SECONDS, seconds).apply()
+        _blackScreenSeconds.value = seconds
     }
 
     fun setCornerAutoHide(on: Boolean) {
@@ -1148,6 +1176,12 @@ class GamepadRuntime(context: Context) {
         val IDLE_STOP_CHOICES = listOf(0, 5, 10, 30)
         private const val KEY_START_FULLSCREEN = "start_fullscreen"
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
+        private const val KEY_BLACK_SCREEN_IDLE = "black_screen_idle"
+        private const val KEY_BLACK_SCREEN_SECONDS = "black_screen_seconds"
+        const val DEFAULT_BLACK_SCREEN_SECONDS = 60
+
+        /** The idle times the Black screen setting offers. */
+        val BLACK_SCREEN_SECONDS = listOf(30, 60, 120, 300)
         private const val KEY_CORNER_AUTO_HIDE = "corner_auto_hide"
         private const val KEY_EDIT_LAYOUT_LOCKED = "edit_layout_locked"
         private const val KEY_CAPSULE_ORDER = "capsule_order"
