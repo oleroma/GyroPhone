@@ -108,6 +108,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Per axis id: the tuning of the physical stick it is part of (null = raw), from the pinned preset ([Workspace.stickTunings]). */
     private val axisStick = arrayOfNulls<StickTuning>(AXIS_SLOTS)
 
+    /** [axisStick] for a pad whose right stick is RX / RY ([PadDevice.rightStickRx]). */
+    private val axisStickRx = arrayOfNulls<StickTuning>(AXIS_SLOTS)
+
     /** Per axis id: the tuning of the physical trigger it is part of (null = the defaults). */
     private val axisTrigger = arrayOfNulls<TriggerTuning>(AXIS_SLOTS)
 
@@ -615,8 +618,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         // The touchpad mappings it does not set come from the Defaults.
         val w = loaded.copy(mappings = Bindings.upgradeSwipes(Inheritance.workspace(loaded, profile.defaults)))
         ws = w
-        axisStick.fill(null); axisTrigger.fill(null)
+        axisStick.fill(null); axisStickRx.fill(null); axisTrigger.fill(null)
         for ((id, axes) in PhysicalSticks.sticks) w.stickTunings[id]?.let { axisStick[axes.first] = it; axisStick[axes.second] = it }
+        for ((id, axes) in PhysicalSticks.sticksRx) w.stickTunings[id]?.let { axisStickRx[axes.first] = it; axisStickRx[axes.second] = it }
         for ((id, axes) in PhysicalSticks.triggers) w.triggerTunings[id]?.let { axisTrigger[axes.first] = it; axisTrigger[axes.second] = it }
         allTouch = w.mappings
         trace?.state("workspace: ${w.name}")
@@ -2556,10 +2560,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     private fun axisValue(dev: Dev, s: InputSource.Axis): Float {
         val a = s.axis
-        val stick = if (a in 0 until AXIS_SLOTS) axisStick[a] else null
+        // The device's own sticks: on a pad with its right stick on RX / RY, Z / RZ are triggers.
+        val rx = dev.device?.rightStickRx == true
+        val layout = if (rx) STICKS_RX else STICKS
+        val stick = if (a in 0 until AXIS_SLOTS) (if (rx) axisStickRx else axisStick)[a] else null
         return when (s.stage) {
-            AxisStage.NONE -> if (stick == null) half(dev.axis(a), s.half) else stickValue(dev, s, stick)
-            AxisStage.OUTER -> stickValue(dev, s, stick ?: DEFAULT_STICK)
+            AxisStage.NONE -> if (stick == null) half(dev.axis(a), s.half) else stickValue(dev, s, stick, layout)
+            AxisStage.OUTER -> stickValue(dev, s, stick ?: DEFAULT_STICK, layout)
             AxisStage.PRESS, AxisStage.FULL_PULL -> {
                 val t = (if (a in 0 until AXIS_SLOTS) axisTrigger[a] else null) ?: DEFAULT_TRIGGER
                 val at = if (s.stage == AxisStage.PRESS) t.press else t.full
@@ -2568,10 +2575,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
     }
 
-    /** [s] (a stick axis, half, or Outer) of [dev] with stick tuning [t]. */
-    private fun stickValue(dev: Dev, s: InputSource.Axis, t: StickTuning): Float {
+    /** [s] (a stick axis, half, or Outer) of [dev], whose sticks are [layout], with stick tuning [t]. */
+    private fun stickValue(dev: Dev, s: InputSource.Axis, t: StickTuning, layout: StickLayout): Float {
         val a = s.axis
-        val partner = STICK_PARTNER.getOrElse(a) { -1 }
+        val partner = layout.partner.getOrElse(a) { -1 }
         if (partner < 0) return if (s.stage == AxisStage.NONE) half(dev.axis(a), s.half) else 0f
         val own = dev.axis(a)
         val other = dev.axis(partner)
@@ -2581,20 +2588,20 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (travel <= 0f) return 0f
         if (s.stage == AxisStage.OUTER) {
             if (travel < t.outerRing) return 0f
-            return if (s.half == AxisHalf.FULL || inPie(s, own, other, t)) 1f else 0f
+            return if (s.half == AxisHalf.FULL || inPie(s, own, other, t, layout)) 1f else 0f
         }
         val mag = (t.curve.apply(travel) * t.sensitivity).coerceAtMost(1f)
         return when (s.half) {
             AxisHalf.FULL -> own / r * mag
-            else -> if (inPie(s, own, other, t)) mag else 0f
+            else -> if (inPie(s, own, other, t, layout)) mag else 0f
         }
     }
 
     /** Whether a stick at ([own] on [s]'s axis, [other] on its partner) points into [s]'s direction pie. */
-    private fun inPie(s: InputSource.Axis, own: Float, other: Float, t: StickTuning): Boolean {
+    private fun inPie(s: InputSource.Axis, own: Float, other: Float, t: StickTuning, layout: StickLayout): Boolean {
         val along = if (s.half == AxisHalf.NEGATIVE) -own else own
         if (along <= 0f) return false
-        val pie = (if (STICK_IS_X[s.axis]) t.pieX else t.pieY).coerceIn(StickTuning.MIN_PIE, StickTuning.MAX_PIE)
+        val pie = (if (layout.isX[s.axis]) t.pieX else t.pieY).coerceIn(StickTuning.MIN_PIE, StickTuning.MAX_PIE)
         return Math.toDegrees(atan2(abs(other), along).toDouble()) <= pie / 2.0
     }
 
@@ -2653,13 +2660,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         private val DEFAULT_STICK = StickTuning()
         private val DEFAULT_TRIGGER = TriggerTuning()
 
-        /** Per axis id: the other axis of its physical stick, or -1. */
-        private val STICK_PARTNER = IntArray(AXIS_SLOTS) { -1 }.also { p ->
-            for ((x, y) in PhysicalSticks.sticks.values) { p[x] = y; p[y] = x }
-        }
-
-        /** Per axis id: it is a physical stick's X axis. */
-        private val STICK_IS_X = BooleanArray(AXIS_SLOTS).also { p -> for ((x, _) in PhysicalSticks.sticks.values) p[x] = true }
+        /** A pad's physical sticks: right stick on Z / RZ ([PhysicalSticks.sticks]) or on RX / RY ([PhysicalSticks.sticksRx]). */
+        private val STICKS = StickLayout(PhysicalSticks.sticks)
+        private val STICKS_RX = StickLayout(PhysicalSticks.sticksRx)
 
         private const val MAX_BUTTON_FINGERS = 10
 
@@ -2694,5 +2697,15 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         /** Wheel units (1/120 notch) per mouse count of swipe: a notch every 20 dp at sensitivity 1.5. */
         const val SWIPE_WHEEL_PER_COUNT = 4f
 
+    }
+}
+
+/** Per axis id (0..63): the other axis of its physical stick in [sticks] ([partner], or -1), and whether it is the X axis. */
+private class StickLayout(sticks: Map<String, Pair<Int, Int>>) {
+    val partner = IntArray(64) { -1 }
+    val isX = BooleanArray(64)
+
+    init {
+        for ((x, y) in sticks.values) { partner[x] = y; partner[y] = x; isX[x] = true }
     }
 }
