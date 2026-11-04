@@ -6,8 +6,8 @@ namespace GyroPhone.Windows;
 /// <summary>
 /// "Use PC controller for gyro ratchet": reads the first XInput controller that is not our own virtual
 /// pad, every millisecond on its own thread, and counts each button's presses so a short one
-/// between two STATEs is not lost. Free slots are looked at only once a second (a query on an
-/// empty slot is slow). Reading never takes the controller away from games or Steam Input.
+/// between two STATEs is not lost. Free slots are looked at only every few seconds (a query on an
+/// empty slot is slow), and not while our own pad is plugged but has no slot yet (it could be any). Reading never takes the controller away from games or Steam Input.
 /// </summary>
 public sealed class XInputPcPad : IPcPad, IDisposable
 {
@@ -20,6 +20,8 @@ public sealed class XInputPcPad : IPcPad, IDisposable
     private const byte TriggerPressed = 128;
 
     private const long RescanMs = 1000;
+    /// <summary>How long after a scan that found nothing the empty slots are queried again.</summary>
+    private const long EmptyRescanMs = 3000;
     private const double PollMs = 1.0;
 
     private readonly Action<string>? _log;
@@ -106,6 +108,7 @@ public sealed class XInputPcPad : IPcPad, IDisposable
     {
         IntPtr timer = CreateWaitableTimerExW(IntPtr.Zero, IntPtr.Zero, CreateWaitableTimerHighResolution, TimerAllAccess);
         long lastScan = -RescanMs;
+        long nextScan = 0;
         var clock = System.Diagnostics.Stopwatch.StartNew();
         int slot = -1;
         try
@@ -121,13 +124,14 @@ public sealed class XInputPcPad : IPcPad, IDisposable
                     {
                         _log?.Invoke($"PC controller for gyro ratchet: controller {slot + 1} is our own pad, looking again");
                         slot = -1;
-                        lastScan = -RescanMs;
+                        nextScan = 0;
                     }
                 }
-                if (slot < 0 && now - lastScan >= RescanMs)
+                if (slot < 0 && now >= nextScan)
                 {
                     lastScan = now;
-                    slot = Scan();
+                    slot = Scan(out bool ownUnknown);
+                    nextScan = now + (slot < 0 && !ownUnknown ? EmptyRescanMs : RescanMs);
                     lock (_gate)
                     {
                         if (run.Stopped) return;
@@ -164,10 +168,12 @@ public sealed class XInputPcPad : IPcPad, IDisposable
         }
     }
 
-    /// <summary>The first connected slot that is not ours, or -1.</summary>
-    private int Scan()
+    /// <summary>The first connected slot that is not ours, or -1 (also while our own pad's slot is unknown).</summary>
+    private int Scan(out bool ownUnknown)
     {
         int own = OwnSlot();
+        ownUnknown = own == IPadSink.SlotUnknown;
+        if (ownUnknown) return -1;
         for (int i = 0; i < 4; i++)
         {
             if (i == own) continue;

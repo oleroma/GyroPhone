@@ -36,7 +36,9 @@ public sealed class PairWindow : Window
     private readonly Button _reopen;
     private readonly DispatcherTimer _timer;
     private uint _promptAttempt;
-    private DateTime? _allowedUtc;
+    private string _promptPhone = "";
+    /// <summary>After Allow: when, which phone, and each paired phone's LastSeenUtc then, to spot the one that pairs.</summary>
+    private (DateTime Utc, string Name, Dictionary<string, DateTime> Before)? _allowed;
 
     public PairWindow(HostEngine engine, string hostName, KeyFiles? keyFiles, string title, ImageSource? icon)
     {
@@ -131,6 +133,7 @@ public sealed class PairWindow : Window
         _reopen = Parts.Button("Open pairing again", () =>
         {
             _engine.OpenPairingWindow();
+            if (!_qrShown) ShowNewQr();
             RefreshNow();
         }, "Accent");
         _reopen.Margin = new Thickness(0, 0, 8, 0);
@@ -180,8 +183,11 @@ public sealed class PairWindow : Window
         var s = _engine.Snapshot();
         if (s.QrEnrolledPhone is { } qrPhone)
         {
-            ShowResult($"Paired with {qrPhone} by QR code. You can close this window.");
-            ShowQr(false);
+            if (_qrShown) // once, when the code is used; the engine keeps the name until a new code
+            {
+                ShowResult($"Paired with {qrPhone} by QR code. You can close this window.");
+                ShowQr(false);
+            }
         }
         else if (_qrShown && s.QrPairingS == 0)
         {
@@ -191,6 +197,7 @@ public sealed class PairWindow : Window
         {
             bool fresh = p.AttemptId != _promptAttempt;
             _promptAttempt = p.AttemptId;
+            _promptPhone = p.PhoneName;
             _question.Text = $"Pair {p.PhoneName}?";
             _code.Text = p.Sas;
             Parts.Show(_promptPanel, true);
@@ -199,7 +206,7 @@ public sealed class PairWindow : Window
             if (fresh)
             {
                 Activate();
-                _allowedUtc = null;
+                _allowed = null;
             }
         }
         else
@@ -207,11 +214,21 @@ public sealed class PairWindow : Window
             _promptAttempt = 0;
             Parts.Show(_promptPanel, false);
             Parts.Show(_waitPanel, true);
-            // A pairing stamps the phone's LastSeenUtc, so a phone seen after the Allow is the new one.
-            if (_allowedUtc is { } since && s.PairedPhones.FirstOrDefault(x => x.LastSeenUtc >= since) is { Name: { } name })
+            // The allowed phone is one that wasn't paired before, or the same name paired again (a pairing
+            // stamps LastSeenUtc). Another paired phone that just reconnects is neither.
+            if (_allowed is { } a)
             {
-                ShowResult($"Paired with {name}. You can close this window.");
-                _allowedUtc = null;
+                var paired = s.PairedPhones.FirstOrDefault(x =>
+                    !a.Before.TryGetValue(Convert.ToHexString(x.PhoneId), out var seen) || (x.Name == a.Name && x.LastSeenUtc != seen));
+                if (paired is { Name: { } name })
+                {
+                    ShowResult($"Paired with {name}. You can close this window.");
+                    _allowed = null;
+                }
+                else if (s.PairingWindowS == 0 || DateTime.UtcNow - a.Utc > TimeSpan.FromSeconds(Wire.PairingWindowS))
+                {
+                    _allowed = null; // the attempt ended without a pairing
+                }
             }
         }
         int left = s.PairingWindowS;
@@ -229,13 +246,27 @@ public sealed class PairWindow : Window
     {
         uint id = _promptAttempt;
         if (id == 0) return;
-        _allowedUtc = allow ? DateTime.UtcNow.AddSeconds(-1) : null;
+        _allowed = null;
+        if (allow)
+        {
+            var before = new Dictionary<string, DateTime>();
+            foreach (var x in _engine.Snapshot().PairedPhones) before[Convert.ToHexString(x.PhoneId)] = x.LastSeenUtc;
+            _allowed = (DateTime.UtcNow, _promptPhone, before);
+        }
         _engine.AnswerPair(id, allow);
         _promptAttempt = 0;
         RefreshNow();
         ShowResult(allow
             ? "Allowed. Finishing on the phone (tap Confirm there if you haven't yet)."
             : "Denied. The phone was not paired.");
+    }
+
+    /// <summary>The user asked to pair another phone: a new QR code if the last one was used.</summary>
+    public void PairAgain()
+    {
+        if (!IsLoaded || _qrShown) return; // Loaded shows the first one
+        ShowNewQr();
+        RefreshNow();
     }
 
     /// <summary>A new one-time QR code (hidden when this PC has no key).</summary>

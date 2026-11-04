@@ -384,7 +384,11 @@ internal sealed class OverlaysPage : Page
             sub.FontSize = 11.5;
             g.Children.Add(Parts.Column(name, sub));
             var shown = new CheckBox { Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, ToolTip = "Show" };
-            shown.Click += (_, _) => _app.SetOverlayShown(id, !(_app.OverlayOf(id)?.Shown ?? false));
+            shown.Click += (_, e) =>
+            {
+                _app.SetOverlayShown(id, !(_app.OverlayOf(id)?.Shown ?? false));
+                e.Handled = true; // the row would select this overlay too
+            };
             Grid.SetColumn(shown, 1);
             g.Children.Add(shown);
             var row = new RadioButton { Style = Parts.Style("ListRow"), GroupName = "overlays", Content = g };

@@ -53,6 +53,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     private MainWindow? _mainWindow;
     private System.Windows.Media.ImageSource? _windowIcon;
     private string _statusLine = "";
+    // While Refresh updates the main window: its snapshot and problems, so View doesn't take them again.
+    private (HostSnapshot Snapshot, List<Problem> Problems)? _refreshing;
     private DebugForm? _debugForm;
     // The open overlay windows, by settings id.
     private readonly Dictionary<string, OverlayForm> _overlayForms = [];
@@ -294,10 +296,19 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         _versionItem.Text = _updater.Pending is { } pending
             ? $"{Program.AppName} {Application.ProductVersion} · restarting into {pending}"
             : $"{Program.AppName} {Application.ProductVersion}";
-        int problems = Problems(s).Count;
+        var problemList = Problems(s);
+        int problems = problemList.Count;
         _problemsItem.Available = problems > 0;
         _problemsItem.Text = problems == 1 ? "⚠ 1 thing to fix: open Home" : $"⚠ {problems} things to fix: open Home";
-        _mainWindow?.RefreshNow();
+        _refreshing = (s, problemList);
+        try
+        {
+            _mainWindow?.RefreshNow();
+        }
+        finally
+        {
+            _refreshing = null;
+        }
 
         if (s.NetworkPublic && !_publicHintShown)
         {
@@ -342,7 +353,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
 
     public CompanionView View()
     {
-        var s = _engine.Snapshot();
+        var s = _refreshing?.Snapshot ?? _engine.Snapshot();
         var help = !_usb.Enabled ? UsbHelp.None : _usb.State switch
         {
             UsbDirectState.AdbBusy => UsbHelp.AdbBusy,
@@ -371,7 +382,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             hostKey,
             _keyFiles.Directory,
             _log.Path,
-            Problems(s));
+            _refreshing?.Problems ?? Problems(s));
     }
 
     public string DetailsText() => StatusText();
@@ -438,6 +449,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     {
         _engine.OpenPairingWindow();
         OpenPairForm();
+        _pairWindow?.PairAgain();
     }
 
     private void OpenPairForm()

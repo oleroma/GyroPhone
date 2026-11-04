@@ -213,10 +213,11 @@ internal sealed class HomePage : Page
             ? $"Gyro ratchet from the PC controller: {name}."
             : "Gyro ratchet from the PC controller: no controller found. Plug one in.";
 
-        if (_detailsFold.IsChecked == true)
+        // Not while the user selects or copies it: setting the text clears the selection.
+        if (_detailsFold.IsChecked == true && !_details.IsKeyboardFocusWithin && _details.SelectionLength == 0)
         {
             var t = _app.DetailsText();
-            if (t != _details.Text) _details.Text = t; // unchanged text keeps the selection
+            if (t != _details.Text) _details.Text = t;
         }
     }
 
