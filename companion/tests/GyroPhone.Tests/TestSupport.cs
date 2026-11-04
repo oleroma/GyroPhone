@@ -117,11 +117,15 @@ internal sealed class FakeKeyMouse : IKeyMouseSink
     public readonly HashSet<string> HeldButtons = new();
     public long MouseX, MouseY, Wheel, HWheel;
 
+    /// <summary>The OS drops every event, as with an elevated window in front.</summary>
+    public bool Dropping;
+
     public IEnumerable<InjectEvent> All => Calls.SelectMany(c => c);
 
-    public void Inject(ReadOnlySpan<InjectEvent> events)
+    public bool Inject(ReadOnlySpan<InjectEvent> events)
     {
         Calls.Add(events.ToArray());
+        if (Dropping) return false;
         foreach (var e in events)
         {
             if (e.Kind == InjectKind.Key)
@@ -138,6 +142,7 @@ internal sealed class FakeKeyMouse : IKeyMouseSink
             Button(e, InjectEvent.MouseMiddleDown, InjectEvent.MouseMiddleUp, "M");
             Button(e, InjectEvent.MouseXDown, InjectEvent.MouseXUp, "X" + e.MouseData);
         }
+        return true;
     }
 
     private void Button(in InjectEvent e, uint down, uint up, string name)

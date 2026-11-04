@@ -71,6 +71,21 @@ public sealed class SettingsAndStatsTests : IDisposable
     }
 
     [Fact]
+    public void LockedSettingsAreNeverReplaced()
+    {
+        var store = new SettingsStore(Path.Combine(_dir, "settings.json"));
+        var s = store.Load("PC");
+        s.PairedPhones.Add(new PairedPhone { PhoneId = Hex.Range(0, 16), Name = "A", ProtectedKey = [1] });
+        store.Save(s);
+        store.Save(s);
+        var before = File.ReadAllText(store.Path);
+        using (new FileStream(store.Path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Assert.Throws<IOException>(() => new SettingsStore(store.Path).Load("other"));
+        Assert.Equal(before, File.ReadAllText(store.Path));
+        Assert.Equal("A", Assert.Single(new SettingsStore(store.Path).Load("other").PairedPhones).Name);
+    }
+
+    [Fact]
     public void FailedSettingsWriteIsRetried()
     {
         var store = new SettingsStore(Path.Combine(_dir, "settings.json"));

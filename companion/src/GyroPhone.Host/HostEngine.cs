@@ -78,6 +78,7 @@ public sealed class HostEngine
     /// <summary>Hex KeyId of every authorized phone key, for ANNOUNCE KnowsYourKey.</summary>
     private readonly HashSet<string> _authorizedKeyIds = new();
     private readonly byte[]? _hostKeyId;
+    private readonly string? _hostKeyFingerprint;
     /// <summary>The last list from authorized_phones, so a QR enrolment can add to it.</summary>
     private IReadOnlyList<AuthorizedPhone> _authorizedList = [];
     private QrSession? _qr;
@@ -137,6 +138,8 @@ public sealed class HostEngine
     private bool _paused, _locked;
     private bool _releasedForSilence;
     private bool _elevatedForeground, _networkPublic;
+    /// <summary>The sink took fewer events than given (UIPI or the secure desktop): resynced once it takes them again.</summary>
+    private bool _injectFailed;
 
     // Phone overlay: asked for in HOST_STATUS while on; the newest OVERLAY and layout from the active phone.
     private bool _overlayOn;
@@ -173,6 +176,7 @@ public sealed class HostEngine
         _settings.Normalize();
         _hostKey = hostKey;
         _hostKeyId = hostKey == null ? null : KeyPairing.KeyId(hostKey.PublicKey);
+        _hostKeyFingerprint = hostKey == null ? null : KeyPairing.Fingerprint(hostKey.PublicKey);
         _pad = pad;
         _keyMouse = keyMouse;
         _protector = protector;
@@ -382,7 +386,11 @@ public sealed class HostEngine
         _padGyro.Decode(plain);
         if (_padGyro.Enabled == was) return;
         if (_padGyro.Enabled) StartPcPad();
-        else StopPcPad();
+        else
+        {
+            StopPcPad();
+            _gate.ClearPc(); // off: no PC toggle or ratchet is left turning the gyro over
+        }
         _events.StateChanged();
     }
 
@@ -468,7 +476,7 @@ public sealed class HostEngine
             $"latency {_stats.LatP50Us / 1000.0:0.0} / {_stats.LatP99Us / 1000.0:0.0} ms (p50/p99)";
         return $"got {_stats.RxPerSec}/s · loss {_stats.LossPermille / 10.0:0.0}% · {lat} · jitter {_stats.JitterUs / 1000.0:0.0} ms" +
             $" · output {_pad.Plugged}" + (_paused ? " · paused" : "") + (_locked ? " · locked" : "") +
-            (_elevatedForeground ? " · an admin window has focus (input blocked)" : "");
+            (_elevatedForeground || _injectFailed ? " · an admin window has focus (input blocked)" : "");
     }
 
     private void HandlePendingControl(HostSession s, byte type, ReadOnlySpan<byte> plain, long nowUs)
@@ -555,17 +563,28 @@ public sealed class HostEngine
                 // last STATE goes in first; its late copies draw no ERROR.
                 if (_hasPending) Flush(nowUs, edge: false);
                 RememberEnded(old.SessionId);
+                // Its app may have restarted: the next layout is taken even with the version shown now,
+                // and its press count starts again.
+                _overlayLayout.Renew();
+                foreach (var pose in _overlayPoses.Values) pose.ForgetPresses();
             }
             else
             {
                 ReleaseAllLocked();
                 SendHostBye(old, HostByeReason.Replaced);
+                // Nothing of the old phone's overlay or PC controller carries over.
+                _overlayLayout.Reset();
+                _overlayPoses.Clear();
+                _overlayRxUs = long.MinValue;
+                StopPcPad();
+                _padGyro.Enabled = false;
+                _gate.Reset();
             }
             old.Dispose();
         }
-        // The phone restarts its totals at 0 for a new session.
+        // The phone restarts its totals at 0 for a new session; the PC controller's toggle stays.
         _mouse.Reset();
-        _gate.Reset();
+        _gate.Rebase();
         _accDx = _accDy = _accWheel = _accHWheel = 0;
         _stats.Reset();
         _releasedForSilence = false;
@@ -607,7 +626,7 @@ public sealed class HostEngine
             bool blocked = _elevatedForeground;
             Span<byte> before = stackalloc byte[StateFrame.KeyBitmapSize];
             byte beforeMouse = _injectedMouse;
-            if (blocked) _injectedKeys.CopyTo(before);
+            _injectedKeys.CopyTo(before);
             int unknown = 0;
             int n = InputDiff.Diff(_injectedKeys, _pending.Keys, ref _injectedMouse, _pending.MouseButtons,
                 Math.Clamp(dx, -Wire.MaxMouseDelta, Wire.MaxMouseDelta),
@@ -619,7 +638,12 @@ public sealed class HostEngine
             if (blocked) NoteBlockedUps(before, beforeMouse);
             if (n > 0)
             {
-                _keyMouse.Inject(_inject.AsSpan(0, n));
+                if (!_keyMouse.Inject(_inject.AsSpan(0, n)))
+                {
+                    // Windows dropped them: the ups are sent again once it takes input.
+                    if (!blocked) NoteBlockedUps(before, beforeMouse);
+                    InjectFailed();
+                }
                 _injections++;
                 if (Debug.Enabled) Debug.OnInject(_inject.AsSpan(0, n), nowUs);
                 for (int i = 0; i < n; i++)
@@ -799,6 +823,8 @@ public sealed class HostEngine
                     _events.StateChanged();
                 }
             }
+            // Ups Windows dropped are sent again as soon as it takes input.
+            if (_injectFailed && !Blocked) ResyncAfterBlock();
             // A pad button held from a burst is let go even when no STATE follows.
             if (_padHeld && nowUs >= _padHoldUntilUs && !_hasPending && !_paused && !_locked) SubmitPad(_pending, nowUs);
             _sessions.ExpirePending(nowUs);
@@ -978,6 +1004,13 @@ public sealed class HostEngine
                 o.Gravity = f.Gravity; o.Compass = f.Compass; o.EaseHeadingOnly = f.EaseHeadingOnly;
                 o.Ease = f.Ease; o.EaseOnRatchet = f.EaseOnRatchet; o.EaseDelayMs = f.EaseDelayMs; o.EaseBySpeed = f.EaseBySpeed;
                 o.EaseSeconds = f.EaseSeconds; o.EaseSpeed = f.EaseSpeed; o.MotionScale = f.MotionScale;
+                if (f.Kind == kind)
+                {
+                    // The same kind also gets its controller handles and their colours.
+                    o.Handles = f.Handles; o.HandleSource = f.HandleSource;
+                    foreach (var key in (string[])["handles", "handlesLit"])
+                        if (f.Colors.TryGetValue(key, out var c)) o.Colors[key] = c;
+                }
             }
             if (kind != OverlayKind.Phone) o.Width = o.Height = 260;
             _settings.Overlays.Add(o);
@@ -1224,11 +1257,21 @@ public sealed class HostEngine
             if (_hostKey == null) return;
             _authorizedList = phones;
             var next = new Dictionary<string, KeyPhone>();
+            // Known keys need no ECDH again.
+            var known = new Dictionary<string, KeyPhone>();
+            foreach (var kp in _keyPhones.Values) known[Convert.ToHexString(kp.PublicKey)] = kp;
             _authorizedKeyIds.Clear();
             foreach (var p in phones)
             {
                 var keyId = KeyPairing.KeyId(p.Key.PublicKey);
                 _authorizedKeyIds.Add(Convert.ToHexString(keyId));
+                var name = p.Key.Name.Length > 0 ? p.Key.Name : Path.GetFileNameWithoutExtension(p.File);
+                if (known.TryGetValue(Convert.ToHexString(p.Key.PublicKey), out var old))
+                {
+                    // Same key: keep the array sessions may still hold, take the (maybe renamed) file.
+                    next.TryAdd(Convert.ToHexString(old.PhoneId), new KeyPhone(p.File, name, old.PhoneId, old.PairKey, old.Fingerprint, old.KeyId, old.PublicKey) { LastSeenUtc = old.LastSeenUtc });
+                    continue;
+                }
                 var (id, pairKey) = KeyPairing.HostSecrets(_hostKey, p.Key.PublicKey);
                 var hex = Convert.ToHexString(id);
                 if (next.ContainsKey(hex))
@@ -1236,17 +1279,7 @@ public sealed class HostEngine
                     CryptographicOperations.ZeroMemory(pairKey); // the same key in two files
                     continue;
                 }
-                var name = p.Key.Name.Length > 0 ? p.Key.Name : Path.GetFileNameWithoutExtension(p.File);
-                if (_keyPhones.TryGetValue(hex, out var old))
-                {
-                    // Same key: keep the array sessions may still hold, take the (maybe renamed) file.
-                    CryptographicOperations.ZeroMemory(pairKey);
-                    next[hex] = new KeyPhone(p.File, name, old.PhoneId, old.PairKey, old.Fingerprint, old.KeyId) { LastSeenUtc = old.LastSeenUtc };
-                }
-                else
-                {
-                    next[hex] = new KeyPhone(p.File, name, id, pairKey, p.Key.Fingerprint, keyId) { LastSeenUtc = DateTime.MinValue };
-                }
+                next[hex] = new KeyPhone(p.File, name, id, pairKey, p.Key.Fingerprint, keyId, p.Key.PublicKey) { LastSeenUtc = DateTime.MinValue };
             }
             foreach (var (hex, old) in _keyPhones)
             {
@@ -1277,6 +1310,12 @@ public sealed class HostEngine
         }
     }
 
+    /// <summary>A session is active. Cheap enough for every overlay frame, unlike <see cref="Snapshot"/>.</summary>
+    public bool Connected
+    {
+        get { lock (_lock) return _sessions.Active != null; }
+    }
+
     public HostSnapshot Snapshot()
     {
         lock (_lock)
@@ -1288,12 +1327,12 @@ public sealed class HostEngine
                 .ToList();
             return new HostSnapshot(
                 a?.PhoneName, a != null, _releasedForSilence, _settings.OutputMode, _pad.DriverOk,
-                _pad.Plugged != OutputMode.None, _paused || _locked, _elevatedForeground, _networkPublic,
+                _pad.Plugged != OutputMode.None, _paused || _locked, _elevatedForeground || _injectFailed, _networkPublic,
                 _pairing.WindowRemainingS(now), _pairing.PromptInfo,
                 _stats.RxPerSec, _stats.LossPermille, _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs,
                 _stats.LastLinkInfo, _anyDatagram, phones,
                 new HostCounters(_datagrams, _dropped, _badAuth, _states, _injections, _unknownUsages, _errors, _exceptions),
-                _hostKey == null ? null : KeyPairing.Fingerprint(_hostKey.PublicKey),
+                _hostKeyFingerprint,
                 _qr != null && now < _qr.ExpiresUs ? (int)((_qr.ExpiresUs - now + 999_999) / 1_000_000) : 0,
                 _qr?.EnrolledName,
                 _padGyro.Enabled ? _pcPad.Name ?? "" : null);
@@ -1414,17 +1453,22 @@ public sealed class HostEngine
         _lastPendingHat = StateFrame.HatCenter;
         Array.Fill(_padPressUs, long.MinValue);
         _hatPressUs = long.MinValue;
-        if (Blocked)
-        {
-            for (int i = 0; i < _injectedKeys.Length; i++) _blockedUps[i] |= _injectedKeys[i];
-            _blockedMouseUps |= _injectedMouse;
-        }
+        Span<byte> held = stackalloc byte[StateFrame.KeyBitmapSize];
+        _injectedKeys.CopyTo(held);
+        byte heldMouse = _injectedMouse;
+        bool delivered = true;
         while (InputDiff.AnyHeld(_injectedKeys, _injectedMouse))
         {
             int n = InputDiff.ReleaseAll(_injectedKeys, ref _injectedMouse, _releaseEvents);
-            if (n > 0) _keyMouse.Inject(_releaseEvents.AsSpan(0, n));
+            if (n > 0) delivered &= _keyMouse.Inject(_releaseEvents.AsSpan(0, n));
             _heldVersion++;
         }
+        if (Blocked || !delivered)
+        {
+            for (int i = 0; i < held.Length; i++) _blockedUps[i] |= held[i];
+            _blockedMouseUps |= heldMouse;
+        }
+        if (!delivered) InjectFailed();
         // Pad to neutral but stay plugged.
         switch (_pad.Plugged)
         {
@@ -1444,6 +1488,13 @@ public sealed class HostEngine
     /// <summary>SendInput may be silently dropped: an elevated window is in front (UIPI) or the secure desktop is up.</summary>
     private bool Blocked => _elevatedForeground || _locked;
 
+    private void InjectFailed()
+    {
+        if (_injectFailed) return;
+        _injectFailed = true;
+        _events.StateChanged();
+    }
+
     private void NoteBlockedUps(ReadOnlySpan<byte> before, byte beforeMouse)
     {
         for (int i = 0; i < _injectedKeys.Length; i++) _blockedUps[i] |= (byte)(before[i] & ~_injectedKeys[i]);
@@ -1459,12 +1510,18 @@ public sealed class HostEngine
         Span<byte> ups = stackalloc byte[StateFrame.KeyBitmapSize];
         for (int i = 0; i < ups.Length; i++) ups[i] = (byte)(_blockedUps[i] & ~_injectedKeys[i]);
         byte upsMouse = (byte)(_blockedMouseUps & ~_injectedMouse);
+        Span<byte> retry = stackalloc byte[StateFrame.KeyBitmapSize];
+        ups.CopyTo(retry);
+        byte retryMouse = upsMouse;
         Array.Clear(_blockedUps);
         _blockedMouseUps = 0;
+        bool wasFailed = _injectFailed;
+        _injectFailed = false;
+        bool delivered = true;
         while (InputDiff.AnyHeld(ups, upsMouse))
         {
             int n = InputDiff.ReleaseAll(ups, ref upsMouse, _releaseEvents);
-            if (n > 0) _keyMouse.Inject(_releaseEvents.AsSpan(0, n));
+            if (n > 0) delivered &= _keyMouse.Inject(_releaseEvents.AsSpan(0, n));
         }
 
         Span<byte> sent = stackalloc byte[StateFrame.KeyBitmapSize];
@@ -1474,8 +1531,16 @@ public sealed class HostEngine
         {
             int n = InputDiff.Diff(sent, _injectedKeys, ref sentMouse, _injectedMouse, 0, 0, 0, _inject, ref unknown);
             if (n == 0) break;
-            _keyMouse.Inject(_inject.AsSpan(0, n));
+            delivered &= _keyMouse.Inject(_inject.AsSpan(0, n));
         }
+        if (!delivered)
+        {
+            // Still dropped: try again later.
+            for (int i = 0; i < retry.Length; i++) _blockedUps[i] |= retry[i];
+            _blockedMouseUps |= retryMouse;
+            _injectFailed = true;
+        }
+        if (wasFailed != _injectFailed) _events.StateChanged();
     }
 
     private void RememberEnded(uint sid)
@@ -1601,7 +1666,7 @@ public sealed class HostEngine
         a.SendSealed(PacketType.Rumble, p, _sender);
     }
 
-    private sealed class KeyPhone(string file, string name, byte[] phoneId, byte[] pairKey, string fingerprint, byte[] keyId)
+    private sealed class KeyPhone(string file, string name, byte[] phoneId, byte[] pairKey, string fingerprint, byte[] keyId, byte[] publicKey)
     {
         public string File { get; } = file;
         public string Name { get; } = name;
@@ -1610,6 +1675,8 @@ public sealed class HostEngine
         public string Fingerprint { get; } = fingerprint;
         /// <summary>The phone key's id, as the phone's DISCOVER carries it.</summary>
         public byte[] KeyId { get; } = keyId;
+        /// <summary>The phone's public key, so a reload of the same key needs no ECDH.</summary>
+        public byte[] PublicKey { get; } = publicKey;
         public DateTime LastSeenUtc { get; set; }
     }
 }

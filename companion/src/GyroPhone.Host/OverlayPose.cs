@@ -56,6 +56,9 @@ public sealed class OverlayPose
         _calm = 0;
     }
 
+    /// <summary>The next frame starts the ratchet count afresh (the phone's app may have restarted).</summary>
+    public void ForgetPresses() => _lastPresses = -1;
+
     private void ResetPose()
     {
         _easing = false;

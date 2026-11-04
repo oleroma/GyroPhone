@@ -267,7 +267,7 @@ public sealed class UdpLoopbackTests : IDisposable
 
         public void Release() => _gate.Set();
 
-        public void Inject(ReadOnlySpan<InjectEvent> events)
+        public bool Inject(ReadOnlySpan<InjectEvent> events)
         {
             lock (_lock) _inner.Inject(events);
             if (_armed)
@@ -276,6 +276,7 @@ public sealed class UdpLoopbackTests : IDisposable
                 _blocked.Set();
                 _gate.Wait(5000);
             }
+            return true;
         }
     }
 }

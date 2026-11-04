@@ -25,7 +25,8 @@ public sealed class KeyFiles
 
     /// <summary>
     /// The host's static key: loaded from host.key, or created on first start. host.pub is rewritten
-    /// when it is missing or differs (for example after a rename of the PC).
+    /// when it is missing or differs (for example after a rename of the PC). Throws IOException when
+    /// host.key stays locked; only a key whose content cannot be used is moved aside and replaced.
     /// </summary>
     public P256 LoadOrCreateHostKey(IKeyProtector protector, string hostName, Action<string>? log = null)
     {
@@ -36,11 +37,11 @@ public sealed class KeyFiles
         {
             try
             {
-                var d = protector.Unprotect(File.ReadAllBytes(HostKeyPath));
+                var d = protector.Unprotect(ReadLocked(HostKeyPath));
                 key = P256.FromPrivateScalar(d);
                 CryptographicOperations.ZeroMemory(d);
             }
-            catch (Exception e) when (e is CryptographicException or ArgumentException or IOException)
+            catch (Exception e) when (e is CryptographicException or ArgumentException)
             {
                 // Never overwrite a key we cannot read (another Windows user's DPAPI blob, say).
                 var bad = $"{HostKeyPath}.bad-{DateTime.UtcNow:yyyyMMddHHmmss}";
@@ -69,11 +70,33 @@ public sealed class KeyFiles
         return key;
     }
 
+    /// <summary>
+    /// Reads a file another program may hold for a moment (a scanner or backup tool at logon). Throws
+    /// IOException when it stays locked: a key that is only locked must never be replaced.
+    /// </summary>
+    private static byte[] ReadLocked(string path)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return File.ReadAllBytes(path);
+            }
+            catch (IOException) when (attempt < 8 && File.Exists(path))
+            {
+                Thread.Sleep(100 * attempt);
+            }
+        }
+    }
+
     /// <summary>Every valid .pub in authorized_phones, in file name order. Unreadable files are skipped.</summary>
     public List<AuthorizedPhone> ReadAuthorized(Action<string>? log = null) => ReadAuthorized(log, out _);
 
     /// <summary>Same, and <paramref name="summary"/> says what the scan saw (for the tray's Status window).</summary>
-    public List<AuthorizedPhone> ReadAuthorized(Action<string>? log, out string summary)
+    public List<AuthorizedPhone> ReadAuthorized(Action<string>? log, out string summary) => ReadAuthorized(log, out summary, null);
+
+    /// <summary>Same, adding each .pub that could not be opened to <paramref name="unreadable"/>.</summary>
+    public List<AuthorizedPhone> ReadAuthorized(Action<string>? log, out string summary, ICollection<string>? unreadable)
     {
         var list = new List<AuthorizedPhone>();
         if (!System.IO.Directory.Exists(AuthorizedDirectory))
@@ -94,7 +117,8 @@ public sealed class KeyFiles
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 problems.Add($"{Path.GetFileName(f)}: {e.GetType().Name}");
-                continue; // still being written: the watcher fires again when it is closed
+                unreadable?.Add(f);
+                continue; // being written, or held by a scanner: not a sign it was removed
             }
             if (PubKeyFile.Parse(text) is { } k) list.Add(new AuthorizedPhone(f, k));
             else
@@ -134,11 +158,13 @@ public sealed class KeyFiles
 /// <summary>
 /// Watches authorized_phones and hands the current list to <paramref name="onChange"/> (on a thread
 /// pool thread) shortly after any change, plus once at start. Adding a file authorizes that phone
-/// at once; deleting it revokes it.
+/// at once; deleting it revokes it. A file that cannot be opened for a moment keeps its phone.
 /// </summary>
 public sealed class AuthorizedPhonesWatcher : IDisposable
 {
     private const int DebounceMs = 300;
+    private const int RetryMs = 1000;
+    private const int MaxRetries = 30;
 
     private readonly KeyFiles _files;
     private readonly Action<IReadOnlyList<AuthorizedPhone>> _onChange;
@@ -147,6 +173,8 @@ public sealed class AuthorizedPhonesWatcher : IDisposable
     private readonly Timer _debounce;
     private readonly object _lock = new();
     private bool _disposed;
+    private IReadOnlyList<AuthorizedPhone> _last = [];
+    private int _retries;
 
     public AuthorizedPhonesWatcher(KeyFiles files, Action<IReadOnlyList<AuthorizedPhone>> onChange, Action<string>? log = null)
     {
@@ -191,7 +219,16 @@ public sealed class AuthorizedPhonesWatcher : IDisposable
             if (_disposed) return;
             try
             {
-                var list = _files.ReadAuthorized(_log, out var summary);
+                var unreadable = new List<string>();
+                var list = _files.ReadAuthorized(_log, out var summary, unreadable);
+                // A file held by another program (a scanner, a backup) keeps the phone it had; read again soon,
+                // since no change event may follow.
+                foreach (var f in unreadable)
+                    if (_last.FirstOrDefault(a => string.Equals(a.File, f, StringComparison.OrdinalIgnoreCase)) is { } kept) list.Add(kept);
+                list.Sort((a, b) => StringComparer.OrdinalIgnoreCase.Compare(a.File, b.File));
+                if (unreadable.Count == 0) _retries = 0;
+                else if (_retries++ < MaxRetries) _debounce.Change(RetryMs, Timeout.Infinite);
+                _last = list;
                 _onChange(list);
                 LastScan = $"{summary}, {DateTime.Now:HH:mm:ss}";
             }

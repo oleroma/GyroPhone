@@ -216,6 +216,7 @@ public sealed class OverlayLayoutAssembler
     private int _version = -1;
     private int _count;
     private byte[]?[] _pieces = [];
+    private bool _renew;
 
     /// <summary>The newest complete layout, or null before one arrived.</summary>
     public OverlayLayout? Layout { get; private set; }
@@ -228,7 +229,7 @@ public sealed class OverlayLayoutAssembler
         int count = plain[3];
         int len = plain[4];
         if (count == 0 || index >= count || len > PieceData) return false;
-        if (Layout != null && Layout.Version == version) return false; // already have it
+        if (Layout != null && Layout.Version == version && !_renew) return false; // already have it
         if (version != _version || count != _count)
         {
             _version = version;
@@ -248,6 +249,7 @@ public sealed class OverlayLayoutAssembler
         _pieces = new byte[]?[count];
         if (l == null) return false;
         Layout = l;
+        _renew = false;
         return true;
     }
 
@@ -256,6 +258,19 @@ public sealed class OverlayLayoutAssembler
         _version = -1;
         _count = 0;
         _pieces = [];
+        _renew = false;
         Layout = null;
+    }
+
+    /// <summary>
+    /// Keeps <see cref="Layout"/> until the next complete one, which is taken even with the same
+    /// version: the phone's app may have restarted, counting its versions from 1 again.
+    /// </summary>
+    public void Renew()
+    {
+        _version = -1;
+        _count = 0;
+        _pieces = [];
+        _renew = Layout != null;
     }
 }

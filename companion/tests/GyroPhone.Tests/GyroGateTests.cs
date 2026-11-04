@@ -136,6 +136,26 @@ public class GyroGateTests
     }
 
     [Fact]
+    public void RebaseKeepsTheToggleAndClearPcEndsIt()
+    {
+        var g = new GyroGate();
+        var c = Config();
+        Run(g, c, Frame(0, 0));
+        Press(North);
+        Release(North);
+        Assert.Equal(1000, Run(g, c, Frame(100, 100)));
+        // The same phone in a new session: totals from zero, still toggled off.
+        g.Rebase();
+        Assert.Equal(1000, Run(g, c, Frame(0, 0)));
+        Assert.Equal(1000, Run(g, c, Frame(100, 100)));
+        Assert.True(g.Toggled);
+        // The phone's switch goes off: nothing of the PC controller is left.
+        g.ClearPc();
+        Assert.False(g.Toggled);
+        Assert.Equal(7, g.EffectiveOf(7, true));
+    }
+
+    [Fact]
     public void PhoneGlideStaysWhenThePcLeavesTheAxisOff()
     {
         // The phone ratcheted roll (it glides); the PC ratchet flips it back on.

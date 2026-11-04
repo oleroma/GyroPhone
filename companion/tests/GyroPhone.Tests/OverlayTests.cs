@@ -135,12 +135,57 @@ public class OverlayTests
     }
 
     [Fact]
+    public void RenewTakesTheSameVersionAgain()
+    {
+        var a = new OverlayLayoutAssembler();
+        Assert.True(a.Add(Piece(1, 0, 1, Hex.B(LayoutBlob))));
+        Assert.False(a.Add(Piece(1, 0, 1, Hex.B(LayoutBlob))));
+        // A restarted app counts from 1 again: the old layout shows until its first one is in.
+        a.Renew();
+        Assert.NotNull(a.Layout);
+        Assert.True(a.Add(Piece(1, 0, 1, Hex.B(LayoutBlob))));
+        Assert.False(a.Add(Piece(1, 0, 1, Hex.B(LayoutBlob))));
+    }
+
+    [Fact]
     public void MalformedLayoutIsDropped()
     {
         var a = new OverlayLayoutAssembler();
         Assert.False(a.Add(Piece(1, 0, 1, Hex.B(LayoutBlob)[..20])));
         Assert.Null(a.Layout);
         Assert.False(a.Add(Piece(1, 2, 1, Hex.B(LayoutBlob)))); // index past the count
+    }
+
+    [Fact]
+    public void AnotherPhoneDoesNotInheritTheLayout()
+    {
+        var h = new Harness();
+        var secondId = Hex.Range(0x80, 16);
+        var secondKey = Hex.Range(0xA0, 32);
+        h.AddPaired(secondId, "Pixel", secondKey);
+        var engine = new GyroPhone.Host.HostEngine(h.Settings, h.Pad, h.KeyMouse, h.Prompt, new PlainProtector(), h.Clock, h.Events);
+        engine.AttachSender(h.Sender);
+        void Send(FakePhone p, byte[] d)
+        {
+            engine.OnDatagram(d, p.Addr, h.Clock.NowUs);
+            engine.Flush(h.Clock.NowUs);
+        }
+        engine.SetOverlay(true);
+        var a = h.NewPhone();
+        engine.OnDatagram(a.Hello(), a.Addr, h.Clock.NowUs);
+        Assert.True(a.OnWelcome(h.Sender.Sent[^1].Data));
+        Send(a, a.State());
+        Send(a, a.Sealed(PacketType.OverlayLayout, Piece(1, 0, 1, Hex.B(LayoutBlob))));
+        Send(a, a.Sealed(PacketType.Overlay, Hex.B(Frame)));
+        engine.OverlaySnapshot(new OverlayFrame(), out var layout);
+        Assert.NotNull(layout);
+
+        var b = FakePhone.Paired(secondId, "Pixel", secondKey, "192.168.1.77", 41000);
+        engine.OnDatagram(b.Hello(), b.Addr, h.Clock.NowUs);
+        Assert.True(b.OnWelcome(h.Sender.Sent[^1].Data));
+        Send(b, b.State());
+        Assert.Equal(-1, engine.OverlaySnapshot(new OverlayFrame(), out layout));
+        Assert.Null(layout);
     }
 
     [Fact]
@@ -319,6 +364,30 @@ public class OverlayTests
         Assert.Equal(-2 * fa.Qy, fb.Qy, 3);
         h.Engine.RemoveOverlay(b);
         Assert.Single(h.Engine.Settings.Overlays);
+    }
+
+    [Fact]
+    public void AddOverlayCopiesHandlesFromTheSameKind()
+    {
+        var h = new Harness();
+        var a = h.Engine.Settings.Overlays[0].Id;
+        h.Engine.UpdateOverlaySettings(a, o =>
+        {
+            o.Handles = GyroPhone.Host.Settings.OverlayHandles.Always;
+            o.HandleSource = GyroPhone.Host.Settings.OverlayHandleSource.Pc;
+            o.Colors["handles"] = 0x11223344;
+            o.Colors["body"] = 0x55667788;
+        });
+        var bId = h.Engine.AddOverlay(GyroPhone.Host.Settings.OverlayKind.Phone);
+        var b = h.Engine.Settings.Overlays.Find(o => o.Id == bId)!;
+        Assert.Equal(GyroPhone.Host.Settings.OverlayHandles.Always, b.Handles);
+        Assert.Equal(GyroPhone.Host.Settings.OverlayHandleSource.Pc, b.HandleSource);
+        Assert.Equal(0x11223344, b.Color("handles"));
+        Assert.False(b.Colors.ContainsKey("body"));
+        var cId = h.Engine.AddOverlay(GyroPhone.Host.Settings.OverlayKind.Shape);
+        var c = h.Engine.Settings.Overlays.Find(o => o.Id == cId)!;
+        Assert.Equal(GyroPhone.Host.Settings.OverlayHandles.Auto, c.Handles);
+        Assert.Empty(c.Colors);
     }
 
     [Fact]

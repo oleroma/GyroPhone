@@ -437,7 +437,7 @@ internal sealed class OverlayForm : Form
         _lastTime = _scene.Frame.PhoneTimeUs;
         _lastLayout = _scene.Frame.LayoutVersion;
         _lastDrawTicks = Environment.TickCount64;
-        _scene.Connected = _engine.Snapshot().Connected;
+        _scene.Connected = _engine.Connected;
         _scene.Arranging = !ClickThrough;
         _scene.Selected = _selected;
         _scene.Title = _title;
