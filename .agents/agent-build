@@ -161,14 +161,20 @@ build_pc() {
   local dest="$BUILD_DIR/builds/$version-$commit" old
   mkdir -p "$dest"
   cp "${files[@]}" "$dest/"
-  if [ -f "$BUILD_DIR/.newest" ]; then
-    while IFS= read -r old; do
-      if [ -n "$old" ]; then rm -f "$BUILD_DIR/$old"; fi
-    done <"$BUILD_DIR/.newest"
-  fi
+  # builds/.newest lists the build files last copied to build/, removed before the new ones come.
+  # (Older scripts kept these two files directly in build/; those are read once and removed.)
+  local list
+  for list in "$BUILD_DIR/builds/.newest" "$BUILD_DIR/.newest"; do
+    if [ -f "$list" ]; then
+      while IFS= read -r old; do
+        if [ -n "$old" ]; then rm -f "$BUILD_DIR/$old"; fi
+      done <"$list"
+    fi
+  done
+  rm -f "$BUILD_DIR/.newest" "$BUILD_DIR/.newest-build"
   cp "${files[@]}" "$BUILD_DIR/"
-  printf '%s\n' "${names[@]}" >"$BUILD_DIR/.newest"
-  echo "$version-$commit" >"$BUILD_DIR/.newest-build"
+  printf '%s\n' "${names[@]}" >"$BUILD_DIR/builds/.newest"
+  echo "$version-$commit" >"$BUILD_DIR/builds/.newest-build"
 
   # Keep the last 4 builds, plus the newest build of each part (and the newest one on main) that
   # they don't have, so agent-publish still finds a part that hasn't been rebuilt for a while.
