@@ -38,8 +38,9 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup>
     <TargetName>GyroPhonePad</TargetName>
-    <OutDir>$(GpOutDir)</OutDir>
-    <IntDir>$(GpIntDir)</IntDir>
+    <!-- Backslashes: stampinf and other WDK tools read "D:/..." as a relative path. -->
+    <OutDir>$([MSBuild]::EnsureTrailingSlash($([System.IO.Path]::GetFullPath('$(GpOutDir)'))))</OutDir>
+    <IntDir>$([MSBuild]::EnsureTrailingSlash($([System.IO.Path]::GetFullPath('$(GpIntDir)'))))</IntDir>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
