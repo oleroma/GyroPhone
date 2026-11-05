@@ -29,6 +29,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.MappingSet
+import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
 /** A page of the pad menu. Encoded as text so the open page survives the activity being recreated. */
@@ -161,71 +163,105 @@ private fun PadMenu(
 }
 
 /**
- * All settings of the current workspace (⚙ in edit mode) in one list of categories the person
- * can reorder: Workspace (rename / duplicate / delete, copy mappings), gyro, controls, haptics,
- * touchpad and gestures, over the Defaults. With layers, tabs on top pick Base or a layer, whose
- * settings go over Base's. Settings of the whole app are on the Settings page instead.
+ * The current workspace's settings page from the Settings menu (the live profile): the same
+ * [WorkspaceSettingsPage] as edit mode's ⚙ and the touchpad's Settings in its mapping editor.
  */
 @Composable
 private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () -> Unit) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
-    val current = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
-    val ws = profile.workspace(current)
-    var copying by remember { mutableStateOf(false) }
     var tab by rememberSaveable { mutableIntStateOf(MappingSet.BASE) }
-    val set = if (ws.sets.any { it.id == tab }) tab else MappingSet.BASE
-
-    Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (ws.sets.isNotEmpty()) {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = set == MappingSet.BASE, onClick = { tab = MappingSet.BASE }, label = { Text("Base") })
-                ws.sets.forEach { st ->
-                    FilterChip(selected = set == st.id, onClick = { tab = st.id }, label = { Text(st.label) })
-                }
-            }
-        }
-        Hint(
-            if (set == MappingSet.BASE) "Each setting follows the Defaults (Settings) unless it is set here: those are " +
-                    "highlighted, with ↺ to follow the Defaults again. Long press a category to move it."
-            else "While this layer is in use. Each setting follows Base unless it is set here: those are " +
-                    "highlighted, with ↺ to follow Base again.",
-        )
-        val workspace = SectionItem("workspace") { card, header ->
-            RememberedSection(
-                runtime,
-                "workspace.Workspace",
-                "Workspace",
-                card,
-                defaultOpen = true,
-                subtitle = "${ws.name} · ${current + 1} of ${profile.workspaces.size}",
-                headerModifier = header,
-            ) {
-                WorkspaceActions(profile, current) { p, _ ->
-                    val deleted = p.workspaces.size < profile.workspaces.size
-                    runtime.editActiveProfile { p }
-                    if (deleted) onDeleted()
-                }
-                Hint("Duplicate copies everything, mappings included; the copy can then be changed on its own.")
-                if (profile.workspaces.size > 1) {
-                    OutlinedButton(onClick = { copying = true }) { Text("Copy mappings from…") }
-                }
-            }
-        }
-        val level = setLevel(ws, profile.defaults, set) { change -> runtime.editActiveProfile { it.updateWorkspace(current, change) } }
-        WorkspaceSettings(
-            runtime, level, profile.id + "/" + ws.id + "/" + set,
-            extra = if (set == MappingSet.BASE) listOf(workspace) else emptyList(),
+    SearchableSettings(modifier) {
+        WorkspaceSettingsPage(
+            runtime, profile, wsIndex, tab, { tab = it },
+            onProfileChange = { p, _ ->
+                val deleted = p.workspaces.size < profile.workspaces.size
+                runtime.editActiveProfile { p }
+                if (deleted) onDeleted()
+            },
+            onWorkspaceChange = { change -> runtime.editActiveProfile { it.updateWorkspace(wsIndex.coerceIn(0, it.workspaces.lastIndex), change) } },
         )
     }
+}
+
+/**
+ * All settings of workspace [index] of [profile] in one list of categories the person can
+ * reorder: Workspace (rename / duplicate / delete, copy mappings), gyro, controls, haptics,
+ * gestures and the touchpad, over the Defaults. With layers, chips on top pick Base or a layer
+ * ([set], [onSet]), whose settings go over Base's. One page wherever it opens: edit mode's ⚙, the
+ * touchpad's Settings in its mapping editor (both on edit mode's draft), the Settings menu.
+ * [onProfileChange] gets rename / duplicate / delete (with the index to show next),
+ * [onWorkspaceChange] every other edit.
+ */
+@Composable
+internal fun WorkspaceSettingsPage(
+    runtime: GamepadRuntime,
+    profile: Profile,
+    index: Int,
+    set: Int,
+    onSet: (Int) -> Unit,
+    onProfileChange: (Profile, Int) -> Unit,
+    onWorkspaceChange: ((Workspace) -> Workspace) -> Unit,
+    /** Copies go into this profile ([CopyMappingsDialog]'s onCopy) instead of the saved one: edit mode's draft. */
+    draft: Boolean = false,
+) {
+    val current = index.coerceIn(0, profile.workspaces.lastIndex)
+    val ws = profile.workspace(current)
+    var copying by remember { mutableStateOf(false) }
+    val shown = if (ws.sets.any { it.id == set }) set else MappingSet.BASE
+
+    if (ws.sets.isNotEmpty()) NotSearching {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = shown == MappingSet.BASE, onClick = { onSet(MappingSet.BASE) }, label = { Text("Base") })
+            ws.sets.forEach { st ->
+                FilterChip(selected = shown == st.id, onClick = { onSet(st.id) }, label = { Text(st.label) })
+            }
+        }
+    }
+    Hint(
+        if (shown == MappingSet.BASE) "Each setting follows the Defaults (Settings) unless it is set here: those are " +
+                "highlighted, with ↺ to follow the Defaults again. Long press a category to move it."
+        else "While this layer is in use. Each setting follows Base unless it is set here: those are " +
+                "highlighted, with ↺ to follow Base again.",
+    )
+    val workspace = SectionItem("workspace") { card, header ->
+        RememberedSection(
+            runtime,
+            "workspace.Workspace",
+            "Workspace",
+            card,
+            defaultOpen = true,
+            subtitle = "${ws.name} · ${current + 1} of ${profile.workspaces.size}",
+            headerModifier = header,
+        ) {
+            Searchable("Workspace", "rename duplicate delete name copy mappings") {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    WorkspaceActions(profile, current, onProfileChange)
+                    Hint("Duplicate copies everything, mappings included; the copy can then be changed on its own.")
+                    if (profile.workspaces.size > 1) {
+                        OutlinedButton(onClick = { copying = true }) { Text("Copy mappings from…") }
+                    }
+                }
+            }
+        }
+    }
+    val level = setLevel(ws, profile.defaults, shown, onWorkspaceChange)
+    WorkspaceSettings(
+        runtime, level, profile.id + "/" + ws.id + "/" + shown,
+        extra = if (shown == MappingSet.BASE) listOf(workspace) else emptyList(),
+    )
 
     if (copying) {
-        CopyMappingsDialog(runtime, current, discards = false, onDismiss = { copying = false }, onCopied = { copying = false })
+        CopyMappingsDialog(
+            runtime, current, discards = false, onDismiss = { copying = false }, onCopied = { copying = false },
+            profile = if (draft) profile else null,
+            onCopy = if (draft) { w -> onWorkspaceChange { w } } else null,
+        )
     }
 }
 
 @Composable
-internal fun Hint(text: String) {
+internal fun Hint(text: String) = NotSearching {
     Text(
         text,
         style = MaterialTheme.typography.bodySmall,

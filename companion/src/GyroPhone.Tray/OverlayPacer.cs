@@ -56,14 +56,37 @@ internal sealed class OverlayPacer : IDisposable
     private void Run()
     {
         IntPtr timer = CreateWaitableTimerExW(IntPtr.Zero, IntPtr.Zero, CreateWaitableTimerHighResolution, TimerAllAccess);
+        try
+        {
+            Run(timer);
+        }
+        finally
+        {
+            if (timer != IntPtr.Zero) CloseHandle(timer);
+        }
+    }
+
+    private void Run(IntPtr timer)
+    {
         int refreshHz = Math.Clamp(RefreshHz(), 30, 500);
         _log($"overlay pacer: screen {refreshHz} Hz, {(timer == IntPtr.Zero ? "sleep" : "high-resolution timer")}");
         bool dwmFailed = false;
-        double lastPost = -1000, ended = -1000;
+        double lastPost = -1000, ended = -1000, lastRefreshCheck = 0;
         while (!_stop)
         {
             _running.Wait();
             if (_stop) return;
+            // The refresh rate changes with the display mode (another screen, a game's mode): read it again every few seconds.
+            if (_clock.Elapsed.TotalMilliseconds - lastRefreshCheck > 5000)
+            {
+                lastRefreshCheck = _clock.Elapsed.TotalMilliseconds;
+                int hz = Math.Clamp(RefreshHz(), 30, 500);
+                if (hz != refreshHz)
+                {
+                    _log($"overlay pacer: screen now {hz} Hz");
+                    refreshHz = hz;
+                }
+            }
             // As often as the fastest window draws, never faster than the screen: waking at every
             // refresh of a 165 Hz screen for 60 pictures a second cost CPU for nothing.
             int want = _wantHz();
@@ -151,6 +174,10 @@ internal sealed class OverlayPacer : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetWaitableTimer(IntPtr timer, ref long dueTime, int period, IntPtr completion, IntPtr arg, bool resume);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
 
     [DllImport("kernel32.dll")]
     private static extern uint WaitForSingleObject(IntPtr handle, uint ms);

@@ -1,7 +1,10 @@
 package com.oleroma.gyrophone.wifi
 
 import android.app.ActivityManager
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Process
 import android.os.SystemClock
@@ -25,7 +28,10 @@ import com.oleroma.gyrophone.core.net.KeyTakeover
 import com.oleroma.gyrophone.core.net.LinkInfo
 import com.oleroma.gyrophone.core.net.LinkInfoFlags
 import com.oleroma.gyrophone.core.net.LiveSession
+import com.oleroma.gyrophone.core.net.MotionFeed
+import com.oleroma.gyrophone.core.net.OutputMode
 import com.oleroma.gyrophone.core.net.OverlayFeed
+import com.oleroma.gyrophone.core.net.PcGyroFeed
 import com.oleroma.gyrophone.core.net.PacketType
 import com.oleroma.gyrophone.core.net.PairFailure
 import com.oleroma.gyrophone.core.net.PairState
@@ -105,6 +111,12 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     /** The PC's phone overlay: its data is gathered and sent while the PC's HOST_STATUS asks for it. */
     val overlay = OverlayFeed()
+
+    /** "Use PC controller for gyro ratchet": the gyro's samples and the controller's gyro buttons for a PC that runs the gyro. */
+    val pcGyro = PcGyroFeed()
+
+    /** The raw motion for the PC's DualShock 4 (its gyro and accelerometer), sent while its pad is one. */
+    val motion = MotionFeed()
     private val accessory = AccessoryBridge(appContext)
 
     private val _state = MutableStateFlow<LinkState>(LinkState.Off)
@@ -173,6 +185,21 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     private var usbHostAddr: InetSocketAddress? = null
     private var usbSocket: DatagramSocket? = null
     @Volatile private var usbActive = false
+    /** Over USB, but the pump stays on Wi-Fi until the USB session's WELCOME. */
+    private var usbPending = false
+    /** The PC's Wi-Fi address when the session moved to USB, to HELLO it there again on the way back. */
+    private var wifiHostAddr: InetSocketAddress? = null
+    /** A USB cable to a computer is in (USB_STATE), or unknown: only then is USB looked for each second. */
+    @Volatile private var usbCabled = true
+    private val usbStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val cabled = intent.getBooleanExtra(EXTRA_USB_CONNECTED, true)
+            if (cabled != usbCabled) {
+                usbCabled = cabled
+                post { nextUsbCheckMs = 0L } // look at once
+            }
+        }
+    }
     /** The session runs over the direct cable (accessory mode), not tethering. */
     @Volatile private var usbDirect = false
     private var nextUsbCheckMs = 0L
@@ -193,6 +220,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     private val foundSeen = HashMap<String, Long>()
     private val foundMap = LinkedHashMap<String, DiscoveredHost>()
     private val manualTargets = LinkedHashSet<InetSocketAddress>()
+    /** The [manualTargets] a QR code added, dropped again once that pairing is over. */
+    private val qrTargets = HashSet<InetSocketAddress>()
+    /** Where the next key DISCOVER round starts in the trusted keys, when there are more than one round names. */
+    private var keyRound = 0
     private var nextScanMs = 0L
     private var scanStartMs = 0L
     private var lastAnnounceMs = 0L
@@ -223,6 +254,9 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             field = v
             overlay.wanted = v != null && v.flags and HostStatusFlags.OVERLAY != 0
             overlay.compassWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_COMPASS != 0
+            overlay.totalsWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_TOTALS != 0
+            if (v != null) motion.padIsDs4 = v.outputMode == OutputMode.DUALSHOCK4 && v.flags and HostStatusFlags.PAD_PLUGGED != 0
+            else motion.padIsDs4 = false
         }
     @Volatile private var welcomeHostFlags: Int? = null
 
@@ -230,6 +264,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         pump.rateHz = rateHz
         pump.linkInfoSource = ::buildLinkInfo
         pump.overlay = overlay
+        pump.pcGyro = pcGyro
+        pump.motion = motion
         // The Keystore key and phone.pub exist from the first start, so update.cmd can fetch it.
         Thread({ keys.publish() }, "gp-keys").start()
     }
@@ -257,6 +293,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         engine.onChange = pump.wake
         keyUserStopped.clear()
         keys.startWatching { post { onTrustedChanged(keys.rescan()) } }
+        usbCabled = true
+        // The sticky USB_STATE comes back at once; without one USB is looked for every second as before.
+        appContext.registerReceiver(usbStateReceiver, IntentFilter(ACTION_USB_STATE), Context.RECEIVER_NOT_EXPORTED)
+            ?.let { usbCabled = it.getBooleanExtra(EXTRA_USB_CONNECTED, true) }
         _state.value = LinkState.Searching
         post { autoConnect() }
         rxThread = Thread({ rxLoop() }, "gp-wifi-rx").apply { start() }
@@ -270,6 +310,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         running = false
         engine.onChange = null
         keys.stopWatching()
+        runCatching { appContext.unregisterReceiver(usbStateReceiver) }
         rxThread?.let { t ->
             try {
                 t.join(RX_JOIN_MS)
@@ -306,6 +347,11 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         foundMap.clear()
         foundSeen.clear()
         keyAnswers.clear()
+        manualTargets.clear()
+        qrTargets.clear()
+        scanStartMs = 0L
+        lastAnnounceMs = 0L
+        wifiHostAddr = null
         _found.value = emptyList()
         _nothingFound.value = false
         _notice.value = null
@@ -467,9 +513,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     private fun onDatagram(buf: ByteArray, len: Int, from: InetSocketAddress, nowMs: Long) {
         val type = WireCodec.classify(buf, len)
-        if (type < 0) return
+        if (type < 0 && type != WireCodec.BAD_VERSION) return // a newer host's ERROR VERSION goes to the session
         when (type) {
-            PacketType.ANNOUNCE -> (WireCodec.decodePlain(buf, len) as? Announce)?.let { onAnnounce(it, from, nowMs) }
+            // On the USB socket the sender's address is the cable's, not the PC's on Wi-Fi.
+            PacketType.ANNOUNCE -> (WireCodec.decodePlain(buf, len) as? Announce)?.let { onAnnounce(it, from, nowMs, viaUsb = usbActive) }
             PacketType.KEY_ENROLL_ACK -> {
                 qrFlow?.let { handleQrOuts(it, it.onDatagram(buf, len, from)) }
                 return
@@ -543,7 +590,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
      */
     private fun sendDiscovers() {
         val phoneKeyId = keys.key?.let { KeyPairing.keyId(it.publicKey) } ?: ByteArray(Wire.KEY_ID_SIZE)
-        val trusted = keys.trusted.value.take(MAX_KEY_DISCOVERS)
+        val trusted = keysToName()
         lastKeyReqs = keyReqs
         keyReqs = HashMap()
         val targets = broadcastTargets()
@@ -556,6 +603,21 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             for (target in targets) send(txBuf, n, target)
             if (!usbActive) probeSend(txBuf, n) // a PC only on the cable is found too, by key
         }
+    }
+
+    /**
+     * The trusted PC keys this DISCOVER round names: all of them when they fit, else a window that
+     * moves on each round, with the key a QR code just added always in it.
+     */
+    private fun keysToName(): List<TrustedHost> {
+        val all = keys.trusted.value
+        if (all.size <= MAX_KEY_DISCOVERS) return all
+        val qr = qrConnectKeyId?.let { id -> all.firstOrNull { it.keyIdHex == id } }
+        val rest = if (qr == null) all else all.filter { it !== qr }
+        val n = MAX_KEY_DISCOVERS - if (qr == null) 0 else 1
+        val start = keyRound % rest.size
+        keyRound = (start + n) % rest.size
+        return listOfNotNull(qr) + List(n) { rest[(start + it) % rest.size] }
     }
 
     /** An ANNOUNCE; [viaUsb] when it came over the USB probe (it never replaces a Wi-Fi address). */
@@ -584,6 +646,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         val qrKey = qrConnectKeyId
         if (qrKey != null && host.keyStatus == KeyStatus.READY && pairFlow == null && matchedKey(id)?.keyIdHex == qrKey) {
             qrConnectKeyId = null
+            dropQrTargets(keep = from)
             keyUserStopped.remove(id)
             connectKeyTo(id) // the user just scanned this PC's QR code
             _qrPairing.value = QrPairView(qrConnectName, "Paired with $qrConnectName", finished = true, ok = true)
@@ -702,7 +765,6 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         val f = session ?: return
         f.disconnect()
         session = null
-        if (usbActive) useWifi()
         sessionHostId = null
         sessionKeyId = null
         _pairedByKey.value = false
@@ -710,7 +772,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         if (live != null) {
             live = null
             pump.setSession(null, reason)
+            // Over USB the goodbye must leave on the USB socket, before useWifi closes it.
+            if (usbActive) pump.awaitSession(GOODBYE_WAIT_MS)
         }
+        if (usbActive) useWifi()
         locks.release()
         hostStatus = null
         welcomeHostFlags = null
@@ -757,8 +822,12 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         }
         qrFlow?.cancel()
         qrConnectKeyId = null
+        dropQrTargets(keep = null)
         for (a in invite.addresses) {
-            runCatching { InetAddress.getByName(a) }.getOrNull()?.let { manualTargets.add(InetSocketAddress(it, invite.port)) }
+            runCatching { InetAddress.getByName(a) }.getOrNull()?.let {
+                val t = InetSocketAddress(it, invite.port)
+                if (manualTargets.add(t)) qrTargets.add(t)
+            }
         }
         val f = QrEnrollFlow(invite, k.publicKey, phoneName(), ::broadcastTargets)
         qrFlow = f
@@ -784,6 +853,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 else -> "No answer from $name. Check that the phone is on the same network as the PC."
             }
             _qrPairing.value = QrPairView(name, why, finished = true)
+            dropQrTargets(keep = null)
             return
         }
         // The PC knows this phone now; trust its key like an imported host.pub.
@@ -802,6 +872,15 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         qrConnectName = name
         qrConnectUntilMs = SystemClock.elapsedRealtime() + QR_CONNECT_WAIT_MS
         _qrPairing.value = QrPairView(name, "Paired with $name, connecting…")
+    }
+
+    /**
+     * Stops probing the PC addresses a QR code gave, except [keep], the one the PC answered from.
+     * Without an answer they stay until the link stops, so the PC can still be found.
+     */
+    private fun dropQrTargets(keep: InetSocketAddress?) {
+        for (t in qrTargets) if (t != keep) manualTargets.remove(t)
+        qrTargets.clear()
     }
 
     private fun startPairing(host: DiscoveredHost) {
@@ -850,13 +929,23 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             is PhoneSessionFlow.Out.Live -> {
                 val s = o.session
                 live = s
+                // The USB session is up: the pump moves to its socket now.
+                if (s != null && usbPending) {
+                    usbPending = false
+                    usbSocket?.let { pump.useSocket(it) }
+                }
+                // The gyro's sample times go out in the phone's clock until this session's first PONG.
+                pump.clockOffsetUs = null
                 // A replacement (rekey, new HELLO after silence) needs no BYE; neither does a
                 // session the PC ended with HOST_BYE.
                 pump.setSession(s)
                 clock.reset()
                 clockOffsetUs = 0L
                 rttMinUs = -1L
-                hostStatus = null
+                // A replacement is the same PC: its overlay stays on until its next HOST_STATUS says otherwise.
+                if (s == null) hostStatus = null
+                // Until the first HOST_STATUS, WELCOME's output mode says whether the pad is a DualShock 4.
+                else if (hostStatus == null) motion.padIsDs4 = s.outputMode == OutputMode.DUALSHOCK4
                 welcomeHostFlags = s?.hostFlags
                 if (s != null) locks.acquire() else locks.release()
                 changed = true
@@ -882,6 +971,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             rttMinUs = clock.rttMinUs
             pump.requestLinkInfo()
         }
+        // Every sample, not only a faster one: the best sample in the window changes as old ones leave it.
+        if (clock.hasSample) pump.clockOffsetUs = clock.offsetUs
     }
 
 
@@ -893,7 +984,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
      * to USB ([useUsb]). Pulling the cable or the PC going silent on USB moves it back.
      */
     private fun usbTick(nowMs: Long) {
-        if (nowMs >= nextUsbCheckMs) {
+        // No cable to a computer: nothing to find, unless one was found and must be noticed gone.
+        if (nowMs >= nextUsbCheckMs && (usbCabled || usb != null)) {
             nextUsbCheckMs = nowMs + USB_CHECK_MS
             val t = accessory.poll() ?: UsbTether.find()
             if (t != usb) {
@@ -996,8 +1088,13 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbDirect = u.direct
         usbSilentSinceMs = 0L
         socket = s
-        pump.useSocket(s)
-        session?.let { handleSessionOuts(it.moveTo(addr, SystemClock.elapsedRealtime())) }
+        // The live Wi-Fi session keeps sending on the Wi-Fi socket until the USB one's WELCOME.
+        usbPending = live != null
+        if (!usbPending) pump.useSocket(s)
+        session?.let { f ->
+            f.hostAddr?.let { wifiHostAddr = it }
+            handleSessionOuts(f.moveTo(addr, SystemClock.elapsedRealtime()))
+        }
         publishState()
     }
 
@@ -1005,6 +1102,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     private fun useWifi() {
         val w = wifiSocket ?: return
         usbActive = false
+        usbPending = false
         usbDirect = false
         socket = w
         pump.useSocket(w)
@@ -1012,9 +1110,14 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbSocket = null
         usbHostId = null
         usbHostAddr = null
-        val addr = sessionHostId?.let { foundMap[it] }?.takeIf { !it.viaUsb }?.let {
+        // A fresh ANNOUNCE first, else where the PC was on Wi-Fi before USB, else its stored address.
+        val id = sessionHostId
+        val addr = id?.let { foundMap[it] }?.takeIf { !it.viaUsb }?.let {
             runCatching { InetSocketAddress(InetAddress.getByName(it.address), it.port) }.getOrNull()
+        } ?: wifiHostAddr ?: id?.let { store.find(it) }?.let { st ->
+            st.lastAddr?.let { ip -> runCatching { InetSocketAddress(InetAddress.getByName(ip), st.lastPort) }.getOrNull() }
         }
+        wifiHostAddr = null
         session?.let { handleSessionOuts(it.moveTo(addr, SystemClock.elapsedRealtime())) }
         usb?.let { if (usbProbe == null) openProbe(it) }
         publishState()
@@ -1026,6 +1129,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbSocket?.close()
         usbSocket = null
         usbActive = false
+        usbPending = false
         usbDirect = false
         usbHostId = null
         usbHostAddr = null
@@ -1136,6 +1240,11 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         /** Silent this long over USB: back to Wi-Fi, and USB is not tried again for [USB_BACKOFF_MS]. */
         private const val USB_SILENT_MS = 3000L
         private const val USB_BACKOFF_MS = 30_000L
+        /** How long the rx thread waits for the pump's goodbye on the USB socket. */
+        private const val GOODBYE_WAIT_MS = 50L
+        /** The sticky broadcast for a USB cable to a computer (hidden in UsbManager), and its extra. */
+        private const val ACTION_USB_STATE = "android.hardware.usb.action.USB_STATE"
+        private const val EXTRA_USB_CONNECTED = "connected"
         /** After a QR code pairing, how long to wait for the PC to answer a key DISCOVER. */
         private const val QR_CONNECT_WAIT_MS = 5000L
         /** When a PC answered several key DISCOVERs, the most useful answer wins. */

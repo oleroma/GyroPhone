@@ -6,11 +6,12 @@ namespace GyroPhone.Host.Settings;
 /// <summary>
 /// Loads and atomically saves <see cref="HostSettings"/>: write .tmp and flush it to the disk, then
 /// File.Replace keeping .bak. A corrupt file is renamed to .bad-&lt;timestamp&gt; and the .bak copy is
-/// used instead; defaults (a new HostId, no paired phones) only when neither can be read.
+/// used instead; defaults (a new HostId, no paired phones) only when neither can be read. A file that
+/// another program keeps locked is never replaced: Load throws instead.
 /// </summary>
 public sealed class SettingsStore
 {
-    private const int ReadAttempts = 3;
+    private const int ReadAttempts = 8; // about 3 s in all
 
     private readonly object _writeLock = new();
 
@@ -21,7 +22,10 @@ public sealed class SettingsStore
     public static string DefaultPath() => System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GyroPhone", "settings.json");
 
-    /// <summary>Loads settings, falling back to the .bak copy, then to (saved) defaults, when the file is missing or corrupt.</summary>
+    /// <summary>
+    /// Loads settings, falling back to the .bak copy, then to (saved) defaults, when the file is missing or corrupt.
+    /// Throws IOException when a file that is there stays locked, so its pairings are never overwritten.
+    /// </summary>
     public HostSettings Load(string defaultHostName, Action<string>? log = null)
     {
         if (File.Exists(Path))
@@ -51,7 +55,7 @@ public sealed class SettingsStore
         return d;
     }
 
-    /// <summary>One settings file, validated; null if it cannot be used (<paramref name="corrupt"/>: its content is bad).</summary>
+    /// <summary>One settings file, validated; null if its content is bad. Throws IOException when it stays unreadable.</summary>
     private static HostSettings? Read(string path, string defaultHostName, Action<string>? log, out bool corrupt)
     {
         corrupt = false;
@@ -77,8 +81,9 @@ public sealed class SettingsStore
                 // A scanner or backup tool can hold the file for a moment, e.g. right after boot.
                 if (attempt >= ReadAttempts)
                 {
+                    // Not corrupt, only locked: falling back would save defaults or the older .bak over it.
                     log?.Invoke($"{name} unreadable ({e.GetType().Name})");
-                    return null;
+                    throw new IOException($"{name} is held by another program", e);
                 }
                 Thread.Sleep(100 * attempt);
             }

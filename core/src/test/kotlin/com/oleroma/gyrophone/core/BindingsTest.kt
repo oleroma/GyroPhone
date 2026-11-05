@@ -75,6 +75,11 @@ class BindingsTest {
         // A stick half is not merged with the full axis.
         val x = BindableInput("X", listOf(InputSource.Axis(AndroidAxis.X)), analog = true)
         assertEquals(emptyList<OutputTarget>(), Bindings.targets(kbm, x))
+        // A trigger's Press stage is an input of its own, apart from its Pull.
+        val press = BindableInput("Press", listOf(InputSource.Axis(AndroidAxis.LTRIGGER, stage = com.oleroma.gyrophone.core.model.AxisStage.PRESS)))
+        assertEquals(emptyList<OutputTarget>(), Bindings.targets(kbm, press))
+        val both = Bindings.setTargets(kbm, press, listOf(OutputTarget.Key(0x2C)))
+        assertEquals(listOf(OutputTarget.Mouse(MouseButton.RIGHT)), Bindings.targets(both, lt))
     }
 
     @Test fun removeTouchControlDropsItsMappings() {

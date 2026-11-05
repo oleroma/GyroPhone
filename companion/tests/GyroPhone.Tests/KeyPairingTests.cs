@@ -197,6 +197,53 @@ public class KeyPairingTests
         }
     }
 
+    [Fact]
+    public void LockedHostKeyIsNeverReplaced()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "gp-keys-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var files = new KeyFiles(dir);
+            using var first = files.LoadOrCreateHostKey(new PlainProtector(), "OLEX");
+            using (new FileStream(files.HostKeyPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                Assert.ThrowsAny<IOException>(() => files.LoadOrCreateHostKey(new PlainProtector(), "OLEX"));
+            Assert.Empty(Directory.GetFiles(dir, "host.key.bad-*"));
+            using var again = files.LoadOrCreateHostKey(new PlainProtector(), "OLEX");
+            Assert.Equal(first.PublicKey, again.PublicKey);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public void LockedKeyFileKeepsItsPhone()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "gp-keys-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var files = new KeyFiles(dir);
+            Directory.CreateDirectory(files.AuthorizedDirectory);
+            var path = Path.Combine(files.AuthorizedDirectory, "OnePlus 15.pub");
+            File.WriteAllText(path, K.Str("phoneFile") + "\r\n");
+            var seen = new List<IReadOnlyList<AuthorizedPhone>>();
+            using var watcher = new AuthorizedPhonesWatcher(files, l => { lock (seen) seen.Add(l); });
+            using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                watcher.Reload();
+                lock (seen) Assert.Equal("OnePlus 15", Assert.Single(seen[^1]).Key.Name);
+            }
+            File.Delete(path);
+            watcher.Reload();
+            lock (seen) Assert.Empty(seen[^1]);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
     private static ushort AnnounceFlagsFor(Harness h, FakePhone phone, byte[]? hostKeyId = null)
     {
         var b = new byte[Wire.DiscoverSize];

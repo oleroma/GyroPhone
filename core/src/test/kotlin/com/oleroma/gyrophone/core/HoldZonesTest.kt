@@ -227,6 +227,20 @@ class HoldZonesTest {
     }
 
     @Test
+    fun aZoneUsedOnlyByAnotherTriggerStays() {
+        // Zone 0 maps On swipe, zone 1 only Release: zone 1 is used, nothing moves.
+        val on = Mapping(InputSource.Surface(1, SurfaceInput.HOLD_UP, zone = 0), OutputTarget.Key(4))
+        val release = Mapping(
+            InputSource.Surface(1, SurfaceInput.HOLD_UP, zone = 1, on = com.oleroma.gyrophone.core.model.Trigger.RELEASE),
+            OutputTarget.Key(5),
+        )
+        assertEquals(listOf(on, release), Bindings.compactZones(listOf(on, release)))
+        // With zone 1 empty, zone 2's Release moves down to it.
+        val far = release.copy(source = (release.source as InputSource.Surface).copy(zone = 2))
+        assertEquals(1, (Bindings.compactZones(listOf(on, far))[1].source as InputSource.Surface).zone)
+    }
+
+    @Test
     fun emptyZonesCloseUpInEverySet() {
         val a = Mapping(InputSource.Surface(1, SurfaceInput.HOLD_UP, "b", zone = 0), OutputTarget.Key(4))
         val c = Mapping(InputSource.Surface(1, SurfaceInput.HOLD_UP, "b", zone = 2), OutputTarget.Key(5))

@@ -82,6 +82,19 @@ class StateFrameTest {
         assertFalse(a.discreteEquals(b))
     }
 
+    @Test fun anyGyroTailChangeIsAChange() {
+        val a = StateFrame().apply { hires = true; gyroExt = true }
+        val b = StateFrame().apply { copyFrom(a) }
+        assertTrue(a.totalsEqual(b))
+        b.ext[PcGyroFeed.TAIL_SIZE - 1] = 1 // the last route's scale
+        assertFalse(a.totalsEqual(b))
+        b.copyFrom(a)
+        b.ext.putI16(2, 1) // the newest seq
+        assertFalse(a.totalsEqual(b))
+        b.copyFrom(a)
+        assertTrue(a.totalsEqual(b))
+    }
+
     @Test fun neutralizeKeepsTotals() {
         totals.add(9, 9, 9)
         val f = StateFrame().apply { fill(HidState(gamepad = GamepadState(buttons = 1), keyboard = KeyboardState(1, listOf(4))), totals, false) }

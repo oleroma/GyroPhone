@@ -65,6 +65,8 @@ import com.oleroma.gyrophone.core.model.ControllerDiagram
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.DevicePreset
 import com.oleroma.gyrophone.core.model.DevicePresets
+import com.oleroma.gyrophone.core.model.HeldButton
+import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.PhysicalDevice
@@ -169,6 +171,7 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
                     }
                     PhysicalDevice.KEYBOARD -> KeyboardView(view, open)
                     PhysicalDevice.MOUSE -> MouseView(view, open)
+                    PhysicalDevice.PHONE -> PhoneView(view, open)
                 }
             }
         }
@@ -186,6 +189,9 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
 
     val e = editing
     if (e != null && preset != null) {
+        // A key or button (not a stick or a wheel axis): what presses it, for its settings and gyro while held.
+        val held = e.inputs.firstOrNull { !it.analog }?.takeIf { !e.stick }?.let { PhysicalHeld(device.name + ":" + e.id, it.sources) }
+        val editSet = if (ws.sets.any { it.id == mapSet }) mapSet else MappingSet.BASE
         ControlMappingScreen(
             control = physicalStandIn(device, e.id, e.label, e.stick),
             mappings = preset.mappings(device),
@@ -193,7 +199,9 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
             onMappingsChange = { m ->
                 runtime.editActiveProfile { p ->
                     val now = p.devicePresets.firstOrNull { it.id == preset.id } ?: return@editActiveProfile p
-                    DevicePresets.put(p, now.withMappings(device, m))
+                    val next = now.withMappings(device, m)
+                    // Gyro mapped while held needs what presses the button.
+                    DevicePresets.put(p, if (held == null) next else next.syncHeld(held.id, held.sources))
                 }
             },
             onSettings = null,
@@ -201,9 +209,25 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
             sets = ws.sets,
             editSet = if (ws.sets.any { it.id == mapSet }) mapSet else MappingSet.BASE,
             onEditSet = { mapSet = it },
-            onSetsChange = { sets, removed -> runtime.editActiveProfile { p -> p.updateWorkspace(current) { it.withSets(sets, removed) } } },
+            onSetsChange = { sets, removed ->
+                runtime.editActiveProfile { p ->
+                    val next = p.updateWorkspace(current) { it.withSets(sets, removed) }
+                    val now = next.devicePresets.firstOrNull { it.id == preset.id }
+                    // The layer's mappings in the preset go too, and the Layer actions to it, unless
+                    // another workspace using the preset still has a layer with that id.
+                    if (removed == null || now == null ||
+                        next.workspaces.any { w -> w.devicePreset == now.id && w.sets.any { it.id == removed } }) next
+                    else DevicePresets.put(
+                        next,
+                        PhysicalDevice.entries.fold(now) { d, dev -> d.withMappings(dev, Bindings.dropSet(d.mappings(dev), removed)) },
+                    )
+                }
+            },
             physicalInputs = e.inputs,
-            settings = physicalSettings(preset, ws) { change ->
+            physicalMotionId = held?.let { HeldButton.GYRO_ID + it.id },
+            inherited = held?.let { h -> Inheritance.gyroInherited(Inheritance.workspace(ws, profile.defaults), HeldButton.GYRO_ID + h.id, editSet) }.orEmpty(),
+            parentName = "Workspace",
+            settings = physicalSettings(runtime, preset, ws, held, editSet) { change ->
                 runtime.editActiveProfile { p ->
                     val now = p.devicePresets.firstOrNull { it.id == preset.id } ?: return@editActiveProfile p
                     DevicePresets.put(p, change(now))
@@ -517,6 +541,50 @@ private fun MouseView(view: List<Mapping>, onOpen: (Element) -> Unit) {
                 ) { onOpen(Element(c.id, c.label, false, c.inputs)) }
             }
         }
+    }
+}
+
+/**
+ * The phone in landscape with its volume rocker on the top edge. The rocker acts while the pad is
+ * open; a key mapped to nothing turns the PC's volume.
+ */
+@Composable
+private fun PhoneView(view: List<Mapping>, onOpen: (Element) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val body = colors.surfaceVariant
+    val line = colors.outline
+    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val h = min(maxHeight, maxWidth / PhysicalLayouts.PHONE_ASPECT)
+            val w = h * PhysicalLayouts.PHONE_ASPECT
+            Box(Modifier.align(Alignment.Center).size(w, h)) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val sw = size.width
+                    val sh = size.height
+                    val top = sh * PhysicalLayouts.PHONE_TOP
+                    val r = CornerRadius(sh * 0.12f, sh * 0.12f)
+                    drawRoundRect(body, Offset(sw * 0.02f, top), androidx.compose.ui.geometry.Size(sw * 0.96f, sh - top - sh * 0.02f), r)
+                    drawRoundRect(
+                        line, Offset(sw * 0.06f, top + sh * 0.08f),
+                        androidx.compose.ui.geometry.Size(sw * 0.88f, sh - top - sh * 0.18f),
+                        CornerRadius(sh * 0.06f, sh * 0.06f), style = androidx.compose.ui.graphics.drawscope.Stroke(2f),
+                    )
+                }
+                for (c in PhysicalLayouts.phoneControls) {
+                    ElementBox(
+                        c.label, summary(view, c.inputs, c.label), round = false, enabled = true,
+                        modifier = Modifier.offset(w * (c.x - c.w / 2f), h * (c.y - c.h / 2f)).size(w * c.w, h * c.h),
+                    ) { onOpen(Element(c.id, c.label, false, c.inputs)) }
+                }
+            }
+        }
+        Text(
+            "The volume rocker acts while the pad is open. A key mapped to nothing turns the PC's volume.",
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp),
+        )
     }
 }
 

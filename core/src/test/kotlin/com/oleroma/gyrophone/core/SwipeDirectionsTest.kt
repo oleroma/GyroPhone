@@ -233,6 +233,21 @@ class SwipeDirectionsTest {
     }
 
     @Test
+    fun latchLetsGoAfterItsTimerAfterSwitchingApps() {
+        val scrub = Mapping(InputSource.Surface(1, SurfaceInput.MOTION_X), OutputTarget.SwitchApps)
+        val map = SurfaceMap(holdList + scrub + holdList.map {
+            it.copy(target = OutputTarget.NoOutput, options = MapOptions(how = How.TOGGLE, endsOnTap = true, endsAfterMs = 200))
+        })
+        val f = Finger(TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE), map)
+        f.down(); f.go(80f, 0f) // far enough to switch apps (Alt held) and hold right
+        assertTrue(f.pad.keyModifiers != 0)
+        f.up()
+        assertEquals(right, f.now)
+        f.settle(250)
+        assertEquals(0, f.now)
+    }
+
+    @Test
     fun noLatchWhenOff() {
         val f = Finger(TouchpadSettings(holdMode = HoldMode.DIRECTION_CHANGE), holdMap)
         f.down(); f.go(30f, 0f); f.up()

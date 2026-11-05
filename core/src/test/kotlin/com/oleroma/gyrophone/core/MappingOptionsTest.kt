@@ -419,6 +419,40 @@ class MappingOptionsTest {
     }
 
     @Test
+    fun stickyShiftIsNotEndedByAToggledKey() {
+        val shift = 0xE1
+        val e = keyEngine(
+            a(MapOptions(how = How.TOGGLE, endsOnNextInput = true), usage = shift),
+            Mapping(InputSource.Key(KEY_B), OutputTarget.Key(B, com.oleroma.gyrophone.core.model.KeyMode.TOGGLE)),
+            Mapping(InputSource.Key(AndroidKey.BUTTON_X), OutputTarget.Key(C)),
+        )
+        e.setKey(dev, KEY_B, true); e.keys(); e.setKey(dev, KEY_B, false); e.keys() // B on
+        e.down(); e.keys(); e.up(); t += 50 * MS
+        repeat(3) { assertEquals(0x02, e.snapshot().keyboard.modifiers) }
+        e.setKey(dev, AndroidKey.BUTTON_X, true); e.keys(); t += 50 * MS
+        e.setKey(dev, AndroidKey.BUTTON_X, false)
+        val after = e.snapshot().keyboard
+        assertEquals(0, after.modifiers) // let go with C
+        assertEquals(listOf(B), after.keys)
+    }
+
+    @Test
+    fun aRatchetHeldIsNotShownOnceItsMappingIsGone() {
+        val w = Workspace(
+            id = "w", name = "w", gyro = GyroSettings(mode = GyroMode.ALWAYS),
+            pads = listOf(AttachedPad(id = "p", mappings = listOf(Mapping(InputSource.Key(KEY_A), OutputTarget.GyroPause)))),
+        )
+        val p = single(w).let { it.copy(workspaces = it.workspaces + w.copy(id = "w2", name = "w2", pads = emptyList())) }
+        val e = MappingEngine(p) { t }
+        e.down(); e.keys()
+        assertEquals(0, e.gyroAxes)
+        assertEquals(MappingEngine.ALL_GYRO, e.ratchetsHeld)
+        e.workspaceIndex = 1
+        assertEquals(MappingEngine.ALL_GYRO, e.gyroAxes)
+        assertEquals(0, e.ratchetsHeld)
+    }
+
+    @Test
     fun swipeToggleLatchesUntilATap() {
         val e = swipeEngine(Mapping(InputSource.Surface(1, SurfaceInput.HOLD_RIGHT), OutputTarget.Key(A),
             options = MapOptions(how = How.TOGGLE, endsOnTap = true)))

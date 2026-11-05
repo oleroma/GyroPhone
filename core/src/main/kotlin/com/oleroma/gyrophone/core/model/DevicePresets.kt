@@ -1,12 +1,13 @@
 package com.oleroma.gyrophone.core.model
 
 import com.oleroma.gyrophone.core.hid.AndroidKeyToHid
+import com.oleroma.gyrophone.core.hid.HidUsage
 import kotlinx.serialization.Serializable
 
 /**
  * What the physical devices attached to the phone do: any game pad's buttons and sticks
  * ([controller]), a keyboard's keys ([keyboard]) and a mouse's buttons, wheel and movement
- * ([mouse]). Presets live beside the workspaces, not in them: a workspace pins one
+ * ([mouse]), and the phone's own volume rocker ([phone]). Presets live beside the workspaces, not in them: a workspace pins one
  * ([Workspace.devicePreset]) and uses it while it is active; a workspace pinning none leaves the
  * devices doing nothing. Mappings use the workspace's layer numbers ([Mapping.set]).
  */
@@ -17,9 +18,65 @@ data class DevicePreset(
     val controller: List<Mapping> = emptyList(),
     val keyboard: List<Mapping> = emptyList(),
     val mouse: List<Mapping> = emptyList(),
-    /** Keys and buttons (controller, keyboard, mouse) with gesture timings of their own. */
+    /**
+     * The phone's own keys: its volume rocker ([AndroidKey.VOLUME_UP], [AndroidKey.VOLUME_DOWN]),
+     * read while the pad is open. A rocker key with no mapping here turns the PC's volume
+     * ([DevicePresets.withPhoneDefaults]).
+     */
+    val phone: List<Mapping> = emptyList(),
+    /** Keys and buttons (controller, keyboard, mouse, phone) with gesture timings of their own. */
     val timings: List<KeyTiming> = emptyList(),
+    /** The sticks' tuning by [PhysicalSticks] id ("ls", "rs"); one not listed has the defaults. */
+    val sticks: Map<String, StickTuning> = emptyMap(),
+    /** The triggers' tuning by [PhysicalSticks] id ("lt", "rt"); one not listed has the defaults. */
+    val triggers: Map<String, TriggerTuning> = emptyMap(),
+    /** Keys and buttons with settings of their own while held ([HeldButton]): gyro sensitivity and acceleration, touchpad speed. */
+    val held: List<HeldButton> = emptyList(),
 ) {
+    /** Control [id]'s settings while held, or null. */
+    fun held(id: String): HeldButton? = held.firstOrNull { it.id == id }
+
+    /**
+     * Control [id] (pressed by [sources]) with its settings in mapping set [set] [change]d; one left
+     * with none, and no gyro mappings of its own ([motionMapped]), is dropped.
+     */
+    fun withHeld(id: String, sources: List<InputSource>, set: Int, change: (ButtonGyro) -> ButtonGyro): DevicePreset {
+        val h = (held(id) ?: HeldButton(id, sources)).withGyro(set, change).copy(sources = sources)
+        val rest = held.filter { it.id != id }
+        return copy(held = if (h.gyro.isEmpty() && !motionMapped(id)) rest else rest + h)
+    }
+
+    /** Control [id] maps gyro axes of its own while held (its Motion tab). */
+    fun motionMapped(id: String): Boolean = PhysicalDevice.entries.any { d ->
+        mappings(d).any { (it.source as? InputSource.Gyro)?.id == HeldButton.GYRO_ID + id }
+    }
+
+    /**
+     * These after control [id]'s (pressed by [sources]) mappings changed: kept as held while it
+     * maps gyro axes of its own, so the engine knows what presses it; dropped once it has nothing.
+     */
+    fun syncHeld(id: String, sources: List<InputSource>): DevicePreset {
+        val h = held(id)
+        val rest = held.filter { it.id != id }
+        return when {
+            motionMapped(id) -> copy(held = rest + (h?.copy(sources = sources) ?: HeldButton(id, sources)))
+            h != null && h.gyro.isEmpty() -> copy(held = rest)
+            else -> this
+        }
+    }
+
+    /** Stick [id]'s tuning in effect. */
+    fun stick(id: String): StickTuning = sticks[id] ?: StickTuning()
+
+    /** Trigger [id]'s tuning in effect. */
+    fun trigger(id: String): TriggerTuning = triggers[id] ?: TriggerTuning()
+
+    fun withStick(id: String, t: StickTuning): DevicePreset =
+        copy(sticks = if (t == StickTuning()) sticks - id else sticks + (id to t))
+
+    fun withTrigger(id: String, t: TriggerTuning): DevicePreset =
+        copy(triggers = if (t == TriggerTuning()) triggers - id else triggers + (id to t))
+
     /** [keyCode]'s own timings, or null: the workspace's. */
     fun timing(keyCode: Int): KeyTiming? = timings.firstOrNull { it.keyCode == keyCode }
 
@@ -34,12 +91,40 @@ data class DevicePreset(
         PhysicalDevice.CONTROLLER -> controller
         PhysicalDevice.KEYBOARD -> keyboard
         PhysicalDevice.MOUSE -> mouse
+        PhysicalDevice.PHONE -> phone
     }
 
     fun withMappings(device: PhysicalDevice, m: List<Mapping>): DevicePreset = when (device) {
         PhysicalDevice.CONTROLLER -> copy(controller = m)
         PhysicalDevice.KEYBOARD -> copy(keyboard = m)
         PhysicalDevice.MOUSE -> copy(mouse = m)
+        PhysicalDevice.PHONE -> copy(phone = m)
+    }
+}
+
+/**
+ * A physical key's or button's own settings while held, per mapping set ([ButtonGyro], like a touch
+ * button's [TouchControl.gyro]): [id] is its device and drawing's control ("CONTROLLER:lt"),
+ * [sources] the inputs that press it (any of them held = it is held).
+ */
+@Serializable
+data class HeldButton(val id: String, val sources: List<InputSource>, val gyro: List<ButtonGyro> = emptyList()) {
+    companion object {
+        /**
+         * Before [id]: the button as a gyro mapping's owner ([InputSource.Gyro.id]), mapped in its
+         * Motion tab: that axis does this instead while it is held.
+         */
+        const val GYRO_ID = "phys:"
+    }
+
+    /** Its settings with mapping sets [sets] in use (Base first): each set's own over the ones below. */
+    fun gyroIn(sets: List<Int>): ButtonGyro =
+        sets.fold(ButtonGyro()) { r, s -> gyro.firstOrNull { it.set == s }?.let { r.under(it) } ?: r }
+
+    /** Copy with set [set]'s settings changed by [change] (one that sets nothing goes). */
+    fun withGyro(set: Int, change: (ButtonGyro) -> ButtonGyro): HeldButton {
+        val g = change(gyro.firstOrNull { it.set == set } ?: ButtonGyro(set))
+        return copy(gyro = gyro.filterNot { it.set == set } + listOfNotNull(g.takeIf { it.any }))
     }
 }
 
@@ -50,10 +135,123 @@ data class DevicePreset(
 @Serializable
 data class KeyTiming(val keyCode: Int, val longPressMs: Int? = null, val doubleTapMs: Int? = null)
 
+/** How a stick's travel past its inner deadzone turns into output ([StickTuning.curve]). */
+@Serializable
+enum class StickCurve(val label: String) {
+    LINEAR("Linear"),
+    /** Finer near the centre: travel squared. */
+    SOFT("Soft"),
+    /** Quicker off the centre: the square root of travel. */
+    AGGRESSIVE("Aggressive");
+
+    fun apply(t: Float): Float = when (this) {
+        LINEAR -> t
+        SOFT -> t * t
+        AGGRESSIVE -> kotlin.math.sqrt(t)
+    }
+}
+
+/**
+ * A physical stick's tuning, kept in its [DevicePreset]. The stick is read as one round vector:
+ * nothing below [inner] (a share of full travel), full from [outer] on, travel between them
+ * shaped by [curve] and scaled by [sensitivity]. Its directions (Left, Right, Up, Down) are pies
+ * [pieX] (left and right) and [pieY] (up and down) degrees wide around their axis: wider than 90
+ * overlap, so a diagonal presses both. [outerRing]: how far it is pushed (between the deadzones,
+ * before the curve) for its Outer inputs ([AxisStage.OUTER]).
+ */
+@Serializable
+data class StickTuning(
+    val inner: Float = 0.10f,
+    val outer: Float = 0.95f,
+    val curve: StickCurve = StickCurve.LINEAR,
+    val sensitivity: Float = 1f,
+    val outerRing: Float = 0.85f,
+    val pieX: Float = 135f,
+    val pieY: Float = 135f,
+) {
+    companion object {
+        const val MIN_PIE = 30f
+        const val MAX_PIE = 180f
+    }
+}
+
+/**
+ * A physical trigger's tuning, kept in its [DevicePreset]: its Press ([AxisStage.PRESS]) is on from
+ * [press] of its pull, its Full pull ([AxisStage.FULL_PULL]) from [full].
+ */
+@Serializable
+data class TriggerTuning(val press: Float = 0.5f, val full: Float = 0.95f)
+
+/** The sticks and triggers a [DevicePreset] tunes, by id, with their axes. */
+object PhysicalSticks {
+    /** Stick id to its X and Y axes. */
+    val sticks: Map<String, Pair<Int, Int>> = linkedMapOf(
+        "ls" to (AndroidAxis.X to AndroidAxis.Y),
+        "rs" to (AndroidAxis.Z to AndroidAxis.RZ),
+    )
+
+    /** [sticks] on a pad whose right stick is RX / RY ([rightStickOnRx]); its Z / RZ are then triggers. */
+    val sticksRx: Map<String, Pair<Int, Int>> = linkedMapOf(
+        "ls" to (AndroidAxis.X to AndroidAxis.Y),
+        "rs" to (AndroidAxis.RX to AndroidAxis.RY),
+    )
+
+    /**
+     * Whether a pad puts its right stick on RX / RY ([has]: it reports that axis). Pads on
+     * Generic.kl do (and sometimes put triggers on Z / RZ); Z / RZ are the stick only without
+     * RX / RY, or when the triggers have axes of their own (LTRIGGER, RTRIGGER, GAS, BRAKE).
+     */
+    fun rightStickOnRx(has: (Int) -> Boolean): Boolean {
+        val triggers = has(AndroidAxis.LTRIGGER) || has(AndroidAxis.RTRIGGER) || has(AndroidAxis.GAS) || has(AndroidAxis.BRAKE)
+        val zStick = has(AndroidAxis.Z) && has(AndroidAxis.RZ) &&
+            (!has(AndroidAxis.RX) || !has(AndroidAxis.RY) || triggers)
+        return !zStick && has(AndroidAxis.RX) && has(AndroidAxis.RY)
+    }
+
+    /** Trigger id to the axes its pull may come as. */
+    val triggers: Map<String, Pair<Int, Int>> = linkedMapOf(
+        "lt" to (AndroidAxis.LTRIGGER to AndroidAxis.BRAKE),
+        "rt" to (AndroidAxis.RTRIGGER to AndroidAxis.GAS),
+    )
+}
+
 /** The kinds of physical device a [DevicePreset] maps. */
-enum class PhysicalDevice(val label: String) { CONTROLLER("Controller"), KEYBOARD("Keyboard"), MOUSE("Mouse") }
+enum class PhysicalDevice(val label: String) { CONTROLLER("Controller"), KEYBOARD("Keyboard"), MOUSE("Mouse"), PHONE("Phone") }
 
 object DevicePresets {
+    /** The id prefix of a physical control's stand-in in the editors ("dev:CONTROLLER:a"). */
+    private const val STAND_IN_PREFIX = "dev:CONTROLLER:"
+
+    /**
+     * [p] with the mappings an older editor saved on a controller button's touch-button stand-in
+     * (InputSource.Touch "dev:CONTROLLER:<id>", which never fire) moved to that button's press;
+     * the stand-in's other touch and surface inputs are dropped.
+     */
+    fun fixStandIns(p: DevicePreset): DevicePreset {
+        fun standIn(s: InputSource): String? = when (s) {
+            is InputSource.Touch -> s.id
+            is InputSource.TouchTap -> s.id
+            is InputSource.TouchDoubleTap -> s.id
+            is InputSource.TouchLongPress -> s.id
+            is InputSource.TouchRelease -> s.id
+            is InputSource.TouchArea -> s.id
+            is InputSource.Surface -> s.id
+            else -> null
+        }?.takeIf { it.startsWith(STAND_IN_PREFIX) }
+        if (p.controller.none { standIn(it.source) != null }) return p
+        val controls = (PhysicalLayouts.controllerFront.controls + PhysicalLayouts.controllerBack.controls).associateBy { it.id }
+        val fixed = p.controller.flatMap { m ->
+            val id = standIn(m.source) ?: return@flatMap listOf(m)
+            if (m.source !is InputSource.Touch) return@flatMap emptyList()
+            // A stick's press is its Click; a button's its first input (Press), a trigger's its Pull.
+            val inputs = controls[id.removePrefix(STAND_IN_PREFIX)]?.inputs.orEmpty()
+            val press = inputs.firstOrNull { it.label == "Click" } ?: inputs.firstOrNull()
+                ?: return@flatMap emptyList()
+            press.sources.map { m.copy(source = it) }
+        }.distinct()
+        return p.copy(controller = fixed)
+    }
+
     fun newId(taken: Collection<String>): String {
         var n = 1
         while ("preset$n" in taken) n++
@@ -67,9 +265,35 @@ object DevicePresets {
         return "Preset $n"
     }
 
-    /** A new preset where every device does what it is: pad to pad, keys to the same keys, mouse to mouse. */
+    /** A new preset where every device does what it is: pad to pad, keys to the same keys, mouse to mouse, rocker to PC volume. */
     fun standard(id: String, name: String): DevicePreset =
-        DevicePreset(id, name, KnownLayouts.standardControllerMappings(), standardKeyboard(), standardMouse())
+        DevicePreset(id, name, KnownLayouts.standardControllerMappings(), standardKeyboard(), standardMouse(), standardPhone())
+
+    /** The phone's volume rocker to the PC's volume keys. */
+    fun standardPhone(): List<Mapping> = listOf(
+        Mapping(InputSource.Key(AndroidKey.VOLUME_UP), OutputTarget.Key(HidUsage.VOLUME_UP)),
+        Mapping(InputSource.Key(AndroidKey.VOLUME_DOWN), OutputTarget.Key(HidUsage.VOLUME_DOWN)),
+    )
+
+    /**
+     * [phone] mappings with each rocker key that nothing maps (no press or gesture of it, in any
+     * set) turning the PC's volume ([standardPhone]): an unmapped rocker is the PC's volume.
+     */
+    fun withPhoneDefaults(phone: List<Mapping>): List<Mapping> {
+        fun maps(m: Mapping, code: Int) = when (val s = m.source) {
+            is InputSource.Key -> s.keyCode == code
+            is InputSource.KeyGesture -> s.keyCode == code
+            else -> false
+        }
+        val missing = standardPhone().filter { d -> phone.none { maps(it, (d.source as InputSource.Key).keyCode) } }
+        return if (missing.isEmpty()) phone else phone + missing
+    }
+
+    /** [p] with [withPhoneDefaults] filled in, so its editor shows what the rocker does. */
+    fun withPhoneDefaults(p: DevicePreset): DevicePreset {
+        val phone = withPhoneDefaults(p.phone)
+        return if (phone === p.phone) p else p.copy(phone = phone)
+    }
 
     /** Every key of a keyboard to the same key on the PC. */
     fun standardKeyboard(): List<Mapping> =
@@ -145,6 +369,11 @@ object PhysicalLayouts {
         BindableInput("Right", listOf(InputSource.Axis(x, AxisHalf.POSITIVE))),
         BindableInput("Up", listOf(InputSource.Axis(y, AxisHalf.NEGATIVE))),
         BindableInput("Down", listOf(InputSource.Axis(y, AxisHalf.POSITIVE))),
+        BindableInput("Outer", listOf(InputSource.Axis(x, stage = AxisStage.OUTER))),
+        BindableInput("Outer left", listOf(InputSource.Axis(x, AxisHalf.NEGATIVE, AxisStage.OUTER))),
+        BindableInput("Outer right", listOf(InputSource.Axis(x, AxisHalf.POSITIVE, AxisStage.OUTER))),
+        BindableInput("Outer up", listOf(InputSource.Axis(y, AxisHalf.NEGATIVE, AxisStage.OUTER))),
+        BindableInput("Outer down", listOf(InputSource.Axis(y, AxisHalf.POSITIVE, AxisStage.OUTER))),
     ) + buttonInputs(listOf(click), "Click").let { b -> b.map { if (it.label == "Click") it else it.copy(label = "Click " + it.label.lowercase()) } }
 
     /** A D-pad direction: its key (with gestures) and the hat axis half some pads report instead. */
@@ -206,6 +435,8 @@ object PhysicalLayouts {
             PhysicalControl(id, label, kind, x, y, w / a, h, inputs)
         fun trigger(code: Int, axis: Int, alt: Int) = listOf(
             BindableInput("Pull", listOf(InputSource.Axis(axis), InputSource.Axis(alt), InputSource.Key(code))),
+            BindableInput("Press", listOf(InputSource.Axis(axis, stage = AxisStage.PRESS), InputSource.Axis(alt, stage = AxisStage.PRESS))),
+            BindableInput("Full pull", listOf(InputSource.Axis(axis, stage = AxisStage.FULL_PULL), InputSource.Axis(alt, stage = AxisStage.FULL_PULL))),
         ) + ButtonGesture.entries.map { g -> BindableInput(g.label, listOf(InputSource.KeyGesture(code, g))) }
         fun paddle(id: String, x: Float, y: Float) =
             rect(id, id.uppercase(), PhysicalKind.FACE, x, y, 0.15f, 0.15f, buttonInputs(paddles.getValue(id)))
@@ -270,6 +501,22 @@ object PhysicalLayouts {
     data class MouseControl(val id: String, val label: String, val x: Float, val y: Float, val w: Float, val h: Float, val inputs: List<BindableInput>)
 
     const val MOUSE_ASPECT = 0.8f
+
+    /**
+     * The phone's own keys, drawn on its top edge as held in landscape (the phone's [PHONE_TOP] and
+     * down is its body): Vol + and Vol − of the rocker.
+     * Each is a button like a controller's (press, tap, double tap, long press, release).
+     */
+    val phoneControls: List<MouseControl> = listOf(
+        MouseControl("volup", "Vol +", 0.30f, 0.13f, 0.18f, 0.22f, buttonInputs(listOf(AndroidKey.VOLUME_UP))),
+        MouseControl("voldown", "Vol −", 0.50f, 0.13f, 0.18f, 0.22f, buttonInputs(listOf(AndroidKey.VOLUME_DOWN))),
+    )
+
+    /** The phone drawing's box: width / height (the phone in landscape, the rocker above it). */
+    const val PHONE_ASPECT = 2.2f
+
+    /** Where the phone's body starts in its box, as a fraction of the height (the rocker sits above). */
+    const val PHONE_TOP = 0.24f
 
     val mouseControls: List<MouseControl> = listOf(
         MouseControl("left", "Left", 0.31f, 0.2f, 0.27f, 0.3f, buttonInputs(listOf(AndroidKey.MOUSE_LEFT))),

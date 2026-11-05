@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
+import com.oleroma.gyrophone.core.model.GyroCurve
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.GyroSpace
@@ -24,6 +25,7 @@ import com.oleroma.gyrophone.core.model.Profile
 
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.MappingSet
+import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 
@@ -114,11 +116,17 @@ internal fun defaultsLevel(runtime: GamepadRuntime, profile: Profile): Workspace
 
 private fun g(p: String) = WorkspaceDefaults.gyroKey(p)
 
+/** One of the PC DualShock 4's gyro axes in the workspace settings: its phone axis and Invert, and how to set them. */
+private class PadAxisRow(
+    val title: String, val prop: String, val src: MotionAxis, val invert: Boolean,
+    val set: (GyroSettings, MotionAxis?, Boolean?) -> GyroSettings,
+)
+
 /**
  * Every setting of one [level] (a workspace, one of its layers, or the Defaults): gyro, buttons,
  * haptics, and the touchpad and gestures, each highlighted with a ↺ where it differs from the
  * parent, as categories in the order the person put them ([ReorderableSections]); [extra] ones
- * join them. [touchpadOpen]: the touchpad's open (its ⚙ Settings in the mapping editor). [key]
+ * join them. [key]
  * restarts slider drafts when the level changes.
  */
 @Composable
@@ -126,7 +134,6 @@ internal fun WorkspaceSettings(
     runtime: GamepadRuntime,
     level: WorkspaceLevel,
     key: String,
-    touchpadOpen: Boolean = false,
     extra: List<SectionItem> = emptyList(),
 ) {
     val ws = level.ws
@@ -135,10 +142,17 @@ internal fun WorkspaceSettings(
     fun reset(k: String): () -> Unit = { level.reset(k) }
 
     val layer = !level.shows(WorkspaceDefaults.CONTROL_OPACITY)
-    ResetAllButton(level.parentName, WorkspaceDefaults.keys.any { level.shows(it) && level.isOwn(it) }) { level.resetAll() }
+    NotSearching {
+        // The jitter cutoff and smoothing are no longer shown or used here, so an old own value of theirs does not light the button.
+        val retired = setOf(g("tighteningThreshold"), g("smoothingThreshold"))
+        ResetAllButton(level.parentName, WorkspaceDefaults.keys.any { it !in retired && level.shows(it) && level.isOwn(it) }) { level.resetAll() }
+    }
     val items = ArrayList(extra)
     items += SectionItem("gyro") { card, header ->
-        RememberedSection(runtime, "workspace.Gyro", "Gyro", card, defaultOpen = true, subtitle = ws.gyro.mode.label, headerModifier = header) {
+        RememberedSection(
+            runtime, "workspace.Gyro", "Gyro", card, defaultOpen = true,
+            subtitle = ws.gyro.mode.label + " · sensitivity, acceleration, game, gyro space, inertia", headerModifier = header,
+        ) {
             OverrideRow(
                 "Gyro to mouse", own(g("mode")), reset(g("mode")),
                 hint = when (ws.gyro.mode) {
@@ -182,10 +196,49 @@ internal fun WorkspaceSettings(
                     }
                 }
             }
+            if (level.shows(g("padYaw"))) {
+                // The PC's DualShock 4 gyro: which phone axis each pad axis follows, and Invert.
+                val g0 = ws.gyro
+                listOf(
+                    PadAxisRow("DualShock 4 yaw", "padYaw", g0.padYaw, g0.padYawInvert) { s, a, i ->
+                        s.copy(padYaw = a ?: s.padYaw, padYawInvert = i ?: s.padYawInvert)
+                    },
+                    PadAxisRow("DualShock 4 pitch", "padPitch", g0.padPitch, g0.padPitchInvert) { s, a, i ->
+                        s.copy(padPitch = a ?: s.padPitch, padPitchInvert = i ?: s.padPitchInvert)
+                    },
+                    PadAxisRow("DualShock 4 roll", "padRoll", g0.padRoll, g0.padRollInvert) { s, a, i ->
+                        s.copy(padRoll = a ?: s.padRoll, padRollInvert = i ?: s.padRollInvert)
+                    },
+                ).forEachIndexed { n, row ->
+                    OverrideRow(
+                        row.title, own(g(row.prop)) || own(g(row.prop + "Invert")),
+                        { level.reset(g(row.prop)); level.reset(g(row.prop + "Invert")) },
+                        hint = if (n == 0) "With the companion's Gamepad output on DualShock 4, the pad's gyro and accelerometer carry the phone's turn " +
+                            "for games with their own controller gyro, whatever the gyro mouse does. Pick the phone axis each pad axis follows: " +
+                            "by default yaw turns through the screen, pitch across it and roll along it. Turn the gyro mouse off where the game aims with it." else null,
+                    ) {
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            (MotionAxis.shown + MotionAxis.NONE).forEach { ax ->
+                                FilterChip(selected = row.src == ax, onClick = {
+                                    editWs { it.copy(gyro = row.set(it.gyro, ax, null)) }
+                                }, label = { Text(ax.label) })
+                            }
+                            FilterChip(selected = row.invert, onClick = {
+                                editWs { it.copy(gyro = row.set(it.gyro, null, !row.invert)) }
+                            }, label = { Text("Invert") })
+                        }
+                    }
+                }
+            }
             GyroSensSlider(
                 key + "gs", "Sensitivity", ws.gyro.sensitivity, ws.gyro, own(g("sensitivity")), reset(g("sensitivity")),
                 hint = "Yaw, pitch and roll each follow it unless their ⚙ in the mapping editor sets their own; scrolling and sticks go faster or slower with it too.",
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(sensitivity = v)) } }
+            AccelCurveSetting(
+                key + "gaccel", "Acceleration", ws.gyro.accel ?: GyroCurve.OFF, ws.gyro.sensitivity, ws.gyro,
+                own(g("accel")), reset(g("accel")),
+                hint = "Yaw, pitch and roll each follow it unless their ⚙ in the mapping editor sets their own; a button can set its own while held. $ACCEL_HINT",
+            ) { c -> editWs { it.copy(gyro = it.gyro.copy(accel = c)) } }
             OverrideSwitch(
                 "Inertia",
                 (if (ws.gyro.inertia) "When a ratchet turns gyro off, the mouse and scrolling glide on and slow down; turning it on again stops the glide."
@@ -199,6 +252,13 @@ internal fun WorkspaceSettings(
                 key + "gglide", "Glide %.0f ms", ws.gyro.glideMs, GyroMouse.MIN_GLIDE_MS..GyroMouse.MAX_GLIDE_MS, 5f,
                 own(g("glideMs")), reset(g("glideMs")), hint = GLIDE_HINT,
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(glideMs = v)) } }
+        }
+    }
+    items += SectionItem("tilt") { card, header ->
+        RememberedSection(
+            runtime, "workspace.Tilt", "Tilt & shake", card,
+            subtitle = "How far a full tilt leans, its deadzone, how hard a shake is", headerModifier = header,
+        ) {
             OverrideSlider(
                 key + "tiltRange", "Tilt range %.0f°", ws.gyro.tiltRangeDeg,
                 GyroSettings.MIN_TILT_RANGE_DEG..GyroSettings.MAX_TILT_RANGE_DEG, 1f, own(g("tiltRangeDeg")), reset(g("tiltRangeDeg")),
@@ -214,43 +274,37 @@ internal fun WorkspaceSettings(
                 GyroSettings.MIN_SHAKE_STRENGTH..GyroSettings.MAX_SHAKE_STRENGTH, 1f, own(g("shakeStrength")), reset(g("shakeStrength")),
                 hint = "How hard a jolt counts as a shake.",
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(shakeStrength = v)) } }
-            // Both filters default to off: raw gyro. Calibration only subtracts a fixed resting bias
-            // and suits the phone, not a layer: the whole workspace's only.
-            run {
-                val tight = ws.gyro.tighteningThreshold
-                OverrideSlider(
-                    key + "tight", if (tight < 0.05f) "Jitter cutoff off" else "Jitter cutoff %.1f°/s", tight, 0f..5f, 0.1f,
-                    own(g("tighteningThreshold")), reset(g("tighteningThreshold")),
-                ) { v -> editWs { it.copy(gyro = it.gyro.copy(tighteningThreshold = if (v < 0.05f) 0f else v)) } }
-                val smooth = ws.gyro.smoothingThreshold
-                OverrideSlider(
-                    key + "smooth", if (smooth < 0.05f) "Smoothing off" else "Smoothing below %.1f°/s", smooth, 0f..10f, 0.1f,
-                    own(g("smoothingThreshold")), reset(g("smoothingThreshold")),
-                ) { v -> editWs { it.copy(gyro = it.gyro.copy(smoothingThreshold = if (v < 0.05f) 0f else v)) } }
-            }
-            if (!layer) {
-                val cal by runtime.calibrationState.collectAsState()
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        when (val c = cal) {
-                            GamepadRuntime.CalibrationState.None -> "Not calibrated (phone's own drift correction only)"
-                            GamepadRuntime.CalibrationState.Running -> "Calibrating: keep the phone still…"
-                            GamepadRuntime.CalibrationState.Moved -> "The phone moved. Lay it flat and try again."
-                            is GamepadRuntime.CalibrationState.Calibrated -> "Calibrated (removes %.2f°/s drift)".format(c.degPerSec)
-                        },
-                        Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
-                    )
-                    if (cal is GamepadRuntime.CalibrationState.Calibrated) {
-                        TextButton(onClick = { runtime.clearGyroCalibration() }) { Text("Clear") }
-                    }
-                    TextButton(
-                        onClick = { runtime.calibrateGyro() },
-                        enabled = cal != GamepadRuntime.CalibrationState.Running
-                    ) {
-                        Text("Calibrate")
-                    }
+        }
+    }
+    // The jitter cutoff and smoothing are the app's (Settings, App, Gyro), the same in every workspace.
+    // Calibration only subtracts a fixed resting bias and suits the phone, not a layer: the whole workspace's only.
+    if (!layer) items += SectionItem("gyroFilters") { card, header ->
+        RememberedSection(
+            runtime, "workspace.GyroFilters", "Gyro calibration", card,
+            subtitle = "Drift calibration", headerModifier = header,
+        ) {
+            Hint("Jitter cutoff and smoothing are in Settings, App, Gyro: one setting for every workspace.")
+            val cal by runtime.calibrationState.collectAsState()
+            Searchable("Calibrate", "gyro drift calibration") { Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    when (val c = cal) {
+                        GamepadRuntime.CalibrationState.None -> "Not calibrated (phone's own drift correction only)"
+                        GamepadRuntime.CalibrationState.Running -> "Calibrating: keep the phone still…"
+                        GamepadRuntime.CalibrationState.Moved -> "The phone moved. Lay it flat and try again."
+                        is GamepadRuntime.CalibrationState.Calibrated -> "Calibrated (removes %.2f°/s drift)".format(c.degPerSec)
+                    },
+                    Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                )
+                if (cal is GamepadRuntime.CalibrationState.Calibrated) {
+                    TextButton(onClick = { runtime.clearGyroCalibration() }) { Text("Clear") }
                 }
-            }
+                TextButton(
+                    onClick = { runtime.calibrateGyro() },
+                    enabled = cal != GamepadRuntime.CalibrationState.Running
+                ) {
+                    Text("Calibrate")
+                }
+            } }
         }
     }
     if (!layer) items += SectionItem("controls") { card, header ->
@@ -296,58 +350,23 @@ internal fun WorkspaceSettings(
             }
         }
     }
-    items += SectionItem("touchpad") { card, header ->
-        TouchpadSection(
-            runtime, level, key, if (touchpadOpen) "touchpad.Touchpad" else "workspace.Touchpad",
-            open = touchpadOpen, card = card, header = header,
-        )
+    items += SectionItem("gestures") { card, header ->
+        RememberedSection(
+            runtime, "workspace.Gestures", "Gesture timings", card,
+            subtitle = "Long press and double tap times", headerModifier = header,
+        ) {
+            MsOverride(
+                key + "long", "Long press after", ws.longPressMs, Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
+                level.isOwn(WorkspaceDefaults.LONG_PRESS), { level.reset(WorkspaceDefaults.LONG_PRESS) },
+                hint = "For the Tap and Long press of the touchpad, touch buttons, controller buttons and keyboard keys without a time of their own.",
+            ) { ms -> level.edit { it.copy(longPressMs = ms) } }
+            MsOverride(
+                key + "double", "Double tap within", ws.doubleTapMs, Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
+                level.isOwn(WorkspaceDefaults.DOUBLE_TAP), { level.reset(WorkspaceDefaults.DOUBLE_TAP) },
+                hint = "The same, for Double tap windows.",
+            ) { ms -> level.edit { it.copy(doubleTapMs = ms) } }
+        }
     }
+    items += surfaceCategories(runtime, workspaceSurfaceLevel(level), key + "tp", Bindings.holdZoneCounts(ws.mappings, ""), touchpad = true)
     ReorderableSections(runtime, "workspace", items)
-}
-
-/** The touchpad and gesture settings of [level]: gesture times, then the touchpad's own. */
-@Composable
-private fun TouchpadSection(
-    runtime: GamepadRuntime,
-    level: WorkspaceLevel,
-    key: String,
-    prefKey: String,
-    open: Boolean,
-    card: Modifier,
-    header: Modifier,
-) {
-    val ws = level.ws
-    RememberedSection(
-        runtime,
-        prefKey,
-        "Touchpad & gestures",
-        card,
-        defaultOpen = open,
-        headerModifier = header,
-        subtitle = "Long press and double tap times, speed, scrolling and directions",
-    ) {
-        MsOverride(
-            key + "long", "Long press after", ws.longPressMs, Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
-            level.isOwn(WorkspaceDefaults.LONG_PRESS), { level.reset(WorkspaceDefaults.LONG_PRESS) },
-            hint = "For the Tap and Long press of the touchpad, touch buttons, controller buttons and keyboard keys without a time of their own.",
-        ) { ms -> level.edit { it.copy(longPressMs = ms) } }
-        MsOverride(
-            key + "double", "Double tap within", ws.doubleTapMs, Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
-            level.isOwn(WorkspaceDefaults.DOUBLE_TAP), { level.reset(WorkspaceDefaults.DOUBLE_TAP) },
-            hint = "The same, for Double tap windows.",
-        ) { ms -> level.edit { it.copy(doubleTapMs = ms) } }
-        SurfaceSharedSettings(
-            workspaceSurfaceLevel(level),
-            key + "tp",
-            Bindings.holdZoneCounts(ws.mappings, ""),
-            touchpad = true,
-            resetAll = false,
-        )
-        Text(
-            "Touchpad buttons use these too, unless they set their own (their Mappings, ⚙ Settings).",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
-        )
-    }
 }

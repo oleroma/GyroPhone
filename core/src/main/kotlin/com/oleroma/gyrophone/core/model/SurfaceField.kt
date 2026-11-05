@@ -326,11 +326,14 @@ enum class DirField(val hold: Boolean) {
 enum class MoveField(val whole: Boolean = false) {
     SENSITIVITY, ACCELERATION, SCROLL_SPEED, NATURAL_SCROLL, MODE, PIE, INERTIA, GLIDE, CURVE,
     CURSOR_DEADZONE(true), CATCH_UP(true), REARM(true), STILL(true), SAMPLE(true),
-    LOCK(true), TURN(true), PIE_MARGIN(true), HOLD_STOPS(true);
+    LOCK(true), TURN(true), PIE_MARGIN(true), HOLD_STOPS(true),
+
+    /** Its factor (× parent) of the sensitivity, instead of an exact [SENSITIVITY]. */
+    SCALE;
 
     /** The shared setting of [m] this sets over. */
     fun sharedOf(m: MoveSlot): SurfaceField = when (this) {
-        SENSITIVITY -> SurfaceField.SENSITIVITY
+        SENSITIVITY, SCALE -> SurfaceField.SENSITIVITY
         ACCELERATION -> SurfaceField.ACCELERATION
         SCROLL_SPEED -> SurfaceField.SCROLL_SPEED
         NATURAL_SCROLL -> SurfaceField.NATURAL_SCROLL
@@ -369,6 +372,7 @@ enum class MoveField(val whole: Boolean = false) {
         TURN -> s.turnDp
         PIE_MARGIN -> s.margin
         HOLD_STOPS -> s.holdStops
+        SCALE -> s.scale
     }
 
     fun same(a: MoveSettings, b: MoveSettings): Boolean = get(a) == get(b)
@@ -393,6 +397,7 @@ enum class MoveField(val whole: Boolean = false) {
         TURN -> to.copy(turnDp = from.turnDp)
         PIE_MARGIN -> to.copy(margin = from.margin)
         HOLD_STOPS -> to.copy(holdStops = from.holdStops)
+        SCALE -> to.copy(scale = from.scale)
     }
 
     /** A level's own [s] sets this for [m]. */

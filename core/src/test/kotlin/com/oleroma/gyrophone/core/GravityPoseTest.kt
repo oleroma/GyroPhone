@@ -31,6 +31,17 @@ class GravityPoseTest {
         assertEquals(1f, u[1], 0.01f)
     }
 
+    @Test fun afterAResetTheNextReadingSetsThePose() {
+        val p = GravityPose()
+        p.setUp(0f, -1f, 0f, 1f) // the old frame's up, upside down in the new one
+        p.reset()
+        p.setUp(0f, 1f, 0f, 1f)
+        p.rotate(0f, 0f, 0f, 0.01f)
+        val u = FloatArray(3)
+        p.up(u)
+        assertEquals(1f, u[1], 0.01f)
+    }
+
     @Test fun aSavedThreeDCameraDisplayReadsAsAPhone() {
         assertEquals(GyroDisplayKind.PHONE, ProfileJson.json.decodeFromString(GyroDisplayKind.serializer(), "\"CAMERA\""))
     }

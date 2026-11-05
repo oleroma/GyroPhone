@@ -323,9 +323,9 @@ public class GoldenVectorTests
         var from = new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 5000).Serialize();
 
         engine.OnDatagram(Vectors.Packet("HELLO").Bytes("hex"), from, h.Clock.NowUs);
-        // The vector predates HiresWheel; the engine also sets that flag, so re-mac the vector with it.
+        // The vector predates HiresWheel, PcGyro and Motion; the engine also sets those flags, so re-mac the vector with them.
         var welcome = Vectors.Packet("WELCOME").Bytes("hex");
-        welcome[61] |= WelcomeFlags.HiresWheel;
+        welcome[61] |= WelcomeFlags.HiresWheel | WelcomeFlags.PcGyro | WelcomeFlags.Motion;
         using (var mac = new System.Security.Cryptography.HMACSHA256(S.Bytes("pairKey")))
             mac.ComputeHash(welcome, 0, Wire.WelcomeSize - Wire.HelloMac).AsSpan(0, Wire.HelloMac).CopyTo(welcome.AsSpan(Wire.WelcomeSize - Wire.HelloMac));
         Assert.Equal(Hex.S(welcome), Hex.S(h.Sender.Last));
@@ -354,16 +354,26 @@ public class GoldenVectorTests
     public void KeyboardUsagesAllMap()
     {
         var usages = Vectors.Root.GetProperty("keyboardUsages").EnumerateArray().Select(e => e.GetInt32()).ToList();
-        Assert.Equal(116, usages.Count);
+        Assert.Equal(122, usages.Count);
+        // Pause and the media keys go as virtual keys, everything else as scan codes.
+        int[] vkPath = { 0x48, 0x7F, 0x80, 0x81, 0xE8, 0xEA, 0xEB };
         foreach (var u in usages)
         {
             var sc = HidScanCodes.For(u);
             Assert.True(sc.IsMapped, $"usage 0x{u:X2} has no scan code");
-            if (u == 0x48)
+            if (vkPath.Contains(u))
                 Assert.Equal((ushort)0, sc.Scan);
             else
                 Assert.Equal((ushort)0, sc.Vk);
         }
+        Assert.Equal(InjectEvent.VkVolumeUp, HidScanCodes.For(0x80).Vk);
+        Assert.Equal(InjectEvent.VkVolumeDown, HidScanCodes.For(0x81).Vk);
+        Assert.Equal(InjectEvent.VkVolumeMute, HidScanCodes.For(0x7F).Vk);
+        Assert.Equal(InjectEvent.VkMediaPlayPause, HidScanCodes.For(0xE8).Vk);
+        Assert.Equal(InjectEvent.VkMediaPrev, HidScanCodes.For(0xEA).Vk);
+        Assert.Equal(InjectEvent.VkMediaNext, HidScanCodes.For(0xEB).Vk);
+        var vol = InjectEvent.Key(0x80, HidScanCodes.For(0x80), up: false);
+        Assert.Equal(InjectEvent.KeyExtended, vol.Flags);
         var pause = HidScanCodes.For(0x48);
         Assert.Equal(InjectEvent.VkPause, pause.Vk);
         var e = InjectEvent.Key(0x48, pause, up: false);

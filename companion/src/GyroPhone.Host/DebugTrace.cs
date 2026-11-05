@@ -280,6 +280,8 @@ public sealed class DebugTrace
         d[0x4F] = "Right"; d[0x50] = "Left"; d[0x51] = "Down"; d[0x52] = "Up";
         d[0xE0] = "Left Ctrl"; d[0xE1] = "Left Shift"; d[0xE2] = "Left Alt"; d[0xE3] = "Left Win";
         d[0xE4] = "Right Ctrl"; d[0xE5] = "Right Shift"; d[0xE6] = "Right Alt"; d[0xE7] = "Right Win";
+        d[0x7F] = "Mute"; d[0x80] = "Volume Up"; d[0x81] = "Volume Down";
+        d[0xE8] = "Play/Pause"; d[0xEA] = "Previous Track"; d[0xEB] = "Next Track";
         return d;
     }
 

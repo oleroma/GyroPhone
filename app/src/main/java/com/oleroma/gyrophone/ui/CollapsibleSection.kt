@@ -124,6 +124,29 @@ internal fun RememberedSection(
     var open by remember(prefKey) {
         mutableStateOf(runtime.uiPref("section." + prefKey)?.let { it == "1" } ?: defaultOpen)
     }
+    val gap = LocalCardGap.current
+    val query = LocalSettingsQuery.current
+    if (query.isNotEmpty()) {
+        // Searching: open, showing only its matching settings (all of them when its own name
+        // matches), and hidden, though still drawn so it keeps counting, when none match.
+        val titleHit = searchMatches(query, title, subtitle)
+        val hits = remember { SearchHits() }
+        val shown = titleHit || hits.count > 0
+        if (titleHit) RegisterHit()
+        CollapsibleSection(
+            title = title,
+            expanded = true,
+            onToggle = {},
+            modifier = if (shown) Modifier.padding(bottom = gap).then(modifier) else Modifier.hiddenLayout(),
+            subtitle = subtitle,
+            headerModifier = headerModifier,
+        ) {
+            CountHits(hits) {
+                CompositionLocalProvider(LocalSettingsQuery provides if (titleHit) "" else query) { content() }
+            }
+        }
+        return
+    }
     CollapsibleSection(
         title = title,
         expanded = open && !LocalSectionsCollapsed.current,
@@ -131,7 +154,7 @@ internal fun RememberedSection(
             open = !open
             runtime.setUiPref("section." + prefKey, if (open) "1" else "0")
         },
-        modifier = modifier,
+        modifier = Modifier.padding(bottom = gap).then(modifier),
         subtitle = subtitle,
         headerModifier = headerModifier,
         content = content,
@@ -156,8 +179,7 @@ internal val LocalSectionsCollapsed = compositionLocalOf { false }
 internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, items: List<SectionItem>) {
     val gap = 8.dp
     fun kept(): List<String> = runtime.uiPref("order.$orderKey")?.split(',')?.filter { it.isNotEmpty() }.orEmpty()
-    fun ordered(): List<String> {
-        val ids = items.map { it.id }
+    fun ordered(ids: List<String>): List<String> {
         val known = kept().filter { it in ids }
         // A category the kept order lacks goes after the one before it in [items].
         val out = known.toMutableList()
@@ -175,13 +197,19 @@ internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, item
     val tops = remember { mutableStateMapOf<String, Float>() }
     val heights = remember { mutableStateMapOf<String, Int>() }
     val headers = remember { HashMap<String, Int>() }
-    val shown = if (dragged == null) ordered() else row.toList()
+    val shown = if (dragged == null) ordered(items.map { it.id }) else row.toList()
     val byId = items.associateBy { it.id }
 
     fun drop() {
-        // Keep ids of categories not shown here too, so another list's order stays.
-        val rest = kept().filter { it !in row }
-        runtime.setUiPref("order.$orderKey", (row + rest).joinToString(","))
+        // Keep ids of categories not shown here too, each after the one it followed, so another list's order stays.
+        val old = kept()
+        val out = row.toMutableList()
+        old.forEachIndexed { i, id ->
+            if (id in out) return@forEachIndexed
+            val before = old.subList(0, i).lastOrNull { it in out }
+            out.add(if (before == null) 0 else out.indexOf(before) + 1, id)
+        }
+        runtime.setUiPref("order.$orderKey", out.joinToString(","))
         dragged = null
     }
 
@@ -201,14 +229,16 @@ internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, item
     // The gesture lives on the column, which never moves: a category's own node moves as the
     // row reorders, and a gesture on it would end at the first move.
     val ids by rememberUpdatedState(items.map { it.id })
+    val searching by rememberUpdatedState(LocalSettingsQuery.current.isNotEmpty())
     var column by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    CompositionLocalProvider(LocalSectionsCollapsed provides (dragged != null)) {
+    CompositionLocalProvider(LocalSectionsCollapsed provides (dragged != null), LocalCardGap provides gap) {
         Column(
             Modifier
                 .onGloballyPositioned { column = it }
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        if (searching) return@awaitEachGesture
                         val col = column ?: return@awaitEachGesture
                         val y = col.localToRoot(down.position).y
                         val id = ids.firstOrNull { i ->
@@ -218,7 +248,8 @@ internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, item
                         val long = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
                         fingerY = col.localToRoot(long.position).y
                         grab = fingerY - (tops[id] ?: 0f)
-                        row.clear(); row.addAll(ordered())
+                        // The latest items: the gesture outlives the composition that started it.
+                        row.clear(); row.addAll(ordered(ids))
                         dragged = id
                         // Ahead of the header's own click and the scrolling list: the finger is ours now.
                         while (true) {
@@ -232,7 +263,6 @@ internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, item
                         drop()
                     }
                 },
-            verticalArrangement = Arrangement.spacedBy(gap),
         ) {
             for (id in shown) {
                 val item = byId[id] ?: continue

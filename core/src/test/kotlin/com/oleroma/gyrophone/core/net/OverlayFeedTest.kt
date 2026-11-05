@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.core.net
 
+import com.oleroma.gyrophone.core.model.AndroidKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -12,7 +13,7 @@ class OverlayFeedTest {
     )
 
     @Test fun sizes() {
-        assertEquals(164, Wire.sizeOf(PacketType.OVERLAY))
+        assertEquals(180, Wire.sizeOf(PacketType.OVERLAY))
         assertEquals(228, Wire.sizeOf(PacketType.OVERLAY_LAYOUT))
         assertEquals(true, PacketType.isPhoneToHost(PacketType.OVERLAY_LAYOUT))
     }
@@ -40,9 +41,11 @@ class OverlayFeedTest {
     @Test fun frame() {
         val f = OverlayFeed()
         assertNull(f.layoutSnapshot())
+        assertEquals(-1, f.layoutVersion())
         f.setLayout(layout)
         f.setLayout(layout.copy()) // the same layout keeps its version
         assertEquals(1, f.layoutSnapshot()!!.first)
+        assertEquals(1, f.layoutVersion())
         f.padShown = true
         f.gyro(100f, -50f, 25f, 0.01f, 3, true)
         f.up(0f, 9.8f, 0f, 9.8f)
@@ -65,6 +68,86 @@ class OverlayFeedTest {
         assertEquals(java.lang.Float.floatToRawIntBits(2f), out.getI32(124)) // the gains stay
     }
 
+    @Test fun controller() {
+        val f = OverlayFeed()
+        val out = ByteArray(Wire.OVERLAY_PLAIN)
+        f.padKey(AndroidKey.BUTTON_A, true) // nothing attached yet: not sent
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(0, out.getU8(136))
+        f.padAttached = true
+        f.padKey(AndroidKey.BUTTON_A, true)
+        f.padKey(AndroidKey.BUTTON_R1, true)
+        f.padKey(AndroidKey.BUTTON_R1, false)
+        f.padKey(AndroidKey.BUTTON_R2, true) // digital trigger: full
+        f.padAxes(1f, -1f, 0.5f, 0f, 0.5f, 0f, -1f, 1f)
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(OverlayFeed.PAD_ATTACHED, out.getU8(136))
+        assertEquals(128, out.getU8(137))
+        assertEquals(255, out.getU8(138))
+        assertEquals(
+            OverlayFeed.PAD_SOUTH or OverlayFeed.PAD_L2 or OverlayFeed.PAD_R2 or OverlayFeed.PAD_LEFT or OverlayFeed.PAD_DOWN,
+            out.getI32(140),
+        )
+        assertEquals(127, out[144].toInt())
+        assertEquals(-127, out[145].toInt())
+        assertEquals(64, out[146].toInt())
+        f.padAttached = false // a controller left: everything let go
+        f.padAttached = true
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(0, out.getI32(140))
+    }
+
+    @Test fun overlayOffLetsGoOfControllerAxes() {
+        val f = OverlayFeed()
+        val out = ByteArray(Wire.OVERLAY_PLAIN)
+        f.padAttached = true
+        f.wanted = true
+        f.padKey(AndroidKey.BUTTON_A, true)
+        f.padAxes(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f)
+        f.wanted = false // axes stop being fed now
+        f.wanted = true
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(0, out.getU8(137))
+        assertEquals(0, out[144].toInt())
+        assertEquals(OverlayFeed.PAD_SOUTH, out.getI32(140)) // keys are fed all the time: kept
+    }
+
+    @Test fun totalsOnlyWhenThePcTakesThem() {
+        val f = OverlayFeed()
+        val out = ByteArray(Wire.OVERLAY_PLAIN)
+        fun yaw() = java.lang.Float.intBitsToFloat(out.getI32(4))
+        fun cam() = java.lang.Float.intBitsToFloat(out.getI32(112))
+        f.wanted = true
+        f.gyro(100f, 0f, 0f, 0.01f, 1, false)
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(0, out.getU8(34) and OverlayFeed.FLAG_TOTALS) // an older PC: per frame
+        assertEquals(1f, yaw(), 1e-4f)
+        f.totalsWanted = true
+        for (i in 0 until 3) {
+            f.gyro(100f, 0f, 0f, 0.01f, 1, false)
+            f.camera(2f, 0f, 0f)
+            f.encodeFrame(out, 0, i, emptySet(), emptySet())
+        }
+        // The first frame's turn counts too: the totals start when the feed was cleared.
+        assertEquals(OverlayFeed.FLAG_TOTALS, out.getU8(34) and OverlayFeed.FLAG_TOTALS)
+        assertEquals(4f, yaw(), 1e-4f)
+        assertEquals(4000, out.getU16(16))
+        assertEquals(6f, cam(), 1e-4f)
+        // Kept modulo 360 in -180..180, the time modulo 65536 units.
+        f.gyro(100f, 0f, 0f, 1.8f, 1, false)
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(-176f, yaw(), 1e-3f)
+        assertEquals((184_000 - 65536 * 2), out.getU16(16))
+        // Clearing the feed restarts them from 0.
+        f.wanted = false
+        f.wanted = true
+        f.gyro(100f, 0f, 0f, 0.01f, 1, false)
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(1f, yaw(), 1e-4f)
+        assertEquals(1000, out.getU16(16))
+        assertEquals(0f, cam(), 0f)
+    }
+
     @Test fun wantedAndCompassTellTheRuntime() {
         val f = OverlayFeed()
         var changes = 0
@@ -81,6 +164,6 @@ class OverlayFeedTest {
         const val LAYOUT_BLOB = "0160093804044d61696e000100010008001033036606800141"
         const val FRAME = "040302010000803f000000bf0000803ee803000000200000000000000180030101003b010080004000000000000000000000000000000000" +
             "0100000000000000000000000000000000000000000000000000000000000000007fc1ff0000ff0000ff0000ff0000ff0000ff0000ff0000" +
-            "0000803f00000000000000c0" + "000000400000000000000000"
+            "0000803f00000000000000c0" + "000000400000000000000000" + "00000000000000000000000000000000"
     }
 }

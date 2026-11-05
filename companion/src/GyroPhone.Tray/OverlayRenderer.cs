@@ -117,10 +117,21 @@ internal static class OverlayRenderer
         float sh = portrait ? longSide : longSide / aspect;
         float bw = sw + 2 * Bezel, bh = sh + 2 * Bezel;
 
-        // Size: fixed, so the slab fits the window however it is turned. Its bounding ball (radius R)
+        // Controller handles on the sides (as tall as the phone's short side held landscape, whichever way it's held).
+        bool handles = settings.Handles switch
+        {
+            OverlayHandles.Always => true,
+            OverlayHandles.Off => false,
+            _ => live && f.PadAttached,
+        };
+        var (hw, hh) = HandleDrawing.Size((portrait ? longSide * aspect : longSide / aspect) + 2 * Bezel);
+        // Size: fixed, so the slab (and its handles) fits the window however it is turned. Its bounding ball (radius R)
         // seen from CameraZ in perspective spans R·C/√(C²−R²) at scale 1: that fills the window's
         // shorter side, with a hair of margin for the edges' smoothing.
-        float radius = MathF.Sqrt(bw * bw + bh * bh + Thickness * Thickness) / 2f;
+        float radius = handles
+            ? MathF.Sqrt(MathF.Pow(bw + 2 * hw, 2) + MathF.Pow(Math.Max(bh, hh * (1 + 2 * HandleDrawing.ShoulderDepth)), 2)
+                + MathF.Pow(Thickness + 2 * HandleDrawing.ShoulderDepth * hh, 2)) / 2f
+            : MathF.Sqrt(bw * bw + bh * bh + Thickness * Thickness) / 2f;
         float half = Math.Min(area.Width, area.Height) / 2f - 2f;
         float k = Math.Max(1f, half * MathF.Sqrt(CameraZ * CameraZ - radius * radius) / (CameraZ * radius));
         var cx = area.X + area.Width / 2f;
@@ -147,150 +158,167 @@ internal static class OverlayRenderer
             return 0.4f + 0.6f * Math.Max(0f, d);
         }
 
-        // The slab's outline (rounded rectangle) in the screen's plane.
-        var outline = RoundedRect(bw, bh, Math.Min(bw, bh) * 0.13f, 6);
-        float zf = Thickness / 2f, zb = -Thickness / 2f;
-        var front = outline.Select(p => Project((p.X, p.Y, zf))).ToArray();
-        var back = outline.Select(p => Project((p.X, p.Y, zb))).ToArray();
+        // The handles and the phone, back to front: a handle nearer than the phone goes after it.
+        var view = new HandleDrawing.View(Project, Faces, Shade);
+        int[] sides = [-1, 1];
+        if (handles)
+            foreach (int side in sides)
+                if (!HandleDrawing.InFront(view, side, bw)) DrawHandle(side);
+        DrawBody();
+        if (handles)
+            foreach (int side in sides)
+                if (HandleDrawing.InFront(view, side, bw)) DrawHandle(side);
 
-        // Sides: visible faces of a convex solid never overlap, so their order does not matter.
-        for (int i = 0; i < outline.Length; i++)
+        void DrawHandle(int side) => HandleDrawing.Draw(g, view, side, bw, hw, hh, Thickness, live ? f : null,
+            Opaque(settings.Color("handles")), Opaque(settings.Color("handlesLit")), Idle, Math.Clamp(k * 0.008f, 1f, 3f));
+
+        void DrawBody()
         {
-            int j = (i + 1) % outline.Length;
-            var a = outline[i];
-            var b = outline[j];
-            var n = Normalize(b.Y - a.Y, a.X - b.X, 0f); // outward for a counter-clockwise outline
-            var mid = ((a.X + b.X) / 2, (a.Y + b.Y) / 2, 0f);
-            if (!Faces(mid, n)) continue;
-            var side = Tint(BodyColor, Shade(n) * 0.85f);
-            var quad = new[] { front[i], front[j], back[j], back[i] };
-            g.FillPolygon(side, quad);
-            g.DrawPolygon(side, 1f, quad); // hides hairline gaps between neighbours
-        }
+            // The slab's outline (rounded rectangle) in the screen's plane.
+            var outline = RoundedRect(bw, bh, Math.Min(bw, bh) * 0.13f, 6);
+            float zf = Thickness / 2f, zb = -Thickness / 2f;
+            var front = outline.Select(p => Project((p.X, p.Y, zf))).ToArray();
+            var back = outline.Select(p => Project((p.X, p.Y, zb))).ToArray();
 
-        if (!Faces((0, 0, zf), (0, 0, 1)))
-        {
-            // The back: the body and a camera island.
-            g.FillPolygon(Tint(BodyColor, Shade((0, 0, -1))), back);
-            float cs = Math.Min(bw, bh) * 0.32f;
-            // Top left as seen from behind the phone held upright.
-            float ix = bw / 2 - cs * 0.8f;
-            float iy = bh / 2 - cs * 0.8f;
-            var island = RoundedRect(cs, cs, cs * 0.3f, 4).Select(p => Project((p.X + ix, p.Y + iy, zb - 0.002f))).ToArray();
-            g.FillPolygon(Tint(Color.FromArgb(0x3A, 0x3F, 0x48), Shade((0, 0, -1))), island);
-            return;
-        }
-
-        g.FillPolygon(Tint(BodyColor, Shade((0, 0, 1))), front);
-
-        float zs = zf + 0.001f;
-        (float X, float Y, float Z) OnScreen(float u, float v) => ((u - 0.5f) * sw, (0.5f - v) * sh, zs);
-        PointF P(float u, float v) => Project(OnScreen(u, v));
-
-        var screen = RoundedRect(sw, sh, Math.Min(sw, sh) * 0.09f, 6).Select(p => Project((p.X, p.Y, zs))).ToArray();
-        g.FillPolygon(ScreenColor, screen);
-        // The front camera: in the top bezel's middle (portrait) or the left one (landscape).
-        var camP = Project(portrait ? OnScreen(0.5f, -Bezel / 2 / sh) : OnScreen(-Bezel / 2 / sw, 0.5f));
-        float camR = Math.Max(1.2f, k * 0.012f);
-        g.FillEllipse(Color.FromArgb(0x05, 0x06, 0x08), new RectangleF(camP.X - camR, camP.Y - camR, camR * 2, camR * 2));
-
-        // Control shapes are cut to the screen here, in pad coordinates, before projecting: a
-        // whole-pixel clip made outlines along the screen's edge flicker as its projected edge moved
-        // by fractions of a pixel. Cut a little inside the edge, so a whole stroke fits on the screen.
-        float penWidth = Math.Clamp(k * 0.008f, 1f, 3f);
-        float inset = (penWidth / 2f + 1.5f) / Math.Max(k, 1f);
-        var screenUv = RoundedRect(sw - 2 * inset, sh - 2 * inset, Math.Max(0f, Math.Min(sw, sh) * 0.09f - inset), 6)
-            .Select(p => (p.X / sw + 0.5f, 0.5f - p.Y / sh)).ToArray();
-        PointF[]? Cut((float X, float Y)[] shape)
-        {
-            var cut = ClipConvex(shape, screenUv);
-            return cut.Length < 3 ? null : cut.Select(p => P(p.X, p.Y)).ToArray();
-        }
-
-        float pxW = layout is { WidthPx: > 0 } ? layout.WidthPx : 2400;
-        float pxH = layout is { HeightPx: > 0 } ? layout.HeightPx : 1080;
-        float fontPx = Math.Min(pxW, pxH) * LabelSize;
-
-        if (layout != null)
-        {
-            var sticks = new Dictionary<int, (float X, float Y)>();
-            if (live) for (int s = 0; s < f.StickCount; s++) sticks[f.StickIndex[s]] = (f.StickXY[s * 2], f.StickXY[s * 2 + 1]);
-            for (int i = 0; i < layout.Controls.Count; i++)
+            // Sides: visible faces of a convex solid never overlap, so their order does not matter.
+            for (int i = 0; i < outline.Length; i++)
             {
-                var c = layout.Controls[i];
-                bool pressed = live && f.IsPressed(i);
-                bool latched = live && !pressed && f.IsLatched(i);
-                var shape = c.Round ? Ellipse(c.X, c.Y, c.W / 2, c.H / 2, 32) : RoundedBox(c, pxW, pxH);
-                if (Cut(shape) is not { } pts) continue;
-                float op = Math.Clamp(c.Opacity, 0f, 1f);
-                if (c.Kind == OverlayControlKind.Display)
-                {
-                    g.DrawPolygon(Color.FromArgb((int)(40 * op), 255, 255, 255), 1f, pts, dashed: true);
-                    continue;
-                }
-                var tint = pressed ? PressedColor : latched ? LatchedColor : Idle;
-                if (pressed || latched) g.FillPolygon(Color.FromArgb((int)(0.25f * 255 * op), tint), pts);
-                g.DrawPolygon(Color.FromArgb((int)(tint.A * op), tint), penWidth, pts);
-                if (c.Kind == OverlayControlKind.Stick)
-                {
-                    var knob = sticks.TryGetValue(i, out var kv) ? kv : (0f, 0f);
-                    float kx = c.X + knob.Item1 * 0.6f * c.W / 2, ky = c.Y + knob.Item2 * 0.6f * c.H / 2;
-                    if (Cut(Ellipse(kx, ky, c.W / 5, c.H / 5, 24)) is { } kp)
-                        g.FillPolygon(Color.FromArgb((int)(0.6f * tint.A * op), tint), kp);
-                }
+                int j = (i + 1) % outline.Length;
+                var a = outline[i];
+                var b = outline[j];
+                var n = Normalize(b.Y - a.Y, a.X - b.X, 0f); // outward for a counter-clockwise outline
+                var mid = ((a.X + b.X) / 2, (a.Y + b.Y) / 2, 0f);
+                if (!Faces(mid, n)) continue;
+                var side = Tint(BodyColor, Shade(n) * 0.85f);
+                var quad = new[] { front[i], front[j], back[j], back[i] };
+                g.FillPolygon(side, quad);
+                g.DrawPolygon(side, 1f, quad); // hides hairline gaps between neighbours
             }
-        }
 
-        // Labels, trails and dots: cut by the screen's outline (text can't be cut by hand).
-        g.PushClip(screen);
-        if (layout != null)
-        {
-            for (int i = 0; i < layout.Controls.Count; i++)
+            if (!Faces((0, 0, zf), (0, 0, 1)))
             {
-                var c = layout.Controls[i];
-                if (c.Kind == OverlayControlKind.Display || c.Label.Length == 0) continue;
-                float op = Math.Clamp(c.Opacity, 0f, 1f);
-                DrawLabel(g, c.Label, c.X, c.Y, c.W * pxW, fontPx, pxW, pxH, P, Color.FromArgb((int)(255 * Math.Max(op, 0.5f)), 255, 255, 255));
+                // The back: the body and a camera island.
+                g.FillPolygon(Tint(BodyColor, Shade((0, 0, -1))), back);
+                float cs = Math.Min(bw, bh) * 0.32f;
+                // Top left as seen from behind the phone held upright.
+                float ix = bw / 2 - cs * 0.8f;
+                float iy = bh / 2 - cs * 0.8f;
+                var island = RoundedRect(cs, cs, cs * 0.3f, 4).Select(p => Project((p.X + ix, p.Y + iy, zb - 0.002f))).ToArray();
+                g.FillPolygon(Tint(Color.FromArgb(0x3A, 0x3F, 0x48), Shade((0, 0, -1))), island);
+                return;
             }
-            if (layout.Layer.Length > 0)
-                DrawLabel(g, layout.Layer, 0.5f, 0.05f, pxW * 0.6f, fontPx, pxW, pxH, P, Color.FromArgb(230, 255, 255, 255), pill: true);
-        }
 
-        if (live && scene.Trails is { } trails)
-        {
-            // Each trail fades along its length: older points fainter and thinner.
-            float width = Math.Clamp(k * 0.02f, 1.5f, 6f);
-            foreach (var t in trails.All)
+            g.FillPolygon(Tint(BodyColor, Shade((0, 0, 1))), front);
+
+            float zs = zf + 0.001f;
+            (float X, float Y, float Z) OnScreen(float u, float v) => ((u - 0.5f) * sw, (0.5f - v) * sh, zs);
+            PointF P(float u, float v) => Project(OnScreen(u, v));
+
+            var screen = RoundedRect(sw, sh, Math.Min(sw, sh) * 0.09f, 6).Select(p => Project((p.X, p.Y, zs))).ToArray();
+            g.FillPolygon(ScreenColor, screen);
+            // The front camera: in the top bezel's middle (portrait) or the left one (landscape).
+            var camP = Project(portrait ? OnScreen(0.5f, -Bezel / 2 / sh) : OnScreen(-Bezel / 2 / sw, 0.5f));
+            float camR = Math.Max(1.2f, k * 0.012f);
+            g.FillEllipse(Color.FromArgb(0x05, 0x06, 0x08), new RectangleF(camP.X - camR, camP.Y - camR, camR * 2, camR * 2));
+
+            // Control shapes are cut to the screen here, in pad coordinates, before projecting: a
+            // whole-pixel clip made outlines along the screen's edge flicker as its projected edge moved
+            // by fractions of a pixel. Cut a little inside the edge, so a whole stroke fits on the screen.
+            float penWidth = Math.Clamp(k * 0.008f, 1f, 3f);
+            float inset = (penWidth / 2f + 1.5f) / Math.Max(k, 1f);
+            var screenUv = RoundedRect(sw - 2 * inset, sh - 2 * inset, Math.Max(0f, Math.Min(sw, sh) * 0.09f - inset), 6)
+                .Select(p => (p.X / sw + 0.5f, 0.5f - p.Y / sh)).ToArray();
+            PointF[]? Cut((float X, float Y)[] shape)
             {
-                var pts = t.Points;
-                for (int i = 1; i < pts.Count; i++)
+                var cut = ClipConvex(shape, screenUv);
+                return cut.Length < 3 ? null : cut.Select(p => P(p.X, p.Y)).ToArray();
+            }
+
+            float pxW = layout is { WidthPx: > 0 } ? layout.WidthPx : 2400;
+            float pxH = layout is { HeightPx: > 0 } ? layout.HeightPx : 1080;
+            float fontPx = Math.Min(pxW, pxH) * LabelSize;
+
+            if (layout != null)
+            {
+                var sticks = new Dictionary<int, (float X, float Y)>();
+                if (live) for (int s = 0; s < f.StickCount; s++) sticks[f.StickIndex[s]] = (f.StickXY[s * 2], f.StickXY[s * 2 + 1]);
+                for (int i = 0; i < layout.Controls.Count; i++)
                 {
-                    float life = 1f - Math.Clamp((scene.NowTicks - pts[i].T) / (float)FingerTrails.LifeMs, 0f, 1f);
-                    if (life <= 0f) continue;
-                    g.DrawLine(Color.FromArgb((int)(fingerColor.A * 0.8f * life), fingerColor), width * (0.4f + 0.6f * life),
-                        P(pts[i - 1].U, pts[i - 1].V), P(pts[i].U, pts[i].V), round: true);
+                    var c = layout.Controls[i];
+                    bool pressed = live && f.IsPressed(i);
+                    bool latched = live && !pressed && f.IsLatched(i);
+                    var shape = c.Round ? Ellipse(c.X, c.Y, c.W / 2, c.H / 2, 32) : RoundedBox(c, pxW, pxH);
+                    if (Cut(shape) is not { } pts) continue;
+                    float op = Math.Clamp(c.Opacity, 0f, 1f);
+                    if (c.Kind == OverlayControlKind.Display)
+                    {
+                        g.DrawPolygon(Color.FromArgb((int)(40 * op), 255, 255, 255), 1f, pts, dashed: true);
+                        continue;
+                    }
+                    var tint = pressed ? PressedColor : latched ? LatchedColor : Idle;
+                    if (pressed || latched) g.FillPolygon(Color.FromArgb((int)(0.25f * 255 * op), tint), pts);
+                    g.DrawPolygon(Color.FromArgb((int)(tint.A * op), tint), penWidth, pts);
+                    if (c.Kind == OverlayControlKind.Stick)
+                    {
+                        var knob = sticks.TryGetValue(i, out var kv) ? kv : (0f, 0f);
+                        float kx = c.X + knob.Item1 * 0.6f * c.W / 2, ky = c.Y + knob.Item2 * 0.6f * c.H / 2;
+                        if (Cut(Ellipse(kx, ky, c.W / 5, c.H / 5, 24)) is { } kp)
+                            g.FillPolygon(Color.FromArgb((int)(0.6f * tint.A * op), tint), kp);
+                    }
                 }
             }
-        }
 
-        if (live && settings.FingerDots)
-        {
-            var dot = Color.FromArgb((int)(fingerColor.A * 0.6f), fingerColor);
-            float r = 0.035f;
-            for (int i = 0; i < f.FingerCount; i++)
-                g.FillPolygon(dot, Ellipse(f.Fingers[i * 2], f.Fingers[i * 2 + 1], r * pxH / pxW, r, 16).Select(p => P(p.X, p.Y)).ToArray());
-        }
+            // Labels, trails and dots: cut by the screen's outline (text can't be cut by hand).
+            g.PushClip(screen);
+            if (layout != null)
+            {
+                for (int i = 0; i < layout.Controls.Count; i++)
+                {
+                    var c = layout.Controls[i];
+                    if (c.Kind == OverlayControlKind.Display || c.Label.Length == 0) continue;
+                    float op = Math.Clamp(c.Opacity, 0f, 1f);
+                    DrawLabel(g, c.Label, c.X, c.Y, c.W * pxW, fontPx, pxW, pxH, P, Color.FromArgb((int)(255 * Math.Max(op, 0.5f)), 255, 255, 255));
+                }
+                if (layout.Layer.Length > 0)
+                    DrawLabel(g, layout.Layer, 0.5f, 0.05f, pxW * 0.6f, fontPx, pxW, pxH, P, Color.FromArgb(230, 255, 255, 255), pill: true);
+            }
 
-        string? note = !scene.Connected ? "Waiting for the phone"
-            : !live ? "Waiting for the phone's overlay data"
-            : !f.PadShown ? "The pad is not open"
-            : layout == null ? "Getting the layout" : null;
-        if (note != null)
-        {
-            g.FillPolygon(Color.FromArgb(150, 0, 0, 0), screen);
-            DrawLabel(g, note, 0.5f, 0.5f, pxW * 0.9f, fontPx * 1.3f, pxW, pxH, P, Color.FromArgb(230, 255, 255, 255));
+            if (live && scene.Trails is { } trails)
+            {
+                // Each trail fades along its length: older points fainter and thinner.
+                float width = Math.Clamp(k * 0.02f, 1.5f, 6f);
+                foreach (var t in trails.All)
+                {
+                    var pts = t.Points;
+                    for (int i = 1; i < pts.Count; i++)
+                    {
+                        float life = 1f - Math.Clamp((scene.NowTicks - pts[i].T) / (float)FingerTrails.LifeMs, 0f, 1f);
+                        if (life <= 0f) continue;
+                        g.DrawLine(Color.FromArgb((int)(fingerColor.A * 0.8f * life), fingerColor), width * (0.4f + 0.6f * life),
+                            P(pts[i - 1].U, pts[i - 1].V), P(pts[i].U, pts[i].V), round: true);
+                    }
+                }
+            }
+
+            if (live && settings.FingerDots)
+            {
+                var dot = Color.FromArgb((int)(fingerColor.A * 0.6f), fingerColor);
+                float r = 0.035f;
+                for (int i = 0; i < f.FingerCount; i++)
+                    g.FillPolygon(dot, Ellipse(f.Fingers[i * 2], f.Fingers[i * 2 + 1], r * pxH / pxW, r, 16).Select(p => P(p.X, p.Y)).ToArray());
+            }
+
+            string? note = !scene.Connected ? "Waiting for the phone"
+                : !live ? "Waiting for the phone's overlay data"
+                : !f.PadShown ? "The pad is not open"
+                : layout == null ? "Getting the layout" : null;
+            if (note != null)
+            {
+                g.FillPolygon(Color.FromArgb(150, 0, 0, 0), screen);
+                DrawLabel(g, note, 0.5f, 0.5f, pxW * 0.9f, fontPx * 1.3f, pxW, pxH, P, Color.FromArgb(230, 255, 255, 255));
+            }
+            g.Pop();
         }
-        g.Pop();
     }
 
     /// <summary>The pose shown: the window's pose, from the levelled one (if any), its turn scaled.</summary>
@@ -363,7 +391,8 @@ internal static class OverlayRenderer
 
     /// <summary>
     /// <paramref name="shape"/> cut to convex polygon <paramref name="clip"/> (Sutherland–Hodgman);
-    /// either winding. Empty when nothing is left.
+    /// either winding. Empty when nothing is left. <paramref name="shape"/> itself when it lies wholly
+    /// inside (most controls): nothing is allocated then.
     /// </summary>
     internal static (float X, float Y)[] ClipConvex((float X, float Y)[] shape, (float X, float Y)[] clip)
     {
@@ -375,14 +404,26 @@ internal static class OverlayRenderer
             area += a.X * b.Y - b.X * a.Y;
         }
         float sign = area >= 0 ? 1f : -1f;
-        var output = new List<(float X, float Y)>(shape);
+        bool inside = true;
+        for (int e = 0; e < clip.Length && inside; e++)
+        {
+            var a = clip[e];
+            var b = clip[(e + 1) % clip.Length];
+            foreach (var p in shape)
+                if (sign * ((b.X - a.X) * (p.Y - a.Y) - (b.Y - a.Y) * (p.X - a.X)) < 0) { inside = false; break; }
+        }
+        if (inside) return shape;
+        // Two lists used in turn, one edge after another.
+        var output = new List<(float X, float Y)>(shape.Length * 2);
+        output.AddRange(shape);
+        var input = new List<(float X, float Y)>(shape.Length * 2);
         for (int e = 0; e < clip.Length && output.Count > 0; e++)
         {
             var a = clip[e];
             var b = clip[(e + 1) % clip.Length];
             float Side((float X, float Y) p) => sign * ((b.X - a.X) * (p.Y - a.Y) - (b.Y - a.Y) * (p.X - a.X));
-            var input = output;
-            output = new List<(float X, float Y)>(input.Count + 4);
+            (input, output) = (output, input);
+            output.Clear();
             for (int i = 0; i < input.Count; i++)
             {
                 var cur = input[i];

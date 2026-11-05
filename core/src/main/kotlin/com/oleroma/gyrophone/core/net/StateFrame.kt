@@ -35,6 +35,10 @@ class StateFrame : WirePacket {
     /** Sent as STATE_HIRES. */
     var hires = false
 
+    /** With [hires]: sent as STATE_GYRO, the [PcGyroFeed.TAIL_SIZE] bytes of [ext] after the STATE_HIRES bytes ([PcGyroFeed.encodeTail]). */
+    var gyroExt = false
+    val ext = ByteArray(PcGyroFeed.TAIL_SIZE)
+
     /** Builds the frame from an engine snapshot; time and REPEAT/KEEPALIVE flags are left to the sender. */
     fun fill(s: HidState, totals: MouseTotals, gyroActive: Boolean, hires: Boolean = false) {
         this.hires = hires
@@ -79,7 +83,7 @@ class StateFrame : WirePacket {
 
     fun totalsEqual(o: StateFrame): Boolean =
         mouseTotalX == o.mouseTotalX && mouseTotalY == o.mouseTotalY && wheelTotal == o.wheelTotal &&
-            hwheelTotal == o.hwheelTotal && hires == o.hires
+            hwheelTotal == o.hwheelTotal && hires == o.hires && gyroExt == o.gyroExt && (!gyroExt || ext.contentEquals(o.ext))
 
     fun copyFrom(o: StateFrame) {
         phoneTimeUs = o.phoneTimeUs; flags = o.flags; buttons = o.buttons; hat = o.hat
@@ -87,6 +91,8 @@ class StateFrame : WirePacket {
         o.keyBitmap.copyInto(keyBitmap)
         mouseTotalX = o.mouseTotalX; mouseTotalY = o.mouseTotalY; wheelTotal = o.wheelTotal
         hwheelTotal = o.hwheelTotal; hires = o.hires
+        gyroExt = o.gyroExt
+        if (gyroExt) o.ext.copyInto(ext)
     }
 
     /** Neutral pad, nothing held, totals zero. */
@@ -95,6 +101,7 @@ class StateFrame : WirePacket {
         lx = 0; ly = 0; rx = 0; ry = 0; lt = 0; rt = 0
         keyBitmap.fill(0)
         mouseTotalX = 0; mouseTotalY = 0; wheelTotal = 0; hwheelTotal = 0; hires = false
+        gyroExt = false; ext.fill(0)
     }
 
     /** Releases pad, keys and buttons but keeps the totals, for the final STATE before BYE. */

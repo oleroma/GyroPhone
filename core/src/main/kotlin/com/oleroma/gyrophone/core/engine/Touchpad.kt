@@ -506,7 +506,10 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
             // Lifting ends the switch (Alt released, the picked window comes to the front).
             endPhase()
             state = if (count == 0) State.IDLE else State.IGNORE
-            if (count == 0) touchEnded(now)
+            if (count == 0) {
+                touchEnded(now)
+                armLatchTimer(now)
+            }
             return
         }
         when (state) {
@@ -765,8 +768,18 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         if (rearmable && !dzHolding && phaseN == 1) d = min(d, stillNs + feel().deadzoneRearmMs * 1_000_000L)
         if (longN > 0 && !longOn && map.has(longN, SurfaceInput.LONG_PRESS)) d = min(d, longT0 + longPressNanos)
         if (pendingTapN != 0) {
-            d = min(d, lastTapNs + doubleTapNanos + 1)
-            if (count > 0) d = min(d, max(t0 + TAP_MAX_NS, lastDownNs + MULTI_TAP_HOLD_NS) + 1)
+            // The waiting tap fires once the double-tap window is over and a touch now down can no
+            // longer be its second tap: the later of the two, never a time already past.
+            // The same test as settlePendingTap.
+            var fire = lastTapNs + doubleTapNanos
+            if (count > 0 && t0 - lastTapNs <= doubleTapNanos) {
+                if (state == State.TOUCH) fire = max(fire, t0 + TAP_MAX_NS)
+                else if (state == State.MULTI && tapCandidate) fire = max(
+                    fire,
+                    min(t0 + MULTI_TAP_MAX_NS, lastDownNs + if (maxFingers >= 3) MULTI_TAP_HOLD_NS else TAP_MAX_NS),
+                )
+            }
+            d = min(d, fire + 1)
         }
         when (state) {
             State.TAP_WAIT -> d = min(d, tapDeadline)

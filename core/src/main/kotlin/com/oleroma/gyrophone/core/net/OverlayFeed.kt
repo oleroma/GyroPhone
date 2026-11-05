@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.core.net
 
+import com.oleroma.gyrophone.core.model.AndroidKey
 import kotlin.math.roundToInt
 
 /** One control as the PC's phone overlay draws it. Centre and size are fractions of the pad area. */
@@ -44,7 +45,7 @@ data class OverlayLayout(
  * ([layoutSnapshot], [encodeLayoutPiece]) when it changes and every few seconds. The PC turns the
  * motion into a pose with its own settings (gravity, compass, reset on ratchet, ease back).
  *
- * OVERLAY plaintext (136 bytes, little endian): u32 phone time (us); f32 × 3 yaw, pitch, roll
+ * OVERLAY plaintext (152 bytes, little endian): u32 phone time (us); f32 × 3 yaw, pitch, roll
  * turned since the last OVERLAY (degrees, as [com.oleroma.gyrophone.core.engine.GyroMouse.motion]
  * gives them); u16 the time those samples cover (10 us units); i16 × 3 the newest accelerometer
  * reading in the phone frame, right, up, toward the player ([G_SCALE] = 1 g); i16 × 3 the newest
@@ -56,13 +57,24 @@ data class OverlayLayout(
  * 8 × (u8 control index or 0xFF, i8 x, i8 y) stick knobs (-127..127 of the radius, y down); f32 × 3
  * yaw, pitch, roll the phone would have turned to send the mouse counts sent since the last OVERLAY by
  * anything but the live gyro ([camera]: touchpad, buttons, glides..., for a trackball); f32 × 3 the
- * game's camera degrees per phone degree on yaw, pitch, roll (real world sensitivity, 0 = unknown).
+ * game's camera degrees per phone degree on yaw, pitch, roll (real world sensitivity, 0 = unknown);
+ * then the controller attached to the phone (for the PC phone overlay's handles): u8 flags
+ * ([PAD_ATTACHED]); u8 left and u8 right trigger (0..255); u8 0; u32 buttons held ([PAD_SOUTH]..,
+ * the D-pad from keys or the hat); i8 × 4 left x, y, right x, y stick (-127..127, y down); 4 bytes 0.
  *
  * OVERLAY_LAYOUT plaintext (200 bytes): u16 layout version; u8 piece index; u8 piece count; u8
  * length; then [PIECE_DATA] bytes of the layout blob. The blob: u8 format (1); u16 width px; u16
  * height px; str8 workspace; str8 layer; u8 control count; per control u8 kind, u8 flags (1 =
  * round), i16 x, y, w, h (× [COORD_SCALE] of the pad area's width / height), u8 opacity (0..255),
  * str8 label. str8 = u8 byte length + UTF-8.
+ *
+ * Totals ([FLAG_TOTALS], only while HOST_STATUS has [HostStatusFlags.OVERLAY_TOTALS]; older PCs get
+ * the per-frame form above): the yaw, pitch, roll and the camera degrees are running totals since
+ * the feed was cleared ([wanted] off, which a session's end also does), kept in doubles and sent
+ * modulo 360 in -180..180; the time covered is a running total too, modulo 65536 units (0.65536 s).
+ * The PC takes the difference from the last frame it got (the angles to the nearest equivalent
+ * modulo 360, the time modulo 65536), so a lost OVERLAY no longer loses its turn. Only more than
+ * 180 degrees on one axis, or 0.65 s of gyro time, between two frames that arrive is misread.
  */
 class OverlayFeed {
     /** The PC's overlay is on and the phone should send its data. */
@@ -71,7 +83,11 @@ class OverlayFeed {
             if (v == field) return
             field = v
             if (!v) compassWanted = false
-            synchronized(lock) { clearMotion() }
+            synchronized(lock) {
+                clearMotion()
+                // Axes are fed only while wanted, so they would be stale when it turns on again.
+                if (!v) padAxes.fill(0f)
+            }
             onWantedChange?.run()
         }
 
@@ -82,6 +98,9 @@ class OverlayFeed {
             field = v
             onWantedChange?.run()
         }
+
+    /** The PC takes running totals ([HostStatusFlags.OVERLAY_TOTALS]): OVERLAY carries [FLAG_TOTALS]. */
+    @Volatile var totalsWanted = false
 
     /** Runs (on the link's thread) when [wanted] or [compassWanted] changes, so the runtime can start or stop the sensors. */
     @Volatile var onWantedChange: Runnable? = null
@@ -119,10 +138,44 @@ class OverlayFeed {
     private var hasNorth = false
     private val cameraDeg = FloatArray(3)
     private val rwsGain = FloatArray(3)
+    // Running totals (under lock): turn and camera degrees modulo 360, seconds modulo TIME_WRAP.
+    private val totalTurn = DoubleArray(3)
+    private val totalCamera = DoubleArray(3)
+    private var totalSeconds = 0.0
+
+    // The attached controller (under lock): buttons held from keys, sticks, triggers and hat from axes.
+    @Volatile var padAttached = false
+        set(v) {
+            field = v
+            if (!v) clearPad()
+        }
+    private var padKeys = 0
+    private val padAxes = FloatArray(8)
+
+    /** A key of an attached controller went down or up (Android key code). */
+    fun padKey(keyCode: Int, down: Boolean) {
+        val bit = padBit(keyCode)
+        if (bit == 0) return
+        synchronized(lock) { padKeys = if (down) padKeys or bit else padKeys and bit.inv() }
+    }
+
+    /** An attached controller's sticks (-1..1, y down), triggers (0..1) and hat (-1..1). */
+    fun padAxes(lx: Float, ly: Float, rx: Float, ry: Float, lt: Float, rt: Float, hatX: Float, hatY: Float) {
+        synchronized(lock) {
+            padAxes[0] = lx; padAxes[1] = ly; padAxes[2] = rx; padAxes[3] = ry
+            padAxes[4] = lt; padAxes[5] = rt; padAxes[6] = hatX; padAxes[7] = hatY
+        }
+    }
+
+    /** Lets go of every controller button and axis (a controller went away, or focus left). */
+    fun clearPad() {
+        synchronized(lock) { padKeys = 0; padAxes.fill(0f) }
+    }
 
     private fun clearMotion() {
         turnYaw = 0f; turnPitch = 0f; turnRoll = 0f; turnSeconds = 0f
         cameraDeg.fill(0f)
+        totalTurn.fill(0.0); totalCamera.fill(0.0); totalSeconds = 0.0
         gyroAtNs = Long.MIN_VALUE
         hasUp = false; hasNorth = false
         ratchetHeld = false
@@ -216,20 +269,34 @@ class OverlayFeed {
         }
     }
 
+    /** The layout version now, or -1 with no layout; read without allocating before a [layoutSnapshot]. */
+    fun layoutVersion(): Int = synchronized(lock) { if (layout == null) -1 else version }
+
     /** The layout version and blob now, for one round of OVERLAY_LAYOUT pieces. */
     fun layoutSnapshot(): Pair<Int, ByteArray>? = synchronized(lock) { if (layout == null) null else version to blob }
 
-    /** Encodes OVERLAY into [out] at [off] and returns its length ([Wire.OVERLAY_PLAIN]); the motion starts again from 0. */
+    /** Encodes OVERLAY into [out] at [off] and returns its length ([Wire.OVERLAY_PLAIN]); the motion since the last one starts again from 0. */
     fun encodeFrame(out: ByteArray, off: Int, phoneTimeUs: Int, pressed: Set<String>, latched: Set<String>): Int {
         out.fill(0, off, off + Wire.OVERLAY_PLAIN)
         out.putU32(off, phoneTimeUs)
         synchronized(lock) {
             val at = gyroAtNs
             val live = at != Long.MIN_VALUE && System.nanoTime() - at < POSE_STALE_NS
-            out.putU32(off + 4, java.lang.Float.floatToRawIntBits(turnYaw))
-            out.putU32(off + 8, java.lang.Float.floatToRawIntBits(turnPitch))
-            out.putU32(off + 12, java.lang.Float.floatToRawIntBits(turnRoll))
-            out.putU16(off + 16, (turnSeconds * 100_000f).roundToInt().coerceIn(0, 0xFFFF))
+            val totals = totalsWanted
+            totalTurn[0] = wrap(totalTurn[0] + turnYaw)
+            totalTurn[1] = wrap(totalTurn[1] + turnPitch)
+            totalTurn[2] = wrap(totalTurn[2] + turnRoll)
+            totalSeconds = (totalSeconds + turnSeconds) % TIME_WRAP
+            for (i in 0 until 3) totalCamera[i] = wrap(totalCamera[i] + cameraDeg[i])
+            if (totals) {
+                for (i in 0 until 3) out.putU32(off + 4 + i * 4, java.lang.Float.floatToRawIntBits(totalTurn[i].toFloat()))
+                out.putU16(off + 16, (totalSeconds * 100_000.0).roundToInt() and 0xFFFF)
+            } else {
+                out.putU32(off + 4, java.lang.Float.floatToRawIntBits(turnYaw))
+                out.putU32(off + 8, java.lang.Float.floatToRawIntBits(turnPitch))
+                out.putU32(off + 12, java.lang.Float.floatToRawIntBits(turnRoll))
+                out.putU16(off + 16, (turnSeconds * 100_000f).roundToInt().coerceIn(0, 0xFFFF))
+            }
             turnYaw = 0f; turnPitch = 0f; turnRoll = 0f; turnSeconds = 0f
             for (i in 0 until 3) {
                 out.putI16(off + 18 + i * 2, (upXYZ[i] * G_SCALE).roundToInt().coerceIn(-32767, 32767))
@@ -245,6 +312,7 @@ class OverlayFeed {
             if (hasUp) flags = flags or FLAG_UP
             if (hasNorth) flags = flags or FLAG_NORTH
             if (ratchetHeld) flags = flags or FLAG_RATCHET_HELD
+            if (totals) flags = flags or FLAG_TOTALS
             out.putU8(off + 34, flags)
             out.putU8(off + 35, fingerCount)
             for (i in 0 until fingerCount) {
@@ -272,10 +340,29 @@ class OverlayFeed {
                 n++
             }
             for (i in 0 until 3) {
-                out.putU32(off + 112 + i * 4, java.lang.Float.floatToRawIntBits(cameraDeg[i]))
+                val cam = if (totals) totalCamera[i].toFloat() else cameraDeg[i]
+                out.putU32(off + 112 + i * 4, java.lang.Float.floatToRawIntBits(cam))
                 out.putU32(off + 124 + i * 4, java.lang.Float.floatToRawIntBits(rwsGain[i]))
             }
             cameraDeg.fill(0f)
+            if (padAttached) {
+                var buttons = padKeys
+                if (padAxes[6] < -0.5f) buttons = buttons or PAD_LEFT
+                if (padAxes[6] > 0.5f) buttons = buttons or PAD_RIGHT
+                if (padAxes[7] < -0.5f) buttons = buttons or PAD_UP
+                if (padAxes[7] > 0.5f) buttons = buttons or PAD_DOWN
+                val lt = padAxes[4].coerceIn(0f, 1f)
+                val rt = padAxes[5].coerceIn(0f, 1f)
+                // The analog pull where there is one; a trigger with only a key is all or nothing.
+                fun pull(v: Float, bit: Int) = if (v > 0f) (v * 255f).roundToInt() else if (buttons and bit != 0) 255 else 0
+                out.putU8(off + 136, PAD_ATTACHED)
+                out.putU8(off + 137, pull(lt, PAD_L2))
+                out.putU8(off + 138, pull(rt, PAD_R2))
+                if (lt >= TRIGGER_PRESSED) buttons = buttons or PAD_L2
+                if (rt >= TRIGGER_PRESSED) buttons = buttons or PAD_R2
+                out.putU32(off + 140, buttons)
+                for (i in 0 until 4) out[off + 144 + i] = (padAxes[i].coerceIn(-1f, 1f) * 127f).roundToInt().toByte()
+            }
         }
         return Wire.OVERLAY_PLAIN
     }
@@ -287,6 +374,53 @@ class OverlayFeed {
         const val FLAG_UP = 8
         const val FLAG_NORTH = 16
         const val FLAG_RATCHET_HELD = 32
+        /** The turn, time and camera degrees are running totals (see the class comment). */
+        const val FLAG_TOTALS = 64
+        const val PAD_ATTACHED = 1
+
+        // Controller buttons in OVERLAY, by place (Switch layout on the PC): the face buttons by side.
+        const val PAD_SOUTH = 1
+        const val PAD_EAST = 2
+        const val PAD_WEST = 4
+        const val PAD_NORTH = 8
+        const val PAD_L1 = 16
+        const val PAD_R1 = 32
+        const val PAD_L2 = 64
+        const val PAD_R2 = 128
+        const val PAD_MINUS = 256
+        const val PAD_PLUS = 512
+        const val PAD_HOME = 1024
+        const val PAD_CAPTURE = 2048
+        const val PAD_L3 = 4096
+        const val PAD_R3 = 8192
+        const val PAD_UP = 16384
+        const val PAD_DOWN = 32768
+        const val PAD_LEFT = 65536
+        const val PAD_RIGHT = 131072
+        /** An analog trigger pulled this far lights as pressed. */
+        const val TRIGGER_PRESSED = 0.1f
+
+        /** The OVERLAY button of Android key [keyCode], or 0. */
+        fun padBit(keyCode: Int): Int = when (keyCode) {
+            AndroidKey.BUTTON_A -> PAD_SOUTH
+            AndroidKey.BUTTON_B -> PAD_EAST
+            AndroidKey.BUTTON_X -> PAD_WEST
+            AndroidKey.BUTTON_Y -> PAD_NORTH
+            AndroidKey.BUTTON_L1 -> PAD_L1
+            AndroidKey.BUTTON_R1 -> PAD_R1
+            AndroidKey.BUTTON_L2 -> PAD_L2
+            AndroidKey.BUTTON_R2 -> PAD_R2
+            AndroidKey.BUTTON_SELECT, AndroidKey.BACK -> PAD_MINUS
+            AndroidKey.BUTTON_START -> PAD_PLUS
+            AndroidKey.BUTTON_MODE -> PAD_HOME
+            AndroidKey.BUTTON_THUMBL -> PAD_L3
+            AndroidKey.BUTTON_THUMBR -> PAD_R3
+            AndroidKey.DPAD_UP -> PAD_UP
+            AndroidKey.DPAD_DOWN -> PAD_DOWN
+            AndroidKey.DPAD_LEFT -> PAD_LEFT
+            AndroidKey.DPAD_RIGHT -> PAD_RIGHT
+            else -> 0
+        }
         /** The accelerometer's 1 g in OVERLAY. */
         const val G_SCALE = 8192f
         const val MAX_FINGERS = 5
@@ -298,8 +432,16 @@ class OverlayFeed {
         const val PIECE_DATA = Wire.OVERLAY_LAYOUT_PLAIN - 5
         const val MAX_PIECES = 255
         private const val POSE_STALE_NS = 250_000_000L
+        /** The time total wraps here: 65536 units of 10 us. */
+        private const val TIME_WRAP = 0.65536
         private const val NAME_MAX = 48
         private const val LABEL_MAX = 32
+
+        /** [d] degrees as the same angle in -180..180. */
+        private fun wrap(d: Double): Double {
+            val r = d % 360.0
+            return if (r >= 180.0) r - 360.0 else if (r < -180.0) r + 360.0 else r
+        }
 
         private fun unit16(v: Float): Int = (v.coerceIn(0f, 1f) * 65535f).roundToInt()
 

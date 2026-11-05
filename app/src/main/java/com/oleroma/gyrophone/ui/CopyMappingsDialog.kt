@@ -26,6 +26,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.WorkspaceMappings
+import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
 /**
@@ -42,8 +44,12 @@ internal fun CopyMappingsDialog(
     discards: Boolean,
     onDismiss: () -> Unit,
     onCopied: () -> Unit,
+    /** Copy within this profile instead of the saved one (edit mode's draft); [onCopy] then gets the copied workspace. */
+    profile: Profile? = null,
+    onCopy: ((Workspace) -> Unit)? = null,
 ) {
-    val set by runtime.activeProfile.collectAsStateWithLifecycle()
+    val saved by runtime.activeProfile.collectAsStateWithLifecycle()
+    val set = profile ?: saved
     val target = set.workspace(wsIndex)
     val others = set.workspaces.filter { it.id != target.id }
     var fromId by remember { mutableStateOf(others.firstOrNull()?.id) }
@@ -94,7 +100,7 @@ internal fun CopyMappingsDialog(
         confirmButton = {
             TextButton(enabled = copied != null, onClick = {
                 val result = copied ?: return@TextButton
-                runtime.editActiveProfile { p ->
+                if (onCopy != null) onCopy(result.workspace) else runtime.editActiveProfile { p ->
                     val i = p.indexOfWorkspace(target.id)
                     if (i < 0) p else p.updateWorkspace(i) { result.workspace }
                 }

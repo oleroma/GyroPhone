@@ -25,7 +25,7 @@ internal sealed class CompanionUpdater : IDisposable
     private bool _restarting, _disposed;
     private string? _lastNew = "";
     /// <summary>The .new build (<see cref="UpdateFinisher.StampOf"/>) a failed update came back from: not tried again until reinstalled.</summary>
-    private readonly string? _failedStamp;
+    private string? _failedStamp;
 
     /// <summary>The newer build next to this exe that this instance is about to restart into, or null.</summary>
     public string? Pending { get; private set; }
@@ -55,7 +55,9 @@ internal sealed class CompanionUpdater : IDisposable
         _log($"self-restart on: {_version} watches {_newPath}");
         if (_failedStamp != null) _log($"update to {_failedStamp} failed; not retrying it until it is installed again");
         _timer.Start();
-        Tick();
+        // No restart yet: this runs before the message loop, where exiting would leave the process hanging.
+        // The first timer tick restarts.
+        Tick(restart: false);
     }
 
     /// <summary>Restarts now if a new build is waiting.</summary>
@@ -66,18 +68,22 @@ internal sealed class CompanionUpdater : IDisposable
         _restarting = true;
         _timer.Stop();
         bool watcher = Watcher.IsRunning();
-        if (watcher) Watcher.SignalStop();
         _log($"new build {pending} at {_newPath}, restarting{(watcher ? " with the watcher" : "")}");
         if (!UpdateFinisher.Launch(_newPath, tray: true, watch: watcher, _log))
         {
+            // Keep running this build; the update is tried again when .new changes.
+            _failedStamp = UpdateFinisher.StampOf(_newPath);
+            _restarting = false;
             Pending = null;
             Changed?.Invoke();
-            return; // keep running this build; the update is tried again when .new changes
+            _timer.Start();
+            return;
         }
+        if (watcher) Watcher.SignalStop(); // the finisher waits for it to exit
         _exitForUpdate();
     }
 
-    private void Tick()
+    private void Tick(bool restart = true)
     {
         if (File.Exists(_oldPath)) TryDelete(_oldPath); // left by builds that swapped the running exe
         string? onDisk = NewVersion();
@@ -99,7 +105,7 @@ internal sealed class CompanionUpdater : IDisposable
             if (pending != null) _log($"new build {pending} installed, restarting");
             Changed?.Invoke();
         }
-        TryRestart();
+        if (restart) TryRestart();
     }
 
     /// <summary>The version of the waiting .new build, or null when there is none (or it can't be read yet).</summary>

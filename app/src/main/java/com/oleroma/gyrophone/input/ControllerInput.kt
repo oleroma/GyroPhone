@@ -12,6 +12,7 @@ import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownLayouts
+import com.oleroma.gyrophone.core.model.PhysicalSticks
 import com.oleroma.gyrophone.runtime.AttachedController
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
@@ -73,10 +74,14 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
     fun onKeyEvent(event: KeyEvent): Boolean {
         val device = event.device ?: return false
         if (device.isVirtual) return false
+        if (isRocker(event, device)) return onRocker(event)
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0) return true
+        // The PC's phone overlay draws the controller's presses on its handles.
+        if (isPad(device)) runtime.wifi.overlay.padKey(event.keyCode, event.action == KeyEvent.ACTION_DOWN)
         // A captured mouse's back / forward buttons come as keys too: they are its buttons already.
+        // A game pad that also says it is a mouse (many do) keeps its keys: they are its buttons.
         if (runtime.mouseCaptured && device.supportsSource(InputDevice.SOURCE_MOUSE) &&
-            device.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC
+            device.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC && !isPad(device)
         ) return true
         val pressed = event.action == KeyEvent.ACTION_DOWN
         runtime.keyLearnListener?.let { learn ->
@@ -96,12 +101,37 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         return mapped || fromPad
     }
 
+    /** Whether [event] is the phone's own volume rocker (a built-in key device, not an attached pad or keyboard). */
+    private fun isRocker(event: KeyEvent, device: InputDevice): Boolean =
+        (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
+            !device.isExternal && !isPad(device) && device.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC
+
+    /**
+     * The volume rocker while the pad is open: a key of the phone's own device ([PHONE_PAD]),
+     * mapped by the workspace's phone mappings (unmapped, the PC's volume keys). Consumed, so the
+     * phone's volume doesn't change or show its slider. With the pad closed, in a menu or while
+     * learning a key it is the phone's volume as usual. Android's repeats of a held key are
+     * swallowed: the key stays held, as any button.
+     */
+    private fun onRocker(event: KeyEvent): Boolean {
+        val pressed = event.action == KeyEvent.ACTION_DOWN
+        if (!runtime.inputAllowed || runtime.learnListener != null || runtime.keyLearnListener != null) {
+            // A press taken while the pad was open still gets its release.
+            if (!pressed) runtime.engine.setKey(PHONE_PAD, event.keyCode, false)
+            return false
+        }
+        if (pressed && event.repeatCount > 0) return true
+        runtime.engine.setKey(PHONE_PAD, event.keyCode, pressed)
+        return true
+    }
+
     fun onGenericMotionEvent(event: MotionEvent): Boolean {
         if (event.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK) return false
         if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
             // Focus left the window (shade, dialog, split screen): the stick's return to rest goes
             // to another window, so let go of this device's axes. Its keys get their own cancel.
             if (runtime.learnListener == null) runtime.engine.clearAxes(event.deviceId)
+            runtime.wifi.overlay.clearPad()
             return true
         }
         if (event.action != MotionEvent.ACTION_MOVE) return false
@@ -132,6 +162,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             axisIds[n] = axis; axisValues[n] = v; n++
         }
         src.seen = true
+        if (runtime.wifi.overlay.wanted) overlayAxes(device, src.last)
         if (learn != null) {
             if (learned != null) {
                 runtime.learnListener = null
@@ -143,6 +174,24 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         // Pad not on screen: nothing is sent ([last] still follows the device for learning).
         if (runtime.inputAllowed) runtime.engine.setAxes(src.pad, axisIds, axisValues, n)
         return true
+    }
+
+    /** Sends [v] (the [AndroidAxis.polled] axes) to the PC's phone overlay, for its handles. */
+    private fun overlayAxes(device: InputDevice, v: FloatArray) {
+        // Pads on Generic.kl put the right stick on RX / RY (and sometimes triggers on Z / RZ).
+        // So Z / RZ are the stick only without RX / RY, or when the triggers have axes of their own.
+        // The engine's PadDevice.rightStickRx uses the same rule (PhysicalSticks.rightStickOnRx).
+        fun has(axis: Int) = device.getMotionRange(axis) != null
+        val triggers = has(AndroidAxis.LTRIGGER) || has(AndroidAxis.RTRIGGER) || has(AndroidAxis.GAS) || has(AndroidAxis.BRAKE)
+        val zStick = has(AndroidAxis.Z) && has(AndroidAxis.RZ) &&
+            (!has(AndroidAxis.RX) || !has(AndroidAxis.RY) || triggers)
+        val rx = if (zStick) v[POLLED_Z] else v[POLLED_RX]
+        val ry = if (zStick) v[POLLED_RZ] else v[POLLED_RY]
+        runtime.wifi.overlay.padAxes(
+            v[POLLED_X], v[POLLED_Y], rx, ry,
+            maxOf(v[POLLED_LTRIGGER], v[POLLED_BRAKE]), maxOf(v[POLLED_RTRIGGER], v[POLLED_GAS]),
+            v[POLLED_HAT_X], v[POLLED_HAT_Y],
+        )
     }
 
     /**
@@ -216,13 +265,12 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         val ids = inputManager.inputDeviceIds.toList()
         val mouse = ids.any { id ->
             val d = inputManager.getInputDevice(id)
-            d != null && !d.isVirtual && d.supportsSource(InputDevice.SOURCE_MOUSE)
+            // A game pad saying it is a mouse too is not one: it would capture the pointer and lose its keys.
+            d != null && !d.isVirtual && d.supportsSource(InputDevice.SOURCE_MOUSE) && !isPad(d)
         }
         val list = ids.mapNotNull { id ->
             val d = inputManager.getInputDevice(id) ?: return@mapNotNull null
-            val isPad = d.sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
-                d.sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
-            if (d.isVirtual || !isPad) return@mapNotNull null
+            if (d.isVirtual || !isPad(d)) return@mapNotNull null
             val has = d.hasKeys(*KEY_CANDIDATES)
             AttachedController(
                 deviceId = d.id,
@@ -234,8 +282,14 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
                 axes = d.motionRanges.map { it.axis }.toSet(),
             )
         }
+        runtime.wifi.overlay.padAttached = list.isNotEmpty()
         runtime.onControllersChanged(list, mouse)
     }
+
+    /** Whether [d] is a game pad or joystick. */
+    private fun isPad(d: InputDevice): Boolean =
+        d.sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+            d.sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
 
     private fun source(device: InputDevice): Source =
         sources.get(device.id) ?: Source(padDevice(device)).also { sources.put(device.id, it) }
@@ -253,6 +307,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             device.getMotionRange(AndroidAxis.BRAKE) != null,
         analogRightTrigger = device.getMotionRange(AndroidAxis.RTRIGGER) != null ||
             device.getMotionRange(AndroidAxis.GAS) != null,
+        rightStickRx = PhysicalSticks.rightStickOnRx { device.getMotionRange(it) != null },
     )
 
     /** The engine's view of a mouse: its own device (id apart from the same device's keys), with the mouse mappings. */
@@ -262,6 +317,23 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
     companion object {
         /** Added to a device's id for its mouse part, so a keyboard with a touchpad keeps its keys apart. */
         private const val MOUSE_ID_BASE = 1 shl 28
+
+        /** The phone's own keys (the volume rocker) as the engine sees them: one device, apart from every Android device id. */
+        private val PHONE_PAD = PadDevice(1 shl 29, 0, 0, "Phone", phone = true)
+
+        // Places in AndroidAxis.polled.
+        private val POLLED_X = AndroidAxis.polled.indexOf(AndroidAxis.X)
+        private val POLLED_Y = AndroidAxis.polled.indexOf(AndroidAxis.Y)
+        private val POLLED_Z = AndroidAxis.polled.indexOf(AndroidAxis.Z)
+        private val POLLED_RX = AndroidAxis.polled.indexOf(AndroidAxis.RX)
+        private val POLLED_RY = AndroidAxis.polled.indexOf(AndroidAxis.RY)
+        private val POLLED_RZ = AndroidAxis.polled.indexOf(AndroidAxis.RZ)
+        private val POLLED_HAT_X = AndroidAxis.polled.indexOf(AndroidAxis.HAT_X)
+        private val POLLED_HAT_Y = AndroidAxis.polled.indexOf(AndroidAxis.HAT_Y)
+        private val POLLED_LTRIGGER = AndroidAxis.polled.indexOf(AndroidAxis.LTRIGGER)
+        private val POLLED_RTRIGGER = AndroidAxis.polled.indexOf(AndroidAxis.RTRIGGER)
+        private val POLLED_GAS = AndroidAxis.polled.indexOf(AndroidAxis.GAS)
+        private val POLLED_BRAKE = AndroidAxis.polled.indexOf(AndroidAxis.BRAKE)
 
         /** Keycodes probed with InputDevice.hasKeys: every known controller key plus BUTTON_1..16. */
         private val KEY_CANDIDATES: IntArray =

@@ -65,9 +65,10 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
- * Full-screen settings of a touch control (a long press in edit mode): collapsible sections for
- * its look, behaviour, area, stick, surface and a summary of its mappings ([onEditMappings]
- * opens the mapping screen). [workspace] holds its mappings; edits go through the callbacks.
+ * The one settings page of a touch control (Settings in its mapping editor, or Configure in edit
+ * mode), as categories: the button itself (duplicate, save to library, delete), its look, layers,
+ * then the settings its actions share ([shared], from [touchControlSettings]: gyro, a touchpad
+ * button's surface, a stick's). [onEditMappings] opens the mapping editor. Edits go through the callbacks.
  */
 @Composable
 internal fun ControlSettingsScreen(
@@ -82,81 +83,52 @@ internal fun ControlSettingsScreen(
     onDuplicate: () -> Unit,
     onDelete: () -> Unit,
     onClose: () -> Unit,
+    shared: MappingSettings? = null,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
     val library by runtime.buttonLibrary.collectAsStateWithLifecycle()
     // Saved to the library during this visit: the button says so instead of saving it twice.
     var savedTo by remember(control.id) { mutableStateOf<String?>(null) }
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-            Column(Modifier.fillMaxSize()) {
-                Row(
-                    Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            control.label.ifBlank { control.id },
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            (if (control.kind == TouchKind.STICK) "Stick" else if (control.swipes) "Touchpad button" else "Button") +
-                                    " · " + control.id + " · settings",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    TextButton(onClick = onDuplicate) { Text("Duplicate") }
-                    if (control.kind != TouchKind.FULLSCREEN) {
-                        val saved = savedTo != null && library.any { it.id == savedTo }
-                        TextButton(enabled = !saved, onClick = {
-                            val b = ButtonLibrary.save(workspace, control, library.map { it.id })
-                            runtime.addToLibrary(b)
-                            savedTo = b.id
-                        }) { Text(if (saved) "In library" else "Save to library") }
-                    }
-                    TextButton(onClick = { confirmDelete = true }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
-                    OutlinedButton(onClick = onEditMappings) { Text("Mappings") }
-                    TextButton(onClick = onClose) { Text("Done") }
-                }
-                Column(
-                    Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .imePadding()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    val section = Modifier.widthIn(max = 720.dp)
-                    RememberedSection(runtime, "control.Look", "Look", section, defaultOpen = true) {
-                        LookSettings(control, inPortrait, onControlChange, onSize)
-                    }
-                    if (workspace.sets.isNotEmpty()) {
-                        RememberedSection(runtime, "control.Layers", "Layers", section) {
-                            SwitchSetting(
-                                "Follows layers while held",
-                                "When the layer changes while this is held, it lets go of what it pressed and does the new layer's mapping at once. " +
-                                        "Off: it keeps pressing it until released.",
-                                control.followLayers,
-                            ) { onControlChange(control.copy(followLayers = it)) }
+    SettingsDialog(
+        title = control.label.ifBlank { control.id },
+        subtitle = (if (control.kind == TouchKind.STICK) "Stick" else if (control.swipes) "Touchpad button" else "Button") +
+                " · " + control.id + " · settings",
+        onClose = onClose,
+        actions = { OutlinedButton(onClick = onEditMappings) { Text("Mappings") } },
+    ) {
+        val kindName = if (control.kind == TouchKind.STICK) "Stick" else "Button"
+        val items = listOfNotNull(
+            category(runtime, "button", kindName, "Duplicate, save to library, delete", defaultOpen = true, prefKey = "control.Button") {
+                Searchable(kindName, "duplicate copy save to library delete remove") {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onDuplicate) { Text("Duplicate") }
+                        if (control.kind != TouchKind.FULLSCREEN) {
+                            val saved = savedTo != null && library.any { it.id == savedTo }
+                            OutlinedButton(enabled = !saved, onClick = {
+                                val b = ButtonLibrary.save(workspace, control, library.map { it.id })
+                                runtime.addToLibrary(b)
+                                savedTo = b.id
+                            }) { Text(if (saved) "In library" else "Save to library") }
                         }
-                    }
-                    RememberedSection(runtime, "control.Mappings", "Mappings", section, defaultOpen = true) {
-                        MappingsSummary(control, workspace.mappings, onEditMappings)
-                        Text(
-                            "Timings, areas" + (if (control.swipes) ", speed and directions" else if (control.kind == TouchKind.STICK) ", deadzone and directions" else "") +
-                                    " are set in Mappings: the ⚙ before an action, or Settings at the top.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        OutlinedButton(onClick = { confirmDelete = true }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
                     }
                 }
-            }
-        }
+                Hint("Duplicate copies its look and mappings. The library keeps it for any workspace: add it from the edit panel.")
+            },
+            category(runtime, "look", "Look", "Label, shape, layer, size", defaultOpen = true, prefKey = "control.Look") {
+                LookSettings(control, inPortrait, onControlChange, onSize)
+            },
+            if (workspace.sets.isNotEmpty()) category(runtime, "layers", "Layers", "What it does when the layer changes while held", prefKey = "control.Layers") {
+                SwitchSetting(
+                    "Follows layers while held",
+                    "When the layer changes while this is held, it lets go of what it pressed and does the new layer's mapping at once. " +
+                            "Off: it keeps pressing it until released.",
+                    control.followLayers,
+                ) { onControlChange(control.copy(followLayers = it)) }
+            } else null,
+        ) + shared?.items.orEmpty()
+        shared?.itemsHeader?.invoke()
+        ReorderableSections(runtime, "control", items)
     }
     if (confirmDelete) {
         AlertDialog(
@@ -183,15 +155,17 @@ internal fun LookSettings(
     onSize: (Float) -> Unit,
 ) {
     val current by rememberUpdatedState(control)
-    OutlinedTextField(
-        value = control.label,
-        onValueChange = { onControlChange(current.copy(label = it)) },
-        label = { Text("Label") },
-        placeholder = { Text("Shows the mapping") },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Searchable("Label", "name text shows the mapping") {
+        OutlinedTextField(
+            value = control.label,
+            onValueChange = { onControlChange(current.copy(label = it)) },
+            label = { Text("Label") },
+            placeholder = { Text("Shows the mapping") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+    Searchable("Shape", "Circle Square") { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Shape", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(52.dp))
         SelectChip(
             "Circle",
@@ -201,8 +175,10 @@ internal fun LookSettings(
             "Square",
             control.shape == TouchShape.SQUARE
         ) { onControlChange(current.copy(shape = TouchShape.SQUARE)) }
-    }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    } }
+    Searchable(
+        "Layer", "overlap front back in front", *TouchLayer.entries.map { it.label }.toTypedArray(),
+    ) { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Layer", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(52.dp))
         for (l in TouchLayer.entries) SelectChip(
             l.label,
@@ -213,7 +189,7 @@ internal fun LookSettings(
         "Where controls overlap, the smaller one (by its shortest side) is in front. Front / Back override that.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    ) } }
     SwitchSetting(
         "Shares touches",
         "Also works when a finger lands on a control in front of it, so both fire.",
@@ -235,7 +211,7 @@ internal fun LookSettings(
 
 /** A switch with a title and an explanation under it. */
 @Composable
-private fun SwitchSetting(title: String, hint: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun SwitchSetting(title: String, hint: String, checked: Boolean, onChange: (Boolean) -> Unit) = Searchable(title, hint) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.labelLarge)
@@ -249,7 +225,7 @@ private fun SwitchSetting(title: String, hint: String, checked: Boolean, onChang
 @Composable
 internal fun StickSettings(control: TouchControl, onControlChange: (TouchControl) -> Unit) {
     val current by rememberUpdatedState(control)
-    Column {
+    Searchable("Deadzone", "stick rest centre") { Column {
         Text("Deadzone " + (control.deadzone * 100).roundToInt() + "%", style = MaterialTheme.typography.labelLarge)
         Slider(
             value = control.deadzone,
@@ -261,7 +237,8 @@ internal fun StickSettings(control: TouchControl, onControlChange: (TouchControl
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    }
+    } }
+    Searchable("Directions", "stick zones diagonal", *StickZones.entries.map { it.label }.toTypedArray()) { Column {
     Text("Directions", style = MaterialTheme.typography.labelLarge)
     Row(
         Modifier.horizontalScroll(rememberScrollState()),
@@ -280,51 +257,7 @@ internal fun StickSettings(control: TouchControl, onControlChange: (TouchControl
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-}
-
-/** Each mapped action of [control] with its targets, and a way into the mapping screen. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-internal fun MappingsSummary(control: TouchControl, mappings: List<Mapping>, onEditMappings: () -> Unit) {
-    val mapped =
-        Bindings.touchInputs(control).map { it to Bindings.targets(mappings, it) }.filter { it.second.isNotEmpty() }
-    if (mapped.isEmpty()) {
-        Text(
-            "Nothing mapped yet.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-    for ((input, targets) in mapped) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                actionLabel(control, input),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.width(96.dp),
-            )
-            FlowRow(
-                Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                for (t in targets) {
-                    Text(
-                        Describe.shortTarget(t),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.secondaryContainer)
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                    )
-                }
-            }
-        }
-    }
-    FilledTonalButton(onClick = onEditMappings) { Text("Edit mappings") }
+    } }
 }
 
 /**
@@ -341,7 +274,7 @@ internal fun actionLabel(control: TouchControl, input: BindableInput): String = 
  * sizes get most of it while the far end still fills the screen.
  */
 @Composable
-internal fun SizeSlider(title: String, value: Float, onChange: (Float) -> Unit) {
+internal fun SizeSlider(title: String, value: Float, onChange: (Float) -> Unit) = Searchable(title, "size") {
     val span = TouchControl.MAX_SIZE - TouchControl.MIN_SIZE
     Column {
         Text(title + " " + (value * 100).roundToInt() + "%", style = MaterialTheme.typography.labelLarge)

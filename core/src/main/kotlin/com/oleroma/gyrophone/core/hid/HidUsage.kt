@@ -11,6 +11,19 @@ object HidUsage {
     const val RIGHT_ALT = 0xE6
     const val RIGHT_GUI = 0xE7
 
+    // Media keys. Mute and the volume keys are the keyboard page's own; play/pause and the track
+    // keys sit in its reserved range above the modifiers, where Linux's HID keyboard table puts
+    // them. The PC companion presses each as its Windows media key.
+    const val MUTE = 0x7F
+    const val VOLUME_UP = 0x80
+    const val VOLUME_DOWN = 0x81
+    const val PLAY_PAUSE = 0xE8
+    const val PREVIOUS_TRACK = 0xEA
+    const val NEXT_TRACK = 0xEB
+
+    /** The media keys, in the order the pickers list them. */
+    val media: List<Int> = listOf(VOLUME_UP, VOLUME_DOWN, MUTE, PLAY_PAUSE, NEXT_TRACK, PREVIOUS_TRACK)
+
     fun isModifier(usage: Int): Boolean = usage in LEFT_CTRL..RIGHT_GUI
     fun modifierBit(usage: Int): Int = 1 shl (usage - LEFT_CTRL)
 
@@ -34,6 +47,8 @@ object HidUsage {
         put(LEFT_CTRL, "Left Ctrl"); put(LEFT_SHIFT, "Left Shift"); put(LEFT_ALT, "Left Alt")
         put(LEFT_GUI, "Left Win"); put(RIGHT_CTRL, "Right Ctrl"); put(RIGHT_SHIFT, "Right Shift")
         put(RIGHT_ALT, "Right Alt"); put(RIGHT_GUI, "Right Win")
+        put(VOLUME_UP, "Volume Up"); put(VOLUME_DOWN, "Volume Down"); put(MUTE, "Mute")
+        put(PLAY_PAUSE, "Play/Pause"); put(NEXT_TRACK, "Next Track"); put(PREVIOUS_TRACK, "Previous Track")
     }
 
     fun byName(name: String): Int? = names.entries.firstOrNull { it.value.equals(name, ignoreCase = true) }?.key
@@ -60,6 +75,8 @@ object AndroidKeyToHid {
         (1..9).forEach { put(144 + it, 0x59 + it - 1) } // NUMPAD_1..9
         put(154, 0x54); put(155, 0x55); put(156, 0x56); put(157, 0x57); put(158, 0x63); put(160, 0x58)
         put(82, 0x65)
+        put(24, HidUsage.VOLUME_UP); put(25, HidUsage.VOLUME_DOWN); put(164, HidUsage.MUTE) // KEYCODE_VOLUME_*
+        put(85, HidUsage.PLAY_PAUSE); put(87, HidUsage.NEXT_TRACK); put(88, HidUsage.PREVIOUS_TRACK) // KEYCODE_MEDIA_*
     }
 
     /** HID usage for an Android keycode, or null if it has no keyboard equivalent. */

@@ -51,6 +51,11 @@ data class Workspace(
     /** A mouse's mappings: like [pads] and [keyboard], filled from [devicePreset] when resolved ([WorkspaceMappings.resolve]). */
     val mouse: List<Mapping> = emptyList(),
     /**
+     * The phone's own keys' mappings (its volume rocker): like [mouse], filled from [devicePreset]
+     * when resolved, with an unmapped rocker key turning the PC's volume even with no preset.
+     */
+    val phone: List<Mapping> = emptyList(),
+    /**
      * The settings ([WorkspaceDefaults.keys]) this workspace sets itself; the others follow the
      * workspace defaults ([Profile.defaults]) when resolved. Null: one from before the defaults,
      * which sets each that differs from the built-in values ([WorkspaceDefaults.own]).
@@ -58,6 +63,12 @@ data class Workspace(
     val ownSettings: Set<String>? = null,
     /** Physical keys' own gesture timings: filled from [devicePreset] when resolved, like [keyboard]. */
     val keyTimings: List<KeyTiming> = emptyList(),
+    /** Physical sticks' tuning by [PhysicalSticks] id: filled from [devicePreset] when resolved; empty = raw sticks. */
+    val stickTunings: Map<String, StickTuning> = emptyMap(),
+    /** Physical triggers' tuning by [PhysicalSticks] id: filled from [devicePreset] when resolved, like [stickTunings]. */
+    val triggerTunings: Map<String, TriggerTuning> = emptyMap(),
+    /** Physical keys' and buttons' own settings while held: filled from [devicePreset] when resolved, like [keyTimings]. */
+    val heldButtons: List<HeldButton> = emptyList(),
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =

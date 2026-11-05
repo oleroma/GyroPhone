@@ -23,6 +23,24 @@ public enum OverlayQuality
     Fast,
 }
 
+/// <summary>When the phone overlay draws controller handles on the phone's sides.</summary>
+public enum OverlayHandles
+{
+    /// <summary>While a controller is attached to the phone.</summary>
+    Auto,
+    Always,
+    Off,
+}
+
+/// <summary>Which controller the phone overlay's handles show.</summary>
+public enum OverlayHandleSource
+{
+    /// <summary>The controller attached to the phone.</summary>
+    Phone,
+    /// <summary>The controller plugged into this PC, while the phone's "Use PC controller for gyro ratchet" is on.</summary>
+    Pc,
+}
+
 /// <summary>What an overlay window shows (as the phone's gyro displays).</summary>
 public enum OverlayKind
 {
@@ -78,6 +96,10 @@ public sealed class OverlaySettings
     public bool FingerDots { get; set; }
     /// <summary>A fading line behind each finger.</summary>
     public bool FingerTrails { get; set; } = true;
+    /// <summary>Switch-style controller handles on the phone's sides, lit by the attached controller's presses.</summary>
+    public OverlayHandles Handles { get; set; } = OverlayHandles.Auto;
+    /// <summary>Which controller the handles show; with <see cref="OverlayHandles.Auto"/>, the one that must be there.</summary>
+    public OverlayHandleSource HandleSource { get; set; } = OverlayHandleSource.Phone;
 
     // 3D shape.
     public OverlayShape Shape { get; set; } = OverlayShape.Globe;
@@ -118,18 +140,28 @@ public sealed class OverlaySettings
     public bool Gravity { get; set; } = true;
     /// <summary>With gravity: the heading held by the phone's compass to the way it faced at the start.</summary>
     public bool Compass { get; set; }
-    /// <summary>A ratchet press sets it straight: the whole pose, or with <see cref="ResetHeadingOnly"/> (always with gravity) the heading.</summary>
-    public bool ResetOnRatchet { get; set; } = true;
-    public bool ResetHeadingOnly { get; set; }
     /// <summary>Goes back to straight on its own (the heading only with gravity).</summary>
     public bool Ease { get; set; } = true;
-    /// <summary>Easing starts after a ratchet is let go, instead of after the phone stops turning.</summary>
-    public bool EaseAfterRatchet { get; set; }
+    /// <summary>
+    /// While a ratchet is held it eases back until straight (stopping when let go), instead of easing whenever the phone stops turning.
+    /// (Replaces Reset on ratchet and "Ratchet let go"; a ratchet press still aims the compass again.)
+    /// </summary>
+    public bool EaseOnRatchet { get; set; } = true;
+    /// <summary>Without gravity, only the heading eases back (with gravity it always is).</summary>
+    public bool EaseHeadingOnly { get; set; }
     public int EaseDelayMs { get; set; } = 300;
     /// <summary>Back at <see cref="EaseSpeed"/> deg/s, instead of over <see cref="EaseSeconds"/>.</summary>
     public bool EaseBySpeed { get; set; }
     public float EaseSeconds { get; set; } = 2f;
     public int EaseSpeed { get; set; } = 90;
+
+    // Ratchet settings of earlier builds: read once by MigrateOld, never written back.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ResetOnRatchet { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ResetHeadingOnly { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? EaseAfterRatchet { get; set; }
 
     /// <summary>ARGB per <see cref="OverlayColor.Key"/> of this kind; missing = its default.</summary>
     public Dictionary<string, int> Colors { get; set; } = [];
@@ -143,6 +175,27 @@ public sealed class OverlaySettings
     public bool NeedsCompass => Gravity && Compass && !IsTrackball;
 
     public static string NewId() => Guid.NewGuid().ToString("N")[..12];
+
+    /// <summary>
+    /// Carries the ratchet settings of earlier builds over: Reset on ratchet becomes Ease on ratchet
+    /// (its Heading only with it); off, easing stays as it was, when the phone stops ("Ratchet let go" is gone).
+    /// </summary>
+    public void MigrateOld()
+    {
+        if (ResetOnRatchet == null && ResetHeadingOnly == null && EaseAfterRatchet == null) return;
+        if (ResetOnRatchet ?? true) // its old default
+        {
+            Ease = true;
+            EaseOnRatchet = true;
+            EaseHeadingOnly = ResetHeadingOnly ?? false;
+        }
+        else
+        {
+            EaseOnRatchet = false;
+            EaseHeadingOnly = false; // easing used to turn the whole pose back without gravity
+        }
+        ResetOnRatchet = ResetHeadingOnly = EaseAfterRatchet = null;
+    }
 
     /// <summary>The colour <paramref name="key"/> (ARGB), or its default.</summary>
     public int Color(string key)
@@ -189,6 +242,8 @@ public sealed class OverlaySettings
         new("lit", "Pressed", 0xFF7CC4FF),
         new("latched", "Latched", 0xFF8FE39A),
         new("fingers", "Fingers", 0xFFFFFFFF),
+        new("handles", "Controller handles", 0xFF353A42),
+        new("handlesLit", "Controller pressed", 0xFF7CC4FF),
     ];
 
     private static readonly OverlayColor[] ShapeColors =

@@ -25,6 +25,25 @@ enum class GamepadAxis {
 @Serializable
 enum class AxisHalf { FULL, POSITIVE, NEGATIVE }
 
+/**
+ * A digital stage of a physical stick or trigger axis ([InputSource.Axis.stage]), set by its
+ * preset's tuning ([StickTuning], [TriggerTuning]).
+ */
+@Serializable
+enum class AxisStage {
+    /** The axis itself (analog). */
+    NONE,
+
+    /** A stick pushed past its outer ring: with a half, only in that direction's pie; FULL = any direction. */
+    OUTER,
+
+    /** A trigger pulled past its press point. */
+    PRESS,
+
+    /** A trigger pulled all the way (past its full pull point). */
+    FULL_PULL,
+}
+
 @Serializable
 enum class StickAxis { X, Y }
 
@@ -127,10 +146,14 @@ sealed interface InputSource {
     @SerialName("key_gesture")
     data class KeyGesture(val keyCode: Int, val gesture: ButtonGesture) : InputSource
 
-    /** An analog axis of an attached device. [half] picks one direction for axis-to-button use. */
+    /**
+     * An analog axis of an attached device. [half] picks one direction for axis-to-button use.
+     * [stage]: a digital stage of it instead ([AxisStage]): a stick's outer ring, a trigger's press
+     * or full pull.
+     */
     @Serializable
     @SerialName("axis")
-    data class Axis(val axis: Int, val half: AxisHalf = AxisHalf.FULL) : InputSource
+    data class Axis(val axis: Int, val half: AxisHalf = AxisHalf.FULL, val stage: AxisStage = AxisStage.NONE) : InputSource
 
     /** A virtual touchscreen button, by [TouchControl.id]: held from touch-down to lift. */
     @Serializable
@@ -366,6 +389,14 @@ sealed interface OutputTarget {
     @Serializable
     @SerialName("let_go")
     data object LetGo : OutputTarget
+
+    /**
+     * The phone's pad screen goes black (touch buttons off) until it is tapped: saves battery while
+     * only a controller is used. Nothing is sent to the PC.
+     */
+    @Serializable
+    @SerialName("black_screen")
+    data object BlackScreen : OutputTarget
 
     /** Does nothing: in a set used as an override, it stops an input falling through to the set below. */
     @Serializable

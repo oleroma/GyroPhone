@@ -74,6 +74,8 @@ internal sealed class FakePad : IPadSink
     public OutputMode Plugged { get; private set; }
     public readonly List<X360Frame> X360 = new();
     public readonly List<Ds4Frame> Ds4 = new();
+    /// <summary>The motion sent with each <see cref="Ds4"/> frame.</summary>
+    public readonly List<Ds4Motion> Ds4Motion = new();
     public int Plugs, Unplugs;
 
     public bool Plug(OutputMode mode)
@@ -98,10 +100,11 @@ internal sealed class FakePad : IPadSink
         X360.Add(frame);
     }
 
-    public void Submit(in Ds4Frame frame)
+    public void Submit(in Ds4Frame frame, in Ds4Motion motion)
     {
         if (FailWith != null) throw FailWith;
         Ds4.Add(frame);
+        Ds4Motion.Add(motion);
     }
 
     public event Action<byte, byte>? Rumble;
@@ -117,11 +120,15 @@ internal sealed class FakeKeyMouse : IKeyMouseSink
     public readonly HashSet<string> HeldButtons = new();
     public long MouseX, MouseY, Wheel, HWheel;
 
+    /// <summary>The OS drops every event, as with an elevated window in front.</summary>
+    public bool Dropping;
+
     public IEnumerable<InjectEvent> All => Calls.SelectMany(c => c);
 
-    public void Inject(ReadOnlySpan<InjectEvent> events)
+    public bool Inject(ReadOnlySpan<InjectEvent> events)
     {
         Calls.Add(events.ToArray());
+        if (Dropping) return false;
         foreach (var e in events)
         {
             if (e.Kind == InjectKind.Key)
@@ -138,6 +145,7 @@ internal sealed class FakeKeyMouse : IKeyMouseSink
             Button(e, InjectEvent.MouseMiddleDown, InjectEvent.MouseMiddleUp, "M");
             Button(e, InjectEvent.MouseXDown, InjectEvent.MouseXUp, "X" + e.MouseData);
         }
+        return true;
     }
 
     private void Button(in InjectEvent e, uint down, uint up, string name)

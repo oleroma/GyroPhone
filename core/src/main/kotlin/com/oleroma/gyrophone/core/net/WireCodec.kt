@@ -141,6 +141,13 @@ object WireCodec {
         out.putU8(14, p.maxVersion)
     }
 
+    /** ERROR with any version byte, so this v1 phone can read a newer host's VERSION error. */
+    fun decodeError(buf: ByteArray, len: Int): ErrorPacket? {
+        if (len != Wire.ERROR_SIZE || len > buf.size || buf[0] != Wire.MAGIC0 || buf[1] != Wire.MAGIC1) return null
+        if (buf.getU8(3) != PacketType.ERROR) return null
+        return ErrorPacket(buf.getU16(12), buf.getU8(14))
+    }
+
     /**
      * Decodes an unsealed packet. HELLO and WELCOME macs are not checked here; use
      * [Crypto.verifyTrailingMac] on the same buffer.
@@ -206,11 +213,17 @@ object WireCodec {
         out.putI32(off + 62, f.wheelTotal)
         if (!f.hires) return Wire.STATE_PLAIN
         out.putI32(off + 66, f.hwheelTotal)
-        return Wire.STATE_HIRES_PLAIN
+        if (!f.gyroExt) return Wire.STATE_HIRES_PLAIN
+        f.ext.copyInto(out, off + Wire.STATE_HIRES_PLAIN)
+        return Wire.STATE_GYRO_PLAIN
     }
 
-    /** Packet type a frame is sent as: STATE, or STATE_HIRES when [StateFrame.hires]. */
-    fun stateType(f: StateFrame): Int = if (f.hires) PacketType.STATE_HIRES else PacketType.STATE
+    /** Packet type a frame is sent as: STATE, STATE_HIRES when [StateFrame.hires], STATE_GYRO with [StateFrame.gyroExt] too. */
+    fun stateType(f: StateFrame): Int = when {
+        !f.hires -> PacketType.STATE
+        f.gyroExt -> PacketType.STATE_GYRO
+        else -> PacketType.STATE_HIRES
+    }
 
     /**
      * Decodes a STATE (or, with [hires], STATE_HIRES) plaintext into [into] (allocation-free) as
@@ -300,6 +313,10 @@ object WireCodec {
         return when (type) {
             PacketType.STATE -> decodeStatePlain(buf, off)
             PacketType.STATE_HIRES -> decodeStatePlain(buf, off, hires = true)
+            PacketType.STATE_GYRO -> decodeStatePlain(buf, off, hires = true).also {
+                it.gyroExt = true
+                buf.copyInto(it.ext, 0, off + Wire.STATE_HIRES_PLAIN, off + Wire.STATE_GYRO_PLAIN)
+            }
             PacketType.PING -> Ping(buf.getU64(off))
             PacketType.PONG -> Pong(buf.getU64(off), buf.getU64(off + 8), buf.getU64(off + 16))
             PacketType.LINK_INFO -> LinkInfo(

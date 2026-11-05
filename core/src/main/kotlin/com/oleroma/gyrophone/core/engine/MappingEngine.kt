@@ -10,6 +10,10 @@ import com.oleroma.gyrophone.core.hid.MouseState
 import com.oleroma.gyrophone.core.model.AndroidAxis
 import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AxisHalf
+import com.oleroma.gyrophone.core.model.AxisStage
+import com.oleroma.gyrophone.core.model.PhysicalSticks
+import com.oleroma.gyrophone.core.model.StickTuning
+import com.oleroma.gyrophone.core.model.TriggerTuning
 import com.oleroma.gyrophone.core.model.ButtonGesture
 import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.GamepadButton
@@ -40,11 +44,15 @@ import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.model.ButtonGyro
+import com.oleroma.gyrophone.core.model.HeldButton
+import com.oleroma.gyrophone.core.model.TouchpadSettings
+import com.oleroma.gyrophone.core.model.PhysicalDevice
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.surfaceSettings
+import com.oleroma.gyrophone.core.net.OverlayFeed
 import java.util.BitSet
 import kotlin.math.PI
 import kotlin.math.abs
@@ -100,6 +108,15 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     private var ws: Workspace = profile.workspace(0)
 
+    /** Per axis id: the tuning of the physical stick it is part of (null = raw), from the pinned preset ([Workspace.stickTunings]). */
+    private val axisStick = arrayOfNulls<StickTuning>(AXIS_SLOTS)
+
+    /** [axisStick] for a pad whose right stick is RX / RY ([PadDevice.rightStickRx]). */
+    private val axisStickRx = arrayOfNulls<StickTuning>(AXIS_SLOTS)
+
+    /** Per axis id: the tuning of the physical trigger it is part of (null = the defaults). */
+    private val axisTrigger = arrayOfNulls<TriggerTuning>(AXIS_SLOTS)
+
     /**
      * The settings in effect: [ws]'s with the own settings of the layers in use laid over
      * ([WorkspaceDefaults.layered]); set by [applyLayers].
@@ -116,6 +133,21 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     @Volatile
     private var gyroNow: GyroSettings = ws.gyro
 
+    /** Physical keys and buttons with settings of their own while held ([physHeldChanged]), and those held now. */
+    private var heldPhys: List<HeldButton> = heldOf(ws)
+    private val physDown = HashSet<String>()
+
+    private fun heldOf(w: Workspace): List<HeldButton> {
+        val mapped = physGyroOf(w).mapTo(HashSet()) { (it.source as InputSource.Gyro).id }
+        return w.heldButtons.filter { b -> b.gyro.any { it.any } || HeldButton.GYRO_ID + b.id in mapped }
+    }
+
+    /** The physical devices' gyro mappings of [w] (a held button's, [HeldButton.GYRO_ID]). */
+    private fun physGyroOf(w: Workspace): List<Mapping> =
+        (w.pads.flatMap { it.mappings } + w.keyboard + w.mouse + w.phone).filter { m ->
+            (m.source as? InputSource.Gyro)?.id?.startsWith(HeldButton.GYRO_ID) == true
+        }.distinct()
+
     /** Sets [gyroNow] for the settings in effect and the buttons held. */
     private fun updateGyroNow() {
         val sets = buildList {
@@ -124,13 +156,30 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             for (o in layerOverrides) if (o != layerSet && o != MappingSet.BASE) add(o)
         }
         var held: ButtonGyro? = null
-        if (ws.touchControls.any { it.gyro.isNotEmpty() }) for (id in pressOrder) {
-            val c = ws.touchControls.firstOrNull { it.id == id } ?: continue
-            if (c.gyro.isEmpty()) continue
-            val g = c.gyroIn(sets)
-            if (g.any) held = g
+        var heldTouch: ButtonGyro? = null
+        if (pressOrder.isNotEmpty() && (heldPhys.isNotEmpty() || ws.touchControls.any { it.gyro.isNotEmpty() })) for (id in pressOrder) {
+            val g = if (id.startsWith(PHYS)) {
+                heldPhys.firstOrNull { PHYS + it.id == id }?.gyroIn(sets) ?: continue
+            } else {
+                val c = ws.touchControls.firstOrNull { it.id == id } ?: continue
+                if (c.gyro.isEmpty()) continue
+                c.gyroIn(sets)
+            }
+            if (g.anyGyro) held = g
+            if (g.anyTouch) heldTouch = g
         }
         gyroNow = held?.over(eff.gyro) ?: eff.gyro
+        pcHeldGyro = if (heldPhys.isEmpty() || ws.pads.isEmpty()) emptyList() else heldPhys.mapNotNull { b ->
+            if (!b.id.startsWith(PhysicalDevice.CONTROLLER.name + ":")) return@mapNotNull null
+            val g = b.gyroIn(sets).takeIf { it.anyGyro } ?: return@mapNotNull null
+            val place = b.sources.firstNotNullOfOrNull { src -> pcPlace(src).takeIf { it >= 0 } } ?: return@mapNotNull null
+            // Over the settings in effect with the phone's own held button, if any: the PC's wins while held.
+            place to g.over(gyroNow)
+        }.distinctBy { it.first }
+        val t = heldTouch?.over(eff.touchpad) ?: eff.touchpad
+        if (t != touchpad.settings) touchpad.settings = t
+        // Every change of the buttons held or the mappings in use comes through here.
+        routesCache = null
     }
 
     /** Touch mappings of the active workspace in use (the touch source group): see [applyLayers]. */
@@ -187,8 +236,23 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Some mapping in use is a gyro ratchet ([gyroAxes] runs per gyro sample: no search without one). */
     private var ratchetMapped = false
 
+    /** A gyro ratchet mapping in use: the input it is part of ([sameInput]) with its target, and the [gyroBit]s it flips. */
+    private class Ratchet(val m: Mapping, val key: Pair<InputSource, OutputTarget>, val bits: Int)
+
+    /** The ratchet mappings in use of each group, like [touchMappings] and [padMappings] ([ratchetedAxes]). */
+    private var touchRatchets: List<Ratchet> = emptyList()
+    private var padRatchets: Array<List<Ratchet>> = emptyArray()
+
+    /** The mappings in use with an event target ([engagedEvents]) of each group, and whether there are any. */
+    private var touchEvents: List<Mapping> = emptyList()
+    private var padEvents: Array<List<Mapping>> = emptyArray()
+    private var eventsMapped = false
+
     /** The gyro mappings in use ([InputSource.Gyro]), [OutputTarget.NoOutput] kept: the workspace's and every button's. */
     private var gyroInUse: List<Mapping> = emptyList()
+
+    /** [gyroRoutes] as last worked out; null after the mappings in use or the buttons held changed. */
+    private var routesCache: List<Mapping>? = null
 
     /** Game pad axes the gyro deflects ([setGyroAxes]), by [GamepadAxis] ordinal. */
     private val gyroPad = FloatArray(GamepadAxis.entries.size)
@@ -197,7 +261,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private var tiltX = 0f
     private var tiltY = 0f
 
-    /** When the last shake came ([shake]); it shows at least [SHAKE_PULSE_NS] and in one snapshot. */
+    /**
+     * The last shake ([shake]) presses: from [shakeAt] for at least [SHAKE_PULSE_NS] and one
+     * snapshot. It ends in [resolveButtons], so an event it pressed sees it let go.
+     */
+    private var shakeOn = false
     private var shakeAt = Long.MIN_VALUE
     private var shakeShown = true
 
@@ -222,6 +290,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         /** Mappings with options of this device's group: their shapers and cycle turns ([shaped]). */
         val shapers = HashMap<Mapping, Shaper>()
         val cycles = HashMap<CycleKey, CycleTurn>()
+
+        /** Its toggle / next-key mappings whose source was held at the last snapshot ([keyModePress]). */
+        val modeHeld = HashSet<Mapping>()
+
+        /** A snapshot ran its mappings ([accumulate]); one that skipped them saw its key modes let go. */
+        var modeSeen = false
         val axes = FloatArray(AXIS_SLOTS)
         private var axisCount = 0
 
@@ -285,6 +359,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         fun clear() {
             keys.clear(); axes.fill(0f); axisCount = 0
             pressedSince.clear(); releasedSince.clear(); shown.clear()
+            modeHeld.clear()
         }
     }
 
@@ -372,11 +447,17 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     private val pulses = ArrayList<Pulse>()
 
-    /** Toggle / next-key key mappings whose source was held at the last snapshot ([keyModePress]). */
+    /**
+     * The touch group's toggle / next-key key mappings whose source was held at the last snapshot
+     * ([keyModePress]); each device keeps its own ([Dev.modeHeld]).
+     */
     private val keyModeHeld = HashSet<Mapping>()
 
-    /** Keys a toggle mapping has turned on. */
-    private val toggledKeys = LinkedHashSet<Int>()
+    /** Keys a toggle mapping has turned on, by usage. */
+    private val toggledKeys = BooleanArray(256)
+
+    /** Keys held only by toggles and next-keys this snapshot ([holdModeKeys]): not another input. */
+    private val modeOnlyKeys = BooleanArray(256)
 
     /** Keys held for the next other key: true once one was pressed (let go with it). */
     private val nextKeys = LinkedHashMap<Int, Boolean>()
@@ -405,6 +486,33 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
 
     private var gyroToggled = false
+
+    // Declared before init, which builds them.
+    /**
+     * The controller's gyro buttons in use, for a controller plugged into the PC ("Use PC
+     * controller for gyro"): one entry per button, `(place shl 8) or kind`, the place an
+     * [com.oleroma.gyrophone.core.net.OverlayFeed] PAD_ bit index, the kind the [gyroBit]s its
+     * ratchets flip plus [PC_GYRO_TOGGLE] for a Toggle gyro. Only plain presses count (no tap,
+     * long press or other gesture). Rebuilt with the layers in use.
+     */
+    @Volatile var pcGyroButtons: IntArray = IntArray(0)
+        private set
+
+    /**
+     * "Use PC controller for gyro ratchet": the controller buttons (PAD_ place) with gyro settings of
+     * their own while held ([HeldButton]), each with the gyro settings in effect while it is held.
+     * The PC uses the last pressed of them that is held, over what the phone sends.
+     */
+    @Volatile var pcHeldGyro: List<Pair<Int, GyroSettings>> = emptyList()
+        private set
+
+    /** The touchpad's settings in effect now, a held button's own over them (tests). */
+    internal val touchpadSettingsNow: TouchpadSettings get() = touchpad.settings
+
+    /** Goes up each time a Toggle gyro press stops counting (the workspace or its gyro changed): a PC controller's toggle resets too. */
+    @Volatile var toggleEpoch: Int = 0
+        private set
+
     private var mouseDx = 0
     private var mouseDy = 0
 
@@ -476,6 +584,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     @Volatile
     var onChange: Runnable? = null
+
+    /**
+     * Called when a [OutputTarget.BlackScreen] mapping fires, inside the engine lock: it must only
+     * hand the request on (the phone's pad screen goes black), never call back into the engine.
+     */
+    @Volatile
+    var onBlackScreen: Runnable? = null
 
     /**
      * Gets the mouse counts each [snapshot] sends other than the live gyro's (touchpad and its
@@ -552,15 +667,25 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         // The touchpad mappings it does not set come from the Defaults.
         val w = loaded.copy(mappings = Bindings.upgradeSwipes(Inheritance.workspace(loaded, profile.defaults)))
         ws = w
-        allTouch = w.mappings
+        heldPhys = heldOf(w)
+        for (id in physDown) pressOrder.remove(PHYS + id)
+        physDown.clear()
+        axisStick.fill(null); axisStickRx.fill(null); axisTrigger.fill(null)
+        for ((id, axes) in PhysicalSticks.sticks) w.stickTunings[id]?.let { axisStick[axes.first] = it; axisStick[axes.second] = it }
+        for ((id, axes) in PhysicalSticks.sticksRx) w.stickTunings[id]?.let { axisStickRx[axes.first] = it; axisStickRx[axes.second] = it }
+        for ((id, axes) in PhysicalSticks.triggers) w.triggerTunings[id]?.let { axisTrigger[axes.first] = it; axisTrigger[axes.second] = it }
+        // A physical button's gyro mappings while held (its Motion tab) route with the touch buttons' ([gyroRoutes]).
+        val physGyro = physGyroOf(w)
+        allTouch = if (physGyro.isEmpty()) w.mappings else w.mappings + physGyro
         trace?.state("workspace: ${w.name}")
         motionMapped = w.mappings.any { it.source is InputSource.Tilt || it.source is InputSource.Shake }
-        allPads = Array(w.pads.size + 2) {
+        allPads = Array(w.pads.size + 3) {
             when {
                 it < w.pads.size -> w.pads[it].mappings
                 it == w.pads.size -> w.keyboard
-                else -> w.mouse
-            }
+                it == w.pads.size + 1 -> w.mouse
+                else -> w.phone
+            }.let { l -> if (physGyro.isEmpty()) l else l.filterNot { m -> m.source is InputSource.Gyro } }
         }
         touchMappings = allTouch
         padMappings = allPads
@@ -623,17 +748,19 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun releaseHeld() {
         for (d in deviceList) d.clear()
         anyDevice.clear()
-        touches.clear(); pressOrder.clear(); setTouchHeld.clear(); touchSticks.clear()
+        touches.clear(); pressOrder.clear(); physDown.clear(); setTouchHeld.clear(); touchSticks.clear()
         updateGyroNow()
         for (s in surfaceList) s.reset()
         for (a in areas) a.clear()
         hapticWas.clear(); hapticNow.clear(); hapticSteps.clear()
         bpState.fill(BP_FREE); bpControl.fill(null)
         pulses.clear()
-        keyModeHeld.clear(); toggledKeys.clear(); nextKeys.clear()
+        keyModeHeld.clear(); toggledKeys.fill(false); nextKeys.clear()
+        shakeOn = false; shakeShown = true
         clearShapers()
         for (t in tapList) t.reset()
         gyroToggled = false
+        toggleEpoch++
         keyOrderSize = 0; inKeyOrder.fill(false)
     }
 
@@ -641,6 +768,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (device == null) return -1
         if (device.keyboard) return ws.pads.size
         if (device.mouse) return ws.pads.size + 1
+        if (device.phone) return ws.pads.size + 2
         return ws.pads.indexOfFirst { it.matches(device.vendorId, device.productId, device.name) }
     }
 
@@ -844,6 +972,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     val touchMappingsInUse: List<Mapping> get() = synchronized(lock) { touchMappings }
 
+    /** Those of [mappings] whose input is on now (at least half way), under one lock: for live mapping labels. */
+    fun activeMappings(mappings: List<Mapping>): List<Mapping> = synchronized(lock) {
+        mappings.filter { abs(sourceValue(it.source)) >= 0.5f }
+    }
+
     /**
      * Every input held now, for the debug panel: touch controls pressed (by label), then each
      * device's held keys ("Gamepad: A"), then touchpad fingers.
@@ -873,6 +1006,21 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val zone = areas[TouchAreaKind.ZONE.ordinal]
         out.addAll(zone.since.keys); out.addAll(zone.late.keys)
         out
+    }
+
+    /**
+     * [pressedTouches] and [latchedTouches] in one lock trip, into the caller's own sets (cleared
+     * first), for the 60 Hz PC overlay send.
+     */
+    fun touchesInto(pressed: MutableSet<String>, latched: MutableSet<String>) {
+        synchronized(lock) {
+            resolveIfDue(clock())
+            pressed.clear(); latched.clear()
+            pressed.addAll(touches.keys)
+            val zone = areas[TouchAreaKind.ZONE.ordinal]
+            pressed.addAll(zone.since.keys); pressed.addAll(zone.late.keys)
+            for ((id, s) in surfaces) if (s.latched) latched.add(id)
+        }
     }
 
     /**
@@ -1041,8 +1189,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * maps taken over by that button's (the last pressed of several).
      */
     fun gyroRoutes(): List<Mapping> = synchronized(lock) {
+        routesCache ?: buildRoutes().also { routesCache = it }
+    }
+
+    private fun buildRoutes(): List<Mapping> {
         val ms = gyroInUse
-        if (ms.isEmpty()) return@synchronized emptyList()
+        if (ms.isEmpty()) return emptyList()
         var out = ms.filter { (it.source as InputSource.Gyro).id.isEmpty() }
         for (id in pressOrder) {
             val own = ms.filter { (it.source as InputSource.Gyro).id == id }
@@ -1050,7 +1202,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val axes = own.mapTo(HashSet()) { (it.source as InputSource.Gyro).axis }
             out = out.filterNot { (it.source as InputSource.Gyro).axis in axes } + own
         }
-        out.filter { it.target != OutputTarget.NoOutput }
+        return out.filter { it.target != OutputTarget.NoOutput }
     }
 
     /** How far the phone is tilted: [x] sideways (+ right), [y] forward and back (+ back), each -1..1. */
@@ -1065,11 +1217,17 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** The phone was shaken: shake mappings press once. */
     fun shake() {
         synchronized(lock) {
-            firingEvents(clock()) { shakeAt = clock(); shakeShown = false }
+            val now = clock()
+            // A shake still pressing ends first, so this one is a new press of its events.
+            if (shakeOn) firingEvents(now) { shakeOn = false }
+            firingEvents(now) { shakeOn = true; shakeAt = now; shakeShown = false }
             trace?.input("shake")
         }
         onChange?.run()
     }
+
+    /** The shake's press has shown in a snapshot and lasted its pulse. */
+    private fun shakeDone(now: Long) = shakeOn && shakeShown && now - shakeAt >= SHAKE_PULSE_NS
 
     /** How far the gyro deflects each game pad axis now (by [GamepadAxis] ordinal, -1..1; triggers 0..1). */
     fun setGyroAxes(values: FloatArray) {
@@ -1155,8 +1313,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (s in surfaceList) d = min(d, s.nextDeadline())
         for (i in pulses.indices) d = min(d, pulses[i].startNs + touchpad.minPulseNanos)
         for (i in tapList.indices) d = min(d, tapDeadline(tapList[i]))
-        for (a in areas) for ((id, t) in a.late) if (id in a.seen) d = min(d, t + touchpad.minPulseNanos)
+        for (a in areas) if (a.late.isNotEmpty()) for ((id, t) in a.late) if (id in a.seen) d = min(d, t + touchpad.minPulseNanos)
         d = min(d, shapersDeadline(clock()))
+        // A shake's press ends by itself: a snapshot then lets it go.
+        if (shakeOn) d = min(d, shakeAt + SHAKE_PULSE_NS)
         // A held haptic is renewed from snapshots, so they keep coming while it is held.
         if (hapticHeld != null) d = min(d, clock() + HAPTIC_RENEW_NS)
         d
@@ -1175,7 +1335,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     val gyroAxes: Int
         get() = synchronized(lock) {
             val g = gyroNow
-            if (g.mode == GyroMode.SENSOR_OFF) return@synchronized 0
+            if (g.mode == GyroMode.SENSOR_OFF) {
+                ratchetsHeld = 0; return@synchronized 0
+            }
+            // Without ratchet mappings in use none is held, even one held when they went away.
+            if (!ratchetMapped) ratchetHeldBits = 0
             val ratchets = if (ratchetMapped) ratchetedAxes() else 0
             ratchetsHeld = ratchetHeldBits
             var out = 0
@@ -1187,6 +1351,55 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             out
         }
 
+    private fun pcGyroButtonsOf(ms: List<Mapping>): IntArray {
+        val kinds = LinkedHashMap<Int, Int>()
+        val seen = HashSet<Pair<Int, OutputTarget>>()
+        for (m in ms) {
+            val t = m.target
+            val kind = when (t) {
+                OutputTarget.GyroPause, OutputTarget.GyroHold -> ALL_GYRO
+                is OutputTarget.GyroPauseAxis -> gyroBit(t.axis)
+                OutputTarget.GyroToggle -> PC_GYRO_TOGGLE
+                else -> continue
+            }
+            val place = pcPlace(m.source)
+            if (place < 0 || !seen.add(place to t)) continue
+            // Two ratchets on one button cancel on an axis, like on the phone; two toggles count as one.
+            val k = kinds[place] ?: 0
+            kinds[place] = if (kind == PC_GYRO_TOGGLE) k or kind else k xor kind
+        }
+        for (b in heldPhys) {
+            if (!b.id.startsWith(PhysicalDevice.CONTROLLER.name + ":") || b.gyro.none { it.anyGyro }) continue
+            val place = b.sources.firstNotNullOfOrNull { src -> pcPlace(src).takeIf { it >= 0 } } ?: continue
+            kinds[place] = (kinds[place] ?: 0) or PC_GYRO_SETTINGS
+        }
+        return kinds.map { (place, kind) -> (place shl 8) or kind }.toIntArray()
+    }
+
+    /** The PAD_ bit index of a controller press source, -1 for anything else. */
+    private fun pcPlace(src: InputSource): Int {
+        val bit = when (src) {
+            is InputSource.Key -> OverlayFeed.padBit(src.keyCode)
+            is InputSource.Axis -> when (src.axis) {
+                AndroidAxis.LTRIGGER, AndroidAxis.BRAKE -> OverlayFeed.PAD_L2
+                AndroidAxis.RTRIGGER, AndroidAxis.GAS -> OverlayFeed.PAD_R2
+                AndroidAxis.HAT_X -> when (src.half) {
+                    AxisHalf.NEGATIVE -> OverlayFeed.PAD_LEFT
+                    AxisHalf.POSITIVE -> OverlayFeed.PAD_RIGHT
+                    AxisHalf.FULL -> 0
+                }
+                AndroidAxis.HAT_Y -> when (src.half) {
+                    AxisHalf.NEGATIVE -> OverlayFeed.PAD_UP
+                    AxisHalf.POSITIVE -> OverlayFeed.PAD_DOWN
+                    AxisHalf.FULL -> 0
+                }
+                else -> 0
+            }
+            else -> 0
+        }
+        return if (bit == 0) -1 else Integer.numberOfTrailingZeros(bit)
+    }
+
     /** The [gyroBit]s of the axes some held ratchet acts on (flipped or not), as of the last [gyroAxes] read. */
     @Volatile var ratchetsHeld: Int = 0
         private set
@@ -1194,11 +1407,17 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** [ratchetedAxes]' axes with any ratchet held. */
     private var ratchetHeldBits = 0
 
-    /** The ratchets [ratchetedAxes] counted: group, input, target. */
-    private val ratchetSeen = HashSet<Triple<Dev?, InputSource, OutputTarget>>()
+    /** The ratchets [ratchetedAxes] counted: each one's group and [Ratchet.key], in two reused lists. */
+    private val ratchetSeenDevs = ArrayList<Dev?>()
+    private val ratchetSeenKeys = ArrayList<Pair<InputSource, OutputTarget>>()
 
     /** [s] as the one input it is part of: a trigger's pull axes are its key (they map together). */
     private fun sameInput(s: InputSource): InputSource = when {
+        s is InputSource.Axis && s.stage != AxisStage.NONE -> s.copy(axis = when (s.axis) {
+            AndroidAxis.BRAKE -> AndroidAxis.LTRIGGER
+            AndroidAxis.GAS -> AndroidAxis.RTRIGGER
+            else -> s.axis
+        })
         s is InputSource.Axis && (s.axis == AndroidAxis.LTRIGGER || s.axis == AndroidAxis.BRAKE) -> InputSource.Key(AndroidKey.BUTTON_L2)
         s is InputSource.Axis && (s.axis == AndroidAxis.RTRIGGER || s.axis == AndroidAxis.GAS) -> InputSource.Key(AndroidKey.BUTTON_R2)
         else -> s
@@ -1212,24 +1431,31 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun ratchetedAxes(): Int {
         var bits = 0
         var held = 0
-        ratchetSeen.clear()
-        forEachGroup { ms, dev ->
-            for (i in ms.indices) {
-                val m = ms[i]
-                val t = m.target
-                val b = when (t) {
-                    OutputTarget.GyroPause, OutputTarget.GyroHold -> ALL_GYRO
-                    is OutputTarget.GyroPauseAxis -> gyroBit(t.axis)
-                    else -> continue
-                }
+        ratchetSeenDevs.clear(); ratchetSeenKeys.clear()
+        val now = clock()
+        forEachGroup(touchRatchets, padRatchets) { rs, dev ->
+            for (i in rs.indices) {
+                val r = rs[i]
                 // One input's sources (a trigger's axes and its key) count once.
-                if (out(m, dev, clock()) >= PRESS_THRESHOLD && ratchetSeen.add(Triple(dev, sameInput(m.source), t))) {
-                    bits = bits xor b; held = held or b
-                }
+                if (out(r.m, dev, now) < PRESS_THRESHOLD || ratchetSeen(dev, r.key)) continue
+                ratchetSeenDevs.add(dev); ratchetSeenKeys.add(r.key)
+                bits = bits xor r.bits; held = held or r.bits
             }
         }
         ratchetHeldBits = held
         return bits
+    }
+
+    private fun ratchetSeen(dev: Dev?, key: Pair<InputSource, OutputTarget>): Boolean {
+        for (i in ratchetSeenKeys.indices) if (ratchetSeenDevs[i] === dev && ratchetSeenKeys[i] == key) return true
+        return false
+    }
+
+    /** The [gyroBit]s ratchet target [t] flips, 0 for any other target. */
+    private fun ratchetBits(t: OutputTarget): Int = when (t) {
+        OutputTarget.GyroPause, OutputTarget.GyroHold -> ALL_GYRO
+        is OutputTarget.GyroPauseAxis -> gyroBit(t.axis)
+        else -> 0
     }
 
     /**
@@ -1242,6 +1468,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             ws = ws.copy(gyro = settings)
             current = current.updateWorkspace(workspaceIndex) { it.copy(gyro = settings) }
             gyroToggled = false
+            toggleEpoch++
             applyLayerSettings()
         }
         onChange?.run()
@@ -1306,6 +1533,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (anyCarried) pruneCarried()
         hapticNow.clear()
         forEachGroup { ms, dev -> accumulate(ms, dev) }
+        // A device skipped (nothing held) holds no key mode press.
+        for (i in deviceList.indices) {
+            val d = deviceList[i]
+            if (!d.modeSeen) d.modeHeld.clear()
+            d.modeSeen = false
+        }
+        if (!anyDevice.modeSeen) anyDevice.modeHeld.clear()
+        anyDevice.modeSeen = false
         shakeShown = true
         for (a in 0 until 4) if (abs(gyroPad[a]) > abs(stick[a])) stick[a] = gyroPad[a]
         trigger[0] = max(trigger[0], abs(gyroPad[GamepadAxis.LT.ordinal]))
@@ -1446,16 +1681,17 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val dupR2 =
             device?.analogRightTrigger == true && pad in mapsRightTriggerAxis.indices && mapsRightTriggerAxis[pad]
         val now = clock()
+        dev?.modeSeen = true
         for (i in ms.indices) {
             val m = ms[i]
             val v = out(m, dev, now, output = true)
             if (v >= PRESS_THRESHOLD) {
                 if (m.options?.endsOnNextInput == true) {
                     val sh = shaperOf(m, dev)
-                    if (sh.options.mode == How.TOGGLE && sh.toggledOn(now)) stickies.add(Sticky(sh, m.target))
+                    if (sh.options.mode == How.TOGGLE && sh.toggledOn(now)) stickies.add(sh, m.target)
                 }
                 // A swipe direction's own outputs are not another input for its latch.
-                if (latchChip(m.source)) stickies.add(Sticky(null, m.target))
+                if (latchChip(m.source)) stickies.add(null, m.target)
                 sameSeen(m, dev, now)
             }
             when (val t = m.target) {
@@ -1482,7 +1718,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 is OutputTarget.Key -> if (t.usage in 0..255) {
                     if (t.mode == KeyMode.HOLD) {
                         if (v >= PRESS_THRESHOLD) heldKeys[t.usage] = true
-                    } else keyModePress(m, t, v >= PRESS_THRESHOLD)
+                    } else keyModePress(m, t, v >= PRESS_THRESHOLD, dev?.modeHeld ?: keyModeHeld)
                 }
                 is OutputTarget.Mouse -> if (v >= PRESS_THRESHOLD) accMouse = accMouse or (1 shl t.button.bit)
                 // Mouse motion follows swipe steps as they come (swipeMove).
@@ -1490,7 +1726,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 is OutputTarget.Wheel, is OutputTarget.MouseAxis,
                 OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause, is OutputTarget.GyroPauseAxis,
                 OutputTarget.SwitchApps, OutputTarget.Zoom, is OutputTarget.Layer, OutputTarget.LayerBack,
-                OutputTarget.LetGo, OutputTarget.NoOutput -> Unit
+                OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.NoOutput -> Unit
 
                 is OutputTarget.Haptic, is OutputTarget.HapticStep -> {
                     val a = min(1f, abs(v))
@@ -1501,14 +1737,17 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (a in 0 until 4) if (abs(groupStick[a]) > abs(stick[a])) stick[a] = groupStick[a]
     }
 
-    /** A toggle or next-key [t] of mapping [m] seen [pressed] in a snapshot: a press flips it. */
-    private fun keyModePress(m: Mapping, t: OutputTarget.Key, pressed: Boolean) {
+    /**
+     * A toggle or next-key [t] of mapping [m] seen [pressed] in a snapshot: a press flips it.
+     * [held] is the group's ([Dev.modeHeld]), so another device that does not hold it does not end the press.
+     */
+    private fun keyModePress(m: Mapping, t: OutputTarget.Key, pressed: Boolean, held: HashSet<Mapping>) {
         if (!pressed) {
-            keyModeHeld.remove(m); return
+            held.remove(m); return
         }
-        if (!keyModeHeld.add(m)) return // still the same press
+        if (!held.add(m)) return // still the same press
         when (t.mode) {
-            KeyMode.TOGGLE -> if (!toggledKeys.remove(t.usage)) toggledKeys.add(t.usage)
+            KeyMode.TOGGLE -> toggledKeys[t.usage] = !toggledKeys[t.usage]
             // Pressed again before it was used: it lets go.
             else -> if (nextKeys.remove(t.usage) == null) nextKeys[t.usage] = false
         }
@@ -1519,27 +1758,50 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * has been pressed, then until all of those are let go.
      */
     private fun holdModeKeys() {
-        for (u in toggledKeys) heldKeys[u] = true
-        if (nextKeys.isEmpty()) return
+        // Another key is one some other mapping holds: looked for before the toggled keys are added.
         var other = false
-        for (u in 0 until 256) if (heldKeys[u] && u !in nextKeys && !HidUsage.isModifier(u)) {
+        if (nextKeys.isNotEmpty()) for (u in 0 until 256) if (heldKeys[u] && !HidUsage.isModifier(u) && u !in nextKeys) {
             other = true; break
         }
+        for (u in 0 until 256) {
+            modeOnlyKeys[u] = toggledKeys[u] && !heldKeys[u]
+            if (toggledKeys[u]) heldKeys[u] = true
+        }
+        if (nextKeys.isEmpty()) return
         val it = nextKeys.entries.iterator()
         while (it.hasNext()) {
             val e = it.next()
             if (other) e.setValue(true) else if (e.value) {
                 it.remove(); continue
             }
+            if (!heldKeys[e.key]) modeOnlyKeys[e.key] = true
             heldKeys[e.key] = true
         }
     }
 
-    /** A toggle that is on and ends on the next other input, and what it presses (null: only what a swipe direction presses). */
-    private class Sticky(val shaper: Shaper?, val target: OutputTarget)
+    /**
+     * Toggles that are on, each with what it presses (shaper null: only what a swipe direction
+     * presses). Kept in two lists that are reused, so a snapshot allocates nothing for them.
+     */
+    private class Stickies {
+        val shapers = ArrayList<Shaper?>()
+        val targets = ArrayList<OutputTarget>()
+        val size: Int get() = shapers.size
+        fun isNotEmpty() = shapers.isNotEmpty()
+        fun add(shaper: Shaper?, target: OutputTarget) {
+            shapers.add(shaper); targets.add(target)
+        }
 
-    /** This snapshot's [Sticky]s ([accumulate]). */
-    private val stickies = ArrayList<Sticky>()
+        fun clear() {
+            shapers.clear(); targets.clear()
+        }
+    }
+
+    /** This snapshot's toggles that end on the next other input ([accumulate]). */
+    private val stickies = Stickies()
+
+    /** [endOnNextInput]'s keys of the toggles, reused. */
+    private val stickyKeys = BooleanArray(256)
 
     /** A swipe latch that ends on the next input saw another one pressed. */
     private var latchNextUsed = false
@@ -1551,13 +1813,16 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     private fun endOnNextInput(now: Long) {
         val latch = touchpad.latchEndsOnNext || surfaceList.any { it.latchEndsOnNext }
-        if (stickies.none { it.shaper != null } && !latch) {
+        var anyToggle = false
+        for (i in 0 until stickies.size) if (stickies.shapers[i] != null) anyToggle = true
+        if (!anyToggle && !latch) {
             latchNextUsed = false; stickies.clear(); return
         }
-        val keys = BooleanArray(256)
+        val keys = stickyKeys
+        keys.fill(false)
         var pad = 0
         var mouse = 0
-        for (st in stickies) when (val t = st.target) {
+        for (i in 0 until stickies.size) when (val t = stickies.targets[i]) {
             is OutputTarget.Key -> if (t.usage in 0..255) keys[t.usage] = true
             is OutputTarget.Pad -> pad = pad or (1 shl t.button.bit)
             is OutputTarget.Mouse -> mouse = mouse or (1 shl t.button.bit)
@@ -1565,15 +1830,16 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         var other = (accButtons and pad.inv()) != 0 || (accMouse and mouse.inv()) != 0 ||
                 accUp || accDown || accLeft || accRight
-        if (!other) for (u in 0 until 256) if (heldKeys[u] && !keys[u] && !HidUsage.isModifier(u)) {
+        // Keys only toggles and next-keys hold are not another input either.
+        if (!other) for (u in 0 until 256) if (heldKeys[u] && !keys[u] && !modeOnlyKeys[u] && !HidUsage.isModifier(u)) {
             other = true; break
         }
-        for (st in stickies) {
-            val sh = st.shaper ?: continue
+        for (i in 0 until stickies.size) {
+            val sh = stickies.shapers[i] ?: continue
             if (other) sh.nextUsed = true
             else if (sh.nextUsed) {
                 sh.letGo(now)
-                if (!sh.on(now)) when (val t = st.target) {
+                if (!sh.on(now)) when (val t = stickies.targets[i]) {
                     is OutputTarget.Key -> if (t.usage in 0..255) heldKeys[t.usage] = false
                     is OutputTarget.Pad -> accButtons = accButtons and (1 shl t.button.bit).inv()
                     is OutputTarget.Mouse -> accMouse = accMouse and (1 shl t.button.bit).inv()
@@ -1592,16 +1858,19 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
     }
 
-    /** Outputs pressed by mappings that are not toggles watching for them ([MapOptions.endsOnSame]): now and at the last snapshot. */
-    private var othersNow = HashSet<OutputTarget>()
-    private var othersBefore = HashSet<OutputTarget>()
+    /**
+     * Outputs pressed by mappings that are not toggles watching for them ([MapOptions.endsOnSame]):
+     * now and at the last snapshot. Lists (few outputs are pressed at once), so adding allocates nothing.
+     */
+    private var othersNow = ArrayList<OutputTarget>()
+    private var othersBefore = ArrayList<OutputTarget>()
 
     /** Toggles that are on and end when their output is pressed elsewhere; toggles of other mappings that are on. */
-    private val sameWatchers = ArrayList<Sticky>()
-    private val onToggles = ArrayList<Sticky>()
+    private val sameWatchers = Stickies()
+    private val onToggles = Stickies()
 
     /** What swipe latches that end on their own output pressed elsewhere press. */
-    private val latchSameTargets = HashSet<OutputTarget>()
+    private val latchSameTargets = ArrayList<OutputTarget>()
 
     /** Mapping [m] (of [dev]'s group) presses its output now: notes it for [endOnSame]. */
     private fun sameSeen(m: Mapping, dev: Dev?, now: Long) {
@@ -1616,9 +1885,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val sh = shaperOf(m, dev)
             if (sh.toggledOn(now)) {
                 if (o!!.endsOnSame) {
-                    sameWatchers.add(Sticky(sh, m.target)); return
+                    sameWatchers.add(sh, m.target); return
                 }
-                onToggles.add(Sticky(sh, m.target))
+                onToggles.add(sh, m.target)
             }
         }
         othersNow.add(m.target)
@@ -1631,21 +1900,30 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     private fun endOnSame(now: Long) {
         if (sameWatchers.isNotEmpty() || latchSameTargets.isNotEmpty()) {
-            for (w in sameWatchers) {
-                val sh = w.shaper!!
-                if (sh.sameArmed && w.target in othersNow && w.target !in othersBefore) {
+            for (i in 0 until sameWatchers.size) {
+                val sh = sameWatchers.shapers[i]!!
+                val target = sameWatchers.targets[i]
+                if (sh.sameArmed && target in othersNow && target !in othersBefore) {
                     sh.letGo(now)
-                    for (t in onToggles) if (t.target == w.target && !t.shaper!!.sameArmed) t.shaper.letGo(now)
+                    for (j in 0 until onToggles.size) {
+                        val t = onToggles.shapers[j]!!
+                        if (onToggles.targets[j] == target && !t.sameArmed) t.letGo(now)
+                    }
                 }
                 sh.sameArmed = true
             }
-            if (latchSameTargets.any { it in othersNow && it !in othersBefore }) {
+            var latchEnds = false
+            for (i in latchSameTargets.indices) {
+                val t = latchSameTargets[i]
+                if (t in othersNow && t !in othersBefore) latchEnds = true
+            }
+            if (latchEnds) {
                 touchpad.endLatchOnSame()
                 for (sf in surfaceList) sf.endLatchOnSame()
             }
         }
         // A toggle seen on: the next snapshot's press of its output is a new one.
-        for (t in onToggles) t.shaper!!.sameArmed = true
+        for (i in 0 until onToggles.size) onToggles.shapers[i]!!.sameArmed = true
         sameWatchers.clear(); onToggles.clear(); latchSameTargets.clear()
         val b = othersBefore; othersBefore = othersNow; othersNow = b; othersNow.clear()
     }
@@ -1654,7 +1932,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun mapsTriggerAxis(ms: List<Mapping>, a: Int, b: Int): Boolean = ms.any { m ->
         val src = m.source
         val t = m.target
-        src is InputSource.Axis && (src.axis == a || src.axis == b) &&
+        src is InputSource.Axis && src.stage == AxisStage.NONE && (src.axis == a || src.axis == b) &&
                 t is OutputTarget.PadAxis && (t.axis == GamepadAxis.LT || t.axis == GamepadAxis.RT)
     }
 
@@ -1662,18 +1940,23 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * Runs [block] for each source group: the touch mappings over the touch state, each attached
      * device over its pad's mappings, and the "any device" source over every pad.
      */
-    private inline fun forEachGroup(block: (List<Mapping>, Dev?) -> Unit) {
-        block(touchMappings, null)
+    private inline fun forEachGroup(block: (List<Mapping>, Dev?) -> Unit) = forEachGroup(touchMappings, padMappings, block)
+
+    /** [forEachGroup] over lists made from the mappings in use: [touch] for the touch group, [pads] by pad index. */
+    private inline fun <T> forEachGroup(touch: List<T>, pads: Array<List<T>>, block: (List<T>, Dev?) -> Unit) {
+        block(touch, null)
         var now = Long.MIN_VALUE
         for (i in deviceList.indices) {
             val d = deviceList[i]
-            if (d.pad < 0) continue
+            if (d.pad < 0 || d.pad >= pads.size) continue
+            val ms = pads[d.pad]
+            if (ms.isEmpty()) continue
             // A toggle (or a delay, a minimum hold) goes on after the device's inputs are let go.
             if (d.active || (d.shapers.isNotEmpty() && busy(d, if (now == Long.MIN_VALUE) clock().also { now = it } else now))) {
-                block(padMappings[d.pad], d)
+                block(ms, d)
             }
         }
-        if (anyDevice.active || (anyDevice.shapers.isNotEmpty() && busy(anyDevice, clock()))) for (ms in padMappings) block(ms, anyDevice)
+        if (anyDevice.active || (anyDevice.shapers.isNotEmpty() && busy(anyDevice, clock()))) for (ms in pads) block(ms, anyDevice)
     }
 
     /** Some shaper of [d] is on or changes by itself after [now]. */
@@ -1704,9 +1987,34 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         resolveButtons(now)
         change()
         engagedEvents(eventsAfter, now, before = false)
-        for (t in eventsAfter) if (t !in eventsBefore) onPress(t)
-        for (t in eventsBefore) if (t is OutputTarget.Layer && t !in eventsAfter) layerReleased(t)
+        if (eventsAfter.isNotEmpty()) for (t in eventsAfter) if (t !in eventsBefore) onPress(t)
+        if (eventsBefore.isNotEmpty()) for (t in eventsBefore) if (t is OutputTarget.Layer && t !in eventsAfter) layerReleased(t)
         if (anyCarried) pruneCarried()
+        if (heldPhys.isNotEmpty()) physHeldChanged()
+    }
+
+    /**
+     * Physical keys and buttons with settings of their own while held ([Workspace.heldButtons]),
+     * and which of them are held: one going down or up joins or leaves [pressOrder] (as
+     * [PHYS] + its id), so the last pressed of them and the touch buttons wins.
+     */
+
+    private fun physHeldChanged() {
+        var changed = false
+        for (b in heldPhys) {
+            var on = false
+            for (src in b.sources) {
+                for (i in deviceList.indices) {
+                    val d = deviceList[i]
+                    if (d.pad >= 0 && value(src, d) >= PRESS_THRESHOLD) { on = true; break }
+                }
+                if (on) break
+            }
+            if (on == (b.id in physDown)) continue
+            changed = true
+            if (on) { physDown.add(b.id); pressOrder.add(PHYS + b.id) } else { physDown.remove(b.id); pressOrder.remove(PHYS + b.id) }
+        }
+        if (changed) updateGyroNow()
     }
 
     /** Resolves due holds and tap releases outside an input change (snapshot, touchpad input). */
@@ -1717,7 +2025,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun buttonsDue(now: Long): Boolean {
         for (i in pulses.indices) if (pulseDone(pulses[i], now)) return true
         for (i in tapList.indices) if (now >= tapDeadline(tapList[i])) return true
-        for (a in areas) for ((id, t) in a.late) if (areaDone(a, id, t, now)) return true
+        for (a in areas) if (a.late.isNotEmpty()) for ((id, t) in a.late) if (areaDone(a, id, t, now)) return true
+        if (shakeDone(now)) return true
         return shapersDeadline(now) <= now
     }
 
@@ -1787,6 +2096,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Shown taps release; waiting presses and release pulses resolve. */
     private fun resolveButtons(now: Long) {
         resolveTaps(now)
+        if (shakeDone(now)) shakeOn = false
         var i = 0
         while (i < pulses.size) {
             val p = pulses[i]
@@ -1812,13 +2122,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     private fun engagedEvents(into: HashSet<OutputTarget>, now: Long, before: Boolean) {
         into.clear()
-        forEachGroup { ms, dev ->
+        if (!eventsMapped) return
+        forEachGroup(touchEvents, padEvents) { ms, dev ->
             for (i in ms.indices) {
                 val m = ms[i]
                 val t = m.target
-                if (t !is OutputTarget.Wheel && t != OutputTarget.GyroToggle && t !is OutputTarget.Layer &&
-                    t != OutputTarget.LayerBack && t != OutputTarget.LetGo
-                ) continue
                 val on = if (!shaped(m)) value(m.source, dev) >= PRESS_THRESHOLD else {
                     val sh = shaperOf(m, dev)
                     if (before) sh.eventOn else (out(m, dev, now) >= PRESS_THRESHOLD).also { sh.eventOn = it }
@@ -1827,6 +2135,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
         }
     }
+
+    /** [t] fires when it is pressed ([onPress]) rather than being held. */
+    private fun isEvent(t: OutputTarget) = t is OutputTarget.Wheel || t == OutputTarget.GyroToggle || t is OutputTarget.Layer ||
+            t == OutputTarget.LayerBack || t == OutputTarget.LetGo || t == OutputTarget.BlackScreen
 
     /** [m]'s shaper in [dev]'s group (the touch group for null). */
     private fun shaperOf(m: Mapping, dev: Dev?): Shaper =
@@ -1920,9 +2232,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** When a shaped output next changes by itself (after [now]); Long.MAX_VALUE = none. */
     private fun shapersDeadline(now: Long): Long {
         var d = Long.MAX_VALUE
-        for (sh in touchShapers.values) d = min(d, sh.deadline(now))
-        for (dev in deviceList) for (sh in dev.shapers.values) d = min(d, sh.deadline(now))
-        for (sh in anyDevice.shapers.values) d = min(d, sh.deadline(now))
+        if (touchShapers.isNotEmpty()) for (sh in touchShapers.values) d = min(d, sh.deadline(now))
+        for (i in deviceList.indices) {
+            val dev = deviceList[i]
+            if (dev.shapers.isNotEmpty()) for (sh in dev.shapers.values) d = min(d, sh.deadline(now))
+        }
+        if (anyDevice.shapers.isNotEmpty()) for (sh in anyDevice.shapers.values) d = min(d, sh.deadline(now))
         return d
     }
 
@@ -1962,6 +2277,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             is OutputTarget.Layer -> layerPressed(t)
             OutputTarget.LayerBack -> layerBack()
             OutputTarget.LetGo -> letGoAll(clock())
+            OutputTarget.BlackScreen -> onBlackScreen?.run()
             else -> Unit
         }
     }
@@ -2073,7 +2389,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** An input whose value follows a motion (a full stick or trigger axis, touch motion): it follows the new set at once. */
     private fun continuous(s: InputSource): Boolean = when (s) {
-        is InputSource.Axis -> s.half == AxisHalf.FULL
+        is InputSource.Axis -> s.half == AxisHalf.FULL && s.stage == AxisStage.NONE
         is InputSource.TouchStick -> s.half == AxisHalf.FULL
         is InputSource.Surface -> s.input.motion
         is InputSource.Gyro -> true
@@ -2126,6 +2442,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         // Buttons take the touchpad's mappings in use of the inputs they map in none of the layers in use.
         val touchInUse = inUse(allTouch, carried.getOrNull(0), keepNothing = true)
         gyroInUse = touchInUse.filter { it.source is InputSource.Gyro }
+        routesCache = null
         touchMappings = Inheritance.toButtons(touchInUse, buttonIds).filter { it.target != OutputTarget.NoOutput }
         padMappings = Array(allPads.size) { inUse(allPads[it], carried.getOrNull(it + 1)) }
         mapsLeftTriggerAxis =
@@ -2138,9 +2455,17 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val src = m.source
             if (src is InputSource.TouchStickDiagonal) stickCfgs[src.id]?.diagonalMapped?.set(src.diagonal.ordinal, true)
         }
-        ratchetMapped = (padMappings.asSequence() + sequenceOf(touchMappings)).any { ms ->
-            ms.any { it.target == OutputTarget.GyroPause || it.target == OutputTarget.GyroHold || it.target is OutputTarget.GyroPauseAxis }
+        pcGyroButtons = if (ws.pads.isEmpty()) IntArray(0) else pcGyroButtonsOf(padMappings[0])
+        fun ratchets(ms: List<Mapping>) = ms.mapNotNull { m ->
+            val b = ratchetBits(m.target)
+            if (b == 0) null else Ratchet(m, sameInput(m.source) to m.target, b)
         }
+        touchRatchets = ratchets(touchMappings)
+        padRatchets = Array(padMappings.size) { ratchets(padMappings[it]) }
+        ratchetMapped = touchRatchets.isNotEmpty() || padRatchets.any { it.isNotEmpty() }
+        touchEvents = touchMappings.filter { isEvent(it.target) }
+        padEvents = Array(padMappings.size) { padMappings[it].filter { m -> isEvent(m.target) } }
+        eventsMapped = touchEvents.isNotEmpty() || padEvents.any { it.isNotEmpty() }
         trace?.let { traceLayers(it) }
         touchpad.map = SurfaceMap(touchMappings)
         for ((id, s) in surfaces) s.map = SurfaceMap(touchMappings, id)
@@ -2171,6 +2496,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val e = WorkspaceDefaults.layered(ws, layerSet, layerOverrides)
         eff = e
         touchpad.settings = e.touchpad
+        updateGyroNow()
         touchpad.doubleTapNanos = e.doubleTapMs.coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L
         touchpad.longPressNanos = e.longPressMs.coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
         for (c in ws.touchControls) {
@@ -2248,7 +2574,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun value(source: InputSource, dev: Dev?, output: Boolean = false): Float = when (source) {
         is InputSource.Key -> if (dev != null && (if (output) dev.keyForOutput(source.keyCode) else dev.key(source.keyCode))) 1f else 0f
         is InputSource.KeyGesture -> if (dev?.gestures?.get(source.keyCode)?.on(source.gesture) == true) 1f else 0f
-        is InputSource.Axis -> if (dev == null) 0f else half(dev.axis(source.axis), source.half)
+        is InputSource.Axis -> if (dev == null) 0f else axisValue(dev, source)
         is InputSource.Touch -> if (touches.containsKey(source.id)) 1f else 0f
         is InputSource.TouchTap -> if (tapStates[source.id]?.on(ButtonGesture.TAP) == true) 1f else 0f
         is InputSource.TouchLongPress -> if (tapStates[source.id]?.on(ButtonGesture.LONG_PRESS) == true) 1f else 0f
@@ -2286,7 +2612,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
         is InputSource.Shake ->
             if (source.id.isNotEmpty() && !touches.containsKey(source.id)) 0f
-            else if (shakeAt != Long.MIN_VALUE && (!shakeShown || clock() - shakeAt < SHAKE_PULSE_NS)) 1f else 0f
+            else if (shakeOn) 1f else 0f
         is InputSource.TouchStickDiagonal -> {
             val v = touchSticks[source.id]
             if (v != null && v.dirs and (DIR_DIAGONAL shl source.diagonal.ordinal) != 0) v.mag else 0f
@@ -2309,6 +2635,57 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
     }
 
+    /**
+     * Physical axis [s] of [dev]: raw unless it is part of a tuned stick ([StickTuning]: round
+     * deadzones, curve, sensitivity, direction pies) or one of its stages ([AxisStage]).
+     */
+    private fun axisValue(dev: Dev, s: InputSource.Axis): Float {
+        val a = s.axis
+        // The device's own sticks: on a pad with its right stick on RX / RY, Z / RZ are triggers.
+        val rx = dev.device?.rightStickRx == true
+        val layout = if (rx) STICKS_RX else STICKS
+        val stick = if (a in 0 until AXIS_SLOTS) (if (rx) axisStickRx else axisStick)[a] else null
+        return when (s.stage) {
+            AxisStage.NONE -> if (stick == null) half(dev.axis(a), s.half) else stickValue(dev, s, stick, layout)
+            AxisStage.OUTER -> stickValue(dev, s, stick ?: DEFAULT_STICK, layout)
+            AxisStage.PRESS, AxisStage.FULL_PULL -> {
+                val t = (if (a in 0 until AXIS_SLOTS) axisTrigger[a] else null) ?: DEFAULT_TRIGGER
+                val at = if (s.stage == AxisStage.PRESS) t.press else t.full
+                if (dev.axis(a) > 0f && dev.axis(a) >= at) 1f else 0f
+            }
+        }
+    }
+
+    /** [s] (a stick axis, half, or Outer) of [dev], whose sticks are [layout], with stick tuning [t]. */
+    private fun stickValue(dev: Dev, s: InputSource.Axis, t: StickTuning, layout: StickLayout): Float {
+        val a = s.axis
+        val partner = layout.partner.getOrElse(a) { -1 }
+        if (partner < 0) return if (s.stage == AxisStage.NONE) half(dev.axis(a), s.half) else 0f
+        val own = dev.axis(a)
+        val other = dev.axis(partner)
+        val r = hypot(own, other)
+        val span = (t.outer - t.inner).coerceAtLeast(0.01f)
+        val travel = ((r - t.inner) / span).coerceIn(0f, 1f)
+        if (travel <= 0f) return 0f
+        if (s.stage == AxisStage.OUTER) {
+            if (travel < t.outerRing) return 0f
+            return if (s.half == AxisHalf.FULL || inPie(s, own, other, t, layout)) 1f else 0f
+        }
+        val mag = (t.curve.apply(travel) * t.sensitivity).coerceAtMost(1f)
+        return when (s.half) {
+            AxisHalf.FULL -> own / r * mag
+            else -> if (inPie(s, own, other, t, layout)) mag else 0f
+        }
+    }
+
+    /** Whether a stick at ([own] on [s]'s axis, [other] on its partner) points into [s]'s direction pie. */
+    private fun inPie(s: InputSource.Axis, own: Float, other: Float, t: StickTuning, layout: StickLayout): Boolean {
+        val along = if (s.half == AxisHalf.NEGATIVE) -own else own
+        if (along <= 0f) return false
+        val pie = (if (layout.isX[s.axis]) t.pieX else t.pieY).coerceIn(StickTuning.MIN_PIE, StickTuning.MAX_PIE)
+        return Math.toDegrees(atan2(abs(other), along).toDouble()) <= pie / 2.0
+    }
+
     private fun half(v: Float, half: AxisHalf): Float = when (half) {
         AxisHalf.FULL -> v
         AxisHalf.POSITIVE -> max(v, 0f)
@@ -2320,6 +2697,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     companion object {
         const val PRESS_THRESHOLD = 0.5f
+
+        /** [pressOrder]'s prefix of a physical key or button ([HeldButton]). */
+        private const val PHYS = HeldButton.GYRO_ID
 
         /** [moveTrack]: inertia carries the Moves on. */
         const val MOVES_GLIDING = 4
@@ -2361,12 +2741,18 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
         /** Android axis ids are 0..47 (MotionEvent.AXIS_GENERIC_16). */
         private const val AXIS_SLOTS = 64
+        private val DEFAULT_STICK = StickTuning()
+        private val DEFAULT_TRIGGER = TriggerTuning()
+
+        /** A pad's physical sticks: right stick on Z / RZ ([PhysicalSticks.sticks]) or on RX / RY ([PhysicalSticks.sticksRx]). */
+        private val STICKS = StickLayout(PhysicalSticks.sticks)
+        private val STICKS_RX = StickLayout(PhysicalSticks.sticksRx)
 
         private const val MAX_BUTTON_FINGERS = 10
 
         private const val BP_FREE = 0
 
-        private val MOTION_AXES = listOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL)
+        private val MOTION_AXES = arrayOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL)
 
         /** Axis [a]'s bit of [gyroAxes]. */
         fun gyroBit(a: MotionAxis): Int = when (a) {
@@ -2378,6 +2764,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
         /** Every gyro axis's [gyroBit]. */
         const val ALL_GYRO = 7
+
+        /** A [pcGyroButtons] kind bit: the button has gyro settings of its own while held ([pcHeldGyro]). */
+        const val PC_GYRO_SETTINGS = 16
+
+        /** A [pcGyroButtons] kind bit: the button toggles the gyro. */
+        const val PC_GYRO_TOGGLE = 8
 
 
         /** Pressed: a finger on a control without a surface. */
@@ -2392,5 +2784,15 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         /** Wheel units (1/120 notch) per mouse count of swipe: a notch every 20 dp at sensitivity 1.5. */
         const val SWIPE_WHEEL_PER_COUNT = 4f
 
+    }
+}
+
+/** Per axis id (0..63): the other axis of its physical stick in [sticks] ([partner], or -1), and whether it is the X axis. */
+private class StickLayout(sticks: Map<String, Pair<Int, Int>>) {
+    val partner = IntArray(64) { -1 }
+    val isX = BooleanArray(64)
+
+    init {
+        for ((x, y) in sticks.values) { partner[x] = y; partner[y] = x; isX[x] = true }
     }
 }

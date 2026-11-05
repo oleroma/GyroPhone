@@ -52,6 +52,7 @@ public sealed class HostSettings
                 ids.Add(o.Id);
             }
             o.Colors ??= [];
+            o.MigrateOld();
         }
     }
 

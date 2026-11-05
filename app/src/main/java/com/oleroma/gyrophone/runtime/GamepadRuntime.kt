@@ -14,6 +14,7 @@ import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.engine.GyroPose
 import com.oleroma.gyrophone.core.engine.GyroSway
 import com.oleroma.gyrophone.core.engine.MappingEngine
+import com.oleroma.gyrophone.core.engine.PadGyro
 import com.oleroma.gyrophone.core.engine.TiltShake
 import com.oleroma.gyrophone.core.engine.Touchpad
 import com.oleroma.gyrophone.core.hid.HidDescriptor
@@ -31,6 +32,8 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TriggerReset
 import com.oleroma.gyrophone.core.model.GyroMode
+import com.oleroma.gyrophone.core.engine.GyroMath
+import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.GyroSpace
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.NavCorners
@@ -39,6 +42,7 @@ import com.oleroma.gyrophone.core.model.WorkspaceSet
 import com.oleroma.gyrophone.ui.TouchVisuals
 import com.oleroma.gyrophone.data.ProfileStore
 import com.oleroma.gyrophone.core.net.ByeReason
+import com.oleroma.gyrophone.core.net.PcGyroFeed
 import com.oleroma.gyrophone.core.net.Wire
 import com.oleroma.gyrophone.core.sensor.GyroRateWindow
 import com.oleroma.gyrophone.hid.HidDeviceManager
@@ -52,6 +56,7 @@ import com.oleroma.gyrophone.sensor.AccelSource
 import com.oleroma.gyrophone.sensor.DirectChannelGyroSource
 import com.oleroma.gyrophone.sensor.GyroSource
 import com.oleroma.gyrophone.wifi.WifiLink
+import com.oleroma.gyrophone.wifi.WifiPump
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -61,8 +66,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.sqrt
 
 /** A game controller attached to the phone (e.g. a clip-on controller). */
 data class AttachedController(
@@ -83,6 +90,8 @@ data class AttachedController(
  * GamepadService; the UI reads its state flows.
  */
 class GamepadRuntime(context: Context) {
+    // Acceleration graphs on screen ([watchAccel]); first, as the gyro's start check reads it.
+    private val accelWatchers = java.util.concurrent.atomic.AtomicInteger()
     private val appContext = context.applicationContext
 
     val store = ProfileStore(appContext)
@@ -150,6 +159,51 @@ class GamepadRuntime(context: Context) {
     /** How often the gyro direct channel is checked for new samples. */
     val gyroPollHz: StateFlow<Int> = _gyroPollHz
 
+    private val _pcControllerGyro = MutableStateFlow(prefs.getBoolean(KEY_PC_CONTROLLER_GYRO, false))
+        .also { wifi.pcGyro.enabled = it.value }
+
+    /** "Use PC controller for gyro ratchet": a controller plugged into the PC ratchets and toggles the gyro ([com.oleroma.gyrophone.core.net.PcGyroFeed]). */
+    val pcControllerGyro: StateFlow<Boolean> = _pcControllerGyro
+
+    // The first start with these: the open workspace's own values (the workspace and layer ones are no longer used).
+    private val _gyroTightening = MutableStateFlow(
+        globalGyroFilter(KEY_GYRO_TIGHTENING) { it.tighteningThreshold },
+    ).also { gyroMouse.tightening = it.value }
+
+    /** The app's gyro jitter cutoff (deg/s, 0 = off): below it slow turns move less. Every workspace, and the PC in PC gyro mode. */
+    val gyroTightening: StateFlow<Float> = _gyroTightening
+
+    private val _gyroSmoothing = MutableStateFlow(
+        globalGyroFilter(KEY_GYRO_SMOOTHING) { it.smoothingThreshold },
+    ).also { gyroMouse.smoothing = it.value }
+
+    /** The app's gyro smoothing (deg/s, 0 = off): below it motion is averaged over a short window. */
+    val gyroSmoothing: StateFlow<Float> = _gyroSmoothing
+
+    /** The stored value of [key], or the first time the open workspace's [of], stored from then on. */
+    private fun globalGyroFilter(key: String, of: (GyroSettings) -> Float): Float {
+        if (prefs.contains(key)) return prefs.getFloat(key, 0f).takeIf { it.isFinite() && it >= 0f } ?: 0f
+        val v = of(_activeProfile.value.workspace(_workspaceIndex.value).gyro).takeIf { it.isFinite() && it >= 0f } ?: 0f
+        prefs.edit().putFloat(key, v).apply()
+        return v
+    }
+
+    /** Sets [gyroTightening] (deg/s; below 0.05 is off). */
+    fun setGyroTightening(degPerSec: Float) {
+        val v = if (degPerSec < 0.05f || !degPerSec.isFinite()) 0f else degPerSec
+        prefs.edit().putFloat(KEY_GYRO_TIGHTENING, v).apply()
+        _gyroTightening.value = v
+        gyroMouse.tightening = v
+    }
+
+    /** Sets [gyroSmoothing] (deg/s; below 0.05 is off). */
+    fun setGyroSmoothing(degPerSec: Float) {
+        val v = if (degPerSec < 0.05f || !degPerSec.isFinite()) 0f else degPerSec
+        prefs.edit().putFloat(KEY_GYRO_SMOOTHING, v).apply()
+        _gyroSmoothing.value = v
+        gyroMouse.smoothing = v
+    }
+
     private val _gyroPollUsed = MutableStateFlow(true)
 
     /** False while the gyro runs on the listener, where [gyroPollHz] has no effect. Kept while paused. */
@@ -186,6 +240,26 @@ class GamepadRuntime(context: Context) {
 
     /** Open the pad in fullscreen when the app starts. */
     val startFullscreen: StateFlow<Boolean> = _startFullscreen
+
+    private val _keepScreenOn = MutableStateFlow(prefs.getBoolean(KEY_KEEP_SCREEN_ON, true))
+
+    /** When on (the default), the screen stays on, so the phone doesn't lock, while the pad is shown. */
+    val keepScreenOn: StateFlow<Boolean> = _keepScreenOn
+
+    private val _blackScreenIdle = MutableStateFlow(prefs.getBoolean(KEY_BLACK_SCREEN_IDLE, false))
+
+    /** In play, the pad goes black (touch buttons off) after [blackScreenSeconds] without a touch; a tap brings it back. */
+    val blackScreenIdle: StateFlow<Boolean> = _blackScreenIdle
+
+    private val _blackScreenSeconds = MutableStateFlow(prefs.getInt(KEY_BLACK_SCREEN_SECONDS, DEFAULT_BLACK_SCREEN_SECONDS))
+
+    /** How long the pad waits without a touch before going black ([blackScreenIdle]). */
+    val blackScreenSeconds: StateFlow<Int> = _blackScreenSeconds
+
+    private val _blackScreenRequests = MutableStateFlow(0)
+
+    /** Goes up each time a Black screen mapping fires ([OutputTarget.BlackScreen]): the pad goes black at once. */
+    val blackScreenRequests: StateFlow<Int> = _blackScreenRequests
 
     private val _cornerAutoHide = MutableStateFlow(prefs.getBoolean(KEY_CORNER_AUTO_HIDE, false))
 
@@ -257,8 +331,18 @@ class GamepadRuntime(context: Context) {
     /** The phone's pose against gravity, for the World and Player gyro spaces ([GyroSpace]). */
     private val gravityPose = GravityPose()
 
+    /** [gravityPose] followed the gyro last sample (World or Player space). Gyro thread only. */
+    private var gravityPoseUsed = false
+
     /** The gyro space ([GyroSpace]) yaw, pitch and roll are measured in now: the workspace's. */
     private fun gyroSpace(): GyroSpace = _activeProfile.value.workspace(_workspaceIndex.value).gyro.gyroSpace
+
+    /** The workspace's gyro settings, for its PC DualShock 4 axes ([PadGyro]). */
+    private fun padGyroSettings(): GyroSettings = _activeProfile.value.workspace(_workspaceIndex.value).gyro
+
+    // The PC DualShock 4's gyro (gyro thread) and accelerometer (accelerometer thread) after the workspace's pad axes.
+    private val padGyro = FloatArray(3)
+    private val padAccel = FloatArray(3)
 
     /** The world's up for [GyroMouse.route] (gyro thread). */
     private val upNow = FloatArray(3)
@@ -474,6 +558,8 @@ class GamepadRuntime(context: Context) {
 
     init {
         engine.hapticSink = haptics
+        // Inside the engine lock: only bump the counter the pad watches.
+        engine.onBlackScreen = Runnable { _blackScreenRequests.update { it + 1 } }
         // Every other mouse count turns a trackball 3D shape too, as the camera turns.
         engine.cameraSink = { dx, dy ->
             val overlay = wifi.overlay
@@ -530,6 +616,12 @@ class GamepadRuntime(context: Context) {
         wifi.rateHz = hz
     }
 
+    fun setPcControllerGyro(on: Boolean) {
+        prefs.edit().putBoolean(KEY_PC_CONTROLLER_GYRO, on).apply()
+        _pcControllerGyro.value = on
+        wifi.pcGyro.enabled = on
+    }
+
     /** Applies at once to a running direct channel, without restarting the sensor. */
     @Synchronized
     fun setGyroPollRate(hz: Int) {
@@ -553,6 +645,21 @@ class GamepadRuntime(context: Context) {
     fun setStartFullscreen(on: Boolean) {
         prefs.edit().putBoolean(KEY_START_FULLSCREEN, on).apply()
         _startFullscreen.value = on
+    }
+
+    fun setKeepScreenOn(on: Boolean) {
+        prefs.edit().putBoolean(KEY_KEEP_SCREEN_ON, on).apply()
+        _keepScreenOn.value = on
+    }
+
+    fun setBlackScreenIdle(on: Boolean) {
+        prefs.edit().putBoolean(KEY_BLACK_SCREEN_IDLE, on).apply()
+        _blackScreenIdle.value = on
+    }
+
+    fun setBlackScreenSeconds(seconds: Int) {
+        prefs.edit().putInt(KEY_BLACK_SCREEN_SECONDS, seconds).apply()
+        _blackScreenSeconds.value = seconds
     }
 
     fun setCornerAutoHide(on: Boolean) {
@@ -670,6 +777,8 @@ class GamepadRuntime(context: Context) {
         gyroMouse.reset()
         tiltShake.displayRotation = degrees
         tiltShake.reset()
+        // The pose is kept in the screen's frame, which just turned.
+        gravityPose.reset()
     }
 
     private val tiltShake = TiltShake()
@@ -680,7 +789,7 @@ class GamepadRuntime(context: Context) {
      * gyro display holds its pose to gravity.
      */
     private fun updateMotion() {
-        if (running && inputAllowed && (engine.motionMapped || needsGravity)) startMotion() else stopMotion()
+        if (running && inputAllowed && (engine.motionMapped || needsGravity || wifi.motion.wanted)) startMotion() else stopMotion()
         if (running && inputAllowed && needsCompass) startCompass() else stopCompass()
     }
 
@@ -734,6 +843,14 @@ class GamepadRuntime(context: Context) {
             if (overlay) wifi.overlay.up(m.pitch, -m.yaw, -m.roll, g)
             for (f in feeds) f.up(m.pitch, -m.yaw, -m.roll, g)
             if (spaced) gravityPose.setUp(m.pitch, -m.yaw, -m.roll, g)
+        }
+        if (wifi.motion.wanted) {
+            // The PC's DualShock 4 accelerometer: in g, right, up and toward the player.
+            val m = gyroMouse.motion(x, y, z)
+            val g = SensorManager.GRAVITY_EARTH * RAD_TO_DEG
+            val p = padAccel
+            PadGyro.map(padGyroSettings(), m.yaw / g, m.pitch / g, m.roll / g, p)
+            wifi.motion.accel(p[0], p[1], p[2])
         }
         if (!engine.motionMapped) return
         // A layer or a held button may have tilt and shake settings of its own.
@@ -986,7 +1103,11 @@ class GamepadRuntime(context: Context) {
     private fun updateGyro() {
         updateMotion()
         // The PC's phone overlay shows the phone turning even where the gyro moves nothing.
-        if (running && ((inputAllowed && (!gyroOff() || wifi.overlay.wanted)) || calibration != null)) {
+        // An acceleration graph on screen reads the gyro too (its live line), moving nothing while input isn't allowed.
+        // The PC's DualShock 4 carries the phone's turn whatever the workspace's gyro does.
+        // Input not allowed: its gyro rests (the sender is woken so the stop goes out now).
+        if (!(running && inputAllowed) && wifi.motion.still()) engine.onChange?.run()
+        if (running && ((inputAllowed && (!gyroOff() || wifi.overlay.wanted || wifi.motion.wanted)) || calibration != null || accelWatchers.get() > 0)) {
             startGyro()
         } else if (running) {
             stopGyro()
@@ -1030,6 +1151,9 @@ class GamepadRuntime(context: Context) {
     private fun stopGyro() {
         gyro?.stop()
         gyro = null
+        // No sample comes to bring the gyro's stick or trigger back to rest, and a last one may
+        // have set it after an engine reset. Clearing axes already at rest changes nothing.
+        clearGyroPad()
     }
 
     /** The direct channel [source] stayed below the listener's rate: switch to the listener. */
@@ -1048,12 +1172,20 @@ class GamepadRuntime(context: Context) {
         if (stored.corners.any { it.id == NavCorners.GYRO }) editActiveProfile { NavCorners.gyroCornerToButtons(it) }
         // The PC's phone overlay turned on or off: the gyro and accelerometer may be needed (or no longer).
         wifi.overlay.onWantedChange = Runnable { main.post { updateGyro() } }
+        // The PC's pad became a DualShock 4 (or no longer is): its gyro and accelerometer need the sensors.
+        wifi.motion.onWantedChange = Runnable { main.post { updateGyro() } }
     }
 
     companion object {
         private const val KEY_RATE = "report_rate_hz"
         private const val KEY_WIFI_RATE = "wifi_rate_hz"
         private const val KEY_GYRO_POLL = "gyro_poll_hz"
+        private const val KEY_PC_CONTROLLER_GYRO = "pc_controller_gyro"
+        private const val KEY_GYRO_TIGHTENING = "gyro_tightening"
+        private const val KEY_GYRO_SMOOTHING = "gyro_smoothing"
+
+        /** A sensor time further than this from elapsed realtime (us) is on another clock. */
+        private const val SENSOR_CLOCK_SLACK_US = 1_000_000L
         private const val SILENT_DIRECT_MS = 1500L
         private const val KEY_TRANSPORT = "transport"
         private const val KEY_ORIENTATION = "screen_orientation"
@@ -1064,6 +1196,13 @@ class GamepadRuntime(context: Context) {
         /** The choices for [idleStopMinutes]; 0 = Off. */
         val IDLE_STOP_CHOICES = listOf(0, 5, 10, 30)
         private const val KEY_START_FULLSCREEN = "start_fullscreen"
+        private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
+        private const val KEY_BLACK_SCREEN_IDLE = "black_screen_idle"
+        private const val KEY_BLACK_SCREEN_SECONDS = "black_screen_seconds"
+        const val DEFAULT_BLACK_SCREEN_SECONDS = 60
+
+        /** The idle times the Black screen setting offers. */
+        val BLACK_SCREEN_SECONDS = listOf(30, 60, 120, 300)
         private const val KEY_CORNER_AUTO_HIDE = "corner_auto_hide"
         private const val KEY_EDIT_LAYOUT_LOCKED = "edit_layout_locked"
         private const val KEY_CAPSULE_ORDER = "capsule_order"
@@ -1102,12 +1241,92 @@ class GamepadRuntime(context: Context) {
         else gyroSway.update(m.yaw, m.pitch, m.roll, dt, v.gyroEdgeSpringMs / 1000f)
     }
 
+    /**
+     * The last sample went to the PC ([com.oleroma.gyrophone.core.net.PcGyroFeed.active]): the PC
+     * runs the gyro math, so the phone neither routes it nor shows it. Gyro thread only.
+     */
+    private var pcGyroRouting = false
+
     /** The gyro deflects game pad axes now ([MappingEngine.setGyroAxes]): they go back to rest when it stops. */
     private var gyroPadSet = false
 
     private fun clearGyroPad() {
         engine.setGyroAxes(FloatArray(GamepadAxis.entries.size))
         gyroPadSet = false
+    }
+
+    /**
+     * "Use PC controller for gyro ratchet" with a PC that runs the gyro: one bias-corrected sample
+     * ([gx], [gy], [gz] in rad/s, sensor time [ts]) goes to [pc] turned for the screen and in [space],
+     * with the phone's own gyro axes [axes] and the gyro settings in effect now, while the gyro may
+     * move ([allowed] and not "Gyro off"); otherwise [pc] is told it is still. The phone adds no
+     * gyro motion itself: entering this, its gyro mouse motion and stick deflection are cleared once.
+     */
+    private var pcHeldFor: List<Pair<Int, GyroSettings>>? = null
+    private var pcHeldRoutes: List<Mapping>? = null
+
+    private fun pcGyroSample(pc: PcGyroFeed, allowed: Boolean, axes: Int, gx: Float, gy: Float, gz: Float, dt: Float, ts: Long, space: GyroSpace) {
+        if (!pcGyroRouting) {
+            pcGyroRouting = true
+            gyroMouse.reset()
+            if (gyroPadSet) clearGyroPad()
+        }
+        val gs = engine.gyroSettings
+        if (!allowed || gs.mode == GyroMode.SENSOR_OFF) {
+            // Wake the sender (engine.onChange) so MAY_MOVE going off goes out now, not at the keepalive.
+            if (pc.still()) engine.onChange?.run()
+            return
+        }
+        val m = gyroMouse.inSpace(gyroMouse.motion(gx, gy, gz), space, upNow)
+        val routes = engine.gyroRoutes()
+        val cfg = gyroMouse.config(gs, routes)
+        // The PC controller's buttons with their own settings while held: made again only when they or the routes change.
+        val held = engine.pcHeldGyro
+        if (held !== pcHeldFor || routes !== pcHeldRoutes) {
+            pcHeldFor = held; pcHeldRoutes = routes
+            pc.held = held.map { (place, s) -> place to GyroMath.Config.of(s, routes) }
+            engine.onChange?.run()
+        }
+        // Sensor time is elapsed realtime on current phones (the clock PING and the clock offset use);
+        // a sensor on another clock gets the time it arrived instead.
+        val now = WifiPump.phoneUs()
+        val sampleUs = (ts / 1000).takeIf { abs(it - now) < SENSOR_CLOCK_SLACK_US } ?: now
+        // One lock: the next tail never has this sample with the settings before it.
+        synchronized(pc.lock) {
+            pc.setConfig(cfg, _gyroTightening.value, _gyroSmoothing.value)
+            pc.add(m.yaw, m.pitch, m.roll, dt, axes, sampleUs)
+        }
+        // Nothing else changes in the engine for a sample here, so wake the sender for it: the tail
+        // holds only the last few samples, and a sender waiting for the keepalive would skip most.
+        engine.onChange?.run()
+    }
+
+    // The acceleration graphs' live line: turning speed (deg/s, smoothed over ~40 ms) of the whole
+    // phone and of yaw, pitch and roll (by MotionAxis ordinal), in the workspace's gyro space.
+    private val liveRates = FloatArray(4)
+    @Volatile private var liveRatesNs = 0L
+
+    /** An acceleration graph is shown: the gyro thread keeps [liveGyroSpeed] up to date until [unwatchAccel]. */
+    fun watchAccel() { accelWatchers.incrementAndGet(); main.post { updateGyro() } }
+    fun unwatchAccel() { accelWatchers.decrementAndGet(); main.post { updateGyro() } }
+
+    /**
+     * The turning speed now (deg/s): the whole phone's ([axis] null) or one axis's, or null when no
+     * gyro sample came lately (the sensor is off, or nothing watches).
+     */
+    fun liveGyroSpeed(axis: MotionAxis?): Float? {
+        if (System.nanoTime() - liveRatesNs > 250_000_000L) return null
+        return liveRates[if (axis == null || axis == MotionAxis.NONE) 3 else axis.ordinal]
+    }
+
+    private fun liveSpeed(yaw: Float, pitch: Float, roll: Float, dt: Float, @Suppress("UNUSED_PARAMETER") ts: Long) {
+        val k = if (dt <= 0f) 1f else (dt / 0.04f).coerceAtMost(1f)
+        val r = liveRates
+        r[0] += k * (abs(yaw) - r[0])
+        r[1] += k * (abs(pitch) - r[1])
+        r[2] += k * (abs(roll) - r[2])
+        r[3] += k * (sqrt(yaw * yaw + pitch * pitch + roll * roll) - r[3])
+        liveRatesNs = System.nanoTime()
     }
 
     private fun onGyroSample(source: GyroSource, x: Float, y: Float, z: Float, ts: Long) {
@@ -1132,7 +1351,11 @@ class GamepadRuntime(context: Context) {
         val active = axes != 0
         val v = vis
         val feeds = gyroFeeds
-        if (v.gyroEdge || feeds.isNotEmpty()) feedVisuals(v, feeds, x - biasX, y - biasY, z - biasZ, dt, axes)
+        val pc = wifi.pcGyro
+        val pcMode = pc.active
+        // With the PC doing the gyro math the phone's gyro displays are off: what moves is the PC's to say.
+        if (pcMode) gyroLiveAxes = 0
+        else if (v.gyroEdge || feeds.isNotEmpty()) feedVisuals(v, feeds, x - biasX, y - biasY, z - biasZ, dt, axes)
         val overlay = wifi.overlay
         if (overlay.wanted && !measuring) {
             // The PC's phone overlay turns its pose from these, with its own settings.
@@ -1145,26 +1368,52 @@ class GamepadRuntime(context: Context) {
                 gs.rwsOf(gs.sensitivityOf(MotionAxis.ROLL)) ?: 0f,
             )
         }
+        // The PC's DualShock 4 gyro: every sample as measured (bias removed), in deg/s about the
+        // screen's right, up and toward-the-player axes, sent at once.
+        val motion = wifi.motion
+        if (motion.wanted) {
+            if (allowed) {
+                val m = gyroMouse.motion(x - biasX, y - biasY, z - biasZ)
+                val p = padGyro
+                PadGyro.map(padGyroSettings(), m.yaw, m.pitch, m.roll, p)
+                motion.add(p[0], p[1], p[2], ts / 1000)
+                engine.onChange?.run()
+            } else if (motion.still()) engine.onChange?.run()
+        }
         // World and player space read the phone's pose against gravity.
         val space = gyroSpace()
         if (space != GyroSpace.LOCAL) {
             val m = gyroMouse.motion(x - biasX, y - biasY, z - biasZ)
             gravityPose.rotate(m.yaw, m.pitch, m.roll, dt)
             gravityPose.up(upNow)
+            gravityPoseUsed = true
+        } else if (gravityPoseUsed) {
+            // Not followed in local space: switched back, it starts again from gravity.
+            gravityPose.reset()
+            gravityPoseUsed = false
         }
-        // An axis a ratchet just turned off may glide on (inertia) while the others are off.
-        if (active || (allowed && gyroMouse.coasting)) {
-            // A layer in use may set gyro settings of its own.
-            val gs = engine.gyroSettings
-            if (gs !== gyroMouse.settings) gyroMouse.settings = gs
-            val routes = engine.gyroRoutes()
-            val r = gyroMouse.route(x - biasX, y - biasY, z - biasZ, dt, routes, axes, space, upNow)
-            if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel, fromGyro = active)
-            engine.setGyroAxes(r.pad)
-            gyroPadSet = true
+        if (accelWatchers.get() > 0) {
+            val m = gyroMouse.inSpace(gyroMouse.motion(x - biasX, y - biasY, z - biasZ), space, upNow)
+            liveSpeed(m.yaw, m.pitch, m.roll, dt, ts)
+        }
+        if (pcMode) {
+            pcGyroSample(pc, allowed, axes, x - biasX, y - biasY, z - biasZ, dt, ts, space)
         } else {
-            gyroMouse.reset()
-            if (gyroPadSet) clearGyroPad()
+            pcGyroRouting = false
+            // An axis a ratchet just turned off may glide on (inertia) while the others are off.
+            if (active || (allowed && gyroMouse.coasting)) {
+                // A layer in use may set gyro settings of its own.
+                val gs = engine.gyroSettings
+                if (gs !== gyroMouse.settings) gyroMouse.settings = gs
+                val routes = engine.gyroRoutes()
+                val r = gyroMouse.route(x - biasX, y - biasY, z - biasZ, dt, routes, axes, space, upNow)
+                if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel, fromGyro = active)
+                engine.setGyroAxes(r.pad)
+                gyroPadSet = true
+            } else {
+                gyroMouse.reset()
+                if (gyroPadSet) clearGyroPad()
+            }
         }
         if (rateWindow.add(ts)) {
             _gyroInfo.value = _gyroInfo.value.copy(rateHz = rateWindow.rateHz, active = active)

@@ -18,19 +18,13 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
 {
     public const string DriverDownloadUrl = "https://github.com/nefarius/ViGEmBus/releases";
 
-    // Index order matches PadMapper.Ds4HatNames: N, NE, E, SE, S, SW, W, NW, none.
-    // DualShock4DPadDirection is a class, so a switch on it is not possible; this table is explicit.
-    private static readonly DualShock4DPadDirection[] Ds4Hats =
-    [
-        DualShock4DPadDirection.North, DualShock4DPadDirection.Northeast, DualShock4DPadDirection.East,
-        DualShock4DPadDirection.Southeast, DualShock4DPadDirection.South, DualShock4DPadDirection.Southwest,
-        DualShock4DPadDirection.West, DualShock4DPadDirection.Northwest, DualShock4DPadDirection.None,
-    ];
-
     private readonly ViGEmClient _client;
     private readonly Action<string>? _log;
     private IXbox360Controller? _x360;
     private IDualShock4Controller? _ds4;
+    private readonly byte[] _ds4Report = new byte[Ds4Report.Size];
+    private const long ReplugGapMs = 1000;
+    private long _replugAtMs = -ReplugGapMs;
 
     private ViGEmPadSink(ViGEmClient client, Action<string>? log)
     {
@@ -117,6 +111,27 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
         }
     }
 
+    /// <summary>
+    /// The XInput slot the plugged Xbox 360 pad took (the driver reports it once Windows assigned one),
+    /// <see cref="IPadSink.SlotUnknown"/> until then, -1 when none is plugged.
+    /// </summary>
+    public int XInputSlot
+    {
+        get
+        {
+            var x = _x360;
+            if (x == null) return -1;
+            try
+            {
+                return x.UserIndex;
+            }
+            catch (Exception)
+            {
+                return IPadSink.SlotUnknown;
+            }
+        }
+    }
+
     public void Unplug()
     {
         var x = _x360;
@@ -163,30 +178,42 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
         }
         catch (VigemTargetNotPluggedInException)
         {
-            // Unplugged underneath us (driver reset); the next Plug recreates it.
+            // Unplugged underneath us (driver reset): plug a new one, and fail so the engine sends the frame again.
+            Replug();
+            throw;
         }
     }
 
-    public void Submit(in Ds4Frame f)
+    public void Submit(in Ds4Frame f, in Ds4Motion m)
     {
         var d = _ds4;
         if (d == null) return;
         try
         {
-            d.SetButtonsFull(f.Buttons);
-            d.SetSpecialButtonsFull(f.Special);
-            d.SetDPadDirection(Ds4Hats[f.Hat < Ds4Hats.Length ? f.Hat : PadMapper.Ds4HatNone]);
-            d.SetAxisValue(DualShock4Axis.LeftThumbX, f.Lx);
-            d.SetAxisValue(DualShock4Axis.LeftThumbY, f.Ly);
-            d.SetAxisValue(DualShock4Axis.RightThumbX, f.Rx);
-            d.SetAxisValue(DualShock4Axis.RightThumbY, f.Ry);
-            d.SetSliderValue(DualShock4Slider.LeftTrigger, f.Lt);
-            d.SetSliderValue(DualShock4Slider.RightTrigger, f.Rt);
-            d.SubmitReport();
+            // The full report (DS4_REPORT_EX) carries the gyro and accelerometer the simple one lacks.
+            Ds4Report.Build(_ds4Report, f, m);
+            d.SubmitRawReport(_ds4Report);
         }
         catch (VigemTargetNotPluggedInException)
         {
+            Replug();
+            throw;
         }
+    }
+
+    /// <summary>
+    /// The pad was removed underneath (disabled in Device Manager, driver reset): Plugged still says it is
+    /// in, so nothing else would make a new one. At most once a second; a failed Plug leaves it unplugged.
+    /// </summary>
+    private void Replug()
+    {
+        long now = Environment.TickCount64;
+        if (now - _replugAtMs < ReplugGapMs) return;
+        _replugAtMs = now;
+        var mode = Plugged;
+        _log?.Invoke($"{mode} pad was unplugged underneath; plugging it again");
+        Unplug();
+        Plug(mode);
     }
 
     private void OnX360Feedback(object sender, Xbox360FeedbackReceivedEventArgs e) => Rumble?.Invoke(e.LargeMotor, e.SmallMotor);

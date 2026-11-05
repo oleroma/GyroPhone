@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.PadDevice
+import com.oleroma.gyrophone.core.hid.HidUsage
 import com.oleroma.gyrophone.core.hid.MouseState
 import com.oleroma.gyrophone.core.model.AndroidAxis
 import com.oleroma.gyrophone.core.model.AndroidKey
@@ -26,6 +27,7 @@ class DevicePresetsTest {
     private val pad = PadDevice(id = 1, vendorId = 0x1234, productId = 1, name = "Some pad")
     private val keyboard = PadDevice(id = 2, vendorId = 0, productId = 0, name = "Keyboard", keyboard = true)
     private val mouse = PadDevice(id = 3, vendorId = 0, productId = 0, name = "Mouse", mouse = true)
+    private val phone = PadDevice(id = 4, vendorId = 0, productId = 0, name = "Phone", phone = true)
     private val A = 1 shl GamepadButton.A.bit
 
     private fun engine(pinned: Boolean, change: (com.oleroma.gyrophone.core.model.DevicePreset) -> com.oleroma.gyrophone.core.model.DevicePreset = { it }): MappingEngine {
@@ -97,5 +99,41 @@ class DevicePresetsTest {
         for (row in PhysicalLayouts.keyboardRows) {
             assertTrue(row.sumOf { it.width.toDouble() } <= PhysicalLayouts.KEYBOARD_UNITS + 0.001)
         }
+    }
+
+    @Test fun theRockerTurnsThePcVolumeEvenWithNoPreset() {
+        for (pinned in listOf(true, false)) {
+            val e = engine(pinned)
+            assertTrue(e.setKey(phone, AndroidKey.VOLUME_UP, true))
+            assertEquals(listOf(HidUsage.VOLUME_UP), e.snapshot().keyboard.keys)
+            e.setKey(phone, AndroidKey.VOLUME_UP, false)
+            e.setKey(phone, AndroidKey.VOLUME_DOWN, true)
+            assertEquals(listOf(HidUsage.VOLUME_DOWN), e.snapshot().keyboard.keys)
+        }
+    }
+
+    @Test fun aMappedRockerKeyKeepsItsMappingAndTheOtherStaysVolume() {
+        val e = engine(pinned = true) {
+            it.copy(phone = listOf(Mapping(InputSource.KeyGesture(AndroidKey.VOLUME_UP, ButtonGesture.LONG_PRESS), OutputTarget.Key(0x04))))
+        }
+        e.setKey(phone, AndroidKey.VOLUME_UP, true)
+        assertTrue(e.snapshot().keyboard.keys.isEmpty())
+        e.setKey(phone, AndroidKey.VOLUME_UP, false)
+        e.setKey(phone, AndroidKey.VOLUME_DOWN, true)
+        assertEquals(listOf(HidUsage.VOLUME_DOWN), e.snapshot().keyboard.keys)
+    }
+
+    @Test fun theRockerIsNotAKeyboardKeyAndAKeyboardIsNotTheRocker() {
+        val e = engine(pinned = true)
+        e.setKey(keyboard, AndroidKey.VOLUME_UP, true)
+        assertTrue(e.snapshot().keyboard.keys.isEmpty())
+    }
+
+    @Test fun storedSetsKeepTheirOwnPhoneMappingsOnly() {
+        val set = Profile("t", "t", listOf(Workspace("w", "w")), devicePresets = listOf(DevicePresets.standard("p", "P").copy(phone = emptyList())))
+        val resolved = WorkspaceMappings.resolve(set)
+        assertEquals(DevicePresets.standardPhone(), resolved.devicePresets.single().phone)
+        assertEquals(DevicePresets.standardPhone(), resolved.workspaces.single().phone)
+        assertTrue(WorkspaceMappings.store(resolved).workspaces.single().phone.isEmpty())
     }
 }

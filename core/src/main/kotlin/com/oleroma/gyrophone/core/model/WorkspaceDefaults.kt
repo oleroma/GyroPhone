@@ -53,19 +53,42 @@ object WorkspaceDefaults {
         return MoveSlot.valueOf(m) to (MoveField.entries.firstOrNull { it.name == f } ?: return null)
     }
 
-    /** The shared touchpad key [key] (a direction's or a Move X / Y's own) sets over, else null. */
-    private fun sharedOf(key: String): String? =
-        dirOf(key)?.let { (d, f) -> touchpadKey(f.sharedOf(d)) } ?: moveOf(key)?.let { (m, f) -> touchpadKey(f.sharedOf(m)) }
+    /** Each gyro axis's own sensitivity and factor keys. */
+    private val gyroAxisSens: Map<String, String> = MotionAxis.entries.mapNotNull { a ->
+        GyroSettings.sensitivityProp(a)?.let { s -> gyroKey(GyroSettings.scaleProp(a)!!) to gyroKey(s) }
+    }.toMap()
+
+    /**
+     * The keys that hide a parent's value of [key] when a level sets one of them itself: [key]
+     * then follows nothing (the shared value) instead. A shared touchpad value or gyro
+     * Sensitivity hides a direction's, Move X / Y's or gyro axis's own values above; an exact
+     * sensitivity hides a factor above (a factor is only ever of the nearest exact value).
+     */
+    private fun hidersOf(key: String): List<String> {
+        dirOf(key)?.let { (d, f) -> return listOf(touchpadKey(f.sharedOf(d))) }
+        moveOf(key)?.let { (m, f) ->
+            val shared = touchpadKey(f.sharedOf(m))
+            return if (f == MoveField.SCALE) listOf(shared, moveKey(m, MoveField.SENSITIVITY)) else listOf(shared)
+        }
+        gyroAxisSens[key]?.let { exact -> return listOf(gyroKey("sensitivity"), exact) }
+        if (key in gyroAxisSens.values) return listOf(gyroKey("sensitivity"))
+        return emptyList()
+    }
+
+    private fun hiddenBy(key: String, own: Collection<String>): Boolean = hidersOf(key).any { it in own }
 
     /** Every key a workspace can set over the defaults. */
     val keys: List<String> = top + gyroProps.map(::gyroKey) + SurfaceField.entries.map(::touchpadKey) +
         Direction.entries.flatMap { d -> DirField.entries.map { f -> dirKey(d, f) } } +
         MoveSlot.entries.flatMap { m -> MoveField.of(m).map { f -> moveKey(m, f) } }
 
-    /** The keys a layer ([MappingSet.settings]) may set: all but the controls' opacity, the game's turn and the gyro space. */
+    /** The PC's DualShock 4 gyro axes ([GyroSettings.padYaw]...): the workspace's and Defaults' only. */
+    val PAD_GYRO_KEYS: List<String> = listOf("padYaw", "padPitch", "padRoll", "padYawInvert", "padPitchInvert", "padRollInvert").map(::gyroKey)
+
+    /** The keys a layer ([MappingSet.settings]) may set: all but the controls' opacity, the game's turn, the gyro space and the PC pad's gyro axes. */
     val layerKeys: List<String> = keys - setOf(
         CONTROL_OPACITY, gyroKey("gameCountsPer360"), gyroKey("gameName"), gyroKey("gyroSpace"),
-    )
+    ) - PAD_GYRO_KEYS.toSet()
 
     /** The touchpad's keys: shared and per direction. */
     val touchpadKeys: List<String> = keys.filter { it.startsWith(TOUCHPAD) }
@@ -131,13 +154,13 @@ object WorkspaceDefaults {
      * own value of the defaults gives way to a shared one the workspace sets: every one uses that.
      */
     private fun follow(key: String, w: Workspace, own: Set<String>, defaults: Workspace): Workspace =
-        if (sharedOf(key) in own) take(key, w, Workspace("", "")) else take(key, w, defaults)
+        if (hiddenBy(key, own)) take(key, w, Workspace("", "")) else take(key, w, defaults)
 
     /** [w] following [defaults] for [key] again. */
     fun reset(w: Workspace, key: String, defaults: Workspace): Workspace {
         val own = own(w) - key
         // A shared touchpad value back to the defaults' brings their direction values back too.
-        val then = keys.filter { k -> k !in own && sharedOf(k) == key }
+        val then = keys.filter { k -> k !in own && key in hidersOf(k) }
         return (listOf(key) + then).fold(w.copy(ownSettings = own)) { r, k -> follow(k, r, own, defaults) }
     }
 
@@ -156,7 +179,7 @@ object WorkspaceDefaults {
         if (changed.isEmpty()) return after
         val own = ownA + changed
         // A shared touchpad value set here hides the defaults' direction values of it.
-        return keys.filter { k -> k !in own && sharedOf(k) in changed }
+        return keys.filter { k -> k !in own && hiddenBy(k, changed) }
             .fold(after.copy(ownSettings = own)) { r, k -> follow(k, r, own, r) }
     }
 
@@ -179,7 +202,7 @@ object WorkspaceDefaults {
         val own = layerOwn(set)
         if (own.isEmpty()) return base
         val r = own.fold(base) { acc, k -> take(k, acc, layer) }
-        return keys.filter { k -> k !in own && sharedOf(k) in own }
+        return keys.filter { k -> k !in own && hiddenBy(k, own) }
             .fold(r) { acc, k -> follow(k, acc, own, acc) }
     }
 

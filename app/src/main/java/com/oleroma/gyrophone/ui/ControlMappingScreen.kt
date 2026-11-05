@@ -73,6 +73,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
@@ -95,7 +98,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.oleroma.gyrophone.core.hid.HidUsage
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
@@ -203,8 +205,9 @@ private fun allows(allowed: Set<OutputTarget>, t: OutputTarget): Boolean {
         is OutputTarget.MouseAxis -> allowed.any { it is OutputTarget.MouseAxis && it.motion == t.motion }
         is OutputTarget.Key -> allowed.any { it is OutputTarget.Key }
         OutputTarget.GyroHold -> OutputTarget.GyroPause in allowed
-        // Layer actions, (Let go) and Nothing go where button outputs do.
-        is OutputTarget.Layer, OutputTarget.LayerBack, OutputTarget.LetGo, OutputTarget.NoOutput -> allowed.any { it is OutputTarget.Key }
+        // Layer actions, (Let go), Black screen and Nothing go where button outputs do.
+        is OutputTarget.Layer, OutputTarget.LayerBack, OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.NoOutput ->
+            allowed.any { it is OutputTarget.Key }
         else -> false
     }
 }
@@ -257,7 +260,7 @@ private fun loadRecent(runtime: GamepadRuntime): List<OutputTarget> =
         .orEmpty()
 
 /** Presets of [control]: stick presets, or common button actions (and touchpad set-ups for swipe buttons). */
-private fun presetsFor(control: TouchControl, inputs: List<BindableInput>): List<MapPreset> = buildList {
+private fun presetsFor(control: TouchControl, inputs: List<BindableInput>, physical: Boolean): List<MapPreset> = buildList {
     if (control.kind == TouchKind.STICK) {
         for (p in Bindings.StickPreset.entries) add(MapPreset(p.label) { m -> Bindings.applyStickPreset(m, inputs, p) })
         return@buildList
@@ -290,9 +293,10 @@ private fun presetsFor(control: TouchControl, inputs: List<BindableInput>): List
             )
         })
     }
-    if (control.swipes) {
+    if (control.swipes && !physical) {
         add(MapPreset("Windows touchpad") { m ->
-            m.filterNot { (it.source as? InputSource.Surface)?.id == control.id } +
+            // Only the edited set's (Base in this view) surface mappings are replaced.
+            m.filterNot { it.set == MappingSet.BASE && (it.source as? InputSource.Surface)?.id == control.id } +
                     Bindings.defaultTouchpadMappings(TouchpadSettings()).map { d ->
                         val s = d.source
                         if (s is InputSource.Surface) d.copy(source = s.copy(id = control.id)) else d
@@ -307,8 +311,8 @@ private fun presetsFor(control: TouchControl, inputs: List<BindableInput>): List
             Bindings.setTargets(x, move(SurfaceInput.MOTION_Y), listOf(OutputTarget.MouseAxis(MouseMotion.MOVE_Y)))
         })
     }
-    // Sets roll and pitch only; the other gyro axes stay.
-    add(MapPreset("Gyro mouse") { m ->
+    // Sets roll and pitch only; the other gyro axes stay. A physical control has no gyro.
+    if (!physical) add(MapPreset("Gyro mouse") { m ->
         Bindings.gyroMouseMappings(control.id).fold(m) { r, g ->
             val input = Bindings.gyroInputs(control.id).first { it.sources.single() == g.source }
             Bindings.setTargets(r, input, listOf(g.target))
@@ -400,6 +404,11 @@ internal fun ControlMappingScreen(
     onZoneSettings: ((List<HoldZone>, List<List<HoldZone>>?) -> Unit)? = null,
     /** A physical control's inputs ([physicalStandIn]): its cards, instead of the touch control's. */
     physicalInputs: List<BindableInput>? = null,
+    /**
+     * A physical key or button that can be held: its gyro owner id ([HeldButton.GYRO_ID] + its preset
+     * id). Its Motion tab then maps gyro axes while it is held; null = no Motion tab.
+     */
+    physicalMotionId: String? = null,
     /** The actions' own settings (their ⚙) and the shared ones (Settings); null = none. */
     settings: MappingSettings? = null,
     /**
@@ -415,6 +424,10 @@ internal fun ControlMappingScreen(
     // The edited set seen as Base, so the Base-only Bindings helpers edit it.
     val view = remember(mappings, editSet) { Bindings.viewSet(mappings, editSet) }
     val parentView = remember(inherited) { inherited.map { it.copy(set = MappingSet.BASE) }.distinct() }
+    // Every other set seen as Base, for the greyed chips: made once per change, not per card and frame.
+    val otherViews = remember(mappings, sets, editSet) {
+        (listOf(MappingSet.BASE) + sets.map { it.id }).filter { it != editSet }.map { n -> n to Bindings.viewSet(mappings, n) }
+    }
 
     /** [input] firing on [t] (itself for Hold). */
     fun trig(input: BindableInput, t: Trigger): BindableInput = Bindings.triggerInput(input, t) ?: input
@@ -449,7 +462,10 @@ internal fun ControlMappingScreen(
             else -> Bindings.touchInputs(control)
         }
     }
-    val presets = remember(control, inputs) { presetsFor(control, inputs) }
+    // A physical button or stick: only its own inputs, none of a touch button's (touch, moves, swipes).
+    val physical = physicalInputs != null
+    val surfaceCards = control.swipes && !physical
+    val presets = remember(control, inputs) { presetsFor(control, inputs, physical) }
     val extras = remember(inputs) { inputs.flatMap { it.extra }.distinct() }
 
     var fingers by remember(control.id) { mutableIntStateOf(1) }
@@ -488,7 +504,7 @@ internal fun ControlMappingScreen(
     val groups = listOf(
         sorted(
             control,
-            (if (!control.swipes) inputs
+            (if (!surfaceCards) (if (physicalMotionId != null && fingers == 0) Bindings.gyroInputs(physicalMotionId) else inputs)
             else if (fingers == 0) Bindings.gyroInputs(control.id) + Bindings.motionInputs(control.id)
             else Bindings.swipeInputs(control, fingers))
                 .filterNot(Bindings::isTriggerOf)
@@ -534,6 +550,8 @@ internal fun ControlMappingScreen(
 
     fun undoLast() {
         val prev = undo.removeLastOrNull() ?: return
+        // Its snackbar's Undo would undo the change before it.
+        snackbar.currentSnackbarData?.dismiss()
         emit(prev)
     }
 
@@ -598,23 +616,6 @@ internal fun ControlMappingScreen(
         actionTitle(currentControl, input) + " follows " + parentName,
     )
 
-    /** Every action the level above maps follows it again. */
-    fun followAll() {
-        val overridden = inputs.filter { Bindings.targets(parentView, it).isNotEmpty() && Bindings.targets(currentMappings, it).isNotEmpty() }
-        change(
-            overridden.fold(currentMappings) { m, input -> Bindings.setTargets(m, input, emptyList()) },
-            "Every action follows " + parentName,
-        )
-    }
-
-    /** Every action does nothing: cleared where the level above maps it, its own mappings gone. */
-    fun clearAll() = change(
-        inputs.fold(currentMappings) { m, input ->
-            Bindings.setTargets(m, input, if (Bindings.targets(parentView, input).isNotEmpty()) listOf(OutputTarget.NoOutput) else emptyList())
-        },
-        "Cleared every action",
-    )
-
     // Drag & drop geometry, in root coordinates.
     val cardBounds = remember { mutableStateMapOf<InputSource, Rect>() }
     // Each card's row items (chips and dividers), by the card's source; read only by drag code.
@@ -659,6 +660,28 @@ internal fun ControlMappingScreen(
         if (zoneSettings == null || src.input.holdDirection == null) return false
         return allMappings.any { (it.source as? InputSource.Surface)?.copy(zone = 0, on = Trigger.HOLD) == src }
     }
+
+    /** Every input the cards show chips of: each card's Wheres and zones, on each trigger. */
+    fun bulkInputs(): List<BindableInput> = inputs.filterNot(Bindings::isTriggerOf).flatMap { card ->
+        (0 until zonesOf(card)).flatMap { z -> if (z == 0) wheresOf(card).filterNotNull() else listOf(zin(card, z)) }
+    }.flatMap { trigInputs(it).map { (_, ti) -> ti } }.distinctBy { it.sources }
+
+    /** Every action the level above maps follows it again. */
+    fun followAll() {
+        val overridden = bulkInputs().filter { Bindings.targets(parentView, it).isNotEmpty() && Bindings.targets(currentMappings, it).isNotEmpty() }
+        change(
+            overridden.fold(currentMappings) { m, input -> Bindings.setTargets(m, input, emptyList()) },
+            "Every action follows " + parentName,
+        )
+    }
+
+    /** Every action does nothing: cleared where the level above maps it, its own mappings gone. */
+    fun clearAll() = change(
+        bulkInputs().fold(currentMappings) { m, input ->
+            Bindings.setTargets(m, input, if (Bindings.targets(parentView, input).isNotEmpty()) listOf(OutputTarget.NoOutput) else emptyList())
+        },
+        "Cleared every action",
+    )
 
     /** [input]'s row as mapped: each zone's chips of the edited set, divided, then the end divider. */
     fun rowOf(input: BindableInput): List<RowItem> = buildList {
@@ -737,9 +760,16 @@ internal fun ControlMappingScreen(
 
     /**
      * [m] (the edited set's view) with [card]'s chips as [row] has them: each in the zone of the
-     * dividers before it, in its order. Zones left empty close up in [change].
+     * dividers before it, in its order. Zones left empty close up in [change]. A chip keeps the
+     * options it had where [m] maps it ([RowItem.Chip.zone] is where it came from); [carry] gives
+     * a chip brought from another card its options.
      */
-    fun withRow(m: List<Mapping>, card: BindableInput, row: List<RowItem>): List<Mapping> {
+    fun withRow(
+        m: List<Mapping>,
+        card: BindableInput,
+        row: List<RowItem>,
+        carry: Pair<OutputTarget, MapOptions?>? = null,
+    ): List<Mapping> {
         val lists = mutableListOf(mutableListOf<RowItem.Chip>())
         for (item in row) when (item) {
             is RowItem.Chip -> lists.last().add(item)
@@ -753,8 +783,12 @@ internal fun ControlMappingScreen(
             val wheres = if (z == 0) wheresOf(card) else listOf(zin(card, z))
             for ((w, wi) in wheres.withIndex()) for ((tr, ti) in trigInputs(wi ?: continue)) {
                 val was = out
-                out = Bindings.setTargets(out, ti, chips.filter { it.trigger == tr && it.where == w }.map { it.target }) { t ->
-                    Bindings.options(was, ti, t)
+                val here = chips.filter { it.trigger == tr && it.where == w }
+                out = Bindings.setTargets(out, ti, here.map { it.target }) { t ->
+                    if (t in Bindings.targets(was, ti)) Bindings.options(was, ti, t)
+                    // Moved here from another zone or Where: the options it had there.
+                    else here.firstOrNull { it.target == t }?.let { c -> Bindings.options(m, trig(chipInput(card, c), c.trigger), t) }
+                        ?: carry?.takeIf { it.first == t }?.second
                 }
             }
         }
@@ -899,13 +933,15 @@ internal fun ControlMappingScreen(
                         val fresh = if (from == null && maps(tr0)) Bindings.triggersOf(zi).firstOrNull { !maps(it) } else null
                         val tr = fresh ?: tr0
                         row.add(i, RowItem.Chip(zone, d.target, tr, w))
+                        // A moved chip keeps its options (Toggle, Once, delays...).
+                        val carry = from?.let { d.target to Bindings.options(currentMappings, it, d.target) }
                         val base = if (from == null || c != null) currentMappings else Bindings.removeTarget(currentMappings, from, d.target)
                         // Already in the zone it lands in: just moved there, not twice.
                         val cleaned = if (c == null) row.filterIndexed { j, it ->
                             j == i || !(it is RowItem.Chip && it.target == d.target && it.trigger == tr && it.where == w && zoneIn(row, j) == zone)
                         } else row
                         change(
-                            withRow(base, card, cleaned),
+                            withRow(base, card, cleaned, carry),
                             (if (from == null) "Mapped " else "Moved ") + Describe.shortTarget(d.target) + " to " + actionTitle(currentControl, zi),
                         )
                         if (fresh != null) chipDialog = card to RowItem.Chip(zone, d.target, tr, w)
@@ -922,7 +958,14 @@ internal fun ControlMappingScreen(
                 val (card, at) = l
                 val row = rowOf(card).filter { it != carried(card) }.toMutableList()
                 row.add(at.coerceIn(0, row.size), RowItem.Divider(d.k))
-                change(withRow(currentMappings, card, row), "Moved a zone divider of " + actionTitle(currentControl, card))
+                // A chip passed into a later zone fires on Hold there when that zone doesn't offer its trigger
+                // (a Quick or Double swipe), as a dropped chip does.
+                val moved = row.mapIndexed { j, item ->
+                    val z = zoneIn(row, j)
+                    if (item is RowItem.Chip && z > 0 && item.trigger !in Bindings.triggersOf(zin(card, z))) item.copy(trigger = Trigger.HOLD)
+                    else item
+                }
+                change(withRow(currentMappings, card, moved), "Moved a zone divider of " + actionTitle(currentControl, card))
                 done = true
             }
 
@@ -990,7 +1033,7 @@ internal fun ControlMappingScreen(
             contentPadding = PaddingValues(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (control.kind == TouchKind.STICK) {
+            if (control.kind == TouchKind.STICK && !physical) {
                 item(key = "presets") {
                     Row(
                         Modifier.animateItem().horizontalScroll(rememberScrollState()),
@@ -1007,7 +1050,25 @@ internal fun ControlMappingScreen(
                 }
             }
             shownGroups.forEachIndexed { g, list ->
-                if (control.swipes) {
+                if (!surfaceCards && physicalMotionId != null) {
+                    item(key = "header$g") {
+                        Column(Modifier.animateItem(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                FilterChip(selected = fingers != 0, onClick = { fingers = 1 }, label = { Text("Button") })
+                                FilterChip(selected = fingers == 0, onClick = { fingers = 0 }, label = { Text("Motion") })
+                            }
+                            if (fingers == 0) {
+                                Text(
+                                    "While this is held: a gyro axis it maps does that instead of what the workspace maps it to " +
+                                        "(faded until it maps its own); ⚙ sets the axis's sensitivity while held.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+                if (surfaceCards) {
                     item(key = "header$g") {
                         Column(
                             Modifier.animateItem().padding(top = if (g == 0) 0.dp else 8.dp),
@@ -1068,8 +1129,12 @@ internal fun ControlMappingScreen(
                     val tis = trigInputs(input)
                     val own = tis.flatMap { (_, ti) -> Bindings.targets(view, ti) }
                     val parent = parentOf(input)
-                    // Mapped in Base, a layer's action does that: the level above shows only where Base maps nothing.
-                    val ownBase = editSet != MappingSet.BASE && tis.any { (_, ti) -> Bindings.targets(mappings, ti).isNotEmpty() }
+                    // The level above passes down each touch input (Inheritance.inputOf) the card doesn't map
+                    // itself, here or, in a layer, in Base: Base's mapping is what the layer does there.
+                    fun inhKey(ti: BindableInput): Any = ti.sources.first().let { Inheritance.inputOf(it) ?: it }
+                    val ownKeys = tis.filter { (_, ti) ->
+                        Bindings.targets(view, ti).isNotEmpty() || (editSet != MappingSet.BASE && Bindings.targets(mappings, ti).isNotEmpty())
+                    }.mapTo(HashSet()) { (_, ti) -> inhKey(ti) }
                     ActionCard(
                         title = when {
                             isSurface(input) && (src as InputSource.Surface).input == SurfaceInput.HOLD -> "Touch"
@@ -1077,13 +1142,12 @@ internal fun ControlMappingScreen(
                             else -> actionLabel(control, input)
                         },
                         row = row,
-                        inherited = if (own.isEmpty() && !ownBase) parent else emptyList(),
+                        inherited = parent.filter { (t, _) -> inhKey(trig(input, t)) !in ownKeys },
                         parentName = parentName,
                         onClear = if (parent.isNotEmpty() && !(own.isNotEmpty() && own.all { it == OutputTarget.NoOutput })) ({ clear(input) }) else null,
                         onFollow = if (parent.isNotEmpty() && own.isNotEmpty()) ({ follow(input) }) else null,
-                        others = zoneInputs.mapIndexed { z, zi ->
-                            (listOf(MappingSet.BASE) + sets.map { it.id }).filter { it != editSet }.flatMap { n ->
-                                val inSet = Bindings.viewSet(mappings, n)
+                        others = zoneInputs.map { zi ->
+                            otherViews.flatMap { (n, inSet) ->
                                 trigInputs(zi).flatMap { (tr, ti) -> Bindings.targets(inSet, ti).map { Triple(n, it, tr) } }
                             }
                         },
@@ -1136,18 +1200,21 @@ internal fun ControlMappingScreen(
     }
 
     var query by remember { mutableStateOf("") }
-    val tabs = remember(extras) { LibraryTab.entries.filter { it != LibraryTab.TOUCHPAD || extras.isNotEmpty() } }
+    val tabs = remember(extras, physical) {
+        LibraryTab.entries.filter { (it != LibraryTab.TOUCHPAD || extras.isNotEmpty()) && !(physical && it == LibraryTab.PHONE) }
+    }
     var tab by remember(control.id) {
         mutableStateOf(
             when {
                 recent.isNotEmpty() -> LibraryTab.RECENT
-                control.kind == TouchKind.STICK -> LibraryTab.PRESETS
+                control.kind == TouchKind.STICK && !physical -> LibraryTab.PRESETS
                 else -> LibraryTab.KEYBOARD
             },
         )
     }
     val chipCarried = (dragged as? Dragged.Target)?.from != null
-    val overLibrary = chipCarried && libraryBounds.contains(dragPos)
+    // Read through derived state, so a moving finger doesn't recompose the panes every frame.
+    val overLibrary by remember { derivedStateOf { (dragged as? Dragged.Target)?.from != null && libraryBounds.contains(dragPos) } }
     val libraryPane: @Composable () -> Unit = {
         val q = query.trim()
         val shownPresets = when {
@@ -1274,11 +1341,12 @@ internal fun ControlMappingScreen(
         }
     }
 
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    FullScreenDialog(onDismiss = onClose) {
         Surface(Modifier.fillMaxSize(), color = colors.surface) {
             Box(
                 Modifier
                     .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
                     .onGloballyPositioned { origin = it.positionInRoot() }
                     .pointerInput(Unit) {
                         // Once a source starts a drag, the finger is followed here, before the panes see it.
@@ -1361,7 +1429,8 @@ internal fun ControlMappingScreen(
                                 )
                             }
                         }
-                        if (inputs.any { parentOf(it).isNotEmpty() && Bindings.targets(view, it).isNotEmpty() }) {
+                        val bulk = bulkInputs()
+                        if (bulk.any { Bindings.targets(parentView, it).isNotEmpty() && Bindings.targets(view, it).isNotEmpty() }) {
                             var asking by remember { mutableStateOf(false) }
                             TextButton(onClick = { asking = true }, contentPadding = compact) { Text("↺ Reset all") }
                             if (asking) ConfirmResetAll(
@@ -1369,19 +1438,19 @@ internal fun ControlMappingScreen(
                                 { asking = false },
                             ) { asking = false; followAll() }
                         }
-                        if (inputs.any { (Bindings.targets(view, it).ifEmpty { parentOf(it) }).any { t -> t != OutputTarget.NoOutput } }) {
+                        if (bulk.any { (Bindings.targets(view, it).ifEmpty { Bindings.targets(parentView, it) }).any { t -> t != OutputTarget.NoOutput } }) {
                             TextButton(onClick = { clearAll() }, contentPadding = compact) { Text("✕ Clear all") }
                         }
-                        // A touch control's shared action settings are its "Button defaults"; its own
-                        // settings (size, shape, look...) sit next to them.
+                        // One Settings: a touch control's own page (its look and the settings its actions
+                        // share), else the shared settings (the touchpad's: the workspace's).
                         val shared = settings?.shared
                         val ownSettings = onSettings != null && !control.isTouchpadStandIn && physicalInputs == null
-                        if (shared != null) TextButton(onClick = { sharedOpen = true }, contentPadding = compact) {
-                            Text(if (ownSettings) "⚙ Button defaults" else "⚙ Settings")
+                        val openSettings: (() -> Unit)? = when {
+                            ownSettings -> onSettings
+                            shared != null -> ({ sharedOpen = true })
+                            else -> onSettings
                         }
-                        if (onSettings != null && (shared == null || ownSettings)) {
-                            TextButton(onClick = onSettings, contentPadding = compact) { Text("Settings") }
-                        }
+                        if (openSettings != null) TextButton(onClick = openSettings, contentPadding = compact) { Text("⚙ Settings") }
                         TextButton(
                             onClick = { undoLast() },
                             enabled = undo.isNotEmpty(),
@@ -1473,16 +1542,9 @@ internal fun ControlMappingScreen(
         val dir = src?.input?.holdDirection
         val zs = zoneSettings
         if (src != null && dir != null && zs != null && onZoneSettings != null) {
-            AlertDialog(
-                onDismissRequest = { zoneDialog = null },
-                title = { Text(actionTitle(control, input) + if (zone == null) " · zones" else " · zone " + (zone + 1)) },
-                text = {
-                    Column(Modifier.verticalScroll(rememberScrollState())) {
-                        HoldZoneSettings(zs, Bindings.holdZoneCounts(mappings, src.id), control.id + "dlg", only = dir, zone = zone, onChange = onZoneSettings)
-                    }
-                },
-                confirmButton = { TextButton(onClick = { zoneDialog = null }) { Text("Done") } },
-            )
+            ContextCard(actionTitle(control, input) + if (zone == null) " · zones" else " · zone " + (zone + 1), onDismiss = { zoneDialog = null }) {
+                HoldZoneSettings(zs, Bindings.holdZoneCounts(mappings, src.id), control.id + "dlg", only = dir, zone = zone, onChange = onZoneSettings)
+            }
         }
     }
     actionDialog?.let { input ->
@@ -1490,22 +1552,19 @@ internal fun ControlMappingScreen(
         // A card's triggers that map something: their timing settings (long press time, double tap window), once each.
         val mappedTriggers = wheresOf(input).filterNotNull().flatMap { trigInputs(it) }
             .filter { (t, ti) -> t != Trigger.HOLD && Bindings.targets(view, ti).isNotEmpty() }
-        val timingContents = listOfNotNull(
-            mappedTriggers.firstOrNull { it.first == Trigger.TAP || it.first == Trigger.LONG_PRESS }?.second,
-            // A swipe's double has its quick swipe's settings.
-            mappedTriggers.firstOrNull { it.first == Trigger.DOUBLE_TAP && !Triggers.isSwipe(input.sources.first()) }?.second,
+        fun mapped(vararg ts: Trigger) = mappedTriggers.firstOrNull { it.first in ts }?.second
+        val timingContents = (
+            if (Triggers.isSwipe(input.sources.first())) {
+                // A swipe: its Quick swipe's settings, then its Long hold and Double swipe times.
+                listOfNotNull(mapped(Trigger.TAP), mapped(Trigger.LONG_PRESS), mapped(Trigger.DOUBLE_TAP))
+            } else {
+                listOfNotNull(mapped(Trigger.TAP, Trigger.LONG_PRESS), mapped(Trigger.DOUBLE_TAP))
+            }
         ).mapNotNull { settings?.action?.invoke(it) } + areaGears(input)
-        if (content != null || timingContents.isNotEmpty()) AlertDialog(
-            onDismissRequest = { actionDialog = null },
-            title = { Text("⚙ " + actionTitle(control, input)) },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    content?.invoke()
-                    for (c in timingContents) c()
-                }
-            },
-            confirmButton = { TextButton(onClick = { actionDialog = null }) { Text("Done") } },
-        )
+        if (content != null || timingContents.isNotEmpty()) ContextCard("⚙ " + actionTitle(control, input), onDismiss = { actionDialog = null }) {
+            content?.invoke()
+            for (c in timingContents) c()
+        }
     }
     chipDialog?.let { (input, chip) ->
         val zi = chipInput(input, chip)
@@ -1555,33 +1614,12 @@ internal fun ControlMappingScreen(
     }
     val shared = settings?.shared
     if (sharedOpen && shared != null) {
-        Dialog(onDismissRequest = { sharedOpen = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(Modifier.fillMaxSize(), color = colors.surface) {
-                Column(Modifier.fillMaxSize()) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(control.label.ifBlank { control.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                if (control.isTouchpadStandIn) "The empty pad area · this workspace's settings"
-                                else controlKindName(control) + " · settings its actions share",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colors.onSurfaceVariant,
-                            )
-                        }
-                        FilledTonalButton(onClick = { sharedOpen = false }) { Text("Done") }
-                    }
-                    Column(
-                        Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Column(Modifier.widthIn(max = 720.dp)) { shared() }
-                    }
-                }
-            }
-        }
+        SettingsDialog(
+            title = control.label.ifBlank { control.id },
+            subtitle = if (control.isTouchpadStandIn) "The empty pad area · this workspace's settings"
+            else controlKindName(control) + " · settings its actions share",
+            onClose = { sharedOpen = false },
+        ) { shared() }
     }
     layerDraft?.let { (input, t) ->
         LayerTargetDialog(
@@ -1625,6 +1663,9 @@ internal fun ControlMappingScreen(
                         setMenu = null
                         if (editSet == st.id) onEditSet(MappingSet.BASE)
                         onSetsChange?.invoke(sets.filterNot { it.id == st.id }, st.id)
+                        // The undo steps hold the deleted layer's mappings: undoing one would bring them back without it.
+                        undo.clear()
+                        snackbar.currentSnackbarData?.dismiss()
                     }) { Text("Delete", color = colors.error) }
                 } else {
                     TextButton(onClick = {

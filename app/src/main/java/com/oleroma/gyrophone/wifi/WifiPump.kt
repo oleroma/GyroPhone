@@ -8,9 +8,11 @@ import com.oleroma.gyrophone.core.net.ByeReason
 import com.oleroma.gyrophone.core.net.HostFlags
 import com.oleroma.gyrophone.core.net.LinkInfo
 import com.oleroma.gyrophone.core.net.LiveSession
+import com.oleroma.gyrophone.core.net.MotionFeed
 import com.oleroma.gyrophone.core.net.MouseTotals
 import com.oleroma.gyrophone.core.net.OverlayFeed
 import com.oleroma.gyrophone.core.net.PacketType
+import com.oleroma.gyrophone.core.net.PcGyroFeed
 import com.oleroma.gyrophone.core.net.SendScheduler
 import com.oleroma.gyrophone.core.net.SessionCipher
 import com.oleroma.gyrophone.core.net.StateFrame
@@ -26,14 +28,16 @@ import java.util.concurrent.locks.LockSupport
  * The Wi-Fi send loop on its own thread. Event-driven: the engine's onChange unparks it, and
  * [SendScheduler] decides between a normal STATE, the +2/+6 ms repeats after a discrete change
  * and the 20 ms keepalive, capped at [rateHz]. It is the only thread that seals P->H packets,
- * BYE included (sent on its way out). The loop allocates nothing except `engine.snapshot()`
- * and the once-a-second PING / LINK_INFO.
+ * BYE included (sent on its way out). The loop allocates little besides `engine.snapshot()`,
+ * the once-a-second PING / LINK_INFO and the overlay's set entries while the PC overlay is on.
  */
 class WifiPump(private val engine: MappingEngine) {
     /** The session to send on; [byeReason] >= 0 says the previous one gets a goodbye first. */
     private class Target(val session: LiveSession?, val byeReason: Int)
 
     @Volatile private var target = Target(null, NO_BYE)
+    /** The last [target] the loop has taken (its goodbye said). */
+    @Volatile private var taken: Target? = null
     @Volatile private var running = false
     @Volatile private var exitByeReason = ByeReason.SHUTDOWN
     @Volatile private var socket: DatagramSocket? = null
@@ -47,6 +51,15 @@ class WifiPump(private val engine: MappingEngine) {
 
     /** The phone overlay's data: sent while [OverlayFeed.wanted] (the PC's overlay is on). */
     @Volatile var overlay: OverlayFeed? = null
+
+    /** "Use PC controller for gyro ratchet": STATE_GYRO and PAD_GYRO for a PC that takes them. */
+    @Volatile var pcGyro: PcGyroFeed? = null
+
+    /** The raw motion for the PC's DualShock 4: MOTION while [MotionFeed.wanted]. */
+    @Volatile var motion: MotionFeed? = null
+
+    /** The clock offset (host us - phone us, [com.oleroma.gyrophone.core.net.ClockSync]) of this session, or null before a clock sample. */
+    @Volatile var clockOffsetUs: Long? = null
 
     /** STATE packets handed to / refused by the socket during the last full second. */
     @Volatile var sentPerSecond = 0
@@ -79,6 +92,17 @@ class WifiPump(private val engine: MappingEngine) {
     private var nextOverlayNs = 0L
     private var layoutSentVersion = -1
     private var layoutSentNs = 0L
+    /** Reused for each OVERLAY's pressed and latched controls. */
+    private val overlayPressed = HashSet<String>()
+    private val overlayLatched = HashSet<String>()
+    private var gyroSnapshot = false
+    private var motionSentVersion = -1
+    private var nextMotionNs = 0L
+    private var padGyroNs = 0L
+    private var padGyroSent: IntArray? = null
+    private var padGyroSentEpoch = -1
+    private var padGyroSentOn = false
+    private var padGyroHeldSent: List<Pair<Int, com.oleroma.gyrophone.core.engine.GyroMath.Config>>? = null
 
     fun start(socket: DatagramSocket) {
         if (running) return
@@ -123,6 +147,16 @@ class WifiPump(private val engine: MappingEngine) {
         LockSupport.unpark(thread)
     }
 
+    /**
+     * Waits up to [timeoutMs] until the loop has taken the last [setSession], so its goodbye has
+     * gone out on the socket in use before the caller changes or closes it.
+     */
+    fun awaitSession(timeoutMs: Long) {
+        val t = target
+        val until = System.nanoTime() + timeoutMs * 1_000_000L
+        while (running && thread != null && taken !== t && System.nanoTime() < until) LockSupport.parkNanos(1_000_000L)
+    }
+
     /** A PONG lowered the minimum round trip: send LINK_INFO with the better clock offset now. */
     fun requestLinkInfo() {
         linkInfoDue = true
@@ -141,14 +175,20 @@ class WifiPump(private val engine: MappingEngine) {
                     continue
                 }
             }
-            val s = engine.snapshot() // always drain motion, even with no session
-            totals.add(s.mouse)
+            // Switch first: switchTo resets the gyro's samples, so the tail below starts from the new session's.
             val t = target
             if (t.session !== cur) {
                 val old = cur
                 if (old != null && t.byeReason >= 0) goodbye(old, t.byeReason)
                 switchTo(t.session)
             }
+            if (taken !== t) taken = t
+            // always drain motion, even with no session; with the PC running the gyro, its samples go along
+            val s = engine.snapshot()
+            val g = pcGyro?.takeIf { it.active }
+            if (g != null) g.encodeTail(frame.ext, 0, clockOffsetUs)
+            gyroSnapshot = g != null
+            totals.add(s.mouse)
             val now = System.nanoTime()
             updateStats(now)
             val c = cur
@@ -160,6 +200,7 @@ class WifiPump(private val engine: MappingEngine) {
             if (scheduler.rateHz != hz) scheduler.rateHz = hz
 
             frame.fill(s, totals, engine.gyroActive, hires)
+            frame.gyroExt = hires && gyroSnapshot
             val discrete = !frame.discreteEquals(lastSent)
             val dirty = discrete || !frame.totalsEqual(lastSent)
             val kind = scheduler.poll(now, dirty, discrete)
@@ -184,6 +225,14 @@ class WifiPump(private val engine: MappingEngine) {
                     sendSealed(c, PacketType.LINK_INFO, n)
                 }
             }
+            // Each new gyro sample goes out at once; while still, every MOTION_KEEPALIVE_NS so a lost stop arrives.
+            val mo = motion?.takeIf { it.wanted }
+            if (mo != null && (mo.version != motionSentVersion || now >= nextMotionNs)) {
+                motionSentVersion = mo.version
+                nextMotionNs = now + MOTION_KEEPALIVE_NS
+                sendSealed(c, PacketType.MOTION, mo.encode(plain, 0))
+            }
+            pcGyro?.let { if (it.hostTakes) sendPadGyro(c, it, now) }
             val ov = overlay?.takeIf { it.wanted }
             if (ov == null) layoutSentVersion = -1
             if (ov != null && now >= nextOverlayNs) {
@@ -192,6 +241,7 @@ class WifiPump(private val engine: MappingEngine) {
             }
             var wakeAt = minOf(minOf(scheduler.nextDeadline(), nextPingNs), minOf(lastLinkInfoNs + SECOND_NS, engine.touchpadDeadlineNanos()))
             if (ov != null) wakeAt = minOf(wakeAt, nextOverlayNs)
+            if (mo != null) wakeAt = minOf(wakeAt, nextMotionNs)
             val wait = wakeAt - System.nanoTime()
             if (wait > 0) LockSupport.parkNanos(wait)
         }
@@ -200,12 +250,31 @@ class WifiPump(private val engine: MappingEngine) {
         cipher = null
     }
 
+    /** PAD_GYRO when the switch, the buttons or the toggle epoch changed, else once a second (a lost one comes again). */
+    private fun sendPadGyro(c: LiveSession, g: PcGyroFeed, now: Long) {
+        g.buttons = engine.pcGyroButtons
+        g.epoch = engine.toggleEpoch
+        val b = g.buttons
+        val changed = b !== padGyroSent || g.epoch != padGyroSentEpoch || g.enabled != padGyroSentOn || g.held !== padGyroHeldSent
+        if (!changed && now - padGyroNs < SECOND_NS) return
+        padGyroNs = now
+        padGyroSent = b; padGyroSentEpoch = g.epoch; padGyroSentOn = g.enabled
+        val n = g.encodeButtons(plain, 0)
+        sendSealed(c, PacketType.PAD_GYRO, n)
+        // Then the settings of each button that has its own while held (after PAD_GYRO, which says which have).
+        val held = g.held
+        for (i in held.indices) sendSealed(c, PacketType.PAD_GYRO_SET, g.encodeHeld(plain, 0, i))
+        padGyroHeldSent = held
+    }
+
     /** One OVERLAY, then the layout's pieces when it changed or every [LAYOUT_REPEAT_NS] (a lost piece comes again). */
     private fun sendOverlay(c: LiveSession, ov: OverlayFeed, now: Long) {
-        val n = ov.encodeFrame(plain, 0, phoneUs().toInt(), engine.pressedTouches(), engine.latchedTouches())
+        engine.touchesInto(overlayPressed, overlayLatched)
+        val n = ov.encodeFrame(plain, 0, phoneUs().toInt(), overlayPressed, overlayLatched)
         sendSealed(c, PacketType.OVERLAY, n)
+        val v = ov.layoutVersion()
+        if (v < 0 || v == layoutSentVersion && now - layoutSentNs < LAYOUT_REPEAT_NS) return
         val (version, blob) = ov.layoutSnapshot() ?: return
-        if (version == layoutSentVersion && now - layoutSentNs < LAYOUT_REPEAT_NS) return
         layoutSentVersion = version
         layoutSentNs = now
         for (i in 0 until OverlayFeed.pieceCount(blob)) {
@@ -217,6 +286,16 @@ class WifiPump(private val engine: MappingEngine) {
     private fun switchTo(session: LiveSession?) {
         cur = session
         hires = session != null && session.hostFlags and HostFlags.HIRES_WHEEL != 0
+        pcGyro?.let {
+            it.hostTakes = hires && session!!.hostFlags and HostFlags.PC_GYRO != 0
+            it.reset()
+        }
+        padGyroSent = null; padGyroSentEpoch = -1; padGyroHeldSent = null
+        motion?.let {
+            it.hostTakes = session != null && session.hostFlags and HostFlags.MOTION != 0
+            it.reset()
+        }
+        motionSentVersion = -1
         cipher = session?.let { SessionCipher(it.kPH, Wire.DIR_P2H) }
         seq = 0
         totals.reset()
@@ -290,6 +369,7 @@ class WifiPump(private val engine: MappingEngine) {
         private const val STOP_JOIN_MS = 500L
         /** OVERLAY about 60 times a second. */
         private const val OVERLAY_NS = 16_666_667L
+        private const val MOTION_KEEPALIVE_NS = MotionFeed.KEEPALIVE_MS * 1_000_000L
         private const val LAYOUT_REPEAT_NS = 2 * SECOND_NS
 
         /** Phone clock for STATE, PING and LINK_INFO: elapsed realtime in microseconds. */

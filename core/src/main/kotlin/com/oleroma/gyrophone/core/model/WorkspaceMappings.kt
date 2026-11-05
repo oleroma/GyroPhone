@@ -8,7 +8,7 @@ package com.oleroma.gyrophone.core.model
  *
  * A set is kept in two forms: stored ([store]), where workspaces hold no device mappings, and
  * resolved ([resolve]), where each holds its pinned preset's as one pad for any game pad
- * ([Workspace.pads]), [Workspace.keyboard] and [Workspace.mouse], as the engine sees it.
+ * ([Workspace.pads]), [Workspace.keyboard], [Workspace.mouse] and [Workspace.phone], as the engine sees it.
  */
 object WorkspaceMappings {
     /** The one pad of a resolved workspace that pins a preset: any game pad. */
@@ -23,10 +23,12 @@ object WorkspaceMappings {
         // Old latch settings become Toggle chips ([ToggleUpgrade]); the Defaults' still count for the workspaces.
         val d = set.defaults
         val defaults = ToggleUpgrade.latches(d.copy(mappings = Triggers.upgrade(d.mappings)))
+        val presets = set.devicePresets.map { DevicePresets.withPhoneDefaults(DevicePresets.fixStandIns(it)) }
         return set.copy(
             defaults = defaults,
+            devicePresets = presets,
             workspaces = set.workspaces.map {
-                resolve(ToggleUpgrade.latches(WorkspaceDefaults.apply(it, d)), set.devicePresets)
+                resolve(ToggleUpgrade.latches(WorkspaceDefaults.apply(it, d)), presets)
             },
         )
     }
@@ -39,14 +41,18 @@ object WorkspaceMappings {
                 pads = if (p == null) emptyList() else listOf(AttachedPad(PRESET_PAD, mappings = Triggers.upgrade(p.controller))),
                 keyboard = Triggers.upgrade(p?.keyboard.orEmpty()),
                 mouse = Triggers.upgrade(p?.mouse.orEmpty()),
+                phone = Triggers.upgrade(DevicePresets.withPhoneDefaults(p?.phone.orEmpty())),
                 keyTimings = p?.timings.orEmpty(),
+                stickTunings = if (p == null) emptyMap() else PhysicalSticks.sticks.keys.associateWith { p.stick(it) },
+                triggerTunings = if (p == null) emptyMap() else PhysicalSticks.triggers.keys.associateWith { p.trigger(it) },
+                heldButtons = p?.held.orEmpty(),
             )
         }
 
     /** [set] as it is stored: the device mappings stay in the presets only. */
     fun store(set: Profile): Profile = set.copy(
         workspaces = set.workspaces.map { w ->
-            w.copy(mappingProfileId = null, pads = emptyList(), keyboard = emptyList(), mouse = emptyList(), keyTimings = emptyList())
+            w.copy(mappingProfileId = null, pads = emptyList(), keyboard = emptyList(), mouse = emptyList(), phone = emptyList(), keyTimings = emptyList(), stickTunings = emptyMap(), triggerTunings = emptyMap(), heldButtons = emptyList())
         },
     )
 
@@ -143,8 +149,8 @@ object WorkspaceMappings {
     }
 
     /**
-     * [target] with [source]'s touch mappings. Touchpad mappings are copied as they are, and
-     * [source]'s sets join [target]'s (a set id both have takes [source]'s name).
+     * [target] with [source]'s touch mappings. Touchpad, gyro, tilt and shake mappings of the
+     * workspace itself are copied as they are, and [source]'s sets join [target]'s (a set id both have takes [source]'s name).
      * [withButtons]: [target]'s buttons are replaced by [source]'s, with their places and mappings.
      * Else [target] keeps its buttons; each takes the mappings of the [source] button of the same
      * kind and name ([buttonName], ignoring case), and one with no match keeps its own.
@@ -177,6 +183,8 @@ object WorkspaceMappings {
                 touch += rekeyAll(src.mappings, match.id, c.id)
             }
         }
-        return Copied(base.copy(mappings = touch + touchpadMappings), unmatched)
+        // The workspace's own gyro, tilt and shake mappings belong to no button: they come as they are, like the touchpad's.
+        val own = src.mappings.filter { it.source.isWorkspaceInput && !it.source.isTouchpad }
+        return Copied(base.copy(mappings = touch + own + touchpadMappings), unmatched)
     }
 }

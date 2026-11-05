@@ -19,10 +19,19 @@ public interface IPadSink
 
     void Submit(in X360Frame frame);
 
-    void Submit(in Ds4Frame frame);
+    /// <summary>The DualShock 4's whole report: buttons, sticks and triggers with its gyro and accelerometer.</summary>
+    void Submit(in Ds4Frame frame, in Ds4Motion motion);
 
     /// <summary>Raised from the driver's thread when the game changes rumble (large, small motor).</summary>
     event Action<byte, byte>? Rumble;
+
+    /// <summary>
+    /// The XInput slot (0..3) our plugged Xbox 360 pad took, -1 when none is plugged, <see cref="SlotUnknown"/>
+    /// while it is plugged but Windows hasn't given it a slot yet. May block briefly: not under the engine lock.
+    /// </summary>
+    int XInputSlot => -1;
+
+    const int SlotUnknown = -2;
 }
 
 /// <summary>Pad sink used when the ViGEmBus driver is missing (or --no-vigem): nothing is plugged, nothing is sent.</summary>
@@ -40,7 +49,7 @@ public sealed class NullPadSink : IPadSink
 
     public void Submit(in X360Frame frame) { }
 
-    public void Submit(in Ds4Frame frame) { }
+    public void Submit(in Ds4Frame frame, in Ds4Motion motion) { }
 
     public event Action<byte, byte>? Rumble
     {

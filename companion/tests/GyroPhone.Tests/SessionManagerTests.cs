@@ -135,6 +135,30 @@ public class SessionManagerTests
     }
 
     [Fact]
+    public void UpDroppedByWindowsIsSentAgain()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        h.Send(phone, phone.State(f => { f.SetKey(UsageW, true); f.MouseButtons = 1; }));
+        Assert.Contains((ushort)0x11, h.KeyMouse.HeldKeys);
+        // An admin window comes to the front and the user lets go: Windows drops the ups.
+        h.KeyMouse.Dropping = true;
+        h.Send(phone, phone.State(f => { f.SetKey(UsageW, false); f.MouseButtons = 0; }));
+        h.Tick(50);
+        Assert.Contains((ushort)0x11, h.KeyMouse.HeldKeys);
+        Assert.True(h.Engine.Snapshot().ElevatedForeground);
+        // Focus comes back: the next tick sends the ups again.
+        h.KeyMouse.Dropping = false;
+        h.Tick(50);
+        Assert.True(h.KeyMouse.NothingHeld);
+        Assert.False(h.Engine.Snapshot().ElevatedForeground);
+        int calls = h.KeyMouse.Calls.Count;
+        h.Tick(50);
+        Assert.Equal(calls, h.KeyMouse.Calls.Count);
+    }
+
+    [Fact]
     public void ByeReleases()
     {
         var h = new Harness();

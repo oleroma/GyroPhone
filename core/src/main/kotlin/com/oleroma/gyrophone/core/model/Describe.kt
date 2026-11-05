@@ -17,7 +17,12 @@ object Describe {
         is InputSource.KeyGesture -> "Controller " + (AndroidKey.names[s.keyCode] ?: "key ${s.keyCode}") + " " +
                 s.gesture.label.lowercase()
 
-        is InputSource.Axis -> (axisNames[s.axis] ?: "Axis ${s.axis}") + half(s.half)
+        is InputSource.Axis -> (axisNames[s.axis] ?: "Axis ${s.axis}") + half(s.half) + when (s.stage) {
+            AxisStage.NONE -> ""
+            AxisStage.OUTER -> " outer"
+            AxisStage.PRESS -> " press"
+            AxisStage.FULL_PULL -> " full pull"
+        }
         is InputSource.Touch -> "Touch ${s.id}"
         is InputSource.TouchStick -> "Touch stick ${s.id} ${s.axis}" + half(s.half)
         is InputSource.TouchStickDiagonal -> "Touch stick ${s.id} ${s.diagonal.label}"
@@ -75,6 +80,7 @@ object Describe {
         is OutputTarget.Layer -> layer(t) + if (t.set < 0) "" else " → " + setName(t.set)
         OutputTarget.LayerBack -> "Layer back (to the layers before the last change)"
         OutputTarget.LetGo -> "(Let go): ends the toggles set to end on it"
+        OutputTarget.BlackScreen -> "Black screen (the phone's screen goes black until tapped)"
         OutputTarget.NoOutput -> "Nothing (blocks the layer below)"
     }
 
@@ -85,8 +91,8 @@ object Describe {
         OutputTarget.LayerBack, OutputTarget.NoOutput,
     )
 
-    /** The "Other" picker group: (Let go). */
-    val otherTargets: List<OutputTarget> = listOf(OutputTarget.LetGo)
+    /** The "Other" picker group: (Let go) and Black screen. */
+    val otherTargets: List<OutputTarget> = listOf(OutputTarget.LetGo, OutputTarget.BlackScreen)
 
     /** "Layer set", "Layer hold", "Override layer set" or "Override layer hold". */
     fun layer(t: OutputTarget.Layer): String = when {
@@ -175,6 +181,7 @@ object Describe {
         is OutputTarget.Layer -> layer(t) + if (t.set < 0) "" else " " + (if (t.set == MappingSet.BASE) "Base" else t.set.toString())
         OutputTarget.LayerBack -> "Layer back"
         OutputTarget.LetGo -> "(Let go)"
+        OutputTarget.BlackScreen -> "Black screen"
 
         OutputTarget.NoOutput -> "Nothing"
     }
@@ -220,8 +227,9 @@ object Describe {
             OutputTarget.Haptic(held = true),
             OutputTarget.HapticStep()
         ),
+        "Media" to HidUsage.media.map { OutputTarget.Key(it) },
         "Keyboard" to (keyboardOrder.filter { it in HidUsage.names } + HidUsage.names.keys.sorted())
-            .distinct().map { OutputTarget.Key(it) },
+            .distinct().filter { it !in HidUsage.media }.map { OutputTarget.Key(it) },
     )
 
     /** Every target the picker offers, in display order. */

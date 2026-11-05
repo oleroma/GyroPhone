@@ -25,6 +25,7 @@ import com.oleroma.gyrophone.core.engine.SwipeGuide
 import com.oleroma.gyrophone.core.engine.Touchpad
 import com.oleroma.gyrophone.core.model.Direction
 import kotlinx.serialization.Serializable
+import kotlin.math.abs
 import kotlin.math.hypot
 
 /**
@@ -78,7 +79,7 @@ data class TouchVisuals(
 
 /** Finger paths for [TouchOverlay], fed by [recordTouches]. Main thread only. */
 class TouchTrails {
-    private class Point(val x: Float, val y: Float, val t: Long)
+    private class Point(var x: Float, var y: Float, var t: Long)
 
     private class Track {
         val points = ArrayDeque<Point>()
@@ -102,7 +103,16 @@ class TouchTrails {
 
     fun move(id: Long, p: Offset, now: Long, keepMs: Int) {
         val t = tracks[id] ?: return
-        t.points.addLast(Point(p.x, p.y, now))
+        val pts = t.points
+        val prev = pts.getOrNull(pts.size - 2)
+        // A sample this close to the point before the head moves the head instead of adding one, so the
+        // trail keeps few segments however fast the screen samples touch, and the head stays on the finger.
+        if (prev != null && (now - prev.t < TRAIL_STEP_MS || abs(p.x - prev.x) + abs(p.y - prev.y) < TRAIL_STEP_PX)) {
+            val head = pts.last()
+            head.x = p.x; head.y = p.y; head.t = now
+        } else {
+            pts.addLast(Point(p.x, p.y, now))
+        }
         while (t.points.size > 1 && now - t.points.first().t > keepMs) t.points.removeFirst()
     }
 
@@ -206,6 +216,12 @@ fun TouchOverlay(trails: TouchTrails, visuals: TouchVisuals, modifier: Modifier 
 }
 
 private const val DOT_DP = 18f
+
+/** A trail keeps at most one point per this many ms of a finger's path. */
+private const val TRAIL_STEP_MS = 8L
+
+/** ...and points at least this far apart (px, across plus down). */
+private const val TRAIL_STEP_PX = 4f
 
 /**
  * Swipe lines for [SwipeLineOverlay]: per finger on a swipe button, its start point (where it
