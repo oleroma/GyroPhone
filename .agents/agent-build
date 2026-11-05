@@ -87,7 +87,7 @@ guard_workflow_change() {
   [ "$FORCE" = 0 ] || return 0
   only_pipeline_changes || return 0
   local since="since main"
-  if [ -n "$LAST_CHECKED" ]; then since="since its last build (${LAST_CHECKED:0:7})"; fi
+  if [ -n "${LAST_CHECKED:-}" ]; then since="since its last build (${LAST_CHECKED:0:7})"; fi
   mapfile -t files <<<"$CHANGES"
   finish workflow-change "Not built: $(git rev-parse --short=7 HEAD) changed only pipeline files or documentation $since:" "${files[@]}" \
     "Olex tests these himself. Tell him in the thread what changed and how to test it; don't run it." \
