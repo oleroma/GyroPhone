@@ -73,14 +73,18 @@ Settings and mappings pass down: **Defaults** (Settings › Defaults) → **work
 
 ### Edit mode
 
-Tap the current workspace's capsule. A floating menu appears (drag it by its ⠿ dots, resize or fold it):
+Tap the current workspace's capsule. A floating menu appears. Drag it by its ⠿ dots to reach what's under it, and drag its right edge to make it wider or narrower. Everything except undo and redo scrolls sideways, so swipe the menu's rows to reach the rest on a narrow (portrait) screen.
 
-- **Tap** a control to select it (taps on overlapping controls cycle through them). **Drag** to move it, **pinch** to resize it. **Long-press** a control to open its mapping editor; long-press empty space for the touchpad's.
-- **+ Button**, **+ Empty button** (one that inherits nothing), **+ Stick**, and the **gyro displays** (3D phone, Ratchet ring, Speed graph, Attitude indicator, Bubble disk, 3D shape). You can also drag items out of the menu onto the pad.
+- **Tap** a control to select it. Tapping again where controls overlap selects the next one underneath, so taps cycle through a stack.
+- **Drag** moves the selected control *from anywhere on the screen*, not only from on top of it, so small controls don't hide under your finger. With nothing selected, a drag moves the control under the finger.
+- **Pinch** with two fingers anywhere resizes the selected control. On a rectangle, the pinch locks to one axis if your fingers spread mostly one way (width or height only), and frees the other axis once that one changes too. A **two-finger tap** selects the control under the fingers without opening anything.
+- **Long-press** (about half a second) a control to open its mapping editor. Long-press **empty space** for the workspace touchpad's mapping editor. Long-press a **← / → corner** for its size and "Same size for all corners", or a **gyro display** for its settings.
+- **Tap empty space** to clear the selection.
+- **+ Button**, **+ Empty button** (one that inherits nothing from the touchpad), **+ Stick**, and the **gyro displays** (3D phone, Ratchet ring, Speed graph, Attitude indicator, Bubble disk, 3D shape). Tapping one adds it in the middle; **dragging it out of the menu** drops it where you let go.
 - **Configure** opens the selected control's settings; **Map** opens its mapping editor.
-- **Select** picks several controls, **Group** / **Ungroup** keep controls together, **Snap** aligns edges to a grid, and 🔒 **Lock layout** stops moving and resizing.
-- **Devices** picks the workspace's device preset. **Library** adds a button you saved earlier ("Save to library" in a button's settings).
-- **↶ / ↷** undo and redo (100 steps). **⚙** opens the workspace's settings. **Done** saves; **Cancel** asks before throwing changes away.
+- **Select** turns taps into multi-pick (a picked control's whole group comes with it), and a drag then moves everything picked. **Group** / **Ungroup** keep controls together for later moves and pinches. **Snap** puts edges on a grid. 🔒 **Lock layout** stops drags and pinches from moving what was already there; controls you add afterwards stay free until edit mode opens again.
+- **Devices** picks the workspace's device preset. **Library** adds a button you saved earlier ("Save to library" in a button's settings); long-press a library button to remove it from the library.
+- **↶ / ↷** undo and redo (100 steps; a slider drag counts as one step). **⚙** saves your edits so far and opens the workspace's settings; Back returns to edit mode. **Done** saves; **Cancel** asks before throwing changes away. Your edits survive the app being sent to the background.
 
 Landscape and portrait have separate placements, so edit in the orientation you play in.
 
@@ -92,12 +96,15 @@ Every button, stick, the touchpad, the Defaults, and every key of an attached de
 
 **Mapping something:**
 
-1. Tap a card to select it, then tap an output in the library to add it there.
-2. Or long-press an output and drag it onto a card.
-3. Drag a chip to another card to move it, or back onto the library to remove it.
-4. Reorder cards by their ⠿ handle.
+1. Tap a card to select it, then tap an output in the library to add it there. Tap several outputs to add them all.
+2. Or long-press an output and drag it onto any card.
+3. Long-press a chip to drag it to another card, or back onto the library to remove it. While dragging, hold near the top or bottom edge to scroll the cards.
+4. Reorder cards by their ⠿ handle. **Sort ▾** puts them back in the default order, your own (Custom), or Mapped first.
+5. Adding an output a card already presses moves it to the next free **When** and opens its settings, so dropping "Crouch" twice gives you On touch Crouch and Long press Crouch.
 
 **Finger chips** (on buttons and the touchpad) pick which finger count you are mapping: **1–4 fingers**, each with its own taps, holds, swipes, Move X / Move Y and pinch. **Motion** maps the gyro, tilt and shake (on a button: what they do while it is held).
+
+Under a card, a grey line shows its timings ("Tap: at lift before 400 ms · Long press: from 400 ms"). A card's **⚙** opens that input's own settings, such as its own long-press time or a swipe direction's distance and pie.
 
 **Chip settings.** Tap a chip to open its settings:
 
@@ -109,7 +116,9 @@ Every button, stick, the touchpad, the Defaults, and every key of an attached de
 
 **Inherited mappings** show faded. **✕** clears one (the input then does nothing here), **↺** follows the parent again, **↺ Reset all** follows everything, and **✕ Clear all** clears everything. **↶ Undo** undoes any change.
 
-**Layers.** Chips at the top pick **Base** or a layer (**+ Layer**, up to 9). A mapping in a layer only works while that layer is in use. Map an input to a **Layer** output (Layers tab) to **switch** to it, **override** Base with it (inputs the layer doesn't map keep their Base mapping), or use it only **while held**. **Layer back** returns to the previous layer. A layer can also have its own settings, for example a lower gyro sensitivity.
+**Swipe length zones.** A held swipe direction (Swipe ← → ↑ ↓) can do different things the further you swipe. Its row ends in a divider: drag a chip **past that end divider** to make a new zone. Long-press a divider to slide it, and tap the end divider for the last zone's settings (its length and Keep: Only in zone, Only forward, Always). A held direction **latches** (stays on after you lift) when one of its chips is a Toggle that also ends on Tap.
+
+**Layers.** Chips at the top pick **Base** or a layer (**+ Layer**, up to 9). Long-press a layer chip to rename or delete it. A mapping in a layer only works while that layer is in use. Map an input to a **Layer** output (Layers tab) to **switch** to it, **override** Base with it (inputs the layer doesn't map keep their Base mapping), or use it only **while held**. **Layer back** returns to the previous layer. A layer can also have its own settings, for example a lower gyro sensitivity.
 
 **Presets** fill in common setups: **Windows touchpad** for a touch surface, **Gyro mouse** for the gyro (yaw → Move X, pitch → Move Y), and Left stick, Right stick, WASD, Arrow keys and D-pad for sticks.
 
@@ -126,6 +135,8 @@ The gyro is mapped like everything else: in the Motion tab, map **yaw / pitch / 
 - **Gyro off**: the sensor isn't read at all.
 
 **Toggle gyro** swaps the first two until you switch workspace.
+
+**Acceleration curve editor**: tap the graph to add a point (up to 6), drag a point to move it, long-press a point to remove it. Its live line shows how fast you are turning now.
 
 **Tuning** (workspace settings › Gyro): **Sensitivity** in mouse counts per degree (16 by default; per axis, exact or "× Parent"); **Game**: pick the game and enter your in-game sensitivity, and the slider shows real-world sensitivity (degrees the camera turns per degree the phone turns; **Measure** helps if your game isn't listed); **Acceleration** curves; **Inertia** (keep gliding after a ratchet); **Gyro space** Local, World or Player. **Calibrate** removes drift: lay the phone still for 2 seconds. Jitter cutoff and smoothing are in Settings › App › Gyro, off by default (raw gyro).
 
@@ -146,7 +157,7 @@ Attach a game pad, keyboard or mouse to the phone (USB or Bluetooth). The **Cont
 - **Workspace settings** (⚙ in edit mode): rename, duplicate, delete, copy mappings from another workspace; gyro, tilt and shake, calibration, control opacity, haptics, gesture timings (long press 400 ms and double tap 300 ms by default), and the touchpad. Chips at the top switch between Base and each layer's own settings.
 - **Connection**: the link, pairing, report rate, gyro poll rate, PC controller ratchet, and **Stop when idle** (the connection ends after the app has been off screen for 10 minutes by default).
 
-Every settings page has a search box. Categories fold, and you can reorder them by long-pressing their names.
+Every settings page has a search box; on Settings it searches App and Defaults at once. Categories fold, and you can **long-press a category's name and drag it** to reorder. Values a workspace or layer sets itself are highlighted with a **↺** to follow the parent again. A ⚙ next to a gyro or touchpad setting opens per-axis or per-direction values.
 
 ## The companion
 
@@ -165,6 +176,32 @@ Every settings page has a search box. Categories fold, and you can reorder them 
 - **Safety.** If the phone goes quiet for 250 ms, or the PC locks or sleeps, everything held is released. If the companion is killed while a key is held, it releases it on its next start.
 - **Enhance pointer precision** in Windows changes how gyro moves the desktop cursor. Games that read raw input aren't affected.
 - **Bluetooth smooth scrolling** needs the PC to have paired with a current build. After updating from an old one, remove GyroPhone in Windows Bluetooth settings and pair again once.
+
+## Easy to miss
+
+Gestures and actions with no button of their own:
+
+**On the pad**
+- **Tap the workspace you're on** (its capsule) to open edit mode. There is no Edit button.
+- **Press ← and → together** for fullscreen. In fullscreen they are the only way out besides Back, which is why they never fade below 25 %.
+- With **Hide the ← / → corners** on (Settings › App › Corners), **four quick taps anywhere** (or touching where a corner is) bring them back for 3 seconds.
+- **Long-press a capsule and drag** to reorder workspaces, Controller, Settings and Connection.
+- **On the black screen**, the first tap only wakes the pad; it presses nothing. A controller button mapped to **Black screen** (Other tab) blacks it out at once.
+- A **one-finger hold on a button** is its press, but it also counts as a touchpad: with the button's swipes and Move mapped (or inherited from the touchpad), you can press it and aim by sliding in one motion.
+- **Show live mappings on buttons** (Settings › App › Touch display) makes a button's label show what it just sent, which helps when learning tap / long press / double tap mappings.
+
+**In the editors**
+- See [Edit mode](#edit-mode) and [The mapping editor](#the-mapping-editor) for drag-from-anywhere, two-finger tap, pinch axis lock, long-press on empty space, drag-to-add, swipe zones and layer chips.
+- **Controller screen**: long-press a preset's tab to rename it, duplicate it, delete it, or reset its keys' own timings.
+- **Inherited values**: anything highlighted is set at this level; **↺** next to it goes back to the parent's value. Faded chips in the mapping editor are inherited; mapping anything on that input replaces them.
+- Every confirm-free destructive action (**✕ Clear all**, removing chips) can be undone with **↶ Undo**.
+
+**On the PC**
+- **Edit** (tray › Overlays, or Ctrl+Alt+E) makes overlay windows draggable. A **click without a drag** picks a window for its settings, and clicking where windows overlap picks the next one underneath.
+- **Level all** (Ctrl+Alt+R) makes the way you hold the phone now show face-on in every overlay.
+- **Hide all** (Ctrl+Alt+O) hides every overlay but keeps each one's own Show switch for when you bring them back.
+- **Clicking the tray icon** can open the main window or the pairing window: App › Tray icon.
+- **Recording on the phone** (debug panel › Record) also saves the PC's side at the same moment.
 
 ## Debugging
 
