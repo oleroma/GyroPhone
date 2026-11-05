@@ -37,6 +37,9 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup>
+    <!-- The build hook passes these; the defaults are for building by hand. -->
+    <GpOutDir Condition="'$(GpOutDir)' == ''">$(MSBuildProjectDirectory)\..\build\driver\out\</GpOutDir>
+    <GpIntDir Condition="'$(GpIntDir)' == ''">$(MSBuildProjectDirectory)\..\build\driver\obj\</GpIntDir>
     <TargetName>GyroPhonePad</TargetName>
     <!-- Backslashes: stampinf and other WDK tools read "D:/..." as a relative path. -->
     <OutDir>$([MSBuild]::EnsureTrailingSlash($([System.IO.Path]::GetFullPath('$(GpOutDir)'))))</OutDir>
@@ -51,6 +54,8 @@
     </ClCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);mincore.lib;VhfUm.lib</AdditionalDependencies>
+      <!-- VhfUm.lib is in the WDK's user-mode lib folder, which the driver toolset doesn't add. -->
+      <AdditionalLibraryDirectories>$(WDKContentRoot)\Lib\$(TargetPlatformVersion)\um\$(Platform);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <Inf>
       <TimeStamp>$(GpDriverVersion)</TimeStamp>
