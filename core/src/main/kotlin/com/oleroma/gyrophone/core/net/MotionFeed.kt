@@ -13,9 +13,10 @@ import kotlin.math.roundToInt
  * u16 newest sample's seq (wrapping), u32 newest sample's phone time (us, low 32 bits), then [RING]
  * slots, oldest first, each u16 us since the sample before it (0 for the first after a stop), i16 x
  * 3 gyro in 1/16 deg/s ([GYRO_SCALE]) and i16 x 3 accelerometer in 1/8192 g ([ACCEL_SCALE]). Both
- * are in the phone's screen frame (right, up, toward the player), turns by the right-hand rule, the
- * accelerometer reading +1 g up while the phone stands still and upright: the DualShock 4's own
- * frame and units. Each packet repeats the last few samples, so a lost one loses none.
+ * are already in the DualShock 4's own frame and units (x right, y out of its face, z toward the
+ * player; turns by the right-hand rule; +1 g on y lying still and flat), mapped from the phone's
+ * axes by the workspace ([com.oleroma.gyrophone.core.engine.PadGyro]). Each packet repeats the
+ * last few samples, so a lost one loses none.
  *
  * All methods hold [lock]; the gyro and accelerometer threads add, the send loop encodes.
  */
@@ -62,28 +63,28 @@ class MotionFeed {
         onWantedChange?.run()
     }
 
-    /** The newest accelerometer reading in g, in the phone's screen frame (right, up, toward the player). */
-    fun accel(right: Float, up: Float, toward: Float) {
+    /** The newest accelerometer reading in g, in the pad's frame (x, y, z). */
+    fun accel(x: Float, y: Float, z: Float) {
         synchronized(lock) {
-            accelNow[0] = clampI16(right * ACCEL_SCALE)
-            accelNow[1] = clampI16(up * ACCEL_SCALE)
-            accelNow[2] = clampI16(toward * ACCEL_SCALE)
+            accelNow[0] = clampI16(x * ACCEL_SCALE)
+            accelNow[1] = clampI16(y * ACCEL_SCALE)
+            accelNow[2] = clampI16(z * ACCEL_SCALE)
         }
     }
 
     /**
-     * One gyro sample in deg/s about the phone's screen axes ([right], [up], [toward] the player),
-     * measured at [timeUs] (phone clock). Each rate is rounded to 1/16 deg/s with the remainder
-     * carried to the next sample, so slow turns are not lost.
+     * One gyro sample in deg/s about the pad's axes ([x], [y], [z]), measured at [timeUs] (phone
+     * clock). Each rate is rounded to 1/16 deg/s with the remainder carried to the next sample, so
+     * slow turns are not lost.
      */
-    fun add(right: Float, up: Float, toward: Float, timeUs: Long) {
+    fun add(x: Float, y: Float, z: Float, timeUs: Long) {
         synchronized(lock) {
             val fresh = !mayMove || timeUs - lastUs !in 0..MAX_DT_US
             if (fresh) rem.fill(0f)
             val i = next
             dtUs[i] = if (fresh) 0 else (timeUs - lastUs).toInt()
             val g = gyro[i]
-            g[0] = quantize(0, right); g[1] = quantize(1, up); g[2] = quantize(2, toward)
+            g[0] = quantize(0, x); g[1] = quantize(1, y); g[2] = quantize(2, z)
             accelNow.copyInto(accelAt[i])
             next = (i + 1) % RING
             if (count < RING) count++

@@ -7,9 +7,9 @@ namespace GyroPhone.Protocol;
 /// (<see cref="FlagMayMove"/>), u8 count (0..8), u16 newest sample's seq (wrapping), u32 newest
 /// sample's phone time (µs, low 32 bits), then 8 sample slots, oldest first, each u16 µs since the
 /// sample before it (0 for the first after a stop), i16 × 3 gyro in 1/16 deg/s and i16 × 3
-/// accelerometer in 1/8192 g. Both are in the phone's screen frame: right, up, toward the player,
-/// turns by the right-hand rule, the accelerometer reading +1 g up when the phone stands still and
-/// upright. That is the DualShock 4's own frame and units, so the PC copies them into the report.
+/// accelerometer in 1/8192 g. The phone has already mapped them into the DualShock 4's own frame
+/// and units (x right, y out of its face, z toward the player; turns by the right-hand rule; +1 g
+/// on y lying still and flat) by the workspace's pad axes, so the PC copies them into the report.
 /// Each packet repeats the last few samples, so a lost one loses none.
 /// </summary>
 public sealed class MotionFrame
@@ -31,7 +31,7 @@ public sealed class MotionFrame
     public ushort NewestSeq;
     public uint NewestTimeUs;
     public readonly ushort[] DtUs = new ushort[MaxSamples];
-    /// <summary>[sample * 3 + axis]: right, up, toward the player.</summary>
+    /// <summary>[sample * 3 + axis]: the pad's x, y, z.</summary>
     public readonly short[] Gyro = new short[MaxSamples * 3];
     public readonly short[] Accel = new short[MaxSamples * 3];
 

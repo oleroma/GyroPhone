@@ -25,6 +25,7 @@ import com.oleroma.gyrophone.core.model.Profile
 
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.MappingSet
+import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 
@@ -115,6 +116,12 @@ internal fun defaultsLevel(runtime: GamepadRuntime, profile: Profile): Workspace
 
 private fun g(p: String) = WorkspaceDefaults.gyroKey(p)
 
+/** One of the PC DualShock 4's gyro axes in the workspace settings: its phone axis and Invert, and how to set them. */
+private class PadAxisRow(
+    val title: String, val prop: String, val src: MotionAxis, val invert: Boolean,
+    val set: (GyroSettings, MotionAxis?, Boolean?) -> GyroSettings,
+)
+
 /**
  * Every setting of one [level] (a workspace, one of its layers, or the Defaults): gyro, buttons,
  * haptics, and the touchpad and gestures, each highlighted with a ↺ where it differs from the
@@ -185,6 +192,40 @@ internal fun WorkspaceSettings(
                             FilterChip(selected = ws.gyro.gyroSpace == sp, onClick = {
                                 editWs { it.copy(gyro = it.gyro.copy(gyroSpace = sp)) }
                             }, label = { Text(sp.label) })
+                        }
+                    }
+                }
+            }
+            if (level.shows(g("padYaw"))) {
+                // The PC's DualShock 4 gyro: which phone axis each pad axis follows, and Invert.
+                val g0 = ws.gyro
+                listOf(
+                    PadAxisRow("DualShock 4 yaw", "padYaw", g0.padYaw, g0.padYawInvert) { s, a, i ->
+                        s.copy(padYaw = a ?: s.padYaw, padYawInvert = i ?: s.padYawInvert)
+                    },
+                    PadAxisRow("DualShock 4 pitch", "padPitch", g0.padPitch, g0.padPitchInvert) { s, a, i ->
+                        s.copy(padPitch = a ?: s.padPitch, padPitchInvert = i ?: s.padPitchInvert)
+                    },
+                    PadAxisRow("DualShock 4 roll", "padRoll", g0.padRoll, g0.padRollInvert) { s, a, i ->
+                        s.copy(padRoll = a ?: s.padRoll, padRollInvert = i ?: s.padRollInvert)
+                    },
+                ).forEachIndexed { n, row ->
+                    OverrideRow(
+                        row.title, own(g(row.prop)) || own(g(row.prop + "Invert")),
+                        { level.reset(g(row.prop)); level.reset(g(row.prop + "Invert")) },
+                        hint = if (n == 0) "With the companion's Gamepad output on DualShock 4, the pad's gyro and accelerometer carry the phone's turn " +
+                            "for games with their own controller gyro, whatever the gyro mouse does. Pick the phone axis each pad axis follows: " +
+                            "by default yaw turns through the screen, pitch across it and roll along it. Turn the gyro mouse off where the game aims with it." else null,
+                    ) {
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            (MotionAxis.shown + MotionAxis.NONE).forEach { ax ->
+                                FilterChip(selected = row.src == ax, onClick = {
+                                    editWs { it.copy(gyro = row.set(it.gyro, ax, null)) }
+                                }, label = { Text(ax.label) })
+                            }
+                            FilterChip(selected = row.invert, onClick = {
+                                editWs { it.copy(gyro = row.set(it.gyro, null, !row.invert)) }
+                            }, label = { Text("Invert") })
                         }
                     }
                 }

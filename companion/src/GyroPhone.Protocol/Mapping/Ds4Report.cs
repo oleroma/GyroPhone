@@ -2,11 +2,11 @@ namespace GyroPhone.Protocol.Mapping;
 
 /// <summary>
 /// The DualShock 4's motion fields: the report timestamp (in 16/3 µs, wrapping), gyro in 1/16 deg/s
-/// and accelerometer in 1/8192 g, in the pad's frame (right, up, toward the player).
+/// and accelerometer in 1/8192 g, in the pad's frame (x right, y out of its face, z toward the player).
 /// </summary>
 public readonly record struct Ds4Motion(ushort Timestamp, short Gx, short Gy, short Gz, short Ax, short Ay, short Az)
 {
-    /// <summary>Still and upright: no turn, 1 g up.</summary>
+    /// <summary>Still and flat: no turn, 1 g out of the face.</summary>
     public static readonly Ds4Motion Neutral = new(0, 0, 0, 0, 0, (short)MotionFrame.AccelScale, 0);
 
     /// <summary>This reading with the gyro at rest (the accelerometer kept), stamped <paramref name="timestamp"/>.</summary>
