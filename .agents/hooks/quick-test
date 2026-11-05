@@ -9,10 +9,20 @@ cd "$(dirname "$0")/../.."
 if [ $# -gt 0 ]; then parts="$*"; else parts="$(bash .agents/hooks/parts)"; fi
 
 if grep -qw apk <<<"$parts"; then
+  source .agents/hooks/android-sdk android-36
   ./gradlew :core:test
 fi
 
 if grep -qw companion <<<"$parts"; then
+  # A cloud session has no .NET: install .NET 8 into ~/.dotnet on first use (about 15 s).
+  if ! command -v dotnet >/dev/null; then
+    export DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH"
+    if [ ! -x "$DOTNET_ROOT/dotnet" ]; then
+      mkdir -p build/downloads
+      curl -sSfLo build/downloads/dotnet-install.sh https://dot.net/v1/dotnet-install.sh
+      bash build/downloads/dotnet-install.sh --channel 8.0 --install-dir "$DOTNET_ROOT" >/dev/null
+    fi
+  fi
   # The Windows-only companion projects build only on Windows; elsewhere the
   # cross-platform ones (protocol, engine and their tests) still run.
   if [ "${OS:-}" = Windows_NT ]; then
