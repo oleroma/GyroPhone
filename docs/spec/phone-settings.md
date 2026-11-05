@@ -40,7 +40,7 @@ Opened by ⚙ in edit mode, the touchpad's Settings in its mapping editor, or th
 | Category | Contents | Defaults |
 |---|---|---|
 | Workspace | Rename, Duplicate, Delete, Copy mappings from… | — |
-| Gyro | Gyro to mouse (Ratchet enables / Ratchet disables / Gyro off), Gyro space (Local / World / Player), Game (preset game + in-game sensitivity, or counts per 360, Measure), Sensitivity (per axis via ⚙, exact or × Parent), Acceleration curve (Off, Light, Strong, custom; by this axis or the whole phone), Inertia (Smooth / Linear) and Glide, DualShock 4 yaw / pitch / roll (the phone axis each pad axis follows, or None, and Invert; workspace and Defaults only) | Ratchet enables, Local, no game, 16 counts/°, Off, inertia off, 325 ms, pad yaw = Yaw, pitch = Pitch, roll = Roll |
+| Gyro | Gyro to mouse (Ratchet enables / Ratchet disables / Gyro off), Gyro space (Local / World / Player), Game (preset game + in-game sensitivity, or counts per 360, Measure), Sensitivity (per axis via ⚙, exact or × Parent), Acceleration curve (Off, Light, Strong, custom; by this axis or the whole phone), Inertia (Smooth / Linear) and Glide, PC pad yaw / pitch / roll (the phone axis each DualShock 4 or DualSense axis follows, or None, and Invert; workspace and Defaults only) | Ratchet enables, Local, no game, 16 counts/°, Off, inertia off, 325 ms, pad yaw = Yaw, pitch = Pitch, roll = Roll |
 | Tilt & shake | Tilt range, Tilt deadzone (per axis), Shake strength | 30°, off, 14 m/s² |
 | Gyro calibration (Base only) | Calibrate, Clear | not calibrated |
 | Controls (Base only) | Control opacity (10–100 %) | 100 % |

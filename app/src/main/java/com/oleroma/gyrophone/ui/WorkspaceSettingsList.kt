@@ -197,23 +197,23 @@ internal fun WorkspaceSettings(
                 }
             }
             if (level.shows(g("padYaw"))) {
-                // The PC's DualShock 4 gyro: which phone axis each pad axis follows, and Invert.
+                // The PC's DualShock 4 or DualSense gyro: which phone axis each pad axis follows, and Invert.
                 val g0 = ws.gyro
                 listOf(
-                    PadAxisRow("DualShock 4 yaw", "padYaw", g0.padYaw, g0.padYawInvert) { s, a, i ->
+                    PadAxisRow("PC pad yaw", "padYaw", g0.padYaw, g0.padYawInvert) { s, a, i ->
                         s.copy(padYaw = a ?: s.padYaw, padYawInvert = i ?: s.padYawInvert)
                     },
-                    PadAxisRow("DualShock 4 pitch", "padPitch", g0.padPitch, g0.padPitchInvert) { s, a, i ->
+                    PadAxisRow("PC pad pitch", "padPitch", g0.padPitch, g0.padPitchInvert) { s, a, i ->
                         s.copy(padPitch = a ?: s.padPitch, padPitchInvert = i ?: s.padPitchInvert)
                     },
-                    PadAxisRow("DualShock 4 roll", "padRoll", g0.padRoll, g0.padRollInvert) { s, a, i ->
+                    PadAxisRow("PC pad roll", "padRoll", g0.padRoll, g0.padRollInvert) { s, a, i ->
                         s.copy(padRoll = a ?: s.padRoll, padRollInvert = i ?: s.padRollInvert)
                     },
                 ).forEachIndexed { n, row ->
                     OverrideRow(
                         row.title, own(g(row.prop)) || own(g(row.prop + "Invert")),
                         { level.reset(g(row.prop)); level.reset(g(row.prop + "Invert")) },
-                        hint = if (n == 0) "With the companion's Gamepad output on DualShock 4, the pad's gyro and accelerometer carry the phone's turn " +
+                        hint = if (n == 0) "With the companion's Gamepad output on DualShock 4 or DualSense, the pad's gyro and accelerometer carry the phone's turn " +
                             "for games with their own controller gyro, whatever the gyro mouse does. Pick the phone axis each pad axis follows: " +
                             "by default yaw turns through the screen, pitch across it and roll along it. Turn the gyro mouse off where the game aims with it." else null,
                     ) {

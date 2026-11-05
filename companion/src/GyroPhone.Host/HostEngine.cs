@@ -774,7 +774,7 @@ public sealed class HostEngine
                 _padFrameValid = true;
                 break;
             case OutputMode.DualShock4:
-            case OutputMode.DualSense: // the same buttons and sticks; no gyro yet
+            case OutputMode.DualSense: // the same buttons, sticks and motion
                 var f = PadMapper.ToDs4(s);
                 if (_padFrameValid && f == _lastDs4) return;
                 if (!TrySubmit(f, _ds4Motion.Current)) { _padRetryAfterUs = nowUs + PadRetryUs; return; }
@@ -817,12 +817,12 @@ public sealed class HostEngine
     }
 
     /// <summary>
-    /// MOTION: each new sample goes to the DualShock 4 as its own report, with the buttons and sticks
+    /// MOTION: each new sample goes to the DualShock 4 or DualSense as its own report, with the buttons and sticks
     /// it shows now, so the game sees every turn at the time it was measured.
     /// </summary>
     private void OnMotion(ReadOnlySpan<byte> plain, long nowUs)
     {
-        if (_pad.Plugged != OutputMode.DualShock4 || _paused || _locked || _releasedForSilence) return;
+        if (!PadTakesMotion || _paused || _locked || _releasedForSilence) return;
         _motionFrame.Decode(plain);
         int n = _ds4Motion.Take(_motionFrame, _motionOut, nowUs);
         SubmitMotion(n);
@@ -879,8 +879,8 @@ public sealed class HostEngine
                 int r = _keyRepeat.Due(_injectedKeys, nowUs, _inject);
                 if (r > 0 && !_keyMouse.Inject(_inject.AsSpan(0, r))) InjectFailed();
             }
-            // A lost stop (or the phone gone quiet): the DualShock 4's gyro comes to rest.
-            if (_pad.Plugged == OutputMode.DualShock4 && _ds4Motion.IsStale(nowUs)) SubmitMotion(_ds4Motion.Rest(_motionOut, nowUs));
+            // A lost stop (or the phone gone quiet): the pad's gyro comes to rest.
+            if (PadTakesMotion && _ds4Motion.IsStale(nowUs)) SubmitMotion(_ds4Motion.Rest(_motionOut, nowUs));
             // A pad button held from a burst is let go even when no STATE follows.
             if (_padHeld && nowUs >= _padHoldUntilUs && !_hasPending && !_paused && !_locked) SubmitPad(_pending, nowUs);
             _sessions.ExpirePending(nowUs);
@@ -1621,6 +1621,9 @@ public sealed class HostEngine
     }
 
     /// <summary>The driver the chosen output needs works (what the phone's "driver ok" flags say).</summary>
+    /// <summary>The plugged pad has a gyro and accelerometer (DualShock 4 or DualSense).</summary>
+    private bool PadTakesMotion => _pad.Plugged is OutputMode.DualShock4 or OutputMode.DualSense;
+
     private bool PadDriverOk => _settings.OutputMode == OutputMode.DualSense ? _pad.DualSenseOk : _pad.DriverOk;
 
     private void PlugPad()

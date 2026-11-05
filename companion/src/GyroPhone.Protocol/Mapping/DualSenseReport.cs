@@ -6,8 +6,9 @@ namespace GyroPhone.Protocol.Mapping;
 /// same <see cref="Ds4Frame"/>: sticks, triggers, the D-pad hat in the low nibble with Square, Cross,
 /// Circle, Triangle above it, then L1 R1 L2 R2 Create Options L3 R3, then PS and touchpad click.
 /// Gyro and accelerometer go in the DualShock 4's units (1/16 deg/s, 1/8192 g), which the driver's
-/// calibration report makes the DualSense's too. The motion timestamp stays 0 for now (no gyro yet);
-/// the driver fills in the report counter.
+/// calibration report makes the DualSense's too, and the sample's time in 1/3 µs (the DualSense's
+/// sensor timestamp), so a game adds up each turn at the time it was measured. The driver fills in
+/// the report counter.
 /// </summary>
 public static class DualSenseReport
 {
@@ -35,6 +36,7 @@ public static class DualSenseReport
         Le.PutI16(r, 22, m.Ax);
         Le.PutI16(r, 24, m.Ay);
         Le.PutI16(r, 26, m.Az);
+        Le.PutU32(r, 28, m.Clock);
         // Both touch points: not touching (bit 7).
         r[33] = 0x80;
         r[37] = 0x80;
