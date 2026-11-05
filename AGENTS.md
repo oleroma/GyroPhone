@@ -2,7 +2,7 @@
 # Shared rules for all of Olex's repos
 
 ## How agents work
-- `main` is the only long-lived branch. Agents commit only on a feature branch made from `main` (or a `handoff/` branch, step 1), never on `main` itself, and change `main` only through `agent-merge`, after Olex says the feature works.
+- `main` is the only long-lived branch. Agents commit only on a feature branch made from `main`, never on `main` itself, and change `main` only through `agent-merge`, when Olex says "merge".
 - Work in a cloud session unless Olex asks for local work or no cloud session is available. If the cloud session lacks something it needs, ask Olex whether to work locally. Local work follows the same steps; say that you're working locally and why.
 - Scripts in `.agents/` do the branching, committing, pushing, building, installing and merging. The agent does what needs judgment: code, commit messages, conflicts, and talking to Olex. Never do by hand what a script does; if a script is missing something or seems wrong, tell Olex.
 - Run the scripts with `bash`. Each ends with `result: <word>` and a short summary, and logs to `build/logs/`. Read the log only when the result is `failed`.
@@ -12,52 +12,46 @@
 |---|---|---|
 | `done` | all | Next step |
 | `failed` | all | Read the log, explain to Olex, stop |
-| `other-agent` | `agent-start` | Run `agent-handoff`, then ask Olex: join that feature or wait (step 1) |
+| `other-agent` | `agent-start` | Another feature holds the repo. If your task isn't a feature (it changes only files no build uses, see `workflow-change`), run `agent-start --continue <name>`. Otherwise make no branch and no edits: work out the task, ask Olex what you need, then ask whether to wait for that feature to merge or to send the task to its thread |
 | `checks-failed` | `agent-build` | Fix it, go back to step 2. Olex doesn't test this build |
-| `other-build` | `agent-build` | Tell Olex which build of which feature it would replace, ask whether to go on |
-| `workflow-change` | `agent-build` | Only pipeline files or docs changed since the last build: tell Olex what changed and how to test it, and don't run it |
-| `conflicts` | `agent-start`, `agent-take`, `agent-merge` | Resolve them, run the same script again |
+| `other-build` | `agent-build` | Tell Olex which build of which feature it would replace. If he says go on, build again with `--replace` |
+| `workflow-change` | `agent-build` | Only files no build uses (the pipeline `.agents/` and `.github/workflows/`, docs, rules, `.gitignore`, `.claude/` and the like, listed in `lib.sh` `pipeline_file`) changed since the last build: Olex tests them himself. Tell him what changed and how to test it, and don't run it. `agent-merge` accepts them without a build |
+| `conflicts` | `agent-start`, `agent-merge` | Resolve them, run the same script again |
 | `needs-testing` | `agent-merge` | The merge touched this feature: go back to step 3 |
 | `not-built` | `agent-merge` | Something was committed after the last build: go back to step 3 |
 | `stuck` | `agent-merge` | Show Olex the files, ask what to do, stop |
 
 ## Steps
-1. **Start.** You may edit on `main` first, without building. When ready to branch, `bash .agents/agent-start <feature-name>` makes the branch from where you are, with your edits as its first commit and the latest `main` merged in, and opens a draft PR. Watch that PR's activity (subscribe to it) until it's merged: PC builds report there.
-   - `other-agent` means another feature holds the repo. Run `bash .agents/agent-handoff <feature-name>`, which pushes your work as `handoff/<feature-name>` (no PR, no build), then ask Olex: join or wait.
-   - Join: send the other feature's thread Olex's answer, asking it to run `bash .agents/agent-take handoff/<feature-name>`. It merges your work into its branch, and its next build tests both. Your part is then done.
-   - Wait: once the other feature is merged, run `agent-start <feature-name>` on your handoff branch. If Olex says to work in parallel anyway, run `agent-start --continue <feature-name>`.
+1. **Start.** Before editing, `bash .agents/agent-start <feature-name>` makes the branch from the latest `main` and opens a draft PR. Watch that PR's activity (subscribe to it) until it's merged: every build's result shows there.
 2. **Edit.** Write the code, then `bash .agents/agent-commit "<message>"`.
-3. **Build.** Every build runs the `quick-test`, `build` and `full-check` hooks once and marks the commit checked; nothing runs them again. Try the PC first through Remote Control (actually try, don't guess):
-   - `pc`: in `D:\dev\<repo>`, run `git fetch origin <branch>`, then `git -C build/src checkout --detach origin/<branch>` (the first time: `git worktree add --detach build/src origin/<branch>`), then `bash build/src/.agents/agent-build pc`. Report its summary. If it says a build file wasn't installed because it isn't an APK, ask Olex whether to install it. To install again without building, run `bash build/src/.agents/agent-install [<version>-<commit>]`. If the install failed (`agent-install` ends `failed`; `agent-build` still ends `done` and says why in its summary), tell Olex why; when the phone dropped off wireless adb, ask him to turn wireless debugging off and on, then run `agent-install` again.
-   - `ci`, only when the PC can't be reached: `bash .agents/agent-build ci`. Post the download links in the project thread first, then upload the files.
-   - Before asking for Remote Control, check that the PC is online (`list_devices`). The PC can't be reached when it's offline, when Olex hasn't approved the Remote Control request 5 minutes after it was asked (set a reminder for then), when the device doesn't pick up the session, or when the session ends without a result. Then run `agent-build ci` at once, without asking Olex first or waiting for him to check the PC, and say in the thread that the PC didn't answer. If the session ended without a result, first check the PR for the PC build's result comment and the head commit for a `build/<n>` tag: if either is there, the PC did build, so report that instead of building again.
-   - `agent-build` stops with `other-build` when the newest build came from another feature whose PR is still open, since Olex may still be testing it. If Olex says to go on, run it again with `--replace`.
+3. **Build.** Every build runs the `quick-test`, `build` and `full-check` hooks once and marks the commit checked. Feature threads don't build: the project's "builder" thread runs every build, on the PC or in CI, one at a time. If the project has none, ask the coordinator to start one.
+   - **Feature thread:** first run `bash .agents/hooks/quick-test` in your session and fix what fails; if the session can't run it, say so in your request. Then ask the builder to build your branch and say what the build should show. The result shows on your PR (the PC build's comment or the CI checks): as soon as it does, post only what was done, in one line, such as "Build 334 installed." or "Build 334 published." Pass on to Olex what the builder sends him or asks of him, and send his answer back.
+   - **Builder thread:** it keeps a Remote Control session on the PC, which Olex approves once. For each request:
+     - `pc`: run `bash .agents/agent-build pc <branch>`. To install again without building, run `bash .agents/agent-install [<version>-<commit>]`. If the phone dropped off wireless adb, ask for Olex to turn wireless debugging off and on, then run it again.
+     - `ci`: when Remote Control can't start (the PC is offline or doesn't pick up), run `bash .agents/agent-build ci <branch>` right away and say so in the feature thread. Send it the CI run link as soon as it shows.
+     - When a build fails, send the feature thread one message with the failing step and the log lines that matter. The feature fixes it and asks again.
+     - Never edit code or merge.
    - If checks fail in code this feature didn't change, tell Olex instead of fixing it in the feature.
-   - Run every script that builds (`agent-build`, `agent-install`) in the background with its output going to a file, never in the foreground or through a pipe such as `| tail`. Build daemons it starts can hold a pipe open after it finishes, so the command never returns, and an agent stuck in a foreground command can't read Olex's messages.
-   - Post the build summary in the project thread as soon as `agent-build` finishes, before any wait or follow-up check, and say what Olex needs to do next. Only what is posted in the thread reaches Olex. Never end a turn waiting on Olex without telling him there what you're waiting for. A check on a device that needs Olex to act first (such as opening the app) is a separate Remote Control task, started after he says he's done it, never part of the build task.
-   - Don't rely on the Remote Control session's report alone: it can fail to arrive. A PC build posts its result, whatever it is, as a comment on the feature's PR, which wakes the thread agent watching it. As a backup, when a PC build starts, set one reminder for after it should be done. If no result has arrived by then, check whether the head commit has a `build/<n>` tag and a passed check, and post what you find (or that it's still running, and since when) without waiting for Olex to ask.
-   - A branch that changes only documentation (`*.md` files and `docs/`) needs no build or test: go straight to step 5 when Olex says so.
-   - Commits that change only the pipeline (`.agents/`, `.github/workflows/`) or documentation need no build: Olex tests them himself ("Scripts and hooks"). `agent-build` stops with `workflow-change`, and `agent-merge` accepts them without one.
-   - A build request sent to the PC says what the build should show. Before building, the PC agent checks what changed since the last build and that it can show it (for example, that the phone is on adb when installing is the point); if it can't, it says so in the thread instead of building.
-4. **Check.** Wait for Olex. If he asks for changes, go back to 2. When he says the feature works, go to 5.
+   - Run `agent-build` and `agent-install` in the background with output to a file, never through a pipe: the build daemons they start keep a pipe open, so the command would never return.
+   - Build only what the code needs to work: a branch that changes only files no build uses needs no build, and `agent-build` stops with `workflow-change`.
+4. **Check.** Wait for Olex. If he asks for changes, go back to 2. Merge only when he says "merge".
 5. **Merge.** `bash .agents/agent-merge`. It merges the latest `main` into the branch, then the branch into `main`, keeping the branch.
 
 ## Scripts and hooks
-- The scripts in `.agents/` are the same in every repo, synced with these rules. When an agent finds a problem in them, the shared rules or its repo's workflows, or a useful insight from its work, it suggests the change to Olex. When Olex asks, it may change them, the shared rules, or its repo's workflows in its own repo. It makes the change on its feature branch like any other code and says so in its summary. Olex tests every change to the scripts, hooks and workflows himself: the agent commits and pushes it, says in the thread what changed and how to test it, and neither builds nor runs it to check it. After the merge it passes the change to the "rulesetter" thread, which copies it to the master and makes the same change in every other repo's rules, scripts and workflows.
+- The scripts in `.agents/` are the same in every repo. When an agent finds a problem in them, the shared rules or its repo's workflows, it suggests a fix to Olex, and makes it on its feature branch only when he asks. Olex tests such changes himself: the agent pushes them and says what changed and how to test it, without running them. After the merge, Olex has the "rulesetter" thread apply it to every repo.
 - Each repo's hooks in `.agents/hooks/` are its only repo-specific part of the pipeline, and part of its code: an agent may change them when its task changes how the repo builds or tests, and says so in its summary.
   - `quick-test`: the quick tests, run before the build.
   - `full-check`: the slower checks, run after the build. Every repo has one, and it doesn't repeat the quick tests.
   - `build`: builds the repo and prints `build-file: <path> <version>` per build file (path relative to the repo). Several build files share one version, made from `BUILD_NUMBER`.
-  - A repo made of separate parts (such as an app and its companion) tests, builds and checks only the parts the branch changed since `main`, so the others aren't rebuilt or reinstalled. A change outside every part builds them all. The hooks decide this; a part that isn't built has no build file.
   - Optionally `install`: run on the PC after a build with the build id and file paths. It installs the build files that aren't APKs and prints `note: <text>` lines for the summary. It never starts or restarts an app; a running app updates itself from `<exe>.new`.
-- `.github/workflows/fallback.yml` is the PC build's fallback: run by hand on a branch, never on a push. It runs the same hooks (each on the runner it needs), claims the build number, uploads each build file unzipped, and marks the commit checked only when every job passed. In a repo that builds an APK, it then publishes the APK as a pre-release on that build's `build/<n>` tag, so Obtainium on the phone can install it. A PC build publishes one the same way, after its full checks pass, only when the phone wasn't reachable to install it. Every job has a `timeout-minutes`. Keep its actions on the Node 24 runtime.
-- `.github/workflows/cache.yml` runs after each push to `main` and only compiles (just the parts the push changed, where a repo has parts), with the same cache setup as `fallback.yml`, so a new branch's first fallback build starts from `main`'s caches. It runs no tests or checks, sets no status, and nothing waits for it, `agent-merge` included, except `agent-build ci`, which first waits up to 30 minutes for a running one. Its jobs have a `timeout-minutes` too.
+- `.github/workflows/fallback.yml` is the PC build's fallback, started by `agent-build ci`. Every build, PC or CI, publishes its build files as a pre-release on its `build/<n>` tag, so Obtainium on the phone can install an APK; a PC build also installs on the phone when it's reachable.
+- `.github/workflows/cache.yml` keeps `main`'s build caches warm after each push to `main`.
 
 ## Builds
 - Everything made by building, testing or running the program (outputs, logs, screenshots, caches, downloads) goes in the repo's gitignored `build/` folder, nowhere else in the repo. Leave files other tools keep in the repo (such as `.delta/` and `.gitstat/`) alone.
 - `build/src` is the one PC build worktree, reused so builds stay incremental. Nothing is ever edited in it.
-- Every build gets the repo's next build number, pushed as a `build/<n>` tag by `.agents/build-number`; never push, move or delete those tags by hand. The version is the hand-bumped version name plus the number, `<name>-<n>` (or `0.1.<n>` where the name holds it), and Android's `versionCode` is the number. A repo may start its count at the number in `.agents/hooks/first-build-number`.
-- When Olex asks to publish builds, run `bash .agents/agent-publish [<n>]` on the PC through Remote Control (from `build/src` when the checkout in `D:\dev\<repo>` doesn't have it yet). It publishes build `<n>` (by default `main`'s newest build) as a GitHub pre-release on its `build/<n>` tag, with every part's current file: a part the build didn't remake comes from the older build it was last made in. Never create releases with `gh release` by hand.
+- Every build gets the repo's next build number, pushed as a `build/<n>` tag by `.agents/build-number`. The version is the hand-bumped version name plus the number, `<name>-<n>` (or `0.1.<n>` where the name holds it), and Android's `versionCode` is the number. A repo may start its count at the number in `.agents/hooks/first-build-number`.
+- When Olex asks to publish builds, ask the builder to run `bash .agents/agent-publish [<n>]` on the PC. It publishes build `<n>` (by default `main`'s newest build) as a pre-release on its `build/<n>` tag, with every part's current file.
 - Keep builds fast: build caches on and never cleaned, build daemons kept running on the PC, quicker settings for branch builds as long as the build file runs the same way.
 
 ## Destructive actions
@@ -65,7 +59,8 @@
 - Everywhere else (the rest of the repo, other repos, the PC, the phone), never do anything that loses data git can't bring back: no deleting files or folders, `git reset --hard`, `git clean`, `git checkout`/`git restore` over uncommitted changes, `git stash drop`, force pushes, deleting branches or tags, rewriting pushed history, or uninstalling apps. If one is needed, ask Olex first. Normal edits as part of the task are fine.
 
 ## Agent instruction files
-- These shared rules sit at the top of every repo's `AGENTS.md`, between the "shared rules" markers. Their master copy is `rules/AGENTS.md` in the DevDoctor project's files, kept and synced by the "rulesetter" thread. Apart from the fixes and insights above, when Olex asks a repo thread for a shared-rule change, pass his message to the rulesetter thread.
+- These shared rules sit at the top of every repo's `AGENTS.md`, between the "shared rules" markers. Their master copy is `rules/AGENTS.md` in the DevDoctor project's files, kept by the "rulesetter" thread, which applies it to every repo. A repo agent suggests shared-rule changes to Olex; when he approves, it makes them in its own `AGENTS.md` on its feature branch, and after the merge Olex has the rulesetter apply them everywhere.
+- `AGENTS.md` is the main rules file; project instructions and project memory refer to it. When Olex says "check memory", compare project memory with `AGENTS.md`, and for each line that conflicts with it, suggest to Olex either removing the line from memory or moving it into this repo's rules below the end marker. Change nothing until he answers. A coordinator passes Olex's words on by attaching his message, not by rewording it.
 - Rules for one repo go below the end marker, written by Olex or by an agent when Olex asks. Where they disagree with a shared rule, the repo rule wins in that repo. Otherwise leave all agent instruction files (`AGENTS.md`, `CLAUDE.md` and the like) alone and bring any needed change to Olex.
 
 ## On the PC
@@ -79,6 +74,10 @@
 <!-- shared rules: end -->
 
 # Notes for agents working on GyroPhone
+
+## Parts
+
+- GyroPhone is made of separate parts (the app and its companion). The hooks test, build and check only the parts the branch changed since `main` (`.agents/hooks/parts`), so the others aren't rebuilt or reinstalled. A change outside every part builds them all; a part that isn't built has no build file.
 
 ## Installing builds on the owner's devices
 

@@ -5,6 +5,7 @@ name: Fallback build
 # It does what a PC build does, with the same hooks in .agents/hooks/: quick tests, build,
 # full checks. When every job passes it marks the commit checked, as PC builds do.
 # Each build file is saved on the run unzipped. It never runs on a push.
+# Every job has a timeout-minutes. Keep its actions on the Node 24 runtime.
 # Only the parts the branch changed since main are tested and built (.agents/hooks/parts):
 # the APK with the Kotlin core's tests on Linux, the companion with its tests on Windows, the
 # only place all companion projects run. Both share one build number.

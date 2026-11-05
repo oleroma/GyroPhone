@@ -113,6 +113,8 @@ run_fallback() {
   done
   [ -n "$RUN" ] || die "Started the fallback workflow but couldn't find its run."
   RUN_URL="https://github.com/$SLUG/actions/runs/$RUN"
+  # Shown right away (not only in the result), so the run can be followed while it builds.
+  echo "CI run: $RUN_URL" >&3
   gh run watch -R "$SLUG" "$RUN" --exit-status --interval 15
 }
 
@@ -133,10 +135,13 @@ mark_checked() {
 # Olex tests changes to the pipeline himself (AGENTS.md, "Scripts and hooks"), so a branch whose
 # changes since its last build are only pipeline files or documentation isn't built again.
 
-# pipeline_file <path>: true for a file no build uses: the pipeline (.agents/, .github/workflows/)
-# or documentation (*.md files and docs/).
+# pipeline_file <path>: true for a file no build uses: the pipeline (.agents/, .github/workflows/),
+# documentation and rules (*.md files and docs/), and git and agent settings.
 pipeline_file() {
-  case "$1" in .agents/* | .github/workflows/* | *.md | docs/*) return 0 ;; *) return 1 ;; esac
+  case "$1" in
+    .agents/* | .github/workflows/* | *.md | docs/* | .gitignore | .gitattributes | .claude/* | LICENSE*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # unbuilt_changes: prints the files this branch's own commits changed after its newest commit
@@ -168,7 +173,6 @@ require_feature_branch() {
   BRANCH="$(git -C "$WORKTREE" symbolic-ref --quiet --short HEAD)" || die "Not on a branch."
   case "$BRANCH" in
     main) die "On $BRANCH: run this on a feature branch." ;;
-    handoff/*) die "On $BRANCH, a handoff branch: it's merged into a feature branch with agent-take, or made one with agent-start." ;;
   esac
 }
 
