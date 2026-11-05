@@ -45,14 +45,9 @@ HKR,,VhfMode,0x00010001,0x1
 HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;BU)"
 
 [GyroPhonePad_Install.NT.Services]
-AddService=WUDFRd,0x000001fa,WUDFRD_ServiceInstall
-
-[WUDFRD_ServiceInstall]
-DisplayName=%WudfRdDisplayName%
-ServiceType=1
-StartType=3
-ErrorControl=1
-ServiceBinary=%12%\WUDFRd.sys
+; The reflector service, from Windows' own wudfrd.inf (as in Microsoft's UMDF 2 samples).
+Include=wudfrd.inf
+Needs=WUDFRD.NT.Services
 
 [GyroPhonePad_Install.NT.Wdf]
 UmdfService=GyroPhonePad,GyroPhonePad_UmdfInstall
@@ -71,4 +66,3 @@ ServiceBinary=%13%\GyroPhonePad.dll
 Provider="GyroPhone"
 DeviceDesc="GyroPhone virtual pad"
 DiskDesc="GyroPhone pad driver"
-WudfRdDisplayName="Windows Driver Foundation - User-mode Driver Framework Reflector"
