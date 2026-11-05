@@ -39,6 +39,7 @@ On the PC:
 
 1. Get `GyroPhoneCompanion.exe` from the same pre-release (Windows 10/11 x64), put it in `%LOCALAPPDATA%\Programs\GyroPhone\`, and run it. It is unsigned, so SmartScreen may ask: *More info* › *Run anyway*.
 2. For the game pad, install the **ViGEmBus** driver ([github.com/nefarius/ViGEmBus/releases](https://github.com/nefarius/ViGEmBus/releases)). Without it keyboard and mouse still work, and Home in the companion shows how to fix it.
+   - Optional: for a **DualSense** pad, run `install.cmd` from the unpacked driver package (`build\GyroPhonePad-driver` after a PC build, or the `GyroPhonePad-driver.zip` of a release), then restart the companion. It's our own user-mode driver, signed with a key made for your PC only; `uninstall.cmd` removes it. Buttons and sticks only for now. See [driver/README.md](driver/README.md).
 3. Allow it through the firewall on **Private** networks. The companion never opens Public networks, so your home Wi-Fi must be set to Private (Home warns when it isn't). The Connection page has fix buttons for the firewall and USB rules.
 4. On the first run the **Pair new phone** window opens by itself. Later, use *Pair new phone…* in the tray menu.
 
@@ -161,7 +162,7 @@ Every settings page has a search box; on Settings it searches App and Defaults a
 
 ## The companion
 
-**Tray menu**: status, **Open GyroPhone**, **Pause input**, **Gamepad output** (Xbox 360 / DualShock 4 / Off), **Overlays**, **Pair new phone…**, **Exit**.
+**Tray menu**: status, **Open GyroPhone**, **Pause input**, **Gamepad output** (Xbox 360 / DualShock 4 / DualSense, only with the pad driver / Off), **Overlays**, **Pair new phone…**, **Exit**.
 
 **Main window**: **Home** (problems and their fixes, phone, link, latency and gamepad cards), **Phones** (paired phones, Forget), **Gamepad**, **Overlays**, **Connection** (network, firewall, USB checks), **App** (startup, tray click, logs, Debug window, version).
 

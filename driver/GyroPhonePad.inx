@@ -1,0 +1,68 @@
+;
+; GyroPhone pad driver: a user-mode (UMDF 2) driver on Windows' Virtual HID Framework.
+; Installed by install.ps1 on a root device with hardware id Root\GyroPhonePad.
+; The settings in GyroPhonePad_HW_AddReg follow Microsoft's UMDF VHF sample (DMF VirtualHidDeviceVhfDmfU).
+;
+
+[Version]
+Signature="$WINDOWS NT$"
+Class=System
+ClassGuid={4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider=%Provider%
+DriverVer=01/01/2026,1.0.0.0
+CatalogFile=GyroPhonePad.cat
+PnpLockdown=1
+
+[Manufacturer]
+%Provider%=GyroPhone,NT$ARCH$.10.0...19041
+
+[GyroPhone.NT$ARCH$.10.0...19041]
+%DeviceDesc%=GyroPhonePad_Install,Root\GyroPhonePad
+
+[SourceDisksNames]
+1=%DiskDesc%,,,
+
+[SourceDisksFiles]
+GyroPhonePad.dll=1
+
+[DestinationDirs]
+UMDriverCopy=13
+
+[UMDriverCopy]
+GyroPhonePad.dll
+
+[GyroPhonePad_Install.NT]
+CopyFiles=UMDriverCopy
+
+[GyroPhonePad_Install.NT.HW]
+AddReg=GyroPhonePad_HW_AddReg
+
+[GyroPhonePad_HW_AddReg]
+; Windows' VHF below our driver, in its user-mode flavour.
+HKR,,"LowerFilters",0x00010000,"vhf"
+HKR,,VhfMode,0x00010001,0x1
+; System and administrators: full access. Signed-in users (the companion): read and write.
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;BU)"
+
+[GyroPhonePad_Install.NT.Services]
+; The reflector service, from Windows' own wudfrd.inf (as in Microsoft's UMDF 2 samples).
+Include=wudfrd.inf
+Needs=WUDFRD.NT.Services
+
+[GyroPhonePad_Install.NT.Wdf]
+UmdfService=GyroPhonePad,GyroPhonePad_UmdfInstall
+UmdfServiceOrder=GyroPhonePad
+UmdfKernelModeClientPolicy=AllowKernelModeClients
+UmdfFileObjectPolicy=AllowNullAndUnknownFileObjects
+UmdfMethodNeitherAction=Copy
+UmdfFsContextUsePolicy=CanUseFsContext2
+UmdfHostPriority=PriorityHigh
+
+[GyroPhonePad_UmdfInstall]
+UmdfLibraryVersion=$UMDFVERSION$
+ServiceBinary=%13%\GyroPhonePad.dll
+
+[Strings]
+Provider="GyroPhone"
+DeviceDesc="GyroPhone virtual pad"
+DiskDesc="GyroPhone pad driver"
