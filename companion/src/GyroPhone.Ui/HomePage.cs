@@ -89,7 +89,8 @@ internal sealed class HomePage : Page
         // Gamepad
         var (pad, gb) = Parts.Card("Gamepad");
         _output = new Seg<OutputMode>(app.SetOutputMode, false,
-            ("Xbox 360", OutputMode.Xbox360), ("DualShock 4", OutputMode.DualShock4), ("Off", OutputMode.None));
+            ("Xbox 360", OutputMode.Xbox360), ("DualShock 4", OutputMode.DualShock4), ("DualSense", OutputMode.DualSense),
+            ("Off", OutputMode.None));
         gb.Children.Add(_output.View);
         _padSub = Parts.Text("", "Sub");
         _padSub.Margin = new Thickness(0, 0, 0, 6);
@@ -201,9 +202,13 @@ internal sealed class HomePage : Page
 
         // Gamepad
         _output.Set(s.OutputMode);
+        _output.Show(OutputMode.DualSense, s.DualSenseOk || s.OutputMode == OutputMode.DualSense);
         Parts.SetChecked(_pause, s.Paused);
         _padSub.Text = s.OutputMode == OutputMode.None
             ? "No gamepad: the phone sends keyboard and mouse only."
+            : s.OutputMode == OutputMode.DualSense
+                ? !s.DualSenseOk ? "No gamepad: the GyroPhone pad driver isn't installed (driver\\install.cmd), or GyroPhone needs a restart after installing it."
+                : s.PadPlugged ? "Virtual DualSense plugged in · GyroPhone pad driver ok." : "Virtual DualSense plugs in when the phone connects · GyroPhone pad driver ok."
             : !s.DriverOk
                 ? $"No gamepad: {v.PadError ?? "the ViGEmBus driver is missing"}."
                 : s.PadPlugged ? "Virtual pad plugged in · ViGEmBus ok." : "Virtual pad plugs in when the phone connects · ViGEmBus ok.";
