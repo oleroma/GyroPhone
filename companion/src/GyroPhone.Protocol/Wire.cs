@@ -52,6 +52,8 @@ public static class Wire
     public const int OverlayPlain = 152;
     /// <summary>OVERLAY_LAYOUT: one piece of the layout the overlay draws on the phone's screen.</summary>
     public const int OverlayLayoutPlain = 200;
+    /// <summary>MOTION: the phone's raw gyro and accelerometer samples for the DualShock 4 (<see cref="MotionFrame"/>).</summary>
+    public const int MotionPlain = MotionFrame.Size;
 
     public static readonly int[] RatesHz = [250, 500, 1000];
     public const int DefaultRateHz = 1000;
@@ -179,6 +181,8 @@ public static class WelcomeFlags
     /// plugged into it. Bit 3 (the old share-rewriting GyroGate) is retired and never set.
     /// </summary>
     public const byte PcGyro = 1 << 4;
+    /// <summary>The host takes MOTION: while its pad is a DualShock 4, the phone sends its raw motion for the pad's gyro and accelerometer.</summary>
+    public const byte Motion = 1 << 5;
 }
 
 /// <summary>Output device the host exposes. Values are the wire outputMode byte.</summary>

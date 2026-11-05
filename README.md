@@ -173,6 +173,7 @@ Every settings page has a search box; on Settings it searches App and Defaults a
 
 - **Games running as administrator** don't accept injected keyboard and mouse input from a normal app. Home says so: use **Restart as administrator**. The virtual pad isn't affected.
 - **Anti-cheat** may ignore injected keyboard and mouse input. Use the game pad output in those games.
+- **DualShock 4 output carries the phone's gyro and accelerometer**, like a real pad, so games with their own controller gyro (The Finals, Steam Input) can aim with it. It's easy to miss: it moves nothing until you turn on the game's gyro, and then turn the app's gyro mouse off in that workspace, or both move the camera. In Steam, turn off PlayStation controller support for the game if Steam takes over the pad.
 - **Safety.** If the phone goes quiet for 250 ms, or the PC locks or sleeps, everything held is released. If the companion is killed while a key is held, it releases it on its next start.
 - **Enhance pointer precision** in Windows changes how gyro moves the desktop cursor. Games that read raw input aren't affected.
 - **Bluetooth smooth scrolling** needs the PC to have paired with a current build. After updating from an old one, remove GyroPhone in Windows Bluetooth settings and pair again once.

@@ -781,7 +781,7 @@ class GamepadRuntime(context: Context) {
      * gyro display holds its pose to gravity.
      */
     private fun updateMotion() {
-        if (running && inputAllowed && (engine.motionMapped || needsGravity)) startMotion() else stopMotion()
+        if (running && inputAllowed && (engine.motionMapped || needsGravity || wifi.motion.wanted)) startMotion() else stopMotion()
         if (running && inputAllowed && needsCompass) startCompass() else stopCompass()
     }
 
@@ -835,6 +835,12 @@ class GamepadRuntime(context: Context) {
             if (overlay) wifi.overlay.up(m.pitch, -m.yaw, -m.roll, g)
             for (f in feeds) f.up(m.pitch, -m.yaw, -m.roll, g)
             if (spaced) gravityPose.setUp(m.pitch, -m.yaw, -m.roll, g)
+        }
+        if (wifi.motion.wanted) {
+            // The PC's DualShock 4 accelerometer: in g, right, up and toward the player.
+            val m = gyroMouse.motion(x, y, z)
+            val g = SensorManager.GRAVITY_EARTH * RAD_TO_DEG
+            wifi.motion.accel(m.pitch / g, -m.yaw / g, -m.roll / g)
         }
         if (!engine.motionMapped) return
         // A layer or a held button may have tilt and shake settings of its own.
@@ -1088,7 +1094,10 @@ class GamepadRuntime(context: Context) {
         updateMotion()
         // The PC's phone overlay shows the phone turning even where the gyro moves nothing.
         // An acceleration graph on screen reads the gyro too (its live line), moving nothing while input isn't allowed.
-        if (running && ((inputAllowed && (!gyroOff() || wifi.overlay.wanted)) || calibration != null || accelWatchers.get() > 0)) {
+        // The PC's DualShock 4 carries the phone's turn whatever the workspace's gyro does.
+        // Input not allowed: its gyro rests (the sender is woken so the stop goes out now).
+        if (!(running && inputAllowed) && wifi.motion.still()) engine.onChange?.run()
+        if (running && ((inputAllowed && (!gyroOff() || wifi.overlay.wanted || wifi.motion.wanted)) || calibration != null || accelWatchers.get() > 0)) {
             startGyro()
         } else if (running) {
             stopGyro()
@@ -1153,6 +1162,8 @@ class GamepadRuntime(context: Context) {
         if (stored.corners.any { it.id == NavCorners.GYRO }) editActiveProfile { NavCorners.gyroCornerToButtons(it) }
         // The PC's phone overlay turned on or off: the gyro and accelerometer may be needed (or no longer).
         wifi.overlay.onWantedChange = Runnable { main.post { updateGyro() } }
+        // The PC's pad became a DualShock 4 (or no longer is): its gyro and accelerometer need the sensors.
+        wifi.motion.onWantedChange = Runnable { main.post { updateGyro() } }
     }
 
     companion object {
@@ -1346,6 +1357,16 @@ class GamepadRuntime(context: Context) {
                 gs.rwsOf(gs.sensitivityOf(MotionAxis.YAW)) ?: 0f, gs.rwsOf(gs.sensitivityOf(MotionAxis.PITCH)) ?: 0f,
                 gs.rwsOf(gs.sensitivityOf(MotionAxis.ROLL)) ?: 0f,
             )
+        }
+        // The PC's DualShock 4 gyro: every sample as measured (bias removed), in deg/s about the
+        // screen's right, up and toward-the-player axes, sent at once.
+        val motion = wifi.motion
+        if (motion.wanted) {
+            if (allowed) {
+                val m = gyroMouse.motion(x - biasX, y - biasY, z - biasZ)
+                motion.add(m.pitch, -m.yaw, -m.roll, ts / 1000)
+                engine.onChange?.run()
+            } else if (motion.still()) engine.onChange?.run()
         }
         // World and player space read the phone's pose against gravity.
         val space = gyroSpace()

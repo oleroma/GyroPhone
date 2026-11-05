@@ -31,6 +31,8 @@ public static class PacketType
     public const byte PadGyro = 0x27;
     /// <summary>With PAD_GYRO: one controller button's gyro settings while held (<see cref="PadGyroConfig.DecodeHeld"/>).</summary>
     public const byte PadGyroSet = 0x28;
+    /// <summary>The phone's raw motion for the DualShock 4's gyro and accelerometer (<see cref="MotionFrame"/>); sent only to a host whose WELCOME has <see cref="WelcomeFlags.Motion"/> while its pad is a DualShock 4.</summary>
+    public const byte Motion = 0x29;
     public const byte Bye = 0x2F;
     public const byte Pong = 0x30;
     public const byte HostStatus = 0x31;
@@ -72,6 +74,7 @@ public static class PacketType
         StateGyro => Wire.StateGyroPlain,
         PadGyro => Wire.PadGyroPlain,
         PadGyroSet => Wire.PadGyroSetPlain,
+        Motion => Wire.MotionPlain,
         Ping => Wire.PingPlain,
         LinkInfo => Wire.LinkInfoPlain,
         Bye => Wire.ByePlain,

@@ -19,7 +19,8 @@ public interface IPadSink
 
     void Submit(in X360Frame frame);
 
-    void Submit(in Ds4Frame frame);
+    /// <summary>The DualShock 4's whole report: buttons, sticks and triggers with its gyro and accelerometer.</summary>
+    void Submit(in Ds4Frame frame, in Ds4Motion motion);
 
     /// <summary>Raised from the driver's thread when the game changes rumble (large, small motor).</summary>
     event Action<byte, byte>? Rumble;
@@ -48,7 +49,7 @@ public sealed class NullPadSink : IPadSink
 
     public void Submit(in X360Frame frame) { }
 
-    public void Submit(in Ds4Frame frame) { }
+    public void Submit(in Ds4Frame frame, in Ds4Motion motion) { }
 
     public event Action<byte, byte>? Rumble
     {
