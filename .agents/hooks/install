@@ -7,8 +7,8 @@
 #    as GyroPhoneCompanion.exe.new, and the running companion (or watcher) shuts down, copies
 #    it into place and starts again within a few seconds, even with a phone connected
 #    (pairing and settings live in %APPDATA%\GyroPhone).
-# 2. Unpacks the optional pad driver (GyroPhonePad-driver.zip) next to the zip, into the repo's
-#    build\GyroPhonePad-driver folder, without installing it: Olex runs its install.cmd himself
+# 2. Copies the optional pad driver's files (the folder the build zipped for releases) to the
+#    repo's build\GyroPhonePad-driver folder, without installing it: Olex runs its install.cmd himself
 #    (admin prompt, its own signing key on this PC), and uninstall.cmd removes it.
 # 3. Swaps the key files over adb, so the phone connects over Wi-Fi without a code: the
 #    phone's phone.pub goes to %APPDATA%\GyroPhone\authorized_phones and the PC's host.pub
@@ -142,19 +142,19 @@ swap_keys() {
 }
 
 # ---- PC: the pad driver's files (not the driver itself) ----
+# Copies the folder the build made (build/driver/pkg here in the build worktree) to the repo's
+# build\GyroPhonePad-driver, next to the other build files. No zip: the zip is only for releases.
 unpack_driver() {
   [ -n "$driver_zip" ] || return 0
-  # Next to the zip in build/, not in the companion's Programs folder: it's a package, not a program.
-  local dest dest_w dver
+  local src=build/driver/pkg dest dest_w dver
   dest="$(dirname "$driver_zip")/GyroPhonePad-driver"
-  mkdir -p "$dest"
   dest_w="$(cygpath -w "$dest")"
-  if ! /c/Windows/System32/tar.exe -xf "$(cygpath -w "$driver_zip")" -C "$dest_w"; then
-    note "Couldn't unpack the pad driver into $dest_w."
+  if [ ! -f "$src/GyroPhonePad.inf" ] || ! mkdir -p "$dest" || ! cp -f "$src"/* "$dest"/; then
+    note "Couldn't copy the pad driver into $dest_w."
     return
   fi
   dver="$(head -n 1 "$dest/VERSION.txt" 2>/dev/null | tr -d '\r')"
-  note "Pad driver ${dver:-?} unpacked to $dest_w, not installed: run install.cmd there to install or update it (admin prompt), uninstall.cmd to remove it."
+  note "Pad driver ${dver:-?} is in $dest_w, not installed: run install.cmd there to install or update it (admin prompt), uninstall.cmd to remove it."
 }
 
 install_companion
