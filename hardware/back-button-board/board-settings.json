@@ -1,0 +1,14 @@
+{
+  "outline_mm": {"width": 150, "height": 70},
+  "buttons": {
+    "first_from_top_corner_mm": {"x": 10, "y": 10},
+    "step_mm": {"x": 12, "y": 9},
+    "per_side": 4,
+    "rotation_deg": 0
+  },
+  "sockets": {
+    "pc": {"edge": "top", "offset_mm": 0},
+    "phone": {"edge": "right", "offset_mm": 0}
+  },
+  "electronics_area_mm": {"x": 55, "y": 22, "width": 40, "height": 30}
+}
