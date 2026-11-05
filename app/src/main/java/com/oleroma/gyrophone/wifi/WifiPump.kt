@@ -8,6 +8,7 @@ import com.oleroma.gyrophone.core.net.ByeReason
 import com.oleroma.gyrophone.core.net.HostFlags
 import com.oleroma.gyrophone.core.net.LinkInfo
 import com.oleroma.gyrophone.core.net.LiveSession
+import com.oleroma.gyrophone.core.net.MotionFeed
 import com.oleroma.gyrophone.core.net.MouseTotals
 import com.oleroma.gyrophone.core.net.OverlayFeed
 import com.oleroma.gyrophone.core.net.PacketType
@@ -54,6 +55,9 @@ class WifiPump(private val engine: MappingEngine) {
     /** "Use PC controller for gyro ratchet": STATE_GYRO and PAD_GYRO for a PC that takes them. */
     @Volatile var pcGyro: PcGyroFeed? = null
 
+    /** The raw motion for the PC's DualShock 4: MOTION while [MotionFeed.wanted]. */
+    @Volatile var motion: MotionFeed? = null
+
     /** The clock offset (host us - phone us, [com.oleroma.gyrophone.core.net.ClockSync]) of this session, or null before a clock sample. */
     @Volatile var clockOffsetUs: Long? = null
 
@@ -92,6 +96,8 @@ class WifiPump(private val engine: MappingEngine) {
     private val overlayPressed = HashSet<String>()
     private val overlayLatched = HashSet<String>()
     private var gyroSnapshot = false
+    private var motionSentVersion = -1
+    private var nextMotionNs = 0L
     private var padGyroNs = 0L
     private var padGyroSent: IntArray? = null
     private var padGyroSentEpoch = -1
@@ -219,6 +225,13 @@ class WifiPump(private val engine: MappingEngine) {
                     sendSealed(c, PacketType.LINK_INFO, n)
                 }
             }
+            // Each new gyro sample goes out at once; while still, every MOTION_KEEPALIVE_NS so a lost stop arrives.
+            val mo = motion?.takeIf { it.wanted }
+            if (mo != null && (mo.version != motionSentVersion || now >= nextMotionNs)) {
+                motionSentVersion = mo.version
+                nextMotionNs = now + MOTION_KEEPALIVE_NS
+                sendSealed(c, PacketType.MOTION, mo.encode(plain, 0))
+            }
             pcGyro?.let { if (it.hostTakes) sendPadGyro(c, it, now) }
             val ov = overlay?.takeIf { it.wanted }
             if (ov == null) layoutSentVersion = -1
@@ -228,6 +241,7 @@ class WifiPump(private val engine: MappingEngine) {
             }
             var wakeAt = minOf(minOf(scheduler.nextDeadline(), nextPingNs), minOf(lastLinkInfoNs + SECOND_NS, engine.touchpadDeadlineNanos()))
             if (ov != null) wakeAt = minOf(wakeAt, nextOverlayNs)
+            if (mo != null) wakeAt = minOf(wakeAt, nextMotionNs)
             val wait = wakeAt - System.nanoTime()
             if (wait > 0) LockSupport.parkNanos(wait)
         }
@@ -277,6 +291,11 @@ class WifiPump(private val engine: MappingEngine) {
             it.reset()
         }
         padGyroSent = null; padGyroSentEpoch = -1; padGyroHeldSent = null
+        motion?.let {
+            it.hostTakes = session != null && session.hostFlags and HostFlags.MOTION != 0
+            it.reset()
+        }
+        motionSentVersion = -1
         cipher = session?.let { SessionCipher(it.kPH, Wire.DIR_P2H) }
         seq = 0
         totals.reset()
@@ -350,6 +369,7 @@ class WifiPump(private val engine: MappingEngine) {
         private const val STOP_JOIN_MS = 500L
         /** OVERLAY about 60 times a second. */
         private const val OVERLAY_NS = 16_666_667L
+        private const val MOTION_KEEPALIVE_NS = MotionFeed.KEEPALIVE_MS * 1_000_000L
         private const val LAYOUT_REPEAT_NS = 2 * SECOND_NS
 
         /** Phone clock for STATE, PING and LINK_INFO: elapsed realtime in microseconds. */

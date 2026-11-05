@@ -28,6 +28,8 @@ import com.oleroma.gyrophone.core.net.KeyTakeover
 import com.oleroma.gyrophone.core.net.LinkInfo
 import com.oleroma.gyrophone.core.net.LinkInfoFlags
 import com.oleroma.gyrophone.core.net.LiveSession
+import com.oleroma.gyrophone.core.net.MotionFeed
+import com.oleroma.gyrophone.core.net.OutputMode
 import com.oleroma.gyrophone.core.net.OverlayFeed
 import com.oleroma.gyrophone.core.net.PcGyroFeed
 import com.oleroma.gyrophone.core.net.PacketType
@@ -112,6 +114,9 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     /** "Use PC controller for gyro ratchet": the gyro's samples and the controller's gyro buttons for a PC that runs the gyro. */
     val pcGyro = PcGyroFeed()
+
+    /** The raw motion for the PC's DualShock 4 (its gyro and accelerometer), sent while its pad is one. */
+    val motion = MotionFeed()
     private val accessory = AccessoryBridge(appContext)
 
     private val _state = MutableStateFlow<LinkState>(LinkState.Off)
@@ -250,6 +255,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             overlay.wanted = v != null && v.flags and HostStatusFlags.OVERLAY != 0
             overlay.compassWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_COMPASS != 0
             overlay.totalsWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_TOTALS != 0
+            if (v != null) motion.padIsDs4 = v.outputMode == OutputMode.DUALSHOCK4 && v.flags and HostStatusFlags.PAD_PLUGGED != 0
+            else motion.padIsDs4 = false
         }
     @Volatile private var welcomeHostFlags: Int? = null
 
@@ -258,6 +265,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         pump.linkInfoSource = ::buildLinkInfo
         pump.overlay = overlay
         pump.pcGyro = pcGyro
+        pump.motion = motion
         // The Keystore key and phone.pub exist from the first start, so update.cmd can fetch it.
         Thread({ keys.publish() }, "gp-keys").start()
     }
@@ -936,6 +944,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 rttMinUs = -1L
                 // A replacement is the same PC: its overlay stays on until its next HOST_STATUS says otherwise.
                 if (s == null) hostStatus = null
+                // Until the first HOST_STATUS, WELCOME's output mode says whether the pad is a DualShock 4.
+                else if (hostStatus == null) motion.padIsDs4 = s.outputMode == OutputMode.DUALSHOCK4
                 welcomeHostFlags = s?.hostFlags
                 if (s != null) locks.acquire() else locks.release()
                 changed = true

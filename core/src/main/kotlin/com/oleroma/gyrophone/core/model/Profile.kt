@@ -1025,6 +1025,18 @@ data class GyroSettings(
     val yawAccel: GyroCurve? = null,
     val pitchAccel: GyroCurve? = null,
     val rollAccel: GyroCurve? = null,
+    /**
+     * The PC's DualShock 4 gyro ([PadGyro]): which of the phone's axes its yaw, pitch and roll
+     * follow ([MotionAxis.NONE]: that pad axis stays still), each optionally inverted. The
+     * default treats the screen as the pad's face: yaw through the screen. The accelerometer
+     * follows the same mapping. The workspace's (and Defaults') only.
+     */
+    val padYaw: MotionAxis = MotionAxis.ROLL,
+    val padPitch: MotionAxis = MotionAxis.PITCH,
+    val padRoll: MotionAxis = MotionAxis.YAW,
+    val padYawInvert: Boolean = false,
+    val padPitchInvert: Boolean = false,
+    val padRollInvert: Boolean = false,
 ) {
     /** Axis [a]'s own acceleration, null when it follows [accel]. */
     fun ownAccel(a: MotionAxis): GyroCurve? = when (a) {

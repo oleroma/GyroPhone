@@ -100,6 +100,10 @@ public sealed class HostEngine
     private readonly PadGyroConfig _padGyro = new();
     private readonly GyroGate _gate = new();
     private readonly PcGyro _pcGyro = new();
+    // MOTION: the phone's raw motion for the DualShock 4's gyro and accelerometer.
+    private readonly MotionFrame _motionFrame = new();
+    private readonly Ds4MotionFeed _ds4Motion = new();
+    private readonly Ds4Motion[] _motionOut = new Ds4Motion[MotionFrame.MaxSamples];
     private readonly Func<long, uint> _pcHeldAt;
     private readonly uint[] _pcPresses = new uint[PadGyroConfig.Places];
     private bool _pcReading;
@@ -381,6 +385,9 @@ public sealed class HostEngine
             case PacketType.OverlayLayout:
                 if (_overlayOn) _overlayLayout.Add(plain);
                 break;
+            case PacketType.Motion:
+                OnMotion(plain, nowUs);
+                break;
             case PacketType.Bye:
                 _events.Log($"phone said bye (reason {plain[0]})");
                 RememberEnded(s.SessionId);
@@ -556,7 +563,7 @@ public sealed class HostEngine
             return;
         }
         var s = _sessions.CreatePending(hello, name, pairKey, _settings.HostId,
-            (byte)_settings.OutputMode, (byte)((_pad.DriverOk ? WelcomeFlags.VigemOk : 0) | WelcomeFlags.HiresWheel | WelcomeFlags.PcGyro),
+            (byte)_settings.OutputMode, (byte)((_pad.DriverOk ? WelcomeFlags.VigemOk : 0) | WelcomeFlags.HiresWheel | WelcomeFlags.PcGyro | WelcomeFlags.Motion),
             from, nowUs);
         Reply(s.Welcome, from);
     }
@@ -763,7 +770,7 @@ public sealed class HostEngine
             case OutputMode.DualShock4:
                 var f = PadMapper.ToDs4(s);
                 if (_padFrameValid && f == _lastDs4) return;
-                if (!TrySubmit(f)) { _padRetryAfterUs = nowUs + PadRetryUs; return; }
+                if (!TrySubmit(f, _ds4Motion.Current)) { _padRetryAfterUs = nowUs + PadRetryUs; return; }
                 _lastDs4 = f;
                 if (Debug.Enabled) Debug.OnDs4(f, nowUs);
                 _padFrameValid = true;
@@ -787,11 +794,11 @@ public sealed class HostEngine
         }
     }
 
-    private bool TrySubmit(in Ds4Frame f)
+    private bool TrySubmit(in Ds4Frame f, in Ds4Motion m)
     {
         try
         {
-            _pad.Submit(f);
+            _pad.Submit(f, m);
             _loggedPadFailure = false;
             return true;
         }
@@ -800,6 +807,26 @@ public sealed class HostEngine
             PadFailed(e);
             return false;
         }
+    }
+
+    /// <summary>
+    /// MOTION: each new sample goes to the DualShock 4 as its own report, with the buttons and sticks
+    /// it shows now, so the game sees every turn at the time it was measured.
+    /// </summary>
+    private void OnMotion(ReadOnlySpan<byte> plain, long nowUs)
+    {
+        if (_pad.Plugged != OutputMode.DualShock4 || _paused || _locked || _releasedForSilence) return;
+        _motionFrame.Decode(plain);
+        int n = _ds4Motion.Take(_motionFrame, _motionOut, nowUs);
+        SubmitMotion(n);
+    }
+
+    /// <summary>Sends the first <paramref name="n"/> readings of <see cref="_motionOut"/> with the pad's current frame.</summary>
+    private void SubmitMotion(int n)
+    {
+        var f = _padFrameValid ? _lastDs4 : Ds4Frame.Neutral;
+        for (int i = 0; i < n; i++)
+            if (!TrySubmit(f, _motionOut[i])) return;
     }
 
     private void PadFailed(Exception e)
@@ -845,6 +872,8 @@ public sealed class HostEngine
                 int r = _keyRepeat.Due(_injectedKeys, nowUs, _inject);
                 if (r > 0 && !_keyMouse.Inject(_inject.AsSpan(0, r))) InjectFailed();
             }
+            // A lost stop (or the phone gone quiet): the DualShock 4's gyro comes to rest.
+            if (_pad.Plugged == OutputMode.DualShock4 && _ds4Motion.IsStale(nowUs)) SubmitMotion(_ds4Motion.Rest(_motionOut, nowUs));
             // A pad button held from a burst is let go even when no STATE follows.
             if (_padHeld && nowUs >= _padHoldUntilUs && !_hasPending && !_paused && !_locked) SubmitPad(_pending, nowUs);
             _sessions.ExpirePending(nowUs);
@@ -1458,6 +1487,7 @@ public sealed class HostEngine
         _overlayRxUs = long.MinValue;
         _overlayPoses.Clear();
         _overlayTotals.Reset();
+        _ds4Motion.Reset();
         _pad.Unplug();
         _padFrameValid = false;
         _hasPending = false;
@@ -1501,7 +1531,8 @@ public sealed class HostEngine
                 _padFrameValid = true;
                 break;
             case OutputMode.DualShock4:
-                if (!TrySubmit(Ds4Frame.Neutral)) break;
+                _ds4Motion.Reset();
+                if (!TrySubmit(Ds4Frame.Neutral, _ds4Motion.Current)) break;
                 _lastDs4 = Ds4Frame.Neutral;
                 _padFrameValid = true;
                 break;

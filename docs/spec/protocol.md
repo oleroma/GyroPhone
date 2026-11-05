@@ -41,6 +41,7 @@ Sealed plaintext sizes:
 | PAD_GYRO_SET | 0x28 | P→H | 183 | u8 place, u8 0, a 181-byte gyro config block |
 | OVERLAY | 0x24 | P→H | 152 | pose input: raw motion, ratchet, non-gyro mouse, touches, presses (`OverlayFeed`) |
 | OVERLAY_LAYOUT | 0x25 | P→H | 200 | the workspace layout, in chunks (`OverlayFeed`) |
+| MOTION | 0x29 | P→H | 120 | raw gyro and accelerometer for the PC's DualShock 4 (below) |
 | RUMBLE | 0x32 | H→P | 4 | large u8, small u8 motor (the phone ignores it today) |
 | FOREGROUND | 0x33 | H→P | 66 | reserved, never sent |
 | BYE | 0x2F | P→H | 4 | reason: USER, TRANSPORT_SWITCH, SHUTDOWN, REKEY |
@@ -50,10 +51,12 @@ STATE's mouse and wheel values are **cumulative wrapping totals**, so a lost pac
 
 **Gyro tail** (STATE_GYRO): flags, count, seq u16, time u32, 8 samples × 9 bytes, 3 × i64 per-axis running totals, then the 181-byte config block: sensitivities f32 × 3, glide f32 × 3, glide bits, route count, tightening, smoothing, 12 routes × 6 bytes @34, 3 curves × 25 bytes @106. Layout in `PcGyroFeed.encodeTail` / `PcGyroTail.cs`.
 
+**MOTION**: sent while WELCOME has MOTION and HOST_STATUS says the PC's pad is a plugged DualShock 4 (before the first HOST_STATUS, WELCOME's output mode), at once for each gyro sample and every 50 ms while still. u8 flags (MAY_MOVE 1: input allowed), u8 count, u16 newest seq, u32 newest phone time (µs), then 8 samples, oldest first, × 14 bytes: u16 µs since the one before (0 after a stop), gyro i16 × 3 in 1/16 deg/s, accelerometer i16 × 3 in 1/8192 g. Already in the DualShock 4's own frame and units (x right, y out of its face, z toward the player; right-hand turns; +1 g on y lying flat), mapped from the phone's axes by the workspace's pad axes (`PadGyro`). Layout in `MotionFeed` / `MotionFrame.cs`.
+
 ### Flags and codes
 
 - **Announce flags**: PAIRING_OPEN 1, VIGEM_OK 2, PAIRED_WITH_YOU 4, BUSY 8, KEY_MATCH 16, KNOWS_YOUR_KEY 32.
-- **Host flags** (WELCOME): VIGEM 1, FOREGROUND 2, HIRES_WHEEL 4, PC_GYRO 16. The host sends VIGEM, HIRES_WHEEL and PC_GYRO.
+- **Host flags** (WELCOME): VIGEM 1, FOREGROUND 2, HIRES_WHEEL 4, PC_GYRO 16, MOTION 32. The host sends VIGEM, HIRES_WHEEL, PC_GYRO and MOTION.
 - **Caps** (HELLO): RUMBLE 1, FOREGROUND 2. **Output modes**: 0 none, 1 Xbox 360, 2 DualShock 4.
 - **LINK_INFO flags**: LOW_LATENCY 1, USB 2, USB_DIRECT 4, DEBUG_TRACE 8, a debug save counter in 0x70.
 - **HOST_STATUS flags**: VIGEM 1, PAD_PLUGGED 2, PAUSED 4, ELEVATED_FG 8, NET_PUBLIC 16, OVERLAY 32, OVERLAY_COMPASS 64, OVERLAY_TOTALS 128.

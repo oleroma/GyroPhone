@@ -50,6 +50,8 @@ object Wire {
     const val OVERLAY_PLAIN = 152
     /** OVERLAY_LAYOUT: one piece of the layout the overlay draws on the phone's screen. */
     const val OVERLAY_LAYOUT_PLAIN = 200
+    /** MOTION: the phone's raw gyro and accelerometer samples for the PC's DualShock 4 ([MotionFeed]). */
+    const val MOTION_PLAIN = MotionFeed.SIZE
 
     /** Sealed packet size for a plaintext of [plain] bytes. */
     fun sealedSize(plain: Int): Int = HEADER + plain + GCM_TAG
@@ -142,6 +144,7 @@ object Wire {
         PacketType.FOREGROUND -> FOREGROUND_PLAIN
         PacketType.OVERLAY -> OVERLAY_PLAIN
         PacketType.OVERLAY_LAYOUT -> OVERLAY_LAYOUT_PLAIN
+        PacketType.MOTION -> MOTION_PLAIN
         PacketType.HOST_BYE -> BYE_PLAIN
         else -> -1
     }
@@ -176,6 +179,8 @@ object PacketType {
     const val PAD_GYRO = 0x27
     /** With PAD_GYRO, per PC controller button with gyro settings of its own while held: those settings ([PcGyroFeed.encodeHeld]). */
     const val PAD_GYRO_SET = 0x28
+    /** Sent while WELCOME has [HostFlags.MOTION] and HOST_STATUS says the PC's pad is a plugged DualShock 4: raw motion for its gyro ([MotionFeed]). */
+    const val MOTION = 0x29
     const val BYE = 0x2F
     const val PONG = 0x30
     const val HOST_STATUS = 0x31
@@ -262,6 +267,8 @@ object HostFlags {
      * controller plugged into it can ratchet the gyro. Bit 8 (the old share-based gate) is no longer used.
      */
     const val PC_GYRO = 16
+    /** The host takes MOTION: while its pad is a DualShock 4, the phone sends its raw motion for the pad's gyro and accelerometer. */
+    const val MOTION = 32
 }
 
 /** STATE flags. */

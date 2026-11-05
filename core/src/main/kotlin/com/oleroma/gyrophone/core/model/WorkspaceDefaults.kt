@@ -82,10 +82,13 @@ object WorkspaceDefaults {
         Direction.entries.flatMap { d -> DirField.entries.map { f -> dirKey(d, f) } } +
         MoveSlot.entries.flatMap { m -> MoveField.of(m).map { f -> moveKey(m, f) } }
 
-    /** The keys a layer ([MappingSet.settings]) may set: all but the controls' opacity, the game's turn and the gyro space. */
+    /** The PC's DualShock 4 gyro axes ([GyroSettings.padYaw]...): the workspace's and Defaults' only. */
+    val PAD_GYRO_KEYS: List<String> = listOf("padYaw", "padPitch", "padRoll", "padYawInvert", "padPitchInvert", "padRollInvert").map(::gyroKey)
+
+    /** The keys a layer ([MappingSet.settings]) may set: all but the controls' opacity, the game's turn, the gyro space and the PC pad's gyro axes. */
     val layerKeys: List<String> = keys - setOf(
         CONTROL_OPACITY, gyroKey("gameCountsPer360"), gyroKey("gameName"), gyroKey("gyroSpace"),
-    )
+    ) - PAD_GYRO_KEYS.toSet()
 
     /** The touchpad's keys: shared and per direction. */
     val touchpadKeys: List<String> = keys.filter { it.startsWith(TOUCHPAD) }

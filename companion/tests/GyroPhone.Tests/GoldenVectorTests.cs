@@ -323,9 +323,9 @@ public class GoldenVectorTests
         var from = new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 5000).Serialize();
 
         engine.OnDatagram(Vectors.Packet("HELLO").Bytes("hex"), from, h.Clock.NowUs);
-        // The vector predates HiresWheel and PcGyro; the engine also sets those flags, so re-mac the vector with them.
+        // The vector predates HiresWheel, PcGyro and Motion; the engine also sets those flags, so re-mac the vector with them.
         var welcome = Vectors.Packet("WELCOME").Bytes("hex");
-        welcome[61] |= WelcomeFlags.HiresWheel | WelcomeFlags.PcGyro;
+        welcome[61] |= WelcomeFlags.HiresWheel | WelcomeFlags.PcGyro | WelcomeFlags.Motion;
         using (var mac = new System.Security.Cryptography.HMACSHA256(S.Bytes("pairKey")))
             mac.ComputeHash(welcome, 0, Wire.WelcomeSize - Wire.HelloMac).AsSpan(0, Wire.HelloMac).CopyTo(welcome.AsSpan(Wire.WelcomeSize - Wire.HelloMac));
         Assert.Equal(Hex.S(welcome), Hex.S(h.Sender.Last));

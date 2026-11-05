@@ -74,6 +74,8 @@ internal sealed class FakePad : IPadSink
     public OutputMode Plugged { get; private set; }
     public readonly List<X360Frame> X360 = new();
     public readonly List<Ds4Frame> Ds4 = new();
+    /// <summary>The motion sent with each <see cref="Ds4"/> frame.</summary>
+    public readonly List<Ds4Motion> Ds4Motion = new();
     public int Plugs, Unplugs;
 
     public bool Plug(OutputMode mode)
@@ -98,10 +100,11 @@ internal sealed class FakePad : IPadSink
         X360.Add(frame);
     }
 
-    public void Submit(in Ds4Frame frame)
+    public void Submit(in Ds4Frame frame, in Ds4Motion motion)
     {
         if (FailWith != null) throw FailWith;
         Ds4.Add(frame);
+        Ds4Motion.Add(motion);
     }
 
     public event Action<byte, byte>? Rumble;

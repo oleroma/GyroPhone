@@ -18,19 +18,11 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
 {
     public const string DriverDownloadUrl = "https://github.com/nefarius/ViGEmBus/releases";
 
-    // Index order matches PadMapper.Ds4HatNames: N, NE, E, SE, S, SW, W, NW, none.
-    // DualShock4DPadDirection is a class, so a switch on it is not possible; this table is explicit.
-    private static readonly DualShock4DPadDirection[] Ds4Hats =
-    [
-        DualShock4DPadDirection.North, DualShock4DPadDirection.Northeast, DualShock4DPadDirection.East,
-        DualShock4DPadDirection.Southeast, DualShock4DPadDirection.South, DualShock4DPadDirection.Southwest,
-        DualShock4DPadDirection.West, DualShock4DPadDirection.Northwest, DualShock4DPadDirection.None,
-    ];
-
     private readonly ViGEmClient _client;
     private readonly Action<string>? _log;
     private IXbox360Controller? _x360;
     private IDualShock4Controller? _ds4;
+    private readonly byte[] _ds4Report = new byte[Ds4Report.Size];
     private const long ReplugGapMs = 1000;
     private long _replugAtMs = -ReplugGapMs;
 
@@ -192,22 +184,15 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
         }
     }
 
-    public void Submit(in Ds4Frame f)
+    public void Submit(in Ds4Frame f, in Ds4Motion m)
     {
         var d = _ds4;
         if (d == null) return;
         try
         {
-            d.SetButtonsFull(f.Buttons);
-            d.SetSpecialButtonsFull(f.Special);
-            d.SetDPadDirection(Ds4Hats[f.Hat < Ds4Hats.Length ? f.Hat : PadMapper.Ds4HatNone]);
-            d.SetAxisValue(DualShock4Axis.LeftThumbX, f.Lx);
-            d.SetAxisValue(DualShock4Axis.LeftThumbY, f.Ly);
-            d.SetAxisValue(DualShock4Axis.RightThumbX, f.Rx);
-            d.SetAxisValue(DualShock4Axis.RightThumbY, f.Ry);
-            d.SetSliderValue(DualShock4Slider.LeftTrigger, f.Lt);
-            d.SetSliderValue(DualShock4Slider.RightTrigger, f.Rt);
-            d.SubmitReport();
+            // The full report (DS4_REPORT_EX) carries the gyro and accelerometer the simple one lacks.
+            Ds4Report.Build(_ds4Report, f, m);
+            d.SubmitRawReport(_ds4Report);
         }
         catch (VigemTargetNotPluggedInException)
         {
