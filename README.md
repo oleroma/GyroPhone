@@ -10,142 +10,192 @@
 
 # GyroPhone
 
-GyroPhone turns an Android phone into a Bluetooth or Wi-Fi gamepad, keyboard and mouse for a PC. Gyro moves the mouse. A clip-on controller supplies the physical buttons, and you can place virtual buttons anywhere on the touchscreen.
+GyroPhone turns an Android phone into a game pad, keyboard, mouse and gyro aim for a Windows PC. The phone's gyro aims like a mouse. The touchscreen is a laptop-style touchpad plus any buttons and sticks you place on it. A controller, keyboard or mouse attached to the phone can be remapped too. Everything is a mapping you can change: any input can press any output.
 
-The reference device is an Android 16 phone (no root). Windows is the first host; other hosts come later.
+It connects two ways:
 
-## How it works
+- **Bluetooth**: the phone is a Bluetooth game pad, keyboard and mouse. Nothing is installed on the PC. Windows sees a DirectInput pad, and input is limited to 30–90 reports a second.
+- **Wi-Fi or USB, with the companion**: a small Windows tray app (`GyroPhoneCompanion.exe`) receives up to 1000 updates a second, encrypted. It gives games a virtual **Xbox 360** or **DualShock 4** pad and real keyboard and mouse input, and can draw the phone's motion as overlay windows over the game or for OBS. This is the low-latency way to play.
 
-```
-Gamepad / keyboard ──────────────┐
-Touchscreen controls ────────────┼─► Mapping engine (profile) ─► Report pump ─► Bluetooth HID ─► Windows
-Gyro (sensor direct channel) ────┘                                                  gamepad + keyboard + mouse
-```
+The reference phone is a OnePlus 15 (Android 16, no root). Android 15 or newer is needed.
 
-* **Bluetooth HID device.** The phone registers itself through `BluetoothHidDevice` as one composite device with a gamepad, a 6-key keyboard and a 16-bit mouse. Windows pairs with it like any Bluetooth controller, and nothing needs to be installed on the PC.
-* **Gyro.** The gyro is read through `SensorDirectChannel` (shared memory written by the sensor HAL, with no Binder or Looper hop) at the highest rate the phone offers. If the phone doesn't support that, it falls back to `SENSOR_DELAY_FASTEST` on a high-priority thread. Gyro-to-mouse is raw by default: every sample goes straight to the cursor, with sub-count remainders kept so slow aiming isn't lost. Optional jitter cutoff (tightening) and tiered smoothing can be turned up per workspace in the pad Menu. Drift is handled by the phone's own gyro bias correction plus an optional rest calibration (Calibrate in the pad Menu: lay the phone still for 2 seconds), which subtracts a fixed offset and does no filtering. Each profile sets how the phone is held (auto from screen rotation, landscape either way, portrait or flat) and which motion (yaw, pitch or roll) drives mouse X and Y, with per-axis invert.
-* **Gyro modes and ratchet.** Each workspace's gyro is *Always on*, *Always off* or *Hold / toggle button*. Any touch or controller button mapped to *Ratchet* flips it while held: always-on gyro pauses (re-centre the phone), always-off gyro engages. With *Touchpad is a ratchet* in the pad Menu, a finger on the touchpad does the same. The *G* corner, next to the → workspace corner, switches the current workspace between always on and always off (it is lit while gyro is on), and ratchets flip with it. Built-in workspaces set gyro axes for portrait and landscape alike.
-* **Report rate.** Reports go out at a fixed rate (30 to 90 Hz, 60 Hz by default), one report per tick, and mouse motion is merged between reports. Android gives no signal when Bluetooth has actually sent a report, so a rate above what the link can carry builds a queue, which feels like growing lag. On the reference phone the Bluetooth stack holds the HID link in sniff mode (it can't be turned off without root), which carries roughly one packet per sniff interval (about 11 ms by Android's HID default). That is why higher rates lag more. The Connection page (Connection button on the pad) shows reports sent per second.
-* **Mapping.** Any input on the phone side (a controller button or axis, a keyboard key, a touch button or touch stick) can map to any output: a gamepad button, axis or trigger, a keyboard key, a mouse button, the wheel, or gyro hold/toggle. One input can drive several outputs, and several inputs can drive one output.
-* **Touchpad.** The pad screen's empty background works like a laptop touchpad: one finger moves the cursor, taps click, two fingers scroll smoothly on both axes (high-resolution wheel, 1/120 of a notch) and keep gliding after a flick, two fingers pinch to zoom (Ctrl + wheel), and three- or four-finger swipes and taps send Windows shortcuts (Task View, show desktop, Alt+Tab scrubbing, switch desktops, notification centre). Every gesture can be changed per profile. Over Bluetooth, smooth scrolling needs the PC to have paired with the current descriptor: after updating from a build without it, remove GyroPhone in Windows Bluetooth settings and pair again once. Until then scrolling falls back to whole notches. Phones with three-finger screenshot gestures take three-finger touches away from apps: turn those gestures off in the phone's settings to use three- and four-finger gestures.
-* **Fullscreen pad.** In *Edit layout*, *+ Fullscreen* adds two small corner markers to the profile. Pressing both at the same time hides the tabs and the Edit button so the pad fills the screen; pressing both again, or Back, brings them back. Move or resize the markers like any control, or remove them from their settings. The *Opacity* slider in Edit layout sets how see-through all of the profile's controls are; the fullscreen corners have their own opacity, and by default resizing one resizes both (see a corner's settings).
-* **Profiles.** Profiles are JSON files. Three are built in: *Virtual gamepad* (a prebuilt touch layout), *Controller passthrough* (attached pad → PC gamepad, R3 toggles gyro) and *Keyboard + mouse (WASD)*. When a known controller is attached, the matching profile is selected automatically. Any other standard pad still works through Android's normalised button layout.
+The full description of every feature and how it works inside is in the **[spec](docs/spec/README.md)**.
 
-### XInput vs DirectInput on Windows
+## Setting up
 
-Over plain Bluetooth HID, Windows sees GyroPhone as a **DirectInput** (generic HID) gamepad. Windows only loads its XInput driver for devices that report a Microsoft vendor/product ID in the Bluetooth Device ID record, and Android does not let apps set that record. There are two ways to get XInput:
+### Phone
 
-1. **A PC-side remapper** (works today): a gamepad remapper on the PC can present the generic gamepad to games as an XInput controller.
-2. **Windows companion over Wi-Fi**: the tray app below creates a virtual Xbox 360 (XInput) or DualShock 4 controller. Per-game profile switching from the same app comes later.
+Install the APK (`gyrophone-0.1.<build>.apk`). Builds are published as pre-releases on this repo, so [Obtainium](https://github.com/ImranR98/Obtainium) can install and update it (add the repo with pre-releases on). Open GyroPhone and allow the nearby-devices (Bluetooth) and notification permissions. The app opens on the pad.
 
-## Windows companion (Wi-Fi)
+### Bluetooth (no PC install)
 
-The companion is a small tray app, `GyroPhoneCompanion.exe`, for Windows 10 and 11 (x64). The phone sends its full state over UDP on your local network (port 47800), as soon as anything changes and up to 1000 times a second. The PC turns it into a virtual game pad plus real keyboard and mouse input. On 5 GHz Wi-Fi this is usually a few milliseconds from phone to game, well under the Bluetooth link's sniff-mode limit.
+1. On the pad, tap **Connection**, choose **Bluetooth**, and tap **Make discoverable**.
+2. On Windows: Settings › Bluetooth & devices › Add device, and pick **GyroPhone**.
+3. The phone reconnects to that PC by itself from then on. Set **Report rate** on the same page (60 Hz by default; higher rates queue up and lag on phones that force Bluetooth sniff mode).
 
-```
-Phone (mapping engine) ─► UDP, AES-GCM sealed ─► GyroPhoneCompanion ─► ViGEmBus pad (Xbox 360 or DualShock 4)
-                                                                    └─► SendInput keyboard and mouse
-```
+### Wi-Fi and USB (companion)
 
-**On the PC**
+On the PC:
 
-1. Run `build\build.cmd`, then `build\update.cmd` (see *Building*). `build\update.cmd` installs the newest `GyroPhoneCompanion.exe` in `%LOCALAPPDATA%\Programs\GyroPhone`. It is unsigned, so SmartScreen may warn the first time: choose *More info*, then *Run anyway*.
-2. For the game pad, install the ViGEmBus driver from [github.com/nefarius/ViGEmBus/releases](https://github.com/nefarius/ViGEmBus/releases). Without it the companion still sends keyboard and mouse, the tray icon turns amber, and the menu offers *Install gamepad driver* and *Retry driver*. ViGEmBus is no longer developed upstream but still installs and works on Windows 10 and 11.
-3. Start the companion. The first time, Windows asks whether to allow it through the firewall: allow it on **Private** networks. If you missed that prompt, use *Allow through firewall…* in the tray menu. The app never opens the firewall for Public networks, so your home network must be set to Private (Settings › Network & internet › your network). The tray warns you when it is Public.
-4. On the first run nothing is paired yet, so the pairing window opens by itself. Later use *Pair new phone…* in the tray menu. It stays open for two minutes.
+1. Get `GyroPhoneCompanion.exe` from the same pre-release (Windows 10/11 x64), put it in `%LOCALAPPDATA%\Programs\GyroPhone\`, and run it. It is unsigned, so SmartScreen may ask: *More info* › *Run anyway*.
+2. For the game pad, install the **ViGEmBus** driver ([github.com/nefarius/ViGEmBus/releases](https://github.com/nefarius/ViGEmBus/releases)). Without it keyboard and mouse still work, and Home in the companion shows how to fix it.
+3. Allow it through the firewall on **Private** networks. The companion never opens Public networks, so your home Wi-Fi must be set to Private (Home warns when it isn't). The Connection page has fix buttons for the firewall and USB rules.
+4. On the first run the **Pair new phone** window opens by itself. Later, use *Pair new phone…* in the tray menu.
 
-**On the phone**
+On the phone:
 
-1. In the **Connect** tab choose **Wi-Fi** and tap **Scan QR code**, then point the camera at the QR code in the PC's pairing window. That is all: the PC adds the phone's key, the phone trusts the PC's key, and it connects by itself from then on. The QR code works once and is replaced every five minutes. To pair with a code instead, follow the next two steps.
-2. PCs running the companion appear under *Found on this network*. If none shows up after a few seconds, check that both are on the same network and that the router has no client or AP isolation, or type the PC's address (shown in the pairing window) under *Enter PC address*.
-3. Tap the PC. Both screens show the same six-digit code. Check it matches, tap **Confirm** on the phone and **Allow** on the PC. After that the phone reconnects to this PC by itself.
-4. Keep GyroPhone on screen while playing. Android only grants the low-latency Wi-Fi mode to the app in front with the screen on, and the Connection page shows whether it is active along with the rate, loss and latency the PC reports.
+1. Tap **Connection**, choose **Wi-Fi**, tap **Scan QR code**, and point the camera at the QR code in the PC's pairing window. That's all: both sides trust each other's key, and the phone connects by itself whenever GyroPhone is open (**Connect automatically**, on by default).
+2. Or pair with a code: tap the PC under *Found on this network* (or type its address under *Enter PC address*). Check the six-digit code matches on both screens, then tap **Confirm** on the phone and **Allow** on the PC.
+3. Keep GyroPhone on screen while playing: Android only grants the low-latency Wi-Fi mode to the app in front. **Link quality** shows the rate, loss and latency.
 
-**Tray menu.** The status line shows the phone, packets per second, loss and 99th percentile latency. *Output* switches between Xbox 360, DualShock 4 (seen by games as a DirectInput pad) and Off. *Pause input* releases everything and ignores the phone until you untick it. *Open main window* shows these settings in the left column and the live status on the right. *Clicking the tray icon* picks what a left click on the icon does: open the main window (the default) or pair a new phone. There are also *Paired phones* (to forget one), *Start with Windows*, *Restart as administrator* and *Open log folder*. The icon is grey while waiting, green when connected, amber when the game pad driver is missing or the pad is off, and red on an error such as port 47800 already being in use.
+**USB.** With USB tethering on, the link moves to the cable by itself. With the phone's USB mode set to *No data transfer*, the companion can also use the cable directly (Android asks to open GyroPhone for the accessory; say yes).
 
-**Things to know**
+**Starting automatically.** In the companion's App page: **Start with Windows**, or **Start when my phone appears** (a tiny watcher starts the companion when the phone looks for this PC).
 
-* **Games running as administrator.** Windows blocks injected keyboard and mouse input to elevated windows (UIPI). When such a window is in front the tray says so; choose *Restart as administrator* to fix it. The virtual game pad is not affected.
-* **Anti-cheat.** Some anti-cheat systems ignore or flag injected keyboard and mouse input. Use the game pad output in those games.
-* **Pointer acceleration.** Gyro mouse motion arrives as relative mouse movement, so Windows' *Enhance pointer precision* changes how the desktop cursor moves. Games that read raw input are not affected. Turn the option off for consistent aiming on the desktop.
-* **Updates.** `build\update.cmd` installs each new companion build at one fixed path, `%LOCALAPPDATA%\Programs\GyroPhone\GyroPhoneCompanion.exe`, and points the Start menu entry there. A running companion is never replaced in place: the new build waits next to it as `GyroPhoneCompanion.exe.new`, and within a few seconds the companion (or, while it's off, the watcher) shuts down cleanly, copies the new build into place and starts again, even mid-session (the phone reconnects by itself). Because the path never changes, the firewall rule and *Start with Windows* keep working, and pairing and settings live in `%APPDATA%\GyroPhone`, so they are kept too. Builds made without `build\update.cmd` never restart themselves.
-* **Safety.** If the phone goes quiet for 250 ms, every held key and button is released and the pad returns to neutral. The same happens when the PC locks or sleeps. If the companion is killed while a key is held, it releases it the next time it starts.
-* **Pairing and keys.** Pairing uses an ECDH key exchange checked by the six-digit code, and the PC must explicitly allow each phone. QR code pairing instead swaps the two static P-256 keys used by key pairing: the QR code carries the PC's public key and a one-time token, and the phone sends its public key back authenticated with that token, so only a phone that saw the screen gets in. The resulting key is stored with Windows DPAPI for your user account in `%APPDATA%\GyroPhone\settings.json`. Every packet after pairing is authenticated and encrypted.
-* **Diagnostics.** `GyroPhoneHeadless.exe` (built from `companion/src/GyroPhone.Headless`) runs the same engine in a console. `--latency-csv latency.csv` logs one-way latency per packet, `--pair` opens pairing and `--no-vigem` runs without the game pad.
+## The pad
+
+The app is the pad. Along the top is the **capsule row**:
+
+- **+** adds a workspace (Controller, WASD, Keyboard or a blank one, with the touchpad only);
+- one capsule per **workspace**: tap to switch, **tap the current one to edit it**;
+- **Controller**: what attached devices do;
+- **Settings** and **Connection**.
+
+Long-press a capsule and drag it to reorder. The **← / →** corners switch to the previous / next workspace. Press **both together for fullscreen**; press them again, or Back, to leave.
+
+Empty space is the **touchpad**. With the Windows touchpad preset (in the three starting workspaces): one finger moves the cursor, tap clicks, tap-and-drag drags, two fingers scroll, two-finger tap right-clicks, pinch zooms, and three- and four-finger swipes and taps do Task View, show desktop, switch apps, switch desktops and the notification centre. If your phone takes three-finger touches for screenshots, turn that gesture off in the phone's settings.
+
+### Workspaces
+
+A **workspace** is one complete setup: its buttons, sticks and touchpad, their mappings, its gyro and touch settings, its layers, and which **device preset** it uses for attached devices. Workspaces share nothing, so you can duplicate one and change it freely. There are no game profiles and no automatic switching: switch with the capsules or corners.
+
+Settings and mappings pass down: **Defaults** (Settings › Defaults) → **workspace** → **layer** → **button**. A level only stores what it changes. Values a level sets itself are highlighted, and **↺** makes one follow its parent again.
+
+### Edit mode
+
+Tap the current workspace's capsule. A floating menu appears (drag it by its ⠿ dots, resize or fold it):
+
+- **Tap** a control to select it (taps on overlapping controls cycle through them). **Drag** to move it, **pinch** to resize it. **Long-press** a control to open its mapping editor; long-press empty space for the touchpad's.
+- **+ Button**, **+ Empty button** (one that inherits nothing), **+ Stick**, and the **gyro displays** (3D phone, Ratchet ring, Speed graph, Attitude indicator, Bubble disk, 3D shape). You can also drag items out of the menu onto the pad.
+- **Configure** opens the selected control's settings; **Map** opens its mapping editor.
+- **Select** picks several controls, **Group** / **Ungroup** keep controls together, **Snap** aligns edges to a grid, and 🔒 **Lock layout** stops moving and resizing.
+- **Devices** picks the workspace's device preset. **Library** adds a button you saved earlier ("Save to library" in a button's settings).
+- **↶ / ↷** undo and redo (100 steps). **⚙** opens the workspace's settings. **Done** saves; **Cancel** asks before throwing changes away.
+
+Landscape and portrait have separate placements, so edit in the orientation you play in.
+
+## The mapping editor
+
+Every button, stick, the touchpad, the Defaults, and every key of an attached device have the same full-screen mapping editor.
+
+**Layout.** The top half lists the control's **actions** as cards: one per input (for a button: its press, then its touch gestures). Each card holds the outputs it presses as **chips**. The bottom half is the **library** of outputs in tabs: Recent, Presets, Keyboard, Mouse, Gamepad, Gyro, Phone, Touchpad, Layers, Other. A search box finds any output ("W", "LT", "wheel"), and **⌨ Press a key** captures a key from an attached keyboard. Drag the divider to give either half more room.
+
+**Mapping something:**
+
+1. Tap a card to select it, then tap an output in the library to add it there.
+2. Or long-press an output and drag it onto a card.
+3. Drag a chip to another card to move it, or back onto the library to remove it.
+4. Reorder cards by their ⠿ handle.
+
+**Finger chips** (on buttons and the touchpad) pick which finger count you are mapping: **1–4 fingers**, each with its own taps, holds, swipes, Move X / Move Y and pinch. **Motion** maps the gyro, tilt and shake (on a button: what they do while it is held).
+
+**Chip settings.** Tap a chip to open its settings:
+
+- **Where** (touch controls): **Touch** (the press), **Inside** (any finger inside the control, wherever it touched down), **Outside** (a finger that touched down on it and slid off).
+- **When**: **On touch** (held from touch-down to lift), **Tap**, **Long press**, **Double tap**, **Release**. On swipe directions these read On swipe, Quick swipe, Long hold, Double swipe. Each When is a separate input, so one button can do different things on tap, long press and double tap. A tap only waits for a possible double tap when the double tap does something else.
+- **How**: **Held** (for as long as it lasts), **Once** (one short press), **Toggle** (on, then off next time). A Toggle can **also end on** a tap, Let go, a timer, the next input (a sticky Shift), or the same keystroke.
+- **Advanced**: start delay, end delay, hold at least, and **Cycle** (the outputs take turns, one per press).
+- Analog outputs (mouse motion, sticks) have a **scale**; −1 inverts.
+
+**Inherited mappings** show faded. **✕** clears one (the input then does nothing here), **↺** follows the parent again, **↺ Reset all** follows everything, and **✕ Clear all** clears everything. **↶ Undo** undoes any change.
+
+**Layers.** Chips at the top pick **Base** or a layer (**+ Layer**, up to 9). A mapping in a layer only works while that layer is in use. Map an input to a **Layer** output (Layers tab) to **switch** to it, **override** Base with it (inputs the layer doesn't map keep their Base mapping), or use it only **while held**. **Layer back** returns to the previous layer. A layer can also have its own settings, for example a lower gyro sensitivity.
+
+**Presets** fill in common setups: **Windows touchpad** for a touch surface, **Gyro mouse** for the gyro (yaw → Move X, pitch → Move Y), and Left stick, Right stick, WASD, Arrow keys and D-pad for sticks.
+
+**⚙ Settings** opens the control's own settings: label, shape and size, layer behaviour, its own touch surface settings, a stick's deadzone and zones, and its own gyro sensitivity while held (for precision aim). For a button it also has **Duplicate**, **Save to library** and **Delete**.
+
+## Gyro aiming
+
+The gyro is mapped like everything else: in the Motion tab, map **yaw / pitch / roll** to mouse Move X / Y, scroll, or a stick axis (or use the Gyro mouse preset). The three starting workspaces already have it.
+
+**Ratchets.** Map a button to **Ratchet** (or Ratchet yaw / pitch / roll) in the Gyro tab. In the workspace's Gyro settings, **Gyro to mouse** sets what it does:
+
+- **Ratchet enables** (default): the gyro does nothing until a ratchet is held.
+- **Ratchet disables**: the gyro is always on, and holding a ratchet pauses it so you can re-centre the phone.
+- **Gyro off**: the sensor isn't read at all.
+
+**Toggle gyro** swaps the first two until you switch workspace.
+
+**Tuning** (workspace settings › Gyro): **Sensitivity** in mouse counts per degree (16 by default; per axis, exact or "× Parent"); **Game**: pick the game and enter your in-game sensitivity, and the slider shows real-world sensitivity (degrees the camera turns per degree the phone turns; **Measure** helps if your game isn't listed); **Acceleration** curves; **Inertia** (keep gliding after a ratchet); **Gyro space** Local, World or Player. **Calibrate** removes drift: lay the phone still for 2 seconds. Jitter cutoff and smoothing are in Settings › App › Gyro, off by default (raw gyro).
+
+**Gyro poll rate** (Connection page, 1/2/4 kHz, default 4 kHz) is how often the app reads the sensor.
+
+## Controllers and other devices
+
+Attach a game pad, keyboard or mouse to the phone (USB or Bluetooth). The **Controller** capsule shows **device presets** as tabs (**+** adds one, long-press to rename, duplicate or delete). Each preset draws the device: the controller from the front and the back, the keyboard, the mouse, and the phone's volume rocker. Tap any control to open its mapping editor. Every key has the same When / How choices as touch buttons, and a **Motion** tab for what the gyro does while it is held. Stick deadzones, curve and direction pies, and trigger press and full-pull points are in each stick's and trigger's settings. A workspace uses one preset; pick it in edit mode with **Devices**.
+
+**Volume rocker.** While the pad is open, the phone's volume keys turn the **PC's** volume unless you map them to something else (Controller › Phone).
+
+**A controller plugged into the PC** can ratchet the phone's gyro with no extra delay: turn on **Use PC controller for gyro ratchet** (Connection page, Wi-Fi). The ratchet buttons come from the workspace's device preset, and the rest of the controller goes to the game as usual.
+
+## Settings
+
+- **Settings › App**: fullscreen on start, keep the screen on (on by default), **black screen when idle** (the pad goes black after a while without a touch, to save battery while you use a controller; tap to wake, and that tap presses nothing), screen rotation, **send input only while the pad is open** (on by default), corners, touch display (show touches, trails, live mappings), gyro filters, debug tools, and the gyro rate.
+- **Settings › Defaults**: the settings and touchpad/motion mappings every workspace uses unless it sets its own.
+- **Workspace settings** (⚙ in edit mode): rename, duplicate, delete, copy mappings from another workspace; gyro, tilt and shake, calibration, control opacity, haptics, gesture timings (long press 400 ms and double tap 300 ms by default), and the touchpad. Chips at the top switch between Base and each layer's own settings.
+- **Connection**: the link, pairing, report rate, gyro poll rate, PC controller ratchet, and **Stop when idle** (the connection ends after the app has been off screen for 10 minutes by default).
+
+Every settings page has a search box. Categories fold, and you can reorder them by long-pressing their names.
+
+## The companion
+
+**Tray menu**: status, **Open GyroPhone**, **Pause input**, **Gamepad output** (Xbox 360 / DualShock 4 / Off), **Overlays**, **Pair new phone…**, **Exit**.
+
+**Main window**: **Home** (problems and their fixes, phone, link, latency and gamepad cards), **Phones** (paired phones, Forget), **Gamepad**, **Overlays**, **Connection** (network, firewall, USB checks), **App** (startup, tray click, logs, Debug window, version).
+
+**Overlays.** Add any number of overlay windows: **Phone** (the phone in 3D with your layout, touches and presses, optionally with controller handles), **3D shape**, **Attitude indicator**, **Bubble disk**. Each has its own size, look, quality, frame rate and turning options (gravity, compass, ease back to straight, Level). Turn on **Edit** to drag and resize them; otherwise the mouse goes through them. For streaming, set the background to **Green** and use an OBS chroma key, with OBS Window Capture. Shortcuts: **Ctrl+Alt+R** Level all, **Ctrl+Alt+O** hide all, **Ctrl+Alt+E** Edit (changeable).
+
+**Updates.** A new build placed next to the running exe as `GyroPhoneCompanion.exe.new` is picked up within seconds: the companion shuts down cleanly, replaces itself and starts again, and the phone reconnects. Settings and pairing in `%APPDATA%\GyroPhone` are kept.
+
+### Things to know
+
+- **Games running as administrator** don't accept injected keyboard and mouse input from a normal app. Home says so: use **Restart as administrator**. The virtual pad isn't affected.
+- **Anti-cheat** may ignore injected keyboard and mouse input. Use the game pad output in those games.
+- **Safety.** If the phone goes quiet for 250 ms, or the PC locks or sleeps, everything held is released. If the companion is killed while a key is held, it releases it on its next start.
+- **Enhance pointer precision** in Windows changes how gyro moves the desktop cursor. Games that read raw input aren't affected.
+- **Bluetooth smooth scrolling** needs the PC to have paired with a current build. After updating from an old one, remove GyroPhone in Windows Bluetooth settings and pair again once.
+
+## Debugging
+
+- **Phone**: Settings › App › Debugging › **Debug tools** shows a panel on the pad with the link, gyro, workspace and layer, what is held, and the newest events. **Record** saves the last 30 s. With the switch off nothing is logged.
+- **PC**: App page › **Debug window…** shows the link as the PC sees it, what the game is given, and the PC's events. **Save last 30 s** writes a recording. When the phone records over Wi-Fi or USB, the PC saves its side at the same moment.
+- **adb**: `adb shell dumpsys activity service com.oleroma.gyrophone/.service.GamepadService [on|off|record|events N]`. `tools/debug-collect.sh` merges a phone and PC recording into one time-sorted file in `build/debug/`.
 
 ## Building
 
-Builds run through the scripts in `.agents/` (see `AGENTS.md`). On the PC, check the commit out in the `build\src` worktree and run `bash build/src/.agents/agent-build pc`: it runs the quick tests, builds `gyrophone-0.1.<build number>.apk` and `GyroPhoneCompanion.exe`, puts the newest ones in `build\` (ignored by git), keeps the last 4 builds in `build\builds\0.1.<build number>-<commit>\`, and installs the APK on a connected phone. Then `.agents/hooks/install` installs the companion in `%LOCALAPPDATA%\Programs\GyroPhone` (a running companion shuts down, updates and starts again within a few seconds) and, with the phone on adb, swaps the phone and PC key files so they connect over Wi-Fi without a code. The build itself is `.agents/hooks/build`. You need JDK 17, the Android SDK (API 36) and the .NET 8 SDK, found through `JAVA_HOME`, `ANDROID_HOME` and the `PATH`.
+Builds run through the scripts in `.agents/` (see `AGENTS.md` and [Build and release](docs/spec/build-release.md)). On the PC, `bash build/src/.agents/agent-build pc` runs the quick tests, builds only the parts that changed (`gyrophone-0.1.<n>.apk` and/or `GyroPhoneCompanion.exe`), runs the full checks, installs the APK over adb, installs the companion and swaps the key files. You need JDK 17, the Android SDK (API 36) and the .NET 8 SDK on the `PATH` / `JAVA_HOME` / `ANDROID_HOME`. When the PC is offline, the `fallback.yml` workflow does the same on GitHub.
 
-When the PC is offline, the `fallback.yml` workflow, started by hand on a branch, does what a PC build does (quick tests, build, full checks) and saves the APK and the companion on the run.
-
-The tests:
+Tests:
 
 ```
 ./gradlew :core:test
-```
-
-The companion needs the .NET 8 SDK. The protocol and engine tests also run on Linux and macOS, while the tray app builds only on Windows:
-
-```
 dotnet test companion/GyroPhone.Companion.Linux.slnf
+```
+
+The companion's protocol and engine tests run on Linux and macOS too. The tray app builds only on Windows:
+
+```
 dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o out
 ```
 
-## Using it
-
-1. Open GyroPhone and allow the Bluetooth permissions.
-2. Tap **Make discoverable**. On Windows, open Settings › Bluetooth & devices › Add device and pick the phone.
-3. Open the **Pad** tab to play. **Edit layout** turns on the pad editor:
-   * Drag a control to move it.
-   * Tap a control to open its settings panel. There you set its label, its shape (circle or square) and its size, and you map it to any gamepad button, stick, trigger, keyboard key, mouse button, wheel or gyro action. Sticks also have presets: left stick, right stick, WASD, arrow keys or D-pad.
-   * Resize the selected control with the handle on its corner, or pinch with two fingers.
-   * **+ Button** and **+ Stick** add new controls, and **Snap** aligns controls to a grid. **Done** saves the layout and its mappings, and **Cancel** throws the changes away.
-4. Open the **Controller** tab to remap an attached controller. The app recognises common controllers and draws them. An unknown pad gets a generic layout with only the buttons it reports. Every button starts on its standard action. Tap a button to map it to any other gamepad, keyboard or mouse output, and **Reset to default** or **Reset all to standard** undoes your changes. Pressed buttons and stick movement light up live. With no controller attached, you can preview each layout.
-5. Edits in the Pad and Controller tabs go to the active profile. A built-in profile is saved as a custom copy. **Profiles** still has **Add from controller** and **Add from touch** for mapping a source directly.
-
-## Debug tools
-
-* **Phone:** Settings › Debugging › **Debug tools** puts a panel on the pad: the link (rate, loss, latency, round trip, Wi-Fi radio), the gyro (source, rate, raw °/s), the workspace and layer in use, what the PC is sent now, and the newest events: each touch, key or controller button with what it maps to in the set in use, each output change (pad buttons and sticks, keys, mouse buttons, summed mouse motion), layer and workspace changes, and a link line every second. Drag the panel by its title, fold it with ▾, pause the list, and pick which kinds of events it lists (in, out, move, state, link, note; **move**, the stick and mouse motion, starts hidden). **Record** saves the last 30 s with every kind. With the switch off nothing is logged.
-* **PC:** tray menu (or main window) › **Debug window…** shows the link as the PC sees it, what the game is given (virtual pad, held keys, mouse buttons) and the PC's events, with the same kind filters. **Save last 30 s** writes a recording to `Documents\GyroPhone\Debug`. When the phone records over Wi-Fi or USB, the PC saves its side at the same moment.
-* **adb:** `adb shell dumpsys activity service com.oleroma.gyrophone/.service.GamepadService [on|off|record|events N]` prints the live status and newest events, and can turn the tools on or record. `tools/debug-collect.sh` (Git Bash on the PC) pulls the newest phone recording, finds the PC's recording of the same moment and merges both into one time-sorted file in `build/debug/`, with the phone's times moved onto the PC's clock.
-
 ## Project layout
 
-| Module | What it contains |
+| Folder | What it contains |
 |---|---|
-| `core/` | Plain Kotlin with no Android dependencies, unit-tested on the JVM: HID descriptor and report encoding, mapping engine, gyro-to-mouse, direct-channel parser, profile model and built-in profiles. |
-| `app/` | Android app: `BluetoothHidDevice` manager, report pump thread, gyro sources, controller input, foreground service, and the Compose UI. |
-| `companion/` | Windows companion in C# (.NET 8): wire protocol and crypto, the host engine (pairing, sessions, injection), ViGEm and SendInput sinks, the tray app and a headless console host. The wire format is pinned by golden vectors in `core/src/test/resources/protocol/v1/`, which both the Kotlin and C# tests check. |
+| `core/` | Plain Kotlin, unit-tested on the JVM: the model (workspaces, mappings, inheritance, device presets), the mapping engine, touch surfaces, gyro math, the HID descriptor, and the wire protocol and crypto. |
+| `app/` | The Android app: Bluetooth HID, the Wi-Fi/USB link, gyro and other sensors, controller input, the foreground service, and the Compose UI. |
+| `companion/` | The Windows companion in C# (.NET 8): protocol, host engine, ViGEm and SendInput, overlays, tray and main window. Shared test vectors in `core/src/test/resources/protocol/v1/` keep the Kotlin and C# sides in step. |
+| `docs/spec/` | The [full spec](docs/spec/README.md). |
 
-## Roadmap
-
-**M1: Skeleton (this PR)**
-- [x] Composite HID descriptor (DInput gamepad, keyboard, mouse) with tests
-- [x] Bluetooth HID registration, pairing and reconnect to the last host
-- [x] Gyro through the direct channel with a listener fallback, gyro → mouse
-- [x] Mapping engine: any input → any output, with gyro hold and toggle
-- [x] Virtual touch gamepad, a prebuilt layout and a drag-to-place editor
-- [x] Profiles with JSON storage and auto-selection when a controller is attached
-- [x] Pad editor: tap a control to open its settings and mappings, circle or square shapes, resize by handle or pinch
-- [x] Controller tab: the attached controller drawn with every remappable button, standard actions by default
-
-**M2: Tuning on the reference phone**
-- [ ] Measure the real gyro rate and the end-to-end latency (input → Windows)
-- [x] Selectable report rate with live send stats, plus gyro orientation and yaw/pitch/roll → mouse axis routing
-- [ ] Tune Bluetooth QoS, and check that sniff mode is off while active
-- [ ] Gyro calibration (bias on rest), player-space yaw (gravity-aware) and ratchet
-- [ ] Stick deadzones and curves, and haptic feedback on touch buttons
-- [ ] Keep sending input while the screen is off or another app is in front
-
-**M3: Windows companion**
-- [x] Tray app that creates a virtual Xbox 360 controller (XInput) from GyroPhone input, or a DualShock 4
-- [x] Wi-Fi transport (UDP on the LAN) with discovery, code-checked pairing and encrypted sessions
-- [x] Keyboard and mouse injection on the PC, with release on signal loss, lock and crash
-- [ ] Per-game auto-switching from the foreground `.exe` (the `games` field in profiles)
-- [ ] Optional USB transport, and configuration from the PC
-
-**M4: More hosts and polish**
-- [ ] Linux, macOS and Android TV hosts
-- [ ] DualShock-style descriptor with gyro passthrough for games with native gyro
-- [ ] Profile import/export and sharing, plus layouts for more known controllers
+What isn't built yet is listed at the end of the [spec overview](docs/spec/README.md).

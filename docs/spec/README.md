@@ -2,7 +2,7 @@
 
 This is the full specification of GyroPhone as `main` builds it today: the Android app (the "phone") and the Windows companion (the "PC"). It says what each part does for the person using it and how it works inside, with the key files to read.
 
-This spec replaces every older description: the README's feature list and roadmap, the design docs and artifacts made in earlier threads, and the notes in `designs/` of the project files. Those are left as they were, but where they disagree with this spec, this spec (and the code) is right. When the code changes, change the page here that describes it in the same branch.
+This spec replaces every older description: the old README's feature list and roadmap (the root README is now a short user guide that links here), the design docs and artifacts made in earlier threads, and the notes in `designs/` of the project files. Those are left as they were, but where they disagree with this spec, this spec (and the code) is right. When the code changes, change the page here that describes it in the same branch.
 
 Only behaviour that `main` has is described. Ideas that are not built are in [Not built yet](#not-built-yet) at the end.
 
