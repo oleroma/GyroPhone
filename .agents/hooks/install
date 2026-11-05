@@ -155,6 +155,9 @@ unpack_driver() {
     note "Couldn't copy the pad driver into $dest_w."
     return
   fi
+  # agent-build also put a copy of the zip there; on the PC only the folder is wanted (the zip
+  # stays in build/builds/<build>/ for publishing).
+  rm -f "$(dirname "$dest")/GyroPhonePad-driver.zip"
   dver="$(head -n 1 "$dest/VERSION.txt" 2>/dev/null | tr -d '\r')"
   note "Pad driver ${dver:-?} is in $dest_w, not installed: run install.cmd there to install or update it (admin prompt), uninstall.cmd to remove it."
 }
