@@ -11,7 +11,7 @@ public class DualSenseReportTests
         var r = new byte[DualSenseReport.Size];
         var f = new Ds4Frame((ushort)(Ds4Buttons.Cross | Ds4Buttons.ShoulderLeft | Ds4Buttons.ThumbRight),
             (byte)(Ds4Special.Ps | Ds4Special.Touchpad), 2, 1, 2, 3, 4, 5, 6);
-        DualSenseReport.Build(r, f, new Ds4Motion(0x1234, 16, -16, 300, -8192, 8192, 7));
+        DualSenseReport.Build(r, f, new Ds4Motion(0x12345678, 16, -16, 300, -8192, 8192, 7));
         Assert.Equal(0x01, r[0]);
         // LX LY RX RY L2 R2
         Assert.Equal(new byte[] { 1, 2, 3, 4, 5, 6 }, r[1..7]);
@@ -27,6 +27,8 @@ public class DualSenseReportTests
         Assert.Equal(-8192, Le.I16(r, 22));
         Assert.Equal(8192, Le.I16(r, 24));
         Assert.Equal(7, Le.I16(r, 26));
+        // The sensor timestamp, in 1/3 µs.
+        Assert.Equal(0x12345678u, Le.U32(r, 28));
         // No finger on either touch point; on cable, charging.
         Assert.Equal(0x80, r[33]);
         Assert.Equal(0x80, r[37]);
