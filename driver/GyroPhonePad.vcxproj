@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The GyroPhone pad driver (UMDF 2, x64). Built by .agents/hooks/build with the Windows Driver Kit
+  from NuGet (driver/packages.config, downloaded into build/driver/packages, nothing installed system
+  wide) and Visual Studio Build Tools with C++. Its package (inf, dll, unsigned cat) is signed on the
+  PC that installs it, by install.ps1.
+-->
+<Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{BD63172F-4BC4-4BE4-8003-428691D1AD04}</ProjectGuid>
+    <RootNamespace>GyroPhonePad</RootNamespace>
+    <UMDF_VERSION_MAJOR>2</UMDF_VERSION_MAJOR>
+    <UMDF_VERSION_MINOR>15</UMDF_VERSION_MINOR>
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+    <Platform Condition="'$(Platform)' == ''">x64</Platform>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <TargetVersion>Windows10</TargetVersion>
+    <UseDebugLibraries>False</UseDebugLibraries>
+    <DriverTargetPlatform>Windows Driver</DriverTargetPlatform>
+    <DriverType>UMDF</DriverType>
+    <PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <!-- The PC's Build Tools have no Spectre-mitigated libraries; this driver doesn't need them. -->
+    <SpectreMitigation>false</SpectreMitigation>
+    <!-- Signed on the PC that installs it (install.ps1), never here. -->
+    <SignMode>Off</SignMode>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <TargetName>GyroPhonePad</TargetName>
+    <OutDir>$(GpOutDir)</OutDir>
+    <IntDir>$(GpIntDir)</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);_UNICODE;UNICODE</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(DDK_INC_PATH);src</AdditionalIncludeDirectories>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>%(AdditionalDependencies);mincore.lib;VhfUm.lib</AdditionalDependencies>
+    </Link>
+    <Inf>
+      <TimeStamp>$(GpDriverVersion)</TimeStamp>
+    </Inf>
+    <DriverSign>
+      <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
+    </DriverSign>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="src\driver.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\dualsense.h" />
+    <ClInclude Include="src\gyropad_ioctl.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <Inf Include="GyroPhonePad.inx" />
+    <FilesToPackage Include="$(TargetPath)" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

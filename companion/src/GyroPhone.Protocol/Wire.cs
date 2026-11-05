@@ -191,6 +191,11 @@ public enum OutputMode : byte
     None = 0,
     Xbox360 = 1,
     DualShock4 = 2,
+    /// <summary>
+    /// A DualSense through the optional GyroPhone pad driver (driver/), shown only when that driver is
+    /// installed. The phone doesn't know this value yet and treats it like "no DualShock 4" (no MOTION).
+    /// </summary>
+    DualSense = 3,
 }
 
 /// <summary>STATE flags.</summary>

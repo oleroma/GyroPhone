@@ -13,6 +13,15 @@ How a STATE becomes input a game sees. Over Bluetooth the phone is itself a HID 
 - **Rumble** from games is recorded on the driver thread and sent as RUMBLE at most 100 Hz. The phone ignores it today.
 - The virtual pad's XInput slot is reported, so the PC-controller reader skips it.
 
+## Game pad (DualSense, optional driver)
+
+`driver/` is the optional **GyroPhone pad driver**: a user-mode (UMDF 2) driver on Windows' Virtual HID Framework that shows a wired **DualSense** (054C:0CE6, the real HID descriptor, answers to the calibration, pairing and firmware feature reports). ViGEmBus can't do a DualSense. See `driver/README.md` for install, uninstall and risks.
+
+- Installed by the person with `driver\install.cmd` (the install hook unpacks it into `%LOCALAPPDATA%\Programs\GyroPhone\driver`, never installs it): it makes a signing certificate for that PC only, trusts it there, signs the package and installs it on a `Root\GyroPhonePad` device. Test signing stays off. `uninstall.cmd` removes all of it.
+- `PadSinks.Create` gives the engine a `CombinedPadSink` when the driver's device interface is there: ViGEm for Xbox 360 / DualShock 4, `DualSensePadSink` for **DualSense**. The DualSense choice shows in the tray and the Home and Gamepad pages only then (restart the companion after installing). The driver is looked for at start and on "Try again".
+- The DualSense takes the DualShock 4's frame (`PadMapper.ToDs4`, the same buttons), built as report 0x01 by `DualSenseReport` and sent with one DeviceIoControl per change. A pad belongs to the companion's handle and goes when it closes.
+- **Trial scope**: sticks, triggers, buttons and D-pad. No gyro (the phone sends MOTION only for a DualShock 4; output mode 3 is new to it), touchpad, rumble, lightbar or adaptive triggers yet. Output reports are accepted and ignored.
+
 ## Keyboard and mouse (SendInput)
 
 `GyroPhone.Windows/SendInputSink.cs`, one SendInput call per injection:
@@ -36,4 +45,4 @@ The PC controller's own buttons still reach games directly (or through Steam Inp
 
 ## Key files
 
-`GyroPhone.Windows/ViGEmPadSink.cs`, `GyroPhone.Protocol/Mapping/Ds4Report.cs`, `MotionFrame.cs`, `SendInputSink.cs`, `XInputPcPad.cs`, `GyroPhone.Protocol/Mapping/PadMapper.cs`, `InputDiff.cs`, `HidScanCodes.cs`, `KeyRepeat.cs`, `InjectEvent.cs`, `GyroPhone.Protocol/MouseDeltaTracker.cs`, `StateFrame.cs`, `GyroMath.cs`, `GyroGate.cs`, `PcGyro.cs`, `PcGyroTail.cs`, `PadHeldHistory.cs`, `GyroPhone.Host/HostEngine.cs` (`Flush`, `OnPadGyro`).
+`GyroPhone.Windows/ViGEmPadSink.cs`, `DualSensePadSink.cs`, `PadSinks.cs`, `GyroPhone.Protocol/Mapping/Ds4Report.cs`, `DualSenseReport.cs`, `driver/src/driver.c`, `driver/src/dualsense.h`, `MotionFrame.cs`, `SendInputSink.cs`, `XInputPcPad.cs`, `GyroPhone.Protocol/Mapping/PadMapper.cs`, `InputDiff.cs`, `HidScanCodes.cs`, `KeyRepeat.cs`, `InjectEvent.cs`, `GyroPhone.Protocol/MouseDeltaTracker.cs`, `StateFrame.cs`, `GyroMath.cs`, `GyroGate.cs`, `PcGyro.cs`, `PcGyroTail.cs`, `PadHeldHistory.cs`, `GyroPhone.Host/HostEngine.cs` (`Flush`, `OnPadGyro`).
