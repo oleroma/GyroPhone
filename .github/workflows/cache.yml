@@ -5,6 +5,7 @@ name: Main cache
 # main and only compiles or restores the parts the push changed (.agents/hooks/parts), with the
 # same cache setup as fallback.yml. It runs no tests or checks, sets no status, and nothing
 # waits for it.
+# The one exception: agent-build ci waits up to 30 minutes for a running one. Every job has a timeout-minutes.
 on:
   push:
     branches: [main]
