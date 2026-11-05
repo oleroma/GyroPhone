@@ -30,6 +30,8 @@
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <!-- The PC's Build Tools have no Spectre-mitigated libraries; this driver doesn't need them. -->
     <SpectreMitigation>false</SpectreMitigation>
+    <!-- The WDK's driver toolset turns it on again unless this is false too. -->
+    <Driver_SpectreMitigation>false</Driver_SpectreMitigation>
     <!-- Signed on the PC that installs it (install.ps1), never here. -->
     <SignMode>Off</SignMode>
   </PropertyGroup>
