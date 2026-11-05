@@ -9,7 +9,8 @@ adaptive triggers come later.
 
 ## Install
 
-1. Run `install.cmd` (from the companion's folder: `%LOCALAPPDATA%\Programs\GyroPhone\driver`).
+1. Run `install.cmd` from the unpacked package (`build\GyroPhonePad-driver` after a PC build, or
+   `GyroPhonePad-driver.zip` from a release, unpacked anywhere).
    Windows asks for administrator rights once.
 2. Restart the GyroPhone companion. "DualSense" now shows up as a gamepad output (Home, Gamepad
    page and the tray menu's "Gamepad output").
