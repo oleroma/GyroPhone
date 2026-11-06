@@ -255,45 +255,56 @@ internal fun ControlFace(e: Element, count: Int, selected: Boolean = false, targ
         val w = with(density) { maxWidth.toPx() }
         val h = with(density) { maxHeight.toPx() }
         // A circle's content has its inner square.
-        val room = if (e.round) 0.72f else 0.88f
+        val room = if (e.round) 0.70f else 0.86f
         val tall = h > 1.6f * w && e.mark == Mark.NAME && e.label.length > 2
         val wide = w > 2.4f * h
-        val long = if (tall) h else w
-        val short = if (tall) w else h
-        fun fit(text: String, share: Float, max: Float) = with(density) {
-            minOf(long * room / (0.6f * text.length.coerceAtLeast(1)), short * room * share).toSp()
-        }.value.coerceIn(6f, max).sp
-        val badgeShare = if (wide) 0.55f else if (e.mark == Mark.NAME) 0.3f else 0.4f
-        val nameShare = if (wide || !mapped) 0.55f else 0.42f
         @Composable
         fun MarkView() {
             when (e.mark) {
                 Mark.NONE -> Unit
                 Mark.NAME -> Text(
                     e.label,
-                    fontSize = fit(e.label, nameShare, 13f),
+                    fontSize = 13.sp,
+                    lineHeight = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     softWrap = false,
                     color = content,
                     modifier = if (tall) Modifier.sideways() else Modifier,
                 )
-                else -> SystemIcon(e.mark, content, with(density) { (minOf(w, h) * room * if (mapped) 0.42f else 0.6f).toDp() })
+                else -> SystemIcon(e.mark, content, 18.dp)
             }
         }
         @Composable
         fun BadgeView() {
             if (!mapped) return
-            val size = fit("↪$count", badgeShare, 11f)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                RemapArrow(content, with(density) { size.toDp() })
-                Text(count.toString(), fontSize = size, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, color = content)
+                RemapArrow(content, 11.dp)
+                Text(count.toString(), fontSize = 11.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false, color = content)
             }
         }
-        if (wide) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) { MarkView(); BadgeView() }
-        } else {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) { MarkView(); BadgeView() }
+        // Laid out at full size, then shrunk as a whole to fit the control: nothing is cut off.
+        Box(Modifier.fitInside(w * room, h * room)) {
+            if (wide) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) { MarkView(); BadgeView() }
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) { MarkView(); BadgeView() }
+            }
+        }
+    }
+}
+
+/** Content measured at its own size and drawn scaled down (never up) to fit [maxW] x [maxH] pixels, centred. */
+private fun Modifier.fitInside(maxW: Float, maxH: Float) = layout { m, _ ->
+    val p = m.measure(Constraints())
+    val k = minOf(1f, maxW / p.width.coerceAtLeast(1), maxH / p.height.coerceAtLeast(1))
+    val w = (p.width * k).roundToInt()
+    val h = (p.height * k).roundToInt()
+    // Scaled about its centre, so placed centred in the scaled size.
+    layout(w, h) {
+        p.placeWithLayer((w - p.width) / 2, (h - p.height) / 2) {
+            scaleX = k
+            scaleY = k
         }
     }
 }
