@@ -142,9 +142,8 @@ data class TouchControl(
     fun longPress(w: Workspace): Int =
         (longPressMs ?: w.longPressMs).coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS)
 
-    /** The double-tap window in effect (ms), its own or [w]'s. */
-    fun doubleTap(w: Workspace): Int =
-        (doubleTapMs ?: w.doubleTapMs).coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS)
+    /** The double-tap window in effect (ms): the one Tap time ([longPress]; [doubleTapMs] is no longer read). */
+    fun doubleTap(w: Workspace): Int = longPress(w)
 
     companion object {
         const val MIN_SIZE = 0.06f

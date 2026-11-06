@@ -50,7 +50,7 @@ object Wire {
     const val OVERLAY_PLAIN = 152
     /** OVERLAY_LAYOUT: one piece of the layout the overlay draws on the phone's screen. */
     const val OVERLAY_LAYOUT_PLAIN = 200
-    /** MOTION: the phone's raw gyro and accelerometer samples for the PC's DualShock 4 ([MotionFeed]). */
+    /** MOTION: the phone's raw gyro and accelerometer samples for the PC's DualShock 4 or DualSense ([MotionFeed]). */
     const val MOTION_PLAIN = MotionFeed.SIZE
 
     /** Sealed packet size for a plaintext of [plain] bytes. */
@@ -179,7 +179,7 @@ object PacketType {
     const val PAD_GYRO = 0x27
     /** With PAD_GYRO, per PC controller button with gyro settings of its own while held: those settings ([PcGyroFeed.encodeHeld]). */
     const val PAD_GYRO_SET = 0x28
-    /** Sent while WELCOME has [HostFlags.MOTION] and HOST_STATUS says the PC's pad is a plugged DualShock 4: raw motion for its gyro ([MotionFeed]). */
+    /** Sent while WELCOME has [HostFlags.MOTION] and HOST_STATUS says the PC's pad is a plugged DualShock 4 or DualSense: raw motion for its gyro ([MotionFeed]). */
     const val MOTION = 0x29
     const val BYE = 0x2F
     const val PONG = 0x30
@@ -254,6 +254,11 @@ object OutputMode {
     const val NONE = 0
     const val XBOX360 = 1
     const val DUALSHOCK4 = 2
+    /** The companion's own driver's DualSense (driver/): the DualShock 4's buttons, sticks and motion. */
+    const val DUALSENSE = 3
+
+    /** The pad has a gyro and accelerometer, so it takes MOTION. */
+    fun takesMotion(mode: Int): Boolean = mode == DUALSHOCK4 || mode == DUALSENSE
 }
 
 /** WELCOME hostFlags. */
@@ -267,7 +272,7 @@ object HostFlags {
      * controller plugged into it can ratchet the gyro. Bit 8 (the old share-based gate) is no longer used.
      */
     const val PC_GYRO = 16
-    /** The host takes MOTION: while its pad is a DualShock 4, the phone sends its raw motion for the pad's gyro and accelerometer. */
+    /** The host takes MOTION: while its pad is a DualShock 4 or DualSense, the phone sends its raw motion for the pad's gyro and accelerometer. */
     const val MOTION = 32
 }
 

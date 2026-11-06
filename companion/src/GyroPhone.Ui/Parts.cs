@@ -158,6 +158,12 @@ internal sealed class Seg<T> where T : notnull
     {
         foreach (var (v, b) in _buttons) if (EqualityComparer<T>.Default.Equals(v, value)) b.IsEnabled = on;
     }
+
+    /// <summary>Shows or hides one option.</summary>
+    public void Show(T value, bool on)
+    {
+        foreach (var (v, b) in _buttons) if (EqualityComparer<T>.Default.Equals(v, value)) Parts.Show(b, on);
+    }
 }
 
 /// <summary>A slider row: name, slider, the value as text. Only moves made by the user call back.</summary>

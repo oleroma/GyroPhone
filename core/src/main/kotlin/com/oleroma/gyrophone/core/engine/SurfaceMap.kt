@@ -25,8 +25,11 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
     /** Per input bit: something maps it that is not a swipe Release ([InputSource.Surface.on]). */
     private val holds = BooleanArray(BITS)
 
-    /** Per input bit: its targets (to tell whether a tap and its double tap do the same). */
+    /** Per input bit: its targets. */
     private val targets = arrayOfNulls<HashSet<OutputTarget>>(BITS)
+
+    /** Per input bit: its targets with their How (to tell whether a tap and its double tap do the same). */
+    private val shapes = arrayOfNulls<HashSet<Pair<OutputTarget, Pair<How, Int>>>>(BITS)
 
     /** Per input bit: the mouse buttons, HID modifier bits and first other key its targets press. */
     internal val mouse = IntArray(BITS)
@@ -79,6 +82,15 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
     }
 
     init {
+        // A double tap with Held and other chips: the engine tells its second touch apart, so it presses them all.
+        val split = HashSet<InputSource>()
+        mappings.filter { m ->
+            val s = m.source as? InputSource.Surface
+            s != null && s.id == id && s.on == Trigger.HOLD && s.input == SurfaceInput.DOUBLE_TAP && m.target != OutputTarget.NoOutput
+        }.groupBy { it.source }.forEach { (src, list) ->
+            val held = list.count { (it.options?.mode ?: How.HELD) == How.HELD }
+            if (held in 1 until list.size) split.add(src)
+        }
         for (m in mappings) {
             val s = m.source as? InputSource.Surface ?: continue
             if (s.id != id || s.fingers !in 1..4) continue
@@ -104,6 +116,7 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
             }
             if (s.on != Trigger.RELEASE) holds[b] = true
             (targets[b] ?: HashSet<OutputTarget>().also { targets[b] = it }).add(m.target)
+            (shapes[b] ?: HashSet<Pair<OutputTarget, Pair<How, Int>>>().also { shapes[b] = it }).add(m.target to (m.options ?: MapOptions()).shape)
             val mo = motion[s.fingers - 1]
             val axis = when (s.input) {
                 SurfaceInput.MOTION_X -> StickAxis.X
@@ -111,7 +124,7 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
                 else -> null
             }
             // A mapping with options is shaped and pressed by the engine ([MappingEngine]).
-            val shaped = m.options != null || s.on != Trigger.HOLD
+            val shaped = m.options != null || s.on != Trigger.HOLD || s in split
             when (val t = m.target) {
                 is OutputTarget.Mouse -> if (!shaped) mouse[b] = mouse[b] or (1 shl t.button.bit)
                 // Toggle and next-key keys are held by the engine ([MappingEngine]).
@@ -187,8 +200,8 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
      */
     fun tapWaits(fingers: Int): Boolean {
         if (!has(fingers, SurfaceInput.DOUBLE_TAP)) return false
-        return targets[bit(fingers, SurfaceInput.DOUBLE_TAP)] != (targets[bit(fingers, SurfaceInput.TAP)]
-            ?: emptySet<OutputTarget>())
+        return shapes[bit(fingers, SurfaceInput.DOUBLE_TAP)] != (shapes[bit(fingers, SurfaceInput.TAP)]
+            ?: emptySet<Pair<OutputTarget, Pair<How, Int>>>())
     }
 
     /** Something happens on a tap with [fingers]: a tap, double tap or tap-drag mapping. */

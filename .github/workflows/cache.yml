@@ -52,6 +52,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
+      # Gradle's build cache, saved by every run so the next build on this branch, or a new
+      # branch's first build, reuses the newest outputs. The basic cache above is keyed by the
+      # build files, so it's saved once and then only restored, and its build cache goes stale.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-${{ github.run_id }}
+          restore-keys: gradle-build-cache-
       - run: ./gradlew :app:assembleDebug :core:testClasses
 
   # The NuGet cache, the only one the companion job keeps: restoring the packages fills it.

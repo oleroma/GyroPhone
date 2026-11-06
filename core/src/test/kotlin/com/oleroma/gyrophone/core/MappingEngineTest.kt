@@ -164,6 +164,9 @@ class MappingEngineTest {
         e.touchpadDown(1, 100f, 100f)
         now = 60 * MS
         e.touchpadUp(1)
+        // The tap waits out the Tap time for a double tap (Windows touchpad double-clicks or drags then).
+        assertEquals(0, e.snapshot().mouse.buttons and 1)
+        now = 370 * MS
         assertEquals(1, e.snapshot().mouse.buttons and 1)
         assertFalse(e.gyroActive)
     }
@@ -193,11 +196,74 @@ class MappingEngineTest {
     private fun dragging(now: () -> Long, set: (Long) -> Unit): MappingEngine {
         val e = gyroOff(now)
         e.touchpadDown(1, 100f, 100f); set(60 * MS); e.touchpadUp(1)
-        assertEquals(1, e.snapshot().mouse.buttons)
+        assertEquals(0, e.snapshot().mouse.buttons)
+        // The second touch moves: a drag at once.
         set(120 * MS); e.touchpadDown(1, 100f, 100f)
         set(140 * MS); e.touchpadMove(1, 150f, 100f)
         assertEquals(1, e.snapshot().mouse.buttons)
         return e
+    }
+
+    /** The touchpad's left button, polled every 5 ms from 0 to [untilMs] with [events] (ms) along the way: "ms:buttons" at each change. */
+    private fun leftEdges(untilMs: Long, vararg events: Pair<Long, MappingEngine.() -> Unit>): List<String> {
+        var now = 0L
+        val e = gyroOff { now }
+        val out = ArrayList<String>()
+        var last = -1
+        var i = 0
+        var t = 0L
+        while (t <= untilMs) {
+            now = t * MS
+            while (i < events.size && events[i].first <= t) e.(events[i++].second)()
+            val b = e.snapshot().mouse.buttons and 1
+            if (b != last) out.add("$t:$b").also { last = b }
+            t += 5
+        }
+        return out
+    }
+
+    private val down: MappingEngine.() -> Unit = { touchpadDown(1, 100f, 100f) }
+    private val up: MappingEngine.() -> Unit = { touchpadUp(1) }
+
+    // Windows touchpad: Tap = Left, Double tap = Left Repeat x2 and Left Held, all within one Tap time (300 ms).
+
+    @Test fun touchpadTapClicksOnceTheTapTimeHasPassed() {
+        assertEquals(listOf("0:0", "365:1", "405:0"), leftEdges(800, 0L to down, 60L to up))
+    }
+
+    @Test fun touchpadQuickDoubleTapIsTwoClicksAtTheSecondLift() {
+        assertEquals(listOf("0:0", "170:1", "210:0", "250:1", "290:0"), leftEdges(800, 0L to down, 60L to up, 120L to down, 170L to up))
+    }
+
+    @Test fun touchpadTapThenHoldDragsFromTheTapTime() {
+        assertEquals(listOf("0:0", "420:1", "700:0"), leftEdges(1000, 0L to down, 60L to up, 120L to down, 700L to up))
+    }
+
+    @Test fun touchpadTapThenMoveDragsAtOnceAndKeepsTheMotion() {
+        var now = 0L
+        val e = gyroOff { now }
+        e.touchpadDown(1, 100f, 100f); now = 60 * MS; e.touchpadUp(1)
+        now = 120 * MS; e.touchpadDown(1, 100f, 100f)
+        var dx = 0
+        for (k in 1..10) {
+            now = (120 + k * 10L) * MS; e.touchpadMove(1, 100f + k * 10f, 100f)
+            val s = e.snapshot()
+            // Held once the finger leaves the tap slop, long before the Tap time.
+            if (k >= 4) assertEquals("at ${120 + k * 10} ms", 1, s.mouse.buttons and 1)
+            dx += s.mouse.dx
+        }
+        now = 300 * MS; e.touchpadUp(1)
+        now = 340 * MS
+        assertEquals(0, e.snapshot().mouse.buttons and 1)
+        assertTrue(dx > 0)
+    }
+
+    @Test fun touchpadCancelReleasesADrag() {
+        var now = 0L
+        val e = dragging({ now }) { now = it }
+        e.touchpadCancel()
+        now = 200 * MS
+        assertEquals(0, e.snapshot().mouse.buttons)
     }
 
     @Test fun resetReleasesTouchpad() {

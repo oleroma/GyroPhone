@@ -42,7 +42,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     private readonly NotifyIcon _tray;
     private readonly ContextMenuStrip _menu;
     private readonly ToolStripMenuItem _statusItem;
-    private readonly ToolStripMenuItem _outX360, _outDs4, _outOff;
+    private readonly ToolStripMenuItem _outX360, _outDs4, _outDualSense, _outOff;
     private readonly ToolStripMenuItem _problemsItem;
     private readonly ToolStripMenuItem _pauseItem;
     private readonly System.Windows.Forms.Timer _uiTimer;
@@ -87,7 +87,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
 
         var store = new SettingsStore(SettingsStore.DefaultPath());
         var settings = store.Load(Environment.MachineName, _log.Write);
-        _pad = ViGEmPadSink.Create(_log.Write, out _padError);
+        _pad = PadSinks.Create(_log.Write, out _padError);
         var protector = new DpapiKeyProtector();
         _keyFiles = new KeyFiles(KeyFiles.DefaultDirectory());
         GyroPhone.Protocol.Crypto.P256? hostKey = null;
@@ -123,9 +123,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         _problemsItem = new ToolStripMenuItem("", null, (_, _) => ShowMainWindow(MainPage.Home)) { Available = false };
         _outX360 = new ToolStripMenuItem("Xbox 360", null, (_, _) => _engine.SetOutputMode(OutputMode.Xbox360));
         _outDs4 = new ToolStripMenuItem("DualShock 4", null, (_, _) => _engine.SetOutputMode(OutputMode.DualShock4));
+        _outDualSense = new ToolStripMenuItem("DualSense", null, (_, _) => _engine.SetOutputMode(OutputMode.DualSense)) { Available = false };
         _outOff = new ToolStripMenuItem("Off (keyboard and mouse only)", null, (_, _) => _engine.SetOutputMode(OutputMode.None));
         var outputItem = new ToolStripMenuItem("Gamepad output");
-        outputItem.DropDownItems.AddRange(new ToolStripItem[] { _outX360, _outDs4, _outOff });
+        outputItem.DropDownItems.AddRange(new ToolStripItem[] { _outX360, _outDs4, _outDualSense, _outOff });
         var pairItem = new ToolStripMenuItem("Pair new phone…", null, (_, _) => PairNewPhone());
         var mainWindowItem = new ToolStripMenuItem("Open GyroPhone", null, (_, _) => ShowMainWindow());
         mainWindowItem.Font = new Font(mainWindowItem.Font, FontStyle.Bold);
@@ -275,13 +276,13 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         }
         else if (s.Connected)
         {
-            state = padWanted && (!s.DriverOk || !s.PadPlugged) ? TrayState.Warning : TrayState.Connected;
+            state = padWanted && (!s.OutputDriverOk || !s.PadPlugged) ? TrayState.Warning : TrayState.Connected;
             status = s.Silent ? $"{s.PhoneName} · no signal" : $"{s.PhoneName} · {s.RxPerSec}/s · {s.LossPermille / 10.0:0.0}% · p99 {Ms(s.LatP99Us)}";
             if (s.Paused) status += " · paused";
         }
         else
         {
-            state = padWanted && !s.DriverOk ? TrayState.Warning : TrayState.Waiting;
+            state = padWanted && !s.OutputDriverOk ? TrayState.Warning : TrayState.Waiting;
             status = s.PairingWindowS > 0 ? $"Waiting for phone · pairing open {s.PairingWindowS / 60}:{s.PairingWindowS % 60:00}" : "Waiting for phone";
         }
         _statusLine = status;
@@ -291,6 +292,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
 
         _outX360.Checked = s.OutputMode == OutputMode.Xbox360;
         _outDs4.Checked = s.OutputMode == OutputMode.DualShock4;
+        _outDualSense.Checked = s.OutputMode == OutputMode.DualSense;
+        _outDualSense.Available = s.DualSenseOk || s.OutputMode == OutputMode.DualSense;
         _outOff.Checked = s.OutputMode == OutputMode.None;
         _pauseItem.Checked = s.Paused;
         _versionItem.Text = _updater.Pending is { } pending
@@ -336,7 +339,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             list.Add(new Problem("GyroPhone isn't allowed through the firewall yet, so Windows may block the phone.", "Allow…", AllowThroughFirewall));
         else if (_firewallHintShown && !s.AnyDatagramSeen && !s.NetworkPublic)
             list.Add(new Problem("No phone seen yet. Check the phone is on the same Wi-Fi as this PC and GyroPhone is open on it."));
-        if (s.OutputMode != OutputMode.None && !s.DriverOk)
+        if (s.OutputMode == OutputMode.DualSense && !s.DualSenseOk)
+            list.Add(new Problem("No gamepad: the DualSense needs the GyroPhone pad driver (driver\\install.cmd next to the companion), then restart GyroPhone. Keyboard and mouse still work."));
+        else if (s.OutputMode != OutputMode.None && s.OutputMode != OutputMode.DualSense && !s.DriverOk)
             list.Add(new Problem($"No gamepad: {_padError ?? "the ViGEmBus driver is missing"}. Keyboard and mouse still work.", "Install driver…", OpenDriverDownload));
         if (s.ElevatedForeground && !ElevationProbe.IsSelfElevated)
             list.Add(new Problem("The app in front runs as administrator, so input can't reach it.", "Restart as administrator", RestartAsAdmin));
@@ -1148,8 +1153,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
 
     public void RetryDriver()
     {
-        var pad = ViGEmPadSink.Create(_log.Write, out var error);
-        if (error != null)
+        var pad = PadSinks.Create(_log.Write, out var error);
+        if (error != null && !pad.DualSenseOk)
         {
             _padError = error;
             MessageBox.Show($"{error}.\n\nInstall ViGEmBus from {ViGEmPadSink.DriverDownloadUrl}, then choose Retry driver again.",
@@ -1159,7 +1164,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         var old = _pad;
         _engine.SetPadSink(pad);
         _pad = pad;
-        _padError = null;
+        _padError = error;
         (old as IDisposable)?.Dispose();
         _log.Write("gamepad driver found");
         Balloon("Gamepad driver found", "Game pad output is on.", ToolTipIcon.Info);
@@ -1222,6 +1227,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     {
         OutputMode.Xbox360 => "Xbox 360",
         OutputMode.DualShock4 => "DualShock 4",
+        OutputMode.DualSense => "DualSense",
         _ => "off (keyboard and mouse only)",
     };
 

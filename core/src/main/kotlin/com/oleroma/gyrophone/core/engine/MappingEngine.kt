@@ -36,6 +36,7 @@ import com.oleroma.gyrophone.core.model.StickZones
 import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
+import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.Triggers
 import com.oleroma.gyrophone.core.model.holdDirection
@@ -215,6 +216,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private class CycleInfo(val key: CycleKey, val index: Int, val size: Int)
 
     private var cycleInfo: Map<Mapping, CycleInfo> = emptyMap()
+
+    /**
+     * The double tap chips told apart by how the second touch goes ([Shaper.Split]): those of a
+     * double tap source with a Held chip and another chip. Held ones fire on a hold
+     * or a move, the others on a quick lift.
+     */
+    private var splitInfo: Map<Mapping, Shaper.Split> = emptyMap()
 
     /**
      * Inputs held through a set change, per group (0 = touch, then 1 + pad index), by source: the
@@ -718,7 +726,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val st = ButtonGestures(
                 c.longPress(w) * 1_000_000L, c.doubleTap(w) * 1_000_000L,
                 hasDouble = double.isNotEmpty(),
-                tapWaits = double.isNotEmpty() && double != targetsOf(w.mappings, InputSource.TouchTap(c.id)),
+                tapWaits = double.isNotEmpty() && shapesOf(w.mappings, InputSource.TouchDoubleTap(c.id)) != shapesOf(w.mappings, InputSource.TouchTap(c.id)),
             )
             tapStates[c.id] = st; tapList.add(st)
         }
@@ -727,9 +735,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val c = w.touchControls.firstOrNull { it.id == k.id }
             val double = targetsOf(w.mappings, k.copy(on = Trigger.DOUBLE_TAP))
             val st = ButtonGestures(
-                (c?.longPress(w) ?: w.longPressMs) * 1_000_000L, (c?.doubleTap(w) ?: w.doubleTapMs) * 1_000_000L,
+                (c?.longPress(w) ?: w.longPressMs) * 1_000_000L, (c?.doubleTap(w) ?: w.longPressMs) * 1_000_000L,
                 hasDouble = double.isNotEmpty(),
-                tapWaits = double.isNotEmpty() && double != targetsOf(w.mappings, k.copy(on = Trigger.TAP)),
+                tapWaits = double.isNotEmpty() && shapesOf(w.mappings, k.copy(on = Trigger.DOUBLE_TAP)) != shapesOf(w.mappings, k.copy(on = Trigger.TAP)),
             )
             areaGestures[areaKey(k.id, k.kind)] = st; tapList.add(st)
         }
@@ -2060,6 +2068,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun targetsOf(mappings: List<Mapping>, source: InputSource): Set<OutputTarget> =
         mappings.filter { it.source == source }.mapTo(HashSet()) { it.target }
 
+    /** [source]'s targets with their How ([MapOptions.shape]): a tap and its double tap do the same when these match. */
+    private fun shapesOf(mappings: List<Mapping>, source: InputSource): Set<Pair<OutputTarget, Pair<How, Int>>> =
+        mappings.filter { it.source == source }.mapTo(HashSet()) { it.target to (it.options ?: MapOptions()).shape }
+
     /** The keys of [mappings] with gesture mappings, and what each needs. */
     private fun keyGestureCfgs(mappings: List<Mapping>): Map<Int, KeyGestureCfg> {
         val codes = mappings.mapNotNullTo(HashSet()) { (it.source as? InputSource.KeyGesture)?.keyCode }
@@ -2067,10 +2079,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val double = targetsOf(mappings, InputSource.KeyGesture(code, ButtonGesture.DOUBLE_TAP))
             KeyGestureCfg(
                 hasDouble = double.isNotEmpty(),
-                tapWaits = double.isNotEmpty() && double != targetsOf(
-                    mappings,
-                    InputSource.KeyGesture(code, ButtonGesture.TAP)
-                ),
+                tapWaits = double.isNotEmpty() && shapesOf(mappings, InputSource.KeyGesture(code, ButtonGesture.DOUBLE_TAP)) !=
+                    shapesOf(mappings, InputSource.KeyGesture(code, ButtonGesture.TAP)),
             )
         }
     }
@@ -2164,8 +2174,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         else -> Trigger.HOLD
     }
 
-    /** [m]'s output goes through a [Shaper]: it has options, or a swipe trigger. */
-    private fun shaped(m: Mapping): Boolean = m.options != null || derivedTrigger(m.source) != Trigger.HOLD
+    /** [m]'s output goes through a [Shaper]: it has options, a swipe trigger, or is a told-apart double tap chip ([splitInfo]). */
+    private fun shaped(m: Mapping): Boolean = m.options != null || derivedTrigger(m.source) != Trigger.HOLD || m in splitInfo
+
+    /** [s] is a double tap held from its second press (not a swipe's double swipe, which the engine works out itself). */
+    private fun isDoubleTap(s: InputSource): Boolean = when (s) {
+        is InputSource.Surface -> s.on == Trigger.HOLD && s.input == SurfaceInput.DOUBLE_TAP
+        else -> derivedTrigger(s) == Trigger.HOLD && Triggers.of(s) == Trigger.DOUBLE_TAP
+    }
 
     /**
      * [m]'s output value in [dev]'s group at [now]: its source's value, or with options that
@@ -2175,9 +2191,21 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val src = m.source
         val derived = derivedTrigger(src)
         val v = value(src, dev, output)
-        val o = m.options ?: if (derived == Trigger.HOLD) return v else NO_OPTIONS
+        val split = splitInfo[m] ?: Shaper.Split.NONE
+        val o = m.options ?: if (derived == Trigger.HOLD && split == Shaper.Split.NONE) return v else NO_OPTIONS
         var on = abs(v) >= PRESS_THRESHOLD
         val sh = shaperOf(m, dev)
+        sh.split = split
+        if (split != Shaper.Split.NONE) {
+            // The second touch: quick (a lift within the Tap time, unmoved) or a hold.
+            val surface = when (val b = Triggers.base(src)) {
+                is InputSource.Surface -> if (b.id.isEmpty()) touchpad else surfaces[b.id]
+                is InputSource.Touch -> surfaces[b.id]
+                else -> null
+            }
+            sh.splitNs = surface?.longPressNanos ?: touchpad.longPressNanos
+            sh.moved = surface?.pastTapSlop == true
+        }
         if (derived == Trigger.RELEASE && src is InputSource.Surface) {
             // A swipe's Release: the last finger lifted in its zone (not sliding on, not leaving the direction).
             val s = src
@@ -2260,6 +2288,25 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         cycles(touchMappings)
         for (ms in padMappings) cycles(ms)
         cycleInfo = info
+        val split = HashMap<Mapping, Shaper.Split>()
+        fun splits(ms: List<Mapping>) {
+            val groups = LinkedHashMap<InputSource, ArrayList<Mapping>>()
+            for (m in ms) if (isDoubleTap(m.source) && m.target != OutputTarget.NoOutput) groups.getOrPut(m.source) { ArrayList() }.add(m)
+            for (list in groups.values) {
+                val held = list.filter { (it.options?.mode ?: How.HELD) == How.HELD }
+                if (held.isEmpty() || held.size == list.size) continue
+                for (m in list) split[m] = if (m in held) Shaper.Split.HOLD else Shaper.Split.QUICK
+            }
+        }
+        splits(touchMappings)
+        for (ms in padMappings) splits(ms)
+        if (split != splitInfo) {
+            // A chip that changes how it is told apart starts again.
+            touchShapers.keys.removeAll { (splitInfo[it] ?: Shaper.Split.NONE) != (split[it] ?: Shaper.Split.NONE) }
+            for (d in deviceList) d.shapers.keys.removeAll { (splitInfo[it] ?: Shaper.Split.NONE) != (split[it] ?: Shaper.Split.NONE) }
+            anyDevice.shapers.keys.removeAll { (splitInfo[it] ?: Shaper.Split.NONE) != (split[it] ?: Shaper.Split.NONE) }
+        }
+        splitInfo = split
         val touchUsed = touchMappings.toHashSet()
         touchShapers.keys.retainAll(touchUsed)
         for (d in deviceList) {
@@ -2497,7 +2544,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         eff = e
         touchpad.settings = e.touchpad
         updateGyroNow()
-        touchpad.doubleTapNanos = e.doubleTapMs.coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L
+        // One Tap time: the double-tap window is the long-press time.
+        touchpad.doubleTapNanos = e.longPressMs.coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
         touchpad.longPressNanos = e.longPressMs.coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
         for (c in ws.touchControls) {
             surfaces[c.id]?.let { s ->
@@ -2518,7 +2566,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun keyTimes(code: Int, g: ButtonGestures) {
         val own = ws.keyTimings.firstOrNull { it.keyCode == code }
         g.longNs = (own?.longPressMs ?: eff.longPressMs).coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
-        g.doubleNs = (own?.doubleTapMs ?: eff.doubleTapMs).coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS) * 1_000_000L
+        g.doubleNs = g.longNs
     }
 
     // ---- Touch presses ----

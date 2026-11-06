@@ -12,7 +12,7 @@ What the person sees and touches: the pad, its top row, the ← / → corners, e
 
 `ui/CapsuleRow.kt`, shown in play mode when not in fullscreen:
 
-- **+** adds a workspace at the front (preset or blank, see [Workspaces](phone-workspaces.md)).
+- **+** adds a workspace at the front (Blank, Windows touchpad or a preset, see [Workspaces](phone-workspaces.md)).
 - One capsule per **workspace**: tap to switch; tap the current one to open its edit mode.
 - **Controller** (the device screens, [Controllers](phone-controllers.md)), **Settings**, **Connection** (shows the link state).
 
@@ -20,10 +20,12 @@ The row scrolls. Long-press a capsule and drag it to reorder; moving workspaces 
 
 ## ← / → corners and fullscreen
 
+The status and navigation bars never show in the app, on the pad, in settings or in any dialog (`ui/AppDialogs.kt`: the app's `Dialog` and `AlertDialog` hide them in their own windows; `MainActivity` hides them again when it gets focus back). A swipe from the screen edge shows them for a moment.
+
 The two nav corners (`Profile.corners`, shared by all workspaces) are always on the pad:
 
 - tap ← / → for the previous / next workspace (dimmed to 35 % at an end, unless wrap-around is on);
-- press both together for **fullscreen** (hides the top row and system bars); both again, or Back, to leave;
+- press both together for **fullscreen** (hides the top row); both again, or Back, to leave;
 - their opacity (default 50 %) never goes below 25 % in play, since they are the way out of fullscreen;
 - **Hide the ← / → corners after a few seconds** (default off): they fade 3 s after a reveal; four quick taps (≤300 ms apart) anywhere, or touching a corner, show them again;
 - corners can be moved and sized in edit mode; "Same size for all corners" (default on) sizes both together.
@@ -51,7 +53,7 @@ New buttons start at 14 % of the short side, sticks 30 %.
 
 ## Mapping editor
 
-`ui/ControlMappingScreen.kt`, full screen, for a touch control, the touchpad (the "Workspace" stand-in), the Defaults' mappings, or a physical device control. Its action **cards** (one per input, with their targets as chips) and a **library of targets** share the screen with a draggable divider. Tap a card, then a target to add it; or long-press and drag a target onto a card, a chip to another card, or back to the library to remove it. Cards reorder by their ⠿ handle. A chip opens its options (`ui/MappingChipDialog.kt`, `ui/ActionSettings.kt`): When, How, Where, Also ends on, delays, Cycle, scale, haptic feel. **Presets** fills in Windows touchpad or Gyro mouse. Layer chips on top pick Base or a layer. Inherited mappings show faded; ✕, ↺, Reset all and Clear all work as in [Workspaces](phone-workspaces.md). **Settings** opens the control's settings (`ui/ControlSettingsScreen.kt`: Button (duplicate, save to library, delete), look (label, shape, size, layer, opacity), layers (follow layers), then the settings its actions share: touch surface, stick, gyro while held). Every change can be undone.
+`ui/ControlMappingScreen.kt`, full screen, for a touch control, the touchpad (the "Workspace" stand-in), the Defaults' mappings, or a physical device control. Its action **cards** (one per input, with their targets as chips) and a **library of targets** share the screen with a draggable divider. Tap a card, then a target to add it; or long-press and drag a target onto a card, a chip to another card, or back to the library to remove it. Cards reorder by their ⠿ handle. A chip opens its options (`ui/MappingChipDialog.kt`, `ui/ActionSettings.kt`): When, How, Where, Also ends on, delays, Cycle, scale, haptic feel. **Presets** fills in Windows touchpad or Gyro mouse. Layer chips on top pick Base or a layer; each shows only its own chips (no other set's, and in a layer nothing faded from the level above). In Base, inherited mappings show faded until the card maps anything itself; a faded chip dragged onto the library is removed (the card then overrides them); ✕, ↺, Reset all and Clear all work as in [Workspaces](phone-workspaces.md). **Settings** opens the control's settings (`ui/ControlSettingsScreen.kt`). **Duplicate** (copies its look and mappings), **Save to library** (for any workspace: add it from the edit panel's Library) and **Delete** (asks first) sit fixed at the top, outside the scrolling list: in the title row in landscape, under the title in portrait, as in workspace settings. Below them the categories: look (label, shape, size, layer, opacity), layers (follow layers), then the settings its actions share: touch surface, stick, gyro while held). Every change can be undone.
 
 ## What the pad shows
 

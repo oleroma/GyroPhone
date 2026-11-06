@@ -60,7 +60,7 @@ internal static class Program
         IPadSink pad = NullPadSink.Instance;
         if (!noVigem)
         {
-            pad = ViGEmPadSink.Create(log.Write, out var padError);
+            pad = PadSinks.Create(log.Write, out var padError);
             if (padError != null)
                 log.Write($"{padError}: gamepad output off, keyboard and mouse still work. Driver: {ViGEmPadSink.DriverDownloadUrl}");
         }

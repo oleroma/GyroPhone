@@ -894,8 +894,7 @@ class GamepadRuntime(context: Context) {
     /**
      * Applies [change] to the active (resolved) workspace set and saves it in the background, each
      * workspace with its own mappings ([WorkspaceMappings.settle]: a pad's mapping edit becomes its
-     * workspace's controller set; a new blank workspace starts with the current one's keyboard,
-     * controller and touchpad mappings). The current workspace stays active (clamped if the edit
+     * workspace's controller set; a new blank workspace starts with no mappings of its own). The current workspace stays active (clamped if the edit
      * removed it). Returns the new resolved set.
      */
     fun editActiveProfile(change: (Profile) -> Profile): Profile {
@@ -903,8 +902,7 @@ class GamepadRuntime(context: Context) {
         // A workspace setting changed by hand stops following the workspace defaults.
         val changed = WorkspaceDefaults.markOwn(before, change(before))
         if (changed == before) return before
-        val current = before.workspaces.getOrNull(_workspaceIndex.value)
-        val set = WorkspaceMappings.store(WorkspaceMappings.settle(before, changed, current))
+        val set = WorkspaceMappings.store(WorkspaceMappings.settle(before, changed))
         if (set != stored) {
             stored = set
             store.saveLater(set)

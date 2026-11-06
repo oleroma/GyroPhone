@@ -3,11 +3,21 @@ using GyroPhone.Protocol.Mapping;
 
 namespace GyroPhone.Host.Abstractions;
 
-/// <summary>Virtual game pad (ViGEm on Windows). Called under the engine lock; must not block.</summary>
+/// <summary>
+/// Virtual game pad: ViGEm on Windows for Xbox 360 and DualShock 4, the optional GyroPhone pad driver
+/// for the DualSense. Called under the engine lock; must not block.
+/// </summary>
 public interface IPadSink
 {
-    /// <summary>The bus driver is present and usable.</summary>
+    /// <summary>The ViGEmBus driver is present and usable (Xbox 360 and DualShock 4).</summary>
     bool DriverOk { get; }
+
+    /// <summary>The GyroPhone pad driver is installed (DualSense).</summary>
+    bool DualSenseOk => false;
+
+    /// <summary>A pad of this type can be plugged: its driver works.</summary>
+    bool CanPlug(OutputMode mode) => mode == OutputMode.DualSense ? DualSenseOk
+        : DriverOk && mode is OutputMode.Xbox360 or OutputMode.DualShock4;
 
     /// <summary>Currently plugged pad type, or <see cref="OutputMode.None"/>.</summary>
     OutputMode Plugged { get; }
@@ -19,7 +29,7 @@ public interface IPadSink
 
     void Submit(in X360Frame frame);
 
-    /// <summary>The DualShock 4's whole report: buttons, sticks and triggers with its gyro and accelerometer.</summary>
+    /// <summary>The DualShock 4's (or DualSense's) whole report: buttons, sticks and triggers with its gyro and accelerometer.</summary>
     void Submit(in Ds4Frame frame, in Ds4Motion motion);
 
     /// <summary>Raised from the driver's thread when the game changes rumble (large, small motor).</summary>

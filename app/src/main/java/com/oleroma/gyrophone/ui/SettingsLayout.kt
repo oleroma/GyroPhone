@@ -1,6 +1,8 @@
 package com.oleroma.gyrophone.ui
 
+import android.content.res.Configuration
 import android.os.Build
+import androidx.compose.foundation.layout.Box
 import android.view.WindowManager
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.WindowInsets
@@ -20,7 +22,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -44,7 +50,6 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
@@ -162,11 +167,16 @@ internal fun SearchableSettings(
     var query by rememberSaveable { mutableStateOf("") }
     val q = query.trim().lowercase()
     val hits = remember { SearchHits() }
-    Column(modifier.verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+    val scroll = rememberScrollState()
+    val page = remember(scroll) { SettingsScroll(scroll) }
+    Column(
+        modifier.onGloballyPositioned { page.viewport = it.boundsInRoot() }.verticalScroll(scroll),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Column(Modifier.widthIn(max = 720.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SettingsSearchField(query, { query = it })
             if (q.isEmpty()) header()
-            CompositionLocalProvider(LocalSettingsQuery provides q, LocalSearchHits provides listOf(hits)) {
+            CompositionLocalProvider(LocalSettingsQuery provides q, LocalSearchHits provides listOf(hits), LocalSettingsScroll provides page) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { content(q.isNotEmpty()) }
             }
             if (q.isNotEmpty() && hits.count == 0) {
@@ -181,10 +191,18 @@ internal fun SearchableSettings(
     }
 }
 
+/** A settings page's scrolling list and where it shows on screen (root coordinates): dragged categories scroll it ([ReorderableSections]). */
+internal class SettingsScroll(val state: ScrollState) {
+    var viewport: Rect = Rect.Zero
+}
+
+/** The [SearchableSettings] list this is in; null outside one. */
+internal val LocalSettingsScroll = compositionLocalOf<SettingsScroll?> { null }
+
 /**
  * A full-screen settings page over the pad (a button's, the touchpad's, a gyro display's, the
- * mapping editor's Settings): [title] and [subtitle] with [actions] and Done on top, then
- * [SearchableSettings] with [content].
+ * mapping editor's Settings): [title] and [subtitle] with [actions] and Done on top, [top] beside or under
+ * them (all fixed), then [SearchableSettings] with [content].
  */
 @Composable
 internal fun SettingsDialog(
@@ -192,16 +210,19 @@ internal fun SettingsDialog(
     subtitle: String?,
     onClose: () -> Unit,
     actions: @Composable RowScope.() -> Unit = {},
+    /** Fixed, so it doesn't scroll with [content]: in the title row in landscape, under it in portrait; null = none. */
+    top: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.(searching: Boolean) -> Unit,
 ) {
     FullScreenDialog(onDismiss = onClose) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+            val wide = top != null && LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
             Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
                 Row(
                     Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f)) {
+                    Column(if (wide) Modifier.widthIn(max = 220.dp).padding(end = 12.dp) else Modifier.weight(1f)) {
                         Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (subtitle != null) {
                             Text(
@@ -213,9 +234,11 @@ internal fun SettingsDialog(
                             )
                         }
                     }
+                    if (wide) Box(Modifier.weight(1f)) { top?.invoke() }
                     actions()
                     TextButton(onClick = onClose) { Text("Done") }
                 }
+                if (top != null && !wide) Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) { top() }
                 SearchableSettings(
                     Modifier.weight(1f).fillMaxWidth().imePadding().padding(horizontal = 12.dp, vertical = 4.dp),
                     content = content,

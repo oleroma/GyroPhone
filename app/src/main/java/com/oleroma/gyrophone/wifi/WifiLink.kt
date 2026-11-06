@@ -115,7 +115,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** "Use PC controller for gyro ratchet": the gyro's samples and the controller's gyro buttons for a PC that runs the gyro. */
     val pcGyro = PcGyroFeed()
 
-    /** The raw motion for the PC's DualShock 4 (its gyro and accelerometer), sent while its pad is one. */
+    /** The raw motion for the PC's DualShock 4 or DualSense (its gyro and accelerometer), sent while its pad is one. */
     val motion = MotionFeed()
     private val accessory = AccessoryBridge(appContext)
 
@@ -255,8 +255,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             overlay.wanted = v != null && v.flags and HostStatusFlags.OVERLAY != 0
             overlay.compassWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_COMPASS != 0
             overlay.totalsWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_TOTALS != 0
-            if (v != null) motion.padIsDs4 = v.outputMode == OutputMode.DUALSHOCK4 && v.flags and HostStatusFlags.PAD_PLUGGED != 0
-            else motion.padIsDs4 = false
+            if (v != null) motion.padTakesMotion = OutputMode.takesMotion(v.outputMode) && v.flags and HostStatusFlags.PAD_PLUGGED != 0
+            else motion.padTakesMotion = false
         }
     @Volatile private var welcomeHostFlags: Int? = null
 
@@ -944,8 +944,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 rttMinUs = -1L
                 // A replacement is the same PC: its overlay stays on until its next HOST_STATUS says otherwise.
                 if (s == null) hostStatus = null
-                // Until the first HOST_STATUS, WELCOME's output mode says whether the pad is a DualShock 4.
-                else if (hostStatus == null) motion.padIsDs4 = s.outputMode == OutputMode.DUALSHOCK4
+                // Until the first HOST_STATUS, WELCOME's output mode says whether the pad takes motion.
+                else if (hostStatus == null) motion.padTakesMotion = OutputMode.takesMotion(s.outputMode)
                 welcomeHostFlags = s?.hostFlags
                 if (s != null) locks.acquire() else locks.release()
                 changed = true

@@ -59,20 +59,25 @@ Each mapping chip opens its own settings (`ui/MappingChipDialog.kt`): **Where**,
 | When | Fires | Swipe direction name |
 |---|---|---|
 | On touch (`HOLD`) | from touch-down to the lift | On swipe: from reaching the hold distance to the lift |
-| Tap | at the lift of a short press | Quick swipe: each quick swipe |
-| Long press | from the long-press time to the lift | Long hold: once held for the long-press time |
-| Double tap | from a second press soon after a tap until it lifts | Double swipe: a second quick swipe soon after |
+| Tap | at a lift before the Tap time | Quick swipe: each quick swipe |
+| Long press | once held past the Tap time, to the lift | Long hold: once held for the Tap time |
+| Double tap | from a second touch-down within the Tap time of a tap's lift, until it lifts (but see below) | Double swipe: a second quick swipe soon after |
 | Release | at every lift | Release |
 
 Inputs that offer triggers (`Triggers.supports`): physical keys, touch buttons, the touchpad's finger counts, swipe directions, Inside, Outside and a stick's On touch. A later length zone offers only On touch, Long press and Release. Everything else is On touch only. `Press` (a pulse at each touch-down) is no longer offered; old ones load as On touch + Once.
 
-**Gesture timing.** A tap does not wait for the double-tap window unless that input's double tap does something else; mapped alike (a double click) the tap stays instant. A double tap is never also a tap or long press, and a long press is never a tap. Timings: **long-press time** (default 400 ms, 100..1500) and **double-tap window** (default 300 ms, 100..800) are workspace settings ("Gesture timings"), with a touch button's own and a physical key's own (in its device preset, `KeyTiming`) over them. On touch surfaces a tap must also stay still (within 10 dp) and lift quickly; physical keys use `core/.../engine/ButtonGestures.kt`, where a tap is a press shorter than the long-press time.
+**Gesture timing.** One **Tap time** (default 300 ms, 100..1000) times everything: a tap is a lift before it, a long press starts once held past it, and a double tap's second touch must come within it of the tap's lift. It is a workspace setting ("Gesture timings"), with a touch button's own and a physical key's own (in its device preset, `KeyTiming`) over it; older separate double-tap windows are no longer used (`doubleTap` = `longPress`). On touch never waits. A tap waits out the Tap time only when that input's Double tap does something different (compared by output and How); mapped alike the tap stays instant. Long press never delays a tap. A double tap is never also a tap or long press, and a long press is never a tap.
+
+**Double tap with Held and another chip.** When one input's Double tap has a Held chip and a chip of another How, the second touch is told apart first: a quick lift (before the Tap time, without leaving the tap slop) fires the other chips, and staying down past the Tap time or moving fires the Held ones until the lift (`Shaper.Split`, worked out in `MappingEngine.updateShapers`). Otherwise a double tap fires at the second touch-down.
+
+**Several chips.** A When can hold any number of chips with any outputs, the same output too when its How differs (Double tap Left Repeat ×2 and Left Held). Only an exact duplicate (same output, How and When) is refused: one dropped where it is already goes to the next free When, and its settings open. In the editor the chips of one When are `Bindings.Entry`s (`entries`, `setEntries`, `removeEntry`). On touch surfaces a tap must also stay still (within 10 dp) and lift quickly; physical keys use `core/.../engine/ButtonGestures.kt`, where a tap is a press shorter than the long-press time.
 
 **How** (`MapOptions.how`):
 
 - **Held**: pressed for as long as the activation lasts (only for triggers that last: On touch, Long press, Double tap).
 - **Once**: one short press as it starts, however long it lasts.
 - **Toggle**: each activation turns it on, the next off.
+- **Repeat ×N** (2..5, default 2; "Times" in the chip's settings): N short presses as it starts, each followed by as long a gap (a double click is Left Repeat ×2). Its chip shows the count.
 
 **Also ends on** (Toggle): **Tap** (touching this button or surface again), **Let go** (a Let go mapping firing), **Timer** (up to 60 s), **Next input** (once the next other key, mouse button or pad button has been pressed and let go: a sticky Shift), **Same keystroke** (this key or button pressed by any other mapping).
 
@@ -96,7 +101,7 @@ The workspace touchpad (the pad's empty background) and **every touch button** a
 
 Surface inputs (`SurfaceInput`):
 
-- **Tap, Double tap, Tap-drag** (one finger: held from a tap's lift through a second touch, a drag), **Hold**, **Long press**, **Release**, **Press**.
+- **Tap, Double tap**, **Hold**, **Long press**, **Release**, **Press**. Tap-drag is gone: old Tap-drag mappings load as Tap + Double tap Repeat ×2 + Double tap Held of the same output (`Triggers.tapDrags`), and the editor no longer offers it.
 - **Move X / Move Y**: the fingers' travel (cursor, scroll, a stick from the touch-down point, switching apps). Sensitivity (default 1.5), acceleration (default 1), scroll speed, natural scrolling (default on) and inertia (default on, 325 ms, Smooth or Linear) shape mouse and wheel output here. Scrolling is 24 dp per notch at scroll speed 1, in 1/120-notch units. Each Move can be **Free** or move only inside its **Pie** (default 120°), with a cursor deadzone, catch-up, sample length, heading lock and pie margin; a **× Parent** factor is offered for its sensitivity.
 - **Quick swipe ← → ↑ ↓**: a pulse each time the fingers travel the swipe distance (default 40 dp) since turning that way, inside its pie (default 90°).
 - **Swipe ← → ↑ ↓** (held directions): held as the hold mode says. **From start point** (default): held while the finger is past the hold distance (default 20 dp) from where the motion started, like a floating stick. **Direction change**: held once the finger has travelled the hold distance since turning that way, until another direction takes over or the fingers lift. Pies default 180° (each axis on its own). Each direction can be split into **length zones** in the editor (dividers on its row); a zone's mappings are held while the finger is in it, kept as its Keep says (Only in zone, Only forward, Always). A held direction **latches** (stays held after the lift) when one of its On swipe chips is a Toggle that also ends on a tap; a tap lets it go; it can also end on a timer, Let go or the next input.
@@ -104,7 +109,7 @@ Surface inputs (`SurfaceInput`):
 
 Direction tracking (pies, samples, heading lock and "turn after", zones) is `core/.../engine/DirectionTracker.kt`. Every direction and every Move has its own settings over the surface's shared ones (`DirSettings`, `MoveSettings`), and a touch button's surface has its own over the workspace touchpad's (`SurfaceSettings`). A finger on a touch button can show a swipe line or Move rulers ([Pad UI](phone-pad-ui.md)).
 
-**Windows touchpad preset** (`Bindings.defaultTouchpadMappings`): tap-drag and double tap = left click (so tap = click, double tap = double click, tap then drag = drag), two-finger tap = right click, one-finger Move X/Y = cursor, two-finger Move Y/X = scroll and sideways scroll, two-finger pinch = zoom, three-finger swipe up = Task View, down = show desktop, left/right = switch apps, three-finger tap = middle click, four-finger swipe up = Task View, down = show desktop, left/right = switch virtual desktops, four-finger tap = notification centre. Phones whose system takes three-finger touches for screenshots cancel them; turn that gesture off in the phone's settings.
+**Windows touchpad preset** (`Bindings.defaultTouchpadMappings`): Tap = Left, Double tap = Left Repeat ×2 and Left Held (so a tap clicks once the Tap time has passed, a quick double tap double-clicks, and tap then hold or move drags; no special touchpad code), two-finger tap = right click, one-finger Move X/Y = cursor, two-finger Move Y/X = scroll and sideways scroll, two-finger pinch = zoom, three-finger swipe up = Task View, down = show desktop, left/right = switch apps, three-finger tap = middle click, four-finger swipe up = Task View, down = show desktop, left/right = switch virtual desktops, four-finger tap = notification centre. Phones whose system takes three-finger touches for screenshots cancel them; turn that gesture off in the phone's settings.
 
 ## Touch controls
 
@@ -113,7 +118,7 @@ Direction tracking (pies, samples, heading lock and "turn after", zones) is `cor
 - **Sticks**: deadzone (share of the radius that counts as centred) and **zones**: "4, diagonals press two" (each half on its own), 4 zones, or 8 zones (a diagonal fires its own mapping, or both neighbours when it has none). Stick presets in the editor: Left stick, Right stick, WASD, Arrow keys, D-pad, None.
 - **Overlap**: where controls overlap, the front one under a finger gets it (`hitOrder`: Front, then Auto by size with smaller in front, then Back). **Shares touches**: a finger landing here while another control is in front works this one too.
 - **Zone interrupt** (Inside mappings): a finger sliding in stops what it was doing (cursor, stick, another button) while inside; **resume** restarts it when the finger leaves.
-- Own long-press time and double-tap window, own gyro sensitivities while held (per layer), own touchpad speed while held, and an edit-mode group.
+- Own Tap time, own gyro sensitivities while held (per layer), own touchpad speed while held, and an edit-mode group.
 
 ## How the engine runs it
 

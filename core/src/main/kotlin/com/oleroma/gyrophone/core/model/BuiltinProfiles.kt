@@ -289,14 +289,14 @@ object BuiltinProfiles {
             val usage = byId.getValue(c.id).usage
             fun on(input: SurfaceInput, options: MapOptions? = null) =
                 Mapping(InputSource.Surface(1, input, c.id), OutputTarget.Key(usage), options = options)
-            // The touchpad's double tap and tap-drag (clicks) cleared, so a key types at once.
+            // The touchpad's double tap (clicks) cleared, so a key types at once.
             fun cleared(input: SurfaceInput) = Mapping(InputSource.Surface(1, input, c.id), OutputTarget.NoOutput)
-            if (!HidUsage.isModifier(usage)) listOf(on(SurfaceInput.TAP), cleared(SurfaceInput.DOUBLE_TAP), cleared(SurfaceInput.TAP_DRAG))
+            if (!HidUsage.isModifier(usage)) listOf(on(SurfaceInput.TAP), cleared(SurfaceInput.DOUBLE_TAP))
             else listOf(
                 touch(c.id, OutputTarget.Key(usage)),
                 // Tap: held until the next key (sticky); double tap: held until tapped again.
                 on(SurfaceInput.TAP, MapOptions(how = How.TOGGLE, endsOnNextInput = true)),
-                on(SurfaceInput.DOUBLE_TAP, MapOptions(how = How.TOGGLE)), cleared(SurfaceInput.TAP_DRAG),
+                on(SurfaceInput.DOUBLE_TAP, MapOptions(how = How.TOGGLE)),
             )
         }
     }
@@ -318,8 +318,12 @@ object BuiltinProfiles {
         w.copy(mappings = Inheritance.fill(w.mappings, Bindings.defaultTouchpadMappings(TouchpadSettings()) + Bindings.gyroMouseMappings()))
     }
 
-    /** An empty workspace: touchpad only, no controls, no pads. */
+    /** An empty workspace: no controls, no pads, no mappings of its own (it follows the Defaults'). */
     fun blankWorkspace(name: String = "Workspace") = Workspace(id = "ws", name = name, gyro = gyro(GyroMode.OFF))
+
+    /** A blank workspace whose touchpad works like a Windows one ("Windows touchpad" preset). */
+    fun touchpadWorkspace(name: String = "Windows touchpad") =
+        blankWorkspace(name).copy(mappings = Bindings.defaultTouchpadMappings(TouchpadSettings()))
 
     /**
      * A new profile with the three preset workspaces, their pad mappings as device presets they
@@ -327,7 +331,7 @@ object BuiltinProfiles {
      */
     fun newProfile(id: String, name: String): Profile {
         val empty = Profile(id = id, name = name, workspaces = emptyList())
-        return WorkspaceMappings.settle(empty, empty.copy(workspaces = presets), null)
+        return WorkspaceMappings.settle(empty, empty.copy(workspaces = presets))
     }
 
     /** The profile a fresh install starts in: Controller, WASD and Keyboard workspaces. */

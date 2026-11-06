@@ -37,7 +37,13 @@ public sealed record HostSnapshot(
     int QrPairingS = 0,
     string? QrEnrolledPhone = null,
     // "Use PC controller for gyro ratchet": null while the phone's switch is off, "" while no controller is found.
-    string? PcController = null);
+    string? PcController = null,
+    // The optional GyroPhone pad driver (driver/) is installed, so the DualSense output can plug.
+    bool DualSenseOk = false)
+{
+    /// <summary>The driver the chosen output needs works: ours for the DualSense, ViGEmBus for the others.</summary>
+    public bool OutputDriverOk => OutputMode == OutputMode.DualSense ? DualSenseOk : DriverOk;
+}
 
 /// <summary>A paired phone for the tray: code-paired (in settings) or key-paired (a file in authorized_phones).</summary>
 public sealed record PairedPhoneInfo(byte[] PhoneId, string Name, DateTime LastSeenUtc, bool ByKey = false,
@@ -563,7 +569,7 @@ public sealed class HostEngine
             return;
         }
         var s = _sessions.CreatePending(hello, name, pairKey, _settings.HostId,
-            (byte)_settings.OutputMode, (byte)((_pad.DriverOk ? WelcomeFlags.VigemOk : 0) | WelcomeFlags.HiresWheel | WelcomeFlags.PcGyro | WelcomeFlags.Motion),
+            (byte)_settings.OutputMode, (byte)((PadDriverOk ? WelcomeFlags.VigemOk : 0) | WelcomeFlags.HiresWheel | WelcomeFlags.PcGyro | WelcomeFlags.Motion),
             from, nowUs);
         Reply(s.Welcome, from);
     }
@@ -768,6 +774,7 @@ public sealed class HostEngine
                 _padFrameValid = true;
                 break;
             case OutputMode.DualShock4:
+            case OutputMode.DualSense: // the same buttons, sticks and motion
                 var f = PadMapper.ToDs4(s);
                 if (_padFrameValid && f == _lastDs4) return;
                 if (!TrySubmit(f, _ds4Motion.Current)) { _padRetryAfterUs = nowUs + PadRetryUs; return; }
@@ -810,12 +817,12 @@ public sealed class HostEngine
     }
 
     /// <summary>
-    /// MOTION: each new sample goes to the DualShock 4 as its own report, with the buttons and sticks
+    /// MOTION: each new sample goes to the DualShock 4 or DualSense as its own report, with the buttons and sticks
     /// it shows now, so the game sees every turn at the time it was measured.
     /// </summary>
     private void OnMotion(ReadOnlySpan<byte> plain, long nowUs)
     {
-        if (_pad.Plugged != OutputMode.DualShock4 || _paused || _locked || _releasedForSilence) return;
+        if (!PadTakesMotion || _paused || _locked || _releasedForSilence) return;
         _motionFrame.Decode(plain);
         int n = _ds4Motion.Take(_motionFrame, _motionOut, nowUs);
         SubmitMotion(n);
@@ -872,8 +879,8 @@ public sealed class HostEngine
                 int r = _keyRepeat.Due(_injectedKeys, nowUs, _inject);
                 if (r > 0 && !_keyMouse.Inject(_inject.AsSpan(0, r))) InjectFailed();
             }
-            // A lost stop (or the phone gone quiet): the DualShock 4's gyro comes to rest.
-            if (_pad.Plugged == OutputMode.DualShock4 && _ds4Motion.IsStale(nowUs)) SubmitMotion(_ds4Motion.Rest(_motionOut, nowUs));
+            // A lost stop (or the phone gone quiet): the pad's gyro comes to rest.
+            if (PadTakesMotion && _ds4Motion.IsStale(nowUs)) SubmitMotion(_ds4Motion.Rest(_motionOut, nowUs));
             // A pad button held from a burst is let go even when no STATE follows.
             if (_padHeld && nowUs >= _padHoldUntilUs && !_hasPending && !_paused && !_locked) SubmitPad(_pending, nowUs);
             _sessions.ExpirePending(nowUs);
@@ -1385,7 +1392,8 @@ public sealed class HostEngine
                 _hostKeyFingerprint,
                 _qr != null && now < _qr.ExpiresUs ? (int)((_qr.ExpiresUs - now + 999_999) / 1_000_000) : 0,
                 _qr?.EnrolledName,
-                _padGyro.Enabled ? _pcPad.Name ?? "" : null);
+                _padGyro.Enabled ? _pcPad.Name ?? "" : null,
+                _pad.DualSenseOk);
         }
     }
 
@@ -1531,6 +1539,7 @@ public sealed class HostEngine
                 _padFrameValid = true;
                 break;
             case OutputMode.DualShock4:
+            case OutputMode.DualSense:
                 _ds4Motion.Reset();
                 if (!TrySubmit(Ds4Frame.Neutral, _ds4Motion.Current)) break;
                 _lastDs4 = Ds4Frame.Neutral;
@@ -1611,11 +1620,17 @@ public sealed class HostEngine
         return false;
     }
 
+    /// <summary>The driver the chosen output needs works (what the phone's "driver ok" flags say).</summary>
+    /// <summary>The plugged pad has a gyro and accelerometer (DualShock 4 or DualSense).</summary>
+    private bool PadTakesMotion => _pad.Plugged is OutputMode.DualShock4 or OutputMode.DualSense;
+
+    private bool PadDriverOk => _settings.OutputMode == OutputMode.DualSense ? _pad.DualSenseOk : _pad.DriverOk;
+
     private void PlugPad()
     {
         var mode = _settings.OutputMode;
         _padFrameValid = false;
-        if (mode == OutputMode.None || !_pad.DriverOk) return;
+        if (mode == OutputMode.None || !_pad.CanPlug(mode)) return;
         if (_pad.Plugged == mode) return;
         if (!_pad.Plug(mode)) _events.Log($"could not plug {mode} pad");
     }
@@ -1624,7 +1639,7 @@ public sealed class HostEngine
     {
         ushort flags = 0;
         if (_pairing.IsOpen(nowUs)) flags |= AnnounceFlags.PairingOpen;
-        if (_pad.DriverOk) flags |= AnnounceFlags.VigemOk;
+        if (PadDriverOk) flags |= AnnounceFlags.VigemOk;
         if (_phones.ContainsKey(Convert.ToHexString(disc.PhoneId)) || _keyPhones.ContainsKey(Convert.ToHexString(disc.PhoneId)))
             flags |= AnnounceFlags.PairedWithYou;
         if (_hostKeyId != null && disc.HostKeyId is { } hk && hk.AsSpan().SequenceEqual(_hostKeyId)) flags |= AnnounceFlags.KeyMatch;
@@ -1677,7 +1692,7 @@ public sealed class HostEngine
     {
         _lastStatusUs = nowUs;
         byte flags = 0;
-        if (_pad.DriverOk) flags |= HostStatusFlags.VigemOk;
+        if (PadDriverOk) flags |= HostStatusFlags.VigemOk;
         if (_pad.Plugged != OutputMode.None) flags |= HostStatusFlags.PadPlugged;
         if (_paused || _locked) flags |= HostStatusFlags.InputPaused;
         if (_elevatedForeground) flags |= HostStatusFlags.ElevatedForeground;
