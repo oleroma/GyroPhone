@@ -20,10 +20,12 @@ The row scrolls. Long-press a capsule and drag it to reorder; moving workspaces 
 
 ## ← / → corners and fullscreen
 
+The status and navigation bars never show in the app, on the pad, in settings or in any dialog (`ui/AppDialogs.kt`: the app's `Dialog` and `AlertDialog` hide them in their own windows; `MainActivity` hides them again when it gets focus back). A swipe from the screen edge shows them for a moment.
+
 The two nav corners (`Profile.corners`, shared by all workspaces) are always on the pad:
 
 - tap ← / → for the previous / next workspace (dimmed to 35 % at an end, unless wrap-around is on);
-- press both together for **fullscreen** (hides the top row and system bars); both again, or Back, to leave;
+- press both together for **fullscreen** (hides the top row); both again, or Back, to leave;
 - their opacity (default 50 %) never goes below 25 % in play, since they are the way out of fullscreen;
 - **Hide the ← / → corners after a few seconds** (default off): they fade 3 s after a reveal; four quick taps (≤300 ms apart) anywhere, or touching a corner, show them again;
 - corners can be moved and sized in edit mode; "Same size for all corners" (default on) sizes both together.
