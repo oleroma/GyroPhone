@@ -374,17 +374,19 @@ private fun markOf(c: PhysicalControl): Mark = when {
  */
 @Composable
 private fun HandlesView(board: ControlBoard, has: (PhysicalControl) -> Boolean) {
-    val d = PhysicalLayouts.controllerHandles
     val colors = MaterialTheme.colorScheme
     val body = colors.surfaceContainer
     val edge = colors.outlineVariant
     val screen = colors.surfaceContainerLowest
     BoxWithConstraints(Modifier.fillMaxSize()) {
+        // On a narrow (portrait) screen no phone: the handles side by side, as large as fits.
+        val phone = maxWidth > maxHeight
+        val d = if (phone) PhysicalLayouts.controllerHandles else PhysicalLayouts.controllerHandlesNarrow
         val w = min(maxWidth, maxHeight * d.aspect)
         val h = w / d.aspect
         Box(Modifier.align(Alignment.Center).size(w, h)) {
             Canvas(Modifier.fillMaxSize()) {
-                val u = size.width / PhysicalLayouts.HANDLES_W
+                val u = size.height / PhysicalLayouts.HANDLES_H
                 val top = PhysicalLayouts.HANDLES_TOP * u
                 val hw = PhysicalLayouts.HANDLE_W * u
                 val line = Stroke(width = 1.5.dp.toPx())
@@ -407,15 +409,17 @@ private fun HandlesView(board: ControlBoard, has: (PhysicalControl) -> Boolean) 
                     drawPath(p, body)
                     drawPath(p, edge, style = line)
                 }
-                val phone = Offset(hw, top)
-                val phoneSize = Size(size.width - 2 * hw, u)
-                drawRoundRect(body, phone, phoneSize, CornerRadius(0.11f * u))
-                drawRoundRect(edge, phone, phoneSize, CornerRadius(0.11f * u), style = line)
-                val inset = 0.04f * u
-                drawRoundRect(
-                    screen, phone + Offset(inset, inset), Size(phoneSize.width - 2 * inset, u - 2 * inset),
-                    CornerRadius(0.08f * u),
-                )
+                if (phone) {
+                    val at = Offset(hw, top)
+                    val phoneSize = Size(size.width - 2 * hw, u)
+                    drawRoundRect(body, at, phoneSize, CornerRadius(0.11f * u))
+                    drawRoundRect(edge, at, phoneSize, CornerRadius(0.11f * u), style = line)
+                    val inset = 0.04f * u
+                    drawRoundRect(
+                        screen, at + Offset(inset, inset), Size(phoneSize.width - 2 * inset, u - 2 * inset),
+                        CornerRadius(0.08f * u),
+                    )
+                }
             }
             for (c in d.controls) {
                 val round = c.kind == PhysicalKind.STICK || c.kind == PhysicalKind.SYSTEM ||

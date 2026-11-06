@@ -88,7 +88,10 @@ class DeviceSwapTest {
 
     @Test fun theHandlesDrawingHasEveryControlInsideItsBox() {
         val ids = (PhysicalLayouts.controllerFront.controls + PhysicalLayouts.controllerBack.controls).map { it.id }.toSet()
-        val d = PhysicalLayouts.controllerHandles
+        for (d in listOf(PhysicalLayouts.controllerHandles, PhysicalLayouts.controllerHandlesNarrow)) inside(ids, d)
+    }
+
+    private fun inside(ids: Set<String>, d: com.oleroma.gyrophone.core.model.ControllerDiagram) {
         assertEquals(ids, d.controls.map { it.id }.toSet())
         for (c in d.controls) {
             assertTrue(c.id, c.x - c.w / 2 >= -1e-4f && c.x + c.w / 2 <= 1.0001f && c.y - c.h / 2 >= -1e-4f && c.y + c.h / 2 <= 1.0001f)

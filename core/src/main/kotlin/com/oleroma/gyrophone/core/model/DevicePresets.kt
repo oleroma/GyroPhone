@@ -583,9 +583,11 @@ object PhysicalLayouts {
 
     // The handles drawing, in handle heights: a handle on each side of the phone (as the companion's
     // overlay draws them), the bumper and trigger above each handle, the back buttons and Home below.
-    /** Its box: width and height in handle heights. */
-    const val HANDLES_W = 3f
+    /** Its box's height in handle heights; its width is two handles and what is between them. */
     const val HANDLES_H = 1.52f
+    /** Between the handles: the phone, or in [controllerHandlesNarrow] just a gap. */
+    const val HANDLES_PHONE = 2f
+    const val HANDLES_GAP = 0.2f
     /** Each handle's width; the phone fills the rest between them. */
     const val HANDLE_W = 0.5f
     /** Where the handles and the phone start, down from the box's top. */
@@ -597,14 +599,21 @@ object PhysicalLayouts {
      * inner top corners; above each handle its trigger, then its bumper, the same size; under each
      * handle its two back buttons, and Home under the phone.
      */
-    val controllerHandles: ControllerDiagram = run {
+    val controllerHandles: ControllerDiagram = handles(HANDLES_PHONE)
+
+    /** [controllerHandles] without the phone: the handles side by side, for a narrow (portrait) screen. */
+    val controllerHandlesNarrow: ControllerDiagram = handles(HANDLES_GAP)
+
+    /** The handles drawing with [between] handle heights between the handles. */
+    private fun handles(between: Float): ControllerDiagram {
+        val width = 2 * HANDLE_W + between
         val all = (controllerFront.controls + controllerBack.controls).associateBy { it.id }
         val t = HANDLES_TOP
         val left = HANDLE_W / 2
-        val right = HANDLES_W - HANDLE_W / 2
+        val right = width - HANDLE_W / 2
         // A control centred at (x, y), w by h, all in handle heights.
         fun at(id: String, x: Float, y: Float, w: Float, h: Float = w) =
-            all.getValue(id).copy(x = x / HANDLES_W, y = y / HANDLES_H, w = w / HANDLES_W, h = h / HANDLES_H)
+            all.getValue(id).copy(x = x / width, y = y / HANDLES_H, w = w / width, h = h / HANDLES_H)
         val stick = 0.27f
         val key = 0.125f
         val gap = 0.125f // from a cluster's centre to each of its keys
@@ -613,8 +622,8 @@ object PhysicalLayouts {
         val small = 0.12f
         val paddle = 0.2f
         val bottom = t + 1f + 0.03f + 0.06f
-        ControllerDiagram(
-            "Controller", DiagramStyle.XBOX, HANDLES_W / HANDLES_H,
+        return ControllerDiagram(
+            "Controller", DiagramStyle.XBOX, width / HANDLES_H,
             listOf(
                 at("lt", left, 0.02f + barH / 2, bar, barH),
                 at("lb", left, 0.02f + barH * 1.5f + 0.04f, bar, barH),
@@ -631,12 +640,12 @@ object PhysicalLayouts {
                 at("b", right + gap, t + 0.38f, key),
                 at("rs", right, t + 0.76f, stick),
                 at("select", HANDLE_W - 0.09f, t + 0.1f, small),
-                at("start", HANDLES_W - HANDLE_W + 0.09f, t + 0.1f, small),
+                at("start", width - HANDLE_W + 0.09f, t + 0.1f, small),
                 at("p3", left - 0.115f, bottom, paddle, 0.12f),
                 at("p4", left + 0.115f, bottom, paddle, 0.12f),
                 at("p2", right - 0.115f, bottom, paddle, 0.12f),
                 at("p1", right + 0.115f, bottom, paddle, 0.12f),
-                at("home", HANDLES_W / 2, bottom, small),
+                at("home", width / 2, bottom, small),
             ),
         )
     }
