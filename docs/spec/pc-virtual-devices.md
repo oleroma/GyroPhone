@@ -29,7 +29,7 @@ How a STATE becomes input a game sees. Over Bluetooth the phone is itself a HID 
 
 - `InputDiff` diffs what was injected against the new STATE: modifier downs, key downs, key ups, modifier ups, mouse buttons, move, wheel, horizontal wheel.
 - Keys go as **Set 1 scan codes** (`HidScanCodes`, from HID usages), so games that read scan codes work; Pause and the media keys go as virtual keys. Unknown usages are counted, never injected.
-- Mouse moves are relative, from the difference of STATE's cumulative totals (`MouseDeltaTracker`), each step capped at 16384; buttons L, R, M, Back, Forward.
+- Mouse moves are relative, from the difference of STATE's cumulative totals (`MouseDeltaTracker`), each step capped at 16384; after lost or late packets the missed stretch glides out over up to 16 ms while new motion still goes out at once, so the cursor travels through it instead of jumping (`MouseCatchUp`); buttons L, R, M, Back, Forward.
 - Wheels in 1/120 notch when the session has HIRES_WHEEL (STATE_HIRES), else whole notches.
 - **Key repeat** (`KeyRepeat`): held Volume Up/Down repeat after 400 ms every 50 ms, because Windows doesn't repeat injected keys.
 
@@ -46,4 +46,4 @@ The PC controller's own buttons still reach games directly (or through Steam Inp
 
 ## Key files
 
-`GyroPhone.Windows/ViGEmPadSink.cs`, `DualSensePadSink.cs`, `PadSinks.cs`, `GyroPhone.Protocol/Mapping/Ds4Report.cs`, `DualSenseReport.cs`, `driver/src/driver.c`, `driver/src/dualsense.h`, `MotionFrame.cs`, `SendInputSink.cs`, `XInputPcPad.cs`, `GyroPhone.Protocol/Mapping/PadMapper.cs`, `InputDiff.cs`, `HidScanCodes.cs`, `KeyRepeat.cs`, `InjectEvent.cs`, `GyroPhone.Protocol/MouseDeltaTracker.cs`, `StateFrame.cs`, `GyroMath.cs`, `GyroGate.cs`, `PcGyro.cs`, `PcGyroTail.cs`, `PadHeldHistory.cs`, `GyroPhone.Host/HostEngine.cs` (`Flush`, `OnPadGyro`).
+`GyroPhone.Windows/ViGEmPadSink.cs`, `DualSensePadSink.cs`, `PadSinks.cs`, `GyroPhone.Protocol/Mapping/Ds4Report.cs`, `DualSenseReport.cs`, `driver/src/driver.c`, `driver/src/dualsense.h`, `MotionFrame.cs`, `SendInputSink.cs`, `XInputPcPad.cs`, `GyroPhone.Protocol/Mapping/PadMapper.cs`, `InputDiff.cs`, `HidScanCodes.cs`, `KeyRepeat.cs`, `InjectEvent.cs`, `GyroPhone.Protocol/MouseDeltaTracker.cs`, `MouseCatchUp.cs`, `StateFrame.cs`, `GyroMath.cs`, `GyroGate.cs`, `PcGyro.cs`, `PcGyroTail.cs`, `PadHeldHistory.cs`, `GyroPhone.Host/HostEngine.cs` (`Flush`, `OnPadGyro`).
