@@ -348,6 +348,7 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
                         Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
                         overridden = level.isOwn(WorkspaceDefaults.LONG_PRESS),
                         onReset = { level.reset(WorkspaceDefaults.LONG_PRESS) },
+                        children = level.kids(WorkspaceDefaults.LONG_PRESS),
                         hint = longHint(isSwipeTiming(input), "the workspace's: every button and key without a time of its own uses it"),
                     ) { ms -> level.edit { it.copy(longPressMs = ms) } }
                 }
@@ -378,6 +379,7 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
         RatchetModeRow(
             axis, g.ownMode(axis) ?: g.mode, level.isOwn(k("Mode")),
             onReset = { level.reset(k("Mode")) },
+            children = level.kids(k("Mode")),
             hint = "Unset, it follows the gyro mode in Settings." + if (g.mode == GyroMode.SENSOR_OFF) " Gyro is off there now." else "",
         ) { m -> level.edit { it.copy(gyro = it.gyro.withMode(axis, m)) } }
         val sensHint = "How fast ${axis.label.lowercase()} turns; scrolling and sticks go faster or slower with it too. " +
@@ -402,12 +404,14 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
             GyroSensSlider(
                 key + "sens" + axis.name, "${axis.label} sensitivity", g.sensitivityOf(axis), g,
                 overridden = sensOwn, onReset = resetSens, hint = sensHint,
+                children = level.kids(k("Sensitivity"), k("Scale")),
             ) { v -> level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, v)) } }
         }
         AccelCurveSetting(
             key + "accel" + axis.name, "${axis.label} acceleration", g.accelOf(axis), g.sensitivityOf(axis), g,
             overridden = level.isOwn(k("Accel")),
             onReset = { level.reset(k("Accel")) },
+            children = level.kids(k("Accel")),
             hint = "Unset, it follows the shared Acceleration in Settings. $ACCEL_HINT",
             perAxis = true,
             axis = axis,
@@ -438,6 +442,7 @@ private fun tiltGear(level: WorkspaceLevel, key: String, x: Boolean): @Composabl
             GyroSettings.MIN_TILT_RANGE_DEG..GyroSettings.MAX_TILT_RANGE_DEG, 1f,
             overridden = level.isOwn(rangeKey),
             onReset = { level.reset(rangeKey) },
+            children = level.kids(rangeKey),
             hint = "How far it leans for a full push. Unset, the shared Tilt range in Settings (%.0f°).".format(g.tiltRangeDeg),
         ) { v -> level.edit { it.copy(gyro = if (x) it.gyro.copy(tiltXRangeDeg = v) else it.gyro.copy(tiltYRangeDeg = v)) } }
         val dz = g.tiltDeadzoneOf(x)
@@ -446,6 +451,7 @@ private fun tiltGear(level: WorkspaceLevel, key: String, x: Boolean): @Composabl
             0f..GyroSettings.MAX_TILT_DEADZONE_DEG, 1f,
             overridden = level.isOwn(dzKey),
             onReset = { level.reset(dzKey) },
+            children = level.kids(dzKey),
             hint = "Leaning less than this counts as level. Unset, the shared Tilt deadzone in Settings.",
         ) { v -> level.edit { it.copy(gyro = if (x) it.gyro.copy(tiltXDeadzoneDeg = v) else it.gyro.copy(tiltYDeadzoneDeg = v)) } }
     }
@@ -457,7 +463,7 @@ private fun shakeGear(level: WorkspaceLevel, key: String): @Composable () -> Uni
     OverrideSlider(
         key + "shake", "Shake at %.0f m/s²", level.ws.gyro.shakeStrength,
         GyroSettings.MIN_SHAKE_STRENGTH..GyroSettings.MAX_SHAKE_STRENGTH, 1f,
-        overridden = level.isOwn(k), onReset = { level.reset(k) },
+        overridden = level.isOwn(k), onReset = { level.reset(k) }, children = level.kids(k),
         hint = "How hard a jolt counts as a shake: higher needs a harder shake.",
     ) { v -> level.edit { it.copy(gyro = it.gyro.copy(shakeStrength = v)) } }
 }
@@ -470,9 +476,10 @@ private fun RatchetModeRow(
     overridden: Boolean,
     onReset: () -> Unit,
     hint: String,
+    children: ChildInfo? = null,
     onSet: (GyroMode) -> Unit,
 ) {
-    OverrideRow("${axis.label}: a ratchet", overridden, onReset, hint) {
+    OverrideRow("${axis.label}: a ratchet", overridden, onReset, hint, children = children) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             for (m in listOf(GyroMode.ALWAYS, GyroMode.OFF)) {
                 FilterChip(selected = mode == m, onClick = { onSet(m) }, label = { Text(if (m == GyroMode.ALWAYS) "Disables it" else "Enables it") })

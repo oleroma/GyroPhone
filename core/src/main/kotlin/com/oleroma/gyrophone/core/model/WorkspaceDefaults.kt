@@ -1,7 +1,12 @@
 package com.oleroma.gyrophone.core.model
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
 
 /**
@@ -108,6 +113,41 @@ object WorkspaceDefaults {
             else -> true
         }
     }
+
+    /**
+     * [w]'s value of [key], for showing: a number, switch, enum or text; a gyro enum stored by
+     * name comes back as its enum. Null when it has none, or one that has no short form.
+     */
+    fun valueOf(key: String, w: Workspace): Any? = when {
+        key.startsWith(GYRO) -> key.removePrefix(GYRO).let { p -> gyroValue(p, gyroJson(w.gyro)[p]) }
+        dirOf(key) != null -> dirOf(key)!!.let { (d, f) -> f.get(w.touchpad.dir(d)) }
+        moveOf(key) != null -> moveOf(key)!!.let { (m, f) -> f.get(w.touchpad.move(m)) }
+        key.startsWith(TOUCHPAD) -> SurfaceField.valueOf(key.removePrefix(TOUCHPAD)).get(w.touchpad)
+        else -> when (key) {
+            LONG_PRESS -> w.longPressMs
+            DOUBLE_TAP -> w.doubleTapMs
+            CONTROL_OPACITY -> w.controlOpacity
+            HAPTIC_EDGE -> w.hapticEdge
+            else -> null
+        }
+    }
+
+    private fun gyroValue(prop: String, e: JsonElement?): Any? {
+        val p = e as? JsonPrimitive ?: return null
+        if (p is JsonNull) return null
+        if (!p.isString) return p.booleanOrNull ?: p.doubleOrNull
+        val name = p.content
+        return when {
+            prop == "gyroSpace" -> GyroSpace.entries.firstOrNull { it.name == name }
+            prop == "mode" || prop.endsWith("Mode") -> GyroMode.entries.firstOrNull { it.name == name }
+            prop.endsWith("Curve") -> InertiaCurve.entries.firstOrNull { it.name == name }
+            prop.startsWith("pad") -> MotionAxis.entries.firstOrNull { it.name == name }
+            else -> name
+        }
+    }
+
+    /** [key] holds a factor of the value above (× parent), not a value of its own. */
+    fun isFactor(key: String): Boolean = key.endsWith("Scale") || key.endsWith("." + MoveField.SCALE.name)
 
     /** [to] with [from]'s value of [key]. */
     fun take(key: String, to: Workspace, from: Workspace): Workspace = when {
