@@ -79,6 +79,7 @@ private fun howHint(h: How): String = when (h) {
     How.HELD -> "Pressed for as long as it lasts."
     How.ONCE -> "One short press as it starts, however long it lasts."
     How.TOGGLE -> "Each time it starts it turns on, the next time off."
+    How.REPEAT -> "That many short presses one after another as it starts (×2 on a mouse button: a double click)."
 }
 
 /** A swipe direction's On swipe Toggle with Tap: the latch. */
@@ -118,6 +119,7 @@ internal fun MappingChipDialog(
     var w by remember { mutableIntStateOf(where) }
     var how by remember { mutableStateOf(o0.mode) }
     var cycle by remember { mutableStateOf(o0.cycle) }
+    var repeat by remember { mutableIntStateOf(o0.repeat.coerceIn(MapOptions.MIN_REPEAT, MapOptions.MAX_REPEAT)) }
     var start by remember { mutableIntStateOf(o0.startDelayMs) }
     var end by remember { mutableIntStateOf(o0.endDelayMs) }
     var minHold by remember { mutableIntStateOf(o0.minHoldMs) }
@@ -182,7 +184,9 @@ internal fun MappingChipDialog(
                 }
                 // Tap and Release start at a lift: nothing is held, so Held is Once there.
                 // An analog output (a stick, a trigger, mouse motion) follows its input: no Toggle.
-                val hows = How.entries.filter { (it != How.HELD || t.holds) && (it != How.TOGGLE || !analog || how == How.TOGGLE) }
+                val hows = How.entries.filter {
+                    (it != How.HELD || t.holds) && (it != How.TOGGLE || !analog || how == How.TOGGLE) && (it != How.REPEAT || !analog || how == How.REPEAT)
+                }
                 val shown = if (how == How.HELD && !t.holds) How.ONCE else how
                 val latch = swipe && t == Trigger.HOLD
                 Text("How", style = MaterialTheme.typography.titleSmall)
@@ -190,6 +194,17 @@ internal fun MappingChipDialog(
                     for (x in hows) FilterChip(selected = shown == x, onClick = { how = x }, label = { Text(x.label) })
                 }
                 hint(if (shown == How.TOGGLE && latch) (if (endsOnTap) LATCH_HINT else SWIPE_TOGGLE_HINT) else howHint(shown))
+                if (shown == How.REPEAT) {
+                    Text("Times", style = MaterialTheme.typography.titleSmall)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (n in MapOptions.MIN_REPEAT..MapOptions.MAX_REPEAT) {
+                            FilterChip(selected = repeat == n, onClick = { repeat = n }, label = { Text("×$n") })
+                        }
+                    }
+                }
+                if (t == Trigger.DOUBLE_TAP) {
+                    hint("With a Held chip and others on Double tap, the second touch decides: a quick lift fires the others, staying down or moving fires the Held one.")
+                }
                 if (shown == How.TOGGLE) {
                     Text("Also ends on", style = MaterialTheme.typography.titleSmall)
                     checkRow("Tap (touching this " + (if (swipe) "surface" else "button") + " again)", endsOnTap) {
@@ -234,6 +249,7 @@ internal fun MappingChipDialog(
                     endsAfterMs = if (toggle) endsAfter else 0,
                     endsOnNextInput = toggle && endsOnNext,
                     endsOnSame = toggle && endsOnSame,
+                    repeat = if (how == How.REPEAT) repeat else 2,
                 )
                 onApply(t, o.takeUnless { it.none }, w)
             }) { Text("Done") }

@@ -140,6 +140,39 @@ object Bindings {
         return kept.subList(0, at) + added + kept.subList(at, kept.size)
     }
 
+    /**
+     * One chip of an input: a target with its options. The same target may be there more than once
+     * with another How ([MapOptions.shape]: Held and Repeat ×2 on one Double tap); never twice alike.
+     */
+    data class Entry(val target: OutputTarget, val options: MapOptions?) {
+        val shape: Pair<How, Int> get() = (options ?: MapOptions()).shape
+    }
+
+    /** [input]'s chips in order, an exact duplicate (same target and How) left out. */
+    fun entries(mappings: List<Mapping>, input: BindableInput): List<Entry> =
+        mappings.filter { belongs(it, input) }.map { Entry(it.target, it.options) }.distinctBy { it.target to it.shape }
+
+    /** The [n]th (from 0) of [input]'s chips of [target]; null = none. */
+    fun entry(mappings: List<Mapping>, input: BindableInput, target: OutputTarget, n: Int): Entry? =
+        if (n < 0) null else entries(mappings, input).filter { it.target == target }.getOrNull(n)
+
+    /** Like [setTargets], with each chip's own options; exact duplicates are kept once. */
+    fun setEntries(mappings: List<Mapping>, input: BindableInput, entries: List<Entry>): List<Mapping> {
+        val first = mappings.indexOfFirst { belongs(it, input) }
+        val kept = mappings.filterNot { belongs(it, input) }
+        val list = entries.distinctBy { it.target to it.shape }
+        val added = input.sources.flatMap { s -> list.map { Mapping(s, it.target, options = it.options) } }
+        val at = if (first < 0) kept.size else first
+        return kept.subList(0, at) + added + kept.subList(at, kept.size)
+    }
+
+    /** [mappings] without the [n]th of [input]'s chips of [target]. */
+    fun removeEntry(mappings: List<Mapping>, input: BindableInput, target: OutputTarget, n: Int): List<Mapping> {
+        var k = -1
+        val es = entries(mappings, input).filterNot { e -> e.target == target && ++k == n }
+        return setEntries(mappings, input, es)
+    }
+
     fun addTarget(mappings: List<Mapping>, input: BindableInput, target: OutputTarget): List<Mapping> {
         val current = targets(mappings, input)
         return if (target in current) mappings else setTargets(mappings, input, current + target)
@@ -304,10 +337,13 @@ object Bindings {
     private fun area(control: TouchControl, kind: TouchAreaKind) =
         BindableInput(kind.label, listOf(InputSource.TouchArea(control.id, kind)))
 
-    /** The surface inputs offered with [fingers] down: taps (tap-drag with one), moves, swipes, pinch with two. */
+    /**
+     * The surface inputs offered with [fingers] down: taps, moves, swipes, pinch with two. No
+     * Tap-drag: the Touch card's Double tap, held, does that ([Triggers.tapDrags]).
+     */
     fun surfaceInputs(fingers: Int, id: String = ""): List<BindableInput> = SurfaceInput.entries.filter { i ->
         when (i) {
-            SurfaceInput.TAP_DRAG -> fingers == 1
+            SurfaceInput.TAP_DRAG -> false
             SurfaceInput.PINCH, SurfaceInput.PINCH_IN, SurfaceInput.PINCH_OUT -> fingers == 2
             else -> true
         }
@@ -328,16 +364,20 @@ object Bindings {
 
     /**
      * The touchpad mappings that do what [s]'s switches and 3 / 4 finger gestures did before
-     * touchpad mappings: tap = left click (tap-drag and double tap with tap and drag), one finger
+     * touchpad mappings: tap = left click (with tap and drag a double tap double-clicks, or drags when held), one finger
      * moves the cursor, two-finger tap = right click, two fingers scroll, pinch zooms.
      */
     fun defaultTouchpadMappings(s: TouchpadSettings): List<Mapping> = buildList {
         fun add(n: Int, i: SurfaceInput, t: OutputTarget) = add(Mapping(InputSource.Surface(n, i), t))
         val left = OutputTarget.Mouse(MouseButton.LEFT)
         if (s.tapToClick) {
+            // Tap and drag: a tap clicks; on a double tap a quick second tap double-clicks (Repeat ×2) and a
+            // second touch that stays down or moves holds the button, so it drags.
+            add(1, SurfaceInput.TAP, left)
             if (s.tapDrag) {
-                add(1, SurfaceInput.TAP_DRAG, left); add(1, SurfaceInput.DOUBLE_TAP, left)
-            } else add(1, SurfaceInput.TAP, left)
+                add(Mapping(InputSource.Surface(1, SurfaceInput.DOUBLE_TAP), left, options = MapOptions(how = How.REPEAT, repeat = 2)))
+                add(1, SurfaceInput.DOUBLE_TAP, left)
+            }
             add(2, SurfaceInput.TAP, OutputTarget.Mouse(MouseButton.RIGHT))
         }
         add(1, SurfaceInput.MOTION_X, OutputTarget.MouseAxis(MouseMotion.MOVE_X))

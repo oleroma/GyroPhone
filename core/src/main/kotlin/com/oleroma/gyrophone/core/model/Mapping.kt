@@ -426,13 +426,16 @@ data class Mapping(
 
 /**
  * How a mapping's output follows its activations ("How" in the editor): HELD for as long as the
- * activation lasts, ONCE a short press as it starts, TOGGLE each activation turns it on, the next off.
+ * activation lasts, ONCE a short press as it starts, TOGGLE each activation turns it on, the next
+ * off, REPEAT [MapOptions.repeat] short presses as it starts.
  */
 @Serializable
 enum class How(val label: String, val mark: String) {
     @SerialName("held") HELD("Held", ""),
     @SerialName("once") ONCE("Once", "¹"),
     @SerialName("toggle") TOGGLE("Toggle", "⟲"),
+    /** [MapOptions.repeat] short presses one after another as it starts (Repeat ×2: a double click). */
+    @SerialName("repeat") REPEAT("Repeat", "×"),
 }
 
 /**
@@ -459,6 +462,8 @@ data class MapOptions(
     val endsAfterMs: Int = 0,
     val endsOnNextInput: Boolean = false,
     val endsOnSame: Boolean = false,
+    /** [How.REPEAT]: how many short presses ([MIN_REPEAT]..[MAX_REPEAT]). */
+    val repeat: Int = 2,
 ) {
     /** Changes nothing (such a mapping keeps no options). */
     val none: Boolean get() = this == MapOptions()
@@ -469,7 +474,12 @@ data class MapOptions(
     companion object {
         const val MAX_DELAY_MS = 2000
         const val MAX_TOGGLE_MS = 60_000
+        const val MIN_REPEAT = 2
+        const val MAX_REPEAT = 5
     }
+
+    /** What it outputs as it fires, to tell whether two mappings of a target do the same: its How, and a Repeat's count. */
+    val shape: Pair<How, Int> get() = mode to if (mode == How.REPEAT) repeat.coerceIn(MIN_REPEAT, MAX_REPEAT) else 1
 }
 
 /**

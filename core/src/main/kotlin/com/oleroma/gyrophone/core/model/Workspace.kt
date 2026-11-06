@@ -75,9 +75,10 @@ data class Workspace(
         pads.firstOrNull { it.matches(vendorId, productId, name) }
 
     companion object {
-        const val DEFAULT_LONG_PRESS_MS = 400
+        /** The Tap time: a press shorter is a tap, one held longer a long press, and a second touch this soon after a lift a double tap. */
+        const val DEFAULT_LONG_PRESS_MS = 300
         const val MIN_LONG_PRESS_MS = 100
-        const val MAX_LONG_PRESS_MS = 1500
+        const val MAX_LONG_PRESS_MS = 1000
         const val DEFAULT_DOUBLE_TAP_MS = 300
         const val MIN_DOUBLE_TAP_MS = 100
         const val MAX_DOUBLE_TAP_MS = 800

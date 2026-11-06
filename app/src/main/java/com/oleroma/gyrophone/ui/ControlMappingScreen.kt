@@ -105,6 +105,7 @@ import com.oleroma.gyrophone.core.model.HoldZone
 import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
+import com.oleroma.gyrophone.core.model.How
 import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.MouseButton
@@ -144,7 +145,7 @@ private sealed interface Dragged {
      * A target from the library ([from] null) or a chip of action [from]; [inherited]: one of the
      * level above's faded chips on card [from] (taken away, the card overrides it).
      */
-    data class Target(val target: OutputTarget, val from: BindableInput?, val inherited: Boolean = false) : Dragged
+    data class Target(val target: OutputTarget, val from: BindableInput?, val inherited: Boolean = false, val n: Int = 0) : Dragged
     data class Preset(val preset: MapPreset) : Dragged
 
     /** An action card moved within its [group] (the one list: the control's actions, a swipe button's with the chosen fingers). */
@@ -163,9 +164,11 @@ private sealed interface RowItem {
     /**
      * A mapping: [target] in length zone [zone], fired on [trigger] (zone 0 only; Hold elsewhere).
      * On a button's touch card, [where] says where the finger is: on it (0), in its Area (1) or
-     * Outside it (2).
+     * Outside it (2). [n] tells chips of the same target on one When apart (another How, as
+     * Double tap Left Repeat ×2 and Left Held): its place among them ([Bindings.entry]); -1 = a
+     * chip just dropped there.
      */
-    data class Chip(val zone: Int, val target: OutputTarget, val trigger: Trigger = Trigger.HOLD, val where: Int = 0) : RowItem
+    data class Chip(val zone: Int, val target: OutputTarget, val trigger: Trigger = Trigger.HOLD, val where: Int = 0, val n: Int = 0) : RowItem
     data class Divider(val k: Int) : RowItem
     data object End : RowItem
     data object Landing : RowItem
@@ -224,6 +227,7 @@ private fun chipText(badge: String, target: OutputTarget, o: MapOptions?): Strin
     append(Describe.shortTarget(target))
     if (o != null) {
         if (o.mode.mark.isNotEmpty()) append(" ").append(o.mode.mark)
+        if (o.mode == How.REPEAT) append(o.repeat.coerceIn(MapOptions.MIN_REPEAT, MapOptions.MAX_REPEAT))
         if (o.cycle) append(" ↻")
         if (o.startDelayMs > 0 || o.endDelayMs > 0 || o.minHoldMs > 0) append(" ⏱")
     }
@@ -442,7 +446,7 @@ internal fun ControlMappingScreen(
     /** What the level above maps [input] to (cleared ones left out), with their triggers. */
     fun parentOf(input: BindableInput): List<Pair<Trigger, OutputTarget>> = trigInputs(input).flatMap { (t, ti) ->
         Bindings.targets(parentView, ti).filter { it != OutputTarget.NoOutput }.map { t to it }
-    }
+    }.distinct()
     // Drag callbacks outlive a composition: everything they read goes through state.
     val currentMappings by rememberUpdatedState(view)
     val allMappings by rememberUpdatedState(mappings)
@@ -591,8 +595,8 @@ internal fun ControlMappingScreen(
         }
     }
 
-    fun remove(input: BindableInput, t: OutputTarget) = change(
-        Bindings.removeTarget(currentMappings, input, t),
+    fun remove(input: BindableInput, t: OutputTarget, n: Int = 0) = change(
+        Bindings.removeEntry(currentMappings, input, t, n),
         "Removed " + Describe.shortTarget(t) + " from " + actionTitle(currentControl, input),
     )
 
@@ -676,11 +680,10 @@ internal fun ControlMappingScreen(
     fun withoutInherited(m: List<Mapping>, input: BindableInput, tr: Trigger, t: OutputTarget): List<Mapping> {
         val rest = parentOf(input).filterNot { it == tr to t }
         if (rest.isEmpty()) return Bindings.setTargets(m, input, Bindings.targets(m, input).filter { it != OutputTarget.NoOutput } + OutputTarget.NoOutput)
-        return rest.fold(m) { out, (r, x) ->
-            val ti = trig(input, r)
-            Bindings.setTargets(out, ti, Bindings.targets(out, ti) + x) { y ->
-                Bindings.options(out, ti, y) ?: Bindings.options(parentView, ti, y)
-            }
+        // Each with its options; the same output with another How (Repeat ×2 and Held) is two.
+        return trigInputs(input).fold(m) { out, (r, ti) ->
+            val add = Bindings.entries(parentView, ti).filter { it.target != OutputTarget.NoOutput && (r to it.target) != (tr to t) }
+            if (add.isEmpty()) out else Bindings.setEntries(out, ti, Bindings.entries(out, ti) + add)
         }
     }
 
@@ -701,14 +704,28 @@ internal fun ControlMappingScreen(
         "Cleared every action",
     )
 
+    /** Each of [ti]'s chips in the edited set: its target and its place among those of that target. */
+    fun chipsOf(ti: BindableInput, each: (OutputTarget, Int) -> Unit) {
+        val seen = HashMap<OutputTarget, Int>()
+        for (e in Bindings.entries(currentMappings, ti)) {
+            val n = seen[e.target] ?: 0
+            seen[e.target] = n + 1
+            each(e.target, n)
+        }
+    }
+
+    /** The options of [chip] of [card] in [m]; null = none, or not there. */
+    fun chipOptions(m: List<Mapping>, card: BindableInput, chip: RowItem.Chip): MapOptions? =
+        Bindings.entry(m, trig(chipInput(card, chip), chip.trigger), chip.target, chip.n)?.options
+
     /** [input]'s row as mapped: each zone's chips of the edited set, divided, then the end divider. */
     fun rowOf(input: BindableInput): List<RowItem> = buildList {
         for (z in 0 until zonesOf(input)) {
             if (z > 0) add(RowItem.Divider(z))
-            for ((tr, ti) in trigInputs(zin(input, z))) for (t in Bindings.targets(currentMappings, ti)) add(RowItem.Chip(z, t, tr))
+            for ((tr, ti) in trigInputs(zin(input, z))) chipsOf(ti) { t, n -> add(RowItem.Chip(z, t, tr, 0, n)) }
             // Its Area and Outside chips follow its own, in zone 1.
             if (z == 0) wheresOf(input).forEachIndexed { w, wi ->
-                if (w > 0 && wi != null) for ((tr, ti) in trigInputs(wi)) for (t in Bindings.targets(currentMappings, ti)) add(RowItem.Chip(0, t, tr, w))
+                if (w > 0 && wi != null) for ((tr, ti) in trigInputs(wi)) chipsOf(ti) { t, n -> add(RowItem.Chip(0, t, tr, w, n)) }
             }
         }
         if (hasEnd(input)) add(RowItem.End)
@@ -721,7 +738,7 @@ internal fun ControlMappingScreen(
             val s = s0 as? InputSource.Surface
             val zone = s?.zone ?: 0
             val tr = Triggers.of(s0)
-            whereOn(input, s0)?.let { w -> RowItem.Chip(if (w == 0) zone else 0, d.target, tr, w) }
+            whereOn(input, s0)?.let { w -> RowItem.Chip(if (w == 0) zone else 0, d.target, tr, w, d.n) }
         }
 
         is Dragged.Divider -> if (d.card.sources.first() == input.sources.first()) RowItem.Divider(d.k) else null
@@ -780,7 +797,8 @@ internal fun ControlMappingScreen(
      * [m] (the edited set's view) with [card]'s chips as [row] has them: each in the zone of the
      * dividers before it, in its order. Zones left empty close up in [change]. A chip keeps the
      * options it had where [m] maps it ([RowItem.Chip.zone] is where it came from); [carry] gives
-     * a chip brought from another card its options.
+     * a chip just dropped (n -1) its options. Exact duplicates (same target and How on one When)
+     * are kept once.
      */
     fun withRow(
         m: List<Mapping>,
@@ -800,14 +818,11 @@ internal fun ControlMappingScreen(
             // Each trigger's chips keep their options; a chip moved within the card keeps its trigger.
             val wheres = if (z == 0) wheresOf(card) else listOf(zin(card, z))
             for ((w, wi) in wheres.withIndex()) for ((tr, ti) in trigInputs(wi ?: continue)) {
-                val was = out
                 val here = chips.filter { it.trigger == tr && it.where == w }
-                out = Bindings.setTargets(out, ti, here.map { it.target }) { t ->
-                    if (t in Bindings.targets(was, ti)) Bindings.options(was, ti, t)
-                    // Moved here from another zone or Where: the options it had there.
-                    else here.firstOrNull { it.target == t }?.let { c -> Bindings.options(m, trig(chipInput(card, c), c.trigger), t) }
-                        ?: carry?.takeIf { it.first == t }?.second
-                }
+                // Moved here from another zone or Where: the options it had there.
+                out = Bindings.setEntries(out, ti, here.map { c ->
+                    Bindings.Entry(c.target, if (c.n < 0) carry?.takeIf { it.first == c.target }?.second else chipOptions(m, card, c))
+                })
             }
         }
         return out
@@ -947,25 +962,36 @@ internal fun ControlMappingScreen(
                         }.takeIf { it in Bindings.triggersOf(zi) } ?: Trigger.HOLD
                         // A new one already mapped there goes to the next When that does not map it yet
                         // (On touch Crouch, then Long press Crouch), its settings opened to pick When and How.
-                        fun maps(t: Trigger) = d.target in Bindings.targets(currentMappings, trig(zi, t))
+                        // A moved chip keeps its options (Toggle, Once, delays...).
+                        val kept = from?.let {
+                            (if (d.inherited) null else Bindings.entry(currentMappings, it, d.target, d.n)?.options)
+                                ?: Bindings.options(parentView, it, d.target)
+                        }
+                        val shape = (kept ?: MapOptions()).shape
+                        fun maps(t: Trigger) = Bindings.entries(currentMappings, trig(zi, t)).any { it.target == d.target && it.shape == shape }
                         val fresh = if (from == null && maps(tr0)) Bindings.triggersOf(zi).firstOrNull { !maps(it) } else null
                         val tr = fresh ?: tr0
-                        row.add(i, RowItem.Chip(zone, d.target, tr, w))
-                        // A moved chip keeps its options (Toggle, Once, delays...).
-                        val carry = from?.let { d.target to (Bindings.options(currentMappings, it, d.target) ?: Bindings.options(parentView, it, d.target)) }
-                        val base = if (from == null || c != null || d.inherited) currentMappings else Bindings.removeTarget(currentMappings, from, d.target)
+                        val base = if (from == null || c != null || d.inherited) currentMappings else Bindings.removeEntry(currentMappings, from, d.target, d.n)
+                        // Already there alike (same When and How): just moved there, not twice.
+                        val twin = row.indexOfFirst {
+                            it is RowItem.Chip && it.target == d.target && it.trigger == tr && it.where == w &&
+                                (chipOptions(base, card, it) ?: MapOptions()).shape == shape
+                        }
+                        var to = i
+                        if (c == null && twin >= 0 && zoneIn(row, twin) == zone) {
+                            row.removeAt(twin)
+                            if (twin < i) to--
+                        }
+                        row.add(to.coerceIn(0, row.size), RowItem.Chip(zone, d.target, tr, w, -1))
                         // A faded chip moved: its card overrides the level above without it (with it, where it landed there).
                         val over = from?.takeIf { d.inherited }?.let(::inheritedCard)
-                        // Already in the zone it lands in: just moved there, not twice.
-                        val cleaned = if (c == null) row.filterIndexed { j, it ->
-                            j == i || !(it is RowItem.Chip && it.target == d.target && it.trigger == tr && it.where == w && zoneIn(row, j) == zone)
-                        } else row
-                        val placed = withRow(base, card, cleaned, carry)
+                        val placed = withRow(base, card, row, from?.let { d.target to kept })
                         change(
                             if (over != null && from != null) withoutInherited(placed, over, Triggers.of(from.sources.first()), d.target) else placed,
                             (if (from == null) "Mapped " else "Moved ") + Describe.shortTarget(d.target) + " to " + actionTitle(currentControl, zi),
                         )
-                        if (fresh != null) chipDialog = card to RowItem.Chip(zone, d.target, tr, w)
+                        if (fresh != null) chipDialog = card to RowItem.Chip(zone, d.target, tr, w,
+                            Bindings.entries(placed, trig(zi, tr)).filter { it.target == d.target }.indexOfFirst { it.shape == shape }.coerceAtLeast(0))
                     }
                     done = true
                 } else if (from != null && libraryBounds.contains(dragPos)) {
@@ -976,7 +1002,7 @@ internal fun ControlMappingScreen(
                             withoutInherited(currentMappings, card, Triggers.of(from.sources.first()), d.target),
                             "Removed " + Describe.shortTarget(d.target) + " from " + actionTitle(currentControl, card) + " (overrides " + parentName + ")",
                         )
-                    } else remove(from, d.target)
+                    } else remove(from, d.target, d.n)
                     done = true
                 }
             }
@@ -1173,7 +1199,7 @@ internal fun ControlMappingScreen(
                         onFollow = if (parent.isNotEmpty() && own.isNotEmpty()) ({ follow(input) }) else null,
                         // Each set shows only its own chips: other sets' would clutter it.
                         others = zoneInputs.map { emptyList() },
-                        optionsOf = { chip -> Bindings.options(view, trig(chipInput(input, chip), chip.trigger), chip.target) },
+                        optionsOf = { chip -> chipOptions(view, input, chip) },
                         badge = { tr, w ->
                             val wi = wheresOf(input).getOrNull(w)
                             if (w == 0 || wi == null) Triggers.badge(src, tr)
@@ -1210,7 +1236,7 @@ internal fun ControlMappingScreen(
                         onChipDrag = { chip, at ->
                             selectedSrc = src
                             val from = trig(chipInput(input, chip), chip.trigger)
-                            startDrag(Dragged.Target(chip.target, from), at)
+                            startDrag(Dragged.Target(chip.target, from, n = chip.n), at)
                         },
                         onChipClick = { chip -> selectedSrc = src; chipDialog = input to chip },
                         onInheritedDrag = { tr, t, at ->
@@ -1611,23 +1637,29 @@ internal fun ControlMappingScreen(
             triggerLabel = { w, t -> trigLabel(inputAt(w), t) },
             swipe = Triggers.isSwipe(input.sources.first()),
             analog = chip.target is OutputTarget.PadAxis || chip.target is OutputTarget.MouseAxis,
-            options = Bindings.options(view, ti, chip.target),
+            options = Bindings.entry(view, ti, chip.target, chip.n)?.options,
             onApply = { tr, o, w ->
                 chipDialog = null
                 val destInput = if (whereInputs.isEmpty()) zi else inputAt(w)
                 val dest = trig(destInput, if (tr in Bindings.triggersOf(destInput)) tr else Trigger.HOLD)
-                // Another trigger: it leaves this one's chips and joins that one's (keeping their order).
-                val base = if (dest == ti) currentMappings else Bindings.removeTarget(currentMappings, ti, chip.target)
-                val targets = Bindings.targets(base, dest).let { if (chip.target in it) it else it + chip.target }
+                // Another trigger: it leaves this one's chips and joins that one's (keeping their order); one
+                // the same there (same output and How) it merges with.
+                val es = Bindings.entries(currentMappings, ti)
+                var k = -1
+                val at = es.indexOfFirst { it.target == chip.target && ++k == chip.n }
+                val now = Bindings.Entry(chip.target, o)
                 change(
-                    Bindings.setTargets(base, dest, targets) { t -> if (t == chip.target) o else Bindings.options(base, dest, t) },
+                    if (dest == ti && at >= 0) Bindings.setEntries(currentMappings, ti, es.toMutableList().apply { set(at, now) })
+                    else Bindings.removeEntry(currentMappings, ti, chip.target, chip.n).let { base ->
+                        Bindings.setEntries(base, dest, Bindings.entries(base, dest) + now)
+                    },
                     Describe.shortTarget(chip.target) + ": " + trigLabel(if (whereInputs.isEmpty()) input else inputAt(w), tr) +
                             if (o == null) "" else " with options",
                 )
             },
             onRemove = {
                 chipDialog = null
-                remove(ti, chip.target)
+                remove(ti, chip.target, chip.n)
             },
             onDismiss = { chipDialog = null },
             onTargetSettings = if (Describe.isHaptic(chip.target)) {

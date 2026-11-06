@@ -191,16 +191,40 @@ object Triggers {
         }
     }
 
+    /**
+     * [list] with each one-finger Tap-drag mapping as the Touch card's Tap, Double tap Repeat ×2
+     * (a quick second tap: a double click) and Double tap Held (a second touch that stays down or
+     * moves: a drag) of the same target; a cleared one clears the Double tap. Returns [list] itself
+     * when there is none.
+     */
+    fun tapDrags(list: List<Mapping>): List<Mapping> {
+        fun isTapDrag(m: Mapping) = (m.source as? InputSource.Surface)?.input == SurfaceInput.TAP_DRAG
+        if (list.none(::isTapDrag)) return list
+        return list.flatMap { m ->
+            val s = m.source as? InputSource.Surface
+            if (s == null || s.input != SurfaceInput.TAP_DRAG) listOf(m)
+            else {
+                val double = m.copy(source = s.copy(input = SurfaceInput.DOUBLE_TAP), options = null)
+                if (m.target == OutputTarget.NoOutput) listOf(double)
+                else listOf(
+                    m.copy(source = s.copy(input = SurfaceInput.TAP), options = null),
+                    m.copy(source = s.copy(input = SurfaceInput.DOUBLE_TAP), options = MapOptions(how = How.REPEAT, repeat = 2)),
+                    double,
+                )
+            }
+        }.distinctBy { listOf(it.source, it.target, it.set, (it.options ?: MapOptions()).shape) }.let(Inheritance::tidy)
+    }
+
     /** [base]'s sources, one per trigger it offers (only itself when it has none). */
     fun all(base: InputSource): List<InputSource> = offered(base).mapNotNull { with(base, it) }
 
     /**
      * [list] with the Press trigger (no longer offered) turned into On touch + Once, the same
-     * thing, and old key modes as Toggles ([ToggleUpgrade.keyModes]). Returns [list] itself when
-     * there is none.
+     * thing, Tap-drag (no longer offered) into Tap + Double tap of its target ([tapDrags]), and
+     * old key modes as Toggles ([ToggleUpgrade.keyModes]). Returns [list] itself when there is none.
      */
     fun upgrade(list: List<Mapping>): List<Mapping> {
-        val ms = ToggleUpgrade.keyModes(list)
+        val ms = tapDrags(ToggleUpgrade.keyModes(list))
         if (ms.none { of(it.source) == Trigger.PRESS }) return ms
         return ms.map { m ->
             if (of(m.source) != Trigger.PRESS) m

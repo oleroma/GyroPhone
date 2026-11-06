@@ -598,7 +598,7 @@ fun PadScreen(
     /** A touch began or ended: watch the live mappings for a while (gestures fire after lifts). */
     fun watchLive() {
         if (!visuals.liveMappings) return
-        liveWatchUntil[0] = SystemClock.uptimeMillis() + ws.doubleTapMs + LIVE_LINGER_MS
+        liveWatchUntil[0] = SystemClock.uptimeMillis() + ws.longPressMs + LIVE_LINGER_MS
         if (!liveWatching) liveWatching = true
     }
 

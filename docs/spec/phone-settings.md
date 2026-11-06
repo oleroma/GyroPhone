@@ -44,7 +44,7 @@ Opened by ⚙ in edit mode, the touchpad's Settings in its mapping editor, or th
 | Gyro calibration (Base only) | Calibrate, Clear | not calibrated |
 | Controls (Base only) | Control opacity (10–100 %) | 100 % |
 | Haptics | Feel (system or custom strength / length), Ticks play (On press / enter, On release / exit, Both) | system, On press |
-| Gesture timings | Long press after (100–1500 ms), Double tap within (100–800 ms) | 400 ms, 300 ms |
+| Gesture timings | Tap time (100–1000 ms): the longest tap, when a long press starts, and the double-tap gap | 300 ms |
 | Touchpad | The workspace touch surface: speed, acceleration, inertia, swipe lengths and pies, per direction and per Move | see [Mapping system](phone-mapping.md) |
 
 ## Connection page

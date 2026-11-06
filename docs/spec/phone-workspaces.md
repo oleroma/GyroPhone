@@ -29,7 +29,7 @@ A **workspace** (`core/.../model/Workspace.kt`) is one complete setup: its touch
 
 Every workspace setting has a **key** (`core/.../model/WorkspaceDefaults.kt`):
 
-- top level: long-press time, double-tap window, control opacity, haptic feel, haptic edge;
+- top level: Tap time, control opacity, haptic feel, haptic edge;
 - `gyro.<property>`: every `GyroSettings` field (mode, sensitivity, per-axis values, inertia, acceleration, tilt, shake, game turn, gyro space…);
 - `touchpad.<field>`: every shared touch surface setting (`SurfaceField`), each direction's own (`touchpad.dir.<D>.<field>`) and each Move X/Y's own (`touchpad.move.<slot>.<field>`).
 

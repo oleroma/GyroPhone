@@ -1180,6 +1180,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     /** A finger is on it. */
     val touching: Boolean get() = count > 0
 
+    /** The touch has moved past the tap slop (a drag rather than a tap). */
+    val pastTapSlop: Boolean get() = count > 0 && primary in 0 until MAX_FINGERS && used[primary] && pastSlop(primary)
+
     /** The fingers all lifted with a latch on: it lets go by itself after its timer ([SurfaceMap.latchMs]). */
     private fun armLatchTimer(now: Long) {
         if (latchMask == 0 || latchUntil != Long.MAX_VALUE || latchN !in 1..4) return
@@ -1803,7 +1806,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         /** Time constant of the speed EMA (about half weight per 120 Hz frame). */
         private const val SPEED_TAU_MS = 10f
         const val DEFAULT_MIN_PULSE_NS = 40_000_000L
-        const val DEFAULT_DOUBLE_TAP_NS = Workspace.DEFAULT_DOUBLE_TAP_MS * 1_000_000L
+        const val DEFAULT_DOUBLE_TAP_NS = Workspace.DEFAULT_LONG_PRESS_MS * 1_000_000L
         const val DEFAULT_LONG_PRESS_NS = Workspace.DEFAULT_LONG_PRESS_MS * 1_000_000L
         const val MAX_FINGERS = 4
 
