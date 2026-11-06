@@ -425,10 +425,6 @@ internal fun ControlMappingScreen(
     // The edited set seen as Base, so the Base-only Bindings helpers edit it.
     val view = remember(mappings, editSet) { Bindings.viewSet(mappings, editSet) }
     val parentView = remember(inherited) { inherited.map { it.copy(set = MappingSet.BASE) }.distinct() }
-    // Every other set seen as Base, for the greyed chips: made once per change, not per card and frame.
-    val otherViews = remember(mappings, sets, editSet) {
-        (listOf(MappingSet.BASE) + sets.map { it.id }).filter { it != editSet }.map { n -> n to Bindings.viewSet(mappings, n) }
-    }
 
     /** [input] firing on [t] (itself for Hold). */
     fun trig(input: BindableInput, t: Trigger): BindableInput = Bindings.triggerInput(input, t) ?: input
@@ -1159,7 +1155,8 @@ internal fun ControlMappingScreen(
                     }
                     val all = cardInputs(input)
                     val own = all.flatMap { ti -> Bindings.targets(view, ti) }
-                    val parent = parentOf(input)
+                    // A layer shows only its own mappings: nothing faded from the level above there.
+                    val parent = if (editSet == MappingSet.BASE) parentOf(input) else emptyList()
                     // The level above passes down the whole card (Inheritance.cardOf) while it maps nothing
                     // itself, here or, in a layer, in Base: Base's mapping is what the layer does there.
                     val owns = own.isNotEmpty() || (editSet != MappingSet.BASE && all.any { ti -> Bindings.targets(mappings, ti).isNotEmpty() })
@@ -1174,11 +1171,8 @@ internal fun ControlMappingScreen(
                         parentName = parentName,
                         onClear = if (parent.isNotEmpty() && !(own.isNotEmpty() && own.all { it == OutputTarget.NoOutput })) ({ clear(input) }) else null,
                         onFollow = if (parent.isNotEmpty() && own.isNotEmpty()) ({ follow(input) }) else null,
-                        others = zoneInputs.map { zi ->
-                            otherViews.flatMap { (n, inSet) ->
-                                trigInputs(zi).flatMap { (tr, ti) -> Bindings.targets(inSet, ti).map { Triple(n, it, tr) } }
-                            }
-                        },
+                        // Each set shows only its own chips: other sets' would clutter it.
+                        others = zoneInputs.map { emptyList() },
                         optionsOf = { chip -> Bindings.options(view, trig(chipInput(input, chip), chip.trigger), chip.target) },
                         badge = { tr, w ->
                             val wi = wheresOf(input).getOrNull(w)
