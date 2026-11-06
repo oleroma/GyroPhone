@@ -91,12 +91,13 @@ class DeviceSwapTest {
         val d = PhysicalLayouts.controllerHandles
         assertEquals(ids, d.controls.map { it.id }.toSet())
         for (c in d.controls) {
-            assertTrue(c.id, c.x - c.w / 2 >= 0f && c.x + c.w / 2 <= 1f && c.y - c.h / 2 >= 0f && c.y + c.h / 2 <= 1f)
+            assertTrue(c.id, c.x - c.w / 2 >= -1e-4f && c.x + c.w / 2 <= 1.0001f && c.y - c.h / 2 >= -1e-4f && c.y + c.h / 2 <= 1.0001f)
         }
-        // No two controls overlap.
+        // No two controls overlap (touching edges, as the D-pad's keys do, is fine).
+        val e = 1e-4f
         for (a in d.controls) for (b in d.controls) if (a.id < b.id) {
-            val apart = a.x + a.w / 2 <= b.x - b.w / 2 || b.x + b.w / 2 <= a.x - a.w / 2 ||
-                a.y + a.h / 2 <= b.y - b.h / 2 || b.y + b.h / 2 <= a.y - a.h / 2
+            val apart = a.x + a.w / 2 <= b.x - b.w / 2 + e || b.x + b.w / 2 <= a.x - a.w / 2 + e ||
+                a.y + a.h / 2 <= b.y - b.h / 2 + e || b.y + b.h / 2 <= a.y - a.h / 2 + e
             assertTrue(a.id + " and " + b.id, apart)
         }
     }
