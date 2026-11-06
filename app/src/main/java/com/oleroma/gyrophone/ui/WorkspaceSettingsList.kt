@@ -353,18 +353,15 @@ internal fun WorkspaceSettings(
     items += SectionItem("gestures") { card, header ->
         RememberedSection(
             runtime, "workspace.Gestures", "Gesture timings", card,
-            subtitle = "Long press and double tap times", headerModifier = header,
+            subtitle = "Tap time", headerModifier = header,
         ) {
             MsOverride(
-                key + "long", "Long press after", ws.longPressMs, Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
+                key + "long", "Tap time", ws.longPressMs, Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
                 level.isOwn(WorkspaceDefaults.LONG_PRESS), { level.reset(WorkspaceDefaults.LONG_PRESS) },
-                hint = "For the Tap and Long press of the touchpad, touch buttons, controller buttons and keyboard keys without a time of their own.",
+                hint = "One time for every gesture: a shorter press is a tap, a longer one a long press, and a second touch this " +
+                        "soon after a lift a double tap (on a double tap with a Held chip and others, a quick lift fires the others, " +
+                        "staying down or moving the Held one). For the touchpad, touch buttons, controller buttons and keys without a time of their own.",
             ) { ms -> level.edit { it.copy(longPressMs = ms) } }
-            MsOverride(
-                key + "double", "Double tap within", ws.doubleTapMs, Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
-                level.isOwn(WorkspaceDefaults.DOUBLE_TAP), { level.reset(WorkspaceDefaults.DOUBLE_TAP) },
-                hint = "The same, for Double tap windows.",
-            ) { ms -> level.edit { it.copy(doubleTapMs = ms) } }
         }
     }
     items += surfaceCategories(runtime, workspaceSurfaceLevel(level), key + "tp", Bindings.holdZoneCounts(ws.mappings, ""), touchpad = true)

@@ -1,8 +1,12 @@
 package com.oleroma.gyrophone.ui
 
 import androidx.activity.compose.BackHandler
+import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -132,6 +136,9 @@ private fun PadMenu(
         DevicePresetsScreen(runtime, onBack = back)
         return
     }
+    // The workspace's own actions stay fixed: in the title row in landscape, under it in portrait.
+    val wide = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val actions = page == PadMenuPage.Root
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 4.dp),
@@ -148,13 +155,15 @@ private fun PadMenu(
                 style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
+                modifier = if (actions && wide) Modifier.padding(end = 12.dp) else Modifier.weight(1f),
             )
+            if (actions && wide) Box(Modifier.weight(1f)) { RootActions(runtime, onWorkspaceDeleted) }
         }
+        if (actions && !wide) Box(Modifier.padding(horizontal = 12.dp)) { RootActions(runtime, onWorkspaceDeleted) }
         HorizontalDivider()
         val content = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)
         when (page) {
-            PadMenuPage.Root -> MenuList(runtime, content, onDeleted = onWorkspaceDeleted)
+            PadMenuPage.Root -> MenuList(runtime, content)
             PadMenuPage.Connection -> ConnectScreen(runtime, onRetry)
             PadMenuPage.AppSettings -> AppSettingsScreen(runtime, content)
             PadMenuPage.Devices -> Unit
@@ -167,31 +176,77 @@ private fun PadMenu(
  * [WorkspaceSettingsPage] as edit mode's ⚙ and the touchpad's Settings in its mapping editor.
  */
 @Composable
-private fun MenuList(runtime: GamepadRuntime, modifier: Modifier, onDeleted: () -> Unit) {
+private fun MenuList(runtime: GamepadRuntime, modifier: Modifier) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(MappingSet.BASE) }
     SearchableSettings(modifier) {
-        WorkspaceSettingsPage(
-            runtime, profile, wsIndex, tab, { tab = it },
-            onProfileChange = { p, _ ->
-                val deleted = p.workspaces.size < profile.workspaces.size
-                runtime.editActiveProfile { p }
-                if (deleted) onDeleted()
-            },
-            onWorkspaceChange = { change -> runtime.editActiveProfile { it.updateWorkspace(wsIndex.coerceIn(0, it.workspaces.lastIndex), change) } },
+        WorkspaceSettingsPage(runtime, profile, wsIndex, tab, { tab = it }, onWorkspaceChange = { change -> editLive(runtime, wsIndex, change) })
+    }
+}
+
+private fun editLive(runtime: GamepadRuntime, index: Int, change: (Workspace) -> Workspace) {
+    runtime.editActiveProfile { it.updateWorkspace(index.coerceIn(0, it.workspaces.lastIndex), change) }
+}
+
+/** The current workspace's [WorkspaceTopBar] on the live profile; [onDeleted] after a delete. */
+@Composable
+private fun RootActions(runtime: GamepadRuntime, onDeleted: () -> Unit) {
+    val profile by runtime.activeProfile.collectAsStateWithLifecycle()
+    val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
+    WorkspaceTopBar(
+        runtime, profile, wsIndex,
+        onProfileChange = { p, _ ->
+            val deleted = p.workspaces.size < profile.workspaces.size
+            runtime.editActiveProfile { p }
+            if (deleted) onDeleted()
+        },
+        onWorkspaceChange = { change -> editLive(runtime, wsIndex, change) },
+    )
+}
+
+/**
+ * Workspace [index]'s own actions, in the fixed panel above its settings (they don't scroll):
+ * rename, duplicate, delete ([onProfileChange], with the index to show next) and "Copy mappings
+ * from…" ([onWorkspaceChange] on a [draft]).
+ */
+@Composable
+internal fun WorkspaceTopBar(
+    runtime: GamepadRuntime,
+    profile: Profile,
+    index: Int,
+    onProfileChange: (Profile, Int) -> Unit,
+    onWorkspaceChange: ((Workspace) -> Workspace) -> Unit,
+    /** Copies go into this profile ([CopyMappingsDialog]'s onCopy) instead of the saved one: edit mode's draft. */
+    draft: Boolean = false,
+) {
+    val current = index.coerceIn(0, profile.workspaces.lastIndex)
+    var copying by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        WorkspaceActions(profile, current, onProfileChange) {
+            if (profile.workspaces.size > 1) {
+                OutlinedButton(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp), onClick = { copying = true }) {
+                    Text("Copy mappings from…")
+                }
+            }
+        }
+    }
+    if (copying) {
+        CopyMappingsDialog(
+            runtime, current, discards = false, onDismiss = { copying = false }, onCopied = { copying = false },
+            profile = if (draft) profile else null,
+            onCopy = if (draft) { w -> onWorkspaceChange { w } } else null,
         )
     }
 }
 
 /**
  * All settings of workspace [index] of [profile] in one list of categories the person can
- * reorder: Workspace (rename / duplicate / delete, copy mappings), gyro, controls, haptics,
- * gestures and the touchpad, over the Defaults. With layers, chips on top pick Base or a layer
- * ([set], [onSet]), whose settings go over Base's. One page wherever it opens: edit mode's ⚙, the
- * touchpad's Settings in its mapping editor (both on edit mode's draft), the Settings menu.
- * [onProfileChange] gets rename / duplicate / delete (with the index to show next),
- * [onWorkspaceChange] every other edit.
+ * reorder: gyro, controls, haptics, gestures and the touchpad, over the Defaults (rename,
+ * duplicate, delete and copy are above it, in [WorkspaceTopBar]). With layers, chips on top pick
+ * Base or a layer ([set], [onSet]), whose settings go over Base's. One page wherever it opens:
+ * edit mode's ⚙, the touchpad's Settings in its mapping editor (both on edit mode's draft), the
+ * Settings menu. [onWorkspaceChange] gets every edit.
  */
 @Composable
 internal fun WorkspaceSettingsPage(
@@ -200,14 +255,10 @@ internal fun WorkspaceSettingsPage(
     index: Int,
     set: Int,
     onSet: (Int) -> Unit,
-    onProfileChange: (Profile, Int) -> Unit,
     onWorkspaceChange: ((Workspace) -> Workspace) -> Unit,
-    /** Copies go into this profile ([CopyMappingsDialog]'s onCopy) instead of the saved one: edit mode's draft. */
-    draft: Boolean = false,
 ) {
     val current = index.coerceIn(0, profile.workspaces.lastIndex)
     val ws = profile.workspace(current)
-    var copying by remember { mutableStateOf(false) }
     val shown = if (ws.sets.any { it.id == set }) set else MappingSet.BASE
 
     if (ws.sets.isNotEmpty()) NotSearching {
@@ -224,40 +275,8 @@ internal fun WorkspaceSettingsPage(
         else "While this layer is in use. Each setting follows Base unless it is set here: those are " +
                 "highlighted, with ↺ to follow Base again.",
     )
-    val workspace = SectionItem("workspace") { card, header ->
-        RememberedSection(
-            runtime,
-            "workspace.Workspace",
-            "Workspace",
-            card,
-            defaultOpen = true,
-            subtitle = "${ws.name} · ${current + 1} of ${profile.workspaces.size}",
-            headerModifier = header,
-        ) {
-            Searchable("Workspace", "rename duplicate delete name copy mappings") {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    WorkspaceActions(profile, current, onProfileChange)
-                    Hint("Duplicate copies everything, mappings included; the copy can then be changed on its own.")
-                    if (profile.workspaces.size > 1) {
-                        OutlinedButton(onClick = { copying = true }) { Text("Copy mappings from…") }
-                    }
-                }
-            }
-        }
-    }
     val level = setLevel(ws, profile.defaults, shown, onWorkspaceChange)
-    WorkspaceSettings(
-        runtime, level, profile.id + "/" + ws.id + "/" + shown,
-        extra = if (shown == MappingSet.BASE) listOf(workspace) else emptyList(),
-    )
-
-    if (copying) {
-        CopyMappingsDialog(
-            runtime, current, discards = false, onDismiss = { copying = false }, onCopied = { copying = false },
-            profile = if (draft) profile else null,
-            onCopy = if (draft) { w -> onWorkspaceChange { w } } else null,
-        )
-    }
+    WorkspaceSettings(runtime, level, profile.id + "/" + ws.id + "/" + shown)
 }
 
 @Composable

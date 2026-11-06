@@ -666,12 +666,12 @@ class MappingOptionsTest {
 
     @Test
     fun areaLongPressTakesTheButtonsOwnTime() {
-        val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, longPressMs = 1500)
+        val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, longPressMs = 900)
         val w = Workspace(id = "w", name = "w", touchControls = listOf(b), mappings = listOf(
             Mapping(Triggers.with(InputSource.TouchArea("b", com.oleroma.gyrophone.core.model.TouchAreaKind.ZONE), Trigger.LONG_PRESS)!!, OutputTarget.Key(A))))
         val e = MappingEngine(single(w)) { t }.apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 10 * MS }
         e.setTouchArea("b", com.oleroma.gyrophone.core.model.TouchAreaKind.ZONE, true)
-        assertTrue(e.hold(1200).none { A in it }) // not at the workspace's time
-        assertTrue(A in e.hold(500).last()) // at the button's
+        assertTrue(e.hold(600).none { A in it }) // not at the workspace's time (300 ms)
+        assertTrue(A in e.hold(400).last()) // at the button's
     }
 }

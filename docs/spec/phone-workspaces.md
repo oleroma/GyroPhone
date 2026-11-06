@@ -23,13 +23,13 @@ A **workspace** (`core/.../model/Workspace.kt`) is one complete setup: its touch
 - **WASD**: a WASD stick and keys for keyboard-and-mouse games; gyro mode Ratchet disables.
 - **Keyboard**: a full keyboard (K380 layout) under a touchpad strip; gyro Ratchet enables.
 
-**Adding** a workspace ("+" capsule, added at the front) offers these presets or a blank one. A blank workspace starts with a copy of the current one's touchpad mappings and layers. **Rename, Duplicate, Delete** (not the last) are at the top of its settings; **Copy mappings from…** (`ui/CopyMappingsDialog.kt`) brings another workspace's mappings in, either with its buttons (replacing this one's) or mappings only (matched to this workspace's buttons by name; buttons with no match are listed first).
+**Adding** a workspace ("+" capsule, added at the front) offers **Blank**, **Windows touchpad** and these presets. A blank workspace starts with no mappings and no layers of its own (it follows the Defaults' mappings); Windows touchpad is a blank one whose touchpad works like a Windows one (`BuiltinProfiles.touchpadWorkspace`). **Rename, Duplicate, Delete** (not the last) are fixed at the top of its settings, outside the scrolling list; **Copy mappings from…** (`ui/CopyMappingsDialog.kt`) brings another workspace's mappings in, either with its buttons (replacing this one's) or mappings only (matched to this workspace's buttons by name; buttons with no match are listed first).
 
 ## Settings inheritance
 
 Every workspace setting has a **key** (`core/.../model/WorkspaceDefaults.kt`):
 
-- top level: long-press time, double-tap window, control opacity, haptic feel, haptic edge;
+- top level: Tap time, control opacity, haptic feel, haptic edge;
 - `gyro.<property>`: every `GyroSettings` field (mode, sensitivity, per-axis values, inertia, acceleration, tilt, shake, game turn, gyro space…);
 - `touchpad.<field>`: every shared touch surface setting (`SurfaceField`), each direction's own (`touchpad.dir.<D>.<field>`) and each Move X/Y's own (`touchpad.move.<slot>.<field>`).
 
@@ -44,14 +44,14 @@ Settings that are not keys are the workspace's alone: its layout, mappings, laye
 
 ## Mapping inheritance
 
-`core/.../model/Inheritance.kt`. Mappings pass down **one input at a time**, not in groups. An input is a finger count, a surface input, a length zone and a trigger, whoever's surface it is; a button's one-finger On touch is its press.
+`core/.../model/Inheritance.kt`. Mappings pass down **one action at a time** (one card of the mapping editor, `Inheritance.cardOf`), not in groups. An action is a finger count and a held surface input, whoever's surface it is; its triggers (tap, long press, quick swipe…), length zones and a button's Area and Outside all belong to it. A button's one-finger On touch is its press. Mapping **anything** on an action overrides **all** of what it inherits: none of the parent's mappings of it are left.
 
-- **Defaults → workspace**: the Defaults' touchpad, gyro, tilt and shake mappings fill the Base of each workspace for every such input the workspace does not map in Base itself (`Inheritance.fill`). The Defaults map nothing until the person maps something there (Settings › Defaults › Mappings, with the presets Windows touchpad and Gyro mouse).
+- **Defaults → workspace**: the Defaults' touchpad, gyro, tilt and shake mappings fill the Base of each workspace for every such action the workspace maps nothing on in Base itself (`Inheritance.fill`). The Defaults map nothing until the person maps something there (Settings › Defaults › Mappings, with the presets Windows touchpad and Gyro mouse).
 - **Workspace touchpad → buttons**: each touch button takes the touchpad's mapping (in the layers in use) of every surface input it maps itself in none of them (`toButtons`). So a button's own mapping beats the workspace's in every layer; a button that maps an input only in a layer not in use takes the touchpad's meanwhile.
 - **Workspace gyro → held buttons**: while a button is held, each gyro axis does the workspace's mapping unless the button maps that axis itself (`gyroInherited`). Physical buttons with a Motion tab work the same way ([Controllers](phone-controllers.md)).
-- **Clearing**: mapping an input to Nothing (`NoOutput`) at a level clears what it would inherit. Mapping something else on that input drops the Nothing again (`tidy`).
+- **Clearing**: mapping an action to Nothing (`NoOutput`, on its Hold) at a level clears what it would inherit. Mapping something else on that action drops the Nothing again (`tidy`).
 
-In the mapping editor inherited mappings show faded. **✕** clears one (Nothing), **↺** follows the parent again, **Reset all** (asks first) follows everything, **✕ Clear all** clears everything (no question; undo brings it back). **+ Button** adds a button that follows the workspace; **+ Empty button** adds one with every inherited input cleared (`Inheritance.cleared`).
+In the mapping editor inherited mappings show faded, and only on cards that map nothing themselves: mapping something on a card makes its faded chips go. A faded chip can be **removed**: long-press it and drag it onto the library (a hidden action: nothing on screen points to it). The card then overrides the parent: it maps the parent's other chips itself, or is cleared (Nothing) when none is left. Dragged onto a card instead, it is mapped there and its own card overrides the parent the same way. **✕** clears one (Nothing), **↺** follows the parent again, **Reset all** (asks first) follows everything, **✕ Clear all** clears everything (no question; undo brings it back). **+ Button** adds a button that follows the workspace; **+ Empty button** adds one with every inherited input cleared (`Inheritance.cleared`).
 
 ## Resolving for the engine
 
@@ -60,7 +60,7 @@ A set is kept in two forms (`WorkspaceMappings`):
 - **stored** (`store`): workspaces hold no device mappings, only the id of the preset they pin;
 - **resolved** (`resolve`): each workspace gets its Defaults settings applied and holds its pinned preset's mappings as one pad for any game pad (`pads`), `keyboard`, `mouse` and `phone` (the volume rocker, with an unmapped rocker key turning the PC's volume), plus the preset's key timings, stick and trigger tuning and held-button settings.
 
-`GamepadRuntime.activeProfile` is the resolved set the engine and editors see; `editActiveProfile` applies an edit and saves the stored form in the background (`WorkspaceMappings.settle`: a pad mapping edit becomes the pinned preset's; a new blank workspace gets the current one's touchpad mappings).
+`GamepadRuntime.activeProfile` is the resolved set the engine and editors see; `editActiveProfile` applies an edit and saves the stored form in the background (`WorkspaceMappings.settle`: a pad mapping edit becomes the pinned preset's; a new workspace is kept as it comes, a blank one blank).
 
 ## Storage
 
