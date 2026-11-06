@@ -76,6 +76,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         if (device.isVirtual) return false
         if (isRocker(event, device)) return onRocker(event)
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0) return true
+        runtime.wifi.pressStamp.note(event.eventTimeNanos)
         // The PC's phone overlay draws the controller's presses on its handles.
         if (isPad(device)) runtime.wifi.overlay.padKey(event.keyCode, event.action == KeyEvent.ACTION_DOWN)
         // A captured mouse's back / forward buttons come as keys too: they are its buttons already.
@@ -121,6 +122,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             return false
         }
         if (pressed && event.repeatCount > 0) return true
+        runtime.wifi.pressStamp.note(event.eventTimeNanos)
         runtime.engine.setKey(PHONE_PAD, event.keyCode, pressed)
         return true
     }
@@ -215,6 +217,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
                 if (dx != 0f || dy != 0f) engine.mouseMove(pad, dx, dy)
             }
             MotionEvent.ACTION_BUTTON_PRESS, MotionEvent.ACTION_BUTTON_RELEASE -> {
+                runtime.wifi.pressStamp.note(event.eventTimeNanos)
                 val key = when (event.actionButton) {
                     MotionEvent.BUTTON_PRIMARY -> AndroidKey.MOUSE_LEFT
                     MotionEvent.BUTTON_SECONDARY -> AndroidKey.MOUSE_RIGHT

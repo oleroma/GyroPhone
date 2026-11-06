@@ -54,6 +54,9 @@ public readonly record struct HostStatus(
     public const uint Unknown = 0xFFFFFFFF;
 }
 
+/// <summary>When the phone saw the input behind a press or release, and the time of the STATE that first carries it (both the low 32 bits of the phone's µs clock, as STATE's time).</summary>
+public readonly record struct PressTime(uint StateTimeUs, uint EventTimeUs);
+
 public readonly record struct Rumble(byte Large, byte Small);
 
 /// <summary>

@@ -25,6 +25,8 @@ internal sealed class HomePage : Page
     private readonly Seg<OutputMode> _output;
     private readonly CheckBox _pause;
     private readonly ToggleButton _detailsFold;
+    private readonly CheckBox _measureButtons;
+    private readonly TextBlock _buttonsSub;
     private readonly Border _detailsCard;
     private readonly TextBox _details;
     private bool _wasConnected;
@@ -84,6 +86,12 @@ internal sealed class HomePage : Page
         var legend = Parts.Text("Last minute: middle (p50) bright, slowest 1% (p99) faint.", "Sub");
         legend.FontSize = 11.5;
         tb.Children.Add(legend);
+        _measureButtons = Parts.Toggle("Measure buttons", app.ToggleMeasureButtons,
+            "Times each press from the phone seeing your touch or controller button to the game getting it.");
+        _measureButtons.Margin = new Thickness(0, 10, 0, 0);
+        tb.Children.Add(_measureButtons);
+        _buttonsSub = Parts.Text("", "Sub");
+        tb.Children.Add(_buttonsSub);
         Place(grid, lat, 1, 0);
 
         // Gamepad
@@ -197,6 +205,12 @@ internal sealed class HomePage : Page
             _latBig.Text = "—";
             _latSub.Text = s.Connected ? "measuring…" : "no phone";
         }
+        Parts.SetChecked(_measureButtons, v.MeasureButtons);
+        Parts.Show(_buttonsSub, v.MeasureButtons);
+        if (v.MeasureButtons)
+            _buttonsSub.Text = !s.Connected ? "Buttons: no phone"
+                : v.Buttons is { } b ? $"Buttons: {b.TotalUs / 1000.0:0.0} ms, phone part {b.PhoneUs / 1000.0:0.0} ms (middle of {b.Count} · last {b.LastUs / 1000.0:0.0} ms)"
+                : "Buttons: press something on the phone…";
         if (s.Connected && !_wasConnected) _graph.Clear();
         _wasConnected = s.Connected;
 

@@ -45,6 +45,9 @@ public sealed record HostSnapshot(
     public bool OutputDriverOk => OutputMode == OutputMode.DualSense ? DualSenseOk : DriverOk;
 }
 
+/// <summary>"Measure buttons": the middle of the last <paramref name="Count"/> presses from input to game, its phone part, and the newest press (all µs).</summary>
+public sealed record ButtonLatency(long TotalUs, long PhoneUs, int Count, long LastUs);
+
 /// <summary>A paired phone for the tray: code-paired (in settings) or key-paired (a file in authorized_phones).</summary>
 public sealed record PairedPhoneInfo(byte[] PhoneId, string Name, DateTime LastSeenUtc, bool ByKey = false,
     string? KeyFile = null, string? Fingerprint = null);
@@ -161,6 +164,10 @@ public sealed class HostEngine
 
     // Phone overlay: asked for in HOST_STATUS while on; the newest OVERLAY and layout from the active phone.
     private bool _overlayOn;
+    // Latency tests: "Measure buttons" (PRESS_TIME) and the latency test window (the phone's markers).
+    private readonly PressLatency _press = new();
+    private bool MeasuringButtons => _settings.MeasureButtons;
+    private bool _latencyScreen;
     private readonly OverlayFrame _overlayFrame = new();
     /// <summary>The last OVERLAY totals of this session, for the motion since then.</summary>
     private readonly OverlayTotals _overlayTotals = new();
@@ -400,6 +407,10 @@ public sealed class HostEngine
             case PacketType.Motion:
                 OnMotion(plain, nowUs);
                 break;
+            case PacketType.PressTime:
+                if (MeasuringButtons)
+                    _press.OnPressTime(WireCodec.DecodePressTime(plain), nowUs, ClockOffsetUs, _stats.LastLinkInfo != null);
+                break;
             case PacketType.Bye:
                 _events.Log($"phone said bye (reason {plain[0]})");
                 RememberEnded(s.SessionId);
@@ -628,6 +639,7 @@ public sealed class HostEngine
         _catchUp.Clear();
         _hasStatePhone = false;
         _stats.Reset();
+        _press.Reset();
         _releasedForSilence = false;
         _hasPending = false;
         PlugPad();
@@ -713,6 +725,7 @@ public sealed class HostEngine
                     }
                 }
             }
+            if (frame && MeasuringButtons) _press.OnInjected(_pending.PhoneTimeUs, _clock.NowUs, ClockOffsetUs, _stats.LastLinkInfo != null);
             if (frame && _hasPendingSample)
             {
                 _hasPendingSample = false;
@@ -1265,6 +1278,45 @@ public sealed class HostEngine
     }
 
     /// <summary>
+    /// "Measure buttons": the phone sends PRESS_TIME for each press and release (told at once), and
+    /// <see cref="PressLatencyNow"/> has the newest presses. Off: the phone stops and they are forgotten.
+    /// </summary>
+    public void SetMeasureButtons(bool on)
+    {
+        lock (_lock)
+        {
+            if (on == MeasuringButtons) return;
+            _settings.MeasureButtons = on;
+            _settingsDirty = true;
+            _press.Reset();
+            if (_sessions.Active is { } a) SendTestMode(a);
+        }
+    }
+
+    /// <summary>The latency test window is open: the phone's pad shows its tracking markers (told at once).</summary>
+    public void SetLatencyScreen(bool on)
+    {
+        lock (_lock)
+        {
+            if (on == _latencyScreen) return;
+            _latencyScreen = on;
+            if (_sessions.Active is { } a) SendTestMode(a);
+        }
+    }
+
+    /// <summary>"Measure buttons": the middle of the last presses (total and the phone's part, µs), how many, and the newest; null while off or before any.</summary>
+    public ButtonLatency? PressLatencyNow()
+    {
+        lock (_lock)
+        {
+            if (!MeasuringButtons || _press.Median() is not { } m) return null;
+            return new ButtonLatency(m.TotalUs, m.PhoneUs, _press.Count, _press.LastTotalUs);
+        }
+    }
+
+    private long ClockOffsetUs => _stats.LastLinkInfo?.ClockOffsetUs ?? 0;
+
+    /// <summary>
     /// Copies the newest OVERLAY into <paramref name="into"/> and returns how long ago it came (us),
     /// or -1 when none came in this session; <paramref name="layout"/> is the newest complete layout.
     /// </summary>
@@ -1747,12 +1799,24 @@ public sealed class HostEngine
         WireCodec.EncodeHostStatus(new HostStatus(s.HighestRxSeq, _stats.RxPerSec, _stats.LossPermille,
             _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs, (byte)_settings.OutputMode, flags), p);
         s.SendSealed(PacketType.HostStatus, p, _sender);
+        SendTestMode(s);
         if (_keyLabels is { } labels)
         {
             Span<byte> k = stackalloc byte[Wire.KeyLabelsPlain];
             WireCodec.EncodeKeyLabels(labels, k);
             s.SendSealed(PacketType.KeyLabels, k, _sender);
         }
+    }
+
+    /// <summary>TEST_MODE, with every HOST_STATUS and on change. Older phones drop it.</summary>
+    private void SendTestMode(HostSession s)
+    {
+        byte flags = 0;
+        if (MeasuringButtons) flags |= TestModeFlags.PressTimes;
+        if (_latencyScreen) flags |= TestModeFlags.LatencyScreen;
+        Span<byte> t = stackalloc byte[Wire.TestModePlain];
+        WireCodec.EncodeTestMode(flags, t);
+        s.SendSealed(PacketType.TestMode, t, _sender);
     }
 
     private void SendHostBye(HostSession s, byte reason)

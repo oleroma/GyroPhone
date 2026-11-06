@@ -182,6 +182,11 @@ class MainActivity : ComponentActivity() {
         TouchStream.pointerCancelled = event.actionMasked == MotionEvent.ACTION_POINTER_UP &&
             (event.flags and MotionEvent.FLAG_CANCELED) != 0
         TouchStream.eventNanos = event.eventTimeNanos
+        // "Measure buttons" on the PC: a finger landing or lifting may press or release something.
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP ->
+                runtime.wifi.pressStamp.note(event.eventTimeNanos)
+        }
         return super.dispatchTouchEvent(event)
     }
 

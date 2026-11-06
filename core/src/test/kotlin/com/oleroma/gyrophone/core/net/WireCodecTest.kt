@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.core.net
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -103,6 +104,7 @@ class WireCodecTest {
             LinkInfo(-1, 100, 1000, -90, 6, 2402, 5955, 1),
             HostStatus(7, 1000, 0, -1, -1, 0, 2, 31),
             KeyLabels(0x04100410, IntArray(KeyLabels.USAGES.size) { 0x20 + it * 3 }),
+            PressTime(0x01020304, 0xA0B0C0D0.toInt()), TestMode(TestModeFlags.PRESS_TIMES or TestModeFlags.LATENCY_SCREEN),
         )
         for (p in packets) {
             val n = WireCodec.encodeSealedPlain(p, buf, 3)
@@ -110,6 +112,18 @@ class WireCodecTest {
             assertEquals(p, WireCodec.decodeSealedPlain(WireCodec.sealedTypeOf(p), buf, 3, n))
         }
         assertNull(WireCodec.decodeSealedPlain(PacketType.PING, buf, 0, 7))
+    }
+
+    @Test fun pressTimeAndTestModeBytesMatchThePc() {
+        // The same bytes as the companion's PressLatencyTests.
+        var n = WireCodec.encodeSealedPlain(PressTime(0x01020304, 0xA0B0C0D0.toInt()), buf, 0)
+        assertEquals("04030201d0c0b0a0", buf.copyOf(n).joinToString("") { "%02x".format(it) })
+        n = WireCodec.encodeSealedPlain(TestMode(3), buf, 0)
+        assertEquals("03000000", buf.copyOf(n).joinToString("") { "%02x".format(it) })
+        assertEquals(Wire.sealedSize(8), Wire.sizeOf(PacketType.PRESS_TIME))
+        assertEquals(Wire.sealedSize(4), Wire.sizeOf(PacketType.TEST_MODE))
+        assertTrue(PacketType.isPhoneToHost(PacketType.PRESS_TIME))
+        assertFalse(PacketType.isPhoneToHost(PacketType.TEST_MODE))
     }
 
     @Test fun keyLabelsNameKeysByWhatThePcTypes() {

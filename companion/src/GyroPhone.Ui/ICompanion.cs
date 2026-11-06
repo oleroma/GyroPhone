@@ -37,7 +37,9 @@ public sealed record CompanionView(
     string HostKey,
     string KeysFolder,
     string LogPath,
-    IReadOnlyList<Problem> Problems);
+    IReadOnlyList<Problem> Problems,
+    bool MeasureButtons = false,
+    ButtonLatency? Buttons = null);
 
 /// <summary>
 /// The tray app as the windows see it. Every setter saves the setting and refreshes the open windows,
@@ -50,6 +52,9 @@ public interface ICompanion
 
     /// <summary>The full status text (Home's "Details").</summary>
     string DetailsText();
+
+    // Latency
+    void ToggleMeasureButtons();
 
     // Gamepad and input
     void SetOutputMode(OutputMode mode);

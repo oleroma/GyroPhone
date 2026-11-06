@@ -92,6 +92,16 @@ data class HostStatus(
     val flags: Int,
 ) : WirePacket
 
+/**
+ * When the phone saw the input behind a press or release: [eventTimeUs], and the time of the
+ * STATE that first carries it, [stateTimeUs] (both the low 32 bits of the phone's
+ * elapsed-realtime µs, as STATE's time).
+ */
+data class PressTime(val stateTimeUs: Int, val eventTimeUs: Int) : WirePacket
+
+/** The PC's latency tests the phone takes part in ([TestModeFlags]). */
+data class TestMode(val flags: Int) : WirePacket
+
 data class Rumble(val large: Int, val small: Int) : WirePacket
 
 /**
