@@ -167,15 +167,17 @@ internal fun ControlBoard.wire(count: (Element) -> Int, onOpen: (Element) -> Uni
     return this
 }
 
-/** The area a board's controls are drawn in: a tap on nothing closes the selection. */
+/**
+ * The area a board's controls are drawn in: a tap on nothing closes the selection. That tap is
+ * caught by a layer behind the controls, not by the area itself: around them it would also see
+ * (and take) the tap that selects a control.
+ */
 @Composable
 internal fun BoardArea(board: ControlBoard, modifier: Modifier, content: @Composable BoxScope.() -> Unit) {
-    Box(
-        modifier
-            .onGloballyPositioned { board.origin = it.positionInRoot() }
-            .pointerInput(board) { detectTapGestures { board.selected = null } },
-        content = content,
-    )
+    Box(modifier.onGloballyPositioned { board.origin = it.positionInRoot() }) {
+        Box(Modifier.matchParentSize().pointerInput(board) { detectTapGestures { board.selected = null } })
+        content()
+    }
 }
 
 /** Control [e] of [board] at [modifier]'s place and size: tap, hold and drag as [ControlBoard] says. */
@@ -203,7 +205,7 @@ internal fun DeviceControl(board: ControlBoard, e: Element, enabled: Boolean, mo
                     if (long == null) {
                         // Let go before the hold time without sliding off: a tap.
                         val up = currentEvent.changes.firstOrNull { it.id == down.id }
-                        if (up != null && !up.pressed && !up.isConsumed &&
+                        if (up != null && !up.pressed &&
                             (up.position - down.position).getDistance() <= viewConfiguration.touchSlop
                         ) {
                             up.consume()
