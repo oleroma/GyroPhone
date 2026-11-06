@@ -1,5 +1,6 @@
 using System.Text;
 using GyroPhone.Protocol.Mapping;
+using GyroPhone.Protocol;
 
 namespace GyroPhone.Host;
 
@@ -289,5 +290,21 @@ public sealed class DebugTrace
         return d;
     }
 
-    public static string UsageName(byte usage) => Names.TryGetValue(usage, out var n) ? n : $"0x{usage:X2}";
+    private static volatile Dictionary<byte, string>? _pcNames;
+
+    /// <summary>Names character keys by what they type on the PC's layout (KEY_LABELS), as the phone does.</summary>
+    public static void SetLayout(KeyLabels labels)
+    {
+        var d = new Dictionary<byte, string>();
+        for (int i = 0; i < KeyLabels.Usages.Length && i < labels.Chars.Length; i++)
+        {
+            ushort c = labels.Chars[i];
+            if (c > 0x20 && c != 0x7F && !char.IsSurrogate((char)c)) d[KeyLabels.Usages[i]] = char.ToUpperInvariant((char)c).ToString();
+        }
+        _pcNames = d;
+    }
+
+    public static string UsageName(byte usage) =>
+        _pcNames is { } pc && pc.TryGetValue(usage, out var p) ? p
+        : Names.TryGetValue(usage, out var n) ? n : $"0x{usage:X2}";
 }

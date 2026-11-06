@@ -106,7 +106,8 @@ internal static class Program
         if (recovered > 0) log.Write($"released {recovered} inputs left held by a previous run");
         var marker = new HeldKeysMarker(markerPath);
         var watchdog = new Watchdog(engine, clock, marker, store,
-            networkPublicProbe: NetworkCategory.IsAnyConnectedPublic, log: log.Write);
+            networkPublicProbe: NetworkCategory.IsAnyConnectedPublic, log: log.Write,
+            keyLabelsProbe: KeyboardLayoutProbe.Read);
 
         engine.Start(clock.NowUs);
         if (pair) engine.OpenPairingWindow();
