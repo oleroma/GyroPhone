@@ -277,6 +277,10 @@ public sealed class DebugTrace
         for (int i = 0; i < 10; i++) d[(byte)(0x1E + i)] = digits[i].ToString();
         d[0x28] = "Enter"; d[0x29] = "Esc"; d[0x2A] = "Backspace"; d[0x2B] = "Tab"; d[0x2C] = "Space";
         for (int i = 1; i <= 12; i++) d[(byte)(0x3A + i - 1)] = "F" + i;
+        d[0x2D] = "-"; d[0x2E] = "="; d[0x2F] = "["; d[0x30] = "]"; d[0x31] = "\\"; d[0x33] = ";";
+        d[0x34] = "'"; d[0x35] = "`"; d[0x36] = ","; d[0x37] = "."; d[0x38] = "/"; d[0x39] = "Caps Lock";
+        d[0x64] = "Non-US \\";
+        for (int i = 13; i <= 24; i++) d[(byte)(0x68 + i - 13)] = "F" + i;
         d[0x4F] = "Right"; d[0x50] = "Left"; d[0x51] = "Down"; d[0x52] = "Up";
         d[0xE0] = "Left Ctrl"; d[0xE1] = "Left Shift"; d[0xE2] = "Left Alt"; d[0xE3] = "Left Win";
         d[0xE4] = "Right Ctrl"; d[0xE5] = "Right Shift"; d[0xE6] = "Right Alt"; d[0xE7] = "Right Win";
