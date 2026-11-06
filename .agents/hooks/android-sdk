@@ -3,6 +3,21 @@
 # The PC and CI already have one (ANDROID_HOME or local.properties), so they skip this.
 if [ -z "${ANDROID_HOME:-}${ANDROID_SDK_ROOT:-}" ] && [ ! -f local.properties ]; then
   export ANDROID_HOME="$HOME/android-sdk"
+  # Maven Central rate-limits the cloud's shared address (429), so cloud Gradle builds download
+  # from Google's mirror of Maven Central instead. The PC and CI keep using Maven Central.
+  mkdir -p "$HOME/.gradle/init.d"
+  cat > "$HOME/.gradle/init.d/central-mirror.gradle" <<'EOF'
+def mirror = 'https://maven-central.storage-download.googleapis.com/maven2/'
+def useMirror = { repos ->
+  repos.withType(MavenArtifactRepository).configureEach { repo ->
+    if (repo.url.toString().startsWith('https://repo.maven.apache.org/maven2')) repo.url = mirror
+  }
+}
+beforeSettings { settings ->
+  useMirror(settings.pluginManagement.repositories)
+  useMirror(settings.dependencyResolutionManagement.repositories)
+}
+EOF
   if [ ! -d "$ANDROID_HOME/platforms/$1" ]; then
     sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
     if [ ! -x "$sdkmanager" ]; then
