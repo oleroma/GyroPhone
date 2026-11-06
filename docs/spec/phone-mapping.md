@@ -81,7 +81,7 @@ Inputs that offer triggers (`Triggers.supports`): physical keys, touch buttons, 
 
 **Also ends on** (Toggle): **Tap** (touching this button or surface again), **Let go** (a Let go mapping firing), **Timer** (up to 60 s), **Next input** (once the next other key, mouse button or pad button has been pressed and let go: a sticky Shift), **Same keystroke** (this key or button pressed by any other mapping).
 
-**Advanced**: **Start delay**, **End delay**, **Hold at least** (each up to 2000 ms; Hold at least starts at 80 ms, so a quick tap stays down long enough for apps that check keys every few tens of ms, such as OBS hotkeys, which need a combo seen on two checks about 25-31 ms apart; set it lower or higher per mapping), and **Cycle**: the mappings of one input and set with Cycle on take turns, one per activation, in list order.
+**Advanced**: **Start delay**, **End delay**, **Hold time** (each up to 2000 ms; Hold time, the shortest the output lasts, starts at 80 ms and shows **Reset to 80 ms** once changed, so a quick tap stays down long enough for apps that check keys every few tens of ms, such as OBS hotkeys, which need a combo seen on two checks about 25-31 ms apart; set it lower or higher per mapping), and **Cycle**: the mappings of one input and set with Cycle on take turns, one per activation, in list order.
 
 A mapping with options runs through its own `core/.../engine/Shaper.kt`, which works out the activations from the source's level and the clock, then applies How, delays and ends. Every press lasts at least the minimum pulse, so a snapshot always shows it.
 

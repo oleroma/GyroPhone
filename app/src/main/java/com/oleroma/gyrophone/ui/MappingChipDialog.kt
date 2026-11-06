@@ -151,8 +151,12 @@ internal fun MappingChipDialog(
     }
 
     @Composable
-    fun msSlider(label: String, value: Int, onChange: (Int) -> Unit) {
-        Text("$label: " + if (value == 0) "off" else "$value ms", style = MaterialTheme.typography.labelLarge)
+    fun msSlider(label: String, value: Int, default: Int = 0, onChange: (Int) -> Unit) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("$label: " + if (value == 0) "off" else "$value ms", style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.weight(1f))
+            if (default != 0 && value != default) TextButton(onClick = { onChange(default) }) { Text("Reset to $default ms") }
+        }
         Slider(
             value = value.toFloat(),
             onValueChange = { onChange((it / 10f).roundToInt() * 10) },
@@ -230,9 +234,9 @@ internal fun MappingChipDialog(
                 }
                 if (advanced) {
                     msSlider("Start delay", start) { start = it }
-                    msSlider("Hold at least", minHold) { minHold = it }
+                    msSlider("Hold time", minHold, MapOptions.DEFAULT_MIN_HOLD_MS) { minHold = it }
                     msSlider("End delay", end) { end = it }
-                    hint("Start delay: it starts this much later. Hold at least: it lasts at least this long (80 ms by default, so apps that check keys now and then, like OBS hotkeys, see a quick tap). End delay: it lasts this much longer after you let go.")
+                    hint("Start delay: it starts this much later. Hold time: it lasts at least this long (80 ms by default, so apps that check keys now and then, like OBS hotkeys, see a quick tap). End delay: it lasts this much longer after you let go.")
                 }
                 TextButton(onClick = onRemove) { Text("Remove this mapping", color = colors.error) }
             }
