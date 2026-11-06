@@ -20,6 +20,7 @@ class WireCodecTest {
         assertEquals(32, Wire.sizeOf(PacketType.RUMBLE))
         assertEquals(94, Wire.sizeOf(PacketType.FOREGROUND))
         assertEquals(32, Wire.sizeOf(PacketType.HOST_BYE))
+        assertEquals(128, Wire.sizeOf(PacketType.KEY_LABELS))
         assertEquals(-1, Wire.sizeOf(0x40))
         for (t in 0..0xFF) assertTrue(Wire.sizeOf(t) <= Wire.MAX_DATAGRAM)
     }
@@ -101,6 +102,7 @@ class WireCodecTest {
             Rumble(255, 0), Foreground("game.exe"),
             LinkInfo(-1, 100, 1000, -90, 6, 2402, 5955, 1),
             HostStatus(7, 1000, 0, -1, -1, 0, 2, 31),
+            KeyLabels(0x04100410, IntArray(KeyLabels.USAGES.size) { 0x20 + it * 3 }),
         )
         for (p in packets) {
             val n = WireCodec.encodeSealedPlain(p, buf, 3)
@@ -108,6 +110,19 @@ class WireCodecTest {
             assertEquals(p, WireCodec.decodeSealedPlain(WireCodec.sealedTypeOf(p), buf, 3, n))
         }
         assertNull(WireCodec.decodeSealedPlain(PacketType.PING, buf, 0, 7))
+    }
+
+    @Test fun keyLabelsNameKeysByWhatThePcTypes() {
+        // Italian: the key above Enter (US backslash) types ù, the one left of 1 (US grave) types backslash.
+        val chars = IntArray(KeyLabels.USAGES.size)
+        chars[KeyLabels.USAGES.indexOf(0x04)] = 'a'.code
+        chars[KeyLabels.USAGES.indexOf(0x31)] = 'ù'.code
+        chars[KeyLabels.USAGES.indexOf(0x35)] = '\\'.code
+        val labels = KeyLabels(0x0410, chars).labels()
+        assertEquals("A", labels[0x04])
+        assertEquals("Ù", labels[0x31])
+        assertEquals("\\", labels[0x35])
+        assertNull(labels[0x05]) // types nothing: keeps its US name
     }
 
     @Test fun stateRoundTripKeepsEveryField() {

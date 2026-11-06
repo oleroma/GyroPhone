@@ -164,6 +164,7 @@ public sealed class HostEngine
     private readonly Dictionary<string, OverlayPose> _overlayPoses = [];
     private long _overlayRxUs = long.MinValue;
     private long _lastStatusUs;
+    private KeyLabels? _keyLabels;
     private int _rumbleNext; // (large << 8) | small, plus RumbleDirty while unsent
     private int _lastRumble;
     private long _lastRumbleUs = -RumbleMinIntervalUs;
@@ -894,6 +895,18 @@ public sealed class HostEngine
                 SendStatus(a, nowUs);
                 if (Debug.Enabled) Debug.SecondTick(DebugLinkLine(), nowUs);
             }
+        }
+    }
+
+    /// <summary>The PC keyboard layout's key labels from the watchdog's probe; sent with every HOST_STATUS, at once when they change.</summary>
+    public void SetKeyLabels(KeyLabels? labels)
+    {
+        lock (_lock)
+        {
+            if (labels == null || labels.SameAs(_keyLabels)) return;
+            _keyLabels = labels;
+            DebugTrace.SetLayout(labels);
+            if (_sessions.Active is { } a) SendStatus(a, _clock.NowUs);
         }
     }
 
@@ -1703,6 +1716,12 @@ public sealed class HostEngine
         WireCodec.EncodeHostStatus(new HostStatus(s.HighestRxSeq, _stats.RxPerSec, _stats.LossPermille,
             _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs, (byte)_settings.OutputMode, flags), p);
         s.SendSealed(PacketType.HostStatus, p, _sender);
+        if (_keyLabels is { } labels)
+        {
+            Span<byte> k = stackalloc byte[Wire.KeyLabelsPlain];
+            WireCodec.EncodeKeyLabels(labels, k);
+            s.SendSealed(PacketType.KeyLabels, k, _sender);
+        }
     }
 
     private void SendHostBye(HostSession s, byte reason)

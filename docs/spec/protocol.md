@@ -44,6 +44,7 @@ Sealed plaintext sizes:
 | MOTION | 0x29 | P→H | 120 | raw gyro and accelerometer for the PC's DualShock 4 or DualSense (below) |
 | RUMBLE | 0x32 | H→P | 4 | large u8, small u8 motor (the phone ignores it today) |
 | FOREGROUND | 0x33 | H→P | 66 | reserved, never sent |
+| KEY_LABELS | 0x34 | H→P | 100 | layout id u32, then a u16 character per character key (`KeyLabels.USAGES`: 0x04..0x27, 0x2D..0x31, 0x33..0x38, 0x64; 0 = types nothing): what each key types on the PC's current layout, sent with every HOST_STATUS. Older phones drop it as an unknown type |
 | BYE | 0x2F | P→H | 4 | reason: USER, TRANSPORT_SWITCH, SHUTDOWN, REKEY |
 | HOST_BYE | 0x3F | H→P | 4 | reason: EXIT, FORGOTTEN, REPLACED |
 

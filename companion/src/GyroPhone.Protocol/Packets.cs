@@ -55,3 +55,25 @@ public readonly record struct HostStatus(
 }
 
 public readonly record struct Rumble(byte Large, byte Small);
+
+/// <summary>
+/// KEY_LABELS: what each key of <see cref="Usages"/> types on the PC's current keyboard layout, one
+/// UTF-16 character each (0 = none). The phone sends key positions; it names its keys with these.
+/// </summary>
+public sealed record KeyLabels(uint Layout, ushort[] Chars)
+{
+    /// <summary>The character keys, in wire order: letters, digits, punctuation (no Non-US #, which Windows types as \), Non-US \.</summary>
+    public static readonly byte[] Usages = BuildUsages();
+
+    private static byte[] BuildUsages()
+    {
+        var u = new List<byte>();
+        for (int i = 0x04; i <= 0x27; i++) u.Add((byte)i);
+        for (int i = 0x2D; i <= 0x31; i++) u.Add((byte)i);
+        for (int i = 0x33; i <= 0x38; i++) u.Add((byte)i);
+        u.Add(0x64);
+        return u.ToArray();
+    }
+
+    public bool SameAs(KeyLabels? o) => o != null && o.Layout == Layout && o.Chars.AsSpan().SequenceEqual(Chars);
+}

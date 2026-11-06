@@ -56,7 +56,7 @@ object Describe {
     fun target(t: OutputTarget): String = when (t) {
         is OutputTarget.Pad -> "Gamepad ${t.button.label}"
         is OutputTarget.PadAxis -> "Gamepad ${t.axis}" + if (t.scale < 0) " (inverted)" else ""
-        is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage)) + keyMode(t.mode)
+        is OutputTarget.Key -> "Key " + HidUsage.labelOrHex(t.usage) + keyMode(t.mode)
         is OutputTarget.Mouse -> "Mouse ${t.button.name.lowercase()}"
         is OutputTarget.Wheel -> if (t.step > 0) "Wheel up" else "Wheel down"
         is OutputTarget.MouseAxis -> t.motion.label + if (t.scale < 0) ", reversed" else ""
@@ -146,7 +146,7 @@ object Describe {
             GamepadAxis.RT -> "RT"
         } + if (t.scale < 0) " inv" else ""
 
-        is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage)) + keyMode(t.mode)
+        is OutputTarget.Key -> "Key " + HidUsage.labelOrHex(t.usage) + keyMode(t.mode)
         is OutputTarget.Mouse -> when (t.button) {
             MouseButton.LEFT -> "Mouse L"
             MouseButton.RIGHT -> "Mouse R"

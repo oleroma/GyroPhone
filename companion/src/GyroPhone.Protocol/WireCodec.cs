@@ -400,4 +400,18 @@ public static class WireCodec
     }
 
     public static Rumble DecodeRumble(ReadOnlySpan<byte> b) => new(b[0], b[1]);
+
+    public static int EncodeKeyLabels(KeyLabels p, Span<byte> b)
+    {
+        Le.PutU32(b, 0, p.Layout);
+        for (int i = 0; i < KeyLabels.Usages.Length; i++) Le.PutU16(b, 4 + 2 * i, i < p.Chars.Length ? p.Chars[i] : (ushort)0);
+        return Wire.KeyLabelsPlain;
+    }
+
+    public static KeyLabels DecodeKeyLabels(ReadOnlySpan<byte> b)
+    {
+        var chars = new ushort[KeyLabels.Usages.Length];
+        for (int i = 0; i < chars.Length; i++) chars[i] = Le.U16(b, 4 + 2 * i);
+        return new KeyLabels(Le.U32(b, 0), chars);
+    }
 }

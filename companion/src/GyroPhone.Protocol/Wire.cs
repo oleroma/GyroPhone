@@ -47,6 +47,8 @@ public static class Wire
     public const int PongPlain = 24;
     public const int HostStatusPlain = 22;
     public const int RumblePlain = 4;
+    /// <summary>KEY_LABELS: u32 layout id, then a u16 character per <see cref="KeyLabels.Usages"/> key.</summary>
+    public static readonly int KeyLabelsPlain = 4 + 2 * KeyLabels.Usages.Length;
     public const int ForegroundPlain = 66;
     /// <summary>OVERLAY: the phone's pose, touches and presses for the phone overlay (<see cref="OverlayFrame"/>).</summary>
     public const int OverlayPlain = 152;

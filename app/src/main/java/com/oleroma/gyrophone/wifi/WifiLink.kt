@@ -11,6 +11,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import com.oleroma.gyrophone.core.engine.MappingEngine
+import com.oleroma.gyrophone.core.hid.HidUsage
 import com.oleroma.gyrophone.core.net.Announce
 import com.oleroma.gyrophone.core.net.AnnounceFlags
 import com.oleroma.gyrophone.core.net.ByeReason
@@ -22,6 +23,7 @@ import com.oleroma.gyrophone.core.net.EnrollResult
 import com.oleroma.gyrophone.core.net.HostFlags
 import com.oleroma.gyrophone.core.net.HostStatus
 import com.oleroma.gyrophone.core.net.HostStatusFlags
+import com.oleroma.gyrophone.core.net.KeyLabels
 import com.oleroma.gyrophone.core.net.KeyPairing
 import com.oleroma.gyrophone.core.net.KeyStatus
 import com.oleroma.gyrophone.core.net.KeyTakeover
@@ -149,6 +151,19 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     private val _autoConnect = MutableStateFlow(prefs.getBoolean(KEY_AUTO_CONNECT, true))
     /** Connect by key without a tap while GyroPhone is on screen (never from the background). */
     val autoConnect: StateFlow<Boolean> = _autoConnect
+
+    /** The last PC's KEY_LABELS, kept so key names follow its layout while no PC is connected. */
+    private var keyLabels: KeyLabels? = prefs.getString(KEY_PC_KEY_LABELS, null)?.let { stored ->
+        val v = stored.split(',').mapNotNull { it.toIntOrNull() }
+        if (v.size != 1 + KeyLabels.USAGES.size) null else KeyLabels(v[0], v.drop(1).toIntArray())
+    }.also { if (it != null) HidUsage.pcLabels = it.labels() }
+
+    private fun onKeyLabels(p: KeyLabels) {
+        if (p == keyLabels) return
+        keyLabels = p
+        HidUsage.pcLabels = p.labels()
+        prefs.edit().putString(KEY_PC_KEY_LABELS, (listOf(p.layout) + p.chars.toList()).joinToString(",")).apply()
+    }
 
     fun setAutoConnect(on: Boolean) {
         prefs.edit().putBoolean(KEY_AUTO_CONNECT, on).apply()
@@ -958,6 +973,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             is PhoneSessionFlow.Out.Received -> when (val p = o.packet) {
                 is Pong -> onPong(p)
                 is HostStatus -> hostStatus = p
+                is KeyLabels -> onKeyLabels(p)
                 else -> Unit // RUMBLE is ignored in v1; ANNOUNCE was handled already
             }
         }
@@ -1233,6 +1249,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         private const val UNKNOWN_LATENCY = -1 // 0xFFFFFFFF
         private const val MAX_KEY_DISCOVERS = 4
         private const val KEY_AUTO_CONNECT = "keyAutoConnect"
+        private const val KEY_PC_KEY_LABELS = "pcKeyLabels"
         private const val KEY_RESCAN_MS = 2000L
         /** How often USB tethering is looked for, and the PC on it. */
         private const val USB_CHECK_MS = 1000L

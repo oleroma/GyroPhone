@@ -259,6 +259,7 @@ object WireCodec {
         is Pong -> PacketType.PONG
         is HostStatus -> PacketType.HOST_STATUS
         is Rumble -> PacketType.RUMBLE
+        is KeyLabels -> PacketType.KEY_LABELS
         is Foreground -> PacketType.FOREGROUND
         is HostBye -> PacketType.HOST_BYE
         else -> -1
@@ -296,6 +297,10 @@ object WireCodec {
                 out.putU8(off + 21, p.flags)
             }
             is Rumble -> { out.putU8(off, p.large); out.putU8(off + 1, p.small) }
+            is KeyLabels -> {
+                out.putU32(off, p.layout)
+                for (i in KeyLabels.USAGES.indices) out.putU16(off + 4 + 2 * i, p.chars.getOrElse(i) { 0 })
+            }
             is Foreground -> {
                 // Layout: nameLen u8, reserved u8, exe[64].
                 val bytes = utf8Truncated(p.exe, Wire.FOREGROUND_EXE_MAX)
@@ -330,6 +335,7 @@ object WireCodec {
                 buf.getI32(off + 16), buf.getU8(off + 20), buf.getU8(off + 21),
             )
             PacketType.RUMBLE -> Rumble(buf.getU8(off), buf.getU8(off + 1))
+            PacketType.KEY_LABELS -> KeyLabels(buf.getI32(off), IntArray(KeyLabels.USAGES.size) { buf.getU16(off + 4 + 2 * it) })
             PacketType.FOREGROUND -> {
                 val n = buf.getU8(off)
                 if (n > Wire.FOREGROUND_EXE_MAX) null else Foreground(String(buf, off + 2, n, Charsets.UTF_8))

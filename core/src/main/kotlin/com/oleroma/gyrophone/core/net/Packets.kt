@@ -94,6 +94,28 @@ data class HostStatus(
 
 data class Rumble(val large: Int, val small: Int) : WirePacket
 
+/**
+ * What each key of [USAGES] types on the PC's current keyboard layout: one UTF-16 character each
+ * (0 = none), as Windows maps the key's scan code there. [layout]: the layout's id, for logs.
+ */
+class KeyLabels(val layout: Int, val chars: IntArray) : WirePacket {
+    /** The labels by usage: the character, upper case; keys that type nothing printable are left out. */
+    fun labels(): Map<Int, String> = buildMap {
+        USAGES.forEachIndexed { i, u ->
+            val c = chars.getOrElse(i) { 0 }
+            if (c > 0x20 && c != 0x7F && c !in 0xD800..0xDFFF) put(u, c.toChar().uppercase())
+        }
+    }
+
+    override fun equals(other: Any?) = other is KeyLabels && layout == other.layout && chars.contentEquals(other.chars)
+    override fun hashCode() = 31 * layout + chars.contentHashCode()
+
+    companion object {
+        /** The character keys, in wire order: letters, digits, punctuation (no Non-US #, which is \\ on Windows), Non-US \\. */
+        val USAGES: List<Int> = (0x04..0x27) + (0x2D..0x31) + (0x33..0x38) + 0x64
+    }
+}
+
 data class HostBye(val reason: Int) : WirePacket
 
 /** Reserved in v1: the host does not send it yet. */

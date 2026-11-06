@@ -45,6 +45,8 @@ object Wire {
     const val PONG_PLAIN = 24
     const val HOST_STATUS_PLAIN = 22
     const val RUMBLE_PLAIN = 4
+    /** KEY_LABELS: u32 layout id, then a u16 character per [KeyLabels.USAGES] key. */
+    val KEY_LABELS_PLAIN = 4 + 2 * KeyLabels.USAGES.size
     const val FOREGROUND_PLAIN = 66
     /** OVERLAY: the phone's pose, touches and presses for the PC's phone overlay ([OverlayFeed]). */
     const val OVERLAY_PLAIN = 152
@@ -141,6 +143,7 @@ object Wire {
         PacketType.PONG -> PONG_PLAIN
         PacketType.HOST_STATUS -> HOST_STATUS_PLAIN
         PacketType.RUMBLE -> RUMBLE_PLAIN
+        PacketType.KEY_LABELS -> KEY_LABELS_PLAIN
         PacketType.FOREGROUND -> FOREGROUND_PLAIN
         PacketType.OVERLAY -> OVERLAY_PLAIN
         PacketType.OVERLAY_LAYOUT -> OVERLAY_LAYOUT_PLAIN
@@ -186,6 +189,8 @@ object PacketType {
     const val HOST_STATUS = 0x31
     const val RUMBLE = 0x32
     const val FOREGROUND = 0x33
+    /** Once a second with HOST_STATUS: what each character key types on the PC's keyboard layout ([KeyLabels]). */
+    const val KEY_LABELS = 0x34
     const val HOST_BYE = 0x3F
     const val ERROR = 0x7F
 

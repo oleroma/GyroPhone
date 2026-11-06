@@ -232,7 +232,8 @@ class MappingEngineTest {
     }
 
     @Test fun touchpadQuickDoubleTapIsTwoClicksAtTheSecondLift() {
-        assertEquals(listOf("0:0", "170:1", "210:0", "250:1", "290:0"), leftEdges(800, 0L to down, 60L to up, 120L to down, 170L to up))
+        // Each click lasts Hold time (80 ms by default).
+        assertEquals(listOf("0:0", "170:1", "250:0", "330:1", "410:0"), leftEdges(800, 0L to down, 60L to up, 120L to down, 170L to up))
     }
 
     @Test fun touchpadTapThenHoldDragsFromTheTapTime() {
@@ -262,7 +263,7 @@ class MappingEngineTest {
         var now = 0L
         val e = dragging({ now }) { now = it }
         e.touchpadCancel()
-        now = 200 * MS
+        now = 230 * MS // past the drag's 80 ms Hold time
         assertEquals(0, e.snapshot().mouse.buttons)
     }
 

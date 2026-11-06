@@ -48,6 +48,8 @@ One input can press several outputs, and several inputs can press one output. Th
 
 The editor's target picker (`ui/BindingEditor.kt`) groups these, has a search box, and can capture a key: "Press a key on a keyboard".
 
+**Key names follow the PC.** A key output is a key position (a HID usage), and the PC turns it into a character with its own keyboard layout. So the PC companion sends what each character key types on its current layout (KEY_LABELS, see protocol.md), and the phone names keys by that (`HidUsage.label`): on an Italian layout the key above Enter shows as "Ù" and the one left of 1 as "\". The last PC's names are kept while none is connected; before any PC has sent them, keys show their US names. Changing the PC's layout renames keys; mappings keep their key positions. The companion's Debug window names keys the same way.
+
 ## When, How and Where
 
 Each mapping chip opens its own settings (`ui/MappingChipDialog.kt`): **Where**, **When**, **How**, "Also ends on" and Advanced.
@@ -81,7 +83,7 @@ Inputs that offer triggers (`Triggers.supports`): physical keys, touch buttons, 
 
 **Also ends on** (Toggle): **Tap** (touching this button or surface again), **Let go** (a Let go mapping firing), **Timer** (up to 60 s), **Next input** (once the next other key, mouse button or pad button has been pressed and let go: a sticky Shift), **Same keystroke** (this key or button pressed by any other mapping).
 
-**Advanced**: **Start delay**, **End delay**, **Hold at least** (each up to 2000 ms), and **Cycle**: the mappings of one input and set with Cycle on take turns, one per activation, in list order.
+**Advanced**: **Start delay**, **End delay**, **Hold time** (each up to 2000 ms; Hold time, the shortest the output lasts, starts at 80 ms and shows **Reset to 80 ms** once changed, so a quick tap stays down long enough for apps that check keys every few tens of ms, such as OBS hotkeys, which need a combo seen on two checks about 25-31 ms apart; set it lower or higher per mapping), and **Cycle**: the mappings of one input and set with Cycle on take turns, one per activation, in list order.
 
 A mapping with options runs through its own `core/.../engine/Shaper.kt`, which works out the activations from the source's level and the clock, then applies How, delays and ends. Every press lasts at least the minimum pulse, so a snapshot always shows it.
 

@@ -38,6 +38,8 @@ public static class PacketType
     public const byte HostStatus = 0x31;
     public const byte Rumble = 0x32;
     public const byte Foreground = 0x33;
+    /// <summary>Host to phone, with every HOST_STATUS: what each character key types on the PC's keyboard layout (<see cref="KeyLabels"/>).</summary>
+    public const byte KeyLabels = 0x34;
     public const byte HostBye = 0x3F;
     public const byte Error = 0x7F;
 
@@ -82,6 +84,7 @@ public static class PacketType
         HostStatus => Wire.HostStatusPlain,
         Rumble => Wire.RumblePlain,
         Foreground => Wire.ForegroundPlain,
+        KeyLabels => Wire.KeyLabelsPlain,
         Overlay => Wire.OverlayPlain,
         OverlayLayout => Wire.OverlayLayoutPlain,
         HostBye => Wire.ByePlain,
