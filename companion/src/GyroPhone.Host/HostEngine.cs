@@ -116,8 +116,13 @@ public sealed class HostEngine
     private readonly StateFrame _pending = new();
     private bool _hasPending;
     private readonly MouseDeltaTracker _mouse = new();
-    /// <summary>Motion since the last Flush; both wheels in 1/120 notch.</summary>
-    private int _accDx, _accDy, _accWheel, _accHWheel;
+    /// <summary>Wheel motion since the last Flush, both in 1/120 notch.</summary>
+    private int _accWheel, _accHWheel;
+    /// <summary>Mouse motion since the last Flush; a lost or late stretch glides out instead of jumping.</summary>
+    private readonly MouseCatchUp _catchUp = new();
+    private uint _lastStatePhoneUs;
+    private bool _hasStatePhone;
+    private long _lostAtState;
 
     // injected state
     private readonly byte[] _injectedKeys = new byte[StateFrame.KeyBitmapSize];
@@ -529,8 +534,14 @@ public sealed class HostEngine
         _releasedForSilence = false;
         _mouse.Apply(_rxFrame.MouseTotalX, _rxFrame.MouseTotalY, _rxFrame.WheelTotal, _rxFrame.HWheelTotal,
             _rxFrame.Hires, nowUs, out int dx, out int dy, out int dw, out int dh);
-        _accDx += dx;
-        _accDy += dy;
+        // Packets lost since the STATE before (seq is shared by every type) mean this delta
+        // also carries their motion, over the phone time since that STATE.
+        long span = _hasStatePhone ? unchecked((int)(_rxFrame.PhoneTimeUs - _lastStatePhoneUs)) : 0;
+        bool lost = _hasStatePhone && _stats.TotalLost != _lostAtState;
+        _lastStatePhoneUs = _rxFrame.PhoneTimeUs;
+        _lostAtState = _stats.TotalLost;
+        _hasStatePhone = true;
+        _catchUp.Add(dx, dy, span, lost);
         // Plain STATE counts whole notches.
         _accWheel += _rxFrame.Hires ? dw : dw * InjectEvent.WheelDelta;
         _accHWheel += dh;
@@ -613,7 +624,9 @@ public sealed class HostEngine
         // The phone restarts its totals and gyro samples at 0 for a new session; the PC controller's toggle stays.
         _mouse.Reset();
         _pcGyro.Rebase();
-        _accDx = _accDy = _accWheel = _accHWheel = 0;
+        _accWheel = _accHWheel = 0;
+        _catchUp.Clear();
+        _hasStatePhone = false;
         _stats.Reset();
         _releasedForSilence = false;
         _hasPending = false;
@@ -632,6 +645,12 @@ public sealed class HostEngine
         _events.StateChanged();
     }
 
+    /// <summary>A lost or late stretch of mouse motion is still gliding out: <see cref="Flush(long)"/> should run within a millisecond, even without packets.</summary>
+    public bool MouseGliding
+    {
+        get { lock (_lock) return _catchUp.Gliding; }
+    }
+
     /// <summary>Injects the newest STATE received since the last Flush: pad only when the mapped frame changed, SendInput only with events.</summary>
     public void Flush(long nowUs) => Flush(nowUs, edge: false);
 
@@ -641,15 +660,26 @@ public sealed class HostEngine
         lock (_lock)
         {
             SendPendingRumble(nowUs);
-            if (!_hasPending) return;
+            // Without a new STATE, only a gliding catch-up has something to move.
+            bool frame = _hasPending;
+            if (!frame && !_catchUp.Gliding) return;
             _hasPending = false;
-            int dx = _accDx, dy = _accDy, dw = _accWheel, dh = _accHWheel;
-            _accDx = _accDy = _accWheel = _accHWheel = 0;
-            if (_paused || _locked) return; // baseline already updated, nothing injected
+            _catchUp.Take(nowUs, out int dx, out int dy);
+            int dw = _accWheel, dh = _accHWheel;
+            _accWheel = _accHWheel = 0;
+            if (_paused || _locked)
+            {
+                _catchUp.Clear();
+                return; // baseline already updated, nothing injected
+            }
+            if (!frame && dx == 0 && dy == 0) return;
 
-            SubmitPad(_pending, nowUs);
-            NotePadPresses(nowUs);
-            if (edge) HoldPadEdge(nowUs);
+            if (frame)
+            {
+                SubmitPad(_pending, nowUs);
+                NotePadPresses(nowUs);
+                if (edge) HoldPadEdge(nowUs);
+            }
 
             bool blocked = _elevatedForeground;
             Span<byte> before = stackalloc byte[StateFrame.KeyBitmapSize];
@@ -683,7 +713,7 @@ public sealed class HostEngine
                     }
                 }
             }
-            if (_hasPendingSample)
+            if (frame && _hasPendingSample)
             {
                 _hasPendingSample = false;
                 LatencySampleHook?.Invoke(_pendingSample with { InjectUs = _clock.NowUs });
@@ -1519,6 +1549,7 @@ public sealed class HostEngine
     private void ReleaseAllLocked()
     {
         _hasPending = false;
+        _catchUp.Clear();
         _padHoldButtons = 0;
         _padHoldHat = StateFrame.HatCenter;
         _padHoldUntilUs = long.MinValue;

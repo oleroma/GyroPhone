@@ -48,7 +48,7 @@ Sealed plaintext sizes:
 | BYE | 0x2F | P→H | 4 | reason: USER, TRANSPORT_SWITCH, SHUTDOWN, REKEY |
 | HOST_BYE | 0x3F | H→P | 4 | reason: EXIT, FORGOTTEN, REPLACED |
 
-STATE's mouse and wheel values are **cumulative wrapping totals**, so a lost packet loses no motion; the PC injects the difference (each step capped at 16384). STATE flags: GYRO_ACTIVE 1, REPEAT 2, KEEPALIVE 4.
+STATE's mouse and wheel values are **cumulative wrapping totals**, so a lost packet loses no motion; the PC injects the difference (each step capped at 16384). A lost or late stretch of mouse motion is not injected as one jump: the newest motion goes out at once, and older motion covering more than 4 ms of phone time (lost packets, found by gaps in seq, or a late burst) glides out over half the time it covers, at most 16 ms (`MouseCatchUp`). STATE flags: GYRO_ACTIVE 1, REPEAT 2, KEEPALIVE 4.
 
 **Gyro tail** (STATE_GYRO): flags, count, seq u16, time u32, 8 samples × 9 bytes, 3 × i64 per-axis running totals, then the 181-byte config block: sensitivities f32 × 3, glide f32 × 3, glide bits, route count, tightening, smoothing, 12 routes × 6 bytes @34, 3 curves × 25 bytes @106. Layout in `PcGyroFeed.encodeTail` / `PcGyroTail.cs`.
 
