@@ -216,7 +216,8 @@ internal fun CapsuleRow(
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     val choices = listOf(
-                        "Blank (touchpad only)" to BuiltinProfiles.blankWorkspace("Workspace ${profile.workspaces.size + 1}"),
+                        "Blank" to BuiltinProfiles.blankWorkspace("Workspace ${profile.workspaces.size + 1}"),
+                        "Windows touchpad" to BuiltinProfiles.touchpadWorkspace(),
                     ) + BuiltinProfiles.presets.map { it.name to it }
                     for ((label, w) in choices) {
                         Text(

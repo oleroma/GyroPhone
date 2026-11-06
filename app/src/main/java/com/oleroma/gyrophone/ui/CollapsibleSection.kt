@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -35,6 +38,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -173,7 +177,8 @@ internal val LocalSectionsCollapsed = compositionLocalOf { false }
 /**
  * [items] in the order kept in the UI prefs under [orderKey] (new ones where [items] has them).
  * Long press a category's header and drag it up or down to move it; while dragging every
- * category shows closed, and the order is kept on drop.
+ * category shows closed, the page scrolls when the finger nears its top or bottom edge (faster
+ * closer to it), and the order is kept on drop.
  */
 @Composable
 internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, items: List<SectionItem>) {
@@ -223,6 +228,28 @@ internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, item
             row.removeAt(at); row.add(at + 1, id)
         } else if (at > 0 && mid < middle(row[at - 1])) {
             row.removeAt(at); row.add(at - 1, id)
+        }
+    }
+
+    // Near the page's top or bottom edge the dragged category scrolls the page, faster closer to it.
+    val page = LocalSettingsScroll.current
+    val density = LocalDensity.current
+    LaunchedEffect(dragged, page) {
+        val id = dragged ?: return@LaunchedEffect
+        if (page == null) return@LaunchedEffect
+        val edge = with(density) { 56.dp.toPx() }
+        val maxStep = with(density) { 14.dp.toPx() }
+        while (true) {
+            withFrameNanos { }
+            val v = page.viewport
+            if (v.height <= 0f) continue
+            val y = fingerY
+            val step = when {
+                y < v.top + edge -> -maxStep * ((v.top + edge - y) / edge).coerceIn(0f, 1f)
+                y > v.bottom - edge -> maxStep * ((y - (v.bottom - edge)) / edge).coerceIn(0f, 1f)
+                else -> 0f
+            }
+            if (step != 0f && page.state.scrollBy(step) != 0f) reorder(id)
         }
     }
 

@@ -47,6 +47,8 @@ import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 internal class MappingSettings(
     val action: (BindableInput) -> (@Composable () -> Unit)?,
     val shared: (@Composable () -> Unit)?,
+    /** Fixed above [shared] on its page (it doesn't scroll): the workspace's rename, duplicate, delete. */
+    val sharedTop: (@Composable () -> Unit)? = null,
     /** A touch control's shared settings as categories, for its one settings page; [itemsHeader] goes above them (its Reset all). */
     val items: List<SectionItem> = emptyList(),
     val itemsHeader: (@Composable () -> Unit)? = null,

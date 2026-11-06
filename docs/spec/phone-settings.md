@@ -4,7 +4,7 @@ Where every setting lives and its default. How workspace settings inherit is in 
 
 ## How settings pages work
 
-Every settings page (`ui/SettingsLayout.kt`) is a list of **categories** that fold open and closed; a long press on a category's name drags it to a new place. Open state and order are remembered. A **search** field on top filters every setting by its words (every word must match); on the Settings page it searches both tabs at once, each under its name. Values a level sets itself are highlighted with **↺** to follow the parent again.
+Every settings page (`ui/SettingsLayout.kt`) is a list of **categories** that fold open and closed; a long press on a category's name drags it to a new place (every category shows closed meanwhile, and the page scrolls when the finger nears its top or bottom edge). Open state and order are remembered. A **search** field on top filters every setting by its words (every word must match); on the Settings page it searches both tabs at once, each under its name. Values a level sets itself are highlighted with **↺** to follow the parent again.
 
 ## Settings (the pad's Settings capsule)
 
@@ -35,11 +35,10 @@ The Defaults' workspace settings (the same categories as a workspace's, below), 
 
 ## Workspace settings
 
-Opened by ⚙ in edit mode, the touchpad's Settings in its mapping editor, or the Settings menu (`ui/PadMenu.kt` `WorkspaceSettingsPage`, `ui/WorkspaceSettingsList.kt`). Chips on top pick **Base** or a layer: a layer's page shows only what a layer may set.
+Opened by ⚙ in edit mode, the touchpad's Settings in its mapping editor, or the Settings menu (`ui/PadMenu.kt` `WorkspaceSettingsPage`, `ui/WorkspaceSettingsList.kt`). **Rename, Duplicate, Delete** (not the last) and **Copy mappings from…** sit fixed at the top, outside the scrolling list: in the title row in landscape, under the title in portrait (`WorkspaceTopBar`). Chips on top of the list pick **Base** or a layer: a layer's page shows only what a layer may set.
 
 | Category | Contents | Defaults |
 |---|---|---|
-| Workspace | Rename, Duplicate, Delete, Copy mappings from… | — |
 | Gyro | Gyro to mouse (Ratchet enables / Ratchet disables / Gyro off), Gyro space (Local / World / Player), Game (preset game + in-game sensitivity, or counts per 360, Measure), Sensitivity (per axis via ⚙, exact or × Parent), Acceleration curve (Off, Light, Strong, custom; by this axis or the whole phone), Inertia (Smooth / Linear) and Glide, PC pad yaw / pitch / roll (the phone axis each DualShock 4 or DualSense axis follows, or None, and Invert; workspace and Defaults only) | Ratchet enables, Local, no game, 16 counts/°, Off, inertia off, 325 ms, pad yaw = Yaw, pitch = Pitch, roll = Roll |
 | Tilt & shake | Tilt range, Tilt deadzone (per axis), Shake strength | 30°, off, 14 m/s² |
 | Gyro calibration (Base only) | Calibrate, Clear | not calibrated |

@@ -12,7 +12,7 @@ What the person sees and touches: the pad, its top row, the ← / → corners, e
 
 `ui/CapsuleRow.kt`, shown in play mode when not in fullscreen:
 
-- **+** adds a workspace at the front (preset or blank, see [Workspaces](phone-workspaces.md)).
+- **+** adds a workspace at the front (Blank, Windows touchpad or a preset, see [Workspaces](phone-workspaces.md)).
 - One capsule per **workspace**: tap to switch; tap the current one to open its edit mode.
 - **Controller** (the device screens, [Controllers](phone-controllers.md)), **Settings**, **Connection** (shows the link state).
 
@@ -51,7 +51,7 @@ New buttons start at 14 % of the short side, sticks 30 %.
 
 ## Mapping editor
 
-`ui/ControlMappingScreen.kt`, full screen, for a touch control, the touchpad (the "Workspace" stand-in), the Defaults' mappings, or a physical device control. Its action **cards** (one per input, with their targets as chips) and a **library of targets** share the screen with a draggable divider. Tap a card, then a target to add it; or long-press and drag a target onto a card, a chip to another card, or back to the library to remove it. Cards reorder by their ⠿ handle. A chip opens its options (`ui/MappingChipDialog.kt`, `ui/ActionSettings.kt`): When, How, Where, Also ends on, delays, Cycle, scale, haptic feel. **Presets** fills in Windows touchpad or Gyro mouse. Layer chips on top pick Base or a layer. Inherited mappings show faded; ✕, ↺, Reset all and Clear all work as in [Workspaces](phone-workspaces.md). **Settings** opens the control's settings (`ui/ControlSettingsScreen.kt`: Button (duplicate, save to library, delete), look (label, shape, size, layer, opacity), layers (follow layers), then the settings its actions share: touch surface, stick, gyro while held). Every change can be undone.
+`ui/ControlMappingScreen.kt`, full screen, for a touch control, the touchpad (the "Workspace" stand-in), the Defaults' mappings, or a physical device control. Its action **cards** (one per input, with their targets as chips) and a **library of targets** share the screen with a draggable divider. Tap a card, then a target to add it; or long-press and drag a target onto a card, a chip to another card, or back to the library to remove it. Cards reorder by their ⠿ handle. A chip opens its options (`ui/MappingChipDialog.kt`, `ui/ActionSettings.kt`): When, How, Where, Also ends on, delays, Cycle, scale, haptic feel. **Presets** fills in Windows touchpad or Gyro mouse. Layer chips on top pick Base or a layer. Inherited mappings show faded until the card maps anything itself; a faded chip dragged onto the library is removed (the card then overrides them); ✕, ↺, Reset all and Clear all work as in [Workspaces](phone-workspaces.md). **Settings** opens the control's settings (`ui/ControlSettingsScreen.kt`: Button (duplicate, save to library, delete), look (label, shape, size, layer, opacity), layers (follow layers), then the settings its actions share: touch surface, stick, gyro while held). Every change can be undone.
 
 ## What the pad shows
 

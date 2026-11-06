@@ -318,8 +318,12 @@ object BuiltinProfiles {
         w.copy(mappings = Inheritance.fill(w.mappings, Bindings.defaultTouchpadMappings(TouchpadSettings()) + Bindings.gyroMouseMappings()))
     }
 
-    /** An empty workspace: touchpad only, no controls, no pads. */
+    /** An empty workspace: no controls, no pads, no mappings of its own (it follows the Defaults'). */
     fun blankWorkspace(name: String = "Workspace") = Workspace(id = "ws", name = name, gyro = gyro(GyroMode.OFF))
+
+    /** A blank workspace whose touchpad works like a Windows one ("Windows touchpad" preset). */
+    fun touchpadWorkspace(name: String = "Windows touchpad") =
+        blankWorkspace(name).copy(mappings = Bindings.defaultTouchpadMappings(TouchpadSettings()))
 
     /**
      * A new profile with the three preset workspaces, their pad mappings as device presets they
@@ -327,7 +331,7 @@ object BuiltinProfiles {
      */
     fun newProfile(id: String, name: String): Profile {
         val empty = Profile(id = id, name = name, workspaces = emptyList())
-        return WorkspaceMappings.settle(empty, empty.copy(workspaces = presets), null)
+        return WorkspaceMappings.settle(empty, empty.copy(workspaces = presets))
     }
 
     /** The profile a fresh install starts in: Controller, WASD and Keyboard workspaces. */

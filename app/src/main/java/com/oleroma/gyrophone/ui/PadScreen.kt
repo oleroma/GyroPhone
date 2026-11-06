@@ -2424,8 +2424,12 @@ fun PadScreen(
                 }
                 // The workspace's settings page: edit mode's ⚙ and the touchpad editor's Settings.
                 val workspacePage: @Composable () -> Unit = {
-                    WorkspaceSettingsPage(
-                        runtime, d, editIndex, mapSet, { mapSet = it },
+                    WorkspaceSettingsPage(runtime, d, editIndex, mapSet, { mapSet = it }, onWorkspaceChange = { change -> editWorkspace(change) })
+                }
+                // Rename, duplicate, delete and copy: fixed above the page.
+                val workspaceTop: @Composable () -> Unit = {
+                    WorkspaceTopBar(
+                        runtime, d, editIndex,
                         onProfileChange = { p, at ->
                             val deleted = p.workspaces.size < d.workspaces.size
                             draft = p
@@ -2440,7 +2444,7 @@ fun PadScreen(
                     )
                 }
                 if (menu != EditMenu.MAPPING) {
-                    SettingsDialog(title = ws.name, subtitle = "Workspace settings", onClose = close) { workspacePage() }
+                    SettingsDialog(title = ws.name, subtitle = "Workspace settings", onClose = close, top = workspaceTop) { workspacePage() }
                 } else {
                     // Its settings are the workspace's: the editor's Settings shows them.
                     ControlMappingScreen(
@@ -2462,7 +2466,7 @@ fun PadScreen(
                         },
                         // ⚙ edits the settings of the layer picked in the set bar.
                         settings = touchpadSettings(runtime, setLevel(ws, d.defaults, mapSet) { change -> editWorkspace(change) })
-                            .let { t -> MappingSettings(t.action, shared = workspacePage) },
+                            .let { t -> MappingSettings(t.action, shared = workspacePage, sharedTop = workspaceTop) },
                         // Base takes the Defaults' mappings of what it does not map; a layer shows Base's greyed.
                         inherited = if (mapSet == MappingSet.BASE || ws.sets.none { s -> s.id == mapSet }) {
                             Inheritance.defaults(d.defaults)
