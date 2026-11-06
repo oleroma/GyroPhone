@@ -62,6 +62,7 @@ internal fun AccelCurveSetting(
     hint: String,
     perAxis: Boolean = false,
     axis: MotionAxis? = null,
+    children: ChildInfo? = null,
     onSet: (GyroCurve) -> Unit,
 ) {
     var draft by remember(key, curve) { mutableStateOf(curve) }
@@ -69,7 +70,7 @@ internal fun AccelCurveSetting(
     val counts = g.gameCountsPer360
     fun shown(gain: Float): String = if (counts > 0f) "%.2f RWS".format(GameSens.rws(sens * gain, counts)) else "%.1f".format(sens * gain)
 
-    OverrideRow(title, overridden, onReset, hint) {
+    OverrideRow(title, overridden, onReset, hint, children = children) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FilterChip(selected = draft.isOff, onClick = { onSet(GyroCurve.OFF) }, label = { Text("Off") })
             for ((name, p) in PRESETS) {
