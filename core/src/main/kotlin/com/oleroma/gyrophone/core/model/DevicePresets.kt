@@ -581,6 +581,66 @@ object PhysicalLayouts {
         )
     }
 
+    // The handles drawing, in handle heights: a handle on each side of the phone (as the companion's
+    // overlay draws them), the bumper and trigger above each handle, the back buttons and Home below.
+    /** Its box: width and height in handle heights. */
+    const val HANDLES_W = 3f
+    const val HANDLES_H = 1.52f
+    /** Each handle's width; the phone fills the rest between them. */
+    const val HANDLE_W = 0.5f
+    /** Where the handles and the phone start, down from the box's top. */
+    const val HANDLES_TOP = 0.36f
+
+    /**
+     * Every controller control in one drawing, laid out on the handles: on the left handle the stick
+     * above the D-pad, on the right the face buttons above the stick, View and Menu in the handles'
+     * inner top corners; above each handle its trigger, then its bumper, the same size; under each
+     * handle its two back buttons, and Home under the phone.
+     */
+    val controllerHandles: ControllerDiagram = run {
+        val all = (controllerFront.controls + controllerBack.controls).associateBy { it.id }
+        val t = HANDLES_TOP
+        val left = HANDLE_W / 2
+        val right = HANDLES_W - HANDLE_W / 2
+        // A control centred at (x, y), w by h, all in handle heights.
+        fun at(id: String, x: Float, y: Float, w: Float, h: Float = w) =
+            all.getValue(id).copy(x = x / HANDLES_W, y = y / HANDLES_H, w = w / HANDLES_W, h = h / HANDLES_H)
+        val stick = 0.27f
+        val key = 0.125f
+        val gap = 0.125f // from a cluster's centre to each of its keys
+        val bar = HANDLE_W - 0.04f
+        val barH = 0.13f
+        val small = 0.12f
+        val paddle = 0.2f
+        val bottom = t + 1f + 0.03f + 0.06f
+        ControllerDiagram(
+            "Controller", DiagramStyle.XBOX, HANDLES_W / HANDLES_H,
+            listOf(
+                at("lt", left, 0.02f + barH / 2, bar, barH),
+                at("lb", left, 0.02f + barH * 1.5f + 0.04f, bar, barH),
+                at("rt", right, 0.02f + barH / 2, bar, barH),
+                at("rb", right, 0.02f + barH * 1.5f + 0.04f, bar, barH),
+                at("ls", left, t + 0.38f, stick),
+                at("up", left, t + 0.76f - gap, key),
+                at("down", left, t + 0.76f + gap, key),
+                at("left", left - gap, t + 0.76f, key),
+                at("right", left + gap, t + 0.76f, key),
+                at("y", right, t + 0.38f - gap, key),
+                at("a", right, t + 0.38f + gap, key),
+                at("x", right - gap, t + 0.38f, key),
+                at("b", right + gap, t + 0.38f, key),
+                at("rs", right, t + 0.76f, stick),
+                at("select", HANDLE_W - 0.09f, t + 0.1f, small),
+                at("start", HANDLES_W - HANDLE_W + 0.09f, t + 0.1f, small),
+                at("p3", left - 0.115f, bottom, paddle, 0.12f),
+                at("p4", left + 0.115f, bottom, paddle, 0.12f),
+                at("p2", right - 0.115f, bottom, paddle, 0.12f),
+                at("p1", right + 0.115f, bottom, paddle, 0.12f),
+                at("home", HANDLES_W / 2, bottom, small),
+            ),
+        )
+    }
+
     // Android key codes of a full keyboard.
     private fun letter(c: Char) = KeyCell(29 + (c - 'a'), c.uppercase())
     private fun gap(width: Float) = KeyCell(null, "", width)

@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -51,7 +52,6 @@ import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.max
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.Bindings
-import com.oleroma.gyrophone.core.model.ControllerDiagram
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.DevicePreset
 import com.oleroma.gyrophone.core.model.DevicePresets
@@ -160,19 +160,7 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
                                 val keys = PhysicalLayouts.paddles[c.id]
                                 keys == null || controllers.isEmpty() || controllers.any { p -> p.keys.isEmpty() || p.keys.any { it in keys } }
                             }
-                            BoxWithConstraints(Modifier.fillMaxSize()) {
-                                if (maxWidth > maxHeight) {
-                                    Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        DiagramView(PhysicalLayouts.controllerFront, board, has, Modifier.weight(1f).fillMaxSize())
-                                        DiagramView(PhysicalLayouts.controllerBack, board, has, Modifier.weight(1f).fillMaxSize())
-                                    }
-                                } else {
-                                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        DiagramView(PhysicalLayouts.controllerFront, board, has, Modifier.weight(1f).fillMaxSize())
-                                        DiagramView(PhysicalLayouts.controllerBack, board, has, Modifier.weight(1f).fillMaxSize())
-                                    }
-                                }
-                            }
+                            HandlesView(board, has)
                         }
                         PhysicalDevice.KEYBOARD -> KeyboardView(board)
                         PhysicalDevice.MOUSE -> MouseView(board)
@@ -369,41 +357,6 @@ private fun PresetMenu(runtime: GamepadRuntime, preset: DevicePreset, onPick: (S
     )
 }
 
-/**
- * The outline of a symmetric-stick gamepad in a box of [w] x [h], as seen from above: a flat top with round
- * shoulders and two long grips. The back view uses it too.
- */
-private fun padOutline(w: Float, h: Float): Path {
-    // The left half, from the top middle round the left grip to the bottom middle (x, y as box fractions).
-    val half = OUTLINE_HALF
-    return Path().apply {
-        moveTo(w * 0.5f, h * OUTLINE_TOP)
-        for (c in half) cubicTo(w * c[0], h * c[1], w * c[2], h * c[3], w * c[4], h * c[5])
-        // The right half: the same curves mirrored, from the bottom middle back up.
-        val points = ArrayList<Pair<Float, Float>>()
-        points.add(0.5f to OUTLINE_TOP)
-        for (c in half) { points.add(c[0] to c[1]); points.add(c[2] to c[3]); points.add(c[4] to c[5]) }
-        val back = points.reversed()
-        var i = 1
-        while (i + 2 < back.size) {
-            val (x1, y1) = back[i]; val (x2, y2) = back[i + 1]; val (x3, y3) = back[i + 2]
-            cubicTo(w * (1f - x1), h * y1, w * (1f - x2), h * y2, w * (1f - x3), h * y3)
-            i += 3
-        }
-        close()
-    }
-}
-
-private const val OUTLINE_TOP = 0.03f
-private val OUTLINE_HALF = listOf(
-    floatArrayOf(0.36f, 0.03f, 0.22f, 0.02f, 0.13f, 0.05f),
-    floatArrayOf(0.05f, 0.08f, 0.025f, 0.20f, 0.02f, 0.40f),
-    floatArrayOf(0.015f, 0.62f, 0.04f, 0.88f, 0.09f, 0.97f),
-    floatArrayOf(0.13f, 1.02f, 0.21f, 1.0f, 0.25f, 0.92f),
-    floatArrayOf(0.29f, 0.82f, 0.31f, 0.73f, 0.38f, 0.70f),
-    floatArrayOf(0.44f, 0.68f, 0.48f, 0.68f, 0.5f, 0.68f),
-)
-
 /** How a controller control is marked: no name on A B X Y and the D-pad, icons on View, Menu and Home. */
 private fun markOf(c: PhysicalControl): Mark = when {
     c.kind == PhysicalKind.DPAD -> Mark.NONE
@@ -414,38 +367,55 @@ private fun markOf(c: PhysicalControl): Mark = when {
     else -> Mark.NAME
 }
 
-/** [d] drawn as large as fits, a game pad body behind its controls; [has]: whether a control can be picked. */
+/**
+ * The controller drawn as the companion's overlay draws it: the phone with a handle on each side,
+ * the triggers and bumpers above the handles, the back buttons and Home below
+ * ([PhysicalLayouts.controllerHandles]), as large as fits. [has]: whether a control can be picked.
+ */
 @Composable
-private fun DiagramView(
-    d: ControllerDiagram,
-    board: ControlBoard,
-    has: (PhysicalControl) -> Boolean,
-    modifier: Modifier,
-) {
-    val body = MaterialTheme.colorScheme.surfaceContainer
-    val edge = MaterialTheme.colorScheme.outlineVariant
-    BoxWithConstraints(modifier) {
-        val w = min(maxWidth, (maxHeight - 20.dp) * d.aspect)
+private fun HandlesView(board: ControlBoard, has: (PhysicalControl) -> Boolean) {
+    val d = PhysicalLayouts.controllerHandles
+    val colors = MaterialTheme.colorScheme
+    val body = colors.surfaceContainer
+    val edge = colors.outlineVariant
+    val screen = colors.surfaceContainerLowest
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val w = min(maxWidth, maxHeight * d.aspect)
         val h = w / d.aspect
-        Text(
-            d.name,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.align(Alignment.TopStart),
-        )
-        Box(Modifier.align(Alignment.Center).padding(top = 20.dp).size(w, h)) {
+        Box(Modifier.align(Alignment.Center).size(w, h)) {
             Canvas(Modifier.fillMaxSize()) {
-                val outline = padOutline(size.width, size.height)
-                drawPath(outline, body)
-                drawPath(outline, edge, style = Stroke(width = 1.5.dp.toPx()))
-                if (d === PhysicalLayouts.controllerFront) {
-                    val (l, t, r, b) = PhysicalLayouts.TOUCHPAD
-                    val pad = Offset(size.width * l, size.height * t)
-                    val padSize = Size(size.width * (r - l), size.height * (b - t))
-                    val corner = CornerRadius(8.dp.toPx())
-                    drawRoundRect(edge.copy(alpha = 0.35f), pad, padSize, corner)
-                    drawRoundRect(edge, pad, padSize, corner, style = Stroke(width = 1.dp.toPx()))
+                val u = size.width / PhysicalLayouts.HANDLES_W
+                val top = PhysicalLayouts.HANDLES_TOP * u
+                val hw = PhysicalLayouts.HANDLE_W * u
+                val line = Stroke(width = 1.5.dp.toPx())
+                // Each handle: big round corners outside, small ones against the phone.
+                fun handle(x0: Float, outerLeft: Boolean): Path {
+                    val ro = 0.12f * u
+                    val ri = 0.015f * u
+                    val (rl, rr) = if (outerLeft) ro to ri else ri to ro
+                    return Path().apply {
+                        addRoundRect(
+                            androidx.compose.ui.geometry.RoundRect(
+                                Rect(x0, top, x0 + hw, top + u),
+                                topLeft = CornerRadius(rl), topRight = CornerRadius(rr),
+                                bottomRight = CornerRadius(rr), bottomLeft = CornerRadius(rl),
+                            ),
+                        )
+                    }
                 }
+                for (p in listOf(handle(0f, true), handle(size.width - hw, false))) {
+                    drawPath(p, body)
+                    drawPath(p, edge, style = line)
+                }
+                val phone = Offset(hw, top)
+                val phoneSize = Size(size.width - 2 * hw, u)
+                drawRoundRect(body, phone, phoneSize, CornerRadius(0.11f * u))
+                drawRoundRect(edge, phone, phoneSize, CornerRadius(0.11f * u), style = line)
+                val inset = 0.04f * u
+                drawRoundRect(
+                    screen, phone + Offset(inset, inset), Size(phoneSize.width - 2 * inset, u - 2 * inset),
+                    CornerRadius(0.08f * u),
+                )
             }
             for (c in d.controls) {
                 val round = c.kind == PhysicalKind.STICK || c.kind == PhysicalKind.SYSTEM ||

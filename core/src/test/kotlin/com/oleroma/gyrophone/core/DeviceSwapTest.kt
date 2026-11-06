@@ -86,6 +86,21 @@ class DeviceSwapTest {
         assertEquals(AndroidKey.BUTTON_X, p.timings.single().keyCode)
     }
 
+    @Test fun theHandlesDrawingHasEveryControlInsideItsBox() {
+        val ids = (PhysicalLayouts.controllerFront.controls + PhysicalLayouts.controllerBack.controls).map { it.id }.toSet()
+        val d = PhysicalLayouts.controllerHandles
+        assertEquals(ids, d.controls.map { it.id }.toSet())
+        for (c in d.controls) {
+            assertTrue(c.id, c.x - c.w / 2 >= 0f && c.x + c.w / 2 <= 1f && c.y - c.h / 2 >= 0f && c.y + c.h / 2 <= 1f)
+        }
+        // No two controls overlap.
+        for (a in d.controls) for (b in d.controls) if (a.id < b.id) {
+            val apart = a.x + a.w / 2 <= b.x - b.w / 2 || b.x + b.w / 2 <= a.x - a.w / 2 ||
+                a.y + a.h / 2 <= b.y - b.h / 2 || b.y + b.h / 2 <= a.y - a.h / 2
+            assertTrue(a.id + " and " + b.id, apart)
+        }
+    }
+
     @Test fun sticksSwapOnlyWithSticks() {
         assertTrue(DevicePresets.canSwap(inputs("ls"), inputs("rs")))
         assertFalse(DevicePresets.canSwap(inputs("ls"), inputs("a")))
