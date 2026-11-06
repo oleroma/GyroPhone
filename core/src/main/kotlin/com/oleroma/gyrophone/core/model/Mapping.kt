@@ -441,7 +441,8 @@ enum class How(val label: String, val mark: String) {
 /**
  * How a mapping turns its source's activations into output: [how] (see [How]). [cycle]: the mappings of one source and set with cycle on take turns, one per activation, in
  * list order. [startDelayMs]: output starts this long after the activation; [minHoldMs]: it lasts
- * at least this long; [endDelayMs]: it lasts this much longer after the source lets go.
+ * at least this long (default [DEFAULT_MIN_HOLD_MS], long enough for apps that poll keys, such as
+ * OBS hotkeys; never shorter than the engine's minimum pulse); [endDelayMs]: it lasts this much longer after the source lets go.
  * A TOGGLE also ends ("Also ends on") on [endsOnTap] (the next touch of the same button or
  * surface), [endsOnLetGo] (a [OutputTarget.LetGo] mapping firing), [endsAfterMs] (a timer; 0 =
  * none) and [endsOnNextInput] (once the next other key, mouse button or pad button has been
@@ -456,7 +457,7 @@ data class MapOptions(
     val cycle: Boolean = false,
     val startDelayMs: Int = 0,
     val endDelayMs: Int = 0,
-    val minHoldMs: Int = 0,
+    val minHoldMs: Int = DEFAULT_MIN_HOLD_MS,
     val endsOnTap: Boolean = false,
     val endsOnLetGo: Boolean = false,
     val endsAfterMs: Int = 0,
@@ -473,6 +474,9 @@ data class MapOptions(
 
     companion object {
         const val MAX_DELAY_MS = 2000
+
+        /** OBS checks hotkeys every 25-31 ms and needs a combo seen on two checks in a row. */
+        const val DEFAULT_MIN_HOLD_MS = 80
         const val MAX_TOGGLE_MS = 60_000
         const val MIN_REPEAT = 2
         const val MAX_REPEAT = 5

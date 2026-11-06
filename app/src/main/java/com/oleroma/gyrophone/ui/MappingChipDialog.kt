@@ -128,7 +128,7 @@ internal fun MappingChipDialog(
     var endsAfter by remember { mutableIntStateOf(o0.endsAfterMs) }
     var endsOnNext by remember { mutableStateOf(o0.endsOnNextInput) }
     var endsOnSame by remember { mutableStateOf(o0.endsOnSame) }
-    var advanced by remember { mutableStateOf(start > 0 || end > 0 || minHold > 0) }
+    var advanced by remember { mutableStateOf(start > 0 || end > 0 || minHold != MapOptions.DEFAULT_MIN_HOLD_MS) }
     val colors = MaterialTheme.colorScheme
 
     @Composable
@@ -232,7 +232,7 @@ internal fun MappingChipDialog(
                     msSlider("Start delay", start) { start = it }
                     msSlider("Hold at least", minHold) { minHold = it }
                     msSlider("End delay", end) { end = it }
-                    hint("Start delay: it starts this much later. Hold at least: it lasts at least this long. End delay: it lasts this much longer after you let go.")
+                    hint("Start delay: it starts this much later. Hold at least: it lasts at least this long (80 ms by default, so apps that check keys now and then, like OBS hotkeys, see a quick tap). End delay: it lasts this much longer after you let go.")
                 }
                 TextButton(onClick = onRemove) { Text("Remove this mapping", color = colors.error) }
             }

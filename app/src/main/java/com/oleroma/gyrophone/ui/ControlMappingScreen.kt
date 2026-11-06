@@ -229,7 +229,7 @@ private fun chipText(badge: String, target: OutputTarget, o: MapOptions?): Strin
         if (o.mode.mark.isNotEmpty()) append(" ").append(o.mode.mark)
         if (o.mode == How.REPEAT) append(o.repeat.coerceIn(MapOptions.MIN_REPEAT, MapOptions.MAX_REPEAT))
         if (o.cycle) append(" ↻")
-        if (o.startDelayMs > 0 || o.endDelayMs > 0 || o.minHoldMs > 0) append(" ⏱")
+        if (o.startDelayMs > 0 || o.endDelayMs > 0 || o.minHoldMs != MapOptions.DEFAULT_MIN_HOLD_MS) append(" ⏱")
     }
 }
 
