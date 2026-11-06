@@ -61,6 +61,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
+      # Gradle's build cache, saved by every run so the next build on this branch, or a new
+      # branch's first build, reuses the newest outputs. The basic cache above is keyed by the
+      # build files, so it's saved once and then only restored, and its build cache goes stale.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-${{ github.run_id }}
+          restore-keys: gradle-build-cache-
 
       - name: Quick tests
         run: bash .agents/hooks/quick-test apk
