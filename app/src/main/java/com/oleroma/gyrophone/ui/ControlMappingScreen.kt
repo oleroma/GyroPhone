@@ -682,8 +682,8 @@ internal fun ControlMappingScreen(
     /** Something of [keys] is mapped, in any set and zone, with any trigger. */
     fun mapsAny(keys: List<InputSource>): Boolean =
         keys.isNotEmpty() && allMappings.any { m ->
-            val s = m.source as? InputSource.Surface
-            s != null && Triggers.base(s).let { b -> (b as? InputSource.Surface)?.copy(zone = 0) in keys }
+            val b = (m.source as? InputSource.Surface)?.let { Triggers.base(it) } as? InputSource.Surface
+            b != null && keys.contains(b.copy(zone = 0))
         }
 
     /** How many zones [input] (a held direction, or the Swipe card's directions) has, in any set (1 for anything else). */
