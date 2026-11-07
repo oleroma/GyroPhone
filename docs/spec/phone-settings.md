@@ -4,6 +4,8 @@ Where every setting lives and its default. How workspace settings inherit is in 
 
 ## How settings pages work
 
+**Sliders** (`ui/CompactSlider.kt`): dragging moves the handle from where it is (it does not jump to the finger). **A tap on a slider without dragging opens a box to type the exact value**, which may go past the slider's ends (a gyro sensitivity up to the highest the app takes, above the Slider cap). A slider with two handles (deadzones, ranges) types the handle nearest the tap; its handles may pass each other.
+
 Every settings page (`ui/SettingsLayout.kt`) is a list of **categories** that fold open and closed; a long press on a category's name drags it to a new place (every category shows closed meanwhile, and the page scrolls when the finger nears its top or bottom edge). Open state and order are remembered. A **search** field on top filters every setting by its words (every word must match); on the Settings page it searches both tabs at once, each under its name. Values a level sets itself are highlighted with **↺** to follow the parent again.
 
 ## Settings (the pad's Settings capsule)
@@ -23,7 +25,7 @@ Every settings page (`ui/SettingsLayout.kt`) is a list of **categories** that fo
 | | Corner opacity | 50 % |
 | | Wrap around | off |
 | Touch display | Show touches, Trail behind fingers (length, fade), Fade out after lift, Show live mappings on buttons, swipe line, Move rulers | see [Pad UI](phone-pad-ui.md) |
-| Gyro | Jitter cutoff (0–5 °/s), Smoothing below (0–10 °/s) | both off |
+| Gyro | Jitter cutoff (0–5 °/s), Smoothing below (0–10 °/s); **Slider cap**: the top of every gyro sensitivity slider and Gyro sensitivity range, in RWS for workspaces that know their game (1–50) and in counts per degree for the others (4–250) | both off; 10 RWS, 64 counts/° |
 | Gyro display | Parallax edge (Turn / Tilt) | off |
 | Controllers on phone | The attached game pads | — |
 | Debugging | Debug tools | off |
