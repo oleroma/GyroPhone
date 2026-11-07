@@ -62,12 +62,13 @@ object Bindings {
      * at least 1), with any finger count, in any set.
      */
     fun holdZoneCounts(mappings: List<Mapping>, id: String): IntArray {
-        val n = IntArray(4) { 1 }
+        val n = IntArray(SWIPE_SLOTS) { 1 }
         for (m in mappings) {
             val s = m.source as? InputSource.Surface ?: continue
             if (s.id != id) continue
-            val d = s.input.holdDirection ?: continue
-            n[d.ordinal] = maxOf(n[d.ordinal], (s.zone + 1).coerceAtMost(TouchpadSettings.MAX_HOLD_ZONES))
+            val d = s.input.holdSlot
+            if (d < 0) continue
+            n[d] = maxOf(n[d], (s.zone + 1).coerceAtMost(TouchpadSettings.MAX_HOLD_ZONES))
         }
         return n
     }
@@ -82,7 +83,7 @@ object Bindings {
         val used = HashMap<InputSource.Surface, java.util.TreeSet<Int>>()
         for (m in mappings) {
             val s = m.source as? InputSource.Surface ?: continue
-            if (s.input.holdDirection == null) continue
+            if (!s.input.heldSwipe) continue
             used.getOrPut(key(s)) { java.util.TreeSet() }.add(s.zone)
         }
         if (used.values.all { it.last() == it.size - 1 }) return mappings
@@ -353,7 +354,7 @@ object Bindings {
      * The surface inputs offered with [fingers] down: taps, moves, swipes, pinch with two. No
      * Tap-drag: the Touch card's Double tap, held, does that ([Triggers.tapDrags]).
      */
-    fun surfaceInputs(fingers: Int, id: String = ""): List<BindableInput> = SurfaceInput.entries.filter { i ->
+    fun surfaceInputs(fingers: Int, id: String = ""): List<BindableInput> = SURFACE_ORDER.filter { i ->
         when (i) {
             SurfaceInput.TAP_DRAG -> false
             SurfaceInput.PINCH, SurfaceInput.PINCH_IN, SurfaceInput.PINCH_OUT -> fingers == 2
@@ -372,6 +373,27 @@ object Bindings {
             swipe = i.motion && i != SurfaceInput.PINCH,
             extra = extra
         )
+    }
+
+    /** The surface inputs in the editor's order: the Swipe row (any way) before the directions its chips also pick. */
+    private val SURFACE_ORDER: List<SurfaceInput> = SurfaceInput.entries.filter { it != SurfaceInput.HOLD_ANY && it != SurfaceInput.SWIPE_ANY }
+        .flatMap { if (it == SurfaceInput.SWIPE_LEFT) listOf(SurfaceInput.HOLD_ANY, SurfaceInput.SWIPE_ANY, it) else listOf(it) }
+
+    /**
+     * The held swipe inputs of [fingers] on surface [id], by slot ([holdSlot]): Swipe any way,
+     * then ↑ → ↓ ←. They share one Swipe row in the editor, each chip picking its direction.
+     */
+    fun swipeSlots(fingers: Int, id: String = ""): List<BindableInput> = listOf(ANY_SLOT, 0, 1, 2, 3).map { slot ->
+        BindableInput(slotLabel(slot), listOf(InputSource.Surface(fingers, holdInputOf(slot), id)))
+    }
+
+    /** A swipe slot's name on its chips and in its chip's settings: Any, ↑, →, ↓, ←. */
+    fun slotLabel(slot: Int): String = when (slot) {
+        0 -> "↑"
+        1 -> "→"
+        2 -> "↓"
+        3 -> "←"
+        else -> "Any"
     }
 
     /**

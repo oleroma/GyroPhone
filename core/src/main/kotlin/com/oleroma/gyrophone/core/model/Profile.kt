@@ -1438,6 +1438,17 @@ data class TouchpadSettings(
     fun holdZoneDp(d: Direction, i: Int): Float =
         (holdZone(d, i).lengthDp ?: holdZone(d, 0).lengthDp ?: holdDpOf(d)).coerceIn(MIN_ZONE_DP, MAX_ZONE_DP)
 
+    /** How far held swipe slot [slot] ([holdSlot]; any way: the shared hold distance) travels before it is held (dp). */
+    fun holdDpAt(slot: Int): Float = if (slot in 0..3) holdDpOf(Direction.entries[slot]) else holdDp
+
+    /** Zone [i] of held swipe slot [slot] ([holdZone]; any way: the shared zones). */
+    fun holdZoneAt(slot: Int, i: Int): HoldZone =
+        if (slot in 0..3) holdZone(Direction.entries[slot], i) else holdZones.getOrNull(i) ?: HoldZone()
+
+    /** How long zone [i] of slot [slot] is (dp), as [holdZoneDp]. */
+    fun holdZoneDpAt(slot: Int, i: Int): Float =
+        (holdZoneAt(slot, i).lengthDp ?: holdZoneAt(slot, 0).lengthDp ?: holdDpAt(slot)).coerceIn(MIN_ZONE_DP, MAX_ZONE_DP)
+
     /** The shared pie width of [d]'s swipes ([hold] false) or held directions: its axis's. */
     fun sharedPieDeg(d: Direction, hold: Boolean): Float =
         if (hold) (if (d.x) holdPieX else holdPieY) else if (d.x) swipePieX else swipePieY

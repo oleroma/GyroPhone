@@ -8,7 +8,8 @@ import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.MotionFeel
 import com.oleroma.gyrophone.core.model.MoveMode
 import com.oleroma.gyrophone.core.model.SurfaceInput
-import com.oleroma.gyrophone.core.model.holdDirection
+import com.oleroma.gyrophone.core.model.SWIPE_SLOTS
+import com.oleroma.gyrophone.core.model.holdSlot
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
 import kotlin.math.abs
@@ -200,7 +201,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     // finger count, and when they let go by themselves (Long.MAX_VALUE = not timed now).
     private var latchN = 0
     private var latchMask = 0
-    private val latchZones = IntArray(4)
+    private val latchZones = IntArray(SWIPE_SLOTS)
     private var latchUntil = Long.MAX_VALUE
 
     /** A finger the system cancelled is being removed: its motion never latches. */
@@ -333,7 +334,8 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
      * through that zone the finger is (0..1, [DirectionTracker.progress]) while it is held; 0 when not.
      */
     fun zoneLevel(fingers: Int, input: SurfaceInput, zone: Int): Float {
-        val d = input.holdDirection ?: return level(fingers, input, zone)
+        val d = input.holdSlot
+        if (d < 0) return level(fingers, input, zone)
         if (level(fingers, input, zone) == 0f) return 0f
         return dirs.progress(d, zone, settings)
     }
@@ -1011,9 +1013,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     /** A mapped swipe hold of [n] fingers pressed this motion: with [MotionFeel.holdStopsMove], its Moves stop. */
     private fun stopMovesOnHold(n: Int) {
         if (holdStopped || !feel(n).holdStopsMove) return
-        for (d in Direction.entries) {
+        for (d in 0 until SWIPE_SLOTS) {
             val z = dirs.zoneAt(d)
-            if (z >= 0 && map.has(n, HOLDS[d.ordinal], z)) {
+            if (z >= 0 && map.has(n, HOLDS[d], z)) {
                 holdStopped = true
                 waitX = 0f; waitY = 0f
                 return
@@ -1050,17 +1052,17 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
             val lift = count == 0 && !cancelling
             var keep = 0
             // Only the zones whose On swipe chip is a Toggle latch.
-            if (lift) for (d in Direction.entries) if (dirs.zones(d) and map.latchZones(n, d) != 0) keep = keep or (1 shl d.ordinal)
+            if (lift) for (d in 0 until SWIPE_SLOTS) if (dirs.zones(d) and map.latchZones(n, d) != 0) keep = keep or (1 shl d)
             if (keep != 0) {
-                for (d in Direction.entries) {
-                    latchZones[d.ordinal] = if (keep and (1 shl d.ordinal) != 0) dirs.zones(d) and map.latchZones(n, d) else 0
+                for (d in 0 until SWIPE_SLOTS) {
+                    latchZones[d] = if (keep and (1 shl d) != 0) dirs.zones(d) and map.latchZones(n, d) else 0
                 }
                 latchN = n; latchMask = keep; latchUntil = Long.MAX_VALUE
             }
             holds(n, if (keep != 0) latchZones else null)
             if (lift) {
                 liftN = n
-                for (d in Direction.entries) liftZone[d.ordinal] = dirs.zoneAt(d)
+                for (d in 0 until SWIPE_SLOTS) liftZone[d] = dirs.zoneAt(d)
                 liftSeq++
             }
         }
@@ -1108,6 +1110,8 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         holdZones(n)
         stopMovesOnHold(n)
         for (d in Direction.entries) if (fired and (1 shl d.ordinal) != 0) pulse(n, SWIPES[d.ordinal])
+        // Any way: with each quick swipe, whichever way.
+        if (fired != 0) pulse(n, SurfaceInput.SWIPE_ANY)
         val sideways = fired and (RIGHT_BIT or LEFT_BIT)
         if (fired != 0 && !swiped) {
             swiped = true
@@ -1126,25 +1130,25 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
 
     /** Held directions of [n] fingers: exactly the zones in [zones] (by [Direction.ordinal], masks of 1 shl zone); null = none. */
     private fun holds(n: Int, zones: IntArray?) {
-        for (d in Direction.entries) {
-            val m = zones?.get(d.ordinal) ?: 0
-            for (z in 0 until TouchpadSettings.MAX_HOLD_ZONES) set(n, HOLDS[d.ordinal], m and (1 shl z) != 0, z)
+        for (d in 0 until SWIPE_SLOTS) {
+            val m = zones?.get(d) ?: 0
+            for (z in 0 until TouchpadSettings.MAX_HOLD_ZONES) set(n, HOLDS[d], m and (1 shl z) != 0, z)
         }
     }
 
     /** Held directions of [n] fingers: the zones the motion holds now. */
     private fun holdZones(n: Int) {
-        for (d in Direction.entries) {
+        for (d in 0 until SWIPE_SLOTS) {
             val m = dirs.zones(d)
-            for (z in 0 until TouchpadSettings.MAX_HOLD_ZONES) set(n, HOLDS[d.ordinal], m and (1 shl z) != 0, z)
+            for (z in 0 until TouchpadSettings.MAX_HOLD_ZONES) set(n, HOLDS[d], m and (1 shl z) != 0, z)
         }
     }
 
     /** The motion's directions have the zones [n] fingers have mapped. */
     private fun zoneCounts(n: Int) {
-        for (d in Direction.entries) {
-            dirs.zoneCount[d.ordinal] = map.zoneCount(n, d)
-            dirs.releaseOnly[d.ordinal] = map.releaseOnly(n, d)
+        for (d in 0 until SWIPE_SLOTS) {
+            dirs.zoneCount[d] = map.zoneCount(n, d)
+            dirs.releaseOnly[d] = map.releaseOnly(n, d)
         }
     }
 
@@ -1152,14 +1156,16 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     var liftSeq = 0L
         private set
     private var liftN = 0
-    private val liftZone = IntArray(4) { -1 }
+    private val liftZone = IntArray(SWIPE_SLOTS) { -1 }
 
     /**
      * The last lift ([liftSeq]) was of [fingers] with held direction [d] in its [zone] (the zone the
      * finger was in, FROM_START, or got to, DIRECTION_CHANGE): its swipe Release fires.
      */
-    fun liftedIn(fingers: Int, d: Direction, zone: Int): Boolean =
-        liftN == fingers && liftZone[d.ordinal] == zone
+    fun liftedIn(fingers: Int, slot: Int, zone: Int): Boolean =
+        liftN == fingers && liftZone[slot] == zone
+
+    fun liftedIn(fingers: Int, d: Direction, zone: Int): Boolean = liftedIn(fingers, d.ordinal, zone)
 
     /** The latched directions let go. */
     private fun releaseLatch() {
@@ -1782,8 +1788,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         /** Axis locks judge a step's direction by about this much of the latest travel. */
 
         /** Held directions and swipes by [Direction.ordinal]. */
+        /** Held swipe slots ([holdSlot]): the directions by [Direction.ordinal], then any way. */
         private val HOLDS =
-            arrayOf(SurfaceInput.HOLD_UP, SurfaceInput.HOLD_RIGHT, SurfaceInput.HOLD_DOWN, SurfaceInput.HOLD_LEFT)
+            arrayOf(SurfaceInput.HOLD_UP, SurfaceInput.HOLD_RIGHT, SurfaceInput.HOLD_DOWN, SurfaceInput.HOLD_LEFT, SurfaceInput.HOLD_ANY)
         private val SWIPES =
             arrayOf(SurfaceInput.SWIPE_UP, SurfaceInput.SWIPE_RIGHT, SurfaceInput.SWIPE_DOWN, SurfaceInput.SWIPE_LEFT)
         /** [movesMapped]: Move X / Move Y. */

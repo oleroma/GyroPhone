@@ -47,7 +47,8 @@ import com.oleroma.gyrophone.core.model.heightRatio
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.Triggers
-import com.oleroma.gyrophone.core.model.holdDirection
+import com.oleroma.gyrophone.core.model.heldSwipe
+import com.oleroma.gyrophone.core.model.holdSlot
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.Inheritance
@@ -317,7 +318,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun activeOf(src: InputSource, dev: Dev?, v: Float): Boolean =
         if (src is InputSource.Finger) fingers.containsKey(src.id) && (!src.axis.roundOnly || src.id in roundIds)
         // A held swipe direction is active from the start of its zone (where its axis is 0).
-        else if (src is InputSource.Surface && src.on == Trigger.HOLD && src.input.holdDirection != null) value(src, dev) >= PRESS_THRESHOLD
+        else if (src is InputSource.Surface && src.on == Trigger.HOLD && src.input.heldSwipe) value(src, dev) >= PRESS_THRESHOLD
         else abs(v) > RANGE_ACTIVE
 
     /** An output that takes an input's size (an axis), not just on or off. */
@@ -330,7 +331,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     private fun axisOf(m: Mapping, v: Float): Float {
         val s = m.source
-        if (v == 0f || s !is InputSource.Surface || s.on != Trigger.HOLD || s.input.holdDirection == null || !analogTarget(m.target)) return v
+        if (v == 0f || s !is InputSource.Surface || s.on != Trigger.HOLD || !s.input.heldSwipe || !analogTarget(m.target)) return v
         val pad = (if (s.id.isEmpty()) touchpad else surfaces[s.id]) ?: return v
         return pad.zoneLevel(s.fingers, s.input, s.zone) * v
     }
@@ -2434,7 +2435,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     /** [s] is an On swipe chip of a swipe direction (any zone): a Toggle on it latches the surface. */
-    private fun latchChip(s: InputSource) = s is InputSource.Surface && s.on == Trigger.HOLD && s.input.holdDirection != null
+    private fun latchChip(s: InputSource) = s is InputSource.Surface && s.on == Trigger.HOLD && s.input.heldSwipe
 
     /** A swipe trigger the engine works out from the swipe itself ([InputSource.Surface.on]); HOLD = none. */
     private fun derivedTrigger(s: InputSource): Trigger = when (s) {
@@ -2478,9 +2479,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             // A swipe's Release: the last finger lifted in its zone (not sliding on, not leaving the direction).
             val s = src
             val pad = if (s.id.isEmpty()) touchpad else surfaces[s.id]
-            val d = s.input.holdDirection
+            val d = s.input.holdSlot
             on = false
-            if (pad != null && d != null) {
+            if (pad != null && d >= 0) {
                 if (sh.liftSeq != Long.MIN_VALUE && pad.liftSeq != sh.liftSeq) on = pad.liftedIn(s.fingers, d, s.zone)
                 sh.liftSeq = pad.liftSeq
             }

@@ -116,6 +116,47 @@ enum class SurfaceInput(val label: String, val motion: Boolean = false) {
 
     /** A pulse each time exactly that many fingers come down (the hold starting). */
     PRESS("Press"),
+
+    /**
+     * HOLD_ANY: held while the finger is past the hold distance from where it touched down, in any
+     * direction (straight-line distance; its zones go by that distance). SWIPE_ANY: a pulse with
+     * each quick swipe, whichever way. Every swipe direction's chips share one Swipe row, each
+     * chip with its own direction ([Bindings.swipeWheres]).
+     */
+    HOLD_ANY("Swipe"), SWIPE_ANY("Quick swipe any way"),
+}
+
+/** The swipe slots, by [holdSlot]: the four directions ([Direction.ordinal]), then any way ([ANY_SLOT]). */
+const val SWIPE_SLOTS = 5
+const val ANY_SLOT = 4
+
+/** The slot of a held swipe input (Swipe ←→↑↓: [Direction.ordinal]; Swipe any way: [ANY_SLOT]), else -1. */
+val SurfaceInput.holdSlot: Int
+    get() = holdDirection?.ordinal ?: if (this == SurfaceInput.HOLD_ANY) ANY_SLOT else -1
+
+/** The slot of a quick swipe input, as [holdSlot], else -1. */
+val SurfaceInput.quickSlot: Int
+    get() = swipeDirection?.ordinal ?: if (this == SurfaceInput.SWIPE_ANY) ANY_SLOT else -1
+
+/** A held swipe input (any direction, or any way): it has length zones and swipe triggers. */
+val SurfaceInput.heldSwipe: Boolean get() = holdSlot >= 0
+
+/** The held swipe input of [slot] ([holdSlot]). */
+fun holdInputOf(slot: Int): SurfaceInput = when (slot) {
+    0 -> SurfaceInput.HOLD_UP
+    1 -> SurfaceInput.HOLD_RIGHT
+    2 -> SurfaceInput.HOLD_DOWN
+    3 -> SurfaceInput.HOLD_LEFT
+    else -> SurfaceInput.HOLD_ANY
+}
+
+/** The quick swipe input of [slot] ([quickSlot]). */
+fun quickInputOf(slot: Int): SurfaceInput = when (slot) {
+    0 -> SurfaceInput.SWIPE_UP
+    1 -> SurfaceInput.SWIPE_RIGHT
+    2 -> SurfaceInput.SWIPE_DOWN
+    3 -> SurfaceInput.SWIPE_LEFT
+    else -> SurfaceInput.SWIPE_ANY
 }
 
 /** The direction of a swipe input (Swipe ←→↑↓), else null. */
