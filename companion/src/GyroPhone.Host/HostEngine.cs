@@ -247,8 +247,22 @@ public sealed class HostEngine
 
     public HostSettings Settings => _settings;
 
-    /// <summary>The always-on input log (docs/spec/pc-companion.md, "Input log"); null = none. Set before Start.</summary>
+    /// <summary>The input log (docs/spec/pc-companion.md, "Input log"); null = none. Set before Start. Written only while <see cref="HostSettings.InputLog"/>.</summary>
     public InputRecorder? Recorder { get; set; }
+    private InputRecorder? Rec => _settings.InputLog ? Recorder : null;
+
+    /// <summary>"Record input log": on, a session already up starts its log now; off, it ends it.</summary>
+    public void SetInputLog(bool on)
+    {
+        lock (_lock)
+        {
+            if (on == _settings.InputLog) return;
+            if (!on) Recorder?.SessionEnded("input log turned off", _clock.NowUs);
+            _settings.InputLog = on;
+            _settingsDirty = true;
+            if (on && _sessions.Active is { } a) Recorder?.SessionStarted(a.PhoneName, _clock.NowUs);
+        }
+    }
     private long _pendingRecvUs = -1;
 
     public void AttachSender(IDatagramSender sender)
@@ -374,7 +388,7 @@ public sealed class HostEngine
 
         long lostBefore = _stats.TotalLost;
         _stats.OnSealed(seq);
-        if (_stats.TotalLost != lostBefore) Recorder?.Lost(_stats.TotalLost - lostBefore, seq, nowUs);
+        if (_stats.TotalLost != lostBefore) Rec?.Lost(_stats.TotalLost - lostBefore, seq, nowUs);
         switch (type)
         {
             case PacketType.State:
@@ -562,11 +576,11 @@ public sealed class HostEngine
         _hasStatePhone = true;
         _catchUp.Add(dx, dy, span, lost);
         _pendingRecvUs = nowUs;
-        if (Recorder != null)
+        if (Rec is { } rec)
         {
             bool moving = dx != 0 || dy != 0;
             bool held = _rxFrame.MouseButtons != 0 || _rxFrame.Buttons != 0 || _rxFrame.Hat != StateFrame.HatCenter || _rxFrame.Keys.AsSpan().IndexOfAnyExcept((byte)0) >= 0;
-            Recorder.State(_rxFrame.PhoneTimeUs, nowUs, moving, moving || held, lost);
+            rec.State(_rxFrame.PhoneTimeUs, nowUs, moving, moving || held, lost);
         }
         // Plain STATE counts whole notches.
         _accWheel += _rxFrame.Hires ? dw : dw * InjectEvent.WheelDelta;
@@ -668,7 +682,7 @@ public sealed class HostEngine
             keyPhone.LastSeenUtc = DateTime.UtcNow;
         }
         _events.Log($"session started with '{s.PhoneName}'");
-        Recorder?.SessionStarted(s.PhoneName, nowUs);
+        Rec?.SessionStarted(s.PhoneName, nowUs);
         SendStatus(s, nowUs);
         _events.StateChanged();
     }
@@ -693,7 +707,7 @@ public sealed class HostEngine
             if (!frame && !_catchUp.Gliding) return;
             _hasPending = false;
             _catchUp.Take(nowUs, out int dx, out int dy);
-            if (_catchUp.BacklogTaken) Recorder?.Glide(_catchUp.BacklogSpanUs, _catchUp.BacklogPx, _catchUp.BacklogGlideUs, nowUs);
+            if (_catchUp.BacklogTaken) Rec?.Glide(_catchUp.BacklogSpanUs, _catchUp.BacklogPx, _catchUp.BacklogGlideUs, nowUs);
             int dw = _accWheel, dh = _accHWheel;
             _accWheel = _accHWheel = 0;
             if (_paused || _locked)
@@ -732,7 +746,7 @@ public sealed class HostEngine
                     if (!blocked) NoteBlockedUps(before, beforeMouse);
                     InjectFailed();
                 }
-                Recorder?.Inject(dx, dy, frame ? _pendingRecvUs : -1, _clock.NowUs, !took);
+                Rec?.Inject(dx, dy, frame ? _pendingRecvUs : -1, _clock.NowUs, !took);
                 _injections++;
                 if (Debug.Enabled) Debug.OnInject(_inject.AsSpan(0, n), nowUs);
                 for (int i = 0; i < n; i++)
@@ -930,7 +944,7 @@ public sealed class HostEngine
                 {
                     _releasedForSilence = true;
                     _hasPending = false;
-                    Recorder?.ReleasedForSilence(HeldCount(), nowUs);
+                    Rec?.ReleasedForSilence(HeldCount(), nowUs);
                     ReleaseAllLocked();
                     _events.StateChanged();
                 }
@@ -955,7 +969,7 @@ public sealed class HostEngine
             if (a != null && nowUs - _lastStatusUs >= StatusIntervalUs)
             {
                 _stats.Roll();
-                Recorder?.Second(_stats, nowUs);
+                Rec?.Second(_stats, nowUs);
                 SendStatus(a, nowUs);
                 if (Debug.Enabled) Debug.SecondTick(DebugLinkLine(), nowUs);
             }
@@ -1598,7 +1612,7 @@ public sealed class HostEngine
     {
         var a = _sessions.Active;
         if (a == null) return;
-        Recorder?.SessionEnded(hostByeReason == null ? why : $"{why} by the PC ({hostByeReason})", _clock.NowUs);
+        Rec?.SessionEnded(hostByeReason == null ? why : $"{why} by the PC ({hostByeReason})", _clock.NowUs);
         ReleaseAllLocked();
         if (hostByeReason is { } r)
         {

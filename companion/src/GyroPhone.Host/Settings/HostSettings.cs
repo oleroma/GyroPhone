@@ -26,6 +26,8 @@ public sealed class HostSettings
 
     /// <summary>"Measure buttons" on Home's latency card: the phone sends PRESS_TIME.</summary>
     public bool MeasureButtons { get; set; }
+    /// <summary>"Record input log" on the App page: the engine writes input.log (<see cref="InputRecorder"/>).</summary>
+    public bool InputLog { get; set; } = true;
     /// <summary>The overlays' global shortcuts.</summary>
     public OverlayShortcuts OverlayShortcuts { get; set; } = new();
     /// <summary>The one phone overlay of earlier builds: read once into <see cref="Overlays"/>.</summary>

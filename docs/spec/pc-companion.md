@@ -51,13 +51,13 @@ All engine state is under one lock. Engine callbacks only post to the UI thread.
 - **Overlays**: see [Overlays](pc-overlays.md).
 - **Connection**: network category, firewall and USB checks with their fixes, the USB cable (direct cable on/off, default on), the server's port and addresses.
 - **Latency test**: times the gyro from a slow-motion video, see [Latency test](pc-latency-test.md).
-- **App**: Startup (Start with Windows, default off; **Start when my phone appears**, the watcher), Tray icon click (Opens this window / Pairs a new phone), Troubleshooting (Open log folder, Debug window…), About (version).
+- **App**: Startup (Start with Windows, default off; **Start when my phone appears**, the watcher), Tray icon click (Opens this window / Pairs a new phone), Troubleshooting (**Record input log**, default on; Open log folder, Debug window…), About (version).
 
 **Pairing window** (`PairWindow`): a QR code for the phone's Scan QR code (a one-time token, renewed when it expires, gone when the window closes; holds up to four of this PC's IPv4 addresses), and for code pairing the PC's name, addresses, port and the pairing countdown, then "Pair <phone>? Code 123 456" with **Allow** / **Deny**. On first run with nothing paired the pairing window opens by itself.
 
 **Debug window** (`DebugForm`, from the App page): the link as the PC sees it, what the game is given now, and the newest debug events at 4 Hz; **Save last 30 s**. The engine logs only while it is open or the phone's debug tools are on. A phone-side Record also saves the PC's (LINK_INFO save counter).
 
-**Input log** (`InputRecorder`, always on, no switch): `%LOCALAPPDATA%\GyroPhone\logs\input.log` (5 MB, then `input.log.old`), for finding stutter after real play. Each line has the wall-clock time, then seconds since the session started. While a session is up there is one `sec` line a second (packets, moving packets, lost, late, the latest packet's extra delay, latency p50/p99 and jitter once the phone sent a clock offset, injections, pixels moved, biggest step, slowest receive-to-SendInput), and one line per event, written when it happens:
+**Input log** (`InputRecorder`; **Record input log** on the App page, on by default, `HostSettings.InputLog`): `%LOCALAPPDATA%\GyroPhone\logs\input.log` (5 MB, then `input.log.old`), for finding stutter after real play. Turning it off ends the session's log at once; turning it on starts one for the session already up. Each line has the wall-clock time, then seconds since the session started. While a session is up there is one `sec` line a second (packets, moving packets, lost, late, the latest packet's extra delay, latency p50/p99 and jitter once the phone sent a clock offset, injections, pixels moved, biggest step, slowest receive-to-SendInput), and one line per event, written when it happens:
 - `lost`: 3 or more packets missing from the seq.
 - `late`: packets more than 15 ms later than the session's fastest ones of the last 5-10 s (receive time minus phone send time, so no clock sync is needed), one line per stretch; "held up on the way" when the phone sent them on time.
 - `phone gap`: the phone sent nothing for over 30 ms (its keepalive is 20 ms) with nothing lost, while input was moving or held.
@@ -67,7 +67,7 @@ All engine state is under one lock. Engine callbacks only post to the UI thread.
 - `refused`: Windows took fewer events than given.
 - `release`: everything let go after 250 ms of silence.
 - `session start` / `session end` (with the session's totals and extra-delay percentiles).
-Like every log it counts keys and buttons but never names them.
+At most 10 event lines a second: the rest are counted in that second's `sec` line (`bigmoves N`, "N more events not written"), so a fast flick that moves 64 px every millisecond stays cheap. Like every log it counts keys and buttons but never names them.
 
 ## Watcher
 

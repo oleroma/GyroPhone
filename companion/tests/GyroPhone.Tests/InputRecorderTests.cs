@@ -69,6 +69,20 @@ public class InputRecorderTests
     }
 
     [Fact]
+    public void AFlickWritesAFewLinesAndCountsTheRest()
+    {
+        var (rec, lines) = New();
+        for (int i = 0; i < 300; i++) rec.Inject(80, 0, -1, 1_000 + i * 1000, false);
+        rec.Second(new LinkStats(), 1_000_000);
+        Assert.Equal(InputRecorder.MaxEventsPerSecond, lines.Count(l => l.Contains("big move")));
+        var sec = Assert.Single(lines, l => l.Contains(" sec "));
+        Assert.Contains("bigmoves 300", sec);
+        Assert.Contains("290 more events not written", sec);
+        rec.Inject(80, 0, -1, 1_100_000, false);
+        Assert.Equal(InputRecorder.MaxEventsPerSecond + 1, lines.Count(l => l.Contains("big move")));
+    }
+
+    [Fact]
     public void NothingIsWrittenOutsideASession()
     {
         var lines = new List<string>();

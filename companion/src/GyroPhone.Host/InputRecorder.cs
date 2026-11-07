@@ -27,6 +27,8 @@ public sealed class InputRecorder
     public const int JumpPx = 64;
     /// <summary>Receive to SendInput slower than this is logged.</summary>
     public const long SlowInjectUs = 2_000;
+    /// <summary>At most this many event lines a second; the rest are only counted in the second's line.</summary>
+    public const int MaxEventsPerSecond = 10;
     private const long BaseWindowUs = 5_000_000;
 
     private readonly Action<string> _write;
@@ -54,7 +56,7 @@ public sealed class InputRecorder
     private long _holdPhoneSpanMaxUs;
 
     // This second.
-    private int _sStates, _sMoving, _sLost, _sLate, _sInjects, _sMaxStep, _sSlow, _sGlides;
+    private int _sStates, _sMoving, _sLost, _sLate, _sInjects, _sMaxStep, _sSlow, _sGlides, _sJumps, _sEvents, _sSkipped;
     private long _sPx, _sMaxLateUs, _sMaxInjectUs;
     // Whole session.
     private long _tStates, _tLost, _tLate, _tHoldups, _tGaps, _tGlides, _tJumps, _tSlow, _tReleases, _tRefused;
@@ -94,7 +96,7 @@ public sealed class InputRecorder
         if (!_active || count <= 0) return;
         _sLost += (int)Math.Min(count, 1_000_000);
         _tLost += count;
-        if (count >= 3) Line(nowUs, "lost", $"{count} packets before seq {seq}");
+        if (count >= 3) Event(nowUs, "lost", $"{count} packets before seq {seq}");
     }
 
     /// <summary>
@@ -114,7 +116,7 @@ public sealed class InputRecorder
             if (!lost && span > PhoneGapUs && (_prevActive || active))
             {
                 _tGaps++;
-                Line(recvUs, "phone gap", $"phone sent nothing for {span / 1000.0:0.0} ms" + (_prevActive ? " while input was moving or held" : ""));
+                Event(recvUs, "phone gap", $"phone sent nothing for {span / 1000.0:0.0} ms" + (_prevActive ? " while input was moving or held" : ""));
             }
             if (_inHoldup) _holdPhoneSpanMaxUs = Math.Max(_holdPhoneSpanMaxUs, span);
         }
@@ -168,7 +170,7 @@ public sealed class InputRecorder
         _inHoldup = false;
         _tHoldups++;
         // Packets that left the phone on time but arrived late together: held up on the way (Wi-Fi or router).
-        Line(_holdStartUs, "late", $"{_holdCount} packets up to {_holdMaxUs / 1000.0:0.0} ms late over {(_holdLastUs - _holdStartUs) / 1000.0:0.0} ms" +
+        Event(_holdStartUs, "late", $"{_holdCount} packets up to {_holdMaxUs / 1000.0:0.0} ms late over {(_holdLastUs - _holdStartUs) / 1000.0:0.0} ms" +
             (_holdPhoneSpanMaxUs > PhoneGapUs ? " (the phone also paused)" : " (sent on time: held up on the way)"));
     }
 
@@ -183,7 +185,8 @@ public sealed class InputRecorder
         if (step >= JumpPx)
         {
             _tJumps++;
-            Line(nowUs, "big move", $"{dx},{dy} px in one step");
+            _sJumps++;
+            Event(nowUs, "big move", $"{dx},{dy} px in one step");
         }
         if (recvUs >= 0)
         {
@@ -193,13 +196,13 @@ public sealed class InputRecorder
             {
                 _sSlow++;
                 _tSlow++;
-                Line(nowUs, "slow hand-off", $"{took / 1000.0:0.0} ms from receive to SendInput");
+                Event(nowUs, "slow hand-off", $"{took / 1000.0:0.0} ms from receive to SendInput");
             }
         }
         if (refused)
         {
             _tRefused++;
-            Line(nowUs, "refused", "Windows took fewer events than given (an admin window or the lock screen in front)");
+            Event(nowUs, "refused", "Windows took fewer events than given (an admin window or the lock screen in front)");
         }
     }
 
@@ -209,7 +212,7 @@ public sealed class InputRecorder
         if (!_active) return;
         _sGlides++;
         _tGlides++;
-        Line(nowUs, "glide", $"{px} px from {backlogUs / 1000.0:0.0} ms of late or lost motion spread over {glideUs / 1000.0:0.0} ms");
+        Event(nowUs, "glide", $"{px} px from {backlogUs / 1000.0:0.0} ms of late or lost motion spread over {glideUs / 1000.0:0.0} ms");
     }
 
     /// <summary>Everything let go after the phone was silent (Wire.ReleaseTimeoutMs).</summary>
@@ -217,7 +220,7 @@ public sealed class InputRecorder
     {
         if (!_active) return;
         _tReleases++;
-        Line(nowUs, "release", $"phone silent {Wire.ReleaseTimeoutMs} ms: let go of {held} held keys or buttons");
+        Event(nowUs, "release", $"phone silent {Wire.ReleaseTimeoutMs} ms: let go of {held} held keys or buttons");
     }
 
     /// <summary>The once-a-second line, with the link numbers the engine rolled just before.</summary>
@@ -230,13 +233,15 @@ public sealed class InputRecorder
         _sb.Append(CultureInfo.InvariantCulture, $" jitter {stats.JitterUs / 1000.0:0.0} inj {_sInjects} px {_sPx} maxstep {_sMaxStep} handoff {_sMaxInjectUs / 1000.0:0.0}");
         if (_sGlides > 0) _sb.Append(" glides ").Append(_sGlides);
         if (_sSlow > 0) _sb.Append(" slow ").Append(_sSlow);
+        if (_sJumps > 0) _sb.Append(" bigmoves ").Append(_sJumps);
+        if (_sSkipped > 0) _sb.Append(" (").Append(_sSkipped).Append(" more events not written)");
         Line(nowUs, "sec", _sb.ToString());
         ClearSecond();
     }
 
     private void ClearSecond()
     {
-        _sStates = _sMoving = _sLost = _sLate = _sInjects = _sMaxStep = _sSlow = _sGlides = 0;
+        _sStates = _sMoving = _sLost = _sLate = _sInjects = _sMaxStep = _sSlow = _sGlides = _sJumps = _sEvents = _sSkipped = 0;
         _sPx = _sMaxLateUs = _sMaxInjectUs = 0;
     }
 
@@ -252,6 +257,18 @@ public sealed class InputRecorder
             if (acc >= rank) return i == _lateHist.Length - 1 ? $"{i}+" : $"<{i + 1}";
         }
         return "-";
+    }
+
+    /// <summary>An event line, unless this second already had <see cref="MaxEventsPerSecond"/> (a flick at high sensitivity can make big moves every millisecond).</summary>
+    private void Event(long atUs, string what, string detail)
+    {
+        if (_sEvents >= MaxEventsPerSecond)
+        {
+            _sSkipped++;
+            return;
+        }
+        _sEvents++;
+        Line(atUs, what, detail);
     }
 
     private void Line(long atUs, string what, string detail) =>

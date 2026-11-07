@@ -39,7 +39,8 @@ public sealed record CompanionView(
     string LogPath,
     IReadOnlyList<Problem> Problems,
     bool MeasureButtons = false,
-    ButtonLatency? Buttons = null);
+    ButtonLatency? Buttons = null,
+    bool InputLog = true);
 
 /// <summary>
 /// The tray app as the windows see it. Every setter saves the setting and refreshes the open windows,
@@ -86,6 +87,7 @@ public interface ICompanion
     void SetTrayClick(TrayClickAction action);
     void OpenLogFolder();
     void ShowDebugWindow();
+    void ToggleInputLog();
 
     // Overlays
     IReadOnlyList<OverlaySettings> Overlays { get; }
