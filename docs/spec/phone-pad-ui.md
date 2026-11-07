@@ -63,7 +63,8 @@ App-wide, Settings › App › Touch display (`ui/TouchVisuals.kt`), all off by 
 - **Trail behind fingers**: a line of the finger's recent path, its end fading;
 - **Show live mappings on buttons**: a button's label briefly shows what it sends (yellow, lingers 700 ms);
 - **Swipe line**: a finger on a touchpad button shows a line from its start to its direction's activation lengths; only the arrows (↑ → ↓ ←) draw it; the Swipe card's Any line has none.
-- **Move rulers**: a finger whose Move X or Y moves shows a sliding ruler per Move. Under the same switch, a button whose **Finger X** or **Finger Y** is mapped shows a thin line across it at the finger's width or height while a finger is on it (`FingerMarkOverlay`).
+- **Move rulers**: a finger whose Move X or Y moves shows a sliding ruler per Move. 
+- **Position ruler** (own switch in Touch display, default on): while a finger is on a button that maps its **Finger X**, **Y**, **distance** or **angle**, each shows a strip through the finger: X across the button, Y up it, distance from the centre out through the finger, angle as a ring round a round button (0 at the top, clockwise). A strip is clear in the input's start deadzone, a gradient from there, and full colour from its end deadzone; small ticks mark both edges. A label with a dark background shows what each of the button's finger mappings in use sends now ("Sens 4.70", "RX 62 %"), above the finger or, with **Values show: In the button's corner**, in its top-right corner. The colour is picked in the same settings (default orange). `PositionRulerOverlay` in `ui/TouchVisuals.kt`; values from `MappingEngine.fingerValueNow`.
 
 A layer in use other than Base shows a pill for a second.
 

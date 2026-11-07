@@ -285,7 +285,7 @@ private fun LevelSlider(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
 
 /** A colour on a checkerboard, so its transparency shows. */
 @Composable
-private fun Swatch(c: Color, size: Int = 32) {
+internal fun Swatch(c: Color, size: Int = 32) {
     Canvas(Modifier.size(size.dp).clip(RoundedCornerShape(6.dp)).border(1.dp, Color.Gray, RoundedCornerShape(6.dp))) {
         val cell = this.size.width / 4
         for (i in 0 until 4) for (j in 0 until 4) {
@@ -301,7 +301,7 @@ private fun Swatch(c: Color, size: Int = 32) {
  * [onPick] gets the result.
  */
 @Composable
-private fun ColorPickerDialog(title: String, initial: Color, onPick: (Color) -> Unit, onDismiss: () -> Unit) {
+internal fun ColorPickerDialog(title: String, initial: Color, onPick: (Color) -> Unit, onDismiss: () -> Unit) {
     val hsv = remember {
         FloatArray(3).also { android.graphics.Color.colorToHSV(initial.toArgb(), it) }
     }

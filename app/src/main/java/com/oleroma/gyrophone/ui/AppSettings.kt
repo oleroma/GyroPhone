@@ -1,5 +1,10 @@
 package com.oleroma.gyrophone.ui
 
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -251,6 +256,41 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "the swipe line. The ticks slide as the axis moves, stay dim while a Move is held back, and keep " +
                         "sliding while inertia glides after the lift.",
             ) { runtime.setTouchVisuals(visuals.copy(moveRulers = it)) }
+            SwitchRow(
+                "Show the position ruler on buttons", visuals.positionRuler,
+                hint = "A finger on a button that maps its Finger X, Y, distance or angle shows a ruler through the finger for each: " +
+                        "clear in the start deadzone, then a gradient to full colour at the end deadzone. A label shows what each " +
+                        "of those mappings sends now.",
+            ) { runtime.setTouchVisuals(visuals.copy(positionRuler = it)) }
+            if (visuals.positionRuler) {
+                var picking by remember { mutableStateOf(false) }
+                Searchable("Position ruler colour", "colour color ruler") {
+                    Row(
+                        Modifier.fillMaxWidth().clickable { picking = true }.padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Position ruler colour", Modifier.weight(1f))
+                        Swatch(Color(visuals.rulerColor.toInt()))
+                        if (visuals.rulerColor != TouchVisuals().rulerColor) {
+                            TextButton(onClick = { runtime.setTouchVisuals(visuals.copy(rulerColor = TouchVisuals().rulerColor)) }) { Text("Reset") }
+                        }
+                    }
+                }
+                if (picking) ColorPickerDialog(
+                    "Position ruler colour", Color(visuals.rulerColor.toInt()),
+                    onPick = { c -> runtime.setTouchVisuals(visuals.copy(rulerColor = c.toArgb().toLong() and 0xFFFFFFFFL)); picking = false },
+                    onDismiss = { picking = false },
+                )
+                Searchable("Position ruler values", "value label corner finger") {
+                    Column {
+                        Text("Values show")
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            SelectChip("Above the finger", !visuals.rulerValueInCorner) { runtime.setTouchVisuals(visuals.copy(rulerValueInCorner = false)) }
+                            SelectChip("In the button's corner", visuals.rulerValueInCorner) { runtime.setTouchVisuals(visuals.copy(rulerValueInCorner = true)) }
+                        }
+                    }
+                }
+            }
         },
         category(runtime, "gyro", "Gyro", "Jitter cutoff, smoothing and the sensitivity slider cap, for every workspace") {
             // Both default to off: raw gyro. One setting for the whole app, also what the PC uses when it runs the gyro.

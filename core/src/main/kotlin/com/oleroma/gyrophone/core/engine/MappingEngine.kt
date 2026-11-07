@@ -1386,6 +1386,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         onChange?.run()
     }
 
+    /** The value of finger input [s] now (0..1, after its deadzones and Locked), or null while no finger is on its button. */
+    fun fingerValueNow(s: InputSource.Finger): Float? = synchronized(lock) {
+        if (!fingers.containsKey(s.id)) null else fingerValue(s)
+    }
+
     /** Where the finger on [id] is now (0..1 from its bottom-left) into [out], or false when none is. */
     fun fingerAt(id: String, out: FloatArray): Boolean = synchronized(lock) {
         val f = fingers[id] ?: return false

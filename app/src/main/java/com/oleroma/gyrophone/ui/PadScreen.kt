@@ -57,6 +57,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.SideEffect
 import com.oleroma.gyrophone.core.model.FingerAxis
+import com.oleroma.gyrophone.core.model.fingerOf
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -2637,23 +2638,24 @@ fun PadScreen(
         if (showTouchVisuals) TouchOverlay(trails, visuals, Modifier.fillMaxSize())
         if (!editing && visuals.swipeLine) SwipeLineOverlay(swipeLines, Modifier.fillMaxSize())
         if (!editing && visuals.moveRulers) MoveRulerOverlay(moveRulers, Modifier.fillMaxSize())
-        if (!editing && visuals.moveRulers) {
-            // A line across each button at the finger's height or width, where its finger position is mapped.
+        if (!editing && visuals.positionRuler) {
+            // A ruler through the finger on each button whose finger position is mapped (in any layer).
             val marks = remember(ws, w, h, portrait) {
                 val axes = ws.mappings.mapNotNull { it.source as? InputSource.Finger }.filter { it.id.isNotEmpty() }
                 ws.touchControls.filter { c -> c.kind == TouchKind.BUTTON && axes.any { it.id == c.id } }.map { c ->
                     val cx = c.placeX(portrait) * w
                     val cy = c.placeY(portrait) * h
                     val hw = c.placeSize(portrait) * minOf(w, h) / 2f
-                    val hh = if (c.shape == TouchShape.CIRCLE) hw else hw * c.heightRatio
+                    val round = c.shape == TouchShape.CIRCLE
+                    val hh = if (round) hw else hw * c.heightRatio
                     FingerMark(
-                        c.id, cx - hw, cy - hh, cx + hw, cy + hh,
-                        x = axes.any { it.id == c.id && it.axis == FingerAxis.X },
-                        y = axes.any { it.id == c.id && it.axis == FingerAxis.Y },
+                        c.id, cx - hw, cy - hh, cx + hw, cy + hh, round,
+                        FingerAxis.entries.filter { a -> (round || !a.roundOnly) && axes.any { it.id == c.id && it.axis == a } }
+                            .map { a -> c.fingers.fingerOf(a) },
                     )
-                }.filter { it.x || it.y }
+                }.filter { it.axes.isNotEmpty() }
             }
-            FingerMarkOverlay(runtime.engine, marks, MaterialTheme.colorScheme.tertiary, Modifier.fillMaxSize())
+            PositionRulerOverlay(runtime.engine, marks, Color(visuals.rulerColor.toInt()), visuals.rulerValueInCorner, Modifier.fillMaxSize())
         }
     }
 }
