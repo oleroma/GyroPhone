@@ -5,7 +5,11 @@ namespace GyroPhone.Latency;
 /// <param name="SpreadMs">Half the spread (middle half) of the lag measured over shorter stretches.</param>
 /// <param name="Twists">Back-and-forth twists seen.</param>
 /// <param name="Correlation">How well the two motions match once lined up (0 to 1).</param>
-public sealed record LatencyFit(double LatencyMs, double SpreadMs, int Twists, double Correlation, int Stretches);
+/// <param name="Stretches">Stretches timed and used.</param>
+/// <param name="Skipped">Stretches left out: the phone or bar out of sight, a freeze, or a poor match.</param>
+/// <param name="Freezes">Times the bar stood still while the phone moved (the motion stalled, then caught up).</param>
+public sealed record LatencyFit(double LatencyMs, double SpreadMs, int Twists, double Correlation, int Stretches,
+    int Skipped = 0, int Freezes = 0);
 
 /// <summary>
 /// The timing maths, without video: both motions are sampled once per video frame. Each is
@@ -32,6 +36,7 @@ public static class LatencyMath
         var a = Fill(phone);
         var b = Fill(bar);
         if (a == null || b == null) return null;
+        int n = phone.Length;
         int w = (int)(fps * DriftS) | 1;
         a = Normalize(HighPass(a, w));
         b = Normalize(HighPass(b, w));
@@ -39,12 +44,22 @@ public static class LatencyMath
         if (Math.Abs(c) < MinCorrelation) return null;
         int sign = Math.Sign(c);
 
+        // Frames to leave out: where either was out of sight, or the bar froze while the phone moved.
+        var bad = new bool[n];
+        for (int i = 0; i < n; i++) bad[i] = double.IsNaN(phone[i]) || double.IsNaN(bar[i]);
+        int freezes = MarkFreezes(a, bar, fps, bad);
+
+        // Stretches that are clean and match well give the spread; the others are counted as left out.
         int seg = (int)(fps * StretchS);
         var lags = new List<double>();
-        for (int s = 0; s + seg <= a.Length; s += seg / 2)
+        int skipped = 0;
+        for (int s = 0; s + seg <= n; s += seg / 2)
         {
+            int badCount = 0;
+            for (int i = s; i < s + seg; i++) if (bad[i]) badCount++;
             var (l, cc) = BestLag(a.AsSpan(s, seg), b.AsSpan(s, seg), maxLag, sign);
-            if (cc * sign >= MinCorrelation) lags.Add(l);
+            if (badCount * 20 > seg || cc * sign < StretchCorrelation) skipped++;
+            else lags.Add(l);
         }
         double spread = 0;
         if (lags.Count >= 2)
@@ -52,7 +67,100 @@ public static class LatencyMath
             lags.Sort();
             spread = (Quantile(lags, 0.75) - Quantile(lags, 0.25)) / 2 / fps * 1000;
         }
-        return new LatencyFit(lag / fps * 1000, spread, CountTwists(a), Math.Abs(c), lags.Count);
+        // The latency is the whole video's lag again, now over the clean frames only.
+        double latency = freezes > 0 || bad.Any(x => x) ? BestLag(a, b, maxLag, sign, bad).Lag : lag;
+        return new LatencyFit(latency / fps * 1000, spread, CountTwists(a), Math.Abs(c), lags.Count, skipped, freezes);
+    }
+
+    /// <summary>A stretch must match at least this well to count.</summary>
+    public const double StretchCorrelation = 0.8;
+    /// <summary>The bar standing still this long while the phone moves is a freeze.</summary>
+    public const double FreezeS = 0.1;
+
+    /// <summary>
+    /// Finds the freezes: runs of at least <see cref="FreezeS"/> where the bar (raw, in pixels) moves
+    /// under half a pixel a frame while the phone (<paramref name="phone"/>, drift-free and scaled)
+    /// moves at least half its usual size. Marks them in <paramref name="bad"/>; returns how many.
+    /// </summary>
+    public static int MarkFreezes(double[] phone, double[] bar, double fps, bool[] bad)
+    {
+        int min = Math.Max(2, (int)(FreezeS * fps));
+        int count = 0, start = -1;
+        for (int i = 1; i <= bar.Length; i++)
+        {
+            bool still = i < bar.Length && !double.IsNaN(bar[i]) && !double.IsNaN(bar[i - 1]) && Math.Abs(bar[i] - bar[i - 1]) < 0.5;
+            if (still)
+            {
+                if (start < 0) start = i - 1;
+                continue;
+            }
+            if (start >= 0 && i - start >= min)
+            {
+                double lo = double.PositiveInfinity, hi = double.NegativeInfinity;
+                for (int k = start; k < i; k++) (lo, hi) = (Math.Min(lo, phone[k]), Math.Max(hi, phone[k]));
+                if (hi - lo >= 0.5)
+                {
+                    count++;
+                    for (int k = start; k < i; k++) bad[k] = true;
+                }
+            }
+            start = -1;
+        }
+        return count;
+    }
+
+    /// <summary>The analyser looks at the video in pieces this long to find where the phone is twisted.</summary>
+    public const double PieceS = 0.5;
+
+    /// <summary>
+    /// The part of the video where the phone is being twisted: the longest run of
+    /// <see cref="PieceS"/> pieces in which both the phone and the bar are mostly tracked and the
+    /// phone turns at least a quarter as fast as in the brisk pieces (one quiet piece inside the run
+    /// is allowed). The setup at the start and the end is left out, so the video needs no trimming.
+    /// The whole video when no such run is found.
+    /// </summary>
+    public static (int Start, int Length) TwistingStretch(double[] phone, double[] bar, double fps)
+    {
+        if (phone.Length != bar.Length || fps <= 0) throw new ArgumentException("one sample of each per frame");
+        int piece = Math.Max(2, (int)(fps * PieceS));
+        int pieces = phone.Length / piece;
+        if (pieces < 2) return (0, phone.Length);
+        var speed = new double[pieces];
+        for (int k = 0; k < pieces; k++)
+        {
+            int tracked = 0, steps = 0;
+            double sum = 0;
+            for (int i = k * piece; i < (k + 1) * piece; i++)
+            {
+                if (double.IsNaN(phone[i]) || double.IsNaN(bar[i])) continue;
+                tracked++;
+                if (i > 0 && !double.IsNaN(phone[i - 1]))
+                {
+                    double d = phone[i] - phone[i - 1];
+                    sum += d * d;
+                    steps++;
+                }
+            }
+            speed[k] = tracked * 2 >= piece && steps > 0 ? Math.Sqrt(sum / steps) : double.NaN;
+        }
+        var known = speed.Where(v => !double.IsNaN(v)).OrderBy(v => v).ToList();
+        if (known.Count == 0) return (0, phone.Length);
+        double brisk = Quantile(known, 0.9), floor = brisk / 4;
+        bool Active(int k) => !double.IsNaN(speed[k]) && speed[k] >= floor;
+
+        int bestStart = -1, bestLen = 0;
+        for (int k = 0; k < pieces; k++)
+        {
+            if (!Active(k)) continue;
+            int end = k;
+            while (end + 1 < pieces && (Active(end + 1) || (end + 2 < pieces && Active(end + 2)))) end += Active(end + 1) ? 1 : 2;
+            if (end - k + 1 > bestLen) (bestStart, bestLen) = (k, end - k + 1);
+            k = end;
+        }
+        if (bestStart < 0) return (0, phone.Length);
+        int start = bestStart * piece;
+        int stop = bestStart + bestLen == pieces ? phone.Length : (bestStart + bestLen) * piece;
+        return (start, stop - start);
     }
 
     /// <summary>NaN (not tracked) frames filled in a straight line from their neighbours; null when under half were tracked.</summary>
@@ -104,15 +212,20 @@ public static class LatencyMath
     /// The lag in frames (with a fraction) at which <paramref name="b"/> best repeats <paramref name="a"/>,
     /// and the match there (signed). <paramref name="sign"/> 0 takes either direction.
     /// </summary>
-    public static (double Lag, double Match) BestLag(ReadOnlySpan<double> a, ReadOnlySpan<double> b, int maxLag, int sign)
+    public static (double Lag, double Match) BestLag(ReadOnlySpan<double> a, ReadOnlySpan<double> b, int maxLag, int sign, bool[]? skip = null)
     {
         var c = new double[maxLag];
         for (int l = 0; l < maxLag; l++)
         {
             double s = 0;
-            int n = a.Length - l;
-            for (int i = 0; i < n; i++) s += a[i] * b[i + l];
-            c[l] = s / n;
+            int n = a.Length - l, used = 0;
+            for (int i = 0; i < n; i++)
+            {
+                if (skip != null && (skip[i] || skip[i + l])) continue;
+                s += a[i] * b[i + l];
+                used++;
+            }
+            c[l] = used > 0 ? s / used : 0;
         }
         int best = 0;
         double bestScore = double.NegativeInfinity;

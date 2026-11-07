@@ -1,4 +1,5 @@
 using System.Windows;
+using GyroPhone.Latency;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -37,7 +38,10 @@ internal static class LatencyCard
         big.Inlines.Add(new System.Windows.Documents.Run($"{r.LatencyMs:0.0}"));
         big.Inlines.Add(new System.Windows.Documents.Run(" ms") { FontSize = 28, Foreground = Dim, FontWeight = FontWeights.Normal });
         left.Children.Add(big);
-        left.Children.Add(Label($"{r.Twists} twists · spread ±{r.SpreadMs:0.0} ms", 14, Dim, FontWeights.Normal, 0, 22));
+        if (r.Tag is { } tag) left.Children.Add(Label($"Timed by {tag}", 12, Accent, FontWeights.SemiBold, 0, 4));
+        string leftOut = r.LeftOut();
+        left.Children.Add(Label($"{r.Twists} twists · spread ±{r.SpreadMs:0.0} ms", 14, Dim, FontWeights.Normal, 0, leftOut.Length > 0 ? 4 : 22));
+        if (leftOut.Length > 0) left.Children.Add(Label(leftOut, 14, Dim, FontWeights.Normal, 0, 22));
         var kv = new Grid();
         kv.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
         kv.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -113,13 +117,5 @@ internal static class LatencyCard
         bmp.Render(card);
         bmp.Freeze();
         return bmp;
-    }
-
-    public static void SavePng(BitmapSource bmp, string path)
-    {
-        var enc = new PngBitmapEncoder();
-        enc.Frames.Add(BitmapFrame.Create(bmp));
-        using var f = File.Create(path);
-        enc.Save(f);
     }
 }

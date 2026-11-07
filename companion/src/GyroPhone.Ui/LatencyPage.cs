@@ -25,7 +25,13 @@ internal sealed class LatencyPage : Page
     private readonly StackPanel _list = new();
     private LatencyTestWindow? _window;
     private CompanionView? _view;
-    private bool _busy;
+    /// <summary>
+    /// The analysis outlives the window (closing and opening it builds a new page): its line under
+    /// the drop area, whether it runs, and the pages showing it.
+    /// </summary>
+    private static string s_status = "";
+    private static bool s_busy;
+    private static event Action? StatusChanged;
     private IReadOnlyList<(string File, LatencyRun Run)> _runs = [];
 
     public override FrameworkElement View => _root;
@@ -68,7 +74,7 @@ internal sealed class LatencyPage : Page
         _choose.HorizontalAlignment = HorizontalAlignment.Center;
         _choose.Margin = new Thickness(0, 10, 0, 0);
         dropBody.Children.Add(_choose);
-        _status = Parts.Text("", "Sub");
+        _status = Parts.Text(s_status, "Sub");
         _status.TextAlignment = TextAlignment.Center;
         _status.Margin = new Thickness(0, 10, 0, 0);
         dropBody.Children.Add(_status);
@@ -91,9 +97,49 @@ internal sealed class LatencyPage : Page
         _root.Children.Add(row);
 
         var (results, rb) = Parts.Card("Results");
+        var openAll = Parts.Button("Open results", OpenResults);
+        openAll.HorizontalAlignment = HorizontalAlignment.Left;
+        openAll.Margin = new Thickness(0, 0, 0, 8);
+        rb.Children.Add(Parts.Text("Every result on one page in your web browser, ready to share as one file.", "Sub"));
+        rb.Children.Add(openAll);
         rb.Children.Add(_list);
         _root.Children.Add(results);
         LoadRuns();
+        _choose.IsEnabled = !s_busy;
+        Action changed = () =>
+        {
+            _status.Text = s_status;
+            _choose.IsEnabled = !s_busy;
+        };
+        Action reload = LoadRuns;
+        StatusChanged += changed;
+        ResultsChanged += reload;
+        // Results saved from outside the page (Claude's tagged runs) show up as they land.
+        FileSystemWatcher? watcher = null;
+        try
+        {
+            Directory.CreateDirectory(LatencyResults.Folder);
+            watcher = new FileSystemWatcher(LatencyResults.Folder, "latency-*.json") { EnableRaisingEvents = true };
+            FileSystemEventHandler landed = (_, _) => _root.Dispatcher.BeginInvoke(new Action(LoadRuns));
+            watcher.Created += landed;
+            watcher.Changed += landed;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // Without it the list still refreshes after the page's own runs.
+        }
+        owner.Closed += (_, _) =>
+        {
+            StatusChanged -= changed;
+            ResultsChanged -= reload;
+            watcher?.Dispose();
+        };
+    }
+
+    private static void SetStatus(string text)
+    {
+        s_status = text;
+        StatusChanged?.Invoke();
     }
 
     public override void Refresh(CompanionView v)
@@ -136,14 +182,19 @@ internal sealed class LatencyPage : Page
 
     private async void Analyze(string path)
     {
-        if (_busy) return;
-        _busy = true;
-        _choose.IsEnabled = false;
-        _status.Text = "Reading the video…";
-        var progress = new Progress<double>(p => _status.Text = $"Reading the video… {p * 100:0}%");
+        if (s_busy) return;
+        s_busy = true;
+        SetStatus("Reading the video…");
+        var progress = new Progress<double>(p => SetStatus($"Reading the video… {p * 100:0}%"));
+        string name = Path.GetFileName(path);
+        _app.Log($"latency test: reading {path}");
         try
         {
-            var a = await Task.Run(() => VideoTracker.Analyze(path, progress));
+            SetStatus("Copying the video…");
+            string copy = await Task.Run(() => LatencyResults.KeepLastVideo(path));
+            _app.Log($"latency test: copied to {copy}");
+            SetStatus("Reading the video…");
+            var a = await Task.Run(() => VideoTracker.Analyze(copy, progress));
             var v = _view;
             var run = LatencyRun.From(a, path,
                 v != null ? LinkName(v) : "—",
@@ -151,24 +202,37 @@ internal sealed class LatencyPage : Page
                 LatencyTestWindow.LastMonitorHz,
                 v?.Version ?? "GyroPhone");
             LatencyResults.Save(run);
-            _status.Text = $"{run.LatencyMs:0.0} ms (±{run.SpreadMs:0.0}) from {run.Twists} twists.";
-            LoadRuns();
-            Open(run);
+            string timed = a.TimedToS - a.TimedFromS < a.LengthS - 1
+                ? $" Timed {Clock(a.TimedFromS)}–{Clock(a.TimedToS)} of {Clock(a.LengthS)}, where you twist."
+                : "";
+            _app.Log($"latency test: {name} {a.Fps:0} fps, {a.Frames} frames, timed {a.TimedFromS:0.0}-{a.TimedToS:0.0} s, phone {a.Motion}: "
+                + $"{run.LatencyMs:0.0} ms ±{run.SpreadMs:0.0}, {run.Twists} twists, match {run.Match:0.00}, {run.Stretches} stretches used, {run.Skipped} left out, {run.Freezes} freezes");
+            string left = run.LeftOut();
+            SetStatus($"{run.LatencyMs:0.0} ms (±{run.SpreadMs:0.0}) from {run.Twists} twists.{timed}"
+                + (left.Length > 0 ? $" {char.ToUpper(left[0])}{left[1..]}." : ""));
+            if (_root.IsLoaded) Open(run);
+            ResultsChanged?.Invoke();
         }
         catch (VideoProblem e)
         {
-            _status.Text = e.Message;
+            _app.Log($"latency test: {name}: {e.Message}");
+            SetStatus(e.Message);
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or OpenCvSharp.OpenCVException or DllNotFoundException or TypeInitializationException)
+        catch (Exception e)
         {
-            _status.Text = $"This video couldn't be read: {e.Message}";
+            _app.Log($"latency test: {name} couldn't be read: {e}");
+            SetStatus($"This video couldn't be read: {e.Message}");
         }
         finally
         {
-            _busy = false;
-            _choose.IsEnabled = true;
+            s_busy = false;
+            StatusChanged?.Invoke();
         }
     }
+
+    private static event Action? ResultsChanged;
+
+    private static string Clock(double s) => TimeSpan.FromSeconds(Math.Max(0, s)).ToString(@"m\:ss");
 
     private void LoadRuns()
     {
@@ -182,26 +246,23 @@ internal sealed class LatencyPage : Page
         for (int i = 0; i < _runs.Count; i++)
         {
             if (i > 0) _list.Children.Add(Parts.Divider());
-            _list.Children.Add(RunRow(_runs[i].File, _runs[i].Run));
+            _list.Children.Add(RunRow(_runs[i].Run));
         }
     }
 
-    private Grid RunRow(string file, LatencyRun r)
+    private Grid RunRow(LatencyRun r)
     {
         var g = new Grid { Margin = new Thickness(0, 4, 0, 4) };
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var text = Parts.Column(
-            Parts.Text($"{r.LatencyMs:0.0} ms  ·  ±{r.SpreadMs:0.0} ms"),
+            Parts.Text($"{r.LatencyMs:0.0} ms  ·  ±{r.SpreadMs:0.0} ms" + (r.Tag is { } tag ? $"  ·  {tag}" : "")),
             Parts.Text($"{r.When:d MMM yyyy, HH:mm} · {r.Link} · {r.App}", "Sub"));
         g.Children.Add(text);
         var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
         foreach (var b in new[]
         {
             Parts.Button("Open", () => Open(r), "Quiet"),
-            Parts.Button("Copy image", () => Clipboard.SetImage(LatencyCard.Render(r)), "Quiet"),
-            Parts.Button("Save image…", () => SaveImage(r), "Quiet"),
-            Parts.Button("Save data…", () => SaveData(file, r), "Quiet"),
         })
         {
             b.Margin = new Thickness(6, 0, 0, 0);
@@ -230,26 +291,18 @@ internal sealed class LatencyPage : Page
         w.Show();
     }
 
-    private void SaveImage(LatencyRun r)
+    /// <summary>Writes results.html afresh and opens it in the default browser.</summary>
+    private void OpenResults()
     {
-        var d = new Microsoft.Win32.SaveFileDialog
+        try
         {
-            Title = "Save the result picture",
-            Filter = "PNG picture|*.png",
-            FileName = $"gyrophone-latency-{r.When:yyyyMMdd-HHmm}.png",
-        };
-        if (d.ShowDialog(_owner) == true) LatencyCard.SavePng(LatencyCard.Render(r), d.FileName);
-    }
-
-    private void SaveData(string file, LatencyRun r)
-    {
-        var d = new Microsoft.Win32.SaveFileDialog
+            string page = LatencyReport.Write();
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(page) { UseShellExecute = true });
+        }
+        catch (Exception e)
         {
-            Title = "Save the result data",
-            Filter = "JSON data|*.json",
-            FileName = $"gyrophone-latency-{r.When:yyyyMMdd-HHmm}.json",
-        };
-        if (d.ShowDialog(_owner) == true) File.Copy(file, d.FileName, overwrite: true);
+            _app.Log($"Latency: couldn't open results.html: {e.Message}");
+        }
     }
 
     /// <summary>The link as the Home page names it.</summary>
