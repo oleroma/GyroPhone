@@ -111,7 +111,7 @@ public static class VideoTracker
     {
         try
         {
-            var hw = new VideoCapture(path, VideoCaptureAPIs.FFMPEG, new VideoCapturePara(VideoAccelerationType.Any, 0));
+            var hw = new VideoCapture(path, VideoCaptureAPIs.FFMPEG, [(int)VideoCaptureProperties.HwAcceleration, (int)VideoAccelerationType.Any]);
             if (hw.IsOpened()) return hw;
             hw.Dispose();
         }
