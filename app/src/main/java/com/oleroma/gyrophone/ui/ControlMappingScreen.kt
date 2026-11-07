@@ -56,6 +56,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.withFrameNanos
@@ -537,14 +538,29 @@ internal fun ControlMappingScreen(
         ),
     )
 
-    /**
-     * [card]'s inputs by Where (see [RowItem.Chip.where]): itself, then for its touch card its Area
-     * and Outside, for the Swipe card (any way) the four directions ↑ → ↓ ←.
-     */
+    /** [card]'s inputs by Where (see [RowItem.Chip.where]): itself, then for its touch card its Area and Outside. */
     fun wheresOf(card: BindableInput): List<BindableInput?> {
         val s = card.sources.first()
-        if (isSwipeCard(s)) return listOf(card) + Bindings.swipeSlots((s as InputSource.Surface).fingers, s.id).drop(1)
         return if (isTouchCard(s) && areaInputs.any { it != null }) listOf(card) + areaInputs else listOf(card)
+    }
+
+    /**
+     * The lines of [card]: the Swipe card has one per direction (Any, ↑ → ↓ ←), each a row of its
+     * own with its own zones, whose chips map that direction; any other card is its one line.
+     */
+    fun linesOf(card: BindableInput): List<BindableInput> {
+        val s = card.sources.first()
+        if (!isSwipeCard(s)) return listOf(card)
+        return listOf(card) + Bindings.swipeSlots((s as InputSource.Surface).fingers, s.id).drop(1)
+    }
+
+    /** The lines that are one action with [line] for inheritance: the Swipe card's all (see [Inheritance.cardOf]), else itself. */
+    fun groupOf(line: BindableInput): List<BindableInput> {
+        val s = line.sources.first() as? InputSource.Surface ?: return listOf(line)
+        if (!s.input.heldSwipe || s.zone != 0 || s.on != Trigger.HOLD) return listOf(line)
+        val card = inputs.firstOrNull { isSwipeCard(it.sources.first()) && (it.sources.first() as InputSource.Surface).let { c -> c.fingers == s.fingers && c.id == s.id } }
+            ?: BindableInput(SurfaceInput.HOLD_ANY.label, listOf(s.copy(input = SurfaceInput.HOLD_ANY)))
+        return linesOf(card)
     }
 
     /** A Where of [card] that has length zones (a swipe direction): its chips go in any zone; the others only in the first. */
@@ -560,11 +576,8 @@ internal fun ControlMappingScreen(
         return if (chip.zone > 0) zin(wi, chip.zone) else wi
     }
 
-    /** What the level above maps [card] to (cleared ones left out), with their triggers and Wheres. */
-    fun parentOf(card: BindableInput): List<Faded> = wheresOf(card).withIndex().flatMap { (w, wi) ->
-        if (wi == null || (w > 0 && !isSwipeCard(card.sources.first()))) emptyList()
-        else parentOfInput(wi).map { (t, x) -> Faded(t, x, w) }
-    }.distinct()
+    /** What the level above maps line [line] to (cleared ones left out), with their triggers. */
+    fun parentOf(line: BindableInput): List<Faded> = parentOfInput(line).map { (t, x) -> Faded(t, x) }
 
     /** Where [from] (a mapped input, any trigger) is on [card]'s row, or null when it is not on it. */
     fun whereOn(card: BindableInput, from: InputSource): Int? {
@@ -580,7 +593,8 @@ internal fun ControlMappingScreen(
     val groupsNow by rememberUpdatedState(shownGroups)
     val shownNow by rememberUpdatedState(shown)
     var selectedSrc by remember(control.id) { mutableStateOf<InputSource?>(null) }
-    val selected = shown.firstOrNull { it.sources.first() == selectedSrc } ?: shown.firstOrNull()
+    // A line of a card can be selected (the Swipe card's ↑...): taps on the library add to it.
+    val selected = shown.flatMap(::linesOf).firstOrNull { it.sources.first() == selectedSrc } ?: shown.firstOrNull()
     val selectedAllowed = remember(selected) { selected?.let(::allowedTargets).orEmpty() }
 
     val undo = remember(control.id) { mutableStateListOf<List<Mapping>>() }
@@ -622,9 +636,7 @@ internal fun ControlMappingScreen(
         runtime.setUiPref(PREF_RECENT, prefJson.encodeToString(recentSerializer, recent))
     }
 
-    fun assign(card: BindableInput, t: OutputTarget) {
-        // A new chip of the Swipe card goes on ↑; its settings pick another direction.
-        val input = if (isSwipeCard(card.sources.first())) wheresOf(card).getOrNull(1) ?: card else card
+    fun assign(input: BindableInput, t: OutputTarget) {
         if (!allows(allowedTargets(input), t)) return
         addRecent(t)
         var next = Bindings.addTarget(currentMappings, input, t)
@@ -670,9 +682,18 @@ internal fun ControlMappingScreen(
     val listState = rememberLazyListState()
     val density = LocalDensity.current
 
+    // The Swipe card's lines, by source: a drag lands on the line under the finger.
+    val lineBounds = remember { mutableStateMapOf<InputSource, Rect>() }
+
+    /** The card (or the line of the Swipe card) under [p]: the line it is on, else the nearest one. */
     fun cardAt(p: Offset): BindableInput? {
         if (!actionsBounds.contains(p)) return null
-        return shownNow.firstOrNull { cardBounds[it.sources.first()]?.contains(p) == true }
+        val card = shownNow.firstOrNull { cardBounds[it.sources.first()]?.contains(p) == true } ?: return null
+        val lines = linesOf(card)
+        if (lines.size == 1) return card
+        val placed = lines.filter { lineBounds[it.sources.first()] != null }
+        return placed.firstOrNull { lineBounds[it.sources.first()]!!.contains(p) }
+            ?: placed.minByOrNull { abs(lineBounds[it.sources.first()]!!.center.y - p.y) } ?: card
     }
 
     /** The held swipe sources of [input]'s zoned Wheres (zone 0, Hold): their mappings make its zones. */
@@ -704,12 +725,16 @@ internal fun ControlMappingScreen(
     fun hasEnd(input: BindableInput): Boolean = zoneSettings != null && mapsAny(zoneKeys(input))
 
     /** Every input [card] shows chips of: its Wheres and zones, on each trigger (mapping any of them overrides the level above). */
-    fun cardInputs(card: BindableInput): List<BindableInput> =
-        (0 until zonesOf(card)).flatMap { z -> wheresIn(card, z).filterNotNull() }
+    fun lineInputs(line: BindableInput): List<BindableInput> =
+        (0 until zonesOf(line)).flatMap { z -> wheresIn(line, z).filterNotNull() }
             .flatMap { trigInputs(it).map { (_, ti) -> ti } }.distinctBy { it.sources }
 
+    /** Every input [card] shows chips of, on all its lines (the Swipe card's directions are one action). */
+    fun cardInputs(card: BindableInput): List<BindableInput> =
+        groupOf(card).flatMap(::lineInputs).distinctBy { it.sources }
+
     /** Every input the cards show chips of: each card's Wheres and zones, on each trigger. */
-    fun bulkInputs(): List<BindableInput> = inputs.filterNot(Bindings::isTriggerOf).flatMap(::cardInputs).distinctBy { it.sources }
+    fun bulkInputs(): List<BindableInput> = inputs.filterNot(Bindings::isTriggerOf).flatMap(::lineInputs).distinctBy { it.sources }
 
     /** [input] maps nothing here, so it does not do what the level above maps it to (a clear on its Hold overrides it all). */
     fun clear(input: BindableInput) = change(
@@ -725,7 +750,7 @@ internal fun ControlMappingScreen(
 
     /** The card whose faded chip maps [from] (one of a card's Wheres on one of its triggers). */
     fun inheritedCard(from: BindableInput): BindableInput? =
-        shownNow.firstOrNull { card -> wheresOf(card).filterNotNull().any { wi -> trigInputs(wi).any { (_, ti) -> ti.sources == from.sources } } }
+        shownNow.flatMap(::linesOf).firstOrNull { line -> trigInputs(line).any { (_, ti) -> ti.sources == from.sources } }
 
     /**
      * [m] with card [input] overriding the level above without its faded chip [t] on [tr] of
@@ -733,10 +758,12 @@ internal fun ControlMappingScreen(
      * (their options kept), or is cleared when none is left.
      */
     fun withoutInherited(m: List<Mapping>, input: BindableInput, tr: Trigger, t: OutputTarget, from: BindableInput? = null): List<Mapping> {
-        val wheres = if (isSwipeCard(input.sources.first())) wheresOf(input).filterNotNull() else listOf(input)
+        val wheres = groupOf(input)
         fun isFrom(wi: BindableInput, r: Trigger) = from == null || trig(wi, r).sources == from.sources
         val rest = wheres.flatMap { wi -> parentOfInput(wi).filterNot { (r, x) -> r == tr && x == t && isFrom(wi, r) } }
-        if (rest.isEmpty()) return Bindings.setTargets(m, input, Bindings.targets(m, input).filter { it != OutputTarget.NoOutput } + OutputTarget.NoOutput)
+        // Nothing left: the action is cleared (on the Swipe card's Any line for the whole card).
+        val head = wheres.first()
+        if (rest.isEmpty()) return Bindings.setTargets(m, head, Bindings.targets(m, head).filter { it != OutputTarget.NoOutput } + OutputTarget.NoOutput)
         // Each with its options; the same output with another How (Repeat ×2 and Held) is two.
         return wheres.fold(m) { acc, wi ->
             trigInputs(wi).fold(acc) { out, (r, ti) ->
@@ -911,7 +938,7 @@ internal fun ControlMappingScreen(
      */
     fun timingLine(input: BindableInput): String? {
         // The Swipe card: its directions' too, each trigger once.
-        val all = if (isSwipeCard(input.sources.first())) wheresOf(input).filterNotNull().flatMap { trigInputs(it) } else trigInputs(input)
+        val all = groupOf(input).flatMap { trigInputs(it) }
         val tis = all.filter { (t, ti) ->
             t != Trigger.HOLD && Bindings.targets(view, ti).any { it != OutputTarget.NoOutput }
         }.distinctBy { it.first }
@@ -1021,10 +1048,9 @@ internal fun ControlMappingScreen(
                     val row = rowOf(card).filter { it != c }.toMutableList()
                     val i = at.coerceIn(0, row.size)
                     val zone = zoneIn(row, i)
-                    // A chip keeps its Where on its own card (Area and Outside in zone 1 only, a swipe direction
-                    // in any zone); anything else lands on the card itself, on the Swipe card on ↑.
-                    val swipeCard = isSwipeCard(card.sources.first())
-                    val w0 = (c as? RowItem.Chip)?.where ?: from?.let { whereOn(card, it.sources.first()) } ?: if (swipeCard) 1 else 0
+                    // A chip keeps its Where on its own card (Area and Outside in zone 1 only); anything else
+                    // lands on the line itself.
+                    val w0 = (c as? RowItem.Chip)?.where ?: from?.let { whereOn(card, it.sources.first()) } ?: 0
                     val w = if (zone > 0 && !zoned(wheresOf(card).getOrNull(w0))) 0 else w0
                     val zi = wheresIn(card, zone).getOrNull(w) ?: zin(card, zone)
                     if (from == null && (d.target as? OutputTarget.Layer)?.set?.let { it < 0 } == true) {
@@ -1259,19 +1285,82 @@ internal fun ControlMappingScreen(
                     }
                     val all = cardInputs(input)
                     val own = all.flatMap { ti -> Bindings.targets(view, ti) }
+                    val cardLines = linesOf(input)
+                    val swipe = cardLines.size > 1
                     // A layer shows only its own mappings: nothing faded from the level above there.
-                    val parent = if (editSet == MappingSet.BASE) parentOf(input) else emptyList()
+                    val parent = if (editSet == MappingSet.BASE) cardLines.flatMap(::parentOf) else emptyList()
                     // The level above passes down the whole card (Inheritance.cardOf) while it maps nothing
                     // itself, here or, in a layer, in Base: Base's mapping is what the layer does there.
                     val owns = own.isNotEmpty() || (editSet != MappingSet.BASE && all.any { ti -> Bindings.targets(mappings, ti).isNotEmpty() })
+                    val hoverHere = hovered != null && cardLines.any { it.sources.first() == hovered?.sources?.first() }
+
+                    /**
+                     * Line [i] of the Swipe card ([line]: Any, then ↑ → ↓ ←): shown while it maps something
+                     * (or shows the level above's), and every line while a drag is over the card.
+                     */
+                    @Composable
+                    fun swipeLine(i: Int, line: BindableInput): CardLine? {
+                        val ls = line.sources.first()
+                        val lrow = liveRow(line)
+                        val inh = if (owns || editSet != MappingSet.BASE) emptyList() else parentOf(line)
+                        val rs = rememberScrollState()
+                        DisposableEffect(ls) {
+                            onDispose {
+                                lineBounds.remove(ls)
+                                itemBounds.keys.removeAll { it.first == ls }
+                                rowScrolls.remove(ls)
+                                rowBounds.remove(ls)
+                            }
+                        }
+                        val show = lrow.isNotEmpty() || inh.isNotEmpty() || (hoverHere && fits) ||
+                            (d is Dragged.Divider && d.card.sources.first() == ls)
+                        if (!show) {
+                            SideEffect { lineBounds.remove(ls) }
+                            return null
+                        }
+                        rowScrolls[ls] = rs
+                        val lz = zonesOf(line)
+                        val lands = landing?.first?.sources?.first() == ls
+                        return CardLine(
+                            key = ls,
+                            label = Bindings.slotLabel(if (i == 0) ANY_SLOT else i - 1),
+                            selected = selected?.sources?.first() == ls,
+                            row = lrow,
+                            inherited = inh,
+                            others = List(lz) { emptyList() },
+                            optionsOf = { chip -> chipOptions(view, line, chip) },
+                            rangeOf = { chip -> chipRangeText(view, line, chip) },
+                            badge = { tr, _ -> Triggers.badge(ls, tr) },
+                            landingZone = if (lands && (lz > 1 || lrow.any { it == RowItem.End })) zoneIn(lrow, lrow.indexOf(RowItem.Landing)) else -1,
+                            addZone = addsZone(line),
+                            rowScroll = rs,
+                            onBounds = { b -> if (lineBounds[ls] != b) lineBounds[ls] = b },
+                            onRowBounds = { b -> rowBounds[ls] = b },
+                            onItemBounds = { item, b -> itemBounds[ls to item] = b },
+                            onDivider = { k -> if (onZoneSettings != null) zoneDialog = line to k - 1 },
+                            onDividerDrag = { k, at -> selectedSrc = ls; startDrag(Dragged.Divider(line, k), at) },
+                            onChipDrag = { chip, at ->
+                                selectedSrc = ls
+                                startDrag(Dragged.Target(chip.target, trig(chipInput(line, chip), chip.trigger), n = chip.n), at)
+                            },
+                            onChipClick = { chip -> selectedSrc = ls; chipDialog = line to chip },
+                            onInheritedDrag = { f, at ->
+                                selectedSrc = ls
+                                startDrag(Dragged.Target(f.target, trig(line, f.trigger), inherited = true), at)
+                            },
+                            onClick = { selectedSrc = ls },
+                        )
+                    }
+                    val lines = if (!swipe) null else cardLines.mapIndexedNotNull { i, line -> key(line.sources.first()) { swipeLine(i, line) } }
                     ActionCard(
+                        lines = lines,
                         title = when {
                             isSurface(input) && (src as InputSource.Surface).input == SurfaceInput.HOLD -> "Touch"
                             isSurface(input) -> input.label
                             else -> actionLabel(control, input)
                         },
                         row = row,
-                        inherited = if (owns) emptyList() else parent,
+                        inherited = if (owns || swipe) emptyList() else parent,
                         parentName = parentName,
                         onClear = if (parent.isNotEmpty() && !(own.isNotEmpty() && own.all { it == OutputTarget.NoOutput })) ({ clear(input) }) else null,
                         onFollow = if (parent.isNotEmpty() && own.isNotEmpty()) ({ follow(input) }) else null,
@@ -1281,24 +1370,23 @@ internal fun ControlMappingScreen(
                         rangeOf = { chip -> chipRangeText(view, input, chip) },
                         badge = { tr, w ->
                             val wi = wheresOf(input).getOrNull(w)
-                            // The Swipe card's chips all show their direction: "Any", "↑"...
-                            val name = if (isSwipeCard(src) && w == 0) "Any" else wi?.label?.takeIf { w > 0 }
-                            listOfNotNull(name, Triggers.badge(src, tr)).filter { it.isNotEmpty() }.joinToString(" · ")
+                            if (w == 0 || wi == null) Triggers.badge(src, tr)
+                            else listOf(wi.label, Triggers.badge(wi.sources.first(), tr)).filter { it.isNotEmpty() }.joinToString(" · ")
                         },
                         timing = timingLine(input),
                         setOrder = sets.map { it.id },
                         setId = editSet,
                         onOther = onEditSet,
                         // Only one card stands out: while a target is over another card, that one does.
-                        selected = input == selected && hovered.let { h ->
-                            h == null || h == input || dragTarget == null || !allows(allowedTargets(h), dragTarget)
+                        selected = cardLines.any { it == selected } && hovered.let { h ->
+                            h == null || h == input || hoverHere || dragTarget == null || !allows(allowedTargets(h), dragTarget)
                         },
-                        hover = dragTarget != null && fits && hovered == input,
+                        hover = dragTarget != null && fits && (hovered == input || hoverHere),
                         landingLabel = when (d) {
                             is Dragged.Target -> Describe.shortTarget(d.target)
                             else -> null
                         },
-                        landingZone = if (landsHere && (zoneCount > 1 || row.any { it == RowItem.End })) zoneIn(row, row.indexOf(RowItem.Landing)) else -1,
+                        landingZone = if (!swipe && landsHere && (zoneCount > 1 || row.any { it == RowItem.End })) zoneIn(row, row.indexOf(RowItem.Landing)) else -1,
                         blocked = !fits,
                         lifted = cardDrag?.input == input,
                         addZone = addsZone(input),
@@ -1312,7 +1400,8 @@ internal fun ControlMappingScreen(
                         onDivider = { k -> if (onZoneSettings != null) zoneDialog = input to k - 1 },
                         onGear = gearOf(input),
                         onDividerDrag = { k, at -> selectedSrc = src; startDrag(Dragged.Divider(input, k), at) },
-                        onClick = { selectedSrc = src },
+                        // The Swipe card: a tap picks its ↑ line, where library taps then add.
+                        onClick = { selectedSrc = cardLines.getOrNull(1)?.sources?.first() ?: src },
                         onChipDrag = { chip, at ->
                             selectedSrc = src
                             val from = trig(chipInput(input, chip), chip.trigger)
@@ -1704,10 +1793,12 @@ internal fun ControlMappingScreen(
         val ti = trig(zi, chip.trigger)
         // A button's touch card: a chip can move between its Touch, Area and Outside (Where); the Swipe
         // card's between its directions (Any, ↑ → ↓ ←), in its zone.
-        val swipeCard = isSwipeCard(input.sources.first())
-        val names = if (swipeCard) List(5) { Bindings.slotLabel(if (it == 0) ANY_SLOT else it - 1) }
+        val group = groupOf(input)
+        val swipeCard = group.size > 1
+        val names = if (swipeCard) List(group.size) { Bindings.slotLabel(if (it == 0) ANY_SLOT else it - 1) }
         else listOf(WHERE_TOUCH, WHERE_AREA, WHERE_OUTSIDE)
-        val whereInputs = wheresIn(input, chip.zone).mapIndexedNotNull { w, wi -> wi?.let { names[w] to it } }
+        val choices = if (swipeCard) group.map { zin(it, chip.zone) } else wheresIn(input, chip.zone)
+        val whereInputs = choices.mapIndexedNotNull { w, wi -> wi?.let { names[w] to it } }
             .takeIf { (chip.zone == 0 || swipeCard) && it.size > 1 }.orEmpty()
         val whereNow = whereInputs.indexOfFirst { it.second.sources == zi.sources }.coerceAtLeast(0)
         fun inputAt(w: Int) = whereInputs.getOrNull(w)?.second ?: input
@@ -1932,15 +2023,13 @@ private fun ActionCard(
     /** The ⠿ handle starts moving the card. */
     onHandleDrag: (Offset) -> Unit,
     modifier: Modifier = Modifier,
+    /** A card of several labelled lines (the Swipe card's directions), each its own row; null = the one [row]. */
+    lines: List<CardLine>? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val handleCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
-    val chipDrag by rememberUpdatedState(onChipDrag)
-    val chipClick by rememberUpdatedState(onChipClick)
-    val inheritedDrag by rememberUpdatedState(onInheritedDrag)
     val handleDrag by rememberUpdatedState(onHandleDrag)
-    val dividerDrag by rememberUpdatedState(onDividerDrag)
-    val empty = row.none { it is RowItem.Chip }
+    val empty = if (lines != null) lines.none { l -> l.row.any { it is RowItem.Chip } } else row.none { it is RowItem.Chip }
     val nothing = row.isEmpty() && others.all { it.isEmpty() } && inherited.isEmpty()
     Surface(
         onClick = onClick,
@@ -2020,181 +2109,269 @@ private fun ActionCard(
                     )
                 }
             }
-            if (nothing) {
+            if (lines != null) {
+                if (lines.isEmpty()) Text(
+                    if (hover) "Release to map" else "Drop here",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                )
+                for (ln in lines) key(ln.key) {
+                    Column(
+                        Modifier.onGloballyPositioned { ln.onBounds(it.boundsInRoot()) },
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Row(
+                            Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = ln.onClick).padding(horizontal = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                ln.label,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = if (ln.selected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (ln.selected) colors.primary else colors.onSurfaceVariant,
+                            )
+                            if (ln.landingZone >= 0) Text(
+                                "  → Zone " + (ln.landingZone + 1) + if (ln.landingZone >= ln.others.size) " (new)" else "",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.tertiary,
+                            )
+                        }
+                        if (ln.row.isEmpty() && ln.inherited.isEmpty()) Text(
+                            "Drop here",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 2.dp, bottom = 4.dp),
+                        ) else ChipRow(ln, parentName, setOrder, setId, onOther, landingLabel)
+                    }
+                }
+            } else if (nothing) {
                 Text(
                     if (hover) "Release to map" else "Drop here",
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant,
                 )
             } else {
-                // A framed row; a shadow at an end that has more to scroll to.
-                val shade = colors.scrim.copy(alpha = 0.28f)
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .onGloballyPositioned { onRowBounds(it.boundsInRoot()) }
-                        .clip(RoundedCornerShape(12.dp))
-                        // Plain inside, whatever the card's highlight, so the chips stay easy to read.
-                        .background(colors.surface)
-                        .border(1.dp, colors.outlineVariant, RoundedCornerShape(12.dp))
-                        .drawWithContent {
-                            drawContent()
-                            val w = ROW_SHADE_DP.dp.toPx()
-                            if (rowScroll.canScrollBackward) {
-                                drawRect(Brush.horizontalGradient(listOf(shade, Color.Transparent), 0f, w), size = Size(w, size.height))
-                            }
-                            if (rowScroll.canScrollForward) {
-                                drawRect(
-                                    Brush.horizontalGradient(listOf(Color.Transparent, shade), size.width - w, size.width),
-                                    topLeft = Offset(size.width - w, 0f), size = Size(w, size.height),
-                                )
-                            }
-                        }
-                        .horizontalScroll(rowScroll)
-                        .padding(4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    // Every set keeps its place in the row (Base, then the layers in order), whichever is edited.
-                    val rank = (listOf(MappingSet.BASE) + setOrder).let { o -> { n: Int -> o.indexOf(n) } }
-
-                    /** Zone [z]'s mappings in the other sets ranked before the one edited ([before]) or after it. */
-                    @Composable
-                    fun othersOf(z: Int, before: Boolean) {
-                        for ((n, t, tr) in others.getOrNull(z).orEmpty()) if ((rank(n) < rank(setId)) == before) key("o", z, n, t, tr) {
-                            Row(
-                                Modifier
-                                    .alpha(0.5f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(colors.surfaceVariant)
-                                    .clickable { onOther(n) }
-                                    .heightIn(min = 32.dp)
-                                    .padding(horizontal = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                if (n == MappingSet.BASE) {
-                                    Text("Base", style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
-                                } else SetNumber(n)
-                                Text(
-                                    chipText(badge(tr, 0), t, null),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = colors.onSurfaceVariant,
-                                    maxLines = 1,
-                                    modifier = Modifier.padding(start = 6.dp),
-                                )
-                            }
-                        }
-                    }
-                    // Faded: what the level above does here.
-                    for (f in inherited) key("p", f) {
-                        val (tr, t) = f
-                        val coords = remember { arrayOfNulls<LayoutCoordinates>(1) }
-                        Row(
-                            Modifier
-                                .dragSource("p" to f, coords) { inheritedDrag(f, it) }
-                                .alpha(0.5f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .border(1.dp, colors.outline, RoundedCornerShape(8.dp))
-                                .heightIn(min = 32.dp)
-                                .padding(horizontal = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(parentName, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
-                            Text(
-                                chipText(badge(tr, f.where), t, null),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = colors.onSurfaceVariant,
-                                maxLines = 1,
-                                modifier = Modifier.padding(start = 6.dp),
-                            )
-                        }
-                    }
-                    var zone = 0
-                    othersOf(0, true)
-                    for (item in row) when (item) {
-                        is RowItem.Chip -> key(item) {
-                            val z = item.zone
-                            val t = item.target
-                            val chipCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
-                            val fg = colors.onSecondaryContainer
-                            Row(
-                                Modifier
-                                    .onGloballyPositioned { onItemBounds(item, Rect(it.positionInRoot(), it.size.toSize())) }
-                                    .dragSource(item, chipCoords) { chipDrag(item, it) }
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { chipClick(item) }
-                                    .background(
-                                        if (setId == MappingSet.BASE) colors.secondaryContainer else setColor(setId).copy(alpha = 0.35f),
-                                    )
-                                    .heightIn(min = 32.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                if (setId != MappingSet.BASE) SetNumber(setId, Modifier.padding(start = 6.dp))
-                                Text(
-                                    chipText(badge(item.trigger, item.where), t, optionsOf(item), rangeOf(item)),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = fg,
-                                    maxLines = 1,
-                                    modifier = Modifier.padding(start = if (setId == MappingSet.BASE) 10.dp else 6.dp, end = 10.dp),
-                                )
-                            }
-                        }
-
-                        is RowItem.Divider -> {
-                            othersOf(zone, false)
-                            zone++
-                            val k = zone
-                            key(item) {
-                                val coords = remember { arrayOfNulls<LayoutCoordinates>(1) }
-                                ZoneDivider(
-                                    k, end = false, addZone = false,
-                                    Modifier
-                                        .onGloballyPositioned { onItemBounds(item, Rect(it.positionInRoot(), it.size.toSize())) }
-                                        .dragSource(item, coords) { dividerDrag(item.k, it) },
-                                ) { onDivider(k) }
-                            }
-                            othersOf(zone, true)
-                        }
-
-                        RowItem.End -> {
-                            othersOf(zone, false)
-                            zone++
-                            val k = zone
-                            key(item) {
-                                ZoneDivider(
-                                    k, end = true, addZone = addZone,
-                                    Modifier.onGloballyPositioned { onItemBounds(item, Rect(it.positionInRoot(), it.size.toSize())) },
-                                ) { onDivider(k) }
-                            }
-                            othersOf(zone, true)
-                        }
-
-                        RowItem.Landing -> key(item) {
-                            if (landingLabel != null) {
-                                Box(
-                                    Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(colors.tertiary.copy(alpha = 0.18f))
-                                        .border(2.dp, colors.tertiary, RoundedCornerShape(8.dp))
-                                        .heightIn(min = 32.dp)
-                                        .padding(horizontal = 12.dp),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Text(landingLabel, style = MaterialTheme.typography.labelLarge, color = colors.tertiary, maxLines = 1)
-                                }
-                            } else {
-                                ZoneDivider(0, end = false, addZone = false, landing = true) {}
-                            }
-                        }
-                    }
-                    othersOf(zone, false)
-                    for (z in zone + 1 until others.size) {
-                        othersOf(z, true); othersOf(z, false)
-                    }
-                }
+                ChipRow(
+                    CardLine(
+                        key = "", label = "", selected = selected, row = row, inherited = inherited, others = others,
+                        optionsOf = optionsOf, rangeOf = rangeOf, badge = badge, landingZone = landingZone, addZone = addZone,
+                        rowScroll = rowScroll, onBounds = {}, onRowBounds = onRowBounds, onItemBounds = onItemBounds,
+                        onDivider = onDivider, onDividerDrag = onDividerDrag, onChipDrag = onChipDrag, onChipClick = onChipClick,
+                        onInheritedDrag = onInheritedDrag, onClick = onClick,
+                    ),
+                    parentName, setOrder, setId, onOther, landingLabel,
+                )
             }
             if (timing != null) Text(timing, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             if (note != null) Text(note, style = MaterialTheme.typography.bodySmall, color = colors.error)
+        }
+    }
+}
+
+/** One line of a card: its [label] (none on a one-line card), its chips and dividers, and what they do. */
+private class CardLine(
+    val key: Any,
+    val label: String,
+    val selected: Boolean,
+    val row: List<RowItem>,
+    val inherited: List<Faded>,
+    val others: List<List<Triple<Int, OutputTarget, Trigger>>>,
+    val optionsOf: (RowItem.Chip) -> MapOptions?,
+    val rangeOf: (RowItem.Chip) -> String?,
+    val badge: (Trigger, Int) -> String,
+    val landingZone: Int,
+    val addZone: Boolean,
+    val rowScroll: ScrollState,
+    val onBounds: (Rect) -> Unit,
+    val onRowBounds: (Rect) -> Unit,
+    val onItemBounds: (RowItem, Rect) -> Unit,
+    val onDivider: (Int) -> Unit,
+    val onDividerDrag: (Int, Offset) -> Unit,
+    val onChipDrag: (RowItem.Chip, Offset) -> Unit,
+    val onChipClick: (RowItem.Chip) -> Unit,
+    val onInheritedDrag: (Faded, Offset) -> Unit,
+    val onClick: () -> Unit,
+)
+
+/** [line]'s framed, sideways scrolling row of chips and zone dividers (see [ActionCard]). */
+@Composable
+private fun ChipRow(
+    line: CardLine,
+    parentName: String,
+    setOrder: List<Int>,
+    setId: Int,
+    onOther: (Int) -> Unit,
+    landingLabel: String?,
+) {
+    val colors = MaterialTheme.colorScheme
+    val chipDrag by rememberUpdatedState(line.onChipDrag)
+    val chipClick by rememberUpdatedState(line.onChipClick)
+    val inheritedDrag by rememberUpdatedState(line.onInheritedDrag)
+    val dividerDrag by rememberUpdatedState(line.onDividerDrag)
+    // A framed row; a shadow at an end that has more to scroll to.
+    val shade = colors.scrim.copy(alpha = 0.28f)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .onGloballyPositioned { line.onRowBounds(it.boundsInRoot()) }
+            .clip(RoundedCornerShape(12.dp))
+            // Plain inside, whatever the card's highlight, so the chips stay easy to read.
+            .background(colors.surface)
+            .border(1.dp, colors.outlineVariant, RoundedCornerShape(12.dp))
+            .drawWithContent {
+                drawContent()
+                val w = ROW_SHADE_DP.dp.toPx()
+                if (line.rowScroll.canScrollBackward) {
+                    drawRect(Brush.horizontalGradient(listOf(shade, Color.Transparent), 0f, w), size = Size(w, size.height))
+                }
+                if (line.rowScroll.canScrollForward) {
+                    drawRect(
+                        Brush.horizontalGradient(listOf(Color.Transparent, shade), size.width - w, size.width),
+                        topLeft = Offset(size.width - w, 0f), size = Size(w, size.height),
+                    )
+                }
+            }
+            .horizontalScroll(line.rowScroll)
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Every set keeps its place in the row (Base, then the layers in order), whichever is edited.
+        val rank = (listOf(MappingSet.BASE) + setOrder).let { o -> { n: Int -> o.indexOf(n) } }
+
+        /** Zone [z]'s mappings in the other sets ranked before the one edited ([before]) or after it. */
+        @Composable
+        fun othersOf(z: Int, before: Boolean) {
+            for ((n, t, tr) in line.others.getOrNull(z).orEmpty()) if ((rank(n) < rank(setId)) == before) key("o", z, n, t, tr) {
+                Row(
+                    Modifier
+                        .alpha(0.5f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(colors.surfaceVariant)
+                        .clickable { onOther(n) }
+                        .heightIn(min = 32.dp)
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (n == MappingSet.BASE) {
+                        Text("Base", style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+                    } else SetNumber(n)
+                    Text(
+                        chipText(line.badge(tr, 0), t, null),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.onSurfaceVariant,
+                        maxLines = 1,
+                        modifier = Modifier.padding(start = 6.dp),
+                    )
+                }
+            }
+        }
+        // Faded: what the level above does here.
+        for (f in line.inherited) key("p", f) {
+            val (tr, t) = f
+            val coords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+            Row(
+                Modifier
+                    .dragSource("p" to f, coords) { inheritedDrag(f, it) }
+                    .alpha(0.5f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .border(1.dp, colors.outline, RoundedCornerShape(8.dp))
+                    .heightIn(min = 32.dp)
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(parentName, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+                Text(
+                    chipText(line.badge(tr, f.where), t, null),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 1,
+                    modifier = Modifier.padding(start = 6.dp),
+                )
+            }
+        }
+        var zone = 0
+        othersOf(0, true)
+        for (item in line.row) when (item) {
+            is RowItem.Chip -> key(item) {
+                val z = item.zone
+                val t = item.target
+                val chipCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+                val fg = colors.onSecondaryContainer
+                Row(
+                    Modifier
+                        .onGloballyPositioned { line.onItemBounds(item, Rect(it.positionInRoot(), it.size.toSize())) }
+                        .dragSource(item, chipCoords) { chipDrag(item, it) }
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { chipClick(item) }
+                        .background(
+                            if (setId == MappingSet.BASE) colors.secondaryContainer else setColor(setId).copy(alpha = 0.35f),
+                        )
+                        .heightIn(min = 32.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (setId != MappingSet.BASE) SetNumber(setId, Modifier.padding(start = 6.dp))
+                    Text(
+                        chipText(line.badge(item.trigger, item.where), t, line.optionsOf(item), line.rangeOf(item)),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = fg,
+                        maxLines = 1,
+                        modifier = Modifier.padding(start = if (setId == MappingSet.BASE) 10.dp else 6.dp, end = 10.dp),
+                    )
+                }
+            }
+
+            is RowItem.Divider -> {
+                othersOf(zone, false)
+                zone++
+                val k = zone
+                key(item) {
+                    val coords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+                    ZoneDivider(
+                        k, end = false, addZone = false,
+                        Modifier
+                            .onGloballyPositioned { line.onItemBounds(item, Rect(it.positionInRoot(), it.size.toSize())) }
+                            .dragSource(item, coords) { dividerDrag(item.k, it) },
+                    ) { line.onDivider(k) }
+                }
+                othersOf(zone, true)
+            }
+
+            RowItem.End -> {
+                othersOf(zone, false)
+                zone++
+                val k = zone
+                key(item) {
+                    ZoneDivider(
+                        k, end = true, addZone = line.addZone,
+                        Modifier.onGloballyPositioned { line.onItemBounds(item, Rect(it.positionInRoot(), it.size.toSize())) },
+                    ) { line.onDivider(k) }
+                }
+                othersOf(zone, true)
+            }
+
+            RowItem.Landing -> key(item) {
+                if (landingLabel != null) {
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(colors.tertiary.copy(alpha = 0.18f))
+                            .border(2.dp, colors.tertiary, RoundedCornerShape(8.dp))
+                            .heightIn(min = 32.dp)
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(landingLabel, style = MaterialTheme.typography.labelLarge, color = colors.tertiary, maxLines = 1)
+                    }
+                } else {
+                    ZoneDivider(0, end = false, addZone = false, landing = true) {}
+                }
+            }
+        }
+        othersOf(zone, false)
+        for (z in zone + 1 until line.others.size) {
+            othersOf(z, true); othersOf(z, false)
         }
     }
 }

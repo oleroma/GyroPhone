@@ -62,7 +62,7 @@ App-wide, Settings › App › Touch display (`ui/TouchVisuals.kt`), all off by 
 - **Show touches**: a dot under each finger that fades after it lifts;
 - **Trail behind fingers**: a line of the finger's recent path, its end fading;
 - **Show live mappings on buttons**: a button's label briefly shows what it sends (yellow, lingers 700 ms);
-- **Swipe line**: a finger on a touchpad button shows a line from its start to its direction's activation lengths; only the arrows (↑ → ↓ ←) draw it; Swipe chips set to Any have no line.
+- **Swipe line**: a finger on a touchpad button shows a line from its start to its direction's activation lengths; only the arrows (↑ → ↓ ←) draw it; the Swipe card's Any line has none.
 - **Move rulers**: a finger whose Move X or Y moves shows a sliding ruler per Move. Under the same switch, a button whose **Finger X** or **Finger Y** is mapped shows a thin line across it at the finger's width or height while a finger is on it (`FingerMarkOverlay`).
 
 A layer in use other than Base shows a pill for a second.

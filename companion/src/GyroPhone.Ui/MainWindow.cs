@@ -81,6 +81,7 @@ public sealed class MainWindow : Window
         Add(side, content, MainPage.Gamepad, "Gamepad", "", new GamepadPage(app));
         Add(side, content, MainPage.Overlays, "Overlays", "", new OverlaysPage(app, this));
         Add(side, content, MainPage.Connection, "Connection", "", new ConnectionPage(app));
+        Add(side, content, MainPage.Latency, "Latency test", "", new LatencyPage(app, this, icon));
         Add(side, content, MainPage.App, "App", "", new AppPage(app));
 
         Content = root;
