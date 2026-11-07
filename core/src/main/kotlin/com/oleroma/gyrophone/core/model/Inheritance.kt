@@ -48,7 +48,7 @@ object Inheritance {
 
     /** Which action of its level [s] is, for a workspace's own input ([isWorkspaceInput]). */
     private fun levelKey(s: InputSource): Any? =
-        if (s is InputSource.Gyro || s is InputSource.Tilt || s is InputSource.Shake) s else cardOf(s)
+        if (s is InputSource.Gyro || s is InputSource.Tilt || s is InputSource.Shake || s is InputSource.Finger) s else cardOf(s)
 
     /** The touch control [s] belongs to ("" = the touchpad), or null for a source that is no touch input. */
     private fun ownerOf(s: InputSource): String? = when (s) {

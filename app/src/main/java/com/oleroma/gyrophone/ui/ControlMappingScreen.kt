@@ -459,7 +459,7 @@ internal fun ControlMappingScreen(
     val inputs = remember(control, physicalInputs) {
         when {
             physicalInputs != null -> physicalInputs
-            control.isTouchpadStandIn -> (1..4).flatMap { Bindings.surfaceInputs(it) } + Bindings.gyroInputs() + Bindings.motionInputs()
+            control.isTouchpadStandIn -> (1..4).flatMap { Bindings.surfaceInputs(it) } + Bindings.fingerInputs("", round = false) + Bindings.gyroInputs() + Bindings.motionInputs()
             else -> Bindings.touchInputs(control)
         }
     }

@@ -53,6 +53,27 @@ enum class MouseMotion(val label: String) {
     MOVE_X("Mouse move X"), MOVE_Y("Mouse move Y"), WHEEL("Scroll"), HWHEEL("Scroll sideways"),
 }
 
+/**
+ * Where a finger is on a touch button or the workspace touchpad ([InputSource.Finger]), 0..1:
+ * X from the left edge, Y from the bottom edge; on round buttons also DISTANCE from the centre
+ * (0) to the rim (1) and ANGLE, a dial from the top (0) clockwise once around (to 1).
+ */
+@Serializable
+enum class FingerAxis(val label: String, val roundOnly: Boolean = false) {
+    X("Finger X"), Y("Finger Y"), DISTANCE("Finger distance", roundOnly = true), ANGLE("Finger angle", roundOnly = true),
+}
+
+/**
+ * A chip's output range ([Mapping.range]): its input's value 0..1 (its size, for a -1..1 axis)
+ * goes from [from] to [to] in a straight line while the input is active; [from] > [to] reverses
+ * it. In the output's own unit: 0..1 of a pad axis or trigger, counts per degree for
+ * [OutputTarget.GyroSens].
+ */
+@Serializable
+data class AxisRange(val from: Float, val to: Float) {
+    fun of(v: Float): Float = from + (to - from) * v.coerceIn(0f, 1f)
+}
+
 /** A diagonal zone of a touch stick split into 8 directions ([StickZones.EIGHT]). */
 @Serializable
 enum class StickDiagonal(val label: String) {
@@ -253,6 +274,15 @@ sealed interface InputSource {
     @SerialName("tilt")
     data class Tilt(val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL, val id: String = "") : InputSource
 
+    /**
+     * Where the first finger is on touch button [id] ("" = the workspace touchpad, its first
+     * finger), 0..1 along [axis] ([FingerAxis]), past the input's deadzones
+     * ([FingerAxisSettings]); active from touch-down to lift (0 is a value too while touching).
+     */
+    @Serializable
+    @SerialName("finger")
+    data class Finger(val id: String, val axis: FingerAxis) : InputSource
+
     /** A shake of the phone: a short press. [id] as for [Tilt]. */
     @Serializable
     @SerialName("shake")
@@ -398,6 +428,16 @@ sealed interface OutputTarget {
     @SerialName("black_screen")
     data object BlackScreen : OutputTarget
 
+    /**
+     * Gyro sensitivity of [axis] ([MotionAxis.NONE] = every axis) from the source's value, through
+     * the chip's range ([Mapping.range], counts per degree) while the source is active. It wins over
+     * every other sensitivity (the button's held, the workspace's); of several active, the last
+     * activated wins.
+     */
+    @Serializable
+    @SerialName("gyro_sens")
+    data class GyroSens(val axis: MotionAxis = MotionAxis.NONE) : OutputTarget
+
     /** Does nothing: in a set used as an override, it stops an input falling through to the set below. */
     @Serializable
     @SerialName("nothing")
@@ -422,6 +462,8 @@ data class Mapping(
     val target: OutputTarget,
     val set: Int = 0,
     val options: MapOptions? = null,
+    /** An analog chip's output range ([AxisRange]); null = the input's value as it is. */
+    val range: AxisRange? = null,
 )
 
 /**

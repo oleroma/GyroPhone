@@ -119,6 +119,7 @@ object WorkspaceMappings {
             is InputSource.Gyro -> if (s.id.isEmpty()) return null else s.copy(id = to)
             is InputSource.Tilt -> if (s.id.isEmpty()) return null else s.copy(id = to)
             is InputSource.Shake -> if (s.id.isEmpty()) return null else s.copy(id = to)
+            is InputSource.Finger -> if (s.id.isEmpty()) return null else s.copy(id = to)
             else -> return null
         }
         return m.copy(source = moved)

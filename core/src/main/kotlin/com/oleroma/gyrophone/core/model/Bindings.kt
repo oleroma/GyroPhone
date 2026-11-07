@@ -144,13 +144,13 @@ object Bindings {
      * One chip of an input: a target with its options. The same target may be there more than once
      * with another How ([MapOptions.shape]: Held and Repeat ×2 on one Double tap); never twice alike.
      */
-    data class Entry(val target: OutputTarget, val options: MapOptions?) {
+    data class Entry(val target: OutputTarget, val options: MapOptions?, val range: AxisRange? = null) {
         val shape: Pair<How, Int> get() = (options ?: MapOptions()).shape
     }
 
     /** [input]'s chips in order, an exact duplicate (same target and How) left out. */
     fun entries(mappings: List<Mapping>, input: BindableInput): List<Entry> =
-        mappings.filter { belongs(it, input) }.map { Entry(it.target, it.options) }.distinctBy { it.target to it.shape }
+        mappings.filter { belongs(it, input) }.map { Entry(it.target, it.options, it.range) }.distinctBy { it.target to it.shape }
 
     /** The [n]th (from 0) of [input]'s chips of [target]; null = none. */
     fun entry(mappings: List<Mapping>, input: BindableInput, target: OutputTarget, n: Int): Entry? =
@@ -161,7 +161,7 @@ object Bindings {
         val first = mappings.indexOfFirst { belongs(it, input) }
         val kept = mappings.filterNot { belongs(it, input) }
         val list = entries.distinctBy { it.target to it.shape }
-        val added = input.sources.flatMap { s -> list.map { Mapping(s, it.target, options = it.options) } }
+        val added = input.sources.flatMap { s -> list.map { Mapping(s, it.target, options = it.options, range = it.range) } }
         val at = if (first < 0) kept.size else first
         return kept.subList(0, at) + added + kept.subList(at, kept.size)
     }
@@ -260,10 +260,21 @@ object Bindings {
 
     fun swipeInputs(control: TouchControl, fingers: Int): List<BindableInput> {
         val surface = surfaceInputs(fingers, control.id)
-        if (fingers != 1 || control.id.isEmpty()) return surface
+        if (fingers != 1) return surface
+        val finger = fingerInputs(control.id, round = control.id.isNotEmpty() && control.shape == TouchShape.CIRCLE)
+        if (control.id.isEmpty()) return surface + finger
         val press = BindableInput(SurfaceInput.HOLD.label, listOf(InputSource.Touch(control.id)))
-        return surface.map { if (isOneFingerHold(it)) press else it }
+        return surface.map { if (isOneFingerHold(it)) press else it } + finger
     }
+
+    /**
+     * Where the finger is on touch button [id] ("" = the touchpad): X and Y, and on a [round]
+     * button its distance from the centre and its angle ([InputSource.Finger]).
+     */
+    fun fingerInputs(id: String, round: Boolean): List<BindableInput> =
+        FingerAxis.entries.filter { round || !it.roundOnly }.map { a ->
+            BindableInput(a.label, listOf(InputSource.Finger(id, a)), analog = true)
+        }
 
     private fun isOneFingerHold(input: BindableInput): Boolean =
         (input.sources.first() as? InputSource.Surface)?.let { it.fingers == 1 && it.input == SurfaceInput.HOLD } == true
