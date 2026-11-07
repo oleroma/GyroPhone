@@ -291,6 +291,9 @@ object DevicePresets {
     /** Whether controls with [a] and [b] inputs can swap what they do ([swap]). */
     fun canSwap(a: List<BindableInput>, b: List<BindableInput>): Boolean = swapKind(a) == swapKind(b) && swapKind(a) != 2
 
+    /** Stands in for a mapping's source while [swap] compares what mappings do. */
+    private val NO_SOURCE = InputSource.Key(-1)
+
     /** A control's main input: its Press, a trigger's Pull, a stick's Click; else its first. */
     private fun mainInput(inputs: List<BindableInput>): BindableInput? =
         inputs.firstOrNull { it.label == "Press" || it.label == "Pull" || it.label == "Click" } ?: inputs.firstOrNull()
@@ -330,9 +333,10 @@ object DevicePresets {
         fun owns(input: BindableInput, m: Mapping) = input.sources.any { Bindings.sameSource(it, m.source) }
         val list = p.mappings(device)
         val moved = pairs.flatMap { (i, j) ->
-            fun keys(x: BindableInput) = list.filter { owns(x, it) }.map { Triple(it.set, it.target, it.options) }.distinct()
-            j.sources.flatMap { s -> keys(i).map { (set, t, o) -> Mapping(s, t, set, o) } } +
-                i.sources.flatMap { s -> keys(j).map { (set, t, o) -> Mapping(s, t, set, o) } }
+            // What x's mappings do (set, target, options, range), without their source.
+            fun keys(x: BindableInput) = list.filter { owns(x, it) }.map { it.copy(source = NO_SOURCE) }.distinct()
+            j.sources.flatMap { s -> keys(i).map { it.copy(source = s) } } +
+                i.sources.flatMap { s -> keys(j).map { it.copy(source = s) } }
         }
         val kept = list.filterNot { m -> pairs.any { (i, j) -> owns(i, m) || owns(j, m) } }
         // Gyro while held: owned by the control's id.
@@ -350,7 +354,8 @@ object DevicePresets {
         out = PhysicalDevice.entries.fold(out) { d, dev -> d.withMappings(dev, d.mappings(dev).map(::regyro)) }
         val ha = device.name + ":" + aId
         val hb = device.name + ":" + bId
-        fun press(inputs: List<BindableInput>) = inputs.firstOrNull { !it.analog }?.sources.orEmpty()
+        // Held is the control's main input: a button's Press, a trigger's Pull, a stick's Click.
+        fun press(inputs: List<BindableInput>) = mainInput(inputs)?.sources.orEmpty()
         out = out.copy(
             held = out.held.map { h ->
                 when (h.id) {

@@ -1,9 +1,12 @@
 package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.hid.HidUsage
+import com.oleroma.gyrophone.core.model.AndroidAxis
 import com.oleroma.gyrophone.core.model.AndroidKey
+import com.oleroma.gyrophone.core.model.AxisRange
 import com.oleroma.gyrophone.core.model.ButtonGesture
 import com.oleroma.gyrophone.core.model.DevicePresets
+import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.GamepadButton
 import com.oleroma.gyrophone.core.model.HeldButton
 import com.oleroma.gyrophone.core.model.InputSource
@@ -128,5 +131,22 @@ class DeviceSwapTest {
                 p.controller.filter { m -> input.sources.any { it == m.source } }.map { it.target }.toSet(),
             )
         }
+    }
+
+    @Test fun aSticksGyroWhileHeldStaysOnItsClick() {
+        val base = preset().copy(held = listOf(HeldButton("CONTROLLER:ls", listOf(InputSource.Key(AndroidKey.BUTTON_THUMBL)))))
+        val p = DevicePresets.swap(base, PhysicalDevice.CONTROLLER, "ls", inputs("ls"), "rs", inputs("rs"))
+        assertEquals("CONTROLLER:rs", p.held.single().id)
+        assertEquals(listOf(InputSource.Key(AndroidKey.BUTTON_THUMBR)), p.held.single().sources)
+    }
+
+    @Test fun aChipsOutputRangeGoesWithIt() {
+        val range = AxisRange(0.2f, 0.8f)
+        val lx = InputSource.Axis(AndroidAxis.X)
+        val base = preset().let { it.copy(controller = it.controller.map { m -> if (m.source == lx) m.copy(range = range) else m }) }
+        val p = DevicePresets.swap(base, PhysicalDevice.CONTROLLER, "ls", inputs("ls"), "rs", inputs("rs"))
+        assertEquals(range, p.controller.single { it.source == InputSource.Axis(AndroidAxis.Z) && it.target == OutputTarget.PadAxis(GamepadAxis.LX) }.range)
+        val back = DevicePresets.swap(p, PhysicalDevice.CONTROLLER, "ls", inputs("ls"), "rs", inputs("rs"))
+        assertEquals(base.controller.toSet(), back.controller.toSet())
     }
 }
