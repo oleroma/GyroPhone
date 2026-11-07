@@ -168,6 +168,8 @@ public sealed class HostEngine
     private readonly PressLatency _press = new();
     private bool MeasuringButtons => _settings.MeasureButtons;
     private bool _latencyScreen;
+    /// <summary>HOST_STATUSes still to carry a TEST_MODE of 0 after the last test ended.</summary>
+    private int _testModeOffRepeats;
     private readonly OverlayFrame _overlayFrame = new();
     /// <summary>The last OVERLAY totals of this session, for the motion since then.</summary>
     private readonly OverlayTotals _overlayTotals = new();
@@ -1289,6 +1291,7 @@ public sealed class HostEngine
             _settings.MeasureButtons = on;
             _settingsDirty = true;
             _press.Reset();
+            _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
             if (_sessions.Active is { } a) SendTestMode(a);
         }
     }
@@ -1300,6 +1303,7 @@ public sealed class HostEngine
         {
             if (on == _latencyScreen) return;
             _latencyScreen = on;
+            _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
             if (_sessions.Active is { } a) SendTestMode(a);
         }
     }
@@ -1798,8 +1802,14 @@ public sealed class HostEngine
         Span<byte> p = stackalloc byte[Wire.HostStatusPlain];
         WireCodec.EncodeHostStatus(new HostStatus(s.HighestRxSeq, _stats.RxPerSec, _stats.LossPermille,
             _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs, (byte)_settings.OutputMode, flags), p);
+        // TEST_MODE first, so HOST_STATUS stays the newest status the phone holds. While no test
+        // runs it goes only with the few statuses after one ended (a lost "off" comes again).
+        if (TestModeFlagsNow() != 0 || _testModeOffRepeats > 0)
+        {
+            if (TestModeFlagsNow() == 0) _testModeOffRepeats--;
+            SendTestMode(s);
+        }
         s.SendSealed(PacketType.HostStatus, p, _sender);
-        SendTestMode(s);
         if (_keyLabels is { } labels)
         {
             Span<byte> k = stackalloc byte[Wire.KeyLabelsPlain];
@@ -1808,12 +1818,18 @@ public sealed class HostEngine
         }
     }
 
-    /// <summary>TEST_MODE, with every HOST_STATUS and on change. Older phones drop it.</summary>
-    private void SendTestMode(HostSession s)
+    private byte TestModeFlagsNow()
     {
         byte flags = 0;
         if (MeasuringButtons) flags |= TestModeFlags.PressTimes;
         if (_latencyScreen) flags |= TestModeFlags.LatencyScreen;
+        return flags;
+    }
+
+    /// <summary>TEST_MODE: on change, and with HOST_STATUS while a test runs. Older phones drop it.</summary>
+    private void SendTestMode(HostSession s)
+    {
+        byte flags = TestModeFlagsNow();
         Span<byte> t = stackalloc byte[Wire.TestModePlain];
         WireCodec.EncodeTestMode(flags, t);
         s.SendSealed(PacketType.TestMode, t, _sender);

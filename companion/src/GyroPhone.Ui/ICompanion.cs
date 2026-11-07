@@ -55,6 +55,8 @@ public interface ICompanion
 
     // Latency
     void ToggleMeasureButtons();
+    /// <summary>The latency test window is open: the phone shows its tracking markers.</summary>
+    void SetLatencyScreen(bool on);
 
     // Gamepad and input
     void SetOutputMode(OutputMode mode);

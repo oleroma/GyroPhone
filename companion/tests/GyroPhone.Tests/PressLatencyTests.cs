@@ -99,3 +99,42 @@ public class PressLatencyTests
         Assert.Equal(Wire.Header + 4 + Wire.GcmTag, PacketType.Size(PacketType.TestMode));
     }
 }
+
+public class MeasureButtonsEngineTests
+{
+    [Fact]
+    public void MeasureButtonsAsksThePhoneAndTimesItsPresses()
+    {
+        using var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        // Phone clock = host clock - 1 s.
+        const long offset = 1_000_000;
+        Span<byte> li = stackalloc byte[Wire.LinkInfoPlain];
+        WireCodec.EncodeLinkInfo(new LinkInfo(offset, 500, 1000, 0, 5, 0, 0, 0), li);
+        h.Send(phone, phone.Sealed(PacketType.LinkInfo, li));
+
+        h.Sender.Clear();
+        h.Engine.SetMeasureButtons(true);
+        Assert.Equal(PacketType.TestMode, phone.TryOpen(h.Sender.Last!, out var tm));
+        Assert.Equal(TestModeFlags.PressTimes, tm[0]);
+
+        // A press seen 3 ms before its STATE, which goes to the game at once.
+        uint stateUs = (uint)(h.Clock.NowUs - offset - 1_000);
+        h.Send(phone, phone.State(f => { f.Buttons = 1; f.PhoneTimeUs = stateUs; }));
+        Span<byte> pt = stackalloc byte[Wire.PressTimePlain];
+        WireCodec.EncodePressTime(new PressTime(stateUs, stateUs - 3_000), pt);
+        h.Send(phone, phone.Sealed(PacketType.PressTime, pt));
+        var b = h.Engine.PressLatencyNow()!;
+        Assert.Equal(4_000, b.TotalUs);
+        Assert.Equal(3_000, b.PhoneUs);
+        Assert.Equal(1, b.Count);
+
+        // Off: the phone is told, and nothing is shown.
+        h.Sender.Clear();
+        h.Engine.SetMeasureButtons(false);
+        Assert.Equal(PacketType.TestMode, phone.TryOpen(h.Sender.Last!, out tm));
+        Assert.Equal(0, tm[0]);
+        Assert.Null(h.Engine.PressLatencyNow());
+    }
+}

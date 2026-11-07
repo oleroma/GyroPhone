@@ -393,6 +393,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _engine.PressLatencyNow());
     }
 
+    public void SetLatencyScreen(bool on) => _engine.SetLatencyScreen(on);
+
     public void ToggleMeasureButtons()
     {
         _engine.SetMeasureButtons(!_engine.Settings.MeasureButtons);
