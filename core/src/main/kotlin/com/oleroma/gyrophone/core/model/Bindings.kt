@@ -135,7 +135,8 @@ object Bindings {
     ): List<Mapping> {
         val first = mappings.indexOfFirst { belongs(it, input) }
         val kept = mappings.filterNot { belongs(it, input) }
-        val added = input.sources.flatMap { s -> targets.distinct().map { Mapping(s, it, options = options(it)) } }
+        val ranges = mappings.filter { belongs(it, input) && it.range != null }.associate { it.target to it.range }
+        val added = input.sources.flatMap { s -> targets.distinct().map { Mapping(s, it, options = options(it), range = ranges[it]) } }
         val at = if (first < 0) kept.size else first
         return kept.subList(0, at) + added + kept.subList(at, kept.size)
     }

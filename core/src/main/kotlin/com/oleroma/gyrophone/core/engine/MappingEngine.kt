@@ -40,6 +40,10 @@ import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.FingerAxis
 import com.oleroma.gyrophone.core.model.FingerAxisSettings
 import com.oleroma.gyrophone.core.model.fingerOf
+import com.oleroma.gyrophone.core.model.placeX
+import com.oleroma.gyrophone.core.model.placeY
+import com.oleroma.gyrophone.core.model.placeSize
+import com.oleroma.gyrophone.core.model.heightRatio
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.Triggers
@@ -228,6 +232,60 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     private val fingers = HashMap<String, FingerState>()
 
+    /** The finger each touch button (and "" the touchpad) follows for its finger inputs: its first. */
+    private val fingerPointer = HashMap<String, Long>()
+
+    /** Touch buttons ("" = the touchpad) with finger inputs mapped in some set, and every button by id. */
+    private var fingerMapped: Set<String> = emptySet()
+    private var controlsById: Map<String, TouchControl> = emptyMap()
+
+    // The pad area in px and whether it is in portrait ([setPadArea]), where buttons are placed.
+    private var padW = 0f
+    private var padH = 0f
+    private var padPortrait = false
+
+    /** The pad area is [w] × [h] px, in portrait or not: where finger positions on buttons are worked out. */
+    fun setPadArea(w: Float, h: Float, portrait: Boolean) {
+        synchronized(lock) { padW = w; padH = h; padPortrait = portrait }
+    }
+
+    /**
+     * Finger [pointer] at [px], [py] (pad area px) on touch button [id] ("" = the touchpad): [phase]
+     * 0 landed, 1 moved, 2 lifted. Only the first finger on it counts; its position goes into
+     * [fingers], 0..1 from the bottom-left of the button (or the pad area), kept to its edges.
+     */
+    private fun fingerTrack(id: String, pointer: Long, px: Float, py: Float, phase: Int) {
+        if (id !in fingerMapped) return
+        when (phase) {
+            0 -> if (fingerPointer.containsKey(id)) return else fingerPointer[id] = pointer
+            1 -> if (fingerPointer[id] != pointer) return
+            else -> {
+                if (fingerPointer[id] != pointer) return
+                fingerPointer.remove(id); fingers.remove(id)
+                return
+            }
+        }
+        if (padW <= 0f || padH <= 0f) return
+        var x: Float
+        var y: Float
+        if (id.isEmpty()) {
+            x = px / padW; y = 1f - py / padH
+        } else {
+            val c = controlsById[id] ?: return
+            val half = c.placeSize(padPortrait) * min(padW, padH) / 2f
+            val halfH = if (c.shape == TouchShape.CIRCLE) half else half * c.heightRatio
+            if (half <= 0f || halfH <= 0f) return
+            x = (px - (c.placeX(padPortrait) * padW - half)) / (2 * half)
+            y = 1f - (py - (c.placeY(padPortrait) * padH - halfH)) / (2 * halfH)
+        }
+        x = x.coerceIn(0f, 1f); y = y.coerceIn(0f, 1f)
+        val f = fingers[id] ?: FingerState().also { n ->
+            fingers[id] = n
+            for (a in FingerAxis.entries) n.landed[a.ordinal] = fingerRaw(a, x, y)
+        }
+        f.x = x; f.y = y
+    }
+
     /** Finger input settings by touch button id ("" = the touchpad) and round buttons, from the workspace. */
     private var fingerCfgs: Map<String, List<FingerAxisSettings>> = emptyMap()
     private var roundIds: Set<String> = emptySet()
@@ -247,7 +305,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun fingerValue(s: InputSource.Finger): Float {
         val f = fingers[s.id] ?: return 0f
         if (s.axis.roundOnly && s.id !in roundIds) return 0f
-        val cfg = fingerCfgs[s.id]?.fingerOf(s.axis) ?: FingerAxisSettings(s.axis)
+        val cfg = (if (s.id.isEmpty()) eff.padFingers else fingerCfgs[s.id])?.fingerOf(s.axis) ?: FingerAxisSettings(s.axis)
         val raw = if (cfg.locked) f.landed[s.axis.ordinal] else fingerRaw(s.axis, f.x, f.y)
         return cfg.shape(raw)
     }
@@ -851,8 +909,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         padMappings = allPads
         buttonIds = w.touchControls.filter { it.kind == TouchKind.BUTTON }.map { it.id }
         followLayerIds = w.touchControls.filter { it.followLayers }.mapTo(HashSet()) { it.id }
-        fingerCfgs = w.touchControls.filter { it.fingers.isNotEmpty() }.associate { it.id to it.fingers } +
-                ("" to w.padFingers)
+        fingerCfgs = w.touchControls.filter { it.fingers.isNotEmpty() }.associate { it.id to it.fingers }
+        controlsById = w.touchControls.associateBy { it.id }
+        fingerMapped = w.mappings.mapNotNullTo(HashSet()) { (it.source as? InputSource.Finger)?.id }
         roundIds = w.touchControls.filter { it.kind == TouchKind.BUTTON && it.shape == TouchShape.CIRCLE }.mapTo(HashSet()) { it.id }
         val swipers = w.touchControls.filter { it.swipes }
         surfaces = swipers.associate { c ->
@@ -912,7 +971,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (d in deviceList) d.clear()
         anyDevice.clear()
         touches.clear(); pressOrder.clear(); physDown.clear(); setTouchHeld.clear(); touchSticks.clear()
-        fingers.clear(); sensOrder.clear(); sensNow.fill(Float.NaN)
+        fingers.clear(); fingerPointer.clear(); sensOrder.clear(); sensNow.fill(Float.NaN)
         updateGyroNow()
         for (s in surfaceList) s.reset()
         for (a in areas) a.clear()
@@ -1042,6 +1101,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 bpDownX[slot] = x; bpDownY[slot] = y; bpDownNs[slot] = now
                 trace?.let { traceTouch(it, id, "down at ${x.toInt()},${y.toInt()}", withTargets = true) }
                 press(id)
+                fingerTrack(id, pointer, x, y, 0)
                 val surface = surfaces[id]
                 if (surface != null) {
                     bpState[slot] = BP_SWIPE
@@ -1058,7 +1118,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val now = clock()
             firingEvents(now) {
                 val slot = slotOf(pointer)
-                if (slot < 0 || bpState[slot] != BP_SWIPE) return@firingEvents
+                if (slot < 0) return@firingEvents
+                fingerTrack(bpControl[slot]!!, pointer, x, y, 1)
+                if (bpState[slot] != BP_SWIPE) return@firingEvents
                 surfaces[bpControl[slot]]?.move(pointer, x, y, now, eventNanos)
             }
         }
@@ -1074,6 +1136,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (slot < 0) return@firingEvents
                 val id = bpControl[slot]!!
                 trace?.let { traceTouch(it, id, "up after ${(now - bpDownNs[slot]) / 1_000_000} ms", withTargets = false) }
+                fingerTrack(id, pointer, 0f, 0f, 2)
                 if (bpState[slot] == BP_SWIPE) surfaces[id]?.up(pointer, now)
                 // A quick tap stays pressed until a snapshot has shown it for the minimum pulse,
                 // so a pump that ticks between its down and up still sends it.
@@ -1096,6 +1159,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (slot < 0) return@firingEvents
                 val id = bpControl[slot]!!
                 trace?.let { traceTouch(it, id, "cancelled by the system", withTargets = false) }
+                fingerTrack(id, pointer, 0f, 0f, 2)
                 if (bpState[slot] == BP_SWIPE) surfaces[id]?.cancelFinger(pointer, now)
                 release(id)
                 bpState[slot] = BP_FREE; bpControl[slot] = null
@@ -1450,6 +1514,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             resolveIfDue(now)
             trace?.input("touchpad finger $pointer down at ${x.toInt()},${y.toInt()}")
             touchpad.down(pointer, x, y, now, eventNs = eventNanos)
+            if ("" in fingerMapped) { fingerTrack("", pointer, x, y, 0); refreshSens() }
         }
         onChange?.run()
     }
@@ -1459,6 +1524,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val now = clock()
             resolveIfDue(now)
             touchpad.move(pointer, x, y, now, eventNanos)
+            if ("" in fingerMapped) { fingerTrack("", pointer, x, y, 1); refreshSens() }
         }
         onChange?.run()
     }
@@ -1469,6 +1535,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             resolveIfDue(now)
             trace?.input("touchpad finger $pointer up")
             touchpad.up(pointer, now)
+            if ("" in fingerMapped) { fingerTrack("", pointer, 0f, 0f, 2); refreshSens() }
         }
         onChange?.run()
     }
@@ -1477,6 +1544,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     fun touchpadCancel() {
         synchronized(lock) {
             touchpad.cancel(clock())
+            if (fingers.remove("") != null) { fingerPointer.remove(""); refreshSens() }
         }
         onChange?.run()
     }
@@ -1488,6 +1556,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             resolveIfDue(now)
             trace?.input("touchpad finger $pointer cancelled by the system")
             touchpad.cancelFinger(pointer, now)
+            if ("" in fingerMapped) { fingerTrack("", pointer, 0f, 0f, 2); refreshSens() }
         }
         onChange?.run()
     }

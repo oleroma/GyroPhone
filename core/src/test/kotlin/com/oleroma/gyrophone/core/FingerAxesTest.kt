@@ -111,4 +111,25 @@ class FingerAxesTest {
         now += 10_000_000; e.touchpadMove(1, 100f, 100f)
         assertEquals(1f, e.snapshot().gamepad.lt / GamepadState.TRIGGER_MAX.toFloat(), 0.02f)
     }
+
+    @Test
+    fun buttonFingersAreMeasuredOnTheButton() {
+        val b = TouchControl("aim", TouchKind.BUTTON, "Aim", 0.5f, 0.5f, size = 0.2f, shape = TouchShape.SQUARE)
+        val w = Workspace(
+            "w", "w", touchControls = listOf(b),
+            mappings = listOf(Mapping(InputSource.Finger("aim", FingerAxis.Y), OutputTarget.PadAxis(GamepadAxis.LT))),
+        )
+        val e = MappingEngine(single(w))
+        e.setPadArea(1000f, 500f, portrait = false)
+        // The button is 100 px square around (500, 250): 210 px down is 90 % up it.
+        e.buttonDown(1, "aim", 500f, 210f)
+        assertEquals(0.9f, e.snapshot().gamepad.lt / GamepadState.TRIGGER_MAX.toFloat(), 0.01f)
+        e.buttonDown(2, "aim", 500f, 290f) // a second finger does not count
+        assertEquals(0.9f, e.snapshot().gamepad.lt / GamepadState.TRIGGER_MAX.toFloat(), 0.01f)
+        e.buttonMove(1, 500f, 400f) // slid off the bottom: the edge
+        assertEquals(0, e.snapshot().gamepad.lt)
+        e.buttonUp(1)
+        e.snapshot()
+        assertEquals(0, e.snapshot().gamepad.lt)
+    }
 }

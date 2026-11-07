@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.oleroma.gyrophone.core.model.AxisRange
 import com.oleroma.gyrophone.core.model.How
 import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.Trigger
@@ -91,6 +92,25 @@ private const val SWIPE_TOGGLE_HINT =
     "A swipe this way turns it on, and it stays on after you lift; the next swipe this way turns it off. Tick Tap to make it a latch instead."
 
 /**
+ * An axis chip's Range ([AxisRange]) as its dialog shows it: [current] (null = none set), stored
+ * values shown through [shown] and back through [stored], on a slider over [bounds] (typed up to
+ * [typed]) in steps of [step], each value written by [format]. A range equal to [identity] is
+ * kept as none; [initial] is what a chip without one starts from.
+ */
+internal class ChipRange(
+    val current: AxisRange?,
+    val initial: AxisRange,
+    val identity: AxisRange?,
+    val bounds: ClosedFloatingPointRange<Float>,
+    val typed: ClosedFloatingPointRange<Float>,
+    val step: Float,
+    val format: (Float) -> String,
+    val hint: String,
+    val shown: (Float) -> Float = { it },
+    val stored: (Float) -> Float = { it },
+)
+
+/**
  * The settings of one mapping (a chip): When it starts ([triggers] offered, named by
  * [triggerLabel]; one = none to pick), How it outputs, and its options. [swipe]: a swipe direction's. [onApply] gets the trigger and options picked (null = none); [onRemove]
  * removes the mapping. [onTargetSettings] (a buzz's): a button that opens the target's own settings.
@@ -106,15 +126,20 @@ internal fun MappingChipDialog(
     swipe: Boolean,
     analog: Boolean,
     options: MapOptions?,
-    onApply: (Trigger, MapOptions?, Int) -> Unit,
+    onApply: (Trigger, MapOptions?, Int, AxisRange?) -> Unit,
     onRemove: () -> Unit,
     onDismiss: () -> Unit,
     onTargetSettings: (() -> Unit)? = null,
     /** Where the chip can be (Touch, Area, Outside), and where it is; none = no choice. */
     wheres: List<String> = emptyList(),
     where: Int = 0,
+    /** An axis chip's output range; null = it has none. */
+    range: ChipRange? = null,
 ) {
     val o0 = options ?: MapOptions()
+    val r0 = range?.let { it.current ?: it.initial }
+    var rFrom by remember { mutableStateOf(r0?.let { range.shown(it.from) } ?: 0f) }
+    var rTo by remember { mutableStateOf(r0?.let { range.shown(it.to) } ?: 0f) }
     var t by remember { mutableStateOf(trigger) }
     var w by remember { mutableIntStateOf(where) }
     var how by remember { mutableStateOf(o0.mode) }
@@ -171,6 +196,17 @@ internal fun MappingChipDialog(
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (onTargetSettings != null) {
                     OutlinedButton(onClick = onTargetSettings, modifier = Modifier.fillMaxWidth()) { Text("Buzz settings") }
+                }
+                if (range != null) {
+                    Text("Range " + range.format(rFrom) + " – " + range.format(rTo), style = MaterialTheme.typography.titleSmall)
+                    TwoHandleSlider(
+                        rFrom, rTo, range.bounds, range.step,
+                        onChange = { a, b -> rFrom = a; rTo = b },
+                        onDone = { a, b -> rFrom = a; rTo = b },
+                        typedRange = range.typed,
+                        fromTitle = "Range from", toTitle = "Range to",
+                    )
+                    hint(range.hint)
                 }
                 if (wheres.size > 1) {
                     Text("Where", style = MaterialTheme.typography.titleSmall)
@@ -255,7 +291,8 @@ internal fun MappingChipDialog(
                     endsOnSame = toggle && endsOnSame,
                     repeat = if (how == How.REPEAT) repeat else 2,
                 )
-                onApply(t, o.takeUnless { it.none }, w)
+                val r = range?.let { AxisRange(it.stored(rFrom), it.stored(rTo)) }?.takeUnless { it == range.identity }
+                onApply(t, o.takeUnless { it.none }, w, r)
             }) { Text("Done") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },

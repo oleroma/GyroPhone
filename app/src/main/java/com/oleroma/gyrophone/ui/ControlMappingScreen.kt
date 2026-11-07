@@ -61,6 +61,13 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import com.oleroma.gyrophone.core.model.AxisRange
+import com.oleroma.gyrophone.core.model.MotionAxis
+import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.runtime
+import com.oleroma.gyrophone.core.model.GameSens
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -222,9 +229,10 @@ private fun isSurface(input: BindableInput) = input.sources.firstOrNull() is Inp
  * A chip's text: its trigger's badge unless On touch ("Tap · Q"), its target, then marks for its
  * How and options: ¹ once, ⟲ toggle, ↻ cycle, ⏱ delays.
  */
-private fun chipText(badge: String, target: OutputTarget, o: MapOptions?): String = buildString {
+private fun chipText(badge: String, target: OutputTarget, o: MapOptions?, range: String? = null): String = buildString {
     if (badge.isNotEmpty()) append(badge).append(" · ")
     append(Describe.shortTarget(target))
+    if (range != null) append(" ").append(range)
     if (o != null) {
         if (o.mode.mark.isNotEmpty()) append(" ").append(o.mode.mark)
         if (o.mode == How.REPEAT) append(o.repeat.coerceIn(MapOptions.MIN_REPEAT, MapOptions.MAX_REPEAT))
@@ -581,8 +589,15 @@ internal fun ControlMappingScreen(
     fun assign(input: BindableInput, t: OutputTarget) {
         if (!allows(allowedTargets(input), t)) return
         addRecent(t)
+        var next = Bindings.addTarget(currentMappings, input, t)
+        if (t is OutputTarget.GyroSens) {
+            // It needs a range to do anything: around the sensitivity it would change.
+            val g = runtime.engine.workspace.gyro
+            val base = g.sensitivityOf(if (t.axis == MotionAxis.NONE) MotionAxis.ROLL else t.axis)
+            next = next.map { if (Bindings.belongs(it, input) && it.target == t && it.range == null) it.copy(range = AxisRange(base * 0.8f, base * 1.2f)) else it }
+        }
         change(
-            Bindings.addTarget(currentMappings, input, t),
+            next,
             "Mapped " + Describe.shortTarget(t) + " to " + actionTitle(currentControl, input),
         )
     }
@@ -718,6 +733,19 @@ internal fun ControlMappingScreen(
     fun chipOptions(m: List<Mapping>, card: BindableInput, chip: RowItem.Chip): MapOptions? =
         Bindings.entry(m, trig(chipInput(card, chip), chip.trigger), chip.target, chip.n)?.options
 
+    /** A chip's range as its text shows it ("10–85 %"), or null. */
+    fun chipRangeText(m: List<Mapping>, card: BindableInput, chip: RowItem.Chip): String? {
+        val r = Bindings.entry(m, trig(chipInput(card, chip), chip.trigger), chip.target, chip.n)?.range ?: return null
+        return when (chip.target) {
+            is OutputTarget.PadAxis -> "%.0f–%.0f %%".format(r.from * 100, r.to * 100)
+            is OutputTarget.GyroSens -> {
+                val c = runtime.engine.workspace.gyro.gameCountsPer360
+                if (c > 0f) "%.2f–%.2f".format(GameSens.rws(r.from, c), GameSens.rws(r.to, c)) else "%.1f–%.1f".format(r.from, r.to)
+            }
+            else -> null
+        }
+    }
+
     /** [input]'s row as mapped: each zone's chips of the edited set, divided, then the end divider. */
     fun rowOf(input: BindableInput): List<RowItem> = buildList {
         for (z in 0 until zonesOf(input)) {
@@ -821,7 +849,10 @@ internal fun ControlMappingScreen(
                 val here = chips.filter { it.trigger == tr && it.where == w }
                 // Moved here from another zone or Where: the options it had there.
                 out = Bindings.setEntries(out, ti, here.map { c ->
-                    Bindings.Entry(c.target, if (c.n < 0) carry?.takeIf { it.first == c.target }?.second else chipOptions(m, card, c))
+                    Bindings.Entry(
+                        c.target, if (c.n < 0) carry?.takeIf { it.first == c.target }?.second else chipOptions(m, card, c),
+                        if (c.n < 0) null else Bindings.entry(m, trig(chipInput(card, c), c.trigger), c.target, c.n)?.range,
+                    )
                 })
             }
         }
@@ -1200,6 +1231,7 @@ internal fun ControlMappingScreen(
                         // Each set shows only its own chips: other sets' would clutter it.
                         others = zoneInputs.map { emptyList() },
                         optionsOf = { chip -> chipOptions(view, input, chip) },
+                        rangeOf = { chip -> chipRangeText(view, input, chip) },
                         badge = { tr, w ->
                             val wi = wheresOf(input).getOrNull(w)
                             if (w == 0 || wi == null) Triggers.badge(src, tr)
@@ -1638,7 +1670,8 @@ internal fun ControlMappingScreen(
             swipe = Triggers.isSwipe(input.sources.first()),
             analog = chip.target is OutputTarget.PadAxis || chip.target is OutputTarget.MouseAxis,
             options = Bindings.entry(view, ti, chip.target, chip.n)?.options,
-            onApply = { tr, o, w ->
+            range = chipRange(chip.target, Bindings.entry(view, ti, chip.target, chip.n)?.range, runtime.engine.workspace.gyro),
+            onApply = { tr, o, w, r ->
                 chipDialog = null
                 val destInput = if (whereInputs.isEmpty()) zi else inputAt(w)
                 val dest = trig(destInput, if (tr in Bindings.triggersOf(destInput)) tr else Trigger.HOLD)
@@ -1647,7 +1680,7 @@ internal fun ControlMappingScreen(
                 val es = Bindings.entries(currentMappings, ti)
                 var k = -1
                 val at = es.indexOfFirst { it.target == chip.target && ++k == chip.n }
-                val now = Bindings.Entry(chip.target, o)
+                val now = Bindings.Entry(chip.target, o, r)
                 change(
                     if (dest == ti && at >= 0) Bindings.setEntries(currentMappings, ti, es.toMutableList().apply { set(at, now) })
                     else Bindings.removeEntry(currentMappings, ti, chip.target, chip.n).let { base ->
@@ -1800,6 +1833,8 @@ private fun ActionCard(
     others: List<List<Triple<Int, OutputTarget, Trigger>>>,
     /** A chip's options (How, cycle...), marked on it. */
     optionsOf: (RowItem.Chip) -> MapOptions?,
+    /** An axis chip's range as text, marked on it; null = none. */
+    rangeOf: (RowItem.Chip) -> String? = { null },
     /** A trigger's badge on this card's chips, by Where ([RowItem.Chip.where]). */
     badge: (Trigger, Int) -> String,
     /** When its triggers fire (a line under the chips); null = none. */
@@ -2042,7 +2077,7 @@ private fun ActionCard(
                             ) {
                                 if (setId != MappingSet.BASE) SetNumber(setId, Modifier.padding(start = 6.dp))
                                 Text(
-                                    chipText(badge(item.trigger, item.where), t, optionsOf(item)),
+                                    chipText(badge(item.trigger, item.where), t, optionsOf(item), rangeOf(item)),
                                     style = MaterialTheme.typography.labelLarge,
                                     color = fg,
                                     maxLines = 1,
@@ -2255,5 +2290,44 @@ private fun SplitHandle(landscape: Boolean, onMove: (Float) -> Unit, onEnd: () -
                 .clip(RoundedCornerShape(2.dp))
                 .background(MaterialTheme.colorScheme.outline),
         )
+    }
+}
+
+/**
+ * The Range of a chip of [target] ([ChipRange]), null for a target that takes none: a game pad
+ * axis or trigger in %, Gyro sensitivity in RWS when [g]'s game is known, else counts per
+ * degree, its slider up to the Slider cap (Settings › App › Gyro).
+ */
+@Composable
+private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings): ChipRange? {
+    val runtime = LocalContext.current.runtime
+    val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
+    val capCounts by runtime.sensCapCounts.collectAsStateWithLifecycle()
+    return when (target) {
+        is OutputTarget.PadAxis -> ChipRange(
+            current, AxisRange(0f, 1f), AxisRange(0f, 1f), 0f..100f, 0f..100f, 1f, { "%.0f %%".format(it) },
+            "What the input's 0 and full send: the stick or trigger moves from the first to the second as the input " +
+                    "goes from 0 to full (past its deadzones). Drag one handle past the other to reverse it.",
+            shown = { it * 100f }, stored = { it / 100f },
+        )
+
+        is OutputTarget.GyroSens -> {
+            val c = g.gameCountsPer360
+            val base = g.sensitivityOf(if (target.axis == MotionAxis.NONE) MotionAxis.ROLL else target.axis)
+            val initial = AxisRange(base * 0.8f, base * 1.2f)
+            val hint = "The gyro sensitivity at the input's 0 and at full; it changes evenly between them while the input " +
+                    "is active (a finger on the button, a trigger off its rest) and goes back when it lets go. " +
+                    "Drag one handle past the other to reverse it. Tap near a handle to type a value above the Slider cap."
+            if (c > 0f) ChipRange(
+                current, initial, null, 0f..capRws.coerceAtMost(GameSens.rws(MAX_GYRO_SENS, c)), 0f..GameSens.rws(MAX_GYRO_SENS, c),
+                0.01f, { "%.2f RWS".format(it) }, hint,
+                shown = { GameSens.rws(it, c) }, stored = { GameSens.sensOf(it, c) },
+            ) else ChipRange(
+                current, initial, null, 0f..capCounts.coerceAtMost(MAX_GYRO_SENS), 0f..MAX_GYRO_SENS,
+                0.5f, { "%.1f".format(it) }, hint,
+            )
+        }
+
+        else -> null
     }
 }
