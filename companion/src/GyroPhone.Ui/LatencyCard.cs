@@ -118,12 +118,4 @@ internal static class LatencyCard
         bmp.Freeze();
         return bmp;
     }
-
-    public static void SavePng(BitmapSource bmp, string path)
-    {
-        var enc = new PngBitmapEncoder();
-        enc.Frames.Add(BitmapFrame.Create(bmp));
-        using var f = File.Create(path);
-        enc.Save(f);
-    }
 }

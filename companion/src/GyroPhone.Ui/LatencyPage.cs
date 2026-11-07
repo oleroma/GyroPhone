@@ -97,6 +97,11 @@ internal sealed class LatencyPage : Page
         _root.Children.Add(row);
 
         var (results, rb) = Parts.Card("Results");
+        var openAll = Parts.Button("Open results", OpenResults);
+        openAll.HorizontalAlignment = HorizontalAlignment.Left;
+        openAll.Margin = new Thickness(0, 0, 0, 8);
+        rb.Children.Add(Parts.Text("Every result on one page in your web browser, ready to share as one file.", "Sub"));
+        rb.Children.Add(openAll);
         rb.Children.Add(_list);
         _root.Children.Add(results);
         LoadRuns();
@@ -241,11 +246,11 @@ internal sealed class LatencyPage : Page
         for (int i = 0; i < _runs.Count; i++)
         {
             if (i > 0) _list.Children.Add(Parts.Divider());
-            _list.Children.Add(RunRow(_runs[i].File, _runs[i].Run));
+            _list.Children.Add(RunRow(_runs[i].Run));
         }
     }
 
-    private Grid RunRow(string file, LatencyRun r)
+    private Grid RunRow(LatencyRun r)
     {
         var g = new Grid { Margin = new Thickness(0, 4, 0, 4) };
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -258,9 +263,6 @@ internal sealed class LatencyPage : Page
         foreach (var b in new[]
         {
             Parts.Button("Open", () => Open(r), "Quiet"),
-            Parts.Button("Copy image", () => Clipboard.SetImage(LatencyCard.Render(r)), "Quiet"),
-            Parts.Button("Save image…", () => SaveImage(r), "Quiet"),
-            Parts.Button("Save data…", () => SaveData(file, r), "Quiet"),
         })
         {
             b.Margin = new Thickness(6, 0, 0, 0);
@@ -289,26 +291,18 @@ internal sealed class LatencyPage : Page
         w.Show();
     }
 
-    private void SaveImage(LatencyRun r)
+    /// <summary>Writes results.html afresh and opens it in the default browser.</summary>
+    private void OpenResults()
     {
-        var d = new Microsoft.Win32.SaveFileDialog
+        try
         {
-            Title = "Save the result picture",
-            Filter = "PNG picture|*.png",
-            FileName = $"gyrophone-latency-{r.When:yyyyMMdd-HHmm}.png",
-        };
-        if (d.ShowDialog(_owner) == true) LatencyCard.SavePng(LatencyCard.Render(r), d.FileName);
-    }
-
-    private void SaveData(string file, LatencyRun r)
-    {
-        var d = new Microsoft.Win32.SaveFileDialog
+            string page = LatencyReport.Write();
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(page) { UseShellExecute = true });
+        }
+        catch (Exception e)
         {
-            Title = "Save the result data",
-            Filter = "JSON data|*.json",
-            FileName = $"gyrophone-latency-{r.When:yyyyMMdd-HHmm}.json",
-        };
-        if (d.ShowDialog(_owner) == true) File.Copy(file, d.FileName, overwrite: true);
+            _app.Log($"Latency: couldn't open results.html: {e.Message}");
+        }
     }
 
     /// <summary>The link as the Home page names it.</summary>

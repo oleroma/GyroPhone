@@ -42,7 +42,7 @@ public sealed record LatencyRun(
 
 /// <summary>
 /// The latency test's results, newest first: one JSON file per timed video in
-/// Documents\GyroPhone\Latency (the same file "Save data" writes). Runs saved from outside the
+/// Documents\GyroPhone\Latency with results.html, the readable page of them all (see <see cref="LatencyReport"/>). Runs saved from outside the
 /// page (tagged) show up there too.
 /// </summary>
 public static class LatencyResults
@@ -90,6 +90,14 @@ public static class LatencyResults
         Directory.CreateDirectory(Folder);
         string file = Path.Combine(Folder, $"latency-{run.When:yyyyMMdd-HHmmss}{(run.Tag is { } t ? "-" + t : "")}.json");
         File.WriteAllText(file, JsonSerializer.Serialize(run, Json));
+        try
+        {
+            LatencyReport.Write();
+        }
+        catch (IOException)
+        {
+            // Open somewhere that locks it: written again next time, or by "Open results".
+        }
         return file;
     }
 }
