@@ -293,7 +293,7 @@ public static class VideoTracker
         return propFps;
     }
 
-    /// <summary>One second of both motions (drift-free, same size, the bar turned to the phone's direction), from the middle of the video, for the card.</summary>
+    /// <summary>One second of both motions (drift-free, same size, the bar turned to the phone's direction), the one that matches best, for the card.</summary>
     private static (double[] Phone, double[] Bar) Curves(double[] phone, double[] bar, double fps, LatencyFit fit)
     {
         var a = LatencyMath.Normalize(LatencyMath.HighPass(LatencyMath.Fill(phone)!, (int)(fps * LatencyMath.DriftS) | 1));
@@ -302,7 +302,16 @@ public static class VideoTracker
         var (_, c) = LatencyMath.BestLag(a, b, maxLag, 0);
         double sign = Math.Sign(c);
         int n = Math.Min(a.Length, (int)fps);
+        // The second that matches best at the video's latency: a typical one, not wherever the middle falls.
+        int lag = (int)Math.Round(fit.LatencyMs / 1000 * fps);
         int start = (a.Length - n) / 2;
+        double bestMatch = double.NegativeInfinity;
+        for (int s = 0; s + n + lag <= a.Length; s += Math.Max(1, n / 8))
+        {
+            double m = 0;
+            for (int i = 0; i < n; i++) m += a[s + i] * b[s + i + lag] * sign;
+            if (m > bestMatch) (bestMatch, start) = (m, s);
+        }
         return (a.AsSpan(start, n).ToArray(), b.AsSpan(start, n).ToArray().Select(v => v * sign).ToArray());
     }
 }
