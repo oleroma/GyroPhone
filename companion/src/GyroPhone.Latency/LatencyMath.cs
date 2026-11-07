@@ -55,6 +55,60 @@ public static class LatencyMath
         return new LatencyFit(lag / fps * 1000, spread, CountTwists(a), Math.Abs(c), lags.Count);
     }
 
+    /// <summary>The analyser looks at the video in pieces this long to find where the phone is twisted.</summary>
+    public const double PieceS = 0.5;
+
+    /// <summary>
+    /// The part of the video where the phone is being twisted: the longest run of
+    /// <see cref="PieceS"/> pieces in which both the phone and the bar are mostly tracked and the
+    /// phone turns at least a quarter as fast as in the brisk pieces (one quiet piece inside the run
+    /// is allowed). The setup at the start and the end is left out, so the video needs no trimming.
+    /// The whole video when no such run is found.
+    /// </summary>
+    public static (int Start, int Length) TwistingStretch(double[] phone, double[] bar, double fps)
+    {
+        if (phone.Length != bar.Length || fps <= 0) throw new ArgumentException("one sample of each per frame");
+        int piece = Math.Max(2, (int)(fps * PieceS));
+        int pieces = phone.Length / piece;
+        if (pieces < 2) return (0, phone.Length);
+        var speed = new double[pieces];
+        for (int k = 0; k < pieces; k++)
+        {
+            int tracked = 0, steps = 0;
+            double sum = 0;
+            for (int i = k * piece; i < (k + 1) * piece; i++)
+            {
+                if (double.IsNaN(phone[i]) || double.IsNaN(bar[i])) continue;
+                tracked++;
+                if (i > 0 && !double.IsNaN(phone[i - 1]))
+                {
+                    double d = phone[i] - phone[i - 1];
+                    sum += d * d;
+                    steps++;
+                }
+            }
+            speed[k] = tracked * 2 >= piece && steps > 0 ? Math.Sqrt(sum / steps) : double.NaN;
+        }
+        var known = speed.Where(v => !double.IsNaN(v)).OrderBy(v => v).ToList();
+        if (known.Count == 0) return (0, phone.Length);
+        double brisk = Quantile(known, 0.9), floor = brisk / 4;
+        bool Active(int k) => !double.IsNaN(speed[k]) && speed[k] >= floor;
+
+        int bestStart = -1, bestLen = 0;
+        for (int k = 0; k < pieces; k++)
+        {
+            if (!Active(k)) continue;
+            int end = k;
+            while (end + 1 < pieces && (Active(end + 1) || (end + 2 < pieces && Active(end + 2)))) end += Active(end + 1) ? 1 : 2;
+            if (end - k + 1 > bestLen) (bestStart, bestLen) = (k, end - k + 1);
+            k = end;
+        }
+        if (bestStart < 0) return (0, phone.Length);
+        int start = bestStart * piece;
+        int stop = bestStart + bestLen == pieces ? phone.Length : (bestStart + bestLen) * piece;
+        return (start, stop - start);
+    }
+
     /// <summary>NaN (not tracked) frames filled in a straight line from their neighbours; null when under half were tracked.</summary>
     public static double[]? Fill(double[] v)
     {

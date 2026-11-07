@@ -43,6 +43,39 @@ public class LatencyAnalysisTests
     }
 
     [Fact]
+    public void TwistingStretchLeavesOutTheSetup()
+    {
+        const double fps = 240;
+        // 4 s of walking up (phone seen, held still with a slow sway, then not seen at all for 2 s),
+        // 10 s of twisting, 3 s of putting it down.
+        int n = (int)(fps * 17);
+        var phone = new double[n];
+        var bar = new double[n];
+        for (int i = 0; i < n; i++)
+        {
+            double t = i / fps;
+            bool twisting = t >= 4 && t < 14;
+            bool seen = !(t >= 1 && t < 3);
+            phone[i] = !seen ? double.NaN : twisting ? Twist(t) : 2 * Math.Sin(t);
+            bar[i] = !seen ? double.NaN : twisting ? -4 * Twist(t - 0.02) : 10 * Math.Sin(t);
+        }
+        var (start, length) = LatencyMath.TwistingStretch(phone, bar, fps);
+        Assert.InRange(start / fps, 3.5, 4.5);
+        Assert.InRange((start + length) / fps, 13.5, 14.5);
+        var fit = LatencyMath.Fit(phone.AsSpan(start, length).ToArray(), bar.AsSpan(start, length).ToArray(), fps)!;
+        Assert.InRange(fit.LatencyMs, 19.5, 20.5);
+    }
+
+    [Fact]
+    public void TwistingStretchKeepsAWholeTwistingVideo()
+    {
+        const double fps = 240;
+        var phone = Enumerable.Range(0, 1440).Select(i => Twist(i / fps)).ToArray();
+        var bar = phone.Select(v => -v).ToArray();
+        Assert.Equal((0, 1440), LatencyMath.TwistingStretch(phone, bar, fps));
+    }
+
+    [Fact]
     public void FillBridgesUntrackedFrames()
     {
         var v = LatencyMath.Fill([double.NaN, 1, double.NaN, double.NaN, 4, 5, double.NaN])!;

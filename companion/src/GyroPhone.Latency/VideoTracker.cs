@@ -3,8 +3,13 @@ using OpenCvSharp.Aruco;
 
 namespace GyroPhone.Latency;
 
-/// <summary>A timed video: the fit, the video's real frame rate and a second of both motions for the result card.</summary>
-public sealed record VideoAnalysis(LatencyFit Fit, double Fps, int Frames, double TrackedShare, double[] PhoneCurve, double[] BarCurve);
+/// <summary>
+/// A timed video: the fit, the video's real frame rate, the part of it that was timed (seconds from
+/// its start, see <see cref="LatencyMath.TwistingStretch"/>) and a second of both motions for the result card.
+/// </summary>
+public sealed record VideoAnalysis(
+    LatencyFit Fit, double Fps, int Frames, double TrackedShare, double[] PhoneCurve, double[] BarCurve,
+    double TimedFromS, double TimedToS, double LengthS);
 
 /// <summary>Why a video can't be timed, in words for the person.</summary>
 public sealed class VideoProblem(string message) : Exception(message);
@@ -81,12 +86,16 @@ public static class VideoTracker
             throw new VideoProblem($"This video plays at {fps:0} frames a second. Film in slow motion (240 fps) and copy the original file, not a shared copy.");
         if (reference == null)
             throw new VideoProblem("The phone's four markers never showed together. Keep the phone's screen toward the camera, markers in the picture.");
-        var ph = phone.ToArray();
-        var br = bar.ToArray();
+        var (from, timedCount) = LatencyMath.TwistingStretch(phone.ToArray(), bar.ToArray(), fps);
+        var ph = phone.GetRange(from, timedCount).ToArray();
+        var br = bar.GetRange(from, timedCount).ToArray();
         var fit = LatencyMath.Fit(ph, br, fps)
             ?? throw new VideoProblem("The phone's twist and the green bar don't match well enough. Twist quickly back and forth, keep the bar and the markers in the picture, and check that the gyro moves the mouse.");
         var (pc, bc) = Curves(ph, br, fps, fit);
-        return new VideoAnalysis(fit, fps, times.Count, tracked / (double)times.Count, pc, bc);
+        double t0 = times[0];
+        int timedTracked = ph.Count(v => !double.IsNaN(v));
+        return new VideoAnalysis(fit, fps, times.Count, timedTracked / (double)ph.Length, pc, bc,
+            times[from] - t0, times[from + timedCount - 1] - t0, times[^1] - t0);
     }
 
     /// <summary>

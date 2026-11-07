@@ -25,7 +25,13 @@ internal sealed class LatencyPage : Page
     private readonly StackPanel _list = new();
     private LatencyTestWindow? _window;
     private CompanionView? _view;
-    private bool _busy;
+    /// <summary>
+    /// The analysis outlives the window (closing and opening it builds a new page): its line under
+    /// the drop area, whether it runs, and the pages showing it.
+    /// </summary>
+    private static string s_status = "";
+    private static bool s_busy;
+    private static event Action? StatusChanged;
     private IReadOnlyList<(string File, LatencyRun Run)> _runs = [];
 
     public override FrameworkElement View => _root;
@@ -68,7 +74,7 @@ internal sealed class LatencyPage : Page
         _choose.HorizontalAlignment = HorizontalAlignment.Center;
         _choose.Margin = new Thickness(0, 10, 0, 0);
         dropBody.Children.Add(_choose);
-        _status = Parts.Text("", "Sub");
+        _status = Parts.Text(s_status, "Sub");
         _status.TextAlignment = TextAlignment.Center;
         _status.Margin = new Thickness(0, 10, 0, 0);
         dropBody.Children.Add(_status);
@@ -94,6 +100,26 @@ internal sealed class LatencyPage : Page
         rb.Children.Add(_list);
         _root.Children.Add(results);
         LoadRuns();
+        _choose.IsEnabled = !s_busy;
+        Action changed = () =>
+        {
+            _status.Text = s_status;
+            _choose.IsEnabled = !s_busy;
+        };
+        Action reload = LoadRuns;
+        StatusChanged += changed;
+        ResultsChanged += reload;
+        owner.Closed += (_, _) =>
+        {
+            StatusChanged -= changed;
+            ResultsChanged -= reload;
+        };
+    }
+
+    private static void SetStatus(string text)
+    {
+        s_status = text;
+        StatusChanged?.Invoke();
     }
 
     public override void Refresh(CompanionView v)
@@ -136,11 +162,12 @@ internal sealed class LatencyPage : Page
 
     private async void Analyze(string path)
     {
-        if (_busy) return;
-        _busy = true;
-        _choose.IsEnabled = false;
-        _status.Text = "Reading the video…";
-        var progress = new Progress<double>(p => _status.Text = $"Reading the video… {p * 100:0}%");
+        if (s_busy) return;
+        s_busy = true;
+        SetStatus("Reading the video…");
+        var progress = new Progress<double>(p => SetStatus($"Reading the video… {p * 100:0}%"));
+        string name = Path.GetFileName(path);
+        _app.Log($"latency test: reading {name}");
         try
         {
             var a = await Task.Run(() => VideoTracker.Analyze(path, progress));
@@ -151,24 +178,35 @@ internal sealed class LatencyPage : Page
                 LatencyTestWindow.LastMonitorHz,
                 v?.Version ?? "GyroPhone");
             LatencyResults.Save(run);
-            _status.Text = $"{run.LatencyMs:0.0} ms (±{run.SpreadMs:0.0}) from {run.Twists} twists.";
-            LoadRuns();
-            Open(run);
+            string timed = a.TimedToS - a.TimedFromS < a.LengthS - 1
+                ? $" Timed {Clock(a.TimedFromS)}–{Clock(a.TimedToS)} of {Clock(a.LengthS)}, where you twist."
+                : "";
+            _app.Log($"latency test: {name} {a.Fps:0} fps, {a.Frames} frames, timed {a.TimedFromS:0.0}-{a.TimedToS:0.0} s: "
+                + $"{run.LatencyMs:0.0} ms ±{run.SpreadMs:0.0}, {run.Twists} twists, match {run.Match:0.00}");
+            SetStatus($"{run.LatencyMs:0.0} ms (±{run.SpreadMs:0.0}) from {run.Twists} twists.{timed}");
+            if (_root.IsLoaded) Open(run);
+            ResultsChanged?.Invoke();
         }
         catch (VideoProblem e)
         {
-            _status.Text = e.Message;
+            _app.Log($"latency test: {name}: {e.Message}");
+            SetStatus(e.Message);
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or OpenCvSharp.OpenCVException or DllNotFoundException or TypeInitializationException)
+        catch (Exception e)
         {
-            _status.Text = $"This video couldn't be read: {e.Message}";
+            _app.Log($"latency test: {name} couldn't be read: {e}");
+            SetStatus($"This video couldn't be read: {e.Message}");
         }
         finally
         {
-            _busy = false;
-            _choose.IsEnabled = true;
+            s_busy = false;
+            StatusChanged?.Invoke();
         }
     }
+
+    private static event Action? ResultsChanged;
+
+    private static string Clock(double s) => TimeSpan.FromSeconds(Math.Max(0, s)).ToString(@"m\:ss");
 
     private void LoadRuns()
     {

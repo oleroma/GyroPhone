@@ -17,11 +17,13 @@ public sealed record LatencyRun(
     string App,
     string Video,
     double[] PhoneCurve,
-    double[] BarCurve)
+    double[] BarCurve,
+    double TimedFromS = 0,
+    double TimedToS = 0)
 {
     public static LatencyRun From(VideoAnalysis a, string video, string link, string phone, int monitorHz, string app) =>
         new(DateTime.Now, a.Fit.LatencyMs, a.Fit.SpreadMs, a.Fit.Twists, a.Fps, a.Fit.Correlation, link, phone, monitorHz, app,
-            Path.GetFileName(video), a.PhoneCurve, a.BarCurve);
+            Path.GetFileName(video), a.PhoneCurve, a.BarCurve, a.TimedFromS, a.TimedToS);
 }
 
 /// <summary>
