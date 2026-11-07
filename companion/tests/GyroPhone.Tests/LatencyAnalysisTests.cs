@@ -88,22 +88,27 @@ public class LatencyAnalysisTests
     /// axis in front of the camera, the test window's green bar above it following the turn
     /// <paramref name="lagMs"/> later.
     /// </summary>
-    private static string SynthVideo(double lagMs, double fps, int frames)
+    private static string SynthVideo(double lagMs, double fps, int frames, int markers = 0b1111)
     {
         const int w = 360, h = 640;
         string path = Path.Combine(Path.GetTempPath(), $"gp-latency-{Guid.NewGuid():N}.avi");
         using var dict = CvAruco.GetPredefinedDictionary(PredefinedDictionaryType.Dict4X4_50);
-        // The phone's screen, portrait, markers in the top half with a white rim each.
+        // The phone's screen, portrait, as LatencyMarkers draws it: a 16-cell grid in the top half,
+        // each marker a light grey quiet zone around its black 6 × 6 square.
         using var screen = new Mat(1300, 600, MatType.CV_8UC3, Scalar.Black);
-        (int X, int Y)[] at = [(30, 30), (390, 30), (30, 240), (390, 240)];
+        const int cell = 34, x0 = 28, y0 = 20;
+        var light = new Scalar(168, 168, 168);
         for (int i = 0; i < 4; i++)
         {
+            if ((markers & (1 << i)) == 0) continue;
+            int mx = x0 + cell * 8 * (i % 2), my = y0 + cell * 8 * (i / 2);
+            Cv2.Rectangle(screen, new Rect(mx, my, cell * 8, cell * 8), light, -1);
             using var m = new Mat();
-            dict.GenerateImageMarker(i, 180, m);
-            using var c = new Mat();
-            Cv2.CvtColor(m, c, ColorConversionCodes.GRAY2BGR);
-            Cv2.Rectangle(screen, new Rect(at[i].X - 12, at[i].Y - 12, 204, 204), Scalar.White, -1);
-            c.CopyTo(new Mat(screen, new Rect(at[i].X, at[i].Y, 180, 180)));
+            dict.GenerateImageMarker(i, 6, m, 1);
+            for (int r = 0; r < 6; r++)
+                for (int c = 0; c < 6; c++)
+                    Cv2.Rectangle(screen, new Rect(mx + cell * (c + 1), my + cell * (r + 1), cell, cell),
+                        m.At<byte>(r, c) > 127 ? light : Scalar.Black, -1);
         }
         using var whole = new Mat(1300, 600, MatType.CV_8UC1, Scalar.White);
         using var writer = new VideoWriter(path, FourCC.MJPG, fps, new Size(w, h));
@@ -133,6 +138,22 @@ public class LatencyAnalysisTests
             writer.Write(img);
         }
         return path;
+    }
+
+    [Fact]
+    public void TwoMarkersAreEnough()
+    {
+        string path = SynthVideo(lagMs: 30, fps: 240, frames: 240 * 4, markers: 0b0011);
+        try
+        {
+            var a = VideoTracker.Analyze(path);
+            Assert.InRange(a.Fit.LatencyMs, 27, 33);
+            Assert.True(a.TrackedShare > 0.9);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]
