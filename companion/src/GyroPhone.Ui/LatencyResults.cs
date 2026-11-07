@@ -55,6 +55,21 @@ internal static class LatencyResults
         return list.OrderByDescending(x => x.Item2.When).ToList();
     }
 
+    /// <summary>
+    /// Copies the video being timed to <c>last-video</c> in <see cref="Folder"/> (replacing the one
+    /// before), so the last video tried can be looked at again, whatever happens to the original.
+    /// </summary>
+    public static string KeepLastVideo(string video)
+    {
+        Directory.CreateDirectory(Folder);
+        string copy = Path.Combine(Folder, "last-video" + Path.GetExtension(video).ToLowerInvariant());
+        if (Path.GetFullPath(video).Equals(Path.GetFullPath(copy), StringComparison.OrdinalIgnoreCase)) return copy;
+        foreach (var old in Directory.GetFiles(Folder, "last-video.*"))
+            if (!old.Equals(copy, StringComparison.OrdinalIgnoreCase)) File.Delete(old);
+        File.Copy(video, copy, overwrite: true);
+        return copy;
+    }
+
     public static string Save(LatencyRun run)
     {
         Directory.CreateDirectory(Folder);

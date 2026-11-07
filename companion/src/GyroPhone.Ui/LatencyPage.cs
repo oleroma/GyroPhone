@@ -167,10 +167,14 @@ internal sealed class LatencyPage : Page
         SetStatus("Reading the video…");
         var progress = new Progress<double>(p => SetStatus($"Reading the video… {p * 100:0}%"));
         string name = Path.GetFileName(path);
-        _app.Log($"latency test: reading {name}");
+        _app.Log($"latency test: reading {path}");
         try
         {
-            var a = await Task.Run(() => VideoTracker.Analyze(path, progress));
+            SetStatus("Copying the video…");
+            string copy = await Task.Run(() => LatencyResults.KeepLastVideo(path));
+            _app.Log($"latency test: copied to {copy}");
+            SetStatus("Reading the video…");
+            var a = await Task.Run(() => VideoTracker.Analyze(copy, progress));
             var v = _view;
             var run = LatencyRun.From(a, path,
                 v != null ? LinkName(v) : "—",
