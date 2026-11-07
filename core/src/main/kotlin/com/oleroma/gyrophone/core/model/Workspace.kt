@@ -69,6 +69,8 @@ data class Workspace(
     val triggerTunings: Map<String, TriggerTuning> = emptyMap(),
     /** Physical keys' and buttons' own settings while held: filled from [devicePreset] when resolved, like [keyTimings]. */
     val heldButtons: List<HeldButton> = emptyList(),
+    /** The touchpad's finger position inputs' settings ([InputSource.Finger] with id ""), like [TouchControl.fingers]. */
+    val padFingers: List<FingerAxisSettings> = emptyList(),
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =
@@ -126,7 +128,7 @@ val InputSource.isTouch: Boolean
             this is InputSource.TouchSwipe || this is InputSource.TouchRelease || this is InputSource.TouchDoubleTap ||
             this is InputSource.TouchTap || this is InputSource.TouchLongPress ||
             this is InputSource.TouchArea || this is InputSource.Surface || this is InputSource.Gyro ||
-            this is InputSource.Tilt || this is InputSource.Shake
+            this is InputSource.Tilt || this is InputSource.Shake || this is InputSource.Finger
 
 /** A source of the workspace touchpad ([InputSource.Surface] with no control id). */
 val InputSource.isTouchpad: Boolean
@@ -139,7 +141,8 @@ val InputSource.isWorkspaceGyro: Boolean
 /** An input of the workspace itself, which it takes from the Defaults unless it maps it: touchpad, gyro, tilt or shake. */
 val InputSource.isWorkspaceInput: Boolean
     get() = isTouchpad || isWorkspaceGyro ||
-            (this is InputSource.Tilt && id.isEmpty()) || (this is InputSource.Shake && id.isEmpty())
+            (this is InputSource.Tilt && id.isEmpty()) || (this is InputSource.Shake && id.isEmpty()) ||
+            (this is InputSource.Finger && id.isEmpty())
 
 /**
  * This workspace with its touchpad mappings: as it is once resolved ([TouchpadSettings.mapped]),

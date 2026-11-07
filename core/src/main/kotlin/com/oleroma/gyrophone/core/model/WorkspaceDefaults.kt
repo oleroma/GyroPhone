@@ -22,6 +22,9 @@ object WorkspaceDefaults {
     const val CONTROL_OPACITY = "controlOpacity"
     const val HAPTICS = "haptics"
     const val HAPTIC_EDGE = "hapticEdge"
+
+    /** The touchpad's finger position inputs' settings ([Workspace.padFingers]). */
+    const val PAD_FINGERS = "padFingers"
     private const val GYRO = "gyro."
     private const val TOUCHPAD = "touchpad."
 
@@ -31,7 +34,7 @@ object WorkspaceDefaults {
     val builtin = Workspace(ID, "Workspace defaults")
 
     private val top = listOf(
-        LONG_PRESS, DOUBLE_TAP, CONTROL_OPACITY, HAPTICS, HAPTIC_EDGE,
+        LONG_PRESS, DOUBLE_TAP, CONTROL_OPACITY, HAPTICS, HAPTIC_EDGE, PAD_FINGERS,
     )
 
     private fun gyroJson(g: GyroSettings): JsonObject = json.encodeToJsonElement(GyroSettings.serializer(), g).jsonObject
@@ -110,6 +113,7 @@ object WorkspaceDefaults {
             CONTROL_OPACITY -> a.controlOpacity == b.controlOpacity
             HAPTICS -> a.haptics == b.haptics
             HAPTIC_EDGE -> a.hapticEdge == b.hapticEdge
+            PAD_FINGERS -> a.padFingers == b.padFingers
             else -> true
         }
     }
@@ -167,6 +171,7 @@ object WorkspaceDefaults {
             CONTROL_OPACITY -> to.copy(controlOpacity = from.controlOpacity)
             HAPTICS -> to.copy(haptics = from.haptics)
             HAPTIC_EDGE -> to.copy(hapticEdge = from.hapticEdge)
+            PAD_FINGERS -> to.copy(padFingers = from.padFingers)
             else -> to
         }
     }

@@ -62,12 +62,13 @@ object Bindings {
      * at least 1), with any finger count, in any set.
      */
     fun holdZoneCounts(mappings: List<Mapping>, id: String): IntArray {
-        val n = IntArray(4) { 1 }
+        val n = IntArray(SWIPE_SLOTS) { 1 }
         for (m in mappings) {
             val s = m.source as? InputSource.Surface ?: continue
             if (s.id != id) continue
-            val d = s.input.holdDirection ?: continue
-            n[d.ordinal] = maxOf(n[d.ordinal], (s.zone + 1).coerceAtMost(TouchpadSettings.MAX_HOLD_ZONES))
+            val d = s.input.holdSlot
+            if (d < 0) continue
+            n[d] = maxOf(n[d], (s.zone + 1).coerceAtMost(TouchpadSettings.MAX_HOLD_ZONES))
         }
         return n
     }
@@ -82,7 +83,7 @@ object Bindings {
         val used = HashMap<InputSource.Surface, java.util.TreeSet<Int>>()
         for (m in mappings) {
             val s = m.source as? InputSource.Surface ?: continue
-            if (s.input.holdDirection == null) continue
+            if (!s.input.heldSwipe) continue
             used.getOrPut(key(s)) { java.util.TreeSet() }.add(s.zone)
         }
         if (used.values.all { it.last() == it.size - 1 }) return mappings
@@ -135,7 +136,8 @@ object Bindings {
     ): List<Mapping> {
         val first = mappings.indexOfFirst { belongs(it, input) }
         val kept = mappings.filterNot { belongs(it, input) }
-        val added = input.sources.flatMap { s -> targets.distinct().map { Mapping(s, it, options = options(it)) } }
+        val ranges = mappings.filter { belongs(it, input) && it.range != null }.associate { it.target to it.range }
+        val added = input.sources.flatMap { s -> targets.distinct().map { Mapping(s, it, options = options(it), range = ranges[it]) } }
         val at = if (first < 0) kept.size else first
         return kept.subList(0, at) + added + kept.subList(at, kept.size)
     }
@@ -144,13 +146,13 @@ object Bindings {
      * One chip of an input: a target with its options. The same target may be there more than once
      * with another How ([MapOptions.shape]: Held and Repeat ×2 on one Double tap); never twice alike.
      */
-    data class Entry(val target: OutputTarget, val options: MapOptions?) {
+    data class Entry(val target: OutputTarget, val options: MapOptions?, val range: AxisRange? = null) {
         val shape: Pair<How, Int> get() = (options ?: MapOptions()).shape
     }
 
     /** [input]'s chips in order, an exact duplicate (same target and How) left out. */
     fun entries(mappings: List<Mapping>, input: BindableInput): List<Entry> =
-        mappings.filter { belongs(it, input) }.map { Entry(it.target, it.options) }.distinctBy { it.target to it.shape }
+        mappings.filter { belongs(it, input) }.map { Entry(it.target, it.options, it.range) }.distinctBy { it.target to it.shape }
 
     /** The [n]th (from 0) of [input]'s chips of [target]; null = none. */
     fun entry(mappings: List<Mapping>, input: BindableInput, target: OutputTarget, n: Int): Entry? =
@@ -161,7 +163,7 @@ object Bindings {
         val first = mappings.indexOfFirst { belongs(it, input) }
         val kept = mappings.filterNot { belongs(it, input) }
         val list = entries.distinctBy { it.target to it.shape }
-        val added = input.sources.flatMap { s -> list.map { Mapping(s, it.target, options = it.options) } }
+        val added = input.sources.flatMap { s -> list.map { Mapping(s, it.target, options = it.options, range = it.range) } }
         val at = if (first < 0) kept.size else first
         return kept.subList(0, at) + added + kept.subList(at, kept.size)
     }
@@ -260,10 +262,21 @@ object Bindings {
 
     fun swipeInputs(control: TouchControl, fingers: Int): List<BindableInput> {
         val surface = surfaceInputs(fingers, control.id)
-        if (fingers != 1 || control.id.isEmpty()) return surface
+        if (fingers != 1) return surface
+        val finger = fingerInputs(control.id, round = control.id.isNotEmpty() && control.shape == TouchShape.CIRCLE)
+        if (control.id.isEmpty()) return surface + finger
         val press = BindableInput(SurfaceInput.HOLD.label, listOf(InputSource.Touch(control.id)))
-        return surface.map { if (isOneFingerHold(it)) press else it }
+        return surface.map { if (isOneFingerHold(it)) press else it } + finger
     }
+
+    /**
+     * Where the finger is on touch button [id] ("" = the touchpad): X and Y, and on a [round]
+     * button its distance from the centre and its angle ([InputSource.Finger]).
+     */
+    fun fingerInputs(id: String, round: Boolean): List<BindableInput> =
+        FingerAxis.entries.filter { round || !it.roundOnly }.map { a ->
+            BindableInput(a.label, listOf(InputSource.Finger(id, a)), analog = true)
+        }
 
     private fun isOneFingerHold(input: BindableInput): Boolean =
         (input.sources.first() as? InputSource.Surface)?.let { it.fingers == 1 && it.input == SurfaceInput.HOLD } == true
@@ -341,7 +354,7 @@ object Bindings {
      * The surface inputs offered with [fingers] down: taps, moves, swipes, pinch with two. No
      * Tap-drag: the Touch card's Double tap, held, does that ([Triggers.tapDrags]).
      */
-    fun surfaceInputs(fingers: Int, id: String = ""): List<BindableInput> = SurfaceInput.entries.filter { i ->
+    fun surfaceInputs(fingers: Int, id: String = ""): List<BindableInput> = SURFACE_ORDER.filter { i ->
         when (i) {
             SurfaceInput.TAP_DRAG -> false
             SurfaceInput.PINCH, SurfaceInput.PINCH_IN, SurfaceInput.PINCH_OUT -> fingers == 2
@@ -360,6 +373,27 @@ object Bindings {
             swipe = i.motion && i != SurfaceInput.PINCH,
             extra = extra
         )
+    }
+
+    /** The surface inputs in the editor's order: the Swipe row (any way) before the directions its chips also pick. */
+    private val SURFACE_ORDER: List<SurfaceInput> = SurfaceInput.entries.filter { it != SurfaceInput.HOLD_ANY && it != SurfaceInput.SWIPE_ANY }
+        .flatMap { if (it == SurfaceInput.SWIPE_LEFT) listOf(SurfaceInput.HOLD_ANY, SurfaceInput.SWIPE_ANY, it) else listOf(it) }
+
+    /**
+     * The held swipe inputs of [fingers] on surface [id], by slot ([holdSlot]): Swipe any way,
+     * then ↑ → ↓ ←. They share one Swipe row in the editor, each chip picking its direction.
+     */
+    fun swipeSlots(fingers: Int, id: String = ""): List<BindableInput> = listOf(ANY_SLOT, 0, 1, 2, 3).map { slot ->
+        BindableInput(slotLabel(slot), listOf(InputSource.Surface(fingers, holdInputOf(slot), id)))
+    }
+
+    /** A swipe slot's name on its chips and in its chip's settings: Any, ↑, →, ↓, ←. */
+    fun slotLabel(slot: Int): String = when (slot) {
+        0 -> "↑"
+        1 -> "→"
+        2 -> "↓"
+        3 -> "←"
+        else -> "Any"
     }
 
     /**

@@ -532,3 +532,37 @@ fun MoveRulerOverlay(rulers: MoveRulers, modifier: Modifier = Modifier) {
         rulers.draw(this, SystemClock.uptimeMillis(), density)
     }
 }
+
+/**
+ * Where the finger is on a button whose finger position is mapped ([com.oleroma.gyrophone.core.model.InputSource.Finger]),
+ * while one is on it: a thin line across it at the finger's height (Finger Y) and one at its
+ * width (Finger X). [marks]: each such button with its rectangle in px (left, top, right, bottom)
+ * and which lines it shows; [engine] says where the finger is ([MappingEngine.fingerAt]).
+ */
+class FingerMark(val id: String, val left: Float, val top: Float, val right: Float, val bottom: Float, val x: Boolean, val y: Boolean)
+
+@Composable
+fun FingerMarkOverlay(engine: MappingEngine, marks: List<FingerMark>, color: Color, modifier: Modifier = Modifier) {
+    if (marks.isEmpty()) return
+    var frame by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(marks) {
+        while (true) withFrameMillis { frame = it }
+    }
+    val at = remember { FloatArray(2) }
+    Canvas(modifier) {
+        @Suppress("UNUSED_EXPRESSION") frame // redraw each frame
+        val stroke = 2f * density
+        for (m in marks) {
+            if (!engine.fingerAt(m.id, at)) continue
+            if (m.y) {
+                val py = m.bottom - at[1] * (m.bottom - m.top)
+                drawLine(color, Offset(m.left, py), Offset(m.right, py), stroke)
+            }
+            if (m.x) {
+                val px = m.left + at[0] * (m.right - m.left)
+                drawLine(color, Offset(px, m.top), Offset(px, m.bottom), stroke)
+            }
+        }
+    }
+}
+

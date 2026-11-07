@@ -29,13 +29,17 @@ object Inheritance {
 
     /**
      * The action (editor card) [s] maps on its surface: its held input with zone 0 and trigger
-     * Hold, so every trigger, zone and Where of it counts as that one action; null for a source
+     * Hold, so every trigger, zone and Where of it counts as that one action (every swipe direction
+ * is the Swipe row's, [SurfaceInput.HOLD_ANY]); null for a source
      * that is not a touch input. A button's Area and Outside are its press's.
      */
     fun cardOf(s: InputSource): TouchInput? =
         if (s is InputSource.TouchArea) {
             if (s.kind == TouchAreaKind.HELD) null else TouchInput(1, SurfaceInput.HOLD, 0, Trigger.HOLD)
-        } else inputOf(holdOf(s))
+        } else inputOf(holdOf(s))?.let { t ->
+            // Every swipe direction is a chip of the one Swipe row: one action.
+            if (t.input.heldSwipe) t.copy(input = SurfaceInput.HOLD_ANY) else t
+        }
 
     /** The held source of the action [s] maps (its Hold in zone 0; a button's one-finger Hold is its press). */
     fun holdOf(s: InputSource): InputSource = when (val b = Triggers.base(s)) {
@@ -48,7 +52,7 @@ object Inheritance {
 
     /** Which action of its level [s] is, for a workspace's own input ([isWorkspaceInput]). */
     private fun levelKey(s: InputSource): Any? =
-        if (s is InputSource.Gyro || s is InputSource.Tilt || s is InputSource.Shake) s else cardOf(s)
+        if (s is InputSource.Gyro || s is InputSource.Tilt || s is InputSource.Shake || s is InputSource.Finger) s else cardOf(s)
 
     /** The touch control [s] belongs to ("" = the touchpad), or null for a source that is no touch input. */
     private fun ownerOf(s: InputSource): String? = when (s) {

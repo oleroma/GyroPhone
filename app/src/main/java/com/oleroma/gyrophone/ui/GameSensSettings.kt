@@ -60,19 +60,27 @@ internal fun GyroSensSlider(
     onDone: (Float) -> Unit,
 ) {
     // The app's jitter cutoff (Settings, App, Gyro), the same in every workspace.
-    val tightening by LocalContext.current.runtime.gyroTightening.collectAsStateWithLifecycle()
+    val runtime = LocalContext.current.runtime
+    val tightening by runtime.gyroTightening.collectAsStateWithLifecycle()
+    val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
+    val capCounts by runtime.sensCapCounts.collectAsStateWithLifecycle()
     val c = g.gameCountsPer360
     if (c <= 0f) {
-        OverrideSlider(key, "$label %.0f", sens, 0f..MAX_GYRO_SENS, 1f, overridden, onReset, hint, children = children, onDone = onDone)
+        OverrideSlider(
+            key, "$label %.0f", sens, 0f..capCounts.coerceAtMost(MAX_GYRO_SENS), 1f, overridden, onReset, hint,
+            children = children, typedRange = 0f..MAX_GYRO_SENS, onDone = onDone,
+        )
         return
     }
     val tight = if (tightening > 0f) {
         " Exact above the jitter cutoff (%.1f°/s): slower turns move less.".format(tightening)
     } else ""
+    val top = GameSens.rws(MAX_GYRO_SENS, c)
     OverrideSlider(
-        key + "rws", "$label %.2f RWS", GameSens.rws(sens, c), 0f..GameSens.rws(MAX_GYRO_SENS, c), 0.01f, overridden, onReset,
+        key + "rws", "$label %.2f RWS", GameSens.rws(sens, c), 0f..capRws.coerceAtMost(top), 0.01f, overridden, onReset,
         "%.1f counts per degree in %s. %s%s %s".format(sens, g.gameName.ifEmpty { "this game" }, RWS_HINT, tight, hint),
         children = children,
+        typedRange = 0f..top,
     ) { v -> onDone(GameSens.sensOf(v, c)) }
 }
 

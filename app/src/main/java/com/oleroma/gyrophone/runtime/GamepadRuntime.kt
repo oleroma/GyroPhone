@@ -204,6 +204,28 @@ class GamepadRuntime(context: Context) {
         gyroMouse.smoothing = v
     }
 
+    private val _sensCapRws = MutableStateFlow(prefs.getFloat(KEY_SENS_CAP_RWS, DEFAULT_SENS_CAP_RWS))
+
+    /** "Slider cap" with the game known: the top of every gyro sensitivity slider shown in RWS. Typing may go above it. */
+    val sensCapRws: StateFlow<Float> = _sensCapRws
+
+    private val _sensCapCounts = MutableStateFlow(prefs.getFloat(KEY_SENS_CAP_COUNTS, DEFAULT_SENS_CAP_COUNTS))
+
+    /** "Slider cap" without a game: the top of every gyro sensitivity slider in counts per degree. */
+    val sensCapCounts: StateFlow<Float> = _sensCapCounts
+
+    fun setSensCapRws(v: Float) {
+        val c = v.coerceIn(MIN_SENS_CAP_RWS, MAX_SENS_CAP_RWS)
+        prefs.edit().putFloat(KEY_SENS_CAP_RWS, c).apply()
+        _sensCapRws.value = c
+    }
+
+    fun setSensCapCounts(v: Float) {
+        val c = v.coerceIn(MIN_SENS_CAP_COUNTS, MAX_SENS_CAP_COUNTS)
+        prefs.edit().putFloat(KEY_SENS_CAP_COUNTS, c).apply()
+        _sensCapCounts.value = c
+    }
+
     private val _gyroPollUsed = MutableStateFlow(true)
 
     /** False while the gyro runs on the listener, where [gyroPollHz] has no effect. Kept while paused. */
@@ -1180,6 +1202,14 @@ class GamepadRuntime(context: Context) {
         private const val KEY_GYRO_POLL = "gyro_poll_hz"
         private const val KEY_PC_CONTROLLER_GYRO = "pc_controller_gyro"
         private const val KEY_GYRO_TIGHTENING = "gyro_tightening"
+        private const val KEY_SENS_CAP_RWS = "sens_cap_rws"
+        private const val KEY_SENS_CAP_COUNTS = "sens_cap_counts"
+        const val DEFAULT_SENS_CAP_RWS = 10f
+        const val MIN_SENS_CAP_RWS = 1f
+        const val MAX_SENS_CAP_RWS = 50f
+        const val DEFAULT_SENS_CAP_COUNTS = 64f
+        const val MIN_SENS_CAP_COUNTS = 4f
+        const val MAX_SENS_CAP_COUNTS = 250f
         private const val KEY_GYRO_SMOOTHING = "gyro_smoothing"
 
         /** A sensor time further than this from elapsed realtime (us) is on another clock. */

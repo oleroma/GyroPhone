@@ -36,10 +36,19 @@ import com.oleroma.gyrophone.core.model.StickZones
 import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
+import com.oleroma.gyrophone.core.model.TouchShape
+import com.oleroma.gyrophone.core.model.FingerAxis
+import com.oleroma.gyrophone.core.model.FingerAxisSettings
+import com.oleroma.gyrophone.core.model.fingerOf
+import com.oleroma.gyrophone.core.model.placeX
+import com.oleroma.gyrophone.core.model.placeY
+import com.oleroma.gyrophone.core.model.placeSize
+import com.oleroma.gyrophone.core.model.heightRatio
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.Triggers
-import com.oleroma.gyrophone.core.model.holdDirection
+import com.oleroma.gyrophone.core.model.heldSwipe
+import com.oleroma.gyrophone.core.model.holdSlot
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.Inheritance
@@ -134,6 +143,207 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     @Volatile
     private var gyroNow: GyroSettings = ws.gyro
 
+    /** [gyroNow] without the Gyro sensitivity chips ([sensNow]). */
+    private var gyroBase: GyroSettings = ws.gyro
+
+    /**
+     * Gyro sensitivity chips ([OutputTarget.GyroSens]) in effect, counts per degree by
+     * [MotionAxis] ordinal (NONE = every axis); NaN = none. Set by [refreshSens].
+     */
+    private val sensNow = FloatArray(MotionAxis.entries.size) { Float.NaN }
+
+    /** Some mapping in use is a Gyro sensitivity chip. */
+    private var sensMapped = false
+
+    /** The active Gyro sensitivity chips, by when they became active (the last activated wins). */
+    private val sensOrder = HashMap<Mapping, Long>()
+    private var sensSeq = 0L
+    private val sensSeen = HashSet<Mapping>()
+
+    /** [g] with the Gyro sensitivity chips in effect over it. */
+    private fun withSens(g: GyroSettings): GyroSettings {
+        if (!sensMapped && sensOrder.isEmpty()) return g
+        var r = g
+        val all = sensNow[MotionAxis.NONE.ordinal]
+        if (!all.isNaN()) r = r.copy(
+            sensitivity = all, yawSensitivity = null, pitchSensitivity = null, rollSensitivity = null,
+            yawScale = null, pitchScale = null, rollScale = null,
+        )
+        val yaw = sensNow[MotionAxis.YAW.ordinal]
+        if (!yaw.isNaN()) r = r.copy(yawSensitivity = yaw, yawScale = null)
+        val pitch = sensNow[MotionAxis.PITCH.ordinal]
+        if (!pitch.isNaN()) r = r.copy(pitchSensitivity = pitch, pitchScale = null)
+        val roll = sensNow[MotionAxis.ROLL.ordinal]
+        if (!roll.isNaN()) r = r.copy(rollSensitivity = roll, rollScale = null)
+        return r
+    }
+
+    /**
+     * Works out the Gyro sensitivity chips in effect from their inputs now ([OutputTarget.GyroSens]):
+     * per axis the last activated with a range; [gyroNow] follows when they change. An "every
+     * axis" chip activated after an axis's own wins over it there too.
+     */
+    private fun refreshSens() {
+        if (!sensMapped && sensOrder.isEmpty()) return
+        sensSeen.clear()
+        val best = arrayOfNulls<Mapping>(MotionAxis.entries.size)
+        val bestSeq = LongArray(MotionAxis.entries.size) { -1L }
+        val vals = FloatArray(MotionAxis.entries.size)
+        forEachGroup { ms, dev ->
+            for (i in ms.indices) {
+                val m = ms[i]
+                val t = m.target as? OutputTarget.GyroSens ?: continue
+                val r = m.range ?: continue
+                val v = abs(axisOf(m, value(m.source, dev)))
+                if (!activeOf(m.source, dev, v)) continue
+                sensSeen.add(m)
+                val seq = sensOrder.getOrPut(m) { ++sensSeq }
+                val a = t.axis.ordinal
+                if (seq > bestSeq[a]) {
+                    bestSeq[a] = seq; best[a] = m; vals[a] = r.of(v)
+                }
+            }
+        }
+        if (sensOrder.size != sensSeen.size) sensOrder.keys.retainAll(sensSeen)
+        // An axis's own chip counts only if it came after the every-axis one.
+        val allSeq = bestSeq[MotionAxis.NONE.ordinal]
+        var changed = false
+        for (a in MotionAxis.entries) {
+            val i = a.ordinal
+            val v = if (best[i] == null || (a != MotionAxis.NONE && bestSeq[i] < allSeq)) Float.NaN
+            else vals[i].coerceIn(MIN_SENS_CHIP, MAX_SENS_CHIP)
+            if (v.toBits() != sensNow[i].toBits()) {
+                sensNow[i] = v; changed = true
+            }
+        }
+        if (changed) gyroNow = withSens(gyroBase)
+    }
+
+    /**
+     * Finger position inputs ([InputSource.Finger]) by touch button id ("" = the touchpad): where
+     * the first finger is, 0..1 from the bottom-left ([setFinger]), while it is down.
+     */
+    private class FingerState {
+        var x = 0f
+        var y = 0f
+
+        /** Raw values by [FingerAxis] ordinal where the finger landed (Locked inputs). */
+        val landed = FloatArray(FingerAxis.entries.size)
+    }
+
+    private val fingers = HashMap<String, FingerState>()
+
+    /** The finger each touch button (and "" the touchpad) follows for its finger inputs: its first. */
+    private val fingerPointer = HashMap<String, Long>()
+
+    /** Touch buttons ("" = the touchpad) with finger inputs mapped in some set, and every button by id. */
+    private var fingerMapped: Set<String> = emptySet()
+    private var controlsById: Map<String, TouchControl> = emptyMap()
+
+    // The pad area in px and whether it is in portrait ([setPadArea]), where buttons are placed.
+    private var padW = 0f
+    private var padH = 0f
+    private var padPortrait = false
+
+    /** The pad area is [w] × [h] px, in portrait or not: where finger positions on buttons are worked out. */
+    fun setPadArea(w: Float, h: Float, portrait: Boolean) {
+        synchronized(lock) { padW = w; padH = h; padPortrait = portrait }
+    }
+
+    /**
+     * Finger [pointer] at [px], [py] (pad area px) on touch button [id] ("" = the touchpad): [phase]
+     * 0 landed, 1 moved, 2 lifted. Only the first finger on it counts; its position goes into
+     * [fingers], 0..1 from the bottom-left of the button (or the pad area), kept to its edges.
+     */
+    private fun fingerTrack(id: String, pointer: Long, px: Float, py: Float, phase: Int) {
+        if (id !in fingerMapped) return
+        when (phase) {
+            0 -> if (fingerPointer.containsKey(id)) return else fingerPointer[id] = pointer
+            1 -> if (fingerPointer[id] != pointer) return
+            else -> {
+                if (fingerPointer[id] != pointer) return
+                fingerPointer.remove(id); fingers.remove(id)
+                return
+            }
+        }
+        if (padW <= 0f || padH <= 0f) return
+        var x: Float
+        var y: Float
+        if (id.isEmpty()) {
+            x = px / padW; y = 1f - py / padH
+        } else {
+            val c = controlsById[id] ?: return
+            val half = c.placeSize(padPortrait) * min(padW, padH) / 2f
+            val halfH = if (c.shape == TouchShape.CIRCLE) half else half * c.heightRatio
+            if (half <= 0f || halfH <= 0f) return
+            x = (px - (c.placeX(padPortrait) * padW - half)) / (2 * half)
+            y = 1f - (py - (c.placeY(padPortrait) * padH - halfH)) / (2 * halfH)
+        }
+        x = x.coerceIn(0f, 1f); y = y.coerceIn(0f, 1f)
+        val f = fingers[id] ?: FingerState().also { n ->
+            fingers[id] = n
+            for (a in FingerAxis.entries) n.landed[a.ordinal] = fingerRaw(a, x, y)
+        }
+        f.x = x; f.y = y
+    }
+
+    /** Finger input settings by touch button id ("" = the touchpad) and round buttons, from the workspace. */
+    private var fingerCfgs: Map<String, List<FingerAxisSettings>> = emptyMap()
+    private var roundIds: Set<String> = emptySet()
+
+    /** Raw value 0..1 of axis [a] at [x], [y] (0..1 from the bottom-left). */
+    private fun fingerRaw(a: FingerAxis, x: Float, y: Float): Float = when (a) {
+        FingerAxis.X -> x
+        FingerAxis.Y -> y
+        FingerAxis.DISTANCE -> min(1f, hypot(x - 0.5f, y - 0.5f) * 2f)
+        FingerAxis.ANGLE -> {
+            val turn = (atan2(x - 0.5f, y - 0.5f) / (2 * PI)).toFloat()
+            if (turn < 0f) turn + 1f else turn
+        }
+    }
+
+    /** The value of finger input [s] now, 0..1; 0 when no finger is on it. */
+    private fun fingerValue(s: InputSource.Finger): Float {
+        val f = fingers[s.id] ?: return 0f
+        if (s.axis.roundOnly && s.id !in roundIds) return 0f
+        val cfg = (if (s.id.isEmpty()) eff.padFingers else fingerCfgs[s.id])?.fingerOf(s.axis) ?: FingerAxisSettings(s.axis)
+        val raw = if (cfg.locked) f.landed[s.axis.ordinal] else fingerRaw(s.axis, f.x, f.y)
+        return cfg.shape(raw)
+    }
+
+    /**
+     * Input [src] (value [v] in group [dev]) is active for a chip's range ([Mapping.range]): a finger
+     * input while its finger is down (0 included), any other while it is off its rest.
+     */
+    private fun activeOf(src: InputSource, dev: Dev?, v: Float): Boolean =
+        if (src is InputSource.Finger) fingers.containsKey(src.id) && (!src.axis.roundOnly || src.id in roundIds)
+        // A held swipe direction is active from the start of its zone (where its axis is 0).
+        else if (src is InputSource.Surface && src.on == Trigger.HOLD && src.input.heldSwipe) value(src, dev) >= PRESS_THRESHOLD
+        else abs(v) > RANGE_ACTIVE
+
+    /** An output that takes an input's size (an axis), not just on or off. */
+    private fun analogTarget(t: OutputTarget): Boolean = t is OutputTarget.PadAxis || t is OutputTarget.GyroSens ||
+            t is OutputTarget.HapticStep || (t is OutputTarget.Haptic && t.held)
+
+    /**
+     * [v] (the level of mapping [m]'s source) as its axis output takes it: a held swipe direction
+     * gives how far through its zone the finger is ([Touchpad.zoneLevel]) to an axis target.
+     */
+    private fun axisOf(m: Mapping, v: Float): Float {
+        val s = m.source
+        if (v == 0f || s !is InputSource.Surface || s.on != Trigger.HOLD || !s.input.heldSwipe || !analogTarget(m.target)) return v
+        val pad = (if (s.id.isEmpty()) touchpad else surfaces[s.id]) ?: return v
+        return pad.zoneLevel(s.fingers, s.input, s.zone) * v
+    }
+
+    /** [v] of mapping [m] through its range ([Mapping.range]), as its target takes it. */
+    private fun ranged(m: Mapping, dev: Dev?, v: Float): Float {
+        val r = m.range ?: return v
+        if (!activeOf(m.source, dev, v)) return 0f
+        val out = r.of(abs(v))
+        return if (v < 0f) -out else out
+    }
+
     /** Physical keys and buttons with settings of their own while held ([physHeldChanged]), and those held now. */
     private var heldPhys: List<HeldButton> = heldOf(ws)
     private val physDown = HashSet<String>()
@@ -169,7 +379,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             if (g.anyGyro) held = g
             if (g.anyTouch) heldTouch = g
         }
-        gyroNow = held?.over(eff.gyro) ?: eff.gyro
+        gyroBase = held?.over(eff.gyro) ?: eff.gyro
+        gyroNow = withSens(gyroBase)
         pcHeldGyro = if (heldPhys.isEmpty() || ws.pads.isEmpty()) emptyList() else heldPhys.mapNotNull { b ->
             if (!b.id.startsWith(PhysicalDevice.CONTROLLER.name + ":")) return@mapNotNull null
             val g = b.gyroIn(sets).takeIf { it.anyGyro } ?: return@mapNotNull null
@@ -699,6 +910,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         padMappings = allPads
         buttonIds = w.touchControls.filter { it.kind == TouchKind.BUTTON }.map { it.id }
         followLayerIds = w.touchControls.filter { it.followLayers }.mapTo(HashSet()) { it.id }
+        fingerCfgs = w.touchControls.filter { it.fingers.isNotEmpty() }.associate { it.id to it.fingers }
+        controlsById = w.touchControls.associateBy { it.id }
+        fingerMapped = w.mappings.mapNotNullTo(HashSet()) { (it.source as? InputSource.Finger)?.id }
+        roundIds = w.touchControls.filter { it.kind == TouchKind.BUTTON && it.shape == TouchShape.CIRCLE }.mapTo(HashSet()) { it.id }
         val swipers = w.touchControls.filter { it.swipes }
         surfaces = swipers.associate { c ->
             c.id to Touchpad(c.surfaceSettings(w.touchpad), SurfaceMap(w.mappings, c.id)).also {
@@ -757,6 +972,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (d in deviceList) d.clear()
         anyDevice.clear()
         touches.clear(); pressOrder.clear(); physDown.clear(); setTouchHeld.clear(); touchSticks.clear()
+        fingers.clear(); fingerPointer.clear(); sensOrder.clear(); sensNow.fill(Float.NaN)
         updateGyroNow()
         for (s in surfaceList) s.reset()
         for (a in areas) a.clear()
@@ -886,6 +1102,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 bpDownX[slot] = x; bpDownY[slot] = y; bpDownNs[slot] = now
                 trace?.let { traceTouch(it, id, "down at ${x.toInt()},${y.toInt()}", withTargets = true) }
                 press(id)
+                fingerTrack(id, pointer, x, y, 0)
                 val surface = surfaces[id]
                 if (surface != null) {
                     bpState[slot] = BP_SWIPE
@@ -902,7 +1119,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val now = clock()
             firingEvents(now) {
                 val slot = slotOf(pointer)
-                if (slot < 0 || bpState[slot] != BP_SWIPE) return@firingEvents
+                if (slot < 0) return@firingEvents
+                fingerTrack(bpControl[slot]!!, pointer, x, y, 1)
+                if (bpState[slot] != BP_SWIPE) return@firingEvents
                 surfaces[bpControl[slot]]?.move(pointer, x, y, now, eventNanos)
             }
         }
@@ -918,6 +1137,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (slot < 0) return@firingEvents
                 val id = bpControl[slot]!!
                 trace?.let { traceTouch(it, id, "up after ${(now - bpDownNs[slot]) / 1_000_000} ms", withTargets = false) }
+                fingerTrack(id, pointer, 0f, 0f, 2)
                 if (bpState[slot] == BP_SWIPE) surfaces[id]?.up(pointer, now)
                 // A quick tap stays pressed until a snapshot has shown it for the minimum pulse,
                 // so a pump that ticks between its down and up still sends it.
@@ -940,6 +1160,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (slot < 0) return@firingEvents
                 val id = bpControl[slot]!!
                 trace?.let { traceTouch(it, id, "cancelled by the system", withTargets = false) }
+                fingerTrack(id, pointer, 0f, 0f, 2)
                 if (bpState[slot] == BP_SWIPE) surfaces[id]?.cancelFinger(pointer, now)
                 release(id)
                 bpState[slot] = BP_FREE; bpControl[slot] = null
@@ -1135,6 +1356,44 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     /**
+     * The first finger on touch button [id] ("" = the workspace touchpad) is at [x], [y]: 0..1 from
+     * its bottom-left, kept in the button (a finger slid off stays at the nearest edge). The first
+     * call after [fingerUp] is where it landed ([FingerAxisSettings.locked]).
+     */
+    fun setFinger(id: String, x: Float, y: Float) {
+        synchronized(lock) {
+            val cx = x.coerceIn(0f, 1f)
+            val cy = y.coerceIn(0f, 1f)
+            val f = fingers[id]
+            if (f != null && f.x == cx && f.y == cy) return
+            firingEvents(clock()) {
+                val st = f ?: FingerState().also { n ->
+                    fingers[id] = n
+                    for (a in FingerAxis.entries) n.landed[a.ordinal] = fingerRaw(a, cx, cy)
+                }
+                st.x = cx; st.y = cy
+            }
+        }
+        onChange?.run()
+    }
+
+    /** The finger [setFinger] followed on [id] lifted: its finger inputs go inactive. */
+    fun fingerUp(id: String) {
+        synchronized(lock) {
+            if (!fingers.containsKey(id)) return
+            firingEvents(clock()) { fingers.remove(id) }
+        }
+        onChange?.run()
+    }
+
+    /** Where the finger on [id] is now (0..1 from its bottom-left) into [out], or false when none is. */
+    fun fingerAt(id: String, out: FloatArray): Boolean = synchronized(lock) {
+        val f = fingers[id] ?: return false
+        out[0] = f.x; out[1] = f.y
+        true
+    }
+
+    /**
      * A physical mouse ([PadDevice.mouse]) moved [dx], [dy] counts: its Move X / Move Y mappings
      * ([AndroidAxis.MOUSE_X], [AndroidAxis.MOUSE_Y] axis sources) in the set in use move the PC
      * mouse or scroll ([OutputTarget.MouseAxis], times its scale; scrolling a notch per
@@ -1256,6 +1515,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             resolveIfDue(now)
             trace?.input("touchpad finger $pointer down at ${x.toInt()},${y.toInt()}")
             touchpad.down(pointer, x, y, now, eventNs = eventNanos)
+            if ("" in fingerMapped) { fingerTrack("", pointer, x, y, 0); refreshSens() }
         }
         onChange?.run()
     }
@@ -1265,6 +1525,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val now = clock()
             resolveIfDue(now)
             touchpad.move(pointer, x, y, now, eventNanos)
+            if ("" in fingerMapped) { fingerTrack("", pointer, x, y, 1); refreshSens() }
         }
         onChange?.run()
     }
@@ -1275,6 +1536,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             resolveIfDue(now)
             trace?.input("touchpad finger $pointer up")
             touchpad.up(pointer, now)
+            if ("" in fingerMapped) { fingerTrack("", pointer, 0f, 0f, 2); refreshSens() }
         }
         onChange?.run()
     }
@@ -1283,6 +1545,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     fun touchpadCancel() {
         synchronized(lock) {
             touchpad.cancel(clock())
+            if (fingers.remove("") != null) { fingerPointer.remove(""); refreshSens() }
         }
         onChange?.run()
     }
@@ -1294,6 +1557,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             resolveIfDue(now)
             trace?.input("touchpad finger $pointer cancelled by the system")
             touchpad.cancelFinger(pointer, now)
+            if ("" in fingerMapped) { fingerTrack("", pointer, 0f, 0f, 2); refreshSens() }
         }
         onChange?.run()
     }
@@ -1692,7 +1956,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         dev?.modeSeen = true
         for (i in ms.indices) {
             val m = ms[i]
-            val v = out(m, dev, now, output = true)
+            val raw = axisOf(m, out(m, dev, now, output = true))
+            val v = if (m.range == null) raw else ranged(m, dev, raw)
             if (v >= PRESS_THRESHOLD) {
                 if (m.options?.endsOnNextInput == true) {
                     val sh = shaperOf(m, dev)
@@ -1735,6 +2000,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause, is OutputTarget.GyroPauseAxis,
                 OutputTarget.SwitchApps, OutputTarget.Zoom, is OutputTarget.Layer, OutputTarget.LayerBack,
                 OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.NoOutput -> Unit
+
+                // The gyro reads it on every sample ([refreshSens]).
+                is OutputTarget.GyroSens -> Unit
 
                 is OutputTarget.Haptic, is OutputTarget.HapticStep -> {
                     val a = min(1f, abs(v))
@@ -1999,6 +2267,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (eventsBefore.isNotEmpty()) for (t in eventsBefore) if (t is OutputTarget.Layer && t !in eventsAfter) layerReleased(t)
         if (anyCarried) pruneCarried()
         if (heldPhys.isNotEmpty()) physHeldChanged()
+        refreshSens()
     }
 
     /**
@@ -2166,7 +2435,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     /** [s] is an On swipe chip of a swipe direction (any zone): a Toggle on it latches the surface. */
-    private fun latchChip(s: InputSource) = s is InputSource.Surface && s.on == Trigger.HOLD && s.input.holdDirection != null
+    private fun latchChip(s: InputSource) = s is InputSource.Surface && s.on == Trigger.HOLD && s.input.heldSwipe
 
     /** A swipe trigger the engine works out from the swipe itself ([InputSource.Surface.on]); HOLD = none. */
     private fun derivedTrigger(s: InputSource): Trigger = when (s) {
@@ -2210,9 +2479,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             // A swipe's Release: the last finger lifted in its zone (not sliding on, not leaving the direction).
             val s = src
             val pad = if (s.id.isEmpty()) touchpad else surfaces[s.id]
-            val d = s.input.holdDirection
+            val d = s.input.holdSlot
             on = false
-            if (pad != null && d != null) {
+            if (pad != null && d >= 0) {
                 if (sh.liftSeq != Long.MIN_VALUE && pad.liftSeq != sh.liftSeq) on = pad.liftedIn(s.fingers, d, s.zone)
                 sh.liftSeq = pad.liftSeq
             }
@@ -2441,6 +2710,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         is InputSource.Surface -> s.input.motion
         is InputSource.Gyro -> true
         is InputSource.Tilt -> s.half == AxisHalf.FULL
+        is InputSource.Finger -> true
         else -> false
     }
 
@@ -2513,6 +2783,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         touchEvents = touchMappings.filter { isEvent(it.target) }
         padEvents = Array(padMappings.size) { padMappings[it].filter { m -> isEvent(m.target) } }
         eventsMapped = touchEvents.isNotEmpty() || padEvents.any { it.isNotEmpty() }
+        sensMapped = touchMappings.any { it.target is OutputTarget.GyroSens } ||
+                padMappings.any { l -> l.any { it.target is OutputTarget.GyroSens } }
         trace?.let { traceLayers(it) }
         touchpad.map = SurfaceMap(touchMappings)
         for ((id, s) in surfaces) s.map = SurfaceMap(touchMappings, id)
@@ -2661,6 +2933,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         is InputSource.Shake ->
             if (source.id.isNotEmpty() && !touches.containsKey(source.id)) 0f
             else if (shakeOn) 1f else 0f
+
+        is InputSource.Finger -> fingerValue(source)
         is InputSource.TouchStickDiagonal -> {
             val v = touchSticks[source.id]
             if (v != null && v.dirs and (DIR_DIAGONAL shl source.diagonal.ordinal) != 0) v.mag else 0f
@@ -2745,6 +3019,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     companion object {
         const val PRESS_THRESHOLD = 0.5f
+
+        /** An input whose value is past this is off its rest, so a chip's range applies ([activeOf]). */
+        const val RANGE_ACTIVE = 1e-4f
+
+        /** The sensitivities a Gyro sensitivity chip can set, counts per degree. */
+        const val MIN_SENS_CHIP = 0f
+        const val MAX_SENS_CHIP = 10_000f
 
         /** [pressOrder]'s prefix of a physical key or button ([HeldButton]). */
         private const val PHYS = HeldButton.GYRO_ID

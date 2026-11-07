@@ -17,6 +17,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -26,11 +30,30 @@ import androidx.compose.ui.unit.sp
  * The latency test's tracking screen, shown while the PC's latency test window is open (TEST_MODE
  * LATENCY_SCREEN): four ArUco markers (4×4 dictionary, ids 0 to 3) in the top half, clear of the
  * hand holding the phone from below, so the PC's video analyser can tell how far the phone is
- * turned. It draws over the pad but takes no touches (input keeps working), except [onStop].
+ * turned. "Top" is the phone's own top, the camera end, in every rotation: the screen is drawn
+ * turned back to the phone's portrait. It draws over the pad but takes no touches (input keeps
+ * working), except [onStop].
  */
 @Composable
 internal fun LatencyMarkers(onStop: () -> Unit) {
-    BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
+    // The display draws turned by its rotation; turning back by it puts the camera end on top.
+    val turns = LocalView.current.display?.rotation ?: 0
+    Box(Modifier.fillMaxSize().background(Color.Black).phonePortrait(turns)) { Markers(onStop) }
+}
+
+/** Lays the content out in the phone's own portrait and turns it there, for a display rotated by [turns] quarter turns. */
+private fun Modifier.phonePortrait(turns: Int): Modifier {
+    val swap = turns % 2 == 1
+    return layout { measurable, c ->
+        val inner = if (swap) Constraints.fixed(c.maxHeight, c.maxWidth) else Constraints.fixed(c.maxWidth, c.maxHeight)
+        val p = measurable.measure(inner)
+        layout(c.maxWidth, c.maxHeight) { p.place((c.maxWidth - p.width) / 2, (c.maxHeight - p.height) / 2) }
+    }.graphicsLayer { rotationZ = -90f * turns }
+}
+
+@Composable
+private fun Markers(onStop: () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
         val w = maxWidth
         val h = maxHeight
         // Two rows of two in the top half, as big as fits.

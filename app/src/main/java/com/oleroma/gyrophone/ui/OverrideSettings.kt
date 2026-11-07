@@ -189,6 +189,7 @@ internal fun OverrideSlider(
     hint: String? = null,
     onLive: ((Float?) -> Unit)? = null,
     children: ChildInfo? = null,
+    typedRange: ClosedFloatingPointRange<Float>? = null,
     onDone: (Float) -> Unit,
 ) {
     var v by remember(key, value) { mutableStateOf(value) }
@@ -204,6 +205,8 @@ internal fun OverrideSlider(
                 onDone(v)
                 onLive?.invoke(null)
             },
+            typedRange = typedRange,
+            typedTitle = format.format(v),
         )
     }
 }

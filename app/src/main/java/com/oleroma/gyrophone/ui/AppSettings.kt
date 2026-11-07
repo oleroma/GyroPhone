@@ -123,6 +123,8 @@ private fun AppTab(runtime: GamepadRuntime) {
     val debugOn by runtime.debug.enabled.collectAsStateWithLifecycle()
     val tight by runtime.gyroTightening.collectAsStateWithLifecycle()
     val smooth by runtime.gyroSmoothing.collectAsStateWithLifecycle()
+    val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
+    val capCounts by runtime.sensCapCounts.collectAsStateWithLifecycle()
     val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?" }
 
     val items = listOf(
@@ -250,7 +252,7 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "sliding while inertia glides after the lift.",
             ) { runtime.setTouchVisuals(visuals.copy(moveRulers = it)) }
         },
-        category(runtime, "gyro", "Gyro", "Jitter cutoff and smoothing, for every workspace") {
+        category(runtime, "gyro", "Gyro", "Jitter cutoff, smoothing and the sensitivity slider cap, for every workspace") {
             // Both default to off: raw gyro. One setting for the whole app, also what the PC uses when it runs the gyro.
             OverrideSlider(
                 "appGyroTight", if (tight < 0.05f) "Jitter cutoff off" else "Jitter cutoff %.1f°/s", tight, 0f..5f, 0.1f,
@@ -262,6 +264,19 @@ private fun AppTab(runtime: GamepadRuntime) {
                 overridden = false, onReset = null,
                 hint = "Turns slower than this are averaged over a few samples, which steadies slow aim. Every workspace uses it.",
             ) { v -> runtime.setGyroSmoothing(v) }
+            OverrideSlider(
+                "appSensCapRws", "Slider cap %.1f RWS", capRws,
+                GamepadRuntime.MIN_SENS_CAP_RWS..GamepadRuntime.MAX_SENS_CAP_RWS, 0.5f,
+                overridden = false, onReset = null,
+                hint = "The top of every gyro sensitivity slider (and Gyro sensitivity ranges) in workspaces that know their " +
+                        "game, so the values you use fill the slider. Tap a slider to type a value above it.",
+            ) { v -> runtime.setSensCapRws(v) }
+            OverrideSlider(
+                "appSensCapCounts", "Slider cap %.0f counts/°", capCounts,
+                GamepadRuntime.MIN_SENS_CAP_COUNTS..GamepadRuntime.MAX_SENS_CAP_COUNTS, 1f,
+                overridden = false, onReset = null,
+                hint = "The same in workspaces without a game set, where sensitivity is in mouse counts per degree.",
+            ) { v -> runtime.setSensCapCounts(v) }
         },
         category(runtime, "gyroDisplay", "Gyro display", "The parallax edge; other gyro displays are placed in edit mode") {
             GyroVisualsSettings(visuals) { runtime.setTouchVisuals(it) }

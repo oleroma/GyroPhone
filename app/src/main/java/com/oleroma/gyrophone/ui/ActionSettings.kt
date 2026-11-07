@@ -33,11 +33,21 @@ import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
+import com.oleroma.gyrophone.core.model.heldSwipe
 import com.oleroma.gyrophone.core.model.holdDirection
+import com.oleroma.gyrophone.core.model.quickSlot
 import com.oleroma.gyrophone.core.model.swipeDirection
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
+import com.oleroma.gyrophone.core.model.FingerAxis
+import com.oleroma.gyrophone.core.model.FingerAxisSettings
+import com.oleroma.gyrophone.core.model.fingerOf
+import com.oleroma.gyrophone.core.model.withFinger
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 
 /**
  * What the mapping editor's ⚙ and Settings open for a control: [action] gives an action's own
@@ -83,7 +93,7 @@ private fun timingOf(input: BindableInput): Timing? = when (val s = input.source
 /** [input] is a swipe direction's Long hold or Double swipe (its timing settings are named for swipes). */
 private fun isSwipeTiming(input: BindableInput): Boolean {
     val s = input.sources.firstOrNull() as? InputSource.Surface ?: return false
-    return s.on != Trigger.HOLD && (s.input.swipeDirection != null || s.input.holdDirection != null)
+    return s.on != Trigger.HOLD && (s.input.quickSlot >= 0 || s.input.heldSwipe)
 }
 
 /** The long press time's name and hint for [input] ([swipe]: a Long hold); [whose]: whose time it is. */
@@ -106,6 +116,8 @@ private fun directionGear(level: SurfaceLevel, key: String, input: BindableInput
         val m = MoveSlot.of(src.fingers, s == SurfaceInput.MOTION_X)
         return ui { MoveGearSettings(level, key, m, touchpad) }
     }
+    // The one Swipe row: each arrow's own settings, both its held and its quick swipe ones.
+    if (s == SurfaceInput.HOLD_ANY) return ui { SwipeArrowSettings(level, key, zones) }
     s.swipeDirection?.let { d -> return ui { DirectionSettings(level, key, d, hold = false, zones) } }
     s.holdDirection?.let { d -> return ui { DirectionSettings(level, key, d, hold = true, zones) } }
     return null
@@ -312,6 +324,10 @@ internal fun touchControlSettings(
 
                 src is InputSource.TouchArea && src.kind == TouchAreaKind.ZONE -> ui { AreaOptions(control, update) }
 
+                src is InputSource.Finger -> fingerGear(key, control.fingerOf(src.axis)) { s ->
+                    update { it.copy(fingers = it.fingers.withFinger(s)) }
+                }
+
                 else -> null
             }
         },
@@ -340,6 +356,9 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
                 is InputSource.Gyro -> gyroGear(level, key, src.axis)
                 is InputSource.Tilt -> tiltGear(level, key, src.axis == StickAxis.X)
                 is InputSource.Shake -> shakeGear(level, key)
+                is InputSource.Finger -> fingerGear(key, ws.padFingers.fingerOf(src.axis), level.isOwn(WorkspaceDefaults.PAD_FINGERS)) { s ->
+                    level.edit { it.copy(padFingers = it.padFingers.withFinger(s)) }
+                }
                 else -> null
             } ?: directionGear(surface, key, input, zones, touchpad = true) ?: when (timingOf(input)) {
                 Timing.LONG_PRESS -> ui {
@@ -661,5 +680,59 @@ private fun AreaOptions(control: TouchControl, update: ((TouchControl) -> TouchC
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/**
+ * The ⚙ of a finger position input ([InputSource.Finger]): Live or Locked, and its deadzones
+ * ([FingerAxisSettings]) as one slider with two handles. [own]: set at this level ([s] differs
+ * from the defaults, for a button).
+ */
+private fun fingerGear(key: String, s: FingerAxisSettings, own: Boolean = !s.none, onSet: (FingerAxisSettings) -> Unit): @Composable () -> Unit = ui {
+    FingerAxisOptions(key, s, own, onSet)
+}
+
+@Composable
+private fun FingerAxisOptions(key: String, s: FingerAxisSettings, own: Boolean, onSet: (FingerAxisSettings) -> Unit) {
+    val along = when (s.axis) {
+        FingerAxis.X -> "from the left edge (0 %) to the right edge (100 %)"
+        FingerAxis.Y -> "from the bottom edge (0 %) to the top edge (100 %)"
+        FingerAxis.DISTANCE -> "from the centre (0 %) to the rim (100 %)"
+        FingerAxis.ANGLE -> "around from the top (0 %), clockwise, back to the top (100 %)"
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OverrideRow(
+            "Value", s.locked, if (s.locked) ({ onSet(s.copy(locked = false)) }) else null,
+            hint = if (s.locked) "Locked: the value is where the finger landed, until it lifts; sliding changes nothing."
+            else "Live: the value follows the finger as it slides.",
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = !s.locked, onClick = { onSet(s.copy(locked = false)) }, label = { Text("Live") })
+                FilterChip(selected = s.locked, onClick = { onSet(s.copy(locked = true)) }, label = { Text("Locked") })
+            }
+        }
+        var a by remember(key, s.axis, s.start) { mutableStateOf(s.start) }
+        var b by remember(key, s.axis, s.end) { mutableStateOf(s.end) }
+        val deadzoned = s.start != 0f || s.end != 1f
+        OverrideRow(
+            "Deadzones %.0f %% – %.0f %%".format(a * 100, b * 100), own && deadzoned,
+            if (deadzoned) ({ onSet(s.copy(start = 0f, end = 1f)) }) else null,
+            hint = "Where on the button the value starts and stops growing, $along. Before the first handle it is 0, " +
+                    "past the second it is full, and it grows evenly between them. Every chip of this input uses it; " +
+                    "each chip's Range then says what 0 and full send. Tap near a handle to type its exact value.",
+        ) {
+            TwoHandleSlider(
+                a * 100f, b * 100f, 0f..100f, 1f,
+                onChange = { x, y -> a = x / 100f; b = y / 100f },
+                onDone = { x, y ->
+                    // The handles in order: the start is the lower one.
+                    val lo = minOf(x, y) / 100f
+                    val hi = maxOf(x, y) / 100f
+                    a = lo; b = hi
+                    onSet(s.copy(start = lo, end = hi))
+                },
+                fromTitle = "Start (%)", toTitle = "End (%)",
+            )
+        }
     }
 }

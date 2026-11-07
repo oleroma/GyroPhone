@@ -118,7 +118,12 @@ data class TouchControl(
     val display: GyroDisplay? = null,
     /** Edit mode: controls sharing a group id move and size together ([ControlGroups]); null = none. */
     val group: String? = null,
+    /** BUTTON: its finger position inputs' own settings ([InputSource.Finger]); an axis not listed has the defaults. */
+    val fingers: List<FingerAxisSettings> = emptyList(),
 ) {
+    /** Finger position input [axis]'s settings. */
+    fun fingerOf(axis: FingerAxis): FingerAxisSettings = fingers.fingerOf(axis)
+
     /**
      * Every button is a touch surface: its fingers drive the touch inputs ([InputSource.Surface]
      * with its id) it maps or inherits from the workspace, its one-finger hold being its press.
@@ -187,6 +192,39 @@ fun TouchControl.placeSize(inPortrait: Boolean): Float =
  * Touchpad settings a swipe-mode button sets for itself; null fields follow the workspace
  * touchpad ([TouchpadSettings.with]).
  */
+/**
+ * A finger position input's settings ([InputSource.Finger]): [locked] keeps the value from where
+ * the finger landed until it lifts (else it follows the finger). [start] and [end] are its
+ * deadzones, 0..1 of the raw position: the value is 0 up to [start], 1 from [end], a straight line
+ * between.
+ */
+@Serializable
+data class FingerAxisSettings(
+    val axis: FingerAxis,
+    val locked: Boolean = false,
+    val start: Float = 0f,
+    val end: Float = 1f,
+) {
+    /** The value of raw position [raw] (0..1). */
+    fun shape(raw: Float): Float {
+        val a = start.coerceIn(0f, 1f)
+        val b = end.coerceIn(0f, 1f)
+        if (b <= a) return if (raw >= a) 1f else 0f
+        return ((raw - a) / (b - a)).coerceIn(0f, 1f)
+    }
+
+    /** Changes nothing (it need not be kept). */
+    val none: Boolean get() = !locked && start == 0f && end == 1f
+}
+
+/** The settings of [axis] in this list, or the defaults. */
+fun List<FingerAxisSettings>.fingerOf(axis: FingerAxis): FingerAxisSettings =
+    firstOrNull { it.axis == axis } ?: FingerAxisSettings(axis)
+
+/** Copy with [s] in place of its axis's settings (dropped when it changes nothing). */
+fun List<FingerAxisSettings>.withFinger(s: FingerAxisSettings): List<FingerAxisSettings> =
+    filter { it.axis != s.axis } + listOfNotNull(s.takeUnless { it.none })
+
 @Serializable
 data class SurfaceSettings(
     val sensitivity: Float? = null,
@@ -1399,6 +1437,17 @@ data class TouchpadSettings(
     /** How long zone [i] of [d] is (dp): its own length, else the first zone's, else the hold distance. */
     fun holdZoneDp(d: Direction, i: Int): Float =
         (holdZone(d, i).lengthDp ?: holdZone(d, 0).lengthDp ?: holdDpOf(d)).coerceIn(MIN_ZONE_DP, MAX_ZONE_DP)
+
+    /** How far held swipe slot [slot] ([holdSlot]; any way: the shared hold distance) travels before it is held (dp). */
+    fun holdDpAt(slot: Int): Float = if (slot in 0..3) holdDpOf(Direction.entries[slot]) else holdDp
+
+    /** Zone [i] of held swipe slot [slot] ([holdZone]; any way: the shared zones). */
+    fun holdZoneAt(slot: Int, i: Int): HoldZone =
+        if (slot in 0..3) holdZone(Direction.entries[slot], i) else holdZones.getOrNull(i) ?: HoldZone()
+
+    /** How long zone [i] of slot [slot] is (dp), as [holdZoneDp]. */
+    fun holdZoneDpAt(slot: Int, i: Int): Float =
+        (holdZoneAt(slot, i).lengthDp ?: holdZoneAt(slot, 0).lengthDp ?: holdDpAt(slot)).coerceIn(MIN_ZONE_DP, MAX_ZONE_DP)
 
     /** The shared pie width of [d]'s swipes ([hold] false) or held directions: its axis's. */
     fun sharedPieDeg(d: Direction, hold: Boolean): Float =
