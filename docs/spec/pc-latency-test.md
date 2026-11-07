@@ -1,0 +1,32 @@
+# Latency test
+
+Two ways to see how long input takes to reach a game, both on the companion: **Measure buttons** on Home's latency card (always on while switched on, no video), and the **Latency test** page, which times the gyro from a slow-motion video. Both need the Wi-Fi or USB link; Bluetooth HID has no companion to measure with.
+
+## Measure buttons
+
+A switch on Home's **Latency** card (off by default, saved as `MeasureButtons` in the settings). While it is on, a line under the graph shows **Buttons: X ms, phone part Y ms** (the middle of the last 64 presses and releases, how many, and the newest one).
+
+- It times each press or release from the moment the phone sees the input (the touch event's or controller key event's own time) to the moment the PC hands the STATE carrying it to the game (SendInput and the virtual pad). The **phone part** is from the input to the phone sending that STATE: Android's input delivery, the app, and any wait a gesture makes on purpose (a When with a Held chip waits up to the Tap time to tell a tap from a hold; a tap's output comes when the finger lifts).
+- It leaves out what happens before the phone sees the input (the touchscreen's or controller's own delay) and after the game gets it (the game and the monitor).
+- How: the PC sends TEST_MODE with PRESS_TIMES. The phone notes the newest touch down or up, controller key edge and mouse button edge (`PressStamp`, forgotten after 1 s if nothing changed) and, after each STATE that first carries a new press or release, sends PRESS_TIME: that STATE's time and the input's time, both in the phone's clock. The PC notes when it injected each STATE (`PressLatency`), matches the PRESS_TIME to the first injection that carried its STATE (a burst injects only its newest STATE), and turns the input time into PC time with the clock offset from LINK_INFO, as the link latency does. Off, the phone sends nothing extra.
+
+## Latency test page
+
+A sidebar page in the companion's main window, for anyone (not a debug tool). It measures the time from turning the phone to the game seeing the mouse move, including the screen, from a video filmed with a second phone.
+
+1. **Start test** opens the **test window**: black, with one tall green bar that moves left and right only by the mouse movement GyroPhone injects (Windows raw input with no device, which is what SendInput makes); a real mouse is ignored. The bar's travel scales itself slowly so any twist fills the window. Esc or Stop test closes it. While it is open the phone shows its **markers** (below), without anything to do on the phone.
+2. The person holds the phone in front of the test window, screen toward them, and twists the wrist left and right (a turn about the phone's vertical axis) for about 10 seconds. The workspace's gyro must move the mouse; nothing else changes.
+3. They film it in slow motion (240 fps or more) with another phone, markers and green bar in the picture, and copy the original video file to the PC (shared copies are often slowed to 30 fps).
+4. They drop the video on the page (or Choose video…). The analyser reads it and adds a result.
+
+**Phone markers** (`LatencyMarkers`): while TEST_MODE has LATENCY_SCREEN, the pad shows a black screen with four ArUco markers (4×4 dictionary, ids 0 to 3) in two rows in the top half, clear of the hand holding the phone from below, and the line "Twist your wrist left and right". It takes no touches, so input keeps working; **Hide markers** hides it until the next test.
+
+**Analyser** (`GyroPhone.Latency`, OpenCV through OpenCvSharp): per frame it finds the four markers and works out the phone's turn from the perspective between their corners in the first frame where all four show and this one (the camera's focal length is guessed from the frame size; a wrong guess changes the size of the turn, not its timing). It takes the green bar's left-right centre in a band of rows just above the phone's top markers, so both are read from nearly the same lines of the picture (a phone camera captures lines one after another). Both motions are filled where tracking missed, freed of slow drift (0.6 s moving average) and scaled alike; the lag from 0 to 250 ms that lines them up best, to a fraction of a frame, is the **latency**. The direction may be opposite (it follows the mouse mapping). The lag is also found over 1.5 s stretches; half the middle half of those is the **spread**. Frame times come from the video, so its real frame rate is used; under 100 fps, or when the motions match less than 0.5, the page says why instead of giving a number.
+
+**Results**: each one is saved as JSON in `Documents\GyroPhone\Latency` and listed newest first with **Open** (the card in a window), **Copy image**, **Save image…** (PNG) and **Save data…** (the JSON). The card (1000 × 520, fixed dark colours) shows the latency, twists and spread, the link, phone, monitor refresh rate (of the test window's screen), video frame rate, companion version and date, and one second of both motions on top of each other.
+
+What the number includes: the phone's gyro and app, the link, the companion, Windows' desktop compositor drawing the test window, and the monitor. Rolling shutter can still leave about a millisecond or two when the camera reads the picture across its width.
+
+## Key files
+
+`core/.../net/PressStamp.kt`, `app/.../wifi/WifiPump.kt` (PRESS_TIME), `app/.../wifi/WifiLink.kt` (TEST_MODE), `app/.../ui/LatencyMarkers.kt`; `GyroPhone.Host/PressLatency.cs`, `HostEngine.cs` (`SetMeasureButtons`, `SetLatencyScreen`), `GyroPhone.Latency/` (`LatencyMath.cs`, `VideoTracker.cs`), `GyroPhone.Ui/LatencyPage.cs`, `LatencyTestWindow.cs`, `LatencyCard.cs`, `LatencyResults.cs`, `HomePage.cs`.

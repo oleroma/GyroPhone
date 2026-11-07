@@ -1900,6 +1900,12 @@ fun PadScreen(
 
         if (!editing) DebugOverlay(runtime, Modifier.align(Alignment.BottomStart))
 
+        // The PC's latency test window is open: tracking markers over the pad until it closes or "Hide markers".
+        val latencyScreen by runtime.wifi.latencyScreen.collectAsStateWithLifecycle()
+        var latencyHidden by remember { mutableStateOf(false) }
+        LaunchedEffect(latencyScreen) { if (!latencyScreen) latencyHidden = false }
+        if (!editing && latencyScreen && !latencyHidden) LatencyMarkers { latencyHidden = true }
+
         if (black) BlackScreen { black = false }
 
         if (!editing) {

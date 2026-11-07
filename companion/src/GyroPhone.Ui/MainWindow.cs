@@ -14,6 +14,7 @@ public enum MainPage
     Gamepad,
     Overlays,
     Connection,
+    Latency,
     App,
 }
 

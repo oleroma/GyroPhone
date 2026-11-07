@@ -56,6 +56,10 @@ public static class Wire
     public const int OverlayLayoutPlain = 200;
     /// <summary>MOTION: the phone's raw gyro and accelerometer samples for the DualShock 4 (<see cref="MotionFrame"/>).</summary>
     public const int MotionPlain = MotionFrame.Size;
+    /// <summary>PRESS_TIME: u32 STATE time, u32 input event time (low 32 bits of the phone's µs clock).</summary>
+    public const int PressTimePlain = 8;
+    /// <summary>TEST_MODE: u8 <see cref="TestModeFlags"/>, 3 reserved bytes.</summary>
+    public const int TestModePlain = 4;
 
     public static readonly int[] RatesHz = [250, 500, 1000];
     public const int DefaultRateHz = 1000;
@@ -228,6 +232,15 @@ public static class LinkInfoFlags
 }
 
 /// <summary>HOST_STATUS flags.</summary>
+/// <summary>TEST_MODE flags: the latency tests the phone takes part in.</summary>
+public static class TestModeFlags
+{
+    /// <summary>"Measure buttons" is on: the phone sends PRESS_TIME for each press and release.</summary>
+    public const byte PressTimes = 1 << 0;
+    /// <summary>The latency test window is open: the phone's pad shows the tracking markers.</summary>
+    public const byte LatencyScreen = 1 << 1;
+}
+
 public static class HostStatusFlags
 {
     public const byte VigemOk = 1 << 0;

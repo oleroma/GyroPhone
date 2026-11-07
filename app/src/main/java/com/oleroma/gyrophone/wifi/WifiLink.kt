@@ -33,6 +33,9 @@ import com.oleroma.gyrophone.core.net.LiveSession
 import com.oleroma.gyrophone.core.net.MotionFeed
 import com.oleroma.gyrophone.core.net.OutputMode
 import com.oleroma.gyrophone.core.net.OverlayFeed
+import com.oleroma.gyrophone.core.net.PressStamp
+import com.oleroma.gyrophone.core.net.TestMode
+import com.oleroma.gyrophone.core.net.TestModeFlags
 import com.oleroma.gyrophone.core.net.PcGyroFeed
 import com.oleroma.gyrophone.core.net.PacketType
 import com.oleroma.gyrophone.core.net.PairFailure
@@ -119,6 +122,21 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     /** The raw motion for the PC's DualShock 4 or DualSense (its gyro and accelerometer), sent while its pad is one. */
     val motion = MotionFeed()
+
+    /** Press and release input times for "Measure buttons" (PRESS_TIME); the input code notes each edge. */
+    val pressStamp: PressStamp get() = pump.pressStamp
+
+    private val _latencyScreen = MutableStateFlow(false)
+    /** The PC's latency test window is open (TEST_MODE): the pad shows the tracking markers. */
+    val latencyScreen: StateFlow<Boolean> = _latencyScreen
+
+    /** The PC's TEST_MODE flags; 0 without a session. */
+    @Volatile private var testMode = 0
+        set(v) {
+            field = v
+            pump.pressTimes = v and TestModeFlags.PRESS_TIMES != 0
+            _latencyScreen.value = v and TestModeFlags.LATENCY_SCREEN != 0
+        }
     private val accessory = AccessoryBridge(appContext)
 
     private val _state = MutableStateFlow<LinkState>(LinkState.Off)
@@ -371,6 +389,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         _nothingFound.value = false
         _notice.value = null
         hostStatus = null
+        testMode = 0
         welcomeHostFlags = null
         _state.value = LinkState.Off
     }
@@ -793,6 +812,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         if (usbActive) useWifi()
         locks.release()
         hostStatus = null
+        testMode = 0
         welcomeHostFlags = null
         publishState()
     }
@@ -958,7 +978,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 clockOffsetUs = 0L
                 rttMinUs = -1L
                 // A replacement is the same PC: its overlay stays on until its next HOST_STATUS says otherwise.
-                if (s == null) hostStatus = null
+                if (s == null) { hostStatus = null; testMode = 0 }
                 // Until the first HOST_STATUS, WELCOME's output mode says whether the pad takes motion.
                 else if (hostStatus == null) motion.padTakesMotion = OutputMode.takesMotion(s.outputMode)
                 welcomeHostFlags = s?.hostFlags
@@ -974,6 +994,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 is Pong -> onPong(p)
                 is HostStatus -> hostStatus = p
                 is KeyLabels -> onKeyLabels(p)
+                is TestMode -> testMode = p.flags
                 else -> Unit // RUMBLE is ignored in v1; ANNOUNCE was handled already
             }
         }

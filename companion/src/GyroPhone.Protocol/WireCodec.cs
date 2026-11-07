@@ -401,6 +401,23 @@ public static class WireCodec
 
     public static Rumble DecodeRumble(ReadOnlySpan<byte> b) => new(b[0], b[1]);
 
+    public static int EncodePressTime(in PressTime p, Span<byte> b)
+    {
+        Le.PutU32(b, 0, p.StateTimeUs);
+        Le.PutU32(b, 4, p.EventTimeUs);
+        return Wire.PressTimePlain;
+    }
+
+    public static PressTime DecodePressTime(ReadOnlySpan<byte> b) => new(Le.U32(b, 0), Le.U32(b, 4));
+
+    /// <summary>TEST_MODE: flags then three zero bytes.</summary>
+    public static int EncodeTestMode(byte flags, Span<byte> b)
+    {
+        b[..Wire.TestModePlain].Clear();
+        b[0] = flags;
+        return Wire.TestModePlain;
+    }
+
     public static int EncodeKeyLabels(KeyLabels p, Span<byte> b)
     {
         Le.PutU32(b, 0, p.Layout);

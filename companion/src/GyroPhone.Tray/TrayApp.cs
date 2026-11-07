@@ -388,7 +388,17 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             hostKey,
             _keyFiles.Directory,
             _log.Path,
-            _refreshing?.Problems ?? Problems(s));
+            _refreshing?.Problems ?? Problems(s),
+            _engine.Settings.MeasureButtons,
+            _engine.PressLatencyNow());
+    }
+
+    public void SetLatencyScreen(bool on) => _engine.SetLatencyScreen(on);
+
+    public void ToggleMeasureButtons()
+    {
+        _engine.SetMeasureButtons(!_engine.Settings.MeasureButtons);
+        Refresh();
     }
 
     public string DetailsText() => StatusText();

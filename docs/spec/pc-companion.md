@@ -45,11 +45,12 @@ All engine state is under one lock. Engine callbacks only post to the UI thread.
 
 `GyroPhone.Ui/MainWindow.cs`, a sidebar of pages, refreshed twice a second:
 
-- **Home**: a warning bar per problem with its fix (no ViGEmBus, firewall, Public network, input blocked by an elevated window…), then cards: phone, link, latency (with a graph), gamepad (output, pause); full status under Details.
+- **Home**: a warning bar per problem with its fix (no ViGEmBus, firewall, Public network, input blocked by an elevated window…), then cards: phone, link, latency (with a graph and the **Measure buttons** switch, see [Latency test](pc-latency-test.md)), gamepad (output, pause); full status under Details.
 - **Phones**: Pair new phone, paired phones (each with Forget), this PC's key.
 - **Gamepad**: output Xbox 360 / DualShock 4 / Off, Pause, the ViGEmBus driver state and Retry.
 - **Overlays**: see [Overlays](pc-overlays.md).
 - **Connection**: network category, firewall and USB checks with their fixes, the USB cable (direct cable on/off, default on), the server's port and addresses.
+- **Latency test**: times the gyro from a slow-motion video, see [Latency test](pc-latency-test.md).
 - **App**: Startup (Start with Windows, default off; **Start when my phone appears**, the watcher), Tray icon click (Opens this window / Pairs a new phone), Troubleshooting (Open log folder, Debug window…), About (version).
 
 **Pairing window** (`PairWindow`): a QR code for the phone's Scan QR code (a one-time token, renewed when it expires, gone when the window closes; holds up to four of this PC's IPv4 addresses), and for code pairing the PC's name, addresses, port and the pairing countdown, then "Pair <phone>? Code 123 456" with **Allow** / **Deny**. On first run with nothing paired the pairing window opens by itself.

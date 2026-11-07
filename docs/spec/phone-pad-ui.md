@@ -82,6 +82,8 @@ Displays that hold their pose to gravity run the accelerometer; ones that hold h
 
 ## Debug panel
 
+While the PC's latency test window is open, the pad shows the test's tracking markers over everything (touches still go through; **Hide markers** hides them until the next test), see [Latency test](pc-latency-test.md#latency-test-page).
+
 With Settings › App › Debugging › **Debug tools** on (default off: nothing is logged), `ui/DebugOverlay.kt` floats over the pad: link, gyro, workspace and layer, what is held (inputs and outputs) and the newest events. Drag the title to move it, ◢ to resize, ▾ to fold it. **Record** saves the last 30 s (`runtime/PhoneDebug.kt`).
 
 ## Black screen
@@ -90,4 +92,4 @@ See [Volume rocker and black screen](phone-volume-black-screen.md).
 
 ## Key files
 
-`ui/MainActivity.kt`, `ui/PadMenu.kt`, `ui/PadScreen.kt`, `ui/CapsuleRow.kt`, `ui/WorkspaceBar.kt`, `ui/ControlMappingScreen.kt`, `ui/BindingEditor.kt`, `ui/MappingChipDialog.kt`, `ui/ActionSettings.kt`, `ui/ControlSettingsScreen.kt`, `ui/DirectionSettings.kt`, `ui/TouchVisuals.kt`, `ui/GyroVisuals.kt`, `ui/GyroVisualsSettings.kt`, `ui/Shapes3D.kt`, `ui/DebugOverlay.kt`, `core/.../model/Profile.kt` (`TouchControl`, `TouchKind`, `NavCorners`), `core/.../model/ControlGroups.kt`, `core/.../model/GyroDisplay.kt`.
+`ui/MainActivity.kt`, `ui/PadMenu.kt`, `ui/PadScreen.kt`, `ui/CapsuleRow.kt`, `ui/WorkspaceBar.kt`, `ui/ControlMappingScreen.kt`, `ui/BindingEditor.kt`, `ui/MappingChipDialog.kt`, `ui/ActionSettings.kt`, `ui/ControlSettingsScreen.kt`, `ui/DirectionSettings.kt`, `ui/TouchVisuals.kt`, `ui/GyroVisuals.kt`, `ui/GyroVisualsSettings.kt`, `ui/Shapes3D.kt`, `ui/DebugOverlay.kt`, `ui/LatencyMarkers.kt`, `core/.../model/Profile.kt` (`TouchControl`, `TouchKind`, `NavCorners`), `core/.../model/ControlGroups.kt`, `core/.../model/GyroDisplay.kt`.
