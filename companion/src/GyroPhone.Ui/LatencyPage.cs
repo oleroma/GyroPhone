@@ -186,8 +186,10 @@ internal sealed class LatencyPage : Page
                 ? $" Timed {Clock(a.TimedFromS)}–{Clock(a.TimedToS)} of {Clock(a.LengthS)}, where you twist."
                 : "";
             _app.Log($"latency test: {name} {a.Fps:0} fps, {a.Frames} frames, timed {a.TimedFromS:0.0}-{a.TimedToS:0.0} s, phone {a.Motion}: "
-                + $"{run.LatencyMs:0.0} ms ±{run.SpreadMs:0.0}, {run.Twists} twists, match {run.Match:0.00}");
-            SetStatus($"{run.LatencyMs:0.0} ms (±{run.SpreadMs:0.0}) from {run.Twists} twists.{timed}");
+                + $"{run.LatencyMs:0.0} ms ±{run.SpreadMs:0.0}, {run.Twists} twists, match {run.Match:0.00}, {run.Stretches} stretches used, {run.Skipped} left out, {run.Freezes} freezes");
+            string left = run.LeftOut();
+            SetStatus($"{run.LatencyMs:0.0} ms (±{run.SpreadMs:0.0}) from {run.Twists} twists.{timed}"
+                + (left.Length > 0 ? $" {char.ToUpper(left[0])}{left[1..]}." : ""));
             if (_root.IsLoaded) Open(run);
             ResultsChanged?.Invoke();
         }

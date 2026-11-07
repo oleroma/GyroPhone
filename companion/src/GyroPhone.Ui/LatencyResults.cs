@@ -19,11 +19,24 @@ public sealed record LatencyRun(
     double[] PhoneCurve,
     double[] BarCurve,
     double TimedFromS = 0,
-    double TimedToS = 0)
+    double TimedToS = 0,
+    int Skipped = 0,
+    int Freezes = 0,
+    int Stretches = 0)
 {
     public static LatencyRun From(VideoAnalysis a, string video, string link, string phone, int monitorHz, string app) =>
         new(DateTime.Now, a.Fit.LatencyMs, a.Fit.SpreadMs, a.Fit.Twists, a.Fps, a.Fit.Correlation, link, phone, monitorHz, app,
-            Path.GetFileName(video), a.PhoneCurve, a.BarCurve, a.TimedFromS, a.TimedToS);
+            Path.GetFileName(video), a.PhoneCurve, a.BarCurve, a.TimedFromS, a.TimedToS,
+            a.Fit.Skipped, a.Fit.Freezes, a.Fit.Stretches);
+
+    /// <summary>"2 freezes, 3 of 14 stretches left out", or "" when nothing was.</summary>
+    public string LeftOut()
+    {
+        var parts = new List<string>();
+        if (Freezes > 0) parts.Add(Freezes == 1 ? "1 freeze" : $"{Freezes} freezes");
+        if (Skipped > 0) parts.Add($"{Skipped} of {Skipped + Stretches} stretches left out");
+        return string.Join(", ", parts);
+    }
 }
 
 /// <summary>

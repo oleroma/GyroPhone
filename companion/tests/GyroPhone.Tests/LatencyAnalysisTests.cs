@@ -76,6 +76,29 @@ public class LatencyAnalysisTests
     }
 
     [Fact]
+    public void AFreezeIsLeftOut()
+    {
+        const double fps = 240;
+        int n = (int)(fps * 10);
+        var phone = new double[n];
+        var bar = new double[n];
+        for (int i = 0; i < n; i++)
+        {
+            double t = i / fps;
+            phone[i] = Twist(t);
+            bar[i] = 300 - 5 * Twist(t - 0.016);
+        }
+        // The bar stands still for 0.36 s at 5.67 s, then catches up over 70 ms.
+        int f0 = (int)(5.67 * fps), f1 = (int)(6.03 * fps), f2 = (int)(6.10 * fps);
+        for (int i = f0; i < f1; i++) bar[i] = bar[f0];
+        for (int i = f1; i < f2; i++) bar[i] = bar[f0] + (bar[f2] - bar[f0]) * (i - f1) / (double)(f2 - f1);
+        var fit = LatencyMath.Fit(phone, bar, fps)!;
+        Assert.Equal(1, fit.Freezes);
+        Assert.InRange(fit.Skipped, 1, 3);
+        Assert.InRange(fit.LatencyMs, 15.5, 16.5);
+    }
+
+    [Fact]
     public void FillBridgesUntrackedFrames()
     {
         var v = LatencyMath.Fill([double.NaN, 1, double.NaN, double.NaN, 4, 5, double.NaN])!;
