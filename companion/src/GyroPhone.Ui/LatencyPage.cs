@@ -185,7 +185,7 @@ internal sealed class LatencyPage : Page
             string timed = a.TimedToS - a.TimedFromS < a.LengthS - 1
                 ? $" Timed {Clock(a.TimedFromS)}–{Clock(a.TimedToS)} of {Clock(a.LengthS)}, where you twist."
                 : "";
-            _app.Log($"latency test: {name} {a.Fps:0} fps, {a.Frames} frames, timed {a.TimedFromS:0.0}-{a.TimedToS:0.0} s: "
+            _app.Log($"latency test: {name} {a.Fps:0} fps, {a.Frames} frames, timed {a.TimedFromS:0.0}-{a.TimedToS:0.0} s, phone {a.Motion}: "
                 + $"{run.LatencyMs:0.0} ms ±{run.SpreadMs:0.0}, {run.Twists} twists, match {run.Match:0.00}");
             SetStatus($"{run.LatencyMs:0.0} ms (±{run.SpreadMs:0.0}) from {run.Twists} twists.{timed}");
             if (_root.IsLoaded) Open(run);

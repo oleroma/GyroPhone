@@ -9,7 +9,14 @@ namespace GyroPhone.Latency;
 /// </summary>
 public sealed record VideoAnalysis(
     LatencyFit Fit, double Fps, int Frames, double TrackedShare, double[] PhoneCurve, double[] BarCurve,
-    double TimedFromS, double TimedToS, double LengthS);
+    double TimedFromS, double TimedToS, double LengthS, PhoneMotion Motion);
+
+/// <summary>
+/// How the phone's twist shows in the video, which depends on where the camera stands:
+/// <see cref="Tilt"/>, the phone turning within the picture like a steering wheel (the forearm
+/// points at the camera), or <see cref="Turn"/>, its screen turning toward and away from the camera.
+/// </summary>
+public enum PhoneMotion { Tilt, Turn }
 
 /// <summary>Why a video can't be timed, in words for the person.</summary>
 public sealed class VideoProblem(string message) : Exception(message);
@@ -46,10 +53,12 @@ public static class VideoTracker
         using var workers = new ThreadLocal<Worker>(() => new Worker(dict), trackAllValues: true);
         var times = new List<double>();
         var phone = new List<double>();
+        var tilt = new List<double>();
         var bar = new List<double>();
         int anySeen = 0;
         var batch = new List<Mat>(Batch);
         var batchTurn = new double[Batch];
+        var batchTilt = new double[Batch];
         var batchBar = new double[Batch];
         var batchSeen = new bool[Batch];
         try
@@ -70,10 +79,11 @@ public static class VideoTracker
                     batch.Add(small);
                 }
                 Parallel.For(0, batch.Count, new ParallelOptions { CancellationToken = cancel }, i =>
-                    (batchTurn[i], batchBar[i], batchSeen[i]) = workers.Value!.Look(batch[i]));
+                    (batchTurn[i], batchTilt[i], batchBar[i], batchSeen[i]) = workers.Value!.Look(batch[i]));
                 for (int i = 0; i < batch.Count; i++)
                 {
                     phone.Add(batchTurn[i]);
+                    tilt.Add(batchTilt[i]);
                     bar.Add(batchBar[i]);
                     if (batchSeen[i]) anySeen++;
                     batch[i].Dispose();
@@ -94,16 +104,48 @@ public static class VideoTracker
             throw new VideoProblem($"This video plays at {fps:0} frames a second. Film in slow motion (240 fps) and copy the original file, not a shared copy.");
         if (anySeen == 0)
             throw new VideoProblem("The phone's markers never showed. Keep the phone's screen toward the camera, its top half in the picture, in good light.");
-        var (from, timedCount) = LatencyMath.TwistingStretch(phone.ToArray(), bar.ToArray(), fps);
-        var ph = phone.GetRange(from, timedCount).ToArray();
-        var br = bar.GetRange(from, timedCount).ToArray();
-        var fit = LatencyMath.Fit(ph, br, fps)
-            ?? throw new VideoProblem("The phone's twist and the green bar don't match well enough. Twist quickly back and forth, keep the bar and the markers in the picture, and check that the gyro moves the mouse.");
+        // Both ways the twist can show are timed; the one that matches the bar better is the twist.
+        Timed? best = null;
+        foreach (var (motion, values) in new[] { (PhoneMotion.Tilt, Unwrap(tilt)), (PhoneMotion.Turn, phone.ToArray()) })
+        {
+            var t = TimeMotion(motion, values, bar.ToArray(), fps);
+            if (t != null && (best == null || t.Fit.Correlation > best.Fit.Correlation)) best = t;
+        }
+        if (best == null)
+            throw new VideoProblem("The phone's twist and the green bar don't match well enough. Twist quickly back and forth, keep the bar and the markers in the picture, and check that the gyro moves the mouse.");
+        var (from, timedCount, ph, br, fit) = (best.From, best.Count, best.Phone, best.Bar, best.Fit);
         var (pc, bc) = Curves(ph, br, fps, fit);
         double t0 = times[0];
         int timedTracked = ph.Count(v => !double.IsNaN(v));
         return new VideoAnalysis(fit, fps, times.Count, timedTracked / (double)ph.Length, pc, bc,
-            times[from] - t0, times[from + timedCount - 1] - t0, times[^1] - t0);
+            times[from] - t0, times[from + timedCount - 1] - t0, times[^1] - t0, best.Motion);
+    }
+
+    private sealed record Timed(PhoneMotion Motion, int From, int Count, double[] Phone, double[] Bar, LatencyFit Fit);
+
+    /// <summary>One way the twist may show, timed over its twisting stretch; null when it doesn't match the bar.</summary>
+    private static Timed? TimeMotion(PhoneMotion motion, double[] phone, double[] bar, double fps)
+    {
+        var (from, count) = LatencyMath.TwistingStretch(phone, bar, fps);
+        var ph = phone.AsSpan(from, count).ToArray();
+        var br = bar.AsSpan(from, count).ToArray();
+        var fit = LatencyMath.Fit(ph, br, fps);
+        return fit == null ? null : new Timed(motion, from, count, ph, br, fit);
+    }
+
+    /// <summary>Angles made continuous: each one within half a turn of the one before (NaN left as is).</summary>
+    private static double[] Unwrap(List<double> angles)
+    {
+        var o = angles.ToArray();
+        double last = double.NaN;
+        for (int i = 0; i < o.Length; i++)
+        {
+            if (double.IsNaN(o[i])) continue;
+            if (!double.IsNaN(last))
+                o[i] += 2 * Math.PI * Math.Round((last - o[i]) / (2 * Math.PI));
+            last = o[i];
+        }
+        return o;
     }
 
     /// <summary>
@@ -128,19 +170,26 @@ public static class VideoTracker
             new DetectorParameters { CornerRefinementMethod = CornerRefineMethod.Subpix }, new RefineParameters());
         private readonly Mat _gray = new(), _hsv = new(), _green = new();
 
-        /// <summary>The phone's turn (NaN when no marker shows), the bar's position (NaN when not found), and whether a marker showed.</summary>
-        public (double Turn, double Bar, bool Seen) Look(Mat small)
+        /// <summary>
+        /// The phone's turn toward the camera and tilt in the picture (NaN when too few markers show),
+        /// the bar's position (NaN when not found), and whether a marker showed.
+        /// </summary>
+        public (double Turn, double Tilt, double Bar, bool Seen) Look(Mat small)
         {
             Cv2.CvtColor(small, _gray, ColorConversionCodes.BGR2GRAY);
             _detector.DetectMarkers(_gray, out var corners, out var ids, out _);
             var found = new Point2f[]?[4];
             for (int i = 0; i < ids.Length; i++)
                 if (ids[i] is >= 0 and < 4) found[ids[i]] = corners[i];
-            double turn = double.NaN;
+            double turn = double.NaN, tilt = double.NaN;
             float top = float.NaN;
             bool seen = found.Any(c => c != null);
-            if (seen) (turn, top) = Turn(found, small.Width, small.Height);
-            return (turn, BarX(small, _hsv, _green, top), seen);
+            if (seen)
+            {
+                (turn, top) = Turn(found, small.Width, small.Height);
+                tilt = Tilt(found);
+            }
+            return (turn, tilt, BarX(small, _hsv, _green, top), seen);
         }
 
         public void Dispose()
@@ -191,6 +240,23 @@ public static class VideoTracker
         double turn = src.Count >= 8 ? Math.Atan2(h20, Math.Sqrt(ax * ax + ay * ay)) : double.NaN;
         var top = Cv2.PerspectiveTransform([new Point2d(0, 0), new Point2d(GridCells, 0)], h);
         return (turn, (float)Math.Min(top[0].Y, top[1].Y));
+    }
+
+    /// <summary>
+    /// How far the phone is tilted within the picture (radians): the direction of the markers' top
+    /// and bottom edges, added up over the markers seen. One marker is enough.
+    /// </summary>
+    private static double Tilt(Point2f[]?[] found)
+    {
+        double x = 0, y = 0;
+        foreach (var c in found)
+        {
+            if (c == null) continue;
+            // Top edge: top left to top right; bottom edge: bottom left to bottom right.
+            x += c[1].X - c[0].X + c[2].X - c[3].X;
+            y += c[1].Y - c[0].Y + c[2].Y - c[3].Y;
+        }
+        return x == 0 && y == 0 ? double.NaN : Math.Atan2(y, x);
     }
 
     /// <summary>

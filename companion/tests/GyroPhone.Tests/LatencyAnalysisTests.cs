@@ -88,7 +88,7 @@ public class LatencyAnalysisTests
     /// axis in front of the camera, the test window's green bar above it following the turn
     /// <paramref name="lagMs"/> later.
     /// </summary>
-    private static string SynthVideo(double lagMs, double fps, int frames, int markers = 0b1111)
+    private static string SynthVideo(double lagMs, double fps, int frames, int markers = 0b1111, bool tilt = false)
     {
         const int w = 360, h = 640;
         string path = Path.Combine(Path.GetTempPath(), $"gp-latency-{Guid.NewGuid():N}.avi");
@@ -128,6 +128,12 @@ public class LatencyAnalysisTests
             var corners = new[] { (0.0, 0.0), (600.0, 0.0), (600.0, 1300.0), (0.0, 1300.0) }.Select(p =>
             {
                 double x = (p.Item1 / 600 - 0.5) * pw, y = (p.Item2 / 1300 - 0.5) * ph;
+                if (tilt)
+                {
+                    // Turning within the picture, like a steering wheel.
+                    double xt = x * Math.Cos(th) - y * Math.Sin(th), yt = x * Math.Sin(th) + y * Math.Cos(th);
+                    return new Point2f((float)(w / 2 + f * xt / z), (float)(h * 0.62 + f * yt / z));
+                }
                 double xr = x * Math.Cos(th), zr = z + x * Math.Sin(th);
                 return new Point2f((float)(w / 2 + f * xr / zr), (float)(h * 0.62 + f * y / zr));
             }).ToArray();
@@ -149,6 +155,22 @@ public class LatencyAnalysisTests
             var a = VideoTracker.Analyze(path);
             Assert.InRange(a.Fit.LatencyMs, 27, 33);
             Assert.True(a.TrackedShare > 0.9);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void TwistSeenAsATiltIsTimed()
+    {
+        string path = SynthVideo(lagMs: 16, fps: 240, frames: 240 * 4, tilt: true);
+        try
+        {
+            var a = VideoTracker.Analyze(path);
+            Assert.Equal(PhoneMotion.Tilt, a.Motion);
+            Assert.InRange(a.Fit.LatencyMs, 14.5, 17.5);
         }
         finally
         {
