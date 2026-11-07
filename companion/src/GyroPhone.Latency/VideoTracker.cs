@@ -9,26 +9,21 @@ namespace GyroPhone.Latency;
 /// </summary>
 public sealed record VideoAnalysis(
     LatencyFit Fit, double Fps, int Frames, double TrackedShare, double[] PhoneCurve, double[] BarCurve,
-    double TimedFromS, double TimedToS, double LengthS, PhoneMotion Motion);
-
-/// <summary>
-/// How the phone's twist shows in the video, which depends on where the camera stands:
-/// <see cref="Tilt"/>, the phone turning within the picture like a steering wheel (the forearm
-/// points at the camera), or <see cref="Turn"/>, its screen turning toward and away from the camera.
-/// </summary>
-public enum PhoneMotion { Tilt, Turn }
+    double TimedFromS, double TimedToS, double LengthS);
 
 /// <summary>Why a video can't be timed, in words for the person.</summary>
 public sealed class VideoProblem(string message) : Exception(message);
 
 /// <summary>
 /// Reads a slow-motion video of the latency test frame by frame. In each frame it finds the phone's
-/// four markers (ArUco 4×4, ids 0 to 3) and works out how far the phone is turned about its
-/// vertical axis: the perspective that maps the markers' corners in the first frame where all four
-/// show onto this frame, as a turn, with the camera's focal length guessed from the frame size
-/// (a wrong guess changes the size of the turn, not its timing). It finds the test window's green
-/// bar and takes its left-right position just above the phone's top markers, so both are read from
-/// nearly the same lines of the picture (a phone camera captures them one after another).
+/// four markers (ArUco 4×4, ids 0 to 3) and how far the phone is tilted within the picture, like a
+/// steering wheel: the video is filmed from behind the hand, along the forearm, so the wrist's
+/// twist shows as that tilt. Only this one reading is used: other readings of the phone (its
+/// left-right position, its turn toward the camera) also pick up the hand sliding and swinging,
+/// and each gives a different answer. It finds the test window's green bar and takes its
+/// left-right position just above the phone's top markers, so both are read from nearly the same
+/// lines of the picture (a phone camera captures them one after another). Frames where the bar
+/// touches the picture's edge (cut off, so its centre is wrong) count as not found.
 /// </summary>
 public static class VideoTracker
 {
@@ -52,12 +47,10 @@ public static class VideoTracker
         // looked at in batches spread over the cores; each core keeps its own detector and buffers.
         using var workers = new ThreadLocal<Worker>(() => new Worker(dict), trackAllValues: true);
         var times = new List<double>();
-        var phone = new List<double>();
         var tilt = new List<double>();
         var bar = new List<double>();
         int anySeen = 0;
         var batch = new List<Mat>(Batch);
-        var batchTurn = new double[Batch];
         var batchTilt = new double[Batch];
         var batchBar = new double[Batch];
         var batchSeen = new bool[Batch];
@@ -79,10 +72,9 @@ public static class VideoTracker
                     batch.Add(small);
                 }
                 Parallel.For(0, batch.Count, new ParallelOptions { CancellationToken = cancel }, i =>
-                    (batchTurn[i], batchTilt[i], batchBar[i], batchSeen[i]) = workers.Value!.Look(batch[i]));
+                    (batchTilt[i], batchBar[i], batchSeen[i]) = workers.Value!.Look(batch[i]));
                 for (int i = 0; i < batch.Count; i++)
                 {
-                    phone.Add(batchTurn[i]);
                     tilt.Add(batchTilt[i]);
                     bar.Add(batchBar[i]);
                     if (batchSeen[i]) anySeen++;
@@ -104,33 +96,18 @@ public static class VideoTracker
             throw new VideoProblem($"This video plays at {fps:0} frames a second. Film in slow motion (240 fps) and copy the original file, not a shared copy.");
         if (anySeen == 0)
             throw new VideoProblem("The phone's markers never showed. Keep the phone's screen toward the camera, its top half in the picture, in good light.");
-        // Both ways the twist can show are timed; the one that matches the bar better is the twist.
-        Timed? best = null;
-        foreach (var (motion, values) in new[] { (PhoneMotion.Tilt, Unwrap(tilt)), (PhoneMotion.Turn, phone.ToArray()) })
-        {
-            var t = TimeMotion(motion, values, bar.ToArray(), fps);
-            if (t != null && (best == null || t.Fit.Correlation > best.Fit.Correlation)) best = t;
-        }
-        if (best == null)
-            throw new VideoProblem("The phone's twist and the green bar don't match well enough. Twist quickly back and forth, keep the bar and the markers in the picture, and check that the gyro moves the mouse.");
-        var (from, timedCount, ph, br, fit) = (best.From, best.Count, best.Phone, best.Bar, best.Fit);
+        var phone = Unwrap(tilt);
+        var bars = bar.ToArray();
+        var (from, timedCount) = LatencyMath.TwistingStretch(phone, bars, fps);
+        var ph = phone.AsSpan(from, timedCount).ToArray();
+        var br = bars.AsSpan(from, timedCount).ToArray();
+        var fit = LatencyMath.Fit(ph, br, fps)
+            ?? throw new VideoProblem("The phone's twist and the green bar don't match well enough. Film from behind your hand, along the forearm, so the twist shows as the phone tilting in the picture; twist quickly back and forth, keep the bar and the markers in the picture, and check that the gyro moves the mouse.");
         var (pc, bc) = Curves(ph, br, fps, fit);
         double t0 = times[0];
         int timedTracked = ph.Count(v => !double.IsNaN(v));
         return new VideoAnalysis(fit, fps, times.Count, timedTracked / (double)ph.Length, pc, bc,
-            times[from] - t0, times[from + timedCount - 1] - t0, times[^1] - t0, best.Motion);
-    }
-
-    private sealed record Timed(PhoneMotion Motion, int From, int Count, double[] Phone, double[] Bar, LatencyFit Fit);
-
-    /// <summary>One way the twist may show, timed over its twisting stretch; null when it doesn't match the bar.</summary>
-    private static Timed? TimeMotion(PhoneMotion motion, double[] phone, double[] bar, double fps)
-    {
-        var (from, count) = LatencyMath.TwistingStretch(phone, bar, fps);
-        var ph = phone.AsSpan(from, count).ToArray();
-        var br = bar.AsSpan(from, count).ToArray();
-        var fit = LatencyMath.Fit(ph, br, fps);
-        return fit == null ? null : new Timed(motion, from, count, ph, br, fit);
+            times[from] - t0, times[from + timedCount - 1] - t0, times[^1] - t0);
     }
 
     /// <summary>Angles made continuous: each one within half a turn of the one before (NaN left as is).</summary>
@@ -171,25 +148,25 @@ public static class VideoTracker
         private readonly Mat _gray = new(), _hsv = new(), _green = new();
 
         /// <summary>
-        /// The phone's turn toward the camera and tilt in the picture (NaN when too few markers show),
-        /// the bar's position (NaN when not found), and whether a marker showed.
+        /// The phone's tilt in the picture (NaN when no marker shows), the bar's position (NaN when
+        /// not found), and whether a marker showed.
         /// </summary>
-        public (double Turn, double Tilt, double Bar, bool Seen) Look(Mat small)
+        public (double Tilt, double Bar, bool Seen) Look(Mat small)
         {
             Cv2.CvtColor(small, _gray, ColorConversionCodes.BGR2GRAY);
             _detector.DetectMarkers(_gray, out var corners, out var ids, out _);
             var found = new Point2f[]?[4];
             for (int i = 0; i < ids.Length; i++)
                 if (ids[i] is >= 0 and < 4) found[ids[i]] = corners[i];
-            double turn = double.NaN, tilt = double.NaN;
+            double tilt = double.NaN;
             float top = float.NaN;
             bool seen = found.Any(c => c != null);
             if (seen)
             {
-                (turn, top) = Turn(found, small.Width, small.Height);
+                top = GridTop(found);
                 tilt = Tilt(found);
             }
-            return (turn, tilt, BarX(small, _hsv, _green, top), seen);
+            return (tilt, BarX(small, _hsv, _green, top), seen);
         }
 
         public void Dispose()
@@ -208,38 +185,27 @@ public static class VideoTracker
     private const int MarkerPitch = 8, MarkerSide = 6, GridCells = 16;
 
     /// <summary>
-    /// How far the phone is turned about its vertical axis (radians, from facing the camera) and
-    /// the image row of the top of its marker grid, from the markers seen (two or more of the four for the turn): the
-    /// perspective from the grid's known layout to their corners, undone by a guessed camera, as a
-    /// turn. It reads the screen's left-right axis, so it works however the video is turned.
+    /// The image row of the top of the phone's marker grid, from the markers seen: the mapping from
+    /// the grid's known layout to their corners (a perspective), applied to the grid's top corners.
+    /// NaN when it can't be found.
     /// </summary>
-    private static (double Turn, float Top) Turn(Point2f[]?[] found, int width, int height)
+    private static float GridTop(Point2f[]?[] found)
     {
-        var src = new List<Point2d>();
-        var dst = new List<Point2d>();
+        var src = new List<Point2f>();
+        var dst = new List<Point2f>();
         for (int i = 0; i < 4; i++)
         {
             if (found[i] == null) continue;
-            double x = MarkerPitch * (i % 2) + 1, y = MarkerPitch * (i / 2) + 1;
+            float x = MarkerPitch * (i % 2) + 1, y = MarkerPitch * (i / 2) + 1;
             // ArUco corners run top left, top right, bottom right, bottom left.
-            Point2d[] grid = [new(x, y), new(x + MarkerSide, y), new(x + MarkerSide, y + MarkerSide), new(x, y + MarkerSide)];
-            for (int j = 0; j < 4; j++)
-            {
-                src.Add(grid[j]);
-                dst.Add(new Point2d(found[i]![j].X, found[i]![j].Y));
-            }
+            Point2f[] grid = [new(x, y), new(x + MarkerSide, y), new(x + MarkerSide, y + MarkerSide), new(x, y + MarkerSide)];
+            src.AddRange(grid);
+            dst.AddRange(found[i]!);
         }
-        using var h = Cv2.FindHomography(src, dst);
-        if (h.Empty()) return (double.NaN, float.NaN);
-        double f = Math.Max(width, height) * 0.9, cx = width / 2.0, cy = height / 2.0;
-        // The first column of K^-1 H, with K the guessed camera [[f, 0, cx], [0, f, cy], [0, 0, 1]]:
-        // the screen's left-right axis as the camera sees it. How far it points toward the camera is the turn.
-        double h00 = h.At<double>(0, 0), h10 = h.At<double>(1, 0), h20 = h.At<double>(2, 0);
-        double ax = (h00 - cx * h20) / f, ay = (h10 - cy * h20) / f;
-        // One marker alone is too small a base to see the turn in (its perspective drowns in noise): two at least.
-        double turn = src.Count >= 8 ? Math.Atan2(h20, Math.Sqrt(ax * ax + ay * ay)) : double.NaN;
-        var top = Cv2.PerspectiveTransform([new Point2d(0, 0), new Point2d(GridCells, 0)], h);
-        return (turn, (float)Math.Min(top[0].Y, top[1].Y));
+        using var h = Cv2.FindHomography(src.Select(p => new Point2d(p.X, p.Y)), dst.Select(p => new Point2d(p.X, p.Y)));
+        if (h.Empty()) return float.NaN;
+        var t = Cv2.PerspectiveTransform([new Point2d(0, 0), new Point2d(GridCells, 0)], h);
+        return (float)Math.Min(t[0].Y, t[1].Y);
     }
 
     /// <summary>
@@ -278,6 +244,9 @@ public static class VideoTracker
         using var roi = new Mat(green, band);
         var m = Cv2.Moments(roi, binaryImage: true);
         if (m.M00 < 20) return double.NaN;
+        // Cut off by the picture's edge: its centre would be wrong.
+        using (var left = roi.Col(0)) using (var right = roi.Col(roi.Width - 1))
+            if (Cv2.CountNonZero(left) > 0 || Cv2.CountNonZero(right) > 0) return double.NaN;
         return m.M10 / m.M00;
     }
 

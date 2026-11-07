@@ -39,9 +39,14 @@ internal static class LatencyCard
         big.Inlines.Add(new System.Windows.Documents.Run(" ms") { FontSize = 28, Foreground = Dim, FontWeight = FontWeights.Normal });
         left.Children.Add(big);
         if (r.Tag is { } tag) left.Children.Add(Label($"Timed by {tag}", 12, Accent, FontWeights.SemiBold, 0, 4));
-        string leftOut = r.LeftOut();
-        left.Children.Add(Label($"{r.Twists} twists · spread ±{r.SpreadMs:0.0} ms", 14, Dim, FontWeights.Normal, 0, leftOut.Length > 0 ? 4 : 22));
-        if (leftOut.Length > 0) left.Children.Add(Label(leftOut, 14, Dim, FontWeights.Normal, 0, 22));
+        var lines = new List<string>
+        {
+            r.Unreliable ? $"{r.Twists} twists · unreliable: too few swings timed" : $"{r.Twists} twists · margin ±{r.SpreadMs:0.0} ms",
+        };
+        if (r.FreezesText() is { Length: > 0 } fz) lines.Add(char.ToUpper(fz[0]) + fz[1..]);
+        if (r.LeftOut() is { Length: > 0 } lo) lines.Add(char.ToUpper(lo[0]) + lo[1..]);
+        for (int i = 0; i < lines.Count; i++)
+            left.Children.Add(Label(lines[i], 14, i == 0 && r.Unreliable ? Accent : Dim, FontWeights.Normal, 0, i == lines.Count - 1 ? 22 : 4));
         var kv = new Grid();
         kv.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
         kv.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
