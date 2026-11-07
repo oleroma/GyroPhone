@@ -27,12 +27,33 @@
 3. **Build.** Every build runs the `quick-test`, `build` and `full-check` hooks once and marks the commit checked. The feature thread builds its own branch.
    - **PC**, when step 1 found it online: run `bash .agents/agent-build pc <branch>` in that Remote Control session. To install again without building, run `bash .agents/agent-install [<version>-<commit>]`. If the phone dropped off wireless adb, ask Olex to turn wireless debugging off and on, then run it again.
    - **CI**, when the PC was offline or Olex says CI: run `bash .agents/agent-build ci <branch>` from your session and post the CI run link as soon as it shows.
-   - The result shows on your PR (the PC build's comment or the CI checks): as soon as it does, post only what was done, in one line, such as "Build 334 installed." or "Build 334 published."
+   - The result shows on your PR (the PC build's comment or the CI checks): as soon as it does, post only what was done, in one line, such as "📲 Build 334 installed on the phone." (see Status lines)
    - If checks fail in code this feature didn't change, tell Olex instead of fixing it in the feature.
    - Run `agent-build` and `agent-install` in the background with output to a file, never through a pipe: the build daemons they start keep a pipe open, so the command would never return.
    - Build only what the code needs to work: a branch that changes only files no build uses needs no build, and `agent-build` stops with `workflow-change`.
 4. **Check.** Wait for Olex. If he asks for changes, go back to 2. Merge only when he says "merge".
-5. **Merge.** `bash .agents/agent-merge`. It merges the latest `main` into the branch, then the branch into `main`, keeping the branch.
+5. **Merge.** `bash .agents/agent-merge`. It merges the latest `main` into the branch, then the branch into `main`, keeping the branch. Then post the end report, one line each:
+   ```
+   🔀 Merged tilt deadzone: <PR link>
+   ✏️ Deadzone slider in Settings, saved per device.
+   🔨🖥️🤖 Build 334 · 📲 installed · 📦 published
+   ```
+
+## Status lines
+Start each status line you post to Olex with its emoji. A build line adds where it builds (🖥️ on the PC, ☁️ in CI) and what it builds (🤖 Android APK, 🪟 Windows exe; both when it makes both).
+
+| Emoji | Means | Example |
+|---|---|---|
+| ✏️ | Edited, committed | ✏️ Added the tilt deadzone setting. |
+| 🔨 + where + what | Building | 🔨☁️🤖 Building the APK in CI: <run link> |
+| ✅ + what | Built, checks passed | ✅🤖 Build 334 passed its checks. |
+| 📲 | Installed on the phone | 📲 Build 334 installed on the phone. |
+| 🪟 | Installed on Windows | 🪟 gitstat 335 installed on Windows. |
+| 📦 | Published for Obtainium | 📦 Build 334 published. |
+| 🔀 | Merged | 🔀 Merged into main: <PR link> |
+| ❌ + what | Failed | ❌🤖 Build 334 failed: lint, unused import in Gyro.kt. Fixing it. |
+| ❓ | Needs Olex's choice | ❓ Keep the old menu or replace it? |
+| 🤔 | Clarifying question | 🤔 By "faster", do you mean the app start or the sync? |
 
 ## Scripts and hooks
 - The scripts in `.agents/` are the same in every repo. When an agent finds a problem in them, the shared rules or its repo's workflows, it suggests a fix to Olex, and makes it on its feature branch only when he asks. Olex tests such changes himself: the agent pushes them and says what changed and how to test it, without running them. After the merge, Olex has the "rulesetter" thread apply it to every repo.
@@ -57,7 +78,7 @@
 
 ## Agent instruction files
 - These shared rules sit at the top of every repo's `AGENTS.md`, between the "shared rules" markers. Their master copy is `rules/AGENTS.md` in the DevDoctor project's files, kept by the "rulesetter" thread, which applies it to every repo. A repo agent suggests shared-rule changes to Olex; when he approves, it makes them in its own `AGENTS.md` on its feature branch, and after the merge Olex has the rulesetter apply them everywhere.
-- Every rule for agents lives in `AGENTS.md`; project instructions and project memory refer to it rather than hold rules. At the start of every session, look for rules in project memory (lines that say how agents should work). Delete each one `AGENTS.md` already covers; move any other into this repo's rules below the end marker in a small PR, and delete it from memory once that merges. Tell Olex in one line what you moved. A coordinator passes Olex's words on by attaching his message, not by rewording it.
+- Every rule for agents lives in `AGENTS.md`. So that every session has the latest rules, even without the repo checked out, project memory keeps an exact copy of this repo's whole `AGENTS.md` in files `rules-1`, `rules-2` and so on (each under 4 KB, split at headings). `rules-1` starts with the `main` commit it was copied from, and the first line of the memory index says "Read rules-1 to rules-N before any work." At the start of every session, read the copy and check the latest commit that changed `AGENTS.md` on `main` (`gh api "repos/oleroma/<repo>/commits?path=AGENTS.md&per_page=1"`). If it is newer than the copy, or after you merge a PR that changes `AGENTS.md`, replace all the rules files with a fresh copy and fix N in the index. Never edit the copy by hand, and keep no other rules in memory or project instructions. A coordinator passes Olex's words on by attaching his message, not by rewording it.
 - Rules for one repo go below the end marker, written by Olex or by an agent when Olex asks. Where they disagree with a shared rule, the repo rule wins in that repo. Otherwise leave all agent instruction files (`AGENTS.md`, `CLAUDE.md` and the like) alone and bring any needed change to Olex.
 
 ## On the PC
