@@ -33,7 +33,9 @@ import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
+import com.oleroma.gyrophone.core.model.heldSwipe
 import com.oleroma.gyrophone.core.model.holdDirection
+import com.oleroma.gyrophone.core.model.quickSlot
 import com.oleroma.gyrophone.core.model.swipeDirection
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.core.model.Workspace
@@ -91,7 +93,7 @@ private fun timingOf(input: BindableInput): Timing? = when (val s = input.source
 /** [input] is a swipe direction's Long hold or Double swipe (its timing settings are named for swipes). */
 private fun isSwipeTiming(input: BindableInput): Boolean {
     val s = input.sources.firstOrNull() as? InputSource.Surface ?: return false
-    return s.on != Trigger.HOLD && (s.input.swipeDirection != null || s.input.holdDirection != null)
+    return s.on != Trigger.HOLD && (s.input.quickSlot >= 0 || s.input.heldSwipe)
 }
 
 /** The long press time's name and hint for [input] ([swipe]: a Long hold); [whose]: whose time it is. */
@@ -114,6 +116,8 @@ private fun directionGear(level: SurfaceLevel, key: String, input: BindableInput
         val m = MoveSlot.of(src.fingers, s == SurfaceInput.MOTION_X)
         return ui { MoveGearSettings(level, key, m, touchpad) }
     }
+    // The one Swipe row: each arrow's own settings, both its held and its quick swipe ones.
+    if (s == SurfaceInput.HOLD_ANY) return ui { SwipeArrowSettings(level, key, zones) }
     s.swipeDirection?.let { d -> return ui { DirectionSettings(level, key, d, hold = false, zones) } }
     s.holdDirection?.let { d -> return ui { DirectionSettings(level, key, d, hold = true, zones) } }
     return null

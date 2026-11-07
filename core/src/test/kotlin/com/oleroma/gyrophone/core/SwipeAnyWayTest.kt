@@ -5,6 +5,7 @@ import com.oleroma.gyrophone.core.engine.Touchpad
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.HoldMode
 import com.oleroma.gyrophone.core.model.HoldZone
+import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MouseButton
@@ -144,5 +145,18 @@ class SwipeAnyWayTest {
         assertEquals(3, counts[4])
         assertTrue(Triggers.supports(InputSource.Surface(1, SurfaceInput.HOLD_ANY, "b")))
         assertEquals("Quick swipe", Triggers.label(InputSource.Surface(1, SurfaceInput.HOLD_ANY), Trigger.TAP))
+    }
+
+    @Test
+    fun theSwipeRowIsOneActionForInheritance() {
+        // The touchpad maps Swipe ← and a quick swipe ↓; a button mapping only Swipe ↑ overrides the whole Swipe row.
+        val pad = listOf(
+            Mapping(InputSource.Surface(1, SurfaceInput.HOLD_LEFT), OutputTarget.Mouse(MouseButton.LEFT)),
+            Mapping(InputSource.Surface(1, SurfaceInput.SWIPE_DOWN), OutputTarget.Mouse(MouseButton.RIGHT)),
+            Mapping(InputSource.Surface(1, SurfaceInput.TAP), OutputTarget.Mouse(MouseButton.MIDDLE)),
+        )
+        assertEquals(3, Inheritance.inherited(pad, emptyList(), "b", 0).size)
+        val own = listOf(Mapping(InputSource.Surface(1, SurfaceInput.HOLD_UP, "b"), OutputTarget.Mouse(MouseButton.LEFT)))
+        assertEquals(listOf(SurfaceInput.TAP), Inheritance.inherited(pad, own, "b", 0).map { (it.source as InputSource.Surface).input })
     }
 }

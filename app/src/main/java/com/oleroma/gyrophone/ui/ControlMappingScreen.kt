@@ -126,6 +126,8 @@ import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.Triggers
+import com.oleroma.gyrophone.core.model.ANY_SLOT
+import com.oleroma.gyrophone.core.model.heldSwipe
 import com.oleroma.gyrophone.core.model.holdDirection
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.roundToInt
@@ -180,6 +182,9 @@ private sealed interface RowItem {
     data object End : RowItem
     data object Landing : RowItem
 }
+
+/** A faded chip: what the level above maps a card's Where [where] to on [trigger]. */
+private data class Faded(val trigger: Trigger, val target: OutputTarget, val where: Int = 0)
 
 /** A ready-made mapping of one or more actions; [apply] rewrites the mapping list. */
 private class MapPreset(val label: String, val apply: (List<Mapping>) -> List<Mapping>)
@@ -244,7 +249,10 @@ private fun chipText(badge: String, target: OutputTarget, o: MapOptions?, range:
 /** Card title in messages: surface actions carry their finger count. */
 private fun actionTitle(control: TouchControl, input: BindableInput): String {
     val s = input.sources.firstOrNull()
-    return if (s is InputSource.Surface) s.fingers.toString() + "f " + input.label else actionLabel(control, input)
+    if (s !is InputSource.Surface) return actionLabel(control, input)
+    // A direction of the Swipe card ("↑"): "Swipe ↑".
+    val d = s.input.holdDirection
+    return s.fingers.toString() + "f " + if (d != null) "Swipe " + Bindings.slotLabel(d.ordinal) else input.label
 }
 
 /** Remembered card orders are per control kind. */
@@ -451,8 +459,8 @@ internal fun ControlMappingScreen(
     /** What [input]'s chips call trigger [t] ("Quick swipe"...). */
     fun trigLabel(input: BindableInput, t: Trigger): String = Triggers.label(input.sources.first(), t)
 
-    /** What the level above maps [input] to (cleared ones left out), with their triggers. */
-    fun parentOf(input: BindableInput): List<Pair<Trigger, OutputTarget>> = trigInputs(input).flatMap { (t, ti) ->
+    /** What the level above maps [input] itself to (cleared ones left out), with their triggers. */
+    fun parentOfInput(input: BindableInput): List<Pair<Trigger, OutputTarget>> = trigInputs(input).flatMap { (t, ti) ->
         Bindings.targets(parentView, ti).filter { it != OutputTarget.NoOutput }.map { t to it }
     }.distinct()
     // Drag callbacks outlive a composition: everything they read goes through state.
@@ -508,6 +516,12 @@ internal fun ControlMappingScreen(
     }
     fun isAreaCard(s: InputSource) = s is InputSource.TouchArea && s.kind != TouchAreaKind.HELD
 
+    /** The one Swipe card (any way, zone 0): every swipe direction's chips are on it, each with its own ([wheresOf]). */
+    fun isSwipeCard(s: InputSource) = s is InputSource.Surface && s.input == SurfaceInput.HOLD_ANY && s.zone == 0 && s.on == Trigger.HOLD
+
+    /** A swipe direction's own card (↑ → ↓ ←): not shown, its chips are the Swipe card's. */
+    fun isDirectionCard(s: InputSource) = s is InputSource.Surface && s.input.holdDirection != null && s.zone == 0 && s.on == Trigger.HOLD
+
     // A swipe button: one list per finger count (hold, taps, moves, swipes...); the button's own
     // outside and area (any fingers) go with one finger's hold, as its chips.
     val groups = listOf(
@@ -517,18 +531,40 @@ internal fun ControlMappingScreen(
             else if (fingers == 0) Bindings.gyroInputs(control.id) + Bindings.motionInputs(control.id)
             else Bindings.swipeInputs(control, fingers))
                 .filterNot(Bindings::isTriggerOf)
-                .let { l -> if (l.any { isTouchCard(it.sources.first()) }) l.filterNot { isAreaCard(it.sources.first()) } else l },
+                .let { l -> if (l.any { isTouchCard(it.sources.first()) }) l.filterNot { isAreaCard(it.sources.first()) } else l }
+                .let { l -> if (l.any { isSwipeCard(it.sources.first()) }) l.filterNot { isDirectionCard(it.sources.first()) } else l },
             order,
         ),
     )
 
-    /** [card]'s inputs by Where (see [RowItem.Chip.where]): itself, then for its touch card its Area and Outside. */
-    fun wheresOf(card: BindableInput): List<BindableInput?> =
-        if (isTouchCard(card.sources.first()) && areaInputs.any { it != null }) listOf(card) + areaInputs else listOf(card)
+    /**
+     * [card]'s inputs by Where (see [RowItem.Chip.where]): itself, then for its touch card its Area
+     * and Outside, for the Swipe card (any way) the four directions ↑ → ↓ ←.
+     */
+    fun wheresOf(card: BindableInput): List<BindableInput?> {
+        val s = card.sources.first()
+        if (isSwipeCard(s)) return listOf(card) + Bindings.swipeSlots((s as InputSource.Surface).fingers, s.id).drop(1)
+        return if (isTouchCard(s) && areaInputs.any { it != null }) listOf(card) + areaInputs else listOf(card)
+    }
 
-    /** The input [chip] of [card]'s row maps (its trigger aside): its zone, or its Where. */
-    fun chipInput(card: BindableInput, chip: RowItem.Chip): BindableInput =
-        if (chip.zone > 0) zin(card, chip.zone) else wheresOf(card).getOrNull(chip.where) ?: card
+    /** A Where of [card] that has length zones (a swipe direction): its chips go in any zone; the others only in the first. */
+    fun zoned(wi: BindableInput?): Boolean = (wi?.sources?.first() as? InputSource.Surface)?.input?.heldSwipe == true
+
+    /** [card]'s Wheres in zone [z]: each as that zone's input, null where it has none. */
+    fun wheresIn(card: BindableInput, z: Int): List<BindableInput?> =
+        if (z == 0) wheresOf(card) else wheresOf(card).map { wi -> if (zoned(wi)) zin(wi!!, z) else null }
+
+    /** The input [chip] of [card]'s row maps (its trigger aside): its Where in its zone. */
+    fun chipInput(card: BindableInput, chip: RowItem.Chip): BindableInput {
+        val wi = wheresOf(card).getOrNull(chip.where) ?: card
+        return if (chip.zone > 0) zin(wi, chip.zone) else wi
+    }
+
+    /** What the level above maps [card] to (cleared ones left out), with their triggers and Wheres. */
+    fun parentOf(card: BindableInput): List<Faded> = wheresOf(card).withIndex().flatMap { (w, wi) ->
+        if (wi == null || (w > 0 && !isSwipeCard(card.sources.first()))) emptyList()
+        else parentOfInput(wi).map { (t, x) -> Faded(t, x, w) }
+    }.distinct()
 
     /** Where [from] (a mapped input, any trigger) is on [card]'s row, or null when it is not on it. */
     fun whereOn(card: BindableInput, from: InputSource): Int? {
@@ -586,7 +622,9 @@ internal fun ControlMappingScreen(
         runtime.setUiPref(PREF_RECENT, prefJson.encodeToString(recentSerializer, recent))
     }
 
-    fun assign(input: BindableInput, t: OutputTarget) {
+    fun assign(card: BindableInput, t: OutputTarget) {
+        // A new chip of the Swipe card goes on ↑; its settings pick another direction.
+        val input = if (isSwipeCard(card.sources.first())) wheresOf(card).getOrNull(1) ?: card else card
         if (!allows(allowedTargets(input), t)) return
         addRecent(t)
         var next = Bindings.addTarget(currentMappings, input, t)
@@ -637,40 +675,41 @@ internal fun ControlMappingScreen(
         return shownNow.firstOrNull { cardBounds[it.sources.first()]?.contains(p) == true }
     }
 
-    /** How many zones [input] (a held direction) has, in any set (1 for anything else). */
+    /** The held swipe sources of [input]'s zoned Wheres (zone 0, Hold): their mappings make its zones. */
+    fun zoneKeys(input: BindableInput): List<InputSource> =
+        wheresOf(input).filter(::zoned).map { it!!.sources.first() }
+
+    /** Something of [keys] is mapped, in any set and zone, with any trigger. */
+    fun mapsAny(keys: List<InputSource>): Boolean =
+        keys.isNotEmpty() && allMappings.any { m ->
+            val s = m.source as? InputSource.Surface
+            s != null && Triggers.base(s).let { b -> (b as? InputSource.Surface)?.copy(zone = 0) in keys }
+        }
+
+    /** How many zones [input] (a held direction, or the Swipe card's directions) has, in any set (1 for anything else). */
     fun zonesOf(input: BindableInput): Int {
-        val src = input.sources.first() as? InputSource.Surface ?: return 1
-        if (src.input.holdDirection == null) return 1
+        val keys = zoneKeys(input)
+        if (keys.isEmpty()) return 1
         return 1 + (allMappings.maxOfOrNull { m ->
             val s = m.source as? InputSource.Surface
-            if (s != null && s.copy(zone = 0, on = Trigger.HOLD) == src) s.zone else 0
+            if (s != null && s.copy(zone = 0, on = Trigger.HOLD) in keys) s.zone else 0
         } ?: 0)
     }
 
     /** A held direction offers a next zone: something is mapped and there is room. */
-    fun addsZone(input: BindableInput): Boolean {
-        val src = input.sources.first() as? InputSource.Surface ?: return false
-        if (!zonesNow || src.input.holdDirection == null) return false
-        return zonesOf(input) < TouchpadSettings.MAX_HOLD_ZONES &&
-                allMappings.any { (it.source as? InputSource.Surface)?.copy(zone = 0, on = Trigger.HOLD) == src }
-    }
+    fun addsZone(input: BindableInput): Boolean =
+        zonesNow && zonesOf(input) < TouchpadSettings.MAX_HOLD_ZONES && mapsAny(zoneKeys(input))
 
     /** A held direction with something mapped (any set): its row ends in a divider that opens the last zone's settings. */
-    fun hasEnd(input: BindableInput): Boolean {
-        val src = input.sources.first() as? InputSource.Surface ?: return false
-        if (zoneSettings == null || src.input.holdDirection == null) return false
-        return allMappings.any { (it.source as? InputSource.Surface)?.copy(zone = 0, on = Trigger.HOLD) == src }
-    }
-
-    /** Every input the cards show chips of: each card's Wheres and zones, on each trigger. */
-    fun bulkInputs(): List<BindableInput> = inputs.filterNot(Bindings::isTriggerOf).flatMap { card ->
-        (0 until zonesOf(card)).flatMap { z -> if (z == 0) wheresOf(card).filterNotNull() else listOf(zin(card, z)) }
-    }.flatMap { trigInputs(it).map { (_, ti) -> ti } }.distinctBy { it.sources }
+    fun hasEnd(input: BindableInput): Boolean = zoneSettings != null && mapsAny(zoneKeys(input))
 
     /** Every input [card] shows chips of: its Wheres and zones, on each trigger (mapping any of them overrides the level above). */
     fun cardInputs(card: BindableInput): List<BindableInput> =
-        (0 until zonesOf(card)).flatMap { z -> if (z == 0) wheresOf(card).filterNotNull() else listOf(zin(card, z)) }
+        (0 until zonesOf(card)).flatMap { z -> wheresIn(card, z).filterNotNull() }
             .flatMap { trigInputs(it).map { (_, ti) -> ti } }.distinctBy { it.sources }
+
+    /** Every input the cards show chips of: each card's Wheres and zones, on each trigger. */
+    fun bulkInputs(): List<BindableInput> = inputs.filterNot(Bindings::isTriggerOf).flatMap(::cardInputs).distinctBy { it.sources }
 
     /** [input] maps nothing here, so it does not do what the level above maps it to (a clear on its Hold overrides it all). */
     fun clear(input: BindableInput) = change(
@@ -684,21 +723,26 @@ internal fun ControlMappingScreen(
         actionTitle(currentControl, input) + " follows " + parentName,
     )
 
-    /** The card whose faded chip maps [from] (a card's input on one of its triggers). */
+    /** The card whose faded chip maps [from] (one of a card's Wheres on one of its triggers). */
     fun inheritedCard(from: BindableInput): BindableInput? =
-        shownNow.firstOrNull { card -> trigInputs(card).any { (_, ti) -> ti.sources == from.sources } }
+        shownNow.firstOrNull { card -> wheresOf(card).filterNotNull().any { wi -> trigInputs(wi).any { (_, ti) -> ti.sources == from.sources } } }
 
     /**
-     * [m] with card [input] overriding the level above without its faded chip [t] on [tr]: it maps
-     * the level above's other chips itself (their options kept), or is cleared when none is left.
+     * [m] with card [input] overriding the level above without its faded chip [t] on [tr] of
+     * [from] (that Where's input on that trigger): it maps the level above's other chips itself
+     * (their options kept), or is cleared when none is left.
      */
-    fun withoutInherited(m: List<Mapping>, input: BindableInput, tr: Trigger, t: OutputTarget): List<Mapping> {
-        val rest = parentOf(input).filterNot { it == tr to t }
+    fun withoutInherited(m: List<Mapping>, input: BindableInput, tr: Trigger, t: OutputTarget, from: BindableInput? = null): List<Mapping> {
+        val wheres = if (isSwipeCard(input.sources.first())) wheresOf(input).filterNotNull() else listOf(input)
+        fun isFrom(wi: BindableInput, r: Trigger) = from == null || trig(wi, r).sources == from.sources
+        val rest = wheres.flatMap { wi -> parentOfInput(wi).filterNot { (r, x) -> r == tr && x == t && isFrom(wi, r) } }
         if (rest.isEmpty()) return Bindings.setTargets(m, input, Bindings.targets(m, input).filter { it != OutputTarget.NoOutput } + OutputTarget.NoOutput)
         // Each with its options; the same output with another How (Repeat ×2 and Held) is two.
-        return trigInputs(input).fold(m) { out, (r, ti) ->
-            val add = Bindings.entries(parentView, ti).filter { it.target != OutputTarget.NoOutput && (r to it.target) != (tr to t) }
-            if (add.isEmpty()) out else Bindings.setEntries(out, ti, Bindings.entries(out, ti) + add)
+        return wheres.fold(m) { acc, wi ->
+            trigInputs(wi).fold(acc) { out, (r, ti) ->
+                val add = Bindings.entries(parentView, ti).filter { it.target != OutputTarget.NoOutput && !(r == tr && it.target == t && isFrom(wi, r)) }
+                if (add.isEmpty()) out else Bindings.setEntries(out, ti, Bindings.entries(out, ti) + add)
+            }
         }
     }
 
@@ -750,10 +794,9 @@ internal fun ControlMappingScreen(
     fun rowOf(input: BindableInput): List<RowItem> = buildList {
         for (z in 0 until zonesOf(input)) {
             if (z > 0) add(RowItem.Divider(z))
-            for ((tr, ti) in trigInputs(zin(input, z))) chipsOf(ti) { t, n -> add(RowItem.Chip(z, t, tr, 0, n)) }
-            // Its Area and Outside chips follow its own, in zone 1.
-            if (z == 0) wheresOf(input).forEachIndexed { w, wi ->
-                if (w > 0 && wi != null) for ((tr, ti) in trigInputs(wi)) chipsOf(ti) { t, n -> add(RowItem.Chip(0, t, tr, w, n)) }
+            // Its own chips, then its other Wheres' (Area and Outside in zone 1; the Swipe card's directions in every zone).
+            wheresIn(input, z).forEachIndexed { w, wi ->
+                if (wi != null) for ((tr, ti) in trigInputs(wi)) chipsOf(ti) { t, n -> add(RowItem.Chip(z, t, tr, w, n)) }
             }
         }
         if (hasEnd(input)) add(RowItem.End)
@@ -766,7 +809,7 @@ internal fun ControlMappingScreen(
             val s = s0 as? InputSource.Surface
             val zone = s?.zone ?: 0
             val tr = Triggers.of(s0)
-            whereOn(input, s0)?.let { w -> RowItem.Chip(if (w == 0) zone else 0, d.target, tr, w, d.n) }
+            whereOn(input, s0)?.let { w -> RowItem.Chip(if (w == 0 || zoned(wheresOf(input).getOrNull(w))) zone else 0, d.target, tr, w, d.n) }
         }
 
         is Dragged.Divider -> if (d.card.sources.first() == input.sources.first()) RowItem.Divider(d.k) else null
@@ -844,7 +887,7 @@ internal fun ControlMappingScreen(
         for (z in 0 until maxOf(lists.size, zonesOf(card)).coerceAtMost(TouchpadSettings.MAX_HOLD_ZONES)) {
             val chips = lists.getOrNull(z).orEmpty()
             // Each trigger's chips keep their options; a chip moved within the card keeps its trigger.
-            val wheres = if (z == 0) wheresOf(card) else listOf(zin(card, z))
+            val wheres = wheresIn(card, z)
             for ((w, wi) in wheres.withIndex()) for ((tr, ti) in trigInputs(wi ?: continue)) {
                 val here = chips.filter { it.trigger == tr && it.where == w }
                 // Moved here from another zone or Where: the options it had there.
@@ -867,9 +910,11 @@ internal fun ControlMappingScreen(
      * Long press: from 400 ms"; null when it maps none or has no timings.
      */
     fun timingLine(input: BindableInput): String? {
-        val tis = trigInputs(input).filter { (t, ti) ->
+        // The Swipe card: its directions' too, each trigger once.
+        val all = if (isSwipeCard(input.sources.first())) wheresOf(input).filterNotNull().flatMap { trigInputs(it) } else trigInputs(input)
+        val tis = all.filter { (t, ti) ->
             t != Trigger.HOLD && Bindings.targets(view, ti).any { it != OutputTarget.NoOutput }
-        }
+        }.distinctBy { it.first }
         if (tis.isEmpty()) return null
         val (long, double) = timing(input) ?: return null
         val doubleTargets = Bindings.targets(view, trig(input, Trigger.DOUBLE_TAP)).toSet()
@@ -905,9 +950,7 @@ internal fun ControlMappingScreen(
                 Bindings.targets(view, ti).any { it is OutputTarget.Key } ||
                     (t != Trigger.HOLD && Bindings.targets(view, ti).isNotEmpty() && settings?.action?.invoke(ti) != null)
             }) return { actionDialog = input }
-        val src = input.sources.first() as? InputSource.Surface
-        if (src?.input?.holdDirection != null && onZoneSettings != null && zonesNow &&
-            allMappings.any { (it.source as? InputSource.Surface)?.copy(zone = 0, on = Trigger.HOLD) == src }) {
+        if (onZoneSettings != null && zonesNow && mapsAny(zoneKeys(input))) {
             return { zoneDialog = input to null }
         }
         return null
@@ -978,9 +1021,12 @@ internal fun ControlMappingScreen(
                     val row = rowOf(card).filter { it != c }.toMutableList()
                     val i = at.coerceIn(0, row.size)
                     val zone = zoneIn(row, i)
-                    // A chip keeps its Where on its own card (zone 1 only); anything else lands on the card itself.
-                    val w = if (zone > 0) 0 else (c as? RowItem.Chip)?.where ?: from?.let { whereOn(card, it.sources.first()) } ?: 0
-                    val zi = if (zone == 0) wheresOf(card).getOrNull(w) ?: card else Bindings.zoneInput(card, zone)
+                    // A chip keeps its Where on its own card (Area and Outside in zone 1 only, a swipe direction
+                    // in any zone); anything else lands on the card itself, on the Swipe card on ↑.
+                    val swipeCard = isSwipeCard(card.sources.first())
+                    val w0 = (c as? RowItem.Chip)?.where ?: from?.let { whereOn(card, it.sources.first()) } ?: if (swipeCard) 1 else 0
+                    val w = if (zone > 0 && !zoned(wheresOf(card).getOrNull(w0))) 0 else w0
+                    val zi = wheresIn(card, zone).getOrNull(w) ?: zin(card, zone)
                     if (from == null && (d.target as? OutputTarget.Layer)?.set?.let { it < 0 } == true) {
                         pick(zi, d.target)
                     } else {
@@ -1018,7 +1064,7 @@ internal fun ControlMappingScreen(
                         val over = from?.takeIf { d.inherited }?.let(::inheritedCard)
                         val placed = withRow(base, card, row, from?.let { d.target to kept })
                         change(
-                            if (over != null && from != null) withoutInherited(placed, over, Triggers.of(from.sources.first()), d.target) else placed,
+                            if (over != null && from != null) withoutInherited(placed, over, Triggers.of(from.sources.first()), d.target, from) else placed,
                             (if (from == null) "Mapped " else "Moved ") + Describe.shortTarget(d.target) + " to " + actionTitle(currentControl, zi),
                         )
                         if (fresh != null) chipDialog = card to RowItem.Chip(zone, d.target, tr, w,
@@ -1030,7 +1076,7 @@ internal fun ControlMappingScreen(
                     val card = if (d.inherited) inheritedCard(from) else null
                     if (card != null) {
                         change(
-                            withoutInherited(currentMappings, card, Triggers.of(from.sources.first()), d.target),
+                            withoutInherited(currentMappings, card, Triggers.of(from.sources.first()), d.target, from),
                             "Removed " + Describe.shortTarget(d.target) + " from " + actionTitle(currentControl, card) + " (overrides " + parentName + ")",
                         )
                     } else remove(from, d.target, d.n)
@@ -1046,7 +1092,8 @@ internal fun ControlMappingScreen(
                 // (a Quick or Double swipe), as a dropped chip does.
                 val moved = row.mapIndexed { j, item ->
                     val z = zoneIn(row, j)
-                    if (item is RowItem.Chip && z > 0 && item.trigger !in Bindings.triggersOf(zin(card, z))) item.copy(trigger = Trigger.HOLD)
+                    if (item is RowItem.Chip && z > 0 && !zoned(wheresOf(card).getOrNull(item.where))) item.copy(where = 0, trigger = Trigger.HOLD)
+                    else if (item is RowItem.Chip && z > 0 && item.trigger !in Bindings.triggersOf(zin(card, z))) item.copy(trigger = Trigger.HOLD)
                     else item
                 }
                 change(withRow(currentMappings, card, moved), "Moved a zone divider of " + actionTitle(currentControl, card))
@@ -1234,8 +1281,9 @@ internal fun ControlMappingScreen(
                         rangeOf = { chip -> chipRangeText(view, input, chip) },
                         badge = { tr, w ->
                             val wi = wheresOf(input).getOrNull(w)
-                            if (w == 0 || wi == null) Triggers.badge(src, tr)
-                            else listOf(wi.label, Triggers.badge(wi.sources.first(), tr)).filter { it.isNotEmpty() }.joinToString(" · ")
+                            // The Swipe card's chips all show their direction: "Any", "↑"...
+                            val name = if (isSwipeCard(src) && w == 0) "Any" else wi?.label?.takeIf { w > 0 }
+                            listOfNotNull(name, Triggers.badge(src, tr)).filter { it.isNotEmpty() }.joinToString(" · ")
                         },
                         timing = timingLine(input),
                         setOrder = sets.map { it.id },
@@ -1271,9 +1319,9 @@ internal fun ControlMappingScreen(
                             startDrag(Dragged.Target(chip.target, from, n = chip.n), at)
                         },
                         onChipClick = { chip -> selectedSrc = src; chipDialog = input to chip },
-                        onInheritedDrag = { tr, t, at ->
+                        onInheritedDrag = { f, at ->
                             selectedSrc = src
-                            startDrag(Dragged.Target(t, trig(input, tr), inherited = true), at)
+                            startDrag(Dragged.Target(f.target, trig(wheresOf(input).getOrNull(f.where) ?: input, f.trigger), inherited = true), at)
                         },
                         onHandleDrag = { at -> startCardDrag(input, at) },
                         modifier = Modifier.animateItem(),
@@ -1623,9 +1671,10 @@ internal fun ControlMappingScreen(
     }
     zoneDialog?.let { (input, zone) ->
         val src = input.sources.first() as? InputSource.Surface
+        // The Swipe card's zones are the shared ones every direction follows (an arrow's own are in its ⚙ settings).
         val dir = src?.input?.holdDirection
         val zs = zoneSettings
-        if (src != null && dir != null && zs != null && onZoneSettings != null) {
+        if (src != null && src.input.heldSwipe && zs != null && onZoneSettings != null) {
             ContextCard(actionTitle(control, input) + if (zone == null) " · zones" else " · zone " + (zone + 1), onDismiss = { zoneDialog = null }) {
                 HoldZoneSettings(zs, Bindings.holdZoneCounts(mappings, src.id), control.id + "dlg", only = dir, zone = zone, onChange = onZoneSettings)
             }
@@ -1639,8 +1688,8 @@ internal fun ControlMappingScreen(
         fun mapped(vararg ts: Trigger) = mappedTriggers.firstOrNull { it.first in ts }?.second
         val timingContents = (
             if (Triggers.isSwipe(input.sources.first())) {
-                // A swipe: its Quick swipe's settings, then its Long hold and Double swipe times.
-                listOfNotNull(mapped(Trigger.TAP), mapped(Trigger.LONG_PRESS), mapped(Trigger.DOUBLE_TAP))
+                // A swipe: its Long hold and Double swipe times (each arrow's Quick swipe settings are in its own ⚙).
+                listOfNotNull(mapped(Trigger.LONG_PRESS, Trigger.DOUBLE_TAP))
             } else {
                 listOfNotNull(mapped(Trigger.TAP, Trigger.LONG_PRESS), mapped(Trigger.DOUBLE_TAP))
             }
@@ -1653,15 +1702,19 @@ internal fun ControlMappingScreen(
     chipDialog?.let { (input, chip) ->
         val zi = chipInput(input, chip)
         val ti = trig(zi, chip.trigger)
-        // A button's touch card: a chip can move between its Touch, Area and Outside (Where).
-        val names = listOf(WHERE_TOUCH, WHERE_AREA, WHERE_OUTSIDE)
-        val whereInputs = wheresOf(input).mapIndexedNotNull { w, wi -> wi?.let { names[w] to it } }
-            .takeIf { chip.zone == 0 && it.size > 1 }.orEmpty()
-        val whereNow = whereInputs.indexOfFirst { it.second == zi }.coerceAtLeast(0)
+        // A button's touch card: a chip can move between its Touch, Area and Outside (Where); the Swipe
+        // card's between its directions (Any, ↑ → ↓ ←), in its zone.
+        val swipeCard = isSwipeCard(input.sources.first())
+        val names = if (swipeCard) List(5) { Bindings.slotLabel(if (it == 0) ANY_SLOT else it - 1) }
+        else listOf(WHERE_TOUCH, WHERE_AREA, WHERE_OUTSIDE)
+        val whereInputs = wheresIn(input, chip.zone).mapIndexedNotNull { w, wi -> wi?.let { names[w] to it } }
+            .takeIf { (chip.zone == 0 || swipeCard) && it.size > 1 }.orEmpty()
+        val whereNow = whereInputs.indexOfFirst { it.second.sources == zi.sources }.coerceAtLeast(0)
         fun inputAt(w: Int) = whereInputs.getOrNull(w)?.second ?: input
         MappingChipDialog(
             wheres = whereInputs.map { it.first },
             where = whereNow,
+            whereTitle = if (swipeCard) "Direction" else null,
             title = Describe.shortTarget(chip.target) + " · " + actionTitle(control, input) +
                 if (chip.zone > 0) " · zone " + (chip.zone + 1) else "",
             triggers = Bindings.triggersOf(zi),
@@ -1823,7 +1876,7 @@ private fun ActionCard(
     title: String,
     row: List<RowItem>,
     /** What the level above maps this action to (with their triggers), while it maps nothing itself: faded chips. */
-    inherited: List<Pair<Trigger, OutputTarget>>,
+    inherited: List<Faded>,
     parentName: String,
     /** ✕: it maps nothing, overriding the level above; null = no ✕. */
     onClear: (() -> Unit)?,
@@ -1875,7 +1928,7 @@ private fun ActionCard(
     /** A tap on a chip opens its settings (when it fires, its options). */
     onChipClick: (RowItem.Chip) -> Unit,
     /** A long press on a faded chip starts dragging it: onto the library it goes (the card then overrides the level above). */
-    onInheritedDrag: (Trigger, OutputTarget, Offset) -> Unit,
+    onInheritedDrag: (Faded, Offset) -> Unit,
     /** The ⠿ handle starts moving the card. */
     onHandleDrag: (Offset) -> Unit,
     modifier: Modifier = Modifier,
@@ -2033,11 +2086,12 @@ private fun ActionCard(
                         }
                     }
                     // Faded: what the level above does here.
-                    for ((tr, t) in inherited) key("p", tr, t) {
+                    for (f in inherited) key("p", f) {
+                        val (tr, t) = f
                         val coords = remember { arrayOfNulls<LayoutCoordinates>(1) }
                         Row(
                             Modifier
-                                .dragSource("p" to (tr to t), coords) { inheritedDrag(tr, t, it) }
+                                .dragSource("p" to f, coords) { inheritedDrag(f, it) }
                                 .alpha(0.5f)
                                 .clip(RoundedCornerShape(8.dp))
                                 .border(1.dp, colors.outline, RoundedCornerShape(8.dp))
@@ -2047,7 +2101,7 @@ private fun ActionCard(
                         ) {
                             Text(parentName, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
                             Text(
-                                chipText(badge(tr, 0), t, null),
+                                chipText(badge(tr, f.where), t, null),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = colors.onSurfaceVariant,
                                 maxLines = 1,

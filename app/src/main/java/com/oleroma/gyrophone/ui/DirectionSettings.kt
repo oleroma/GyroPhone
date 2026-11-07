@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.DirField
 import com.oleroma.gyrophone.core.model.DirSettings
 import com.oleroma.gyrophone.core.model.Direction
@@ -633,6 +634,31 @@ private fun SectionTitle(text: String) = NotSearching {
 }
 
 /**
+ * The Swipe row's ⚙: pick an arrow (↑ → ↓ ←) to see what it sets for itself over the Settings'
+ * shared values, its held swipe's ([DirectionSettings] with hold) and its quick swipe's. Swipe
+ * any way has no settings of its own: it uses the shared hold distance and zones.
+ */
+@Composable
+internal fun SwipeArrowSettings(level: SurfaceLevel, key: String, zones: IntArray) {
+    var d by remember { mutableStateOf(Direction.UP) }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        NotSearching {
+            DirNote("Swipe any way uses the Settings' hold distance and zones. Each arrow can set its own here.")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (x in Direction.entries) {
+                    val own = DirField.entries.any { level.isDirOwn(x, it) }
+                    SelectChip(Bindings.slotLabel(x.ordinal) + if (own) " •" else "", d == x) { d = x }
+                }
+            }
+        }
+        SectionTitle("Swipe " + Bindings.slotLabel(d.ordinal))
+        DirectionSettings(level, key, d, hold = true, zones)
+        SectionTitle("Quick swipe " + Bindings.slotLabel(d.ordinal))
+        DirectionSettings(level, key, d, hold = false, zones)
+    }
+}
+
+/**
  * The length zones of held direction [only] ([TouchpadSettings.holdZone]): its own, or the shared
  * ones every direction without its own follows ([only] null: those, as many as the direction with
  * the most). [zone]: only that one (from 0; a zone divider), null = all. [zones]: how many each
@@ -656,7 +682,7 @@ internal fun HoldZoneSettings(
         change(all)
         onChange(shared, all.takeUnless { l -> l.all { it == shared } })
     }
-    val mapped = if (only == null) Direction.entries.maxOf { zones[it.ordinal] } else zones[only.ordinal]
+    val mapped = if (only == null) zones.max() else zones[only.ordinal]
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (s.dragStart && s.holdMode == HoldMode.FROM_START) {
             DirNote(

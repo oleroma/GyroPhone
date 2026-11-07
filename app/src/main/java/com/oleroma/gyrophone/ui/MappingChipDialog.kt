@@ -53,6 +53,12 @@ internal const val WHERE_TOUCH = "Touch"
 internal const val WHERE_AREA = "Inside"
 internal const val WHERE_OUTSIDE = "Outside"
 
+/** What a swipe chip's direction [d] (Any, ↑ → ↓ ←) means. */
+private fun directionHint(d: String?): String = when (d) {
+    "Any" -> "Any way: how far the finger is from where it touched down, whichever way it went. Its zones go by that distance."
+    else -> "Only toward $d, inside its pie (the Swipe ⚙ sets each arrow's own pie and distances)."
+}
+
 private fun whereHint(w: String?): String = when (w) {
     WHERE_AREA -> "Any finger inside the button, wherever it touched down (sliding in counts)."
     WHERE_OUTSIDE -> "A finger that touched down on the button, now outside it."
@@ -130,9 +136,11 @@ internal fun MappingChipDialog(
     onRemove: () -> Unit,
     onDismiss: () -> Unit,
     onTargetSettings: (() -> Unit)? = null,
-    /** Where the chip can be (Touch, Area, Outside), and where it is; none = no choice. */
+    /** Where the chip can be (Touch, Area, Outside; a swipe's directions), and where it is; none = no choice. */
     wheres: List<String> = emptyList(),
     where: Int = 0,
+    /** What the choice of [wheres] is called ("Direction" for a swipe's); null = "Where". */
+    whereTitle: String? = null,
     /** An axis chip's output range; null = it has none. */
     range: ChipRange? = null,
 ) {
@@ -209,11 +217,11 @@ internal fun MappingChipDialog(
                     hint(range.hint)
                 }
                 if (wheres.size > 1) {
-                    Text("Where", style = MaterialTheme.typography.titleSmall)
+                    Text(whereTitle ?: "Where", style = MaterialTheme.typography.titleSmall)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         wheres.forEachIndexed { i, label -> FilterChip(selected = w == i, onClick = { w = i }, label = { Text(label) }) }
                     }
-                    hint(whereHint(wheres.getOrNull(w)))
+                    hint(if (whereTitle != null) directionHint(wheres.getOrNull(w)) else whereHint(wheres.getOrNull(w)))
                 }
                 if (triggers.size > 1) {
                     Text("When", style = MaterialTheme.typography.titleSmall)
