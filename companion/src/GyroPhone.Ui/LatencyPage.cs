@@ -49,7 +49,7 @@ internal sealed class LatencyPage : Page
         var steps = new UniformGrid4();
         steps.Add("1", "Press Start test. The test window opens with a green bar, and the phone shows four markers.");
         steps.Add("2", "Hold the phone in front of the test window, screen toward you. Twist your wrist left and right for about 10 seconds.");
-        steps.Add("3", "Film it with another phone in slow motion (240 fps or more), the markers and the green bar in the picture.");
+        steps.Add("3", "Film it with another phone in slow motion (240 fps or more) from behind your hand, along the forearm, the markers and the green bar in the picture.");
         steps.Add("4", "Copy the original video file to this PC and drop it below. Shared copies are often slowed to 30 fps.");
         _root.Children.Add(steps.View);
 
@@ -205,11 +205,12 @@ internal sealed class LatencyPage : Page
             string timed = a.TimedToS - a.TimedFromS < a.LengthS - 1
                 ? $" Timed {Clock(a.TimedFromS)}–{Clock(a.TimedToS)} of {Clock(a.LengthS)}, where you twist."
                 : "";
-            _app.Log($"latency test: {name} {a.Fps:0} fps, {a.Frames} frames, timed {a.TimedFromS:0.0}-{a.TimedToS:0.0} s, phone {a.Motion}: "
-                + $"{run.LatencyMs:0.0} ms ±{run.SpreadMs:0.0}, {run.Twists} twists, match {run.Match:0.00}, {run.Stretches} stretches used, {run.Skipped} left out, {run.Freezes} freezes");
-            string left = run.LeftOut();
-            SetStatus($"{run.LatencyMs:0.0} ms (±{run.SpreadMs:0.0}) from {run.Twists} twists.{timed}"
-                + (left.Length > 0 ? $" {char.ToUpper(left[0])}{left[1..]}." : ""));
+            _app.Log($"latency test: {name} {a.Fps:0} fps, {a.Frames} frames, timed {a.TimedFromS:0.0}-{a.TimedToS:0.0} s, phone tilt: "
+                + $"{run.LatencyMs:0.0} ms ±{run.SpreadMs:0.0}, {run.Twists} twists, match {run.Match:0.00}, {run.Stretches} swings used, {run.Skipped} left out, {run.Freezes} freezes (longest {run.LongestFreezeMs:0} ms)");
+            string extra = string.Concat(new[] { run.FreezesText(), run.LeftOut() }.Where(t => t.Length > 0).Select(t => $" {char.ToUpper(t[0])}{t[1..]}."));
+            SetStatus((run.Unreliable
+                    ? $"{run.LatencyMs:0.0} ms, unreliable: too few swings could be timed. Twist quickly and keep the bar in the picture."
+                    : $"{run.LatencyMs:0.0} ms (±{run.SpreadMs:0.0}) from {run.Twists} twists.") + timed + extra);
             if (_root.IsLoaded) Open(run);
             ResultsChanged?.Invoke();
         }
@@ -256,7 +257,7 @@ internal sealed class LatencyPage : Page
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var text = Parts.Column(
-            Parts.Text($"{r.LatencyMs:0.0} ms  ·  ±{r.SpreadMs:0.0} ms" + (r.Tag is { } tag ? $"  ·  {tag}" : "")),
+            Parts.Text($"{r.LatencyMs:0.0} ms  ·  " + (r.Unreliable ? "unreliable" : $"±{r.SpreadMs:0.0} ms") + (r.Tag is { } tag ? $"  ·  {tag}" : "")),
             Parts.Text($"{r.When:d MMM yyyy, HH:mm} · {r.Link} · {r.App}", "Sub"));
         g.Children.Add(text);
         var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };

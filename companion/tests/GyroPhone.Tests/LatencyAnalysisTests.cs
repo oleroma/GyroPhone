@@ -96,6 +96,35 @@ public class LatencyAnalysisTests
         Assert.Equal(1, fit.Freezes);
         Assert.InRange(fit.Skipped, 1, 3);
         Assert.InRange(fit.LatencyMs, 15.5, 16.5);
+        Assert.InRange(fit.LongestFreezeMs, 330, 380);
+    }
+
+    [Fact]
+    public void OneOddSecondDoesntSwayTheResult()
+    {
+        const double fps = 240;
+        int n = (int)(fps * 8);
+        var phone = new double[n];
+        var bar = new double[n];
+        for (int i = 0; i < n; i++)
+        {
+            double t = i / fps;
+            phone[i] = Twist(t);
+            // 20 ms, except for one second at 60 ms.
+            bar[i] = 5 * Twist(t - (t is > 3 and < 4 ? 0.060 : 0.020));
+        }
+        var fit = LatencyMath.Fit(phone, bar, fps)!;
+        Assert.InRange(fit.LatencyMs, 19, 21.5);
+        Assert.True(fit.Stretches >= LatencyMath.MinHalfTwists * 5);
+        Assert.InRange(fit.SpreadMs, 0, 5);
+    }
+
+    [Fact]
+    public void CrossingsSplitTheMotionIntoSwings()
+    {
+        var a = Enumerable.Range(0, 400).Select(i => Math.Sin(2 * Math.PI * i / 100.0)).ToArray();
+        var cuts = LatencyMath.Crossings(a);
+        Assert.Equal([50, 100, 150, 200, 250, 300, 350], cuts.Select(c => (int)Math.Round(c / 10.0) * 10));
     }
 
     [Fact]
@@ -111,7 +140,7 @@ public class LatencyAnalysisTests
     /// axis in front of the camera, the test window's green bar above it following the turn
     /// <paramref name="lagMs"/> later.
     /// </summary>
-    private static string SynthVideo(double lagMs, double fps, int frames, int markers = 0b1111, bool tilt = false)
+    private static string SynthVideo(double lagMs, double fps, int frames, int markers = 0b1111)
     {
         const int w = 360, h = 640;
         string path = Path.Combine(Path.GetTempPath(), $"gp-latency-{Guid.NewGuid():N}.avi");
@@ -151,14 +180,9 @@ public class LatencyAnalysisTests
             var corners = new[] { (0.0, 0.0), (600.0, 0.0), (600.0, 1300.0), (0.0, 1300.0) }.Select(p =>
             {
                 double x = (p.Item1 / 600 - 0.5) * pw, y = (p.Item2 / 1300 - 0.5) * ph;
-                if (tilt)
-                {
-                    // Turning within the picture, like a steering wheel.
-                    double xt = x * Math.Cos(th) - y * Math.Sin(th), yt = x * Math.Sin(th) + y * Math.Cos(th);
-                    return new Point2f((float)(w / 2 + f * xt / z), (float)(h * 0.62 + f * yt / z));
-                }
-                double xr = x * Math.Cos(th), zr = z + x * Math.Sin(th);
-                return new Point2f((float)(w / 2 + f * xr / zr), (float)(h * 0.62 + f * y / zr));
+                // Turning within the picture, like a steering wheel (filmed along the forearm).
+                double xt = x * Math.Cos(th) - y * Math.Sin(th), yt = x * Math.Sin(th) + y * Math.Cos(th);
+                return new Point2f((float)(w / 2 + f * xt / z), (float)(h * 0.62 + f * yt / z));
             }).ToArray();
             using var hm = Cv2.GetPerspectiveTransform([new(0, 0), new(600, 0), new(600, 1300), new(0, 1300)], corners);
             Cv2.WarpPerspective(screen, warped, hm, new Size(w, h));
@@ -186,13 +210,12 @@ public class LatencyAnalysisTests
     }
 
     [Fact]
-    public void TwistSeenAsATiltIsTimed()
+    public void OneMarkerIsEnough()
     {
-        string path = SynthVideo(lagMs: 16, fps: 240, frames: 240 * 4, tilt: true);
+        string path = SynthVideo(lagMs: 16, fps: 240, frames: 240 * 4, markers: 0b0001);
         try
         {
             var a = VideoTracker.Analyze(path);
-            Assert.Equal(PhoneMotion.Tilt, a.Motion);
             Assert.InRange(a.Fit.LatencyMs, 14.5, 17.5);
         }
         finally

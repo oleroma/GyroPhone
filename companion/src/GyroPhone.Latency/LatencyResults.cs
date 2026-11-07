@@ -22,22 +22,28 @@ public sealed record LatencyRun(
     int Skipped = 0,
     int Freezes = 0,
     int Stretches = 0,
-    string? Tag = null)
+    string? Tag = null,
+    double LongestFreezeMs = 0)
 {
     /// <param name="tag">Who timed it when not the page: "claude" for Claude's own runs of the analyser.</param>
     public static LatencyRun From(VideoAnalysis a, string video, string link, string phone, int monitorHz, string app, string? tag = null) =>
         new(DateTime.Now, a.Fit.LatencyMs, a.Fit.SpreadMs, a.Fit.Twists, a.Fps, a.Fit.Correlation, link, phone, monitorHz, app,
             Path.GetFileName(video), a.PhoneCurve, a.BarCurve, a.TimedFromS, a.TimedToS,
-            a.Fit.Skipped, a.Fit.Freezes, a.Fit.Stretches, tag);
+            a.Fit.Skipped, a.Fit.Freezes, a.Fit.Stretches, tag, a.Fit.LongestFreezeMs);
 
-    /// <summary>"2 freezes, 3 of 14 stretches left out", or "" when nothing was.</summary>
-    public string LeftOut()
-    {
-        var parts = new List<string>();
-        if (Freezes > 0) parts.Add(Freezes == 1 ? "1 freeze" : $"{Freezes} freezes");
-        if (Skipped > 0) parts.Add($"{Skipped} of {Skipped + Stretches} stretches left out");
-        return string.Join(", ", parts);
-    }
+    /// <summary>"3 of 30 swings left out", or "" when none was.</summary>
+    public string LeftOut() => Skipped > 0 ? $"{Skipped} of {Skipped + Stretches} swings left out" : "";
+
+    /// <summary>"2 freezes, longest 0.36 s": the motion stalling, then catching up, which a player feels. "" when none.</summary>
+    public string FreezesText() => Freezes == 0 ? "" :
+        (Freezes == 1 ? "1 freeze" : $"{Freezes} freezes") + (LongestFreezeMs > 0 ? $", longest {LongestFreezeMs / 1000:0.00} s" : "");
+
+    /// <summary>
+    /// Too few swings could be timed one by one (see <see cref="LatencyMath.MinHalfTwists"/>): the
+    /// number rests on the whole video's match alone and has no margin.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool Unreliable => Stretches < LatencyMath.MinHalfTwists;
 }
 
 /// <summary>

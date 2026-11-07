@@ -17,13 +17,14 @@ public class LatencyReportTests
         Assert.Contains("13.8 ms", html);
         Assert.Contains("±1.8 ms", html);
         Assert.Contains("claude", html);
-        Assert.Contains("2 freezes, 8 of 13 stretches left out", html);
+        Assert.Contains("2 freezes", html);
+        Assert.Contains("8 of 13 swings left out", html);
         Assert.Equal(4, html.Split("<polyline").Length - 1);
         Assert.DoesNotContain("unreliable</span>", html);
     }
 
     [Fact]
-    public void ARunWithNoStretchCheckedIsMarkedUnreliable()
+    public void ARunWithTooFewSwingsTimedIsMarkedUnreliable()
     {
         Assert.Contains("unreliable</span>", LatencyReport.Html([Run(0)]));
     }

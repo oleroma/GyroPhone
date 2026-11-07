@@ -11,9 +11,13 @@ namespace GyroPhone.Ui;
 /// <summary>
 /// The latency test window: black, with one tall green bar that moves left and right by the mouse
 /// movement GyroPhone injects (Windows raw input with no device: SendInput), so it follows what a
-/// game gets. A real mouse is ignored. The bar's travel is scaled to fit by itself, slowly, so a
-/// twist of any size fills the window without the scale changing within a twist. While it is open
-/// the phone shows its markers.
+/// game gets. A real mouse is ignored. While the phone twists, the bar follows the mouse exactly
+/// (1:1: a fixed middle and scale), since any re-centring or squeezing would shift the bar's
+/// motion in time and skew the result. The middle and scale are set again only between takes,
+/// when the mouse has rested for <see cref="RestS"/>: the bar jumps back to the middle and the
+/// next take's swing fills the window. Where the bar would leave the window it is hidden rather
+/// than held at the edge, so the analyser leaves those frames out. While it is open the phone
+/// shows its markers.
 /// </summary>
 internal sealed class LatencyTestWindow : Window
 {
@@ -27,9 +31,19 @@ internal sealed class LatencyTestWindow : Window
     private HwndSource? _source;
     private readonly byte[] _buffer = new byte[64];
 
-    // Where the injected mouse has gone (counts), the middle it swings about and how far it swings.
-    private double _x, _mid, _swing = 200;
-    private long _lastTicks = Environment.TickCount64;
+    /// <summary>The mouse resting this long ends a take: the middle and scale are set again.</summary>
+    private const double RestS = 0.4;
+
+    // Where the injected mouse has gone (counts), the middle it swings about, and how far a swing
+    // goes (counts to 40% of the width), kept between windows. Within a take: the take's biggest swing.
+    private double _x, _mid;
+    private static double s_swing = 200;
+    private double _takeSwing;
+    private bool _inTake;
+    // Where the mouse last moved noticeably, and when.
+    private double _restX;
+    private long _restTicks = Environment.TickCount64;
+    private readonly System.Windows.Threading.DispatcherTimer _rest = new() { Interval = TimeSpan.FromMilliseconds(50) };
 
     /// <summary>The refresh rate of the screen this window was last on (Hz), 0 before it was shown.</summary>
     public static int LastMonitorHz { get; private set; }
@@ -45,7 +59,7 @@ internal sealed class LatencyTestWindow : Window
         _canvas.Children.Add(_bar);
         _hint = new TextBlock
         {
-            Text = "Hold the phone in front of this window, screen toward you, and twist your wrist left and right. Esc closes.",
+            Text = "Hold the phone in front of this window, screen toward you, and twist your wrist left and right. Film from behind your hand, along the forearm. If the bar disappears, rest a moment and it comes back. Esc closes.",
             Foreground = new SolidColorBrush(Color.FromRgb(0x6B, 0x73, 0x85)),
             FontSize = 14,
             TextAlignment = TextAlignment.Center,
@@ -70,8 +84,11 @@ internal sealed class LatencyTestWindow : Window
         {
             if (_source != null) LastMonitorHz = MonitorHz(_source.Handle);
         };
+        _rest.Tick += (_, _) => EndTakeWhenRested();
+        _rest.Start();
         Closed += (_, _) =>
         {
+            _rest.Stop();
             Register(IntPtr.Zero, RidevRemove);
             _source?.RemoveHook(Hook);
         };
@@ -104,27 +121,44 @@ internal sealed class LatencyTestWindow : Window
         return IntPtr.Zero;
     }
 
-    /// <summary>Moves the bar: the middle and the swing follow the motion slowly (seconds), the bar at once.</summary>
+    /// <summary>
+    /// Ends a take once the mouse has rested for <see cref="RestS"/> (moved under 5% of a swing): the
+    /// bar goes back to the middle and the next take's scale fits this take's biggest swing.
+    /// </summary>
+    private void EndTakeWhenRested()
+    {
+        long now = Environment.TickCount64;
+        if (Math.Abs(_x - _restX) > s_swing * 0.05)
+        {
+            (_restX, _restTicks) = (_x, now);
+            return;
+        }
+        if (!_inTake || now - _restTicks < RestS * 1000) return;
+        _inTake = false;
+        if (_takeSwing > 20) s_swing = _takeSwing;
+        _takeSwing = 0;
+        _mid = _x;
+        Place();
+    }
+
+    /// <summary>Moves the bar 1:1 with the mouse; hidden where it would leave the window.</summary>
     private void Place()
     {
         double w = _canvas.ActualWidth > 0 ? _canvas.ActualWidth : Width;
         double hgt = _canvas.ActualHeight > 0 ? _canvas.ActualHeight : Height;
-        long now = Environment.TickCount64;
-        double dt = Math.Clamp((now - _lastTicks) / 1000.0, 0, 0.5);
-        _lastTicks = now;
-        _mid += (_x - _mid) * Math.Min(1, dt / 1.5);
         double off = _x - _mid;
-        _swing = Math.Max(Math.Abs(off), _swing - _swing * Math.Min(1, dt / 4));
-        _swing = Math.Max(_swing, 20);
+        if (Math.Abs(off) > s_swing * 0.05) _inTake = true;
+        _takeSwing = Math.Max(_takeSwing, Math.Abs(off));
         double barW = Math.Max(24, w / 30);
-        double x = w / 2 + off / _swing * (w * 0.4) - barW / 2;
+        double x = w / 2 + off / s_swing * (w * 0.4) - barW / 2;
         _bar.Width = barW;
         _bar.Height = hgt;
+        _bar.Visibility = x < 0 || x > w - barW ? Visibility.Hidden : Visibility.Visible;
         Canvas.SetLeft(_bar, Math.Clamp(x, 0, w - barW));
         Canvas.SetTop(_bar, 0);
         _hint.Width = w - 40;
         Canvas.SetLeft(_hint, 20);
-        Canvas.SetTop(_hint, hgt - 40);
+        Canvas.SetTop(_hint, hgt - 60);
     }
 
     private static void Register(IntPtr hwnd, uint flags)

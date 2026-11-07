@@ -1,31 +1,37 @@
 namespace GyroPhone.Latency;
 
 /// <summary>What the analyser found: how far the bar trails the phone, and how sure it is.</summary>
-/// <param name="LatencyMs">The lag that lines the two motions up best over the whole video.</param>
-/// <param name="SpreadMs">Half the spread (middle half) of the lag measured over shorter stretches.</param>
+/// <param name="LatencyMs">The middle of the lags of the half-twists timed one by one.</param>
+/// <param name="SpreadMs">
+/// The margin on that middle (95%): how far it could be off, from how much the half-twists differ
+/// and how many there are. 0 when too few could be timed.
+/// </param>
 /// <param name="Twists">Back-and-forth twists seen.</param>
-/// <param name="Correlation">How well the two motions match once lined up (0 to 1).</param>
-/// <param name="Stretches">Stretches timed and used.</param>
-/// <param name="Skipped">Stretches left out: the phone or bar out of sight, a freeze, or a poor match.</param>
+/// <param name="Correlation">How well the two motions match over the whole video once lined up (0 to 1).</param>
+/// <param name="Stretches">Half-twists timed and used.</param>
+/// <param name="Skipped">Half-twists left out: the phone or bar out of sight, a freeze, or a poor match.</param>
 /// <param name="Freezes">Times the bar stood still while the phone moved (the motion stalled, then caught up).</param>
+/// <param name="LongestFreezeMs">The longest of those freezes.</param>
 public sealed record LatencyFit(double LatencyMs, double SpreadMs, int Twists, double Correlation, int Stretches,
-    int Skipped = 0, int Freezes = 0);
+    int Skipped = 0, int Freezes = 0, double LongestFreezeMs = 0);
 
 /// <summary>
 /// The timing maths, without video: both motions are sampled once per video frame. Each is
 /// filled where tracking missed a frame, freed of slow drift (a moving average of
-/// <see cref="DriftS"/> taken off) and scaled to the same size; then the lag from 0 to
-/// <see cref="MaxLagS"/> with the best match is found to a fraction of a frame. The two may move
-/// in opposite directions (the bar's direction follows the mouse mapping): the sign is taken from
-/// the whole video, then used for every stretch.
+/// <see cref="DriftS"/> taken off) and scaled to the same size. The whole video's best lag (0 to
+/// <see cref="MaxLagS"/>) checks that the two match at all and gives the direction (the bar's
+/// direction follows the mouse mapping). Then each half-twist (one swing, from one crossing of the
+/// middle to the next) is timed on its own, scored by its own match, and the result is the middle
+/// of those lags with a margin from all of them, so no one piece decides it.
 /// </summary>
 public static class LatencyMath
 {
     public const double MaxLagS = 0.25;
     public const double DriftS = 0.6;
-    public const double StretchS = 1.5;
     /// <summary>Below this match the video can't be timed (no twisting, or tracking lost).</summary>
     public const double MinCorrelation = 0.5;
+    /// <summary>Fewer half-twists than this timed: the result rests on the whole video's lag alone, and is shown as unreliable.</summary>
+    public const int MinHalfTwists = 3;
 
     /// <summary>Times the bar against the phone; null when they don't match well enough.</summary>
     public static LatencyFit? Fit(double[] phone, double[] bar, double fps)
@@ -47,45 +53,114 @@ public static class LatencyMath
         // Frames to leave out: where either was out of sight, or the bar froze while the phone moved.
         var bad = new bool[n];
         for (int i = 0; i < n; i++) bad[i] = double.IsNaN(phone[i]) || double.IsNaN(bar[i]);
-        int freezes = MarkFreezes(a, bar, fps, bad);
+        var (freezes, longest) = MarkFreezes(a, bar, fps, bad);
 
-        // Stretches that are clean and match well give the spread; the others are counted as left out.
-        int seg = (int)(fps * StretchS);
+        // Each half-twist on its own: clean ones that match well are used, the others counted as left out.
         var lags = new List<double>();
         int skipped = 0;
-        for (int s = 0; s + seg <= n; s += seg / 2)
+        var cuts = Crossings(a);
+        for (int k = 0; k + 1 < cuts.Count; k++)
         {
-            int badCount = 0;
-            for (int i = s; i < s + seg; i++) if (bad[i]) badCount++;
-            var (l, cc) = BestLag(a.AsSpan(s, seg), b.AsSpan(s, seg), maxLag, sign);
-            if (badCount * 20 > seg || cc * sign < StretchCorrelation) skipped++;
+            int s = cuts[k], len = cuts[k + 1] - s;
+            if (s + len + maxLag > n) break;
+            var (l, r) = HalfTwistLag(a, b, s, len, maxLag, sign);
+            int at = (int)Math.Round(l), badCount = 0;
+            for (int i = s; i < s + len; i++) if (bad[i] || bad[i + at]) badCount++;
+            if (badCount * 20 > len || r < HalfTwistMatch) skipped++;
             else lags.Add(l);
         }
-        double spread = 0;
-        if (lags.Count >= 2)
+        double latency, margin = 0;
+        if (lags.Count >= MinHalfTwists)
         {
             lags.Sort();
-            spread = (Quantile(lags, 0.75) - Quantile(lags, 0.25)) / 2 / fps * 1000;
+            latency = Quantile(lags, 0.5);
+            // The middle's margin: the half-twists' spread (from their middle half, so one odd one
+            // doesn't sway it) over the root of their count, as for a median.
+            double sd = (Quantile(lags, 0.75) - Quantile(lags, 0.25)) / 1.349;
+            margin = 1.96 * 1.2533 * sd / Math.Sqrt(lags.Count);
         }
-        // The latency is the whole video's lag again, now over the clean frames only.
-        double latency = freezes > 0 || bad.Any(x => x) ? BestLag(a, b, maxLag, sign, bad).Lag : lag;
-        return new LatencyFit(latency / fps * 1000, spread, CountTwists(a), Math.Abs(c), lags.Count, skipped, freezes);
+        else
+        {
+            // Too few to go by: the whole video's lag, over the clean frames only.
+            latency = bad.Any(x => x) ? BestLag(a, b, maxLag, sign, bad).Lag : lag;
+        }
+        return new LatencyFit(latency / fps * 1000, margin / fps * 1000, CountTwists(a), Math.Abs(c), lags.Count, skipped,
+            freezes, longest / fps * 1000);
     }
 
-    /// <summary>A stretch must match at least this well to count.</summary>
-    public const double StretchCorrelation = 0.8;
+    /// <summary>A half-twist must match at least this well, on its own, to count.</summary>
+    public const double HalfTwistMatch = 0.8;
+
+    /// <summary>
+    /// Where the drift-free motion crosses its middle, ignoring wobble under a fifth of its size:
+    /// the frame where each swing to the other side begins.
+    /// </summary>
+    public static List<int> Crossings(double[] a)
+    {
+        var cuts = new List<int>();
+        int side = 0, flip = 0;
+        for (int i = 0; i < a.Length; i++)
+        {
+            if (i > 0 && Math.Sign(a[i]) != Math.Sign(a[i - 1])) flip = i;
+            int s = a[i] > 0.2 ? 1 : a[i] < -0.2 ? -1 : 0;
+            if (s == 0) continue;
+            if (side != 0 && s != side) cuts.Add(flip);
+            side = s;
+        }
+        return cuts;
+    }
+
+    /// <summary>
+    /// The lag (frames, with a fraction) at which the bar best repeats the phone's half-twist
+    /// <paramref name="start"/>..+<paramref name="len"/>, and the match there, scored on that piece
+    /// alone (a correlation, -1 to 1, in the given direction).
+    /// </summary>
+    public static (double Lag, double Match) HalfTwistLag(double[] a, double[] b, int start, int len, int maxLag, int sign)
+    {
+        var c = new double[maxLag];
+        double ma = 0;
+        for (int i = start; i < start + len; i++) ma += a[i];
+        ma /= len;
+        double va = 0;
+        for (int i = start; i < start + len; i++) va += (a[i] - ma) * (a[i] - ma);
+        for (int l = 0; l < maxLag; l++)
+        {
+            double mb = 0;
+            for (int i = start; i < start + len; i++) mb += b[i + l];
+            mb /= len;
+            double cov = 0, vb = 0;
+            for (int i = start; i < start + len; i++)
+            {
+                double db = b[i + l] - mb;
+                cov += (a[i] - ma) * db;
+                vb += db * db;
+            }
+            c[l] = va > 0 && vb > 0 ? cov / Math.Sqrt(va * vb) * sign : 0;
+        }
+        int best = 0;
+        for (int l = 1; l < maxLag; l++) if (c[l] > c[best]) best = l;
+        double frac = 0;
+        if (best > 0 && best < maxLag - 1)
+        {
+            double den = c[best - 1] - 2 * c[best] + c[best + 1];
+            if (den < 0) frac = 0.5 * (c[best - 1] - c[best + 1]) / den;
+        }
+        return (best + frac, c[best]);
+    }
+
     /// <summary>The bar standing still this long while the phone moves is a freeze.</summary>
     public const double FreezeS = 0.1;
 
     /// <summary>
     /// Finds the freezes: runs of at least <see cref="FreezeS"/> where the bar (raw, in pixels) moves
     /// under half a pixel a frame while the phone (<paramref name="phone"/>, drift-free and scaled)
-    /// moves at least half its usual size. Marks them in <paramref name="bad"/>; returns how many.
+    /// moves at least half its usual size. Marks them in <paramref name="bad"/>; returns how many,
+    /// and the longest (frames).
     /// </summary>
-    public static int MarkFreezes(double[] phone, double[] bar, double fps, bool[] bad)
+    public static (int Count, int Longest) MarkFreezes(double[] phone, double[] bar, double fps, bool[] bad)
     {
         int min = Math.Max(2, (int)(FreezeS * fps));
-        int count = 0, start = -1;
+        int count = 0, start = -1, longest = 0;
         for (int i = 1; i <= bar.Length; i++)
         {
             bool still = i < bar.Length && !double.IsNaN(bar[i]) && !double.IsNaN(bar[i - 1]) && Math.Abs(bar[i] - bar[i - 1]) < 0.5;
@@ -101,12 +176,13 @@ public static class LatencyMath
                 if (hi - lo >= 0.5)
                 {
                     count++;
+                    longest = Math.Max(longest, i - start);
                     for (int k = start; k < i; k++) bad[k] = true;
                 }
             }
             start = -1;
         }
-        return count;
+        return (count, longest);
     }
 
     /// <summary>The analyser looks at the video in pieces this long to find where the phone is twisted.</summary>

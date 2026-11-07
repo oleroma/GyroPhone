@@ -57,21 +57,21 @@ public static class LatencyReport
             .key b { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin: 0 4px 0 10px; }
             </style></head><body><main>
             <h1>GyroPhone latency results</h1>
-            <p class="sub">Time from moving the phone to the game seeing the mouse move, from slow-motion videos. Newest first.</p>
+            <p class="sub">Time from twisting the phone to the green bar moving on the screen, from slow-motion videos. Each swing of the wrist is timed on its own; the latency is their middle, the margin how far that middle could be off. Freezes (the bar stalling, then catching up) are left out of the latency and listed on their own. Newest first.</p>
             """);
         if (runs.Count == 0)
         {
             sb.Append("<p>No results yet.</p></main></body></html>\n");
             return sb.ToString();
         }
-        sb.Append("<div class=\"wrap\"><table><thead><tr><th>When</th><th>Latency</th><th>Spread</th><th>Twists</th><th>Match</th><th>Left out</th><th>Video</th><th>fps</th><th>Link</th><th>Phone</th><th>Monitor</th><th>App</th></tr></thead><tbody>\n");
+        sb.Append("<div class=\"wrap\"><table><thead><tr><th>When</th><th>Latency</th><th>Margin</th><th>Twists</th><th>Match</th><th>Freezes</th><th>Left out</th><th>Video</th><th>fps</th><th>Link</th><th>Phone</th><th>Monitor</th><th>App</th></tr></thead><tbody>\n");
         for (int i = 0; i < runs.Count; i++)
         {
             var r = runs[i];
             string left = r.LeftOut();
             sb.Append(ci, $"<tr><td><a href=\"#run{i}\">{E(r.When.ToString("yyyy-MM-dd HH:mm", ci))}</a>{Tag(r)}</td>")
               .Append(ci, $"<td class=\"big\">{r.LatencyMs:0.0} ms{Unsure(r)}</td><td>±{r.SpreadMs:0.0} ms</td><td>{r.Twists}</td><td>{r.Match:0.00}</td>")
-              .Append(ci, $"<td>{E(left.Length > 0 ? left : "—")}</td><td>{E(r.Video)}</td><td>{r.Fps:0}</td><td>{E(r.Link)}</td><td>{E(r.Phone)}</td>")
+              .Append(ci, $"<td>{E(r.FreezesText() is { Length: > 0 } fz ? fz : "—")}</td><td>{E(left.Length > 0 ? left : "—")}</td><td>{E(r.Video)}</td><td>{r.Fps:0}</td><td>{E(r.Link)}</td><td>{E(r.Phone)}</td>")
               .Append(ci, $"<td>{(r.MonitorHz > 0 ? r.MonitorHz + " Hz" : "—")}</td><td>{E(r.App)}</td></tr>\n");
         }
         sb.Append("</tbody></table></div>\n<h2>One second of each run</h2>\n");
@@ -92,14 +92,9 @@ public static class LatencyReport
 
     private static string Tag(LatencyRun r) => r.Tag is { } t ? $" <span class=\"tag\">{E(t)}</span>" : "";
 
-    /// <summary>
-    /// A run where no 1.5 s stretch could be checked (all left out) rests on the whole-video match
-    /// alone, with no spread: marked so it isn't read as a clean number.
-    /// </summary>
-    public static bool Unreliable(LatencyRun r) => r.Stretches == 0;
-
+    /// <summary>A run with too few swings timed (<see cref="LatencyRun.Unreliable"/>) is marked so it isn't read as a clean number.</summary>
     private static string Unsure(LatencyRun r) =>
-        Unreliable(r) ? " <span class=\"warn\" title=\"No stretch could be checked; whole-video match only\">unreliable</span>" : "";
+        r.Unreliable ? " <span class=\"warn\" title=\"Too few swings could be timed; whole-video match only\">unreliable</span>" : "";
 
     private static string E(string s) => WebUtility.HtmlEncode(s);
 
