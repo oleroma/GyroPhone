@@ -685,16 +685,6 @@ internal fun ControlMappingScreen(
     // The Swipe card's lines, by source: a drag lands on the line under the finger.
     val lineBounds = remember { mutableStateMapOf<InputSource, Rect>() }
 
-    /** The card (or the line of the Swipe card) under [p]: the line it is on, else the nearest one. */
-    fun cardAt(p: Offset): BindableInput? {
-        if (!actionsBounds.contains(p)) return null
-        val card = shownNow.firstOrNull { cardBounds[it.sources.first()]?.contains(p) == true } ?: return null
-        val lines = linesOf(card)
-        if (lines.size == 1) return card
-        val placed = lines.filter { lineBounds[it.sources.first()] != null }
-        return placed.firstOrNull { lineBounds[it.sources.first()]!!.contains(p) }
-            ?: placed.minByOrNull { abs(lineBounds[it.sources.first()]!!.center.y - p.y) } ?: card
-    }
 
     /** The held swipe sources of [input]'s zoned Wheres (zone 0, Hold): their mappings make its zones. */
     fun zoneKeys(input: BindableInput): List<InputSource> =
@@ -841,6 +831,41 @@ internal fun ControlMappingScreen(
 
         is Dragged.Divider -> if (d.card.sources.first() == input.sources.first()) RowItem.Divider(d.k) else null
         else -> null
+    }
+
+    /** [card]'s lines map something themselves, here or (in a layer) in Base: the level above's are then not shown. */
+    fun groupOwns(card: BindableInput): Boolean {
+        val all = groupOf(card).flatMap(::lineInputs)
+        return all.any { ti -> Bindings.targets(view, ti).isNotEmpty() } ||
+            (editSet != MappingSet.BASE && all.any { ti -> Bindings.targets(mappings, ti).isNotEmpty() })
+    }
+
+    /** Line [line] of the Swipe card shows: it has chips or dividers, or the level above's faded chips. */
+    fun lineShown(line: BindableInput, owns: Boolean): Boolean =
+        rowOf(line).isNotEmpty() || (!owns && editSet == MappingSet.BASE && parentOf(line).isNotEmpty())
+
+    /**
+     * The Swipe card's new line, shown under its lines while a target is dragged: the first direction
+     * that shows no line yet (↑ → ↓ ←, then Any); a target dropped there opens its settings to pick the
+     * direction. Null for any other card, or when every direction already has its line.
+     */
+    fun newLineOf(card: BindableInput): BindableInput? {
+        val lines = linesOf(card)
+        if (lines.size == 1) return null
+        val owns = groupOwns(card)
+        return (lines.drop(1) + lines.first()).firstOrNull { !lineShown(it, owns) }
+    }
+
+    /** The card (or the line of the Swipe card) under [p]: the line it is on, else the Swipe card's new line. */
+    fun cardAt(p: Offset): BindableInput? {
+        if (!actionsBounds.contains(p)) return null
+        val card = shownNow.firstOrNull { cardBounds[it.sources.first()]?.contains(p) == true } ?: return null
+        val lines = linesOf(card)
+        if (lines.size == 1) return card
+        val placed = lines.filter { lineBounds[it.sources.first()] != null }
+        return placed.firstOrNull { lineBounds[it.sources.first()]!!.contains(p) }
+            ?: newLineOf(card)?.takeIf { dragged is Dragged.Target }
+            ?: placed.minByOrNull { abs(lineBounds[it.sources.first()]!!.center.y - p.y) } ?: card
     }
 
     /** Where a chip or divider being dragged lands: a card and the index in its row (without the carried item). */
@@ -1042,6 +1067,8 @@ internal fun ControlMappingScreen(
                 val from = d.from
                 if (l != null) {
                     val (card, at) = l
+                    // Dropped on the Swipe card's new line: its settings open, to pick its direction.
+                    val onNewLine = groupOf(card).size > 1 && newLineOf(groupOf(card).first())?.sources?.first() == card.sources.first()
                     // Where something lands is the selected card from then on.
                     selectedSrc = card.sources.first()
                     val c = carried(card)
@@ -1093,7 +1120,7 @@ internal fun ControlMappingScreen(
                             if (over != null && from != null) withoutInherited(placed, over, Triggers.of(from.sources.first()), d.target, from) else placed,
                             (if (from == null) "Mapped " else "Moved ") + Describe.shortTarget(d.target) + " to " + actionTitle(currentControl, zi),
                         )
-                        if (fresh != null) chipDialog = card to RowItem.Chip(zone, d.target, tr, w,
+                        if (fresh != null || onNewLine) chipDialog = card to RowItem.Chip(zone, d.target, tr, w,
                             Bindings.entries(placed, trig(zi, tr)).filter { it.target == d.target }.indexOfFirst { it.shape == shape }.coerceAtLeast(0))
                     }
                     done = true
@@ -1294,9 +1321,12 @@ internal fun ControlMappingScreen(
                     val owns = own.isNotEmpty() || (editSet != MappingSet.BASE && all.any { ti -> Bindings.targets(mappings, ti).isNotEmpty() })
                     val hoverHere = hovered != null && cardLines.any { it.sources.first() == hovered?.sources?.first() }
 
+                    // While a target is dragged, one new line under the others takes it (see newLineOf).
+                    val newLine = if (swipe && d is Dragged.Target && fits) newLineOf(input) else null
+
                     /**
                      * Line [i] of the Swipe card ([line]: Any, then ↑ → ↓ ←): shown while it maps something
-                     * (or shows the level above's), and every line while a drag is over the card.
+                     * (or shows the level above's); the new line while a target is dragged.
                      */
                     @Composable
                     fun swipeLine(i: Int, line: BindableInput): CardLine? {
@@ -1312,7 +1342,8 @@ internal fun ControlMappingScreen(
                                 rowBounds.remove(ls)
                             }
                         }
-                        val show = lrow.isNotEmpty() || inh.isNotEmpty() || (hoverHere && fits) ||
+                        val isNew = newLine?.sources?.first() == ls
+                        val show = lrow.isNotEmpty() || inh.isNotEmpty() || isNew ||
                             (d is Dragged.Divider && d.card.sources.first() == ls)
                         if (!show) {
                             SideEffect { lineBounds.remove(ls) }
@@ -1323,7 +1354,7 @@ internal fun ControlMappingScreen(
                         val lands = landing?.first?.sources?.first() == ls
                         return CardLine(
                             key = ls,
-                            label = Bindings.slotLabel(if (i == 0) ANY_SLOT else i - 1),
+                            label = if (isNew) "" else Bindings.slotLabel(if (i == 0) ANY_SLOT else i - 1),
                             selected = selected?.sources?.first() == ls,
                             row = lrow,
                             inherited = inh,
@@ -1351,7 +1382,9 @@ internal fun ControlMappingScreen(
                             onClick = { selectedSrc = ls },
                         )
                     }
+                    // The new line goes last, under the mapped ones.
                     val lines = if (!swipe) null else cardLines.mapIndexedNotNull { i, line -> key(line.sources.first()) { swipeLine(i, line) } }
+                        .sortedBy { it.key == newLine?.sources?.first() }
                     ActionCard(
                         lines = lines,
                         title = when {
@@ -2124,11 +2157,15 @@ private fun ActionCard(
                             Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = ln.onClick).padding(horizontal = 2.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(
-                                ln.label,
+                            if (ln.label.isEmpty()) Text(
+                                "New",
                                 style = MaterialTheme.typography.labelLarge,
-                                fontWeight = if (ln.selected) FontWeight.Bold else FontWeight.Normal,
+                                color = colors.tertiary,
+                            ) else DirectionLabel(
+                                ln.label,
                                 color = if (ln.selected) colors.primary else colors.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelLarge,
+                                bold = ln.selected,
                             )
                             if (ln.landingZone >= 0) Text(
                                 "  → Zone " + (ln.landingZone + 1) + if (ln.landingZone >= ln.others.size) " (new)" else "",

@@ -219,7 +219,9 @@ internal fun MappingChipDialog(
                 if (wheres.size > 1) {
                     Text(whereTitle ?: "Where", style = MaterialTheme.typography.titleSmall)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        wheres.forEachIndexed { i, label -> FilterChip(selected = w == i, onClick = { w = i }, label = { Text(label) }) }
+                        wheres.forEachIndexed { i, label ->
+                            FilterChip(selected = w == i, onClick = { w = i }, label = { if (whereTitle != null) DirectionLabel(label) else Text(label) })
+                        }
                     }
                     hint(if (whereTitle != null) directionHint(wheres.getOrNull(w)) else whereHint(wheres.getOrNull(w)))
                 }
