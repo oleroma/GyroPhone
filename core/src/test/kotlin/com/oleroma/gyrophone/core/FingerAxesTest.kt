@@ -11,6 +11,7 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchShape
@@ -91,5 +92,23 @@ class FingerAxesTest {
         val s = e.snapshot().gamepad
         assertEquals(1f, s.lt / GamepadState.TRIGGER_MAX.toFloat(), 0.01f)
         assertEquals(0.25f, s.rt / GamepadState.TRIGGER_MAX.toFloat(), 0.01f)
+    }
+
+    @Test
+    fun swipeAxisChipGrowsThroughItsZone() {
+        // One zone, from the hold distance (20 dp) for 20 dp more.
+        val w = Workspace(
+            "w", "w",
+            mappings = listOf(Mapping(InputSource.Surface(1, SurfaceInput.HOLD_UP), OutputTarget.PadAxis(GamepadAxis.LT), range = AxisRange(0.2f, 1f))),
+        )
+        var now = 0L
+        val e = MappingEngine(single(w)) { now }
+        e.touchpadDown(1, 100f, 200f); e.snapshot()
+        now += 10_000_000; e.touchpadMove(1, 100f, 190f)
+        assertEquals(0, e.snapshot().gamepad.lt) // not at the hold distance yet
+        now += 10_000_000; e.touchpadMove(1, 100f, 170f)
+        assertEquals(0.6f, e.snapshot().gamepad.lt / GamepadState.TRIGGER_MAX.toFloat(), 0.02f)
+        now += 10_000_000; e.touchpadMove(1, 100f, 100f)
+        assertEquals(1f, e.snapshot().gamepad.lt / GamepadState.TRIGGER_MAX.toFloat(), 0.02f)
     }
 }

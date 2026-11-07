@@ -48,6 +48,9 @@ internal class DirectionTracker {
     /** Per direction: the zones held now, a mask of 1 shl zone. */
     private val zoneMask = IntArray(4)
 
+    /** Per direction: how far the finger is along it now (dp, from the start; DIRECTION_CHANGE: its travel), for [progress]. */
+    private val alongNow = FloatArray(4)
+
     /** Per direction: DIRECTION_CHANGE travel since it was held (dp). */
     private val travel = FloatArray(4)
 
@@ -116,8 +119,18 @@ internal class DirectionTracker {
         for (i in 0 until 4) {
             val z = if (latched and (1 shl i) != 0) latchedZones?.get(i) ?: 1 else 0
             carryZones[i] = z; zoneMask[i] = z
-            at[i] = -1; travel[i] = 0f; untilLift[i] = 0
+            at[i] = -1; travel[i] = 0f; untilLift[i] = 0; alongNow[i] = 0f
         }
+    }
+
+    /**
+     * How far through zone [z] of [d] the finger is now, 0 at its start to 1 at its end (and past
+     * it): what an axis chip of that zone outputs.
+     */
+    fun progress(d: Direction, z: Int, s: TouchpadSettings): Float {
+        var edge = activate(s.holdDpOf(d))
+        for (i in 0 until z) edge += s.holdZoneDp(d, i)
+        return ((alongNow[d.ordinal] - edge) / s.holdZoneDp(d, z)).coerceIn(0f, 1f)
     }
 
     /** The zones of [d] held now, a mask of 1 shl zone (bit 0 = the first zone). */
@@ -334,6 +347,7 @@ internal class DirectionTracker {
                 Direction.LEFT -> -offX
             }
             val i = d.ordinal
+            alongNow[i] = along
             at[i] = if (s.inPie(offX, offY, d, hold = true)) zoneOf(along, d, s) else -1
             if (at[i] >= 0) mask = mask or (1 shl i)
         }
@@ -371,8 +385,9 @@ internal class DirectionTracker {
         for (d in Direction.entries) {
             val i = d.ordinal
             if (held and (1 shl i) == 0) {
-                at[i] = -1; zoneMask[i] = untilLift[i]; continue
+                at[i] = -1; zoneMask[i] = untilLift[i]; alongNow[i] = 0f; continue
             }
+            alongNow[i] = travel[i]
             val z = zoneOf(travel[i], d, s)
             // A latched direction keeps its zones until this motion reaches one.
             if (z > at[i]) {

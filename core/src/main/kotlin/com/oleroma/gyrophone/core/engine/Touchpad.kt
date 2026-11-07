@@ -8,6 +8,7 @@ import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.MotionFeel
 import com.oleroma.gyrophone.core.model.MoveMode
 import com.oleroma.gyrophone.core.model.SurfaceInput
+import com.oleroma.gyrophone.core.model.holdDirection
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
 import kotlin.math.abs
@@ -327,6 +328,16 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
      * (-1..1: the travel from where the motion started, a floating stick; the spread change).
      * [zone]: a held direction's length zone.
      */
+    /**
+     * An axis chip's value of held direction [input] in [zone] with [fingers] down: how far
+     * through that zone the finger is (0..1, [DirectionTracker.progress]) while it is held; 0 when not.
+     */
+    fun zoneLevel(fingers: Int, input: SurfaceInput, zone: Int): Float {
+        val d = input.holdDirection ?: return level(fingers, input, zone)
+        if (level(fingers, input, zone) == 0f) return 0f
+        return dirs.progress(d, zone, settings)
+    }
+
     fun level(fingers: Int, input: SurfaceInput, zone: Int = 0): Float {
         if (fingers !in 1..4 || zone !in 0 until TouchpadSettings.MAX_HOLD_ZONES) return 0f
         return when (input) {

@@ -189,7 +189,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val m = ms[i]
                 val t = m.target as? OutputTarget.GyroSens ?: continue
                 val r = m.range ?: continue
-                val v = abs(value(m.source, dev))
+                val v = abs(axisOf(m, value(m.source, dev)))
                 if (!activeOf(m.source, dev, v)) continue
                 sensSeen.add(m)
                 val seq = sensOrder.getOrPut(m) { ++sensSeq }
@@ -258,7 +258,24 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     private fun activeOf(src: InputSource, dev: Dev?, v: Float): Boolean =
         if (src is InputSource.Finger) fingers.containsKey(src.id) && (!src.axis.roundOnly || src.id in roundIds)
+        // A held swipe direction is active from the start of its zone (where its axis is 0).
+        else if (src is InputSource.Surface && src.on == Trigger.HOLD && src.input.holdDirection != null) value(src, dev) >= PRESS_THRESHOLD
         else abs(v) > RANGE_ACTIVE
+
+    /** An output that takes an input's size (an axis), not just on or off. */
+    private fun analogTarget(t: OutputTarget): Boolean = t is OutputTarget.PadAxis || t is OutputTarget.GyroSens ||
+            t is OutputTarget.HapticStep || (t is OutputTarget.Haptic && t.held)
+
+    /**
+     * [v] (the level of mapping [m]'s source) as its axis output takes it: a held swipe direction
+     * gives how far through its zone the finger is ([Touchpad.zoneLevel]) to an axis target.
+     */
+    private fun axisOf(m: Mapping, v: Float): Float {
+        val s = m.source
+        if (v == 0f || s !is InputSource.Surface || s.on != Trigger.HOLD || s.input.holdDirection == null || !analogTarget(m.target)) return v
+        val pad = (if (s.id.isEmpty()) touchpad else surfaces[s.id]) ?: return v
+        return pad.zoneLevel(s.fingers, s.input, s.zone) * v
+    }
 
     /** [v] of mapping [m] through its range ([Mapping.range]), as its target takes it. */
     private fun ranged(m: Mapping, dev: Dev?, v: Float): Float {
@@ -1869,7 +1886,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         dev?.modeSeen = true
         for (i in ms.indices) {
             val m = ms[i]
-            val raw = out(m, dev, now, output = true)
+            val raw = axisOf(m, out(m, dev, now, output = true))
             val v = if (m.range == null) raw else ranged(m, dev, raw)
             if (v >= PRESS_THRESHOLD) {
                 if (m.options?.endsOnNextInput == true) {
