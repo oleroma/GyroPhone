@@ -57,6 +57,18 @@ All engine state is under one lock. Engine callbacks only post to the UI thread.
 
 **Debug window** (`DebugForm`, from the App page): the link as the PC sees it, what the game is given now, and the newest debug events at 4 Hz; **Save last 30 s**. The engine logs only while it is open or the phone's debug tools are on. A phone-side Record also saves the PC's (LINK_INFO save counter).
 
+**Input log** (`InputRecorder`, always on, no switch): `%LOCALAPPDATA%\GyroPhone\logs\input.log` (5 MB, then `input.log.old`), for finding stutter after real play. Each line has the wall-clock time, then seconds since the session started. While a session is up there is one `sec` line a second (packets, moving packets, lost, late, the latest packet's extra delay, latency p50/p99 and jitter once the phone sent a clock offset, injections, pixels moved, biggest step, slowest receive-to-SendInput), and one line per event, written when it happens:
+- `lost`: 3 or more packets missing from the seq.
+- `late`: packets more than 15 ms later than the session's fastest ones of the last 5-10 s (receive time minus phone send time, so no clock sync is needed), one line per stretch; "held up on the way" when the phone sent them on time.
+- `phone gap`: the phone sent nothing for over 30 ms (its keepalive is 20 ms) with nothing lost, while input was moving or held.
+- `glide`: late or lost motion spread out by `MouseCatchUp` instead of landing at once.
+- `big move`: 64 px or more in one SendInput.
+- `slow hand-off`: over 2 ms from receive to SendInput.
+- `refused`: Windows took fewer events than given.
+- `release`: everything let go after 250 ms of silence.
+- `session start` / `session end` (with the session's totals and extra-delay percentiles).
+Like every log it counts keys and buttons but never names them.
+
 ## Watcher
 
 `GyroPhoneCompanion.exe --watch` (`Watcher`): no window, no tray. While the companion is off it holds UDP 47800; the first DISCOVER from a known phone (by phone id or key id) makes it free the port and start the installed companion, at most once per gap. A companion started any other way asks the watcher to yield the port. Started at login by the `GyroPhoneWatcher` Run entry; on and off with **Start when my phone appears** on the App page. DISCOVER is not authenticated, so a spoofer can only start the companion; connecting still needs the key.
@@ -68,7 +80,7 @@ All engine state is under one lock. Engine callbacks only post to the UI thread.
 | `%APPDATA%\GyroPhone\settings.json` | `HostSettings`: host id and name, output mode, Start with Windows, tray click, USB direct, code-paired phones (pairing keys wrapped with DPAPI), overlay windows and shortcuts. Written atomically off the rx thread. |
 | `%APPDATA%\GyroPhone\host.key`, `host.pub` | This PC's static P-256 key (the private scalar wrapped with DPAPI). |
 | `%APPDATA%\GyroPhone\authorized_phones\*.pub` | Trusted phone keys; watched, so a new file pairs at once and a removed one drops the phone (live session included). |
-| `%LOCALAPPDATA%\GyroPhone\logs` | Append-only logs (counters and lifecycle only, never keys). |
+| `%LOCALAPPDATA%\GyroPhone\logs` | Append-only logs (counters and lifecycle only, never keys): `companion.log` and the input log `input.log` (above). |
 | `%LOCALAPPDATA%\GyroPhone\held.json` | Crash marker (above). |
 | `%LOCALAPPDATA%\Programs\GyroPhone\` | The installed exe ([Install and update](pc-install-update.md)). |
 

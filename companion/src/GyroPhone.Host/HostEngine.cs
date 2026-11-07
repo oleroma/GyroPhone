@@ -247,6 +247,10 @@ public sealed class HostEngine
 
     public HostSettings Settings => _settings;
 
+    /// <summary>The always-on input log (docs/spec/pc-companion.md, "Input log"); null = none. Set before Start.</summary>
+    public InputRecorder? Recorder { get; set; }
+    private long _pendingRecvUs = -1;
+
     public void AttachSender(IDatagramSender sender)
     {
         lock (_lock) _sender = sender;
@@ -368,7 +372,9 @@ public sealed class HostEngine
             Promote(s, nowUs);
         }
 
+        long lostBefore = _stats.TotalLost;
         _stats.OnSealed(seq);
+        if (_stats.TotalLost != lostBefore) Recorder?.Lost(_stats.TotalLost - lostBefore, seq, nowUs);
         switch (type)
         {
             case PacketType.State:
@@ -416,7 +422,7 @@ public sealed class HostEngine
             case PacketType.Bye:
                 _events.Log($"phone said bye (reason {plain[0]})");
                 RememberEnded(s.SessionId);
-                EndActive(hostByeReason: null);
+                EndActive(hostByeReason: null, why: $"phone said bye ({plain[0]})");
                 break;
         }
     }
@@ -555,6 +561,13 @@ public sealed class HostEngine
         _lostAtState = _stats.TotalLost;
         _hasStatePhone = true;
         _catchUp.Add(dx, dy, span, lost);
+        _pendingRecvUs = nowUs;
+        if (Recorder != null)
+        {
+            bool moving = dx != 0 || dy != 0;
+            bool held = _rxFrame.MouseButtons != 0 || _rxFrame.Buttons != 0 || _rxFrame.Hat != StateFrame.HatCenter || _rxFrame.Keys.AsSpan().IndexOfAnyExcept((byte)0) >= 0;
+            Recorder.State(_rxFrame.PhoneTimeUs, nowUs, moving, moving || held, lost);
+        }
         // Plain STATE counts whole notches.
         _accWheel += _rxFrame.Hires ? dw : dw * InjectEvent.WheelDelta;
         _accHWheel += dh;
@@ -655,6 +668,7 @@ public sealed class HostEngine
             keyPhone.LastSeenUtc = DateTime.UtcNow;
         }
         _events.Log($"session started with '{s.PhoneName}'");
+        Recorder?.SessionStarted(s.PhoneName, nowUs);
         SendStatus(s, nowUs);
         _events.StateChanged();
     }
@@ -679,6 +693,7 @@ public sealed class HostEngine
             if (!frame && !_catchUp.Gliding) return;
             _hasPending = false;
             _catchUp.Take(nowUs, out int dx, out int dy);
+            if (_catchUp.BacklogTaken) Recorder?.Glide(_catchUp.BacklogSpanUs, _catchUp.BacklogPx, _catchUp.BacklogGlideUs, nowUs);
             int dw = _accWheel, dh = _accHWheel;
             _accWheel = _accHWheel = 0;
             if (_paused || _locked)
@@ -710,12 +725,14 @@ public sealed class HostEngine
             if (blocked) NoteBlockedUps(before, beforeMouse);
             if (n > 0)
             {
-                if (!_keyMouse.Inject(_inject.AsSpan(0, n)))
+                bool took = _keyMouse.Inject(_inject.AsSpan(0, n));
+                if (!took)
                 {
                     // Windows dropped them: the ups are sent again once it takes input.
                     if (!blocked) NoteBlockedUps(before, beforeMouse);
                     InjectFailed();
                 }
+                Recorder?.Inject(dx, dy, frame ? _pendingRecvUs : -1, _clock.NowUs, !took);
                 _injections++;
                 if (Debug.Enabled) Debug.OnInject(_inject.AsSpan(0, n), nowUs);
                 for (int i = 0; i < n; i++)
@@ -907,12 +924,13 @@ public sealed class HostEngine
                 if (silent >= SessionTimeoutUs)
                 {
                     _events.Log($"session with '{a.PhoneName}' timed out");
-                    EndActive(hostByeReason: null);
+                    EndActive(hostByeReason: null, why: "timed out");
                 }
                 else if (silent >= ReleaseTimeoutUs && !_releasedForSilence)
                 {
                     _releasedForSilence = true;
                     _hasPending = false;
+                    Recorder?.ReleasedForSilence(HeldCount(), nowUs);
                     ReleaseAllLocked();
                     _events.StateChanged();
                 }
@@ -937,6 +955,7 @@ public sealed class HostEngine
             if (a != null && nowUs - _lastStatusUs >= StatusIntervalUs)
             {
                 _stats.Roll();
+                Recorder?.Second(_stats, nowUs);
                 SendStatus(a, nowUs);
                 if (Debug.Enabled) Debug.SecondTick(DebugLinkLine(), nowUs);
             }
@@ -1575,10 +1594,11 @@ public sealed class HostEngine
         _events.StateChanged();
     }
 
-    private void EndActive(byte? hostByeReason)
+    private void EndActive(byte? hostByeReason, string why = "ended")
     {
         var a = _sessions.Active;
         if (a == null) return;
+        Recorder?.SessionEnded(hostByeReason == null ? why : $"{why} by the PC ({hostByeReason})", _clock.NowUs);
         ReleaseAllLocked();
         if (hostByeReason is { } r)
         {
@@ -1600,6 +1620,14 @@ public sealed class HostEngine
         _hasPending = false;
         _releasedForSilence = false;
         _events.StateChanged();
+    }
+
+    /// <summary>Keys and mouse buttons injected and held now (a count only, for the input log).</summary>
+    private int HeldCount()
+    {
+        int n = System.Numerics.BitOperations.PopCount(_injectedMouse);
+        foreach (var b in _injectedKeys) n += System.Numerics.BitOperations.PopCount(b);
+        return n;
     }
 
     private void ReleaseAllLocked()
