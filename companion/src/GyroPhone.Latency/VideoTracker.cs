@@ -41,7 +41,7 @@ public static class VideoTracker
         double propFps = cap.Get(VideoCaptureProperties.Fps);
         using var dict = CvAruco.GetPredefinedDictionary(PredefinedDictionaryType.Dict4X4_50);
 
-        // Frames are decoded in order (one at a time, on the graphics card where it can), then
+        // Frames are decoded in order (one at a time), then
         // looked at in batches spread over the cores; each core keeps its own detector and buffers.
         using var workers = new ThreadLocal<Worker>(() => new Worker(dict), trackAllValues: true);
         var times = new List<double>();
@@ -106,19 +106,12 @@ public static class VideoTracker
             times[from] - t0, times[from + timedCount - 1] - t0, times[^1] - t0);
     }
 
-    /// <summary>The video, decoded on the graphics card where Windows offers it (else on the CPU).</summary>
+    /// <summary>
+    /// The video, decoded on the CPU: the graphics card's decoder (D3D11VA) was slower here, since
+    /// every frame has to come back to the CPU, and lost frames (device removed) on a 240 fps video.
+    /// </summary>
     private static VideoCapture Open(string path)
     {
-        try
-        {
-            var hw = new VideoCapture(path, VideoCaptureAPIs.FFMPEG, [(int)VideoCaptureProperties.HwAcceleration, (int)VideoAccelerationType.Any]);
-            if (hw.IsOpened()) return hw;
-            hw.Dispose();
-        }
-        catch (OpenCVException)
-        {
-            // No such backend here: the plain one below.
-        }
         var cap = new VideoCapture(path);
         if (!cap.IsOpened())
         {
