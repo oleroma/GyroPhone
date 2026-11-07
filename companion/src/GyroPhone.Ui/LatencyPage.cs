@@ -109,10 +109,25 @@ internal sealed class LatencyPage : Page
         Action reload = LoadRuns;
         StatusChanged += changed;
         ResultsChanged += reload;
+        // Results saved from outside the page (Claude's tagged runs) show up as they land.
+        FileSystemWatcher? watcher = null;
+        try
+        {
+            Directory.CreateDirectory(LatencyResults.Folder);
+            watcher = new FileSystemWatcher(LatencyResults.Folder, "latency-*.json") { EnableRaisingEvents = true };
+            FileSystemEventHandler landed = (_, _) => _root.Dispatcher.BeginInvoke(new Action(LoadRuns));
+            watcher.Created += landed;
+            watcher.Changed += landed;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // Without it the list still refreshes after the page's own runs.
+        }
         owner.Closed += (_, _) =>
         {
             StatusChanged -= changed;
             ResultsChanged -= reload;
+            watcher?.Dispose();
         };
     }
 
@@ -236,7 +251,7 @@ internal sealed class LatencyPage : Page
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var text = Parts.Column(
-            Parts.Text($"{r.LatencyMs:0.0} ms  ·  ±{r.SpreadMs:0.0} ms"),
+            Parts.Text($"{r.LatencyMs:0.0} ms  ·  ±{r.SpreadMs:0.0} ms" + (r.Tag is { } tag ? $"  ·  {tag}" : "")),
             Parts.Text($"{r.When:d MMM yyyy, HH:mm} · {r.Link} · {r.App}", "Sub"));
         g.Children.Add(text);
         var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };

@@ -1,7 +1,6 @@
 using System.Text.Json;
-using GyroPhone.Latency;
 
-namespace GyroPhone.Ui;
+namespace GyroPhone.Latency;
 
 /// <summary>One timed video: the result and what it was measured with, as the card shows it.</summary>
 public sealed record LatencyRun(
@@ -22,12 +21,14 @@ public sealed record LatencyRun(
     double TimedToS = 0,
     int Skipped = 0,
     int Freezes = 0,
-    int Stretches = 0)
+    int Stretches = 0,
+    string? Tag = null)
 {
-    public static LatencyRun From(VideoAnalysis a, string video, string link, string phone, int monitorHz, string app) =>
+    /// <param name="tag">Who timed it when not the page: "claude" for Claude's own runs of the analyser.</param>
+    public static LatencyRun From(VideoAnalysis a, string video, string link, string phone, int monitorHz, string app, string? tag = null) =>
         new(DateTime.Now, a.Fit.LatencyMs, a.Fit.SpreadMs, a.Fit.Twists, a.Fps, a.Fit.Correlation, link, phone, monitorHz, app,
             Path.GetFileName(video), a.PhoneCurve, a.BarCurve, a.TimedFromS, a.TimedToS,
-            a.Fit.Skipped, a.Fit.Freezes, a.Fit.Stretches);
+            a.Fit.Skipped, a.Fit.Freezes, a.Fit.Stretches, tag);
 
     /// <summary>"2 freezes, 3 of 14 stretches left out", or "" when nothing was.</summary>
     public string LeftOut()
@@ -41,9 +42,10 @@ public sealed record LatencyRun(
 
 /// <summary>
 /// The latency test's results, newest first: one JSON file per timed video in
-/// Documents\GyroPhone\Latency (the same file "Save data" writes).
+/// Documents\GyroPhone\Latency (the same file "Save data" writes). Runs saved from outside the
+/// page (tagged) show up there too.
 /// </summary>
-internal static class LatencyResults
+public static class LatencyResults
 {
     public static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
@@ -86,7 +88,7 @@ internal static class LatencyResults
     public static string Save(LatencyRun run)
     {
         Directory.CreateDirectory(Folder);
-        string file = Path.Combine(Folder, $"latency-{run.When:yyyyMMdd-HHmmss}.json");
+        string file = Path.Combine(Folder, $"latency-{run.When:yyyyMMdd-HHmmss}{(run.Tag is { } t ? "-" + t : "")}.json");
         File.WriteAllText(file, JsonSerializer.Serialize(run, Json));
         return file;
     }
