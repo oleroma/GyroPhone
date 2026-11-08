@@ -168,6 +168,8 @@ public sealed class OverlaySettings
     public bool LaserAxonometric { get; set; } = true;
     /// <summary>Laser pointer: the beam stays pointing ahead and the sphere (grid, axes, paint) turns under it instead.</summary>
     public bool LaserSphereTurns { get; set; }
+    /// <summary>Laser pointer: a rifle aiming instead of the sphere and beam; Draw mode still paints where it points.</summary>
+    public bool LaserRifle { get; set; }
     public bool LaserAxes { get; set; } = true;
     /// <summary>Draw mode: the beam paints the sphere's inside, <see cref="LaserBrush"/> degrees round; it fades after <see cref="LaserFadeMs"/> ms (0 = never).</summary>
     public bool LaserDraw { get; set; }
@@ -338,6 +340,7 @@ public sealed class OverlaySettings
         new("dot", "Dot", 0xFFFFFFFF),
         new("paint", "Paint ahead", 0xFFFFC94D),
         new("paint_behind", "Paint behind", 0xFF4DA6FF),
+        new("rifle", "Rifle", 0xFF5A616C),
     ];
 
     private static readonly OverlayColor[] DiskColors =

@@ -263,9 +263,12 @@ private class VisState {
             }
             lt.expire(now, fadeMs)
         }
+        val rifle = d.laserRifle
         val sphere = col(GyroDisplayColor.LASER_SPHERE)
+        if (!rifle) {
         val lit = Color(sphere.red + (1 - sphere.red) * 0.35f, sphere.green + (1 - sphere.green) * 0.35f, sphere.blue + (1 - sphere.blue) * 0.35f, sphere.alpha)
         drawCircle(Brush.radialGradient(listOf(lit, sphere), Offset(c.x - r * 0.35f, c.y - r * 0.4f), r * 1.3f), r, c)
+        }
         val grid = col(GyroDisplayColor.LASER_GRID)
         val thin = Stroke(density, cap = StrokeCap.Round, join = StrokeJoin.Round)
         val (gridFront, gridBack) = LaserTrace.grid(laserAxon, laserTurned)
@@ -374,6 +377,27 @@ private class VisState {
                 val tip = laserAt(c, r, beam[0] + tick[0] * k, beam[1] + tick[1] * k, beam[2] + tick[2] * k)
                 drawLine(dotCol, hit, tip, 2f * density, StrokeCap.Round)
             }
+        }
+        if (rifle) {
+            // The rifle look: no sphere or beam; the paint still lands where it aims.
+            axes(false)
+            paint(false)
+            val body = col(GyroDisplayColor.LASER_RIFLE)
+            for (f in LaserTrace.rifle(m, laserAxon, laserTurned)) {
+                path.reset()
+                for (i in 0 until 4) {
+                    val x = c.x + f.xy[i * 2] * r
+                    val y = c.y - f.xy[i * 2 + 1] * r
+                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                }
+                path.close()
+                val k = f.light
+                drawPath(path, Color(body.red * k, body.green * k, body.blue * k, body.alpha))
+                drawPath(path, Color(body.red * 0.5f, body.green * 0.5f, body.blue * 0.5f, body.alpha), style = Stroke(density * 0.75f, join = StrokeJoin.Round))
+            }
+            paint(true)
+            axes(true)
+            return
         }
         if (d.laserGrid) drawPath(gridPath(gridBack), grid, style = thin)
         axes(false)

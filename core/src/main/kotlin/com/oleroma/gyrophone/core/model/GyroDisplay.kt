@@ -133,6 +133,8 @@ data class GyroDisplay(
     val laserAxonometric: Boolean = true,
     /** LASER: the beam stays pointing ahead and the sphere (grid, axes, paint) turns under it instead. */
     val laserSphereTurns: Boolean = false,
+    /** LASER: a rifle aiming instead of the sphere and beam; Draw mode still paints where it points. */
+    val laserRifle: Boolean = false,
     /** LASER: Draw mode, the beam paints the sphere's inside, [laserBrush] degrees round; it fades after [laserFadeMs] ms (0 = never). */
     val laserDraw: Boolean = false,
     val laserBrush: Int = 4,
@@ -298,6 +300,7 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     LASER_DOT(GyroDisplayKind.LASER, "dot", "Dot", 0xFFFFFFFF),
     LASER_PAINT(GyroDisplayKind.LASER, "paint", "Paint ahead", 0xFFFFC94D),
     LASER_PAINT_BEHIND(GyroDisplayKind.LASER, "paint_behind", "Paint behind", 0xFF4DA6FF),
+    LASER_RIFLE(GyroDisplayKind.LASER, "rifle", "Rifle", 0xFF5A616C),
     ;
 
     companion object {

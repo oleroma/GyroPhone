@@ -228,6 +228,70 @@ public sealed class LaserTrace
         return (front, back);
     }
 
+    /// <summary>
+    /// The rifle look's model in the phone's frame (x right, y up, z toward the player), the muzzle out of
+    /// the phone's back as the beam: boxes as centre x, y, z and half sizes, unit radius. As the phone's.
+    /// </summary>
+    private static readonly float[] Rifle =
+    [
+        // stock, buffer tube, receiver, carry rail, handguard, barrel, muzzle, front sight, magazine, grip
+        0f, -0.02f, 0.68f, 0.05f, 0.09f, 0.2f,
+        0f, 0.03f, 0.42f, 0.03f, 0.03f, 0.08f,
+        0f, 0.03f, 0.12f, 0.055f, 0.075f, 0.22f,
+        0f, 0.13f, 0.1f, 0.028f, 0.025f, 0.18f,
+        0f, 0.03f, -0.32f, 0.055f, 0.055f, 0.2f,
+        0f, 0.03f, -0.7f, 0.018f, 0.018f, 0.18f,
+        0f, 0.03f, -0.9f, 0.026f, 0.026f, 0.03f,
+        0f, 0.1f, -0.5f, 0.012f, 0.06f, 0.015f,
+        0f, -0.17f, 0.0f, 0.035f, 0.12f, 0.06f,
+        0f, -0.14f, 0.28f, 0.03f, 0.09f, 0.045f,
+    ];
+
+    /// <summary>One face of the rifle in the picture: its corners (x, y, unit radius), how lit it is (0..1) and its depth.</summary>
+    public readonly record struct Face((float X, float Y)[] Corners, float Light, float Depth);
+
+    /// <summary>
+    /// The rifle turned by pose <paramref name="m"/>, seen as <see cref="ToView"/> sees it: the faces toward
+    /// the viewer, farthest first, lit from above left.
+    /// </summary>
+    public static List<Face> RifleFaces(float[] m, bool axon, float[]? turned)
+    {
+        var faces = new List<Face>(32);
+        var p = new (float X, float Y, float Z)[8];
+        const float lx = -0.35f, ly = 0.6f, lz = 0.72f;
+        (float X, float Y, float Z) Turn(float x, float y, float z) =>
+            ToView(m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z, axon, turned);
+        for (int o = 0; o < Rifle.Length; o += 6)
+        {
+            for (int k = 0; k < 8; k++)
+                p[k] = Turn(Rifle[o] + ((k & 1) != 0 ? Rifle[o + 3] : -Rifle[o + 3]),
+                    Rifle[o + 1] + ((k & 2) != 0 ? Rifle[o + 4] : -Rifle[o + 4]),
+                    Rifle[o + 2] + ((k & 4) != 0 ? Rifle[o + 5] : -Rifle[o + 5]));
+            for (int f = 0; f < 6; f++)
+            {
+                int axis = f / 2;
+                float sign = f % 2 == 0 ? -1f : 1f;
+                var n = Turn(axis == 0 ? sign : 0f, axis == 1 ? sign : 0f, axis == 2 ? sign : 0f);
+                if (n.Z <= 1e-4f) continue;
+                int on = sign > 0 ? 1 << axis : 0;
+                // The face's corners, in order round it.
+                int a = 1 << ((axis + 1) % 3), b = 1 << ((axis + 2) % 3);
+                int[] ring = [on, a | on, a | b | on, b | on];
+                var corners = new (float X, float Y)[4];
+                float depth = 0f;
+                for (int i = 0; i < 4; i++)
+                {
+                    corners[i] = (p[ring[i]].X, p[ring[i]].Y);
+                    depth += p[ring[i]].Z;
+                }
+                float light = Math.Clamp(0.45f + 0.55f * Math.Max(0f, n.X * lx + n.Y * ly + n.Z * lz), 0f, 1f);
+                faces.Add(new Face(corners, light, depth / 4f));
+            }
+        }
+        faces.Sort((x, y) => x.Depth.CompareTo(y.Depth));
+        return faces;
+    }
+
     /// <summary>The beam's direction for pose matrix <paramref name="m"/> (row-major, phone frame to shown): out of the phone's back.</summary>
     public static (float X, float Y, float Z) Beam(float[] m) => (-m[2], -m[5], -m[8]);
 

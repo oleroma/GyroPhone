@@ -41,7 +41,7 @@ internal static class LaserDrawing
         var beam = LaserTrace.Beam(m);
         var sphere = Color.FromArgb(s.Color("sphere"));
         var lit = Color.FromArgb(sphere.A, sphere.R + (int)((255 - sphere.R) * 0.35f), sphere.G + (int)((255 - sphere.G) * 0.35f), sphere.B + (int)((255 - sphere.B) * 0.35f));
-        g.FillBall(new RectangleF(c.X - r, c.Y - r, 2 * r, 2 * r), new PointF(c.X - r * 0.35f, c.Y - r * 0.4f), lit, sphere);
+        if (!s.LaserRifle) g.FillBall(new RectangleF(c.X - r, c.Y - r, 2 * r, 2 * r), new PointF(c.X - r * 0.35f, c.Y - r * 0.4f), lit, sphere);
         var grid = Color.FromArgb(s.Color("grid"));
         Color[] axisColors = [Color.FromArgb(s.Color("x")), Color.FromArgb(s.Color("y")), Color.FromArgb(s.Color("z"))];
 
@@ -172,6 +172,24 @@ internal static class LaserDrawing
             }
         }
 
+        if (s.LaserRifle)
+        {
+            // The rifle look: no sphere or beam; the paint still lands where it aims.
+            Axes(false);
+            Paint(false);
+            var body = Color.FromArgb(s.Color("rifle"));
+            float edge = Math.Max(1f, px * 0.75f);
+            foreach (var f in LaserTrace.RifleFaces(m, s.LaserAxonometric, turned))
+            {
+                var pts = new PointF[4];
+                for (int i = 0; i < 4; i++) pts[i] = new PointF(c.X + f.Corners[i].X * r, c.Y - f.Corners[i].Y * r);
+                g.FillPolygon(Color.FromArgb(body.A, (int)(body.R * f.Light), (int)(body.G * f.Light), (int)(body.B * f.Light)), pts);
+                g.DrawPolygon(Color.FromArgb(body.A, body.R / 2, body.G / 2, body.B / 2), edge, pts);
+            }
+            Paint(true);
+            Axes(true);
+            return;
+        }
         var gridLines = LaserTrace.GridFor(s.LaserAxonometric, turned);
         if (s.LaserGrid) Grid(gridLines.Back, grid);
         Axes(false);

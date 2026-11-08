@@ -46,6 +46,8 @@ internal sealed class OverlaysPage : Page
     private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook;
     private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserDraw, _laserClearOnRatchet;
     private readonly Seg<int> _laserFade;
+    private readonly Seg<bool> _laserLook;
+    private readonly TextBlock _laserRifleHint;
     private readonly SliderRow _laserBrush;
     private readonly StackPanel _laserDrawOptions;
     private readonly CheckBox _dots, _trails, _phoneAxon, _shapeAxon;
@@ -250,6 +252,11 @@ internal sealed class OverlaysPage : Page
 
         var (laser, lb) = Parts.Card("Laser pointer");
         lb.Children.Add(Parts.Text("A see-through sphere seen from above and to the side. The laser at its centre shines out of the phone's back onto the inside; the tick at the dot shows which way the phone's top points. The beam dims while a ratchet is held.", "Hint"));
+        _laserLook = new Seg<bool>(r => Change(o => o.LaserRifle = r), false, ("Sphere", false), ("Rifle", true));
+        _laserLook.View.Margin = new Thickness(0, 6, 0, 2);
+        lb.Children.Add(_laserLook.View);
+        _laserRifleHint = Parts.Text("A rifle aims instead: no sphere or beam, and Draw mode still paints where it points. Best with Axonometric view (face-on you look along the barrel).", "Hint");
+        lb.Children.Add(_laserRifleHint);
         _laserAxon = Parts.Toggle("Axonometric view", () => Change(o => o.LaserAxonometric = !o.LaserAxonometric), "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot.");
         _laserGrid = Parts.Toggle("Grid every 15°", () => Change(o => o.LaserGrid = !o.LaserGrid));
         lb.Children.Add(_laserAxon);
@@ -488,6 +495,9 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_laserLook, o.Kind == OverlayKind.Laser);
         Parts.SetChecked(_phoneAxon, o.Axonometric);
         Parts.SetChecked(_shapeAxon, o.Axonometric);
+        _laserLook.Set(o.LaserRifle);
+        Parts.Show(_laserRifleHint, o.LaserRifle);
+        Parts.Show(_laserGrid, !o.LaserRifle);
         Parts.SetChecked(_laserAxon, o.LaserAxonometric);
         Parts.SetChecked(_laserSphereTurns, o.LaserSphereTurns);
         Parts.SetChecked(_laserGrid, o.LaserGrid);

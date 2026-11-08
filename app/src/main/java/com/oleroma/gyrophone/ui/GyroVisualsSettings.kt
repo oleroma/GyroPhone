@@ -171,9 +171,11 @@ internal fun GyroDisplaySettingsScreen(
                 GyroDisplayKind.LASER -> {
                     GroupTitle("Laser pointer")
                     Hint("A see-through sphere seen from above and to the side. The laser at its centre shines out of the phone's back onto the inside; the tick at the dot shows which way the phone's top points. The beam dims while a ratchet is held.")
+                    Chips(listOf("Sphere" to false, "Rifle" to true), d.laserRifle) { set(d.copy(laserRifle = it)) }
+                    if (d.laserRifle) Hint("A rifle aims instead: no sphere or beam, and Draw mode still paints where it points. Best with Axonometric view (face-on you look along the barrel).")
                     SwitchRow("Axonometric view", d.laserAxonometric, LASER_AXON_HINT) { set(d.copy(laserAxonometric = it)) }
                     SwitchRow("Sphere turns, beam stays ahead", d.laserSphereTurns, "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.") { set(d.copy(laserSphereTurns = it)) }
-                    SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
+                    if (!d.laserRifle) SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
                     SwitchRow("Axes (yaw red, pitch green, roll blue)", d.laserAxes) { set(d.copy(laserAxes = it)) }
                     GroupTitle("Draw")
                     SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim.") { set(d.copy(laserDraw = it)) }
@@ -337,9 +339,11 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     GyroDisplayColor.BALL_EQUATOR -> d.ballShape == BallShape.GLOBE && d.equator
     GyroDisplayColor.BALL_MARK -> d.screenMark
     GyroDisplayColor.BALL_POLE -> d.topMark
-    GyroDisplayColor.LASER_GRID -> d.laserGrid
+    GyroDisplayColor.LASER_GRID -> d.laserGrid && !d.laserRifle
     GyroDisplayColor.LASER_X, GyroDisplayColor.LASER_Y, GyroDisplayColor.LASER_Z -> d.laserAxes
     GyroDisplayColor.LASER_PAINT, GyroDisplayColor.LASER_PAINT_BEHIND -> d.laserDraw
+    GyroDisplayColor.LASER_RIFLE -> d.laserRifle
+    GyroDisplayColor.LASER_SPHERE, GyroDisplayColor.LASER_BEAM, GyroDisplayColor.LASER_DOT -> !d.laserRifle
     else -> true
 }
 

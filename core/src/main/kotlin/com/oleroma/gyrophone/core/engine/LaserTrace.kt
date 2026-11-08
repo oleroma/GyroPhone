@@ -257,6 +257,73 @@ class LaserTrace {
         const val GRID_DEG = 15
         private const val GRID_STEPS = 96
 
+        /**
+         * The rifle look's model in the phone's frame (x right, y up, z toward the player), the muzzle
+         * out of the phone's back as the beam: boxes as centre x, y, z and half sizes, unit radius.
+         */
+        private val RIFLE = floatArrayOf(
+            // stock, buffer tube, receiver, carry rail, handguard, barrel, muzzle, front sight, magazine, grip
+            0f, -0.02f, 0.68f, 0.05f, 0.09f, 0.2f,
+            0f, 0.03f, 0.42f, 0.03f, 0.03f, 0.08f,
+            0f, 0.03f, 0.12f, 0.055f, 0.075f, 0.22f,
+            0f, 0.13f, 0.1f, 0.028f, 0.025f, 0.18f,
+            0f, 0.03f, -0.32f, 0.055f, 0.055f, 0.2f,
+            0f, 0.03f, -0.7f, 0.018f, 0.018f, 0.18f,
+            0f, 0.03f, -0.9f, 0.026f, 0.026f, 0.03f,
+            0f, 0.1f, -0.5f, 0.012f, 0.06f, 0.015f,
+            0f, -0.17f, 0.0f, 0.035f, 0.12f, 0.06f,
+            0f, -0.14f, 0.28f, 0.03f, 0.09f, 0.045f,
+        )
+
+        /** One face of the rifle in the picture: its corners (x, y pairs, unit radius) and how lit it is (0..1). */
+        class Face(val xy: FloatArray, val light: Float, val depth: Float)
+
+        /**
+         * The rifle turned by pose [m], seen as [view] sees it ([axon], [turned]): the faces toward the
+         * viewer, farthest first, lit from above left.
+         */
+        fun rifle(m: FloatArray, axon: Boolean, turned: FloatArray?): List<Face> {
+            val faces = ArrayList<Face>(32)
+            val p = FloatArray(24)
+            val n = FloatArray(3)
+            val lx = -0.35f
+            val ly = 0.6f
+            val lz = 0.72f
+            for (b in 0 until RIFLE.size / 6) {
+                val o = b * 6
+                for (k in 0 until 8) {
+                    val x = RIFLE[o] + (if (k and 1 != 0) RIFLE[o + 3] else -RIFLE[o + 3])
+                    val y = RIFLE[o + 1] + (if (k and 2 != 0) RIFLE[o + 4] else -RIFLE[o + 4])
+                    val z = RIFLE[o + 2] + (if (k and 4 != 0) RIFLE[o + 5] else -RIFLE[o + 5])
+                    view(m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z, p, k * 3, axon, turned)
+                }
+                for (f in 0 until 6) {
+                    val axis = f / 2
+                    val sign = if (f % 2 == 0) -1f else 1f
+                    val nx = if (axis == 0) sign else 0f
+                    val ny = if (axis == 1) sign else 0f
+                    val nz = if (axis == 2) sign else 0f
+                    view(m[0] * nx + m[1] * ny + m[2] * nz, m[3] * nx + m[4] * ny + m[5] * nz, m[6] * nx + m[7] * ny + m[8] * nz, n, 0, axon, turned)
+                    if (n[2] <= 1e-4f) continue
+                    val bit = 1 shl axis
+                    val on = if (sign > 0) bit else 0
+                    // The face's corners, in order round it.
+                    val others = (0..2).filter { it != axis }.map { 1 shl it }
+                    val ring = intArrayOf(0, others[0], others[0] or others[1], others[1]).map { it or on }
+                    val xy = FloatArray(8)
+                    var depth = 0f
+                    for ((i, k) in ring.withIndex()) {
+                        xy[i * 2] = p[k * 3]; xy[i * 2 + 1] = p[k * 3 + 1]
+                        depth += p[k * 3 + 2]
+                    }
+                    val light = (0.45f + 0.55f * (n[0] * lx + n[1] * ly + n[2] * lz).coerceAtLeast(0f)).coerceIn(0f, 1f)
+                    faces.add(Face(xy, light, depth / 4f))
+                }
+            }
+            faces.sortBy { it.depth }
+            return faces
+        }
+
         /** The beam's direction for pose matrix [m] (row-major, phone frame to shown): out of the phone's back. */
         fun beam(m: FloatArray, out: FloatArray) {
             out[0] = -m[2]; out[1] = -m[5]; out[2] = -m[8]
