@@ -36,6 +36,8 @@ public sealed class OverlayFrame
     public byte Axes;
     /// <summary>Ratchet presses so far (wraps at 256): a change is a press.</summary>
     public byte RatchetPresses;
+    /// <summary>Level displays presses so far (wraps at 256): a change levels every overlay shown.</summary>
+    public byte LevelPresses;
     /// <summary>The phone turn (degrees on yaw, pitch, roll) that would send the mouse counts sent since the last OVERLAY by anything but the live gyro (a trackball turns by it).</summary>
     public float CameraYaw, CameraPitch, CameraRoll;
     /// <summary>The game's camera degrees per phone degree on yaw, pitch, roll; 0 = unknown.</summary>
@@ -126,6 +128,7 @@ public sealed class OverlayFrame
         PadFlags = b[136];
         PadL2Pull = b[137] / 255f;
         PadR2Pull = b[138] / 255f;
+        LevelPresses = b[139];
         PadButtons = Le.U32(b, 140);
         for (int i = 0; i < 4; i++) PadSticks[i] = Math.Max(-1f, (sbyte)b[144 + i] / 127f);
     }
@@ -142,6 +145,7 @@ public sealed class OverlayFrame
         o.NorthX = NorthX; o.NorthY = NorthY; o.NorthZ = NorthZ;
         o.Axes = Axes;
         o.RatchetPresses = RatchetPresses;
+        o.LevelPresses = LevelPresses;
         o.CameraYaw = CameraYaw; o.CameraPitch = CameraPitch; o.CameraRoll = CameraRoll;
         o.RwsYaw = RwsYaw; o.RwsPitch = RwsPitch; o.RwsRoll = RwsRoll;
         o.Qw = Qw; o.Qx = Qx; o.Qy = Qy; o.Qz = Qz;

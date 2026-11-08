@@ -35,7 +35,8 @@ public sealed class OverlayPose
     private float _settling = SettleS;
 
     private float _calm;
-    private bool _wasGravity, _wasCompass, _wasTrackball, _started;
+    private bool _wasGravity, _wasCompass, _started;
+    private OverlayTurnsWith _wasTurns;
     private int _lastPresses = -1;
     private float[]? _rest;
 
@@ -71,22 +72,23 @@ public sealed class OverlayPose
     /// <summary>One OVERLAY: turns the pose by its motion with settings <paramref name="s"/>.</summary>
     public void Feed(OverlayFrame f, OverlaySettings s)
     {
-        bool trackball = s.IsTrackball;
-        bool gravity = s.Gravity && !trackball;
+        bool camera = s.FollowsCamera;
+        bool gravity = s.Gravity && !camera;
         bool compass = gravity && s.Compass;
         // Face-on is the Level grip; it is kept only with gravity (without, Level restarts the pose).
         _rest = gravity ? s.Rest : null;
-        if (!_started || gravity != _wasGravity || trackball != _wasTrackball)
+        if (!_started || gravity != _wasGravity || s.TurnsWith != _wasTurns)
         {
             _started = true;
             _wasGravity = gravity;
-            _wasTrackball = trackball;
+            _wasTurns = s.TurnsWith;
             ResetPose();
         }
-        if (trackball)
+        // A trackball never eases back: every roll is a camera move.
+        if (s.IsTrackball)
         {
             _lastPresses = f.RatchetPresses;
-            Trackball(f, s);
+            CameraTurn(f, s);
             return;
         }
         if (compass && !_wasCompass) _aimPending = true;
@@ -116,11 +118,15 @@ public sealed class OverlayPose
         else if (!f.RatchetHeld) _easing = false;
         // While a ratchet is held it eases back until straight (the gyro is paused then).
         if (_easing) EaseAfterPress(s, gravity, wall);
+        // The camera's turn comes even while the gyro is paused (touchpad, buttons...).
+        if (camera) CameraTurn(f, s);
 
         float dt = f.TurnSeconds;
         if (!f.PoseLive || dt <= 0f) return;
         float yaw = f.TurnYaw / dt, pitch = f.TurnPitch / dt, roll = f.TurnRoll / dt;
-        if (gravity) Fuse(yaw, pitch, roll, dt, compass);
+        // Following the camera it already turned above.
+        if (camera) { /* turned by CameraTurn */ }
+        else if (gravity) Fuse(yaw, pitch, roll, dt, compass);
         else if (f.Axes != 0)
         {
             float k = DegToRad * dt;
@@ -161,12 +167,13 @@ public sealed class OverlayPose
     }
 
     /// <summary>
-    /// A trackball: while the gyro moves the mouse it holds still against the world (turns the other
-    /// way); every other mouse move turns it as the gyro turn that would send it.
+    /// Following the camera: the live gyro axes and every other mouse move turn it as the camera turns
+    /// (Camera), or the other way, holding still against the world while the gyro aims (Trackball).
     /// </summary>
-    private void Trackball(OverlayFrame f, OverlaySettings s)
+    private void CameraTurn(OverlayFrame f, OverlaySettings s)
     {
-        float Gain(float rws) => s.TrackballRws ? (rws > 0f ? rws : 1f) : Math.Clamp(s.TrackballSpin, 0.05f, 20f);
+        float sign = s.TurnsWith == OverlayTurnsWith.Camera ? -1f : 1f;
+        float Gain(float rws) => (s.TrackballRws ? (rws > 0f ? rws : 1f) : Math.Clamp(s.TrackballSpin, 0.05f, 20f)) * sign;
         float gy = Gain(f.RwsYaw), gp = Gain(f.RwsPitch), gr = Gain(f.RwsRoll);
         float yaw = f.CameraYaw * gy, pitch = f.CameraPitch * gp, roll = f.CameraRoll * gr;
         if (f.PoseLive)

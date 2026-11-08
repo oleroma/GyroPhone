@@ -176,6 +176,8 @@ public sealed class HostEngine
     private readonly OverlayLayoutAssembler _overlayLayout = new();
     // Each overlay window's pose, by its settings id, turned by every OVERLAY while it is shown.
     private readonly Dictionary<string, OverlayPose> _overlayPoses = [];
+    // The phone's Level displays presses last seen (-1 = none yet: the first count levels nothing).
+    private int _levelPresses = -1;
     private long _overlayRxUs = long.MinValue;
     private long _lastStatusUs;
     private KeyLabels? _keyLabels;
@@ -421,6 +423,11 @@ public sealed class HostEngine
                     if (!_overlayPoses.TryGetValue(o.Id, out var pose)) _overlayPoses[o.Id] = pose = new OverlayPose();
                     pose.Feed(_overlayFrame, o);
                 }
+                // A Level displays mapping on the phone: every overlay shown levels, as its Level button does.
+                if (_levelPresses >= 0 && _overlayFrame.LevelPresses != _levelPresses)
+                    foreach (var o in _settings.Overlays)
+                        if (o.Shown) LevelOverlay(o.Id);
+                _levelPresses = _overlayFrame.LevelPresses;
                 _overlayRxUs = nowUs;
                 break;
             case PacketType.OverlayLayout:
@@ -645,6 +652,7 @@ public sealed class HostEngine
                 // and its press count starts again.
                 _overlayLayout.Renew();
                 foreach (var pose in _overlayPoses.Values) pose.ForgetPresses();
+                _levelPresses = -1;
             }
             else
             {
@@ -653,6 +661,7 @@ public sealed class HostEngine
                 // Nothing of the old phone's overlay or PC controller carries over.
                 _overlayLayout.Reset();
                 _overlayPoses.Clear();
+                _levelPresses = -1;
                 _overlayRxUs = long.MinValue;
                 StopPcPad();
                 _padGyro.Enabled = false;
@@ -1306,6 +1315,7 @@ public sealed class HostEngine
             _overlayOn = on;
             _overlayRxUs = long.MinValue;
             _overlayPoses.Clear();
+            _levelPresses = -1;
             _overlayTotals.Reset();
             if (!on) _overlayLayout.Reset();
             if (_sessions.Active is { } a) SendStatus(a, _clock.NowUs);
@@ -1393,7 +1403,7 @@ public sealed class HostEngine
             var o = _settings.Overlays.Find(x => x.Id == id);
             if (o == null) return;
             _overlayPoses.TryGetValue(id, out var pose);
-            if (o.Gravity && !o.IsTrackball)
+            if (o.Gravity && !o.FollowsCamera)
             {
                 if (pose == null) return;
                 o.Rest = pose.TiltOnly();
@@ -1627,6 +1637,7 @@ public sealed class HostEngine
         _overlayLayout.Reset();
         _overlayRxUs = long.MinValue;
         _overlayPoses.Clear();
+        _levelPresses = -1;
         _overlayTotals.Reset();
         _ds4Motion.Reset();
         _pad.Unplug();

@@ -82,6 +82,7 @@ object Describe {
         OutputTarget.LayerBack -> "Layer back (to the layers before the last change)"
         OutputTarget.LetGo -> "(Let go): ends the toggles set to end on it"
         OutputTarget.BlackScreen -> "Black screen (the phone's screen goes black until tapped)"
+        OutputTarget.LevelDisplays -> "Level displays (gyro displays and PC overlays take the way you hold the phone now as level)"
         OutputTarget.NoOutput -> "Nothing (blocks the layer below)"
         is OutputTarget.GyroSens -> gyroSens(t)
     }
@@ -97,8 +98,8 @@ object Describe {
         OutputTarget.LayerBack, OutputTarget.NoOutput,
     )
 
-    /** The "Other" picker group: (Let go) and Black screen. */
-    val otherTargets: List<OutputTarget> = listOf(OutputTarget.LetGo, OutputTarget.BlackScreen)
+    /** The "Other" picker group: (Let go), Black screen and Level displays. */
+    val otherTargets: List<OutputTarget> = listOf(OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.LevelDisplays)
 
     /** "Layer set", "Layer hold", "Override layer set" or "Override layer hold". */
     fun layer(t: OutputTarget.Layer): String = when {
@@ -188,6 +189,7 @@ object Describe {
         OutputTarget.LayerBack -> "Layer back"
         OutputTarget.LetGo -> "(Let go)"
         OutputTarget.BlackScreen -> "Black screen"
+        OutputTarget.LevelDisplays -> "Level displays"
 
         OutputTarget.NoOutput -> "Nothing"
         is OutputTarget.GyroSens -> "Sens" + if (t.axis == MotionAxis.NONE) "" else " " + t.axis.label.lowercase()

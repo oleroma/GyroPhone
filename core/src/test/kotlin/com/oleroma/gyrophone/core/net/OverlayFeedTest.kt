@@ -97,6 +97,21 @@ class OverlayFeedTest {
         assertEquals(0, out.getI32(140))
     }
 
+    @Test fun levelDisplaysCountsPressesWithOrWithoutAController() {
+        val f = OverlayFeed()
+        val out = ByteArray(Wire.OVERLAY_PLAIN)
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(0, out.getU8(139))
+        f.levelDisplays()
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(1, out.getU8(139))
+        f.padAttached = true
+        repeat(255) { f.levelDisplays() }
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(0, out.getU8(139)) // wraps at 256
+        assertEquals(OverlayFeed.PAD_ATTACHED, out.getU8(136))
+    }
+
     @Test fun overlayOffLetsGoOfControllerAxes() {
         val f = OverlayFeed()
         val out = ByteArray(Wire.OVERLAY_PLAIN)

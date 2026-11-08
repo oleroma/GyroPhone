@@ -189,6 +189,37 @@ public class OverlayTests
     }
 
     [Fact]
+    public void LevelDisplaysPressOnThePhoneLevelsEveryOverlayShown()
+    {
+        var h = new Harness();
+        var tilted = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Shown = true, Gravity = true };
+        var free = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Shown = true, Gravity = false, Rest = [1, 0, 0, 0] };
+        var hidden = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Shown = false, Gravity = false, Rest = [1, 0, 0, 0] };
+        h.Settings.Overlays.AddRange([tilted, free, hidden]);
+        var phone = h.NewPhone();
+        Assert.True(phone.OnWelcome(h.Send(phone, phone.Hello())!));
+        h.Send(phone, phone.State());
+        h.Engine.SetOverlay(true);
+        byte[] Frame(byte levelPresses)
+        {
+            var b = Hex.B(OverlayTests.Frame);
+            b[139] = levelPresses;
+            return b;
+        }
+
+        // The first count seen levels nothing: it may be from before.
+        h.Send(phone, phone.Sealed(PacketType.Overlay, Frame(5)));
+        h.Send(phone, phone.Sealed(PacketType.Overlay, Frame(5)));
+        Assert.Null(tilted.Rest);
+        Assert.NotNull(free.Rest);
+
+        h.Send(phone, phone.Sealed(PacketType.Overlay, Frame(6)));
+        Assert.NotNull(tilted.Rest);
+        Assert.Null(free.Rest);
+        Assert.NotNull(hidden.Rest);
+    }
+
+    [Fact]
     public void OverlayFlagAndDataOnlyWhileOn()
     {
         var h = new Harness();
@@ -328,7 +359,7 @@ public class OverlayTests
     [Fact]
     public void TrackballTurnsAgainstTheGyroAndWithOtherMoves()
     {
-        var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Trackball = true, TrackballRws = false, TrackballSpin = 2f };
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Trackball, TrackballRws = false, TrackballSpin = 2f };
         var p = new GyroPhone.Host.OverlayPose();
         // The gyro turns 10° right while moving the mouse: the ball turns 20° the other way.
         p.Feed(Motion(10f, 0.01f), s);
@@ -341,6 +372,31 @@ public class OverlayTests
     }
 
     [Fact]
+    public void CameraTurnsWithTheGyroOnAnyKindAndIgnoresGravity()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Horizon, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Camera, Gravity = true, Ease = false, TrackballRws = false, TrackballSpin = 2f };
+        var p = new GyroPhone.Host.OverlayPose();
+        p.Feed(Motion(10f, 0.01f), s);
+        Assert.Equal(20f, HeadingDeg(p), 1);
+        Assert.False(s.NeedsCompass);
+    }
+
+    [Fact]
+    public void SavedTrackballSwitchesBecomeTurnsWith()
+    {
+        var t = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Trackball = true };
+        t.MigrateOld();
+        Assert.Equal(GyroPhone.Host.Settings.OverlayTurnsWith.Trackball, t.TurnsWith);
+        Assert.Null(t.Trackball);
+        var c = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Trackball = true, TrackballInvert = true };
+        c.MigrateOld();
+        Assert.Equal(GyroPhone.Host.Settings.OverlayTurnsWith.Camera, c.TurnsWith);
+        var n = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Trackball = false };
+        n.MigrateOld();
+        Assert.Equal(GyroPhone.Host.Settings.OverlayTurnsWith.Phone, n.TurnsWith);
+    }
+
+    [Fact]
     public void EachShownOverlayHasItsOwnPose()
     {
         var h = new Harness();
@@ -350,7 +406,7 @@ public class OverlayTests
         var a = h.Engine.Settings.Overlays[0].Id;
         h.Engine.UpdateOverlaySettings(a, o => { o.Shown = true; o.Gravity = false; o.Ease = false; });
         var b = h.Engine.AddOverlay(GyroPhone.Host.Settings.OverlayKind.Shape);
-        h.Engine.UpdateOverlaySettings(b, o => { o.Trackball = true; o.TrackballRws = false; });
+        h.Engine.UpdateOverlaySettings(b, o => { o.TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Trackball; o.TrackballRws = false; });
         h.Engine.SetOverlay(true);
         var frame = Hex.B(Frame); // 1° yaw, -0.5° pitch, 0.25° roll; axes yaw + pitch
         h.Send(phone, phone.Sealed(PacketType.Overlay, frame));

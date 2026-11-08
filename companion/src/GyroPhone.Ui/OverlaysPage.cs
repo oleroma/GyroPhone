@@ -55,13 +55,18 @@ internal sealed class OverlaysPage : Page
     private readonly List<(string Key, Border Swatch)> _swatches = [];
 
     // Turning
-    private readonly Border _trackballCard, _poseCard;
-    private readonly CheckBox _trackball, _rws;
+    private readonly Border _poseCard;
+    private readonly Seg<OverlayTurnsWith> _turnsWith;
+    private readonly TextBlock _turnsHint;
+    private readonly UIElement _gravityDivider;
+    private readonly CheckBox _rws;
     private readonly SliderRow _spin;
     private readonly CheckBox _gravity, _compass, _ease, _headingOnly;
     private readonly StackPanel _easeOptions;
     private readonly Seg<bool> _easeWhen, _easeBy;
     private readonly SliderRow _delay, _seconds, _speed, _scale;
+    /// <summary>Under Turn amount; both hidden while following the camera, where Spin sets how far it turns.</summary>
+    private readonly UIElement _scaleDivider;
 
     public override FrameworkElement View => _root;
 
@@ -239,17 +244,18 @@ internal sealed class OverlaysPage : Page
         _lookTab.Children.Add(colors);
 
         // Turning tab
-        var (tb, tbb) = Parts.Card("Trackball");
-        _trackball = Parts.Toggle("Trackball", () => Change(o => o.Trackball = !o.Trackball),
-            "Still while the gyro aims; turned by the other mouse moves.");
+        var (tb, tbb) = Parts.Card("Turns with");
+        _turnsWith = new Seg<OverlayTurnsWith>(t => Change(o => o.TurnsWith = t), false,
+            ("Phone", OverlayTurnsWith.Phone), ("Camera", OverlayTurnsWith.Camera), ("Trackball", OverlayTurnsWith.Trackball));
+        _turnsHint = Parts.Text("", "Hint");
         _rws = Parts.Toggle("As far as the game's camera", () => Change(o => o.TrackballRws = !o.TrackballRws));
         _rws.Margin = new Thickness(20, 5, 0, 5);
         _spin = new SliderRow("Spin", 0.1, 10, 0.1, v => $"× {v:0.0}", v => Change(o => o.TrackballSpin = (float)v));
         _spin.View.Margin = new Thickness(20, 4, 0, 4);
-        tbb.Children.Add(_trackball);
+        tbb.Children.Add(_turnsWith.View);
+        tbb.Children.Add(_turnsHint);
         tbb.Children.Add(_rws);
         tbb.Children.Add(_spin.View);
-        _trackballCard = tb;
         _turnTab.Children.Add(tb);
 
         var (pose, pob) = Parts.Card("Pose");
@@ -259,7 +265,8 @@ internal sealed class OverlaysPage : Page
         _ease = Parts.Toggle("Ease back to straight", () => Change(o => o.Ease = !o.Ease));
         pob.Children.Add(_gravity);
         pob.Children.Add(_compass);
-        pob.Children.Add(Parts.Divider());
+        _gravityDivider = Parts.Divider();
+        pob.Children.Add(_gravityDivider);
         pob.Children.Add(_ease);
         _easeOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
         _easeWhen = new Seg<bool>(r => Change(o => o.EaseOnRatchet = r), false, ("On ratchet", true), ("When the phone stops", false));
@@ -282,7 +289,8 @@ internal sealed class OverlaysPage : Page
         var (amount, ab) = Parts.Card("Amount");
         _scale = new SliderRow("Turn amount", 0.5, 3, 0.1, v => $"× {v:0.0}", v => Change(o => o.MotionScale = (float)v));
         ab.Children.Add(_scale.View);
-        ab.Children.Add(Parts.Divider());
+        _scaleDivider = Parts.Divider();
+        ab.Children.Add(_scaleDivider);
         ab.Children.Add(Parts.Text("Hold the phone the way you play and press Level: held that way, it shows face-on, its screen flat toward you.", "Hint"));
         ab.Children.Add(Parts.Button("Level", () => { if (Picked is { } id) _app.LevelOverlay(id); }, glyph: ""));
         _turnTab.Children.Add(amount);
@@ -421,7 +429,7 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_subdivision.View, o.Shape == OverlayShape.Icosphere);
         _subdivision.Set(o.Subdivision);
         Parts.SetChecked(_smooth, o.Smooth);
-        Parts.Show(_smooth, o.Shape is not (OverlayShape.Plane or OverlayShape.Tetrahedron));
+        Parts.Show(_smooth, o.Shape is not (OverlayShape.Plane or OverlayShape.Tetrahedron or OverlayShape.Camera));
         Parts.SetChecked(_hiddenEdges, o.HiddenEdges);
         Parts.SetChecked(_fillFaces, o.FillFaces);
         Parts.Show(_fillFaces, o.Shape != OverlayShape.Gimbal);
@@ -433,19 +441,27 @@ internal sealed class OverlaysPage : Page
         Parts.SetChecked(_crosshair, o.Crosshair);
         ShowColors(o);
 
-        Parts.Show(_trackballCard, o.Kind == OverlayKind.Shape);
-        Parts.SetChecked(_trackball, o.Trackball);
+        _turnsWith.Set(o.TurnsWith);
+        _turnsHint.Text = o.TurnsWith switch
+        {
+            OverlayTurnsWith.Camera => "Where the game's camera points: it turns with the gyro and every other camera move (touchpad, buttons, controllers, keys). A ratchet stops it, as it stops the camera.",
+            OverlayTurnsWith.Trackball => "Like a ball under your hand: still against the world while the gyro aims, so it rolls the other way; every other camera move rolls it too.",
+            _ => "How you hold the phone.",
+        };
         Parts.SetChecked(_rws, o.TrackballRws);
-        Parts.Show(_rws, o.Trackball);
+        Parts.Show(_rws, o.FollowsCamera);
         _spin.Set(o.TrackballSpin);
-        Parts.Show(_spin.View, o.Trackball && !o.TrackballRws);
+        Parts.Show(_spin.View, o.FollowsCamera && !o.TrackballRws);
+        // A trackball never eases back: every roll is a camera move. Following the camera: no gravity or compass.
         Parts.Show(_poseCard, !o.IsTrackball);
+        Parts.Show(_gravity, !o.FollowsCamera);
+        Parts.Show(_gravityDivider, !o.FollowsCamera);
         Parts.SetChecked(_gravity, o.Gravity);
         Parts.SetChecked(_compass, o.Compass);
-        Parts.Show(_compass, o.Gravity);
+        Parts.Show(_compass, o.Gravity && !o.FollowsCamera);
         // With gravity only the heading eases back.
         Parts.SetChecked(_headingOnly, o.EaseHeadingOnly);
-        Parts.Show(_headingOnly, !o.Gravity);
+        Parts.Show(_headingOnly, !o.Gravity || o.FollowsCamera);
         Parts.SetChecked(_ease, o.Ease);
         _ease.IsEnabled = !o.NeedsCompass;
         Parts.Show(_easeOptions, o.Ease && !o.NeedsCompass);
@@ -457,6 +473,8 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_seconds.View, !o.EaseBySpeed);
         Parts.Show(_speed.View, o.EaseBySpeed);
         _scale.Set(o.MotionScale);
+        Parts.Show(_scale.View, !o.FollowsCamera);
+        Parts.Show(_scaleDivider, !o.FollowsCamera);
     }
 
     /// <summary>One swatch per colour the picked window's kind (and shape) draws with; a click opens Windows' colour picker.</summary>

@@ -50,6 +50,12 @@ class GyroPose {
     /** Seconds of [fuse] left that pull hard toward gravity: a fresh pose settles at once. */
     private var settling = SETTLE_S
 
+    /**
+     * The resting grip (w, x, y, z; null = upright, facing the player) the heading is measured from
+     * ([headingFrom]): the heading eases back, and the compass aims, to the way the screen faces in it.
+     */
+    @Volatile var rest: FloatArray? = null
+
     @Synchronized
     fun reset() {
         w = 1f; x = 0f; y = 0f; z = 0f
@@ -126,7 +132,7 @@ class GyroPose {
                     // Turning the heading by t takes both it and a down by t: a - heading is where
                     // north lies at heading 0. Then the heading goes straight to 0.
                     if (settled) {
-                        val h = heading()
+                        val h = headingFrom(rest)
                         northAt = a - h
                         turnVertical(h)
                         aimPending = false
@@ -136,18 +142,87 @@ class GyroPose {
                 }
             }
         } else if (easeSeconds > 0f) {
-            turnVertical(heading() * (dtSeconds / easeSeconds).coerceAtMost(1f))
+            turnVertical(headingFrom(rest) * (dtSeconds / easeSeconds).coerceAtMost(1f))
         }
         version++
     }
 
-    /** The heading in radians (right +): the right edge's angle round the vertical, 0 while that edge points up or down. */
+    /** The heading in radians (right +) from upright facing the player: see [headingFrom]. */
     @Synchronized
-    fun heading(): Float {
-        val rx = 1 - 2 * (y * y + z * z)
-        val rz = 2 * (x * z - w * y)
-        // Turning right brings the right edge toward the player (+z).
-        return if (rx * rx + rz * rz > 0.04f) atan2(rz, rx) else 0f
+    fun heading(): Float = headingFrom(null)
+
+    /**
+     * The turn round the vertical (radians, right +) from the way the screen faces in the resting
+     * grip [rest] (w, x, y, z; null = upright, facing the player): [turnHeading] by minus it brings
+     * the screen back to face that way. Measured by where the screen faces, so a turn about the
+     * screen's own axis is left alone; when the screen (now or at rest) faces nearly up or down,
+     * the phone's edges take over, smoothly, so there are no jumps or flips. As the PC overlays'.
+     */
+    @Synchronized
+    fun headingFrom(rest: FloatArray?): Float {
+        var rw = 1f
+        var rx = 0f
+        var ry = 0f
+        var rz = 0f
+        if (rest != null && rest.size == 4) {
+            rw = rest[0]; rx = rest[1]; ry = rest[2]; rz = rest[3]
+        }
+        // The phone's axes in the world, now (a) and at rest (b): screen normal, top edge, right edge.
+        val anx = 2 * (x * z + w * y)
+        val anz = 1 - 2 * (x * x + y * y)
+        val bnx = 2 * (rx * rz + rw * ry)
+        val bnz = 1 - 2 * (rx * rx + ry * ry)
+        var sn = bnx * anz - bnz * anx
+        var cn = bnx * anx + bnz * anz
+        val m = sqrt(sn * sn + cn * cn)
+        val k = (1f - m / EDGES_BELOW).coerceAtLeast(0f)
+        if (k > 0f) {
+            val aux = 2 * (x * y - w * z)
+            val auz = 2 * (y * z + w * x)
+            val bux = 2 * (rx * ry - rw * rz)
+            val buz = 2 * (ry * rz + rw * rx)
+            val arx = 1 - 2 * (y * y + z * z)
+            val arz = 2 * (x * z - w * y)
+            val brx = 1 - 2 * (ry * ry + rz * rz)
+            val brz = 2 * (rx * rz - rw * ry)
+            sn += k * (bux * auz - buz * aux + brx * arz - brz * arx)
+            cn += k * (bux * aux + buz * auz + brx * arx + brz * arz)
+        }
+        if (sn * sn + cn * cn < 1e-8f) return 0f
+        return atan2(sn, cn)
+    }
+
+    /** How far (radians) the whole pose is turned from straight. */
+    @Synchronized
+    fun angle(): Float = 2 * acos(abs(w).coerceAtMost(1f))
+
+    /** Exactly straight, keeping what the sensors last said (unlike [reset]). */
+    @Synchronized
+    fun straighten() {
+        w = 1f; x = 0f; y = 0f; z = 0f
+        version++
+    }
+
+    /**
+     * The pose with its turn round the vertical taken out (w, x, y, z): only how it is tilted against
+     * gravity. That turn is the twist of the whole pose about the vertical, so tipping forward or back
+     * never counts, however far.
+     */
+    @Synchronized
+    fun tiltOnly(): FloatArray {
+        val a = if (y * y + w * w > 1e-8f) -2f * atan2(y, w) else 0f
+        val bw = cos(a / 2)
+        val by = sin(a / 2)
+        val q = floatArrayOf(bw * w - by * y, bw * x + by * z, bw * y + by * w, bw * z - by * x)
+        val n = 1f / sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3])
+        for (i in 0..3) q[i] *= n
+        return q
+    }
+
+    /** The rotation as a quaternion (w, x, y, z) into [out]. */
+    @Synchronized
+    fun quaternion(out: FloatArray) {
+        out[0] = w; out[1] = x; out[2] = y; out[3] = z
     }
 
     /** Turns the heading by [a] radians (right +), about the world's vertical. */
@@ -164,7 +239,7 @@ class GyroPose {
      */
     @Synchronized
     fun easeHeading(bySpeed: Boolean, amount: Float) {
-        val h = heading()
+        val h = headingFrom(rest)
         if (h == 0f) return
         turnHeading(eased(abs(h), bySpeed, amount) * (if (h < 0f) -1f else 1f) - h)
     }
@@ -279,20 +354,41 @@ class GyroPose {
         out[6] = 2 * (x * z - w * y); out[7] = 2 * (y * z + w * x); out[8] = 1 - 2 * (x * x + y * y)
     }
 
-    private companion object {
-        const val DEG_TO_RAD = (Math.PI / 180).toFloat()
-        const val PI = Math.PI.toFloat()
-        const val TWO_PI = (2 * Math.PI).toFloat()
+    companion object {
+        /**
+         * The resting grip held to gravity from an accelerometer reading ([setUp]'s frame, any unit):
+         * the turn (w, x, y, z) that tips that up onto the view's up with no turn round the vertical,
+         * as [tiltOnly] of a pose held that way. Null with no reading.
+         */
+        fun tiltFromUp(ax: Float, ay: Float, az: Float): FloatArray? {
+            val l = sqrt(ax * ax + ay * ay + az * az)
+            if (!(l > 0f)) return null
+            val x = ax / l
+            val y = ay / l
+            val z = az / l
+            // Shortest turn from up to (0, 1, 0): its axis up × (0, 1, 0) lies flat, so it has no turn round the vertical.
+            val w = 1f + y
+            if (w < 1e-4f) return floatArrayOf(0f, 1f, 0f, 0f) // upside down: half a turn about the right edge
+            val n = 1f / sqrt(w * w + z * z + x * x)
+            return floatArrayOf(w * n, -z * n, 0f, x * n)
+        }
+
+        private const val DEG_TO_RAD = (Math.PI / 180).toFloat()
+        private const val PI = Math.PI.toFloat()
+        private const val TWO_PI = (2 * Math.PI).toFloat()
 
         /** Pull toward gravity (rad/s per unit of error): slow enough to ride out hand shake. */
-        const val KP = 1.5f
-        const val KP_SETTLE = 20f
+        private const val KP = 1.5f
+        private const val KP_SETTLE = 20f
 
         /** Pull toward north (rad/s per radian off): slow, as the magnetometer is noisy. */
-        const val KC = 1f
-        const val SETTLE_S = 0.3f
+        private const val KC = 1f
+        private const val SETTLE_S = 0.3f
 
         /** How far from 1 g a reading may be and still count as gravity. */
-        const val G_SLACK = 0.15f
+        private const val G_SLACK = 0.15f
+
+        /** Below this much (screen sideways, now times at rest) the edges help find the heading. */
+        private const val EDGES_BELOW = 0.5f
     }
 }

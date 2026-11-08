@@ -346,6 +346,72 @@ class GamepadRuntime(context: Context) {
         if (!same || sensors != (needsGravity to needsCompass)) synchronized(this) { updateMotion() }
     }
 
+    /**
+     * Gravity now, for a gyro display's Level (the sensors may be off, as in edit mode): a few
+     * accelerometer readings averaged, as "up" in the phone's frame (right, up, toward the player),
+     * given to [onUp] on the main thread; null when there is none within a second.
+     */
+    fun readUp(onUp: (FloatArray?) -> Unit) {
+        val source = appContext.getSystemService(SensorManager::class.java)?.let { AccelSource(it) }
+        val done = java.util.concurrent.atomic.AtomicBoolean(false)
+        val sum = FloatArray(3)
+        var n = 0
+        fun finish(up: FloatArray?) {
+            source?.stop()
+            onUp(up)
+        }
+        val started = source?.start { x, y, z, _ ->
+            if (done.get()) return@start
+            val m = gyroMouse.motion(x, y, z)
+            sum[0] += m.pitch; sum[1] += -m.yaw; sum[2] += -m.roll
+            if (++n >= 8 && done.compareAndSet(false, true)) {
+                val up = sum.copyOf()
+                main.post { finish(up) }
+            }
+        } ?: false
+        if (!started) {
+            onUp(null)
+            return
+        }
+        main.postDelayed({ if (done.compareAndSet(false, true)) finish(null) }, 1000)
+    }
+
+    /**
+     * A Level displays mapping fired (main thread): every 3D gyro display on the pad and every PC
+     * overlay takes the way the phone is held now as level, as each one's Level button does. With
+     * gravity that tilt is saved as the display's resting grip; without, its pose starts again from
+     * straight. The saved grips change only the workspace's displays: nothing held is let go.
+     */
+    private fun levelDisplays() {
+        wifi.overlay.levelDisplays()
+        val rests = HashMap<String, List<Float>?>()
+        for (f in gyroFeeds) {
+            val d = f.display
+            if (!d.kind.pose) continue
+            val rest = if (d.needsGravity) f.pose.tiltOnly().toList() else null
+            if (rest == null) f.restart()
+            f.display = d.copy(rest = rest)
+            if (d.rest != rest) rests[f.id] = rest
+        }
+        if (rests.isEmpty()) return
+        val before = _activeProfile.value
+        val index = _workspaceIndex.value
+        fun level(c: TouchControl): TouchControl {
+            val d = c.display ?: return c
+            return if (c.id in rests) c.copy(display = d.copy(rest = rests[c.id])) else c
+        }
+        val changed = before.updateWorkspace(index) { w -> w.copy(touchControls = w.touchControls.map(::level)) }
+            .let { it.copy(corners = it.corners.map(::level)) }
+        if (changed == before) return
+        // Saved like editActiveProfile, but the engine keeps its profile: a display's grip is no mapping.
+        val set = WorkspaceMappings.store(WorkspaceMappings.settle(before, changed))
+        if (set != stored) {
+            stored = set
+            store.saveLater(set)
+        }
+        _activeProfile.value = WorkspaceMappings.resolve(stored)
+    }
+
     /** Some gyro display holds its pose to gravity (and so needs the accelerometer). */
     private val needsGravity: Boolean get() = vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity } || wifi.overlay.wanted ||
         _activeProfile.value.workspace(_workspaceIndex.value).gyro.gyroSpace != GyroSpace.LOCAL
@@ -582,6 +648,7 @@ class GamepadRuntime(context: Context) {
         engine.hapticSink = haptics
         // Inside the engine lock: only bump the counter the pad watches.
         engine.onBlackScreen = Runnable { _blackScreenRequests.update { it + 1 } }
+        engine.onLevelDisplays = Runnable { main.post { levelDisplays() } }
         // Every other mouse count turns a trackball 3D shape too, as the camera turns.
         engine.cameraSink = { dx, dy ->
             val overlay = wifi.overlay
@@ -590,7 +657,7 @@ class GamepadRuntime(context: Context) {
                 overlay.camera(deg[0], deg[1], deg[2])
             }
             val feeds = gyroFeeds
-            if (feeds.any { it.display.isTrackball }) {
+            if (feeds.any { it.display.followsCamera }) {
                 val routes = engine.gyroRoutes()
                 val gs = engine.gyroSettings
                 for (f in feeds) f.camera(dx, dy, routes, gs)

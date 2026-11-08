@@ -144,24 +144,35 @@ class GyroDisplayTest {
         assertEquals(true, com.oleroma.gyrophone.core.model.Bindings.touchInputs(c).isEmpty())
     }
 
-    @Test fun ratchetPressResetsTheGyroPhoneOnlyWhenSetTo() {
+    @Test fun ratchetHeldEasesTheGyroPhoneBackOnlyWhenSetTo() {
         val kind = com.oleroma.gyrophone.core.model.GyroDisplayKind.PHONE
-        val on = com.oleroma.gyrophone.core.engine.GyroDisplayFeed("a", com.oleroma.gyrophone.core.model.GyroDisplay(kind))
-        val off = com.oleroma.gyrophone.core.engine.GyroDisplayFeed("b", com.oleroma.gyrophone.core.model.GyroDisplay(kind, resetOnRatchet = false))
+        val on = com.oleroma.gyrophone.core.engine.GyroDisplayFeed("a", com.oleroma.gyrophone.core.model.GyroDisplay(kind, ease = true, easeDelayMs = 0))
+        val off = com.oleroma.gyrophone.core.engine.GyroDisplayFeed("b", com.oleroma.gyrophone.core.model.GyroDisplay(kind, ease = false))
         val m = FloatArray(9)
         for (f in listOf(on, off)) {
             repeat(100) { f.feed(90f, 0f, 0f, 0.01f, 7, pressed = false, held = false) }
-            f.feed(0f, 0f, 0f, 0.01f, 7, pressed = true, held = true)
+            f.feed(0f, 0f, 0f, 0.01f, 0, pressed = true, held = true)
+            repeat(200) { f.feed(0f, 0f, 0f, 0.01f, 0, pressed = false, held = true) }
         }
-        on.pose.matrix(m); assertEquals(1f, m[8], 1e-4f)
-        off.pose.matrix(m); assertEquals(0f, m[8], 1e-2f)
+        on.pose.matrix(m); assertEquals(1f, m[0], 1e-4f)
+        off.pose.matrix(m); assertEquals(0f, m[0], 1e-2f)
+    }
+
+    @Test fun easingOnRatchetStopsWhenLetGo() {
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, ease = true, easeDelayMs = 0, easeBySpeed = true, easeSpeed = 90))
+        repeat(100) { f.feed(90f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // 90° yaw
+        f.feed(0f, 0f, 0f, 0.01f, 0, pressed = true, held = true)
+        repeat(49) { f.feed(0f, 0f, 0f, 0.01f, 0, pressed = false, held = true) } // half a second at 90°/s: 45° back
+        assertEquals(45f, Math.toDegrees(f.pose.heading().toDouble()).toFloat(), 1.5f)
+        repeat(100) { f.feed(0f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // let go: stays
+        assertEquals(45f, Math.toDegrees(f.pose.heading().toDouble()).toFloat(), 1.5f)
     }
 
     private fun feed(d: com.oleroma.gyrophone.core.model.GyroDisplay) = com.oleroma.gyrophone.core.engine.GyroDisplayFeed("f", d)
     private val ball = com.oleroma.gyrophone.core.model.GyroDisplayKind.BALL
 
     @Test fun easesBackOnceStillAfterTheDelay() {
-        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, ease = true, easeDelayMs = 200, easeSeconds = 0.5f))
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, ease = true, easeOnRatchet = false, easeDelayMs = 200, easeSeconds = 0.5f))
         val m = FloatArray(9)
         repeat(50) { f.feed(0f, 90f, 0f, 0.01f, 7, pressed = false, held = false) } // 45° pitch
         repeat(10) { f.feed(0f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // still, inside the delay
@@ -170,21 +181,50 @@ class GyroDisplayTest {
         f.pose.matrix(m); assertEquals(1f, m[8], 1e-3f)
     }
 
-    @Test fun easesBackBySpeedAfterTheRatchetIsLetGo() {
-        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, ease = true, easeAfterRatchet = true, easeDelayMs = 0, easeBySpeed = true, easeSpeed = 90))
-        val m = FloatArray(9)
-        repeat(100) { f.feed(90f, 0f, 0f, 0.01f, 7, pressed = false, held = true) } // 90° yaw, held
-        f.pose.matrix(m); assertEquals(0f, m[0], 1e-2f)
-        repeat(50) { f.feed(0f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // half a second at 90°/s: 45° back
-        assertEquals(45f, Math.toDegrees(f.pose.heading().toDouble()).toFloat(), 1f)
+    @Test fun headingOnlyEaseKeepsTheTilt() {
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, ease = true, easeHeadingOnly = true, easeDelayMs = 0, easeSeconds = 0.1f))
+        repeat(50) { f.feed(60f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // 30° right
+        repeat(20) { f.feed(0f, 40f, 0f, 0.01f, 7, pressed = false, held = false) } // 8° up
+        assertEquals(30f, Math.toDegrees(f.pose.heading().toDouble()).toFloat(), 1f)
+        f.feed(0f, 0f, 0f, 0.01f, 0, pressed = true, held = true)
+        repeat(100) { f.feed(0f, 0f, 0f, 0.01f, 0, pressed = false, held = true) }
+        assertEquals(0f, f.pose.heading(), 1e-3f)
+        // Still tipped up: not straight.
+        assertEquals(8f, Math.toDegrees(f.pose.angle().toDouble()).toFloat(), 1f)
     }
 
-    @Test fun headingOnlyResetKeepsTheTilt() {
-        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, resetHeadingOnly = true))
-        repeat(50) { f.feed(60f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // 30° right
-        assertEquals(30f, Math.toDegrees(f.pose.heading().toDouble()).toFloat(), 0.5f)
-        f.feed(0f, 0f, 0f, 0.01f, 7, pressed = true, held = true)
-        assertEquals(0f, f.pose.heading(), 1e-3f)
+    @Test fun oldSettingsCarryOverAsThePcOverlaysDid() {
+        val old = com.oleroma.gyrophone.core.model.GyroDisplay(ball, resetOnRatchet = true, resetHeadingOnly = true, levelDeg = 90).migrated()
+        assertEquals(com.oleroma.gyrophone.core.model.GyroDisplay.VERSION, old.v)
+        assertEquals(true, old.ease)
+        assertEquals(true, old.easeOnRatchet)
+        assertEquals(true, old.easeHeadingOnly)
+        assertEquals(0.707f, old.rest!![0], 1e-3f)
+        assertEquals(-0.707f, old.rest!![1], 1e-3f)
+        val noReset = com.oleroma.gyrophone.core.model.GyroDisplay(ball, resetOnRatchet = false, ease = true, easeAfterRatchet = true).migrated()
+        assertEquals(true, noReset.ease)
+        assertEquals(false, noReset.easeOnRatchet)
+        assertEquals(null, noReset.rest)
+        val off = com.oleroma.gyrophone.core.model.GyroDisplay(ball, resetOnRatchet = false).migrated()
+        assertEquals(false, off.ease)
+        // A new one is current and keeps its own settings.
+        val n = com.oleroma.gyrophone.core.model.GyroDisplay.create(ball)
+        assertEquals(n, n.migrated())
+        assertEquals(true, n.gravity)
+    }
+
+    @Test fun levelledFlatShowsFaceOn() {
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay.create(ball).copy(ease = false))
+        // Held flat, screen up.
+        repeat(300) { f.up(0f, 0f, 9.8f, 9.8f); f.feed(0f, 0f, 0f, 0.01f, 7, pressed = false, held = false) }
+        val m = FloatArray(9)
+        f.shown(m); assertEquals(0f, m[8], 0.05f)
+        val rest = com.oleroma.gyrophone.core.engine.GyroPose.tiltFromUp(0f, 0f, 9.8f)!!
+        val tilt = f.pose.tiltOnly()
+        for (i in 0..3) assertEquals(tilt[i], rest[i], 1e-2f)
+        f.display = f.display.copy(rest = rest.toList())
+        repeat(2) { f.up(0f, 0f, 9.8f, 9.8f); f.feed(0f, 0f, 0f, 0.01f, 7, pressed = false, held = false) }
+        f.shown(m); assertEquals(1f, m[8], 1e-3f)
     }
 
     @Test fun compassHoldsTheHeadingWhereItStartedNotNorth() {
@@ -214,7 +254,7 @@ class GyroDisplayTest {
     }
 
     @Test fun compassRatchetResetAimsWhereThePhoneFaces() {
-        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, gravity = true, compass = true, resetOnRatchet = true))
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, gravity = true, compass = true))
         fun sample(nx: Float, nz: Float, pressed: Boolean = false) {
             f.up(0f, 9.8f, 0f, 9.8f)
             f.north(nx, -40f, nz)
@@ -230,8 +270,37 @@ class GyroDisplayTest {
         assertEquals(0f, Math.toDegrees(f.pose.heading().toDouble()).toFloat(), 1f)
     }
 
+    @Test fun cameraTurnsWithThePhone() {
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.CAMERA))
+        val m = FloatArray(9)
+        repeat(50) { f.feed(60f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // phone 30° right
+        // Turned 30° the same way, as the camera: its right side came forward.
+        f.pose.matrix(m); assertEquals(0.5f, m[6], 1e-3f)
+    }
+
+    @Test fun cameraOnAnyPoseDisplayEasesBackOnRatchet() {
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(com.oleroma.gyrophone.core.model.GyroDisplayKind.HORIZON,
+            turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.CAMERA, gravity = true, ease = true, easeDelayMs = 0, easeSeconds = 0.2f))
+        val m = FloatArray(9)
+        repeat(50) { f.feed(60f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // camera 30° right
+        f.pose.matrix(m); assertEquals(0.5f, m[6], 1e-3f) // gravity is ignored: no accelerometer needed
+        assertEquals(false, f.display.needsGravity)
+        f.feed(0f, 0f, 0f, 0.01f, 0, pressed = true, held = true)
+        repeat(100) { f.feed(0f, 0f, 0f, 0.01f, 0, pressed = false, held = true) }
+        f.pose.matrix(m); assertEquals(1f, m[0], 1e-4f)
+    }
+
+    @Test fun savedTrackballsCarryOver() {
+        val G = com.oleroma.gyrophone.core.model.GyroDisplay
+        assertEquals(com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL, com.oleroma.gyrophone.core.model.GyroDisplay(ball, trackball = true).migrated().turnsWith)
+        assertEquals(com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL, com.oleroma.gyrophone.core.model.GyroDisplay(ball, v = 2, trackball = true).migrated().turnsWith)
+        assertEquals(com.oleroma.gyrophone.core.model.TurnsWith.CAMERA, com.oleroma.gyrophone.core.model.GyroDisplay(ball, v = 2, trackball = true, trackballInvert = true).migrated().turnsWith)
+        assertEquals(com.oleroma.gyrophone.core.model.TurnsWith.PHONE, com.oleroma.gyrophone.core.model.GyroDisplay(ball, v = 2).migrated().turnsWith)
+        assertEquals(G.VERSION, com.oleroma.gyrophone.core.model.GyroDisplay(ball, v = 2).migrated().v)
+    }
+
     @Test fun trackballHoldsStillAgainstTheWorldUntilARatchetStopsIt() {
-        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, trackball = true))
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL))
         val m = FloatArray(9)
         repeat(50) { f.feed(60f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // phone 30° right
         // The ball turned 30° the other way: its right side went back.
@@ -242,7 +311,7 @@ class GyroDisplayTest {
     }
 
     @Test fun trackballTurnsWithOtherMouseCountsExactlyAsTheGameCamera() {
-        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, trackball = true))
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL))
         val g = com.oleroma.gyrophone.core.model.GyroSettings(gameCountsPer360 = 8000f)
         val routes = com.oleroma.gyrophone.core.model.Bindings.gyroMouseMappings()
         val m = FloatArray(9)
@@ -251,7 +320,7 @@ class GyroDisplayTest {
         f.pose.matrix(m); assertArrayEquals(floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f), m, 1e-3f)
         // A quarter turn more: as far as a quarter of the gyro's roll would turn it.
         f.camera(2000, 0, routes, g)
-        val turned = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, trackball = true))
+        val turned = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL))
         val rws = g.rwsOf(g.sensitivityOf(com.oleroma.gyrophone.core.model.MotionAxis.ROLL))!!
         repeat(100) { turned.feed(0f, 0f, 90f / rws, 0.01f, 7, pressed = false, held = false, gyro = g) }
         val m2 = FloatArray(9)
@@ -261,7 +330,7 @@ class GyroDisplayTest {
     }
 
     @Test fun trackballWithoutRwsSpinsOtherCountsAsTheGyro() {
-        val d = com.oleroma.gyrophone.core.model.GyroDisplay(ball, trackball = true, trackballRws = false, trackballSpin = 2f)
+        val d = com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL, trackballRws = false, trackballSpin = 2f)
         val f = feed(d)
         val g = com.oleroma.gyrophone.core.model.GyroSettings(gameCountsPer360 = 8000f)
         val pitch = g.sensitivityOf(com.oleroma.gyrophone.core.model.MotionAxis.PITCH)

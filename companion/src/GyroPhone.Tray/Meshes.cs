@@ -150,6 +150,7 @@ internal static class Meshes
             OverlayShape.Tetrahedron => Tetrahedron(),
             OverlayShape.Dodecahedron => Dodecahedron(),
             OverlayShape.Torus => smooth ? Torus(28, 14) : Torus(12, 6),
+            OverlayShape.Camera => Camera(),
             _ => Plane(),
         };
         Cache[key] = m;
@@ -316,6 +317,51 @@ internal static class Meshes
             double a = 2 * Math.PI * (k / w + 0.5) / u, b = 2 * Math.PI * (k % w + 0.5) / w;
             return [(float)(Math.Cos(b) * Math.Cos(a)), (float)Math.Sin(b), (float)(Math.Cos(b) * Math.Sin(a))];
         });
+    }
+
+    /// <summary>
+    /// A camera seen from behind: a body, a lens pointing away from the viewer (into the screen,
+    /// where the camera looks) and a viewfinder on top, left. As the phone's.
+    /// </summary>
+    private static Mesh Camera()
+    {
+        var v = new List<float>();
+        var faces = new List<int[]>();
+        var normals = new List<float[]>();
+        void Box(float x0, float x1, float y0, float y1, float z0, float z1)
+        {
+            int b = v.Count / 3;
+            foreach (var x in new[] { x0, x1 }) foreach (var y in new[] { y0, y1 }) foreach (var z in new[] { z0, z1 }) { v.Add(x); v.Add(y); v.Add(z); }
+            int At(int x, int y, int z) => b + x * 4 + y * 2 + z;
+            faces.Add([At(0, 0, 0), At(0, 1, 0), At(0, 1, 1), At(0, 0, 1)]); normals.Add([-1f, 0f, 0f]);
+            faces.Add([At(1, 0, 0), At(1, 0, 1), At(1, 1, 1), At(1, 1, 0)]); normals.Add([1f, 0f, 0f]);
+            faces.Add([At(0, 0, 0), At(0, 0, 1), At(1, 0, 1), At(1, 0, 0)]); normals.Add([0f, -1f, 0f]);
+            faces.Add([At(0, 1, 0), At(1, 1, 0), At(1, 1, 1), At(0, 1, 1)]); normals.Add([0f, 1f, 0f]);
+            faces.Add([At(0, 0, 0), At(1, 0, 0), At(1, 1, 0), At(0, 1, 0)]); normals.Add([0f, 0f, -1f]);
+            faces.Add([At(0, 0, 1), At(0, 1, 1), At(1, 1, 1), At(1, 0, 1)]); normals.Add([0f, 0f, 1f]);
+        }
+        Box(-0.75f, 0.75f, -0.45f, 0.45f, -0.2f, 0.45f);
+        Box(-0.55f, -0.2f, 0.45f, 0.62f, 0f, 0.35f);
+        const int n = 12;
+        const double r = 0.32;
+        int b = v.Count / 3;
+        for (int i = 0; i < n; i++)
+        {
+            double a = 2 * Math.PI * i / n;
+            float x = (float)(r * Math.Cos(a)), y = (float)(r * Math.Sin(a));
+            v.Add(x); v.Add(y); v.Add(-0.2f);
+            v.Add(x); v.Add(y); v.Add(-0.75f);
+        }
+        for (int i = 0; i < n; i++)
+        {
+            int j = (i + 1) % n;
+            faces.Add([b + 2 * i, b + 2 * j, b + 2 * j + 1, b + 2 * i + 1]);
+            double a = 2 * Math.PI * (i + 0.5) / n;
+            normals.Add([(float)Math.Cos(a), (float)Math.Sin(a), 0f]);
+        }
+        faces.Add(Enumerable.Range(0, n).Select(k => b + 2 * (n - 1 - k) + 1).ToArray());
+        normals.Add([0f, 0f, -1f]);
+        return new Mesh(v.ToArray(), faces.ToArray(), convex: false, normalsOf: k => normals[k]);
     }
 
     /// <summary>A paper plane, nose up, wings spread across, keel behind (away from the screen).</summary>
