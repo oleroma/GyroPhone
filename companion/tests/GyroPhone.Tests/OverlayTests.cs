@@ -189,6 +189,37 @@ public class OverlayTests
     }
 
     [Fact]
+    public void LevelDisplaysPressOnThePhoneLevelsEveryOverlayShown()
+    {
+        var h = new Harness();
+        var tilted = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Shown = true, Gravity = true };
+        var free = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Shown = true, Gravity = false, Rest = [1, 0, 0, 0] };
+        var hidden = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Shown = false, Gravity = false, Rest = [1, 0, 0, 0] };
+        h.Settings.Overlays.AddRange([tilted, free, hidden]);
+        var phone = h.NewPhone();
+        Assert.True(phone.OnWelcome(h.Send(phone, phone.Hello())!));
+        h.Send(phone, phone.State());
+        h.Engine.SetOverlay(true);
+        byte[] Frame(byte levelPresses)
+        {
+            var b = Hex.B(OverlayTests.Frame);
+            b[139] = levelPresses;
+            return b;
+        }
+
+        // The first count seen levels nothing: it may be from before.
+        h.Send(phone, phone.Sealed(PacketType.Overlay, Frame(5)));
+        h.Send(phone, phone.Sealed(PacketType.Overlay, Frame(5)));
+        Assert.Null(tilted.Rest);
+        Assert.NotNull(free.Rest);
+
+        h.Send(phone, phone.Sealed(PacketType.Overlay, Frame(6)));
+        Assert.NotNull(tilted.Rest);
+        Assert.Null(free.Rest);
+        Assert.NotNull(hidden.Rest);
+    }
+
+    [Fact]
     public void OverlayFlagAndDataOnlyWhileOn()
     {
         var h = new Harness();

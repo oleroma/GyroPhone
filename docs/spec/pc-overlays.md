@@ -23,7 +23,7 @@ Overlays page: the switches for all (Edit, Hide all, Level all), the list of win
 
 The phone's own gyro displays use the same Look and Turning settings, names and defaults (see [Pad UI](phone-pad-ui.md#gyro-displays)); their values are separate.
 
-**Shortcuts** (global, `Hotkeys`, a hidden message window so they work with no overlay open; reconfigurable, one press never does two things): **Ctrl+Alt+R** Level all, **Ctrl+Alt+O** Hide all, **Ctrl+Alt+E** Edit.
+**Shortcuts** (global, `Hotkeys`, a hidden message window so they work with no overlay open; reconfigurable, one press never does two things): **Ctrl+Alt+R** Level all, **Ctrl+Alt+O** Hide all, **Ctrl+Alt+E** Edit. A **Level displays** mapping on the phone levels every overlay shown too (OVERLAY byte 139 counts its presses; a change levels, the first count seen in a session levels nothing).
 
 ## Edit and click-through
 

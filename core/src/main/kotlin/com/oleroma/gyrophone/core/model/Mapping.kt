@@ -470,6 +470,14 @@ sealed interface OutputTarget {
     data object BlackScreen : OutputTarget
 
     /**
+     * Levels every gyro display in the workspace and every PC overlay to the way the phone is held
+     * now, the same as pressing each one's Level button.
+     */
+    @Serializable
+    @SerialName("level_displays")
+    data object LevelDisplays : OutputTarget
+
+    /**
      * Gyro sensitivity of [axis] ([MotionAxis.NONE] = every axis) from the source's value, through
      * the chip's range ([Mapping.range], counts per degree) while the source is active. It wins over
      * every other sensitivity (the button's held, the workspace's); of several active, the last
