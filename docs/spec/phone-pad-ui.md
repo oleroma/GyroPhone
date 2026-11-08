@@ -77,7 +77,7 @@ Touch controls of kind DISPLAY (`core/.../model/GyroDisplay.kt`, drawn by `ui/Gy
 - **Speed graph** (scrolling yaw/pitch/roll speed, ratchets shaded);
 - **Attitude indicator** (aircraft horizon with heading tape);
 - **Bubble disk** (heading disk with a tilt dot);
-- **3D shape** (Globe, Icosphere, Cube, Tetrahedron, Dodecahedron, Torus, Gimbal rings, Paper plane).
+- **3D shape** (Globe, Icosphere, Cube, Tetrahedron, Dodecahedron, Torus, Gimbal rings, Paper plane, Camera).
 
 Their settings are laid out as the [PC overlays'](pc-overlays.md#per-window-settings) are, with the same names, ranges and defaults (a new display starts as a new PC overlay does):
 

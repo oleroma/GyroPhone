@@ -218,6 +218,9 @@ enum class BallShape(val label: String) {
     /** Three rings, one per axis (yaw, pitch, roll), lit while that axis moves the mouse. */
     GIMBAL("Gimbal rings"),
     PLANE("Paper plane"),
+
+    /** A camera seen from behind: its lens points into the screen, where the camera looks. */
+    CAMERA("Camera"),
 }
 
 /** A colour a gyro display can change, per [kind]; [default] is ARGB. */

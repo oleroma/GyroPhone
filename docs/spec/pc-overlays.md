@@ -7,7 +7,7 @@ Windows on the PC that show the phone's motion over a game or in a stream.
 Any number of overlay windows (`OverlaySettings`, Overlays page › Add), each one of:
 
 - **Phone**: the phone in 3D with the workspace's layout, presses and fingers on its screen; optional Switch-style **controller handles** on its sides (narrow, sticks and buttons centred, −/+/Home next to the phone edge, bumper/trigger pills on the front, presses shown visually, no labels). Handles: **While a controller is attached** (default) / Always / Off; **Controller**: Phone (default) or PC (the PC's controller, only while the phone's PC ratchet switch is on).
-- **3D shape**: Globe (default), Icosphere (subdivision 0–3), Cube, Tetrahedron, Dodecahedron, Torus, Gimbal rings, Paper plane; smooth edges, hidden edges, filled faces, equator, screen and top marks.
+- **3D shape**: Globe (default), Icosphere (subdivision 0–3), Cube, Tetrahedron, Dodecahedron, Torus, Gimbal rings, Paper plane, Camera (seen from behind, lens pointing where it looks); smooth edges, hidden edges, filled faces, equator, screen and top marks.
 - **Attitude indicator**: horizon with a heading tape.
 - **Bubble disk**: heading disk with a tilt dot (range 30°), crosshair.
 

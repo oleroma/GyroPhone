@@ -76,6 +76,8 @@ public enum OverlayShape
     /// <summary>Three rings, one per axis, lit while that axis moves the mouse.</summary>
     Gimbal,
     Plane,
+    /// <summary>A camera seen from behind: its lens points into the screen, where the camera looks.</summary>
+    Camera,
 }
 
 /// <summary>One colour an overlay kind draws with: its settings key, its name and its default (ARGB).</summary>

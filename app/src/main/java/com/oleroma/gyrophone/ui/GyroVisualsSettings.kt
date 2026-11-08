@@ -155,7 +155,7 @@ internal fun GyroDisplaySettingsScreen(
                     if (shape == BallShape.ICOSPHERE) {
                         IntSlider("Subdivision %d", d.subdivision, 0..Meshes.MAX_SUBDIVISION) { set(d.copy(subdivision = it)) }
                     }
-                    if (shape != BallShape.PLANE) {
+                    if (shape != BallShape.PLANE && shape != BallShape.CAMERA) {
                         SwitchRow("Smooth (edges bent onto a ball)", d.smooth) { set(d.copy(smooth = it)) }
                         SwitchRow("Edges round the back, faint", d.hiddenEdges) { set(d.copy(hiddenEdges = it)) }
                     }

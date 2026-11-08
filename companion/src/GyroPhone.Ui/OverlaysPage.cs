@@ -429,7 +429,7 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_subdivision.View, o.Shape == OverlayShape.Icosphere);
         _subdivision.Set(o.Subdivision);
         Parts.SetChecked(_smooth, o.Smooth);
-        Parts.Show(_smooth, o.Shape is not (OverlayShape.Plane or OverlayShape.Tetrahedron));
+        Parts.Show(_smooth, o.Shape is not (OverlayShape.Plane or OverlayShape.Tetrahedron or OverlayShape.Camera));
         Parts.SetChecked(_hiddenEdges, o.HiddenEdges);
         Parts.SetChecked(_fillFaces, o.FillFaces);
         Parts.Show(_fillFaces, o.Shape != OverlayShape.Gimbal);
