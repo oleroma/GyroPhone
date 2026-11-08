@@ -155,7 +155,7 @@ private class VisState {
         typeface = Typeface.DEFAULT_BOLD
     }
 
-    /** [m] = the pose of [raw] seen from the level angle: the pose [levelDeg] back from upright shows square on. */
+    /** [m] = the pose of [raw] seen from the level angle (the parallax edge): the pose [levelDeg] back from upright shows square on. */
     fun level(levelDeg: Int) {
         val a = Math.toRadians(levelDeg.toDouble())
         val c = cos(a).toFloat()
@@ -212,10 +212,11 @@ private class VisState {
         }
     }
 
-    /** [raw] = [feed]'s pose (straight without one), [m] = it seen from [GyroDisplay.levelDeg]. */
+    /** [m] (and [raw]) = [feed]'s pose as shown ([GyroDisplayFeed.shown]: from the resting grip, scaled), straight without one. */
+    @Suppress("UNUSED_PARAMETER")
     private fun poseOf(feed: GyroDisplayFeed?, d: GyroDisplay) {
-        if (feed == null) raw.fill(0f).also { raw[0] = 1f; raw[4] = 1f; raw[8] = 1f } else feed.pose.matrix(raw)
-        level(d.levelDeg)
+        if (feed == null) m.fill(0f).also { m[0] = 1f; m[4] = 1f; m[8] = 1f } else feed.shown(m)
+        m.copyInto(raw)
     }
 
     /** The heading of [raw] in degrees (right +), as [com.oleroma.gyrophone.core.engine.GyroPose.heading]. */

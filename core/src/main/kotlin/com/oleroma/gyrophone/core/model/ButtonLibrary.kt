@@ -55,7 +55,7 @@ object ButtonLibrary {
      * mapping sets [w] does not have are added with those sets, so layer buttons keep working.
      */
     fun addTo(w: Workspace, b: LibraryButton, id: String, placed: (TouchControl) -> TouchControl): Workspace {
-        val control = placed(b.control.copy(id = id, group = null))
+        val control = placed(b.control.copy(id = id, group = null, display = b.control.display?.migrated()))
         val mappings = WorkspaceMappings.rekeyAll(b.mappings, b.control.id, id)
         val missing = setsOf(mappings).filter { set -> w.sets.none { it.id == set } }
         val added = missing.map { set -> b.sets.firstOrNull { it.id == set } ?: MappingSet(set) }

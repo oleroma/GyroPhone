@@ -2309,7 +2309,7 @@ fun PadScreen(
                                             shape = TouchShape.SQUARE,
                                             aspect = aspect,
                                             layer = TouchLayer.BACK,
-                                            display = GyroDisplay(kind),
+                                            display = GyroDisplay.create(kind),
                                         )
                                         editWorkspace { it.copy(touchControls = it.touchControls + addAt(at, c)) }
                                         selected = id

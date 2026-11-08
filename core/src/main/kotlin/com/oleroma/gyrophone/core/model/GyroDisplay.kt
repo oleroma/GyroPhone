@@ -3,6 +3,8 @@ package com.oleroma.gyrophone.core.model
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonNames
+import kotlin.math.cos
+import kotlin.math.sin
 
 /** What a gyro display ([TouchKind.DISPLAY]) shows. */
 @Serializable
@@ -34,35 +36,49 @@ enum class GyroDisplayKind(val label: String) {
 }
 
 /**
- * A gyro display's settings ([TouchControl.display]). The pose ones apply to the kinds that show
- * the phone's pose ([GyroDisplayKind.pose]):
+ * A gyro display's settings ([TouchControl.display]), structured as the PC overlays' are
+ * (`OverlaySettings` in the companion). The pose ones apply to the kinds that show the phone's
+ * pose ([GyroDisplayKind.pose]):
  * - [gravity]: its tilt held to the world, so it never drifts; off, turned by the gyro (only the
- *   axes that move the mouse) since the last reset. [compass] (with gravity): its heading held by
- *   the magnetometer to the way the phone faced when the app opened, edit mode closed or the
- *   workspace changed (or a ratchet reset it): 0° there, wherever north is.
- * - [resetOnRatchet]: each ratchet press sets it straight: the whole pose, or with
- *   [resetHeadingOnly] (always with gravity) only the turn round the vertical.
- * - [ease]: it goes back to straight on its own (the heading only with gravity), starting
- *   [easeDelayMs] after the phone stops turning, or with [easeAfterRatchet] after a ratchet is let
- *   go; [easeSeconds] to get (almost) all the way back, or with [easeBySpeed] at [easeSpeed] deg/s.
- * - [levelDeg]: the real pose shown square on, 0 upright facing the player, 90 flat screen up,
- *   180 upright facing away.
+ *   axes that move the mouse) since it started. [compass] (with gravity): its heading held by the
+ *   magnetometer to the way the phone faced when the app opened, edit mode closed or the workspace
+ *   changed (a ratchet press aims it again): 0° there, wherever north is.
+ * - [ease]: it goes back to straight on its own (the heading only with gravity, or with
+ *   [easeHeadingOnly]): with [easeOnRatchet] while a ratchet is held, until straight (stopping when
+ *   let go), else whenever the phone stops turning; starting [easeDelayMs] later; 95% of the way
+ *   back in [easeSeconds], or with [easeBySpeed] at [easeSpeed] deg/s.
+ * - [rest] (Level): the resting grip as a quaternion w, x, y, z: held this way it shows face-on,
+ *   its screen flat toward the viewer. Only with gravity (without, Level starts the pose again);
+ *   null = upright, facing the player.
+ * - [motionScale]: turns shown this many times larger.
+ *
+ * Constructor defaults are those of displays saved before [v] 2 (saved files leave defaults out);
+ * a new one starts from [create]. Older ones are carried over by [migrated].
  *
  * [colors]: ARGB per [GyroDisplayColor.key], missing = its default.
  */
 @Serializable
 data class GyroDisplay(
     val kind: GyroDisplayKind,
+    /** Settings layout: 1 = before the PC overlays' (ratchet reset, level angle), 2 = as the PC's. */
+    val v: Int = 1,
     val gravity: Boolean = false,
-    val resetOnRatchet: Boolean = true,
-    val resetHeadingOnly: Boolean = false,
+    val compass: Boolean = false,
     val ease: Boolean = false,
-    val easeAfterRatchet: Boolean = false,
+    val easeOnRatchet: Boolean = true,
+    val easeHeadingOnly: Boolean = false,
     val easeDelayMs: Int = 300,
     val easeBySpeed: Boolean = false,
     val easeSeconds: Float = 0.5f,
     val easeSpeed: Int = 90,
-    val compass: Boolean = false,
+    val rest: List<Float>? = null,
+    val motionScale: Float = 1f,
+    /** v1: each ratchet press set it straight (the whole pose, or with [resetHeadingOnly] the heading). */
+    val resetOnRatchet: Boolean = true,
+    val resetHeadingOnly: Boolean = false,
+    /** v1: easing started when the ratchet was let go, instead of when the phone stopped. */
+    val easeAfterRatchet: Boolean = false,
+    /** v1: the real pose shown square on, 0 upright facing the player, 90 flat screen up. */
     val levelDeg: Int = 0,
     val ghosts: Boolean = false,
     val axes: Boolean = false,
@@ -102,6 +118,32 @@ data class GyroDisplay(
     val opacity: Float = 0.7f,
     val colors: Map<String, Long> = emptyMap(),
 ) {
+    /** [rest] as an array, only while it applies (with gravity), else null. */
+    val restNow: FloatArray? get() = if (needsGravity) rest?.takeIf { it.size == 4 }?.toFloatArray() else null
+
+    /**
+     * This one in the current layout ([v] 2), carried over as the PC overlays' were: Reset on
+     * ratchet becomes Ease on ratchet (its Heading only with it); off, easing stays as it was, when
+     * the phone stops ("When the ratchet is let go" is gone). The level angle becomes the resting grip.
+     */
+    fun migrated(): GyroDisplay {
+        if (v >= VERSION) return this
+        val ratchet = resetOnRatchet
+        val restQ = if (levelDeg == 0) null else {
+            // Tipped back levelDeg about the phone's right edge (the screen toward the sky).
+            val a = Math.toRadians(levelDeg.toDouble()) / 2
+            listOf(cos(a).toFloat(), -sin(a).toFloat(), 0f, 0f)
+        }
+        return copy(
+            v = VERSION,
+            ease = ratchet || ease,
+            easeOnRatchet = ratchet,
+            easeHeadingOnly = ratchet && resetHeadingOnly,
+            rest = restQ,
+            resetOnRatchet = true, resetHeadingOnly = false, easeAfterRatchet = false, levelDeg = 0,
+        )
+    }
+
     /** It holds its pose to gravity (and so needs the accelerometer). */
     val needsGravity: Boolean get() = kind.pose && gravity && !isTrackball
 
@@ -121,6 +163,12 @@ data class GyroDisplay(
         copy(colors = if (argb == null || argb == c.default) colors - c.key else colors + (c.key to argb))
 
     companion object {
+        /** The current settings layout ([v]). */
+        const val VERSION = 2
+
+        /** A new display of [kind], with the PC overlays' defaults: gravity, easing back on ratchet over 2 s. */
+        fun create(kind: GyroDisplayKind) = GyroDisplay(kind, v = VERSION, gravity = true, ease = true, easeSeconds = 2f)
+
         /** Size (of the shorter side) and height / width a new one of [kind] starts with. */
         fun newSize(kind: GyroDisplayKind): Pair<Float, Float> = when (kind) {
             GyroDisplayKind.PHONE -> 0.5f to 1f

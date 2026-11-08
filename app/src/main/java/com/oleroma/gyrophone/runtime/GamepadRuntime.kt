@@ -346,6 +346,36 @@ class GamepadRuntime(context: Context) {
         if (!same || sensors != (needsGravity to needsCompass)) synchronized(this) { updateMotion() }
     }
 
+    /**
+     * Gravity now, for a gyro display's Level (the sensors may be off, as in edit mode): a few
+     * accelerometer readings averaged, as "up" in the phone's frame (right, up, toward the player),
+     * given to [onUp] on the main thread; null when there is none within a second.
+     */
+    fun readUp(onUp: (FloatArray?) -> Unit) {
+        val source = appContext.getSystemService(SensorManager::class.java)?.let { AccelSource(it) }
+        val done = java.util.concurrent.atomic.AtomicBoolean(false)
+        val sum = FloatArray(3)
+        var n = 0
+        fun finish(up: FloatArray?) {
+            source?.stop()
+            onUp(up)
+        }
+        val started = source?.start { x, y, z, _ ->
+            if (done.get()) return@start
+            val m = gyroMouse.motion(x, y, z)
+            sum[0] += m.pitch; sum[1] += -m.yaw; sum[2] += -m.roll
+            if (++n >= 8 && done.compareAndSet(false, true)) {
+                val up = sum.copyOf()
+                main.post { finish(up) }
+            }
+        } ?: false
+        if (!started) {
+            onUp(null)
+            return
+        }
+        main.postDelayed({ if (done.compareAndSet(false, true)) finish(null) }, 1000)
+    }
+
     /** Some gyro display holds its pose to gravity (and so needs the accelerometer). */
     private val needsGravity: Boolean get() = vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity } || wifi.overlay.wanted ||
         _activeProfile.value.workspace(_workspaceIndex.value).gyro.gyroSpace != GyroSpace.LOCAL

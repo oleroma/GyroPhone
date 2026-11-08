@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +52,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
+import com.oleroma.gyrophone.core.engine.GyroPose
 import com.oleroma.gyrophone.core.model.BallShape
 import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayColor
@@ -102,6 +104,8 @@ internal fun GyroDisplaySettingsScreen(
     gameKnown: Boolean = false,
 ) {
     val d = control.display ?: return
+    // Level reads the accelerometer a moment later: it changes the control as it is then.
+    val latest = rememberUpdatedState(control)
     var confirmDelete by remember { mutableStateOf(false) }
     var picking by remember { mutableStateOf<GyroDisplayColor?>(null) }
     fun set(nd: GyroDisplay) = onChange(control.copy(display = nd))
@@ -114,95 +118,104 @@ internal fun GyroDisplaySettingsScreen(
             TextButton(onClick = { confirmDelete = true }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
         },
     ) {
-        val items = listOf(
-            category(runtime, "gyroDisplayShows", "What it shows", "Pose, marks, ranges, opacity", defaultOpen = true) {
-                when (d.kind) {
-                    GyroDisplayKind.PHONE -> {
-                        PoseSettings(d) { set(it) }
-                        SwitchRow("Ghost trail", d.ghosts) { set(d.copy(ghosts = it)) }
-                        SwitchRow("Axis arrows", d.axes) { set(d.copy(axes = it)) }
-                        Hint("Arrows along the phone's own right, up and screen directions.")
+        // As the PC overlays' tabs: Look (what it shows, colours) and Turning (how the pose moves).
+        val look = category(runtime, "gyroDisplayLook", "Look", "What it shows, opacity, colours", defaultOpen = true) {
+            when (d.kind) {
+                GyroDisplayKind.PHONE -> {
+                    SwitchRow("Ghost trail", d.ghosts) { set(d.copy(ghosts = it)) }
+                    SwitchRow("Axis arrows", d.axes) { set(d.copy(axes = it)) }
+                    Hint("Arrows along the phone's own right, up and screen directions.")
+                }
+
+                GyroDisplayKind.RATCHET_RING ->
+                    Hint("Yaw, pitch and roll arcs, lit while that axis moves the mouse and dim while a ratchet (or the gyro mode) pauses it.")
+
+                GyroDisplayKind.GRAPH -> {
+                    Chips(listOf(180, 360, 720, 1440).map { "±$it°/s" to it }, d.graphRange) { set(d.copy(graphRange = it)) }
+                    Chips(listOf(2, 3, 5, 8).map { "$it s" to it }, d.graphSeconds) { set(d.copy(graphSeconds = it)) }
+                    Hint("Yaw, pitch and roll speed; shaded while a ratchet is held.")
+                }
+
+                GyroDisplayKind.HORIZON ->
+                    Hint("It tilts with roll and moves with pitch. The tape on top shows the heading.")
+
+                GyroDisplayKind.DISK -> {
+                    GroupTitle("Bubble disk")
+                    Hint("The dot moves off centre where the screen tilts; the disk and its marks spin with the heading.")
+                    IntSlider("Dot on the rim at %d°", d.diskRange, 5..90, step = 5) { set(d.copy(diskRange = it)) }
+                    SwitchRow("Crosshair", d.crosshair) { set(d.copy(crosshair = it)) }
+                }
+
+                GyroDisplayKind.BALL -> {
+                    val shape = d.ballShape
+                    GroupTitle("Shape")
+                    Hint("A shape turned with the phone: the yellow mark shows where the screen faces, the red one its top.")
+                    Chips(BallShape.entries.map { it.label to it }, shape) { set(d.copy(shape = it, icosphere = false)) }
+                    if (shape == BallShape.ICOSPHERE) {
+                        IntSlider("Subdivision %d", d.subdivision, 0..Meshes.MAX_SUBDIVISION) { set(d.copy(subdivision = it)) }
                     }
-
-                    GyroDisplayKind.RATCHET_RING ->
-                        Hint("Yaw, pitch and roll arcs, lit while that axis moves the mouse and dim while a ratchet (or the gyro mode) pauses it.")
-
-                    GyroDisplayKind.GRAPH -> {
-                        Chips(listOf(180, 360, 720, 1440).map { "±$it°/s" to it }, d.graphRange) { set(d.copy(graphRange = it)) }
-                        Chips(listOf(2, 3, 5, 8).map { "$it s" to it }, d.graphSeconds) { set(d.copy(graphSeconds = it)) }
-                        Hint("Yaw, pitch and roll speed; shaded while a ratchet is held.")
+                    if (shape != BallShape.PLANE) {
+                        SwitchRow("Smooth (edges bent onto a ball)", d.smooth) { set(d.copy(smooth = it)) }
+                        SwitchRow("Edges round the back, faint", d.hiddenEdges) { set(d.copy(hiddenEdges = it)) }
                     }
-
-                    GyroDisplayKind.HORIZON -> {
-                        Hint("It tilts with roll and moves with pitch. The tape on top shows the heading.")
-                        PoseSettings(d) { set(it) }
-                    }
-
-                    GyroDisplayKind.DISK -> {
-                        Hint("The dot moves off centre where the screen tilts; the disk and its marks spin with the heading.")
-                        PoseSettings(d) { set(it) }
-                        IntSlider("Dot on the rim at %d°", d.diskRange, 10..90, step = 5) { set(d.copy(diskRange = it)) }
-                        SwitchRow("Crosshair", d.crosshair) { set(d.copy(crosshair = it)) }
-                    }
-
-                    GyroDisplayKind.BALL -> {
-                        val shape = d.ballShape
-                        Hint("A shape turned with the phone: the yellow mark shows where the screen faces, the red one its top.")
-                        Chips(BallShape.entries.map { it.label to it }, shape) { set(d.copy(shape = it, icosphere = false)) }
-                        if (shape == BallShape.ICOSPHERE) {
-                            IntSlider("Subdivision %d", d.subdivision, 0..Meshes.MAX_SUBDIVISION) { set(d.copy(subdivision = it)) }
-                        }
-                        if (shape != BallShape.PLANE) {
-                            Chips(listOf("Smooth" to true, "Polygonal" to false), d.smooth) { set(d.copy(smooth = it)) }
-                            Hint(
-                                when (shape) {
-                                    BallShape.GLOBE, BallShape.TORUS, BallShape.GIMBAL -> "Smooth: round lines. Polygonal: a few straight sides."
-                                    else -> "Smooth: every edge bent onto a ball. Polygonal: straight edges and flat faces."
-                                        },
-                                    )
-                            SwitchRow("Show hidden edges", d.hiddenEdges) { set(d.copy(hiddenEdges = it)) }
-                        }
-                        if (shape != BallShape.GIMBAL) SwitchRow("Fill faces", d.fillFaces) { set(d.copy(fillFaces = it)) }
-                        SwitchRow("Trackball", d.trackball) { set(d.copy(trackball = it)) }
-                        if (d.trackball) Indented {
-                            Hint(
-                                "While the gyro moves the mouse, the ball holds still against the world, so it rolls the other way on screen, " +
-                                    "like a trackball under your hand. A ratchet stops it (only the axes it pauses), and it turns with the phone. " +
-                                    "Every other camera movement (touchpad, buttons, controllers, keys, glides) turns it too, as the gyro turn that would send it.",
-                                    )
-                            SwitchRow("RWS", d.trackballRws) { set(d.copy(trackballRws = it)) }
-                            if (d.trackballRws) {
-                                Hint(
-                                    if (gameKnown) "It turns exactly as far as the game's camera."
-                                    else "Set the game's turn in Gyro → Game for exact turns. Until then it turns as far as the phone, and every movement matches the gyro.",
-                                        )
-                            } else {
-                                FloatSlider("Spin %.2f×", d.trackballSpin, 0.25f..4f, 0.25f) { set(d.copy(trackballSpin = it)) }
-                                Hint("Every movement turns it Spin times as far as the phone turn that sends it.")
-                            }
-                            LevelSlider(d) { set(it) }
-                        } else PoseSettings(d) { set(it) }
-                        if (shape == BallShape.GLOBE) SwitchRow("Equator", d.equator) { set(d.copy(equator = it)) }
-                        SwitchRow("Screen mark", d.screenMark) { set(d.copy(screenMark = it)) }
-                        SwitchRow("Top mark", d.topMark) { set(d.copy(topMark = it)) }
+                    if (shape != BallShape.GIMBAL) SwitchRow("Filled faces", d.fillFaces) { set(d.copy(fillFaces = it)) }
+                    if (shape == BallShape.GLOBE) SwitchRow("Equator", d.equator) { set(d.copy(equator = it)) }
+                    SwitchRow("Mark where the screen faces", d.screenMark) { set(d.copy(screenMark = it)) }
+                    SwitchRow("Mark at the top", d.topMark) { set(d.copy(topMark = it)) }
+                }
+            }
+            PercentSlider("Opacity", d.opacity, 0.1f..1f) { set(d.copy(opacity = it)) }
+            Hint("Resize it with a pinch in edit mode; it always keeps its shape.")
+            GroupTitle("Colours")
+            for (c in GyroDisplayColor.of(d.kind).filter { shown(d, it) }) Searchable(c.label, "colour color") {
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { picking = c }.padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Swatch(Color(d.color(c).toInt()))
+                    Text(c.label, Modifier.padding(start = 12.dp).weight(1f))
+                    if (c.key in d.colors) TextButton(onClick = { set(d.withColor(c, null)) }) { Text("Reset") }
+                }
+            }
+            if (d.colors.isNotEmpty()) TextButton(onClick = { set(d.copy(colors = emptyMap())) }) { Text("Default colours") }
+        }
+        val turning = if (!d.kind.pose) null else category(runtime, "gyroDisplayTurning", "Turning", "Gravity, ease back, turn amount, Level", defaultOpen = true) {
+            if (d.kind == GyroDisplayKind.BALL) {
+                GroupTitle("Trackball")
+                SwitchRow("Trackball", d.trackball, "Still while the gyro aims; turned by the other mouse moves.") { set(d.copy(trackball = it)) }
+                if (d.trackball) Indented {
+                    Hint(
+                        "While the gyro moves the mouse, the ball holds still against the world, so it rolls the other way on screen, " +
+                            "like a trackball under your hand. A ratchet stops it (only the axes it pauses), and it turns with the phone. " +
+                            "Every other camera movement (touchpad, buttons, controllers, keys, glides) turns it too, as the gyro turn that would send it.",
+                    )
+                    SwitchRow("As far as the game's camera", d.trackballRws) { set(d.copy(trackballRws = it)) }
+                    if (d.trackballRws) {
+                        Hint(
+                            if (gameKnown) "It turns exactly as far as the game's camera."
+                            else "Set the game's turn in Gyro → Game for exact turns. Until then it turns as far as the phone, and every movement matches the gyro.",
+                        )
+                    } else {
+                        FloatSlider("Spin × %.1f", d.trackballSpin, 0.1f..10f, 0.1f) { set(d.copy(trackballSpin = it)) }
+                        Hint("Every movement turns it Spin times as far as the phone turn that sends it.")
                     }
                 }
-                PercentSlider("Opacity", d.opacity, 0.1f..1f) { set(d.copy(opacity = it)) }
-                Hint("Resize it with a pinch in edit mode; it always keeps its shape.")
-            },
-            category(runtime, "gyroDisplayColours", "Colours", "The colour of each part") {
-                for (c in GyroDisplayColor.of(d.kind).filter { shown(d, it) }) Searchable(c.label, "colour color") {
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { picking = c }.padding(vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Swatch(Color(d.color(c).toInt()))
-                        Text(c.label, Modifier.padding(start = 12.dp).weight(1f))
-                        if (c.key in d.colors) TextButton(onClick = { set(d.withColor(c, null)) }) { Text("Reset") }
-                    }
+            }
+            if (!d.isTrackball) PoseSettings(d) { set(it) }
+            GroupTitle("Amount")
+            FloatSlider("Turn amount × %.1f", d.motionScale, 0.5f..3f, 0.1f) { set(d.copy(motionScale = it)) }
+            Hint("Hold the phone the way you play and press Level: held that way, it shows face-on, its screen flat toward you.")
+            TextButton(onClick = {
+                if (!d.needsGravity) {
+                    runtime.gyroFeed(control.id)?.restart()
+                    if (d.rest != null) set(d.copy(rest = null))
+                } else runtime.readUp { up ->
+                    val rest = up?.let { GyroPose.tiltFromUp(it[0], it[1], it[2]) } ?: return@readUp
+                    latest.value.display?.let { onChange(latest.value.copy(display = it.copy(rest = rest.toList()))) }
                 }
-            },
-        )
+            }) { Text("Level") }
+        }
+        val items = listOfNotNull(look, turning)
         ReorderableSections(runtime, "gyroDisplay", items)
     }
     picking?.let { c ->
@@ -228,42 +241,41 @@ internal fun GyroDisplaySettingsScreen(
     }
 }
 
-/** The settings every pose display has ([GyroDisplayKind.pose]): gravity, compass, reset, ease back and level. */
+/** The pose settings of a pose display ([GyroDisplayKind.pose]), as the PC overlays' Pose card: gravity, compass and ease back. */
 @Composable
 private fun PoseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
-    SwitchRow("Gravity", d.gravity) { set(d.copy(gravity = it)) }
-    Hint(
-        if (d.gravity) "Its tilt follows gravity, so it never drifts. Only the heading (the turn left or right) can drift, reset or ease back."
-        else "It turns as the gyro moves the mouse (paused axes stay still) and can drift over time.",
-    )
-    if (d.gravity) {
-        SwitchRow("Compass", d.compass) { set(d.copy(compass = it)) }
-        if (d.compass) Hint(
-            "The magnetometer holds the heading, so it never drifts. 0° is the way the phone faced when the app opened, " +
-                "edit mode closed or the workspace changed (or a ratchet reset it), wherever north is.",
+    GroupTitle("Pose")
+    SwitchRow("Gravity", d.gravity, "Tilt held to the world, so it never drifts.") { set(d.copy(gravity = it)) }
+    if (d.gravity) Indented {
+        SwitchRow("Compass", d.compass, "Heading held to where the phone faced.") { set(d.copy(compass = it)) }
+    }
+    if (d.needsCompass) {
+        Hint("With the compass the heading never drifts, so it doesn't ease back; a ratchet press aims it again.")
+        return
+    }
+    SwitchRow("Ease back to straight", d.ease) { set(d.copy(ease = it)) }
+    if (d.ease) Indented {
+        Chips(listOf("On ratchet" to true, "When the phone stops" to false), d.easeOnRatchet) { set(d.copy(easeOnRatchet = it)) }
+        Hint(
+            if (d.easeOnRatchet) "While a ratchet is held it eases back until straight, and stops when you let go."
+            else "It eases back whenever the phone stops turning.",
         )
-    }
-    SwitchRow("Reset on ratchet", d.resetOnRatchet) { set(d.copy(resetOnRatchet = it)) }
-    if (d.resetOnRatchet && !d.gravity) Indented {
-        Chips(listOf("Whole pose" to false, "Heading only" to true), d.resetHeadingOnly) { set(d.copy(resetHeadingOnly = it)) }
-    }
-    if (!d.needsCompass) {
-        SwitchRow("Ease back", d.ease) { set(d.copy(ease = it)) }
-        if (d.ease) Indented {
-            Hint(if (d.gravity) "The heading goes back to straight on its own." else "It goes back to straight on its own.")
-            Chips(listOf("When the phone stops" to false, "When the ratchet is let go" to true), d.easeAfterRatchet) {
-                set(d.copy(easeAfterRatchet = it))
-            }
-            IntSlider("Starting after %d ms", d.easeDelayMs, 0..3000, step = 50) { set(d.copy(easeDelayMs = it)) }
-            Chips(listOf("By time" to false, "By speed" to true), d.easeBySpeed) { set(d.copy(easeBySpeed = it)) }
-            if (d.easeBySpeed) {
-                IntSlider("At %d°/s", d.easeSpeed, 10..720, step = 10) { set(d.copy(easeSpeed = it)) }
-            } else {
-                FloatSlider("Back in %.1f s", d.easeSeconds, 0.1f..5f, 0.1f) { set(d.copy(easeSeconds = it)) }
-            }
+        // With gravity only the heading eases back.
+        if (!d.gravity) SwitchRow("Heading only", d.easeHeadingOnly) { set(d.copy(easeHeadingOnly = it)) }
+        IntSlider("Delay %d ms", d.easeDelayMs, 0..3000, step = 50) { set(d.copy(easeDelayMs = it)) }
+        Chips(listOf("By time" to false, "By speed" to true), d.easeBySpeed) { set(d.copy(easeBySpeed = it)) }
+        if (d.easeBySpeed) {
+            IntSlider("Speed %d °/s", d.easeSpeed, 10..720, step = 10) { set(d.copy(easeSpeed = it)) }
+        } else {
+            FloatSlider("Back in %.1f s", d.easeSeconds, 0.1f..5f, 0.1f) { set(d.copy(easeSeconds = it)) }
         }
     }
-    LevelSlider(d, set)
+}
+
+/** A group's title inside a section, as a card title on the PC. */
+@Composable
+private fun GroupTitle(text: String) = NotSearching {
+    Text(text, Modifier.padding(top = 10.dp, bottom = 2.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
 }
 
 /** Colour [c] is drawn on [d] (a 3D shape only uses those of its shape). */
@@ -275,12 +287,6 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     GyroDisplayColor.BALL_MARK -> d.screenMark
     GyroDisplayColor.BALL_POLE -> d.topMark
     else -> true
-}
-
-@Composable
-private fun LevelSlider(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
-    IntSlider("Level at %d°", d.levelDeg, 0..180, step = 5) { set(d.copy(levelDeg = it)) }
-    Hint("The real pose shown square on: 0° upright facing you, 90° flat with the screen up, 180° upright facing away. Set it to how you hold the phone.")
 }
 
 /** A colour on a checkerboard, so its transparency shows. */

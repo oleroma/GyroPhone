@@ -21,6 +21,8 @@ Overlays page: the switches for all (Edit, Hide all, Level all), the list of win
 - **Look**: kind-specific options above, colours (one swatch per colour; Windows colour picker), finger dots (off) and trails (on), motion scale (0.5–3).
 - **Turning**: **Level** (the way the phone is held now shows face-on; with Gravity only the tilt is kept), **Gravity** (tilt held to gravity, default on), **Compass** (heading held by the magnetometer, off), **Ease** back to straight (on): after 300 ms still, over 2 s or at a speed (90 °/s); **Ease on ratchet** (on: while a ratchet is held it eases back until straight, instead of whenever the phone stops); heading only (without gravity).
 
+The phone's own gyro displays use the same Look and Turning settings, names and defaults (see [Pad UI](phone-pad-ui.md#gyro-displays)); their values are separate.
+
 **Shortcuts** (global, `Hotkeys`, a hidden message window so they work with no overlay open; reconfigurable, one press never does two things): **Ctrl+Alt+R** Level all, **Ctrl+Alt+O** Hide all, **Ctrl+Alt+E** Edit.
 
 ## Edit and click-through
