@@ -23,6 +23,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     private const long FirewallHintAfterUs = 30_000_000;
 
     private readonly FileLog _log;
+    /// <summary>The always-on input log (input.log next to companion.log), written by the engine's InputRecorder.</summary>
+    private readonly FileLog _inputLog;
     private readonly string _exePath;
     private readonly IClock _clock = StopwatchClock.Instance;
     private readonly long _startUs;
@@ -76,6 +78,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     public TrayApp()
     {
         _log = new FileLog();
+        _inputLog = new FileLog(fileName: "input.log", maxBytes: 5_000_000);
         _exePath = Environment.ProcessPath ?? Application.ExecutablePath;
         _startUs = _clock.NowUs;
         _ui = new Control();
@@ -100,7 +103,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _keyError = $"{e.GetType().Name}: {e.Message}";
             _log.Write($"key file pairing off: {_keyError}");
         }
-        _engine = new HostEngine(settings, _pad, _keyMouse, this, protector, _clock, this, hostKey: hostKey);
+        _engine = new HostEngine(settings, _pad, _keyMouse, this, protector, _clock, this, hostKey: hostKey)
+        {
+            Recorder = new InputRecorder(_inputLog.Write),
+        };
         _engine.SetPcPad(new XInputPcPad(_log.Write, _clock));
         if (hostKey != null) _authorized = new AuthorizedPhonesWatcher(_keyFiles, _engine.SetAuthorizedPhones, _log.Write);
         PowerQos.TryDisableForProcess(_log.Write);
@@ -390,10 +396,17 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _log.Path,
             _refreshing?.Problems ?? Problems(s),
             _engine.Settings.MeasureButtons,
-            _engine.PressLatencyNow());
+            _engine.PressLatencyNow(),
+            _engine.Settings.InputLog);
     }
 
     public void SetLatencyScreen(bool on) => _engine.SetLatencyScreen(on);
+
+    public void ToggleInputLog()
+    {
+        _engine.SetInputLog(!_engine.Settings.InputLog);
+        Refresh();
+    }
 
     public void ToggleMeasureButtons()
     {
@@ -1344,6 +1357,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _menu.Dispose();
             _icons.Dispose();
             _ui.Dispose();
+            _inputLog.Dispose();
             _log.Dispose();
         }
         base.Dispose(disposing);

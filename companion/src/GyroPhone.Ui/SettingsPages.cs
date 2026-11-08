@@ -254,7 +254,7 @@ internal sealed class ConnectionPage : Page
 internal sealed class AppPage : Page
 {
     private readonly StackPanel _root = new();
-    private readonly CheckBox _autoStart, _watcher;
+    private readonly CheckBox _autoStart, _watcher, _inputLog;
     private readonly Seg<TrayClickAction> _trayClick;
     private readonly TextBlock _log, _version;
 
@@ -283,6 +283,10 @@ internal sealed class AppPage : Page
         _root.Children.Add(tray);
 
         var (help, hb) = Parts.Card("Troubleshooting");
+        _inputLog = Parts.Toggle("Record input log", app.ToggleInputLog,
+            "Notes lost, late and stalled input in input.log in the log folder, so a stutter can be traced after you play. Costs almost nothing.");
+        hb.Children.Add(_inputLog);
+        hb.Children.Add(Parts.Divider());
         _log = Parts.Text("", "Sub");
         hb.Children.Add(_log);
         hb.Children.Add(Parts.Row(
@@ -301,6 +305,7 @@ internal sealed class AppPage : Page
     {
         Parts.SetChecked(_autoStart, v.AutoStart);
         Parts.SetChecked(_watcher, v.Watcher);
+        Parts.SetChecked(_inputLog, v.InputLog);
         _trayClick.Set(v.TrayClick);
         _log.Text = $"Log: {v.LogPath}";
         _version.Text = v.UpdatePending is { } p ? $"{v.Version} · restarting into {p}" : v.Version;

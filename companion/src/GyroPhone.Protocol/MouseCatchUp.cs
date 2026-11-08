@@ -43,6 +43,12 @@ public sealed class MouseCatchUp
 
     public long GlideEndUs => _glideEndUs;
 
+    /// <summary>The last <see cref="Take"/> started or lengthened a glide: the backlog's phone time, counts and glide length (for the input log).</summary>
+    public bool BacklogTaken { get; private set; }
+    public long BacklogSpanUs { get; private set; }
+    public int BacklogPx { get; private set; }
+    public long BacklogGlideUs { get; private set; }
+
     /// <summary>Nothing pending (a new session, a release, a pause): the backlog is dropped.</summary>
     public void Clear()
     {
@@ -102,9 +108,14 @@ public sealed class MouseCatchUp
     public void Take(long nowUs, out int dx, out int dy)
     {
         double x = _freshX, y = _freshY;
+        BacklogTaken = false;
         if (_oldSpan > MinBacklogUs)
         {
             long end = nowUs + Math.Min(_oldSpan / 2, MaxGlideUs);
+            BacklogTaken = true;
+            BacklogSpanUs = _oldSpan;
+            BacklogPx = Math.Abs(_oldX) + Math.Abs(_oldY);
+            BacklogGlideUs = end - nowUs;
             if (!Gliding)
             {
                 _glideFromUs = nowUs;
