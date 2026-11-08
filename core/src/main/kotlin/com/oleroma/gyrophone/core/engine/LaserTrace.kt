@@ -324,6 +324,22 @@ class LaserTrace {
             return faces
         }
 
+        /**
+         * Pose matrix [m] (row-major, changed) seen as the laser aims: the phone held as a gamepad
+         * aims with its roll axis (out of its top edge), so that axis takes the place of the one out
+         * of its back, into the screen at rest. Turning it with the phone (yaw, the turn through its
+         * screen) then swings the beam sideways, and pitch up and down. A · m · Aᵀ with A taking the
+         * phone's up into the screen and its screen's normal up.
+         */
+        fun aim(m: FloatArray) {
+            val r = FloatArray(9)
+            for (i in 0..2) for (j in 0..2) r[i * 3 + j] = AIM_SIGN[i] * AIM_SIGN[j] * m[AIM_AXIS[i] * 3 + AIM_AXIS[j]]
+            r.copyInto(m)
+        }
+
+        private val AIM_AXIS = intArrayOf(0, 2, 1)
+        private val AIM_SIGN = floatArrayOf(1f, 1f, -1f)
+
         /** The beam's direction for pose matrix [m] (row-major, phone frame to shown): out of the phone's back. */
         fun beam(m: FloatArray, out: FloatArray) {
             out[0] = -m[2]; out[1] = -m[5]; out[2] = -m[8]

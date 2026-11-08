@@ -252,7 +252,7 @@ internal sealed class OverlaysPage : Page
         _lookTab.Children.Add(disk);
 
         var (laser, lb) = Parts.Card("Laser pointer");
-        lb.Children.Add(Parts.Text("A see-through sphere seen from above and to the side. The laser at its centre shines out of the phone's back onto the inside; the tick at the dot shows which way the phone's top points. The beam dims while a ratchet is held.", "Hint"));
+        lb.Children.Add(Parts.Text("A see-through sphere seen from above and to the side. The laser at its centre aims along the phone's roll axis (out of its top edge, into the screen at rest) onto the inside; the tick at the dot shows which way the phone's screen faces. The beam dims while a ratchet is held.", "Hint"));
         _laserShape = new Seg<bool>(r => Change(o => o.LaserRifle = r), false, ("Sphere", false), ("Rifle", true));
         _laserShape.View.Margin = new Thickness(0, 6, 0, 2);
         lb.Children.Add(_laserShape.View);

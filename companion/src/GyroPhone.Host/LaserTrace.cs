@@ -292,6 +292,24 @@ public sealed class LaserTrace
         return faces;
     }
 
+    /// <summary>
+    /// Pose matrix <paramref name="m"/> (row-major) seen as the laser aims: the phone held as a gamepad aims
+    /// with its roll axis (out of its top edge), so that axis takes the place of the one out of its back,
+    /// into the screen at rest. Turning it with the phone (yaw, the turn through its screen) then swings the
+    /// beam sideways, and pitch up and down. A · m · Aᵀ with A taking the phone's up into the screen and its
+    /// screen's normal up. As the phone's LaserTrace.aim.
+    /// </summary>
+    public static float[] Aim(float[] m)
+    {
+        int[] axis = [0, 2, 1];
+        float[] sign = [1f, 1f, -1f];
+        var r = new float[9];
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                r[i * 3 + j] = sign[i] * sign[j] * m[axis[i] * 3 + axis[j]];
+        return r;
+    }
+
     /// <summary>The beam's direction for pose matrix <paramref name="m"/> (row-major, phone frame to shown): out of the phone's back.</summary>
     public static (float X, float Y, float Z) Beam(float[] m) => (-m[2], -m[5], -m[8]);
 

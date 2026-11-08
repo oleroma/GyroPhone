@@ -433,7 +433,7 @@ internal sealed class OverlayForm : Form
             // The laser pointer: where the beam points now, as drawn.
             if (Settings is { Kind: OverlayKind.Laser } ls)
             {
-                var beam = LaserTrace.Beam(OverlayRenderer.PoseMatrix(_scene.Frame, ls));
+                var beam = LaserTrace.Beam(LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(_scene.Frame, ls), ls));
                 _laser.Add(beam.X, beam.Y, beam.Z, now, ls.LaserDraw, _scene.Frame.RatchetHeld, ls.LaserClearOnRatchet);
             }
         }

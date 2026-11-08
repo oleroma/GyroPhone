@@ -246,6 +246,8 @@ private class VisState {
      */
     private fun DrawScope.drawLaser(feed: GyroDisplayFeed?, d: GyroDisplay, box: Rect, col: (GyroDisplayColor) -> Color) {
         poseOf(feed, d)
+        // Turned by the phone it aims with its roll axis (a game camera already aims ahead).
+        if (d.turnsWith != com.oleroma.gyrophone.core.model.TurnsWith.CAMERA) LaserTrace.aim(m)
         laserAxon = d.laserAxonometric
         // Sphere turns: everything on it is seen from the pose, so the beam stays ahead.
         laserTurned = if (d.laserSphereTurns) m else null

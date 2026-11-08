@@ -62,6 +62,19 @@ public class LaserTraceTests
     }
 
     [Fact]
+    public void AimsWithTheRollAxis()
+    {
+        var b = LaserTrace.Beam(LaserTrace.Aim(Identity));
+        Assert.Equal((0f, 0f, -1f), (b.X, b.Y, b.Z));
+        // A yaw turn (through the screen) of 90° clockwise: the top edge goes right.
+        b = LaserTrace.Beam(LaserTrace.Aim([0, 1, 0, -1, 0, 0, 0, 0, 1]));
+        Assert.Equal((1f, 0f, 0f), (b.X, b.Y, b.Z));
+        // Pitch up 90° (the top comes toward the player): the beam points up.
+        b = LaserTrace.Beam(LaserTrace.Aim([1, 0, 0, 0, 0, -1, 0, 1, 0]));
+        Assert.Equal((0f, 1f, 0f), (b.X, b.Y, b.Z));
+    }
+
+    [Fact]
     public void FaceOnSeesTheBeamStraightInAsADot()
     {
         Assert.Equal((0f, 0f, -1f), LaserTrace.ToView(0, 0, -1, false));

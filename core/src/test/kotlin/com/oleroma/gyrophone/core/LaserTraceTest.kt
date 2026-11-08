@@ -62,6 +62,24 @@ class LaserTraceTest {
         for (f in faces) assertTrue(f.light in 0f..1f)
     }
 
+    @Test fun aimsWithTheRollAxis() {
+        val b = FloatArray(3)
+        val m = floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f)
+        LaserTrace.aim(m)
+        LaserTrace.beam(m, b)
+        assertArrayEquals(floatArrayOf(0f, 0f, -1f), b, 1e-6f) // at rest into the screen
+        // A yaw turn (through the screen) of 90° clockwise: the top edge goes right.
+        val yaw = floatArrayOf(0f, 1f, 0f, -1f, 0f, 0f, 0f, 0f, 1f)
+        LaserTrace.aim(yaw)
+        LaserTrace.beam(yaw, b)
+        assertArrayEquals(floatArrayOf(1f, 0f, 0f), b, 1e-6f)
+        // Pitch up 90° (the top comes toward the player): the beam points up.
+        val pitch = floatArrayOf(1f, 0f, 0f, 0f, 0f, -1f, 0f, 1f, 0f)
+        LaserTrace.aim(pitch)
+        LaserTrace.beam(pitch, b)
+        assertArrayEquals(floatArrayOf(0f, 1f, 0f), b, 1e-6f)
+    }
+
     @Test fun faceOnSeesTheBeamStraightInAsADot() {
         val p = FloatArray(3)
         LaserTrace.view(0f, 0f, -1f, p, axon = false)
