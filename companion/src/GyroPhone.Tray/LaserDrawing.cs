@@ -7,16 +7,16 @@ namespace GyroPhone.Tray;
 /// <summary>
 /// The laser pointer overlay (the phone's laser pointer display, ported): a see-through sphere seen
 /// from a fixed angle (30° round, 30° above, no perspective), its 15° grid and axes, the beam from
-/// its centre out of the phone's back to the inside, a dot and a roll tick where it hits; the fading
-/// trail and Draw mode's paint (<see cref="LaserTrace"/>). Far half first, then the beam, then the
+/// its centre out of the phone's back to the inside, a dot and a roll tick where it hits; Draw mode's
+/// fading paint (<see cref="LaserTrace"/>). Far half first, then the beam, then the
 /// near half (fainter, seen through the shell).
 /// </summary>
 internal static class LaserDrawing
 {
-    /// <summary>A trail's hops longer than this are bent along the sphere in pieces.</summary>
-    private static readonly float TrailStep = 4f * MathF.PI / 180f;
+    /// <summary>A stroke's hops longer than this are bent along the sphere in pieces.</summary>
+    private static readonly float StrokeStep = 4f * MathF.PI / 180f;
 
-    /// <summary>Strokes and the trail fade in this many steps.</summary>
+    /// <summary>Strokes fade in this many steps.</summary>
     private const int Levels = 8;
 
     public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held)
@@ -24,8 +24,7 @@ internal static class LaserDrawing
         float r = Math.Min(area.Width, area.Height) / 2f * 0.95f;
         var c = new PointF(area.X + area.Width / 2f, area.Y + area.Height / 2f);
         float px = Math.Clamp(r * 0.006f, 1f, 3f);
-        int fadeMs = s.LaserFadeS * 1000;
-        int trailMs = Math.Clamp(s.LaserTrailMs, 0, 3000);
+        int fadeMs = s.LaserFadeMs;
 
         (PointF P, float Z) At(float x, float y, float z)
         {
@@ -65,7 +64,7 @@ internal static class LaserDrawing
                 }
         }
 
-        // Strokes and the trail: each piece of the way between two points (long hops bent along the
+        // Strokes: each piece of the way between two points (long hops bent along the
         // sphere), drawn on its side, older pieces darker and fainter.
         void Lines(LaserTrace.Ring ring, bool front, Func<int, long, float> life, float width, bool glow, Color color)
         {
@@ -106,7 +105,7 @@ internal static class LaserDrawing
                 }
                 int level = Math.Clamp((int)MathF.Ceiling(k * Levels), 1, Levels);
                 float dot = Math.Clamp(a.X * b.X + a.Y * b.Y + a.Z * b.Z, -1f, 1f);
-                int n = Math.Clamp((int)(MathF.Acos(dot) / TrailStep), 1, 32);
+                int n = Math.Clamp((int)(MathF.Acos(dot) / StrokeStep), 1, 32);
                 var (prev, prevZ) = At(a.X, a.Y, a.Z);
                 for (int j = 1; j <= n; j++)
                 {
@@ -140,12 +139,6 @@ internal static class LaserDrawing
             Lines(trace.Strokes, front, (i, t) => LaserTrace.StrokeLife(i, n, t, nowMs, fadeMs), brushPx, true, Color.FromArgb(s.Color("paint")));
         }
 
-        void Trail(bool front)
-        {
-            if (trace == null || trailMs <= 0) return;
-            Lines(trace.Trail, front, (_, t) => Math.Clamp(1f - (nowMs - t) / (float)trailMs, 0f, 1f), px * 2f, false, Color.FromArgb(s.Color("trail")));
-        }
-
         var (hit, hitZ) = At(beam.X, beam.Y, beam.Z);
         bool hitFront = hitZ > 0f;
         var beamCol = Color.FromArgb(s.Color("beam"));
@@ -171,14 +164,12 @@ internal static class LaserDrawing
         if (s.LaserGrid) Grid(gridLines.Back, grid);
         Axes(false);
         Paint(false);
-        Trail(false);
         if (!hitFront) Spot();
         g.DrawLine(beamCol, px * 2.5f, c, hit, round: true);
         g.FillEllipse(beamCol, new RectangleF(c.X - px * 3, c.Y - px * 3, px * 6, px * 6));
         Paint(true);
         if (s.LaserGrid) Grid(gridLines.Front, Fade(grid, 0.6f));
         Axes(true);
-        Trail(true);
         if (hitFront) Spot();
         g.DrawEllipse(grid, px * 1.5f, new RectangleF(c.X - r, c.Y - r, 2 * r, 2 * r));
     }

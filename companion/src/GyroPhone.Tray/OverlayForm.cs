@@ -434,10 +434,10 @@ internal sealed class OverlayForm : Form
             if (Settings is { Kind: OverlayKind.Laser } ls)
             {
                 var beam = LaserTrace.Beam(OverlayRenderer.PoseMatrix(_scene.Frame, ls));
-                _laser.Add(beam.X, beam.Y, beam.Z, now, ls.LaserTrailMs, ls.LaserDraw, _scene.Frame.RatchetHeld, ls.LaserClearOnRatchet);
+                _laser.Add(beam.X, beam.Y, beam.Z, now, ls.LaserDraw, _scene.Frame.RatchetHeld, ls.LaserClearOnRatchet);
             }
         }
-        // A Clear displays mapping on the phone: the paint and trail go (the first count seen clears nothing).
+        // A Clear displays mapping on the phone: the paint goes (the first count seen clears nothing).
         if (age >= 0)
         {
             int presses = _scene.Frame.ClearPresses;
@@ -451,8 +451,8 @@ internal sealed class OverlayForm : Form
         bool laserFading = false;
         if (Settings is { Kind: OverlayKind.Laser } lf)
         {
-            _laser.Expire(now, Math.Clamp(lf.LaserTrailMs, 0, 3000), lf.LaserFadeS * 1000);
-            laserFading = _laser.Fading(lf.LaserFadeS * 1000);
+            _laser.Expire(now, lf.LaserFadeMs);
+            laserFading = _laser.Fading(lf.LaserFadeMs);
         }
         UpdateStats();
         bool changed = _dirty || fresh || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||

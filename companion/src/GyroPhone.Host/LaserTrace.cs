@@ -1,9 +1,8 @@
 namespace GyroPhone.Host;
 
 /// <summary>
-/// What a laser pointer overlay remembers between frames: the beam's recent hit points on the
-/// sphere (the trail) and, in Draw mode, the strokes it painted on the sphere's inside. Both are
-/// rings of unit directions in the shown frame (x right, y up, z toward the viewer) with their
+/// What a laser pointer overlay remembers between frames: in Draw mode, the strokes the beam
+/// painted on the sphere's inside (they fade after a while, or stay), a ring of unit directions in the shown frame (x right, y up, z toward the viewer) with their
 /// times; a point starts a new line after a gap (a held ratchet, Draw just turned on). Strokes keep
 /// a point each time the beam moved <see cref="StrokeStepDeg"/>° or more, up to <see cref="StrokeMax"/>
 /// (the oldest go first), so drawing them costs the same however long you paint. Same as the phone's
@@ -11,7 +10,6 @@ namespace GyroPhone.Host;
 /// </summary>
 public sealed class LaserTrace
 {
-    public const int TrailMax = 512;
     public const int StrokeMax = 4096;
     public const float StrokeStepDeg = 0.5f;
     public const int GridDeg = 15;
@@ -69,49 +67,31 @@ public sealed class LaserTrace
         public bool Gap(int i) => _gap[(_head + i) % capacity];
     }
 
-    /// <summary>The trail's hit points.</summary>
-    public readonly Ring Trail = new(TrailMax);
-
     /// <summary>Draw mode's strokes.</summary>
     public readonly Ring Strokes = new(StrokeMax);
 
-    private bool _trailGap = true, _strokeGap = true;
+    private bool _strokeGap = true;
     private float _lastX, _lastY, _lastZ;
     private bool _wasHeld;
 
     /// <summary>
     /// The beam now points at (x, y, z) (any length) at <paramref name="nowMs"/>. While a ratchet is
-    /// <paramref name="held"/> it neither trails nor paints (the pose eases back then, which isn't
-    /// aiming); with <paramref name="clearOnPress"/> pressing one clears the strokes. With
-    /// <paramref name="draw"/> it paints; turning Draw off clears the strokes.
+    /// <paramref name="held"/> it doesn't paint (the pose eases back then, which isn't aiming); with
+    /// <paramref name="clearOnPress"/> pressing one clears the strokes. With <paramref name="draw"/> it
+    /// paints; turning Draw off clears the strokes.
     /// </summary>
-    public void Add(float x, float y, float z, long nowMs, int trailMs, bool draw, bool held, bool clearOnPress = false)
+    public void Add(float x, float y, float z, long nowMs, bool draw, bool held, bool clearOnPress = false)
     {
         bool pressed = clearOnPress && held && !_wasHeld;
         _wasHeld = held;
         if ((!draw || pressed) && Strokes.Count > 0) Clear();
         float l = MathF.Sqrt(x * x + y * y + z * z);
-        if (l < 1e-6f || held || !float.IsFinite(l))
-        {
-            _trailGap = _strokeGap = true;
-            return;
-        }
-        float dx = x / l, dy = y / l, dz = z / l;
-        if (trailMs > 0)
-        {
-            Trail.Add(dx, dy, dz, nowMs, _trailGap);
-            _trailGap = false;
-        }
-        else
-        {
-            Trail.Clear();
-            _trailGap = true;
-        }
-        if (!draw)
+        if (!draw || l < 1e-6f || held || !float.IsFinite(l))
         {
             _strokeGap = true;
             return;
         }
+        float dx = x / l, dy = y / l, dz = z / l;
         // A new point once the beam moved a little: a still beam adds nothing.
         if (!_strokeGap && _lastX * dx + _lastY * dy + _lastZ * dz > StrokeStepCos) return;
         Strokes.Add(dx, dy, dz, nowMs, _strokeGap);
@@ -119,22 +99,20 @@ public sealed class LaserTrace
         _lastX = dx; _lastY = dy; _lastZ = dz;
     }
 
-    /// <summary>Drops trail points older than <paramref name="trailMs"/> and, with <paramref name="fadeMs"/> &gt; 0, strokes older than it.</summary>
-    public void Expire(long nowMs, int trailMs, int fadeMs)
+    /// <summary>With <paramref name="fadeMs"/> &gt; 0, drops strokes older than it.</summary>
+    public void Expire(long nowMs, int fadeMs)
     {
-        Trail.Expire(nowMs, trailMs);
         if (fadeMs > 0) Strokes.Expire(nowMs, fadeMs);
     }
 
-    /// <summary>Some trail point or fading stroke is left (draw again while it fades).</summary>
-    public bool Fading(int fadeMs) => Trail.Count > 0 || (fadeMs > 0 && Strokes.Count > 0);
+    /// <summary>Some stroke is still fading (draw again while it fades).</summary>
+    public bool Fading(int fadeMs) => fadeMs > 0 && Strokes.Count > 0;
 
-    /// <summary>Clears the strokes and the trail.</summary>
+    /// <summary>Clears the strokes.</summary>
     public void Clear()
     {
         Strokes.Clear();
-        Trail.Clear();
-        _trailGap = _strokeGap = true;
+        _strokeGap = true;
     }
 
     /// <summary>How bright stroke point <paramref name="i"/> of <paramref name="count"/> made at <paramref name="t"/> is: 1 new .. 0 gone (<paramref name="fadeMs"/>), or by its place without fading.</summary>

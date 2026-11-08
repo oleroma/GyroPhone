@@ -173,15 +173,12 @@ internal fun GyroDisplaySettingsScreen(
                     SwitchRow("Axonometric view", d.laserAxonometric, LASER_AXON_HINT) { set(d.copy(laserAxonometric = it)) }
                     SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
                     SwitchRow("Axes (right, up, toward you)", d.laserAxes) { set(d.copy(laserAxes = it)) }
-                    Chips(listOf("No trail" to 0, "0.25 s" to 250, "0.5 s" to 500, "1 s" to 1000, "2 s" to 2000, "3 s" to 3000), d.laserTrailMs) {
-                        set(d.copy(laserTrailMs = it))
-                    }
                     GroupTitle("Draw")
                     SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim.") { set(d.copy(laserDraw = it)) }
                     if (d.laserDraw) Indented {
                         IntSlider("Brush %d°", d.laserBrush, 1..20) { set(d.copy(laserBrush = it)) }
-                        Chips(listOf("Never fades" to 0, "5 s" to 5, "10 s" to 10, "30 s" to 30, "60 s" to 60), d.laserFadeS) {
-                            set(d.copy(laserFadeS = it))
+                        Chips(LASER_FADES, d.laserFadeMs) {
+                            set(d.copy(laserFadeMs = it))
                         }
                         SwitchRow("Clear on ratchet", d.laserClearOnRatchet, "A ratchet press clears the drawing.") { set(d.copy(laserClearOnRatchet = it)) }
                         Hint("Strokes glow, older ones darker. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every laser pointer at once.")
@@ -325,11 +322,11 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     GyroDisplayColor.BALL_POLE -> d.topMark
     GyroDisplayColor.LASER_GRID -> d.laserGrid
     GyroDisplayColor.LASER_X, GyroDisplayColor.LASER_Y, GyroDisplayColor.LASER_Z -> d.laserAxes
-    GyroDisplayColor.LASER_TRAIL -> d.laserTrailMs > 0
     GyroDisplayColor.LASER_PAINT -> d.laserDraw
     else -> true
 }
 
+private val LASER_FADES = listOf("Never fades" to 0, "0.25 s" to 250, "0.5 s" to 500, "1 s" to 1000, "2 s" to 2000, "5 s" to 5000, "10 s" to 10_000, "30 s" to 30_000, "60 s" to 60_000)
 private const val LASER_AXON_HINT = "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot."
 private const val AXON_HINT = "Seen from 30° round and 30° above with the world's axes (right red, up green, toward you blue), as the laser pointer is, instead of face-on."
 

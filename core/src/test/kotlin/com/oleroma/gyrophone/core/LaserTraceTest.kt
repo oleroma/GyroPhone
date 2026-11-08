@@ -44,10 +44,10 @@ class LaserTraceTest {
 
     @Test fun strokesKeepAPointOnlyWhenTheBeamMoves() {
         val t = LaserTrace()
-        t.add(0f, 0f, -1f, 0, 500, draw = true, held = false)
-        t.add(0f, 0f, -1f, 10, 500, draw = true, held = false)
+        t.add(0f, 0f, -1f, 0, draw = true, held = false)
+        t.add(0f, 0f, -1f, 10, draw = true, held = false)
         assertEquals(1, t.strokes.count)
-        t.add(0.1f, 0f, -1f, 20, 500, draw = true, held = false)
+        t.add(0.1f, 0f, -1f, 20, draw = true, held = false)
         assertEquals(2, t.strokes.count)
         assertTrue(t.strokes.gap(0))
         assertFalse(t.strokes.gap(1))
@@ -55,43 +55,39 @@ class LaserTraceTest {
 
     @Test fun drawOffOrClearWipesTheStrokes() {
         val t = LaserTrace()
-        t.add(0f, 0f, -1f, 0, 500, draw = true, held = false)
-        t.add(1f, 0f, 0f, 10, 500, draw = true, held = false)
+        t.add(0f, 0f, -1f, 0, draw = true, held = false)
+        t.add(1f, 0f, 0f, 10, draw = true, held = false)
         assertEquals(2, t.strokes.count)
         val v = t.version
-        t.add(1f, 0f, 0f, 20, 500, draw = false, held = false)
+        t.add(1f, 0f, 0f, 20, draw = false, held = false)
         assertEquals(0, t.strokes.count)
         assertTrue(t.version > v)
-        t.add(0f, 0f, -1f, 30, 500, draw = true, held = false)
+        t.add(0f, 0f, -1f, 30, draw = true, held = false)
         t.clear()
         assertEquals(0, t.strokes.count)
-        assertEquals(0, t.trail.count)
     }
 
-    @Test fun heldRatchetNeitherTrailsNorPaintsAndBreaksTheLine() {
+    @Test fun heldRatchetDoesntPaintAndBreaksTheLine() {
         val t = LaserTrace()
-        t.add(0f, 0f, -1f, 0, 500, draw = true, held = false)
-        t.add(1f, 0f, 0f, 5, 500, draw = true, held = true)
+        t.add(0f, 0f, -1f, 0, draw = true, held = false)
+        t.add(1f, 0f, 0f, 5, draw = true, held = true)
         assertEquals(1, t.strokes.count) // kept without Clear on ratchet
-        t.add(1f, 0f, 0f, 6, 500, draw = true, held = false)
-        t.add(1f, 0f, 0f, 10, 500, draw = true, held = true, clearOnPress = true)
+        t.add(1f, 0f, 0f, 6, draw = true, held = false)
+        t.add(1f, 0f, 0f, 10, draw = true, held = true, clearOnPress = true)
         assertEquals(0, t.strokes.count) // a ratchet press clears the drawing
-        assertEquals(0, t.trail.count)
-        t.add(1f, 0f, 0f, 20, 500, draw = true, held = false)
-        assertEquals(1, t.trail.count)
+        t.add(1f, 0f, 0f, 20, draw = true, held = false)
         assertEquals(1, t.strokes.count)
         assertTrue(t.strokes.gap(0))
     }
 
-    @Test fun trailAndStrokesFade() {
+    @Test fun strokesFade() {
         val t = LaserTrace()
-        t.add(0f, 0f, -1f, 0, 500, draw = true, held = false)
+        t.add(0f, 0f, -1f, 0, draw = true, held = false)
         assertEquals(1f, LaserTrace.strokeLife(0, 1, 0, 0, 5000), 0f)
         assertEquals(0.5f, LaserTrace.strokeLife(0, 1, 0, 2500, 5000), 1e-3f)
-        t.expire(600, 500, 5000)
-        assertEquals(0, t.trail.count)
+        t.expire(600, 5000)
         assertTrue(t.fading(5000))
-        t.expire(5001, 500, 5000)
+        t.expire(5001, 5000)
         assertEquals(0, t.strokes.count)
         assertFalse(t.fading(5000))
         assertEquals(0f, LaserTrace.strokeLife(0, 3, 0, 0, 0), 0f)

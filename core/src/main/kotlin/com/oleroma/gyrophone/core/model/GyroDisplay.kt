@@ -119,17 +119,15 @@ data class GyroDisplay(
     val trackballInvert: Boolean = false,
     /** PHONE and BALL: seen from a fixed angle (30° round, 30° above) with the world's axes, as the laser pointer is, instead of face-on. */
     val axonometric: Boolean = false,
-    /** LASER: how long the beam's hit point leaves a fading trail, in ms (0 = none). */
-    val laserTrailMs: Int = 500,
     /** LASER: the 15° grid on the sphere, and its three axes. */
     val laserGrid: Boolean = true,
     val laserAxes: Boolean = true,
     /** LASER: seen from the fixed axonometric angle (30° round, 30° above); off, face-on. */
     val laserAxonometric: Boolean = true,
-    /** LASER: Draw mode, the beam paints the sphere's inside, [laserBrush] degrees round; it fades after [laserFadeS] seconds (0 = never). */
+    /** LASER: Draw mode, the beam paints the sphere's inside, [laserBrush] degrees round; it fades after [laserFadeMs] ms (0 = never). */
     val laserDraw: Boolean = false,
     val laserBrush: Int = 4,
-    val laserFadeS: Int = 0,
+    val laserFadeMs: Int = 0,
     /** LASER Draw mode: a ratchet press clears the drawing. */
     val laserClearOnRatchet: Boolean = false,
     /** What turns it (the pose kinds): the phone, the game's camera, or a trackball. */
@@ -289,7 +287,6 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     LASER_Z(GyroDisplayKind.LASER, "z", "Toward you axis", 0xFF5AA8FF),
     LASER_BEAM(GyroDisplayKind.LASER, "beam", "Beam", 0xFFFF3B3B),
     LASER_DOT(GyroDisplayKind.LASER, "dot", "Dot", 0xFFFFFFFF),
-    LASER_TRAIL(GyroDisplayKind.LASER, "trail", "Trail", 0xFFFF7A7A),
     LASER_PAINT(GyroDisplayKind.LASER, "paint", "Paint", 0xFFFFC94D),
     ;
 

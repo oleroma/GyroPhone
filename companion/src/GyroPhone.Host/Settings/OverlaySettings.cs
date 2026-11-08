@@ -152,17 +152,15 @@ public sealed class OverlaySettings
     public bool Crosshair { get; set; } = true;
 
     // Laser pointer.
-    /// <summary>How long the beam's hit point leaves a fading trail, in ms (0 = none, up to 3000).</summary>
-    public int LaserTrailMs { get; set; } = 500;
     /// <summary>The 15° grid on the sphere, and its three axes.</summary>
     public bool LaserGrid { get; set; } = true;
     /// <summary>Laser pointer: seen from the fixed axonometric angle (30° round, 30° above); off, face-on.</summary>
     public bool LaserAxonometric { get; set; } = true;
     public bool LaserAxes { get; set; } = true;
-    /// <summary>Draw mode: the beam paints the sphere's inside, <see cref="LaserBrush"/> degrees round; it fades after <see cref="LaserFadeS"/> seconds (0 = never).</summary>
+    /// <summary>Draw mode: the beam paints the sphere's inside, <see cref="LaserBrush"/> degrees round; it fades after <see cref="LaserFadeMs"/> ms (0 = never).</summary>
     public bool LaserDraw { get; set; }
     public int LaserBrush { get; set; } = 4;
-    public int LaserFadeS { get; set; }
+    public int LaserFadeMs { get; set; }
     /// <summary>Draw mode: a ratchet press clears the drawing.</summary>
     public bool LaserClearOnRatchet { get; set; }
 
@@ -326,7 +324,6 @@ public sealed class OverlaySettings
         new("z", "Toward you axis", 0xFF5AA8FF),
         new("beam", "Beam", 0xFFFF3B3B),
         new("dot", "Dot", 0xFFFFFFFF),
-        new("trail", "Trail", 0xFFFF7A7A),
         new("paint", "Paint", 0xFFFFC94D),
     ];
 

@@ -3,7 +3,7 @@ using GyroPhone.Protocol;
 
 namespace GyroPhone.Tests;
 
-/// <summary>The laser pointer overlay's trail and strokes, as the phone's LaserTraceTest.</summary>
+/// <summary>The laser pointer overlay's strokes, as the phone's LaserTraceTest.</summary>
 public class LaserTraceTests
 {
     private static readonly float[] Identity = [1, 0, 0, 0, 1, 0, 0, 0, 1];
@@ -47,10 +47,10 @@ public class LaserTraceTests
     public void StrokesKeepAPointOnlyWhenTheBeamMoves()
     {
         var t = new LaserTrace();
-        t.Add(0, 0, -1, 0, 500, true, false);
-        t.Add(0, 0, -1, 10, 500, true, false);
+        t.Add(0, 0, -1, 0, true, false);
+        t.Add(0, 0, -1, 10, true, false);
         Assert.Equal(1, t.Strokes.Count);
-        t.Add(0.1f, 0, -1, 20, 500, true, false);
+        t.Add(0.1f, 0, -1, 20, true, false);
         Assert.Equal(2, t.Strokes.Count);
         Assert.True(t.Strokes.Gap(0));
         Assert.False(t.Strokes.Gap(1));
@@ -60,45 +60,41 @@ public class LaserTraceTests
     public void DrawOffOrClearWipesTheStrokes()
     {
         var t = new LaserTrace();
-        t.Add(0, 0, -1, 0, 500, true, false);
-        t.Add(1, 0, 0, 10, 500, true, false);
+        t.Add(0, 0, -1, 0, true, false);
+        t.Add(1, 0, 0, 10, true, false);
         Assert.Equal(2, t.Strokes.Count);
-        t.Add(1, 0, 0, 20, 500, false, false);
+        t.Add(1, 0, 0, 20, false, false);
         Assert.Equal(0, t.Strokes.Count);
-        t.Add(0, 0, -1, 30, 500, true, false);
+        t.Add(0, 0, -1, 30, true, false);
         t.Clear();
         Assert.Equal(0, t.Strokes.Count);
-        Assert.Equal(0, t.Trail.Count);
     }
 
     [Fact]
-    public void HeldRatchetNeitherTrailsNorPaintsAndBreaksTheLine()
+    public void HeldRatchetDoesntPaintAndBreaksTheLine()
     {
         var t = new LaserTrace();
-        t.Add(0, 0, -1, 0, 500, true, false);
-        t.Add(1, 0, 0, 5, 500, true, true);
+        t.Add(0, 0, -1, 0, true, false);
+        t.Add(1, 0, 0, 5, true, true);
         Assert.Equal(1, t.Strokes.Count); // kept without Clear on ratchet
-        t.Add(1, 0, 0, 6, 500, true, false);
-        t.Add(1, 0, 0, 10, 500, true, true, true);
+        t.Add(1, 0, 0, 6, true, false);
+        t.Add(1, 0, 0, 10, true, true, true);
         Assert.Equal(0, t.Strokes.Count); // a ratchet press clears the drawing
-        Assert.Equal(0, t.Trail.Count);
-        t.Add(1, 0, 0, 20, 500, true, false);
-        Assert.Equal(1, t.Trail.Count);
+        t.Add(1, 0, 0, 20, true, false);
         Assert.Equal(1, t.Strokes.Count);
         Assert.True(t.Strokes.Gap(0));
     }
 
     [Fact]
-    public void TrailAndStrokesFade()
+    public void StrokesFade()
     {
         var t = new LaserTrace();
-        t.Add(0, 0, -1, 0, 500, true, false);
+        t.Add(0, 0, -1, 0, true, false);
         Assert.Equal(1f, LaserTrace.StrokeLife(0, 1, 0, 0, 5000));
         Assert.Equal(0.5f, LaserTrace.StrokeLife(0, 1, 0, 2500, 5000), 3);
-        t.Expire(600, 500, 5000);
-        Assert.Equal(0, t.Trail.Count);
+        t.Expire(600, 5000);
         Assert.True(t.Fading(5000));
-        t.Expire(5001, 500, 5000);
+        t.Expire(5001, 5000);
         Assert.Equal(0, t.Strokes.Count);
         Assert.False(t.Fading(5000));
         // Without fading, older points are darker by their place.

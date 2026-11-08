@@ -45,7 +45,7 @@ internal sealed class OverlaysPage : Page
     // Look
     private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook;
     private readonly CheckBox _laserAxon, _laserGrid, _laserAxes, _laserDraw, _laserClearOnRatchet;
-    private readonly Seg<int> _laserTrail, _laserFade;
+    private readonly Seg<int> _laserFade;
     private readonly SliderRow _laserBrush;
     private readonly StackPanel _laserDrawOptions;
     private readonly CheckBox _dots, _trails, _phoneAxon, _shapeAxon;
@@ -252,11 +252,6 @@ internal sealed class OverlaysPage : Page
         _laserAxes = Parts.Toggle("Axes (right, up, toward you)", () => Change(o => o.LaserAxes = !o.LaserAxes));
         lb.Children.Add(_laserGrid);
         lb.Children.Add(_laserAxes);
-        lb.Children.Add(Parts.Text("Trail"));
-        _laserTrail = new Seg<int>(t => Change(o => o.LaserTrailMs = t), false,
-            ("None", 0), ("0.25 s", 250), ("0.5 s", 500), ("1 s", 1000), ("2 s", 2000), ("3 s", 3000));
-        _laserTrail.View.Margin = new Thickness(0, 6, 0, 6);
-        lb.Children.Add(_laserTrail.View);
         lb.Children.Add(Parts.Divider());
         _laserDraw = Parts.Toggle("Draw mode", () => Change(o => o.LaserDraw = !o.LaserDraw), "The beam paints the inside of the sphere as you aim.");
         lb.Children.Add(_laserDraw);
@@ -264,8 +259,8 @@ internal sealed class OverlaysPage : Page
         _laserBrush = new SliderRow("Brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserBrush = (int)v));
         _laserDrawOptions.Children.Add(_laserBrush.View);
         _laserDrawOptions.Children.Add(Parts.Text("Fades after"));
-        _laserFade = new Seg<int>(f => Change(o => o.LaserFadeS = f), false,
-            ("Never", 0), ("5 s", 5), ("10 s", 10), ("30 s", 30), ("60 s", 60));
+        _laserFade = new Seg<int>(f => Change(o => o.LaserFadeMs = f), false,
+            ("Never", 0), ("0.25 s", 250), ("0.5 s", 500), ("1 s", 1000), ("2 s", 2000), ("5 s", 5000), ("10 s", 10_000), ("30 s", 30_000), ("60 s", 60_000));
         _laserFade.View.Margin = new Thickness(0, 6, 0, 2);
         _laserDrawOptions.Children.Add(_laserFade.View);
         _laserClearOnRatchet = Parts.Toggle("Clear on ratchet", () => Change(o => o.LaserClearOnRatchet = !o.LaserClearOnRatchet), "A ratchet press clears the drawing.");
@@ -472,11 +467,10 @@ internal sealed class OverlaysPage : Page
         Parts.SetChecked(_laserAxon, o.LaserAxonometric);
         Parts.SetChecked(_laserGrid, o.LaserGrid);
         Parts.SetChecked(_laserAxes, o.LaserAxes);
-        _laserTrail.Set(o.LaserTrailMs);
         Parts.SetChecked(_laserDraw, o.LaserDraw);
         Parts.Show(_laserDrawOptions, o.LaserDraw);
         _laserBrush.Set(o.LaserBrush);
-        _laserFade.Set(o.LaserFadeS);
+        _laserFade.Set(o.LaserFadeMs);
         Parts.SetChecked(_laserClearOnRatchet, o.LaserClearOnRatchet);
         Parts.SetChecked(_dots, o.FingerDots);
         Parts.SetChecked(_trails, o.FingerTrails);

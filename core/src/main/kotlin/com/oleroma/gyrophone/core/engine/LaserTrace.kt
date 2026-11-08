@@ -6,9 +6,8 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * What a laser pointer display remembers between frames: the beam's recent hit points on the
- * sphere (the trail) and, in Draw mode, the strokes it painted on the sphere's inside. Both are
- * rings of unit directions in the shown frame (x right, y up, z toward the viewer) with their
+ * What a laser pointer display remembers between frames: in Draw mode, the strokes the beam
+ * painted on the sphere's inside (they fade after a while, or stay), a ring of unit directions in the shown frame (x right, y up, z toward the viewer) with their
  * times; a point starts a new line after a gap (a held ratchet, Draw just turned on). Strokes keep
  * a point each time the beam moved [STROKE_STEP_DEG]° or more, up to [STROKE_MAX] (the oldest go
  * first), so drawing them costs the same however long you paint. Same as the companion's
@@ -62,13 +61,9 @@ class LaserTrace {
         fun gap(i: Int): Boolean = gap[(head + i) % capacity]
     }
 
-    /** The trail's hit points. */
-    val trail = Ring(TRAIL_MAX)
-
     /** Draw mode's strokes. */
     val strokes = Ring(STROKE_MAX)
 
-    private var trailGap = true
     private var strokeGap = true
     private var lastX = 0f
     private var lastY = 0f
@@ -84,34 +79,21 @@ class LaserTrace {
 
     /**
      * The beam now points at ([x], [y], [z]) (any length) at [nowMs]. While a ratchet is [held] it
-     * neither trails nor paints (the pose eases back then, which isn't aiming); with
-     * [clearOnPress] pressing one clears the strokes. With [draw] it paints; turning Draw off
-     * clears the strokes.
+     * doesn't paint (the pose eases back then, which isn't aiming); with [clearOnPress] pressing
+     * one clears the strokes. With [draw] it paints; turning Draw off clears the strokes.
      */
-    fun add(x: Float, y: Float, z: Float, nowMs: Long, trailMs: Int, draw: Boolean, held: Boolean, clearOnPress: Boolean = false) {
+    fun add(x: Float, y: Float, z: Float, nowMs: Long, draw: Boolean, held: Boolean, clearOnPress: Boolean = false) {
         val pressed = clearOnPress && held && !wasHeld
         wasHeld = held
         if ((!draw || pressed) && strokes.count > 0) clear()
         val l = sqrt(x * x + y * y + z * z)
-        if (l < 1e-6f || held || l.isNaN()) {
-            trailGap = true
+        if (!draw || l < 1e-6f || held || l.isNaN()) {
             strokeGap = true
             return
         }
         val dx = x / l
         val dy = y / l
         val dz = z / l
-        if (trailMs > 0) {
-            trail.add(dx, dy, dz, nowMs, trailGap)
-            trailGap = false
-        } else {
-            trail.clear()
-            trailGap = true
-        }
-        if (!draw) {
-            strokeGap = true
-            return
-        }
         // A new point once the beam moved a little: a still beam adds nothing.
         if (!strokeGap && lastX * dx + lastY * dy + lastZ * dz > STROKE_STEP_COS) return
         strokes.add(dx, dy, dz, nowMs, strokeGap)
@@ -119,26 +101,22 @@ class LaserTrace {
         lastX = dx; lastY = dy; lastZ = dz
     }
 
-    /** Drops trail points older than [trailMs] and, with [fadeMs] > 0, strokes older than it. */
-    fun expire(nowMs: Long, trailMs: Int, fadeMs: Int) {
-        trail.expire(nowMs, trailMs)
+    /** With [fadeMs] > 0, drops strokes older than it. */
+    fun expire(nowMs: Long, fadeMs: Int) {
         if (fadeMs > 0) strokes.expire(nowMs, fadeMs)
     }
 
-    /** Some trail point or fading stroke is left (draw again while it fades). */
-    fun fading(fadeMs: Int): Boolean = trail.count > 0 || (fadeMs > 0 && strokes.count > 0)
+    /** Some stroke is still fading (draw again while it fades). */
+    fun fading(fadeMs: Int): Boolean = fadeMs > 0 && strokes.count > 0
 
-    /** Clears the strokes and the trail. */
+    /** Clears the strokes. */
     fun clear() {
         strokes.clear()
-        trail.clear()
-        trailGap = true
         strokeGap = true
         version++
     }
 
     companion object {
-        const val TRAIL_MAX = 512
         const val STROKE_MAX = 4096
         const val STROKE_STEP_DEG = 0.5f
         private val STROKE_STEP_COS = cos(Math.toRadians(STROKE_STEP_DEG.toDouble())).toFloat()
