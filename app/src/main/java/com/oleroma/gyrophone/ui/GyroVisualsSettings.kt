@@ -58,6 +58,7 @@ import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayColor
 import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.TouchControl
+import com.oleroma.gyrophone.core.model.TurnsWith
 import kotlin.math.roundToInt
 
 /** Settings of the parallax edge ([GyroEdgeLayer]); [set] saves a changed [v]. The other gyro displays are placed in edit mode. */
@@ -179,33 +180,37 @@ internal fun GyroDisplaySettingsScreen(
             }
             if (d.colors.isNotEmpty()) TextButton(onClick = { set(d.copy(colors = emptyMap())) }) { Text("Default colours") }
         }
-        val turning = if (!d.kind.pose) null else category(runtime, "gyroDisplayTurning", "Turning", "Gravity, ease back, turn amount, Level", defaultOpen = true) {
-            if (d.kind == GyroDisplayKind.BALL) {
-                GroupTitle("Trackball")
-                SwitchRow("Trackball", d.trackball, "Still while the gyro aims; turned by the other mouse moves.") { set(d.copy(trackball = it)) }
-                if (d.trackball) Indented {
+        val turning = if (!d.kind.pose) null else category(runtime, "gyroDisplayTurning", "Turning", "Turns with, gravity, ease back, turn amount, Level", defaultOpen = true) {
+            GroupTitle("Turns with")
+            Chips(TurnsWith.entries.map { it.label to it }, d.turnsWith) { set(d.copy(turnsWith = it)) }
+            Hint(
+                when (d.turnsWith) {
+                    TurnsWith.PHONE -> "How you hold the phone."
+                    TurnsWith.CAMERA -> "Where the game's camera points: it turns with the gyro and every other camera move (touchpad, buttons, controllers, keys, glides). A ratchet stops it, as it stops the camera."
+                    TurnsWith.TRACKBALL -> "Like a ball under your hand: still against the world while the gyro aims, so it rolls the other way; every other camera move rolls it too. A ratchet stops it, and it turns with the phone."
+                },
+            )
+            if (d.followsCamera) Indented {
+                SwitchRow("As far as the game's camera", d.trackballRws) { set(d.copy(trackballRws = it)) }
+                if (d.trackballRws) {
                     Hint(
-                        "While the gyro moves the mouse, the ball holds still against the world, so it rolls the other way on screen, " +
-                            "like a trackball under your hand. A ratchet stops it (only the axes it pauses), and it turns with the phone. " +
-                            "Every other camera movement (touchpad, buttons, controllers, keys, glides) turns it too, as the gyro turn that would send it.",
+                        if (gameKnown) "It turns exactly as far as the game's camera."
+                        else "Set the game's turn in Gyro → Game for exact turns. Until then it turns as far as the phone, and every movement matches the gyro.",
                     )
-                    SwitchRow("Invert: turn as the camera turns", d.trackballInvert) { set(d.copy(trackballInvert = it)) }
-                    SwitchRow("As far as the game's camera", d.trackballRws) { set(d.copy(trackballRws = it)) }
-                    if (d.trackballRws) {
-                        Hint(
-                            if (gameKnown) "It turns exactly as far as the game's camera."
-                            else "Set the game's turn in Gyro → Game for exact turns. Until then it turns as far as the phone, and every movement matches the gyro.",
-                        )
-                    } else {
-                        FloatSlider("Spin × %.1f", d.trackballSpin, 0.1f..10f, 0.1f) { set(d.copy(trackballSpin = it)) }
-                        Hint("Every movement turns it Spin times as far as the phone turn that sends it.")
-                    }
+                } else {
+                    FloatSlider("Spin × %.1f", d.trackballSpin, 0.1f..10f, 0.1f) { set(d.copy(trackballSpin = it)) }
+                    Hint("Every movement turns it Spin times as far as the phone turn that sends it.")
                 }
             }
-            if (!d.isTrackball) PoseSettings(d) { set(it) }
+            if (d.turnsWith == TurnsWith.PHONE) PoseSettings(d) { set(it) }
+            // A trackball never eases back: every roll is a camera move.
+            if (d.turnsWith == TurnsWith.CAMERA) {
+                GroupTitle("Pose")
+                EaseSettings(d) { set(it) }
+            }
             GroupTitle("Amount")
-            // A trackball turns by Spin (or as far as the game's camera) instead.
-            if (!d.isTrackball) FloatSlider("Turn amount × %.1f", d.motionScale, 0.5f..3f, 0.1f) { set(d.copy(motionScale = it)) }
+            // Following the camera it turns by Spin (or as far as the game's camera) instead.
+            if (!d.followsCamera) FloatSlider("Turn amount × %.1f", d.motionScale, 0.5f..3f, 0.1f) { set(d.copy(motionScale = it)) }
             Hint("Hold the phone the way you play and press Level: held that way, it shows face-on, its screen flat toward you.")
             TextButton(onClick = {
                 if (!d.needsGravity) {
@@ -255,6 +260,12 @@ private fun PoseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
         Hint("With the compass the heading never drifts, so it doesn't ease back; a ratchet press aims it again.")
         return
     }
+    EaseSettings(d, set)
+}
+
+/** Ease back to straight and its options (Phone and Camera; a trackball never eases back). */
+@Composable
+private fun EaseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
     SwitchRow("Ease back to straight", d.ease) { set(d.copy(ease = it)) }
     if (d.ease) Indented {
         Chips(listOf("On ratchet" to true, "When the phone stops" to false), d.easeOnRatchet) { set(d.copy(easeOnRatchet = it)) }
@@ -263,7 +274,7 @@ private fun PoseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
             else "It eases back whenever the phone stops turning.",
         )
         // With gravity only the heading eases back.
-        if (!d.gravity) SwitchRow("Heading only", d.easeHeadingOnly) { set(d.copy(easeHeadingOnly = it)) }
+        if (!d.needsGravity) SwitchRow("Heading only", d.easeHeadingOnly) { set(d.copy(easeHeadingOnly = it)) }
         IntSlider("Delay %d ms", d.easeDelayMs, 0..3000, step = 50) { set(d.copy(easeDelayMs = it)) }
         Chips(listOf("By time" to false, "By speed" to true), d.easeBySpeed) { set(d.copy(easeBySpeed = it)) }
         if (d.easeBySpeed) {

@@ -620,7 +620,7 @@ class GamepadRuntime(context: Context) {
                 overlay.camera(deg[0], deg[1], deg[2])
             }
             val feeds = gyroFeeds
-            if (feeds.any { it.display.isTrackball }) {
+            if (feeds.any { it.display.followsCamera }) {
                 val routes = engine.gyroRoutes()
                 val gs = engine.gyroSettings
                 for (f in feeds) f.camera(dx, dy, routes, gs)

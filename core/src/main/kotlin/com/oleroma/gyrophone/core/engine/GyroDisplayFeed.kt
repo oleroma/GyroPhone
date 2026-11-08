@@ -8,6 +8,7 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.TurnsWith
 import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.cos
@@ -39,9 +40,9 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     /** [GyroDisplay.restNow] of [restOf], kept so a sample does not make it again. */
     private var restOf: GyroDisplay? = null
 
-    /** Its mode at the last sample (gravity, trackball): switching starts it straight. */
+    /** Its mode at the last sample (gravity, what turns it): switching starts it straight. */
     private var wasGravity = display.needsGravity
-    private var wasTrackball = display.isTrackball
+    private var wasTurns = display.turnsWith
     private var wasCompass = display.needsCompass
 
     /**
@@ -60,17 +61,19 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
             return
         }
         if (!d.kind.pose) return
-        if (d.needsGravity != wasGravity || d.isTrackball != wasTrackball) {
+        if (d.needsGravity != wasGravity || d.turnsWith != wasTurns) {
             wasGravity = d.needsGravity
-            wasTrackball = d.isTrackball
+            wasTurns = d.turnsWith
             pose.reset()
         }
-        if (d.isTrackball) {
+        // The camera's turn: the live gyro axes' share (other camera moves come through [camera]).
+        fun cameraTurn() {
             if (dtSeconds == 0f || axes == 0) return
-            fun k(a: MotionAxis) = if (axes and MappingEngine.gyroBit(a) == 0) 0f else trackballGain(d, gyro, a)
+            fun k(a: MotionAxis) = if (axes and MappingEngine.gyroBit(a) == 0) 0f else cameraGain(d, gyro, a)
             pose.counterRotate(yaw * k(MotionAxis.YAW), pitch * k(MotionAxis.PITCH), roll * k(MotionAxis.ROLL), dtSeconds)
-            return
         }
+        // A trackball never eases back: every roll is a camera move.
+        if (d.isTrackball) return cameraTurn()
         val compass = d.needsCompass
         if (restOf !== d) {
             restOf = d
@@ -92,7 +95,9 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         // While a ratchet is held it eases back until straight (the gyro is paused then).
         if (easing) easeAfterPress(d, dtSeconds)
         if (dtSeconds == 0f) return
-        if (d.gravity) {
+        if (d.followsCamera) {
+            cameraTurn()
+        } else if (d.needsGravity) {
             pose.fuse(yaw, pitch, roll, dtSeconds, 0f, compass)
         } else if (axes != 0) {
             pose.rotate(
@@ -113,7 +118,7 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     private fun easeBack(d: GyroDisplay, dt: Float) {
         // By time: an exponential, 95% of the way back after easeSeconds.
         val amount = if (d.easeBySpeed) d.easeSpeed * DEG_TO_RAD * dt else 3f * dt / d.easeSeconds.coerceAtLeast(0.05f)
-        if (d.gravity || d.easeHeadingOnly) pose.easeHeading(d.easeBySpeed, amount) else pose.easeAll(d.easeBySpeed, amount)
+        if (d.needsGravity || d.easeHeadingOnly) pose.easeHeading(d.easeBySpeed, amount) else pose.easeAll(d.easeBySpeed, amount)
     }
 
     /** Easing after a ratchet press: after the delay, until it is (nearly) straight, then exactly straight. */
@@ -121,7 +126,7 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         calm += dt
         if (calm < d.easeDelayMs / 1000f) return
         easeBack(d, dt)
-        val heading = d.gravity || d.easeHeadingOnly
+        val heading = d.needsGravity || d.easeHeadingOnly
         val h = if (heading) pose.headingFrom(pose.rest) else 0f
         val left = if (heading) abs(h) else pose.angle()
         if (left > STRAIGHT_RAD) return
@@ -140,8 +145,8 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     fun shown(out: FloatArray) {
         pose.quaternion(q)
         val d = display
-        // A trackball turns by Spin (or as far as the game's camera): no turn amount on top.
-        shownMatrix(q, d.restNow, if (d.isTrackball) 1f else d.motionScale, out)
+        // Following the camera it turns by Spin (or as far as the game's camera): no turn amount on top.
+        shownMatrix(q, d.restNow, if (d.followsCamera) 1f else d.motionScale, out)
     }
 
     /**
@@ -152,28 +157,29 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
 
     /**
      * Mouse counts [dx], [dy] sent by anything but the live gyro ([MappingEngine.cameraSink]), on
-     * the pump's thread. A trackball turns as the gyro turn that would send them would turn it:
+     * the pump's thread. One that follows the camera ([GyroDisplay.followsCamera]) turns as the gyro turn that would send them would turn it:
      * about the gyro axis [routes] map to that mouse axis (roll for X, pitch for Y when none does),
      * at [gyro]'s sensitivity of that axis. The pose takes turns from both threads.
      */
     fun camera(dx: Int, dy: Int, routes: List<Mapping>, gyro: GyroSettings) {
         val d = display
-        if (!d.isTrackball) return
+        if (!d.followsCamera) return
         val deg = cameraDegrees(dx, dy, routes, gyro)
         pose.counterRotate(
-            deg[0] * trackballGain(d, gyro, MotionAxis.YAW), deg[1] * trackballGain(d, gyro, MotionAxis.PITCH),
-            deg[2] * trackballGain(d, gyro, MotionAxis.ROLL), 1f,
+            deg[0] * cameraGain(d, gyro, MotionAxis.YAW), deg[1] * cameraGain(d, gyro, MotionAxis.PITCH),
+            deg[2] * cameraGain(d, gyro, MotionAxis.ROLL), 1f,
         )
     }
 
     /**
-     * How far a trackball turns per degree the phone turns on [a]: with RWS as far as the game's
-     * camera ([GyroSettings.rwsOf]; as the phone while the game's turn is unknown), else Spin times;
-     * negative with [GyroDisplay.trackballInvert] (it turns as the camera does).
+     * How far one following the camera turns per degree the phone turns on [a]: with RWS as far as
+     * the game's camera ([GyroSettings.rwsOf]; as the phone while the game's turn is unknown), else
+     * Spin times. Positive: held still against the world, a trackball (it rolls the other way);
+     * negative for [TurnsWith.CAMERA], which turns as the camera does.
      */
-    private fun trackballGain(d: GyroDisplay, gyro: GyroSettings?, a: MotionAxis): Float =
+    private fun cameraGain(d: GyroDisplay, gyro: GyroSettings?, a: MotionAxis): Float =
         (if (!d.trackballRws) d.trackballSpin else gyro?.let { it.rwsOf(it.sensitivityOf(a)) } ?: 1f) *
-            (if (d.trackballInvert) -1f else 1f)
+            (if (d.turnsWith == TurnsWith.CAMERA) -1f else 1f)
 
     /**
      * The compass ([GyroDisplay.needsCompass]) takes the way the phone faces now as heading 0 (the

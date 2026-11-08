@@ -1393,7 +1393,7 @@ public sealed class HostEngine
             var o = _settings.Overlays.Find(x => x.Id == id);
             if (o == null) return;
             _overlayPoses.TryGetValue(id, out var pose);
-            if (o.Gravity && !o.IsTrackball)
+            if (o.Gravity && !o.FollowsCamera)
             {
                 if (pose == null) return;
                 o.Rest = pose.TiltOnly();

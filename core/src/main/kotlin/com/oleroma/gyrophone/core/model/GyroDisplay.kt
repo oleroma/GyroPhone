@@ -60,7 +60,7 @@ enum class GyroDisplayKind(val label: String) {
 @Serializable
 data class GyroDisplay(
     val kind: GyroDisplayKind,
-    /** Settings layout: 1 = before the PC overlays' (ratchet reset, level angle), 2 = as the PC's. */
+    /** Settings layout: 1 = before the PC overlays' (ratchet reset, level angle), 2 = as the PC's, 3 = [turnsWith]. */
     val v: Int = 1,
     val gravity: Boolean = false,
     val compass: Boolean = false,
@@ -103,23 +103,25 @@ data class GyroDisplay(
     val equator: Boolean = true,
     val screenMark: Boolean = true,
     val topMark: Boolean = true,
-    /**
-     * BALL: a trackball. While the gyro moves the mouse the ball holds still against the world (it
-     * rolls the other way on screen); a ratchet (per axis) stops it, so it turns with the phone.
-     * Every other mouse count sent (touchpad, buttons, controllers, keys, glides) turns it too, as
-     * the gyro turn that would send it. With [trackballRws] it turns exactly as far as the game's
-     * camera once the game's turn is known ([GyroSettings.gameCountsPer360]), else as far as the
-     * phone; without, [trackballSpin] times the phone's turn.
-     * No gravity, compass, reset or ease back.
-     */
+    /** BALL, v2: a trackball ([turnsWith] [TurnsWith.TRACKBALL] since v3). */
     val trackball: Boolean = false,
+    /**
+     * [TurnsWith.CAMERA] and [TurnsWith.TRACKBALL]: with [trackballRws] as far as the game's camera
+     * once the game's turn is known ([GyroSettings.gameCountsPer360]), else as far as the phone;
+     * without, [trackballSpin] times the phone's turn.
+     */
     val trackballSpin: Float = 1f,
     val trackballRws: Boolean = true,
-    /** BALL trackball: turns the way the game's camera turns, instead of rolling the other way like a trackball under the hand. */
+    /** Branch builds before v3: a trackball turning as the camera ([TurnsWith.CAMERA] since). */
     val trackballInvert: Boolean = false,
+    /** What turns it (the pose kinds): the phone, the game's camera, or a trackball. */
+    val turnsWith: TurnsWith = TurnsWith.PHONE,
     val opacity: Float = 0.7f,
     val colors: Map<String, Long> = emptyMap(),
 ) {
+    /** It turns with the game's camera ([TurnsWith.CAMERA] or [TurnsWith.TRACKBALL]): no gravity, compass or turn amount. */
+    val followsCamera: Boolean get() = kind.pose && turnsWith != TurnsWith.PHONE
+
     /** [rest] as an array, only while it applies (with gravity), else null. */
     val restNow: FloatArray? get() = if (needsGravity) rest?.takeIf { it.size == 4 }?.toFloatArray() else null
 
@@ -130,6 +132,12 @@ data class GyroDisplay(
      */
     fun migrated(): GyroDisplay {
         if (v >= VERSION) return this
+        val turns = when {
+            turnsWith != TurnsWith.PHONE -> turnsWith
+            kind == GyroDisplayKind.BALL && trackball -> if (trackballInvert) TurnsWith.CAMERA else TurnsWith.TRACKBALL
+            else -> TurnsWith.PHONE
+        }
+        if (v >= 2) return copy(v = VERSION, turnsWith = turns, trackball = false, trackballInvert = false)
         val ratchet = resetOnRatchet
         val restQ = if (levelDeg == 0) null else {
             // Tipped back levelDeg about the phone's right edge (the screen toward the sky).
@@ -143,17 +151,18 @@ data class GyroDisplay(
             easeHeadingOnly = ratchet && resetHeadingOnly,
             rest = restQ,
             resetOnRatchet = true, resetHeadingOnly = false, easeAfterRatchet = false, levelDeg = 0,
+            turnsWith = turns, trackball = false, trackballInvert = false,
         )
     }
 
     /** It holds its pose to gravity (and so needs the accelerometer). */
-    val needsGravity: Boolean get() = kind.pose && gravity && !isTrackball
+    val needsGravity: Boolean get() = kind.pose && gravity && !followsCamera
 
     /** The shape a BALL shows. */
     val ballShape: BallShape get() = if (icosphere && shape == BallShape.GLOBE) BallShape.ICOSPHERE else shape
 
     /** A [trackball] ball. */
-    val isTrackball: Boolean get() = kind == GyroDisplayKind.BALL && trackball
+    val isTrackball: Boolean get() = kind.pose && turnsWith == TurnsWith.TRACKBALL
 
     /** It holds its heading to north (and so needs the magnetometer). */
     val needsCompass: Boolean get() = needsGravity && compass
@@ -166,7 +175,7 @@ data class GyroDisplay(
 
     companion object {
         /** The current settings layout ([v]). */
-        const val VERSION = 2
+        const val VERSION = 3
 
         /** A new display of [kind], with the PC overlays' defaults: gravity, easing back on ratchet over 2 s. */
         fun create(kind: GyroDisplayKind) = GyroDisplay(kind, v = VERSION, gravity = true, ease = true, easeSeconds = 2f)
@@ -181,6 +190,19 @@ data class GyroDisplay(
             GyroDisplayKind.BALL -> 0.4f to 1f
         }
     }
+}
+
+/** What turns a pose display ([GyroDisplay.turnsWith]). */
+@Serializable
+enum class TurnsWith(val label: String) {
+    /** How the phone is held: gravity, compass, ease back. */
+    PHONE("Phone"),
+
+    /** Where the game's camera points: every camera move (gyro, touchpad, buttons...), as far as the camera turns. */
+    CAMERA("Camera"),
+
+    /** As [CAMERA] but rolling the other way, like a ball under the hand: still against the world while the gyro aims. */
+    TRACKBALL("Trackball"),
 }
 
 /** What a 3D shape display ([GyroDisplayKind.BALL]) shows. */

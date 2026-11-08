@@ -41,6 +41,17 @@ public enum OverlayHandleSource
     Pc,
 }
 
+/// <summary>What turns an overlay (as the phone's gyro displays' Turns with).</summary>
+public enum OverlayTurnsWith
+{
+    /// <summary>How the phone is held: gravity, compass, ease back.</summary>
+    Phone,
+    /// <summary>Where the game's camera points: every camera move (gyro, touchpad, buttons...), as far as the camera turns.</summary>
+    Camera,
+    /// <summary>As Camera but rolling the other way, like a ball under the hand: still against the world while the gyro aims.</summary>
+    Trackball,
+}
+
 /// <summary>What an overlay window shows (as the phone's gyro displays).</summary>
 public enum OverlayKind
 {
@@ -114,17 +125,20 @@ public sealed class OverlaySettings
     public bool Equator { get; set; } = true;
     public bool ScreenMark { get; set; } = true;
     public bool TopMark { get; set; } = true;
+    /// <summary>What turns it: the phone, the game's camera, or a trackball (see <see cref="OverlayTurnsWith"/>).</summary>
+    public OverlayTurnsWith TurnsWith { get; set; } = OverlayTurnsWith.Phone;
     /// <summary>
-    /// A trackball: while the gyro moves the mouse it holds still against the world; every other mouse
-    /// move (touchpad, buttons...) turns it as the gyro turn that would send it. With <see cref="TrackballRws"/>
-    /// as far as the game's camera (once the game's turn is known on the phone), else <see cref="TrackballSpin"/>
-    /// times the phone's turn. No gravity, compass, reset or ease back.
+    /// Following the camera: with <see cref="TrackballRws"/> as far as the game's camera (once the
+    /// game's turn is known on the phone), else <see cref="TrackballSpin"/> times the phone's turn.
     /// </summary>
-    public bool Trackball { get; set; }
     public bool TrackballRws { get; set; } = true;
     public float TrackballSpin { get; set; } = 1f;
-    /// <summary>Turns the way the game's camera turns, instead of rolling the other way like a trackball under the hand.</summary>
-    public bool TrackballInvert { get; set; }
+
+    // Trackball settings of earlier builds: read once by MigrateOld, never written back.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Trackball { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? TrackballInvert { get; set; }
 
     // Bubble disk.
     /// <summary>The tilt that puts the dot on the rim, in degrees.</summary>
@@ -168,22 +182,30 @@ public sealed class OverlaySettings
     /// <summary>ARGB per <see cref="OverlayColor.Key"/> of this kind; missing = its default.</summary>
     public Dictionary<string, int> Colors { get; set; } = [];
 
-    /// <summary>A trackball 3D shape (no gravity, compass, reset or ease back).</summary>
+    /// <summary>A trackball (no gravity, compass or ease back).</summary>
     [JsonIgnore]
-    public bool IsTrackball => Kind == OverlayKind.Shape && Trackball;
+    public bool IsTrackball => TurnsWith == OverlayTurnsWith.Trackball;
+
+    /// <summary>It turns with the game's camera (no gravity, compass or turn amount).</summary>
+    [JsonIgnore]
+    public bool FollowsCamera => TurnsWith != OverlayTurnsWith.Phone;
 
     /// <summary>The phone sends its magnetometer readings for this one.</summary>
     [JsonIgnore]
-    public bool NeedsCompass => Gravity && Compass && !IsTrackball;
+    public bool NeedsCompass => Gravity && Compass && !FollowsCamera;
 
     public static string NewId() => Guid.NewGuid().ToString("N")[..12];
 
     /// <summary>
-    /// Carries the ratchet settings of earlier builds over: Reset on ratchet becomes Ease on ratchet
+    /// Carries the trackball and ratchet settings of earlier builds over: Reset on ratchet becomes Ease on ratchet
     /// (its Heading only with it); off, easing stays as it was, when the phone stops ("Ratchet let go" is gone).
     /// </summary>
     public void MigrateOld()
     {
+        // The trackball switch (3D shape only) and its Invert became Turns with.
+        if (Trackball == true && Kind == OverlayKind.Shape)
+            TurnsWith = TrackballInvert == true ? OverlayTurnsWith.Camera : OverlayTurnsWith.Trackball;
+        Trackball = TrackballInvert = null;
         if (ResetOnRatchet == null && ResetHeadingOnly == null && EaseAfterRatchet == null) return;
         if (ResetOnRatchet ?? true) // its old default
         {
