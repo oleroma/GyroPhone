@@ -77,15 +77,19 @@ public sealed class LaserTrace
 
     private bool _trailGap = true, _strokeGap = true;
     private float _lastX, _lastY, _lastZ;
+    private bool _wasHeld;
 
     /// <summary>
     /// The beam now points at (x, y, z) (any length) at <paramref name="nowMs"/>. While a ratchet is
     /// <paramref name="held"/> it neither trails nor paints (the pose eases back then, which isn't
-    /// aiming). With <paramref name="draw"/> it paints; turning Draw off clears the strokes.
+    /// aiming); with <paramref name="clearOnPress"/> pressing one clears the strokes. With
+    /// <paramref name="draw"/> it paints; turning Draw off clears the strokes.
     /// </summary>
-    public void Add(float x, float y, float z, long nowMs, int trailMs, bool draw, bool held)
+    public void Add(float x, float y, float z, long nowMs, int trailMs, bool draw, bool held, bool clearOnPress = false)
     {
-        if (!draw && Strokes.Count > 0) Clear();
+        bool pressed = clearOnPress && held && !_wasHeld;
+        _wasHeld = held;
+        if ((!draw || pressed) && Strokes.Count > 0) Clear();
         float l = MathF.Sqrt(x * x + y * y + z * z);
         if (l < 1e-6f || held || !float.IsFinite(l))
         {

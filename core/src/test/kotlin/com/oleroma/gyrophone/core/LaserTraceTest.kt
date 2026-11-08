@@ -62,13 +62,16 @@ class LaserTraceTest {
     @Test fun heldRatchetNeitherTrailsNorPaintsAndBreaksTheLine() {
         val t = LaserTrace()
         t.add(0f, 0f, -1f, 0, 500, draw = true, held = false)
-        t.add(1f, 0f, 0f, 10, 500, draw = true, held = true)
-        assertEquals(1, t.strokes.count)
-        assertEquals(1, t.trail.count)
+        t.add(1f, 0f, 0f, 5, 500, draw = true, held = true)
+        assertEquals(1, t.strokes.count) // kept without Clear on ratchet
+        t.add(1f, 0f, 0f, 6, 500, draw = true, held = false)
+        t.add(1f, 0f, 0f, 10, 500, draw = true, held = true, clearOnPress = true)
+        assertEquals(0, t.strokes.count) // a ratchet press clears the drawing
+        assertEquals(0, t.trail.count)
         t.add(1f, 0f, 0f, 20, 500, draw = true, held = false)
-        assertEquals(2, t.trail.count)
-        assertTrue(t.trail.gap(1))
-        assertTrue(t.strokes.gap(1))
+        assertEquals(1, t.trail.count)
+        assertEquals(1, t.strokes.count)
+        assertTrue(t.strokes.gap(0))
     }
 
     @Test fun trailAndStrokesFade() {

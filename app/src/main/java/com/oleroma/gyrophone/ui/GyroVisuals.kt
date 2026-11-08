@@ -255,7 +255,7 @@ private class VisState {
             val v = feed?.pose?.version ?: 0L
             if (v != lt.fedVersion) {
                 lt.fedVersion = v
-                lt.add(beam[0], beam[1], beam[2], now, trailMs, d.laserDraw, held)
+                lt.add(beam[0], beam[1], beam[2], now, trailMs, d.laserDraw, held, d.laserClearOnRatchet)
             }
             lt.expire(now, trailMs, fadeMs)
         }

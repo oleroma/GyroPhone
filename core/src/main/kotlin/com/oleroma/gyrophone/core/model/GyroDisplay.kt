@@ -128,6 +128,8 @@ data class GyroDisplay(
     val laserDraw: Boolean = false,
     val laserBrush: Int = 4,
     val laserFadeS: Int = 0,
+    /** LASER Draw mode: a ratchet press clears the drawing. */
+    val laserClearOnRatchet: Boolean = false,
     /** What turns it (the pose kinds): the phone, the game's camera, or a trackball. */
     val turnsWith: TurnsWith = TurnsWith.PHONE,
     val opacity: Float = 0.7f,

@@ -161,6 +161,8 @@ public sealed class OverlaySettings
     public bool LaserDraw { get; set; }
     public int LaserBrush { get; set; } = 4;
     public int LaserFadeS { get; set; }
+    /// <summary>Draw mode: a ratchet press clears the drawing.</summary>
+    public bool LaserClearOnRatchet { get; set; }
 
     // The pose, made on the PC (the phone's own gyro display settings are separate).
     /// <summary>

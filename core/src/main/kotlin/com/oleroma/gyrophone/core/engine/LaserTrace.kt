@@ -73,6 +73,7 @@ class LaserTrace {
     private var lastX = 0f
     private var lastY = 0f
     private var lastZ = 0f
+    private var wasHeld = false
 
     /** Goes up when the strokes are cleared. */
     var version = 0L
@@ -83,11 +84,14 @@ class LaserTrace {
 
     /**
      * The beam now points at ([x], [y], [z]) (any length) at [nowMs]. While a ratchet is [held] it
-     * neither trails nor paints (the pose eases back then, which isn't aiming). With [draw] it
-     * paints; turning Draw off clears the strokes.
+     * neither trails nor paints (the pose eases back then, which isn't aiming); with
+     * [clearOnPress] pressing one clears the strokes. With [draw] it paints; turning Draw off
+     * clears the strokes.
      */
-    fun add(x: Float, y: Float, z: Float, nowMs: Long, trailMs: Int, draw: Boolean, held: Boolean) {
-        if (!draw && strokes.count > 0) clear()
+    fun add(x: Float, y: Float, z: Float, nowMs: Long, trailMs: Int, draw: Boolean, held: Boolean, clearOnPress: Boolean = false) {
+        val pressed = clearOnPress && held && !wasHeld
+        wasHeld = held
+        if ((!draw || pressed) && strokes.count > 0) clear()
         val l = sqrt(x * x + y * y + z * z)
         if (l < 1e-6f || held || l.isNaN()) {
             trailGap = true

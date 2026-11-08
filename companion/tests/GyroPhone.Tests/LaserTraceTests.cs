@@ -65,13 +65,16 @@ public class LaserTraceTests
     {
         var t = new LaserTrace();
         t.Add(0, 0, -1, 0, 500, true, false);
-        t.Add(1, 0, 0, 10, 500, true, true);
-        Assert.Equal(1, t.Strokes.Count);
-        Assert.Equal(1, t.Trail.Count);
+        t.Add(1, 0, 0, 5, 500, true, true);
+        Assert.Equal(1, t.Strokes.Count); // kept without Clear on ratchet
+        t.Add(1, 0, 0, 6, 500, true, false);
+        t.Add(1, 0, 0, 10, 500, true, true, true);
+        Assert.Equal(0, t.Strokes.Count); // a ratchet press clears the drawing
+        Assert.Equal(0, t.Trail.Count);
         t.Add(1, 0, 0, 20, 500, true, false);
-        Assert.Equal(2, t.Trail.Count);
-        Assert.True(t.Trail.Gap(1));
-        Assert.True(t.Strokes.Gap(1));
+        Assert.Equal(1, t.Trail.Count);
+        Assert.Equal(1, t.Strokes.Count);
+        Assert.True(t.Strokes.Gap(0));
     }
 
     [Fact]

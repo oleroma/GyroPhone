@@ -44,7 +44,7 @@ internal sealed class OverlaysPage : Page
 
     // Look
     private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook;
-    private readonly CheckBox _laserGrid, _laserAxes, _laserDraw;
+    private readonly CheckBox _laserGrid, _laserAxes, _laserDraw, _laserClearOnRatchet;
     private readonly Seg<int> _laserTrail, _laserFade;
     private readonly SliderRow _laserBrush;
     private readonly StackPanel _laserDrawOptions;
@@ -266,7 +266,9 @@ internal sealed class OverlaysPage : Page
             ("Never", 0), ("5 s", 5), ("10 s", 10), ("30 s", 30), ("60 s", 60));
         _laserFade.View.Margin = new Thickness(0, 6, 0, 2);
         _laserDrawOptions.Children.Add(_laserFade.View);
-        _laserDrawOptions.Children.Add(Parts.Text("Strokes glow, older ones darker. A held ratchet stops the painting; turning Draw mode off clears it. A Clear displays mapping on the phone (Other targets) clears every laser pointer at once.", "Hint"));
+        _laserClearOnRatchet = Parts.Toggle("Clear on ratchet", () => Change(o => o.LaserClearOnRatchet = !o.LaserClearOnRatchet), "A ratchet press clears the drawing.");
+        _laserDrawOptions.Children.Add(_laserClearOnRatchet);
+        _laserDrawOptions.Children.Add(Parts.Text("Strokes glow, older ones darker. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping on the phone (Other targets) clears every laser pointer at once.", "Hint"));
         lb.Children.Add(_laserDrawOptions);
         var clear = Parts.Button("Clear", () => { if (Picked is { } id) _app.ClearOverlay(id); }, glyph: "");
         clear.Margin = new Thickness(0, 8, 0, 0);
@@ -472,6 +474,7 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_laserDrawOptions, o.LaserDraw);
         _laserBrush.Set(o.LaserBrush);
         _laserFade.Set(o.LaserFadeS);
+        Parts.SetChecked(_laserClearOnRatchet, o.LaserClearOnRatchet);
         Parts.SetChecked(_dots, o.FingerDots);
         Parts.SetChecked(_trails, o.FingerTrails);
         _handles.Set(o.Handles);

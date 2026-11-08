@@ -182,7 +182,8 @@ internal fun GyroDisplaySettingsScreen(
                         Chips(listOf("Never fades" to 0, "5 s" to 5, "10 s" to 10, "30 s" to 30, "60 s" to 60), d.laserFadeS) {
                             set(d.copy(laserFadeS = it))
                         }
-                        Hint("Strokes glow, older ones darker. A held ratchet stops the painting; turning Draw mode off clears it. A Clear displays mapping (Other targets) clears every laser pointer at once.")
+                        SwitchRow("Clear on ratchet", d.laserClearOnRatchet, "A ratchet press clears the drawing.") { set(d.copy(laserClearOnRatchet = it)) }
+                        Hint("Strokes glow, older ones darker. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every laser pointer at once.")
                     }
                     TextButton(onClick = { runtime.clearLaser(control.id) }) { Text("Clear") }
                 }
