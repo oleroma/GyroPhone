@@ -203,7 +203,8 @@ internal fun GyroDisplaySettingsScreen(
             }
             if (!d.isTrackball) PoseSettings(d) { set(it) }
             GroupTitle("Amount")
-            FloatSlider("Turn amount × %.1f", d.motionScale, 0.5f..3f, 0.1f) { set(d.copy(motionScale = it)) }
+            // A trackball turns by Spin (or as far as the game's camera) instead.
+            if (!d.isTrackball) FloatSlider("Turn amount × %.1f", d.motionScale, 0.5f..3f, 0.1f) { set(d.copy(motionScale = it)) }
             Hint("Hold the phone the way you play and press Level: held that way, it shows face-on, its screen flat toward you.")
             TextButton(onClick = {
                 if (!d.needsGravity) {

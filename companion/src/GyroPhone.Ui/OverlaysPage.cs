@@ -62,6 +62,8 @@ internal sealed class OverlaysPage : Page
     private readonly StackPanel _easeOptions;
     private readonly Seg<bool> _easeWhen, _easeBy;
     private readonly SliderRow _delay, _seconds, _speed, _scale;
+    /// <summary>Under Turn amount; both hidden on a trackball, where Spin sets how far it turns.</summary>
+    private readonly UIElement _scaleDivider;
 
     public override FrameworkElement View => _root;
 
@@ -282,7 +284,8 @@ internal sealed class OverlaysPage : Page
         var (amount, ab) = Parts.Card("Amount");
         _scale = new SliderRow("Turn amount", 0.5, 3, 0.1, v => $"× {v:0.0}", v => Change(o => o.MotionScale = (float)v));
         ab.Children.Add(_scale.View);
-        ab.Children.Add(Parts.Divider());
+        _scaleDivider = Parts.Divider();
+        ab.Children.Add(_scaleDivider);
         ab.Children.Add(Parts.Text("Hold the phone the way you play and press Level: held that way, it shows face-on, its screen flat toward you.", "Hint"));
         ab.Children.Add(Parts.Button("Level", () => { if (Picked is { } id) _app.LevelOverlay(id); }, glyph: ""));
         _turnTab.Children.Add(amount);
@@ -457,6 +460,8 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_seconds.View, !o.EaseBySpeed);
         Parts.Show(_speed.View, o.EaseBySpeed);
         _scale.Set(o.MotionScale);
+        Parts.Show(_scale.View, !o.IsTrackball);
+        Parts.Show(_scaleDivider, !o.IsTrackball);
     }
 
     /// <summary>One swatch per colour the picked window's kind (and shape) draws with; a click opens Windows' colour picker.</summary>

@@ -139,7 +139,9 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
      */
     fun shown(out: FloatArray) {
         pose.quaternion(q)
-        shownMatrix(q, display.restNow, display.motionScale, out)
+        val d = display
+        // A trackball turns by Spin (or as far as the game's camera): no turn amount on top.
+        shownMatrix(q, d.restNow, if (d.isTrackball) 1f else d.motionScale, out)
     }
 
     /**

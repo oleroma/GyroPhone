@@ -18,8 +18,8 @@ The phone overlay is only drawn on the PC; the phone sends its raw motion, layou
 Overlays page: the switches for all (Edit, Hide all, Level all), the list of windows (Show each, Add, shortcuts), and the picked window's settings in three tabs.
 
 - **Window**: place and size (default 420 × 300), opacity (0.1–1), background **Transparent** or **Green** (for an OBS chroma key), **Quality** High (default) / Balanced / Fast, **Frame rate** screen refresh / 60 (default) / 30.
-- **Look**: kind-specific options above, colours (one swatch per colour; Windows colour picker), finger dots (off) and trails (on), motion scale (0.5–3).
-- **Turning**: **Level** (the way the phone is held now shows face-on; with Gravity only the tilt is kept), **Gravity** (tilt held to gravity, default on), **Compass** (heading held by the magnetometer, off), **Ease** back to straight (on): after 300 ms still, over 2 s or at a speed (90 °/s); **Ease on ratchet** (on: while a ratchet is held it eases back until straight, instead of whenever the phone stops); heading only (without gravity).
+- **Look**: kind-specific options above, colours (one swatch per colour; Windows colour picker), finger dots (off) and trails (on).
+- **Turning**: **Level** (the way the phone is held now shows face-on; with Gravity only the tilt is kept), **Gravity** (tilt held to gravity, default on), **Compass** (heading held by the magnetometer, off), **Ease** back to straight (on): after 300 ms still, over 2 s or at a speed (90 °/s); **Ease on ratchet** (on: while a ratchet is held it eases back until straight, instead of whenever the phone stops); heading only (without gravity). **Amount**: **Turn amount** (0.5–3×, not on a trackball, which turns by Spin) and **Level**.
 
 The phone's own gyro displays use the same Look and Turning settings, names and defaults (see [Pad UI](phone-pad-ui.md#gyro-displays)); their values are separate.
 
