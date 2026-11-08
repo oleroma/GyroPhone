@@ -172,6 +172,7 @@ internal fun GyroDisplaySettingsScreen(
                     GroupTitle("Laser pointer")
                     Hint("A see-through sphere seen from above and to the side. The laser at its centre shines out of the phone's back onto the inside; the tick at the dot shows which way the phone's top points. The beam dims while a ratchet is held.")
                     SwitchRow("Axonometric view", d.laserAxonometric, LASER_AXON_HINT) { set(d.copy(laserAxonometric = it)) }
+                    SwitchRow("Sphere turns, beam stays ahead", d.laserSphereTurns, "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.") { set(d.copy(laserSphereTurns = it)) }
                     SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
                     SwitchRow("Axes (yaw red, pitch green, roll blue)", d.laserAxes) { set(d.copy(laserAxes = it)) }
                     GroupTitle("Draw")

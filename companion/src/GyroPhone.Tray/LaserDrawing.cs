@@ -29,9 +29,11 @@ internal static class LaserDrawing
         float px = Math.Clamp(r * 0.006f, 1f, 3f);
         int fadeMs = s.LaserFadeMs;
 
+        // Sphere turns: everything on it is seen from the pose, so the beam stays ahead.
+        float[]? turned = s.LaserSphereTurns ? m : null;
         (PointF P, float Z) At(float x, float y, float z)
         {
-            var v = LaserTrace.ToView(x, y, z, s.LaserAxonometric);
+            var v = LaserTrace.ToView(x, y, z, s.LaserAxonometric, turned);
             return (new PointF(c.X + v.X * r, c.Y - v.Y * r), v.Z);
         }
         Color Fade(Color col, float k) => Color.FromArgb(Math.Clamp((int)(col.A * k), 0, 255), col);
@@ -170,7 +172,7 @@ internal static class LaserDrawing
             }
         }
 
-        var gridLines = LaserTrace.GridFor(s.LaserAxonometric);
+        var gridLines = LaserTrace.GridFor(s.LaserAxonometric, turned);
         if (s.LaserGrid) Grid(gridLines.Back, grid);
         Axes(false);
         Paint(false);

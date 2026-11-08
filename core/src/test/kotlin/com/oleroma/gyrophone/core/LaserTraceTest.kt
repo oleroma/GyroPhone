@@ -39,6 +39,21 @@ class LaserTraceTest {
         assertEquals(1f, LaserTrace.behind(1f), 0f)
     }
 
+    @Test fun sphereTurnsKeepsTheBeamAhead() {
+        // The phone turned 90° right: its back points to the right.
+        val m = floatArrayOf(0f, 0f, -1f, 0f, 1f, 0f, 1f, 0f, 0f)
+        val b = FloatArray(3)
+        LaserTrace.beam(m, b)
+        assertArrayEquals(floatArrayOf(1f, 0f, 0f), b, 1e-6f)
+        val p = FloatArray(3)
+        LaserTrace.view(b[0], b[1], b[2], p, axon = false, turned = m)
+        assertArrayEquals(floatArrayOf(0f, 0f, -1f), p, 1e-6f) // still ahead
+        LaserTrace.view(0f, 0f, -1f, p, axon = false, turned = m)
+        assertArrayEquals(floatArrayOf(-1f, 0f, 0f), p, 1e-6f) // what was ahead went left
+        val (front, back) = LaserTrace.grid(false, m)
+        assertTrue(front.isNotEmpty() && back.isNotEmpty())
+    }
+
     @Test fun faceOnSeesTheBeamStraightInAsADot() {
         val p = FloatArray(3)
         LaserTrace.view(0f, 0f, -1f, p, axon = false)

@@ -229,11 +229,12 @@ private class VisState {
     private val lb = FloatArray(3)
     private val pv = FloatArray(3)
     private var laserAxon = true
+    private var laserTurned: FloatArray? = null
     private val levelPaths = Array(LEVELS * HUES) { Path() }
 
     /** Picture point of shown-frame direction ([x], [y], [z]) on a sphere of radius [r] at [c]; its depth (toward the viewer +) left in [pv]. */
     private fun laserAt(c: Offset, r: Float, x: Float, y: Float, z: Float): Offset {
-        LaserTrace.view(x, y, z, pv, axon = laserAxon)
+        LaserTrace.view(x, y, z, pv, axon = laserAxon, turned = laserTurned)
         return Offset(c.x + pv[0] * r, c.y - pv[1] * r)
     }
 
@@ -246,6 +247,8 @@ private class VisState {
     private fun DrawScope.drawLaser(feed: GyroDisplayFeed?, d: GyroDisplay, box: Rect, col: (GyroDisplayColor) -> Color) {
         poseOf(feed, d)
         laserAxon = d.laserAxonometric
+        // Sphere turns: everything on it is seen from the pose, so the beam stays ahead.
+        laserTurned = if (d.laserSphereTurns) m else null
         val r = minOf(box.width, box.height) / 2f * 0.95f
         val c = box.center
         val fadeMs = d.laserFadeMs
@@ -265,7 +268,7 @@ private class VisState {
         drawCircle(Brush.radialGradient(listOf(lit, sphere), Offset(c.x - r * 0.35f, c.y - r * 0.4f), r * 1.3f), r, c)
         val grid = col(GyroDisplayColor.LASER_GRID)
         val thin = Stroke(density, cap = StrokeCap.Round, join = StrokeJoin.Round)
-        val (gridFront, gridBack) = LaserTrace.grid(laserAxon)
+        val (gridFront, gridBack) = LaserTrace.grid(laserAxon, laserTurned)
         fun gridPath(lines: List<FloatArray>): Path {
             path.reset()
             for (l in lines) {

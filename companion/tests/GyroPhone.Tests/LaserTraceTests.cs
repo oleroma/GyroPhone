@@ -41,6 +41,18 @@ public class LaserTraceTests
     }
 
     [Fact]
+    public void SphereTurnsKeepsTheBeamAhead()
+    {
+        // The phone turned 90° right: its back points to the right.
+        float[] m = [0, 0, -1, 0, 1, 0, 1, 0, 0];
+        var b = LaserTrace.Beam(m);
+        Assert.Equal((1f, 0f, 0f), (b.X, b.Y, b.Z));
+        Assert.Equal((0f, 0f, -1f), LaserTrace.ToView(b.X, b.Y, b.Z, false, m));
+        Assert.Equal((-1f, 0f, 0f), LaserTrace.ToView(0, 0, -1, false, m));
+        Assert.NotEmpty(LaserTrace.GridFor(false, m).Front);
+    }
+
+    [Fact]
     public void FaceOnSeesTheBeamStraightInAsADot()
     {
         Assert.Equal((0f, 0f, -1f), LaserTrace.ToView(0, 0, -1, false));

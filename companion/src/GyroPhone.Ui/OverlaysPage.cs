@@ -44,7 +44,7 @@ internal sealed class OverlaysPage : Page
 
     // Look
     private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook;
-    private readonly CheckBox _laserAxon, _laserGrid, _laserAxes, _laserDraw, _laserClearOnRatchet;
+    private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserDraw, _laserClearOnRatchet;
     private readonly Seg<int> _laserFade;
     private readonly SliderRow _laserBrush;
     private readonly StackPanel _laserDrawOptions;
@@ -253,6 +253,8 @@ internal sealed class OverlaysPage : Page
         _laserAxon = Parts.Toggle("Axonometric view", () => Change(o => o.LaserAxonometric = !o.LaserAxonometric), "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot.");
         _laserGrid = Parts.Toggle("Grid every 15°", () => Change(o => o.LaserGrid = !o.LaserGrid));
         lb.Children.Add(_laserAxon);
+        _laserSphereTurns = Parts.Toggle("Sphere turns, beam stays ahead", () => Change(o => o.LaserSphereTurns = !o.LaserSphereTurns), "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.");
+        lb.Children.Add(_laserSphereTurns);
         _laserAxes = Parts.Toggle("Axes (yaw red, pitch green, roll blue)", () => Change(o => o.LaserAxes = !o.LaserAxes));
         lb.Children.Add(_laserGrid);
         lb.Children.Add(_laserAxes);
@@ -487,6 +489,7 @@ internal sealed class OverlaysPage : Page
         Parts.SetChecked(_phoneAxon, o.Axonometric);
         Parts.SetChecked(_shapeAxon, o.Axonometric);
         Parts.SetChecked(_laserAxon, o.LaserAxonometric);
+        Parts.SetChecked(_laserSphereTurns, o.LaserSphereTurns);
         Parts.SetChecked(_laserGrid, o.LaserGrid);
         Parts.SetChecked(_laserAxes, o.LaserAxes);
         Parts.SetChecked(_laserDraw, o.LaserDraw);

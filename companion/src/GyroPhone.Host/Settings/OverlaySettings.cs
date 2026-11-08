@@ -166,6 +166,8 @@ public sealed class OverlaySettings
     public bool LaserGrid { get; set; } = true;
     /// <summary>Laser pointer: seen from the fixed axonometric angle (30° round, 30° above); off, face-on.</summary>
     public bool LaserAxonometric { get; set; } = true;
+    /// <summary>Laser pointer: the beam stays pointing ahead and the sphere (grid, axes, paint) turns under it instead.</summary>
+    public bool LaserSphereTurns { get; set; }
     public bool LaserAxes { get; set; } = true;
     /// <summary>Draw mode: the beam paints the sphere's inside, <see cref="LaserBrush"/> degrees round; it fades after <see cref="LaserFadeMs"/> ms (0 = never).</summary>
     public bool LaserDraw { get; set; }

@@ -155,8 +155,20 @@ class LaserTrace {
             )
         }
 
-        /** Picture x, y, z of shown-frame point ([x], [y], [z]) into [out] at [at]: through [VIEW], or as it is (face-on) without [axon]. */
-        fun view(x: Float, y: Float, z: Float, out: FloatArray, at: Int = 0, axon: Boolean = true) {
+        /**
+         * Picture x, y, z of shown-frame point ([x], [y], [z]) into [out] at [at]: through [VIEW], or
+         * as it is (face-on) without [axon]. With [turned] (a pose matrix, row-major) the point is
+         * first seen from that pose (its transpose times the point): the sphere turned under a beam
+         * that stays ahead.
+         */
+        fun view(x: Float, y: Float, z: Float, out: FloatArray, at: Int = 0, axon: Boolean = true, turned: FloatArray? = null) {
+            if (turned != null) {
+                val t = turned
+                return view(
+                    t[0] * x + t[3] * y + t[6] * z, t[1] * x + t[4] * y + t[7] * z, t[2] * x + t[5] * y + t[8] * z,
+                    out, at, axon,
+                )
+            }
             if (!axon) {
                 out[at] = x; out[at + 1] = y; out[at + 2] = z
                 return
@@ -181,10 +193,11 @@ class LaserTrace {
         /** The same grid seen face-on. */
         val FLAT_GRID: Pair<List<FloatArray>, List<FloatArray>> by lazy { makeGrid(false) }
 
-        /** [GRID] or [FLAT_GRID]. */
-        fun grid(axon: Boolean) = if (axon) GRID else FLAT_GRID
+        /** [GRID] or [FLAT_GRID]; with [turned] (see [view]) made anew, turned with the sphere. */
+        fun grid(axon: Boolean, turned: FloatArray? = null) =
+            if (turned != null) makeGrid(axon, turned) else if (axon) GRID else FLAT_GRID
 
-        private fun makeGrid(axon: Boolean): Pair<List<FloatArray>, List<FloatArray>> {
+        private fun makeGrid(axon: Boolean, turned: FloatArray? = null): Pair<List<FloatArray>, List<FloatArray>> {
             val front = ArrayList<FloatArray>()
             val back = ArrayList<FloatArray>()
             val p = FloatArray(3)
@@ -201,7 +214,7 @@ class LaserTrace {
                 }
                 for (i in 0..GRID_STEPS) {
                     point(i * 2 * Math.PI / GRID_STEPS, p)
-                    view(p[0], p[1], p[2], q, axon = axon)
+                    view(p[0], p[1], p[2], q, axon = axon, turned = turned)
                     val f = q[2] >= 0f
                     if (i > 0 && f != lastFront) {
                         // Cut where it crosses the rim, pushed onto it.

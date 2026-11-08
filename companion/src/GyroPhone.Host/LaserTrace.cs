@@ -156,8 +156,12 @@ public sealed class LaserTrace
     }
 
     /// <summary>Picture x, y, z (toward the viewer +) of shown-frame point (x, y, z): through <see cref="View"/>, or as it is (face-on) without <paramref name="axon"/>.</summary>
-    public static (float X, float Y, float Z) ToView(float x, float y, float z, bool axon = true)
+    /// With <paramref name="turned"/> (a pose matrix, row-major) the point is first seen from that pose (its
+    /// transpose times the point): the sphere turned under a beam that stays ahead.
+    public static (float X, float Y, float Z) ToView(float x, float y, float z, bool axon = true, float[]? turned = null)
     {
+        if (turned is { } t)
+            (x, y, z) = (t[0] * x + t[3] * y + t[6] * z, t[1] * x + t[4] * y + t[7] * z, t[2] * x + t[5] * y + t[8] * z);
         if (!axon) return (x, y, z);
         var v = View;
         return (v[0] * x + v[1] * y + v[2] * z, v[3] * x + v[4] * y + v[5] * z, v[6] * x + v[7] * y + v[8] * z);
@@ -170,9 +174,11 @@ public sealed class LaserTrace
     public static readonly (List<(float X, float Y)[]> Front, List<(float X, float Y)[]> Back) FlatGrid = MakeGrid(false);
 
     /// <summary><see cref="Grid"/> or <see cref="FlatGrid"/>.</summary>
-    public static (List<(float X, float Y)[]> Front, List<(float X, float Y)[]> Back) GridFor(bool axon) => axon ? Grid : FlatGrid;
+    /// With <paramref name="turned"/> (see <see cref="ToView"/>) it is made anew, turned with the sphere.
+    public static (List<(float X, float Y)[]> Front, List<(float X, float Y)[]> Back) GridFor(bool axon, float[]? turned = null) =>
+        turned != null ? MakeGrid(axon, turned) : axon ? Grid : FlatGrid;
 
-    private static (List<(float X, float Y)[]>, List<(float X, float Y)[]>) MakeGrid(bool axon)
+    private static (List<(float X, float Y)[]>, List<(float X, float Y)[]>) MakeGrid(bool axon, float[]? turned = null)
     {
         var front = new List<(float X, float Y)[]>();
         var back = new List<(float X, float Y)[]>();
@@ -189,7 +195,7 @@ public sealed class LaserTrace
             for (int i = 0; i <= GridSteps; i++)
             {
                 var p = point(i * 2 * Math.PI / GridSteps);
-                var q = ToView(p.X, p.Y, p.Z, axon);
+                var q = ToView(p.X, p.Y, p.Z, axon, turned);
                 bool f = q.Z >= 0f;
                 if (i > 0 && f != lastFront)
                 {
