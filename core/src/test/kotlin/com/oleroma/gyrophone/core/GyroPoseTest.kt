@@ -301,15 +301,25 @@ class GyroDisplayTest {
         assertEquals(G.VERSION, com.oleroma.gyrophone.core.model.GyroDisplay(ball, v = 2).migrated().v)
     }
 
-    @Test fun trackballHoldsStillAgainstTheWorldUntilARatchetStopsIt() {
+    @Test fun trackballTurnsAsItsAxesSayUntilARatchetStopsIt() {
         val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL))
         val m = FloatArray(9)
         repeat(50) { f.feed(60f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // phone 30° right
-        // The ball turned 30° the other way: its right side went back.
-        f.pose.matrix(m); assertEquals(-0.5f, m[6], 1e-3f)
+        // By default as the phone: its right side came forward.
+        f.pose.matrix(m); assertEquals(0.5f, m[6], 1e-3f)
         val yawOff = 7 and com.oleroma.gyrophone.core.engine.MappingEngine.gyroBit(com.oleroma.gyrophone.core.model.MotionAxis.YAW).inv()
         repeat(50) { f.feed(60f, 0f, 0f, 0.01f, yawOff, pressed = true, held = true) } // yaw paused: no change, no reset
-        f.pose.matrix(m); assertEquals(-0.5f, m[6], 1e-3f)
+        f.pose.matrix(m); assertEquals(0.5f, m[6], 1e-3f)
+        // The up axis inverted: the same turn rolls it the other way.
+        val inv = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL, trackballAxes = com.oleroma.gyrophone.core.model.TRACKBALL_AS_PHONE or 0x80))
+        repeat(50) { inv.feed(60f, 0f, 0f, 0.01f, 7, pressed = false, held = false) }
+        inv.pose.matrix(m); assertEquals(-0.5f, m[6], 1e-3f)
+        // Pitch on the up axis, nothing on the others: a yaw turn does nothing.
+        val swapped = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL, trackballAxes = 2))
+        repeat(50) { swapped.feed(60f, 0f, 0f, 0.01f, 7, pressed = false, held = false) }
+        swapped.pose.matrix(m); assertEquals(0f, m[6], 1e-3f)
+        repeat(50) { swapped.feed(0f, 60f, 0f, 0.01f, 7, pressed = false, held = false) }
+        swapped.pose.matrix(m); assertEquals(0.5f, m[6], 1e-3f)
     }
 
     @Test fun trackballTurnsWithOtherMouseCountsExactlyAsTheGameCamera() {

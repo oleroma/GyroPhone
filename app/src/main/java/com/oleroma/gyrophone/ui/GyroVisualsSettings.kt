@@ -31,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import com.oleroma.gyrophone.runtime.GamepadRuntime
+import com.oleroma.gyrophone.core.model.TRACKBALL_AS_PHONE
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -172,7 +173,7 @@ internal fun GyroDisplaySettingsScreen(
                     Hint("A see-through sphere seen from above and to the side. The laser at its centre shines out of the phone's back onto the inside; the tick at the dot shows which way the phone's top points. The beam dims while a ratchet is held.")
                     SwitchRow("Axonometric view", d.laserAxonometric, LASER_AXON_HINT) { set(d.copy(laserAxonometric = it)) }
                     SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
-                    SwitchRow("Axes (right, up, toward you)", d.laserAxes) { set(d.copy(laserAxes = it)) }
+                    SwitchRow("Axes (yaw red, pitch green, roll blue)", d.laserAxes) { set(d.copy(laserAxes = it)) }
                     GroupTitle("Draw")
                     SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim.") { set(d.copy(laserDraw = it)) }
                     if (d.laserDraw) Indented {
@@ -208,7 +209,7 @@ internal fun GyroDisplaySettingsScreen(
                 when (d.turnsWith) {
                     TurnsWith.PHONE -> "How you hold the phone."
                     TurnsWith.CAMERA -> "Where the game's camera points: it turns left and right and up and down as the camera does, never rolling, with the gyro and every other camera move (touchpad, buttons, controllers, keys, glides). A ratchet stops it, as it stops the camera."
-                    TurnsWith.TRACKBALL -> "Like a ball under your hand: still against the world while the gyro aims, so it rolls the other way; every other camera move rolls it too. A ratchet stops it, and it turns with the phone."
+                    TurnsWith.TRACKBALL -> "Like a ball rolled by your moves: each of its axes turns by the gyro turn picked below (as the phone, by default), and every other camera move rolls it too. A ratchet stops it."
                 },
             )
             if (d.followsCamera) Indented {
@@ -223,6 +224,7 @@ internal fun GyroDisplaySettingsScreen(
                     Hint("Every movement turns it Spin times as far as the phone turn that sends it.")
                 }
             }
+            if (d.turnsWith == TurnsWith.TRACKBALL) Indented { TrackballAxesSettings(d) { set(it) } }
             if (d.turnsWith == TurnsWith.PHONE) PoseSettings(d) { set(it) }
             // A trackball never eases back: every roll is a camera move.
             if (d.turnsWith == TurnsWith.CAMERA) {
@@ -284,6 +286,20 @@ private fun PoseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
     EaseSettings(d, set)
 }
 
+/** A trackball's axes: for each, the gyro turn that rolls it about that axis, and which way. */
+@Composable
+private fun TrackballAxesSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
+    // Its bytes: 0 about up (shown as roll), 1 about right (pitch), 2 through the screen (shown as yaw).
+    for ((i, name) in listOf(2 to "Yaw", 1 to "Pitch", 0 to "Roll")) {
+        val code = d.trackballAxes shr (8 * i) and 0xFF
+        fun put(c: Int) = set(d.copy(trackballAxes = (d.trackballAxes and (0xFF shl (8 * i)).inv()) or (c shl (8 * i))))
+        Text("$name axis turns with", style = MaterialTheme.typography.bodyMedium)
+        Chips(listOf("Yaw" to 3, "Pitch" to 2, "Roll" to 1, "None" to 0), code and 0x7F) { put(it or (code and 0x80)) }
+        if (code and 0x7F != 0) SwitchRow("Invert $name axis", code and 0x80 != 0) { put((code and 0x7F) or (if (it) 0x80 else 0)) }
+    }
+    if (d.trackballAxes != TRACKBALL_AS_PHONE) TextButton(onClick = { set(d.copy(trackballAxes = TRACKBALL_AS_PHONE)) }) { Text("As the phone") }
+}
+
 /** Ease back to straight and its options (Phone and Camera; a trackball never eases back). */
 @Composable
 private fun EaseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
@@ -328,7 +344,7 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
 
 private val LASER_FADES = listOf("Never fades" to 0, "0.25 s" to 250, "0.5 s" to 500, "1 s" to 1000, "2 s" to 2000, "5 s" to 5000, "10 s" to 10_000, "30 s" to 30_000, "60 s" to 60_000)
 private const val LASER_AXON_HINT = "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot."
-private const val AXON_HINT = "Seen from 30° round and 30° above with the world's axes (right red, up green, toward you blue), as the laser pointer is, instead of face-on."
+private const val AXON_HINT = "Seen from 30° round and 30° above with the world's axes (yaw toward you red, pitch right green, roll up blue, as the gimbal's rings), as the laser pointer is, instead of face-on."
 
 /** A colour on a checkerboard, so its transparency shows. */
 @Composable

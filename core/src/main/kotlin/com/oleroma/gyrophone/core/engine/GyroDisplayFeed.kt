@@ -97,8 +97,8 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
                 pose.cameraTurn(deg(map and 0xFF), deg(map shr 8 and 0xFF))
                 return
             }
-            fun k(a: MotionAxis) = if (axes and MappingEngine.gyroBit(a) == 0) 0f else cameraGain(d, gyro, a)
-            pose.counterRotate(yaw * k(MotionAxis.YAW), pitch * k(MotionAxis.PITCH), roll * k(MotionAxis.ROLL), dtSeconds)
+            fun k(a: MotionAxis) = if (axes and MappingEngine.gyroBit(a) == 0) 0f else cameraSpeed(d, gyro, a)
+            trackballTurn(d, yaw * k(MotionAxis.YAW), pitch * k(MotionAxis.PITCH), roll * k(MotionAxis.ROLL), dtSeconds)
         }
         // A trackball never eases back: every roll is a camera move.
         if (d.isTrackball) return cameraTurn()
@@ -205,20 +205,26 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
             pose.cameraTurn(turn(map and 0xFF), turn(map shr 8 and 0xFF))
             return
         }
-        pose.counterRotate(
-            deg[0] * cameraGain(d, gyro, MotionAxis.YAW), deg[1] * cameraGain(d, gyro, MotionAxis.PITCH),
-            deg[2] * cameraGain(d, gyro, MotionAxis.ROLL), 1f,
+        trackballTurn(
+            d, deg[0] * cameraSpeed(d, gyro, MotionAxis.YAW), deg[1] * cameraSpeed(d, gyro, MotionAxis.PITCH),
+            deg[2] * cameraSpeed(d, gyro, MotionAxis.ROLL), 1f,
         )
     }
 
     /**
-     * How far one following the camera turns per degree the phone turns on [a]: with RWS as far as
-     * the game's camera ([GyroSettings.rwsOf]; as the phone while the game's turn is unknown), else
-     * Spin times. Positive: held still against the world, a trackball (it rolls the other way);
-     * negative for [TurnsWith.CAMERA], which turns as the camera does.
+     * A trackball's turn by gyro turns [yaw], [pitch], [roll] (deg/s over [dt], or degrees with
+     * [dt] 1): about each of its fixed axes by the turn [GyroDisplay.trackballAxes] picks for it.
      */
-    private fun cameraGain(d: GyroDisplay, gyro: GyroSettings?, a: MotionAxis): Float =
-        cameraSpeed(d, gyro, a) * (if (d.turnsWith == TurnsWith.CAMERA) -1f else 1f)
+    private fun trackballTurn(d: GyroDisplay, yaw: Float, pitch: Float, roll: Float, dt: Float) {
+        val m = d.trackballAxes
+        fun about(i: Int): Float {
+            val code = m shr (8 * i) and 0xFF
+            val v = when (code and 0x7F) { 1 -> yaw; 2 -> pitch; 3 -> roll; else -> 0f }
+            return if (code and 0x80 != 0) -v else v
+        }
+        // As the phone turns, about the view's fixed axes (the opposite of holding still against the world).
+        pose.counterRotate(-about(0), -about(1), -about(2), dt)
+    }
 
     /** How far it turns per degree the phone turns on [a]: as far as the game's camera (RWS), or Spin times. */
     private fun cameraSpeed(d: GyroDisplay, gyro: GyroSettings?, a: MotionAxis): Float =

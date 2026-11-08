@@ -108,10 +108,11 @@ internal static class OverlayRenderer
         if (note != null) DrawNote(g, area, note);
     }
 
-    private static readonly Color[] WorldAxisColors = [Color.FromArgb(0xFF, 0xFF, 0x5A, 0x5A), Color.FromArgb(0xFF, 0x5A, 0xDB, 0x6E), Color.FromArgb(0xFF, 0x5A, 0xA8, 0xFF)];
+    // By turn, as the gimbal's rings: right is the pitch axis (green), up roll (blue), toward you yaw (red).
+    private static readonly Color[] WorldAxisColors = [Color.FromArgb(0xFF, 0x5A, 0xDB, 0x6E), Color.FromArgb(0xFF, 0x5A, 0xA8, 0xFF), Color.FromArgb(0xFF, 0xFF, 0x5A, 0x5A)];
 
     /// <summary>
-    /// The world's axes in the axonometric view (right red, up green, toward you blue), reaching
+    /// The world's axes in the axonometric view (pitch right green, roll up blue, yaw toward you red), reaching
     /// <paramref name="reach"/> of the area's shorter side from its centre: the halves behind the
     /// middle (<paramref name="front"/> false) or in front of it.
     /// </summary>

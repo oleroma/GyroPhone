@@ -168,7 +168,7 @@ public sealed class OverlayPose
 
     /// <summary>
     /// Following the camera: the live gyro axes and every other mouse move turn it as the camera turns
-    /// (Camera), or the other way, holding still against the world while the gyro aims (Trackball).
+    /// (Camera), or about its fixed axes as its axis mapping says (Trackball).
     /// </summary>
     private void CameraTurn(OverlayFrame f, OverlaySettings s)
     {
@@ -190,8 +190,7 @@ public sealed class OverlayPose
             CameraLook(Deg(f.CameraXAxis, 3), Deg(f.CameraYAxis, 2));
             return;
         }
-        float sign = 1f;
-        float Gain(float rws) => (s.TrackballRws ? (rws > 0f ? rws : 1f) : Math.Clamp(s.TrackballSpin, 0.05f, 20f)) * sign;
+        float Gain(float rws) => s.TrackballRws ? (rws > 0f ? rws : 1f) : Math.Clamp(s.TrackballSpin, 0.05f, 20f);
         float gy = Gain(f.RwsYaw), gp = Gain(f.RwsPitch), gr = Gain(f.RwsRoll);
         float yaw = f.CameraYaw * gy, pitch = f.CameraPitch * gp, roll = f.CameraRoll * gr;
         if (f.PoseLive)
@@ -200,7 +199,15 @@ public sealed class OverlayPose
             if ((f.Axes & 2) != 0) pitch += f.TurnPitch * gp;
             if ((f.Axes & 4) != 0) roll += f.TurnRoll * gr;
         }
-        CounterRotate(yaw, pitch, roll);
+        // About each of its fixed axes by the turn TrackballAxes picks for it, as the phone turns
+        // (the opposite of holding still against the world).
+        float About(int i)
+        {
+            int code = (s.TrackballAxes >> (8 * i)) & 0xFF;
+            float v = (code & 0x7F) switch { 1 => yaw, 2 => pitch, 3 => roll, _ => 0f };
+            return (code & 0x80) != 0 ? -v : v;
+        }
+        CounterRotate(-About(0), -About(1), -About(2));
     }
 
     /// <summary>

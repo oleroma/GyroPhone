@@ -139,6 +139,16 @@ public sealed class OverlaySettings
     /// </summary>
     public bool TrackballRws { get; set; } = true;
     public float TrackballSpin { get; set; } = 1f;
+    /// <summary>
+    /// Trackball: which gyro turn rolls it about each of its axes, one byte each: about its up axis
+    /// (shown as roll), its right axis (pitch), the axis through the screen (shown as yaw); each byte
+    /// 1 yaw (as sent), 2 pitch, 3 roll (as sent), 0 none, | 0x80 the other way. The default turns it
+    /// as the phone turns. As the phone's GyroDisplay.trackballAxes.
+    /// </summary>
+    public int TrackballAxes { get; set; } = TrackballAsPhone;
+
+    /// <summary><see cref="TrackballAxes"/> turning it as the phone turns: each axis by its own gyro turn.</summary>
+    public const int TrackballAsPhone = 1 | (2 << 8) | (3 << 16);
 
     // Trackball settings of earlier builds: read once by MigrateOld, never written back.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -319,9 +329,9 @@ public sealed class OverlaySettings
     [
         new("sphere", "Sphere", 0x332A3446),
         new("grid", "Grid", 0x66FFFFFF),
-        new("x", "Right axis", 0xFFFF5A5A),
-        new("y", "Up axis", 0xFF5ADB6E),
-        new("z", "Toward you axis", 0xFF5AA8FF),
+        new("x", "Pitch axis (right)", 0xFF5ADB6E),
+        new("y", "Roll axis (up)", 0xFF5AA8FF),
+        new("z", "Yaw axis (toward you)", 0xFFFF5A5A),
         new("beam", "Beam", 0xFFFF3B3B),
         new("dot", "Dot", 0xFFFFFFFF),
         new("paint", "Paint ahead", 0xFFFFC94D),

@@ -115,6 +115,13 @@ data class GyroDisplay(
      */
     val trackballSpin: Float = 1f,
     val trackballRws: Boolean = true,
+    /**
+     * [TurnsWith.TRACKBALL]: which gyro turn rolls it about each of its axes, one byte each: about
+     * its up axis (shown as roll), its right axis (pitch), the axis through the screen (shown as
+     * yaw); each byte 1 yaw (stored), 2 pitch, 3 roll (stored), 0 none, | 0x80 the other way.
+     * The default turns it as the phone turns ([TRACKBALL_AS_PHONE]).
+     */
+    val trackballAxes: Int = TRACKBALL_AS_PHONE,
     /** Branch builds before v3: a trackball turning as the camera ([TurnsWith.CAMERA] since). */
     val trackballInvert: Boolean = false,
     /** PHONE and BALL: seen from a fixed angle (30° round, 30° above) with the world's axes, as the laser pointer is, instead of face-on. */
@@ -282,9 +289,9 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     BALL_GIMBAL_ROLL(GyroDisplayKind.BALL, "groll", "Gimbal roll ring", 0xFF5AA8FF),
     LASER_SPHERE(GyroDisplayKind.LASER, "sphere", "Sphere", 0x332A3446),
     LASER_GRID(GyroDisplayKind.LASER, "grid", "Grid", 0x66FFFFFF),
-    LASER_X(GyroDisplayKind.LASER, "x", "Right axis", 0xFFFF5A5A),
-    LASER_Y(GyroDisplayKind.LASER, "y", "Up axis", 0xFF5ADB6E),
-    LASER_Z(GyroDisplayKind.LASER, "z", "Toward you axis", 0xFF5AA8FF),
+    LASER_X(GyroDisplayKind.LASER, "x", "Pitch axis (right)", 0xFF5ADB6E),
+    LASER_Y(GyroDisplayKind.LASER, "y", "Roll axis (up)", 0xFF5AA8FF),
+    LASER_Z(GyroDisplayKind.LASER, "z", "Yaw axis (toward you)", 0xFFFF5A5A),
     LASER_BEAM(GyroDisplayKind.LASER, "beam", "Beam", 0xFFFF3B3B),
     LASER_DOT(GyroDisplayKind.LASER, "dot", "Dot", 0xFFFFFFFF),
     LASER_PAINT(GyroDisplayKind.LASER, "paint", "Paint ahead", 0xFFFFC94D),
@@ -295,3 +302,6 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
         fun of(kind: GyroDisplayKind): List<GyroDisplayColor> = entries.filter { it.kind == kind }
     }
 }
+
+/** [GyroDisplay.trackballAxes] turning a trackball as the phone turns: each axis by its own gyro turn. */
+const val TRACKBALL_AS_PHONE = 1 or (2 shl 8) or (3 shl 16)

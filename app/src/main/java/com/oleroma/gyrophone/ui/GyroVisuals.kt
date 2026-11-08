@@ -386,7 +386,7 @@ private class VisState {
     }
 
     /**
-     * The world's axes in the axonometric view (right red, up green, toward you blue), [len] long
+     * The world's axes in the axonometric view (pitch right green, roll up blue, yaw toward you red), [len] long
      * from [c]: the halves behind the middle ([front] false) or in front of it.
      */
     private fun DrawScope.worldAxes(c: Offset, len: Float, front: Boolean, op: Float) {
@@ -1061,7 +1061,8 @@ private const val GHOST_MS = 45L
 private val STROKE_STEP_RAD = Math.toRadians(4.0).toFloat()
 
 /** The world's axes in the axonometric view: right, up, toward you. */
-private val WORLD_AXES = arrayOf(Color(0xFFFF5A5A), Color(0xFF5ADB6E), Color(0xFF5AA8FF))
+// By turn, as the gimbal's rings: right is the pitch axis (green), up roll (blue), toward you yaw (red).
+private val WORLD_AXES = arrayOf(Color(0xFF5ADB6E), Color(0xFF5AA8FF), Color(0xFFFF5A5A))
 
 /** A laser pointer's strokes fade in this many steps (one path each). */
 private const val LEVELS = 8

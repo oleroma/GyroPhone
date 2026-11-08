@@ -357,18 +357,23 @@ public class OverlayTests
     }
 
     [Fact]
-    public void TrackballTurnsAgainstTheGyroAndWithOtherMoves()
+    public void TrackballTurnsAsItsAxesSayAndWithOtherMoves()
     {
         var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Trackball, TrackballRws = false, TrackballSpin = 2f };
         var p = new GyroPhone.Host.OverlayPose();
-        // The gyro turns 10° right while moving the mouse: the ball turns 20° the other way.
+        // The gyro turns 10° right while moving the mouse: the ball turns 20° with it (as the phone, by default).
         p.Feed(Motion(10f, 0.01f), s);
-        Assert.Equal(-20f, HeadingDeg(p), 1);
+        Assert.Equal(20f, HeadingDeg(p), 1);
         // Touchpad counts worth a 10° yaw turn turn it as that gyro turn would.
         var f = Motion(0f, 0.01f);
         f.CameraYaw = 10f;
         p.Feed(f, s);
-        Assert.Equal(-40f, HeadingDeg(p), 1);
+        Assert.Equal(40f, HeadingDeg(p), 1);
+        // The up axis inverted: the other way.
+        s.TrackballAxes = GyroPhone.Host.Settings.OverlaySettings.TrackballAsPhone | 0x80;
+        var q = new GyroPhone.Host.OverlayPose();
+        q.Feed(Motion(10f, 0.01f), s);
+        Assert.Equal(-20f, HeadingDeg(q), 1);
     }
 
     [Fact]
@@ -443,9 +448,9 @@ public class OverlayTests
         Assert.True(h.Engine.OverlaySnapshot(fa, a, out _) >= 0);
         h.Engine.OverlaySnapshot(fb, b, out _);
         Assert.NotEqual(1f, fa.Qw);
-        // Opposite turns: the trackball holds still against the world, and the frame's 1° of
+        // The same way (a trackball turns as the phone by default), and the frame's 1° of
         // touchpad yaw turns it as far again.
-        Assert.Equal(-2 * fa.Qy, fb.Qy, 3);
+        Assert.Equal(2 * fa.Qy, fb.Qy, 3);
         h.Engine.RemoveOverlay(b);
         Assert.Single(h.Engine.Settings.Overlays);
     }

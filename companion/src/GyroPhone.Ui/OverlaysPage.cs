@@ -64,6 +64,10 @@ internal sealed class OverlaysPage : Page
     private readonly TextBlock _turnsHint;
     private readonly UIElement _gravityDivider;
     private readonly CheckBox _rws;
+    private readonly StackPanel _trackballAxes;
+    private readonly Seg<int>[] _tbFrom = new Seg<int>[3];
+    private readonly CheckBox[] _tbInvert = new CheckBox[3];
+    private readonly Button _tbAsPhone;
     private readonly SliderRow _spin;
     private readonly CheckBox _gravity, _compass, _ease, _headingOnly;
     private readonly StackPanel _easeOptions;
@@ -249,7 +253,7 @@ internal sealed class OverlaysPage : Page
         _laserAxon = Parts.Toggle("Axonometric view", () => Change(o => o.LaserAxonometric = !o.LaserAxonometric), "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot.");
         _laserGrid = Parts.Toggle("Grid every 15°", () => Change(o => o.LaserGrid = !o.LaserGrid));
         lb.Children.Add(_laserAxon);
-        _laserAxes = Parts.Toggle("Axes (right, up, toward you)", () => Change(o => o.LaserAxes = !o.LaserAxes));
+        _laserAxes = Parts.Toggle("Axes (yaw red, pitch green, roll blue)", () => Change(o => o.LaserAxes = !o.LaserAxes));
         lb.Children.Add(_laserGrid);
         lb.Children.Add(_laserAxes);
         lb.Children.Add(Parts.Divider());
@@ -294,6 +298,24 @@ internal sealed class OverlaysPage : Page
         tbb.Children.Add(_turnsHint);
         tbb.Children.Add(_rws);
         tbb.Children.Add(_spin.View);
+        // A trackball's axes: for each, the gyro turn that rolls it about that axis, and which way.
+        // TrackballAxes bytes: 0 about up (shown as roll), 1 about right (pitch), 2 through the screen (shown as yaw).
+        _trackballAxes = new StackPanel { Margin = new Thickness(20, 4, 0, 4) };
+        foreach (var (i, name) in new[] { (2, "Yaw"), (1, "Pitch"), (0, "Roll") })
+        {
+            int shift = 8 * i;
+            void Put(OverlaySettings o, int c) => o.TrackballAxes = (o.TrackballAxes & ~(0xFF << shift)) | (c << shift);
+            _trackballAxes.Children.Add(Parts.Text($"{name} axis turns with"));
+            _tbFrom[i] = new Seg<int>(a => Change(o => Put(o, a | ((o.TrackballAxes >> shift) & 0x80))), false,
+                ("Yaw", 3), ("Pitch", 2), ("Roll", 1), ("None", 0));
+            _tbFrom[i].View.Margin = new Thickness(0, 4, 0, 2);
+            _trackballAxes.Children.Add(_tbFrom[i].View);
+            _tbInvert[i] = Parts.Toggle($"Invert {name} axis", () => Change(o => Put(o, ((o.TrackballAxes >> shift) & 0xFF) ^ 0x80)));
+            _trackballAxes.Children.Add(_tbInvert[i]);
+        }
+        _tbAsPhone = Parts.Button("As the phone", () => Change(o => o.TrackballAxes = OverlaySettings.TrackballAsPhone));
+        _trackballAxes.Children.Add(_tbAsPhone);
+        tbb.Children.Add(_trackballAxes);
         _turnTab.Children.Add(tb);
 
         var (pose, pob) = Parts.Card("Pose");
@@ -341,7 +363,7 @@ internal sealed class OverlaysPage : Page
         ShowTab();
     }
 
-    private const string AxonHint = "Seen from 30° round and 30° above with the world's axes (right red, up green, toward you blue), as the laser pointer is, instead of face-on.";
+    private const string AxonHint = "Seen from 30° round and 30° above with the world's axes (yaw toward you red, pitch right green, roll up blue, as the gimbal's rings), as the laser pointer is, instead of face-on.";
 
     /// <summary>Meshes.MaxSubdivision in the tray app; the icosphere's finest level.</summary>
     private const int MaxSubdivision = 3;
@@ -496,13 +518,22 @@ internal sealed class OverlaysPage : Page
         _turnsHint.Text = o.TurnsWith switch
         {
             OverlayTurnsWith.Camera => "Where the game's camera points: it turns left and right and up and down as the camera does, never rolling, with the gyro and every other camera move (touchpad, buttons, controllers, keys). A ratchet stops it, as it stops the camera.",
-            OverlayTurnsWith.Trackball => "Like a ball under your hand: still against the world while the gyro aims, so it rolls the other way; every other camera move rolls it too.",
+            OverlayTurnsWith.Trackball => "Like a ball rolled by your moves: each of its axes turns by the gyro turn picked below (as the phone, by default), and every other camera move rolls it too.",
             _ => "How you hold the phone.",
         };
         Parts.SetChecked(_rws, o.TrackballRws);
         Parts.Show(_rws, o.FollowsCamera);
         _spin.Set(o.TrackballSpin);
         Parts.Show(_spin.View, o.FollowsCamera && !o.TrackballRws);
+        Parts.Show(_trackballAxes, o.IsTrackball);
+        for (int i = 0; i < 3; i++)
+        {
+            int code = (o.TrackballAxes >> (8 * i)) & 0xFF;
+            _tbFrom[i].Set(code & 0x7F);
+            Parts.SetChecked(_tbInvert[i], (code & 0x80) != 0);
+            Parts.Show(_tbInvert[i], (code & 0x7F) != 0);
+        }
+        Parts.Show(_tbAsPhone, o.TrackballAxes != OverlaySettings.TrackballAsPhone);
         // A trackball never eases back: every roll is a camera move. Following the camera: no gravity or compass.
         Parts.Show(_poseCard, !o.IsTrackball);
         Parts.Show(_gravity, !o.FollowsCamera);
