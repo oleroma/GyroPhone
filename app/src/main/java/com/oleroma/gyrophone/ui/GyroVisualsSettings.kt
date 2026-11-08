@@ -31,7 +31,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import com.oleroma.gyrophone.runtime.GamepadRuntime
-import com.oleroma.gyrophone.core.model.TRACKBALL_AS_PHONE
+import com.oleroma.gyrophone.core.model.TRACKBALL_AS_CAMERA
+import com.oleroma.gyrophone.core.model.TRACKBALL_LOCK
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -216,7 +217,7 @@ internal fun GyroDisplaySettingsScreen(
                 when (d.turnsWith) {
                     TurnsWith.PHONE -> "How you hold the phone."
                     TurnsWith.CAMERA -> "Where the game's camera points: it turns left and right and up and down as the camera does, never rolling, with the gyro and every other camera move (touchpad, buttons, controllers, keys, glides). A ratchet stops it, as it stops the camera."
-                    TurnsWith.TRACKBALL -> "Like a ball rolled by your moves: each of its axes turns by the gyro turn picked below (as the phone, by default), and every other camera move rolls it too. A ratchet stops it."
+                    TurnsWith.TRACKBALL -> "Like a ball rolled by your moves: each of its axes turns by the gyro turn picked below (as Camera, by default), and every other camera move rolls it too. A ratchet stops it."
                 },
             )
             if (d.followsCamera) Indented {
@@ -293,18 +294,22 @@ private fun PoseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
     EaseSettings(d, set)
 }
 
-/** A trackball's axes: for each, the gyro turn that rolls it about that axis, and which way. */
+/** A trackball's axes: for each, locked or the gyro turn that rolls it about that axis, and which way. */
 @Composable
 private fun TrackballAxesSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
     // Its bytes: 0 about up (shown as roll), 1 about right (pitch), 2 through the screen (shown as yaw).
     for ((i, name) in listOf(2 to "Yaw", 1 to "Pitch", 0 to "Roll")) {
         val code = d.trackballAxes shr (8 * i) and 0xFF
         fun put(c: Int) = set(d.copy(trackballAxes = (d.trackballAxes and (0xFF shl (8 * i)).inv()) or (c shl (8 * i))))
+        val locked = code and TRACKBALL_LOCK != 0
+        SwitchRow("Lock $name axis", locked) { put(if (it) code or TRACKBALL_LOCK else code and TRACKBALL_LOCK.inv()) }
+        if (locked) continue
         Text("$name axis turns with", style = MaterialTheme.typography.bodyMedium)
-        Chips(listOf("Yaw" to 3, "Pitch" to 2, "Roll" to 1, "None" to 0), code and 0x7F) { put(it or (code and 0x80)) }
-        if (code and 0x7F != 0) SwitchRow("Invert $name axis", code and 0x80 != 0) { put((code and 0x7F) or (if (it) 0x80 else 0)) }
+        Chips(listOf("Yaw" to 3, "Pitch" to 2, "Roll" to 1, "None" to 0), code and 0x3F) { put(it or (code and 0x80)) }
+        if (code and 0x3F != 0) SwitchRow("Invert $name axis", code and 0x80 != 0) { put((code and 0x3F) or (if (it) 0x80 else 0)) }
     }
-    if (d.trackballAxes != TRACKBALL_AS_PHONE) TextButton(onClick = { set(d.copy(trackballAxes = TRACKBALL_AS_PHONE)) }) { Text("As the phone") }
+    Hint("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces; with Yaw locked it stops at straight up or down.")
+    if (d.trackballAxes != TRACKBALL_AS_CAMERA) TextButton(onClick = { set(d.copy(trackballAxes = TRACKBALL_AS_CAMERA)) }) { Text("As the camera") }
 }
 
 /** Ease back to straight and its options (Phone and Camera; a trackball never eases back). */

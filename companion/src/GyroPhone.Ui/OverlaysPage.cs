@@ -71,7 +71,9 @@ internal sealed class OverlaysPage : Page
     private readonly StackPanel _trackballAxes;
     private readonly Seg<int>[] _tbFrom = new Seg<int>[3];
     private readonly CheckBox[] _tbInvert = new CheckBox[3];
-    private readonly Button _tbAsPhone;
+    private readonly CheckBox[] _tbLock = new CheckBox[3];
+    private readonly TextBlock[] _tbFromTitle = new TextBlock[3];
+    private readonly Button _tbAsCamera;
     private readonly SliderRow _spin;
     private readonly CheckBox _gravity, _compass, _ease, _headingOnly;
     private readonly StackPanel _easeOptions;
@@ -322,7 +324,10 @@ internal sealed class OverlaysPage : Page
         {
             int shift = 8 * i;
             void Put(OverlaySettings o, int c) => o.TrackballAxes = (o.TrackballAxes & ~(0xFF << shift)) | (c << shift);
-            _trackballAxes.Children.Add(Parts.Text($"{name} axis turns with"));
+            _tbLock[i] = Parts.Toggle($"Lock {name} axis", () => Change(o => Put(o, ((o.TrackballAxes >> shift) & 0xFF) ^ OverlaySettings.TrackballLock)));
+            _trackballAxes.Children.Add(_tbLock[i]);
+            _tbFromTitle[i] = Parts.Text($"{name} axis turns with");
+            _trackballAxes.Children.Add(_tbFromTitle[i]);
             _tbFrom[i] = new Seg<int>(a => Change(o => Put(o, a | ((o.TrackballAxes >> shift) & 0x80))), false,
                 ("Yaw", 3), ("Pitch", 2), ("Roll", 1), ("None", 0));
             _tbFrom[i].View.Margin = new Thickness(0, 4, 0, 2);
@@ -330,8 +335,9 @@ internal sealed class OverlaysPage : Page
             _tbInvert[i] = Parts.Toggle($"Invert {name} axis", () => Change(o => Put(o, ((o.TrackballAxes >> shift) & 0xFF) ^ 0x80)));
             _trackballAxes.Children.Add(_tbInvert[i]);
         }
-        _tbAsPhone = Parts.Button("As the phone", () => Change(o => o.TrackballAxes = OverlaySettings.TrackballAsPhone));
-        _trackballAxes.Children.Add(_tbAsPhone);
+        _trackballAxes.Children.Add(Parts.Text("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces; with Yaw locked it stops at straight up or down.", "Hint"));
+        _tbAsCamera = Parts.Button("As the camera", () => Change(o => o.TrackballAxes = OverlaySettings.TrackballAsCamera));
+        _trackballAxes.Children.Add(_tbAsCamera);
         tbb.Children.Add(_trackballAxes);
         _turnTab.Children.Add(tb);
 
@@ -542,7 +548,7 @@ internal sealed class OverlaysPage : Page
         _turnsHint.Text = o.TurnsWith switch
         {
             OverlayTurnsWith.Camera => "Where the game's camera points: it turns left and right and up and down as the camera does, never rolling, with the gyro and every other camera move (touchpad, buttons, controllers, keys). A ratchet stops it, as it stops the camera.",
-            OverlayTurnsWith.Trackball => "Like a ball rolled by your moves: each of its axes turns by the gyro turn picked below (as the phone, by default), and every other camera move rolls it too.",
+            OverlayTurnsWith.Trackball => "Like a ball rolled by your moves: each of its axes turns by the gyro turn picked below (as Camera, by default), and every other camera move rolls it too.",
             _ => "How you hold the phone.",
         };
         Parts.SetChecked(_rws, o.TrackballRws);
@@ -553,11 +559,15 @@ internal sealed class OverlaysPage : Page
         for (int i = 0; i < 3; i++)
         {
             int code = (o.TrackballAxes >> (8 * i)) & 0xFF;
-            _tbFrom[i].Set(code & 0x7F);
+            bool locked = (code & OverlaySettings.TrackballLock) != 0;
+            Parts.SetChecked(_tbLock[i], locked);
+            Parts.Show(_tbFromTitle[i], !locked);
+            Parts.Show(_tbFrom[i].View, !locked);
+            _tbFrom[i].Set(code & 0x3F);
             Parts.SetChecked(_tbInvert[i], (code & 0x80) != 0);
-            Parts.Show(_tbInvert[i], (code & 0x7F) != 0);
+            Parts.Show(_tbInvert[i], !locked && (code & 0x3F) != 0);
         }
-        Parts.Show(_tbAsPhone, o.TrackballAxes != OverlaySettings.TrackballAsPhone);
+        Parts.Show(_tbAsCamera, o.TrackballAxes != OverlaySettings.TrackballAsCamera);
         // A trackball never eases back: every roll is a camera move. Following the camera: no gravity or compass.
         Parts.Show(_poseCard, !o.IsTrackball);
         Parts.Show(_gravity, !o.FollowsCamera);

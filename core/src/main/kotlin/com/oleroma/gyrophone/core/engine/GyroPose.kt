@@ -219,6 +219,39 @@ class GyroPose {
         version++
     }
 
+    /** The gimbal angles ([gimbalTurn]) and the pose they made: read again from the pose when anything else turned it. */
+    private val gimbal = FloatArray(3)
+    private val gimbalOf = FloatArray(4) { Float.NaN }
+
+    /**
+     * Turns as a gimbal (a game camera's order): by [a] radians about the vertical, then [b] about
+     * its own right, then [c] about where it faces, as Ry(a)·Rx(b)·Rz(c). The angles add up and
+     * [locks] (bit 0 the vertical, 1 the right, 2 the facing axis) holds those at 0, so nothing,
+     * not even the other two, ever turns a locked one. [maxPitch] (radians, 0 none) limits [b].
+     */
+    @Synchronized
+    fun gimbalTurn(a: Float, b: Float, c: Float, locks: Int, maxPitch: Float) {
+        if (w != gimbalOf[0] || x != gimbalOf[1] || y != gimbalOf[2] || z != gimbalOf[3]) {
+            gimbal[0] = atan2(2 * (x * z + w * y), 1 - 2 * (x * x + y * y))
+            gimbal[1] = asin((-2 * (y * z - w * x)).coerceIn(-1f, 1f))
+            gimbal[2] = atan2(2 * (x * y + w * z), 1 - 2 * (x * x + z * z))
+        }
+        gimbal[0] += a; gimbal[1] += b; gimbal[2] += c
+        for (i in 0..2) if (locks and (1 shl i) != 0) gimbal[i] = 0f
+        if (maxPitch > 0f) gimbal[1] = gimbal[1].coerceIn(-maxPitch, maxPitch)
+        // Ry(a) · Rx(b), then · Rz(c)
+        val cy = cos(gimbal[0] / 2); val sy = sin(gimbal[0] / 2)
+        val cx = cos(gimbal[1] / 2); val sx = sin(gimbal[1] / 2)
+        val cz = cos(gimbal[2] / 2); val sz = sin(gimbal[2] / 2)
+        val pw = cy * cx; val px = cy * sx; val py = sy * cx; val pz = -sy * sx
+        w = pw * cz - pz * sz
+        x = px * cz + py * sz
+        y = py * cz - px * sz
+        z = pw * sz + pz * cz
+        gimbalOf[0] = w; gimbalOf[1] = x; gimbalOf[2] = y; gimbalOf[3] = z
+        version++
+    }
+
     /** Exactly straight, keeping what the sensors last said (unlike [reset]). */
     @Synchronized
     fun straighten() {
@@ -399,7 +432,7 @@ class GyroPose {
         private const val DEG_TO_RAD = (Math.PI / 180).toFloat()
 
         /** A camera pitches no further than this up or down (radians, 89°). */
-        private const val MAX_CAMERA_PITCH = (89 * Math.PI / 180).toFloat()
+        const val MAX_CAMERA_PITCH = (89 * Math.PI / 180).toFloat()
         private const val PI = Math.PI.toFloat()
         private const val TWO_PI = (2 * Math.PI).toFloat()
 

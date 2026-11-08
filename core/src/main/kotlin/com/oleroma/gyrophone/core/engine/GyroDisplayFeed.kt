@@ -8,6 +8,7 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.TRACKBALL_LOCK
 import com.oleroma.gyrophone.core.model.TurnsWith
 import kotlin.math.abs
 import kotlin.math.acos
@@ -217,14 +218,29 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
      */
     private fun trackballTurn(d: GyroDisplay, yaw: Float, pitch: Float, roll: Float, dt: Float) {
         val m = d.trackballAxes
-        // As the phone turns, about the view's fixed axes (the opposite of holding still against the world).
-        pose.counterRotate(-about(m, 0, yaw, pitch, roll), -about(m, 1, yaw, pitch, roll), -about(m, 2, yaw, pitch, roll), dt)
+        val locks = trackballLocks(m)
+        if (locks == 0) {
+            // As the phone turns, about the view's fixed axes (the opposite of holding still against the world).
+            pose.counterRotate(-about(m, 0, yaw, pitch, roll), -about(m, 1, yaw, pitch, roll), -about(m, 2, yaw, pitch, roll), dt)
+            return
+        }
+        // A locked axis: as a game camera turns (a gimbal), so it stays level; with the facing axis
+        // locked it stops at straight up or down, as Camera does.
+        val k = DEG_TO_RAD * dt
+        pose.gimbalTurn(
+            -about(m, 0, yaw, pitch, roll) * k, about(m, 1, yaw, pitch, roll) * k, -about(m, 2, yaw, pitch, roll) * k,
+            locks, if (locks and 4 != 0 && locks and 2 == 0) GyroPose.MAX_CAMERA_PITCH else 0f,
+        )
     }
+
+    /** Bits 0, 1, 2: which trackball axes (up, right, through the screen) [m] ([GyroDisplay.trackballAxes]) locks. */
+    private fun trackballLocks(m: Int): Int =
+        (0..2).fold(0) { acc, i -> if (m shr (8 * i) and TRACKBALL_LOCK != 0) acc or (1 shl i) else acc }
 
     /** Axis [i]'s turn (0 up, 1 right, 2 through the screen) by axis mapping [m] ([GyroDisplay.trackballAxes]) of gyro turns [yaw], [pitch], [roll]. */
     private fun about(m: Int, i: Int, yaw: Float, pitch: Float, roll: Float): Float {
         val code = m shr (8 * i) and 0xFF
-        val v = when (code and 0x7F) { 1 -> yaw; 2 -> pitch; 3 -> roll; else -> 0f }
+        val v = when (code and 0x3F) { 1 -> yaw; 2 -> pitch; 3 -> roll; else -> 0f }
         return if (code and 0x80 != 0) -v else v
     }
 

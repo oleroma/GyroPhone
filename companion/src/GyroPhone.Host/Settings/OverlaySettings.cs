@@ -142,10 +142,21 @@ public sealed class OverlaySettings
     /// <summary>
     /// Trackball: which gyro turn rolls it about each of its axes, one byte each: about its up axis
     /// (shown as roll), its right axis (pitch), the axis through the screen (shown as yaw); each byte
-    /// 1 yaw (as sent), 2 pitch, 3 roll (as sent), 0 none, | 0x80 the other way. The default turns it
-    /// as the phone turns. As the phone's GyroDisplay.trackballAxes.
+    /// 1 yaw (as sent), 2 pitch, 3 roll (as sent), 0 none, | 0x80 the other way, | TrackballLock locked. The default turns it
+    /// as Camera does with the default gyro mouse. As the phone's GyroDisplay.trackballAxes.
     /// </summary>
-    public int TrackballAxes { get; set; } = TrackballAsPhone;
+    public int TrackballAxes { get; set; } = TrackballAsCamera;
+
+    /// <summary><see cref="TrackballAxes"/> turning it as Camera does with the default gyro mouse (roll on mouse X, pitch on mouse Y): left and right by roll (as sent), up and down by pitch, the axis through the screen locked.</summary>
+    public const int TrackballAsCamera = 3 | (2 << 8) | (TrackballLock << 16);
+
+    /// <summary>
+    /// In a <see cref="TrackballAxes"/> byte: that axis is locked, held at 0 whatever turns the others make, as
+    /// Camera's roll is. With any axis locked it turns as a gimbal (left and right about the vertical, then up
+    /// and down about its own right, then about where it faces); with the axis through the screen locked it
+    /// stops at straight up or down (±89°). As the phone's TRACKBALL_LOCK.
+    /// </summary>
+    public const int TrackballLock = 0x40;
 
     /// <summary><see cref="TrackballAxes"/> turning it as the phone turns: each axis by its own gyro turn.</summary>
     public const int TrackballAsPhone = 1 | (2 << 8) | (3 << 16);

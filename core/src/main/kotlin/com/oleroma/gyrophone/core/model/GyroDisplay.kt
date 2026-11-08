@@ -118,10 +118,11 @@ data class GyroDisplay(
     /**
      * [TurnsWith.TRACKBALL]: which gyro turn rolls it about each of its axes, one byte each: about
      * its up axis (shown as roll), its right axis (pitch), the axis through the screen (shown as
-     * yaw); each byte 1 yaw (stored), 2 pitch, 3 roll (stored), 0 none, | 0x80 the other way.
-     * The default turns it as the phone turns ([TRACKBALL_AS_PHONE]).
+     * yaw); each byte 1 yaw (stored), 2 pitch, 3 roll (stored), 0 none, | 0x80 the other way, | [TRACKBALL_LOCK]
+     * locked (held at 0: then it turns as a gimbal, as a game camera does).
+     * The default turns it as the Camera mode does with the default gyro mouse ([TRACKBALL_AS_CAMERA]).
      */
-    val trackballAxes: Int = TRACKBALL_AS_PHONE,
+    val trackballAxes: Int = TRACKBALL_AS_CAMERA,
     /** Branch builds before v3: a trackball turning as the camera ([TurnsWith.CAMERA] since). */
     val trackballInvert: Boolean = false,
     /** PHONE and BALL: seen from a fixed angle (30° round, 30° above) with the world's axes, as the laser pointer is, instead of face-on. */
@@ -310,5 +311,17 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     }
 }
 
-/** [GyroDisplay.trackballAxes] turning a trackball as the phone turns: each axis by its own gyro turn. */
-const val TRACKBALL_AS_PHONE = 1 or (2 shl 8) or (3 shl 16)
+/**
+ * In a [GyroDisplay.trackballAxes] byte: that axis is locked, held at 0 whatever turns the others
+ * make, as Camera's roll is. With any axis locked the trackball turns as a gimbal (left and right
+ * about the vertical, then up and down about its own right, then about where it faces), and with
+ * the axis through the screen locked it stops at straight up or down (±89°).
+ */
+const val TRACKBALL_LOCK = 0x40
+
+/**
+ * [GyroDisplay.trackballAxes] turning a trackball as the camera turns with the default gyro mouse
+ * (roll on mouse X, pitch on mouse Y): left and right by roll (stored), up and down by pitch, the
+ * axis through the screen locked (no roll, stopping at straight up or down).
+ */
+const val TRACKBALL_AS_CAMERA = 3 or (2 shl 8) or (TRACKBALL_LOCK shl 16)

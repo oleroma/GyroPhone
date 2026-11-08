@@ -202,14 +202,60 @@ public sealed class OverlayPose
         // About each of its fixed axes by the turn TrackballAxes picks for it, as the phone turns
         // (the opposite of holding still against the world).
         int m = s.TrackballAxes;
-        CounterRotate(-About(m, 0, yaw, pitch, roll), -About(m, 1, yaw, pitch, roll), -About(m, 2, yaw, pitch, roll));
+        int locks = 0;
+        for (int i = 0; i < 3; i++)
+            if (((m >> (8 * i)) & OverlaySettings.TrackballLock) != 0) locks |= 1 << i;
+        if (locks == 0)
+        {
+            CounterRotate(-About(m, 0, yaw, pitch, roll), -About(m, 1, yaw, pitch, roll), -About(m, 2, yaw, pitch, roll));
+            return;
+        }
+        // A locked axis: as a game camera turns (a gimbal), so it stays level; with the facing axis
+        // locked it stops at straight up or down, as Camera does.
+        GimbalTurn(-About(m, 0, yaw, pitch, roll) * DegToRad, About(m, 1, yaw, pitch, roll) * DegToRad,
+            -About(m, 2, yaw, pitch, roll) * DegToRad, locks, (locks & 4) != 0 && (locks & 2) == 0 ? 89f * DegToRad : 0f);
+    }
+
+    /// <summary>The gimbal angles (GimbalTurn) and the pose they made: read again from the pose when anything else turned it.</summary>
+    private readonly float[] _gimbal = new float[3];
+    private readonly float[] _gimbalOf = { float.NaN, float.NaN, float.NaN, float.NaN };
+
+    /// <summary>
+    /// Turns as a gimbal (a game camera's order): by <paramref name="a"/> radians about the vertical, then
+    /// <paramref name="b"/> about its own right, then <paramref name="c"/> about where it faces, as
+    /// Ry(a)·Rx(b)·Rz(c). The angles add up and <paramref name="locks"/> (bit 0 the vertical, 1 the right, 2
+    /// the facing axis) holds those at 0, so nothing ever turns a locked one. <paramref name="maxPitch"/>
+    /// (radians, 0 none) limits b. As the phone's GyroPose.gimbalTurn.
+    /// </summary>
+    private void GimbalTurn(float a, float b, float c, int locks, float maxPitch)
+    {
+        if (_w != _gimbalOf[0] || _x != _gimbalOf[1] || _y != _gimbalOf[2] || _z != _gimbalOf[3])
+        {
+            _gimbal[0] = MathF.Atan2(2 * (_x * _z + _w * _y), 1 - 2 * (_x * _x + _y * _y));
+            _gimbal[1] = MathF.Asin(Math.Clamp(-2 * (_y * _z - _w * _x), -1f, 1f));
+            _gimbal[2] = MathF.Atan2(2 * (_x * _y + _w * _z), 1 - 2 * (_x * _x + _z * _z));
+        }
+        _gimbal[0] += a; _gimbal[1] += b; _gimbal[2] += c;
+        for (int i = 0; i < 3; i++)
+            if ((locks & (1 << i)) != 0) _gimbal[i] = 0f;
+        if (maxPitch > 0f) _gimbal[1] = Math.Clamp(_gimbal[1], -maxPitch, maxPitch);
+        // Ry(a) · Rx(b), then · Rz(c)
+        float cy = MathF.Cos(_gimbal[0] / 2), sy = MathF.Sin(_gimbal[0] / 2);
+        float cx = MathF.Cos(_gimbal[1] / 2), sx = MathF.Sin(_gimbal[1] / 2);
+        float cz = MathF.Cos(_gimbal[2] / 2), sz = MathF.Sin(_gimbal[2] / 2);
+        float pw = cy * cx, px = cy * sx, py = sy * cx, pz = -sy * sx;
+        _w = pw * cz - pz * sz;
+        _x = px * cz + py * sz;
+        _y = py * cz - px * sz;
+        _z = pw * sz + pz * cz;
+        _gimbalOf[0] = _w; _gimbalOf[1] = _x; _gimbalOf[2] = _y; _gimbalOf[3] = _z;
     }
 
     /// <summary>Axis <paramref name="i"/>'s turn (0 up, 1 right, 2 through the screen) by axis mapping <paramref name="m"/> (TrackballAxes) of these gyro turns.</summary>
     private static float About(int m, int i, float yaw, float pitch, float roll)
     {
         int code = (m >> (8 * i)) & 0xFF;
-        float v = (code & 0x7F) switch { 1 => yaw, 2 => pitch, 3 => roll, _ => 0f };
+        float v = (code & 0x3F) switch { 1 => yaw, 2 => pitch, 3 => roll, _ => 0f };
         return (code & 0x80) != 0 ? -v : v;
     }
 
