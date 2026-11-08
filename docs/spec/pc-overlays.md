@@ -10,6 +10,7 @@ Any number of overlay windows (`OverlaySettings`, Overlays page › Add), each o
 - **3D shape**: Globe (default), Icosphere (subdivision 0–3), Cube, Tetrahedron, Dodecahedron, Torus, Gimbal rings, Paper plane, Camera (seen from behind, lens pointing where it looks); smooth edges, hidden edges, filled faces, equator, screen and top marks.
 - **Attitude indicator**: horizon with a heading tape.
 - **Bubble disk**: heading disk with a tilt dot (range 30°), crosshair.
+- **Laser pointer** (`LaserDrawing`, `GyroPhone.Host/LaserTrace.cs`): a see-through sphere seen from a fixed axonometric angle (30° round, 30° from above, no perspective, so a beam into the far side shows as a line, not a dot), with its **15° grid** and its **axes** (right red, up green, toward you blue; both on by default). The laser at the centre shines out of the **phone's back**: a beam to where it hits the inside, a dot there and a short **roll tick** pointing the way the phone's top points. The beam dims while a ratchet is held. **Trail**: the hit point leaves a fading trail, None / 0.25 / **0.5** (default) / 1 / 2 / 3 s. **Draw mode** (off): the beam paints the sphere's inside as you aim, **Brush** 1–20° (4°), **Fades after** Never (default) / 5 / 10 / 30 / 60 s; a held ratchet stops painting and trailing (no stroke is drawn across where the pose eased back). **Clear** wipes the paint and trail; a **Clear displays** mapping (Other targets) clears every laser pointer on the pad and the PC at once. The paint lives in 2° cells (90 rows × 180 columns, `LaserTrace`): each frame only the cells under the brush (and along the way the beam went since the last frame) change, and the drawing merges neighbouring cells of one row and strength into one strip, so it costs the same however much is painted. Paint and trail are not saved.
 
 The phone overlay is only drawn on the PC; the phone sends its raw motion, layout, touches and presses (OVERLAY, OVERLAY_LAYOUT) only while some overlay is shown (HOST_STATUS flags tell it). The PC makes the pose itself (`GyroPhone.Host/OverlayPose.cs`, a port of the phone's `GyroPose`).
 
@@ -23,7 +24,7 @@ Overlays page: the switches for all (Edit, Hide all, Level all), the list of win
 
 The phone's own gyro displays use the same Look and Turning settings, names and defaults (see [Pad UI](phone-pad-ui.md#gyro-displays)); their values are separate.
 
-**Shortcuts** (global, `Hotkeys`, a hidden message window so they work with no overlay open; reconfigurable, one press never does two things): **Ctrl+Alt+R** Level all, **Ctrl+Alt+O** Hide all, **Ctrl+Alt+E** Edit. A **Level displays** mapping on the phone levels every overlay shown too (OVERLAY byte 139 counts its presses; a change levels, the first count seen in a session levels nothing).
+**Shortcuts** (global, `Hotkeys`, a hidden message window so they work with no overlay open; reconfigurable, one press never does two things): **Ctrl+Alt+R** Level all, **Ctrl+Alt+O** Hide all, **Ctrl+Alt+E** Edit. A **Level displays** mapping on the phone levels every overlay shown too (OVERLAY byte 139 counts its presses; a change levels, the first count seen in a session levels nothing). A **Clear displays** mapping clears every laser pointer overlay the same way (OVERLAY byte 148).
 
 ## Edit and click-through
 

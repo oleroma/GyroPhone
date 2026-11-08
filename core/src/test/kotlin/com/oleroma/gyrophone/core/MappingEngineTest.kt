@@ -98,6 +98,18 @@ class MappingEngineTest {
         assertEquals(2, fired)
     }
 
+    @Test fun clearDisplaysFiresOncePerPress() {
+        val p = profileOf(listOf(Mapping(InputSource.Key(AndroidKey.BUTTON_SELECT), OutputTarget.ClearDisplays)))
+        val e = MappingEngine(p)
+        var fired = 0
+        e.onClearDisplays = Runnable { fired++ }
+        e.setKey(AndroidKey.BUTTON_SELECT, true)
+        e.setKey(AndroidKey.BUTTON_SELECT, false)
+        assertEquals(1, fired)
+        e.setKey(AndroidKey.BUTTON_SELECT, true)
+        assertEquals(2, fired)
+    }
+
     @Test fun axisSourcesFireEventTargetsOncePerPress() {
         val p = profileOf(listOf(
             Mapping(InputSource.Axis(AndroidAxis.X, AxisHalf.NEGATIVE), OutputTarget.Wheel(1)),

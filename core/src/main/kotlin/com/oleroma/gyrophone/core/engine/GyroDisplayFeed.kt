@@ -31,6 +31,13 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     /** The graph's speeds (GRAPH only). */
     val trace: GyroTrace? = if (display.kind == GyroDisplayKind.GRAPH) GyroTrace() else null
 
+    /** The laser pointer's trail and paint (LASER only), kept and drawn by the UI. */
+    val laser: LaserTrace? = if (display.kind == GyroDisplayKind.LASER) LaserTrace() else null
+
+    /** A ratchet was held at the last sample (the laser pointer dims its beam and stops trailing). */
+    @Volatile var ratchetHeld = false
+        private set
+
     /** Seconds since the phone stopped turning, or since the ratchet press while easing on it. */
     private var calm = 0f
 
@@ -55,6 +62,7 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         gyro: GyroSettings? = null,
     ) {
         val d = display
+        ratchetHeld = held
         if (d.kind == GyroDisplayKind.GRAPH) {
             // Shown names: the turn through the screen (stored as roll) is yaw.
             if (dtSeconds > 0f) trace?.add(roll, pitch, yaw, dtSeconds, held)

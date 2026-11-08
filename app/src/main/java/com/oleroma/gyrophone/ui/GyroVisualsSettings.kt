@@ -64,7 +64,7 @@ import kotlin.math.roundToInt
 /** Settings of the parallax edge ([GyroEdgeLayer]); [set] saves a changed [v]. The other gyro displays are placed in edit mode. */
 @Composable
 fun GyroVisualsSettings(v: TouchVisuals, set: (TouchVisuals) -> Unit) {
-    Hint("3D phone, ratchet ring, speed graph and attitude indicator: add them in edit mode, like buttons.")
+    Hint("The other gyro displays (3D phone, ratchet ring, speed graph, attitude indicator, bubble disk, 3D shape, laser pointer): add them in edit mode, like buttons.")
     SwitchRow("Parallax edge", v.gyroEdge) { set(v.copy(gyroEdge = it)) }
     if (v.gyroEdge) Indented {
         Chips(listOf("Turn" to false, "Tilt" to true), v.gyroEdgeTilt) { set(v.copy(gyroEdgeTilt = it)) }
@@ -163,6 +163,26 @@ internal fun GyroDisplaySettingsScreen(
                     if (shape == BallShape.GLOBE) SwitchRow("Equator", d.equator) { set(d.copy(equator = it)) }
                     SwitchRow("Mark where the screen faces", d.screenMark) { set(d.copy(screenMark = it)) }
                     SwitchRow("Mark at the top", d.topMark) { set(d.copy(topMark = it)) }
+                }
+
+                GyroDisplayKind.LASER -> {
+                    GroupTitle("Laser pointer")
+                    Hint("A see-through sphere seen from above and to the side. The laser at its centre shines out of the phone's back onto the inside; the tick at the dot shows which way the phone's top points. The beam dims while a ratchet is held.")
+                    SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
+                    SwitchRow("Axes (right, up, toward you)", d.laserAxes) { set(d.copy(laserAxes = it)) }
+                    Chips(listOf("No trail" to 0, "0.25 s" to 250, "0.5 s" to 500, "1 s" to 1000, "2 s" to 2000, "3 s" to 3000), d.laserTrailMs) {
+                        set(d.copy(laserTrailMs = it))
+                    }
+                    GroupTitle("Draw")
+                    SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim.") { set(d.copy(laserDraw = it)) }
+                    if (d.laserDraw) Indented {
+                        IntSlider("Brush %d°", d.laserBrush, 1..20) { set(d.copy(laserBrush = it)) }
+                        Chips(listOf("Never fades" to 0, "5 s" to 5, "10 s" to 10, "30 s" to 30, "60 s" to 60), d.laserFadeS) {
+                            set(d.copy(laserFadeS = it))
+                        }
+                        Hint("A held ratchet stops the painting. A Clear displays mapping (Other targets) clears every laser pointer at once.")
+                    }
+                    TextButton(onClick = { runtime.clearLaser(control.id) }) { Text("Clear") }
                 }
             }
             PercentSlider("Opacity", d.opacity, 0.1f..1f) { set(d.copy(opacity = it)) }
@@ -299,6 +319,10 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     GyroDisplayColor.BALL_EQUATOR -> d.ballShape == BallShape.GLOBE && d.equator
     GyroDisplayColor.BALL_MARK -> d.screenMark
     GyroDisplayColor.BALL_POLE -> d.topMark
+    GyroDisplayColor.LASER_GRID -> d.laserGrid
+    GyroDisplayColor.LASER_X, GyroDisplayColor.LASER_Y, GyroDisplayColor.LASER_Z -> d.laserAxes
+    GyroDisplayColor.LASER_TRAIL -> d.laserTrailMs > 0
+    GyroDisplayColor.LASER_PAINT -> d.laserDraw
     else -> true
 }
 

@@ -104,6 +104,8 @@ public interface ICompanion
     string AddOverlay(OverlayKind kind);
     void RemoveOverlay(string id);
     void LevelOverlay(string id);
+    /// <summary>Clears laser pointer overlay <paramref name="id"/>'s paint and trail.</summary>
+    void ClearOverlay(string id);
     void LevelAll();
 
     // Overlay shortcuts

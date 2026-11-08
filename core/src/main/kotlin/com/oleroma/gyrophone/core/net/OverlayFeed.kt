@@ -61,7 +61,8 @@ data class OverlayLayout(
  * then the controller attached to the phone (for the PC phone overlay's handles): u8 flags
  * ([PAD_ATTACHED]); u8 left and u8 right trigger (0..255); u8 Level displays presses so far
  * (wraps at 256: a change levels every PC overlay, [levelDisplays]); u32 buttons held ([PAD_SOUTH]..,
- * the D-pad from keys or the hat); i8 × 4 left x, y, right x, y stick (-127..127, y down); 4 bytes 0.
+ * the D-pad from keys or the hat); i8 × 4 left x, y, right x, y stick (-127..127, y down); u8 Clear
+ * displays presses so far (wraps at 256: a change clears every PC laser pointer, [clearDisplays]); 3 bytes 0.
  *
  * OVERLAY_LAYOUT plaintext (200 bytes): u16 layout version; u8 piece index; u8 piece count; u8
  * length; then [PIECE_DATA] bytes of the layout blob. The blob: u8 format (1); u16 width px; u16
@@ -134,6 +135,7 @@ class OverlayFeed {
     private var ratchetHeld = false
     private var ratchetPresses = 0
     private var levelPresses = 0
+    private var clearPresses = 0
     private val upXYZ = FloatArray(3)
     private var hasUp = false
     private val northXYZ = FloatArray(3)
@@ -157,6 +159,11 @@ class OverlayFeed {
     /** A Level displays mapping fired: the PC levels every overlay shown, as its Level button does. */
     fun levelDisplays() {
         synchronized(lock) { levelPresses = (levelPresses + 1) and 0xFF }
+    }
+
+    /** A Clear displays mapping fired: the PC clears every laser pointer overlay's paint and trail. */
+    fun clearDisplays() {
+        synchronized(lock) { clearPresses = (clearPresses + 1) and 0xFF }
     }
 
     /** A key of an attached controller went down or up (Android key code). */
@@ -353,6 +360,7 @@ class OverlayFeed {
             }
             cameraDeg.fill(0f)
             out.putU8(off + 139, levelPresses)
+            out.putU8(off + 148, clearPresses)
             if (padAttached) {
                 var buttons = padKeys
                 if (padAxes[6] < -0.5f) buttons = buttons or PAD_LEFT

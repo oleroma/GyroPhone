@@ -43,7 +43,11 @@ internal sealed class OverlaysPage : Page
     private readonly Seg<int> _fps;
 
     // Look
-    private readonly Border _phoneLook, _shapeLook, _diskLook;
+    private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook;
+    private readonly CheckBox _laserGrid, _laserAxes, _laserDraw;
+    private readonly Seg<int> _laserTrail, _laserFade;
+    private readonly SliderRow _laserBrush;
+    private readonly StackPanel _laserDrawOptions;
     private readonly CheckBox _dots, _trails;
     private readonly Seg<OverlayHandles> _handles;
     private readonly Seg<OverlayHandleSource> _handleSource;
@@ -143,7 +147,7 @@ internal sealed class OverlaysPage : Page
         Grid.SetRow(right, 1);
         Grid.SetColumn(right, 2);
         _root.Children.Add(right);
-        _empty = Parts.Text("No overlays yet. Press \"Add overlay\" to put the phone, a 3D shape, an attitude indicator or a bubble disk over your game.", "Sub");
+        _empty = Parts.Text("No overlays yet. Press \"Add overlay\" to put the phone, a 3D shape, an attitude indicator, a bubble disk or a laser pointer over your game.", "Sub");
         right.Children.Add(_empty);
         right.Children.Add(_settings);
         var tabBar = new Border { BorderThickness = new Thickness(0, 0, 0, 1), Margin = new Thickness(0, 0, 0, 14) };
@@ -235,6 +239,37 @@ internal sealed class OverlaysPage : Page
         dkb.Children.Add(_crosshair);
         _diskLook = disk;
         _lookTab.Children.Add(disk);
+
+        var (laser, lb) = Parts.Card("Laser pointer");
+        lb.Children.Add(Parts.Text("A see-through sphere seen from above and to the side. The laser at its centre shines out of the phone's back onto the inside; the tick at the dot shows which way the phone's top points. The beam dims while a ratchet is held.", "Hint"));
+        _laserGrid = Parts.Toggle("Grid every 15°", () => Change(o => o.LaserGrid = !o.LaserGrid));
+        _laserAxes = Parts.Toggle("Axes (right, up, toward you)", () => Change(o => o.LaserAxes = !o.LaserAxes));
+        lb.Children.Add(_laserGrid);
+        lb.Children.Add(_laserAxes);
+        lb.Children.Add(Parts.Text("Trail"));
+        _laserTrail = new Seg<int>(t => Change(o => o.LaserTrailMs = t), false,
+            ("None", 0), ("0.25 s", 250), ("0.5 s", 500), ("1 s", 1000), ("2 s", 2000), ("3 s", 3000));
+        _laserTrail.View.Margin = new Thickness(0, 6, 0, 6);
+        lb.Children.Add(_laserTrail.View);
+        lb.Children.Add(Parts.Divider());
+        _laserDraw = Parts.Toggle("Draw mode", () => Change(o => o.LaserDraw = !o.LaserDraw), "The beam paints the inside of the sphere as you aim.");
+        lb.Children.Add(_laserDraw);
+        _laserDrawOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
+        _laserBrush = new SliderRow("Brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserBrush = (int)v));
+        _laserDrawOptions.Children.Add(_laserBrush.View);
+        _laserDrawOptions.Children.Add(Parts.Text("Fades after"));
+        _laserFade = new Seg<int>(f => Change(o => o.LaserFadeS = f), false,
+            ("Never", 0), ("5 s", 5), ("10 s", 10), ("30 s", 30), ("60 s", 60));
+        _laserFade.View.Margin = new Thickness(0, 6, 0, 2);
+        _laserDrawOptions.Children.Add(_laserFade.View);
+        _laserDrawOptions.Children.Add(Parts.Text("A held ratchet stops the painting. A Clear displays mapping on the phone (Other targets) clears every laser pointer at once.", "Hint"));
+        lb.Children.Add(_laserDrawOptions);
+        var clear = Parts.Button("Clear", () => { if (Picked is { } id) _app.ClearOverlay(id); }, glyph: "");
+        clear.Margin = new Thickness(0, 8, 0, 0);
+        clear.HorizontalAlignment = HorizontalAlignment.Left;
+        lb.Children.Add(clear);
+        _laserLook = laser;
+        _lookTab.Children.Add(laser);
 
         var (colors, cb) = Parts.Card("Colours");
         cb.Children.Add(_colors);
@@ -421,6 +456,14 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_phoneLook, o.Kind == OverlayKind.Phone);
         Parts.Show(_shapeLook, o.Kind == OverlayKind.Shape);
         Parts.Show(_diskLook, o.Kind == OverlayKind.Disk);
+        Parts.Show(_laserLook, o.Kind == OverlayKind.Laser);
+        Parts.SetChecked(_laserGrid, o.LaserGrid);
+        Parts.SetChecked(_laserAxes, o.LaserAxes);
+        _laserTrail.Set(o.LaserTrailMs);
+        Parts.SetChecked(_laserDraw, o.LaserDraw);
+        Parts.Show(_laserDrawOptions, o.LaserDraw);
+        _laserBrush.Set(o.LaserBrush);
+        _laserFade.Set(o.LaserFadeS);
         Parts.SetChecked(_dots, o.FingerDots);
         Parts.SetChecked(_trails, o.FingerTrails);
         _handles.Set(o.Handles);

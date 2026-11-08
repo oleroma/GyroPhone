@@ -63,6 +63,8 @@ public enum OverlayKind
     Horizon,
     /// <summary>A disk with clock marks that spins with the heading, a dot showing the tilt.</summary>
     Disk,
+    /// <summary>A see-through sphere seen from a fixed angle, a laser at its centre shining out of the phone's back onto its inside.</summary>
+    Laser,
 }
 
 public enum OverlayShape
@@ -146,6 +148,17 @@ public sealed class OverlaySettings
     /// <summary>The tilt that puts the dot on the rim, in degrees.</summary>
     public int DiskRange { get; set; } = 30;
     public bool Crosshair { get; set; } = true;
+
+    // Laser pointer.
+    /// <summary>How long the beam's hit point leaves a fading trail, in ms (0 = none, up to 3000).</summary>
+    public int LaserTrailMs { get; set; } = 500;
+    /// <summary>The 15° grid on the sphere, and its three axes.</summary>
+    public bool LaserGrid { get; set; } = true;
+    public bool LaserAxes { get; set; } = true;
+    /// <summary>Draw mode: the beam paints the sphere's inside, <see cref="LaserBrush"/> degrees round; it fades after <see cref="LaserFadeS"/> seconds (0 = never).</summary>
+    public bool LaserDraw { get; set; }
+    public int LaserBrush { get; set; } = 4;
+    public int LaserFadeS { get; set; }
 
     // The pose, made on the PC (the phone's own gyro display settings are separate).
     /// <summary>
@@ -237,6 +250,7 @@ public sealed class OverlaySettings
         OverlayKind.Phone => PhoneColors,
         OverlayKind.Horizon => HorizonColors,
         OverlayKind.Disk => DiskColors,
+        OverlayKind.Laser => LaserColors,
         _ => shape switch
         {
             null => ShapeColors,
@@ -251,6 +265,7 @@ public sealed class OverlaySettings
         OverlayKind.Phone => "Phone",
         OverlayKind.Shape => "3D shape",
         OverlayKind.Horizon => "Attitude indicator",
+        OverlayKind.Laser => "Laser pointer",
         _ => "Bubble disk",
     };
 
@@ -294,6 +309,19 @@ public sealed class OverlaySettings
         new("rim", "Rim", 0xCCFFFFFF),
         new("tape", "Heading tape", 0x66000000),
         new("text", "Heading numbers", 0xFFFFFFFF),
+    ];
+
+    private static readonly OverlayColor[] LaserColors =
+    [
+        new("sphere", "Sphere", 0x332A3446),
+        new("grid", "Grid", 0x66FFFFFF),
+        new("x", "Right axis", 0xFFFF5A5A),
+        new("y", "Up axis", 0xFF5ADB6E),
+        new("z", "Toward you axis", 0xFF5AA8FF),
+        new("beam", "Beam", 0xFFFF3B3B),
+        new("dot", "Dot", 0xFFFFFFFF),
+        new("trail", "Trail", 0xFFFF7A7A),
+        new("paint", "Paint", 0xFFFFC94D),
     ];
 
     private static readonly OverlayColor[] DiskColors =

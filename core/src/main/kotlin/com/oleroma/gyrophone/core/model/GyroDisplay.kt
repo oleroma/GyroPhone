@@ -29,10 +29,13 @@ enum class GyroDisplayKind(val label: String) {
     /** A 3D shape ([BallShape]: a ball with lines on it, a solid, a torus...), turned with the phone. */
     BALL("3D shape"),
 
+    /** A see-through sphere seen from a fixed angle, a laser at its centre shining out of the phone's back onto its inside. */
+    LASER("Laser pointer"),
+
     ;
 
     /** It shows the phone's pose ([GyroDisplay] pose settings apply). */
-    val pose: Boolean get() = this == PHONE || this == HORIZON || this == DISK || this == BALL
+    val pose: Boolean get() = this == PHONE || this == HORIZON || this == DISK || this == BALL || this == LASER
 }
 
 /**
@@ -114,6 +117,15 @@ data class GyroDisplay(
     val trackballRws: Boolean = true,
     /** Branch builds before v3: a trackball turning as the camera ([TurnsWith.CAMERA] since). */
     val trackballInvert: Boolean = false,
+    /** LASER: how long the beam's hit point leaves a fading trail, in ms (0 = none). */
+    val laserTrailMs: Int = 500,
+    /** LASER: the 15° grid on the sphere, and its three axes. */
+    val laserGrid: Boolean = true,
+    val laserAxes: Boolean = true,
+    /** LASER: Draw mode, the beam paints the sphere's inside, [laserBrush] degrees round; it fades after [laserFadeS] seconds (0 = never). */
+    val laserDraw: Boolean = false,
+    val laserBrush: Int = 4,
+    val laserFadeS: Int = 0,
     /** What turns it (the pose kinds): the phone, the game's camera, or a trackball. */
     val turnsWith: TurnsWith = TurnsWith.PHONE,
     val opacity: Float = 0.7f,
@@ -188,6 +200,7 @@ data class GyroDisplay(
             GyroDisplayKind.HORIZON -> 0.4f to 1.25f
             GyroDisplayKind.DISK -> 0.4f to 1f
             GyroDisplayKind.BALL -> 0.4f to 1f
+            GyroDisplayKind.LASER -> 0.45f to 1f
         }
     }
 }
@@ -263,6 +276,15 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     BALL_GIMBAL_YAW(GyroDisplayKind.BALL, "gyaw", "Gimbal yaw ring", 0xFFFF5A5A),
     BALL_GIMBAL_PITCH(GyroDisplayKind.BALL, "gpitch", "Gimbal pitch ring", 0xFF5ADB6E),
     BALL_GIMBAL_ROLL(GyroDisplayKind.BALL, "groll", "Gimbal roll ring", 0xFF5AA8FF),
+    LASER_SPHERE(GyroDisplayKind.LASER, "sphere", "Sphere", 0x332A3446),
+    LASER_GRID(GyroDisplayKind.LASER, "grid", "Grid", 0x66FFFFFF),
+    LASER_X(GyroDisplayKind.LASER, "x", "Right axis", 0xFFFF5A5A),
+    LASER_Y(GyroDisplayKind.LASER, "y", "Up axis", 0xFF5ADB6E),
+    LASER_Z(GyroDisplayKind.LASER, "z", "Toward you axis", 0xFF5AA8FF),
+    LASER_BEAM(GyroDisplayKind.LASER, "beam", "Beam", 0xFFFF3B3B),
+    LASER_DOT(GyroDisplayKind.LASER, "dot", "Dot", 0xFFFFFFFF),
+    LASER_TRAIL(GyroDisplayKind.LASER, "trail", "Trail", 0xFFFF7A7A),
+    LASER_PAINT(GyroDisplayKind.LASER, "paint", "Paint", 0xFFFFC94D),
     ;
 
     companion object {

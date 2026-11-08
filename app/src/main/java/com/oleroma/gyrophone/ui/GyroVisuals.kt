@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
+import com.oleroma.gyrophone.core.engine.LaserTrace
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.model.BallShape
 import com.oleroma.gyrophone.core.model.GyroDisplay
@@ -78,10 +79,17 @@ fun GyroDisplaysLayer(
                 sig = sig * 31 + System.identityHashCode(f)
                 sig = sig * 31 + (f?.pose?.version ?: 0L)
                 sig = sig * 31 + (f?.trace?.version ?: 0L)
+                sig = sig * 31 + (f?.laser?.version ?: 0L)
             }
             if (sig != last || frame == 0L) {
                 last = sig
                 until = t + (GHOSTS + 2) * GHOST_MS
+            }
+            // A laser pointer's trail and fading paint: draw on until they are gone.
+            for (b in shown) {
+                val l = runtime.gyroFeed(b.control.id)?.laser ?: continue
+                val d = b.control.display ?: continue
+                if (l.fading(d.laserFadeS * 1000)) until = maxOf(until, t + 50)
             }
             if (t <= until) frame = t
         }
@@ -209,7 +217,159 @@ private class VisState {
             GyroDisplayKind.HORIZON -> drawHorizon(feed, d, box, ::col)
             GyroDisplayKind.DISK -> drawDisk(feed, d, box, ::col)
             GyroDisplayKind.BALL -> drawBall(feed, d, box, live, ::col)
+            GyroDisplayKind.LASER -> drawLaser(feed, d, box, ::col)
         }
+    }
+
+    private val beam = FloatArray(3)
+    private val tick = FloatArray(3)
+    private val la = FloatArray(3)
+    private val lb = FloatArray(3)
+    private val pv = FloatArray(3)
+    private val runPaths = Array(LaserTrace.LEVELS * 2) { Path() }
+
+    /** Picture point of shown-frame direction ([x], [y], [z]) on a sphere of radius [r] at [c]; its depth (toward the viewer +) left in [pv]. */
+    private fun laserAt(c: Offset, r: Float, x: Float, y: Float, z: Float): Offset {
+        LaserTrace.view(x, y, z, pv)
+        return Offset(c.x + pv[0] * r, c.y - pv[1] * r)
+    }
+
+    /**
+     * The laser pointer: a see-through sphere seen from a fixed angle (30° round, 30° above), its
+     * grid and axes, the beam from its centre out of the phone's back to the inside, a dot and a roll
+     * tick where it hits; the fading trail and Draw mode's paint ([GyroDisplayFeed.laser]). Far
+     * half first, then the beam, then the near half (fainter, seen through the shell).
+     */
+    private fun DrawScope.drawLaser(feed: GyroDisplayFeed?, d: GyroDisplay, box: Rect, col: (GyroDisplayColor) -> Color) {
+        poseOf(feed, d)
+        val r = minOf(box.width, box.height) / 2f * 0.95f
+        val c = box.center
+        val fadeMs = d.laserFadeS * 1000
+        val trailMs = d.laserTrailMs.coerceIn(0, 3000)
+        val held = feed?.ratchetHeld == true
+        LaserTrace.beam(m, beam)
+        val lt = feed?.laser
+        if (lt != null) {
+            val v = feed?.pose?.version ?: 0L
+            if (v != lt.fedVersion) {
+                lt.fedVersion = v
+                lt.add(beam[0], beam[1], beam[2], now, trailMs, d.laserDraw, d.laserBrush.toFloat(), held)
+            }
+            lt.expire(now, trailMs, fadeMs)
+        }
+        val sphere = col(GyroDisplayColor.LASER_SPHERE)
+        val lit = Color(sphere.red + (1 - sphere.red) * 0.35f, sphere.green + (1 - sphere.green) * 0.35f, sphere.blue + (1 - sphere.blue) * 0.35f, sphere.alpha)
+        drawCircle(Brush.radialGradient(listOf(lit, sphere), Offset(c.x - r * 0.35f, c.y - r * 0.4f), r * 1.3f), r, c)
+        val grid = col(GyroDisplayColor.LASER_GRID)
+        val thin = Stroke(density, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val (gridFront, gridBack) = LaserTrace.GRID
+        fun gridPath(lines: List<FloatArray>): Path {
+            path.reset()
+            for (l in lines) {
+                path.moveTo(c.x + l[0] * r, c.y - l[1] * r)
+                var i = 2
+                while (i < l.size) {
+                    path.lineTo(c.x + l[i] * r, c.y - l[i + 1] * r)
+                    i += 2
+                }
+            }
+            return path
+        }
+        val axisColors = arrayOf(col(GyroDisplayColor.LASER_X), col(GyroDisplayColor.LASER_Y), col(GyroDisplayColor.LASER_Z))
+        fun axes(front: Boolean) {
+            if (!d.laserAxes) return
+            for (i in 0..2) {
+                for (sign in intArrayOf(1, -1)) {
+                    val p = laserAt(c, r, if (i == 0) sign.toFloat() else 0f, if (i == 1) sign.toFloat() else 0f, if (i == 2) sign.toFloat() else 0f)
+                    if ((pv[2] > 0f) != front) continue
+                    val a = axisColors[i]
+                    drawLine(a.copy(alpha = a.alpha * (if (sign > 0) 1f else 0.4f) * (if (front) 0.7f else 1f)), c, p, 1.5f * density, StrokeCap.Round)
+                    if (sign > 0) drawCircle(a, 2.5f * density, p)
+                }
+            }
+        }
+        fun paint(front: Boolean) {
+            if (lt == null || lt.painted == 0) return
+            for (p in runPaths) p.reset()
+            lt.forEachRun(now, fadeMs, { row, cc -> LaserTrace.CELL_FRONT[row * LaserTrace.COLS + cc] }) { row, c0, c1, level, f ->
+                if (f != front) return@forEachRun
+                val into = runPaths[(level - 1) * 2 + (if (f) 1 else 0)]
+                val lat0 = LaserTrace.rowLat(row) - LaserTrace.CELL_RAD / 2
+                val lat1 = lat0 + LaserTrace.CELL_RAD
+                for (k in c0..c1 + 1) {
+                    LaserTrace.dir(lat1, LaserTrace.colLon(k) - LaserTrace.CELL_RAD / 2, la)
+                    val p = laserAt(c, r, la[0], la[1], la[2])
+                    if (k == c0) into.moveTo(p.x, p.y) else into.lineTo(p.x, p.y)
+                }
+                for (k in c1 + 1 downTo c0) {
+                    LaserTrace.dir(lat0, LaserTrace.colLon(k) - LaserTrace.CELL_RAD / 2, la)
+                    val p = laserAt(c, r, la[0], la[1], la[2])
+                    into.lineTo(p.x, p.y)
+                }
+                into.close()
+            }
+            val pc = col(GyroDisplayColor.LASER_PAINT)
+            for (level in 1..LaserTrace.LEVELS) {
+                val into = runPaths[(level - 1) * 2 + (if (front) 1 else 0)]
+                drawPath(into, pc.copy(alpha = pc.alpha * level / LaserTrace.LEVELS * (if (front) 0.45f else 0.9f)))
+            }
+        }
+        fun trail(front: Boolean) {
+            if (lt == null || trailMs <= 0) return
+            val tc = col(GyroDisplayColor.LASER_TRAIL)
+            for (i in 1 until lt.trailCount) {
+                if (lt.trailGap(i)) continue
+                lt.trailPoint(i - 1, now, trailMs, la)
+                val life = lt.trailPoint(i, now, trailMs, lb)
+                if (life <= 0f) continue
+                // Long hops bent along the sphere.
+                val dot = (la[0] * lb[0] + la[1] * lb[1] + la[2] * lb[2]).coerceIn(-1f, 1f)
+                val n = (acos(dot) / TRAIL_STEP_RAD).toInt().coerceIn(1, 32)
+                var prev = laserAt(c, r, la[0], la[1], la[2])
+                for (k in 1..n) {
+                    val t = k / n.toFloat()
+                    var x = la[0] + (lb[0] - la[0]) * t
+                    var y = la[1] + (lb[1] - la[1]) * t
+                    var z = la[2] + (lb[2] - la[2]) * t
+                    val l = kotlin.math.sqrt(x * x + y * y + z * z).coerceAtLeast(1e-4f)
+                    x /= l; y /= l; z /= l
+                    val p = laserAt(c, r, x, y, z)
+                    if ((pv[2] > 0f) == front) {
+                        drawLine(tc.copy(alpha = tc.alpha * life * (if (front) 0.6f else 1f)), prev, p, (1f + 2f * life) * density, StrokeCap.Round)
+                    }
+                    prev = p
+                }
+            }
+        }
+        val hit = laserAt(c, r, beam[0], beam[1], beam[2])
+        val hitFront = pv[2] > 0f
+        val hitDepth = pv[2]
+        val beamCol = col(GyroDisplayColor.LASER_BEAM).let { if (held) it.copy(alpha = it.alpha * 0.35f) else it }
+        fun spot() {
+            val dotCol = col(GyroDisplayColor.LASER_DOT).let { if (held) it.copy(alpha = it.alpha * 0.35f) else it }
+            // Foreshortened toward the rim (seen edge-on there).
+            val size = r * 0.06f * (0.5f + 0.5f * kotlin.math.abs(hitDepth))
+            drawCircle(beamCol.copy(alpha = beamCol.alpha * 0.35f), size * 2f, hit)
+            drawCircle(dotCol, size, hit)
+            if (LaserTrace.rollTick(m, beam, tick)) {
+                val k = 0.22f
+                val tip = laserAt(c, r, beam[0] + tick[0] * k, beam[1] + tick[1] * k, beam[2] + tick[2] * k)
+                drawLine(dotCol, hit, tip, 2f * density, StrokeCap.Round)
+            }
+        }
+        if (d.laserGrid) drawPath(gridPath(gridBack), grid, style = thin)
+        axes(false)
+        paint(false)
+        trail(false)
+        if (!hitFront) spot()
+        drawLine(beamCol, c, hit, 2.5f * density, StrokeCap.Round)
+        drawCircle(beamCol, 3f * density, c)
+        paint(true)
+        if (d.laserGrid) drawPath(gridPath(gridFront), grid.copy(alpha = grid.alpha * 0.6f), style = thin)
+        axes(true)
+        trail(true)
+        if (hitFront) spot()
+        drawCircle(grid, r, c, style = Stroke(1.5f * density))
     }
 
     /** [m] (and [raw]) = [feed]'s pose as shown ([GyroDisplayFeed.shown]: from the resting grip, scaled), straight without one. */
@@ -861,6 +1021,9 @@ private val GIMBAL_RADII = doubleArrayOf(0.95, 0.82, 0.69)
 
 private const val GHOSTS = 6
 private const val GHOST_MS = 45L
+
+/** A laser trail's hops longer than this are bent along the sphere in pieces. */
+private val TRAIL_STEP_RAD = Math.toRadians(4.0).toFloat()
 
 /** The edge's swing per degree, its furthest swing, each layer's step inwards and the outer corner radius. */
 private const val EDGE_PX_PER_DEG = 1.5f

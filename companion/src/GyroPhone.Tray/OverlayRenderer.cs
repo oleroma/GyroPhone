@@ -22,6 +22,8 @@ internal sealed class OverlayScene
     public string Title = "";
     /// <summary>The fingers' trails (phone, with Finger trails on), and the time to fade them by (ms).</summary>
     public FingerTrails? Trails;
+    /// <summary>The laser pointer's trail and paint (laser pointer only).</summary>
+    public LaserTrace? Laser;
     public long NowTicks;
 }
 
@@ -82,6 +84,9 @@ internal static class OverlayRenderer
                 break;
             case OverlayKind.Horizon:
                 DialDrawing.DrawHorizon(g, area, settings, m, m);
+                break;
+            case OverlayKind.Laser:
+                LaserDrawing.Draw(g, area, settings, m, scene.Laser, scene.NowTicks, live && scene.Frame.RatchetHeld);
                 break;
             default:
                 DialDrawing.DrawDisk(g, area, settings, m, m);
@@ -320,6 +325,9 @@ internal static class OverlayRenderer
             g.Pop();
         }
     }
+
+    /// <summary>The pose shown as a row-major matrix (phone frame to the player's view), as <see cref="Draw"/> shows it.</summary>
+    public static float[] PoseMatrix(OverlayFrame f, OverlaySettings s) => Matrix3(Shown(f, s));
 
     /// <summary>The pose shown: the window's pose, from the levelled one (if any), its turn scaled.</summary>
     private static (float W, float X, float Y, float Z) Shown(OverlayFrame f, OverlaySettings s)

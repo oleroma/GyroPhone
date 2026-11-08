@@ -754,6 +754,12 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         Refresh();
     }
 
+    /// <summary>Clears laser pointer overlay <paramref name="id"/>'s paint and trail.</summary>
+    public void ClearOverlay(string id)
+    {
+        if (_overlayForms.TryGetValue(id, out var f)) f.ClearPaint();
+    }
+
     public void LevelAll()
     {
         foreach (var f in _overlayForms.Values.ToList()) f.Level();

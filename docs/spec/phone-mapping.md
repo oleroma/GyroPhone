@@ -46,6 +46,7 @@ One input can press several outputs, and several inputs can press one output. Th
 | Let go | `LetGo` | Ends the toggles set to end on it. |
 | Black screen | `BlackScreen` | The pad goes black. See [Volume rocker and black screen](phone-volume-black-screen.md). |
 | Level displays | `LevelDisplays` | Every 3D gyro display on the pad and every PC overlay shown takes the way the phone is held now as level, as each one's Level button does (with Gravity the tilt is saved as its resting grip; without, it starts again from straight). Nothing held is let go. The PC hears it as a count in OVERLAY (byte 139). |
+| Clear displays | `ClearDisplays` | Every laser pointer display on the pad and every PC laser pointer overlay loses its paint and trail, as its Clear button does. The PC hears it as a count in OVERLAY (byte 148; the first count seen clears nothing). |
 | Nothing | `NoOutput` | Does nothing. In an override layer it stops the input falling through; at a level it clears what the input inherits. |
 | Gyro sensitivity | `GyroSens(axis)` | In the Gyro group: every axis, or yaw, pitch or roll. While its input is active it sets that gyro sensitivity from the input's value through the chip's **Range** (below), over every other sensitivity (the workspace's, a held button's); of several active, the last activated wins (an axis's own chip counts only if activated after an every-axis one). It goes back when the input lets go. A new chip's range is the sensitivity it changes ±20 %. See [Gyro math](phone-gyro-math.md). |
 

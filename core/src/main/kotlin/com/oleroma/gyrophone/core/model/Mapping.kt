@@ -477,6 +477,11 @@ sealed interface OutputTarget {
     @SerialName("level_displays")
     data object LevelDisplays : OutputTarget
 
+    /** Clears every laser pointer display's paint and trail in the workspace and on the PC overlays. */
+    @Serializable
+    @SerialName("clear_displays")
+    data object ClearDisplays : OutputTarget
+
     /**
      * Gyro sensitivity of [axis] ([MotionAxis.NONE] = every axis) from the source's value, through
      * the chip's range ([Mapping.range], counts per degree) while the source is active. It wins over

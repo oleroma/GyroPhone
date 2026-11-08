@@ -412,6 +412,17 @@ class GamepadRuntime(context: Context) {
         _activeProfile.value = WorkspaceMappings.resolve(stored)
     }
 
+    /** A Clear displays mapping fired (main thread): every laser pointer on the pad and the PC loses its paint and trail. */
+    private fun clearDisplays() {
+        wifi.overlay.clearDisplays()
+        for (f in gyroFeeds) f.laser?.clear()
+    }
+
+    /** Clears laser pointer [id]'s paint and trail (its settings' Clear button; main thread). */
+    fun clearLaser(id: String) {
+        gyroFeed(id)?.laser?.clear()
+    }
+
     /** Some gyro display holds its pose to gravity (and so needs the accelerometer). */
     private val needsGravity: Boolean get() = vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity } || wifi.overlay.wanted ||
         _activeProfile.value.workspace(_workspaceIndex.value).gyro.gyroSpace != GyroSpace.LOCAL
@@ -649,6 +660,7 @@ class GamepadRuntime(context: Context) {
         // Inside the engine lock: only bump the counter the pad watches.
         engine.onBlackScreen = Runnable { _blackScreenRequests.update { it + 1 } }
         engine.onLevelDisplays = Runnable { main.post { levelDisplays() } }
+        engine.onClearDisplays = Runnable { main.post { clearDisplays() } }
         // Every other mouse count turns a trackball 3D shape too, as the camera turns.
         engine.cameraSink = { dx, dy ->
             val overlay = wifi.overlay
