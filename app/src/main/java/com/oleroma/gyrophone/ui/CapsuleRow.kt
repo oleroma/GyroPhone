@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -216,7 +215,8 @@ internal fun CapsuleRow(
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     val choices = listOf(
-                        "Blank (touchpad only)" to BuiltinProfiles.blankWorkspace("Workspace ${profile.workspaces.size + 1}"),
+                        "Blank" to BuiltinProfiles.blankWorkspace("Workspace ${profile.workspaces.size + 1}"),
+                        "Windows touchpad" to BuiltinProfiles.touchpadWorkspace(),
                     ) + BuiltinProfiles.presets.map { it.name to it }
                     for ((label, w) in choices) {
                         Text(

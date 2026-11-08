@@ -23,11 +23,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -52,7 +50,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.oleroma.gyrophone.core.model.BallShape
 import com.oleroma.gyrophone.core.model.GyroDisplay
@@ -288,7 +285,7 @@ private fun LevelSlider(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
 
 /** A colour on a checkerboard, so its transparency shows. */
 @Composable
-private fun Swatch(c: Color, size: Int = 32) {
+internal fun Swatch(c: Color, size: Int = 32) {
     Canvas(Modifier.size(size.dp).clip(RoundedCornerShape(6.dp)).border(1.dp, Color.Gray, RoundedCornerShape(6.dp))) {
         val cell = this.size.width / 4
         for (i in 0 until 4) for (j in 0 until 4) {
@@ -304,7 +301,7 @@ private fun Swatch(c: Color, size: Int = 32) {
  * [onPick] gets the result.
  */
 @Composable
-private fun ColorPickerDialog(title: String, initial: Color, onPick: (Color) -> Unit, onDismiss: () -> Unit) {
+internal fun ColorPickerDialog(title: String, initial: Color, onPick: (Color) -> Unit, onDismiss: () -> Unit) {
     val hsv = remember {
         FloatArray(3).also { android.graphics.Color.colorToHSV(initial.toArgb(), it) }
     }

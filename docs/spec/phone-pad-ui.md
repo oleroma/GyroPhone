@@ -12,7 +12,7 @@ What the person sees and touches: the pad, its top row, the ← / → corners, e
 
 `ui/CapsuleRow.kt`, shown in play mode when not in fullscreen:
 
-- **+** adds a workspace at the front (preset or blank, see [Workspaces](phone-workspaces.md)).
+- **+** adds a workspace at the front (Blank, Windows touchpad or a preset, see [Workspaces](phone-workspaces.md)).
 - One capsule per **workspace**: tap to switch; tap the current one to open its edit mode.
 - **Controller** (the device screens, [Controllers](phone-controllers.md)), **Settings**, **Connection** (shows the link state).
 
@@ -20,10 +20,12 @@ The row scrolls. Long-press a capsule and drag it to reorder; moving workspaces 
 
 ## ← / → corners and fullscreen
 
+The status and navigation bars never show in the app, on the pad, in settings or in any dialog (`ui/AppDialogs.kt`: the app's `Dialog` and `AlertDialog` hide them in their own windows; `MainActivity` hides them again when it gets focus back). A swipe from the screen edge shows them for a moment.
+
 The two nav corners (`Profile.corners`, shared by all workspaces) are always on the pad:
 
 - tap ← / → for the previous / next workspace (dimmed to 35 % at an end, unless wrap-around is on);
-- press both together for **fullscreen** (hides the top row and system bars); both again, or Back, to leave;
+- press both together for **fullscreen** (hides the top row); both again, or Back, to leave;
 - their opacity (default 50 %) never goes below 25 % in play, since they are the way out of fullscreen;
 - **Hide the ← / → corners after a few seconds** (default off): they fade 3 s after a reveal; four quick taps (≤300 ms apart) anywhere, or touching a corner, show them again;
 - corners can be moved and sized in edit mode; "Same size for all corners" (default on) sizes both together.
@@ -51,7 +53,7 @@ New buttons start at 14 % of the short side, sticks 30 %.
 
 ## Mapping editor
 
-`ui/ControlMappingScreen.kt`, full screen, for a touch control, the touchpad (the "Workspace" stand-in), the Defaults' mappings, or a physical device control. Its action **cards** (one per input, with their targets as chips) and a **library of targets** share the screen with a draggable divider. Tap a card, then a target to add it; or long-press and drag a target onto a card, a chip to another card, or back to the library to remove it. Cards reorder by their ⠿ handle. A chip opens its options (`ui/MappingChipDialog.kt`, `ui/ActionSettings.kt`): When, How, Where, Also ends on, delays, Cycle, scale, haptic feel. **Presets** fills in Windows touchpad or Gyro mouse. Layer chips on top pick Base or a layer. Inherited mappings show faded; ✕, ↺, Reset all and Clear all work as in [Workspaces](phone-workspaces.md). **Settings** opens the control's settings (`ui/ControlSettingsScreen.kt`: Button (duplicate, save to library, delete), look (label, shape, size, layer, opacity), layers (follow layers), then the settings its actions share: touch surface, stick, gyro while held). Every change can be undone.
+`ui/ControlMappingScreen.kt`, full screen, for a touch control, the touchpad (the "Workspace" stand-in), the Defaults' mappings, or a physical device control. Its action **cards** (one per input, with their targets as chips) and a **library of targets** share the screen with a draggable divider. Tap a card, then a target to add it; or long-press and drag a target onto a card, a chip to another card, or back to the library to remove it. Cards reorder by their ⠿ handle. A chip opens its options (`ui/MappingChipDialog.kt`, `ui/ActionSettings.kt`): When, How, Where, Also ends on, delays, Cycle, scale, haptic feel. **Presets** fills in Windows touchpad or Gyro mouse. Layer chips on top pick Base or a layer; each shows only its own chips (no other set's, and in a layer nothing faded from the level above). In Base, inherited mappings show faded until the card maps anything itself; a faded chip dragged onto the library is removed (the card then overrides them); ✕, ↺, Reset all and Clear all work as in [Workspaces](phone-workspaces.md). **Settings** opens the control's settings (`ui/ControlSettingsScreen.kt`). **Duplicate** (copies its look and mappings), **Save to library** (for any workspace: add it from the edit panel's Library) and **Delete** (asks first) sit fixed at the top, outside the scrolling list: in the title row in landscape, under the title in portrait, as in workspace settings. Below them the categories: look (label, shape, size, layer, opacity), layers (follow layers), then the settings its actions share: touch surface, stick, gyro while held). Every change can be undone.
 
 ## What the pad shows
 
@@ -60,8 +62,9 @@ App-wide, Settings › App › Touch display (`ui/TouchVisuals.kt`), all off by 
 - **Show touches**: a dot under each finger that fades after it lifts;
 - **Trail behind fingers**: a line of the finger's recent path, its end fading;
 - **Show live mappings on buttons**: a button's label briefly shows what it sends (yellow, lingers 700 ms);
-- **Swipe line**: a finger on a touchpad button shows a line from its start to its direction's activation lengths;
-- **Move rulers**: a finger whose Move X or Y moves shows a sliding ruler per Move.
+- **Swipe line**: a finger on a touchpad button shows a line from its start to its direction's activation lengths; only the arrows (↑ → ↓ ←) draw it; the Swipe card's Any line has none.
+- **Move rulers**: a finger whose Move X or Y moves shows a sliding ruler per Move. 
+- **Position ruler** (own switch in Touch display, default on): while a finger is on a button that maps its **Finger X**, **Y**, **distance** or **angle**, each shows a strip through the finger: X across the button, Y up it, distance from the centre out through the finger, angle as a ring round a round button (0 at the top, clockwise). A strip is clear in the input's start deadzone, a gradient from there, and full colour from its end deadzone; small ticks mark both edges. A label with a dark background shows what each of the button's finger mappings in use sends now ("Sens 4.70", "RX 62 %"), above the finger or, with **Values show: In the button's corner**, in its top-right corner. The colour is picked in the same settings (default orange). `PositionRulerOverlay` in `ui/TouchVisuals.kt`; values from `MappingEngine.fingerValueNow`.
 
 A layer in use other than Base shows a pill for a second.
 
@@ -80,6 +83,8 @@ Displays that hold their pose to gravity run the accelerometer; ones that hold h
 
 ## Debug panel
 
+While the PC's latency test window is open, the pad shows the test's tracking markers over everything (touches still go through; **Hide markers** hides them until the next test), see [Latency test](pc-latency-test.md#latency-test-page).
+
 With Settings › App › Debugging › **Debug tools** on (default off: nothing is logged), `ui/DebugOverlay.kt` floats over the pad: link, gyro, workspace and layer, what is held (inputs and outputs) and the newest events. Drag the title to move it, ◢ to resize, ▾ to fold it. **Record** saves the last 30 s (`runtime/PhoneDebug.kt`).
 
 ## Black screen
@@ -88,4 +93,4 @@ See [Volume rocker and black screen](phone-volume-black-screen.md).
 
 ## Key files
 
-`ui/MainActivity.kt`, `ui/PadMenu.kt`, `ui/PadScreen.kt`, `ui/CapsuleRow.kt`, `ui/WorkspaceBar.kt`, `ui/ControlMappingScreen.kt`, `ui/BindingEditor.kt`, `ui/MappingChipDialog.kt`, `ui/ActionSettings.kt`, `ui/ControlSettingsScreen.kt`, `ui/DirectionSettings.kt`, `ui/TouchVisuals.kt`, `ui/GyroVisuals.kt`, `ui/GyroVisualsSettings.kt`, `ui/Shapes3D.kt`, `ui/DebugOverlay.kt`, `core/.../model/Profile.kt` (`TouchControl`, `TouchKind`, `NavCorners`), `core/.../model/ControlGroups.kt`, `core/.../model/GyroDisplay.kt`.
+`ui/MainActivity.kt`, `ui/PadMenu.kt`, `ui/PadScreen.kt`, `ui/CapsuleRow.kt`, `ui/WorkspaceBar.kt`, `ui/ControlMappingScreen.kt`, `ui/BindingEditor.kt`, `ui/MappingChipDialog.kt`, `ui/ActionSettings.kt`, `ui/ControlSettingsScreen.kt`, `ui/DirectionSettings.kt`, `ui/TouchVisuals.kt`, `ui/GyroVisuals.kt`, `ui/GyroVisualsSettings.kt`, `ui/Shapes3D.kt`, `ui/DebugOverlay.kt`, `ui/LatencyMarkers.kt`, `core/.../model/Profile.kt` (`TouchControl`, `TouchKind`, `NavCorners`), `core/.../model/ControlGroups.kt`, `core/.../model/GyroDisplay.kt`.

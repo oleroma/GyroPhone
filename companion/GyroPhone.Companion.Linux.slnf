@@ -6,6 +6,7 @@
       "src\\GyroPhone.Host\\GyroPhone.Host.csproj",
       "src\\GyroPhone.Windows\\GyroPhone.Windows.csproj",
       "src\\GyroPhone.Headless\\GyroPhone.Headless.csproj",
+      "src\\GyroPhone.Latency\\GyroPhone.Latency.csproj",
       "tests\\GyroPhone.Tests\\GyroPhone.Tests.csproj"
     ]
   }

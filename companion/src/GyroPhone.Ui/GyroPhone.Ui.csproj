@@ -14,5 +14,6 @@
   <ItemGroup>
     <ProjectReference Include="../GyroPhone.Protocol/GyroPhone.Protocol.csproj" />
     <ProjectReference Include="../GyroPhone.Host/GyroPhone.Host.csproj" />
+    <ProjectReference Include="../GyroPhone.Latency/GyroPhone.Latency.csproj" />
   </ItemGroup>
 </Project>

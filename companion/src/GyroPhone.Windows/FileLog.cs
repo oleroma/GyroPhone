@@ -9,16 +9,17 @@ namespace GyroPhone.Windows;
 /// </summary>
 public sealed class FileLog : IDisposable
 {
-    private const long MaxBytes = 1_000_000;
+    private readonly long _maxBytes;
 
     private readonly BlockingCollection<string> _queue = new(boundedCapacity: 1024);
     private readonly Thread _thread;
     private readonly Action<string>? _echo;
 
-    public FileLog(string? directory = null, Action<string>? echo = null)
+    public FileLog(string? directory = null, Action<string>? echo = null, string fileName = "companion.log", long maxBytes = 1_000_000)
     {
         Directory = directory ?? DefaultDirectory();
-        Path = System.IO.Path.Combine(Directory, "companion.log");
+        Path = System.IO.Path.Combine(Directory, fileName);
+        _maxBytes = maxBytes;
         _echo = echo;
         _thread = new Thread(Run) { Name = "gp-log", IsBackground = true, Priority = ThreadPriority.BelowNormal };
         _thread.Start();
@@ -54,7 +55,7 @@ public sealed class FileLog : IDisposable
         try
         {
             System.IO.Directory.CreateDirectory(Directory);
-            if (File.Exists(Path) && new FileInfo(Path).Length > MaxBytes) Rotate();
+            if (File.Exists(Path) && new FileInfo(Path).Length > _maxBytes) Rotate();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -66,7 +67,7 @@ public sealed class FileLog : IDisposable
             _echo?.Invoke(line);
             try
             {
-                if (Append(line + Environment.NewLine) > MaxBytes) Rotate();
+                if (Append(line + Environment.NewLine) > _maxBytes) Rotate();
                 _lastError = null;
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)

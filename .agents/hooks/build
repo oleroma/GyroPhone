@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds GyroPhone and prints "build-file: <path> <version>" per build file.
-# Usage: build [apk|companion]
-#   no argument: the parts this branch changed (see parts); the companion only on Windows
-#   apk / companion: only that one (the fallback workflow builds them on separate runners)
+# Usage: build [apk|companion|driver]
+#   no argument: the parts this branch changed (see parts); the companion and driver only on Windows
+#   apk / companion / driver: only that one (the fallback workflow builds them on separate runners)
 # A part that isn't built has no build file, so agent-install leaves it as installed.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -42,4 +42,61 @@ if grep -qw companion <<<"$parts" && { [ $# -gt 0 ] || [ "${OS:-}" = Windows_NT 
     echo "$key" >"$out/source-key.txt"
   fi
   echo "build-file: $out/GyroPhoneCompanion.exe $version"
+fi
+
+if grep -qw driver <<<"$parts" && { [ $# -gt 0 ] || [ "${OS:-}" = Windows_NT ]; }; then
+  # The optional GyroPhone pad driver (driver/): a UMDF 2 DLL, its INF and an unsigned catalog, zipped
+  # with install.cmd / uninstall.cmd. The PC that installs it signs it with its own key (install.ps1).
+  # The Windows Driver Kit comes from NuGet into build/driver/packages (kept, never cleaned); the C++
+  # compiler from the Visual Studio (Build Tools) that has MSVC. Nothing is installed system wide.
+  dd=build/driver
+  zip="$dd/GyroPhonePad-driver.zip"
+  key="$(git rev-parse HEAD:driver)"
+  if [ -f "$zip" ] && [ -f "$dd/source-key.txt" ] && [ "$(cat "$dd/source-key.txt")" = "$key" ]; then
+    echo "Driver sources unchanged: reusing $zip." >&2
+  else
+    mkdir -p "$dd/packages"
+    # Windows' own tar (bsdtar) reads and writes zips; Git Bash's GNU tar doesn't.
+    wintar=/c/Windows/System32/tar.exe
+    if [ -f "$dd/source-key.txt" ]; then : >"$dd/source-key.txt"; fi
+    # driver/packages.config lists them; a package is a zip, unpacked to <id>.<version>.
+    while read -r id ver; do
+      dir="$dd/packages/$id.$ver"
+      [ -d "$dir" ] && continue
+      echo "Downloading $id $ver from NuGet..." >&2
+      curl -fsSL --retry 3 -o "$dd/packages/$id.$ver.nupkg" "https://www.nuget.org/api/v2/package/$id/$ver"
+      mkdir -p "$dir.part"
+      "$wintar" -xf "$dd/packages/$id.$ver.nupkg" -C "$dir.part"
+      mv "$dir.part" "$dir"
+      rm -f "$dd/packages/$id.$ver.nupkg"
+    done < <(sed -n 's/.*<package id="\([^"]*\)" version="\([^"]*\)".*/\1 \2/p' driver/packages.config)
+
+    vswhere="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
+    msbuild="$("$vswhere" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 \
+      -find 'MSBuild\**\Bin\amd64\MSBuild.exe' | tr -d '\r' | head -n 1)"
+    [ -n "$msbuild" ] || { echo "No Visual Studio (Build Tools) with the C++ x64 compiler found: the driver needs it." >&2; exit 1; }
+
+    rm -rf "$dd/obj" "$dd/out" "$dd/pkg"
+    mkdir -p "$dd/obj" "$dd/out" "$dd/pkg"
+    MSYS_NO_PATHCONV=1 "$msbuild" driver/GyroPhonePad.vcxproj -nologo -v:minimal -m \
+      -p:Configuration=Release -p:Platform=x64 \
+      -p:GpOutDir="$(cygpath -m "$PWD/$dd/out")/" -p:GpIntDir="$(cygpath -m "$PWD/$dd/obj")/" \
+      -p:GpDriverVersion="0.1.$GP_BUILD.0"
+
+    # The built DLL and the INF the WDK stamped (version, UMDF version), wherever it put them.
+    dll="$(find "$dd/out" "$dd/obj" -iname GyroPhonePad.dll | head -n 1)"
+    inf="$(find "$dd/out" "$dd/obj" -iname GyroPhonePad.inf | head -n 1)"
+    [ -n "$dll" ] && [ -n "$inf" ] || { echo "The driver build made no GyroPhonePad.dll or .inf." >&2; exit 1; }
+    cp "$dll" "$inf" "$dd/pkg/"
+    inf2cat="$(find "$dd/packages" -ipath '*x86*' -iname Inf2Cat.exe | head -n 1)"
+    [ -n "$inf2cat" ] || { echo "Inf2Cat.exe not found in the WDK package." >&2; exit 1; }
+    MSYS_NO_PATHCONV=1 "$inf2cat" /driver:"$(cygpath -w "$PWD/$dd/pkg")" /os:10_X64 /uselocaltime
+    [ -f "$dd/pkg/GyroPhonePad.cat" ] || [ -f "$dd/pkg/gyrophonepad.cat" ] || { echo "Inf2Cat made no catalog." >&2; exit 1; }
+    cp driver/install.cmd driver/install.ps1 driver/uninstall.cmd driver/uninstall.ps1 driver/common.ps1 driver/README.md "$dd/pkg/"
+    echo "$version-$GP_COMMIT" >"$dd/pkg/VERSION.txt"
+    rm -f "$zip"
+    (cd "$dd/pkg" && "$wintar" -a -cf ../GyroPhonePad-driver.zip -- *)
+    echo "$key" >"$dd/source-key.txt"
+  fi
+  echo "build-file: $zip $version"
 fi

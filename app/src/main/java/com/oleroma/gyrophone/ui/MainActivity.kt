@@ -83,10 +83,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        WindowInsetsControllerCompat(window, window.decorView).apply {
-            hide(WindowInsetsCompat.Type.systemBars())
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        }
+        // No status or navigation bar anywhere in the app (dialogs too: AppDialogs.kt).
+        hideSystemBars(window)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         controllerInput = ControllerInput(this, runtime)
@@ -184,6 +182,11 @@ class MainActivity : ComponentActivity() {
         TouchStream.pointerCancelled = event.actionMasked == MotionEvent.ACTION_POINTER_UP &&
             (event.flags and MotionEvent.FLAG_CANCELED) != 0
         TouchStream.eventNanos = event.eventTimeNanos
+        // "Measure buttons" on the PC: a finger landing or lifting may press or release something.
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP ->
+                runtime.wifi.pressStamp.note(event.eventTimeNanos)
+        }
         return super.dispatchTouchEvent(event)
     }
 
@@ -199,7 +202,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) TouchStream.requestUnbuffered(window.decorView)
+        if (hasFocus) {
+            TouchStream.requestUnbuffered(window.decorView)
+            // Back from a dialog, the keyboard or another app: the bars stay hidden.
+            hideSystemBars(window)
+        }
     }
 
     private fun displayDegrees() = when (display?.rotation) {

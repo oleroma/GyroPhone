@@ -4,7 +4,9 @@ Where every setting lives and its default. How workspace settings inherit is in 
 
 ## How settings pages work
 
-Every settings page (`ui/SettingsLayout.kt`) is a list of **categories** that fold open and closed; a long press on a category's name drags it to a new place. Open state and order are remembered. A **search** field on top filters every setting by its words (every word must match); on the Settings page it searches both tabs at once, each under its name. Values a level sets itself are highlighted with **↺** to follow the parent again.
+**Sliders** (`ui/CompactSlider.kt`): dragging moves the handle from where it is (it does not jump to the finger). **A tap on a slider without dragging opens a box to type the exact value**, which may go past the slider's ends (a gyro sensitivity up to the highest the app takes, above the Slider cap). A slider with two handles (deadzones, ranges) types the handle nearest the tap; its handles may pass each other.
+
+Every settings page (`ui/SettingsLayout.kt`) is a list of **categories** that fold open and closed; a long press on a category's name drags it to a new place (every category shows closed meanwhile, and the page scrolls when the finger nears its top or bottom edge). Open state and order are remembered. A **search** field on top filters every setting by its words (every word must match); on the Settings page it searches both tabs at once, each under its name. Values a level sets itself are highlighted with **↺** to follow the parent again.
 
 ## Settings (the pad's Settings capsule)
 
@@ -23,7 +25,7 @@ Every settings page (`ui/SettingsLayout.kt`) is a list of **categories** that fo
 | | Corner opacity | 50 % |
 | | Wrap around | off |
 | Touch display | Show touches, Trail behind fingers (length, fade), Fade out after lift, Show live mappings on buttons, swipe line, Move rulers | see [Pad UI](phone-pad-ui.md) |
-| Gyro | Jitter cutoff (0–5 °/s), Smoothing below (0–10 °/s) | both off |
+| Gyro | Jitter cutoff (0–5 °/s), Smoothing below (0–10 °/s); **Slider cap**: the top of every gyro sensitivity slider and Gyro sensitivity range, in RWS for workspaces that know their game (1–50) and in counts per degree for the others (4–250) | both off; 10 RWS, 64 counts/° |
 | Gyro display | Parallax edge (Turn / Tilt) | off |
 | Controllers on phone | The attached game pads | — |
 | Debugging | Debug tools | off |
@@ -33,19 +35,20 @@ Every settings page (`ui/SettingsLayout.kt`) is a list of **categories** that fo
 
 The Defaults' workspace settings (the same categories as a workspace's, below), each highlighted with ↺ where it differs from the built-in value, plus **Mappings**: the touchpad and motion mappings every workspace starts from (none until mapped; Presets has Windows touchpad and Gyro mouse).
 
+**Children that set their own value.** Under each setting that some child sets itself, a small pink line lists them: how many, then each one's name and value, for example "4 own: Apex 2.6 · Apex › Sniper 0.8 · Apex › Aim ×0.5 · …". Children are every workspace, its layers ("Workspace › Layer") and its touch buttons ("Workspace › Button", or "Workspace › Layer › Button" for a button's gyro in a layer). A value that is a factor of the parent's shows as ×; one with no short form (an acceleration curve, a haptic feel) shows the name only. The first 3 show; **+N more ▾** (tap the line) lists the rest in place, **▴ less** folds them again. **Reset children** (asks first) makes them all follow this setting again. Settings no child sets have no line. The workspace settings show the same line for the workspace's layers and buttons, and a layer's for the buttons (a button's own value wins over every layer). The ⚙ of a gyro axis, tilt, shake, Move X / Y or swipe direction in the mapping editor shows it too. Physical controller buttons' held gyro (device presets) is not counted. (`core/model/OverridingChildren.kt`, `ui/OverrideSettings.kt` `ChildLine`)
+
 ## Workspace settings
 
-Opened by ⚙ in edit mode, the touchpad's Settings in its mapping editor, or the Settings menu (`ui/PadMenu.kt` `WorkspaceSettingsPage`, `ui/WorkspaceSettingsList.kt`). Chips on top pick **Base** or a layer: a layer's page shows only what a layer may set.
+Opened by ⚙ in edit mode, the touchpad's Settings in its mapping editor, or the Settings menu (`ui/PadMenu.kt` `WorkspaceSettingsPage`, `ui/WorkspaceSettingsList.kt`). **Rename, Duplicate, Delete** (not the last) and **Copy mappings from…** sit fixed at the top, outside the scrolling list: in the title row in landscape, under the title in portrait (`WorkspaceTopBar`). Chips on top of the list pick **Base** or a layer: a layer's page shows only what a layer may set.
 
 | Category | Contents | Defaults |
 |---|---|---|
-| Workspace | Rename, Duplicate, Delete, Copy mappings from… | — |
-| Gyro | Gyro to mouse (Ratchet enables / Ratchet disables / Gyro off), Gyro space (Local / World / Player), Game (preset game + in-game sensitivity, or counts per 360, Measure), Sensitivity (per axis via ⚙, exact or × Parent), Acceleration curve (Off, Light, Strong, custom; by this axis or the whole phone), Inertia (Smooth / Linear) and Glide, DualShock 4 yaw / pitch / roll (the phone axis each pad axis follows, or None, and Invert; workspace and Defaults only) | Ratchet enables, Local, no game, 16 counts/°, Off, inertia off, 325 ms, pad yaw = Yaw, pitch = Pitch, roll = Roll |
+| Gyro | Gyro to mouse (Ratchet enables / Ratchet disables / Gyro off), Gyro space (Local / World / Player), Game (preset game + in-game sensitivity, or counts per 360, Measure), Sensitivity (per axis via ⚙, exact or × Parent), Acceleration curve (Off, Light, Strong, custom; by this axis or the whole phone), Inertia (Smooth / Linear) and Glide, PC pad yaw / pitch / roll (the phone axis each DualShock 4 or DualSense axis follows, or None, and Invert; workspace and Defaults only) | Ratchet enables, Local, no game, 16 counts/°, Off, inertia off, 325 ms, pad yaw = Yaw, pitch = Pitch, roll = Roll |
 | Tilt & shake | Tilt range, Tilt deadzone (per axis), Shake strength | 30°, off, 14 m/s² |
 | Gyro calibration (Base only) | Calibrate, Clear | not calibrated |
 | Controls (Base only) | Control opacity (10–100 %) | 100 % |
 | Haptics | Feel (system or custom strength / length), Ticks play (On press / enter, On release / exit, Both) | system, On press |
-| Gesture timings | Long press after (100–1500 ms), Double tap within (100–800 ms) | 400 ms, 300 ms |
+| Gesture timings | Tap time (100–1000 ms): the longest tap, when a long press starts, and the double-tap gap | 300 ms |
 | Touchpad | The workspace touch surface: speed, acceleration, inertia, swipe lengths and pies, per direction and per Move | see [Mapping system](phone-mapping.md) |
 
 ## Connection page

@@ -354,7 +354,7 @@ public class GoldenVectorTests
     public void KeyboardUsagesAllMap()
     {
         var usages = Vectors.Root.GetProperty("keyboardUsages").EnumerateArray().Select(e => e.GetInt32()).ToList();
-        Assert.Equal(122, usages.Count);
+        Assert.Equal(123, usages.Count);
         // Pause and the media keys go as virtual keys, everything else as scan codes.
         int[] vkPath = { 0x48, 0x7F, 0x80, 0x81, 0xE8, 0xEA, 0xEB };
         foreach (var u in usages)
