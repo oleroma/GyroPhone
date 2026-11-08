@@ -62,6 +62,17 @@ class LaserTraceTest {
         for (f in faces) assertTrue(f.light in 0f..1f)
     }
 
+    @Test fun aTrackballFacesTheWayPicked() {
+        val want = arrayOf(floatArrayOf(0f, 0f, -1f), floatArrayOf(0f, 0f, 1f), floatArrayOf(1f, 0f, 0f), floatArrayOf(-1f, 0f, 0f), floatArrayOf(0f, 1f, 0f), floatArrayOf(0f, -1f, 0f))
+        val b = FloatArray(3)
+        for (k in 0..5) {
+            val m = floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f)
+            LaserTrace.faces(m, k)
+            LaserTrace.beam(m, b)
+            assertArrayEquals(want[k], b, 1e-6f)
+        }
+    }
+
     @Test fun aimsWithTheRollAxis() {
         val b = FloatArray(3)
         val m = floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f)

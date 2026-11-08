@@ -310,6 +310,32 @@ public sealed class LaserTrace
         return r;
     }
 
+    /// <summary>
+    /// Pose matrix <paramref name="m"/> (row-major) with the laser facing direction <paramref name="faces"/> of it:
+    /// 0 −Z (into the screen at rest), 1 +Z, 2 +X, 3 −X, 4 +Y, 5 −Y. m · F, F turning −Z onto that direction.
+    /// As the phone's LaserTrace.faces.
+    /// </summary>
+    public static float[] Faces(float[] m, int faces)
+    {
+        if (faces is < 0 or > 5) return m;
+        var f = FaceTurns[faces];
+        var r = new float[9];
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                r[i * 3 + j] = m[i * 3] * f[j] + m[i * 3 + 1] * f[3 + j] + m[i * 3 + 2] * f[6 + j];
+        return r;
+    }
+
+    private static readonly float[][] FaceTurns =
+    [
+        [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        [-1, 0, 0, 0, 1, 0, 0, 0, -1],
+        [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        [0, 0, 1, 0, 1, 0, -1, 0, 0],
+        [1, 0, 0, 0, 0, -1, 0, 1, 0],
+        [1, 0, 0, 0, 0, 1, 0, -1, 0],
+    ];
+
     /// <summary>The beam's direction for pose matrix <paramref name="m"/> (row-major, phone frame to shown): out of the phone's back.</summary>
     public static (float X, float Y, float Z) Beam(float[] m) => (-m[2], -m[5], -m[8]);
 

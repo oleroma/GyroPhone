@@ -47,6 +47,8 @@ internal sealed class OverlaysPage : Page
     private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserDraw, _laserClearOnRatchet;
     private readonly Seg<int> _laserFade;
     private readonly Seg<bool> _laserShape;
+    private readonly Seg<int> _laserFaces;
+    private readonly TextBlock _laserFacesTitle;
     private readonly TextBlock _laserRifleHint;
     private readonly SliderRow _laserBrush;
     private readonly StackPanel _laserDrawOptions;
@@ -67,7 +69,6 @@ internal sealed class OverlaysPage : Page
     private readonly UIElement _gravityDivider;
     private readonly CheckBox _rws;
     private readonly StackPanel _trackballAxes;
-    private readonly TextBlock _axesGravityHint;
     private readonly Seg<int>[] _tbFrom = new Seg<int>[3];
     private readonly CheckBox[] _tbInvert = new CheckBox[3];
     private readonly Button _tbAsPhone;
@@ -258,6 +259,12 @@ internal sealed class OverlaysPage : Page
         lb.Children.Add(_laserShape.View);
         _laserRifleHint = Parts.Text("A rifle aims instead: no sphere or beam, and Draw mode still paints where it points. Best with Axonometric view (face-on you look along the barrel).", "Hint");
         lb.Children.Add(_laserRifleHint);
+        _laserFacesTitle = Parts.Text("Laser faces (as a trackball)");
+        lb.Children.Add(_laserFacesTitle);
+        _laserFaces = new Seg<int>(f => Change(o => o.LaserFaces = f), false,
+            ("−Z (into the screen)", 0), ("+Z", 1), ("+X", 2), ("−X", 3), ("+Y", 4), ("−Y", 5));
+        _laserFaces.View.Margin = new Thickness(0, 6, 0, 2);
+        lb.Children.Add(_laserFaces.View);
         _laserAxon = Parts.Toggle("Axonometric view", () => Change(o => o.LaserAxonometric = !o.LaserAxonometric), "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot.");
         _laserGrid = Parts.Toggle("Grid every 15°", () => Change(o => o.LaserGrid = !o.LaserGrid));
         lb.Children.Add(_laserAxon);
@@ -326,9 +333,6 @@ internal sealed class OverlaysPage : Page
         _tbAsPhone = Parts.Button("As the phone", () => Change(o => o.TrackballAxes = OverlaySettings.TrackballAsPhone));
         _trackballAxes.Children.Add(_tbAsPhone);
         tbb.Children.Add(_trackballAxes);
-        _axesGravityHint = Parts.Text("Turn Gravity off to pick which gyro turn turns each axis: with gravity its tilt follows the real world.", "Hint");
-        _axesGravityHint.Margin = new Thickness(20, 4, 0, 4);
-        tbb.Children.Add(_axesGravityHint);
         _turnTab.Children.Add(tb);
 
         var (pose, pob) = Parts.Card("Pose");
@@ -500,6 +504,9 @@ internal sealed class OverlaysPage : Page
         Parts.SetChecked(_phoneAxon, o.Axonometric);
         Parts.SetChecked(_shapeAxon, o.Axonometric);
         _laserShape.Set(o.LaserRifle);
+        _laserFaces.Set(o.LaserFaces);
+        Parts.Show(_laserFaces.View, o.IsTrackball);
+        Parts.Show(_laserFacesTitle, o.IsTrackball);
         Parts.Show(_laserRifleHint, o.LaserRifle);
         Parts.Show(_laserGrid, !o.LaserRifle);
         Parts.SetChecked(_laserAxon, o.LaserAxonometric);
@@ -542,9 +549,7 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_rws, o.FollowsCamera);
         _spin.Set(o.TrackballSpin);
         Parts.Show(_spin.View, o.FollowsCamera && !o.TrackballRws);
-        // Each axis's gyro turn: a trackball, or turning with the phone without gravity.
-        Parts.Show(_trackballAxes, o.IsTrackball || o.TurnsWith == OverlayTurnsWith.Phone && !o.Gravity);
-        Parts.Show(_axesGravityHint, o.TurnsWith == OverlayTurnsWith.Phone && o.Gravity);
+        Parts.Show(_trackballAxes, o.IsTrackball);
         for (int i = 0; i < 3; i++)
         {
             int code = (o.TrackballAxes >> (8 * i)) & 0xFF;

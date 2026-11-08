@@ -22,8 +22,13 @@ internal static class LaserDrawing
     /// <summary>Strokes blend from Paint ahead to Paint behind in this many steps.</summary>
     private const int Hues = 8;
 
-    /// <summary>The pose as the laser aims: turned by the phone, with its roll axis (<see cref="LaserTrace.Aim"/>); a game camera already aims ahead.</summary>
-    public static float[] Aimed(float[] m, OverlaySettings s) => s.TurnsWith == OverlayTurnsWith.Camera ? m : LaserTrace.Aim(m);
+    /// <summary>The pose as the laser aims: turned by the phone, with its roll axis (<see cref="LaserTrace.Aim"/>); a trackball the way picked (<see cref="LaserTrace.Faces"/>); a game camera already aims ahead.</summary>
+    public static float[] Aimed(float[] m, OverlaySettings s) => s.TurnsWith switch
+    {
+        OverlayTurnsWith.Phone => LaserTrace.Aim(m),
+        OverlayTurnsWith.Trackball => LaserTrace.Faces(m, s.LaserFaces),
+        _ => m,
+    };
 
     public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held)
     {

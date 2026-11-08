@@ -129,11 +129,8 @@ public sealed class OverlayPose
         else if (gravity) Fuse(yaw, pitch, roll, dt, compass);
         else if (f.Axes != 0)
         {
-            // Without gravity each of its axes turns by the gyro turn its axis mapping picks.
             float k = DegToRad * dt;
-            float y = (f.Axes & 1) != 0 ? yaw : 0f, p = (f.Axes & 2) != 0 ? pitch : 0f, r = (f.Axes & 4) != 0 ? roll : 0f;
-            int m = s.TrackballAxes;
-            Turn(About(m, 1, y, p, r) * k, -About(m, 0, y, p, r) * k, -About(m, 2, y, p, r) * k);
+            Turn(((f.Axes & 2) != 0 ? pitch : 0f) * k, -((f.Axes & 1) != 0 ? yaw : 0f) * k, -((f.Axes & 4) != 0 ? roll : 0f) * k);
         }
         if (!s.Ease || compass || s.EaseOnRatchet) return;
         bool busy = MathF.Sqrt(yaw * yaw + pitch * pitch + roll * roll) > StillDps;

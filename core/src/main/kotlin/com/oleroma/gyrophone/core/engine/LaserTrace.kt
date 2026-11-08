@@ -337,6 +337,30 @@ class LaserTrace {
             r.copyInto(m)
         }
 
+        /**
+         * Pose matrix [m] (row-major, changed) with the laser facing direction [faces] of it: one of
+         * [FACES] (0 −Z into the screen at rest, 1 +Z, 2 +X, 3 −X, 4 +Y, 5 −Y). m · F, F turning −Z
+         * onto that direction.
+         */
+        fun faces(m: FloatArray, faces: Int) {
+            val f = FACE_TURNS.getOrNull(faces) ?: return
+            val r = FloatArray(9)
+            for (i in 0..2) for (j in 0..2) r[i * 3 + j] = m[i * 3] * f[j] + m[i * 3 + 1] * f[3 + j] + m[i * 3 + 2] * f[6 + j]
+            r.copyInto(m)
+        }
+
+        /** The directions the laser can face (a trackball's), by their names. */
+        val FACES = listOf("−Z", "+Z", "+X", "−X", "+Y", "−Y")
+
+        private val FACE_TURNS = arrayOf(
+            floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f),
+            floatArrayOf(-1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, -1f),
+            floatArrayOf(0f, 0f, -1f, 0f, 1f, 0f, 1f, 0f, 0f),
+            floatArrayOf(0f, 0f, 1f, 0f, 1f, 0f, -1f, 0f, 0f),
+            floatArrayOf(1f, 0f, 0f, 0f, 0f, -1f, 0f, 1f, 0f),
+            floatArrayOf(1f, 0f, 0f, 0f, 0f, 1f, 0f, -1f, 0f),
+        )
+
         private val AIM_AXIS = intArrayOf(0, 2, 1)
         private val AIM_SIGN = floatArrayOf(1f, 1f, -1f)
 

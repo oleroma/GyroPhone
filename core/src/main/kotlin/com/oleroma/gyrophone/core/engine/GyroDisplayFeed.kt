@@ -128,12 +128,12 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         } else if (d.needsGravity) {
             pose.fuse(yaw, pitch, roll, dtSeconds, 0f, compass)
         } else if (axes != 0) {
-            // Without gravity each of its axes turns by the gyro turn its axis mapping picks.
-            val y = if (axes and MappingEngine.gyroBit(MotionAxis.YAW) != 0) yaw else 0f
-            val p = if (axes and MappingEngine.gyroBit(MotionAxis.PITCH) != 0) pitch else 0f
-            val r = if (axes and MappingEngine.gyroBit(MotionAxis.ROLL) != 0) roll else 0f
-            val m = d.trackballAxes
-            pose.rotate(about(m, 0, y, p, r), about(m, 1, y, p, r), about(m, 2, y, p, r), dtSeconds)
+            pose.rotate(
+                if (axes and MappingEngine.gyroBit(MotionAxis.YAW) != 0) yaw else 0f,
+                if (axes and MappingEngine.gyroBit(MotionAxis.PITCH) != 0) pitch else 0f,
+                if (axes and MappingEngine.gyroBit(MotionAxis.ROLL) != 0) roll else 0f,
+                dtSeconds,
+            )
         }
         if (!d.ease || compass || d.easeOnRatchet) return
         val busy = sqrt(yaw * yaw + pitch * pitch + roll * roll) > STILL_DPS

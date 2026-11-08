@@ -61,6 +61,19 @@ public class LaserTraceTests
         Assert.All(faces, f => Assert.InRange(f.Light, 0f, 1f));
     }
 
+    [Theory]
+    [InlineData(0, 0, 0, -1)]
+    [InlineData(1, 0, 0, 1)]
+    [InlineData(2, 1, 0, 0)]
+    [InlineData(3, -1, 0, 0)]
+    [InlineData(4, 0, 1, 0)]
+    [InlineData(5, 0, -1, 0)]
+    public void ATrackballFacesTheWayPicked(int faces, float x, float y, float z)
+    {
+        var b = LaserTrace.Beam(LaserTrace.Faces(Identity, faces));
+        Assert.Equal((x, y, z), (b.X + 0f, b.Y + 0f, b.Z + 0f));
+    }
+
     [Fact]
     public void AimsWithTheRollAxis()
     {

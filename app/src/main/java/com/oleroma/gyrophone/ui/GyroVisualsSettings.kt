@@ -173,6 +173,10 @@ internal fun GyroDisplaySettingsScreen(
                     Hint("A see-through sphere seen from above and to the side. The laser at its centre aims along the phone's roll axis (out of its top edge, into the screen at rest) onto the inside; the tick at the dot shows which way the phone's screen faces. The beam dims while a ratchet is held.")
                     Chips(listOf("Sphere" to false, "Rifle" to true), d.laserRifle) { set(d.copy(laserRifle = it)) }
                     if (d.laserRifle) Hint("A rifle aims instead: no sphere or beam, and Draw mode still paints where it points. Best with Axonometric view (face-on you look along the barrel).")
+                    if (d.turnsWith == TurnsWith.TRACKBALL) {
+                        Text("Laser faces (as a trackball)", style = MaterialTheme.typography.bodyMedium)
+                        Chips(listOf("−Z (into the screen)" to 0, "+Z" to 1, "+X" to 2, "−X" to 3, "+Y" to 4, "−Y" to 5), d.laserFaces) { set(d.copy(laserFaces = it)) }
+                    }
                     SwitchRow("Axonometric view", d.laserAxonometric, LASER_AXON_HINT) { set(d.copy(laserAxonometric = it)) }
                     SwitchRow("Sphere turns, beam stays ahead", d.laserSphereTurns, "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.") { set(d.copy(laserSphereTurns = it)) }
                     if (!d.laserRifle) SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
@@ -229,11 +233,6 @@ internal fun GyroDisplaySettingsScreen(
             }
             if (d.turnsWith == TurnsWith.TRACKBALL) Indented { TrackballAxesSettings(d) { set(it) } }
             if (d.turnsWith == TurnsWith.PHONE) PoseSettings(d) { set(it) }
-            if (d.turnsWith == TurnsWith.PHONE) {
-                GroupTitle("Axes")
-                if (d.needsGravity) Hint("Turn Gravity off to pick which gyro turn turns each axis: with gravity its tilt follows the real world.")
-                else TrackballAxesSettings(d) { set(it) }
-            }
             // A trackball never eases back: every roll is a camera move.
             if (d.turnsWith == TurnsWith.CAMERA) {
                 GroupTitle("Pose")

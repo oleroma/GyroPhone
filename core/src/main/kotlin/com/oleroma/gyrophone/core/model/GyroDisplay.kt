@@ -135,6 +135,8 @@ data class GyroDisplay(
     val laserSphereTurns: Boolean = false,
     /** LASER: a rifle aiming instead of the sphere and beam; Draw mode still paints where it points. */
     val laserRifle: Boolean = false,
+    /** LASER turned as a trackball: which way of it the laser faces ([com.oleroma.gyrophone.core.engine.LaserTrace.FACES], 0 −Z into the screen). */
+    val laserFaces: Int = 0,
     /** LASER: Draw mode, the beam paints the sphere's inside, [laserBrush] degrees round; it fades after [laserFadeMs] ms (0 = never). */
     val laserDraw: Boolean = false,
     val laserBrush: Int = 4,

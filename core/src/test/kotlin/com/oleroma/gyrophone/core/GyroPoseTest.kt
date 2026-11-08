@@ -322,18 +322,6 @@ class GyroDisplayTest {
         swapped.pose.matrix(m); assertEquals(0.5f, m[6], 1e-3f)
     }
 
-    @Test fun phoneWithoutGravityTurnsAsItsAxesSay() {
-        val plain = com.oleroma.gyrophone.core.model.GyroDisplay(ball, gravity = false, ease = false)
-        val m = FloatArray(9)
-        val f = feed(plain)
-        repeat(50) { f.feed(60f, 0f, 0f, 0.01f, 7, pressed = false, held = false) }
-        f.pose.matrix(m); val asPhone = m[6]
-        val inv = feed(plain.copy(trackballAxes = com.oleroma.gyrophone.core.model.TRACKBALL_AS_PHONE or 0x80))
-        repeat(50) { inv.feed(60f, 0f, 0f, 0.01f, 7, pressed = false, held = false) }
-        inv.pose.matrix(m); assertEquals(-asPhone, m[6], 1e-3f)
-        assertEquals(0.5f, kotlin.math.abs(asPhone), 1e-3f)
-    }
-
     @Test fun trackballTurnsWithOtherMouseCountsExactlyAsTheGameCamera() {
         val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL))
         val g = com.oleroma.gyrophone.core.model.GyroSettings(gameCountsPer360 = 8000f)

@@ -170,6 +170,8 @@ public sealed class OverlaySettings
     public bool LaserSphereTurns { get; set; }
     /// <summary>Laser pointer: a rifle aiming instead of the sphere and beam; Draw mode still paints where it points.</summary>
     public bool LaserRifle { get; set; }
+    /// <summary>Laser pointer turned as a trackball: which way of it the laser faces (0 −Z into the screen, 1 +Z, 2 +X, 3 −X, 4 +Y, 5 −Y).</summary>
+    public int LaserFaces { get; set; }
     public bool LaserAxes { get; set; } = true;
     /// <summary>Draw mode: the beam paints the sphere's inside, <see cref="LaserBrush"/> degrees round; it fades after <see cref="LaserFadeMs"/> ms (0 = never).</summary>
     public bool LaserDraw { get; set; }
