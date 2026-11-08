@@ -33,6 +33,17 @@ public class LaserTraceTests
     }
 
     [Fact]
+    public void FaceOnSeesTheBeamStraightInAsADot()
+    {
+        Assert.Equal((0f, 0f, -1f), LaserTrace.ToView(0, 0, -1, false));
+        var g = LaserTrace.GridFor(false);
+        Assert.NotEmpty(g.Front);
+        Assert.NotEmpty(g.Back);
+        foreach (var l in g.Front.Concat(g.Back))
+            foreach (var (x, y) in l) Assert.True(x * x + y * y <= 1.0001f);
+    }
+
+    [Fact]
     public void StrokesKeepAPointOnlyWhenTheBeamMoves()
     {
         var t = new LaserTrace();

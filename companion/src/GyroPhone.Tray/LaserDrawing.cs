@@ -29,7 +29,7 @@ internal static class LaserDrawing
 
         (PointF P, float Z) At(float x, float y, float z)
         {
-            var v = LaserTrace.ToView(x, y, z);
+            var v = LaserTrace.ToView(x, y, z, s.LaserAxonometric);
             return (new PointF(c.X + v.X * r, c.Y - v.Y * r), v.Z);
         }
         Color Fade(Color col, float k) => Color.FromArgb(Math.Clamp((int)(col.A * k), 0, 255), col);
@@ -167,7 +167,8 @@ internal static class LaserDrawing
             }
         }
 
-        if (s.LaserGrid) Grid(LaserTrace.Grid.Back, grid);
+        var gridLines = LaserTrace.GridFor(s.LaserAxonometric);
+        if (s.LaserGrid) Grid(gridLines.Back, grid);
         Axes(false);
         Paint(false);
         Trail(false);
@@ -175,7 +176,7 @@ internal static class LaserDrawing
         g.DrawLine(beamCol, px * 2.5f, c, hit, round: true);
         g.FillEllipse(beamCol, new RectangleF(c.X - px * 3, c.Y - px * 3, px * 6, px * 6));
         Paint(true);
-        if (s.LaserGrid) Grid(LaserTrace.Grid.Front, Fade(grid, 0.6f));
+        if (s.LaserGrid) Grid(gridLines.Front, Fade(grid, 0.6f));
         Axes(true);
         Trail(true);
         if (hitFront) Spot();

@@ -156,6 +156,8 @@ public sealed class OverlaySettings
     public int LaserTrailMs { get; set; } = 500;
     /// <summary>The 15° grid on the sphere, and its three axes.</summary>
     public bool LaserGrid { get; set; } = true;
+    /// <summary>Laser pointer: seen from the fixed axonometric angle (30° round, 30° above); off, face-on.</summary>
+    public bool LaserAxonometric { get; set; } = true;
     public bool LaserAxes { get; set; } = true;
     /// <summary>Draw mode: the beam paints the sphere's inside, <see cref="LaserBrush"/> degrees round; it fades after <see cref="LaserFadeS"/> seconds (0 = never).</summary>
     public bool LaserDraw { get; set; }

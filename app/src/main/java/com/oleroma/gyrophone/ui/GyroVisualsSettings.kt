@@ -170,6 +170,7 @@ internal fun GyroDisplaySettingsScreen(
                 GyroDisplayKind.LASER -> {
                     GroupTitle("Laser pointer")
                     Hint("A see-through sphere seen from above and to the side. The laser at its centre shines out of the phone's back onto the inside; the tick at the dot shows which way the phone's top points. The beam dims while a ratchet is held.")
+                    SwitchRow("Axonometric view", d.laserAxonometric, LASER_AXON_HINT) { set(d.copy(laserAxonometric = it)) }
                     SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
                     SwitchRow("Axes (right, up, toward you)", d.laserAxes) { set(d.copy(laserAxes = it)) }
                     Chips(listOf("No trail" to 0, "0.25 s" to 250, "0.5 s" to 500, "1 s" to 1000, "2 s" to 2000, "3 s" to 3000), d.laserTrailMs) {
@@ -329,6 +330,7 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     else -> true
 }
 
+private const val LASER_AXON_HINT = "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot."
 private const val AXON_HINT = "Seen from 30° round and 30° above with the world's axes (right red, up green, toward you blue), as the laser pointer is, instead of face-on."
 
 /** A colour on a checkerboard, so its transparency shows. */

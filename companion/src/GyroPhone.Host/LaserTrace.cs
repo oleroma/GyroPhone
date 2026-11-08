@@ -174,17 +174,24 @@ public sealed class LaserTrace
         return r;
     }
 
-    /// <summary>Picture x, y, z (toward the viewer +) of shown-frame point (x, y, z).</summary>
-    public static (float X, float Y, float Z) ToView(float x, float y, float z)
+    /// <summary>Picture x, y, z (toward the viewer +) of shown-frame point (x, y, z): through <see cref="View"/>, or as it is (face-on) without <paramref name="axon"/>.</summary>
+    public static (float X, float Y, float Z) ToView(float x, float y, float z, bool axon = true)
     {
+        if (!axon) return (x, y, z);
         var v = View;
         return (v[0] * x + v[1] * y + v[2] * z, v[3] * x + v[4] * y + v[5] * z, v[6] * x + v[7] * y + v[8] * z);
     }
 
     /// <summary>The <see cref="GridDeg"/>° grid (latitudes, meridians) in the picture, unit radius, as polylines: near half and far half.</summary>
-    public static readonly (List<(float X, float Y)[]> Front, List<(float X, float Y)[]> Back) Grid = MakeGrid();
+    public static readonly (List<(float X, float Y)[]> Front, List<(float X, float Y)[]> Back) Grid = MakeGrid(true);
 
-    private static (List<(float X, float Y)[]>, List<(float X, float Y)[]>) MakeGrid()
+    /// <summary>The same grid seen face-on.</summary>
+    public static readonly (List<(float X, float Y)[]> Front, List<(float X, float Y)[]> Back) FlatGrid = MakeGrid(false);
+
+    /// <summary><see cref="Grid"/> or <see cref="FlatGrid"/>.</summary>
+    public static (List<(float X, float Y)[]> Front, List<(float X, float Y)[]> Back) GridFor(bool axon) => axon ? Grid : FlatGrid;
+
+    private static (List<(float X, float Y)[]>, List<(float X, float Y)[]>) MakeGrid(bool axon)
     {
         var front = new List<(float X, float Y)[]>();
         var back = new List<(float X, float Y)[]>();
@@ -201,7 +208,7 @@ public sealed class LaserTrace
             for (int i = 0; i <= GridSteps; i++)
             {
                 var p = point(i * 2 * Math.PI / GridSteps);
-                var q = ToView(p.X, p.Y, p.Z);
+                var q = ToView(p.X, p.Y, p.Z, axon);
                 bool f = q.Z >= 0f;
                 if (i > 0 && f != lastFront)
                 {

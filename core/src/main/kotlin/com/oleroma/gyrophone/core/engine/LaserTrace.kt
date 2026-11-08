@@ -174,8 +174,12 @@ class LaserTrace {
             )
         }
 
-        /** Picture x, y, z of shown-frame point ([x], [y], [z]) into [out] at [at]. */
-        fun view(x: Float, y: Float, z: Float, out: FloatArray, at: Int = 0) {
+        /** Picture x, y, z of shown-frame point ([x], [y], [z]) into [out] at [at]: through [VIEW], or as it is (face-on) without [axon]. */
+        fun view(x: Float, y: Float, z: Float, out: FloatArray, at: Int = 0, axon: Boolean = true) {
+            if (!axon) {
+                out[at] = x; out[at + 1] = y; out[at + 2] = z
+                return
+            }
             val v = VIEW
             out[at] = v[0] * x + v[1] * y + v[2] * z
             out[at + 1] = v[3] * x + v[4] * y + v[5] * z
@@ -190,8 +194,16 @@ class LaserTrace {
             r.copyInto(m)
         }
 
-        /** The [GRID_DEG]° grid (latitudes, meridians) in the picture, unit radius, as polylines of x, y pairs: (near half, far half). */
-        val GRID: Pair<List<FloatArray>, List<FloatArray>> by lazy {
+        /** The [GRID_DEG]° grid (latitudes, meridians) in the axonometric picture, unit radius, as polylines of x, y pairs: (near half, far half). */
+        val GRID: Pair<List<FloatArray>, List<FloatArray>> by lazy { makeGrid(true) }
+
+        /** The same grid seen face-on. */
+        val FLAT_GRID: Pair<List<FloatArray>, List<FloatArray>> by lazy { makeGrid(false) }
+
+        /** [GRID] or [FLAT_GRID]. */
+        fun grid(axon: Boolean) = if (axon) GRID else FLAT_GRID
+
+        private fun makeGrid(axon: Boolean): Pair<List<FloatArray>, List<FloatArray>> {
             val front = ArrayList<FloatArray>()
             val back = ArrayList<FloatArray>()
             val p = FloatArray(3)
@@ -208,7 +220,7 @@ class LaserTrace {
                 }
                 for (i in 0..GRID_STEPS) {
                     point(i * 2 * Math.PI / GRID_STEPS, p)
-                    view(p[0], p[1], p[2], q)
+                    view(p[0], p[1], p[2], q, axon = axon)
                     val f = q[2] >= 0f
                     if (i > 0 && f != lastFront) {
                         // Cut where it crosses the rim, pushed onto it.
@@ -245,7 +257,7 @@ class LaserTrace {
                 }
                 lon += GRID_DEG
             }
-            front to back
+            return front to back
         }
 
         const val GRID_DEG = 15

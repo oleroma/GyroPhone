@@ -124,6 +124,8 @@ data class GyroDisplay(
     /** LASER: the 15° grid on the sphere, and its three axes. */
     val laserGrid: Boolean = true,
     val laserAxes: Boolean = true,
+    /** LASER: seen from the fixed axonometric angle (30° round, 30° above); off, face-on. */
+    val laserAxonometric: Boolean = true,
     /** LASER: Draw mode, the beam paints the sphere's inside, [laserBrush] degrees round; it fades after [laserFadeS] seconds (0 = never). */
     val laserDraw: Boolean = false,
     val laserBrush: Int = 4,

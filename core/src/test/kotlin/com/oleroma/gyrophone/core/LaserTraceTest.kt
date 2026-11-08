@@ -33,6 +33,15 @@ class LaserTraceTest {
         assertArrayEquals(LaserTrace.VIEW, m, 1e-6f)
     }
 
+    @Test fun faceOnSeesTheBeamStraightInAsADot() {
+        val p = FloatArray(3)
+        LaserTrace.view(0f, 0f, -1f, p, axon = false)
+        assertArrayEquals(floatArrayOf(0f, 0f, -1f), p, 0f)
+        val (front, back) = LaserTrace.grid(false)
+        assertTrue(front.isNotEmpty() && back.isNotEmpty())
+        for (l in front + back) for (i in l.indices step 2) assertTrue(l[i] * l[i] + l[i + 1] * l[i + 1] <= 1.0001f)
+    }
+
     @Test fun strokesKeepAPointOnlyWhenTheBeamMoves() {
         val t = LaserTrace()
         t.add(0f, 0f, -1f, 0, 500, draw = true, held = false)

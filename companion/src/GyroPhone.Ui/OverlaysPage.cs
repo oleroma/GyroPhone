@@ -44,7 +44,7 @@ internal sealed class OverlaysPage : Page
 
     // Look
     private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook;
-    private readonly CheckBox _laserGrid, _laserAxes, _laserDraw, _laserClearOnRatchet;
+    private readonly CheckBox _laserAxon, _laserGrid, _laserAxes, _laserDraw, _laserClearOnRatchet;
     private readonly Seg<int> _laserTrail, _laserFade;
     private readonly SliderRow _laserBrush;
     private readonly StackPanel _laserDrawOptions;
@@ -246,7 +246,9 @@ internal sealed class OverlaysPage : Page
 
         var (laser, lb) = Parts.Card("Laser pointer");
         lb.Children.Add(Parts.Text("A see-through sphere seen from above and to the side. The laser at its centre shines out of the phone's back onto the inside; the tick at the dot shows which way the phone's top points. The beam dims while a ratchet is held.", "Hint"));
+        _laserAxon = Parts.Toggle("Axonometric view", () => Change(o => o.LaserAxonometric = !o.LaserAxonometric), "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot.");
         _laserGrid = Parts.Toggle("Grid every 15°", () => Change(o => o.LaserGrid = !o.LaserGrid));
+        lb.Children.Add(_laserAxon);
         _laserAxes = Parts.Toggle("Axes (right, up, toward you)", () => Change(o => o.LaserAxes = !o.LaserAxes));
         lb.Children.Add(_laserGrid);
         lb.Children.Add(_laserAxes);
@@ -467,6 +469,7 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_laserLook, o.Kind == OverlayKind.Laser);
         Parts.SetChecked(_phoneAxon, o.Axonometric);
         Parts.SetChecked(_shapeAxon, o.Axonometric);
+        Parts.SetChecked(_laserAxon, o.LaserAxonometric);
         Parts.SetChecked(_laserGrid, o.LaserGrid);
         Parts.SetChecked(_laserAxes, o.LaserAxes);
         _laserTrail.Set(o.LaserTrailMs);
