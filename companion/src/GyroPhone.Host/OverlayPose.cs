@@ -166,7 +166,7 @@ public sealed class OverlayPose
     /// </summary>
     private void Trackball(OverlayFrame f, OverlaySettings s)
     {
-        float Gain(float rws) => s.TrackballRws ? (rws > 0f ? rws : 1f) : Math.Clamp(s.TrackballSpin, 0.05f, 20f);
+        float Gain(float rws) => (s.TrackballRws ? (rws > 0f ? rws : 1f) : Math.Clamp(s.TrackballSpin, 0.05f, 20f)) * (s.TrackballInvert ? -1f : 1f);
         float gy = Gain(f.RwsYaw), gp = Gain(f.RwsPitch), gr = Gain(f.RwsRoll);
         float yaw = f.CameraYaw * gy, pitch = f.CameraPitch * gp, roll = f.CameraRoll * gr;
         if (f.PoseLive)

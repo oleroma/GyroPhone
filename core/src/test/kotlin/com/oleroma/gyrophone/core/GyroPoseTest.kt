@@ -270,6 +270,14 @@ class GyroDisplayTest {
         assertEquals(0f, Math.toDegrees(f.pose.heading().toDouble()).toFloat(), 1f)
     }
 
+    @Test fun invertedTrackballTurnsWithThePhone() {
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, trackball = true, trackballInvert = true))
+        val m = FloatArray(9)
+        repeat(50) { f.feed(60f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // phone 30° right
+        // Turned 30° the same way, as the camera: its right side came forward.
+        f.pose.matrix(m); assertEquals(0.5f, m[6], 1e-3f)
+    }
+
     @Test fun trackballHoldsStillAgainstTheWorldUntilARatchetStopsIt() {
         val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, trackball = true))
         val m = FloatArray(9)

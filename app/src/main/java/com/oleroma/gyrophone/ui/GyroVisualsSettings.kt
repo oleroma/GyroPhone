@@ -189,6 +189,7 @@ internal fun GyroDisplaySettingsScreen(
                             "like a trackball under your hand. A ratchet stops it (only the axes it pauses), and it turns with the phone. " +
                             "Every other camera movement (touchpad, buttons, controllers, keys, glides) turns it too, as the gyro turn that would send it.",
                     )
+                    SwitchRow("Invert: turn as the camera turns", d.trackballInvert) { set(d.copy(trackballInvert = it)) }
                     SwitchRow("As far as the game's camera", d.trackballRws) { set(d.copy(trackballRws = it)) }
                     if (d.trackballRws) {
                         Hint(

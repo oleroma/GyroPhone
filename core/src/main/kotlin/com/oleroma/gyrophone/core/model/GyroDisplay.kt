@@ -115,6 +115,8 @@ data class GyroDisplay(
     val trackball: Boolean = false,
     val trackballSpin: Float = 1f,
     val trackballRws: Boolean = true,
+    /** BALL trackball: turns the way the game's camera turns, instead of rolling the other way like a trackball under the hand. */
+    val trackballInvert: Boolean = false,
     val opacity: Float = 0.7f,
     val colors: Map<String, Long> = emptyMap(),
 ) {

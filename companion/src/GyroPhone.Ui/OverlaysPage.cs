@@ -56,7 +56,7 @@ internal sealed class OverlaysPage : Page
 
     // Turning
     private readonly Border _trackballCard, _poseCard;
-    private readonly CheckBox _trackball, _rws;
+    private readonly CheckBox _trackball, _rws, _invert;
     private readonly SliderRow _spin;
     private readonly CheckBox _gravity, _compass, _ease, _headingOnly;
     private readonly StackPanel _easeOptions;
@@ -249,6 +249,9 @@ internal sealed class OverlaysPage : Page
         _spin = new SliderRow("Spin", 0.1, 10, 0.1, v => $"× {v:0.0}", v => Change(o => o.TrackballSpin = (float)v));
         _spin.View.Margin = new Thickness(20, 4, 0, 4);
         tbb.Children.Add(_trackball);
+        _invert = Parts.Toggle("Invert: turn as the camera turns", () => Change(o => o.TrackballInvert = !o.TrackballInvert));
+        _invert.Margin = new Thickness(20, 5, 0, 5);
+        tbb.Children.Add(_invert);
         tbb.Children.Add(_rws);
         tbb.Children.Add(_spin.View);
         _trackballCard = tb;
@@ -440,6 +443,8 @@ internal sealed class OverlaysPage : Page
         Parts.SetChecked(_trackball, o.Trackball);
         Parts.SetChecked(_rws, o.TrackballRws);
         Parts.Show(_rws, o.Trackball);
+        Parts.SetChecked(_invert, o.TrackballInvert);
+        Parts.Show(_invert, o.Trackball);
         _spin.Set(o.TrackballSpin);
         Parts.Show(_spin.View, o.Trackball && !o.TrackballRws);
         Parts.Show(_poseCard, !o.IsTrackball);

@@ -168,10 +168,12 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
 
     /**
      * How far a trackball turns per degree the phone turns on [a]: with RWS as far as the game's
-     * camera ([GyroSettings.rwsOf]; as the phone while the game's turn is unknown), else Spin times.
+     * camera ([GyroSettings.rwsOf]; as the phone while the game's turn is unknown), else Spin times;
+     * negative with [GyroDisplay.trackballInvert] (it turns as the camera does).
      */
     private fun trackballGain(d: GyroDisplay, gyro: GyroSettings?, a: MotionAxis): Float =
-        if (!d.trackballRws) d.trackballSpin else gyro?.let { it.rwsOf(it.sensitivityOf(a)) } ?: 1f
+        (if (!d.trackballRws) d.trackballSpin else gyro?.let { it.rwsOf(it.sensitivityOf(a)) } ?: 1f) *
+            (if (d.trackballInvert) -1f else 1f)
 
     /**
      * The compass ([GyroDisplay.needsCompass]) takes the way the phone faces now as heading 0 (the

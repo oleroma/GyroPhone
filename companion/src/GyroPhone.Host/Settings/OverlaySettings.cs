@@ -123,6 +123,8 @@ public sealed class OverlaySettings
     public bool Trackball { get; set; }
     public bool TrackballRws { get; set; } = true;
     public float TrackballSpin { get; set; } = 1f;
+    /// <summary>Turns the way the game's camera turns, instead of rolling the other way like a trackball under the hand.</summary>
+    public bool TrackballInvert { get; set; }
 
     // Bubble disk.
     /// <summary>The tilt that puts the dot on the rim, in degrees.</summary>
