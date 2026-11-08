@@ -229,6 +229,11 @@ internal fun GyroDisplaySettingsScreen(
             }
             if (d.turnsWith == TurnsWith.TRACKBALL) Indented { TrackballAxesSettings(d) { set(it) } }
             if (d.turnsWith == TurnsWith.PHONE) PoseSettings(d) { set(it) }
+            if (d.turnsWith == TurnsWith.PHONE) {
+                GroupTitle("Axes")
+                if (d.needsGravity) Hint("Turn Gravity off to pick which gyro turn turns each axis: with gravity its tilt follows the real world.")
+                else TrackballAxesSettings(d) { set(it) }
+            }
             // A trackball never eases back: every roll is a camera move.
             if (d.turnsWith == TurnsWith.CAMERA) {
                 GroupTitle("Pose")

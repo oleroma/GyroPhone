@@ -67,6 +67,7 @@ internal sealed class OverlaysPage : Page
     private readonly UIElement _gravityDivider;
     private readonly CheckBox _rws;
     private readonly StackPanel _trackballAxes;
+    private readonly TextBlock _axesGravityHint;
     private readonly Seg<int>[] _tbFrom = new Seg<int>[3];
     private readonly CheckBox[] _tbInvert = new CheckBox[3];
     private readonly Button _tbAsPhone;
@@ -325,6 +326,9 @@ internal sealed class OverlaysPage : Page
         _tbAsPhone = Parts.Button("As the phone", () => Change(o => o.TrackballAxes = OverlaySettings.TrackballAsPhone));
         _trackballAxes.Children.Add(_tbAsPhone);
         tbb.Children.Add(_trackballAxes);
+        _axesGravityHint = Parts.Text("Turn Gravity off to pick which gyro turn turns each axis: with gravity its tilt follows the real world.", "Hint");
+        _axesGravityHint.Margin = new Thickness(20, 4, 0, 4);
+        tbb.Children.Add(_axesGravityHint);
         _turnTab.Children.Add(tb);
 
         var (pose, pob) = Parts.Card("Pose");
@@ -538,7 +542,9 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_rws, o.FollowsCamera);
         _spin.Set(o.TrackballSpin);
         Parts.Show(_spin.View, o.FollowsCamera && !o.TrackballRws);
-        Parts.Show(_trackballAxes, o.IsTrackball);
+        // Each axis's gyro turn: a trackball, or turning with the phone without gravity.
+        Parts.Show(_trackballAxes, o.IsTrackball || o.TurnsWith == OverlayTurnsWith.Phone && !o.Gravity);
+        Parts.Show(_axesGravityHint, o.TurnsWith == OverlayTurnsWith.Phone && o.Gravity);
         for (int i = 0; i < 3; i++)
         {
             int code = (o.TrackballAxes >> (8 * i)) & 0xFF;

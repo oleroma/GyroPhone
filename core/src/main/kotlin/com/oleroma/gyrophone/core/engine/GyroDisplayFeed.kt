@@ -128,12 +128,12 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         } else if (d.needsGravity) {
             pose.fuse(yaw, pitch, roll, dtSeconds, 0f, compass)
         } else if (axes != 0) {
-            pose.rotate(
-                if (axes and MappingEngine.gyroBit(MotionAxis.YAW) != 0) yaw else 0f,
-                if (axes and MappingEngine.gyroBit(MotionAxis.PITCH) != 0) pitch else 0f,
-                if (axes and MappingEngine.gyroBit(MotionAxis.ROLL) != 0) roll else 0f,
-                dtSeconds,
-            )
+            // Without gravity each of its axes turns by the gyro turn its axis mapping picks.
+            val y = if (axes and MappingEngine.gyroBit(MotionAxis.YAW) != 0) yaw else 0f
+            val p = if (axes and MappingEngine.gyroBit(MotionAxis.PITCH) != 0) pitch else 0f
+            val r = if (axes and MappingEngine.gyroBit(MotionAxis.ROLL) != 0) roll else 0f
+            val m = d.trackballAxes
+            pose.rotate(about(m, 0, y, p, r), about(m, 1, y, p, r), about(m, 2, y, p, r), dtSeconds)
         }
         if (!d.ease || compass || d.easeOnRatchet) return
         val busy = sqrt(yaw * yaw + pitch * pitch + roll * roll) > STILL_DPS
@@ -217,13 +217,15 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
      */
     private fun trackballTurn(d: GyroDisplay, yaw: Float, pitch: Float, roll: Float, dt: Float) {
         val m = d.trackballAxes
-        fun about(i: Int): Float {
-            val code = m shr (8 * i) and 0xFF
-            val v = when (code and 0x7F) { 1 -> yaw; 2 -> pitch; 3 -> roll; else -> 0f }
-            return if (code and 0x80 != 0) -v else v
-        }
         // As the phone turns, about the view's fixed axes (the opposite of holding still against the world).
-        pose.counterRotate(-about(0), -about(1), -about(2), dt)
+        pose.counterRotate(-about(m, 0, yaw, pitch, roll), -about(m, 1, yaw, pitch, roll), -about(m, 2, yaw, pitch, roll), dt)
+    }
+
+    /** Axis [i]'s turn (0 up, 1 right, 2 through the screen) by axis mapping [m] ([GyroDisplay.trackballAxes]) of gyro turns [yaw], [pitch], [roll]. */
+    private fun about(m: Int, i: Int, yaw: Float, pitch: Float, roll: Float): Float {
+        val code = m shr (8 * i) and 0xFF
+        val v = when (code and 0x7F) { 1 -> yaw; 2 -> pitch; 3 -> roll; else -> 0f }
+        return if (code and 0x80 != 0) -v else v
     }
 
     /** How far it turns per degree the phone turns on [a]: as far as the game's camera (RWS), or Spin times. */

@@ -129,8 +129,11 @@ public sealed class OverlayPose
         else if (gravity) Fuse(yaw, pitch, roll, dt, compass);
         else if (f.Axes != 0)
         {
+            // Without gravity each of its axes turns by the gyro turn its axis mapping picks.
             float k = DegToRad * dt;
-            Turn(((f.Axes & 2) != 0 ? pitch : 0f) * k, -((f.Axes & 1) != 0 ? yaw : 0f) * k, -((f.Axes & 4) != 0 ? roll : 0f) * k);
+            float y = (f.Axes & 1) != 0 ? yaw : 0f, p = (f.Axes & 2) != 0 ? pitch : 0f, r = (f.Axes & 4) != 0 ? roll : 0f;
+            int m = s.TrackballAxes;
+            Turn(About(m, 1, y, p, r) * k, -About(m, 0, y, p, r) * k, -About(m, 2, y, p, r) * k);
         }
         if (!s.Ease || compass || s.EaseOnRatchet) return;
         bool busy = MathF.Sqrt(yaw * yaw + pitch * pitch + roll * roll) > StillDps;
@@ -201,13 +204,16 @@ public sealed class OverlayPose
         }
         // About each of its fixed axes by the turn TrackballAxes picks for it, as the phone turns
         // (the opposite of holding still against the world).
-        float About(int i)
-        {
-            int code = (s.TrackballAxes >> (8 * i)) & 0xFF;
-            float v = (code & 0x7F) switch { 1 => yaw, 2 => pitch, 3 => roll, _ => 0f };
-            return (code & 0x80) != 0 ? -v : v;
-        }
-        CounterRotate(-About(0), -About(1), -About(2));
+        int m = s.TrackballAxes;
+        CounterRotate(-About(m, 0, yaw, pitch, roll), -About(m, 1, yaw, pitch, roll), -About(m, 2, yaw, pitch, roll));
+    }
+
+    /// <summary>Axis <paramref name="i"/>'s turn (0 up, 1 right, 2 through the screen) by axis mapping <paramref name="m"/> (TrackballAxes) of these gyro turns.</summary>
+    private static float About(int m, int i, float yaw, float pitch, float roll)
+    {
+        int code = (m >> (8 * i)) & 0xFF;
+        float v = (code & 0x7F) switch { 1 => yaw, 2 => pitch, 3 => roll, _ => 0f };
+        return (code & 0x80) != 0 ? -v : v;
     }
 
     /// <summary>
