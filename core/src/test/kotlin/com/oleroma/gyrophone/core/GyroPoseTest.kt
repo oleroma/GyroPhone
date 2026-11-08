@@ -272,6 +272,7 @@ class GyroDisplayTest {
 
     @Test fun cameraTurnsWithThePhone() {
         val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.CAMERA))
+        f.cameraMap = 1 or (2 shl 8) // yaw moves the mouse sideways
         val m = FloatArray(9)
         repeat(50) { f.feed(60f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // phone 30° right
         // Turned 30° the same way, as the camera: its right side came forward.
@@ -281,6 +282,7 @@ class GyroDisplayTest {
     @Test fun cameraOnAnyPoseDisplayEasesBackOnRatchet() {
         val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(com.oleroma.gyrophone.core.model.GyroDisplayKind.HORIZON,
             turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.CAMERA, gravity = true, ease = true, easeDelayMs = 0, easeSeconds = 0.2f))
+        f.cameraMap = 1 or (2 shl 8) // yaw moves the mouse sideways
         val m = FloatArray(9)
         repeat(50) { f.feed(60f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // camera 30° right
         f.pose.matrix(m); assertEquals(0.5f, m[6], 1e-3f) // gravity is ignored: no accelerometer needed

@@ -202,12 +202,14 @@ private class VisState {
                         model.drawOutline(this, g.poses, at, path, box.center, unit, col(GyroDisplayColor.PHONE_EDGE).copy(alpha = col(GyroDisplayColor.PHONE_EDGE).alpha * 0.4f * (1f - (i - 1f) / GHOSTS)))
                     }
                 } else ghosts.remove(id)
+                if (d.axonometric) worldAxes(box.center, unit * 1.25f, false, op)
                 model.draw(
                     this, m, path, box.center, unit,
                     col(GyroDisplayColor.PHONE_FRONT), col(GyroDisplayColor.PHONE_BACK), col(GyroDisplayColor.PHONE_SIDE),
                     col(GyroDisplayColor.PHONE_EDGE),
                     if (d.axes) arrayOf(col(GyroDisplayColor.PHONE_X), col(GyroDisplayColor.PHONE_Y), col(GyroDisplayColor.PHONE_Z)) else null,
                 )
+                if (d.axonometric) worldAxes(box.center, unit * 1.25f, true, op)
             }
 
             GyroDisplayKind.RATCHET_RING -> drawRing(box, live, col(GyroDisplayColor.RING_TEXT),
@@ -226,7 +228,7 @@ private class VisState {
     private val la = FloatArray(3)
     private val lb = FloatArray(3)
     private val pv = FloatArray(3)
-    private val runPaths = Array(LaserTrace.LEVELS * 2) { Path() }
+    private val levelPaths = Array(LEVELS) { Path() }
 
     /** Picture point of shown-frame direction ([x], [y], [z]) on a sphere of radius [r] at [c]; its depth (toward the viewer +) left in [pv]. */
     private fun laserAt(c: Offset, r: Float, x: Float, y: Float, z: Float): Offset {
@@ -253,7 +255,7 @@ private class VisState {
             val v = feed?.pose?.version ?: 0L
             if (v != lt.fedVersion) {
                 lt.fedVersion = v
-                lt.add(beam[0], beam[1], beam[2], now, trailMs, d.laserDraw, d.laserBrush.toFloat(), held)
+                lt.add(beam[0], beam[1], beam[2], now, trailMs, d.laserDraw, held)
             }
             lt.expire(now, trailMs, fadeMs)
         }
@@ -288,58 +290,68 @@ private class VisState {
                 }
             }
         }
-        fun paint(front: Boolean) {
-            if (lt == null || lt.painted == 0) return
-            for (p in runPaths) p.reset()
-            lt.forEachRun(now, fadeMs, { row, cc -> LaserTrace.CELL_FRONT[row * LaserTrace.COLS + cc] }) { row, c0, c1, level, f ->
-                if (f != front) return@forEachRun
-                val into = runPaths[(level - 1) * 2 + (if (f) 1 else 0)]
-                val lat0 = LaserTrace.rowLat(row) - LaserTrace.CELL_RAD / 2
-                val lat1 = lat0 + LaserTrace.CELL_RAD
-                for (k in c0..c1 + 1) {
-                    LaserTrace.dir(lat1, LaserTrace.colLon(k) - LaserTrace.CELL_RAD / 2, la)
-                    val p = laserAt(c, r, la[0], la[1], la[2])
-                    if (k == c0) into.moveTo(p.x, p.y) else into.lineTo(p.x, p.y)
+        // Strokes and the trail: each piece of the way between two points (long hops bent along
+        // the sphere) goes into the path of its side and strength, so a few paths draw them all.
+        fun lines(ring: LaserTrace.Ring, front: Boolean, life: (Int, Long) -> Float, width: Float, glow: Boolean, color: Color) {
+            if (ring.count < 2) return
+            for (p in levelPaths) p.reset()
+            var lastLevel = -1
+            for (i in 1 until ring.count) {
+                if (ring.gap(i)) {
+                    lastLevel = -1
+                    continue
                 }
-                for (k in c1 + 1 downTo c0) {
-                    LaserTrace.dir(lat0, LaserTrace.colLon(k) - LaserTrace.CELL_RAD / 2, la)
-                    val p = laserAt(c, r, la[0], la[1], la[2])
-                    into.lineTo(p.x, p.y)
+                ring.point(i - 1, la)
+                val t = ring.point(i, lb)
+                val k = life(i, t)
+                if (k <= 0f) {
+                    lastLevel = -1
+                    continue
                 }
-                into.close()
-            }
-            val pc = col(GyroDisplayColor.LASER_PAINT)
-            for (level in 1..LaserTrace.LEVELS) {
-                val into = runPaths[(level - 1) * 2 + (if (front) 1 else 0)]
-                drawPath(into, pc.copy(alpha = pc.alpha * level / LaserTrace.LEVELS * (if (front) 0.45f else 0.9f)))
-            }
-        }
-        fun trail(front: Boolean) {
-            if (lt == null || trailMs <= 0) return
-            val tc = col(GyroDisplayColor.LASER_TRAIL)
-            for (i in 1 until lt.trailCount) {
-                if (lt.trailGap(i)) continue
-                lt.trailPoint(i - 1, now, trailMs, la)
-                val life = lt.trailPoint(i, now, trailMs, lb)
-                if (life <= 0f) continue
-                // Long hops bent along the sphere.
+                val level = (kotlin.math.ceil(k * LEVELS).toInt()).coerceIn(1, LEVELS)
                 val dot = (la[0] * lb[0] + la[1] * lb[1] + la[2] * lb[2]).coerceIn(-1f, 1f)
                 val n = (acos(dot) / TRAIL_STEP_RAD).toInt().coerceIn(1, 32)
                 var prev = laserAt(c, r, la[0], la[1], la[2])
-                for (k in 1..n) {
-                    val t = k / n.toFloat()
-                    var x = la[0] + (lb[0] - la[0]) * t
-                    var y = la[1] + (lb[1] - la[1]) * t
-                    var z = la[2] + (lb[2] - la[2]) * t
+                var prevFront = pv[2] > 0f
+                for (j in 1..n) {
+                    val f = j / n.toFloat()
+                    var x = la[0] + (lb[0] - la[0]) * f
+                    var y = la[1] + (lb[1] - la[1]) * f
+                    var z = la[2] + (lb[2] - la[2]) * f
                     val l = kotlin.math.sqrt(x * x + y * y + z * z).coerceAtLeast(1e-4f)
                     x /= l; y /= l; z /= l
-                    val p = laserAt(c, r, x, y, z)
-                    if ((pv[2] > 0f) == front) {
-                        drawLine(tc.copy(alpha = tc.alpha * life * (if (front) 0.6f else 1f)), prev, p, (1f + 2f * life) * density, StrokeCap.Round)
-                    }
-                    prev = p
+                    val pt = laserAt(c, r, x, y, z)
+                    val nowFront = pv[2] > 0f
+                    if (nowFront == front && prevFront == front) {
+                        val into = levelPaths[level - 1]
+                        if (lastLevel != level) into.moveTo(prev.x, prev.y)
+                        into.lineTo(pt.x, pt.y)
+                        lastLevel = level
+                    } else lastLevel = -1
+                    prev = pt
+                    prevFront = nowFront
                 }
             }
+            val side = if (front) 0.5f else 1f
+            for (level in 1..LEVELS) {
+                val k = level / LEVELS.toFloat()
+                // Older: darker and fainter.
+                val shade = 0.35f + 0.65f * k
+                val col = Color(color.red * shade, color.green * shade, color.blue * shade, color.alpha * (0.35f + 0.65f * k) * side)
+                val w = width * (if (front) 0.6f else 1f)
+                if (glow) drawPath(levelPaths[level - 1], col.copy(alpha = col.alpha * 0.22f), style = Stroke(w * 3f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(levelPaths[level - 1], col, style = Stroke(w, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            }
+        }
+        val brushPx = maxOf(1.5f * density, r * Math.toRadians(d.laserBrush.coerceIn(1, 20).toDouble()).toFloat() * 0.6f)
+        fun paint(front: Boolean) {
+            val s = lt?.strokes ?: return
+            val n = s.count
+            lines(s, front, { i, t -> LaserTrace.strokeLife(i, n, t, now, fadeMs) }, brushPx, true, col(GyroDisplayColor.LASER_PAINT))
+        }
+        fun trail(front: Boolean) {
+            if (lt == null || trailMs <= 0) return
+            lines(lt.trail, front, { _, t -> (1f - (now - t) / trailMs.toFloat()).coerceIn(0f, 1f) }, 2f * density, false, col(GyroDisplayColor.LASER_TRAIL))
         }
         val hit = laserAt(c, r, beam[0], beam[1], beam[2])
         val hitFront = pv[2] > 0f
@@ -372,10 +384,29 @@ private class VisState {
         drawCircle(grid, r, c, style = Stroke(1.5f * density))
     }
 
+    /**
+     * The world's axes in the axonometric view (right red, up green, toward you blue), [len] long
+     * from [c]: the halves behind the middle ([front] false) or in front of it.
+     */
+    private fun DrawScope.worldAxes(c: Offset, len: Float, front: Boolean, op: Float) {
+        for (i in 0..2) {
+            for (sign in intArrayOf(1, -1)) {
+                LaserTrace.view(if (i == 0) sign.toFloat() else 0f, if (i == 1) sign.toFloat() else 0f, if (i == 2) sign.toFloat() else 0f, pv)
+                if ((pv[2] > 0f) != front) continue
+                val a = WORLD_AXES[i].copy(alpha = op * (if (sign > 0) 0.9f else 0.35f))
+                val p = Offset(c.x + pv[0] * len, c.y - pv[1] * len)
+                drawLine(a, c, p, 1.5f * density, StrokeCap.Round)
+                if (sign > 0) drawCircle(a, 2.5f * density, p)
+            }
+        }
+    }
+
     /** [m] (and [raw]) = [feed]'s pose as shown ([GyroDisplayFeed.shown]: from the resting grip, scaled), straight without one. */
     @Suppress("UNUSED_PARAMETER")
     private fun poseOf(feed: GyroDisplayFeed?, d: GyroDisplay) {
         if (feed == null) m.fill(0f).also { m[0] = 1f; m[4] = 1f; m[8] = 1f } else feed.shown(m)
+        // Axonometric: seen from 30° round and 30° above, as the laser pointer is.
+        if (d.axonometric && (d.kind == GyroDisplayKind.PHONE || d.kind == GyroDisplayKind.BALL)) LaserTrace.axonometric(m)
         m.copyInto(raw)
     }
 
@@ -424,8 +455,10 @@ private class VisState {
 
     private fun DrawScope.drawBall(feed: GyroDisplayFeed?, d: GyroDisplay, box: Rect, live: Int, col: (GyroDisplayColor) -> Color) {
         poseOf(feed, d)
-        val r = minOf(box.width, box.height) / 2f * 0.95f
+        // Axonometric: the world's axes poke out of the shape, so it is shorter.
+        val r = minOf(box.width, box.height) / 2f * (if (d.axonometric) 0.78f else 0.95f)
         val c = box.center
+        if (d.axonometric) worldAxes(c, r * 1.22f, false, d.opacity.coerceIn(0.05f, 1f))
         val lines = col(GyroDisplayColor.BALL_LINES)
         val faint = lines.copy(alpha = lines.alpha * HIDDEN_ALPHA)
         val body = col(GyroDisplayColor.BALL_BODY)
@@ -522,6 +555,7 @@ private class VisState {
         penBack = null
         if (d.screenMark) sphereDot(c, r, 0f, 0f, 1f, col(GyroDisplayColor.BALL_MARK))
         if (d.topMark) sphereDot(c, r, 0f, 1f, 0f, col(GyroDisplayColor.BALL_POLE))
+        if (d.axonometric) worldAxes(c, r * 1.22f, true, d.opacity.coerceIn(0.05f, 1f))
     }
 
     /** A smooth ball's fill: one disk, lit from the top left. */
@@ -1024,6 +1058,12 @@ private const val GHOST_MS = 45L
 
 /** A laser trail's hops longer than this are bent along the sphere in pieces. */
 private val TRAIL_STEP_RAD = Math.toRadians(4.0).toFloat()
+
+/** The world's axes in the axonometric view: right, up, toward you. */
+private val WORLD_AXES = arrayOf(Color(0xFFFF5A5A), Color(0xFF5ADB6E), Color(0xFF5AA8FF))
+
+/** A laser pointer's strokes and trail fade in this many steps (one path each). */
+private const val LEVELS = 8
 
 /** The edge's swing per degree, its furthest swing, each layer's step inwards and the outer corner radius. */
 private const val EDGE_PX_PER_DEG = 1.5f

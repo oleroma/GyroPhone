@@ -3,7 +3,7 @@ using GyroPhone.Protocol;
 
 namespace GyroPhone.Tests;
 
-/// <summary>The laser pointer overlay's trail and paint, as the phone's LaserTraceTest.</summary>
+/// <summary>The laser pointer overlay's trail and strokes, as the phone's LaserTraceTest.</summary>
 public class LaserTraceTests
 {
     private static readonly float[] Identity = [1, 0, 0, 0, 1, 0, 0, 0, 1];
@@ -13,8 +13,6 @@ public class LaserTraceTests
     {
         var b = LaserTrace.Beam(Identity);
         Assert.Equal(-1f, b.Z);
-        Assert.Equal(LaserTrace.Rows / 2, LaserTrace.RowOf(0.001f));
-        Assert.Equal(LaserTrace.Cols / 2, LaserTrace.ColOf(0.001f));
         var tick = LaserTrace.RollTick(Identity, b);
         Assert.NotNull(tick);
         Assert.Equal(1f, tick.Value.Y, 5);
@@ -26,83 +24,82 @@ public class LaserTraceTests
         var p = LaserTrace.ToView(0, 0, -1);
         Assert.True(p.X > 0 && p.Y > 0 && p.Z < 0);
         Assert.True(LaserTrace.ToView(0, 1, 0).Z > 0);
-        Assert.False(LaserTrace.CellFront[LaserTrace.Rows / 2 * LaserTrace.Cols + LaserTrace.Cols / 2]);
         Assert.NotEmpty(LaserTrace.Grid.Front);
         Assert.NotEmpty(LaserTrace.Grid.Back);
         foreach (var l in LaserTrace.Grid.Front.Concat(LaserTrace.Grid.Back))
             foreach (var (x, y) in l) Assert.True(x * x + y * y <= 1.0001f);
+        // Axonometric of the identity is the view itself.
+        Assert.Equal(LaserTrace.View, LaserTrace.Axonometric(Identity));
     }
 
     [Fact]
-    public void PaintCoversTheBrushOnlyAndClears()
+    public void StrokesKeepAPointOnlyWhenTheBeamMoves()
     {
         var t = new LaserTrace();
-        t.Add(0, 0, -1, 1000, 500, true, 4, false);
-        int first = t.Painted;
-        Assert.InRange(first, 9, 20);
-        t.Add(0, 0, -1, 1010, 500, true, 4, false);
-        Assert.Equal(first, t.Painted);
+        t.Add(0, 0, -1, 0, 500, true, false);
+        t.Add(0, 0, -1, 10, 500, true, false);
+        Assert.Equal(1, t.Strokes.Count);
+        t.Add(0.1f, 0, -1, 20, 500, true, false);
+        Assert.Equal(2, t.Strokes.Count);
+        Assert.True(t.Strokes.Gap(0));
+        Assert.False(t.Strokes.Gap(1));
+    }
+
+    [Fact]
+    public void DrawOffOrClearWipesTheStrokes()
+    {
+        var t = new LaserTrace();
+        t.Add(0, 0, -1, 0, 500, true, false);
+        t.Add(1, 0, 0, 10, 500, true, false);
+        Assert.Equal(2, t.Strokes.Count);
+        t.Add(1, 0, 0, 20, 500, false, false);
+        Assert.Equal(0, t.Strokes.Count);
+        t.Add(0, 0, -1, 30, 500, true, false);
         t.Clear();
-        Assert.Equal(0, t.Painted);
-        Assert.Equal(0, t.TrailCount);
-    }
-
-    [Fact]
-    public void AFastSwingPaintsAContinuousStroke()
-    {
-        var t = new LaserTrace();
-        t.Add(0, 0, -1, 0, 0, true, 2, false);
-        double a = 60 * Math.PI / 180;
-        t.Add((float)Math.Sin(a), 0, -(float)Math.Cos(a), 16, 0, true, 2, false);
-        for (int c = LaserTrace.Cols / 2; c < LaserTrace.Cols / 2 + 30; c++)
-            Assert.NotEqual(0, t.LevelOf(LaserTrace.Rows / 2, c, 16, 0));
+        Assert.Equal(0, t.Strokes.Count);
+        Assert.Equal(0, t.Trail.Count);
     }
 
     [Fact]
     public void HeldRatchetNeitherTrailsNorPaintsAndBreaksTheLine()
     {
         var t = new LaserTrace();
-        t.Add(0, 0, -1, 0, 500, true, 4, false);
-        int painted = t.Painted;
-        t.Add(1, 0, 0, 10, 500, true, 4, true);
-        Assert.Equal(painted, t.Painted);
-        Assert.Equal(1, t.TrailCount);
-        t.Add(1, 0, 0, 20, 500, true, 4, false);
-        Assert.Equal(2, t.TrailCount);
-        Assert.True(t.TrailGap(1));
-        Assert.Equal(0, t.LevelOf(LaserTrace.Rows / 2, LaserTrace.Cols / 2 + 22, 20, 0));
+        t.Add(0, 0, -1, 0, 500, true, false);
+        t.Add(1, 0, 0, 10, 500, true, true);
+        Assert.Equal(1, t.Strokes.Count);
+        Assert.Equal(1, t.Trail.Count);
+        t.Add(1, 0, 0, 20, 500, true, false);
+        Assert.Equal(2, t.Trail.Count);
+        Assert.True(t.Trail.Gap(1));
+        Assert.True(t.Strokes.Gap(1));
     }
 
     [Fact]
-    public void TrailAndPaintFade()
+    public void TrailAndStrokesFade()
     {
         var t = new LaserTrace();
-        t.Add(0, 0, -1, 0, 500, true, 4, false);
-        int r = LaserTrace.Rows / 2, c = LaserTrace.Cols / 2;
-        Assert.Equal(LaserTrace.Levels, t.LevelOf(r, c, 0, 5000));
-        Assert.Equal(LaserTrace.Levels / 2, t.LevelOf(r, c, 2500, 5000));
+        t.Add(0, 0, -1, 0, 500, true, false);
+        Assert.Equal(1f, LaserTrace.StrokeLife(0, 1, 0, 0, 5000));
+        Assert.Equal(0.5f, LaserTrace.StrokeLife(0, 1, 0, 2500, 5000), 3);
         t.Expire(600, 500, 5000);
-        Assert.Equal(0, t.TrailCount);
+        Assert.Equal(0, t.Trail.Count);
         Assert.True(t.Fading(5000));
         t.Expire(5001, 500, 5000);
-        Assert.Equal(0, t.Painted);
+        Assert.Equal(0, t.Strokes.Count);
         Assert.False(t.Fading(5000));
+        // Without fading, older points are darker by their place.
+        Assert.Equal(0f, LaserTrace.StrokeLife(0, 3, 0, 0, 0));
+        Assert.Equal(1f, LaserTrace.StrokeLife(2, 3, 0, 0, 0));
     }
 
     [Fact]
-    public void RunsMergeNeighbouringCells()
+    public void RingDropsTheOldestWhenFull()
     {
-        var t = new LaserTrace();
-        t.Add(0, 0, -1, 0, 0, true, 6, false);
-        int runs = 0, cells = 0;
-        t.ForEachRun(0, 0, (_, c0, c1, level, _) =>
-        {
-            runs++;
-            cells += c1 - c0 + 1;
-            Assert.Equal(LaserTrace.Levels, level);
-        });
-        Assert.Equal(t.Painted, cells);
-        Assert.True(runs <= 7, $"runs {runs}");
+        var r = new LaserTrace.Ring(3);
+        for (int i = 0; i < 5; i++) r.Add(i, 0, 0, i, false);
+        Assert.Equal(3, r.Count);
+        Assert.Equal(2f, r.Point(0).X);
+        Assert.True(r.Gap(0));
     }
 
     [Fact]

@@ -40,6 +40,12 @@ public sealed class OverlayFrame
     public byte LevelPresses;
     /// <summary>Clear displays presses so far (wraps at 256): a change clears every laser pointer's paint and trail.</summary>
     public byte ClearPresses;
+    /// <summary>
+    /// The gyro axis on mouse X and on mouse Y: 1 yaw, 2 pitch, 3 roll (+ 0x80 when it moves the mouse
+    /// the other way); 0 = not sent (older phones: roll and pitch). An overlay turning with the camera
+    /// turns as the game's camera by them.
+    /// </summary>
+    public byte CameraXAxis, CameraYAxis;
     /// <summary>The phone turn (degrees on yaw, pitch, roll) that would send the mouse counts sent since the last OVERLAY by anything but the live gyro (a trackball turns by it).</summary>
     public float CameraYaw, CameraPitch, CameraRoll;
     /// <summary>The game's camera degrees per phone degree on yaw, pitch, roll; 0 = unknown.</summary>
@@ -134,6 +140,8 @@ public sealed class OverlayFrame
         PadButtons = Le.U32(b, 140);
         for (int i = 0; i < 4; i++) PadSticks[i] = Math.Max(-1f, (sbyte)b[144 + i] / 127f);
         ClearPresses = b[148];
+        CameraXAxis = b[149];
+        CameraYAxis = b[150];
     }
 
     private static float Gain(float v) => float.IsFinite(v) && v > 0f ? Math.Min(v, 100f) : 0f;
@@ -150,6 +158,8 @@ public sealed class OverlayFrame
         o.RatchetPresses = RatchetPresses;
         o.LevelPresses = LevelPresses;
         o.ClearPresses = ClearPresses;
+        o.CameraXAxis = CameraXAxis;
+        o.CameraYAxis = CameraYAxis;
         o.CameraYaw = CameraYaw; o.CameraPitch = CameraPitch; o.CameraRoll = CameraRoll;
         o.RwsYaw = RwsYaw; o.RwsPitch = RwsPitch; o.RwsRoll = RwsRoll;
         o.Qw = Qw; o.Qx = Qx; o.Qy = Qy; o.Qz = Qz;

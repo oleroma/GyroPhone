@@ -117,6 +117,8 @@ data class GyroDisplay(
     val trackballRws: Boolean = true,
     /** Branch builds before v3: a trackball turning as the camera ([TurnsWith.CAMERA] since). */
     val trackballInvert: Boolean = false,
+    /** PHONE and BALL: seen from a fixed angle (30° round, 30° above) with the world's axes, as the laser pointer is, instead of face-on. */
+    val axonometric: Boolean = false,
     /** LASER: how long the beam's hit point leaves a fading trail, in ms (0 = none). */
     val laserTrailMs: Int = 500,
     /** LASER: the 15° grid on the sphere, and its three axes. */

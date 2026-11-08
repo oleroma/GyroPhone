@@ -71,16 +71,29 @@ internal static class OverlayRenderer
         bool live = scene.Connected && scene.FrameAgeUs is >= 0 and < 1_500_000;
         var raw = live ? Shown(scene.Frame, settings) : (1f, 0f, 0f, 0f);
         var m = Matrix3(raw);
+        // Axonometric: seen from 30° round and 30° above, with the world's axes, as the laser pointer is.
+        bool axon = settings.Axonometric && settings.Kind is OverlayKind.Phone or OverlayKind.Shape;
+        if (axon) m = LaserTrace.Axonometric(m);
         // The same area with Edit on or off, so nothing changes size when it's toggled (the caption lies over it).
         var area = new RectangleF(0, 0, size.Width, size.Height);
         string? note = !scene.Connected ? "Waiting for the phone" : !live ? "Waiting for the phone's data" : null;
         switch (settings.Kind)
         {
             case OverlayKind.Phone:
-                DrawPhone(g, area, scene, settings, live, m);
+                if (axon) WorldAxes(g, area, false, 0.62f);
+                DrawPhone(g, area, scene, settings, live, m, axon ? 0.8f : 1f);
+                if (axon) WorldAxes(g, area, true, 0.62f);
                 return;
             case OverlayKind.Shape:
-                ShapeDrawing.Draw(g, area, settings, m, live ? scene.Frame.Axes : 0);
+                if (axon)
+                {
+                    // The world's axes poke out of the shape, so it is drawn smaller.
+                    var inner = RectangleF.Inflate(area, -area.Width * 0.09f, -area.Height * 0.09f);
+                    WorldAxes(g, area, false, 0.5f);
+                    ShapeDrawing.Draw(g, inner, settings, m, live ? scene.Frame.Axes : 0);
+                    WorldAxes(g, area, true, 0.5f);
+                }
+                else ShapeDrawing.Draw(g, area, settings, m, live ? scene.Frame.Axes : 0);
                 break;
             case OverlayKind.Horizon:
                 DialDrawing.DrawHorizon(g, area, settings, m, m);
@@ -95,6 +108,30 @@ internal static class OverlayRenderer
         if (note != null) DrawNote(g, area, note);
     }
 
+    private static readonly Color[] WorldAxisColors = [Color.FromArgb(0xFF, 0xFF, 0x5A, 0x5A), Color.FromArgb(0xFF, 0x5A, 0xDB, 0x6E), Color.FromArgb(0xFF, 0x5A, 0xA8, 0xFF)];
+
+    /// <summary>
+    /// The world's axes in the axonometric view (right red, up green, toward you blue), reaching
+    /// <paramref name="reach"/> of the area's shorter side from its centre: the halves behind the
+    /// middle (<paramref name="front"/> false) or in front of it.
+    /// </summary>
+    private static void WorldAxes(ICanvas g, RectangleF area, bool front, float reach)
+    {
+        float len = Math.Min(area.Width, area.Height) * reach;
+        var c = new PointF(area.X + area.Width / 2f, area.Y + area.Height / 2f);
+        float w = Math.Clamp(len * 0.012f, 1f, 3f);
+        for (int i = 0; i < 3; i++)
+            foreach (int sign in new[] { 1, -1 })
+            {
+                var v = LaserTrace.ToView(i == 0 ? sign : 0, i == 1 ? sign : 0, i == 2 ? sign : 0);
+                if (v.Z > 0f != front) continue;
+                var col = Color.FromArgb(sign > 0 ? 230 : 90, WorldAxisColors[i]);
+                var p = new PointF(c.X + v.X * len, c.Y - v.Y * len);
+                g.DrawLine(col, w, c, p, round: true);
+                if (sign > 0) g.FillEllipse(col, new RectangleF(p.X - w * 2, p.Y - w * 2, w * 4, w * 4));
+            }
+    }
+
     /// <summary>A short line under the drawing (no phone or no data).</summary>
     private static void DrawNote(ICanvas g, RectangleF area, string text)
     {
@@ -104,7 +141,7 @@ internal static class OverlayRenderer
         g.DrawText(text, px, true, Color.FromArgb(230, 255, 255, 255), r, TextAlign.Center, TextAlign.Far);
     }
 
-    private static void DrawPhone(ICanvas g, RectangleF area, OverlayScene scene, OverlaySettings settings, bool live, float[] m)
+    private static void DrawPhone(ICanvas g, RectangleF area, OverlayScene scene, OverlaySettings settings, bool live, float[] m, float fit = 1f)
     {
         var BodyColor = Opaque(settings.Color("body"));
         var ScreenColor = Opaque(settings.Color("screen"));
@@ -137,7 +174,7 @@ internal static class OverlayRenderer
             ? MathF.Sqrt(MathF.Pow(bw + 2 * hw, 2) + MathF.Pow(Math.Max(bh, hh * (1 + 2 * HandleDrawing.ShoulderDepth)), 2)
                 + MathF.Pow(Thickness + 2 * HandleDrawing.ShoulderDepth * hh, 2)) / 2f
             : MathF.Sqrt(bw * bw + bh * bh + Thickness * Thickness) / 2f;
-        float half = Math.Min(area.Width, area.Height) / 2f - 2f;
+        float half = (Math.Min(area.Width, area.Height) / 2f - 2f) * fit;
         float k = Math.Max(1f, half * MathF.Sqrt(CameraZ * CameraZ - radius * radius) / (CameraZ * radius));
         var cx = area.X + area.Width / 2f;
         var cy = area.Y + area.Height / 2f;

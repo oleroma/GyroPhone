@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.core.engine
 
 import kotlin.math.abs
 import kotlin.math.acos
+import kotlin.math.asin
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -196,6 +197,28 @@ class GyroPose {
     @Synchronized
     fun angle(): Float = 2 * acos(abs(w).coerceAtMost(1f))
 
+    /**
+     * Turns as a game camera does: [yawDeg] right about the vertical, [pitchDeg] up about its own
+     * right, pitch held within ±89°, never any roll. Where it points now is read from the pose (so
+     * easing back keeps working), then the pose is made again from that heading and pitch alone.
+     */
+    @Synchronized
+    fun cameraTurn(yawDeg: Float, pitchDeg: Float) {
+        // Where the screen's back points (as a laser pointer's beam): out of the phone's back.
+        val bx = -(2 * (x * z + w * y))
+        val by = -(2 * (y * z - w * x))
+        val bz = -(1 - 2 * (x * x + y * y))
+        val heading = atan2(bx, -bz) + yawDeg * DEG_TO_RAD
+        val pitch = (asin(by.coerceIn(-1f, 1f)) + pitchDeg * DEG_TO_RAD).coerceIn(-MAX_CAMERA_PITCH, MAX_CAMERA_PITCH)
+        // Ry(-heading) · Rx(pitch)
+        val cy = cos(-heading / 2)
+        val sy = sin(-heading / 2)
+        val cx = cos(pitch / 2)
+        val sx = sin(pitch / 2)
+        w = cy * cx; x = cy * sx; y = sy * cx; z = -sy * sx
+        version++
+    }
+
     /** Exactly straight, keeping what the sensors last said (unlike [reset]). */
     @Synchronized
     fun straighten() {
@@ -374,6 +397,9 @@ class GyroPose {
         }
 
         private const val DEG_TO_RAD = (Math.PI / 180).toFloat()
+
+        /** A camera pitches no further than this up or down (radians, 89°). */
+        private const val MAX_CAMERA_PITCH = (89 * Math.PI / 180).toFloat()
         private const val PI = Math.PI.toFloat()
         private const val TWO_PI = (2 * Math.PI).toFloat()
 

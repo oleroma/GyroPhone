@@ -172,7 +172,25 @@ public sealed class OverlayPose
     /// </summary>
     private void CameraTurn(OverlayFrame f, OverlaySettings s)
     {
-        float sign = s.TurnsWith == OverlayTurnsWith.Camera ? -1f : 1f;
+        if (s.TurnsWith == OverlayTurnsWith.Camera)
+        {
+            // As the game's camera: the axis on mouse X turns it right, the one on mouse Y up; no roll.
+            float Deg(byte code, byte fallback)
+            {
+                if (code == 0) code = fallback;
+                int a = code & 0x7F;
+                if (a is < 1 or > 3) return 0f;
+                float rws = a == 1 ? f.RwsYaw : a == 2 ? f.RwsPitch : f.RwsRoll;
+                float cam = a == 1 ? f.CameraYaw : a == 2 ? f.CameraPitch : f.CameraRoll;
+                float turn = a == 1 ? f.TurnYaw : a == 2 ? f.TurnPitch : f.TurnRoll;
+                float deg = cam + (f.PoseLive && (f.Axes & (1 << (a - 1))) != 0 ? turn : 0f);
+                float speed = s.TrackballRws ? (rws > 0f ? rws : 1f) : Math.Clamp(s.TrackballSpin, 0.05f, 20f);
+                return deg * speed * ((code & 0x80) != 0 ? -1f : 1f);
+            }
+            CameraLook(Deg(f.CameraXAxis, 3), Deg(f.CameraYAxis, 2));
+            return;
+        }
+        float sign = 1f;
         float Gain(float rws) => (s.TrackballRws ? (rws > 0f ? rws : 1f) : Math.Clamp(s.TrackballSpin, 0.05f, 20f)) * sign;
         float gy = Gain(f.RwsYaw), gp = Gain(f.RwsPitch), gr = Gain(f.RwsRoll);
         float yaw = f.CameraYaw * gy, pitch = f.CameraPitch * gp, roll = f.CameraRoll * gr;
@@ -183,6 +201,24 @@ public sealed class OverlayPose
             if ((f.Axes & 4) != 0) roll += f.TurnRoll * gr;
         }
         CounterRotate(yaw, pitch, roll);
+    }
+
+    /// <summary>
+    /// Turns as a game camera does: <paramref name="yawDeg"/> right about the vertical,
+    /// <paramref name="pitchDeg"/> up about its own right, pitch held within ±89°, never any roll.
+    /// Where it points now is read from the pose (so easing back keeps working), then the pose is
+    /// made again from that heading and pitch alone. As the phone's GyroPose.cameraTurn.
+    /// </summary>
+    private void CameraLook(float yawDeg, float pitchDeg)
+    {
+        float bx = -(2 * (_x * _z + _w * _y));
+        float by = -(2 * (_y * _z - _w * _x));
+        float bz = -(1 - 2 * (_x * _x + _y * _y));
+        float heading = MathF.Atan2(bx, -bz) + yawDeg * DegToRad;
+        float max = 89f * DegToRad;
+        float pitch = Math.Clamp(MathF.Asin(Math.Clamp(by, -1f, 1f)) + pitchDeg * DegToRad, -max, max);
+        float cy = MathF.Cos(-heading / 2), sy = MathF.Sin(-heading / 2), cx = MathF.Cos(pitch / 2), sx = MathF.Sin(pitch / 2);
+        _w = cy * cx; _x = cy * sx; _y = sy * cx; _z = -sy * sx;
     }
 
     /// <summary>The world as the phone sees it while it turns by these degrees: the opposite turn, about the view's axes (q = b * q).</summary>

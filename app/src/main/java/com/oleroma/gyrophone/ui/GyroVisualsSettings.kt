@@ -126,6 +126,7 @@ internal fun GyroDisplaySettingsScreen(
                     SwitchRow("Ghost trail", d.ghosts) { set(d.copy(ghosts = it)) }
                     SwitchRow("Axis arrows", d.axes) { set(d.copy(axes = it)) }
                     Hint("Arrows along the phone's own right, up and screen directions.")
+                    SwitchRow("Axonometric view", d.axonometric, AXON_HINT) { set(d.copy(axonometric = it)) }
                 }
 
                 GyroDisplayKind.RATCHET_RING ->
@@ -163,6 +164,7 @@ internal fun GyroDisplaySettingsScreen(
                     if (shape == BallShape.GLOBE) SwitchRow("Equator", d.equator) { set(d.copy(equator = it)) }
                     SwitchRow("Mark where the screen faces", d.screenMark) { set(d.copy(screenMark = it)) }
                     SwitchRow("Mark at the top", d.topMark) { set(d.copy(topMark = it)) }
+                    SwitchRow("Axonometric view", d.axonometric, AXON_HINT) { set(d.copy(axonometric = it)) }
                 }
 
                 GyroDisplayKind.LASER -> {
@@ -180,7 +182,7 @@ internal fun GyroDisplaySettingsScreen(
                         Chips(listOf("Never fades" to 0, "5 s" to 5, "10 s" to 10, "30 s" to 30, "60 s" to 60), d.laserFadeS) {
                             set(d.copy(laserFadeS = it))
                         }
-                        Hint("A held ratchet stops the painting. A Clear displays mapping (Other targets) clears every laser pointer at once.")
+                        Hint("Strokes glow, older ones darker. A held ratchet stops the painting; turning Draw mode off clears it. A Clear displays mapping (Other targets) clears every laser pointer at once.")
                     }
                     TextButton(onClick = { runtime.clearLaser(control.id) }) { Text("Clear") }
                 }
@@ -206,7 +208,7 @@ internal fun GyroDisplaySettingsScreen(
             Hint(
                 when (d.turnsWith) {
                     TurnsWith.PHONE -> "How you hold the phone."
-                    TurnsWith.CAMERA -> "Where the game's camera points: it turns with the gyro and every other camera move (touchpad, buttons, controllers, keys, glides). A ratchet stops it, as it stops the camera."
+                    TurnsWith.CAMERA -> "Where the game's camera points: it turns left and right and up and down as the camera does, never rolling, with the gyro and every other camera move (touchpad, buttons, controllers, keys, glides). A ratchet stops it, as it stops the camera."
                     TurnsWith.TRACKBALL -> "Like a ball under your hand: still against the world while the gyro aims, so it rolls the other way; every other camera move rolls it too. A ratchet stops it, and it turns with the phone."
                 },
             )
@@ -325,6 +327,8 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     GyroDisplayColor.LASER_PAINT -> d.laserDraw
     else -> true
 }
+
+private const val AXON_HINT = "Seen from 30° round and 30° above with the world's axes (right red, up green, toward you blue), as the laser pointer is, instead of face-on."
 
 /** A colour on a checkerboard, so its transparency shows. */
 @Composable

@@ -48,7 +48,7 @@ internal sealed class OverlaysPage : Page
     private readonly Seg<int> _laserTrail, _laserFade;
     private readonly SliderRow _laserBrush;
     private readonly StackPanel _laserDrawOptions;
-    private readonly CheckBox _dots, _trails;
+    private readonly CheckBox _dots, _trails, _phoneAxon, _shapeAxon;
     private readonly Seg<OverlayHandles> _handles;
     private readonly Seg<OverlayHandleSource> _handleSource;
     private readonly Seg<OverlayShape> _shape;
@@ -201,6 +201,8 @@ internal sealed class OverlaysPage : Page
         _trails = Parts.Toggle("Finger trails", () => Change(o => o.FingerTrails = !o.FingerTrails));
         pb.Children.Add(_dots);
         pb.Children.Add(_trails);
+        _phoneAxon = Parts.Toggle("Axonometric view", () => Change(o => o.Axonometric = !o.Axonometric), AxonHint);
+        pb.Children.Add(_phoneAxon);
         pb.Children.Add(Parts.Divider());
         pb.Children.Add(Parts.Text("Controller handles"));
         _handles = new Seg<OverlayHandles>(h => Change(o => o.Handles = h), false,
@@ -229,6 +231,8 @@ internal sealed class OverlaysPage : Page
         _screenMark = Parts.Toggle("Mark where the screen faces", () => Change(o => o.ScreenMark = !o.ScreenMark));
         _topMark = Parts.Toggle("Mark at the top", () => Change(o => o.TopMark = !o.TopMark));
         foreach (var c in new[] { _smooth, _hiddenEdges, _fillFaces, _equator, _screenMark, _topMark }) shb.Children.Add(c);
+        _shapeAxon = Parts.Toggle("Axonometric view", () => Change(o => o.Axonometric = !o.Axonometric), AxonHint);
+        shb.Children.Add(_shapeAxon);
         _shapeLook = shape;
         _lookTab.Children.Add(shape);
 
@@ -262,7 +266,7 @@ internal sealed class OverlaysPage : Page
             ("Never", 0), ("5 s", 5), ("10 s", 10), ("30 s", 30), ("60 s", 60));
         _laserFade.View.Margin = new Thickness(0, 6, 0, 2);
         _laserDrawOptions.Children.Add(_laserFade.View);
-        _laserDrawOptions.Children.Add(Parts.Text("A held ratchet stops the painting. A Clear displays mapping on the phone (Other targets) clears every laser pointer at once.", "Hint"));
+        _laserDrawOptions.Children.Add(Parts.Text("Strokes glow, older ones darker. A held ratchet stops the painting; turning Draw mode off clears it. A Clear displays mapping on the phone (Other targets) clears every laser pointer at once.", "Hint"));
         lb.Children.Add(_laserDrawOptions);
         var clear = Parts.Button("Clear", () => { if (Picked is { } id) _app.ClearOverlay(id); }, glyph: "");
         clear.Margin = new Thickness(0, 8, 0, 0);
@@ -337,6 +341,8 @@ internal sealed class OverlaysPage : Page
         _tabs.Set(0);
         ShowTab();
     }
+
+    private const string AxonHint = "Seen from 30° round and 30° above with the world's axes (right red, up green, toward you blue), as the laser pointer is, instead of face-on.";
 
     /// <summary>Meshes.MaxSubdivision in the tray app; the icosphere's finest level.</summary>
     private const int MaxSubdivision = 3;
@@ -457,6 +463,8 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_shapeLook, o.Kind == OverlayKind.Shape);
         Parts.Show(_diskLook, o.Kind == OverlayKind.Disk);
         Parts.Show(_laserLook, o.Kind == OverlayKind.Laser);
+        Parts.SetChecked(_phoneAxon, o.Axonometric);
+        Parts.SetChecked(_shapeAxon, o.Axonometric);
         Parts.SetChecked(_laserGrid, o.LaserGrid);
         Parts.SetChecked(_laserAxes, o.LaserAxes);
         _laserTrail.Set(o.LaserTrailMs);
@@ -487,7 +495,7 @@ internal sealed class OverlaysPage : Page
         _turnsWith.Set(o.TurnsWith);
         _turnsHint.Text = o.TurnsWith switch
         {
-            OverlayTurnsWith.Camera => "Where the game's camera points: it turns with the gyro and every other camera move (touchpad, buttons, controllers, keys). A ratchet stops it, as it stops the camera.",
+            OverlayTurnsWith.Camera => "Where the game's camera points: it turns left and right and up and down as the camera does, never rolling, with the gyro and every other camera move (touchpad, buttons, controllers, keys). A ratchet stops it, as it stops the camera.",
             OverlayTurnsWith.Trackball => "Like a ball under your hand: still against the world while the gyro aims, so it rolls the other way; every other camera move rolls it too.",
             _ => "How you hold the phone.",
         };

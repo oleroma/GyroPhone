@@ -16,6 +16,9 @@ internal static class LaserDrawing
     /// <summary>A trail's hops longer than this are bent along the sphere in pieces.</summary>
     private static readonly float TrailStep = 4f * MathF.PI / 180f;
 
+    /// <summary>Strokes and the trail fade in this many steps.</summary>
+    private const int Levels = 8;
+
     public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held)
     {
         float r = Math.Min(area.Width, area.Height) / 2f * 0.95f;
@@ -62,54 +65,85 @@ internal static class LaserDrawing
                 }
         }
 
+        // Strokes and the trail: each piece of the way between two points (long hops bent along the
+        // sphere), drawn on its side, older pieces darker and fainter.
+        void Lines(LaserTrace.Ring ring, bool front, Func<int, long, float> life, float width, bool glow, Color color)
+        {
+            if (ring.Count < 2) return;
+            float side = front ? 0.5f : 1f;
+            float w = width * (front ? 0.6f : 1f);
+            var run = new List<PointF>(64);
+            int runLevel = -1;
+            void Flush()
+            {
+                if (run.Count >= 2)
+                {
+                    float k = runLevel / (float)Levels;
+                    float shade = 0.35f + 0.65f * k;
+                    var col = Color.FromArgb(Math.Clamp((int)(color.A * (0.35f + 0.65f * k) * side), 0, 255),
+                        (int)(color.R * shade), (int)(color.G * shade), (int)(color.B * shade));
+                    var pts = run.ToArray();
+                    if (glow) g.DrawLines(Fade(col, 0.22f), w * 3f, pts);
+                    g.DrawLines(col, w, pts);
+                }
+                run.Clear();
+                runLevel = -1;
+            }
+            for (int i = 1; i < ring.Count; i++)
+            {
+                if (ring.Gap(i))
+                {
+                    Flush();
+                    continue;
+                }
+                var a = ring.Point(i - 1);
+                var b = ring.Point(i);
+                float k = life(i, b.T);
+                if (k <= 0f)
+                {
+                    Flush();
+                    continue;
+                }
+                int level = Math.Clamp((int)MathF.Ceiling(k * Levels), 1, Levels);
+                float dot = Math.Clamp(a.X * b.X + a.Y * b.Y + a.Z * b.Z, -1f, 1f);
+                int n = Math.Clamp((int)(MathF.Acos(dot) / TrailStep), 1, 32);
+                var (prev, prevZ) = At(a.X, a.Y, a.Z);
+                for (int j = 1; j <= n; j++)
+                {
+                    float t = j / (float)n;
+                    float x = a.X + (b.X - a.X) * t, y = a.Y + (b.Y - a.Y) * t, z = a.Z + (b.Z - a.Z) * t;
+                    float l = Math.Max(1e-4f, MathF.Sqrt(x * x + y * y + z * z));
+                    var (p, depth) = At(x / l, y / l, z / l);
+                    if (depth > 0f == front && prevZ > 0f == front)
+                    {
+                        if (level != runLevel) Flush();
+                        if (run.Count == 0)
+                        {
+                            run.Add(prev);
+                            runLevel = level;
+                        }
+                        run.Add(p);
+                    }
+                    else Flush();
+                    prev = p;
+                    prevZ = depth;
+                }
+            }
+            Flush();
+        }
+
+        float brushPx = Math.Max(px * 1.5f, r * Math.Clamp(s.LaserBrush, 1, 20) * MathF.PI / 180f * 0.6f);
         void Paint(bool front)
         {
-            if (trace is not { Painted: > 0 }) return;
-            var pc = Color.FromArgb(s.Color("paint"));
-            var pts = new List<PointF>(64);
-            trace.ForEachRun(nowMs, fadeMs, (row, c0, c1, level, f) =>
-            {
-                if (f != front) return;
-                float lat0 = LaserTrace.RowLat(row) - LaserTrace.CellRad / 2, lat1 = lat0 + LaserTrace.CellRad;
-                pts.Clear();
-                for (int k = c0; k <= c1 + 1; k++)
-                {
-                    var d = LaserTrace.Dir(lat1, LaserTrace.ColLon(k) - LaserTrace.CellRad / 2);
-                    pts.Add(At(d.X, d.Y, d.Z).P);
-                }
-                for (int k = c1 + 1; k >= c0; k--)
-                {
-                    var d = LaserTrace.Dir(lat0, LaserTrace.ColLon(k) - LaserTrace.CellRad / 2);
-                    pts.Add(At(d.X, d.Y, d.Z).P);
-                }
-                g.FillPolygon(Fade(pc, level / (float)LaserTrace.Levels * (front ? 0.45f : 0.9f)), pts.ToArray());
-            });
+            if (trace == null) return;
+            int n = trace.Strokes.Count;
+            Lines(trace.Strokes, front, (i, t) => LaserTrace.StrokeLife(i, n, t, nowMs, fadeMs), brushPx, true, Color.FromArgb(s.Color("paint")));
         }
 
         void Trail(bool front)
         {
             if (trace == null || trailMs <= 0) return;
-            var tc = Color.FromArgb(s.Color("trail"));
-            for (int i = 1; i < trace.TrailCount; i++)
-            {
-                if (trace.TrailGap(i)) continue;
-                var a = trace.TrailPoint(i - 1, nowMs, trailMs);
-                var b = trace.TrailPoint(i, nowMs, trailMs);
-                if (b.Life <= 0f) continue;
-                float dot = Math.Clamp(a.X * b.X + a.Y * b.Y + a.Z * b.Z, -1f, 1f);
-                int n = Math.Clamp((int)(MathF.Acos(dot) / TrailStep), 1, 32);
-                var prev = At(a.X, a.Y, a.Z).P;
-                for (int k = 1; k <= n; k++)
-                {
-                    float t = k / (float)n;
-                    float x = a.X + (b.X - a.X) * t, y = a.Y + (b.Y - a.Y) * t, z = a.Z + (b.Z - a.Z) * t;
-                    float l = Math.Max(1e-4f, MathF.Sqrt(x * x + y * y + z * z));
-                    var (p, depth) = At(x / l, y / l, z / l);
-                    if (depth > 0f == front)
-                        g.DrawLine(Fade(tc, b.Life * (front ? 0.6f : 1f)), px * (1f + 2f * b.Life), prev, p, round: true);
-                    prev = p;
-                }
-            }
+            Lines(trace.Trail, front, (_, t) => Math.Clamp(1f - (nowMs - t) / (float)trailMs, 0f, 1f), px * 2f, false, Color.FromArgb(s.Color("trail")));
         }
 
         var (hit, hitZ) = At(beam.X, beam.Y, beam.Z);

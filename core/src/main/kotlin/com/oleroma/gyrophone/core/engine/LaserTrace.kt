@@ -1,254 +1,150 @@
 package com.oleroma.gyrophone.core.engine
 
 import kotlin.math.abs
-import kotlin.math.acos
-import kotlin.math.asin
-import kotlin.math.atan2
-import kotlin.math.ceil
 import kotlin.math.cos
-import kotlin.math.floor
 import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
  * What a laser pointer display remembers between frames: the beam's recent hit points on the
- * sphere (the trail) and, in Draw mode, the sphere's painted inside. Directions are unit vectors in
- * the shown frame (x right, y up, z toward the viewer); the sphere is cut into [CELL_DEG]° cells by
- * latitude (round the up axis) and longitude (0 straight ahead, into the screen). Each frame only
- * the cells under the brush are touched, so painting costs the same however much is painted; the
- * drawing merges neighbouring cells of one row into one strip ([forEachRun]). Same as the
- * companion's LaserTrace. One thread at a time (the UI's).
+ * sphere (the trail) and, in Draw mode, the strokes it painted on the sphere's inside. Both are
+ * rings of unit directions in the shown frame (x right, y up, z toward the viewer) with their
+ * times; a point starts a new line after a gap (a held ratchet, Draw just turned on). Strokes keep
+ * a point each time the beam moved [STROKE_STEP_DEG]° or more, up to [STROKE_MAX] (the oldest go
+ * first), so drawing them costs the same however long you paint. Same as the companion's
+ * LaserTrace. One thread at a time (the UI's).
  */
 class LaserTrace {
-    // The trail: a ring of hit points, oldest first from [head].
-    private val tx = FloatArray(TRAIL_MAX)
-    private val ty = FloatArray(TRAIL_MAX)
-    private val tz = FloatArray(TRAIL_MAX)
-    private val tt = LongArray(TRAIL_MAX)
-    private val tGap = BooleanArray(TRAIL_MAX)
-    private var head = 0
-    private var count = 0
-    private var gap = true
+    /** A ring of directions with times, oldest first. */
+    class Ring(private val capacity: Int) {
+        private val x = FloatArray(capacity)
+        private val y = FloatArray(capacity)
+        private val z = FloatArray(capacity)
+        private val t = LongArray(capacity)
+        private val gap = BooleanArray(capacity)
+        private var head = 0
 
-    /** When each cell was last painted (ms, + 1 so 0 = never). */
-    private val cells = LongArray(ROWS * COLS)
-    private val rowPainted = IntArray(ROWS)
+        /** Points kept now. */
+        var count = 0
+            private set
 
-    /** Cells painted now. */
-    var painted = 0
-        private set
+        fun add(px: Float, py: Float, pz: Float, ms: Long, startsLine: Boolean) {
+            val i = (head + count) % capacity
+            if (count == capacity) {
+                head = (head + 1) % capacity
+                gap[head] = true // the oldest left has no line from before it
+            } else count++
+            x[i] = px; y[i] = py; z[i] = pz; t[i] = ms; gap[i] = startsLine
+        }
 
-    /** Goes up when the paint is cleared. */
+        /** Drops points older than [ms] at [nowMs]. */
+        fun expire(nowMs: Long, ms: Int) {
+            while (count > 0 && nowMs - t[head] > ms) {
+                head = (head + 1) % capacity
+                count--
+            }
+            if (count > 0) gap[head] = true
+        }
+
+        fun clear() {
+            count = 0
+            head = 0
+        }
+
+        /** Point [i] (0 oldest) into [out] (x, y, z); returns its time (ms). */
+        fun point(i: Int, out: FloatArray, at: Int = 0): Long {
+            val k = (head + i) % capacity
+            out[at] = x[k]; out[at + 1] = y[k]; out[at + 2] = z[k]
+            return t[k]
+        }
+
+        /** Point [i] starts a new line (none drawn from the point before it). */
+        fun gap(i: Int): Boolean = gap[(head + i) % capacity]
+    }
+
+    /** The trail's hit points. */
+    val trail = Ring(TRAIL_MAX)
+
+    /** Draw mode's strokes. */
+    val strokes = Ring(STROKE_MAX)
+
+    private var trailGap = true
+    private var strokeGap = true
+    private var lastX = 0f
+    private var lastY = 0f
+    private var lastZ = 0f
+
+    /** Goes up when the strokes are cleared. */
     var version = 0L
         private set
 
     /** The pose version last fed (the UI feeds once per new pose). */
     var fedVersion = Long.MIN_VALUE
 
-    private var lastX = 0f
-    private var lastY = 0f
-    private var lastZ = 0f
-    private var hasLast = false
-
-    /** Trail points kept now. */
-    val trailCount: Int get() = count
-
     /**
      * The beam now points at ([x], [y], [z]) (any length) at [nowMs]. While a ratchet is [held] it
-     * neither trails nor paints (the pose eases back then, which isn't aiming). With [draw] the
-     * cells within [brushDeg] of the beam, and of the way it went since the last call, are painted.
+     * neither trails nor paints (the pose eases back then, which isn't aiming). With [draw] it
+     * paints; turning Draw off clears the strokes.
      */
-    fun add(x: Float, y: Float, z: Float, nowMs: Long, trailMs: Int, draw: Boolean, brushDeg: Float, held: Boolean) {
+    fun add(x: Float, y: Float, z: Float, nowMs: Long, trailMs: Int, draw: Boolean, held: Boolean) {
+        if (!draw && strokes.count > 0) clear()
         val l = sqrt(x * x + y * y + z * z)
-        if (l < 1e-6f || held) {
-            gap = true
-            hasLast = false
+        if (l < 1e-6f || held || l.isNaN()) {
+            trailGap = true
+            strokeGap = true
             return
         }
         val dx = x / l
         val dy = y / l
         val dz = z / l
         if (trailMs > 0) {
-            val i = (head + count) % TRAIL_MAX
-            if (count == TRAIL_MAX) head = (head + 1) % TRAIL_MAX else count++
-            tx[i] = dx; ty[i] = dy; tz[i] = dz; tt[i] = nowMs; tGap[i] = gap
-            gap = false
+            trail.add(dx, dy, dz, nowMs, trailGap)
+            trailGap = false
         } else {
-            count = 0
-            gap = true
+            trail.clear()
+            trailGap = true
         }
-        if (draw) {
-            val brush = Math.toRadians(brushDeg.coerceIn(0.5f, 45f).toDouble()).toFloat()
-            if (hasLast) {
-                // Along the great circle from the last point, in steps of half the brush.
-                val cosA = (lastX * dx + lastY * dy + lastZ * dz).coerceIn(-1f, 1f)
-                val a = acos(cosA)
-                val steps = ceil(a / (brush * 0.5f)).toInt().coerceIn(1, 360)
-                val s = sin(a)
-                for (k in 1..steps) {
-                    val t = k / steps.toFloat()
-                    if (s < 1e-4f) paint(dx, dy, dz, brush, nowMs)
-                    else {
-                        val wa = sin((1 - t) * a) / s
-                        val wb = sin(t * a) / s
-                        paint(lastX * wa + dx * wb, lastY * wa + dy * wb, lastZ * wa + dz * wb, brush, nowMs)
-                    }
-                }
-            } else paint(dx, dy, dz, brush, nowMs)
-            lastX = dx; lastY = dy; lastZ = dz
-            hasLast = true
-        } else hasLast = false
+        if (!draw) {
+            strokeGap = true
+            return
+        }
+        // A new point once the beam moved a little: a still beam adds nothing.
+        if (!strokeGap && lastX * dx + lastY * dy + lastZ * dz > STROKE_STEP_COS) return
+        strokes.add(dx, dy, dz, nowMs, strokeGap)
+        strokeGap = false
+        lastX = dx; lastY = dy; lastZ = dz
     }
 
-    /** Paints every cell whose centre is within [brush] radians of unit direction ([x], [y], [z]). */
-    private fun paint(x: Float, y: Float, z: Float, brush: Float, nowMs: Long) {
-        val lat = asin(y.coerceIn(-1f, 1f))
-        val lon = atan2(x, -z)
-        val sinLat = sin(lat)
-        val cosLat = cos(lat)
-        val cosB = cos(brush)
-        val r0 = rowOf(lat - brush)
-        val r1 = rowOf(lat + brush)
-        val stamp = nowMs + 1
-        for (r in r0..r1) {
-            val lc = rowLat(r)
-            val cl = cos(lc)
-            val sl = sin(lc)
-            val den = cosLat * cl
-            // The longitudes within the brush on this row: cos d = sin a sin b + cos a cos b cos Δ.
-            val half = if (den < 1e-6f) PI_F else {
-                val c = (cosB - sinLat * sl) / den
-                if (c > 1f) continue
-                if (c <= -1f) PI_F else acos(c)
-            }
-            if (half >= PI_F) {
-                for (c in 0 until COLS) mark(r, c, stamp)
-                continue
-            }
-            val c0 = ceil((lon - half + PI_F) / CELL_RAD - 0.5f).toInt()
-            val c1 = floor((lon + half + PI_F) / CELL_RAD - 0.5f).toInt()
-            if (c1 < c0) mark(r, colOf(lon), stamp)
-            else for (c in c0..c1) mark(r, ((c % COLS) + COLS) % COLS, stamp)
-        }
-        // The cell the beam is in always.
-        mark(rowOf(lat), colOf(lon), stamp)
-    }
-
-    private fun mark(r: Int, c: Int, stamp: Long) {
-        val i = r * COLS + c
-        if (cells[i] == 0L) {
-            painted++
-            rowPainted[r]++
-        }
-        cells[i] = stamp
-    }
-
-    /** Drops trail points older than [trailMs] and, with [fadeMs] > 0, paint older than it. */
+    /** Drops trail points older than [trailMs] and, with [fadeMs] > 0, strokes older than it. */
     fun expire(nowMs: Long, trailMs: Int, fadeMs: Int) {
-        while (count > 0 && nowMs - tt[head] > trailMs) {
-            head = (head + 1) % TRAIL_MAX
-            count--
-        }
-        if (count > 0) tGap[head] = true
-        if (fadeMs <= 0 || painted == 0) return
-        for (r in 0 until ROWS) {
-            if (rowPainted[r] == 0) continue
-            val base = r * COLS
-            for (c in 0 until COLS) {
-                val s = cells[base + c]
-                if (s != 0L && nowMs - (s - 1) > fadeMs) {
-                    cells[base + c] = 0L
-                    rowPainted[r]--
-                    painted--
-                }
-            }
-        }
+        trail.expire(nowMs, trailMs)
+        if (fadeMs > 0) strokes.expire(nowMs, fadeMs)
     }
 
-    /** Some trail point or fading paint is left (draw again while it fades). */
-    fun fading(fadeMs: Int): Boolean = count > 0 || (fadeMs > 0 && painted > 0)
+    /** Some trail point or fading stroke is left (draw again while it fades). */
+    fun fading(fadeMs: Int): Boolean = trail.count > 0 || (fadeMs > 0 && strokes.count > 0)
 
-    /** Clears the paint and the trail. */
+    /** Clears the strokes and the trail. */
     fun clear() {
-        cells.fill(0L)
-        rowPainted.fill(0)
-        painted = 0
-        count = 0
-        head = 0
-        gap = true
-        hasLast = false
+        strokes.clear()
+        trail.clear()
+        trailGap = true
+        strokeGap = true
         version++
     }
 
-    /** Trail point [i] (0 oldest): direction into [out] (x, y, z), returns how fresh it is, 1 (new) .. 0 (gone). */
-    fun trailPoint(i: Int, nowMs: Long, trailMs: Int, out: FloatArray): Float {
-        val k = (head + i) % TRAIL_MAX
-        out[0] = tx[k]; out[1] = ty[k]; out[2] = tz[k]
-        return (1f - (nowMs - tt[k]) / trailMs.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
-    }
-
-    /** Trail point [i] starts a new line (none drawn from the point before it). */
-    fun trailGap(i: Int): Boolean = tGap[(head + i) % TRAIL_MAX]
-
-    /**
-     * Each run of neighbouring painted cells on one row with the same strength (1..[LEVELS], by
-     * [fadeMs]; all full without fading) and the same side of [front]: row, first and last column.
-     */
-    inline fun forEachRun(nowMs: Long, fadeMs: Int, front: (row: Int, col: Int) -> Boolean, run: (row: Int, c0: Int, c1: Int, level: Int, front: Boolean) -> Unit) {
-        for (r in 0 until ROWS) {
-            if (rowPainted(r) == 0) continue
-            var start = -1
-            var level = 0
-            var side = false
-            for (c in 0..COLS) {
-                val lv = if (c == COLS) 0 else levelOf(r, c, nowMs, fadeMs)
-                val f = lv != 0 && front(r, c)
-                if (start >= 0 && (lv != level || f != side)) {
-                    run(r, start, c - 1, level, side)
-                    start = -1
-                }
-                if (lv != 0 && start < 0) {
-                    start = c
-                    level = lv
-                    side = f
-                }
-            }
-        }
-    }
-
-    /** Cells painted on row [r]. */
-    fun rowPainted(r: Int): Int = rowPainted[r]
-
-    /** Cell ([r], [c])'s strength: 0 unpainted, 1..[LEVELS] fading to full. */
-    fun levelOf(r: Int, c: Int, nowMs: Long, fadeMs: Int): Int {
-        val s = cells[r * COLS + c]
-        if (s == 0L) return 0
-        if (fadeMs <= 0) return LEVELS
-        val left = 1f - (nowMs - (s - 1)) / fadeMs.toFloat()
-        if (left <= 0f) return 0
-        return ceil(left * LEVELS).toInt().coerceIn(1, LEVELS)
-    }
-
     companion object {
-        const val CELL_DEG = 2
-        const val ROWS = 180 / CELL_DEG
-        const val COLS = 360 / CELL_DEG
-        const val LEVELS = 8
         const val TRAIL_MAX = 512
-        private const val PI_F = Math.PI.toFloat()
-        const val CELL_RAD = (CELL_DEG * Math.PI / 180).toFloat()
+        const val STROKE_MAX = 4096
+        const val STROKE_STEP_DEG = 0.5f
+        private val STROKE_STEP_COS = cos(Math.toRadians(STROKE_STEP_DEG.toDouble())).toFloat()
 
-        /** Row [r]'s centre latitude (radians, up +). */
-        fun rowLat(r: Int): Float = (r + 0.5f) * CELL_RAD - PI_F / 2
+        /** How bright stroke point [i] of [count] made at [t] is at [nowMs]: 1 new .. 0 gone ([fadeMs]), or by its place without fading. */
+        fun strokeLife(i: Int, count: Int, t: Long, nowMs: Long, fadeMs: Int): Float =
+            if (fadeMs > 0) (1f - (nowMs - t) / fadeMs.toFloat()).coerceIn(0f, 1f)
+            else if (count <= 1) 1f else (i / (count - 1f))
 
-        /** Column [c]'s centre longitude (radians, right +, 0 straight ahead). */
-        fun colLon(c: Int): Float = (c + 0.5f) * CELL_RAD - PI_F
-
-        fun rowOf(lat: Float): Int = floor((lat + PI_F / 2) / CELL_RAD).toInt().coerceIn(0, ROWS - 1)
-
-        fun colOf(lon: Float): Int = ((floor((lon + PI_F) / CELL_RAD).toInt() % COLS) + COLS) % COLS
-
-        /** The unit direction at latitude [lat], longitude [lon] into [out] at [at]. */
+        /** The unit direction at latitude [lat], longitude [lon] (0 straight ahead, into the screen) into [out] at [at]. */
         fun dir(lat: Float, lon: Float, out: FloatArray, at: Int = 0) {
             val cl = cos(lat)
             out[at] = cl * sin(lon)
@@ -282,15 +178,12 @@ class LaserTrace {
             out[at + 2] = v[6] * x + v[7] * y + v[8] * z
         }
 
-        /** Each cell's centre faces the viewer (lies on the sphere's near half), by row * [COLS] + column. */
-        val CELL_FRONT: BooleanArray = BooleanArray(ROWS * COLS).also { f ->
-            val p = FloatArray(3)
-            val q = FloatArray(3)
-            for (r in 0 until ROWS) for (c in 0 until COLS) {
-                dir(rowLat(r), colLon(c), p)
-                view(p[0], p[1], p[2], q)
-                f[r * COLS + c] = q[2] > 0f
-            }
+        /** [m] (row-major 3×3, changed) seen through the axonometric [VIEW]: VIEW · m. */
+        fun axonometric(m: FloatArray) {
+            val v = VIEW
+            val r = FloatArray(9)
+            for (i in 0..2) for (j in 0..2) r[i * 3 + j] = v[i * 3] * m[j] + v[i * 3 + 1] * m[3 + j] + v[i * 3 + 2] * m[6 + j]
+            r.copyInto(m)
         }
 
         /** The [GRID_DEG]° grid (latitudes, meridians) in the picture, unit radius, as polylines of x, y pairs: (near half, far half). */
@@ -354,7 +247,7 @@ class LaserTrace {
         const val GRID_DEG = 15
         private const val GRID_STEPS = 96
 
-        /** The beam's direction for pose matrix [m] (shown frame): out of the phone's back. */
+        /** The beam's direction for pose matrix [m] (row-major, phone frame to shown): out of the phone's back. */
         fun beam(m: FloatArray, out: FloatArray) {
             out[0] = -m[2]; out[1] = -m[5]; out[2] = -m[8]
         }

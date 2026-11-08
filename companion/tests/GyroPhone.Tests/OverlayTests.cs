@@ -376,9 +376,37 @@ public class OverlayTests
     {
         var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Horizon, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Camera, Gravity = true, Ease = false, TrackballRws = false, TrackballSpin = 2f };
         var p = new GyroPhone.Host.OverlayPose();
-        p.Feed(Motion(10f, 0.01f), s);
+        var f = Motion(10f, 0.01f);
+        f.CameraXAxis = 1; // yaw moves the mouse sideways
+        f.CameraYAxis = 2;
+        p.Feed(f, s);
         Assert.Equal(20f, HeadingDeg(p), 1);
         Assert.False(s.NeedsCompass);
+    }
+
+    [Fact]
+    public void CameraTurnsAsTheGameCameraByTheMouseAxesAndNeverRolls()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Camera, Ease = false, TrackballRws = false, TrackballSpin = 1f };
+        var p = new GyroPhone.Host.OverlayPose();
+        // Older phones send no map: roll moves the mouse sideways, pitch up and down.
+        var f = new OverlayFrame { TurnRoll = 30f, TurnPitch = 10f, TurnSeconds = 0.01f, Axes = 7, Flags = OverlayFrame.FlagPose };
+        p.Feed(f, s);
+        float w = p.W, x = p.X, y = p.Y, z = p.Z;
+        // Right stays level (no roll); the back points 30° right and 10° up.
+        float m3 = 2 * (x * y + w * z);
+        Assert.Equal(0f, m3, 4);
+        float bx = -(2 * (x * z + w * y)), by = -(2 * (y * z - w * x)), bz = -(1 - 2 * (x * x + y * y));
+        Assert.Equal(30f, MathF.Atan2(bx, -bz) * 180f / MathF.PI, 2);
+        Assert.Equal(10f, MathF.Asin(by) * 180f / MathF.PI, 2);
+        // An inverted Y axis turns it down instead.
+        f.CameraXAxis = 3;
+        f.CameraYAxis = 0x82;
+        f.TurnRoll = 0;
+        p.Feed(f, s);
+        w = p.W; x = p.X; y = p.Y; z = p.Z;
+        by = -(2 * (y * z - w * x));
+        Assert.Equal(0f, MathF.Asin(by) * 180f / MathF.PI, 2);
     }
 
     [Fact]

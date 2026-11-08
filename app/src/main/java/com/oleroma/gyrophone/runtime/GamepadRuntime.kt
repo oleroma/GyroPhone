@@ -1334,6 +1334,23 @@ class GamepadRuntime(context: Context) {
         private const val RAD_TO_DEG = (180.0 / Math.PI).toFloat()
     }
 
+    /** The routes and gyro settings [cameraMapNow] was made from, and its value (gyro thread). */
+    private var cameraMapRoutes: List<Mapping>? = null
+    private var cameraMapGyro: GyroSettings? = null
+    private var cameraMapValue = GyroDisplayFeed.DEFAULT_CAMERA_MAP
+
+    /** Which gyro axes move the mouse sideways and up and down now ([GyroDisplayFeed.cameraMapOf]), made again only when they change. */
+    private fun cameraMapNow(): Int {
+        val routes = engine.gyroRoutes()
+        val gs = engine.gyroSettings
+        if (routes !== cameraMapRoutes || gs !== cameraMapGyro) {
+            cameraMapRoutes = routes
+            cameraMapGyro = gs
+            cameraMapValue = GyroDisplayFeed.cameraMapOf(routes, gs)
+        }
+        return cameraMapValue
+    }
+
     /** Feeds one bias-corrected gyro sample to the gyro displays and the parallax edge; [axes] move the mouse now. */
     private fun feedVisuals(v: TouchVisuals, feeds: Array<GyroDisplayFeed>, x: Float, y: Float, z: Float, dt: Float, axes: Int) {
         val ratchets = if (inputAllowed) engine.ratchetsHeld else 0
@@ -1342,7 +1359,11 @@ class GamepadRuntime(context: Context) {
         gyroLiveAxes = axes
         val m = gyroMouse.motion(x, y, z)
         val gs = if (axes != 0) engine.gyroSettings else null
-        for (f in feeds) f.feed(m.yaw, m.pitch, m.roll, dt, axes, pressed, ratchets != 0, gs)
+        val map = if (axes != 0) cameraMapNow() else 0
+        for (f in feeds) {
+            if (map != 0) f.cameraMap = map
+            f.feed(m.yaw, m.pitch, m.roll, dt, axes, pressed, ratchets != 0, gs)
+        }
         if (dt == 0f || !v.gyroEdge) return
         if (v.gyroEdgeTilt) worldPose.fuse(m.yaw, m.pitch, m.roll, dt, GyroDisplayFeed.HEADING_EASE_S)
         else gyroSway.update(m.yaw, m.pitch, m.roll, dt, v.gyroEdgeSpringMs / 1000f)
@@ -1469,6 +1490,7 @@ class GamepadRuntime(context: Context) {
             val m = gyroMouse.motion(x - biasX, y - biasY, z - biasZ)
             overlay.gyro(m.yaw, m.pitch, m.roll, dt, axes, inputAllowed && engine.ratchetsHeld != 0)
             overlay.gyroActive = active
+            overlay.cameraMap = cameraMapNow()
             val gs = engine.gyroSettings
             overlay.rws(
                 gs.rwsOf(gs.sensitivityOf(MotionAxis.YAW)) ?: 0f, gs.rwsOf(gs.sensitivityOf(MotionAxis.PITCH)) ?: 0f,

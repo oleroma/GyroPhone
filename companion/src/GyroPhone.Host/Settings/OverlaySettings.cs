@@ -129,6 +129,8 @@ public sealed class OverlaySettings
     public bool Equator { get; set; } = true;
     public bool ScreenMark { get; set; } = true;
     public bool TopMark { get; set; } = true;
+    /// <summary>Phone and 3D shape: seen from a fixed angle (30° round, 30° above) with the world's axes, as the laser pointer is, instead of face-on.</summary>
+    public bool Axonometric { get; set; }
     /// <summary>What turns it: the phone, the game's camera, or a trackball (see <see cref="OverlayTurnsWith"/>).</summary>
     public OverlayTurnsWith TurnsWith { get; set; } = OverlayTurnsWith.Phone;
     /// <summary>

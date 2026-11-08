@@ -56,6 +56,7 @@ class OverlayFeedTest {
         f.setFingers(floatArrayOf(0.5f, 0.25f), 1)
         f.setStick("a", 1f, -0.5f)
         f.setStick("gone", 0.3f, 0.3f) // not in the layout: left out
+        f.cameraMap = 0 // the golden frame (shared with the PC's test) predates bytes 149 and 150
         val out = ByteArray(Wire.OVERLAY_PLAIN)
         assertEquals(Wire.OVERLAY_PLAIN, f.encodeFrame(out, 0, 0x01020304, setOf("a", "unknown"), emptySet()))
         assertEquals(FRAME, out.hex())
@@ -110,6 +111,18 @@ class OverlayFeedTest {
         f.encodeFrame(out, 0, 0, emptySet(), emptySet())
         assertEquals(0, out.getU8(139)) // wraps at 256
         assertEquals(OverlayFeed.PAD_ATTACHED, out.getU8(136))
+    }
+
+    @Test fun cameraMapGoesInBytes149And150() {
+        val f = OverlayFeed()
+        val out = ByteArray(Wire.OVERLAY_PLAIN)
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(3, out.getU8(149)) // roll on mouse X
+        assertEquals(2, out.getU8(150)) // pitch on mouse Y
+        f.cameraMap = 1 or (0x82 shl 8)
+        f.encodeFrame(out, 0, 0, emptySet(), emptySet())
+        assertEquals(1, out.getU8(149))
+        assertEquals(0x82, out.getU8(150))
     }
 
     @Test fun clearDisplaysCountsPressesInByte148() {

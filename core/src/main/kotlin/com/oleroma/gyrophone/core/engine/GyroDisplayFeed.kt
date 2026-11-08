@@ -38,6 +38,12 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     @Volatile var ratchetHeld = false
         private set
 
+    /**
+     * Which gyro axis moves the mouse sideways and which up and down, and which way ([cameraMapOf]):
+     * a display turning with the camera turns as the game's camera, by those. Set by the runtime.
+     */
+    @Volatile var cameraMap: Int = DEFAULT_CAMERA_MAP
+
     /** Seconds since the phone stopped turning, or since the ratchet press while easing on it. */
     private var calm = 0f
 
@@ -77,6 +83,20 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         // The camera's turn: the live gyro axes' share (other camera moves come through [camera]).
         fun cameraTurn() {
             if (dtSeconds == 0f || axes == 0) return
+            if (d.turnsWith == TurnsWith.CAMERA) {
+                // As the game's camera: the axis on mouse X turns it right, the one on mouse Y up; no roll.
+                val rates = floatArrayOf(yaw, pitch, roll)
+                fun deg(code: Int): Float {
+                    val a = code and 0x7F
+                    if (a == 0) return 0f
+                    val axis = CAMERA_AXES[a - 1]
+                    if (axes and MappingEngine.gyroBit(axis) == 0) return 0f
+                    return rates[a - 1] * dtSeconds * cameraSpeed(d, gyro, axis) * (if (code and 0x80 != 0) -1f else 1f)
+                }
+                val map = cameraMap
+                pose.cameraTurn(deg(map and 0xFF), deg(map shr 8 and 0xFF))
+                return
+            }
             fun k(a: MotionAxis) = if (axes and MappingEngine.gyroBit(a) == 0) 0f else cameraGain(d, gyro, a)
             pose.counterRotate(yaw * k(MotionAxis.YAW), pitch * k(MotionAxis.PITCH), roll * k(MotionAxis.ROLL), dtSeconds)
         }
@@ -173,6 +193,18 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         val d = display
         if (!d.followsCamera) return
         val deg = cameraDegrees(dx, dy, routes, gyro)
+        if (d.turnsWith == TurnsWith.CAMERA) {
+            // As the game's camera: sideways counts turn it right, up and down ones up; no roll.
+            fun turn(code: Int): Float {
+                val a = code and 0x7F
+                if (a == 0) return 0f
+                return deg[a - 1] * cameraSpeed(d, gyro, CAMERA_AXES[a - 1]) * (if (code and 0x80 != 0) -1f else 1f)
+            }
+            val map = cameraMapOf(routes, gyro)
+            cameraMap = map
+            pose.cameraTurn(turn(map and 0xFF), turn(map shr 8 and 0xFF))
+            return
+        }
         pose.counterRotate(
             deg[0] * cameraGain(d, gyro, MotionAxis.YAW), deg[1] * cameraGain(d, gyro, MotionAxis.PITCH),
             deg[2] * cameraGain(d, gyro, MotionAxis.ROLL), 1f,
@@ -186,8 +218,11 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
      * negative for [TurnsWith.CAMERA], which turns as the camera does.
      */
     private fun cameraGain(d: GyroDisplay, gyro: GyroSettings?, a: MotionAxis): Float =
-        (if (!d.trackballRws) d.trackballSpin else gyro?.let { it.rwsOf(it.sensitivityOf(a)) } ?: 1f) *
-            (if (d.turnsWith == TurnsWith.CAMERA) -1f else 1f)
+        cameraSpeed(d, gyro, a) * (if (d.turnsWith == TurnsWith.CAMERA) -1f else 1f)
+
+    /** How far it turns per degree the phone turns on [a]: as far as the game's camera (RWS), or Spin times. */
+    private fun cameraSpeed(d: GyroDisplay, gyro: GyroSettings?, a: MotionAxis): Float =
+        if (!d.trackballRws) d.trackballSpin else gyro?.let { it.rwsOf(it.sensitivityOf(a)) } ?: 1f
 
     /**
      * The compass ([GyroDisplay.needsCompass]) takes the way the phone faces now as heading 0 (the
@@ -270,6 +305,33 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
             // The gyro's Y is up +, the counts' down +.
             add(-dy, MouseMotion.MOVE_Y, MotionAxis.PITCH)
             return deg
+        }
+
+        private val CAMERA_AXES = arrayOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL)
+
+        /** No routes known: roll moves the mouse sideways, pitch up and down (as [cameraDegrees] falls back to). */
+        const val DEFAULT_CAMERA_MAP = 3 or (2 shl 8)
+
+        /**
+         * Which gyro axis [routes] put on mouse X (low byte) and on mouse Y (next byte), each 1 yaw,
+         * 2 pitch, 3 roll, + 0x80 when it moves the mouse the other way (a negative scale or
+         * sensitivity): the way the camera turns for that axis's turn. Roll for X and pitch for Y when
+         * none does. Also in OVERLAY (bytes 149, 150) for the PC's overlays.
+         */
+        fun cameraMapOf(routes: List<Mapping>, gyro: GyroSettings): Int {
+            fun code(motion: MouseMotion, fallback: MotionAxis): Int {
+                val m = routes.firstOrNull { it.source is InputSource.Gyro && (it.target as? OutputTarget.MouseAxis)?.motion == motion }
+                val a = (m?.source as? InputSource.Gyro)?.axis ?: fallback
+                val i = when (a) {
+                    MotionAxis.YAW -> 1
+                    MotionAxis.PITCH -> 2
+                    MotionAxis.ROLL -> 3
+                    else -> return 0
+                }
+                val perDeg = gyro.sensitivityOf(a) * ((m?.target as? OutputTarget.MouseAxis)?.scale ?: 1f)
+                return i or (if (perDeg < 0f) 0x80 else 0)
+            }
+            return code(MouseMotion.MOVE_X, MotionAxis.ROLL) or (code(MouseMotion.MOVE_Y, MotionAxis.PITCH) shl 8)
         }
 
         /** How fast the world pose's heading eases back to facing the player. */
