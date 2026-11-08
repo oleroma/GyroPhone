@@ -181,7 +181,7 @@ internal fun GyroDisplaySettingsScreen(
                             set(d.copy(laserFadeMs = it))
                         }
                         SwitchRow("Clear on ratchet", d.laserClearOnRatchet, "A ratchet press clears the drawing.") { set(d.copy(laserClearOnRatchet = it)) }
-                        Hint("Strokes glow, older ones darker. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every laser pointer at once.")
+                        Hint("Strokes glow, older ones darker. Their colour goes from Paint ahead (straight ahead) to Paint behind (turned all the way round), so a turn past 90° still reads. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every laser pointer at once.")
                     }
                     TextButton(onClick = { runtime.clearLaser(control.id) }) { Text("Clear") }
                 }
@@ -322,7 +322,7 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     GyroDisplayColor.BALL_POLE -> d.topMark
     GyroDisplayColor.LASER_GRID -> d.laserGrid
     GyroDisplayColor.LASER_X, GyroDisplayColor.LASER_Y, GyroDisplayColor.LASER_Z -> d.laserAxes
-    GyroDisplayColor.LASER_PAINT -> d.laserDraw
+    GyroDisplayColor.LASER_PAINT, GyroDisplayColor.LASER_PAINT_BEHIND -> d.laserDraw
     else -> true
 }
 

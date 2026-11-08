@@ -324,7 +324,8 @@ public sealed class OverlaySettings
         new("z", "Toward you axis", 0xFF5AA8FF),
         new("beam", "Beam", 0xFFFF3B3B),
         new("dot", "Dot", 0xFFFFFFFF),
-        new("paint", "Paint", 0xFFFFC94D),
+        new("paint", "Paint ahead", 0xFFFFC94D),
+        new("paint_behind", "Paint behind", 0xFF4DA6FF),
     ];
 
     private static readonly OverlayColor[] DiskColors =

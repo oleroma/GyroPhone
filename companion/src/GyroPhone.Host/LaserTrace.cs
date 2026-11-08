@@ -115,6 +115,9 @@ public sealed class LaserTrace
         _strokeGap = true;
     }
 
+    /// <summary>How far round from straight ahead (into the screen) shown-frame direction z is: 0 ahead .. 1 straight behind.</summary>
+    public static float Behind(float z) => Math.Clamp((1f + z) / 2f, 0f, 1f);
+
     /// <summary>How bright stroke point <paramref name="i"/> of <paramref name="count"/> made at <paramref name="t"/> is: 1 new .. 0 gone (<paramref name="fadeMs"/>), or by its place without fading.</summary>
     public static float StrokeLife(int i, int count, long t, long nowMs, int fadeMs) =>
         fadeMs > 0 ? Math.Clamp(1f - (nowMs - t) / (float)fadeMs, 0f, 1f)

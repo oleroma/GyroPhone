@@ -229,7 +229,7 @@ private class VisState {
     private val lb = FloatArray(3)
     private val pv = FloatArray(3)
     private var laserAxon = true
-    private val levelPaths = Array(LEVELS) { Path() }
+    private val levelPaths = Array(LEVELS * HUES) { Path() }
 
     /** Picture point of shown-frame direction ([x], [y], [z]) on a sphere of radius [r] at [c]; its depth (toward the viewer +) left in [pv]. */
     private fun laserAt(c: Offset, r: Float, x: Float, y: Float, z: Float): Offset {
@@ -292,21 +292,22 @@ private class VisState {
             }
         }
         // Strokes: each piece of the way between two points (long hops bent along
-        // the sphere) goes into the path of its side and strength, so a few paths draw them all.
-        fun lines(ring: LaserTrace.Ring, front: Boolean, life: (Int, Long) -> Float, width: Float, glow: Boolean, color: Color) {
+        // the sphere) goes into the path of its side, strength and colour step (from [ahead] straight
+        // ahead to [behind] turned all the way round), so a few paths draw them all.
+        fun lines(ring: LaserTrace.Ring, front: Boolean, life: (Int, Long) -> Float, width: Float, glow: Boolean, ahead: Color, behind: Color) {
             if (ring.count < 2) return
             for (p in levelPaths) p.reset()
-            var lastLevel = -1
+            var lastPath = -1
             for (i in 1 until ring.count) {
                 if (ring.gap(i)) {
-                    lastLevel = -1
+                    lastPath = -1
                     continue
                 }
                 ring.point(i - 1, la)
                 val t = ring.point(i, lb)
                 val k = life(i, t)
                 if (k <= 0f) {
-                    lastLevel = -1
+                    lastPath = -1
                     continue
                 }
                 val level = (kotlin.math.ceil(k * LEVELS).toInt()).coerceIn(1, LEVELS)
@@ -324,31 +325,36 @@ private class VisState {
                     val pt = laserAt(c, r, x, y, z)
                     val nowFront = pv[2] > 0f
                     if (nowFront == front && prevFront == front) {
-                        val into = levelPaths[level - 1]
-                        if (lastLevel != level) into.moveTo(prev.x, prev.y)
+                        val hue = (LaserTrace.behind(z) * (HUES - 1) + 0.5f).toInt().coerceIn(0, HUES - 1)
+                        val at = (level - 1) * HUES + hue
+                        val into = levelPaths[at]
+                        if (lastPath != at) into.moveTo(prev.x, prev.y)
                         into.lineTo(pt.x, pt.y)
-                        lastLevel = level
-                    } else lastLevel = -1
+                        lastPath = at
+                    } else lastPath = -1
                     prev = pt
                     prevFront = nowFront
                 }
             }
             val side = if (front) 0.5f else 1f
-            for (level in 1..LEVELS) {
+            val w = width * (if (front) 0.6f else 1f)
+            for (level in 1..LEVELS) for (hue in 0 until HUES) {
+                val path = levelPaths[(level - 1) * HUES + hue]
+                if (path.isEmpty) continue
                 val k = level / LEVELS.toFloat()
+                val color = androidx.compose.ui.graphics.lerp(ahead, behind, hue / (HUES - 1f))
                 // Older: darker and fainter.
                 val shade = 0.35f + 0.65f * k
                 val col = Color(color.red * shade, color.green * shade, color.blue * shade, color.alpha * (0.35f + 0.65f * k) * side)
-                val w = width * (if (front) 0.6f else 1f)
-                if (glow) drawPath(levelPaths[level - 1], col.copy(alpha = col.alpha * 0.22f), style = Stroke(w * 3f, cap = StrokeCap.Round, join = StrokeJoin.Round))
-                drawPath(levelPaths[level - 1], col, style = Stroke(w, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                if (glow) drawPath(path, col.copy(alpha = col.alpha * 0.22f), style = Stroke(w * 3f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(path, col, style = Stroke(w, cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
         }
         val brushPx = maxOf(1.5f * density, r * Math.toRadians(d.laserBrush.coerceIn(1, 20).toDouble()).toFloat() * 0.6f)
         fun paint(front: Boolean) {
             val s = lt?.strokes ?: return
             val n = s.count
-            lines(s, front, { i, t -> LaserTrace.strokeLife(i, n, t, now, fadeMs) }, brushPx, true, col(GyroDisplayColor.LASER_PAINT))
+            lines(s, front, { i, t -> LaserTrace.strokeLife(i, n, t, now, fadeMs) }, brushPx, true, col(GyroDisplayColor.LASER_PAINT), col(GyroDisplayColor.LASER_PAINT_BEHIND))
         }
         val hit = laserAt(c, r, beam[0], beam[1], beam[2])
         val hitFront = pv[2] > 0f
@@ -1059,6 +1065,9 @@ private val WORLD_AXES = arrayOf(Color(0xFFFF5A5A), Color(0xFF5ADB6E), Color(0xF
 
 /** A laser pointer's strokes fade in this many steps (one path each). */
 private const val LEVELS = 8
+
+/** A laser pointer's strokes blend from Paint ahead to Paint behind in this many steps (one path each). */
+private const val HUES = 8
 
 /** The edge's swing per degree, its furthest swing, each layer's step inwards and the outer corner radius. */
 private const val EDGE_PX_PER_DEG = 1.5f

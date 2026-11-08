@@ -287,7 +287,8 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     LASER_Z(GyroDisplayKind.LASER, "z", "Toward you axis", 0xFF5AA8FF),
     LASER_BEAM(GyroDisplayKind.LASER, "beam", "Beam", 0xFFFF3B3B),
     LASER_DOT(GyroDisplayKind.LASER, "dot", "Dot", 0xFFFFFFFF),
-    LASER_PAINT(GyroDisplayKind.LASER, "paint", "Paint", 0xFFFFC94D),
+    LASER_PAINT(GyroDisplayKind.LASER, "paint", "Paint ahead", 0xFFFFC94D),
+    LASER_PAINT_BEHIND(GyroDisplayKind.LASER, "paint_behind", "Paint behind", 0xFF4DA6FF),
     ;
 
     companion object {

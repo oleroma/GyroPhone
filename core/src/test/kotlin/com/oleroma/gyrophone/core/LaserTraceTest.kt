@@ -33,6 +33,12 @@ class LaserTraceTest {
         assertArrayEquals(LaserTrace.VIEW, m, 1e-6f)
     }
 
+    @Test fun behindGoesFromAheadToTurnedRound() {
+        assertEquals(0f, LaserTrace.behind(-1f), 0f)
+        assertEquals(0.5f, LaserTrace.behind(0f), 0f)
+        assertEquals(1f, LaserTrace.behind(1f), 0f)
+    }
+
     @Test fun faceOnSeesTheBeamStraightInAsADot() {
         val p = FloatArray(3)
         LaserTrace.view(0f, 0f, -1f, p, axon = false)

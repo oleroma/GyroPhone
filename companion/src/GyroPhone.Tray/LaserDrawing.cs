@@ -19,6 +19,9 @@ internal static class LaserDrawing
     /// <summary>Strokes fade in this many steps.</summary>
     private const int Levels = 8;
 
+    /// <summary>Strokes blend from Paint ahead to Paint behind in this many steps.</summary>
+    private const int Hues = 8;
+
     public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held)
     {
         float r = Math.Min(area.Width, area.Height) / 2f * 0.95f;
@@ -66,18 +69,22 @@ internal static class LaserDrawing
 
         // Strokes: each piece of the way between two points (long hops bent along the
         // sphere), drawn on its side, older pieces darker and fainter.
-        void Lines(LaserTrace.Ring ring, bool front, Func<int, long, float> life, float width, bool glow, Color color)
+        // Their colour goes from ahead (straight ahead) to behind (turned all the way round).
+        void Lines(LaserTrace.Ring ring, bool front, Func<int, long, float> life, float width, bool glow, Color ahead, Color behind)
         {
             if (ring.Count < 2) return;
             float side = front ? 0.5f : 1f;
             float w = width * (front ? 0.6f : 1f);
             var run = new List<PointF>(64);
-            int runLevel = -1;
+            int runLevel = -1, runHue = -1;
             void Flush()
             {
                 if (run.Count >= 2)
                 {
                     float k = runLevel / (float)Levels;
+                    float h = runHue / (Hues - 1f);
+                    var color = Color.FromArgb((int)(ahead.A + (behind.A - ahead.A) * h), (int)(ahead.R + (behind.R - ahead.R) * h),
+                        (int)(ahead.G + (behind.G - ahead.G) * h), (int)(ahead.B + (behind.B - ahead.B) * h));
                     float shade = 0.35f + 0.65f * k;
                     var col = Color.FromArgb(Math.Clamp((int)(color.A * (0.35f + 0.65f * k) * side), 0, 255),
                         (int)(color.R * shade), (int)(color.G * shade), (int)(color.B * shade));
@@ -87,6 +94,7 @@ internal static class LaserDrawing
                 }
                 run.Clear();
                 runLevel = -1;
+                runHue = -1;
             }
             for (int i = 1; i < ring.Count; i++)
             {
@@ -115,11 +123,13 @@ internal static class LaserDrawing
                     var (p, depth) = At(x / l, y / l, z / l);
                     if (depth > 0f == front && prevZ > 0f == front)
                     {
-                        if (level != runLevel) Flush();
+                        int hue = Math.Clamp((int)(LaserTrace.Behind(z / l) * (Hues - 1) + 0.5f), 0, Hues - 1);
+                        if (level != runLevel || hue != runHue) Flush();
                         if (run.Count == 0)
                         {
                             run.Add(prev);
                             runLevel = level;
+                            runHue = hue;
                         }
                         run.Add(p);
                     }
@@ -136,7 +146,7 @@ internal static class LaserDrawing
         {
             if (trace == null) return;
             int n = trace.Strokes.Count;
-            Lines(trace.Strokes, front, (i, t) => LaserTrace.StrokeLife(i, n, t, nowMs, fadeMs), brushPx, true, Color.FromArgb(s.Color("paint")));
+            Lines(trace.Strokes, front, (i, t) => LaserTrace.StrokeLife(i, n, t, nowMs, fadeMs), brushPx, true, Color.FromArgb(s.Color("paint")), Color.FromArgb(s.Color("paint_behind")));
         }
 
         var (hit, hitZ) = At(beam.X, beam.Y, beam.Z);

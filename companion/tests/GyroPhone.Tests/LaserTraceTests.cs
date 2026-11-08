@@ -33,6 +33,14 @@ public class LaserTraceTests
     }
 
     [Fact]
+    public void BehindGoesFromAheadToTurnedRound()
+    {
+        Assert.Equal(0f, LaserTrace.Behind(-1));
+        Assert.Equal(0.5f, LaserTrace.Behind(0));
+        Assert.Equal(1f, LaserTrace.Behind(1));
+    }
+
+    [Fact]
     public void FaceOnSeesTheBeamStraightInAsADot()
     {
         Assert.Equal((0f, 0f, -1f), LaserTrace.ToView(0, 0, -1, false));

@@ -121,6 +121,9 @@ class LaserTrace {
         const val STROKE_STEP_DEG = 0.5f
         private val STROKE_STEP_COS = cos(Math.toRadians(STROKE_STEP_DEG.toDouble())).toFloat()
 
+        /** How far round from straight ahead (into the screen) shown-frame direction z is: 0 ahead .. 1 straight behind. */
+        fun behind(z: Float): Float = ((1f + z) / 2f).coerceIn(0f, 1f)
+
         /** How bright stroke point [i] of [count] made at [t] is at [nowMs]: 1 new .. 0 gone ([fadeMs]), or by its place without fading. */
         fun strokeLife(i: Int, count: Int, t: Long, nowMs: Long, fadeMs: Int): Float =
             if (fadeMs > 0) (1f - (nowMs - t) / fadeMs.toFloat()).coerceIn(0f, 1f)
