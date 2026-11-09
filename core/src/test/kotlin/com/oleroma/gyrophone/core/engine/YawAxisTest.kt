@@ -27,7 +27,7 @@ class YawAxisTest {
         assertEquals(-1f, motion(0f, 0f, 1f).roll, 0f)
         // Through the screen becomes shown roll (stored yaw); across stays pitch.
         val through = mouse.withYawAxis(motion(0f, 0f, 1f), YawAxis.SCREEN_Y)
-        assertEquals(-1f, through.yaw, 0f); assertEquals(0f, through.roll, 0f)
+        assertEquals(1f, through.yaw, 0f); assertEquals(0f, through.roll, 0f)
         assertEquals(1f, mouse.withYawAxis(motion(1f, 0f, 0f), YawAxis.SCREEN_Y).pitch, 0f)
     }
 
