@@ -390,14 +390,6 @@ val GyroDisplay.gimbalLocks: Int
         else -> 0
     }
 
-/** The gimbal axes that stop at ±90° (bits as [gimbalLocks]): a trackball's (turning about the sphere's axes), Camera's pitch. */
-val GyroDisplay.gimbalStops: Int
-    get() = when (turnsWith) {
-        TurnsWith.TRACKBALL -> if (trackballOwnAxes) 0 else (0..2).fold(0) { acc, i -> if (trackballAxes shr (8 * i) and TRACKBALL_STOP != 0) acc or (1 shl i) else acc }
-        TurnsWith.CAMERA -> 2
-        else -> 0
-    }
-
 /**
  * A trackball's locked axes in [axes] ([GyroDisplay.trackballAxes]; bit 0 yaw, 1 pitch, 2 roll): those
  * no gyro turn drives (None), held at 0; and those saved with [TRACKBALL_LOCK] before None meant it.

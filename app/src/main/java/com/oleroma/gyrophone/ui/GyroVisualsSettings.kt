@@ -236,7 +236,7 @@ internal fun GyroDisplaySettingsScreen(
                     SwitchRow("Sphere turns, beam stays ahead", d.laserSphereTurns, "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.") { set(d.copy(laserSphereTurns = it)) }
                     if (!d.laserRifle) SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
                     SwitchRow("Axes (yaw Y red, pitch X green, roll Z blue)", d.laserAxes, "They turn with the laser, R along its beam.") { set(d.copy(laserAxes = it)) }
-                    if (!d.laserRifle && !d.laserCrosshair) SwitchRow("Gimbal rings", d.laserGimbal, "Yaw (red, outside), pitch (green) and roll (blue) rings, each round its axis, stepped as the gimbal turns: yaw turns only the yaw ring, pitch the pitch and roll rings, roll the roll ring, so the dots and the gaps between rings show each axis's angle. A None axis's ring is faint and dashed; Stop at ±90° shows its limits as ticks.") { set(d.copy(laserGimbal = it)) }
+                    if (!d.laserRifle && !d.laserCrosshair) SwitchRow("Gimbal rings", d.laserGimbal, "Yaw (red, outside), pitch (green) and roll (blue) rings turning with the laser's axes, each round its own: the path the beam and crosshair take turning about it. A None axis's ring is faint and dashed, and an axis lights up while the gyro turns it.") { set(d.copy(laserGimbal = it)) }
                     GroupTitle("Draw")
                     SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim.") { set(d.copy(laserDraw = it)) }
                     if (d.laserDraw) Indented {
@@ -372,7 +372,7 @@ private fun TrackballAxesSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
     }
     Hint(
         if (d.trackballOwnAxes) "As the laser sees it: up and down about its own right, left and right about its own up, so it always moves square to where it aims and never rolls by itself. Moving in a loop leaves it a little rolled (the sphere is curved); Roll's ease back levels that out."
-        else "As a game camera (a gimbal): left and right about the sphere's vertical, up and down about its turned right, then roll about the beam. The gimbal rings show each angle.",
+        else "As a game camera (a gimbal): left and right about the sphere's vertical, up and down about its turned right, then roll about the beam.",
     )
     // Its bytes: 0 about up Y (yaw), 1 about right X (pitch), 2 along the beam Z (roll).
     for ((i, name) in listOf(0 to "Yaw", 1 to "Pitch", 2 to "Roll")) {
@@ -391,7 +391,7 @@ private fun TrackballAxesSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
         }
         AxisEaseSettings(name, d.easeOf(i)) { set(d.withEase(i, it)) }
     }
-    Hint("None holds an axis still: nothing turns it, as Camera never rolls. On the laser pointer a None axis is grey and dashed with a padlock, its gimbal ring faint; Stop at ±90° shows ticks at the limits on its ring, and an axis lights up while the gyro turns it.")
+    Hint("None holds an axis still: nothing turns it, as Camera never rolls. On the laser pointer a None axis is grey and dashed with a padlock, its gimbal ring faint, and an axis lights up while the gyro turns it.")
     if (d.trackballAxes != TRACKBALL_AS_CAMERA || d.trackballOwnAxes) TextButton(onClick = { set(d.copy(trackballAxes = TRACKBALL_AS_CAMERA, trackballOwnAxes = false)) }) { Text("As the camera") }
 }
 

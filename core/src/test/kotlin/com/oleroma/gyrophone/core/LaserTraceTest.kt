@@ -257,47 +257,17 @@ class CameraTurnTest {
         return mul(mul(ry, rx), rz)
     }
 
-    @Test fun gimbalAnglesReadBackAPose() {
-        val out = FloatArray(3)
-        LaserTrace.gimbalAngles(gimbal(0.5f, -0.3f, 0.2f), 0, out)
-        assertEquals(0.5f, out[0], 1e-4f)
-        assertEquals(-0.3f, out[1], 1e-4f)
-        assertEquals(0.2f, out[2], 1e-4f)
-        // Over the top with roll locked: read the way that keeps roll at 0.
-        val over = 2.2f
-        LaserTrace.gimbalAngles(gimbal(0.4f, over, 0f), 4, out)
-        assertEquals(0f, out[2], 1e-4f)
-        assertEquals(over, out[1], 1e-4f)
-        assertEquals(0.4f, out[0], 1e-4f)
-    }
-
-    @Test fun gimbalRingsGoRoundTheirAxes() {
-        val angles = floatArrayOf(0.7f, 0.4f, 0.3f)
-        val f0 = gimbal(0.7f, 0f, 0f)
-        val f1 = gimbal(0.7f, 0.4f, 0f)
-        val f2 = gimbal(0.7f, 0.4f, 0.3f)
-        // Each ring's axis: yaw the vertical (f0 Y), pitch the turned right (f1 X), roll the beam (f2 Z).
-        val axes = arrayOf(
-            floatArrayOf(f0[1], f0[4], f0[7]), floatArrayOf(f1[0], f1[3], f1[6]), floatArrayOf(f2[2], f2[5], f2[8]),
-        )
+    @Test fun gimbalRingsTurnWithTheLasersAxes() {
+        val m = gimbal(0.7f, 0.4f, 0.3f)
         for (i in 0..2) {
             val rho = LaserTrace.GIMBAL_RADII[i]
-            val pts = LaserTrace.gimbalRing(i, angles, 64)
-            val ax = axes[i]
+            val pts = LaserTrace.gimbalRing(i, m, 64)
+            // Its axis: the laser's Y for yaw, X for pitch, Z for roll (columns of its pose).
+            val c = intArrayOf(1, 0, 2)[i]
             for (j in pts.indices step 3) {
                 assertEquals(rho, kotlin.math.sqrt(pts[j] * pts[j] + pts[j + 1] * pts[j + 1] + pts[j + 2] * pts[j + 2]), 1e-4f)
-                // Square to its axis: round it.
-                assertEquals(0f, pts[j] * ax[0] + pts[j + 1] * ax[1] + pts[j + 2] * ax[2], 1e-4f)
+                assertEquals(0f, pts[j] * m[c] + pts[j + 1] * m[3 + c] + pts[j + 2] * m[6 + c], 1e-4f)
             }
         }
-        assertEquals(0f, axes[0][0], 1e-6f)
-        // The dots: yaw and pitch where the laser faces (beam, −Z of f1 for pitch), roll at the laser's up.
-        val mk = FloatArray(3)
-        LaserTrace.gimbalMark(1, angles, mk)
-        for (k in 0..2) assertEquals(-LaserTrace.GIMBAL_RADII[1] * f1[k * 3 + 2], mk[k], 1e-4f)
-        LaserTrace.gimbalMark(2, angles, mk)
-        for (k in 0..2) assertEquals(LaserTrace.GIMBAL_RADII[2] * f2[k * 3 + 1], mk[k], 1e-4f)
-        LaserTrace.gimbalMark(0, angles, mk)
-        assertEquals(0f, mk[1], 1e-4f)
     }
 }
