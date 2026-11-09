@@ -407,6 +407,28 @@ public class OverlayTests
     }
 
     [Fact]
+    public void TrackballAxesEaseBackEachOnItsOwn()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Trackball, TrackballRws = false, TrackballSpin = 1f };
+        var e = s.EaseOf(0);
+        e.On = true; e.OnRatchet = false; e.DelayMs = 0; e.Seconds = 0.2f;
+        var p = new GyroPhone.Host.OverlayPose();
+        OverlayFrame F(float pitch, float roll)
+        {
+            var f = Motion(0f, 0.01f);
+            f.TurnPitch = pitch;
+            f.TurnRoll = roll;
+            return f;
+        }
+        for (int i = 0; i < 50; i++) p.Feed(F(0f, 0.6f), s); // 30° right
+        for (int i = 0; i < 50; i++) p.Feed(F(0.6f, 0f), s); // 30° up
+        for (int i = 0; i < 100; i++) p.Feed(F(0f, 0f), s); // still: left and right eases back, up and down stays
+        float w = p.W, x = p.X, y = p.Y, z = p.Z;
+        Assert.Equal(0f, 2 * (x * z + w * y), 3);
+        Assert.Equal(0.5f, -2 * (y * z - w * x), 3);
+    }
+
+    [Fact]
     public void CameraTurnsWithTheGyroOnAnyKindAndIgnoresGravity()
     {
         var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Horizon, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Camera, Gravity = true, Ease = false, TrackballRws = false, TrackballSpin = 2f };

@@ -123,6 +123,11 @@ data class GyroDisplay(
      * The default turns it as the Camera mode does with the default gyro mouse ([TRACKBALL_AS_CAMERA]).
      */
     val trackballAxes: Int = TRACKBALL_AS_CAMERA,
+    /**
+     * [TurnsWith.TRACKBALL]: easing each of its axes (as [trackballAxes]: up, right, through the
+     * screen) back to straight, each with its own options. Easing any turns it as a gimbal, as a lock does.
+     */
+    val trackballEase: List<AxisEase> = List(3) { AxisEase() },
     /** Branch builds before v3: a trackball turning as the camera ([TurnsWith.CAMERA] since). */
     val trackballInvert: Boolean = false,
     /** PHONE and BALL: seen from a fixed angle (30° round, 30° above) with the world's axes, as the laser pointer is, instead of face-on. */
@@ -310,6 +315,28 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
         fun of(kind: GyroDisplayKind): List<GyroDisplayColor> = entries.filter { it.kind == kind }
     }
 }
+
+/**
+ * A trackball axis easing back to straight ([GyroDisplay.trackballEase]), as [GyroDisplay.ease] for
+ * the whole pose: [on]; with [onRatchet] while a ratchet is held (stopping when let go), else
+ * whenever the phone stops turning; starting [delayMs] later; 95% of the way back in [seconds], or
+ * with [bySpeed] at [speed] deg/s.
+ */
+@Serializable
+data class AxisEase(
+    val on: Boolean = false,
+    val onRatchet: Boolean = true,
+    val delayMs: Int = 300,
+    val bySpeed: Boolean = false,
+    val seconds: Float = 2f,
+    val speed: Int = 90,
+)
+
+/** Trackball axis [i]'s easing ([GyroDisplay.trackballEase]; off when not saved). */
+fun GyroDisplay.easeOf(i: Int): AxisEase = trackballEase.getOrNull(i) ?: AxisEase()
+
+/** This display with trackball axis [i] easing as [e]. */
+fun GyroDisplay.withEase(i: Int, e: AxisEase): GyroDisplay = copy(trackballEase = List(3) { if (it == i) e else easeOf(it) })
 
 /**
  * In a [GyroDisplay.trackballAxes] byte: that axis is locked, held at 0 whatever turns the others

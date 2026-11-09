@@ -231,13 +231,13 @@ class GyroPose {
      */
     @Synchronized
     fun gimbalTurn(a: Float, b: Float, c: Float, locks: Int, maxPitch: Float) {
-        if (w != gimbalOf[0] || x != gimbalOf[1] || y != gimbalOf[2] || z != gimbalOf[3]) {
-            gimbal[0] = atan2(2 * (x * z + w * y), 1 - 2 * (x * x + y * y))
-            gimbal[1] = asin((-2 * (y * z - w * x)).coerceIn(-1f, 1f))
-            gimbal[2] = atan2(2 * (x * y + w * z), 1 - 2 * (x * x + z * z))
-        }
+        syncGimbal()
         gimbal[0] += a; gimbal[1] += b; gimbal[2] += c
-        for (i in 0..2) if (locks and (1 shl i) != 0) gimbal[i] = 0f
+        for (i in 0..2) {
+            // Within half a turn either way, so easing back never unwinds whole turns.
+            if (gimbal[i] > PI_F) gimbal[i] -= 2 * PI_F else if (gimbal[i] < -PI_F) gimbal[i] += 2 * PI_F
+            if (locks and (1 shl i) != 0) gimbal[i] = 0f
+        }
         if (maxPitch > 0f) gimbal[1] = gimbal[1].coerceIn(-maxPitch, maxPitch)
         // Ry(a) · Rx(b), then · Rz(c)
         val cy = cos(gimbal[0] / 2); val sy = sin(gimbal[0] / 2)
@@ -250,6 +250,21 @@ class GyroPose {
         z = pw * sz + pz * cz
         gimbalOf[0] = w; gimbalOf[1] = x; gimbalOf[2] = y; gimbalOf[3] = z
         version++
+    }
+
+    /** The gimbal angles ([gimbalTurn]: about the vertical, its right, where it faces; radians) into [out]. */
+    @Synchronized
+    fun gimbalAngles(out: FloatArray) {
+        syncGimbal()
+        gimbal.copyInto(out)
+    }
+
+    /** Reads the gimbal angles from the pose again when anything but [gimbalTurn] turned it. */
+    private fun syncGimbal() {
+        if (w == gimbalOf[0] && x == gimbalOf[1] && y == gimbalOf[2] && z == gimbalOf[3]) return
+        gimbal[0] = atan2(2 * (x * z + w * y), 1 - 2 * (x * x + y * y))
+        gimbal[1] = asin((-2 * (y * z - w * x)).coerceIn(-1f, 1f))
+        gimbal[2] = atan2(2 * (x * y + w * z), 1 - 2 * (x * x + z * z))
     }
 
     /** Exactly straight, keeping what the sensors last said (unlike [reset]). */
@@ -433,6 +448,7 @@ class GyroPose {
 
         /** A camera pitches no further than this up or down (radians, 89°). */
         const val MAX_CAMERA_PITCH = (89 * Math.PI / 180).toFloat()
+        private const val PI_F = Math.PI.toFloat()
         private const val PI = Math.PI.toFloat()
         private const val TWO_PI = (2 * Math.PI).toFloat()
 

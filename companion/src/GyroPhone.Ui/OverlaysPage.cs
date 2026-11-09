@@ -72,6 +72,13 @@ internal sealed class OverlaysPage : Page
     private readonly Seg<int>[] _tbFrom = new Seg<int>[3];
     private readonly CheckBox[] _tbInvert = new CheckBox[3];
     private readonly CheckBox[] _tbLock = new CheckBox[3];
+    private readonly CheckBox[] _tbEase = new CheckBox[3];
+    private readonly StackPanel[] _tbEaseOptions = new StackPanel[3];
+    private readonly Seg<bool>[] _tbEaseWhen = new Seg<bool>[3];
+    private readonly Seg<bool>[] _tbEaseBy = new Seg<bool>[3];
+    private readonly SliderRow[] _tbEaseDelay = new SliderRow[3];
+    private readonly SliderRow[] _tbEaseSeconds = new SliderRow[3];
+    private readonly SliderRow[] _tbEaseSpeed = new SliderRow[3];
     private readonly TextBlock[] _tbFromTitle = new TextBlock[3];
     private readonly Button _tbAsCamera;
     private readonly SliderRow _spin;
@@ -334,8 +341,26 @@ internal sealed class OverlaysPage : Page
             _trackballAxes.Children.Add(_tbFrom[i].View);
             _tbInvert[i] = Parts.Toggle($"Invert {name} axis", () => Change(o => Put(o, ((o.TrackballAxes >> shift) & 0xFF) ^ 0x80)));
             _trackballAxes.Children.Add(_tbInvert[i]);
+            // Easing this axis back to straight, with its own options.
+            int ai = i;
+            _tbEase[i] = Parts.Toggle($"Ease {name} axis back", () => Change(o => o.EaseOf(ai).On = !o.EaseOf(ai).On));
+            _trackballAxes.Children.Add(_tbEase[i]);
+            var opts = new StackPanel { Margin = new Thickness(20, 0, 0, 4) };
+            _tbEaseWhen[i] = new Seg<bool>(r => Change(o => o.EaseOf(ai).OnRatchet = r), false, ("On ratchet", true), ("When the phone stops", false));
+            opts.Children.Add(_tbEaseWhen[i].View);
+            _tbEaseDelay[i] = new SliderRow("Delay", 0, 3000, 50, v => $"{v:0} ms", v => Change(o => o.EaseOf(ai).DelayMs = (int)v));
+            opts.Children.Add(_tbEaseDelay[i].View);
+            _tbEaseBy[i] = new Seg<bool>(b => Change(o => o.EaseOf(ai).BySpeed = b), false, ("By time", false), ("By speed", true));
+            _tbEaseBy[i].View.Margin = new Thickness(0, 8, 0, 4);
+            opts.Children.Add(_tbEaseBy[i].View);
+            _tbEaseSeconds[i] = new SliderRow("Back in", 0.1, 5, 0.1, v => $"{v:0.0} s", v => Change(o => o.EaseOf(ai).Seconds = (float)v));
+            _tbEaseSpeed[i] = new SliderRow("Speed", 10, 720, 10, v => $"{v:0} °/s", v => Change(o => o.EaseOf(ai).Speed = (int)v));
+            opts.Children.Add(_tbEaseSeconds[i].View);
+            opts.Children.Add(_tbEaseSpeed[i].View);
+            _tbEaseOptions[i] = opts;
+            _trackballAxes.Children.Add(opts);
         }
-        _trackballAxes.Children.Add(Parts.Text("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces; with Yaw locked it stops at straight up or down.", "Hint"));
+        _trackballAxes.Children.Add(Parts.Text("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked or easing back it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces; with Yaw locked it stops at straight up or down.", "Hint"));
         _tbAsCamera = Parts.Button("As the camera", () => Change(o => o.TrackballAxes = OverlaySettings.TrackballAsCamera));
         _trackballAxes.Children.Add(_tbAsCamera);
         tbb.Children.Add(_trackballAxes);
@@ -566,9 +591,20 @@ internal sealed class OverlaysPage : Page
             _tbFrom[i].Set(code & 0x3F);
             Parts.SetChecked(_tbInvert[i], (code & 0x80) != 0);
             Parts.Show(_tbInvert[i], !locked && (code & 0x3F) != 0);
+            var e = o.EaseOf(i);
+            Parts.SetChecked(_tbEase[i], e.On);
+            Parts.Show(_tbEase[i], !locked);
+            Parts.Show(_tbEaseOptions[i], !locked && e.On);
+            _tbEaseWhen[i].Set(e.OnRatchet);
+            _tbEaseDelay[i].Set(e.DelayMs);
+            _tbEaseBy[i].Set(e.BySpeed);
+            _tbEaseSeconds[i].Set(e.Seconds);
+            _tbEaseSpeed[i].Set(e.Speed);
+            Parts.Show(_tbEaseSeconds[i].View, !e.BySpeed);
+            Parts.Show(_tbEaseSpeed[i].View, e.BySpeed);
         }
         Parts.Show(_tbAsCamera, o.TrackballAxes != OverlaySettings.TrackballAsCamera);
-        // A trackball never eases back: every roll is a camera move. Following the camera: no gravity or compass.
+        // A trackball eases back per axis (in its axis rows), not here. Following the camera: no gravity or compass.
         Parts.Show(_poseCard, !o.IsTrackball);
         Parts.Show(_gravity, !o.FollowsCamera);
         Parts.Show(_gravityDivider, !o.FollowsCamera);

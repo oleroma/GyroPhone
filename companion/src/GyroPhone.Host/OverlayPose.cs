@@ -84,11 +84,16 @@ public sealed class OverlayPose
             _wasTurns = s.TurnsWith;
             ResetPose();
         }
-        // A trackball never eases back: every roll is a camera move.
+        // A trackball eases back only on the axes picked to.
         if (s.IsTrackball)
         {
+            bool press = _lastPresses >= 0 && f.RatchetPresses != _lastPresses;
             _lastPresses = f.RatchetPresses;
+            long at = System.Diagnostics.Stopwatch.GetTimestamp();
+            float clock = _lastFeedAt == 0 ? 0f : Math.Min((at - _lastFeedAt) / (float)System.Diagnostics.Stopwatch.Frequency, 0.1f);
+            _lastFeedAt = at;
             CameraTurn(f, s);
+            TrackballEase(f, s, press, clock);
             return;
         }
         if (compass && !_wasCompass) _aimPending = true;
@@ -202,23 +207,111 @@ public sealed class OverlayPose
         // About each of its fixed axes by the turn TrackballAxes picks for it, as the phone turns
         // (the opposite of holding still against the world).
         int m = s.TrackballAxes;
-        int locks = 0;
-        for (int i = 0; i < 3; i++)
-            if (((m >> (8 * i)) & OverlaySettings.TrackballLock) != 0) locks |= 1 << i;
-        if (locks == 0)
+        int locks = Locks(m);
+        if (locks == 0 && !AnyEase(s))
         {
             CounterRotate(-About(m, 0, yaw, pitch, roll), -About(m, 1, yaw, pitch, roll), -About(m, 2, yaw, pitch, roll));
             return;
         }
-        // A locked axis: as a game camera turns (a gimbal), so it stays level; with the facing axis
-        // locked it stops at straight up or down, as Camera does.
+        // A locked or easing axis: as a game camera turns (a gimbal), so each axis has its own angle;
+        // with the facing axis locked it stops at straight up or down, as Camera does.
         GimbalTurn(-About(m, 0, yaw, pitch, roll) * DegToRad, About(m, 1, yaw, pitch, roll) * DegToRad,
-            -About(m, 2, yaw, pitch, roll) * DegToRad, locks, (locks & 4) != 0 && (locks & 2) == 0 ? 89f * DegToRad : 0f);
+            -About(m, 2, yaw, pitch, roll) * DegToRad, locks, MaxPitch(locks));
+    }
+
+    private static int Locks(int m)
+    {
+        int locks = 0;
+        for (int i = 0; i < 3; i++)
+            if (((m >> (8 * i)) & OverlaySettings.TrackballLock) != 0) locks |= 1 << i;
+        return locks;
+    }
+
+    private static float MaxPitch(int locks) => (locks & 4) != 0 && (locks & 2) == 0 ? 89f * DegToRad : 0f;
+
+    private static bool AnyEase(OverlaySettings s)
+    {
+        for (int i = 0; i < 3; i++)
+            if (s.EaseOf(i).On) return true;
+        return false;
+    }
+
+    /// <summary>Per trackball axis: seconds since the phone stopped (or since the ratchet press), easing on a held ratchet.</summary>
+    private readonly float[] _axisCalm = new float[3];
+    private readonly bool[] _axisEasing = new bool[3];
+    private readonly float[] _easeStep = new float[3];
+
+    /// <summary>
+    /// Eases the trackball's axes picked to (TrackballEase) back toward straight: on a ratchet press while it is held
+    /// (by the PC's <paramref name="clock"/>, as the gyro is paused then), or once the phone stopped; each by its own
+    /// delay and speed. As the phone's GyroDisplayFeed.trackballEase.
+    /// </summary>
+    private void TrackballEase(OverlayFrame f, OverlaySettings s, bool pressed, float clock)
+    {
+        if (!AnyEase(s))
+        {
+            Array.Clear(_axisEasing);
+            return;
+        }
+        float dt = f.TurnSeconds;
+        bool live = f.PoseLive && dt > 0f;
+        bool busy = live && MathF.Sqrt(f.TurnYaw * f.TurnYaw + f.TurnPitch * f.TurnPitch + f.TurnRoll * f.TurnRoll) / dt > StillDps;
+        GimbalSync();
+        bool any = false;
+        for (int i = 0; i < 3; i++)
+        {
+            _easeStep[i] = 0f;
+            var e = s.EaseOf(i);
+            if (!e.On)
+            {
+                _axisEasing[i] = false;
+                continue;
+            }
+            float step;
+            if (e.OnRatchet)
+            {
+                if (pressed)
+                {
+                    _axisEasing[i] = true;
+                    _axisCalm[i] = 0f;
+                }
+                else if (!f.RatchetHeld) _axisEasing[i] = false;
+                if (!_axisEasing[i]) continue;
+                step = clock;
+            }
+            else
+            {
+                if (!live) continue;
+                step = dt;
+            }
+            if (!e.OnRatchet && busy) { _axisCalm[i] = 0f; continue; }
+            _axisCalm[i] += step;
+            if (step == 0f || _axisCalm[i] < Math.Clamp(e.DelayMs, 0, 3000) / 1000f) continue;
+            float a = _gimbal[i];
+            if (a == 0f) continue;
+            // By time: an exponential, 95% of the way back after its seconds; then exactly straight.
+            float max = Math.Clamp(e.Speed, 1, 3600) * DegToRad * step;
+            float next = e.BySpeed ? a - Math.Clamp(a, -max, max) : a * (1f - Math.Min(3f * step / Math.Max(e.Seconds, 0.05f), 1f));
+            if (MathF.Abs(next) < StraightRad) next = 0f;
+            _easeStep[i] = next - a;
+            any = true;
+        }
+        int locks = Locks(s.TrackballAxes);
+        if (any) GimbalTurn(_easeStep[0], _easeStep[1], _easeStep[2], locks, MaxPitch(locks));
     }
 
     /// <summary>The gimbal angles (GimbalTurn) and the pose they made: read again from the pose when anything else turned it.</summary>
     private readonly float[] _gimbal = new float[3];
     private readonly float[] _gimbalOf = { float.NaN, float.NaN, float.NaN, float.NaN };
+
+    /// <summary>Reads the gimbal angles from the pose again when anything but GimbalTurn turned it.</summary>
+    private void GimbalSync()
+    {
+        if (_w == _gimbalOf[0] && _x == _gimbalOf[1] && _y == _gimbalOf[2] && _z == _gimbalOf[3]) return;
+        _gimbal[0] = MathF.Atan2(2 * (_x * _z + _w * _y), 1 - 2 * (_x * _x + _y * _y));
+        _gimbal[1] = MathF.Asin(Math.Clamp(-2 * (_y * _z - _w * _x), -1f, 1f));
+        _gimbal[2] = MathF.Atan2(2 * (_x * _y + _w * _z), 1 - 2 * (_x * _x + _z * _z));
+    }
 
     /// <summary>
     /// Turns as a gimbal (a game camera's order): by <paramref name="a"/> radians about the vertical, then
@@ -229,15 +322,14 @@ public sealed class OverlayPose
     /// </summary>
     private void GimbalTurn(float a, float b, float c, int locks, float maxPitch)
     {
-        if (_w != _gimbalOf[0] || _x != _gimbalOf[1] || _y != _gimbalOf[2] || _z != _gimbalOf[3])
-        {
-            _gimbal[0] = MathF.Atan2(2 * (_x * _z + _w * _y), 1 - 2 * (_x * _x + _y * _y));
-            _gimbal[1] = MathF.Asin(Math.Clamp(-2 * (_y * _z - _w * _x), -1f, 1f));
-            _gimbal[2] = MathF.Atan2(2 * (_x * _y + _w * _z), 1 - 2 * (_x * _x + _z * _z));
-        }
+        GimbalSync();
         _gimbal[0] += a; _gimbal[1] += b; _gimbal[2] += c;
         for (int i = 0; i < 3; i++)
+        {
+            // Within half a turn either way, so easing back never unwinds whole turns.
+            if (_gimbal[i] > MathF.PI) _gimbal[i] -= 2 * MathF.PI; else if (_gimbal[i] < -MathF.PI) _gimbal[i] += 2 * MathF.PI;
             if ((locks & (1 << i)) != 0) _gimbal[i] = 0f;
+        }
         if (maxPitch > 0f) _gimbal[1] = Math.Clamp(_gimbal[1], -maxPitch, maxPitch);
         // Ry(a) · Rx(b), then · Rz(c)
         float cy = MathF.Cos(_gimbal[0] / 2), sy = MathF.Sin(_gimbal[0] / 2);

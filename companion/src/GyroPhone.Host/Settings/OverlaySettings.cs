@@ -86,6 +86,21 @@ public enum OverlayShape
 public sealed record OverlayColor(string Key, string Label, uint Default);
 
 /// <summary>One overlay window: what it shows, where, and how it turns.</summary>
+/// <summary>
+/// A trackball axis easing back to straight (OverlaySettings.TrackballEase): with OnRatchet while a ratchet is held
+/// (stopping when let go), else whenever the phone stops turning; starting DelayMs later; 95% of the way back in
+/// Seconds, or with BySpeed at Speed deg/s. As the phone's AxisEase.
+/// </summary>
+public sealed class AxisEase
+{
+    public bool On { get; set; }
+    public bool OnRatchet { get; set; } = true;
+    public int DelayMs { get; set; } = 300;
+    public bool BySpeed { get; set; }
+    public float Seconds { get; set; } = 2f;
+    public int Speed { get; set; } = 90;
+}
+
 public sealed class OverlaySettings
 {
     public string Id { get; set; } = NewId();
@@ -146,6 +161,24 @@ public sealed class OverlaySettings
     /// as Camera does with the default gyro mouse. As the phone's GyroDisplay.trackballAxes.
     /// </summary>
     public int TrackballAxes { get; set; } = TrackballAsCamera;
+
+    /// <summary>
+    /// Trackball: easing each of its axes (as <see cref="TrackballAxes"/>: up, right, through the screen) back to
+    /// straight, each with its own options. Easing any turns it as a gimbal, as a lock does. As the phone's
+    /// GyroDisplay.trackballEase.
+    /// </summary>
+    public AxisEase[] TrackballEase { get; set; } = [new(), new(), new()];
+
+    /// <summary>Trackball axis <paramref name="i"/>'s easing, made when not saved.</summary>
+    public AxisEase EaseOf(int i)
+    {
+        if (TrackballEase is not { Length: 3 })
+        {
+            var old = TrackballEase ?? [];
+            TrackballEase = [.. Enumerable.Range(0, 3).Select(k => k < old.Length && old[k] != null ? old[k] : new AxisEase())];
+        }
+        return TrackballEase[i] ??= new AxisEase();
+    }
 
     /// <summary><see cref="TrackballAxes"/> turning it as Camera does with the default gyro mouse (roll on mouse X, pitch on mouse Y): left and right by roll (as sent), up and down by pitch, the axis through the screen locked.</summary>
     public const int TrackballAsCamera = 3 | (2 << 8) | (TrackballLock << 16);

@@ -1,6 +1,7 @@
 package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.engine.GyroPose
+import com.oleroma.gyrophone.core.model.withEase
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -371,6 +372,30 @@ class GyroDisplayTest {
         val up = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = tb))
         repeat(100) { up.feed(0f, 200f, 0f, 0.01f, 7, pressed = false, held = false) }
         up.pose.matrix(m); assertEquals(kotlin.math.sin(Math.toRadians(89.0)).toFloat(), -m[5], 1e-4f)
+    }
+
+    @Test fun trackballAxesEaseBackEachOnItsOwn() {
+        val G = com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL)
+        val m = FloatArray(9)
+        // Left and right eases back once the phone stops; up and down stays.
+        val f = feed(G.withEase(0, com.oleroma.gyrophone.core.model.AxisEase(on = true, onRatchet = false, delayMs = 0, seconds = 0.2f)))
+        repeat(50) { f.feed(0f, 0f, 60f, 0.01f, 7, pressed = false, held = false) } // 30° right
+        repeat(50) { f.feed(0f, 60f, 0f, 0.01f, 7, pressed = false, held = false) } // 30° up
+        repeat(100) { f.feed(0f, 0f, 0f, 0.01f, 7, pressed = false, held = false) }
+        f.pose.matrix(m)
+        assertEquals(0f, m[2], 1e-4f)
+        assertEquals(0.5f, -m[5], 1e-3f)
+        // Up and down eases back while a ratchet is held, by speed; left and right stays.
+        val r = feed(G.withEase(1, com.oleroma.gyrophone.core.model.AxisEase(on = true, delayMs = 0, bySpeed = true, speed = 90)))
+        repeat(50) { r.feed(0f, 0f, 60f, 0.01f, 7, pressed = false, held = false) } // 30° right
+        repeat(50) { r.feed(0f, 60f, 0f, 0.01f, 7, pressed = false, held = false) } // 30° up
+        repeat(20) { r.feed(0f, 0f, 0f, 0.01f, 7, pressed = false, held = false) } // still, no ratchet: stays
+        r.pose.matrix(m); assertEquals(0.5f, -m[5], 1e-3f)
+        r.feed(0f, 0f, 0f, 0.01f, 0, pressed = true, held = true)
+        repeat(50) { r.feed(0f, 0f, 0f, 0.01f, 0, pressed = false, held = true) } // 0.5 s at 90°/s: back
+        r.pose.matrix(m)
+        assertEquals(0f, m[5], 1e-4f)
+        assertEquals(0.5f, m[6], 1e-3f)
     }
 
     @Test fun trackballWithoutRwsSpinsOtherCountsAsTheGyro() {

@@ -33,6 +33,9 @@ import androidx.compose.runtime.Composable
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.core.model.TRACKBALL_AS_CAMERA
 import com.oleroma.gyrophone.core.model.TRACKBALL_LOCK
+import com.oleroma.gyrophone.core.model.AxisEase
+import com.oleroma.gyrophone.core.model.easeOf
+import com.oleroma.gyrophone.core.model.withEase
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -234,7 +237,7 @@ internal fun GyroDisplaySettingsScreen(
             }
             if (d.turnsWith == TurnsWith.TRACKBALL) Indented { TrackballAxesSettings(d) { set(it) } }
             if (d.turnsWith == TurnsWith.PHONE) PoseSettings(d) { set(it) }
-            // A trackball never eases back: every roll is a camera move.
+            // A trackball eases back per axis (in its axis rows), not here.
             if (d.turnsWith == TurnsWith.CAMERA) {
                 GroupTitle("Pose")
                 EaseSettings(d) { set(it) }
@@ -307,12 +310,26 @@ private fun TrackballAxesSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
         Text("$name axis turns with", style = MaterialTheme.typography.bodyMedium)
         Chips(listOf("Yaw" to 3, "Pitch" to 2, "Roll" to 1, "None" to 0), code and 0x3F) { put(it or (code and 0x80)) }
         if (code and 0x3F != 0) SwitchRow("Invert $name axis", code and 0x80 != 0) { put((code and 0x3F) or (if (it) 0x80 else 0)) }
+        AxisEaseSettings(name, d.easeOf(i)) { set(d.withEase(i, it)) }
     }
-    Hint("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces; with Yaw locked it stops at straight up or down.")
+    Hint("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked or easing back it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces; with Yaw locked it stops at straight up or down.")
     if (d.trackballAxes != TRACKBALL_AS_CAMERA) TextButton(onClick = { set(d.copy(trackballAxes = TRACKBALL_AS_CAMERA)) }) { Text("As the camera") }
 }
 
-/** Ease back to straight and its options (Phone and Camera; a trackball never eases back). */
+/** A trackball axis [name] easing back to straight, and its own options. */
+@Composable
+private fun AxisEaseSettings(name: String, e: AxisEase, set: (AxisEase) -> Unit) {
+    SwitchRow("Ease $name axis back", e.on) { set(e.copy(on = it)) }
+    if (e.on) Indented {
+        Chips(listOf("On ratchet" to true, "When the phone stops" to false), e.onRatchet) { set(e.copy(onRatchet = it)) }
+        IntSlider("Delay %d ms", e.delayMs, 0..3000, step = 50) { set(e.copy(delayMs = it)) }
+        Chips(listOf("By time" to false, "By speed" to true), e.bySpeed) { set(e.copy(bySpeed = it)) }
+        if (e.bySpeed) IntSlider("Speed %d °/s", e.speed, 10..720, step = 10) { set(e.copy(speed = it)) }
+        else FloatSlider("Back in %.1f s", e.seconds, 0.1f..5f, 0.1f) { set(e.copy(seconds = it)) }
+    }
+}
+
+/** Ease back to straight and its options (Phone and Camera; a trackball eases each axis on its own). */
 @Composable
 private fun EaseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
     SwitchRow("Ease back to straight", d.ease) { set(d.copy(ease = it)) }
