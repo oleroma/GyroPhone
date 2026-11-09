@@ -289,7 +289,7 @@ internal fun GyroDisplaySettingsScreen(
             }
             TextButton(onClick = { runtime.clearLaser(control.id) }) { Text("Clear") }
         }
-        val strokes = if (!laser || !(d.laserDraw || d.laserSnake)) null else category(runtime, "gyroDisplayStrokes", "Paint", "Colour by, detail, softness, glow, outline, shade, smoothing") {
+        val strokes = if (!laser || !(d.laserDraw || d.laserSnake)) null else category(runtime, "gyroDisplayStrokes", "Paint", "Colour by, detail, softness, glow, outline, shade, light, shine, smoothing") {
             GroupTitle("Colour by")
             Chips(listOf("Where it is" to false, "The way it moved" to true), d.laserColourByWay) { set(d.copy(laserColourByWay = it)) }
             if (d.laserDraw) {
@@ -302,6 +302,11 @@ internal fun GyroDisplaySettingsScreen(
             }
             PercentSlider("Facing shade", d.laserShade, 0f..1f) { set(d.copy(laserShade = it)) }
             PercentSlider("Inside", d.laserInside, 0.2f..1f) { set(d.copy(laserInside = it)) }
+            GroupTitle("Light")
+            PercentSlider("Light strength", d.laserLight, 0f..1f) { set(d.copy(laserLight = it)) }
+            Chips(listOf("Upper left" to 0, "Above" to 1, "Upper right" to 2, "Front" to 3), d.laserLightFrom.coerceIn(0, 3)) { set(d.copy(laserLightFrom = it)) }
+            PercentSlider("Shine", d.laserShine, 0f..1f) { set(d.copy(laserShine = it)) }
+            Hint("A light fixed in the scene, shining from where you pick: it stays put while the sphere or the pointer turns. Light strength darkens what faces away from it (0 off); Shine adds a glossy highlight where it reflects toward you (0 none).")
             SavedSlider(
                 { if (it < 0.025f) "Line smoothing: off" else "Line smoothing %.0f%%".format(it * 100) },
                 d.laserLineSmoothing, 0f..1f, { (it * 20).roundToInt() / 20f },

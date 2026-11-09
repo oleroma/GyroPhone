@@ -203,6 +203,14 @@ data class GyroDisplay(
      */
     val laserShade: Float = 0.5f,
     val laserInside: Float = 0.7f,
+    /**
+     * LASER Draw mode and Snake: a light fixed in the scene ([laserLightFrom]: 0 upper left, 1 above,
+     * 2 upper right, 3 front), [laserLight] its strength (0 off .. 1 strong), [laserShine] its glossy
+     * highlight (0 none .. 1 strong).
+     */
+    val laserLight: Float = 0.5f,
+    val laserLightFrom: Int = 0,
+    val laserShine: Float = 0.3f,
     /** LASER Draw mode: paint takes the colour of the way the beam moved there; off, the sphere's own colour where it is (the Moving colours as a normal map). */
     val laserColourByWay: Boolean = false,
     /** 3D phone, 3D shape and laser pointer: seen in perspective (nearer parts bigger); off, flat (no perspective). */

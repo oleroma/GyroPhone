@@ -258,6 +258,8 @@ private class VisState {
     // Each pointer's paint drawing (its map's upload).
     private val paintShaders = java.util.WeakHashMap<LaserTrace, PointerPaintShader>()
     private val viewOf: (Float, Float, Float, FloatArray) -> Unit = { x, y, z, out -> LaserTrace.view(x, y, z, out, axon = laserAxon, turned = laserTurned) }
+    private val nv = FloatArray(3)
+    private val hv = FloatArray(3)
     private val sceneOf: (Float, Float, Float, FloatArray) -> Unit = { x, y, z, out -> LaserTrace.view(x, y, z, out, axon = laserAxon) }
     private val moveColors = LongArray(6)
 
@@ -382,10 +384,22 @@ private class VisState {
                     Color(LaserTrace.directionColor(way, moveColors).toInt()).copy(alpha = 1f)
                 }
                 val facing = kotlin.math.abs(z).coerceAtMost(1f)
-                val k = (1f + (0.25f + 0.75f * facing - 1f) * d.laserShade) * (if (front) 1f else d.laserInside)
+                var k = (1f + (0.25f + 0.75f * facing - 1f) * d.laserShade) * (if (front) 1f else d.laserInside)
+                // The scene's light (as the paint's shader): the side you see, outside near, inside far.
+                LaserTrace.view(la[0], la[1], la[2], nv, axon = laserAxon, turned = turned)
+                if (!front) for (q in 0..2) nv[q] = -nv[q]
+                val ld = PointerPaintShader.lightDir(d.laserLightFrom)
+                val diffuse = (nv[0] * ld[0] + nv[1] * ld[1] + nv[2] * ld[2]).coerceAtLeast(0f)
+                k *= 1f + (0.3f + 0.9f * diffuse - 1f) * d.laserLight
+                hv[0] = ld[0]; hv[1] = ld[1]; hv[2] = ld[2] + 1f
+                LaserTrace.unit(hv)
+                val spec = d.laserShine * Math.pow((nv[0] * hv[0] + nv[1] * hv[1] + nv[2] * hv[2]).coerceAtLeast(0f).toDouble(), 24.0).toFloat()
                 val tail = 1f - s.behindNewest(i) / len
                 val w = width * (0.2f + 0.8f * tail.coerceIn(0f, 1f)) * (if (laserPersp) LaserTrace.perspective(z) else 1f)
-                drawLine(Color(argb.red * k, argb.green * k, argb.blue * k), prev, p, w, StrokeCap.Round)
+                drawLine(
+                    Color((argb.red * k + spec).coerceAtMost(1f), (argb.green * k + spec).coerceAtMost(1f), (argb.blue * k + spec).coerceAtMost(1f)),
+                    prev, p, w, StrokeCap.Round,
+                )
             }
             prev = p
         }
@@ -509,7 +523,7 @@ private class VisState {
         val look = if (lt?.paint == null || !d.laserDraw) null else PointerPaintShader.Look(
             eye = if (laserPersp) LaserTrace.CAMERA_DISTANCE else 0f,
             byWay = d.laserColourByWay, soft = d.laserSoftness, glow = d.laserGlow, outline = d.laserOutline,
-            shade = d.laserShade, inside = d.laserInside,
+            shade = d.laserShade, inside = d.laserInside, light = d.laserLight, lightFrom = d.laserLightFrom, shine = d.laserShine,
             moves = IntArray(6) { moveColors[it].toInt() },
             fireAhead = col(GyroDisplayColor.LASER_FIRE).toArgb(), fireBehind = col(GyroDisplayColor.LASER_FIRE_BEHIND).toArgb(),
             outlineColor = col(GyroDisplayColor.LASER_OUTLINE).toArgb(), wayAlpha = moveAlpha,

@@ -27,7 +27,7 @@ internal class PointerPaintShader {
     /** What every draw of one frame shares. */
     class Look(
         val eye: Float, val byWay: Boolean, val soft: Float, val glow: Float, val outline: Boolean,
-        val shade: Float, val inside: Float, val moves: IntArray, val fireAhead: Int, val fireBehind: Int,
+        val shade: Float, val inside: Float, val light: Float, val lightFrom: Int, val shine: Float, val moves: IntArray, val fireAhead: Int, val fireBehind: Int,
         val outlineColor: Int, val wayAlpha: Float,
     )
 
@@ -81,6 +81,10 @@ internal class PointerPaintShader {
         s.setFloatUniform("outline", if (look.outline) 1f else 0f)
         s.setFloatUniform("shade", look.shade)
         s.setFloatUniform("inside", look.inside)
+        s.setFloatUniform("light", look.light)
+        s.setFloatUniform("shine", look.shine)
+        val l = lightDir(look.lightFrom)
+        s.setFloatUniform("lightDir", l[0], l[1], l[2])
         s.setFloatUniform("wayAlpha", look.wayAlpha)
         for ((i, name) in MOVE_NAMES.withIndex()) s.setColorUniform(name, look.moves[i])
         s.setColorUniform("fireAhead", look.fireAhead)
@@ -95,6 +99,13 @@ internal class PointerPaintShader {
     private fun exact(bm: Bitmap) = BitmapShader(bm, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { filterMode = BitmapShader.FILTER_MODE_NEAREST }
 
     companion object {
+        /** The scene's light, a unit direction in the picture (x right, y up, z toward you), from 0 upper left, 1 above, 2 upper right, 3 front. */
+        fun lightDir(from: Int): FloatArray = LIGHTS[from.coerceIn(0, 3)]
+
+        private val LIGHTS = arrayOf(
+            floatArrayOf(-0.5f, 0.6f, 0.6f), floatArrayOf(0f, 0.8f, 0.6f), floatArrayOf(0.5f, 0.6f, 0.6f), floatArrayOf(0f, 0f, 1f),
+        ).onEach { LaserTrace.unit(it) }
+
         // In LaserTrace.directionColor's order.
         private val MOVE_NAMES = arrayOf("cRight", "cLeft", "cUp", "cDown", "cToward", "cAway")
 
@@ -119,6 +130,9 @@ internal class PointerPaintShader {
             uniform float outline;
             uniform float shade;
             uniform float inside;
+            uniform float light;
+            uniform float shine;
+            uniform float3 lightDir;
             uniform float wayAlpha;
             layout(color) uniform half4 cRight;
             layout(color) uniform half4 cLeft;
@@ -208,7 +222,12 @@ internal class PointerPaintShader {
                 float4 col = mix(base, fc, fired);
                 // Facing shade (darker where the surface turns away), the far half seen from inside darker still.
                 float k = mix(1.0, 0.25 + 0.75 * facing, shade) * (front > 0.5 ? 1.0 : inside);
-                col.rgb *= k;
+                // The scene's light on the side you see (outside on the near half, inside on the far).
+                float3 nv = front > 0.5 ? p : -p;
+                float diffuse = max(dot(nv, lightDir), 0.0);
+                k *= mix(1.0, 0.3 + 0.9 * diffuse, light);
+                float spec = shine * pow(max(dot(nv, normalize(lightDir + float3(0.0, 0.0, 1.0))), 0.0), 24.0);
+                col.rgb = min(col.rgb * k + spec, float3(1.0));
 
                 float sw = mix(0.03, 0.3, soft);
                 float paintA = smoothstep(edge - sw, edge + sw, c) * col.a;
