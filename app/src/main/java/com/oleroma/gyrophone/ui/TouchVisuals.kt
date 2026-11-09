@@ -84,6 +84,8 @@ data class TouchVisuals(
     val gyroLevelDeg: Int = 0,
     /** The edge's opacity. */
     val gyroOpacity: Float = 0.6f,
+    /** "Fade when phone rests": the gyro displays fade while the phone lies still at their Level, untouched. */
+    val restFade: com.oleroma.gyrophone.core.model.RestFade = com.oleroma.gyrophone.core.model.RestFade(),
 ) {
     /** The edge holds its pose to gravity (and so needs the accelerometer). */
     val gyroNeedsGravity: Boolean get() = gyroEdge && gyroEdgeTilt

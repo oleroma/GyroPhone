@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
 import com.oleroma.gyrophone.core.engine.LaserTrace
+import com.oleroma.gyrophone.core.engine.RestDetector
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.model.BallShape
 import com.oleroma.gyrophone.core.model.GyroDisplay
@@ -67,12 +68,29 @@ fun GyroDisplaysLayer(
 ) {
     var frame by remember { mutableLongStateOf(0L) }
     val shown by rememberUpdatedState(boxes)
+    val inEdit by rememberUpdatedState(editing)
+    // "Fade when phone rests": each display's share of its opacity now (1 = not faded).
+    val fades = remember { HashMap<String, Float>() }
     // Redraws only while some display's data changes (and a moment after, so ghost trails catch up):
     // a still pose, as in edit mode or with the gyro off, draws nothing new.
     LaunchedEffect(Unit) {
         var last = 0L
         var until = 0L
+        var lastT = 0L
         while (true) withFrameMillis { t ->
+            val dt = if (lastT == 0L) 0f else (t - lastT).coerceIn(0L, 100L).toFloat()
+            lastT = t
+            val rf = runtime.touchVisuals.value.restFade
+            val nowNs = System.nanoTime()
+            for (b in shown) {
+                val id = b.control.id
+                val was = fades[id] ?: 1f
+                val next = RestDetector.step(was, !inEdit && runtime.restDetector.resting(id, nowNs), dt, rf)
+                if (next != was) {
+                    fades[id] = next
+                    until = maxOf(until, t)
+                }
+            }
             var sig = runtime.gyroLiveAxes.toLong()
             for (b in shown) {
                 val f = runtime.gyroFeed(b.control.id)
@@ -98,7 +116,9 @@ fun GyroDisplaysLayer(
     Canvas(modifier) {
         st.now = frame
         for (b in boxes) {
-            val d = b.control.display ?: continue
+            val shownAs = b.control.display ?: continue
+            val k = fades[b.control.id] ?: 1f
+            val d = if (k < 1f) shownAs.copy(opacity = shownAs.opacity * k) else shownAs
             st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
             if (editing) {
                 val sel = b.control.id in selected

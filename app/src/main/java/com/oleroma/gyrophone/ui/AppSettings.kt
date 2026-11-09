@@ -319,7 +319,7 @@ private fun AppTab(runtime: GamepadRuntime) {
             ) { v -> runtime.setSensCapCounts(v) }
         },
         category(runtime, "gyroDisplay", "Gyro display", "The parallax edge; other gyro displays are placed in edit mode") {
-            GyroVisualsSettings(visuals) { runtime.setTouchVisuals(it) }
+            GyroVisualsSettings(visuals, runtime::restStillnessDps) { runtime.setTouchVisuals(it) }
         },
         category(runtime, "controllers", "Controllers on phone", "Gamepads attached to the phone") {
             Searchable("Controllers on phone", "gamepad attached", *controllers.map { it.name }.toTypedArray()) {

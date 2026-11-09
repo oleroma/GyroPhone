@@ -179,6 +179,8 @@ public sealed class HostEngine
     // The phone's Level displays presses last seen (-1 = none yet: the first count levels nothing).
     private int _levelPresses = -1;
     private long _overlayRxUs = long.MinValue;
+    // "Fade when phone rests": whether the phone lies still at each overlay's Level, untouched.
+    private readonly OverlayRest _overlayRest = new();
     private long _lastStatusUs;
     private KeyLabels? _keyLabels;
     private int _rumbleNext; // (large << 8) | small, plus RumbleDirty while unsent
@@ -428,6 +430,7 @@ public sealed class HostEngine
                     foreach (var o in _settings.Overlays)
                         if (o.Shown) LevelOverlay(o.Id);
                 _levelPresses = _overlayFrame.LevelPresses;
+                _overlayRest.Feed(_overlayFrame, nowUs, _settings);
                 _overlayRxUs = nowUs;
                 break;
             case PacketType.OverlayLayout:
@@ -681,6 +684,7 @@ public sealed class HostEngine
                 _overlayPoses.Clear();
                 _levelPresses = -1;
                 _overlayRxUs = long.MinValue;
+                _overlayRest.Clear(_clock.NowUs);
                 StopPcPad();
                 _padGyro.Enabled = false;
                 _gate.Reset();
@@ -1332,6 +1336,7 @@ public sealed class HostEngine
             if (on == _overlayOn) return;
             _overlayOn = on;
             _overlayRxUs = long.MinValue;
+            _overlayRest.Clear(_clock.NowUs);
             _overlayPoses.Clear();
             _levelPresses = -1;
             _overlayTotals.Reset();
@@ -1421,6 +1426,10 @@ public sealed class HostEngine
             var o = _settings.Overlays.Find(x => x.Id == id);
             if (o == null) return;
             _overlayPoses.TryGetValue(id, out var pose);
+            // Which way is up now: "Fade when phone rests" counts the phone flat near this tilt.
+            if (_overlayRxUs != long.MinValue && _overlayFrame.HasUp &&
+                MathF.Sqrt(_overlayFrame.UpX * _overlayFrame.UpX + _overlayFrame.UpY * _overlayFrame.UpY + _overlayFrame.UpZ * _overlayFrame.UpZ) is var g and > 0f)
+                o.LevelUp = [_overlayFrame.UpX / g, _overlayFrame.UpY / g, _overlayFrame.UpZ / g];
             if (o.Gravity && !o.FollowsCamera)
             {
                 if (pose == null) return;
@@ -1431,6 +1440,29 @@ public sealed class HostEngine
                 pose?.Reset();
                 o.Rest = null;
             }
+            _settingsDirty = true;
+        }
+    }
+
+    /// <summary>"Fade when phone rests": overlay <paramref name="id"/> should be faded now (the phone lies still at its Level, untouched).</summary>
+    public bool OverlayResting(string id)
+    {
+        lock (_lock) return _overlayRest.Resting(id, _clock.NowUs, _overlayRxUs, _settings.OverlayRestFade);
+    }
+
+    /// <summary>The phone's turning speed now (deg/s) from its overlay frames, or null without any lately: shown beside "Still below".</summary>
+    public float? OverlayStillnessDps()
+    {
+        lock (_lock) return _overlayRest.LiveDps(_clock.NowUs);
+    }
+
+    /// <summary>Changes the "Fade when phone rests" settings.</summary>
+    public void UpdateOverlayRestFade(Action<OverlayRestFade> change)
+    {
+        lock (_lock)
+        {
+            change(_settings.OverlayRestFade);
+            _settings.OverlayRestFade.Normalize();
             _settingsDirty = true;
         }
     }
@@ -1654,6 +1686,7 @@ public sealed class HostEngine
         _pcGyro.Reset();
         _overlayLayout.Reset();
         _overlayRxUs = long.MinValue;
+        _overlayRest.Clear(_clock.NowUs);
         _overlayPoses.Clear();
         _levelPresses = -1;
         _overlayTotals.Reset();

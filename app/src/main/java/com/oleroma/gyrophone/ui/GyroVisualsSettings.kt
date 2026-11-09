@@ -66,11 +66,19 @@ import com.oleroma.gyrophone.core.model.GyroDisplayColor
 import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TurnsWith
+import com.oleroma.gyrophone.core.model.RestFade
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
+import kotlin.math.sqrt
 import kotlin.math.roundToInt
 
-/** Settings of the parallax edge ([GyroEdgeLayer]); [set] saves a changed [v]. The other gyro displays are placed in edit mode. */
+/**
+ * Settings of the parallax edge ([GyroEdgeLayer]) and "Fade when phone rests" for every gyro display
+ * ([stillness] the phone's turning speed now, for its live line); [set] saves a changed [v]. The
+ * other gyro displays are placed in edit mode.
+ */
 @Composable
-fun GyroVisualsSettings(v: TouchVisuals, set: (TouchVisuals) -> Unit) {
+fun GyroVisualsSettings(v: TouchVisuals, stillness: () -> Float? = { null }, set: (TouchVisuals) -> Unit) {
     Hint("The other gyro displays (3D phone, ratchet ring, speed graph, attitude indicator, bubble disk, 3D shape, laser pointer): add them in edit mode, like buttons.")
     SwitchRow("Parallax edge", v.gyroEdge) { set(v.copy(gyroEdge = it)) }
     if (v.gyroEdge) Indented {
@@ -93,6 +101,36 @@ fun GyroVisualsSettings(v: TouchVisuals, set: (TouchVisuals) -> Unit) {
         SwitchRow("Move with the phone", v.gyroEdgeInvert) { set(v.copy(gyroEdgeInvert = it)) }
         SwitchRow("Tint by ratchet", v.gyroEdgeRatchetTint) { set(v.copy(gyroEdgeRatchetTint = it)) }
         Hint("Off: the frame lags behind the phone, like a window onto a still world. Tint: it dims and takes the live axes' colours while a ratchet pauses some.")
+    }
+    RestFadeSettings(v.restFade, stillness) { set(v.copy(restFade = it)) }
+}
+
+/** "Fade when phone rests" for every gyro display on the pad, as the PC's Overlays page has it for the overlays. */
+@Composable
+private fun RestFadeSettings(r: RestFade, stillness: () -> Float?, set: (RestFade) -> Unit) {
+    SwitchRow(
+        "Fade when phone rests", r.on,
+        "The gyro displays fade while the phone lies still at their Level with nothing pressed. Any touch, button or movement brings them back at once.",
+    ) { set(r.copy(on = it)) }
+    if (!r.on) return
+    Indented {
+        IntSlider("Flat within %d°", r.flatWithinDeg.roundToInt(), 1..45) { set(r.copy(flatWithinDeg = it.toFloat())) }
+        Hint("Of the tilt each display was leveled at (its Level button or a Level displays mapping).")
+        FloatSlider("Still below %.1f°/s", r.stillBelowDps, 0.1f..5f, 0.1f) { set(r.copy(stillBelowDps = it)) }
+        var live by remember { mutableStateOf<Float?>(null) }
+        LaunchedEffect(Unit) {
+            while (true) {
+                live = stillness()
+                delay(300)
+            }
+        }
+        Hint(
+            live?.let { "Phone now: %.2f°/s, %s".format(it, if (it < r.stillBelowDps) "still" else "moving") }
+                ?: "Phone now: not measured (only while a gyro display is on the pad)",
+        )
+        FloatSlider("Quiet for %.1f s", r.quietMs / 1000f, 0.5f..30f, 0.5f) { set(r.copy(quietMs = (it * 1000).roundToInt())) }
+        PercentSlider("Fade to", r.fadeTo, 0.05f..1f) { set(r.copy(fadeTo = it)) }
+        FloatSlider("Fade over %.1f s", r.fadeMs / 1000f, 0f..3f, 0.1f) { set(r.copy(fadeMs = (it * 1000).roundToInt())) }
     }
 }
 
@@ -267,12 +305,16 @@ internal fun GyroDisplaySettingsScreen(
             if (!d.followsCamera) FloatSlider("Turn amount × %.1f", d.motionScale, 0.5f..3f, 0.1f) { set(d.copy(motionScale = it)) }
             Hint("Hold the phone the way you play and press Level: held that way, it shows face-on, its screen flat toward you.")
             TextButton(onClick = {
-                if (!d.needsGravity) {
-                    runtime.gyroFeed(control.id)?.restart()
-                    if (d.rest != null) set(d.copy(rest = null))
-                } else runtime.readUp { up ->
-                    val rest = up?.let { GyroPose.tiltFromUp(it[0], it[1], it[2]) } ?: return@readUp
-                    latest.value.display?.let { onChange(latest.value.copy(display = it.copy(rest = rest.toList()))) }
+                val gravity = d.needsGravity
+                if (!gravity) runtime.gyroFeed(control.id)?.restart()
+                // Which way is up is kept either way: "Fade when phone rests" counts the phone flat near it.
+                runtime.readUp { up ->
+                    val now = latest.value.display ?: return@readUp
+                    val l = up?.let { sqrt(it[0] * it[0] + it[1] * it[1] + it[2] * it[2]) }?.takeIf { it > 0f }
+                    val levelUp = if (up != null && l != null) listOf(up[0] / l, up[1] / l, up[2] / l) else now.levelUp
+                    val rest = if (!gravity) null
+                    else up?.let { GyroPose.tiltFromUp(it[0], it[1], it[2]) }?.toList() ?: return@readUp
+                    if (rest != now.rest || levelUp != now.levelUp) onChange(latest.value.copy(display = now.copy(rest = rest, levelUp = levelUp)))
                 }
             }) { Text("Level") }
         }

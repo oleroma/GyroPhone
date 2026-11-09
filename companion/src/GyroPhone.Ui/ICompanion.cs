@@ -107,6 +107,11 @@ public interface ICompanion
     /// <summary>Clears laser pointer overlay <paramref name="id"/>'s paint and trail.</summary>
     void ClearOverlay(string id);
     void LevelAll();
+    /// <summary>"Fade when phone rests", for every overlay.</summary>
+    OverlayRestFade RestFade { get; }
+    void ChangeRestFade(Action<OverlayRestFade> change);
+    /// <summary>The phone's turning speed now (deg/s) from its overlay data, or null without any lately.</summary>
+    float? StillnessDps { get; }
 
     // Overlay shortcuts
     OverlayShortcuts Shortcuts { get; }
