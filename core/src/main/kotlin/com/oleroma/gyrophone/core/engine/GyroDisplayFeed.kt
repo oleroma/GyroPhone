@@ -44,6 +44,9 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     /** A laser pointer's fire output ([GyroDisplay.laserFire]) is being sent; set by the runtime. */
     @Volatile var firing = false
 
+    /** A laser pointer's Aim display output is sent now (as [firing]). */
+    @Volatile var aiming = false
+
     /**
      * Which gyro axis moves the mouse sideways and which up and down, and which way ([cameraMapOf]):
      * a display turning with the camera turns as the game's camera, by those. Set by the runtime.

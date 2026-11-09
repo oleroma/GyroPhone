@@ -87,7 +87,9 @@ internal sealed class OverlaysPage : Page
     private readonly CheckBox[] _tbInvert = new CheckBox[3];
     private readonly Seg<bool> _tbOwnAxes;
     private readonly CheckBox[] _tbStop = new CheckBox[3];
-    private readonly List<Seg<int>> _fireSegs = [];
+    private readonly ButtonPick _firePick, _aimPick;
+    private readonly SliderRow _fireBrush, _fireGlow, _aimSize, _aimBrush, _aimGlow;
+    private readonly StackPanel _fireOptions, _aimOptions;
     private readonly CheckBox _laserFireOnly;
     private readonly CheckBox[] _tbEase = new CheckBox[3];
     private readonly StackPanel[] _tbEaseOptions = new StackPanel[3];
@@ -348,6 +350,30 @@ internal sealed class OverlaysPage : Page
         _laserPerspective = Parts.Toggle("Perspective", () => Change(o => o.Perspective = !o.Perspective), "Nearer parts of the sphere, its paint and the pointer look bigger.");
         lb.Children.Add(_laserPerspective);
 
+        // Fire display and Aim display: the buttons, sent from the phone or pressed on the PC's controller with
+        // "Use PC controller for gyro ratchet" on.
+        _firePick = new ButtonPick("Fire display", "While this button is sent from the phone (or pressed on the PC's controller with \"Use PC controller for gyro ratchet\" on) the rifle's muzzle flashes and Draw mode paints in the Fire colours. Click to pick another, or None.", k => Change(o => o.LaserFire = k));
+        lb.Children.Add(_firePick.View);
+        _fireOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
+        _fireBrush = new SliderRow("Fire brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserFireBrush = (int)v));
+        _fireGlow = new SliderRow("Fire glow", 0, 3, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserFireGlow = (float)v));
+        _fireOptions.Children.Add(_fireBrush.View);
+        _fireOptions.Children.Add(_fireGlow.View);
+        lb.Children.Add(_fireOptions);
+        _aimPick = new ButtonPick("Aim display", "While this button is held the crosshair shrinks, the rifle is shouldered with a scope and a laser sight, and Draw mode paints in the Aim colours. Firing wins over aiming. Click to pick another, or None.", k => Change(o => o.LaserAim = k));
+        lb.Children.Add(_aimPick.View);
+        _aimOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
+        _aimSize = new SliderRow("Crosshair while aiming", 0.2, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserAimSize = (float)v));
+        _aimBrush = new SliderRow("Aim brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserAimBrush = (int)v));
+        _aimGlow = new SliderRow("Aim glow", 0, 3, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserAimGlow = (float)v));
+        _aimOptions.Children.Add(_aimSize.View);
+        _aimOptions.Children.Add(_aimBrush.View);
+        _aimOptions.Children.Add(_aimGlow.View);
+        lb.Children.Add(_aimOptions);
+        _laserFireOnly = Parts.Toggle("Paint only while firing or aiming", () => Change(o => o.LaserFireOnly = !o.LaserFireOnly), "The beam alone leaves no trail; only shots and aiming draw.");
+        lb.Children.Add(_laserFireOnly);
+        lb.Children.Add(Parts.Divider());
+
         _laserDraw = Parts.Toggle("Draw mode", () => Change(o => o.LaserDraw = !o.LaserDraw), "The beam paints the inside of the sphere as you aim; the paint stays until you clear it.");
         lb.Children.Add(_laserDraw);
         _laserSnake = Parts.Toggle("Snake", () => Change(o => o.LaserSnake = !o.LaserSnake), "A line following the beam along the newest stretch of its path, thinning to its tail. With or without Draw mode.");
@@ -361,17 +387,7 @@ internal sealed class OverlaysPage : Page
         _laserDrawOptions.Children.Add(_laserBrush.View);
         _laserClearOnRatchet = Parts.Toggle("Clear on ratchet", () => Change(o => o.LaserClearOnRatchet = !o.LaserClearOnRatchet), "A ratchet press clears the drawing.");
         _laserDrawOptions.Children.Add(_laserClearOnRatchet);
-        _laserDrawOptions.Children.Add(Parts.Text("Fire: paints in the Fire colours while it is sent from the phone, or pressed on the PC's controller with \"Use PC controller for gyro ratchet\" on."));
-        foreach (var (group, choices) in new[] { ("Mouse", GyroPhone.Host.LaserFire.MouseChoices), ("Controller", GyroPhone.Host.LaserFire.PadChoices), ("Keyboard", GyroPhone.Host.LaserFire.KeyChoices) })
-        {
-            _laserDrawOptions.Children.Add(Parts.Text(group, "Hint"));
-            var seg = new Seg<int>(k => Change(o => o.LaserFire = k), true, choices);
-            _fireSegs.Add(seg);
-            _laserDrawOptions.Children.Add(seg.View);
-        }
-        _laserFireOnly = Parts.Toggle("Paint only while firing", () => Change(o => o.LaserFireOnly = !o.LaserFireOnly), "Aiming leaves no trail; only shots draw.");
-        _laserDrawOptions.Children.Add(_laserFireOnly);
-        _laserDrawOptions.Children.Add(Parts.Text("The paint uncovers the sphere's own colours where it lands (the Moving colours, laid on the sphere as a normal map: right pink, left teal, up light green, down purple), or with Colour by the way it moved, the colour of each sweep's direction. Shots take the Fire colours. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping on the phone (Other targets) clears every pointer at once.", "Hint"));
+        _laserDrawOptions.Children.Add(Parts.Text("The paint uncovers the sphere's own colours where it lands (the Moving colours, laid on the sphere as a normal map: right pink, left teal, up light green, down purple), or with Colour by the way it moved, the colour of each sweep's direction. Shots take the Fire colours and aiming the Aim colours, each with its own brush and glow (Fire display, Aim display). Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping on the phone (Other targets) clears every pointer at once.", "Hint"));
         lb.Children.Add(_laserDrawOptions);
 
         // Paint: how Draw mode's paint and Snake look.
@@ -725,7 +741,21 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_laserSmoothColours, moves);
         Parts.Show(_laserMovesHint, moves);
         Parts.SetChecked(_laserSmoothColours, o.LaserSmoothColours);
-        foreach (var seg in _fireSegs) seg.Set(o.LaserFire);
+        _firePick.Set(o.LaserFire);
+        _aimPick.Set(o.LaserAim);
+        bool fires = o.LaserFire != GyroPhone.Host.LaserFire.None, aims = o.LaserAim != GyroPhone.Host.LaserFire.None;
+        Parts.Show(_fireOptions, fires && paints);
+        _fireBrush.Set(o.LaserFireBrush);
+        _fireGlow.Set(o.LaserFireGlow);
+        Parts.Show(_fireGlow.View, o.LaserDraw);
+        Parts.Show(_aimOptions, aims);
+        _aimSize.Set(o.LaserAimSize);
+        Parts.Show(_aimSize.View, ch);
+        _aimBrush.Set(o.LaserAimBrush);
+        Parts.Show(_aimBrush.View, paints);
+        _aimGlow.Set(o.LaserAimGlow);
+        Parts.Show(_aimGlow.View, o.LaserDraw);
+        Parts.Show(_laserFireOnly, paints && (fires || aims));
         Parts.SetChecked(_laserFireOnly, o.LaserFireOnly);
         Parts.SetChecked(_laserClearOnRatchet, o.LaserClearOnRatchet);
         Parts.SetChecked(_dots, o.FingerDots);

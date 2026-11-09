@@ -62,7 +62,8 @@ internal static class PaintRenderer
         int hash = HashCode.Combine(
             HashCode.Combine(s.Perspective, s.LaserColourByWay, s.LaserGlow, s.LaserOutline, s.LaserShade, s.LaserInside, s.LaserLight, s.LaserLightFrom),
             HashCode.Combine(s.LaserShine, s.LaserSnake, s.LaserSnakeDeg, s.LaserBrush, s.LaserDraw, s.Color("fire"), s.Color("fire_behind"), s.Color("outline")),
-            HashCode.Combine(moveColors[0], moveColors[1], moveColors[2], moveColors[3], moveColors[4], moveColors[5], s.LaserSmoothColours));
+            HashCode.Combine(moveColors[0], moveColors[1], moveColors[2], moveColors[3], moveColors[4], moveColors[5], s.LaserSmoothColours),
+            HashCode.Combine(s.Color("aim"), s.Color("aim_behind"), s.LaserFireGlow, s.LaserAimGlow, s.LaserFireBrush, s.LaserAimBrush));
         var key = new Key(lp?.Version ?? -1, trace.Strokes.Count, trace.Strokes.Count > 0 ? trace.Strokes.Along(trace.Strokes.Count - 1) : 0,
             trace.Version, size, r, colX, colY, colZ, scX, scY, scZ, hash);
         ref int[] buf = ref front ? ref st.Near : ref st.Far;
@@ -92,16 +93,22 @@ internal static class PaintRenderer
         int w = lp.Width, h = lp.Height;
         var amount = lp.Amount;
         var fire = lp.Fire;
+        var aimMap = lp.Aim;
         var glow = lp.Glow;
+        var glowFire = lp.GlowFire;
+        var glowAim = lp.GlowAim;
         var way = s.LaserColourByWay ? lp.Way : null;
         float moveAlpha = 0f;
         foreach (var m in moves) moveAlpha += (m >> 24) / 255f;
         moveAlpha /= 6f;
         var fa = Color.FromArgb(s.Color("fire"));
         var fb = Color.FromArgb(s.Color("fire_behind"));
+        var aa = Color.FromArgb(s.Color("aim"));
+        var ab = Color.FromArgb(s.Color("aim_behind"));
         var oc = Color.FromArgb(s.Color("outline"));
         var light = LightDir(s.LaserLightFrom);
         var hv = LaserTrace.Unit(light.X, light.Y, light.Z + 1f);
+        float fireGlowK = s.LaserFireGlow, aimGlowK = s.LaserAimGlow;
         float glowK = s.LaserGlow, shade = s.LaserShade, inside = s.LaserInside, lightK = s.LaserLight, shine = s.LaserShine;
         bool outline = s.LaserOutline;
         float e = 1.05f;
@@ -148,6 +155,11 @@ internal static class PaintRenderer
                 if (c < 0.004f && gl < 0.004f) continue;
                 float cs = Math.Max(c, 0.004f);
                 float fired = Math.Clamp((fire[k00] * w00 + fire[k10] * w10 + fire[k01] * w01 + fire[k11] * w11) / 255f / cs, 0f, 1f);
+                float aimed = Math.Clamp((aimMap[k00] * w00 + aimMap[k10] * w10 + aimMap[k01] * w01 + aimMap[k11] * w11) / 255f / cs, 0f, 1f - fired);
+                // The glow's shares that are shots' and aiming's.
+                float gsum = Math.Max(gl, 0.004f);
+                float gFired = Math.Clamp((glowFire[k00] * w00 + glowFire[k10] * w10 + glowFire[k01] * w01 + glowFire[k11] * w11) / 255f / gsum, 0f, 1f);
+                float gAimed = Math.Clamp((glowAim[k00] * w00 + glowAim[k10] * w10 + glowAim[k01] * w01 + glowAim[k11] * w11) / 255f / gsum, 0f, 1f - gFired);
                 // The point in the scene's frame: what its colour goes by.
                 float gx = sx.X * px + sx.Y * py + sx.Z * pz;
                 float gy = sy.X * px + sy.Y * py + sy.Z * pz;
@@ -166,7 +178,15 @@ internal static class PaintRenderer
                 float kb = LaserTrace.Behind(gz);
                 float fr = (fa.R + (fb.R - fa.R) * kb) / 255f, fg = (fa.G + (fb.G - fa.G) * kb) / 255f;
                 float fbl = (fa.B + (fb.B - fa.B) * kb) / 255f, fal = (fa.A + (fb.A - fa.A) * kb) / 255f;
-                float cr = br + (fr - br) * fired, cg = bg + (fg - bg) * fired, cb = bb + (fbl - bb) * fired, ca = ba + (fal - ba) * fired;
+                float ar = (aa.R + (ab.R - aa.R) * kb) / 255f, ag = (aa.G + (ab.G - aa.G) * kb) / 255f;
+                float abl = (aa.B + (ab.B - aa.B) * kb) / 255f, aal = (aa.A + (ab.A - aa.A) * kb) / 255f;
+                float pb = 1f - fired - aimed, gb = 1f - gFired - gAimed;
+                float cr = br * pb + fr * fired + ar * aimed, cg = bg * pb + fg * fired + ag * aimed;
+                float cb = bb * pb + fbl * fired + abl * aimed, ca = ba * pb + fal * fired + aal * aimed;
+                // The glow takes the colours of what laid it, each as strong as its own glow (up to 3: a bright bloom).
+                float hr = br * gb + fr * gFired + ar * gAimed, hg = bg * gb + fg * gFired + ag * gAimed;
+                float hb = bb * gb + fbl * gFired + abl * gAimed, ha = ba * gb + fal * gFired + aal * gAimed;
+                float gk = glowK * gb + fireGlowK * gFired + aimGlowK * gAimed;
                 // Facing shade, the far half (seen from inside) darker, and the scene's light on the side you see.
                 float kk = (1f + (0.25f + 0.75f * facing - 1f) * shade) * (front ? 1f : inside);
                 float nx = front ? px : -px, ny = front ? py : -py, nz = front ? pz : -pz;
@@ -174,9 +194,15 @@ internal static class PaintRenderer
                 kk *= 1f + (0.3f + 0.9f * diffuse - 1f) * lightK;
                 float spec = shine * MathF.Pow(Math.Max(nx * hv.X + ny * hv.Y + nz * hv.Z, 0f), 24f);
                 cr = Math.Min(cr * kk + spec, 1f); cg = Math.Min(cg * kk + spec, 1f); cb = Math.Min(cb * kk + spec, 1f);
-                // Glow under an outline under the paint (premultiplied).
-                float pa = c * ca, ga = glowK * 0.45f * gl * ca;
-                float or = cr * ga, og = cg * ga, ob = cb * ga, oa = ga;
+                hr = Math.Min(hr * kk, 1f); hg = Math.Min(hg * kk, 1f); hb = Math.Min(hb * kk, 1f);
+                // A glow over 100% also lights the line's core toward white, as hot light.
+                float hot = 0.6f * (Math.Clamp((fireGlowK - 1f) / 2f, 0f, 1f) * fired + Math.Clamp((aimGlowK - 1f) / 2f, 0f, 1f) * aimed);
+                cr += (1f - cr) * hot; cg += (1f - cg) * hot; cb += (1f - cb) * hot;
+                // Glow under an outline under the paint (premultiplied). Over 100% it blooms: brighter, and wider as its
+                // faint edge is lifted (gl^(1/k)).
+                float pa = c * ca;
+                float ga = (gk <= 1f ? gk * 0.45f * gl : Math.Min(0.9f, 0.45f * MathF.Pow(gl, 1f / gk) * MathF.Sqrt(gk))) * ha;
+                float or = hr * ga, og = hg * ga, ob = hb * ga, oa = ga;
                 if (outline)
                 {
                     float la = Smooth(0.2f, 0.4f, gl) * (1f - c) * oc.A / 255f;
@@ -217,6 +243,11 @@ internal static class PaintRenderer
         alpha /= 6f;
         var fa = Color.FromArgb(s.Color("fire"));
         var fb = Color.FromArgb(s.Color("fire_behind"));
+        var aa = Color.FromArgb(s.Color("aim"));
+        var ab = Color.FromArgb(s.Color("aim_behind"));
+        int brush = Math.Clamp(s.LaserBrush, 1, 20);
+        // A Fire or Aim line's width as a share of the beam's.
+        float fireW = Math.Clamp(s.LaserFireBrush, 1, 20) / (float)brush, aimW = Math.Clamp(s.LaserAimBrush, 1, 20) / (float)brush;
         var light = LightDir(s.LaserLightFrom);
         var hv = LaserTrace.Unit(light.X, light.Y, light.Z + 1f);
         int reach = s.LaserSmoothColours ? LaserTrace.SmoothReach : 0;
@@ -228,7 +259,7 @@ internal static class PaintRenderer
             var p = strokes.Point(i);
             var v = Pic(p.X, p.Y, p.Z);
             float k = s.Perspective ? LaserTrace.Perspective(v.Z) : 1f;
-            float bx = (v.X * k + e) * r * toBuf, by = (e - v.Y * k) * r * toBuf;
+            float bx = (v.X * k * r + e) * toBuf, by = (e - v.Y * k * r) * toBuf;
             if (i > 0 && !strokes.Gap(i) && v.Z > 0f == front)
             {
                 // Its colour: where it is in the scene, or the way it moved; shots in the Fire colours.
@@ -237,10 +268,12 @@ internal static class PaintRenderer
                     turned[1] * p.X + turned[4] * p.Y + turned[7] * p.Z,
                     turned[2] * p.X + turned[5] * p.Y + turned[8] * p.Z);
                 float cr, cg, cb;
-                if (strokes.Fire(i))
+                int kind = strokes.Kind(i);
+                if (kind != LaserPaint.PaintKind)
                 {
                     float kb = LaserTrace.Behind(gs.Item3);
-                    cr = (fa.R + (fb.R - fa.R) * kb) / 255f; cg = (fa.G + (fb.G - fa.G) * kb) / 255f; cb = (fa.B + (fb.B - fa.B) * kb) / 255f;
+                    var (ca, cz) = kind == LaserPaint.FireKind ? (fa, fb) : (aa, ab);
+                    cr = (ca.R + (cz.R - ca.R) * kb) / 255f; cg = (ca.G + (cz.G - ca.G) * kb) / 255f; cb = (ca.B + (cz.B - ca.B) * kb) / 255f;
                 }
                 else
                 {
@@ -254,7 +287,8 @@ internal static class PaintRenderer
                 float spec = s.LaserShine * MathF.Pow(Math.Max(nx * hv.X + ny * hv.Y + nz * hv.Z, 0f), 24f);
                 int col = Pack(Math.Min(cr * kk + spec, 1f), Math.Min(cg * kk + spec, 1f), Math.Min(cb * kk + spec, 1f), 1f);
                 float tail = Math.Clamp(1f - strokes.BehindNewest(i) / len, 0f, 1f);
-                float half = width * (0.2f + 0.8f * tail) * k / 2f;
+                float kw = kind == LaserPaint.FireKind ? fireW : kind == LaserPaint.AimKind ? aimW : 1f;
+                float half = width * kw * (0.2f + 0.8f * tail) * k / 2f;
                 Capsule(cov, covCol, size, bx0, by0, bx, by, half, col);
                 any = true;
             }

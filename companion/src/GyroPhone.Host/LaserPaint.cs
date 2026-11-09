@@ -12,12 +12,17 @@ namespace GyroPhone.Host;
 /// stamps overlap; there a texel takes the line's strongest stamp, not their sum, so a line is even along its length.
 ///
 /// Per texel (0 .. 255), premultiplied by the amount so reading between texels blends: <see cref="Amount"/>,
-/// <see cref="Fire"/> (the amount that is shots) and <see cref="Glow"/> (a wide faint halo, built up the same way).
+/// <see cref="Fire"/> (the amount that is shots), <see cref="Aim"/> (the amount painted while aiming) and
+/// <see cref="Glow"/> (a wide faint halo, built up the same way), with <see cref="GlowFire"/> and <see cref="GlowAim"/>
+/// the glow's shares that are shots' and aiming's (premultiplied by the glow), so theirs can shine stronger.
 /// With way colours kept, <see cref="Way"/> holds each texel's colour times its amount (RGB).
 /// </summary>
 public sealed class LaserPaint
 {
     public const int DefaultWidth = 1024;
+
+    /// <summary>What painted a stamp: the beam, the beam while aiming, while firing. As the phone's.</summary>
+    public const int PaintKind = 0, AimKind = 1, FireKind = 2;
 
     /// <summary>How far the glow reaches, in brush half widths.</summary>
     public const float Reach = 3f;
@@ -29,7 +34,7 @@ public sealed class LaserPaint
 
     public int Width { get; }
     public int Height { get; }
-    public readonly byte[] Amount, Fire, Glow;
+    public readonly byte[] Amount, Fire, Aim, Glow, GlowFire, GlowAim;
 
     /// <summary>Each texel's way colour times its amount (RGB), made at the first stamp that keeps one.</summary>
     public int[]? Way { get; private set; }
@@ -51,6 +56,9 @@ public sealed class LaserPaint
         Amount = new byte[_n];
         Fire = new byte[_n];
         Glow = new byte[_n];
+        Aim = new byte[_n];
+        GlowFire = new byte[_n];
+        GlowAim = new byte[_n];
         _lineAmount = new byte[_n];
         _lineGlow = new byte[_n];
         _lineTag = new short[_n];
@@ -79,6 +87,9 @@ public sealed class LaserPaint
         Array.Clear(Amount);
         Array.Clear(Fire);
         Array.Clear(Glow);
+        Array.Clear(Aim);
+        Array.Clear(GlowFire);
+        Array.Clear(GlowAim);
         if (Way != null) Array.Clear(Way);
         Array.Clear(_lineAmount);
         Array.Clear(_lineGlow);
@@ -97,11 +108,12 @@ public sealed class LaserPaint
     /// <summary>
     /// Paints the line from unit direction a to b (the same point for a dot), <paramref name="alongDeg"/> degrees
     /// along its line at its end, <paramref name="halfDeg"/> degrees each side of its middle, its edge
-    /// <paramref name="soft"/> (0 sharp .. 1 soft); <paramref name="fired"/> while firing; <paramref name="wayRgb"/> its
+    /// <paramref name="soft"/> (0 sharp .. 1 soft); <paramref name="kind"/> what painted it (<see cref="PaintKind"/>,
+    /// <see cref="AimKind"/> while aiming, <see cref="FireKind"/> while firing); <paramref name="wayRgb"/> its
     /// way colour (RGB, or null).
     /// </summary>
     public void Stamp(float ax, float ay, float az, float bx, float by, float bz, double alongDeg, float halfDeg,
-        bool fired, float soft = 0.5f, int? wayRgb = null)
+        int kind, float soft = 0.5f, int? wayRgb = null)
     {
         if (_line == 0) NewLine();
         if (wayRgb != null && Way == null) Way = new int[_n];
@@ -114,7 +126,7 @@ public sealed class LaserPaint
         {
             var a = Slerp(ax, ay, az, bx, by, bz, hop, k / (float)pieces);
             var b = Slerp(ax, ay, az, bx, by, bz, hop, (k + 1) / (float)pieces);
-            Piece(a, b, brush, fired, wayRgb, along);
+            Piece(a, b, brush, kind, wayRgb, along);
         }
         Version++;
     }
@@ -139,7 +151,7 @@ public sealed class LaserPaint
         }
     }
 
-    private void Piece((float X, float Y, float Z) a, (float X, float Y, float Z) b, Brush brush, bool fired, int? wayRgb, int along)
+    private void Piece((float X, float Y, float Z) a, (float X, float Y, float Z) b, Brush brush, int kind, int? wayRgb, int along)
     {
         float abx = b.X - a.X, aby = b.Y - a.Y, abz = b.Z - a.Z;
         float ab2 = abx * abx + aby * aby + abz * abz;
@@ -161,7 +173,8 @@ public sealed class LaserPaint
         int w = wayRgb ?? 0;
         float wr = w >> 16 & 0xFF, wg = w >> 8 & 0xFF, wb = w & 0xFF;
         var ways = Way;
-        float f = fired ? 1f : 0f;
+        float f = kind == FireKind ? 1f : 0f;
+        float ai = kind == AimKind ? 1f : 0f;
         for (int j = j0; j <= j1; j++)
         {
             double lat = LatOf(j);
@@ -201,7 +214,7 @@ public sealed class LaserPaint
                 if (pa <= 0f && pg <= 0f) continue;
                 float oldA = Amount[k] / 255f, oldG = Glow[k] / 255f;
                 // What was there before this line's pass: take this line's part back out.
-                float baseA = oldA, baseG = oldG, keep = 1f;
+                float baseA = oldA, baseG = oldG, keep = 1f, keepG = 1f;
                 if (_lineTag[k] == _line && ((along - _lineAlong[k]) & 0xFFFF) <= samePass)
                 {
                     float la = _lineAmount[k] / 255f, lg = _lineGlow[k] / 255f;
@@ -211,14 +224,21 @@ public sealed class LaserPaint
                     if (la < 0.995f) baseA = Math.Clamp((oldA - la) / (1f - la), 0f, 1f);
                     if (lg < 0.995f) baseG = Math.Clamp((oldG - lg) / (1f - lg), 0f, 1f);
                     keep = oldA > 1e-4f ? Math.Clamp(baseA / oldA, 0f, 1f) : 0f;
+                    keepG = oldG > 1e-4f ? Math.Clamp(baseG / oldG, 0f, 1f) : 0f;
                 }
                 float newA = baseA + pa * (1f - baseA);
                 float newG = baseG + pg * (1f - baseG);
                 // Premultiplied colours: the base's part, under the new paint, plus the new paint's.
                 float newF = Fire[k] / 255f * keep * (1f - pa) + f * pa;
+                float newI = Aim[k] / 255f * keep * (1f - pa) + ai * pa;
+                float newGF = GlowFire[k] / 255f * keepG * (1f - pg) + f * pg;
+                float newGI = GlowAim[k] / 255f * keepG * (1f - pg) + ai * pg;
                 Amount[k] = (byte)(newA * 255f + 0.5f);
                 Glow[k] = (byte)(newG * 255f + 0.5f);
                 Fire[k] = (byte)(MathF.Min(newF, newA) * 255f + 0.5f);
+                Aim[k] = (byte)(MathF.Max(0f, MathF.Min(newI, newA - MathF.Min(newF, newA))) * 255f + 0.5f);
+                GlowFire[k] = (byte)(MathF.Min(newGF, newG) * 255f + 0.5f);
+                GlowAim[k] = (byte)(MathF.Max(0f, MathF.Min(newGI, newG - MathF.Min(newGF, newG))) * 255f + 0.5f);
                 if (ways != null && wayRgb != null)
                 {
                     int o = ways[k];

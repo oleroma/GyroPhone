@@ -27,6 +27,8 @@ internal sealed class OverlayScene
     public long NowTicks;
     /// <summary>The laser pointer's fire output is held now (the rifle's muzzle flash).</summary>
     public bool Firing;
+    /// <summary>The laser pointer's Aim display now, eased (0 .. 1): the crosshair shrinks and the rifle shoulders by it.</summary>
+    public float Aim;
 }
 
 /// <summary>
@@ -101,7 +103,7 @@ internal static class OverlayRenderer
                 DialDrawing.DrawHorizon(g, area, settings, m, m);
                 break;
             case OverlayKind.Laser:
-                LaserDrawing.Draw(g, area, settings, LaserDrawing.Aimed(m, settings), scene.Laser, scene.NowTicks, live && scene.Frame.RatchetHeld, live ? scene.Frame.PoseActive : 0, live && scene.Firing, m);
+                LaserDrawing.Draw(g, area, settings, LaserDrawing.Aimed(m, settings), scene.Laser, scene.NowTicks, live && scene.Frame.RatchetHeld, live ? scene.Frame.PoseActive : 0, live && scene.Firing, m, live ? scene.Aim : 0f);
                 break;
             default:
                 DialDrawing.DrawDisk(g, area, settings, m, m);

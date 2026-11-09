@@ -26,6 +26,10 @@ internal sealed class OverlayForm : Form
     // The laser pointer's trail and paint; the phone's Clear displays presses last seen (-1 = none yet).
     private readonly LaserTrace _laser = new();
     private int _clearPresses = -1;
+    // The Aim display's ease: last stepped at this tick.
+    private long _aimTicks;
+    /// <summary>How long the Aim display takes to ease fully in or out (as the phone's).</summary>
+    private const float AimEaseMs = 120f;
     private readonly Action<string> _log;
     private readonly OverlayScene _scene = new();
     private DibSurface? _surface;
@@ -470,6 +474,7 @@ internal sealed class OverlayForm : Form
             {
                 var beam = LaserTrace.Beam(LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(_scene.Frame, ls), ls));
                 bool fire = (ls.LaserDraw || ls.LaserSnake) && _engine.OutputHeld(ls.LaserFire);
+                bool aim = (ls.LaserDraw || ls.LaserSnake) && _engine.OutputHeld(ls.LaserAim);
                 for (int i = 0; i < 6; i++) _moveColors[i] = unchecked((uint)ls.Color(OverlaySettings.LaserMoves[i]));
                 _laser.Add(beam.X, beam.Y, beam.Z, now, ls.LaserDraw, _scene.Frame.RatchetHeld, ls.LaserClearOnRatchet, fire, ls.LaserFireOnly,
                     ls.LaserSmoothColours, ls.LaserLineSmoothing,
@@ -477,7 +482,10 @@ internal sealed class OverlayForm : Form
                     snakeDeg: ls.LaserSnake ? ls.LaserSnakeDeg : 0f,
                     wayColors: ls.LaserColourByWay ? _moveColors : null,
                     mapWidth: PaintWidths[Math.Clamp(ls.LaserPaintDetail, 0, 2)],
-                    soft: ls.LaserSoftness);
+                    soft: ls.LaserSoftness,
+                    aim: aim,
+                    fireBrushDeg: Math.Clamp(ls.LaserFireBrush, 1, 20) * 0.6f,
+                    aimBrushDeg: Math.Clamp(ls.LaserAimBrush, 1, 20) * 0.6f);
             }
         }
         // A Clear displays mapping on the phone: the paint goes (the first count seen clears nothing).
@@ -497,6 +505,16 @@ internal sealed class OverlayForm : Form
             // The rifle's muzzle flash flickers while it fires.
             _scene.Firing = _engine.OutputHeld(lf.LaserFire);
             if (lf.LaserRifle && _scene.Firing) laserFading = true;
+            // Aiming eases in and out over AimEaseMs.
+            float goal = _engine.OutputHeld(lf.LaserAim) ? 1f : 0f;
+            float dt = _aimTicks == 0 ? 0f : Math.Clamp(now - _aimTicks, 0L, 100L);
+            _aimTicks = now;
+            if (_scene.Aim != goal)
+            {
+                float step = dt <= 0f ? 1f : dt / AimEaseMs;
+                _scene.Aim = goal > _scene.Aim ? Math.Min(goal, _scene.Aim + step) : Math.Max(goal, _scene.Aim - step);
+                laserFading = true;
+            }
         }
         StepRestFade(now);
         UpdateStats();

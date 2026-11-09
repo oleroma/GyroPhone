@@ -1437,6 +1437,8 @@ class GamepadRuntime(context: Context) {
             if (map != 0) f.cameraMap = map
             f.firing = f.display.kind == com.oleroma.gyrophone.core.model.GyroDisplayKind.LASER &&
                 inputAllowed && com.oleroma.gyrophone.core.engine.LaserFire.held(f.display.laserFire, out)
+            f.aiming = f.display.kind == com.oleroma.gyrophone.core.model.GyroDisplayKind.LASER &&
+                inputAllowed && com.oleroma.gyrophone.core.engine.LaserFire.held(f.display.laserAim, out)
             f.realWorld = real
             val d = f.display
             val c = if (d.isTrackball || d.followsCamera) cam else m

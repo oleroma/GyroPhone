@@ -286,6 +286,23 @@ class CameraTurnTest {
         assertNotNull(dot.dot)
     }
 
+    @Test fun aimingPaintsInItsOwnKindAndFiringWins() {
+        val t = LaserTrace()
+        fun go(deg: Int, fire: Boolean, aim: Boolean, only: Boolean = false) {
+            val a = Math.toRadians(deg.toDouble()).toFloat()
+            t.add(kotlin.math.sin(a), 0f, -kotlin.math.cos(a), deg.toLong(), draw = true, held = false, fire = fire, aim = aim, fireOnly = only, brushDeg = 2f)
+        }
+        go(0, false, false); go(2, false, true); go(4, true, true)
+        assertEquals(com.oleroma.gyrophone.core.engine.LaserPaint.PAINT, t.strokes.kind(0))
+        assertEquals(com.oleroma.gyrophone.core.engine.LaserPaint.AIM, t.strokes.kind(1))
+        assertEquals(com.oleroma.gyrophone.core.engine.LaserPaint.FIRE, t.strokes.kind(2))
+        // Only while firing or aiming: aiming still paints.
+        go(6, false, true, only = true)
+        assertEquals(4, t.strokes.count)
+        go(8, false, false, only = true)
+        assertEquals(4, t.strokes.count)
+    }
+
     @Test fun firingPaintsInItsOwnColoursAndCanBeTheOnlyPaint() {
         val t = LaserTrace()
         fun aim(deg: Int, fire: Boolean, only: Boolean = false) {

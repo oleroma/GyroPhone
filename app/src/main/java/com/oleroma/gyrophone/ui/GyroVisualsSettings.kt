@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.oleroma.gyrophone.core.engine.GyroPose
+import com.oleroma.gyrophone.core.engine.LaserFire
 import com.oleroma.gyrophone.core.engine.LaserTrace
 import com.oleroma.gyrophone.core.model.BallShape
 import com.oleroma.gyrophone.core.model.GyroDisplay
@@ -258,6 +259,21 @@ internal fun GyroDisplaySettingsScreen(
                     SwitchRow("Fixed pointer mode", d.laserSphereTurns, "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.") { set(d.copy(laserSphereTurns = it)) }
                     if (!d.laserRifle) SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
                     SwitchRow("Axes (pitch X red, yaw Y green, roll Z blue)", d.laserAxes, "They turn with the pointer, R along its beam.") { set(d.copy(laserAxes = it)) }
+                    val paints = d.laserDraw || d.laserSnake
+                    ButtonPicker("Fire display", d.laserFire, "While GyroPhone sends this button the rifle's muzzle flashes and Draw mode paints in the Fire colours. Tap to pick another, or None.") { set(d.copy(laserFire = it)) }
+                    if (d.laserFire != LaserFire.NONE && paints) Indented {
+                        IntSlider("Fire brush %d°", d.laserFireBrush, 1..20) { set(d.copy(laserFireBrush = it)) }
+                        if (d.laserDraw) PercentSlider("Fire glow", d.laserFireGlow, 0f..3f) { set(d.copy(laserFireGlow = it)) }
+                    }
+                    ButtonPicker("Aim display", d.laserAim, "While GyroPhone sends this button the crosshair shrinks, the rifle is shouldered with a scope and a laser sight, and Draw mode paints in the Aim colours. Firing wins over aiming. Tap to pick another, or None.") { set(d.copy(laserAim = it)) }
+                    if (d.laserAim != LaserFire.NONE) Indented {
+                        if (look == 2) PercentSlider("Crosshair while aiming", d.laserAimSize, 0.2f..1f) { set(d.copy(laserAimSize = it)) }
+                        if (paints) IntSlider("Aim brush %d°", d.laserAimBrush, 1..20) { set(d.copy(laserAimBrush = it)) }
+                        if (d.laserDraw) PercentSlider("Aim glow", d.laserAimGlow, 0f..3f) { set(d.copy(laserAimGlow = it)) }
+                    }
+                    if (paints && (d.laserFire != LaserFire.NONE || d.laserAim != LaserFire.NONE)) {
+                        SwitchRow("Paint only while firing or aiming", d.laserFireOnly, "The beam alone leaves no trail; only shots and aiming draw.") { set(d.copy(laserFireOnly = it)) }
+                    }
                     if (!d.laserRifle && !d.laserCrosshair) SwitchRow("Gimbal rings", d.laserGimbal, "Yaw (green, outside), pitch (red) and roll (blue) rings turning with the pointer's axes, each round its own: the path the beam and crosshair take turning about it. A None axis's ring is faint and dashed, and an axis lights up while the gyro turns it.") { set(d.copy(laserGimbal = it)) }
                 }
             }
@@ -269,7 +285,7 @@ internal fun GyroDisplaySettingsScreen(
                 Colours()
             }
         }
-        val draw = if (!laser) null else category(runtime, "gyroDisplayDraw", "Draw", "Draw mode, snake, brush, Fire, Clear") {
+        val draw = if (!laser) null else category(runtime, "gyroDisplayDraw", "Draw", "Draw mode, snake, brush, Clear") {
             SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim; the paint stays until you clear it.") { set(d.copy(laserDraw = it)) }
             SwitchRow("Snake", d.laserSnake, "A line following the beam along the newest stretch of its path, thinning to its tail. With or without Draw mode.") { set(d.copy(laserSnake = it)) }
             // Length 10° to 720°, finer toward the short ones: the slider's square, in 5° steps.
@@ -283,9 +299,7 @@ internal fun GyroDisplaySettingsScreen(
             if (d.laserDraw || d.laserSnake) Indented {
                 IntSlider("Brush %d°", d.laserBrush, 1..20) { set(d.copy(laserBrush = it)) }
                 SwitchRow("Clear on ratchet", d.laserClearOnRatchet, "A ratchet press clears the drawing.") { set(d.copy(laserClearOnRatchet = it)) }
-                FirePicker(d.laserFire) { set(d.copy(laserFire = it)) }
-                SwitchRow("Paint only while firing", d.laserFireOnly, "Aiming leaves no trail; only shots draw.") { set(d.copy(laserFireOnly = it)) }
-                Hint("The paint uncovers the sphere's own colours where it lands (the Moving colours, laid on the sphere as a normal map: right pink, left teal, up light green, down purple), or with Colour by the way it moved, the colour of each sweep's direction. Shots take the Fire colours. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every pointer at once.")
+                Hint("The paint uncovers the sphere's own colours where it lands (the Moving colours, laid on the sphere as a normal map: right pink, left teal, up light green, down purple), or with Colour by the way it moved, the colour of each sweep's direction. Shots take the Fire colours and aiming the Aim colours, each with its own brush and glow (Look tab). Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every pointer at once.")
             }
             TextButton(onClick = { runtime.clearLaser(control.id) }) { Text("Clear") }
         }
@@ -711,13 +725,13 @@ private fun <T> Chips(options: List<Pair<String, T>>, selected: T, onPick: (T) -
 }
 
 /**
- * The laser's Fire pick: a row showing the picked button that opens a popup listing every
- * button as chips wrapped to the screen's width, scrolling if they don't fit, in two tabs:
- * Keyboard & mouse and Gamepad (opening on the picked one's).
+ * A pointer's Fire display or Aim display pick ([title]): a row showing the picked button that
+ * opens a popup listing None and every button as chips wrapped to the screen's width, scrolling if
+ * they don't fit, in two tabs: Keyboard & mouse and Gamepad (opening on the picked one's).
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun FirePicker(selected: Int, onPick: (Int) -> Unit) {
+private fun ButtonPicker(title: String, selected: Int, hint: String, onPick: (Int) -> Unit) {
     val groups = listOf(
         "Mouse" to com.oleroma.gyrophone.core.engine.LaserFire.MOUSE_CHOICES,
         "Controller" to com.oleroma.gyrophone.core.engine.LaserFire.PAD_CHOICES,
@@ -725,20 +739,20 @@ private fun FirePicker(selected: Int, onPick: (Int) -> Unit) {
     )
     var open by remember { mutableStateOf(false) }
     val name = groups.firstNotNullOfOrNull { (g, list) -> list.firstOrNull { it.second == selected }?.let { "$g ${it.first}" } } ?: "None"
-    Searchable("Fire", *groups.flatMap { g -> g.second.map { it.first } }.toTypedArray()) {
+    Searchable(title, *groups.flatMap { g -> g.second.map { it.first } }.toTypedArray()) {
         // As every settings row: its title, the picked button on the right, the tip below.
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Fire", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
                 androidx.compose.material3.OutlinedButton(onClick = { open = true }) { Text(name) }
             }
-            Hint("Paints in the Fire colours while GyroPhone sends this button. Tap to pick another.")
+            Hint(hint)
         }
     }
     if (!open) return
     androidx.compose.material3.AlertDialog(
         onDismissRequest = { open = false },
-        title = { Text("Fire") },
+        title = { Text(title) },
         text = {
             var pad by remember { mutableStateOf(groups[1].second.any { it.second == selected }) }
             Column {
@@ -746,6 +760,11 @@ private fun FirePicker(selected: Int, onPick: (Int) -> Unit) {
                     FilterChip(selected = !pad, onClick = { pad = false }, label = { Text("Keyboard & mouse") })
                     FilterChip(selected = pad, onClick = { pad = true }, label = { Text("Gamepad") })
                 }
+                // None turns it off.
+                FilterChip(selected = selected == LaserFire.NONE, onClick = {
+                    onPick(LaserFire.NONE)
+                    open = false
+                }, label = { Text("None") }, modifier = Modifier.padding(top = 8.dp))
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 for ((g, list) in if (pad) groups.subList(1, 2) else listOf(groups[0], groups[2])) {
                     Text(g, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))

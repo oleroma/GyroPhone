@@ -18,7 +18,7 @@ class LaserPaintTest {
     private fun fire(p: LaserPaint, d: FloatArray) = (p.fire[k(p, d)].toInt() and 0xFF) / 255f
 
     // A line along the equator in 0.5° steps, as the trace stamps it.
-    private fun line(p: LaserPaint, from: Float, to: Float, up: Float = 0f, soft: Float = 0.5f, fired: Boolean = false, way: Int? = null) {
+    private fun line(p: LaserPaint, from: Float, to: Float, up: Float = 0f, soft: Float = 0.5f, fired: Boolean = false, way: Int? = null, kind: Int = if (fired) LaserPaint.FIRE else LaserPaint.PAINT) {
         p.newLine()
         var x = from
         var along = 0.0
@@ -26,7 +26,7 @@ class LaserPaintTest {
             val a = at(x, up)
             val b = at(x + 0.5f, up)
             along += 0.5
-            p.stamp(a[0], a[1], a[2], b[0], b[1], b[2], along, 1f, fired, soft, way)
+            p.stamp(a[0], a[1], a[2], b[0], b[1], b[2], along, 1f, kind, soft, way)
             x += 0.5f
         }
     }
@@ -58,6 +58,21 @@ class LaserPaintTest {
         assertEquals(1f, fire(p, at(10f)), 0.02f)
         line(p, 0f, 20f) // painted over in full
         assertEquals(0f, fire(p, at(10f)), 0.02f)
+    }
+
+    @Test fun aimPaintAndGlowAreKeptApartFromFire() {
+        val p = LaserPaint()
+        line(p, 0f, 20f, kind = LaserPaint.AIM)
+        val t = k(p, at(10f))
+        assertEquals(1f, (p.aim[t].toInt() and 0xFF) / 255f, 0.02f)
+        assertEquals(0f, fire(p, at(10f)), 0.02f)
+        val g = k(p, at(10f, 2f))
+        assertEquals(p.glow[g].toInt() and 0xFF, p.glowAim[g].toInt() and 0xFF) // all of the glow there is aiming's
+        assertEquals(0, p.glowFire[g].toInt())
+        line(p, 0f, 20f, fired = true) // a shot over it takes its place
+        assertEquals(0f, (p.aim[t].toInt() and 0xFF) / 255f, 0.02f)
+        assertEquals(1f, fire(p, at(10f)), 0.02f)
+        assertTrue((p.glowFire[g].toInt() and 0xFF) > (p.glowAim[g].toInt() and 0xFF))
     }
 
     @Test fun keepsWayColours() {
