@@ -117,8 +117,8 @@ data class GyroDisplay(
     val trackballRws: Boolean = true,
     /**
      * [TurnsWith.TRACKBALL]: which gyro turn rolls it about each of its axes, one byte each: about
-     * its up axis (shown as roll), its right axis (pitch), the axis through the screen (shown as
-     * yaw); each byte 1 yaw (stored), 2 pitch, 3 roll (stored), 0 none, | 0x80 the other way, | [TRACKBALL_STOP], | [TRACKBALL_LOCK]
+     * its up axis Y (yaw, turning left and right), its right axis X (pitch), the axis along the beam Z (roll,
+     * through the screen at rest); each byte 1 yaw (stored), 2 pitch, 3 roll (stored), 0 none, | 0x80 the other way, | [TRACKBALL_STOP], | [TRACKBALL_LOCK]
      * locked (held at 0: then it turns as a gimbal, as a game camera does).
      * The default turns it as the Camera mode does with the default gyro mouse ([TRACKBALL_AS_CAMERA]).
      */
@@ -322,9 +322,9 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     BALL_GIMBAL_ROLL(GyroDisplayKind.BALL, "groll", "Gimbal roll ring", 0xFF5AA8FF),
     LASER_SPHERE(GyroDisplayKind.LASER, "sphere", "Sphere", 0x332A3446),
     LASER_GRID(GyroDisplayKind.LASER, "grid", "Grid", 0x66FFFFFF),
-    LASER_X(GyroDisplayKind.LASER, "x", "Pitch axis (right)", 0xFF5ADB6E),
-    LASER_Y(GyroDisplayKind.LASER, "y", "Roll axis (up)", 0xFF5AA8FF),
-    LASER_Z(GyroDisplayKind.LASER, "z", "Yaw axis (toward you)", 0xFFFF5A5A),
+    LASER_X(GyroDisplayKind.LASER, "x", "Pitch axis (X, right)", 0xFF5ADB6E),
+    LASER_Y(GyroDisplayKind.LASER, "y", "Yaw axis (Y, up)", 0xFFFF5A5A),
+    LASER_Z(GyroDisplayKind.LASER, "z", "Roll axis (Z, along the beam)", 0xFF5AA8FF),
     LASER_BEAM(GyroDisplayKind.LASER, "beam", "Beam", 0xFFFF3B3B),
     LASER_DOT(GyroDisplayKind.LASER, "dot", "Dot", 0xFFFFFFFF),
     LASER_PAINT(GyroDisplayKind.LASER, "paint", "Paint ahead", 0xFFFFC94D),

@@ -305,7 +305,7 @@ internal sealed class OverlaysPage : Page
         lb.Children.Add(_laserAxon);
         _laserSphereTurns = Parts.Toggle("Sphere turns, beam stays ahead", () => Change(o => o.LaserSphereTurns = !o.LaserSphereTurns), "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.");
         lb.Children.Add(_laserSphereTurns);
-        _laserAxes = Parts.Toggle("Axes (yaw red, pitch green, roll blue)", () => Change(o => o.LaserAxes = !o.LaserAxes));
+        _laserAxes = Parts.Toggle("Axes (yaw Y red, pitch X green, roll Z blue)", () => Change(o => o.LaserAxes = !o.LaserAxes));
         lb.Children.Add(_laserGrid);
         lb.Children.Add(_laserAxes);
         lb.Children.Add(Parts.Divider());
@@ -361,9 +361,9 @@ internal sealed class OverlaysPage : Page
         tbb.Children.Add(_rws);
         tbb.Children.Add(_spin.View);
         // A trackball's axes: for each, the gyro turn that rolls it about that axis, and which way.
-        // TrackballAxes bytes: 0 about up (shown as roll), 1 about right (pitch), 2 through the screen (shown as yaw).
+        // TrackballAxes bytes: 0 about up Y (yaw), 1 about right X (pitch), 2 along the beam Z (roll).
         _trackballAxes = new StackPanel { Margin = new Thickness(20, 4, 0, 4) };
-        foreach (var (i, name) in new[] { (2, "Yaw"), (1, "Pitch"), (0, "Roll") })
+        foreach (var (i, name) in new[] { (0, "Yaw"), (1, "Pitch"), (2, "Roll") })
         {
             int shift = 8 * i;
             void Put(OverlaySettings o, int c) => o.TrackballAxes = (o.TrackballAxes & ~(0xFF << shift)) | (c << shift);
@@ -399,7 +399,7 @@ internal sealed class OverlaysPage : Page
             _tbEaseOptions[i] = opts;
             _trackballAxes.Children.Add(opts);
         }
-        _trackballAxes.Children.Add(Parts.Text("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked, stopped or easing back it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces; with Yaw locked it stops at straight up or down.", "Hint"));
+        _trackballAxes.Children.Add(Parts.Text("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked, stopped or easing back it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces. Stop at ±90° keeps an axis from turning past sideways (Pitch: straight up or down).", "Hint"));
         _tbAsCamera = Parts.Button("As the camera", () => Change(o => o.TrackballAxes = OverlaySettings.TrackballAsCamera));
         _trackballAxes.Children.Add(_tbAsCamera);
         tbb.Children.Add(_trackballAxes);

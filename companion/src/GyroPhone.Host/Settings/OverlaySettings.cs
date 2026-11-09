@@ -156,7 +156,7 @@ public sealed class OverlaySettings
     public float TrackballSpin { get; set; } = 1f;
     /// <summary>
     /// Trackball: which gyro turn rolls it about each of its axes, one byte each: about its up axis
-    /// (shown as roll), its right axis (pitch), the axis through the screen (shown as yaw); each byte
+    /// Y (yaw, turning left and right), its right axis X (pitch), the axis along the beam Z (roll, through the screen at rest); each byte
     /// 1 yaw (as sent), 2 pitch, 3 roll (as sent), 0 none, | 0x80 the other way, | TrackballStop stopping at ±90°, | TrackballLock locked. The default turns it
     /// as Camera does with the default gyro mouse. As the phone's GyroDisplay.trackballAxes.
     /// </summary>
@@ -407,9 +407,9 @@ public sealed class OverlaySettings
     [
         new("sphere", "Sphere", 0x332A3446),
         new("grid", "Grid", 0x66FFFFFF),
-        new("x", "Pitch axis (right)", 0xFF5ADB6E),
-        new("y", "Roll axis (up)", 0xFF5AA8FF),
-        new("z", "Yaw axis (toward you)", 0xFFFF5A5A),
+        new("x", "Pitch axis (X, right)", 0xFF5ADB6E),
+        new("y", "Yaw axis (Y, up)", 0xFFFF5A5A),
+        new("z", "Roll axis (Z, along the beam)", 0xFF5AA8FF),
         new("beam", "Beam", 0xFFFF3B3B),
         new("dot", "Dot", 0xFFFFFFFF),
         new("paint", "Paint ahead", 0xFFFFC94D),

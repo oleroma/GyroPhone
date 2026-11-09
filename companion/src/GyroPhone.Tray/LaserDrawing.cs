@@ -16,6 +16,9 @@ internal static class LaserDrawing
     /// <summary>A stroke's hops longer than this are bent along the sphere in pieces.</summary>
     private static readonly float StrokeStep = 4f * MathF.PI / 180f;
 
+    /// <summary>The axis letters, X, Y, Z: pitch, yaw, roll as the laser aims (facing −Z).</summary>
+    private static readonly string[] AxisLetters = ["P", "Y", "R"];
+
     /// <summary>Strokes fade in this many steps.</summary>
     private const int Levels = 8;
 
@@ -74,7 +77,15 @@ internal static class LaserDrawing
                     if (z > 0f != front) continue;
                     var a = axisColors[i];
                     g.DrawLine(Fade(a, (sign > 0 ? 1f : 0.4f) * (front ? 0.7f : 1f)), px * 1.5f, c, p, round: true);
-                    if (sign > 0) g.FillEllipse(a, new RectangleF(p.X - px * 2.5f, p.Y - px * 2.5f, px * 5f, px * 5f));
+                    if (sign > 0)
+                    {
+                        g.FillEllipse(a, new RectangleF(p.X - px * 2.5f, p.Y - px * 2.5f, px * 5f, px * 5f));
+                        // Its letter just beyond the tip: P (X), Y (Y), R (Z), as the laser aims.
+                        float k = 1f + 12f * px / r;
+                        var q = At(i == 0 ? k : 0, i == 1 ? k : 0, i == 2 ? k : 0).P;
+                        float size = 11f * px;
+                        g.DrawText(AxisLetters[i], size, true, Fade(a, front ? 0.8f : 1f), new RectangleF(q.X - size, q.Y - size, size * 2, size * 2), TextAlign.Center, TextAlign.Center);
+                    }
                 }
         }
 

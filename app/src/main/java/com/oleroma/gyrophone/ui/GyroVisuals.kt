@@ -335,7 +335,15 @@ private class VisState {
                     if ((pv[2] > 0f) != front) continue
                     val a = axisColors[i]
                     drawLine(a.copy(alpha = a.alpha * (if (sign > 0) 1f else 0.4f) * (if (front) 0.7f else 1f)), c, p, 1.5f * density, StrokeCap.Round)
-                    if (sign > 0) drawCircle(a, 2.5f * density, p)
+                    if (sign > 0) {
+                        drawCircle(a, 2.5f * density, p)
+                        // Its letter just beyond the tip: P (X), Y (Y), R (Z), as the laser aims.
+                        val k = 1f + 12f * density / r
+                        val q = laserAt(c, r, if (i == 0) k else 0f, if (i == 1) k else 0f, if (i == 2) k else 0f)
+                        text.textSize = 11f * density
+                        text.color = a.copy(alpha = a.alpha * (if (front) 0.8f else 1f)).toArgb()
+                        drawContext.canvas.nativeCanvas.drawText(LASER_AXIS_LETTERS[i], q.x, q.y + text.textSize * 0.35f, text)
+                    }
                 }
             }
         }
@@ -1167,3 +1175,6 @@ private const val EDGE_CORNER_DP = 34f
 private val AXIS_COLORS = arrayOf(Color(0xFFFF5A5A), Color(0xFF5ADB6E), Color(0xFF5AA8FF))
 private val RING_AXES = MotionAxis.shown.toTypedArray()
 private val RING_LETTERS = arrayOf("Y", "P", "R")
+
+/** The laser pointer's axis letters, X, Y, Z: pitch, yaw, roll as it aims (facing −Z). */
+private val LASER_AXIS_LETTERS = arrayOf("P", "Y", "R")

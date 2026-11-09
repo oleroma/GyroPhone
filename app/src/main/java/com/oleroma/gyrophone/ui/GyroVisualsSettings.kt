@@ -197,7 +197,7 @@ internal fun GyroDisplaySettingsScreen(
                     SwitchRow("Axonometric view", d.laserAxonometric, LASER_AXON_HINT) { set(d.copy(laserAxonometric = it)) }
                     SwitchRow("Sphere turns, beam stays ahead", d.laserSphereTurns, "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.") { set(d.copy(laserSphereTurns = it)) }
                     if (!d.laserRifle) SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
-                    SwitchRow("Axes (yaw red, pitch green, roll blue)", d.laserAxes) { set(d.copy(laserAxes = it)) }
+                    SwitchRow("Axes (yaw Y red, pitch X green, roll Z blue)", d.laserAxes) { set(d.copy(laserAxes = it)) }
                     GroupTitle("Draw")
                     SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim.") { set(d.copy(laserDraw = it)) }
                     if (d.laserDraw) Indented {
@@ -321,8 +321,8 @@ private fun PoseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
 /** A trackball's axes: for each, locked or the gyro turn that rolls it about that axis, and which way. */
 @Composable
 private fun TrackballAxesSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
-    // Its bytes: 0 about up (shown as roll), 1 about right (pitch), 2 through the screen (shown as yaw).
-    for ((i, name) in listOf(2 to "Yaw", 1 to "Pitch", 0 to "Roll")) {
+    // Its bytes: 0 about up Y (yaw), 1 about right X (pitch), 2 along the beam Z (roll).
+    for ((i, name) in listOf(0 to "Yaw", 1 to "Pitch", 2 to "Roll")) {
         val code = d.trackballAxes shr (8 * i) and 0xFF
         fun put(c: Int) = set(d.copy(trackballAxes = (d.trackballAxes and (0xFF shl (8 * i)).inv()) or (c shl (8 * i))))
         val locked = code and TRACKBALL_LOCK != 0
@@ -336,7 +336,7 @@ private fun TrackballAxesSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
         }
         AxisEaseSettings(name, d.easeOf(i)) { set(d.withEase(i, it)) }
     }
-    Hint("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked, stopped or easing back it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces; with Yaw locked it stops at straight up or down.")
+    Hint("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked, stopped or easing back it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces. Stop at ±90° keeps an axis from turning past sideways (Pitch: straight up or down).")
     if (d.trackballAxes != TRACKBALL_AS_CAMERA) TextButton(onClick = { set(d.copy(trackballAxes = TRACKBALL_AS_CAMERA)) }) { Text("As the camera") }
 }
 
