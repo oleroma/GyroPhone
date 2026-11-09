@@ -30,7 +30,7 @@ enum class GyroDisplayKind(val label: String) {
     BALL("3D shape"),
 
     /** A see-through sphere seen from a fixed angle, a laser at its centre shining out of the phone's back onto its inside. */
-    LASER("Laser pointer"),
+    LASER("Pointer"),
 
     ;
 
@@ -177,6 +177,8 @@ data class GyroDisplay(
     val laserDraw: Boolean = false,
     val laserBrush: Int = 4,
     val laserFadeMs: Int = 0,
+    /** LASER Draw mode: keeps only the newest [laserLength] degrees of painted line (0 = all); with fading it also fades along that length. */
+    val laserLength: Int = 0,
     /** LASER Draw mode: a ratchet press clears the drawing. */
     val laserClearOnRatchet: Boolean = false,
     /**
@@ -195,6 +197,14 @@ data class GyroDisplay(
     val laserColourSteps: Int = 16,
     val laserCurve: Float = 0.5f,
     val laserLineSmoothing: Float = 0f,
+    /** LASER Draw mode: the glow round the paint (0 none .. 1 strong), a dark [GyroDisplayColor.LASER_OUTLINE] edge, older paint darker. */
+    val laserGlow: Float = 0.5f,
+    val laserOutline: Boolean = false,
+    val laserAgeDim: Boolean = false,
+    /** LASER Draw mode: the paint gets thinner toward the sphere's rim (and with [perspective] bigger nearer), changing smoothly along the line. */
+    val laserPaintWidth: Boolean = true,
+    /** 3D phone, 3D shape and laser pointer: seen in perspective (nearer parts bigger); off, flat (no perspective). */
+    val perspective: Boolean = true,
     /** What turns it (the pose kinds): the phone, the game's camera, or a trackball. */
     val turnsWith: TurnsWith = TurnsWith.PHONE,
     val opacity: Float = 0.7f,
@@ -359,6 +369,7 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     LASER_MOVE_DOWN(GyroDisplayKind.LASER, "move_down", "Moving down", 0xFF800080),
     LASER_MOVE_TOWARD(GyroDisplayKind.LASER, "move_toward", "Moving toward you", 0xFF8080FF),
     LASER_MOVE_AWAY(GyroDisplayKind.LASER, "move_away", "Moving away", 0xFF808000),
+    LASER_OUTLINE(GyroDisplayKind.LASER, "outline", "Paint outline", 0xB3000000),
     LASER_RIFLE(GyroDisplayKind.LASER, "rifle", "Rifle", 0xFF5A616C),
     LASER_FIRE(GyroDisplayKind.LASER, "fire", "Fire", 0xFFFF4A3D),
     LASER_FIRE_BEHIND(GyroDisplayKind.LASER, "fire_behind", "Fire behind", 0xFF8A1E18),

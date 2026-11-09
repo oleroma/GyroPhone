@@ -22,6 +22,8 @@ class LaserTrace {
         private val t = LongArray(capacity)
         private val gap = BooleanArray(capacity)
         private val fire = BooleanArray(capacity)
+        /** Degrees painted up to each point, counted along the lines (a new line adds none). */
+        private val along = DoubleArray(capacity)
         private var head = 0
 
         /** Points kept now. */
@@ -30,12 +32,38 @@ class LaserTrace {
 
         fun add(px: Float, py: Float, pz: Float, ms: Long, startsLine: Boolean, firing: Boolean = false) {
             val i = (head + count) % capacity
+            var a = 0.0
+            if (count > 0) {
+                val l = (head + count - 1) % capacity
+                a = along[l]
+                if (!startsLine) {
+                    val dot = (x[l] * px + y[l] * py + z[l] * pz).toDouble().coerceIn(-1.0, 1.0)
+                    a += Math.toDegrees(kotlin.math.acos(dot))
+                }
+            }
             if (count == capacity) {
                 head = (head + 1) % capacity
                 gap[head] = true // the oldest left has no line from before it
             } else count++
-            x[i] = px; y[i] = py; z[i] = pz; t[i] = ms; gap[i] = startsLine; fire[i] = firing
+            x[i] = px; y[i] = py; z[i] = pz; t[i] = ms; gap[i] = startsLine; fire[i] = firing; along[i] = a
         }
+
+        /** Drops the oldest points more than [deg] degrees of painted line behind the newest. */
+        fun cut(deg: Float) {
+            if (count == 0) return
+            val newest = along[(head + count - 1) % capacity]
+            var dropped = false
+            while (count > 1 && newest - along[head] > deg + 0.05) { // a hair over: sums of steps round
+                head = (head + 1) % capacity
+                count--
+                dropped = true
+            }
+            if (dropped) gap[head] = true
+        }
+
+        /** Degrees of painted line from point [i] to the newest. */
+        fun behindNewest(i: Int): Float =
+            if (count == 0) 0f else (along[(head + count - 1) % capacity] - along[(head + i) % capacity]).toFloat()
 
         /** Drops points older than [ms] at [nowMs]. */
         fun expire(nowMs: Long, ms: Int) {
@@ -196,9 +224,10 @@ class LaserTrace {
         beamX = x; beamY = y; beamZ = z; beamMs = nowMs
     }
 
-    /** With [fadeMs] > 0, drops strokes older than it. */
-    fun expire(nowMs: Long, fadeMs: Int) {
+    /** With [fadeMs] > 0, drops strokes older than it; with [lengthDeg] > 0, keeps only that many degrees of line. */
+    fun expire(nowMs: Long, fadeMs: Int, lengthDeg: Float = 0f) {
         if (fadeMs > 0) strokes.expire(nowMs, fadeMs)
+        if (lengthDeg > 0f) strokes.cut(lengthDeg)
     }
 
     /** Some stroke is still fading (draw again while it fades). */
@@ -265,16 +294,30 @@ class LaserTrace {
         const val STROKE_STEP_DEG = 0.5f
         private val STROKE_STEP_COS = cos(Math.toRadians(STROKE_STEP_DEG.toDouble())).toFloat()
 
+        /** Perspective: the eye's distance from the centre, in sphere radii (as the 3D phone's). */
+        const val CAMERA_DISTANCE = 6f
+
+        /** Perspective: how much bigger a picture point at depth [z] (toward the viewer +, sphere radii) shows. */
+        fun perspective(z: Float): Float = CAMERA_DISTANCE / (CAMERA_DISTANCE - z.coerceAtMost(CAMERA_DISTANCE - 0.5f))
+
+        /** How wide 3D paint at picture depth [z] on the unit sphere shows: foreshortened toward the rim (0.2 edge-on .. 1 face-on). */
+        fun paintWidth(z: Float): Float = 0.2f + 0.8f * kotlin.math.abs(z).coerceAtMost(1f)
+
         /** The rifle's muzzle tip in its own frame (x right, y up, z toward the stock). */
         val MUZZLE = floatArrayOf(0f, 0.03f, -0.93f)
 
         /** How far round from straight ahead (into the screen) shown-frame direction z is: 0 ahead .. 1 straight behind. */
         fun behind(z: Float): Float = ((1f + z) / 2f).coerceIn(0f, 1f)
 
-        /** How bright stroke point [i] of [count] made at [t] is at [nowMs]: 1 new .. 0 gone ([fadeMs]), or by its place without fading. */
-        fun strokeLife(i: Int, count: Int, t: Long, nowMs: Long, fadeMs: Int): Float =
-            if (fadeMs > 0) (1f - (nowMs - t) / fadeMs.toFloat()).coerceIn(0f, 1f)
-            else if (count <= 1) 1f else (i / (count - 1f))
+        /**
+         * How bright stroke point [i] of [count] made at [t] is at [nowMs]: 1 new .. 0 gone ([fadeMs]), or by its place without fading.
+         * With fading and a [lengthDeg] limit it also fades along the line, to 0 at the cut, [behindDeg] being how far it is behind the newest.
+         */
+        fun strokeLife(i: Int, count: Int, t: Long, nowMs: Long, fadeMs: Int, behindDeg: Float = 0f, lengthDeg: Float = 0f): Float =
+            if (fadeMs > 0) {
+                val byTime = (1f - (nowMs - t) / fadeMs.toFloat()).coerceIn(0f, 1f)
+                if (lengthDeg > 0f) minOf(byTime, (1f - behindDeg / lengthDeg).coerceIn(0f, 1f)) else byTime
+            } else if (count <= 1) 1f else (i / (count - 1f))
 
         /** The unit direction at latitude [lat], longitude [lon] (0 straight ahead, into the screen) into [out] at [at]. */
         fun dir(lat: Float, lon: Float, out: FloatArray, at: Int = 0) {
@@ -429,7 +472,7 @@ class LaserTrace {
          * The rifle turned by pose [m], seen as [view] sees it ([axon], [turned]): the faces toward the
          * viewer, farthest first, lit from above left.
          */
-        fun rifle(m: FloatArray, axon: Boolean, turned: FloatArray?): List<Face> {
+        fun rifle(m: FloatArray, axon: Boolean, turned: FloatArray?, persp: Boolean = false): List<Face> {
             val faces = ArrayList<Face>(32)
             val p = FloatArray(24)
             val n = FloatArray(3)
@@ -443,6 +486,11 @@ class LaserTrace {
                     val y = RIFLE[o + 1] + (if (k and 2 != 0) RIFLE[o + 4] else -RIFLE[o + 4])
                     val z = RIFLE[o + 2] + (if (k and 4 != 0) RIFLE[o + 5] else -RIFLE[o + 5])
                     view(m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z, p, k * 3, axon, turned)
+                    if (persp) {
+                        val f = perspective(p[k * 3 + 2])
+                        p[k * 3] *= f
+                        p[k * 3 + 1] *= f
+                    }
                 }
                 for (f in 0 until 6) {
                     val axis = f / 2

@@ -235,6 +235,23 @@ class LaserTraceTest {
         assertEquals(1f, LaserTrace.strokeLife(2, 3, 0, 0, 0), 0f)
     }
 
+    @Test fun lengthCutsTheOldestEnd() {
+        val r = LaserTrace.Ring(100)
+        // 1° apart along the equator: 0..20°, the second line from 30°.
+        fun at(deg: Int, ms: Long, starts: Boolean) {
+            val a = Math.toRadians(deg.toDouble())
+            r.add(kotlin.math.sin(a).toFloat(), 0f, -kotlin.math.cos(a).toFloat(), ms, starts)
+        }
+        for (i in 0..20) at(i, i.toLong(), i == 0)
+        for (i in 30..35) at(i, i.toLong(), i == 30)
+        assertEquals(25f, r.behindNewest(0), 0.02f) // the jump between lines counts nothing
+        r.cut(10f)
+        assertEquals(10f, r.behindNewest(0), 0.02f)
+        assertTrue(r.gap(0))
+        assertEquals(0.5f, LaserTrace.strokeLife(0, 1, 0, 0, 5000, 5f, 10f), 1e-3f) // fades along the length
+        assertEquals(0.2f, LaserTrace.strokeLife(0, 1, 0, 4000, 5000, 5f, 10f), 1e-3f) // or by time, whichever is less
+    }
+
     @Test fun ringDropsTheOldestWhenFull() {
         val r = LaserTrace.Ring(3)
         for (i in 0 until 5) r.add(i.toFloat(), 0f, 0f, i.toLong(), false)
@@ -328,6 +345,11 @@ class CameraTurnTest {
         assertTrue(F.held(F.PAD + 5, com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(buttons = 32))))
         assertTrue(F.held(F.RT, com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(rt = 900))))
         assertFalse(F.held(F.LT, com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(rt = 900))))
+        val upRight = com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(hat = com.oleroma.gyrophone.core.hid.Hat.UP_RIGHT))
+        assertTrue(F.held(F.DPAD, upRight))
+        assertTrue(F.held(F.DPAD + 3, upRight))
+        assertFalse(F.held(F.DPAD + 1, upRight))
+        assertFalse(F.held(F.DPAD, none))
     }
 
     /** Ry(a)·Rx(b)·Rz(c), row-major. */
