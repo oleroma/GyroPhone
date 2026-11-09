@@ -313,7 +313,7 @@ internal fun GyroDisplaySettingsScreen(
                     val l = up?.let { sqrt(it[0] * it[0] + it[1] * it[1] + it[2] * it[2]) }?.takeIf { it > 0f }
                     val levelUp = if (up != null && l != null) listOf(up[0] / l, up[1] / l, up[2] / l) else now.levelUp
                     val rest = if (!gravity) null
-                    else up?.let { GyroPose.tiltFromUp(it[0], it[1], it[2]).toList() } ?: return@readUp
+                    else up?.let { GyroPose.tiltFromUp(it[0], it[1], it[2]) }?.toList() ?: return@readUp
                     if (rest != now.rest || levelUp != now.levelUp) onChange(latest.value.copy(display = now.copy(rest = rest, levelUp = levelUp)))
                 }
             }) { Text("Level") }
