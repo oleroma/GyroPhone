@@ -776,7 +776,8 @@ private fun FirePicker(selected: Int, onPick: (Int) -> Unit) {
             }
             }
         },
-        confirmButton = { TextButton(onClick = { open = false }) { Text("Close") } },
+        // Picking a button closes it (or tapping outside): no Close button.
+        confirmButton = {},
         properties = DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier.padding(16.dp),
     )
