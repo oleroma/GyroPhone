@@ -173,12 +173,12 @@ data class GyroDisplay(
     val crosshairOutline: Boolean = true,
     /** LASER turned as a trackball: which way of it the laser faces ([com.oleroma.gyrophone.core.engine.LaserTrace.FACES], 0 −Z into the screen). */
     val laserFaces: Int = 0,
-    /** LASER: Draw mode, the beam paints the sphere's inside, [laserBrush] degrees round; it fades after [laserFadeMs] ms (0 = never). */
+    /** LASER: Draw mode, the beam paints the sphere's inside ([com.oleroma.gyrophone.core.engine.LaserPaint]), [laserBrush] degrees round. */
     val laserDraw: Boolean = false,
     val laserBrush: Int = 4,
-    val laserFadeMs: Int = 0,
-    /** LASER Draw mode: keeps only the newest [laserLength] degrees of painted line (0 = all); with fading it also fades along that length. */
-    val laserLength: Int = 0,
+    /** LASER Draw mode, Snake: only the newest [laserSnakeDeg] degrees of painted path show, its tail fading out (else paint stays until cleared). */
+    val laserSnake: Boolean = false,
+    val laserSnakeDeg: Int = 180,
     /** LASER Draw mode: a ratchet press clears the drawing. */
     val laserClearOnRatchet: Boolean = false,
     /**
@@ -189,20 +189,20 @@ data class GyroDisplay(
     val laserFireOnly: Boolean = false,
     /** LASER: the paint's and crosshair's way colours even out small shakes. */
     val laserSmoothColours: Boolean = true,
-    /**
-     * LASER Draw mode's strokes: [laserColourSteps] shades per colour
-     * channel (4..32); [laserCurve] rounds the corners between points (0 straight .. 1 round);
-     * [laserLineSmoothing] evens out hand shake in the painted path (0 off .. 1 strong).
-     */
-    val laserColourSteps: Int = 16,
-    val laserCurve: Float = 0.5f,
+    /** LASER Draw mode: [laserLineSmoothing] evens out hand shake in the painted path (0 off .. 1 strong). */
     val laserLineSmoothing: Float = 0f,
-    /** LASER Draw mode: the glow round the paint (0 none .. 1 strong), a dark [GyroDisplayColor.LASER_OUTLINE] edge, older paint darker. */
+    /** LASER Draw mode: the glow round the paint (0 none .. 1 strong), a dark [GyroDisplayColor.LASER_OUTLINE] edge, how soft the paint's edge is (0 sharp .. 1 soft). */
     val laserGlow: Float = 0.5f,
     val laserOutline: Boolean = false,
-    val laserAgeDim: Boolean = false,
-    /** LASER Draw mode: the paint gets thinner toward the sphere's rim (and with [perspective] bigger nearer), changing smoothly along the line. */
-    val laserPaintWidth: Boolean = true,
+    val laserSoftness: Float = 0.5f,
+    /**
+     * LASER Draw mode: the paint darker where the sphere's surface turns away from you ([laserShade], 0 off .. 1 strong),
+     * and on the far half (seen from inside) at [laserInside] of the near half's brightness.
+     */
+    val laserShade: Float = 0.5f,
+    val laserInside: Float = 0.7f,
+    /** LASER Draw mode: paint takes the colour of the way the beam moved there; off, the sphere's own colour where it is (the Moving colours as a normal map). */
+    val laserColourByWay: Boolean = false,
     /** 3D phone, 3D shape and laser pointer: seen in perspective (nearer parts bigger); off, flat (no perspective). */
     val perspective: Boolean = true,
     /** What turns it (the pose kinds): the phone, the game's camera, or a trackball. */
