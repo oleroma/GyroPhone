@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,7 +20,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -40,7 +40,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.BindableInput
@@ -66,9 +65,9 @@ import kotlin.math.sqrt
 
 /**
  * The one settings page of a touch control (Settings in its mapping editor, or Configure in edit
- * mode), as categories: the button itself (duplicate, save to library, delete), its look, layers,
- * then the settings its actions share ([shared], from [touchControlSettings]: gyro, a touchpad
- * button's surface, a stick's). [onEditMappings] opens the mapping editor. Edits go through the callbacks.
+ * mode). Duplicate, Save to library and Delete sit fixed on top (beside the title in landscape,
+ * under it in portrait); then categories: its look, layers, then the settings its actions share
+ * ([shared], from [touchControlSettings]: gyro, a touchpad button's surface, a stick's). [onEditMappings] opens the mapping editor. Edits go through the callbacks.
  */
 @Composable
 internal fun ControlSettingsScreen(
@@ -95,26 +94,30 @@ internal fun ControlSettingsScreen(
                 " · " + control.id + " · settings",
         onClose = onClose,
         actions = { OutlinedButton(onClick = onEditMappings) { Text("Mappings") } },
-    ) {
-        val kindName = if (control.kind == TouchKind.STICK) "Stick" else "Button"
-        val items = listOfNotNull(
-            category(runtime, "button", kindName, "Duplicate, save to library, delete", defaultOpen = true, prefKey = "control.Button") {
-                Searchable(kindName, "duplicate copy save to library delete remove") {
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = onDuplicate) { Text("Duplicate") }
-                        if (control.kind != TouchKind.FULLSCREEN) {
-                            val saved = savedTo != null && library.any { it.id == savedTo }
-                            OutlinedButton(enabled = !saved, onClick = {
-                                val b = ButtonLibrary.save(workspace, control, library.map { it.id })
-                                runtime.addToLibrary(b)
-                                savedTo = b.id
-                            }) { Text(if (saved) "In library" else "Save to library") }
-                        }
-                        OutlinedButton(onClick = { confirmDelete = true }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
-                    }
+        top = {
+            // The button's own actions stay fixed above its settings, like a workspace's.
+            val compact = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButton(contentPadding = compact, onClick = onDuplicate) { Text("Duplicate") }
+                if (control.kind != TouchKind.FULLSCREEN) {
+                    val saved = savedTo != null && library.any { it.id == savedTo }
+                    OutlinedButton(contentPadding = compact, enabled = !saved, onClick = {
+                        val b = ButtonLibrary.save(workspace, control, library.map { it.id })
+                        runtime.addToLibrary(b)
+                        savedTo = b.id
+                    }) { Text(if (saved) "In library" else "Save to library") }
                 }
-                Hint("Duplicate copies its look and mappings. The library keeps it for any workspace: add it from the edit panel.")
-            },
+                TextButton(contentPadding = compact, onClick = { confirmDelete = true }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+    ) {
+        val items = listOfNotNull(
             category(runtime, "look", "Look", "Label, shape, layer, size", defaultOpen = true, prefKey = "control.Look") {
                 LookSettings(control, inPortrait, onControlChange, onSize)
             },

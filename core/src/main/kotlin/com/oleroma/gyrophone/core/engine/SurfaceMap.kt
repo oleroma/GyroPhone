@@ -13,7 +13,9 @@ import com.oleroma.gyrophone.core.model.StickAxis
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Trigger
-import com.oleroma.gyrophone.core.model.holdDirection
+import com.oleroma.gyrophone.core.model.SWIPE_SLOTS
+import com.oleroma.gyrophone.core.model.holdInputOf
+import com.oleroma.gyrophone.core.model.holdSlot
 
 /**
  * A touch surface's mappings ([InputSource.Surface] with [id]) compiled for [Touchpad]: which
@@ -25,8 +27,11 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
     /** Per input bit: something maps it that is not a swipe Release ([InputSource.Surface.on]). */
     private val holds = BooleanArray(BITS)
 
-    /** Per input bit: its targets (to tell whether a tap and its double tap do the same). */
+    /** Per input bit: its targets. */
     private val targets = arrayOfNulls<HashSet<OutputTarget>>(BITS)
+
+    /** Per input bit: its targets with their How (to tell whether a tap and its double tap do the same). */
+    private val shapes = arrayOfNulls<HashSet<Pair<OutputTarget, Pair<How, Int>>>>(BITS)
 
     /** Per input bit: the mouse buttons, HID modifier bits and first other key its targets press. */
     internal val mouse = IntArray(BITS)
@@ -36,8 +41,8 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
     /** Per finger count (index fingers - 1): where Move X / Y go. */
     internal val motion = Array(4) { Motion() }
 
-    /** Per finger count and direction ((fingers - 1) * 4 + [Direction.ordinal]): how many length zones are mapped (at least 1). */
-    private val zones = IntArray(16) { 1 }
+    /** Per finger count and swipe slot ((fingers - 1) * [SWIPE_SLOTS] + slot, [holdSlot]): how many length zones are mapped (at least 1). */
+    private val zones = IntArray(4 * SWIPE_SLOTS) { 1 }
 
     /** Pinch zooms (Ctrl + wheel). */
     internal var zoom = false
@@ -49,8 +54,8 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
      */
     private val latchDirs = IntArray(4)
 
-    /** Per finger count and direction ((fingers - 1) * 4 + [Direction.ordinal]): the zones that latch, 1 shl zone. */
-    private val latchZoneMask = IntArray(16)
+    /** Per finger count and slot ((fingers - 1) * [SWIPE_SLOTS] + slot): the zones that latch, 1 shl zone. */
+    private val latchZoneMask = IntArray(4 * SWIPE_SLOTS)
 
     /** Per finger count: a latch lets go by itself this long after the lift (ms); 0 = never. */
     internal val latchMs = IntArray(4) { -1 }
@@ -79,22 +84,31 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
     }
 
     init {
+        // A double tap with Held and other chips: the engine tells its second touch apart, so it presses them all.
+        val split = HashSet<InputSource>()
+        mappings.filter { m ->
+            val s = m.source as? InputSource.Surface
+            s != null && s.id == id && s.on == Trigger.HOLD && s.input == SurfaceInput.DOUBLE_TAP && m.target != OutputTarget.NoOutput
+        }.groupBy { it.source }.forEach { (src, list) ->
+            val held = list.count { (it.options?.mode ?: How.HELD) == How.HELD }
+            if (held in 1 until list.size) split.add(src)
+        }
         for (m in mappings) {
             val s = m.source as? InputSource.Surface ?: continue
             if (s.id != id || s.fingers !in 1..4) continue
-            val dir = s.input.holdDirection
-            if (s.zone != 0 && (dir == null || s.zone !in 1 until TouchpadSettings.MAX_HOLD_ZONES)) continue
-            if (dir != null) {
-                val z = (s.fingers - 1) * 4 + dir.ordinal
+            val dir = s.input.holdSlot
+            if (s.zone != 0 && (dir < 0 || s.zone !in 1 until TouchpadSettings.MAX_HOLD_ZONES)) continue
+            if (dir >= 0) {
+                val z = (s.fingers - 1) * SWIPE_SLOTS + dir
                 zones[z] = maxOf(zones[z], s.zone + 1)
             }
             val b = bit(s.fingers, s.input, s.zone)
             mapped[b] = true
             val o = m.options
-            if (dir != null && s.on == Trigger.HOLD && o != null && o.mode == How.TOGGLE && o.endsOnTap) {
+            if (dir >= 0 && s.on == Trigger.HOLD && o != null && o.mode == How.TOGGLE && o.endsOnTap) {
                 val f = s.fingers - 1
-                latchDirs[f] = latchDirs[f] or (1 shl dir.ordinal)
-                latchZoneMask[f * 4 + dir.ordinal] = latchZoneMask[f * 4 + dir.ordinal] or (1 shl s.zone)
+                latchDirs[f] = latchDirs[f] or (1 shl dir)
+                latchZoneMask[f * SWIPE_SLOTS + dir] = latchZoneMask[f * SWIPE_SLOTS + dir] or (1 shl s.zone)
                 if (o.endsOnSame) latchSame[f] = true
                 val ms = o.endsAfterMs.coerceIn(0, MapOptions.MAX_TOGGLE_MS)
                 // Any chip without a timer keeps it; else the longest timer.
@@ -104,6 +118,7 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
             }
             if (s.on != Trigger.RELEASE) holds[b] = true
             (targets[b] ?: HashSet<OutputTarget>().also { targets[b] = it }).add(m.target)
+            (shapes[b] ?: HashSet<Pair<OutputTarget, Pair<How, Int>>>().also { shapes[b] = it }).add(m.target to (m.options ?: MapOptions()).shape)
             val mo = motion[s.fingers - 1]
             val axis = when (s.input) {
                 SurfaceInput.MOTION_X -> StickAxis.X
@@ -111,7 +126,7 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
                 else -> null
             }
             // A mapping with options is shaped and pressed by the engine ([MappingEngine]).
-            val shaped = m.options != null || s.on != Trigger.HOLD
+            val shaped = m.options != null || s.on != Trigger.HOLD || s in split
             when (val t = m.target) {
                 is OutputTarget.Mouse -> if (!shaped) mouse[b] = mouse[b] or (1 shl t.button.bit)
                 // Toggle and next-key keys are held by the engine ([MappingEngine]).
@@ -162,24 +177,29 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
      * The zones of held direction [d] with [fingers] mapped only to fire as the finger lifts in
      * them (swipe Release), a mask of 1 shl zone: nothing holds them ([DirectionTracker]).
      */
-    fun releaseOnly(fingers: Int, d: Direction): Int {
+    fun releaseOnly(fingers: Int, slot: Int): Int {
         if (fingers !in 1..4) return 0
         var m = 0
         for (z in 0 until TouchpadSettings.MAX_HOLD_ZONES) {
-            val b = bit(fingers, holdOf(d), z)
+            val b = bit(fingers, holdInputOf(slot), z)
             if (mapped[b] && !holds[b]) m = m or (1 shl z)
         }
         return m
     }
 
-    /** Held direction [d] with [fingers] latches (see [latchDirs]). */
-    fun latches(fingers: Int, d: Direction): Boolean = fingers in 1..4 && latchDirs[fingers - 1] and (1 shl d.ordinal) != 0
+    fun releaseOnly(fingers: Int, d: Direction): Int = releaseOnly(fingers, d.ordinal)
 
-    /** The zones of held direction [d] with [fingers] that latch (their On swipe chip is a Toggle), 1 shl zone. */
-    fun latchZones(fingers: Int, d: Direction): Int = if (fingers in 1..4) latchZoneMask[(fingers - 1) * 4 + d.ordinal] else 0
+    /** Held swipe slot [slot] with [fingers] latches (see [latchDirs]). */
+    fun latches(fingers: Int, slot: Int): Boolean = fingers in 1..4 && latchDirs[fingers - 1] and (1 shl slot) != 0
+    fun latches(fingers: Int, d: Direction): Boolean = latches(fingers, d.ordinal)
 
-    /** How many length zones held direction [d] with [fingers] has mapped (at least 1). */
-    fun zoneCount(fingers: Int, d: Direction): Int = if (fingers in 1..4) zones[(fingers - 1) * 4 + d.ordinal] else 1
+    /** The zones of held swipe slot [slot] with [fingers] that latch (their On swipe chip is a Toggle), 1 shl zone. */
+    fun latchZones(fingers: Int, slot: Int): Int = if (fingers in 1..4) latchZoneMask[(fingers - 1) * SWIPE_SLOTS + slot] else 0
+    fun latchZones(fingers: Int, d: Direction): Int = latchZones(fingers, d.ordinal)
+
+    /** How many length zones held swipe slot [slot] with [fingers] has mapped (at least 1). */
+    fun zoneCount(fingers: Int, slot: Int): Int = if (fingers in 1..4) zones[(fingers - 1) * SWIPE_SLOTS + slot] else 1
+    fun zoneCount(fingers: Int, d: Direction): Int = zoneCount(fingers, d.ordinal)
 
     /**
      * A tap with [fingers] waits out the double-tap window: its double tap is mapped and does
@@ -187,8 +207,8 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
      */
     fun tapWaits(fingers: Int): Boolean {
         if (!has(fingers, SurfaceInput.DOUBLE_TAP)) return false
-        return targets[bit(fingers, SurfaceInput.DOUBLE_TAP)] != (targets[bit(fingers, SurfaceInput.TAP)]
-            ?: emptySet<OutputTarget>())
+        return shapes[bit(fingers, SurfaceInput.DOUBLE_TAP)] != (shapes[bit(fingers, SurfaceInput.TAP)]
+            ?: emptySet<Pair<OutputTarget, Pair<How, Int>>>())
     }
 
     /** Something happens on a tap with [fingers]: a tap, double tap or tap-drag mapping. */
@@ -205,26 +225,27 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
     companion object {
         val INPUTS = SurfaceInput.entries.size
 
-        /** Every input per finger count, then the held directions' later zones. */
-        val BITS = 4 * INPUTS + 16 * (TouchpadSettings.MAX_HOLD_ZONES - 1)
+        /** Every input per finger count, then the held swipe slots' later zones. */
+        val BITS = 4 * INPUTS + 4 * SWIPE_SLOTS * (TouchpadSettings.MAX_HOLD_ZONES - 1)
 
-        /** The bit of [input] with [fingers]; [zone] > 0 only for a held direction. */
+        init {
+            // Touchpad keeps the inputs' states in three 64-bit words.
+            check(BITS <= 192)
+        }
+
+        /** The bit of [input] with [fingers]; [zone] > 0 only for a held swipe slot. */
         fun bit(fingers: Int, input: SurfaceInput, zone: Int = 0): Int {
             if (zone == 0) return (fingers - 1) * INPUTS + input.ordinal
-            val d = input.holdDirection ?: return (fingers - 1) * INPUTS + input.ordinal
-            return 4 * INPUTS + ((fingers - 1) * 4 + d.ordinal) * (TouchpadSettings.MAX_HOLD_ZONES - 1) + zone - 1
-        }
-        private fun holdOf(d: Direction): SurfaceInput = when (d) {
-            Direction.UP -> SurfaceInput.HOLD_UP
-            Direction.RIGHT -> SurfaceInput.HOLD_RIGHT
-            Direction.DOWN -> SurfaceInput.HOLD_DOWN
-            Direction.LEFT -> SurfaceInput.HOLD_LEFT
+            val d = input.holdSlot
+            if (d < 0) return (fingers - 1) * INPUTS + input.ordinal
+            return 4 * INPUTS + ((fingers - 1) * SWIPE_SLOTS + d) * (TouchpadSettings.MAX_HOLD_ZONES - 1) + zone - 1
         }
 
         private val MOVES = listOf(
             SurfaceInput.MOTION_X, SurfaceInput.MOTION_Y,
             SurfaceInput.SWIPE_LEFT, SurfaceInput.SWIPE_RIGHT, SurfaceInput.SWIPE_UP, SurfaceInput.SWIPE_DOWN,
             SurfaceInput.HOLD_LEFT, SurfaceInput.HOLD_RIGHT, SurfaceInput.HOLD_UP, SurfaceInput.HOLD_DOWN,
+            SurfaceInput.HOLD_ANY, SurfaceInput.SWIPE_ANY,
         )
     }
 }

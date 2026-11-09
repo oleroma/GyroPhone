@@ -39,7 +39,7 @@ Otherwise it stops, saving CPU and battery. Ratchets, toggles and the other gyro
 - The rest-calibration bias is subtracted.
 - The sample goes to the debug trace, the gyro displays and parallax edge, the PC overlay feed, and then either to the PC (in PC gyro mode, see [Controllers](phone-controllers.md)) or to `GyroMouse.route`, which turns it into mouse counts, wheel or stick deflection in the engine.
 
-The measured rate is shown in Settings › About and the debug panel (`core/.../sensor/GyroRateWindow.kt`).
+The measured rate is shown in App › About and the debug panel (`core/.../sensor/GyroRateWindow.kt`).
 
 ## Rest calibration
 
@@ -57,7 +57,7 @@ The magnetometer runs only while a gyro display with a compass is on the pad, or
 
 ## Screen rotation
 
-How the phone is held decides which axis is which (see [Gyro math](phone-gyro-math.md)). **Screen rotation** (Settings › App › Pad, `runtime/ScreenOrientation.kt`): Auto, Landscape, Portrait (these follow the system rotation lock: unlocked they turn with the phone, Landscape only between its two landscape sides and Portrait between its two portrait sides; locked they stay as the screen is), and Forced portrait, Forced landscape top on the left, Forced landscape top on the right. The gyro follows the rotation the screen shows.
+How the phone is held decides which axis is which (see [Gyro math](phone-gyro-math.md)). **Screen rotation** (App › Screen, `runtime/ScreenOrientation.kt`): Auto, Landscape, Portrait (these follow the system rotation lock: unlocked they turn with the phone, Landscape only between its two landscape sides and Portrait between its two portrait sides; locked they stay as the screen is), and Forced portrait, Forced landscape top on the left, Forced landscape top on the right. The gyro follows the rotation the screen shows.
 
 ## Key files
 

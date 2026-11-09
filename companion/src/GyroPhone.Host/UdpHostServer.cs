@@ -80,6 +80,8 @@ public sealed class UdpHostServer : IDatagramSender, IDisposable
         return true;
     }
 
+    private const int CatchUpWakeUs = 1000;
+
     private void RxLoop()
     {
         try
@@ -98,6 +100,12 @@ public sealed class UdpHostServer : IDatagramSender, IDisposable
         {
             try
             {
+                // While a lost stretch of mouse motion catches up, wake every millisecond to move it on.
+                if (_engine.MouseCatchingUp && !socket.Poll(CatchUpWakeUs, SelectMode.SelectRead))
+                {
+                    _engine.Flush(_clock.NowUs);
+                    continue;
+                }
                 int n = socket.ReceiveFrom(buf, SocketFlags.None, from);
                 _engine.OnDatagram(buf.AsSpan(0, n), from, _clock.NowUs);
                 while (socket.Available > 0)

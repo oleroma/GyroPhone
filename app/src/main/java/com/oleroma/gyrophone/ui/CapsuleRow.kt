@@ -1,5 +1,9 @@
 package com.oleroma.gyrophone.ui
 
+import androidx.compose.material3.Icon
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -15,7 +19,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -53,26 +56,31 @@ import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.WorkspaceEdits
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
-/** One capsule of the pad's top row: a workspace (by index in the profile), Controller, Settings or Connection. */
+/** One capsule of the pad's top row: a workspace (by index in the profile), Controller, App, Defaults or Connection. */
 internal sealed interface Capsule {
     data class Ws(val index: Int) : Capsule
     /** The device screens: what physical devices do ([com.oleroma.gyrophone.core.model.DevicePreset]). */
     data object Devices : Capsule
-    data object Settings : Capsule
+    /** The whole app's settings (gear). Saved as 'S', the old Settings capsule's place. */
+    data object App : Capsule
+    /** The Defaults every workspace follows (sliders). */
+    data object Defaults : Capsule
     data object Connection : Capsule
 }
 
 /**
- * The capsules in row order from the saved [order] ('W' = a workspace slot, 'D', 'S', 'C'), filled with
+ * The capsules in row order from the saved [order] ('W' = a workspace slot, 'D', 'S' = App, 'F' = Defaults, 'C'), filled with
  * [count] workspaces in profile order. Workspaces beyond the saved slots are new ones: they were
  * added at the front, so their slots go first; missing ones drop the last slots.
  */
 internal fun capsules(order: String, count: Int): List<Capsule> {
     val seen = HashSet<Char>()
-    val t = order.filter { it == 'W' || (it in "DSC" && seen.add(it)) }.toMutableList()
+    val t = order.filter { it == 'W' || (it in "DSFC" && seen.add(it)) }.toMutableList()
     // New since the order was saved: right before Settings.
     if ('D' !in t) t.add(t.indexOf('S').takeIf { it >= 0 } ?: t.size, 'D')
     if ('S' !in t) t.add('S')
+    // Defaults, split off the old Settings capsule: right after App.
+    if ('F' !in t) t.add(t.indexOf('S') + 1, 'F')
     if ('C' !in t) t.add('C')
     var w = t.count { it == 'W' }
     while (w < count) { t.add(0, 'W'); w++ }
@@ -82,7 +90,8 @@ internal fun capsules(order: String, count: Int): List<Capsule> {
         when (it) {
             'W' -> Capsule.Ws(next++)
             'D' -> Capsule.Devices
-            'S' -> Capsule.Settings
+            'S' -> Capsule.App
+            'F' -> Capsule.Defaults
             else -> Capsule.Connection
         }
     }
@@ -92,14 +101,15 @@ private fun encode(row: List<Capsule>): String = row.joinToString("") {
     when (it) {
         is Capsule.Ws -> "W"
         Capsule.Devices -> "D"
-        Capsule.Settings -> "S"
+        Capsule.App -> "S"
+        Capsule.Defaults -> "F"
         Capsule.Connection -> "C"
     }
 }
 
 /**
  * The pad's top row in play: + (add a workspace at the front), then the workspaces, Controller,
- * Settings and Connection in the saved order. It scrolls; long-press a capsule and drag it to reorder (moving
+ * App, Defaults and Connection in the saved order. It scrolls; long-press a capsule and drag it to reorder (moving
  * workspaces reorders them). Tap a workspace to switch to it, the current one to edit its layout.
  */
 @Composable
@@ -107,7 +117,8 @@ internal fun CapsuleRow(
     runtime: GamepadRuntime,
     onEdit: () -> Unit,
     onDevices: () -> Unit,
-    onSettings: () -> Unit,
+    onApp: () -> Unit,
+    onDefaults: () -> Unit,
     onConnection: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -148,13 +159,19 @@ internal fun CapsuleRow(
             val label = when (c) {
                 is Capsule.Ws -> profile.workspaces.getOrNull(c.index)?.name.orEmpty() + if (c.index == wsIndex) " ✎" else ""
                 Capsule.Devices -> "Controller, keyboard and mouse"
-                Capsule.Settings -> "Settings"
+                Capsule.App -> "App"
+                Capsule.Defaults -> "Defaults"
                 Capsule.Connection -> "Connection"
             }
             val isDragged = dragged == c
             CapsuleChip(
                 label,
                 icons = c == Capsule.Devices,
+                icon = when (c) {
+                    Capsule.App -> EditIcons.Gear
+                    Capsule.Defaults -> EditIcons.Tune
+                    else -> null
+                },
                 selected = c is Capsule.Ws && c.index == wsIndex,
                 modifier = Modifier
                     .onSizeChanged { widths[c] = it.width }
@@ -201,7 +218,8 @@ internal fun CapsuleRow(
                     when (c) {
                         is Capsule.Ws -> if (c.index == wsIndex) onEdit() else runtime.switchWorkspace(c.index)
                         Capsule.Devices -> onDevices()
-                        Capsule.Settings -> onSettings()
+                        Capsule.App -> onApp()
+                        Capsule.Defaults -> onDefaults()
                         Capsule.Connection -> onConnection()
                     }
                 },
@@ -216,7 +234,8 @@ internal fun CapsuleRow(
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     val choices = listOf(
-                        "Blank (touchpad only)" to BuiltinProfiles.blankWorkspace("Workspace ${profile.workspaces.size + 1}"),
+                        "Blank" to BuiltinProfiles.blankWorkspace("Workspace ${profile.workspaces.size + 1}"),
+                        "Windows touchpad" to BuiltinProfiles.touchpadWorkspace(),
                     ) + BuiltinProfiles.presets.map { it.name to it }
                     for ((label, w) in choices) {
                         Text(
@@ -242,6 +261,8 @@ private fun CapsuleChip(
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
     icons: Boolean = false,
+    /** Drawn before [text] (App's gear, Defaults' sliders). */
+    icon: ImageVector? = null,
 ) {
     val tap by rememberUpdatedState(onTap)
     Surface(
@@ -256,14 +277,24 @@ private fun CapsuleChip(
             )
             return@Surface
         }
-        Text(
-            text,
-            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else Color.White,
-            style = MaterialTheme.typography.labelLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 180.dp).padding(horizontal = 16.dp, vertical = 10.dp),
-        )
+        val fg = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else Color.White
+        Row(
+            Modifier.padding(start = if (icon != null) 12.dp else 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (icon != null) {
+                Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(
+                text,
+                color = fg,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 180.dp),
+            )
+        }
     }
 }
 

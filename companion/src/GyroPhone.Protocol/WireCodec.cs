@@ -400,4 +400,35 @@ public static class WireCodec
     }
 
     public static Rumble DecodeRumble(ReadOnlySpan<byte> b) => new(b[0], b[1]);
+
+    public static int EncodePressTime(in PressTime p, Span<byte> b)
+    {
+        Le.PutU32(b, 0, p.StateTimeUs);
+        Le.PutU32(b, 4, p.EventTimeUs);
+        return Wire.PressTimePlain;
+    }
+
+    public static PressTime DecodePressTime(ReadOnlySpan<byte> b) => new(Le.U32(b, 0), Le.U32(b, 4));
+
+    /// <summary>TEST_MODE: flags then three zero bytes.</summary>
+    public static int EncodeTestMode(byte flags, Span<byte> b)
+    {
+        b[..Wire.TestModePlain].Clear();
+        b[0] = flags;
+        return Wire.TestModePlain;
+    }
+
+    public static int EncodeKeyLabels(KeyLabels p, Span<byte> b)
+    {
+        Le.PutU32(b, 0, p.Layout);
+        for (int i = 0; i < KeyLabels.Usages.Length; i++) Le.PutU16(b, 4 + 2 * i, i < p.Chars.Length ? p.Chars[i] : (ushort)0);
+        return Wire.KeyLabelsPlain;
+    }
+
+    public static KeyLabels DecodeKeyLabels(ReadOnlySpan<byte> b)
+    {
+        var chars = new ushort[KeyLabels.Usages.Length];
+        for (int i = 0; i < chars.Length; i++) chars[i] = Le.U16(b, 4 + 2 * i);
+        return new KeyLabels(Le.U32(b, 0), chars);
+    }
 }

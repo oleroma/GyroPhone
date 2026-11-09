@@ -7,7 +7,10 @@
 #    as GyroPhoneCompanion.exe.new, and the running companion (or watcher) shuts down, copies
 #    it into place and starts again within a few seconds, even with a phone connected
 #    (pairing and settings live in %APPDATA%\GyroPhone).
-# 2. Swaps the key files over adb, so the phone connects over Wi-Fi without a code: the
+# 2. Copies the optional pad driver's files (the folder the build zipped for releases) to the
+#    repo's build\GyroPhonePad-driver folder (next to the newest APK and companion), without installing it: Olex runs its install.cmd himself
+#    (admin prompt, its own signing key on this PC), and uninstall.cmd removes it.
+# 3. Swaps the key files over adb, so the phone connects over Wi-Fi without a code: the
 #    phone's phone.pub goes to %APPDATA%\GyroPhone\authorized_phones and the PC's host.pub
 #    to the phone's keys/trusted_hosts. Only public keys are copied.
 # Never starts or closes the apps, except --init-keys, which makes the PC key and exits.
@@ -20,9 +23,12 @@ note() { echo "note: $*"; }
 
 ver="$1"
 shift
-exe=""
+exe="" driver_zip=""
 for f in "$@"; do
-  case "$f" in */GyroPhoneCompanion.exe) exe="$f" ;; esac
+  case "$f" in
+    */GyroPhoneCompanion.exe) exe="$f" ;;
+    */GyroPhonePad-driver.zip) driver_zip="$f" ;;
+  esac
 done
 
 if [ "${OS:-}" != Windows_NT ]; then
@@ -135,5 +141,27 @@ swap_keys() {
   fi
 }
 
+# ---- PC: the pad driver's files (not the driver itself) ----
+# Copies the folder the build made (build/driver/pkg here in the build worktree) to the repo's
+# build\GyroPhonePad-driver, next to the other build files. No zip: the zip is only for releases.
+unpack_driver() {
+  [ -n "$driver_zip" ] || return 0
+  local src=build/driver/pkg dest dest_w dver
+  # The build files come from build/builds/<build>/; the folder goes next to the newest build
+  # files directly in build/, replacing the previous build's, like the APK and the companion.
+  dest="$(dirname "$(dirname "$(dirname "$driver_zip")")")/GyroPhonePad-driver"
+  dest_w="$(cygpath -w "$dest")"
+  if [ ! -f "$src/GyroPhonePad.inf" ] || ! rm -rf "$dest" || ! mkdir -p "$dest" || ! cp -f "$src"/* "$dest"/; then
+    note "Couldn't copy the pad driver into $dest_w."
+    return
+  fi
+  # agent-build also put a copy of the zip there; on the PC only the folder is wanted (the zip
+  # stays in build/builds/<build>/ for publishing).
+  rm -f "$(dirname "$dest")/GyroPhonePad-driver.zip"
+  dver="$(head -n 1 "$dest/VERSION.txt" 2>/dev/null | tr -d '\r')"
+  note "Pad driver ${dver:-?} is in $dest_w, not installed: run install.cmd there to install or update it (admin prompt), uninstall.cmd to remove it."
+}
+
 install_companion
+unpack_driver
 swap_keys

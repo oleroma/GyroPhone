@@ -1,5 +1,10 @@
 package com.oleroma.gyrophone.ui
 
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -31,33 +36,19 @@ import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.runtime.ScreenOrientation
 import kotlin.math.roundToInt
 
-/**
- * The Settings page (from the pad's Settings capsule): the App tab, options of the whole app with
- * the corners, and the Defaults tab, what every workspace uses unless it sets its own (its
- * settings page, ⚙ in edit mode). The search box above the tabs searches both.
- */
+/** The App page (the pad's App capsule, a gear): options of the whole app, with the corners. */
 @Composable
 fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
-    var tab by rememberSaveable { mutableIntStateOf(0) }
-    SearchableSettings(
-        modifier,
-        header = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("App") })
-                FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("Defaults") })
-            }
-        },
-    ) { searching ->
-        if (searching) {
-            // Both tabs at once, each under its name.
-            val app = remember { SearchHits() }
-            val defaults = remember { SearchHits() }
-            SearchGroupLabel("App", app)
-            CountHits(app) { AppTab(runtime) }
-            SearchGroupLabel("Defaults", defaults)
-            CountHits(defaults) { DefaultsTab(runtime) }
-        } else if (tab == 0) AppTab(runtime) else DefaultsTab(runtime)
-    }
+    SearchableSettings(modifier) { AppTab(runtime) }
+}
+
+/**
+ * The Defaults page (the pad's Defaults capsule, sliders): what every workspace uses unless it sets
+ * its own (its settings page, the sliders in edit mode).
+ */
+@Composable
+fun DefaultsSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
+    SearchableSettings(modifier) { DefaultsTab(runtime) }
 }
 
 /**
@@ -70,7 +61,7 @@ private fun DefaultsTab(runtime: GamepadRuntime) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Hint(
             "Every workspace uses these, except where it sets its own (its settings): those show highlighted " +
-                    "there, with ↺ to follow these again. Long press a category to move it.",
+                    "there, with ↺ to follow these again. Long press a tab to move it.",
         )
         var mapping by remember { mutableStateOf(false) }
         NotSearching {
@@ -123,10 +114,12 @@ private fun AppTab(runtime: GamepadRuntime) {
     val debugOn by runtime.debug.enabled.collectAsStateWithLifecycle()
     val tight by runtime.gyroTightening.collectAsStateWithLifecycle()
     val smooth by runtime.gyroSmoothing.collectAsStateWithLifecycle()
+    val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
+    val capCounts by runtime.sensCapCounts.collectAsStateWithLifecycle()
     val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?" }
 
     val items = listOf(
-        category(runtime, "pad", "Pad", "Fullscreen, screen on, black screen, screen rotation, when input is sent", defaultOpen = true) {
+        category(runtime, "pad", "Screen", "Fullscreen, screen on, black screen, screen rotation, when input is sent", defaultOpen = true) {
             SwitchRow(
                 "Start in fullscreen", startFullscreen,
                 hint = "The pad opens in fullscreen when the app starts. Press ← and → together, or Back, to leave it.",
@@ -249,8 +242,43 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "the swipe line. The ticks slide as the axis moves, stay dim while a Move is held back, and keep " +
                         "sliding while inertia glides after the lift.",
             ) { runtime.setTouchVisuals(visuals.copy(moveRulers = it)) }
+            SwitchRow(
+                "Show the position ruler on buttons", visuals.positionRuler,
+                hint = "A finger on a button that maps its Finger X, Y, distance or angle shows a ruler through the finger for each: " +
+                        "clear in the start deadzone, then a gradient to full colour at the end deadzone. A label shows what each " +
+                        "of those mappings sends now.",
+            ) { runtime.setTouchVisuals(visuals.copy(positionRuler = it)) }
+            if (visuals.positionRuler) {
+                var picking by remember { mutableStateOf(false) }
+                Searchable("Position ruler colour", "colour color ruler") {
+                    Row(
+                        Modifier.fillMaxWidth().clickable { picking = true }.padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Position ruler colour", Modifier.weight(1f))
+                        Swatch(Color(visuals.rulerColor.toInt()))
+                        if (visuals.rulerColor != TouchVisuals().rulerColor) {
+                            TextButton(onClick = { runtime.setTouchVisuals(visuals.copy(rulerColor = TouchVisuals().rulerColor)) }) { Text("Reset") }
+                        }
+                    }
+                }
+                if (picking) ColorPickerDialog(
+                    "Position ruler colour", Color(visuals.rulerColor.toInt()),
+                    onPick = { c -> runtime.setTouchVisuals(visuals.copy(rulerColor = c.toArgb().toLong() and 0xFFFFFFFFL)); picking = false },
+                    onDismiss = { picking = false },
+                )
+                Searchable("Position ruler values", "value label corner finger") {
+                    Column {
+                        Text("Values show")
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            SelectChip("Above the finger", !visuals.rulerValueInCorner) { runtime.setTouchVisuals(visuals.copy(rulerValueInCorner = false)) }
+                            SelectChip("In the button's corner", visuals.rulerValueInCorner) { runtime.setTouchVisuals(visuals.copy(rulerValueInCorner = true)) }
+                        }
+                    }
+                }
+            }
         },
-        category(runtime, "gyro", "Gyro", "Jitter cutoff and smoothing, for every workspace") {
+        category(runtime, "gyro", "Gyro", "Jitter cutoff, smoothing and the sensitivity slider cap, for every workspace") {
             // Both default to off: raw gyro. One setting for the whole app, also what the PC uses when it runs the gyro.
             OverrideSlider(
                 "appGyroTight", if (tight < 0.05f) "Jitter cutoff off" else "Jitter cutoff %.1f°/s", tight, 0f..5f, 0.1f,
@@ -262,11 +290,24 @@ private fun AppTab(runtime: GamepadRuntime) {
                 overridden = false, onReset = null,
                 hint = "Turns slower than this are averaged over a few samples, which steadies slow aim. Every workspace uses it.",
             ) { v -> runtime.setGyroSmoothing(v) }
+            OverrideSlider(
+                "appSensCapRws", "Slider cap %.1f RWS", capRws,
+                GamepadRuntime.MIN_SENS_CAP_RWS..GamepadRuntime.MAX_SENS_CAP_RWS, 0.5f,
+                overridden = false, onReset = null,
+                hint = "The top of every gyro sensitivity slider (and Gyro sensitivity ranges) in workspaces that know their " +
+                        "game, so the values you use fill the slider. Tap a slider to type a value above it.",
+            ) { v -> runtime.setSensCapRws(v) }
+            OverrideSlider(
+                "appSensCapCounts", "Slider cap %.0f counts/°", capCounts,
+                GamepadRuntime.MIN_SENS_CAP_COUNTS..GamepadRuntime.MAX_SENS_CAP_COUNTS, 1f,
+                overridden = false, onReset = null,
+                hint = "The same in workspaces without a game set, where sensitivity is in mouse counts per degree.",
+            ) { v -> runtime.setSensCapCounts(v) }
         },
         category(runtime, "gyroDisplay", "Gyro display", "The parallax edge; other gyro displays are placed in edit mode") {
-            GyroVisualsSettings(visuals) { runtime.setTouchVisuals(it) }
+            GyroVisualsSettings(visuals, runtime::restStillnessDps) { runtime.setTouchVisuals(it) }
         },
-        category(runtime, "controllers", "Controllers on phone", "Gamepads attached to the phone") {
+        category(runtime, "controllers", "Controllers", "Gamepads attached to the phone") {
             Searchable("Controllers on phone", "gamepad attached", *controllers.map { it.name }.toTypedArray()) {
                 Column {
                     if (controllers.isEmpty()) Text("None. Attach any gamepad.")
@@ -299,7 +340,7 @@ private fun AppTab(runtime: GamepadRuntime) {
         },
     )
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Hint("Long press a category's name to move it.")
+        Hint("Long press a tab to move it.")
         ReorderableSections(runtime, "app", items)
     }
 }

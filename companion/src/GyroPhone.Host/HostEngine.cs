@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using GyroPhone.Host.Abstractions;
 using GyroPhone.Host.Settings;
@@ -37,7 +38,16 @@ public sealed record HostSnapshot(
     int QrPairingS = 0,
     string? QrEnrolledPhone = null,
     // "Use PC controller for gyro ratchet": null while the phone's switch is off, "" while no controller is found.
-    string? PcController = null);
+    string? PcController = null,
+    // The optional GyroPhone pad driver (driver/) is installed, so the DualSense output can plug.
+    bool DualSenseOk = false)
+{
+    /// <summary>The driver the chosen output needs works: ours for the DualSense, ViGEmBus for the others.</summary>
+    public bool OutputDriverOk => OutputMode == OutputMode.DualSense ? DualSenseOk : DriverOk;
+}
+
+/// <summary>"Measure buttons": the middle of the last <paramref name="Count"/> presses from input to game, its phone part, and the newest press (all µs).</summary>
+public sealed record ButtonLatency(long TotalUs, long PhoneUs, int Count, long LastUs);
 
 /// <summary>A paired phone for the tray: code-paired (in settings) or key-paired (a file in authorized_phones).</summary>
 public sealed record PairedPhoneInfo(byte[] PhoneId, string Name, DateTime LastSeenUtc, bool ByKey = false,
@@ -110,8 +120,13 @@ public sealed class HostEngine
     private readonly StateFrame _pending = new();
     private bool _hasPending;
     private readonly MouseDeltaTracker _mouse = new();
-    /// <summary>Motion since the last Flush; both wheels in 1/120 notch.</summary>
-    private int _accDx, _accDy, _accWheel, _accHWheel;
+    /// <summary>Wheel motion since the last Flush, both in 1/120 notch.</summary>
+    private int _accWheel, _accHWheel;
+    /// <summary>Mouse motion since the last Flush; a lost or late stretch catches up over a few ms instead of jumping.</summary>
+    private readonly MouseCatchUp _catchUp = new();
+    private uint _lastStatePhoneUs;
+    private bool _hasStatePhone;
+    private long _lostAtState;
 
     // injected state
     private readonly byte[] _injectedKeys = new byte[StateFrame.KeyBitmapSize];
@@ -150,14 +165,27 @@ public sealed class HostEngine
 
     // Phone overlay: asked for in HOST_STATUS while on; the newest OVERLAY and layout from the active phone.
     private bool _overlayOn;
+    // Latency tests: "Measure buttons" (PRESS_TIME) and the latency test window (the phone's markers).
+    private readonly PressLatency _press = new();
+    private bool MeasuringButtons => _settings.MeasureButtons;
+    private bool _latencyScreen;
+    /// <summary>Host time a Link test ends; long.MinValue: none.</summary>
+    private long _linkTestUntilUs = long.MinValue;
+    /// <summary>HOST_STATUSes still to carry a TEST_MODE of 0 after the last test ended.</summary>
+    private int _testModeOffRepeats;
     private readonly OverlayFrame _overlayFrame = new();
     /// <summary>The last OVERLAY totals of this session, for the motion since then.</summary>
     private readonly OverlayTotals _overlayTotals = new();
     private readonly OverlayLayoutAssembler _overlayLayout = new();
     // Each overlay window's pose, by its settings id, turned by every OVERLAY while it is shown.
     private readonly Dictionary<string, OverlayPose> _overlayPoses = [];
+    // The phone's Level displays presses last seen (-1 = none yet: the first count levels nothing).
+    private int _levelPresses = -1;
     private long _overlayRxUs = long.MinValue;
+    // "Fade when phone rests": whether the phone lies still at each overlay's Level, untouched.
+    private readonly OverlayRest _overlayRest = new();
     private long _lastStatusUs;
+    private KeyLabels? _keyLabels;
     private int _rumbleNext; // (large << 8) | small, plus RumbleDirty while unsent
     private int _lastRumble;
     private long _lastRumbleUs = -RumbleMinIntervalUs;
@@ -183,6 +211,7 @@ public sealed class HostEngine
     {
         _settings = settings;
         _settings.Normalize();
+        _catchUp.MaxUs = _settings.CatchUpMs * 1000L;
         _hostKey = hostKey;
         _hostKeyId = hostKey == null ? null : KeyPairing.KeyId(hostKey.PublicKey);
         _hostKeyFingerprint = hostKey == null ? null : KeyPairing.Fingerprint(hostKey.PublicKey);
@@ -225,6 +254,24 @@ public sealed class HostEngine
     public Action<LatencySample>? LatencySampleHook { get; set; }
 
     public HostSettings Settings => _settings;
+
+    /// <summary>The input log (docs/spec/pc-companion.md, "Input log"); null = none. Set before Start. Written only while <see cref="HostSettings.InputLog"/>.</summary>
+    public InputRecorder? Recorder { get; set; }
+    private InputRecorder? Rec => _settings.InputLog ? Recorder : null;
+
+    /// <summary>"Record input log": on, a session already up starts its log now; off, it ends it.</summary>
+    public void SetInputLog(bool on)
+    {
+        lock (_lock)
+        {
+            if (on == _settings.InputLog) return;
+            if (!on) Recorder?.SessionEnded("input log turned off", _clock.NowUs);
+            _settings.InputLog = on;
+            _settingsDirty = true;
+            if (on && _sessions.Active is { } a) Recorder?.SessionStarted(a.PhoneName, _clock.NowUs);
+        }
+    }
+    private long _pendingRecvUs = -1;
 
     public void AttachSender(IDatagramSender sender)
     {
@@ -305,6 +352,11 @@ public sealed class HostEngine
             case PacketType.Hello:
                 OnHello(d, from, nowUs);
                 return;
+            case PacketType.LinkTestCtl:
+                // Only a program on this PC may start one (tools/link-test.sh); anything else is dropped.
+                if (from.Family == AddressFamily.InterNetwork && from[4] == 127) SetLinkTest(Le.U16(d, Wire.Header), "asked on this PC");
+                else _dropped++;
+                return;
             case PacketType.KeyEnroll:
                 if (WireCodec.TryDecodeKeyEnroll(d, out var ke)) OnKeyEnroll(d, ke, from, nowUs);
                 else _dropped++;
@@ -347,7 +399,9 @@ public sealed class HostEngine
             Promote(s, nowUs);
         }
 
+        long lostBefore = _stats.TotalLost;
         _stats.OnSealed(seq);
+        if (_stats.TotalLost != lostBefore) Rec?.Lost(_stats.TotalLost - lostBefore, seq, nowUs);
         switch (type)
         {
             case PacketType.State:
@@ -380,6 +434,12 @@ public sealed class HostEngine
                     if (!_overlayPoses.TryGetValue(o.Id, out var pose)) _overlayPoses[o.Id] = pose = new OverlayPose();
                     pose.Feed(_overlayFrame, o);
                 }
+                // A Level displays mapping on the phone: every overlay shown levels, as its Level button does.
+                if (_levelPresses >= 0 && _overlayFrame.LevelPresses != _levelPresses)
+                    foreach (var o in _settings.Overlays)
+                        if (o.Shown) LevelOverlay(o.Id);
+                _levelPresses = _overlayFrame.LevelPresses;
+                _overlayRest.Feed(_overlayFrame, nowUs, _settings);
                 _overlayRxUs = nowUs;
                 break;
             case PacketType.OverlayLayout:
@@ -388,10 +448,14 @@ public sealed class HostEngine
             case PacketType.Motion:
                 OnMotion(plain, nowUs);
                 break;
+            case PacketType.PressTime:
+                if (MeasuringButtons)
+                    _press.OnPressTime(WireCodec.DecodePressTime(plain), nowUs, ClockOffsetUs, _stats.LastLinkInfo != null);
+                break;
             case PacketType.Bye:
                 _events.Log($"phone said bye (reason {plain[0]})");
                 RememberEnded(s.SessionId);
-                EndActive(hostByeReason: null);
+                EndActive(hostByeReason: null, why: $"phone said bye ({plain[0]})");
                 break;
         }
     }
@@ -431,6 +495,24 @@ public sealed class HostEngine
     {
         bool connected = _pcPad.Read(_pcPresses, out uint held);
         _gate.Update(new PcPadState { Connected = connected, Held = held, Presses = _pcPresses }, _padGyro);
+    }
+
+    private readonly uint[] _firePresses = new uint[PadGyroConfig.Places];
+
+    /// <summary>
+    /// A laser pointer overlay's fire output <paramref name="code"/> (LaserFire) is held: sent by the phone now, or
+    /// pressed on the PC's controller with "Use PC controller for gyro ratchet" on.
+    /// </summary>
+    public bool OutputHeld(int code)
+    {
+        if (code == 0) return false;
+        Span<float> axes = stackalloc float[6];
+        lock (_lock)
+        {
+            uint held = 0;
+            bool pc = _padGyro.Enabled && _pcPad.Read(_firePresses, out held) && _pcPad.ReadAxes(axes);
+            return LaserFire.Held(code, _pending, pc ? held : 0, pc ? axes[4] : 0f, pc ? axes[5] : 0f);
+        }
     }
 
     /// <summary>The overlays turn with the axes on after the PC controller, and its ratchets count for "On ratchet".</summary>
@@ -522,8 +604,21 @@ public sealed class HostEngine
         _releasedForSilence = false;
         _mouse.Apply(_rxFrame.MouseTotalX, _rxFrame.MouseTotalY, _rxFrame.WheelTotal, _rxFrame.HWheelTotal,
             _rxFrame.Hires, nowUs, out int dx, out int dy, out int dw, out int dh);
-        _accDx += dx;
-        _accDy += dy;
+        // Packets lost since the STATE before (seq is shared by every type) mean this delta
+        // also carries their motion, over the phone time since that STATE.
+        long span = _hasStatePhone ? unchecked((int)(_rxFrame.PhoneTimeUs - _lastStatePhoneUs)) : 0;
+        bool lost = _hasStatePhone && _stats.TotalLost != _lostAtState;
+        _lastStatePhoneUs = _rxFrame.PhoneTimeUs;
+        _lostAtState = _stats.TotalLost;
+        _hasStatePhone = true;
+        _catchUp.Add(dx, dy, span, lost);
+        _pendingRecvUs = nowUs;
+        if (Rec is { } rec)
+        {
+            bool moving = dx != 0 || dy != 0;
+            bool held = _rxFrame.MouseButtons != 0 || _rxFrame.Buttons != 0 || _rxFrame.Hat != StateFrame.HatCenter || _rxFrame.Keys.AsSpan().IndexOfAnyExcept((byte)0) >= 0;
+            rec.State(_rxFrame.PhoneTimeUs, nowUs, moving, moving || held, lost);
+        }
         // Plain STATE counts whole notches.
         _accWheel += _rxFrame.Hires ? dw : dw * InjectEvent.WheelDelta;
         _accHWheel += dh;
@@ -563,7 +658,7 @@ public sealed class HostEngine
             return;
         }
         var s = _sessions.CreatePending(hello, name, pairKey, _settings.HostId,
-            (byte)_settings.OutputMode, (byte)((_pad.DriverOk ? WelcomeFlags.VigemOk : 0) | WelcomeFlags.HiresWheel | WelcomeFlags.PcGyro | WelcomeFlags.Motion),
+            (byte)_settings.OutputMode, (byte)((PadDriverOk ? WelcomeFlags.VigemOk : 0) | WelcomeFlags.HiresWheel | WelcomeFlags.PcGyro | WelcomeFlags.Motion),
             from, nowUs);
         Reply(s.Welcome, from);
     }
@@ -587,6 +682,7 @@ public sealed class HostEngine
                 // and its press count starts again.
                 _overlayLayout.Renew();
                 foreach (var pose in _overlayPoses.Values) pose.ForgetPresses();
+                _levelPresses = -1;
             }
             else
             {
@@ -595,7 +691,9 @@ public sealed class HostEngine
                 // Nothing of the old phone's overlay or PC controller carries over.
                 _overlayLayout.Reset();
                 _overlayPoses.Clear();
+                _levelPresses = -1;
                 _overlayRxUs = long.MinValue;
+                _overlayRest.Clear(_clock.NowUs);
                 StopPcPad();
                 _padGyro.Enabled = false;
                 _gate.Reset();
@@ -606,8 +704,11 @@ public sealed class HostEngine
         // The phone restarts its totals and gyro samples at 0 for a new session; the PC controller's toggle stays.
         _mouse.Reset();
         _pcGyro.Rebase();
-        _accDx = _accDy = _accWheel = _accHWheel = 0;
+        _accWheel = _accHWheel = 0;
+        _catchUp.Clear();
+        _hasStatePhone = false;
         _stats.Reset();
+        _press.Reset();
         _releasedForSilence = false;
         _hasPending = false;
         PlugPad();
@@ -621,8 +722,15 @@ public sealed class HostEngine
             keyPhone.LastSeenUtc = DateTime.UtcNow;
         }
         _events.Log($"session started with '{s.PhoneName}'");
+        Rec?.SessionStarted(s.PhoneName, nowUs);
         SendStatus(s, nowUs);
         _events.StateChanged();
+    }
+
+    /// <summary>A lost or late stretch of mouse motion is still catching up: <see cref="Flush(long)"/> should run within a millisecond, even without packets.</summary>
+    public bool MouseCatchingUp
+    {
+        get { lock (_lock) return _catchUp.CatchingUp; }
     }
 
     /// <summary>Injects the newest STATE received since the last Flush: pad only when the mapped frame changed, SendInput only with events.</summary>
@@ -634,15 +742,32 @@ public sealed class HostEngine
         lock (_lock)
         {
             SendPendingRumble(nowUs);
-            if (!_hasPending) return;
+            // Without a new STATE, only a running catch-up has something to move.
+            bool frame = _hasPending;
+            if (!frame && !_catchUp.CatchingUp) return;
             _hasPending = false;
-            int dx = _accDx, dy = _accDy, dw = _accWheel, dh = _accHWheel;
-            _accDx = _accDy = _accWheel = _accHWheel = 0;
-            if (_paused || _locked) return; // baseline already updated, nothing injected
+            _catchUp.Take(nowUs, out int dx, out int dy);
+            if (_catchUp.BacklogTaken) Rec?.CatchUp(_catchUp.BacklogSpanUs, _catchUp.BacklogPx, _catchUp.BacklogCatchUpUs, nowUs);
+            int dw = _accWheel, dh = _accHWheel;
+            _accWheel = _accHWheel = 0;
+            if ((_pending.Flags & StateFlags.LinkTest) != 0)
+            {
+                // Link test input is counted (input log, catch-up), never moved.
+                dx = dy = dw = dh = 0;
+            }
+            if (_paused || _locked)
+            {
+                _catchUp.Clear();
+                return; // baseline already updated, nothing injected
+            }
+            if (!frame && dx == 0 && dy == 0) return;
 
-            SubmitPad(_pending, nowUs);
-            NotePadPresses(nowUs);
-            if (edge) HoldPadEdge(nowUs);
+            if (frame)
+            {
+                SubmitPad(_pending, nowUs);
+                NotePadPresses(nowUs);
+                if (edge) HoldPadEdge(nowUs);
+            }
 
             bool blocked = _elevatedForeground;
             Span<byte> before = stackalloc byte[StateFrame.KeyBitmapSize];
@@ -659,12 +784,14 @@ public sealed class HostEngine
             if (blocked) NoteBlockedUps(before, beforeMouse);
             if (n > 0)
             {
-                if (!_keyMouse.Inject(_inject.AsSpan(0, n)))
+                bool took = _keyMouse.Inject(_inject.AsSpan(0, n));
+                if (!took)
                 {
                     // Windows dropped them: the ups are sent again once it takes input.
                     if (!blocked) NoteBlockedUps(before, beforeMouse);
                     InjectFailed();
                 }
+                Rec?.Inject(dx, dy, frame ? _pendingRecvUs : -1, _clock.NowUs, !took);
                 _injections++;
                 if (Debug.Enabled) Debug.OnInject(_inject.AsSpan(0, n), nowUs);
                 for (int i = 0; i < n; i++)
@@ -676,7 +803,8 @@ public sealed class HostEngine
                     }
                 }
             }
-            if (_hasPendingSample)
+            if (frame && MeasuringButtons) _press.OnInjected(_pending.PhoneTimeUs, _clock.NowUs, ClockOffsetUs, _stats.LastLinkInfo != null);
+            if (frame && _hasPendingSample)
             {
                 _hasPendingSample = false;
                 LatencySampleHook?.Invoke(_pendingSample with { InjectUs = _clock.NowUs });
@@ -768,6 +896,7 @@ public sealed class HostEngine
                 _padFrameValid = true;
                 break;
             case OutputMode.DualShock4:
+            case OutputMode.DualSense: // the same buttons, sticks and motion
                 var f = PadMapper.ToDs4(s);
                 if (_padFrameValid && f == _lastDs4) return;
                 if (!TrySubmit(f, _ds4Motion.Current)) { _padRetryAfterUs = nowUs + PadRetryUs; return; }
@@ -810,12 +939,12 @@ public sealed class HostEngine
     }
 
     /// <summary>
-    /// MOTION: each new sample goes to the DualShock 4 as its own report, with the buttons and sticks
+    /// MOTION: each new sample goes to the DualShock 4 or DualSense as its own report, with the buttons and sticks
     /// it shows now, so the game sees every turn at the time it was measured.
     /// </summary>
     private void OnMotion(ReadOnlySpan<byte> plain, long nowUs)
     {
-        if (_pad.Plugged != OutputMode.DualShock4 || _paused || _locked || _releasedForSilence) return;
+        if (!PadTakesMotion || _paused || _locked || _releasedForSilence) return;
         _motionFrame.Decode(plain);
         int n = _ds4Motion.Take(_motionFrame, _motionOut, nowUs);
         SubmitMotion(n);
@@ -847,6 +976,7 @@ public sealed class HostEngine
     {
         lock (_lock)
         {
+            if (_linkTestUntilUs != long.MinValue && nowUs >= _linkTestUntilUs) SetLinkTest(0, "time is up");
             var a = _sessions.Active;
             if (a != null)
             {
@@ -854,12 +984,13 @@ public sealed class HostEngine
                 if (silent >= SessionTimeoutUs)
                 {
                     _events.Log($"session with '{a.PhoneName}' timed out");
-                    EndActive(hostByeReason: null);
+                    EndActive(hostByeReason: null, why: "timed out");
                 }
                 else if (silent >= ReleaseTimeoutUs && !_releasedForSilence)
                 {
                     _releasedForSilence = true;
                     _hasPending = false;
+                    Rec?.ReleasedForSilence(HeldCount(), nowUs);
                     ReleaseAllLocked();
                     _events.StateChanged();
                 }
@@ -872,8 +1003,8 @@ public sealed class HostEngine
                 int r = _keyRepeat.Due(_injectedKeys, nowUs, _inject);
                 if (r > 0 && !_keyMouse.Inject(_inject.AsSpan(0, r))) InjectFailed();
             }
-            // A lost stop (or the phone gone quiet): the DualShock 4's gyro comes to rest.
-            if (_pad.Plugged == OutputMode.DualShock4 && _ds4Motion.IsStale(nowUs)) SubmitMotion(_ds4Motion.Rest(_motionOut, nowUs));
+            // A lost stop (or the phone gone quiet): the pad's gyro comes to rest.
+            if (PadTakesMotion && _ds4Motion.IsStale(nowUs)) SubmitMotion(_ds4Motion.Rest(_motionOut, nowUs));
             // A pad button held from a burst is let go even when no STATE follows.
             if (_padHeld && nowUs >= _padHoldUntilUs && !_hasPending && !_paused && !_locked) SubmitPad(_pending, nowUs);
             _sessions.ExpirePending(nowUs);
@@ -884,9 +1015,22 @@ public sealed class HostEngine
             if (a != null && nowUs - _lastStatusUs >= StatusIntervalUs)
             {
                 _stats.Roll();
+                Rec?.Second(_stats, nowUs);
                 SendStatus(a, nowUs);
                 if (Debug.Enabled) Debug.SecondTick(DebugLinkLine(), nowUs);
             }
+        }
+    }
+
+    /// <summary>The PC keyboard layout's key labels from the watchdog's probe; sent with every HOST_STATUS, at once when they change.</summary>
+    public void SetKeyLabels(KeyLabels? labels)
+    {
+        lock (_lock)
+        {
+            if (labels == null || labels.SameAs(_keyLabels)) return;
+            _keyLabels = labels;
+            DebugTrace.SetLayout(labels);
+            if (_sessions.Active is { } a) SendStatus(a, _clock.NowUs);
         }
     }
 
@@ -1094,6 +1238,19 @@ public sealed class HostEngine
         if (_overlayOn && before != OverlayCompassLocked() && _sessions.Active is { } a) SendStatus(a, _clock.NowUs);
     }
 
+    /// <summary>"Catch-up time" (ms; 0 = off): the longest a lost or late stretch of mouse motion is spread over.</summary>
+    public void SetCatchUpMs(int ms)
+    {
+        lock (_lock)
+        {
+            ms = HostSettings.ClampCatchUpMs(ms);
+            if (ms == _settings.CatchUpMs) return;
+            _settings.CatchUpMs = ms;
+            _catchUp.MaxUs = ms * 1000L;
+            _settingsDirty = true;
+        }
+    }
+
     /// <summary>What a left click on the tray icon does; the tray reads it from <see cref="Settings"/>.</summary>
     public void SetTrayClick(TrayClickAction action)
     {
@@ -1207,12 +1364,88 @@ public sealed class HostEngine
             if (on == _overlayOn) return;
             _overlayOn = on;
             _overlayRxUs = long.MinValue;
+            _overlayRest.Clear(_clock.NowUs);
             _overlayPoses.Clear();
+            _levelPresses = -1;
             _overlayTotals.Reset();
             if (!on) _overlayLayout.Reset();
             if (_sessions.Active is { } a) SendStatus(a, _clock.NowUs);
         }
     }
+
+    /// <summary>
+    /// "Measure buttons": the phone sends PRESS_TIME for each press and release (told at once), and
+    /// <see cref="PressLatencyNow"/> has the newest presses. Off: the phone stops and they are forgotten.
+    /// </summary>
+    public void SetMeasureButtons(bool on)
+    {
+        lock (_lock)
+        {
+            if (on == MeasuringButtons) return;
+            _settings.MeasureButtons = on;
+            _settingsDirty = true;
+            _press.Reset();
+            _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
+            if (_sessions.Active is { } a) SendTestMode(a);
+        }
+    }
+
+    /// <summary>The latency test window is open: the phone's pad shows its tracking markers (told at once).</summary>
+    public void SetLatencyScreen(bool on)
+    {
+        lock (_lock)
+        {
+            if (on == _latencyScreen) return;
+            _latencyScreen = on;
+            _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
+            if (_sessions.Active is { } a) SendTestMode(a);
+        }
+    }
+
+    /// <summary>A Link test runs (<see cref="SetLinkTest"/>).</summary>
+    public bool LinkTesting
+    {
+        get { lock (_lock) return _linkTestUntilUs != long.MinValue; }
+    }
+
+    /// <summary>
+    /// Starts a Link test for <paramref name="seconds"/> (0 stops one): the phone sends fake moving
+    /// input at its full rate, which the input log counts like real input but which is never injected.
+    /// </summary>
+    public void SetLinkTest(int seconds, string why = "")
+    {
+        lock (_lock)
+        {
+            long now = _clock.NowUs;
+            bool was = _linkTestUntilUs != long.MinValue;
+            _linkTestUntilUs = seconds > 0 ? now + Math.Min(seconds, 3600) * 1_000_000L : long.MinValue;
+            if (seconds > 0)
+            {
+                _events.Log($"link test started for {Math.Min(seconds, 3600)} s" + (why.Length > 0 ? $" ({why})" : ""));
+                Rec?.Note("link test", $"started for {Math.Min(seconds, 3600)} s", now);
+            }
+            else if (was)
+            {
+                _events.Log("link test stopped" + (why.Length > 0 ? $" ({why})" : ""));
+                Rec?.Note("link test", "stopped", now);
+            }
+            else return;
+            _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
+            if (_sessions.Active is { } a) SendTestMode(a);
+        }
+    }
+
+    /// <summary>"Measure buttons": the middle of the last presses (total and the phone's part, µs), how many, and the newest; null while off or before any.</summary>
+    public ButtonLatency? PressLatencyNow()
+    {
+        lock (_lock)
+        {
+            if (!MeasuringButtons || _press.Median() is not { } m) return null;
+            return new ButtonLatency(m.TotalUs, m.PhoneUs, _press.Count, _press.LastTotalUs);
+        }
+    }
+
+    private long ClockOffsetUs => _stats.LastLinkInfo?.ClockOffsetUs ?? 0;
 
     /// <summary>
     /// Copies the newest OVERLAY into <paramref name="into"/> and returns how long ago it came (us),
@@ -1231,10 +1464,12 @@ public sealed class HostEngine
             if (id != null && _overlayPoses.TryGetValue(id, out var p))
             {
                 into.Qw = p.W; into.Qx = p.X; into.Qy = p.Y; into.Qz = p.Z;
+                into.PoseActive = p.Active();
             }
             else
             {
                 into.Qw = 1; into.Qx = into.Qy = into.Qz = 0;
+                into.PoseActive = 0;
             }
             if (id != null && _settings.Overlays.FirstOrDefault(o => o.Id == id) is { HandleSource: OverlayHandleSource.Pc })
                 PcPadOnHandles(into);
@@ -1254,7 +1489,11 @@ public sealed class HostEngine
             var o = _settings.Overlays.Find(x => x.Id == id);
             if (o == null) return;
             _overlayPoses.TryGetValue(id, out var pose);
-            if (o.Gravity && !o.IsTrackball)
+            // Which way is up now: "Fade when phone rests" counts the phone flat near this tilt.
+            if (_overlayRxUs != long.MinValue && _overlayFrame.HasUp &&
+                MathF.Sqrt(_overlayFrame.UpX * _overlayFrame.UpX + _overlayFrame.UpY * _overlayFrame.UpY + _overlayFrame.UpZ * _overlayFrame.UpZ) is var g and > 0f)
+                o.LevelUp = [_overlayFrame.UpX / g, _overlayFrame.UpY / g, _overlayFrame.UpZ / g];
+            if (o.Gravity && !o.FollowsCamera)
             {
                 if (pose == null) return;
                 o.Rest = pose.TiltOnly();
@@ -1264,6 +1503,29 @@ public sealed class HostEngine
                 pose?.Reset();
                 o.Rest = null;
             }
+            _settingsDirty = true;
+        }
+    }
+
+    /// <summary>"Fade when phone rests": overlay <paramref name="id"/> should be faded now (the phone lies still at its Level, untouched).</summary>
+    public bool OverlayResting(string id)
+    {
+        lock (_lock) return _overlayRest.Resting(id, _clock.NowUs, _overlayRxUs, _settings.OverlayRestFade);
+    }
+
+    /// <summary>The phone's turning speed now (deg/s) from its overlay frames, or null without any lately: shown beside "Still below".</summary>
+    public float? OverlayStillnessDps()
+    {
+        lock (_lock) return _overlayRest.LiveDps(_clock.NowUs);
+    }
+
+    /// <summary>Changes the "Fade when phone rests" settings.</summary>
+    public void UpdateOverlayRestFade(Action<OverlayRestFade> change)
+    {
+        lock (_lock)
+        {
+            change(_settings.OverlayRestFade);
+            _settings.OverlayRestFade.Normalize();
             _settingsDirty = true;
         }
     }
@@ -1385,7 +1647,8 @@ public sealed class HostEngine
                 _hostKeyFingerprint,
                 _qr != null && now < _qr.ExpiresUs ? (int)((_qr.ExpiresUs - now + 999_999) / 1_000_000) : 0,
                 _qr?.EnrolledName,
-                _padGyro.Enabled ? _pcPad.Name ?? "" : null);
+                _padGyro.Enabled ? _pcPad.Name ?? "" : null,
+                _pad.DualSenseOk);
         }
     }
 
@@ -1468,10 +1731,11 @@ public sealed class HostEngine
         _events.StateChanged();
     }
 
-    private void EndActive(byte? hostByeReason)
+    private void EndActive(byte? hostByeReason, string why = "ended")
     {
         var a = _sessions.Active;
         if (a == null) return;
+        Rec?.SessionEnded(hostByeReason == null ? why : $"{why} by the PC ({hostByeReason})", _clock.NowUs);
         ReleaseAllLocked();
         if (hostByeReason is { } r)
         {
@@ -1485,7 +1749,9 @@ public sealed class HostEngine
         _pcGyro.Reset();
         _overlayLayout.Reset();
         _overlayRxUs = long.MinValue;
+        _overlayRest.Clear(_clock.NowUs);
         _overlayPoses.Clear();
+        _levelPresses = -1;
         _overlayTotals.Reset();
         _ds4Motion.Reset();
         _pad.Unplug();
@@ -1495,9 +1761,18 @@ public sealed class HostEngine
         _events.StateChanged();
     }
 
+    /// <summary>Keys and mouse buttons injected and held now (a count only, for the input log).</summary>
+    private int HeldCount()
+    {
+        int n = System.Numerics.BitOperations.PopCount(_injectedMouse);
+        foreach (var b in _injectedKeys) n += System.Numerics.BitOperations.PopCount(b);
+        return n;
+    }
+
     private void ReleaseAllLocked()
     {
         _hasPending = false;
+        _catchUp.Clear();
         _padHoldButtons = 0;
         _padHoldHat = StateFrame.HatCenter;
         _padHoldUntilUs = long.MinValue;
@@ -1531,6 +1806,7 @@ public sealed class HostEngine
                 _padFrameValid = true;
                 break;
             case OutputMode.DualShock4:
+            case OutputMode.DualSense:
                 _ds4Motion.Reset();
                 if (!TrySubmit(Ds4Frame.Neutral, _ds4Motion.Current)) break;
                 _lastDs4 = Ds4Frame.Neutral;
@@ -1611,11 +1887,17 @@ public sealed class HostEngine
         return false;
     }
 
+    /// <summary>The driver the chosen output needs works (what the phone's "driver ok" flags say).</summary>
+    /// <summary>The plugged pad has a gyro and accelerometer (DualShock 4 or DualSense).</summary>
+    private bool PadTakesMotion => _pad.Plugged is OutputMode.DualShock4 or OutputMode.DualSense;
+
+    private bool PadDriverOk => _settings.OutputMode == OutputMode.DualSense ? _pad.DualSenseOk : _pad.DriverOk;
+
     private void PlugPad()
     {
         var mode = _settings.OutputMode;
         _padFrameValid = false;
-        if (mode == OutputMode.None || !_pad.DriverOk) return;
+        if (mode == OutputMode.None || !_pad.CanPlug(mode)) return;
         if (_pad.Plugged == mode) return;
         if (!_pad.Plug(mode)) _events.Log($"could not plug {mode} pad");
     }
@@ -1624,7 +1906,7 @@ public sealed class HostEngine
     {
         ushort flags = 0;
         if (_pairing.IsOpen(nowUs)) flags |= AnnounceFlags.PairingOpen;
-        if (_pad.DriverOk) flags |= AnnounceFlags.VigemOk;
+        if (PadDriverOk) flags |= AnnounceFlags.VigemOk;
         if (_phones.ContainsKey(Convert.ToHexString(disc.PhoneId)) || _keyPhones.ContainsKey(Convert.ToHexString(disc.PhoneId)))
             flags |= AnnounceFlags.PairedWithYou;
         if (_hostKeyId != null && disc.HostKeyId is { } hk && hk.AsSpan().SequenceEqual(_hostKeyId)) flags |= AnnounceFlags.KeyMatch;
@@ -1677,7 +1959,7 @@ public sealed class HostEngine
     {
         _lastStatusUs = nowUs;
         byte flags = 0;
-        if (_pad.DriverOk) flags |= HostStatusFlags.VigemOk;
+        if (PadDriverOk) flags |= HostStatusFlags.VigemOk;
         if (_pad.Plugged != OutputMode.None) flags |= HostStatusFlags.PadPlugged;
         if (_paused || _locked) flags |= HostStatusFlags.InputPaused;
         if (_elevatedForeground) flags |= HostStatusFlags.ElevatedForeground;
@@ -1687,7 +1969,38 @@ public sealed class HostEngine
         Span<byte> p = stackalloc byte[Wire.HostStatusPlain];
         WireCodec.EncodeHostStatus(new HostStatus(s.HighestRxSeq, _stats.RxPerSec, _stats.LossPermille,
             _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs, (byte)_settings.OutputMode, flags), p);
+        // TEST_MODE first, so HOST_STATUS stays the newest status the phone holds. While no test
+        // runs it goes only with the few statuses after one ended (a lost "off" comes again).
+        if (TestModeFlagsNow() != 0 || _testModeOffRepeats > 0)
+        {
+            if (TestModeFlagsNow() == 0) _testModeOffRepeats--;
+            SendTestMode(s);
+        }
         s.SendSealed(PacketType.HostStatus, p, _sender);
+        if (_keyLabels is { } labels)
+        {
+            Span<byte> k = stackalloc byte[Wire.KeyLabelsPlain];
+            WireCodec.EncodeKeyLabels(labels, k);
+            s.SendSealed(PacketType.KeyLabels, k, _sender);
+        }
+    }
+
+    private byte TestModeFlagsNow()
+    {
+        byte flags = 0;
+        if (MeasuringButtons) flags |= TestModeFlags.PressTimes;
+        if (_latencyScreen) flags |= TestModeFlags.LatencyScreen;
+        if (_linkTestUntilUs != long.MinValue) flags |= TestModeFlags.LinkTest;
+        return flags;
+    }
+
+    /// <summary>TEST_MODE: on change, and with HOST_STATUS while a test runs. Older phones drop it.</summary>
+    private void SendTestMode(HostSession s)
+    {
+        byte flags = TestModeFlagsNow();
+        Span<byte> t = stackalloc byte[Wire.TestModePlain];
+        WireCodec.EncodeTestMode(flags, t);
+        s.SendSealed(PacketType.TestMode, t, _sender);
     }
 
     private void SendHostBye(HostSession s, byte reason)

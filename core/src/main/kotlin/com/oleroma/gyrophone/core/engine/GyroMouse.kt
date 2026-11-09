@@ -10,6 +10,7 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.YawAxis
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.min
@@ -32,6 +33,9 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
     /** Screen rotation in degrees (0/90/180/270): how the phone is held. */
     @Volatile var displayRotation: Int = 90
 
+    /** Which screen axis is yaw ([YawAxis]): [motion] turns the screen's frame by it. */
+    @Volatile var yawAxis: YawAxis = YawAxis.SCREEN_Z
+
     data class Counts(val dx: Int, val dy: Int)
 
     /**
@@ -52,7 +56,10 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
      * counter-clockwise looking down the axis. Each orientation names which device axis points
      * up / right / toward the player.
      */
-    fun motion(gx: Float, gy: Float, gz: Float): Motion = motion(gx, gy, gz, resolvedOrientation())
+    fun motion(gx: Float, gy: Float, gz: Float): Motion = withYawAxis(screenMotion(gx, gy, gz), yawAxis)
+
+    /** As [motion], about the screen's own axes whatever [yawAxis] says. */
+    fun screenMotion(gx: Float, gy: Float, gz: Float): Motion = motion(gx, gy, gz, resolvedOrientation())
 
     private fun motion(gx: Float, gy: Float, gz: Float, resolved: Resolved): Motion {
         val x = gx * RAD_TO_DEG; val y = gy * RAD_TO_DEG; val z = gz * RAD_TO_DEG
@@ -62,6 +69,20 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
             Resolved.PORTRAIT -> Motion(yaw = -y, pitch = x, roll = -z)
             Resolved.PORTRAIT_UPSIDE_DOWN -> Motion(yaw = y, pitch = -x, roll = -z)
         }
+    }
+
+    /**
+     * Motion [m] about the screen's axes in the frame [axis] makes ([YawAxis]), a plain rotation
+     * of the phone's frame (right, up, toward the player = pitch, -yaw, -roll):
+     * - Screen Y, tilted back 90°: right stays, up becomes away from the player (-toward), toward
+     *   becomes the screen's up. Stored roll (shown yaw) is then the turn about the screen's vertical.
+     * - Screen X, turned 90° about the vertical: right becomes away from the player, toward becomes
+     *   the screen's right. Stored roll (shown yaw) is then the turn about the screen's horizontal.
+     */
+    fun withYawAxis(m: Motion, axis: YawAxis): Motion = when (axis) {
+        YawAxis.SCREEN_Z -> m
+        YawAxis.SCREEN_Y -> Motion(yaw = -m.roll, pitch = m.pitch, roll = m.yaw)
+        YawAxis.SCREEN_X -> Motion(yaw = m.yaw, pitch = m.roll, roll = -m.pitch)
     }
 
     /**

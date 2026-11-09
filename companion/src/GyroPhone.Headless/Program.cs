@@ -60,7 +60,7 @@ internal static class Program
         IPadSink pad = NullPadSink.Instance;
         if (!noVigem)
         {
-            pad = ViGEmPadSink.Create(log.Write, out var padError);
+            pad = PadSinks.Create(log.Write, out var padError);
             if (padError != null)
                 log.Write($"{padError}: gamepad output off, keyboard and mouse still work. Driver: {ViGEmPadSink.DriverDownloadUrl}");
         }
@@ -106,7 +106,8 @@ internal static class Program
         if (recovered > 0) log.Write($"released {recovered} inputs left held by a previous run");
         var marker = new HeldKeysMarker(markerPath);
         var watchdog = new Watchdog(engine, clock, marker, store,
-            networkPublicProbe: NetworkCategory.IsAnyConnectedPublic, log: log.Write);
+            networkPublicProbe: NetworkCategory.IsAnyConnectedPublic, log: log.Write,
+            keyLabelsProbe: KeyboardLayoutProbe.Read);
 
         engine.Start(clock.NowUs);
         if (pair) engine.OpenPairingWindow();

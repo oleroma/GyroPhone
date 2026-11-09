@@ -55,13 +55,16 @@ object ProfileJson {
     private val MAPPING_LISTS = setOf("mappings", "controller", "keyboard", "mouse", "touch")
 
     /**
-     * At least one workspace, all corners present, no corner inside a workspace and unique
-     * workspace ids.
+     * At least one workspace, all corners present, no corner inside a workspace, unique workspace
+     * ids and gyro displays in the current settings layout ([GyroDisplay.migrated]).
      */
     fun normalize(p: Profile): Profile {
         var workspaces = p.workspaces.map { w ->
-            val clean = if (w.touchControls.none { it.kind == TouchKind.FULLSCREEN }) w
+            var clean = if (w.touchControls.none { it.kind == TouchKind.FULLSCREEN }) w
             else w.copy(touchControls = w.touchControls.filterNot { it.kind == TouchKind.FULLSCREEN })
+            if (clean.touchControls.any { (it.display?.v ?: GyroDisplay.VERSION) < GyroDisplay.VERSION }) {
+                clean = clean.copy(touchControls = clean.touchControls.map { c -> c.display?.let { c.copy(display = it.migrated()) } ?: c })
+            }
             if (clean.gyro.mode == GyroMode.HOLD_OR_TOGGLE) clean.copy(gyro = clean.gyro.copy(mode = GyroMode.OFF)) else clean
         }
         if (workspaces.isEmpty()) workspaces = listOf(Workspace(id = "ws1", name = "Main"))

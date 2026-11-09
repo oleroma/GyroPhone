@@ -36,12 +36,24 @@ public sealed class OverlayFrame
     public byte Axes;
     /// <summary>Ratchet presses so far (wraps at 256): a change is a press.</summary>
     public byte RatchetPresses;
+    /// <summary>Level displays presses so far (wraps at 256): a change levels every overlay shown.</summary>
+    public byte LevelPresses;
+    /// <summary>Clear displays presses so far (wraps at 256): a change clears every laser pointer's paint and trail.</summary>
+    public byte ClearPresses;
+    /// <summary>
+    /// The gyro axis on mouse X and on mouse Y: 1 yaw, 2 pitch, 3 roll (+ 0x80 when it moves the mouse
+    /// the other way); 0 = not sent (older phones: roll and pitch). An overlay turning with the camera
+    /// turns as the game's camera by them.
+    /// </summary>
+    public byte CameraXAxis, CameraYAxis;
     /// <summary>The phone turn (degrees on yaw, pitch, roll) that would send the mouse counts sent since the last OVERLAY by anything but the live gyro (a trackball turns by it).</summary>
     public float CameraYaw, CameraPitch, CameraRoll;
     /// <summary>The game's camera degrees per phone degree on yaw, pitch, roll; 0 = unknown.</summary>
     public float RwsYaw, RwsPitch, RwsRoll;
     /// <summary>The pose the PC made (not on the wire): phone frame (x right, y up, z out of the screen) to the player's view.</summary>
     public float Qw = 1, Qx, Qy, Qz;
+    /// <summary>Not on the wire: the trackball axes (bit 0 yaw, 1 pitch, 2 roll) the gyro turned just now, to light them up.</summary>
+    public int PoseActive;
     public ushort LayoutVersion;
     public byte Flags;
     public int FingerCount;
@@ -126,8 +138,12 @@ public sealed class OverlayFrame
         PadFlags = b[136];
         PadL2Pull = b[137] / 255f;
         PadR2Pull = b[138] / 255f;
+        LevelPresses = b[139];
         PadButtons = Le.U32(b, 140);
         for (int i = 0; i < 4; i++) PadSticks[i] = Math.Max(-1f, (sbyte)b[144 + i] / 127f);
+        ClearPresses = b[148];
+        CameraXAxis = b[149];
+        CameraYAxis = b[150];
     }
 
     private static float Gain(float v) => float.IsFinite(v) && v > 0f ? Math.Min(v, 100f) : 0f;
@@ -142,9 +158,14 @@ public sealed class OverlayFrame
         o.NorthX = NorthX; o.NorthY = NorthY; o.NorthZ = NorthZ;
         o.Axes = Axes;
         o.RatchetPresses = RatchetPresses;
+        o.LevelPresses = LevelPresses;
+        o.ClearPresses = ClearPresses;
+        o.CameraXAxis = CameraXAxis;
+        o.CameraYAxis = CameraYAxis;
         o.CameraYaw = CameraYaw; o.CameraPitch = CameraPitch; o.CameraRoll = CameraRoll;
         o.RwsYaw = RwsYaw; o.RwsPitch = RwsPitch; o.RwsRoll = RwsRoll;
         o.Qw = Qw; o.Qx = Qx; o.Qy = Qy; o.Qz = Qz;
+        o.PoseActive = PoseActive;
         o.LayoutVersion = LayoutVersion;
         o.Flags = Flags;
         o.FingerCount = FingerCount;

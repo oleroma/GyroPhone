@@ -23,6 +23,14 @@ A gyro axis can go to **mouse move X/Y**, **scroll** or **scroll sideways** (`Ou
 - **World**: against gravity. Yaw turns around the vertical, pitch tilts around the horizontal axis to the right, roll turns around the horizontal way the phone faces. Uses `GravityPose` (the accelerometer runs).
 - **Player**: yaw blends the phone's yaw and roll by how the phone is tilted (forgiving when leaning back or lying down); pitch and roll stay the phone's.
 
+**Yaw axis** (workspace gyro setting, `YawAxis`, workspace and Defaults only): which screen axis is yaw, a 90° turn of the phone's frame applied in `GyroMouse.motion`, so everything that reads the phone's axes follows it: the gyro mouse (in every gyro space), the PC controller's gyro and accelerometer, the gyro displays and their Level, and the PC overlays (the phone sends them the turned frame, so the companion needs no change).
+
+- **Screen Z** (default): held flat, screen up. Yaw through the screen, pitch across it, roll along it.
+- **Screen Y**: held upright, screen facing you (the frame tilted back 90°). Yaw about the screen's vertical axis, roll through the screen, pitch across it.
+- **Screen X**: held on its side, right edge up. Yaw about the screen's horizontal axis, pitch through the screen, roll about its vertical axis.
+
+**Set grip**, beside the chips, reads gravity and picks the screen axis pointing most nearly up (`YawAxis.nearest`). Holding the phone upside down (or left edge up) picks the same axis, so turns come out mirrored. Tilt and shake still read the screen's own axes. A display's saved Level grip is in the turned frame, so press Level again after changing the yaw axis.
+
 ## Sensitivity
 
 Gyro **sensitivity** is mouse counts per degree the phone turns. Default 16. Every level can set it ([Workspaces](phone-workspaces.md)): one shared value plus each axis's own.
@@ -30,6 +38,8 @@ Gyro **sensitivity** is mouse counts per degree the phone turns. Default 16. Eve
 - An axis's own value is either **exact** or a **factor × Parent** (0.1 to 4 on the slider, 0.01 to 10 typed). A factor multiplies the nearest exact value above it and replaces any factor above (factors never stack).
 - A level that sets its own shared sensitivity hides the axis values above it.
 - A held button's own sensitivities (per layer) apply while it is the last pressed of the held buttons that have their own, whatever it maps (precision aim). The chain for one axis: the button's axis value → the button's shared value → the workspace's axis value (layer, then Base) → the workspace's shared value → the Defaults.
+
+**Gyro sensitivity chips** (`OutputTarget.GyroSens`, [Mapping system](phone-mapping.md)) sit over the whole chain while their input is active: the engine works out the one in effect on every input change (`MappingEngine.refreshSens`) and lays it over the gyro settings in effect (`gyroSettings`), so the phone and the PC in PC gyro mode both use it from the next sample, with no smoothing. An aim button with Finger Y → Gyro sensitivity 4–6 RWS tightens or loosens the aim as the finger slides up or down it.
 
 **Real world sensitivity.** When the workspace knows the game's full turn (`gameCountsPer360`: picked from a preset such as Counter-Strike 2 or Apex Legends with the in-game sensitivity, typed, or measured), sensitivity sliders show and take **RWS**: degrees the game camera turns per degree the phone turns, `RWS = sensitivity × 360 / counts per full turn` (`core/.../model/GameSens.kt`). It is exact only with raw input and no in-game mouse acceleration. **Measure** streams steady mouse counts (`core/.../engine/CountStream.kt`) while the gyro is paused, so the person can count one full turn in the game and nudge the camera to line it up.
 
@@ -59,7 +69,7 @@ Each workspace's gyro (and each axis, if set) has one **mode** (`GyroMode`):
 1. **Inertia** (`coast`). An axis that is on tracks its recent speed (15 ms EMA). When a ratchet turns it off and its inertia is on and it was turning at least 5 °/s, it glides on from that speed: **Smooth** fades exponentially with the glide time as time constant; **Linear** slows evenly and stops after 2 × the glide time, so both travel the same distance. The glide time is clamped to 100..1000 ms (default 325); a glide stops below 0.5 °/s. A gliding axis moves only the mouse and the wheel, never a pad axis. Inertia, glide time and curve are per workspace with per-axis overrides; default off.
 2. **Acceleration** (`accelerate`). Each axis that is on takes its curve's gain at the turning speed: its own speed ("This axis") or the whole phone's (all three axes together, the default, so a diagonal flick speeds up both ways alike). A curve (`GyroCurve`) is up to 6 points of (speed °/s, gain); straight lines between, flat outside; **smooth** makes it a monotone cubic with flat ends. No points = gain 1, also over a parent's curve. Presets Light and Strong. An axis that is off keeps its last gain. The curve multiplies the resulting sensitivity.
 3. **Routing**: each route adds `value × gain × sensitivity × scale` to its target.
-4. **Filters** on the cursor (`counts`), both app-wide and both off by default (raw gyro), thresholds in °/s at the default sensitivity: **jitter cutoff** (soft tightening) scales motion below the threshold down in proportion to its speed; **smoothing** averages motion below the threshold over an 8-sample window, fully smoothed below half the threshold, blended up to the threshold, direct above. Only the smoothed share enters the window, so fast motion is never replayed after the phone stops. Set in Settings › App › Gyro.
+4. **Filters** on the cursor (`counts`), both app-wide and both off by default (raw gyro), thresholds in °/s at the default sensitivity: **jitter cutoff** (soft tightening) scales motion below the threshold down in proportion to its speed; **smoothing** averages motion below the threshold over an 8-sample window, fully smoothed below half the threshold, blended up to the threshold, direct above. Only the smoothed share enters the window, so fast motion is never replayed after the phone stops. Set in App › Gyro.
 5. **Remainders**: sub-count fractions of the mouse and both wheels are carried to the next sample, so slow aiming is never lost.
 
 The result (`GyroMath.Routed`: mouse dx/dy, wheel and horizontal wheel in 1/120 notch, six pad axes) goes into the engine (`addMouseMotion(fromGyro = true)`, `setGyroAxes`).

@@ -21,6 +21,7 @@ public sealed class Watchdog : IDisposable
     private readonly SettingsStore? _store;
     private readonly Func<bool>? _elevatedProbe;
     private readonly Func<bool>? _publicProbe;
+    private readonly Func<KeyLabels?>? _keyLabelsProbe;
     private readonly Action<string> _log;
     private readonly byte[] _held = new byte[StateFrame.KeyBitmapSize];
     private Timer? _timer;
@@ -30,7 +31,8 @@ public sealed class Watchdog : IDisposable
     private long _saveRetryAfterUs = long.MinValue;
 
     public Watchdog(HostEngine engine, IClock clock, HeldKeysMarker? marker = null, SettingsStore? store = null,
-        Func<bool>? elevatedForegroundProbe = null, Func<bool>? networkPublicProbe = null, Action<string>? log = null)
+        Func<bool>? elevatedForegroundProbe = null, Func<bool>? networkPublicProbe = null, Action<string>? log = null,
+        Func<KeyLabels?>? keyLabelsProbe = null)
     {
         _engine = engine;
         _clock = clock;
@@ -38,6 +40,7 @@ public sealed class Watchdog : IDisposable
         _store = store;
         _elevatedProbe = elevatedForegroundProbe;
         _publicProbe = networkPublicProbe;
+        _keyLabelsProbe = keyLabelsProbe;
         _log = log ?? (_ => { });
     }
 
@@ -52,7 +55,7 @@ public sealed class Watchdog : IDisposable
         {
             long now = _clock.NowUs;
             _engine.OnTick(now);
-            if (now - _lastProbeUs >= ProbeIntervalUs && (_elevatedProbe != null || _publicProbe != null) &&
+            if (now - _lastProbeUs >= ProbeIntervalUs && (_elevatedProbe != null || _publicProbe != null || _keyLabelsProbe != null) &&
                 Interlocked.Exchange(ref _probing, 1) == 0)
             {
                 _lastProbeUs = now;
@@ -82,6 +85,12 @@ public sealed class Watchdog : IDisposable
             bool elevated = Probe(_elevatedProbe);
             bool pub = Probe(_publicProbe);
             _engine.SetEnvironment(elevated, pub);
+            if (_keyLabelsProbe != null)
+            {
+                KeyLabels? labels = null;
+                try { labels = _keyLabelsProbe(); } catch (Exception) { }
+                _engine.SetKeyLabels(labels);
+            }
         }
         finally
         {

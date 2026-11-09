@@ -9,4 +9,11 @@
     <Company>GyroPhone</Company>
     <Product>GyroPhone Companion</Product>
   </PropertyGroup>
+  <!-- OpenCvSharp (the latency test's video analyser) ships an analyzer that needs a newer compiler
+       than the .NET 8 SDK has; it only adds warnings, so every project leaves it out. -->
+  <Target Name="DropOpenCvSharpAnalyzer" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'OpenCvSharp.Analyzers'" />
+    </ItemGroup>
+  </Target>
 </Project>

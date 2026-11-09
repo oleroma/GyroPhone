@@ -59,8 +59,12 @@ data class OverlayLayout(
  * anything but the live gyro ([camera]: touchpad, buttons, glides..., for a trackball); f32 × 3 the
  * game's camera degrees per phone degree on yaw, pitch, roll (real world sensitivity, 0 = unknown);
  * then the controller attached to the phone (for the PC phone overlay's handles): u8 flags
- * ([PAD_ATTACHED]); u8 left and u8 right trigger (0..255); u8 0; u32 buttons held ([PAD_SOUTH]..,
- * the D-pad from keys or the hat); i8 × 4 left x, y, right x, y stick (-127..127, y down); 4 bytes 0.
+ * ([PAD_ATTACHED]); u8 left and u8 right trigger (0..255); u8 Level displays presses so far
+ * (wraps at 256: a change levels every PC overlay, [levelDisplays]); u32 buttons held ([PAD_SOUTH]..,
+ * the D-pad from keys or the hat); i8 × 4 left x, y, right x, y stick (-127..127, y down); u8 Clear
+ * displays presses so far (wraps at 256: a change clears every PC laser pointer, [clearDisplays]); u8 × 2
+ * the gyro axis on mouse X and on mouse Y ([cameraMap], [com.oleroma.gyrophone.core.engine.GyroDisplayFeed.cameraMapOf]:
+ * an overlay turning with the camera turns as the game's camera, by those); 1 byte 0.
  *
  * OVERLAY_LAYOUT plaintext (200 bytes): u16 layout version; u8 piece index; u8 piece count; u8
  * length; then [PIECE_DATA] bytes of the layout blob. The blob: u8 format (1); u16 width px; u16
@@ -132,6 +136,11 @@ class OverlayFeed {
     private var axes = 0
     private var ratchetHeld = false
     private var ratchetPresses = 0
+    private var levelPresses = 0
+    private var clearPresses = 0
+
+    /** Which gyro axis moves the mouse sideways (low byte) and up and down (next byte), set by the gyro thread. */
+    @Volatile var cameraMap: Int = com.oleroma.gyrophone.core.engine.GyroDisplayFeed.DEFAULT_CAMERA_MAP
     private val upXYZ = FloatArray(3)
     private var hasUp = false
     private val northXYZ = FloatArray(3)
@@ -151,6 +160,16 @@ class OverlayFeed {
         }
     private var padKeys = 0
     private val padAxes = FloatArray(8)
+
+    /** A Level displays mapping fired: the PC levels every overlay shown, as its Level button does. */
+    fun levelDisplays() {
+        synchronized(lock) { levelPresses = (levelPresses + 1) and 0xFF }
+    }
+
+    /** A Clear displays mapping fired: the PC clears every laser pointer overlay's paint and trail. */
+    fun clearDisplays() {
+        synchronized(lock) { clearPresses = (clearPresses + 1) and 0xFF }
+    }
 
     /** A key of an attached controller went down or up (Android key code). */
     fun padKey(keyCode: Int, down: Boolean) {
@@ -345,6 +364,11 @@ class OverlayFeed {
                 out.putU32(off + 124 + i * 4, java.lang.Float.floatToRawIntBits(rwsGain[i]))
             }
             cameraDeg.fill(0f)
+            out.putU8(off + 139, levelPresses)
+            out.putU8(off + 148, clearPresses)
+            val map = cameraMap
+            out.putU8(off + 149, map and 0xFF)
+            out.putU8(off + 150, map shr 8 and 0xFF)
             if (padAttached) {
                 var buttons = padKeys
                 if (padAxes[6] < -0.5f) buttons = buttons or PAD_LEFT

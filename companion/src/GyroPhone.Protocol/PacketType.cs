@@ -33,12 +33,20 @@ public static class PacketType
     public const byte PadGyroSet = 0x28;
     /// <summary>The phone's raw motion for the DualShock 4's gyro and accelerometer (<see cref="MotionFrame"/>); sent only to a host whose WELCOME has <see cref="WelcomeFlags.Motion"/> while its pad is a DualShock 4.</summary>
     public const byte Motion = 0x29;
+    /// <summary>Phone to host while TEST_MODE has <see cref="TestModeFlags.PressTimes"/>: when the phone saw the input behind a press or release (<see cref="PressTime"/>).</summary>
+    public const byte PressTime = 0x2A;
     public const byte Bye = 0x2F;
     public const byte Pong = 0x30;
     public const byte HostStatus = 0x31;
     public const byte Rumble = 0x32;
     public const byte Foreground = 0x33;
+    /// <summary>Host to phone, with every HOST_STATUS: what each character key types on the PC's keyboard layout (<see cref="KeyLabels"/>).</summary>
+    public const byte KeyLabels = 0x34;
+    /// <summary>Host to phone, with every HOST_STATUS and on change: the latency tests the phone takes part in (<see cref="TestModeFlags"/>).</summary>
+    public const byte TestMode = 0x35;
     public const byte HostBye = 0x3F;
+    /// <summary>Unsealed, from a program on this PC (loopback only): start or stop a Link test (tools/link-test.sh).</summary>
+    public const byte LinkTestCtl = 0x7E;
     public const byte Error = 0x7F;
 
     /// <summary>Sealed (AES-GCM) packets are types 0x20..0x3F.</summary>
@@ -61,6 +69,7 @@ public static class PacketType
         Hello => Wire.HelloSize,
         Welcome => Wire.WelcomeSize,
         Error => Wire.ErrorSize,
+        LinkTestCtl => Wire.LinkTestCtlSize,
         KeyEnroll => Wire.KeyEnrollSize,
         KeyEnrollAck => Wire.KeyEnrollAckSize,
         _ => PlainSize(type) is var p && p >= 0 ? Wire.Header + p + Wire.GcmTag : -1,
@@ -82,8 +91,11 @@ public static class PacketType
         HostStatus => Wire.HostStatusPlain,
         Rumble => Wire.RumblePlain,
         Foreground => Wire.ForegroundPlain,
+        KeyLabels => Wire.KeyLabelsPlain,
         Overlay => Wire.OverlayPlain,
         OverlayLayout => Wire.OverlayLayoutPlain,
+        PressTime => Wire.PressTimePlain,
+        TestMode => Wire.TestModePlain,
         HostBye => Wire.ByePlain,
         _ => -1,
     };

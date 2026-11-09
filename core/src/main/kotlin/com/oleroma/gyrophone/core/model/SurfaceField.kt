@@ -15,7 +15,8 @@ enum class SurfaceField(val button: Boolean = true) {
     SWIPE_PIE_X, SWIPE_PIE_Y, SWIPE_SAMPLE, SWIPE, SWIPE_LOCK, SWIPE_TURN,
     HOLD_PIE_X, HOLD_PIE_Y, HOLD_SAMPLE, HOLD, HOLD_LOCK, HOLD_TURN, HOLD_MODE, DRAG_START, RELEASE, LATCH, LATCH_RELEASE;
 
-    private fun value(t: TouchpadSettings): Any? = when (this) {
+    /** This setting's value in [t]. */
+    fun get(t: TouchpadSettings): Any? = when (this) {
         ENABLED -> t.enabled
         SENSITIVITY -> t.sensitivity
         ACCELERATION -> t.acceleration
@@ -56,7 +57,7 @@ enum class SurfaceField(val button: Boolean = true) {
     }
 
     /** [a] and [b] have the same value of this setting. */
-    fun same(a: TouchpadSettings, b: TouchpadSettings): Boolean = value(a) == value(b)
+    fun same(a: TouchpadSettings, b: TouchpadSettings): Boolean = get(a) == get(b)
 
     /** [to] with [from]'s value of this setting. */
     fun take(to: TouchpadSettings, from: TouchpadSettings): TouchpadSettings = when (this) {

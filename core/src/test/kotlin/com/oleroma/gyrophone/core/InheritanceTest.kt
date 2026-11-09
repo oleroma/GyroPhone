@@ -87,24 +87,34 @@ class InheritanceTest {
     @Test fun anEmptyButtonClearsEverythingItWouldTake() {
         val touchpad = listOf(pad(1, SurfaceInput.HOLD, left), pad(2, SurfaceInput.TAP, right), pad(2, SurfaceInput.TAP, left, set = 1))
         val empty = Inheritance.cleared(touchpad, "b")
-        assertEquals(setOf(InputSource.Touch("b"), InputSource.Surface(2, SurfaceInput.TAP, "b")), empty.mapTo(HashSet()) { it.source })
+        assertEquals(setOf(InputSource.Touch("b"), InputSource.Surface(2, SurfaceInput.HOLD, "b")), empty.mapTo(HashSet()) { it.source })
         assertTrue(empty.all { it.target == OutputTarget.NoOutput && it.set == 0 })
         assertTrue(Inheritance.toButtons(touchpad.filter { it.set == 0 } + empty, listOf("b")).none { m ->
             (m.source as? InputSource.Surface)?.id == "b" && m.target != OutputTarget.NoOutput
         })
     }
 
-    @Test fun eachTriggerOfASwipeDirectionIsInheritedOnItsOwn() {
+    @Test fun mappingAnyTriggerOfAnActionOverridesAllOfIt() {
         val release = InputSource.Surface(1, SurfaceInput.HOLD_UP, on = com.oleroma.gyrophone.core.model.Trigger.RELEASE)
-        // The Defaults map On swipe, the workspace only Release: it keeps the Defaults' On swipe.
-        val d = WorkspaceDefaults.builtin.copy(mappings = listOf(pad(1, SurfaceInput.HOLD_UP, key)))
+        // The Defaults map On swipe and Quick swipe, the workspace only Release: none of the Defaults' are left.
+        val d = WorkspaceDefaults.builtin.copy(mappings = listOf(pad(1, SurfaceInput.HOLD_UP, key), pad(1, SurfaceInput.SWIPE_UP, right)))
         val w = Workspace("w", "w", mappings = listOf(Mapping(release, left)))
         val out = Inheritance.workspace(w, d)
-        assertEquals(listOf<OutputTarget>(key), targetOf(out, InputSource.Surface(1, SurfaceInput.HOLD_UP)))
-        // A button that maps only Release on Swipe up takes the touchpad's On swipe.
+        assertEquals(emptyList<OutputTarget>(), targetOf(out, InputSource.Surface(1, SurfaceInput.HOLD_UP)))
+        assertEquals(emptyList<OutputTarget>(), targetOf(out, InputSource.Surface(1, SurfaceInput.SWIPE_UP)))
+        assertEquals(listOf<OutputTarget>(left), targetOf(out, release))
+        // A button that maps only Release on Swipe up takes none of the touchpad's Swipe up.
         val inUse = listOf(pad(1, SurfaceInput.HOLD_UP, key), Mapping(release.copy(id = "b"), left))
         val buttons = Inheritance.toButtons(inUse, listOf("b"))
-        assertEquals(listOf<OutputTarget>(key), targetOf(buttons, InputSource.Surface(1, SurfaceInput.HOLD_UP, "b")))
+        assertEquals(emptyList<OutputTarget>(), targetOf(buttons, InputSource.Surface(1, SurfaceInput.HOLD_UP, "b")))
         assertEquals(listOf<OutputTarget>(left), targetOf(buttons, release.copy(id = "b")))
+        // A button's tap is its press's: mapping it drops the touchpad's one-finger Hold for it.
+        val tapped = Inheritance.toButtons(listOf(pad(1, SurfaceInput.HOLD, key), btn("b", 1, SurfaceInput.TAP, left)), listOf("b"))
+        assertEquals(emptyList<OutputTarget>(), targetOf(tapped, InputSource.Touch("b")))
+    }
+
+    @Test fun mappingAnythingOnAClearedActionReplacesTheClear() {
+        val ms = listOf(Mapping(InputSource.Touch("b"), OutputTarget.NoOutput), btn("b", 1, SurfaceInput.TAP, key))
+        assertEquals(listOf(btn("b", 1, SurfaceInput.TAP, key)), Inheritance.tidy(ms))
     }
 }

@@ -23,6 +23,9 @@ internal sealed class OverlayForm : Form
     private readonly Action<string, Point> _clicked;
     private readonly Action<string> _picked;
     private readonly FingerTrails _trails = new();
+    // The laser pointer's trail and paint; the phone's Clear displays presses last seen (-1 = none yet).
+    private readonly LaserTrace _laser = new();
+    private int _clearPresses = -1;
     private readonly Action<string> _log;
     private readonly OverlayScene _scene = new();
     private DibSurface? _surface;
@@ -76,6 +79,10 @@ internal sealed class OverlayForm : Form
     private ushort _lastLayout;
     private long _lastDrawTicks;
     private bool _dirty = true;
+    // "Fade when phone rests": this window's share of its opacity now (1 = not faded), and when it was last stepped.
+    private float _restFade = 1f;
+    private long _restFadeAt;
+    private int _alphaQueued;
 
     public OverlayForm(HostEngine engine, string id, Action<string> log, Action<string, Point> clicked, Action<string> picked)
     {
@@ -177,6 +184,13 @@ internal sealed class OverlayForm : Form
     public void Level()
     {
         _engine.LevelOverlay(_id);
+        _dirty = true;
+    }
+
+    /// <summary>Clears the laser pointer's paint and trail.</summary>
+    public void ClearPaint()
+    {
+        lock (_renderLock) _laser.Clear();
         _dirty = true;
     }
 
@@ -420,10 +434,35 @@ internal sealed class OverlayForm : Form
         {
             _lastTrailTime = _scene.Frame.PhoneTimeUs;
             _trails.Add(_scene.Frame, now);
+            // The laser pointer: where the beam points now, as drawn.
+            if (Settings is { Kind: OverlayKind.Laser } ls)
+            {
+                var beam = LaserTrace.Beam(LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(_scene.Frame, ls), ls));
+                bool fire = ls.LaserDraw && _engine.OutputHeld(ls.LaserFire);
+                _laser.Add(beam.X, beam.Y, beam.Z, now, ls.LaserDraw, _scene.Frame.RatchetHeld, ls.LaserClearOnRatchet, fire, ls.LaserFireOnly);
+            }
         }
+        // A Clear displays mapping on the phone: the paint goes (the first count seen clears nothing).
+        if (age >= 0)
+        {
+            int presses = _scene.Frame.ClearPresses;
+            if (_clearPresses >= 0 && presses != _clearPresses)
+            {
+                _laser.Clear();
+                _dirty = true;
+            }
+            _clearPresses = presses;
+        }
+        bool laserFading = false;
+        if (Settings is { Kind: OverlayKind.Laser } lf)
+        {
+            _laser.Expire(now, lf.LaserFadeMs);
+            laserFading = _laser.Fading(lf.LaserFadeMs);
+        }
+        StepRestFade(now);
         UpdateStats();
         bool changed = _dirty || fresh || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||
-            !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now);
+            !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now) || laserFading;
         if (!changed && now - _lastDrawTicks < 500) return;
         // Frame-rate cap (a little early, so a 60 Hz cap on a 60 Hz screen never skips a refresh).
         int fps = MaxFps;
@@ -431,6 +470,48 @@ internal sealed class OverlayForm : Form
         _scene.FrameAgeUs = age;
         _scene.Layout = layout;
         Render();
+    }
+
+    /// <summary>
+    /// "Fade when phone rests": fades toward the faded opacity over the fade time while the phone rests,
+    /// and back to full at once when it doesn't (never in Edit). A swap-chain window just gets its
+    /// new constant alpha; a copied one draws again with it.
+    /// </summary>
+    private void StepRestFade(long now)
+    {
+        var rf = _engine.Settings.OverlayRestFade;
+        bool resting = ClickThrough && _engine.OverlayResting(_id);
+        float target = resting ? Math.Clamp(rf.FadeTo, 0.05f, 1f) : 1f;
+        float was = _restFade;
+        long dtMs = _restFadeAt == 0 ? 0 : Math.Clamp(now - _restFadeAt, 0, 100);
+        _restFadeAt = now;
+        if (target >= _restFade) _restFade = target;
+        else _restFade = rf.FadeMs <= 0 ? target : Math.Max(target, _restFade - (1f - target) * dtMs / rf.FadeMs);
+        if (Math.Abs(_restFade - was) < 1e-4f) return;
+        if (!_direct)
+        {
+            _dirty = true;
+            return;
+        }
+        if (!_revealed || WindowAlpha() == _directAlpha) return;
+        // Set on the UI thread (the window's), one at a time; it reads the newest fade when it runs.
+        if (Interlocked.Exchange(ref _alphaQueued, 1) != 0) return;
+        try
+        {
+            BeginInvoke(() =>
+            {
+                Volatile.Write(ref _alphaQueued, 0);
+                if (!IsHandleCreated || !_direct || !_revealed) return;
+                byte a = WindowAlpha();
+                if (a == _directAlpha) return;
+                _directAlpha = a;
+                SetLayeredWindowAttributes(Handle, 0, a, LwaAlpha);
+            });
+        }
+        catch (Exception e) when (e is InvalidOperationException or ObjectDisposedException)
+        {
+            Volatile.Write(ref _alphaQueued, 0);
+        }
     }
 
     private void Render()
@@ -502,6 +583,7 @@ internal sealed class OverlayForm : Form
                 if (Settings is { } gs)
                 {
                     _scene.Trails = gs.FingerTrails ? _trails : null;
+                    _scene.Laser = _laser;
                     _scene.NowTicks = _lastDrawTicks;
                     var size = new Size(width, height);
                     _gpuSurface.Draw(width, height, gs.Quality, c =>
@@ -541,6 +623,7 @@ internal sealed class OverlayForm : Form
             if (Settings is { } settings)
             {
                 _scene.Trails = settings.FingerTrails ? _trails : null;
+                _scene.Laser = _laser;
                 _scene.NowTicks = _lastDrawTicks;
                 OverlayRenderer.Draw(new GdiCanvas(g, settings.Quality, _fonts), new Size(width, height), _scene, settings);
             }
@@ -637,6 +720,7 @@ internal sealed class OverlayForm : Form
     {
         float op = Math.Clamp(Settings?.Opacity ?? 1f, 0.1f, 1f);
         if (!ClickThrough) op = Math.Max(op, 0.6f);
+        else op = Math.Max(op * _restFade, 0.02f);
         return (byte)Math.Round(op * 255);
     }
 
