@@ -390,7 +390,6 @@ class GamepadRuntime(context: Context) {
      * held is let go.
      */
     fun setOrientation(granular: Boolean) {
-        wifi.overlay.levelDisplays()
         val fresh = screenUpNs != 0L && System.nanoTime() - screenUpNs < UP_FRESH_NS
         if (fresh) applyOrientation(screenUp.copyOf(), granular)
         else readUp(screen = true) { up -> if (up != null) applyOrientation(up, granular) }
@@ -407,6 +406,11 @@ class GamepadRuntime(context: Context) {
         val levelUp = (if (gyroSpace() == GyroSpace.LOCAL) gyroMouse.upInFrame(up, axis, pitch) else up).toList()
         gyroMouse.yawAxis = axis
         gyroMouse.gripPitch = pitch
+        // The PC overlays: the frame they now get, with its up, then the press that starts them over.
+        val overlay = wifi.overlay
+        val n = sqrt(levelUp[0] * levelUp[0] + levelUp[1] * levelUp[1] + levelUp[2] * levelUp[2])
+        if (n > 0f) overlay.up(levelUp[0], levelUp[1], levelUp[2], n)
+        overlay.levelDisplays()
         val ids = HashSet<String>()
         for (f in gyroFeeds) {
             val d = f.display
@@ -966,8 +970,7 @@ class GamepadRuntime(context: Context) {
         // The same axes as the gyro's: right, up and toward the player in the phone's frame.
         val d = displayMotion(x, y, z)
         for (f in gyroFeeds) f.north(d.pitch, -d.yaw, -d.roll)
-        val m = gyroMouse.motion(x, y, z)
-        if (wifi.overlay.compassWanted) wifi.overlay.north(m.pitch, -m.yaw, -m.roll)
+        if (wifi.overlay.compassWanted) wifi.overlay.north(d.pitch, -d.yaw, -d.roll)
     }
 
     private fun startMotion() {
@@ -1002,7 +1005,7 @@ class GamepadRuntime(context: Context) {
             val d = if (spaced) s else m
             val g = SensorManager.GRAVITY_EARTH * RAD_TO_DEG
             if (vis.gyroNeedsGravity) worldPose.setUp(d.pitch, -d.yaw, -d.roll, g)
-            if (overlay) wifi.overlay.up(m.pitch, -m.yaw, -m.roll, g)
+            if (overlay) wifi.overlay.up(d.pitch, -d.yaw, -d.roll, g)
             for (f in feeds) f.up(d.pitch, -d.yaw, -d.roll, g)
             if (feeds.isNotEmpty() && vis.restFade.on) restDetector.up(d.pitch, -d.yaw, -d.roll, g, System.nanoTime(), feeds)
             if (spaced) gravityPose.setUp(m.pitch, -m.yaw, -m.roll, g)
@@ -1567,9 +1570,21 @@ class GamepadRuntime(context: Context) {
         }
         val overlay = wifi.overlay
         if (overlay.wanted && !measuring) {
-            // The PC's phone overlay turns its pose from these, with its own settings.
-            val m = gyroMouse.motion(x - biasX, y - biasY, z - biasZ)
+            // The PC's phone overlay turns its pose from these, with its own settings: in World and
+            // Player space the phone's real pose, and what follows the camera gets the gyro mouse's turn.
+            val space = gyroSpace()
+            val real = space != GyroSpace.LOCAL
+            overlay.realWorld = real
+            val m = displayMotion(x - biasX, y - biasY, z - biasZ, space)
             overlay.gyro(m.yaw, m.pitch, m.roll, dt, axes, inputAllowed && engine.ratchetsHeld != 0)
+            if (real && active && dt > 0f) {
+                val c = gyroMouse.inSpace(gyroMouse.motion(x - biasX, y - biasY, z - biasZ), space, upNow)
+                fun on(a: MotionAxis) = axes and MappingEngine.gyroBit(a) != 0
+                overlay.camera(
+                    if (on(MotionAxis.YAW)) c.yaw * dt else 0f, if (on(MotionAxis.PITCH)) c.pitch * dt else 0f,
+                    if (on(MotionAxis.ROLL)) c.roll * dt else 0f,
+                )
+            }
             overlay.gyroActive = active
             overlay.cameraMap = cameraMapNow()
             val gs = engine.gyroSettings

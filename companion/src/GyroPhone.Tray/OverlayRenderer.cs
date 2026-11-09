@@ -376,7 +376,8 @@ internal static class OverlayRenderer
         // Seen from the resting grip: held that way it shows face-on, and the phone's own yaw, pitch
         // and roll show as the same turns about the PC screen's axes.
         // Kept only with gravity: without it Level restarts the pose, so a grip left from gravity is ignored.
-        if (s.Gravity && !s.FollowsCamera && s.Rest is { Length: 4 } c) q = MulQ((c[0], -c[1], -c[2], -c[3]), q);
+        // In World or Player space (the phone's real pose) there is no grip.
+        if (s.Gravity && !s.FollowsCamera && !f.RealWorld && s.Rest is { Length: 4 } c) q = MulQ((c[0], -c[1], -c[2], -c[3]), q);
         // Following the camera it turns by Spin (or as far as the game's camera): no turn amount on top.
         float scale = s.FollowsCamera ? 1f : Math.Clamp(s.MotionScale, 0.25f, 4f);
         if (MathF.Abs(scale - 1f) < 0.001f) return q;

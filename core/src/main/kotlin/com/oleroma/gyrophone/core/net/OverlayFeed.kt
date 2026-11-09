@@ -52,15 +52,15 @@ data class OverlayLayout(
  * magnetometer reading in that frame (unit length × 32767); u8 the gyro axes moving the mouse
  * ([com.oleroma.gyrophone.core.engine.MappingEngine.gyroBit]); u8 ratchet presses so far (wraps);
  * u16 layout version; u8 flags ([FLAG_POSE], [FLAG_PAD_SHOWN], [FLAG_GYRO_ACTIVE], [FLAG_UP],
- * [FLAG_NORTH], [FLAG_RATCHET_HELD]); u8 finger count; 5 × (u16 x, u16 y) fingers (0..65535 of the
+ * [FLAG_NORTH], [FLAG_RATCHET_HELD], [FLAG_TOTALS], [FLAG_REAL_WORLD]); u8 finger count; 5 × (u16 x, u16 y) fingers (0..65535 of the
  * pad area); 16 bytes pressed bitmap and 16 bytes latched bitmap (bit i = control i of the layout);
  * 8 × (u8 control index or 0xFF, i8 x, i8 y) stick knobs (-127..127 of the radius, y down); f32 × 3
  * yaw, pitch, roll the phone would have turned to send the mouse counts sent since the last OVERLAY by
  * anything but the live gyro ([camera]: touchpad, buttons, glides..., for a trackball); f32 × 3 the
  * game's camera degrees per phone degree on yaw, pitch, roll (real world sensitivity, 0 = unknown);
  * then the controller attached to the phone (for the PC phone overlay's handles): u8 flags
- * ([PAD_ATTACHED]); u8 left and u8 right trigger (0..255); u8 Level displays presses so far
- * (wraps at 256: a change levels every PC overlay, [levelDisplays]); u32 buttons held ([PAD_SOUTH]..,
+ * ([PAD_ATTACHED]); u8 left and u8 right trigger (0..255); u8 Set orientation presses so far
+ * (wraps at 256: a change starts every PC overlay shown again from the new base orientation, [levelDisplays]); u32 buttons held ([PAD_SOUTH]..,
  * the D-pad from keys or the hat); i8 × 4 left x, y, right x, y stick (-127..127, y down); u8 Clear
  * displays presses so far (wraps at 256: a change clears every PC laser pointer, [clearDisplays]); u8 × 2
  * the gyro axis on mouse X and on mouse Y ([cameraMap], [com.oleroma.gyrophone.core.engine.GyroDisplayFeed.cameraMapOf]:
@@ -118,6 +118,9 @@ class OverlayFeed {
     /** The gyro moves the mouse now. */
     @Volatile var gyroActive = false
 
+    /** World or Player gyro space: the motion comes about the screen's own axes ([FLAG_REAL_WORLD]). */
+    @Volatile var realWorld = false
+
     private val lock = Any()
     private var layout: OverlayLayout? = null
     private var version = 0
@@ -161,7 +164,7 @@ class OverlayFeed {
     private var padKeys = 0
     private val padAxes = FloatArray(8)
 
-    /** A Level displays mapping fired: the PC levels every overlay shown, as its Level button does. */
+    /** Set orientation: every PC overlay shown starts again, level and facing ahead, from the base orientation the frames now come in. */
     fun levelDisplays() {
         synchronized(lock) { levelPresses = (levelPresses + 1) and 0xFF }
     }
@@ -332,6 +335,7 @@ class OverlayFeed {
             if (hasNorth) flags = flags or FLAG_NORTH
             if (ratchetHeld) flags = flags or FLAG_RATCHET_HELD
             if (totals) flags = flags or FLAG_TOTALS
+            if (realWorld) flags = flags or FLAG_REAL_WORLD
             out.putU8(off + 34, flags)
             out.putU8(off + 35, fingerCount)
             for (i in 0 until fingerCount) {
@@ -400,6 +404,13 @@ class OverlayFeed {
         const val FLAG_RATCHET_HELD = 32
         /** The turn, time and camera degrees are running totals (see the class comment). */
         const val FLAG_TOTALS = 64
+
+        /**
+         * World or Player gyro space ([realWorld]): the turn, up and north are about the screen's own
+         * axes, the PC's poses take no saved grip, and the live gyro's camera turn (in that space) is
+         * already in the camera degrees.
+         */
+        const val FLAG_REAL_WORLD = 128
         const val PAD_ATTACHED = 1
 
         // Controller buttons in OVERLAY, by place (Switch layout on the PC): the face buttons by side.
