@@ -2565,7 +2565,7 @@ private fun SplitHandle(landscape: Boolean, onMove: (Float) -> Unit, onEnd: () -
 /**
  * The Range of a chip of [target] ([ChipRange]), null for a target that takes none: a game pad
  * axis or trigger in %, Gyro sensitivity in RWS when [g]'s game is known, else counts per
- * degree, its slider up to the Slider cap (Settings › App › Gyro).
+ * degree, its slider up to the Slider cap (App › Gyro).
  */
 @Composable
 private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings): ChipRange? {

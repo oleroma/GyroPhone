@@ -364,12 +364,12 @@ internal fun WorkspaceSettings(
 /**
  * The end of a workspace's Gyro tab: drift calibration. It only subtracts a fixed resting bias and
  * suits the phone, not a layer, so only the whole workspace shows it. The jitter cutoff and
- * smoothing are the app's (Settings, App, Gyro), the same in every workspace.
+ * smoothing are the app's (App › Gyro), the same in every workspace.
  */
 @Composable
 private fun GyroCalibration(runtime: GamepadRuntime) {
     SettingsGroupTitle("Calibration")
-    Hint("Jitter cutoff and smoothing are in Settings, App, Gyro: one setting for every workspace.")
+    Hint("Jitter cutoff and smoothing are in App › Gyro: one setting for every workspace.")
     val cal by runtime.calibrationState.collectAsState()
     Searchable("Calibrate", "gyro drift calibration") { Row(verticalAlignment = Alignment.CenterVertically) {
         Text(

@@ -69,7 +69,7 @@ Two USB paths carry the same Wi-Fi protocol, so pairing, sessions and encryption
 
 ## What is sent and when
 
-**Input only while the pad is open.** With **Send input only while the pad is open** (Settings › App › Screen, default on), controller, keyboard, mouse and gyro input reach the engine only while the pad is on screen in play. The link stays up and sends nothing held. Leaving the pad releases everything, so no key sticks on the PC, and pauses the gyro sensor.
+**Input only while the pad is open.** With **Send input only while the pad is open** (App › Screen, default on), controller, keyboard, mouse and gyro input reach the engine only while the pad is on screen in play. The link stays up and sends nothing held. Leaving the pad releases everything, so no key sticks on the PC, and pauses the gyro sensor.
 
 **Haptics.** Haptic mappings play on the phone's vibrator only while a PC is connected (`runtime/PhoneHaptics.kt`), on a thread of their own so the report never waits for a vibrator call.
 

@@ -59,7 +59,7 @@ internal fun GyroSensSlider(
     children: ChildInfo? = null,
     onDone: (Float) -> Unit,
 ) {
-    // The app's jitter cutoff (Settings, App, Gyro), the same in every workspace.
+    // The app's jitter cutoff (App › Gyro), the same in every workspace.
     val runtime = LocalContext.current.runtime
     val tightening by runtime.gyroTightening.collectAsStateWithLifecycle()
     val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()

@@ -6,13 +6,13 @@ Where every setting lives and its default. How workspace settings inherit is in 
 
 **Sliders** (`ui/CompactSlider.kt`): dragging moves the handle from where it is (it does not jump to the finger). **A tap on a slider without dragging opens a box to type the exact value**, which may go past the slider's ends (a gyro sensitivity up to the highest the app takes, above the Slider cap). A slider with two handles (deadzones, ranges) types the handle nearest the tap; its handles may pass each other.
 
-Every settings page (`ui/SettingsLayout.kt`) has a low **search** field on top (rounded, in the cards' colours) and right under it its **categories as tabs**, each named by what it controls (Gyro, Touchpad, Tilt & shake, Buttons, Taps, Haptics; a category with several parts has headed groups inside) (chips, scrolling sideways when they don't fit); both stay pinned while the settings scroll. Tapping a tab shows that one category, always open. **Long press a tab and drag it sideways** to move it. The order and the last picked tab are remembered per kind of page. Where a page has tabs of its own (Settings' App and Defaults, a workspace's Base and layers), those sit between the search field and the category tabs. The search filters every setting by its words (every word must match): while it holds text the tabs hide and every category with a match shows as a card, open, under its name (on the Settings page both App and Defaults at once, each under its name); a long press on a card's name drags it up or down there. Values a level sets itself are highlighted with **↺** to follow the parent again.
+Every settings page (`ui/SettingsLayout.kt`) has a low **search** field on top (rounded, in the cards' colours) and right under it its **categories as tabs**, each named by what it controls (Gyro, Touchpad, Tilt & shake, Buttons, Taps, Haptics; a category with several parts has headed groups inside) (chips, scrolling sideways when they don't fit); both stay pinned while the settings scroll. Tapping a tab shows that one category, always open. **Long press a tab and drag it sideways** to move it. The order and the last picked tab are remembered per kind of page. Where a page has tabs of its own (a workspace's Base and layers, in the accent colour after a "Layers" label so they don't read as category tabs), those sit between the search field and the category tabs. The search filters every setting by its words (every word must match): while it holds text the tabs hide and every category with a match shows as a card, open, under its name; a long press on a card's name drags it up or down there. Values a level sets itself are highlighted with **↺** to follow the parent again.
 
-## Settings (the pad's Settings capsule)
+## App and Defaults (the pad's App and Defaults capsules)
 
-`ui/AppSettings.kt`, two tabs.
+`ui/AppSettings.kt`: two pages, each from its own capsule on the pad's top row: **App** (a gear) and **Defaults** (sliders).
 
-### App tab (app-wide, not inherited)
+### App page (app-wide, not inherited)
 
 | Category | Setting | Default |
 |---|---|---|
@@ -31,7 +31,7 @@ Every settings page (`ui/SettingsLayout.kt`) has a low **search** field on top (
 | Debugging | Debug tools | off |
 | About | Version, gyro source and measured rate | — |
 
-### Defaults tab
+### Defaults page
 
 The Defaults' workspace settings (the same categories as a workspace's, below), each highlighted with ↺ where it differs from the built-in value, plus **Mappings**: the touchpad and motion mappings every workspace starts from (none until mapped; Presets has Windows touchpad and Gyro mouse).
 

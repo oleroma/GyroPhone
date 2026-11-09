@@ -1929,9 +1929,13 @@ fun PadScreen(
                         releaseAll()
                         onOpenMenu(PadMenuPage.Devices)
                     },
-                    onSettings = {
+                    onApp = {
                         releaseAll()
                         onOpenMenu(PadMenuPage.AppSettings)
+                    },
+                    onDefaults = {
+                        releaseAll()
+                        onOpenMenu(PadMenuPage.DefaultsSettings)
                     },
                     onConnection = {
                         releaseAll()
@@ -2179,20 +2183,12 @@ fun PadScreen(
                             MenuIcon(EditIcons.Redo, "Redo", redoSteps.isNotEmpty()) { redoEdit() }
                             ScrollStrip {
                                 // Everything but undo and redo scrolls, so a narrow (portrait) panel reaches it all.
-                                Text(
-                                    "⚙",
-                                    color = Color.White,
-                                    style = MaterialTheme.typography.titleLarge,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(50))
-                                        .clickable {
-                                            // The workspace's settings, the same page as the touchpad's Settings
-                                            // in its mapping editor, on the draft like the rest of edit mode.
-                                            selected = TOUCHPAD_SELECTION
-                                            menu = EditMenu.CONTEXT
-                                        }
-                                        .padding(horizontal = 8.dp, vertical = 2.dp),
-                                )
+                                // The workspace's settings, the same page as the touchpad's Settings
+                                // in its mapping editor, on the draft like the rest of edit mode.
+                                MenuIcon(EditIcons.Tune, "Workspace settings", true) {
+                                    selected = TOUCHPAD_SELECTION
+                                    menu = EditMenu.CONTEXT
+                                }
                                 MenuIcon(
                                     if (layoutLocked) EditIcons.Lock else EditIcons.LockOpen,
                                     if (layoutLocked) "Unlock layout" else "Lock layout",
@@ -2902,7 +2898,7 @@ private fun CornerSettings(
         Switch(checked = sameSize, onCheckedChange = onSameSize)
     }
     Text(
-        "Corner opacity and wrap-around are in Settings (on the pad).",
+        "Corner opacity and wrap-around are in App (on the pad).",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

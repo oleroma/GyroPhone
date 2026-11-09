@@ -14,9 +14,9 @@ What the person sees and touches: the pad, its top row, the ← / → corners, e
 
 - **+** adds a workspace at the front (Blank, Windows touchpad or a preset, see [Workspaces](phone-workspaces.md)).
 - One capsule per **workspace**: tap to switch; tap the current one to open its edit mode.
-- **Controller** (the device screens, [Controllers](phone-controllers.md)), **Settings**, **Connection** (shows the link state).
+- **Controller** (the device screens, [Controllers](phone-controllers.md)), **App** (gear: the whole app's settings), **Defaults** (sliders: what every workspace follows, [Settings](phone-settings.md)), **Connection** (shows the link state).
 
-The row scrolls. Long-press a capsule and drag it to reorder; moving workspaces reorders them. The order is stored as a string of `W`/`D`/`S`/`C`.
+The row scrolls. Long-press a capsule and drag it to reorder; moving workspaces reorders them. The order is stored as a string of `W`/`D`/`S` (App)/`F` (Defaults)/`C`; an order saved before Defaults existed gets it right after App.
 
 ## ← / → corners and fullscreen
 
@@ -39,7 +39,7 @@ Opened by tapping the current workspace's capsule. It works on a **draft** of th
 **The floating menu** (drag by its ⠿ dots, resize, fold):
 
 - ↶ **Undo** / ↷ **Redo** (100 steps; changes within 400 ms merge into one step);
-- ⚙ saves the draft and opens the workspace's settings page;
+- The sliders icon (the same as the Defaults capsule's) saves the draft and opens the workspace's settings page;
 - 🔒 **Lock layout**: drags and pinches stop moving or sizing what was there when edit mode opened (new controls stay free);
 - **Done** saves (switches to the edited workspace); **Cancel** asks "Discard your changes?" if anything changed;
 - **Select** (pick several controls, whole groups; a drag moves them all), **Group** / **Ungroup** (`ControlGroups`: grouped controls move and size together);
@@ -57,7 +57,7 @@ New buttons start at 14 % of the short side, sticks 30 %.
 
 ## What the pad shows
 
-App-wide, Settings › App › Touch display (`ui/TouchVisuals.kt`), all off by default except where noted:
+App-wide, App › Touch display (`ui/TouchVisuals.kt`), all off by default except where noted:
 
 - **Show touches**: a dot under each finger that fades after it lifts;
 - **Trail behind fingers**: a line of the finger's recent path, its end fading;
@@ -87,13 +87,13 @@ Their settings are laid out as the [PC overlays'](pc-overlays.md#per-window-sett
 
 A saved trackball 3D shape becomes Turns with Trackball (with Invert on, from test builds, Camera). Displays saved before this layout carry over as the PC's did (`GyroDisplay.migrated`, on load): Reset on ratchet becomes Ease on ratchet (with its Heading only), "When the ratchet is let go" becomes When the phone stops, and the Level angle becomes the matching resting grip.
 
-Displays that hold their pose to gravity run the accelerometer; ones that hold heading to north run the magnetometer. The **parallax edge** (Settings › App › Gyro display) draws outlines inside the screen edge that slide as the phone turns (Turn) or shift while tilted (Tilt).
+Displays that hold their pose to gravity run the accelerometer; ones that hold heading to north run the magnetometer. The **parallax edge** (App › Gyro display) draws outlines inside the screen edge that slide as the phone turns (Turn) or shift while tilted (Tilt).
 
 ## Debug panel
 
 While the PC's latency test window is open, the pad shows the test's tracking markers over everything (touches still go through; **Hide markers** hides them until the next test), see [Latency test](pc-latency-test.md#latency-test-page).
 
-With Settings › App › Debugging › **Debug tools** on (default off: nothing is logged), `ui/DebugOverlay.kt` floats over the pad: link, gyro, workspace and layer, what is held (inputs and outputs) and the newest events. Drag the title to move it, ◢ to resize, ▾ to fold it. **Record** saves the last 30 s (`runtime/PhoneDebug.kt`).
+With App › Debugging › **Debug tools** on (default off: nothing is logged), `ui/DebugOverlay.kt` floats over the pad: link, gyro, workspace and layer, what is held (inputs and outputs) and the newest events. Drag the title to move it, ◢ to resize, ▾ to fold it. **Record** saves the last 30 s (`runtime/PhoneDebug.kt`).
 
 ## Black screen
 
