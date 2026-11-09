@@ -261,17 +261,20 @@ internal fun WorkspaceSettingsPage(
     val ws = profile.workspace(current)
     val shown = if (ws.sets.any { it.id == set }) set else MappingSet.BASE
 
+    // Base and the layers: pinned under the search box, above the category tabs.
     if (ws.sets.isNotEmpty()) NotSearching {
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = shown == MappingSet.BASE, onClick = { onSet(MappingSet.BASE) }, label = { Text("Base") })
-            ws.sets.forEach { st ->
-                FilterChip(selected = shown == st.id, onClick = { onSet(st.id) }, label = { Text(st.label) })
+        PinnedScope {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = shown == MappingSet.BASE, onClick = { onSet(MappingSet.BASE) }, label = { Text("Base") })
+                ws.sets.forEach { st ->
+                    FilterChip(selected = shown == st.id, onClick = { onSet(st.id) }, label = { Text(st.label) })
+                }
             }
         }
     }
     Hint(
         if (shown == MappingSet.BASE) "Each setting follows the Defaults (Settings) unless it is set here: those are " +
-                "highlighted, with ↺ to follow the Defaults again. Long press a category to move it."
+                "highlighted, with ↺ to follow the Defaults again. Long press a tab to move it."
         else "While this layer is in use. Each setting follows Base unless it is set here: those are " +
                 "highlighted, with ↺ to follow Base again.",
     )

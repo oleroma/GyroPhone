@@ -167,7 +167,7 @@ internal fun WorkspaceSettings(
         ResetAllButton(level.parentName, WorkspaceDefaults.keys.any { it !in retired && level.shows(it) && level.isOwn(it) }) { level.resetAll() }
     }
     val items = ArrayList(extra)
-    items += SectionItem("gyro") { card, header ->
+    items += SectionItem("gyro", "Gyro") { card, header ->
         RememberedSection(
             runtime, "workspace.Gyro", "Gyro", card, defaultOpen = true,
             subtitle = ws.gyro.mode.label + " · sensitivity, acceleration, game, gyro space, inertia", headerModifier = header,
@@ -276,7 +276,7 @@ internal fun WorkspaceSettings(
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(glideMs = v)) } }
         }
     }
-    items += SectionItem("tilt") { card, header ->
+    items += SectionItem("tilt", "Tilt & shake") { card, header ->
         RememberedSection(
             runtime, "workspace.Tilt", "Tilt & shake", card,
             subtitle = "How far a full tilt leans, its deadzone, how hard a shake is", headerModifier = header,
@@ -300,7 +300,7 @@ internal fun WorkspaceSettings(
     }
     // The jitter cutoff and smoothing are the app's (Settings, App, Gyro), the same in every workspace.
     // Calibration only subtracts a fixed resting bias and suits the phone, not a layer: the whole workspace's only.
-    if (!layer) items += SectionItem("gyroFilters") { card, header ->
+    if (!layer) items += SectionItem("gyroFilters", "Gyro calibration") { card, header ->
         RememberedSection(
             runtime, "workspace.GyroFilters", "Gyro calibration", card,
             subtitle = "Drift calibration", headerModifier = header,
@@ -329,7 +329,7 @@ internal fun WorkspaceSettings(
             } }
         }
     }
-    if (!layer) items += SectionItem("controls") { card, header ->
+    if (!layer) items += SectionItem("controls", "Controls") { card, header ->
         RememberedSection(
             runtime,
             "workspace.Controls",
@@ -344,7 +344,7 @@ internal fun WorkspaceSettings(
             ) { v -> editWs { it.copy(controlOpacity = v / 100f) } }
         }
     }
-    items += SectionItem("haptics") { card, header ->
+    items += SectionItem("haptics", "Haptics") { card, header ->
         RememberedSection(
             runtime,
             "workspace.Haptics",
@@ -372,7 +372,7 @@ internal fun WorkspaceSettings(
             }
         }
     }
-    items += SectionItem("gestures") { card, header ->
+    items += SectionItem("gestures", "Gesture timings") { card, header ->
         RememberedSection(
             runtime, "workspace.Gestures", "Gesture timings", card,
             subtitle = "Tap time", headerModifier = header,

@@ -185,7 +185,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
         },
     )
     SearchableSettings(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)) {
-        Hint("Long press a category's name to move it.")
+        Hint("Long press a tab to move it.")
         ReorderableSections(runtime, "connection", items)
     }
 }

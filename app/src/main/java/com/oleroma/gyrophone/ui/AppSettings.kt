@@ -75,7 +75,7 @@ private fun DefaultsTab(runtime: GamepadRuntime) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Hint(
             "Every workspace uses these, except where it sets its own (its settings): those show highlighted " +
-                    "there, with ↺ to follow these again. Long press a category to move it.",
+                    "there, with ↺ to follow these again. Long press a tab to move it.",
         )
         var mapping by remember { mutableStateOf(false) }
         NotSearching {
@@ -354,7 +354,7 @@ private fun AppTab(runtime: GamepadRuntime) {
         },
     )
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Hint("Long press a category's name to move it.")
+        Hint("Long press a tab to move it.")
         ReorderableSections(runtime, "app", items)
     }
 }

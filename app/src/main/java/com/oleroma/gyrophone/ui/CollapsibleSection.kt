@@ -7,6 +7,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.FilterChip
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
@@ -151,6 +159,22 @@ internal fun RememberedSection(
         }
         return
     }
+    if (LocalSectionAsTab.current) {
+        // Its tab is picked ([ReorderableSections]): the tab names it, so only its settings, always open.
+        Surface(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            tonalElevation = 1.dp,
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                content = content,
+            )
+        }
+        return
+    }
     CollapsibleSection(
         title = title,
         expanded = open && !LocalSectionsCollapsed.current,
@@ -166,33 +190,64 @@ internal fun RememberedSection(
 }
 
 /**
- * One category of [ReorderableSections]: [id] names it in the kept order; [content] draws it
- * (a [RememberedSection]) with the card's modifier and its header's (which drags it).
+ * One category of [ReorderableSections]: [id] names it in the kept order, [title] on its tab;
+ * [content] draws it (a [RememberedSection]) with the card's modifier and its header's (which
+ * drags it while searching shows the categories as cards).
  */
-internal class SectionItem(val id: String, val content: @Composable (card: Modifier, header: Modifier) -> Unit)
+internal class SectionItem(val id: String, val title: String, val content: @Composable (card: Modifier, header: Modifier) -> Unit)
+
+/** True while a [RememberedSection] is drawn as the picked tab ([ReorderableSections]): no header, always open. */
+internal val LocalSectionAsTab = compositionLocalOf { false }
 
 /** While a category is dragged ([ReorderableSections]), every section shows closed, so they are easy to move past. */
 internal val LocalSectionsCollapsed = compositionLocalOf { false }
 
+/** The category order kept in the UI prefs under [orderKey]. */
+private fun keptOrder(runtime: GamepadRuntime, orderKey: String): List<String> =
+    runtime.uiPref("order.$orderKey")?.split(',')?.filter { it.isNotEmpty() }.orEmpty()
+
+/** [ids] in the order kept under [orderKey]; one the kept order lacks goes after the one before it in [ids]. */
+private fun orderedIds(runtime: GamepadRuntime, orderKey: String, ids: List<String>): List<String> {
+    val out = keptOrder(runtime, orderKey).filter { it in ids }.toMutableList()
+    ids.forEachIndexed { i, id ->
+        if (id !in out) out.add(if (i == 0) 0 else out.indexOf(ids[i - 1]) + 1, id)
+    }
+    return out
+}
+
+/** Keeps [row] as the order under [orderKey], with ids of categories not shown here each after the one it followed, so another list's order stays. */
+private fun keepOrder(runtime: GamepadRuntime, orderKey: String, row: List<String>) {
+    val old = keptOrder(runtime, orderKey)
+    val out = row.toMutableList()
+    old.forEachIndexed { i, id ->
+        if (id in out) return@forEachIndexed
+        val before = old.subList(0, i).lastOrNull { it in out }
+        out.add(if (before == null) 0 else out.indexOf(before) + 1, id)
+    }
+    runtime.setUiPref("order.$orderKey", out.joinToString(","))
+}
+
 /**
- * [items] in the order kept in the UI prefs under [orderKey] (new ones where [items] has them).
- * Long press a category's header and drag it up or down to move it; while dragging every
- * category shows closed, the page scrolls when the finger nears its top or bottom edge (faster
- * closer to it), and the order is kept on drop.
+ * A settings page's categories: [items] in the order kept in the UI prefs under [orderKey]
+ * (new ones where [items] has them).
+ *
+ * Not searching, they are tabs ([CategoryTabs], pinned under the search box by
+ * [SearchableSettings]) and only the picked one shows, open; the picked tab is kept under
+ * "tab.[orderKey]". Long press a tab and drag it sideways to move it.
+ *
+ * Searching, every category shows as a card with its matching settings. Long press a card's
+ * header and drag it up or down to move it; while dragging every category shows closed, the page
+ * scrolls when the finger nears its top or bottom edge (faster closer to it), and the order is
+ * kept on drop.
  */
 @Composable
 internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, items: List<SectionItem>) {
-    val gap = 8.dp
-    fun kept(): List<String> = runtime.uiPref("order.$orderKey")?.split(',')?.filter { it.isNotEmpty() }.orEmpty()
-    fun ordered(ids: List<String>): List<String> {
-        val known = kept().filter { it in ids }
-        // A category the kept order lacks goes after the one before it in [items].
-        val out = known.toMutableList()
-        ids.forEachIndexed { i, id ->
-            if (id !in out) out.add(if (i == 0) 0 else out.indexOf(ids[i - 1]) + 1, id)
-        }
-        return out
+    if (LocalSettingsQuery.current.isEmpty()) {
+        TabbedSections(runtime, orderKey, items)
+        return
     }
+    val gap = 8.dp
+    fun ordered(ids: List<String>) = orderedIds(runtime, orderKey, ids)
     val row = remember { mutableStateListOf<String>() }
     var dragged by remember { mutableStateOf<String?>(null) }
     // The finger, in root coordinates, and where it holds the dragged card (from its top).
@@ -206,15 +261,7 @@ internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, item
     val byId = items.associateBy { it.id }
 
     fun drop() {
-        // Keep ids of categories not shown here too, each after the one it followed, so another list's order stays.
-        val old = kept()
-        val out = row.toMutableList()
-        old.forEachIndexed { i, id ->
-            if (id in out) return@forEachIndexed
-            val before = old.subList(0, i).lastOrNull { it in out }
-            out.add(if (before == null) 0 else out.indexOf(before) + 1, id)
-        }
-        runtime.setUiPref("order.$orderKey", out.joinToString(","))
+        keepOrder(runtime, orderKey, row.toList())
         dragged = null
     }
 
@@ -315,6 +362,196 @@ internal fun ReorderableSections(runtime: GamepadRuntime, orderKey: String, item
                         val header = Modifier.onSizeChanged { headers[id] = it.height }
                         item.content(card, header)
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * [items] as tabs, only the picked one shown (see [ReorderableSections]). The tab row goes to the
+ * page's [SettingsTabs] (pinned under its search box) when it has one, else above the category.
+ */
+@Composable
+private fun TabbedSections(runtime: GamepadRuntime, orderKey: String, items: List<SectionItem>) {
+    if (items.isEmpty()) return
+    // Bumped when a drag keeps a new order, so the tabs read it again.
+    var orderVersion by remember { mutableIntStateOf(0) }
+    val ids = items.map { it.id }
+    val shown = remember(orderKey, ids, orderVersion) { orderedIds(runtime, orderKey, ids) }
+    var picked by remember(orderKey) { mutableStateOf(runtime.uiPref("tab.$orderKey")) }
+    val current = picked?.takeIf { it in ids } ?: shown.first()
+    val titles = items.associate { it.id to it.title }
+    val bar: @Composable () -> Unit = {
+        CategoryTabs(
+            tabs = shown.map { it to (titles[it] ?: it) },
+            picked = current,
+            onPick = { id ->
+                picked = id
+                runtime.setUiPref("tab.$orderKey", id)
+            },
+            onMove = { row ->
+                keepOrder(runtime, orderKey, row)
+                orderVersion++
+            },
+        )
+    }
+    val tabs = LocalSettingsTabs.current
+    if (tabs != null) PinIn(tabs.bar, bar) else {
+        bar()
+        Spacer(Modifier.height(8.dp))
+    }
+    // A new tab starts at the top of the page.
+    val page = LocalSettingsScroll.current
+    LaunchedEffect(current) { page?.state?.scrollTo(0) }
+    val item = items.first { it.id == current }
+    CompositionLocalProvider(LocalSectionAsTab provides true, LocalCardGap provides 0.dp) {
+        key(current) { item.content(Modifier, Modifier) }
+    }
+}
+
+/**
+ * What a settings page pins under its search box ([SearchableSettings]), each drawn by the one
+ * that claimed it last: [scope] the page's own tabs (a workspace's Base and layers, [PinnedScope]),
+ * [bar] the category tabs of its [ReorderableSections].
+ */
+internal class SettingsTabs {
+    val scope = PinnedSlot()
+    val bar = PinnedSlot()
+}
+
+/** One pinned place of [SettingsTabs]. */
+internal class PinnedSlot {
+    var content by mutableStateOf<(@Composable () -> Unit)?>(null)
+        private set
+    private var owner: Any? = null
+
+    fun claim(token: Any, content: @Composable () -> Unit) {
+        owner = token
+        this.content = content
+    }
+
+    fun release(token: Any) {
+        if (owner !== token) return
+        owner = null
+        content = null
+    }
+}
+
+/** Draws [content] in [slot] (pinned under the search box) while this is shown. */
+@Composable
+internal fun PinIn(slot: PinnedSlot, content: @Composable () -> Unit) {
+    val token = remember { Any() }
+    SideEffect { slot.claim(token, content) }
+    DisposableEffect(slot, token) { onDispose { slot.release(token) } }
+}
+
+/** [content] (a page's own tabs, e.g. a workspace's Base and layers) pinned under the search box, above the category tabs; in place outside a settings page. */
+@Composable
+internal fun PinnedScope(content: @Composable () -> Unit) {
+    val tabs = LocalSettingsTabs.current
+    if (tabs == null) content() else PinIn(tabs.scope, content)
+}
+
+/** The [SettingsTabs] of the settings page this is on; null outside one. */
+internal val LocalSettingsTabs = compositionLocalOf<SettingsTabs?> { null }
+
+/**
+ * A row of category tabs ([tabs]: id to name), [picked] highlighted, scrolling sideways when long.
+ * Tap one to pick it; long press one and drag it sideways to move it ([onMove] gets the new order on drop).
+ */
+@Composable
+private fun CategoryTabs(
+    tabs: List<Pair<String, String>>,
+    picked: String,
+    onPick: (String) -> Unit,
+    onMove: (List<String>) -> Unit,
+) {
+    val ids by rememberUpdatedState(tabs.map { it.first })
+    val titles = tabs.toMap()
+    val row = remember { mutableStateListOf<String>() }
+    var dragged by remember { mutableStateOf<String?>(null) }
+    // The finger, in root coordinates, and where it holds the dragged tab (from its left).
+    var fingerX by remember { mutableFloatStateOf(0f) }
+    var grab by remember { mutableFloatStateOf(0f) }
+    val lefts = remember { mutableStateMapOf<String, Float>() }
+    val widths = remember { mutableStateMapOf<String, Int>() }
+    var strip by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val move by rememberUpdatedState(onMove)
+    val shown = if (dragged == null) ids else row.toList()
+
+    /** Moves the dragged [id] past a neighbour once its middle is past the neighbour's. */
+    fun reorder(id: String) {
+        val at = row.indexOf(id)
+        if (at < 0) return
+        val mid = fingerX - grab + (widths[id] ?: 0) / 2f
+        fun middle(other: String) = (lefts[other] ?: 0f) + (widths[other] ?: 0) / 2f
+        if (at < row.lastIndex && mid > middle(row[at + 1])) {
+            row.removeAt(at); row.add(at + 1, id)
+        } else if (at > 0 && mid < middle(row[at - 1])) {
+            row.removeAt(at); row.add(at - 1, id)
+        }
+    }
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .onGloballyPositioned { strip = it }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val s = strip ?: return@awaitEachGesture
+                    val x = s.localToRoot(down.position).x
+                    val id = ids.firstOrNull { i ->
+                        val left = lefts[i] ?: return@firstOrNull false
+                        x >= left && x <= left + (widths[i] ?: 0)
+                    } ?: return@awaitEachGesture
+                    val long = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                    fingerX = s.localToRoot(long.position).x
+                    grab = fingerX - (lefts[id] ?: 0f)
+                    row.clear(); row.addAll(ids)
+                    dragged = id
+                    // Ahead of the tab's own click and the scrolling row: the finger is ours now.
+                    while (true) {
+                        val e = awaitPointerEvent(PointerEventPass.Initial)
+                        val ch = e.changes.firstOrNull { it.id == long.id } ?: break
+                        e.changes.forEach { it.consume() }
+                        if (!ch.pressed) break
+                        strip?.let { fingerX = it.localToRoot(ch.position).x }
+                        reorder(id)
+                    }
+                    move(row.toList())
+                    dragged = null
+                }
+            },
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        for (id in shown) {
+            key(id) {
+                val isDragged = dragged == id
+                Box(
+                    Modifier
+                        .zIndex(if (isDragged) 1f else 0f)
+                        .onGloballyPositioned {
+                            lefts[id] = it.positionInRoot().x
+                            widths[id] = it.size.width
+                        },
+                ) {
+                    FilterChip(
+                        selected = id == picked,
+                        onClick = { onPick(id) },
+                        label = { Text(titles[id] ?: id, maxLines = 1) },
+                        modifier = Modifier.graphicsLayer {
+                            if (isDragged) {
+                                translationX = fingerX - grab - (lefts[id] ?: 0f)
+                                scaleX = 1.05f
+                                scaleY = 1.05f
+                                shadowElevation = 8f
+                            }
+                        },
+                    )
                 }
             }
         }
