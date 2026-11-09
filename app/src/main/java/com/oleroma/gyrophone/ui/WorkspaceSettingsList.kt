@@ -22,6 +22,7 @@ import com.oleroma.gyrophone.core.model.GyroCurve
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.GyroSpace
+import com.oleroma.gyrophone.core.model.YawAxis
 import com.oleroma.gyrophone.core.model.OverridingChildren
 import com.oleroma.gyrophone.core.model.Profile
 
@@ -198,7 +199,7 @@ internal fun WorkspaceSettings(
                 OverrideRow(
                     "Gyro space", own(g("gyroSpace")), reset(g("gyroSpace")), children = kids(g("gyroSpace")),
                     hint = when (ws.gyro.gyroSpace) {
-                        GyroSpace.LOCAL -> "Turns are measured about the phone's own axes: yaw through the screen, pitch across it, roll along it. " +
+                        GyroSpace.LOCAL -> "Turns are measured about the phone's own axes, as Yaw axis names them. " +
                             "With the phone tilted, turning left and right mixes yaw and roll."
                         GyroSpace.WORLD -> "Turns are measured against gravity: yaw is turning around the vertical, however the phone is tilted; " +
                             "pitch is tilting around the flat axis across the screen, roll around the flat axis along it."
@@ -212,6 +213,36 @@ internal fun WorkspaceSettings(
                                 editWs { it.copy(gyro = it.gyro.copy(gyroSpace = sp)) }
                             }, label = { Text(sp.label) })
                         }
+                    }
+                }
+            }
+            if (level.shows(g("yawAxis"))) {
+                OverrideRow(
+                    "Yaw axis", own(g("yawAxis")), reset(g("yawAxis")), children = kids(g("yawAxis")),
+                    hint = when (ws.gyro.yawAxis) {
+                        YawAxis.SCREEN_Z -> "For holding the phone flat, screen up: yaw is the turn through the screen, pitch across it, roll along it."
+                        YawAxis.SCREEN_Y -> "For holding the phone upright, screen facing you: yaw is the turn about the screen's vertical axis, " +
+                            "roll through the screen, pitch across it."
+                        YawAxis.SCREEN_X -> "For holding the phone on its side, right edge up: yaw is the turn about the screen's horizontal axis, " +
+                            "pitch through the screen, roll about its vertical axis."
+                    } + " The gyro mouse, the PC controller's gyro and the gyro displays all follow it. " +
+                        "Set grip picks the axis pointing up the way you hold the phone now.",
+                ) {
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        YawAxis.entries.forEach { ax ->
+                            FilterChip(selected = ws.gyro.yawAxis == ax, onClick = {
+                                editWs { it.copy(gyro = it.gyro.copy(yawAxis = ax)) }
+                            }, label = { Text(ax.label) })
+                        }
+                        TextButton(onClick = {
+                            runtime.readUp(screen = true) { up ->
+                                val ax = up?.let(YawAxis::nearest) ?: return@readUp
+                                editWs { it.copy(gyro = it.gyro.copy(yawAxis = ax)) }
+                            }
+                        }) { Text("Set grip") }
                     }
                 }
             }

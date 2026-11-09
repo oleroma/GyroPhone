@@ -23,6 +23,14 @@ A gyro axis can go to **mouse move X/Y**, **scroll** or **scroll sideways** (`Ou
 - **World**: against gravity. Yaw turns around the vertical, pitch tilts around the horizontal axis to the right, roll turns around the horizontal way the phone faces. Uses `GravityPose` (the accelerometer runs).
 - **Player**: yaw blends the phone's yaw and roll by how the phone is tilted (forgiving when leaning back or lying down); pitch and roll stay the phone's.
 
+**Yaw axis** (workspace gyro setting, `YawAxis`, workspace and Defaults only): which screen axis is yaw, a 90° turn of the phone's frame applied in `GyroMouse.motion`, so everything that reads the phone's axes follows it: the gyro mouse (in every gyro space), the PC controller's gyro and accelerometer, the gyro displays and their Level, and the PC overlays (the phone sends them the turned frame, so the companion needs no change).
+
+- **Screen Z** (default): held flat, screen up. Yaw through the screen, pitch across it, roll along it.
+- **Screen Y**: held upright, screen facing you (the frame tilted back 90°). Yaw about the screen's vertical axis, roll through the screen, pitch across it.
+- **Screen X**: held on its side, right edge up. Yaw about the screen's horizontal axis, pitch through the screen, roll about its vertical axis.
+
+**Set grip**, beside the chips, reads gravity and picks the screen axis pointing most nearly up (`YawAxis.nearest`). Holding the phone upside down (or left edge up) picks the same axis, so turns come out mirrored. Tilt and shake still read the screen's own axes. A display's saved Level grip is in the turned frame, so press Level again after changing the yaw axis.
+
 ## Sensitivity
 
 Gyro **sensitivity** is mouse counts per degree the phone turns. Default 16. Every level can set it ([Workspaces](phone-workspaces.md)): one shared value plus each axis's own.
