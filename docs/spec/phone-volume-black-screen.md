@@ -15,7 +15,7 @@ The phone's own volume keys are a mappable device, **Phone** (`PhysicalDevice.PH
 
 For playing with a controller while the phone sits on the desk.
 
-- **Black screen when idle** (Settings › App › Pad, default off) blacks out the pad after **Black screen after** (30 s, 1, 2 or 5 min; default 1 min) without a screen touch, in play mode only.
+- **Black screen when idle** (Settings › App › Screen, default off) blacks out the pad after **Black screen after** (30 s, 1, 2 or 5 min; default 1 min) without a screen touch, in play mode only.
 - A mapping to **Black screen** (Other targets) blacks it out at once, for example from a controller button.
 - While black, the touch controls are off. Gyro, controllers, the volume rocker and the PC link keep working.
 - A **tap** on the screen brings the pad back; that tap presses nothing.

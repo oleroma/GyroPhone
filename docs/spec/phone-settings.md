@@ -6,7 +6,7 @@ Where every setting lives and its default. How workspace settings inherit is in 
 
 **Sliders** (`ui/CompactSlider.kt`): dragging moves the handle from where it is (it does not jump to the finger). **A tap on a slider without dragging opens a box to type the exact value**, which may go past the slider's ends (a gyro sensitivity up to the highest the app takes, above the Slider cap). A slider with two handles (deadzones, ranges) types the handle nearest the tap; its handles may pass each other.
 
-Every settings page (`ui/SettingsLayout.kt`) has a low **search** field on top (rounded, in the cards' colours) and right under it its **categories as tabs** (chips, scrolling sideways when they don't fit); both stay pinned while the settings scroll. Tapping a tab shows that one category, always open. **Long press a tab and drag it sideways** to move it. The order and the last picked tab are remembered per kind of page. Where a page has tabs of its own (Settings' App and Defaults, a workspace's Base and layers), those sit between the search field and the category tabs. The search filters every setting by its words (every word must match): while it holds text the tabs hide and every category with a match shows as a card, open, under its name (on the Settings page both App and Defaults at once, each under its name); a long press on a card's name drags it up or down there. Values a level sets itself are highlighted with **↺** to follow the parent again.
+Every settings page (`ui/SettingsLayout.kt`) has a low **search** field on top (rounded, in the cards' colours) and right under it its **categories as tabs**, each named by what it controls (Gyro, Touchpad, Tilt & shake, Buttons, Taps, Haptics; a category with several parts has headed groups inside) (chips, scrolling sideways when they don't fit); both stay pinned while the settings scroll. Tapping a tab shows that one category, always open. **Long press a tab and drag it sideways** to move it. The order and the last picked tab are remembered per kind of page. Where a page has tabs of its own (Settings' App and Defaults, a workspace's Base and layers), those sit between the search field and the category tabs. The search filters every setting by its words (every word must match): while it holds text the tabs hide and every category with a match shows as a card, open, under its name (on the Settings page both App and Defaults at once, each under its name); a long press on a card's name drags it up or down there. Values a level sets itself are highlighted with **↺** to follow the parent again.
 
 ## Settings (the pad's Settings capsule)
 
@@ -16,7 +16,7 @@ Every settings page (`ui/SettingsLayout.kt`) has a low **search** field on top (
 
 | Category | Setting | Default |
 |---|---|---|
-| Pad | Start in fullscreen | off |
+| Screen | Start in fullscreen | off |
 | | Keep the screen on while the pad is open | on |
 | | Black screen when idle; Black screen after 30 s / 1 / 2 / 5 min | off; 1 min |
 | | Screen rotation: Auto, Landscape, Portrait, Forced portrait, Forced landscape (top left / top right) | Auto |
@@ -27,7 +27,7 @@ Every settings page (`ui/SettingsLayout.kt`) has a low **search** field on top (
 | Touch display | Show touches, Trail behind fingers (length, fade), Fade out after lift, Show live mappings on buttons, swipe line, Move rulers | see [Pad UI](phone-pad-ui.md) |
 | Gyro | Jitter cutoff (0–5 °/s), Smoothing below (0–10 °/s); **Slider cap**: the top of every gyro sensitivity slider and Gyro sensitivity range, in RWS for workspaces that know their game (1–50) and in counts per degree for the others (4–250) | both off; 10 RWS, 64 counts/° |
 | Gyro display | Parallax edge (Turn / Tilt); **Fade when phone rests**: the gyro displays on the pad (the kinds with a Level) fade while the phone lies within Flat within (10°) of the tilt each was last leveled at, turning slower than Still below (0.5 °/s, live speed shown), with no finger, key or controller stick in use, for Quiet for (3 s); they fade to Fade to (30 %) over Fade over (0.5 s) and come back at once. Same rules as the PC's overlays ([PC overlays](pc-overlays.md)); never in edit mode (`RestDetector`, `TouchVisuals.restFade`, `GyroDisplay.levelUp`) | parallax off; fade on |
-| Controllers on phone | The attached game pads | — |
+| Controllers | The attached game pads | — |
 | Debugging | Debug tools | off |
 | About | Version, gyro source and measured rate | — |
 
@@ -44,12 +44,16 @@ Opened by ⚙ in edit mode, the touchpad's Settings in its mapping editor, or th
 | Category | Contents | Defaults |
 |---|---|---|
 | Gyro | Gyro to mouse (Ratchet enables / Ratchet disables / Gyro off), Gyro space (Local / World / Player), Game (preset game + in-game sensitivity, or counts per 360, Measure), Sensitivity (per axis via ⚙, exact or × Parent), Acceleration curve (Off, Light, Strong, custom; by this axis or the whole phone), Inertia (Smooth / Linear) and Glide, PC pad yaw / pitch / roll (the phone axis each DualShock 4 or DualSense axis follows, or None, and Invert; workspace and Defaults only) | Ratchet enables, Local, no game, 16 counts/°, Off, inertia off, 325 ms, pad yaw = Yaw, pitch = Pitch, roll = Roll |
+| | Calibration (Base only): Calibrate, Clear | not calibrated |
+| Touchpad | The workspace touch surface, in groups: Cursor & scrolling (speed, acceleration, inertia, deadzone), Move X & Y, Quick swipes, Held swipes, Length zones (lengths and pies, per direction and per Move) | see [Mapping system](phone-mapping.md) |
 | Tilt & shake | Tilt range, Tilt deadzone (per axis), Shake strength | 30°, off, 14 m/s² |
-| Gyro calibration (Base only) | Calibrate, Clear | not calibrated |
-| Controls (Base only) | Control opacity (10–100 %) | 100 % |
+| Buttons (Base only) | Control opacity (10–100 %) | 100 % |
 | Haptics | Feel (system or custom strength / length), Ticks play (On press / enter, On release / exit, Both) | system, On press |
-| Gesture timings | Tap time (100–1000 ms): the longest tap, when a long press starts, and the double-tap gap | 300 ms |
-| Touchpad | The workspace touch surface: speed, acceleration, inertia, swipe lengths and pies, per direction and per Move | see [Mapping system](phone-mapping.md) |
+| Taps | Tap time (100–1000 ms): the longest tap, when a long press starts, and the double-tap gap | 300 ms |
+
+## A touch control's or controller button's settings
+
+The mapping editor's ⚙ Settings (`ui/ControlSettingsScreen.kt`, `ui/ActionSettings.kt`): **Look** (label, shape, layer, size), **Layers** (when the workspace has layers), **Gyro** and **Touchpad** (the gyro's sensitivity and acceleration and the touchpad cursor's speed while it is held), then **Swipes** for a button that swipes (the same groups as the workspace Touchpad, its own over the workspace's) or **Stick** for a stick. A controller button's ⚙ has the same Gyro and Touchpad tabs.
 
 ## Connection page
 
@@ -57,12 +61,12 @@ Opened by ⚙ in edit mode, the touchpad's Settings in its mapping editor, or th
 
 | Category | Contents | Default |
 |---|---|---|
-| PC connection | Bluetooth: registration, Make discoverable, paired PCs. Wi-Fi: Scan QR code, found and paired PCs, Enter PC address | — |
+| PC | Bluetooth: registration, Make discoverable, paired PCs. Wi-Fi: Scan QR code, found and paired PCs, Enter PC address | — |
 | Key pairing (Wi-Fi) | This phone's key, share `phone.pub`, import `host.pub`, trusted PCs, Connect automatically | on |
 | Link quality (Wi-Fi) | Rates, loss, latency, jitter, radio, USB | — |
 | Report rate | Bluetooth 30/45/60/75/90 Hz; Wi-Fi 250/500/1000 Hz | 60 Hz; 1000 Hz |
-| Gyro poll rate | 1 / 2 / 4 kHz | 4 kHz |
-| PC controller for gyro ratchet (Wi-Fi) | Use PC controller for gyro ratchet ([Controllers](phone-controllers.md)) | off |
+| Gyro rate | 1 / 2 / 4 kHz | 4 kHz |
+| PC controller (Wi-Fi) | Use PC controller for gyro ratchet ([Controllers](phone-controllers.md)) | off |
 | Stop when idle | Off / 5 / 10 / 30 min | 10 min |
 
 ## Where it is stored

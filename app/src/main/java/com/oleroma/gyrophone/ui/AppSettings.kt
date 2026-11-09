@@ -133,7 +133,7 @@ private fun AppTab(runtime: GamepadRuntime) {
     val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?" }
 
     val items = listOf(
-        category(runtime, "pad", "Pad", "Fullscreen, screen on, black screen, screen rotation, when input is sent", defaultOpen = true) {
+        category(runtime, "pad", "Screen", "Fullscreen, screen on, black screen, screen rotation, when input is sent", defaultOpen = true) {
             SwitchRow(
                 "Start in fullscreen", startFullscreen,
                 hint = "The pad opens in fullscreen when the app starts. Press ← and → together, or Back, to leave it.",
@@ -321,7 +321,7 @@ private fun AppTab(runtime: GamepadRuntime) {
         category(runtime, "gyroDisplay", "Gyro display", "The parallax edge; other gyro displays are placed in edit mode") {
             GyroVisualsSettings(visuals, runtime::restStillnessDps) { runtime.setTouchVisuals(it) }
         },
-        category(runtime, "controllers", "Controllers on phone", "Gamepads attached to the phone") {
+        category(runtime, "controllers", "Controllers", "Gamepads attached to the phone") {
             Searchable("Controllers on phone", "gamepad attached", *controllers.map { it.name }.toTypedArray()) {
                 Column {
                     if (controllers.isEmpty()) Text("None. Attach any gamepad.")

@@ -372,3 +372,14 @@ internal fun SearchGroupLabel(text: String, hits: SearchHits) {
         Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
     }
 }
+
+/** A heading over a group of settings inside a category (e.g. the Touchpad's "Held swipes"); hidden while searching. */
+@Composable
+internal fun SettingsGroupTitle(text: String, first: Boolean = false) = NotSearching {
+    Text(
+        text,
+        Modifier.padding(top = if (first) 0.dp else 10.dp, bottom = 2.dp),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+    )
+}

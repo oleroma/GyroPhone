@@ -155,11 +155,12 @@ private class ButtonGyroLevel(
 }
 
 /**
- * The button's settings while held: its gyro Sensitivity and Acceleration (every gyro axis's
- * unless the axis has its own) and the touchpad cursor's sensitivity and acceleration.
+ * The button's gyro while it is held: Sensitivity and Acceleration (every gyro axis's unless the
+ * axis has its own). Its Gyro tab.
  */
 @Composable
 private fun ButtonGyroSensitivity(g: ButtonGyroLevel, key: String) {
+    Hint("While this is held.")
     GyroSensSlider(
         key + "gyro" + g.set, "Gyro sensitivity", g.inUse.sensitivity ?: g.parent.sensitivity, g.parent,
         overridden = g.own.sensitivity != null,
@@ -175,6 +176,12 @@ private fun ButtonGyroSensitivity(g: ButtonGyroLevel, key: String) {
         hint = "While this is held${g.where}: Off aims without acceleration (for example while aiming down sights). " +
             "Unset, the workspace's. $ACCEL_HINT",
     ) { c -> g.edit { it.copy(accel = c) } }
+}
+
+/** The touchpad cursor's sensitivity and acceleration while the button is held. Its Touchpad tab. */
+@Composable
+private fun ButtonTouchpadSpeed(g: ButtonGyroLevel, key: String) {
+    Hint("While this is held.")
     val touchHint = "While this is held${g.where}, the touchpad cursor moves at this speed, for every finger count. Unset, the workspace's."
     val touchOwn = g.own.touchSensitivity != null || g.own.touchScale != null
     val touchReset = { g.edit { it.withTouch(null) } }
@@ -289,13 +296,18 @@ internal fun touchControlSettings(
     val zones = Bindings.holdZoneCounts(ws.mappings, control.id)
     val gyro = if (control.kind == TouchKind.BUTTON) ButtonGyroLevel.of(control, ws, set, update) else null
     // The settings its actions share, as categories: its gyro, a touchpad button's surface, a stick's own.
-    val gyroCategory = gyro?.let { g ->
-        category(runtime, "buttonGyro", "While held", "Gyro sensitivity and acceleration, touchpad speed", prefKey = "button.Gyro") {
-            ButtonGyroSensitivity(g, key)
-        }
+    val heldCategories = gyro?.let { g ->
+        listOf(
+            category(runtime, "buttonGyro", "Gyro", "Gyro sensitivity and acceleration while held", prefKey = "button.Gyro") {
+                ButtonGyroSensitivity(g, key)
+            },
+            category(runtime, "buttonTouchpad", "Touchpad", "Touchpad cursor speed while held", prefKey = "button.Touchpad") {
+                ButtonTouchpadSpeed(g, key)
+            },
+        )
     }
-    val items = listOfNotNull(gyroCategory) + when {
-        surface != null -> surfaceCategories(runtime, surface, key, zones, touchpad = false)
+    val items = heldCategories.orEmpty() + when {
+        surface != null -> listOf(surfaceCategory(runtime, "Swipes", surface, key, zones, touchpad = false))
         control.kind == TouchKind.STICK -> listOf(
             category(runtime, "stick", "Stick", "Deadzone and directions", defaultOpen = true) { StickSettings(control) { c -> update { c } } },
         )
@@ -524,8 +536,11 @@ internal fun physicalSettings(
     }
     val key = preset.id + ":" + held?.id
     val items = if (level == null) emptyList() else listOf(
-        category(runtime, "heldGyro", "While held", "Gyro sensitivity and acceleration, touchpad speed", prefKey = "physical.Held", defaultOpen = true) {
+        category(runtime, "heldGyro", "Gyro", "Gyro sensitivity and acceleration while held", prefKey = "physical.Held", defaultOpen = true) {
             ButtonGyroSensitivity(level, key)
+        },
+        category(runtime, "heldTouchpad", "Touchpad", "Touchpad cursor speed while held", prefKey = "physical.HeldTouchpad") {
+            ButtonTouchpadSpeed(level, key)
         },
     )
     return physicalActionSettings(preset, ws, update).let { a ->

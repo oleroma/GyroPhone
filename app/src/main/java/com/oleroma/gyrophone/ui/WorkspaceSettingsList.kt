@@ -170,7 +170,7 @@ internal fun WorkspaceSettings(
     items += SectionItem("gyro", "Gyro") { card, header ->
         RememberedSection(
             runtime, "workspace.Gyro", "Gyro", card, defaultOpen = true,
-            subtitle = ws.gyro.mode.label + " · sensitivity, acceleration, game, gyro space, inertia", headerModifier = header,
+            subtitle = ws.gyro.mode.label + " · sensitivity, acceleration, game, gyro space, inertia, calibration", headerModifier = header,
         ) {
             OverrideRow(
                 "Gyro to mouse", own(g("mode")), reset(g("mode")), children = kids(g("mode")),
@@ -274,6 +274,7 @@ internal fun WorkspaceSettings(
                 key + "gglide", "Glide %.0f ms", ws.gyro.glideMs, GyroMouse.MIN_GLIDE_MS..GyroMouse.MAX_GLIDE_MS, 5f,
                 own(g("glideMs")), reset(g("glideMs")), hint = GLIDE_HINT, children = kids(g("glideMs")),
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(glideMs = v)) } }
+            if (!layer) GyroCalibration(runtime)
         }
     }
     items += SectionItem("tilt", "Tilt & shake") { card, header ->
@@ -298,42 +299,11 @@ internal fun WorkspaceSettings(
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(shakeStrength = v)) } }
         }
     }
-    // The jitter cutoff and smoothing are the app's (Settings, App, Gyro), the same in every workspace.
-    // Calibration only subtracts a fixed resting bias and suits the phone, not a layer: the whole workspace's only.
-    if (!layer) items += SectionItem("gyroFilters", "Gyro calibration") { card, header ->
-        RememberedSection(
-            runtime, "workspace.GyroFilters", "Gyro calibration", card,
-            subtitle = "Drift calibration", headerModifier = header,
-        ) {
-            Hint("Jitter cutoff and smoothing are in Settings, App, Gyro: one setting for every workspace.")
-            val cal by runtime.calibrationState.collectAsState()
-            Searchable("Calibrate", "gyro drift calibration") { Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    when (val c = cal) {
-                        GamepadRuntime.CalibrationState.None -> "Not calibrated (phone's own drift correction only)"
-                        GamepadRuntime.CalibrationState.Running -> "Calibrating: keep the phone still…"
-                        GamepadRuntime.CalibrationState.Moved -> "The phone moved. Lay it flat and try again."
-                        is GamepadRuntime.CalibrationState.Calibrated -> "Calibrated (removes %.2f°/s drift)".format(c.degPerSec)
-                    },
-                    Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
-                )
-                if (cal is GamepadRuntime.CalibrationState.Calibrated) {
-                    TextButton(onClick = { runtime.clearGyroCalibration() }) { Text("Clear") }
-                }
-                TextButton(
-                    onClick = { runtime.calibrateGyro() },
-                    enabled = cal != GamepadRuntime.CalibrationState.Running
-                ) {
-                    Text("Calibrate")
-                }
-            } }
-        }
-    }
-    if (!layer) items += SectionItem("controls", "Controls") { card, header ->
+    if (!layer) items += SectionItem("controls", "Buttons") { card, header ->
         RememberedSection(
             runtime,
             "workspace.Controls",
-            "Controls",
+            "Buttons",
             card,
             subtitle = "How visible the touch controls are",
             headerModifier = header,
@@ -372,9 +342,9 @@ internal fun WorkspaceSettings(
             }
         }
     }
-    items += SectionItem("gestures", "Gesture timings") { card, header ->
+    items += SectionItem("gestures", "Taps") { card, header ->
         RememberedSection(
-            runtime, "workspace.Gestures", "Gesture timings", card,
+            runtime, "workspace.Gestures", "Taps", card,
             subtitle = "Tap time", headerModifier = header,
         ) {
             MsOverride(
@@ -386,6 +356,39 @@ internal fun WorkspaceSettings(
             ) { ms -> level.edit { it.copy(longPressMs = ms) } }
         }
     }
-    items += surfaceCategories(runtime, workspaceSurfaceLevel(level), key + "tp", Bindings.holdZoneCounts(ws.mappings, ""), touchpad = true)
+    // The touchpad right after the gyro.
+    items.add(items.indexOfFirst { it.id == "gyro" } + 1, surfaceCategory(runtime, "Touchpad", workspaceSurfaceLevel(level), key + "tp", Bindings.holdZoneCounts(ws.mappings, ""), touchpad = true))
     ReorderableSections(runtime, "workspace", items)
+}
+
+/**
+ * The end of a workspace's Gyro tab: drift calibration. It only subtracts a fixed resting bias and
+ * suits the phone, not a layer, so only the whole workspace shows it. The jitter cutoff and
+ * smoothing are the app's (Settings, App, Gyro), the same in every workspace.
+ */
+@Composable
+private fun GyroCalibration(runtime: GamepadRuntime) {
+    SettingsGroupTitle("Calibration")
+    Hint("Jitter cutoff and smoothing are in Settings, App, Gyro: one setting for every workspace.")
+    val cal by runtime.calibrationState.collectAsState()
+    Searchable("Calibrate", "gyro drift calibration") { Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            when (val c = cal) {
+                GamepadRuntime.CalibrationState.None -> "Not calibrated (phone's own drift correction only)"
+                GamepadRuntime.CalibrationState.Running -> "Calibrating: keep the phone still…"
+                GamepadRuntime.CalibrationState.Moved -> "The phone moved. Lay it flat and try again."
+                is GamepadRuntime.CalibrationState.Calibrated -> "Calibrated (removes %.2f°/s drift)".format(c.degPerSec)
+            },
+            Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+        )
+        if (cal is GamepadRuntime.CalibrationState.Calibrated) {
+            TextButton(onClick = { runtime.clearGyroCalibration() }) { Text("Clear") }
+        }
+        TextButton(
+            onClick = { runtime.calibrateGyro() },
+            enabled = cal != GamepadRuntime.CalibrationState.Running
+        ) {
+            Text("Calibrate")
+        }
+    } }
 }
