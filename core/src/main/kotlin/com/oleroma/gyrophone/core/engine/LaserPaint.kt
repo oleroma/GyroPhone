@@ -17,16 +17,14 @@ import kotlin.math.sqrt
  * sphere, so the paint follows the sphere's real shape, depth and perspective, and costs the same
  * however much is painted. Same as the companion's LaserPaint.
  *
- * Each texel is one Int, ARGB with alpha 255 (the GPU reads it as data, not colour):
- * - red: how close it is to the painted line's middle, 7 bits ([REACH_MAX] on it, 0 at [REACH]
- *   brush half widths away), shifted up one, the lowest bit set when the paint was a shot (Fire);
- * - green, blue: how far along the painting it was painted, in [ALONG_UNIT]° steps, wrapping at
- *   [ALONG_WRAP] steps (Snake shows only the newest stretch).
+ * Each texel is one byte: how close it is to the painted line's middle, 7 bits ([REACH_MAX] on it,
+ * 0 at [REACH] brush half widths away), shifted up one, the lowest bit set when the paint was a shot
+ * (Fire). The UI hands the bytes to the GPU as they are (an alpha-only bitmap, 512 KB).
  *
  * With the way colours kept ([stamp]'s wayRgb), [way] holds each texel's colour (RGB, alpha 255).
  */
 class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
-    val data = IntArray(width * height)
+    val data = ByteArray(width * height)
 
     /** Each texel's way colour (RGB, alpha 255), made at the first stamp that keeps one. */
     var way: IntArray? = null
@@ -35,13 +33,6 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
     /** Goes up at each change. */
     var version = 0L
         private set
-
-    /** The newest paint's place along the painting, in [ALONG_UNIT]° steps below [ALONG_WRAP]. */
-    var newest = 0
-        private set
-
-    private var newestDeg = 0.0
-    private var sweptDeg = 0.0
 
     private val sinLat = FloatArray(height) { sin(latOf(it)).toFloat() }
     private val cosLat = FloatArray(height) { cos(latOf(it)).toFloat() }
@@ -58,16 +49,12 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
     }
 
     /**
-     * Paints the line from unit direction ([ax], [ay], [az]), [alongA] degrees along the painting, to
-     * ([bx], [by], [bz]) at [alongB] (the same point for a dot), [halfDeg] degrees each side of its
-     * middle; [fired] while firing. With [snakeDeg] > 0 (Snake) paint older than that many degrees
-     * no longer counts. Where the new paint reaches at least as far as what shows there, it takes the
-     * texel (newer paint wins); [wayRgb] (RGB, or null) is its way colour.
+     * Paints the line from unit direction ([ax], [ay], [az]) to ([bx], [by], [bz]) (the same point for
+     * a dot), [halfDeg] degrees each side of its middle; [fired] while firing. Where the new paint
+     * reaches at least as far as what is there, it takes the texel (newer paint wins: its Fire and
+     * [wayRgb], its way colour (RGB, or null)).
      */
-    fun stamp(
-        ax: Float, ay: Float, az: Float, alongA: Double, bx: Float, by: Float, bz: Float, alongB: Double,
-        halfDeg: Float, fired: Boolean, snakeDeg: Float = 0f, wayRgb: Int? = null,
-    ) {
+    fun stamp(ax: Float, ay: Float, az: Float, bx: Float, by: Float, bz: Float, halfDeg: Float, fired: Boolean, wayRgb: Int? = null) {
         if (wayRgb != null && way == null) way = IntArray(width * height)
         val reachRad = Math.toRadians((halfDeg * REACH).toDouble()).coerceAtLeast(1e-4)
         // Long hops in pieces of up to PIECE_DEG, so each piece's straight chord stays on the sphere.
@@ -78,20 +65,12 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
         for (k in 0 until pieces) {
             slerp(ax, ay, az, bx, by, bz, hop, k / pieces.toFloat(), a)
             slerp(ax, ay, az, bx, by, bz, hop, (k + 1) / pieces.toFloat(), b)
-            piece(
-                a, alongA + (alongB - alongA) * k / pieces.toDouble(), b, alongA + (alongB - alongA) * (k + 1) / pieces.toDouble(),
-                reachRad, fired, snakeDeg, wayRgb,
-            )
+            piece(a, b, reachRad, fired, wayRgb)
         }
-        newestDeg = alongB
-        newest = units(alongB)
-        // Keep every texel's age readable through the wrap: anything older than SWEEP_AGE_DEG is
-        // pulled up to that age (Snake never shows it, its longest being shorter).
-        if (newestDeg - sweptDeg > SWEEP_EVERY_DEG) sweep()
         version++
     }
 
-    private fun piece(a: FloatArray, alongA: Double, b: FloatArray, alongB: Double, reach: Double, fired: Boolean, snakeDeg: Float, wayRgb: Int?) {
+    private fun piece(a: FloatArray, b: FloatArray, reach: Double, fired: Boolean, wayRgb: Int?) {
         val abx = b[0] - a[0]
         val aby = b[1] - a[1]
         val abz = b[2] - a[2]
@@ -112,7 +91,6 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
         val sinLatC = sin(latC)
         val cosLatC = cos(latC)
         val reachF = reach.toFloat()
-        val snakeUnits = if (snakeDeg > 0f) (snakeDeg / ALONG_UNIT).toInt() else 0
         val fire = if (fired) 1 else 0
         val ways = way
         for (j in j0..j1) {
@@ -157,28 +135,11 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
                 if (d >= reachF) continue
                 val cov = ((1f - d / reachF) * REACH_MAX + 0.5f).toInt().coerceIn(1, REACH_MAX)
                 val k = row + i
-                val old = data[k]
-                if (old != 0) {
-                    var shows = old shr 17 and REACH_MAX
-                    if (snakeUnits > 0) shows = (shows * snakeShows(old and 0xFFFF, newest, snakeUnits)).toInt()
-                    if (cov < shows) continue
-                }
-                val along = units(alongA + (alongB - alongA) * t)
-                data[k] = (0xFF shl 24) or ((cov shl 1 or fire) shl 16) or along
+                if (cov < (data[k].toInt() and 0xFF) shr 1) continue
+                data[k] = (cov shl 1 or fire).toByte()
                 if (ways != null && wayRgb != null) ways[k] = (0xFF shl 24) or (wayRgb and 0xFFFFFF)
             }
         }
-    }
-
-    private fun sweep() {
-        val ageUnits = (SWEEP_AGE_DEG / ALONG_UNIT).toInt()
-        for (k in data.indices) {
-            val v = data[k]
-            if (v shr 17 and REACH_MAX == 0) continue
-            val age = Math.floorMod(newest - (v and 0xFFFF), ALONG_WRAP)
-            if (age > ageUnits) data[k] = (v and 0xFFFF0000.toInt()) or Math.floorMod(newest - ageUnits, ALONG_WRAP)
-        }
-        sweptDeg = newestDeg
     }
 
     /** The texel holding unit direction ([x], [y], [z]). */
@@ -203,30 +164,7 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
         /** Where the line's edge is in red's reach (0 .. 1): one half width of [REACH]. */
         const val EDGE = 1f - 1f / REACH
 
-        /** How fine the place along the painting is kept, in degrees. */
-        const val ALONG_UNIT = 0.1f
-
-        /** The place along the painting wraps at this many [ALONG_UNIT] steps (16 bits). */
-        const val ALONG_WRAP = 65536
-
-        /** Snake's tail: the last share of its length fades out. */
-        const val SNAKE_TAIL = 0.2f
-
-        /** Snake's longest length (degrees). */
-        const val SNAKE_MAX_DEG = 720
-
         private const val PIECE_DEG = 4.0
-        private const val SWEEP_EVERY_DEG = 2000.0
-        private const val SWEEP_AGE_DEG = 1000f
-
-        /** [deg] degrees along as wrapped [ALONG_UNIT] steps. */
-        fun units(deg: Double): Int = Math.floorMod(Math.round(deg / ALONG_UNIT).toLong(), ALONG_WRAP.toLong()).toInt()
-
-        /** How much of paint at [along] shows with Snake [snakeUnits] long, the newest being [newest] (all in steps): 1 .. 0 past its tail. */
-        fun snakeShows(along: Int, newest: Int, snakeUnits: Int): Float {
-            val age = Math.floorMod(newest - along, ALONG_WRAP)
-            return ((snakeUnits - age) / (SNAKE_TAIL * snakeUnits)).coerceIn(0f, 1f)
-        }
 
         /** The unit direction [f] of the way from unit a to unit b ([hop] radians apart) into [out]. */
         private fun slerp(ax: Float, ay: Float, az: Float, bx: Float, by: Float, bz: Float, hop: Double, f: Float, out: FloatArray) {

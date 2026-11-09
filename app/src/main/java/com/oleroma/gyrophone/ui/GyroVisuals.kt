@@ -343,6 +343,55 @@ private class VisState {
         drawCircle(Color.White.copy(alpha = fire.alpha * 0.9f), size * 0.25f, tip)
     }
 
+    /**
+     * Snake: the line along the newest stretch of [t]'s strokes, its [front] (near) or far pieces, [width]
+     * wide at the head thinning to a fifth at the tail; coloured as the paint (the Moving colours by where it
+     * is in the scene, or by the way it moved; shots in the Fire colours), shaded as the paint. Pieces are
+     * drawn opaque into one layer at the colours' opacity, so overlaps don't darken.
+     */
+    private fun DrawScope.snake(t: LaserTrace, d: GyroDisplay, front: Boolean, c: Offset, r: Float, width: Float, col: (GyroDisplayColor) -> Color) {
+        val s = t.strokes
+        val n = s.count
+        if (n < 2) return
+        val len = d.laserSnakeDeg.toFloat().coerceAtLeast(1f)
+        val fa = col(GyroDisplayColor.LASER_FIRE)
+        val fb = col(GyroDisplayColor.LASER_FIRE_BEHIND)
+        val alpha = (moveColors.sumOf { it shr 24 and 0xFF } / 6f).toInt().coerceIn(0, 255)
+        val canvas = drawContext.canvas.nativeCanvas
+        val e = r * 1.1f
+        val layer = canvas.saveLayerAlpha(c.x - e, c.y - e, c.x + e, c.y + e, alpha)
+        val turned = laserTurned
+        var prev = Offset.Zero
+        for (i in 0 until n) {
+            s.point(i, la)
+            val p = laserAt(c, r, la[0], la[1], la[2])
+            val z = pv[2]
+            if (i > 0 && !s.gap(i) && (z > 0f) == front) {
+                // The scene's frame (without the sphere's turn): what the colour goes by.
+                val (gx, gy, gz) = if (turned == null) Triple(la[0], la[1], la[2]) else Triple(
+                    turned[0] * la[0] + turned[3] * la[1] + turned[6] * la[2],
+                    turned[1] * la[0] + turned[4] * la[1] + turned[7] * la[2],
+                    turned[2] * la[0] + turned[5] * la[1] + turned[8] * la[2],
+                )
+                val argb = if (s.fire(i)) {
+                    val k = LaserTrace.behind(gz)
+                    Color(fa.red + (fb.red - fa.red) * k, fa.green + (fb.green - fa.green) * k, fa.blue + (fb.blue - fa.blue) * k)
+                } else {
+                    if (d.laserColourByWay) s.direction(i, if (d.laserSmoothColours) LaserTrace.SMOOTH_REACH else 0, way)
+                    else { way[0] = gx; way[1] = gy; way[2] = gz }
+                    Color(LaserTrace.directionColor(way, moveColors).toInt()).copy(alpha = 1f)
+                }
+                val facing = kotlin.math.abs(z).coerceAtMost(1f)
+                val k = (1f + (0.25f + 0.75f * facing - 1f) * d.laserShade) * (if (front) 1f else d.laserInside)
+                val tail = 1f - s.behindNewest(i) / len
+                val w = width * (0.2f + 0.8f * tail.coerceIn(0f, 1f)) * (if (laserPersp) LaserTrace.perspective(z) else 1f)
+                drawLine(Color(argb.red * k, argb.green * k, argb.blue * k), prev, p, w, StrokeCap.Round)
+            }
+            prev = p
+        }
+        canvas.restoreToCount(layer)
+    }
+
     /** Picture point of shown-frame direction ([x], [y], [z]) on a sphere of radius [r] at [c]; its depth (toward the viewer +) left in [pv]. */
     private fun laserAt(c: Offset, r: Float, x: Float, y: Float, z: Float): Offset {
         LaserTrace.view(x, y, z, pv, axon = laserAxon, turned = laserTurned)
@@ -386,6 +435,7 @@ private class VisState {
                     brushDeg = d.laserBrush.coerceIn(1, 20) * BRUSH_WIDTH,
                     snakeDeg = if (d.laserSnake) d.laserSnakeDeg.toFloat() else 0f,
                     wayColors = if (d.laserColourByWay) moveColors else null,
+                    mapWidth = PAINT_WIDTHS[d.laserPaintDetail.coerceIn(0, 2)],
                 )
             }
         }
@@ -458,19 +508,20 @@ private class VisState {
         // Draw mode's paint: the paint map drawn on the sphere by the GPU, its near or far half.
         val look = if (lt?.paint == null || !d.laserDraw) null else PointerPaintShader.Look(
             eye = if (laserPersp) LaserTrace.CAMERA_DISTANCE else 0f,
-            snakeDeg = if (d.laserSnake) d.laserSnakeDeg.toFloat() else 0f,
             byWay = d.laserColourByWay, soft = d.laserSoftness, glow = d.laserGlow, outline = d.laserOutline,
             shade = d.laserShade, inside = d.laserInside,
             moves = IntArray(6) { moveColors[it].toInt() },
             fireAhead = col(GyroDisplayColor.LASER_FIRE).toArgb(), fireBehind = col(GyroDisplayColor.LASER_FIRE_BEHIND).toArgb(),
             outlineColor = col(GyroDisplayColor.LASER_OUTLINE).toArgb(), wayAlpha = moveAlpha,
         )
+        val brushPx = maxOf(1.5f * density, r * Math.toRadians(d.laserBrush.coerceIn(1, 20).toDouble()).toFloat() * BRUSH_WIDTH)
         fun paint(front: Boolean) {
             val t = lt ?: return
-            val lp = t.paint ?: return
-            val lk = look ?: return
-            val sh = paintShaders.getOrPut(t) { PointerPaintShader() }
-            sh.draw(drawContext.canvas.nativeCanvas, lp, front, c.x, c.y, r, viewOf, sceneOf, lk)
+            val lp = t.paint
+            if (lp != null && look != null) {
+                paintShaders.getOrPut(t) { PointerPaintShader() }.draw(drawContext.canvas.nativeCanvas, lp, front, c.x, c.y, r, viewOf, sceneOf, look)
+            }
+            if (d.laserSnake) snake(t, d, front, c, r, brushPx, col)
         }
         val hit = laserAt(c, r, beam[0], beam[1], beam[2])
         val hitFront = pv[2] > 0f
@@ -1250,6 +1301,9 @@ private const val GHOST_MS = 45L
 /** The world's axes in the axonometric view: right, up, toward you. */
 // By turn, as the gimbal's rings: right is the pitch axis (green), up roll (blue), toward you yaw (red).
 private val WORLD_AXES = arrayOf(Color(0xFF5ADB6E), Color(0xFF5AA8FF), Color(0xFFFF5A5A))
+
+/** The paint map's width in texels for Paint detail low, normal, high. */
+private val PAINT_WIDTHS = intArrayOf(512, 1024, 2048)
 
 /** A pointer's paint is this many degrees wide per Brush degree. */
 private const val BRUSH_WIDTH = 0.6f

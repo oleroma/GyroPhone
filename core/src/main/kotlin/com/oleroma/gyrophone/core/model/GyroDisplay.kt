@@ -176,9 +176,11 @@ data class GyroDisplay(
     /** LASER: Draw mode, the beam paints the sphere's inside ([com.oleroma.gyrophone.core.engine.LaserPaint]), [laserBrush] degrees round. */
     val laserDraw: Boolean = false,
     val laserBrush: Int = 4,
-    /** LASER Draw mode, Snake: only the newest [laserSnakeDeg] degrees of painted path show, its tail fading out (else paint stays until cleared). */
+    /** LASER, Snake (with or without Draw mode): a line along the newest [laserSnakeDeg] degrees of the beam's path, thinning to its tail. */
     val laserSnake: Boolean = false,
     val laserSnakeDeg: Int = 180,
+    /** LASER Draw mode: the paint map's detail, 0 low (512 texels round), 1 normal (1024), 2 high (2048). */
+    val laserPaintDetail: Int = 1,
     /** LASER Draw mode: a ratchet press clears the drawing. */
     val laserClearOnRatchet: Boolean = false,
     /**

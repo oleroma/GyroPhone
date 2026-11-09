@@ -53,6 +53,23 @@ class LaserTrace {
             head = 0
         }
 
+        /** Drops the oldest points more than [deg] degrees of line behind the newest. */
+        fun cut(deg: Float) {
+            if (count == 0) return
+            val newest = along[(head + count - 1) % capacity]
+            var dropped = false
+            while (count > 1 && newest - along[head] > deg + 0.05) { // a hair over: sums of steps round
+                head = (head + 1) % capacity
+                count--
+                dropped = true
+            }
+            if (dropped) gap[head] = true
+        }
+
+        /** Degrees of line from point [i] to the newest. */
+        fun behindNewest(i: Int): Float =
+            if (count == 0) 0f else (along[(head + count - 1) % capacity] - along[(head + i) % capacity]).toFloat()
+
         /** Degrees painted up to point [i] (0 oldest), counted along the lines. */
         fun along(i: Int): Double = along[(head + i) % capacity]
 
@@ -126,22 +143,24 @@ class LaserTrace {
      * one clears the strokes. With [draw] it paints; turning Draw off clears the strokes. While
      * [fire] (the display's fire output is sent) it paints in the Fire colours; with [fireOnly] only then.
      * [moving] follows the beam, evened out over [SMOOTH_MS] with [smooth]. With [lineSmoothing]
-     * (0 off .. 1 strong) the paint follows a steadied beam ([steadyToward]). Each new point paints
-     * [paint] from the point before, [brushDeg] wide; with [snakeDeg] > 0 (Snake) only that many
-     * degrees of the newest paint count; with [wayColors] (as [directionColor]'s) it also keeps each
-     * texel's way colour.
+     * (0 off .. 1 strong) the paint follows a steadied beam ([steadyToward]). With [draw] each new
+     * point paints [paint] from the point before, [brushDeg] wide, with [wayColors] (as
+     * [directionColor]'s) also keeping each texel's way colour, the map [mapWidth] texels round. With [snakeDeg] > 0 (Snake) the
+     * strokes are kept (even without Draw) only for the newest that many degrees: the snake's line.
      */
     fun add(
         x: Float, y: Float, z: Float, nowMs: Long, draw: Boolean, held: Boolean, clearOnPress: Boolean = false,
         fire: Boolean = false, fireOnly: Boolean = false, smooth: Boolean = true, lineSmoothing: Float = 0f,
-        brushDeg: Float = 0f, snakeDeg: Float = 0f, wayColors: LongArray? = null,
+        brushDeg: Float = 0f, snakeDeg: Float = 0f, wayColors: LongArray? = null, mapWidth: Int = LaserPaint.WIDTH,
     ) {
         val pressed = clearOnPress && held && !wasHeld
         wasHeld = held
-        if ((!draw || pressed) && strokes.count > 0) clear()
+        val snake = snakeDeg > 0f
+        if (!draw && paintUsed) clearPaint() // Draw off wipes the paint (a snake goes on)
+        if ((!(draw || snake) || pressed) && (strokes.count > 0 || paintUsed)) clear()
         val l = sqrt(x * x + y * y + z * z)
         if (l > 1e-6f && !l.isNaN()) follow(x / l, y / l, z / l, nowMs, smooth)
-        if (!draw || l < 1e-6f || held || l.isNaN() || (fireOnly && !fire)) {
+        if (!(draw || snake) || l < 1e-6f || held || l.isNaN() || (fireOnly && !fire)) {
             strokeGap = true
             return
         }
@@ -155,7 +174,8 @@ class LaserTrace {
         // A new point once the beam moved a little (or the firing started or stopped): a still beam adds nothing.
         if (!strokeGap && fire == lastFire && lastX * dx + lastY * dy + lastZ * dz > STROKE_STEP_COS) return
         strokes.add(dx, dy, dz, nowMs, strokeGap, fire)
-        if (brushDeg > 0f) stampNewest(brushDeg / 2f, fire, snakeDeg, wayColors, if (smooth) SMOOTH_REACH else 0)
+        if (draw && brushDeg > 0f) stampNewest(brushDeg / 2f, fire, wayColors, if (smooth) SMOOTH_REACH else 0, mapWidth)
+        if (snake) strokes.cut(snakeDeg)
         strokeGap = false
         lastFire = fire
         lastX = dx; lastY = dy; lastZ = dz
@@ -189,6 +209,15 @@ class LaserTrace {
         steadyMs = nowMs
     }
 
+    // Something is painted on the map (since the last clear).
+    private var paintUsed = false
+
+    private fun clearPaint() {
+        paint?.clear()
+        paintUsed = false
+        version++
+    }
+
     /** The paint map, made at the first painted point. */
     var paint: LaserPaint? = null
         private set
@@ -198,8 +227,9 @@ class LaserTrace {
     private val pb = FloatArray(3)
 
     /** Paints the newest stroke point into [paint], from the point before it unless it starts a line. */
-    private fun stampNewest(halfDeg: Float, fire: Boolean, snakeDeg: Float, wayColors: LongArray?, reach: Int) {
-        val p = paint ?: LaserPaint().also { paint = it }
+    private fun stampNewest(halfDeg: Float, fire: Boolean, wayColors: LongArray?, reach: Int, mapWidth: Int) {
+        // A new map when the detail changed (the paint so far goes).
+        val p = paint?.takeIf { it.width == mapWidth } ?: LaserPaint(mapWidth, mapWidth / 2).also { paint = it }
         val n = strokes.count
         val b = n - 1
         val a = if (strokes.gap(b) || n < 2) b else b - 1
@@ -209,7 +239,8 @@ class LaserTrace {
             if (a == b) wayDir.fill(0f) else strokes.direction(b, reach, wayDir)
             (directionColor(wayDir, wayColors) and 0xFFFFFF).toInt()
         }
-        p.stamp(pa[0], pa[1], pa[2], strokes.along(a), pb[0], pb[1], pb[2], strokes.along(b), halfDeg, fire, snakeDeg, rgb)
+        p.stamp(pa[0], pa[1], pa[2], pb[0], pb[1], pb[2], halfDeg, fire, rgb)
+        paintUsed = true
     }
 
     /** Turns [moving] toward the way the beam went to ([x], [y], [z]), a unit direction, at [nowMs]. */
@@ -233,6 +264,7 @@ class LaserTrace {
     fun clear() {
         strokes.clear()
         paint?.clear()
+        paintUsed = false
         strokeGap = true
         version++
     }

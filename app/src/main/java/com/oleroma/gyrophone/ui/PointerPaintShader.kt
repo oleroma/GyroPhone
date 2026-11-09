@@ -19,19 +19,14 @@ internal class PointerPaintShader {
     private val near = RuntimeShader(SOURCE)
     private val far = RuntimeShader(SOURCE)
     private val paint = Paint()
-    // The map's three bytes a texel, each in the alpha of its own ALPHA_8 bitmap: alpha is never
-    // colour-converted on the way to the GPU, so the numbers arrive exact.
     private var reachMap: Bitmap? = null
-    private var hiMap: Bitmap? = null
-    private var loMap: Bitmap? = null
-    private var bytes: Array<java.nio.ByteBuffer>? = null
     private var wayMap: Bitmap? = null
     private var uploaded = Long.MIN_VALUE
     private val col = FloatArray(3)
 
     /** What every draw of one frame shares. */
     class Look(
-        val eye: Float, val snakeDeg: Float, val byWay: Boolean, val soft: Float, val glow: Float, val outline: Boolean,
+        val eye: Float, val byWay: Boolean, val soft: Float, val glow: Float, val outline: Boolean,
         val shade: Float, val inside: Float, val moves: IntArray, val fireAhead: Int, val fireBehind: Int,
         val outlineColor: Int, val wayAlpha: Float,
     )
@@ -47,26 +42,15 @@ internal class PointerPaintShader {
         view: (Float, Float, Float, FloatArray) -> Unit, scene: (Float, Float, Float, FloatArray) -> Unit, look: Look,
     ) {
         val s = if (front) near else far
-        if (lp.version != uploaded || reachMap == null) {
-            val n = lp.width * lp.height
-            val bufs = bytes ?: Array(3) { java.nio.ByteBuffer.allocateDirect(n) }.also { bytes = it }
-            for (b in bufs) b.clear()
-            val data = lp.data
-            for (k in 0 until n) {
-                val v = data[k]
-                bufs[0].put((v shr 16).toByte())
-                bufs[1].put((v shr 8).toByte())
-                bufs[2].put(v.toByte())
+        if (lp.version != uploaded || reachMap?.width != lp.width) {
+            if (reachMap?.width != lp.width) {
+                reachMap = null
+                wayMap = null
             }
-            fun a8(old: Bitmap?, buf: java.nio.ByteBuffer): Bitmap {
-                val bm = old ?: Bitmap.createBitmap(lp.width, lp.height, Bitmap.Config.ALPHA_8)
-                buf.rewind()
-                bm.copyPixelsFromBuffer(buf)
-                return bm
-            }
-            val rm = a8(reachMap, bufs[0]).also { reachMap = it }
-            val hm = a8(hiMap, bufs[1]).also { hiMap = it }
-            val lm = a8(loMap, bufs[2]).also { loMap = it }
+            // The map's bytes as they are, in an alpha-only bitmap: alpha is never colour-converted
+            // on the way to the GPU, so the numbers arrive exact.
+            val rm = reachMap ?: Bitmap.createBitmap(lp.width, lp.height, Bitmap.Config.ALPHA_8).also { reachMap = it }
+            rm.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(lp.data))
             val ways = lp.way
             if (ways != null) {
                 val wb = wayMap ?: Bitmap.createBitmap(lp.width, lp.height, Bitmap.Config.ARGB_8888).also { wayMap = it }
@@ -76,8 +60,6 @@ internal class PointerPaintShader {
             // New shaders for the changed pixels, so the GPU takes them up.
             for (sh in arrayOf(near, far)) {
                 sh.setInputBuffer("reach", exact(rm))
-                sh.setInputBuffer("alongHi", exact(hm))
-                sh.setInputBuffer("alongLo", exact(lm))
                 sh.setInputShader("way", exact(wayMap ?: rm))
             }
         }
@@ -92,8 +74,6 @@ internal class PointerPaintShader {
         scene(1f, 0f, 0f, col); s.setFloatUniform("sceneX", col[0], col[1], col[2])
         scene(0f, 1f, 0f, col); s.setFloatUniform("sceneY", col[0], col[1], col[2])
         scene(0f, 0f, 1f, col); s.setFloatUniform("sceneZ", col[0], col[1], col[2])
-        s.setFloatUniform("newest", lp.newest.toFloat())
-        s.setFloatUniform("snake", if (look.snakeDeg > 0f) look.snakeDeg / LaserPaint.ALONG_UNIT else 0f)
         s.setFloatUniform("wayMode", if (look.byWay && lp.way != null) 1f else 0f)
         s.setFloatUniform("edge", LaserPaint.EDGE)
         s.setFloatUniform("soft", look.soft)
@@ -120,8 +100,6 @@ internal class PointerPaintShader {
 
         private val SOURCE = """
             uniform shader reach;
-            uniform shader alongHi;
-            uniform shader alongLo;
             uniform shader way;
             uniform float2 mapSize;
             uniform float2 center;
@@ -134,8 +112,6 @@ internal class PointerPaintShader {
             uniform float3 sceneX;
             uniform float3 sceneY;
             uniform float3 sceneZ;
-            uniform float newest;
-            uniform float snake;
             uniform float wayMode;
             uniform float edge;
             uniform float soft;
@@ -163,11 +139,6 @@ internal class PointerPaintShader {
                 float2 x = at(i, j);
                 float r8 = floor(float(reach.eval(x).a) * 255.0 + 0.5);
                 float c = floor(r8 / 2.0) / 127.0;
-                if (snake > 0.0) {
-                    float a = floor(float(alongHi.eval(x).a) * 255.0 + 0.5) * 256.0 + floor(float(alongLo.eval(x).a) * 255.0 + 0.5);
-                    float age = mod(newest - a + 65536.0, 65536.0);
-                    c *= clamp((snake - age) / (0.2 * snake), 0.0, 1.0);
-                }
                 return float2(c, c * mod(r8, 2.0));
             }
 
