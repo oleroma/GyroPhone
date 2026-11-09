@@ -46,20 +46,25 @@ internal const val MAX_SURFACE_SENS = 50f
 
 /**
  * The settings a touch surface's actions share (the mapping editor's Settings, and a workspace's
- * own settings), as categories: movement and scrolling, Move directions, quick swipes, held swipes
- * and length zones. Each shows [level]'s value, highlighted with a ↺ where it differs from the
- * parent. [touchpad]: the workspace touchpad, with its own on / off. [zones]: how many length
- * zones each direction has mapped. Their ids are the same at every level, so they keep one order.
+ * own settings), as one category named [title] (the workspace's Touchpad, a button's Swipes), in
+ * groups: Cursor & scrolling, Move X & Y, Quick swipes, Held swipes and Length zones. Each shows
+ * [level]'s value, highlighted with a ↺ where it differs from the parent. [touchpad]: the workspace
+ * touchpad, with its own on / off. [zones]: how many length zones each direction has mapped. Its id
+ * is the same at every level, so it keeps one place in the order.
  */
-internal fun surfaceCategories(runtime: GamepadRuntime, level: SurfaceLevel, key: String, zones: IntArray, touchpad: Boolean): List<SectionItem> = listOf(
-    category(runtime, "movement", "Movement & scrolling", "Speed, acceleration, scrolling, inertia, cursor deadzone") {
+internal fun surfaceCategory(runtime: GamepadRuntime, title: String, level: SurfaceLevel, key: String, zones: IntArray, touchpad: Boolean): SectionItem =
+    category(runtime, "touchpad", title, "Cursor and scrolling, Move X & Y, quick and held swipes, length zones") {
+        SettingsGroupTitle("Cursor & scrolling", first = true)
         SurfaceMovement(level, key, touchpad)
-    },
-    category(runtime, "move", "Move directions", "How Move X and Move Y pick their way, pies, heading lock") { SurfaceMove(level, key) },
-    category(runtime, "quickSwipe", "Quick swipe", "Pies, distance and heading lock of quick swipes") { SurfaceQuickSwipe(level, key) },
-    category(runtime, "swipe", "Swipe", "Held directions: hold mode, pies, distance, drag start point") { SurfaceSwipe(level, key, zones) },
-    category(runtime, "zones", "Length zones", "Zones further along a held direction") { SurfaceZones(level, key, zones) },
-)
+        SettingsGroupTitle("Move X & Y")
+        SurfaceMove(level, key)
+        SettingsGroupTitle("Quick swipes")
+        SurfaceQuickSwipe(level, key)
+        SettingsGroupTitle("Held swipes")
+        SurfaceSwipe(level, key, zones)
+        SettingsGroupTitle("Length zones")
+        SurfaceZones(level, key, zones)
+    }
 
 @Composable
 private fun SurfaceMovement(level: SurfaceLevel, key: String, touchpad: Boolean) {

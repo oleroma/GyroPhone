@@ -1,5 +1,8 @@
 package com.oleroma.gyrophone.ui
 
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
+import androidx.compose.material3.FilterChipDefaults
 import androidx.activity.compose.BackHandler
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
@@ -45,8 +48,10 @@ sealed interface PadMenuPage {
     data object Devices : PadMenuPage
     /** The PC link (the pad's Connection capsule). */
     data object Connection : PadMenuPage
-    /** Options of the whole app (the pad's Settings capsule). */
+    /** Options of the whole app (the pad's App capsule). */
     data object AppSettings : PadMenuPage
+    /** What every workspace uses unless it sets its own (the pad's Defaults capsule). */
+    data object DefaultsSettings : PadMenuPage
 
     companion object {
         private const val SEP = "\n"
@@ -57,6 +62,7 @@ sealed interface PadMenuPage {
                 Devices -> "devices"
                 Connection -> "connection"
                 AppSettings -> "settings"
+                DefaultsSettings -> "defaults"
             }
         }
 
@@ -67,6 +73,7 @@ sealed interface PadMenuPage {
                 "devices" -> Devices
                 "connection" -> Connection
                 "settings" -> AppSettings
+                "defaults" -> DefaultsSettings
                 else -> null
             }
         }
@@ -150,7 +157,8 @@ private fun PadMenu(
                     PadMenuPage.Devices -> "Controller"
                     PadMenuPage.Root -> "Workspace settings"
                     PadMenuPage.Connection -> "Connection"
-                    PadMenuPage.AppSettings -> "Settings"
+                    PadMenuPage.AppSettings -> "App"
+                    PadMenuPage.DefaultsSettings -> "Defaults"
                 },
                 style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
@@ -166,6 +174,7 @@ private fun PadMenu(
             PadMenuPage.Root -> MenuList(runtime, content)
             PadMenuPage.Connection -> ConnectScreen(runtime, onRetry)
             PadMenuPage.AppSettings -> AppSettingsScreen(runtime, content)
+            PadMenuPage.DefaultsSettings -> DefaultsSettingsScreen(runtime, content)
             PadMenuPage.Devices -> Unit
         }
     }
@@ -261,17 +270,14 @@ internal fun WorkspaceSettingsPage(
     val ws = profile.workspace(current)
     val shown = if (ws.sets.any { it.id == set }) set else MappingSet.BASE
 
+    // Base and the layers: pinned under the search box, above the category tabs, as an accented
+    // "Layers" band so they don't read as more category tabs.
     if (ws.sets.isNotEmpty()) NotSearching {
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = shown == MappingSet.BASE, onClick = { onSet(MappingSet.BASE) }, label = { Text("Base") })
-            ws.sets.forEach { st ->
-                FilterChip(selected = shown == st.id, onClick = { onSet(st.id) }, label = { Text(st.label) })
-            }
-        }
+        PinnedScope { LayerPicker(ws, shown, onSet) }
     }
     Hint(
-        if (shown == MappingSet.BASE) "Each setting follows the Defaults (Settings) unless it is set here: those are " +
-                "highlighted, with ↺ to follow the Defaults again. Long press a category to move it."
+        if (shown == MappingSet.BASE) "Each setting follows the Defaults (the Defaults pill) unless it is set here: those are " +
+                "highlighted, with ↺ to follow the Defaults again. Long press a tab to move it."
         else "While this layer is in use. Each setting follows Base unless it is set here: those are " +
                 "highlighted, with ↺ to follow Base again.",
     )
@@ -287,4 +293,40 @@ internal fun Hint(text: String) = NotSearching {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
     )
+}
+
+/** Which of [ws]'s layers (or Base) a workspace page shows: a band in the accent colour, "Layers" then a chip each. */
+@Composable
+private fun LayerPicker(ws: Workspace, shown: Int, onSet: (Int) -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Surface(shape = RoundedCornerShape(12.dp), color = c.tertiaryContainer.copy(alpha = 0.45f), modifier = Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Layers", style = MaterialTheme.typography.labelLarge, color = c.tertiary)
+            val colors = FilterChipDefaults.filterChipColors(
+                labelColor = c.onTertiaryContainer,
+                selectedContainerColor = c.tertiary,
+                selectedLabelColor = c.onTertiary,
+            )
+            @Composable
+            fun chip(id: Int, label: String) {
+                FilterChip(
+                    selected = shown == id,
+                    onClick = { onSet(id) },
+                    label = { Text(label) },
+                    colors = colors,
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = shown == id,
+                        borderColor = c.tertiary.copy(alpha = 0.6f),
+                    ),
+                )
+            }
+            chip(MappingSet.BASE, "Base")
+            ws.sets.forEach { st -> chip(st.id, st.label) }
+        }
+    }
 }

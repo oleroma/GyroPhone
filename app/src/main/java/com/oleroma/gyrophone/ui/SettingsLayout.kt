@@ -28,9 +28,19 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -54,9 +64,8 @@ import androidx.compose.ui.window.DialogProperties
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
 /*
- * The one layout every settings page shares: a search box on top, then the page's categories,
- * each a card that folds open and shut and that a long press on its header drags up or down
- * ([ReorderableSections]).
+ * The one layout every settings page shares: a search box on top, under it the page's categories
+ * as tabs (a long press drags one sideways), only the picked one shown ([ReorderableSections]).
  *
  * Search: while the box holds text, every category shows open and only the settings whose name
  * or explanation holds every typed word stay; categories with none hide. A category whose own
@@ -137,26 +146,51 @@ internal fun Modifier.hiddenLayout(): Modifier = layout { measurable, constraint
     layout(0, 0) {}
 }
 
-/** The search box of a settings page. */
+/**
+ * The search box of a settings page: a low rounded field in the cards' colours, ⌕ in front and
+ * ✕ (clear) at the end while it holds text.
+ */
 @Composable
 internal fun SettingsSearchField(query: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
-    OutlinedTextField(
-        value = query,
-        onValueChange = onChange,
-        modifier = modifier.fillMaxWidth(),
-        placeholder = { Text("Search settings") },
-        leadingIcon = { Text("⌕", style = MaterialTheme.typography.titleLarge) },
-        trailingIcon = {
-            if (query.isNotEmpty()) TextButton(onClick = { onChange("") }) { Text("✕") }
-        },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-    )
+    val keyboard = LocalSoftwareKeyboardController.current
+    Surface(
+        modifier = modifier.fillMaxWidth().height(40.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = 1.dp,
+    ) {
+        Row(Modifier.padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("⌕", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(8.dp))
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                if (query.isEmpty()) {
+                    Text("Search settings", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                BasicTextField(
+                    value = query,
+                    onValueChange = onChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
+                )
+            }
+            if (query.isNotEmpty()) {
+                Box(
+                    Modifier.size(36.dp).clip(CircleShape).clickable { onChange("") },
+                    contentAlignment = Alignment.Center,
+                ) { Text("✕", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+        }
+    }
 }
 
 /**
- * A settings page's scrolling body: the search box, then [header] (hidden while searching, e.g.
- * tabs), then [content] (its categories), at most 720 dp wide and centred, filtered by the search.
+ * A settings page: pinned on top the search box, then (not while searching) [header] (e.g. App
+ * and Defaults), the page's own tabs ([PinnedScope]) and its category tabs ([ReorderableSections]);
+ * under them [content] (its categories) scrolls. At most 720 dp wide and centred, filtered by the search.
  */
 @Composable
 internal fun SearchableSettings(
@@ -169,23 +203,40 @@ internal fun SearchableSettings(
     val hits = remember { SearchHits() }
     val scroll = rememberScrollState()
     val page = remember(scroll) { SettingsScroll(scroll) }
-    Column(
-        modifier.onGloballyPositioned { page.viewport = it.boundsInRoot() }.verticalScroll(scroll),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Column(Modifier.widthIn(max = 720.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val tabs = remember { SettingsTabs() }
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             SettingsSearchField(query, { query = it })
-            if (q.isEmpty()) header()
-            CompositionLocalProvider(LocalSettingsQuery provides q, LocalSearchHits provides listOf(hits), LocalSettingsScroll provides page) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { content(q.isNotEmpty()) }
+            if (q.isEmpty()) {
+                header()
+                tabs.scope.content?.invoke()
+                tabs.bar.content?.invoke()
             }
-            if (q.isNotEmpty() && hits.count == 0) {
-                Text(
-                    "No setting here matches \"${query.trim()}\".",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(8.dp),
-                )
+        }
+        Column(
+            Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { page.viewport = it.boundsInRoot() }.verticalScroll(scroll),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Column(Modifier.widthIn(max = 720.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                CompositionLocalProvider(
+                    LocalSettingsQuery provides q,
+                    LocalSearchHits provides listOf(hits),
+                    LocalSettingsScroll provides page,
+                    LocalSettingsTabs provides tabs,
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { content(q.isNotEmpty()) }
+                }
+                if (q.isNotEmpty() && hits.count == 0) {
+                    Text(
+                        "No setting here matches \"${query.trim()}\".",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(8.dp),
+                    )
+                }
             }
         }
     }
@@ -310,7 +361,7 @@ internal fun category(
     defaultOpen: Boolean = false,
     prefKey: String = "settings.$id",
     content: @Composable ColumnScope.() -> Unit,
-) = SectionItem(id) { card, header ->
+) = SectionItem(id, title) { card, header ->
     RememberedSection(runtime, prefKey, title, card, defaultOpen = defaultOpen, subtitle = subtitle, headerModifier = header, content = content)
 }
 
@@ -320,4 +371,15 @@ internal fun SearchGroupLabel(text: String, hits: SearchHits) {
     if (LocalSettingsQuery.current.isNotEmpty() && hits.count > 0) {
         Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
     }
+}
+
+/** A heading over a group of settings inside a category (e.g. the Touchpad's "Held swipes"); hidden while searching. */
+@Composable
+internal fun SettingsGroupTitle(text: String, first: Boolean = false) = NotSearching {
+    Text(
+        text,
+        Modifier.padding(top = if (first) 0.dp else 10.dp, bottom = 2.dp),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+    )
 }

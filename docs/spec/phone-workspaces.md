@@ -40,7 +40,7 @@ The chain is **built-in values → Defaults → workspace → layer**:
 - A **layer** (`MappingSet.settings`) sets keys of its own over the workspace's while it is in use (`WorkspaceDefaults.layered`, applied by the engine as `eff`). A layer may set every key but the control opacity, the game's turn and the gyro space (`layerKeys`). The Defaults have no layers. The workspace settings page has chips on top to pick Base or a layer.
 - A **button** has its own fields over the workspace's: its long-press and double-tap times, its touch surface settings (`SurfaceSettings`, null = the workspace touchpad's), and its gyro and touchpad speed while held, per layer (`ButtonGyro`). A held button's settings win while a finger is on it; of several, the last pressed.
 
-Settings that are not keys are the workspace's alone: its layout, mappings, layers and pinned preset. App-wide options (Settings › App) are outside the chain ([Settings](phone-settings.md)).
+Settings that are not keys are the workspace's alone: its layout, mappings, layers and pinned preset. App-wide options (the App page) are outside the chain ([Settings](phone-settings.md)).
 
 ## Mapping inheritance
 

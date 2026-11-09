@@ -36,33 +36,19 @@ import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.runtime.ScreenOrientation
 import kotlin.math.roundToInt
 
-/**
- * The Settings page (from the pad's Settings capsule): the App tab, options of the whole app with
- * the corners, and the Defaults tab, what every workspace uses unless it sets its own (its
- * settings page, ⚙ in edit mode). The search box above the tabs searches both.
- */
+/** The App page (the pad's App capsule, a gear): options of the whole app, with the corners. */
 @Composable
 fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
-    var tab by rememberSaveable { mutableIntStateOf(0) }
-    SearchableSettings(
-        modifier,
-        header = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("App") })
-                FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("Defaults") })
-            }
-        },
-    ) { searching ->
-        if (searching) {
-            // Both tabs at once, each under its name.
-            val app = remember { SearchHits() }
-            val defaults = remember { SearchHits() }
-            SearchGroupLabel("App", app)
-            CountHits(app) { AppTab(runtime) }
-            SearchGroupLabel("Defaults", defaults)
-            CountHits(defaults) { DefaultsTab(runtime) }
-        } else if (tab == 0) AppTab(runtime) else DefaultsTab(runtime)
-    }
+    SearchableSettings(modifier) { AppTab(runtime) }
+}
+
+/**
+ * The Defaults page (the pad's Defaults capsule, sliders): what every workspace uses unless it sets
+ * its own (its settings page, the sliders in edit mode).
+ */
+@Composable
+fun DefaultsSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
+    SearchableSettings(modifier) { DefaultsTab(runtime) }
 }
 
 /**
@@ -75,7 +61,7 @@ private fun DefaultsTab(runtime: GamepadRuntime) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Hint(
             "Every workspace uses these, except where it sets its own (its settings): those show highlighted " +
-                    "there, with ↺ to follow these again. Long press a category to move it.",
+                    "there, with ↺ to follow these again. Long press a tab to move it.",
         )
         var mapping by remember { mutableStateOf(false) }
         NotSearching {
@@ -133,7 +119,7 @@ private fun AppTab(runtime: GamepadRuntime) {
     val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?" }
 
     val items = listOf(
-        category(runtime, "pad", "Pad", "Fullscreen, screen on, black screen, screen rotation, when input is sent", defaultOpen = true) {
+        category(runtime, "pad", "Screen", "Fullscreen, screen on, black screen, screen rotation, when input is sent", defaultOpen = true) {
             SwitchRow(
                 "Start in fullscreen", startFullscreen,
                 hint = "The pad opens in fullscreen when the app starts. Press ← and → together, or Back, to leave it.",
@@ -321,7 +307,7 @@ private fun AppTab(runtime: GamepadRuntime) {
         category(runtime, "gyroDisplay", "Gyro display", "The parallax edge; other gyro displays are placed in edit mode") {
             GyroVisualsSettings(visuals, runtime::restStillnessDps) { runtime.setTouchVisuals(it) }
         },
-        category(runtime, "controllers", "Controllers on phone", "Gamepads attached to the phone") {
+        category(runtime, "controllers", "Controllers", "Gamepads attached to the phone") {
             Searchable("Controllers on phone", "gamepad attached", *controllers.map { it.name }.toTypedArray()) {
                 Column {
                     if (controllers.isEmpty()) Text("None. Attach any gamepad.")
@@ -354,7 +340,7 @@ private fun AppTab(runtime: GamepadRuntime) {
         },
     )
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Hint("Long press a category's name to move it.")
+        Hint("Long press a tab to move it.")
         ReorderableSections(runtime, "app", items)
     }
 }
