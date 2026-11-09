@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.core.engine
 
 import kotlin.math.abs
 import kotlin.math.acos
+import kotlin.math.asin
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -196,6 +197,82 @@ class GyroPose {
     @Synchronized
     fun angle(): Float = 2 * acos(abs(w).coerceAtMost(1f))
 
+    /**
+     * Turns as a game camera does: [yawDeg] right about the vertical, [pitchDeg] up about its own
+     * right, pitch held within ±89°, never any roll. Where it points now is read from the pose (so
+     * easing back keeps working), then the pose is made again from that heading and pitch alone.
+     */
+    @Synchronized
+    fun cameraTurn(yawDeg: Float, pitchDeg: Float) {
+        // Where the screen's back points (as a laser pointer's beam): out of the phone's back.
+        val bx = -(2 * (x * z + w * y))
+        val by = -(2 * (y * z - w * x))
+        val bz = -(1 - 2 * (x * x + y * y))
+        val heading = atan2(bx, -bz) + yawDeg * DEG_TO_RAD
+        val pitch = (asin(by.coerceIn(-1f, 1f)) + pitchDeg * DEG_TO_RAD).coerceIn(-MAX_CAMERA_PITCH, MAX_CAMERA_PITCH)
+        // Ry(-heading) · Rx(pitch)
+        val cy = cos(-heading / 2)
+        val sy = sin(-heading / 2)
+        val cx = cos(pitch / 2)
+        val sx = sin(pitch / 2)
+        w = cy * cx; x = cy * sx; y = sy * cx; z = -sy * sx
+        version++
+    }
+
+    /** The gimbal angles ([gimbalTurn]) and the pose they made: read again from the pose when anything else turned it. */
+    private val gimbal = FloatArray(3)
+    private val gimbalOf = FloatArray(4) { Float.NaN }
+
+    /**
+     * Turns as a gimbal (a game camera's order): by [a] radians about the vertical, then [b] about
+     * its own right, then [c] about where it faces, as Ry(a)·Rx(b)·Rz(c). The angles add up and
+     * [locks] (bit 0 the vertical, 1 the right, 2 the facing axis) holds those at 0, so nothing,
+     * not even the other two, ever turns a locked one; [stops] (the same bits) holds those within ±90°
+     * (the right one within ±89°, short of the poles). Over the top (beyond ±90° about the right),
+     * [a] turns the other way, so left and right stay as seen.
+     */
+    @Synchronized
+    fun gimbalTurn(a: Float, b: Float, c: Float, locks: Int, stops: Int) {
+        syncGimbal()
+        gimbal[0] += if (abs(gimbal[1]) > PI_F / 2) -a else a
+        gimbal[1] += b; gimbal[2] += c
+        for (i in 0..2) {
+            // Within half a turn either way, so easing back never unwinds whole turns.
+            if (gimbal[i] > PI_F) gimbal[i] -= 2 * PI_F else if (gimbal[i] < -PI_F) gimbal[i] += 2 * PI_F
+            if (locks and (1 shl i) != 0) gimbal[i] = 0f
+        }
+        for (i in 0..2) if (stops and (1 shl i) != 0) {
+            val max = if (i == 1) MAX_CAMERA_PITCH else PI_F / 2
+            gimbal[i] = gimbal[i].coerceIn(-max, max)
+        }
+        // Ry(a) · Rx(b), then · Rz(c)
+        val cy = cos(gimbal[0] / 2); val sy = sin(gimbal[0] / 2)
+        val cx = cos(gimbal[1] / 2); val sx = sin(gimbal[1] / 2)
+        val cz = cos(gimbal[2] / 2); val sz = sin(gimbal[2] / 2)
+        val pw = cy * cx; val px = cy * sx; val py = sy * cx; val pz = -sy * sx
+        w = pw * cz - pz * sz
+        x = px * cz + py * sz
+        y = py * cz - px * sz
+        z = pw * sz + pz * cz
+        gimbalOf[0] = w; gimbalOf[1] = x; gimbalOf[2] = y; gimbalOf[3] = z
+        version++
+    }
+
+    /** The gimbal angles ([gimbalTurn]: about the vertical, its right, where it faces; radians) into [out]. */
+    @Synchronized
+    fun gimbalAngles(out: FloatArray) {
+        syncGimbal()
+        gimbal.copyInto(out)
+    }
+
+    /** Reads the gimbal angles from the pose again when anything but [gimbalTurn] turned it. */
+    private fun syncGimbal() {
+        if (w == gimbalOf[0] && x == gimbalOf[1] && y == gimbalOf[2] && z == gimbalOf[3]) return
+        gimbal[0] = atan2(2 * (x * z + w * y), 1 - 2 * (x * x + y * y))
+        gimbal[1] = asin((-2 * (y * z - w * x)).coerceIn(-1f, 1f))
+        gimbal[2] = atan2(2 * (x * y + w * z), 1 - 2 * (x * x + z * z))
+    }
+
     /** Exactly straight, keeping what the sensors last said (unlike [reset]). */
     @Synchronized
     fun straighten() {
@@ -374,6 +451,10 @@ class GyroPose {
         }
 
         private const val DEG_TO_RAD = (Math.PI / 180).toFloat()
+
+        /** A camera pitches no further than this up or down (radians, 89°). */
+        const val MAX_CAMERA_PITCH = (89 * Math.PI / 180).toFloat()
+        private const val PI_F = Math.PI.toFloat()
         private const val PI = Math.PI.toFloat()
         private const val TWO_PI = (2 * Math.PI).toFloat()
 

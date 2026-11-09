@@ -63,6 +63,8 @@ public enum OverlayKind
     Horizon,
     /// <summary>A disk with clock marks that spins with the heading, a dot showing the tilt.</summary>
     Disk,
+    /// <summary>A see-through sphere seen from a fixed angle, a laser at its centre shining out of the phone's back onto its inside.</summary>
+    Laser,
 }
 
 public enum OverlayShape
@@ -84,6 +86,21 @@ public enum OverlayShape
 public sealed record OverlayColor(string Key, string Label, uint Default);
 
 /// <summary>One overlay window: what it shows, where, and how it turns.</summary>
+/// <summary>
+/// A trackball axis easing back to straight (OverlaySettings.TrackballEase): with OnRatchet while a ratchet is held
+/// (stopping when let go), else whenever the phone stops turning; starting DelayMs later; 95% of the way back in
+/// Seconds, or with BySpeed at Speed deg/s. As the phone's AxisEase.
+/// </summary>
+public sealed class AxisEase
+{
+    public bool On { get; set; }
+    public bool OnRatchet { get; set; } = true;
+    public int DelayMs { get; set; } = 300;
+    public bool BySpeed { get; set; }
+    public float Seconds { get; set; } = 2f;
+    public int Speed { get; set; } = 90;
+}
+
 public sealed class OverlaySettings
 {
     public string Id { get; set; } = NewId();
@@ -127,6 +144,8 @@ public sealed class OverlaySettings
     public bool Equator { get; set; } = true;
     public bool ScreenMark { get; set; } = true;
     public bool TopMark { get; set; } = true;
+    /// <summary>Phone and 3D shape: seen from a fixed angle (30° round, 30° above) with the world's axes, as the laser pointer is, instead of face-on.</summary>
+    public bool Axonometric { get; set; }
     /// <summary>What turns it: the phone, the game's camera, or a trackball (see <see cref="OverlayTurnsWith"/>).</summary>
     public OverlayTurnsWith TurnsWith { get; set; } = OverlayTurnsWith.Phone;
     /// <summary>
@@ -135,6 +154,52 @@ public sealed class OverlaySettings
     /// </summary>
     public bool TrackballRws { get; set; } = true;
     public float TrackballSpin { get; set; } = 1f;
+    /// <summary>
+    /// Trackball: which gyro turn rolls it about each of its axes, one byte each: about its up axis
+    /// Y (yaw, turning left and right), its right axis X (pitch), the axis along the beam Z (roll, through the screen at rest); each byte
+    /// 1 yaw (as sent), 2 pitch, 3 roll (as sent), 0 none, | 0x80 the other way, | TrackballStop stopping at ±90°, | TrackballLock locked. The default turns it
+    /// as Camera does with the default gyro mouse. As the phone's GyroDisplay.trackballAxes.
+    /// </summary>
+    public int TrackballAxes { get; set; } = TrackballAsCamera;
+
+    /// <summary>
+    /// Trackball: easing each of its axes (as <see cref="TrackballAxes"/>: up, right, through the screen) back to
+    /// straight, each with its own options. Easing any turns it as a gimbal, as a lock does. As the phone's
+    /// GyroDisplay.trackballEase.
+    /// </summary>
+    public AxisEase[] TrackballEase { get; set; } = [new(), new(), new()];
+
+    /// <summary>Trackball axis <paramref name="i"/>'s easing, made when not saved.</summary>
+    public AxisEase EaseOf(int i)
+    {
+        if (TrackballEase is not { Length: 3 })
+        {
+            var old = TrackballEase ?? [];
+            TrackballEase = [.. Enumerable.Range(0, 3).Select(k => k < old.Length && old[k] != null ? old[k] : new AxisEase())];
+        }
+        return TrackballEase[i] ??= new AxisEase();
+    }
+
+    /// <summary><see cref="TrackballAxes"/> turning it as Camera does with the default gyro mouse (roll on mouse X, pitch on mouse Y): left and right by roll (as sent), up and down by pitch, the axis through the screen locked.</summary>
+    public const int TrackballAsCamera = 3 | ((2 | TrackballStop) << 8) | (TrackballLock << 16);
+
+    /// <summary>
+    /// In a <see cref="TrackballAxes"/> byte: that axis is locked, held at 0 whatever turns the others make, as
+    /// Camera's roll is. With any axis locked it turns as a gimbal (left and right about the vertical, then up
+    /// and down about its own right, then about where it faces); with the axis through the screen locked it
+    /// stops at straight up or down (±89°). As the phone's TRACKBALL_LOCK.
+    /// </summary>
+    public const int TrackballLock = 0x40;
+
+    /// <summary>
+    /// In a <see cref="TrackballAxes"/> byte: that axis stops at ±90° from straight (up and down at ±89°, the poles);
+    /// without, it turns all the way round (up and down over the top, left and right then staying as seen). As the
+    /// phone's TRACKBALL_STOP.
+    /// </summary>
+    public const int TrackballStop = 0x20;
+
+    /// <summary><see cref="TrackballAxes"/> turning it as the phone turns: each axis by its own gyro turn.</summary>
+    public const int TrackballAsPhone = 1 | (2 << 8) | (3 << 16);
 
     // Trackball settings of earlier builds: read once by MigrateOld, never written back.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -146,6 +211,45 @@ public sealed class OverlaySettings
     /// <summary>The tilt that puts the dot on the rim, in degrees.</summary>
     public int DiskRange { get; set; } = 30;
     public bool Crosshair { get; set; } = true;
+
+    // Laser pointer.
+    /// <summary>The 15° grid on the sphere, and its three axes.</summary>
+    public bool LaserGrid { get; set; } = true;
+    /// <summary>Laser pointer: seen from the fixed axonometric angle (30° round, 30° above); off, face-on.</summary>
+    public bool LaserAxonometric { get; set; } = true;
+    /// <summary>Laser pointer: the beam stays pointing ahead and the sphere (grid, axes, paint) turns under it instead.</summary>
+    public bool LaserSphereTurns { get; set; }
+    /// <summary>Laser pointer: a rifle aiming instead of the sphere and beam; Draw mode still paints where it points.</summary>
+    public bool LaserRifle { get; set; }
+    /// <summary>
+    /// Laser pointer: a crosshair where the beam lands instead of the sphere and beam (not with LaserRifle): lying
+    /// on the sphere facing its centre, shape CrosshairShape (LaserTrace.Crosshairs), arms CrosshairSize degrees
+    /// long from a CrosshairGap degree gap, lines CrosshairThickness thick, a centre dot, a dark outline; turning
+    /// about the beam as the pose does (a trackball's roll axis as mapped). As the phone's GyroDisplay.laserCrosshair.
+    /// </summary>
+    public bool LaserCrosshair { get; set; }
+    public int CrosshairShape { get; set; } = 1;
+    public int CrosshairSize { get; set; } = 6;
+    public int CrosshairGap { get; set; } = 2;
+    public float CrosshairThickness { get; set; } = 2f;
+    public bool CrosshairDot { get; set; } = true;
+    public bool CrosshairOutline { get; set; } = true;
+    /// <summary>Laser pointer turned as a trackball: which way of it the laser faces (0 −Z into the screen, 1 +Z, 2 +X, 3 −X, 4 +Y, 5 −Y).</summary>
+    public int LaserFaces { get; set; }
+    public bool LaserAxes { get; set; } = true;
+    /// <summary>Draw mode: the beam paints the sphere's inside, <see cref="LaserBrush"/> degrees round; it fades after <see cref="LaserFadeMs"/> ms (0 = never).</summary>
+    public bool LaserDraw { get; set; }
+    public int LaserBrush { get; set; } = 4;
+    public int LaserFadeMs { get; set; }
+    /// <summary>Draw mode: a ratchet press clears the drawing.</summary>
+    public bool LaserClearOnRatchet { get; set; }
+    /// <summary>
+    /// Laser pointer Draw mode: while this output is held (LaserFire numbers, default the left mouse button), from the
+    /// phone or, with "Use PC controller for gyro ratchet", the PC's controller, it paints in the Fire colours; with
+    /// LaserFireOnly only then. As the phone's GyroDisplay.laserFire.
+    /// </summary>
+    public int LaserFire { get; set; } = GyroPhone.Host.LaserFire.Default;
+    public bool LaserFireOnly { get; set; }
 
     // The pose, made on the PC (the phone's own gyro display settings are separate).
     /// <summary>
@@ -237,6 +341,7 @@ public sealed class OverlaySettings
         OverlayKind.Phone => PhoneColors,
         OverlayKind.Horizon => HorizonColors,
         OverlayKind.Disk => DiskColors,
+        OverlayKind.Laser => LaserColors,
         _ => shape switch
         {
             null => ShapeColors,
@@ -251,6 +356,7 @@ public sealed class OverlaySettings
         OverlayKind.Phone => "Phone",
         OverlayKind.Shape => "3D shape",
         OverlayKind.Horizon => "Attitude indicator",
+        OverlayKind.Laser => "Laser pointer",
         _ => "Bubble disk",
     };
 
@@ -294,6 +400,25 @@ public sealed class OverlaySettings
         new("rim", "Rim", 0xCCFFFFFF),
         new("tape", "Heading tape", 0x66000000),
         new("text", "Heading numbers", 0xFFFFFFFF),
+    ];
+
+    private static readonly OverlayColor[] LaserColors =
+    [
+        new("sphere", "Sphere", 0x332A3446),
+        new("grid", "Grid", 0x66FFFFFF),
+        new("x", "Pitch axis (X, right)", 0xFF5ADB6E),
+        new("y", "Yaw axis (Y, up)", 0xFFFF5A5A),
+        new("z", "Roll axis (Z, along the beam)", 0xFF5AA8FF),
+        new("beam", "Beam", 0xFFFF3B3B),
+        new("dot", "Dot", 0xFFFFFFFF),
+        new("paint", "Paint ahead", 0xFFFFC94D),
+        new("paint_behind", "Paint behind", 0xFF4DA6FF),
+        new("rifle", "Rifle", 0xFF5A616C),
+        new("fire", "Fire", 0xFFFF4A3D),
+        new("fire_behind", "Fire behind", 0xFF8A1E18),
+        new("crosshair", "Crosshair", 0xFF4CFF6A),
+        new("crosshair_behind", "Crosshair behind", 0xFF2E8A43),
+        new("crosshair_outline", "Crosshair outline", 0xFF0E1116),
     ];
 
     private static readonly OverlayColor[] DiskColors =

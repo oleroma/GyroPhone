@@ -222,9 +222,9 @@ private fun allows(allowed: Set<OutputTarget>, t: OutputTarget): Boolean {
         is OutputTarget.MouseAxis -> allowed.any { it is OutputTarget.MouseAxis && it.motion == t.motion }
         is OutputTarget.Key -> allowed.any { it is OutputTarget.Key }
         OutputTarget.GyroHold -> OutputTarget.GyroPause in allowed
-        // Layer actions, (Let go), Black screen, Level displays and Nothing go where button outputs do.
+        // Layer actions, (Let go), Black screen, Level and Clear displays and Nothing go where button outputs do.
         is OutputTarget.Layer, OutputTarget.LayerBack, OutputTarget.LetGo, OutputTarget.BlackScreen,
-        OutputTarget.LevelDisplays, OutputTarget.NoOutput ->
+        OutputTarget.LevelDisplays, OutputTarget.ClearDisplays, OutputTarget.NoOutput ->
             allowed.any { it is OutputTarget.Key }
         else -> false
     }

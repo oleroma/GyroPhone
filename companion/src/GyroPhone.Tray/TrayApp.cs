@@ -617,6 +617,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             Checked = OverlayEdit,
         });
         menu.DropDownItems.Add(new ToolStripMenuItem("Level all: as held now shows face-on" + KeysSuffix(OverlayAction.LevelAll), null, (_, _) => LevelAll()));
+        if (_engine.Settings.Overlays.Any(o => o.Kind == OverlayKind.Laser))
+            menu.DropDownItems.Add(new ToolStripMenuItem("Clear laser pointers", null, (_, _) => ClearAllLasers()));
         menu.DropDownItems.Add(new ToolStripMenuItem("Overlay settings…", null, (_, _) => ShowMainWindow(MainPage.Overlays)));
     }
 
@@ -752,6 +754,18 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     {
         if (_overlayForms.TryGetValue(id, out var f)) f.Level();
         Refresh();
+    }
+
+    /// <summary>Clears laser pointer overlay <paramref name="id"/>'s paint and trail.</summary>
+    public void ClearOverlay(string id)
+    {
+        if (_overlayForms.TryGetValue(id, out var f)) f.ClearPaint();
+    }
+
+    /// <summary>Clears every laser pointer overlay's paint and trail.</summary>
+    private void ClearAllLasers()
+    {
+        foreach (var f in _overlayForms.Values.ToList()) f.ClearPaint();
     }
 
     public void LevelAll()

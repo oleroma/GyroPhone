@@ -485,6 +485,24 @@ public sealed class HostEngine
         _gate.Update(new PcPadState { Connected = connected, Held = held, Presses = _pcPresses }, _padGyro);
     }
 
+    private readonly uint[] _firePresses = new uint[PadGyroConfig.Places];
+
+    /// <summary>
+    /// A laser pointer overlay's fire output <paramref name="code"/> (LaserFire) is held: sent by the phone now, or
+    /// pressed on the PC's controller with "Use PC controller for gyro ratchet" on.
+    /// </summary>
+    public bool OutputHeld(int code)
+    {
+        if (code == 0) return false;
+        Span<float> axes = stackalloc float[6];
+        lock (_lock)
+        {
+            uint held = 0;
+            bool pc = _padGyro.Enabled && _pcPad.Read(_firePresses, out held) && _pcPad.ReadAxes(axes);
+            return LaserFire.Held(code, _pending, pc ? held : 0, pc ? axes[4] : 0f, pc ? axes[5] : 0f);
+        }
+    }
+
     /// <summary>The overlays turn with the axes on after the PC controller, and its ratchets count for "On ratchet".</summary>
     private void GateOverlay(OverlayFrame f)
     {

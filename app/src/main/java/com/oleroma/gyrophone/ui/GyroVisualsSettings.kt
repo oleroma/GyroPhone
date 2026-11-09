@@ -31,6 +31,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import com.oleroma.gyrophone.runtime.GamepadRuntime
+import com.oleroma.gyrophone.core.model.TRACKBALL_AS_CAMERA
+import com.oleroma.gyrophone.core.model.TRACKBALL_LOCK
+import com.oleroma.gyrophone.core.model.TRACKBALL_STOP
+import com.oleroma.gyrophone.core.model.AxisEase
+import com.oleroma.gyrophone.core.model.easeOf
+import com.oleroma.gyrophone.core.model.withEase
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +59,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.oleroma.gyrophone.core.engine.GyroPose
+import com.oleroma.gyrophone.core.engine.LaserTrace
 import com.oleroma.gyrophone.core.model.BallShape
 import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayColor
@@ -64,7 +71,7 @@ import kotlin.math.roundToInt
 /** Settings of the parallax edge ([GyroEdgeLayer]); [set] saves a changed [v]. The other gyro displays are placed in edit mode. */
 @Composable
 fun GyroVisualsSettings(v: TouchVisuals, set: (TouchVisuals) -> Unit) {
-    Hint("3D phone, ratchet ring, speed graph and attitude indicator: add them in edit mode, like buttons.")
+    Hint("The other gyro displays (3D phone, ratchet ring, speed graph, attitude indicator, bubble disk, 3D shape, laser pointer): add them in edit mode, like buttons.")
     SwitchRow("Parallax edge", v.gyroEdge) { set(v.copy(gyroEdge = it)) }
     if (v.gyroEdge) Indented {
         Chips(listOf("Turn" to false, "Tilt" to true), v.gyroEdgeTilt) { set(v.copy(gyroEdgeTilt = it)) }
@@ -126,6 +133,7 @@ internal fun GyroDisplaySettingsScreen(
                     SwitchRow("Ghost trail", d.ghosts) { set(d.copy(ghosts = it)) }
                     SwitchRow("Axis arrows", d.axes) { set(d.copy(axes = it)) }
                     Hint("Arrows along the phone's own right, up and screen directions.")
+                    SwitchRow("Axonometric view", d.axonometric, AXON_HINT) { set(d.copy(axonometric = it)) }
                 }
 
                 GyroDisplayKind.RATCHET_RING ->
@@ -163,6 +171,51 @@ internal fun GyroDisplaySettingsScreen(
                     if (shape == BallShape.GLOBE) SwitchRow("Equator", d.equator) { set(d.copy(equator = it)) }
                     SwitchRow("Mark where the screen faces", d.screenMark) { set(d.copy(screenMark = it)) }
                     SwitchRow("Mark at the top", d.topMark) { set(d.copy(topMark = it)) }
+                    SwitchRow("Axonometric view", d.axonometric, AXON_HINT) { set(d.copy(axonometric = it)) }
+                }
+
+                GyroDisplayKind.LASER -> {
+                    GroupTitle("Laser pointer")
+                    Hint("A see-through sphere seen from above and to the side. The laser at its centre aims along the phone's roll axis (out of its top edge, into the screen at rest) onto the inside; the tick at the dot shows which way the phone's screen faces. The beam dims while a ratchet is held.")
+                    val look = if (d.laserRifle) 1 else if (d.laserCrosshair) 2 else 0
+                    Chips(listOf("Sphere" to 0, "Rifle" to 1, "Crosshair" to 2), look) { set(d.copy(laserRifle = it == 1, laserCrosshair = it == 2)) }
+                    if (d.laserRifle) Hint("A rifle aims instead: no sphere or beam, and Draw mode still paints where it points. Best with Axonometric view (face-on you look along the barrel).")
+                    if (look == 2) Indented {
+                        Hint("A crosshair instead: no sphere or beam, just a crosshair lying on the sphere where the laser lands, facing its centre, so it squashes toward the edge. It turns about the beam as the Trackball's Roll row maps it (Lock keeps it upright, Invert turns it the other way). Draw mode still paints where it points.")
+                        Chips(LaserTrace.CROSSHAIRS.mapIndexed { i, n -> n to i }, d.crosshairShape) { set(d.copy(crosshairShape = it)) }
+                        IntSlider("Size %d°", d.crosshairSize, 2..30) { set(d.copy(crosshairSize = it)) }
+                        if (d.crosshairShape == 1 || d.crosshairShape == 3 || d.crosshairShape == 5) IntSlider("Gap %d°", d.crosshairGap, 0..10) { set(d.copy(crosshairGap = it)) }
+                        if (d.crosshairShape != 4) FloatSlider("Thickness %.1f", d.crosshairThickness, 0.5f..6f, 0.5f) { set(d.copy(crosshairThickness = it)) }
+                        if (d.crosshairShape != 4) SwitchRow("Centre dot", d.crosshairDot) { set(d.copy(crosshairDot = it)) }
+                        SwitchRow("Outline", d.crosshairOutline, "A dark edge so it shows on any background.") { set(d.copy(crosshairOutline = it)) }
+                    }
+                    if (d.turnsWith == TurnsWith.TRACKBALL) {
+                        Text("Laser faces (as a trackball)", style = MaterialTheme.typography.bodyMedium)
+                        Chips(listOf("−Z (into the screen)" to 0, "+Z" to 1, "+X" to 2, "−X" to 3, "+Y" to 4, "−Y" to 5), d.laserFaces) { set(d.copy(laserFaces = it)) }
+                    }
+                    SwitchRow("Axonometric view", d.laserAxonometric, LASER_AXON_HINT) { set(d.copy(laserAxonometric = it)) }
+                    SwitchRow("Sphere turns, beam stays ahead", d.laserSphereTurns, "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.") { set(d.copy(laserSphereTurns = it)) }
+                    if (!d.laserRifle) SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
+                    SwitchRow("Axes (yaw Y red, pitch X green, roll Z blue)", d.laserAxes) { set(d.copy(laserAxes = it)) }
+                    GroupTitle("Draw")
+                    SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim.") { set(d.copy(laserDraw = it)) }
+                    if (d.laserDraw) Indented {
+                        IntSlider("Brush %d°", d.laserBrush, 1..20) { set(d.copy(laserBrush = it)) }
+                        Chips(LASER_FADES, d.laserFadeMs) {
+                            set(d.copy(laserFadeMs = it))
+                        }
+                        SwitchRow("Clear on ratchet", d.laserClearOnRatchet, "A ratchet press clears the drawing.") { set(d.copy(laserClearOnRatchet = it)) }
+                        Text("Fire (paints in the Fire colours while GyroPhone sends it)", style = MaterialTheme.typography.bodyMedium)
+                        Text("Mouse", style = MaterialTheme.typography.bodySmall)
+                        Chips(com.oleroma.gyrophone.core.engine.LaserFire.MOUSE_CHOICES, d.laserFire) { set(d.copy(laserFire = it)) }
+                        Text("Controller", style = MaterialTheme.typography.bodySmall)
+                        Chips(com.oleroma.gyrophone.core.engine.LaserFire.PAD_CHOICES, d.laserFire) { set(d.copy(laserFire = it)) }
+                        Text("Keyboard", style = MaterialTheme.typography.bodySmall)
+                        Chips(com.oleroma.gyrophone.core.engine.LaserFire.KEY_CHOICES, d.laserFire) { set(d.copy(laserFire = it)) }
+                        SwitchRow("Paint only while firing", d.laserFireOnly, "Aiming leaves no trail; only shots draw.") { set(d.copy(laserFireOnly = it)) }
+                        Hint("Strokes glow, older ones darker. Their colour goes from Paint ahead (straight ahead) to Paint behind (turned all the way round), so a turn past 90° still reads. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every laser pointer at once.")
+                    }
+                    TextButton(onClick = { runtime.clearLaser(control.id) }) { Text("Clear") }
                 }
             }
             PercentSlider("Opacity", d.opacity, 0.1f..1f) { set(d.copy(opacity = it)) }
@@ -186,8 +239,8 @@ internal fun GyroDisplaySettingsScreen(
             Hint(
                 when (d.turnsWith) {
                     TurnsWith.PHONE -> "How you hold the phone."
-                    TurnsWith.CAMERA -> "Where the game's camera points: it turns with the gyro and every other camera move (touchpad, buttons, controllers, keys, glides). A ratchet stops it, as it stops the camera."
-                    TurnsWith.TRACKBALL -> "Like a ball under your hand: still against the world while the gyro aims, so it rolls the other way; every other camera move rolls it too. A ratchet stops it, and it turns with the phone."
+                    TurnsWith.CAMERA -> "Where the game's camera points: it turns left and right and up and down as the camera does, never rolling, with the gyro and every other camera move (touchpad, buttons, controllers, keys, glides). A ratchet stops it, as it stops the camera."
+                    TurnsWith.TRACKBALL -> "Like a ball rolled by your moves: each of its axes turns by the gyro turn picked below (as Camera, by default), and every other camera move rolls it too. A ratchet stops it."
                 },
             )
             if (d.followsCamera) Indented {
@@ -202,8 +255,9 @@ internal fun GyroDisplaySettingsScreen(
                     Hint("Every movement turns it Spin times as far as the phone turn that sends it.")
                 }
             }
+            if (d.turnsWith == TurnsWith.TRACKBALL) Indented { TrackballAxesSettings(d) { set(it) } }
             if (d.turnsWith == TurnsWith.PHONE) PoseSettings(d) { set(it) }
-            // A trackball never eases back: every roll is a camera move.
+            // A trackball eases back per axis (in its axis rows), not here.
             if (d.turnsWith == TurnsWith.CAMERA) {
                 GroupTitle("Pose")
                 EaseSettings(d) { set(it) }
@@ -263,7 +317,42 @@ private fun PoseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
     EaseSettings(d, set)
 }
 
-/** Ease back to straight and its options (Phone and Camera; a trackball never eases back). */
+/** A trackball's axes: for each, locked or the gyro turn that rolls it about that axis, and which way. */
+@Composable
+private fun TrackballAxesSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
+    // Its bytes: 0 about up Y (yaw), 1 about right X (pitch), 2 along the beam Z (roll).
+    for ((i, name) in listOf(0 to "Yaw", 1 to "Pitch", 2 to "Roll")) {
+        val code = d.trackballAxes shr (8 * i) and 0xFF
+        fun put(c: Int) = set(d.copy(trackballAxes = (d.trackballAxes and (0xFF shl (8 * i)).inv()) or (c shl (8 * i))))
+        val locked = code and TRACKBALL_LOCK != 0
+        SwitchRow("Lock $name axis", locked) { put(if (it) code or TRACKBALL_LOCK else code and TRACKBALL_LOCK.inv()) }
+        if (locked) continue
+        Text("$name axis turns with", style = MaterialTheme.typography.bodyMedium)
+        Chips(listOf("Yaw" to 3, "Pitch" to 2, "Roll" to 1, "None" to 0), code and 0x1F) { put(it or (code and 0x1F.inv())) }
+        if (code and 0x1F != 0) SwitchRow("Invert $name axis", code and 0x80 != 0) { put((code and 0x80.inv()) or (if (it) 0x80 else 0)) }
+        SwitchRow("Stop $name at ±90°", code and TRACKBALL_STOP != 0, if (i == 1) "Off: it goes over the top, left and right staying as seen." else null) {
+            put(if (it) code or TRACKBALL_STOP else code and TRACKBALL_STOP.inv())
+        }
+        AxisEaseSettings(name, d.easeOf(i)) { set(d.withEase(i, it)) }
+    }
+    Hint("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked, stopped or easing back it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces. Stop at ±90° keeps an axis from turning past sideways (Pitch: straight up or down).")
+    if (d.trackballAxes != TRACKBALL_AS_CAMERA) TextButton(onClick = { set(d.copy(trackballAxes = TRACKBALL_AS_CAMERA)) }) { Text("As the camera") }
+}
+
+/** A trackball axis [name] easing back to straight, and its own options. */
+@Composable
+private fun AxisEaseSettings(name: String, e: AxisEase, set: (AxisEase) -> Unit) {
+    SwitchRow("Ease $name axis back", e.on) { set(e.copy(on = it)) }
+    if (e.on) Indented {
+        Chips(listOf("On ratchet" to true, "When the phone stops" to false), e.onRatchet) { set(e.copy(onRatchet = it)) }
+        IntSlider("Delay %d ms", e.delayMs, 0..3000, step = 50) { set(e.copy(delayMs = it)) }
+        Chips(listOf("By time" to false, "By speed" to true), e.bySpeed) { set(e.copy(bySpeed = it)) }
+        if (e.bySpeed) IntSlider("Speed %d °/s", e.speed, 10..720, step = 10) { set(e.copy(speed = it)) }
+        else FloatSlider("Back in %.1f s", e.seconds, 0.1f..5f, 0.1f) { set(e.copy(seconds = it)) }
+    }
+}
+
+/** Ease back to straight and its options (Phone and Camera; a trackball eases each axis on its own). */
 @Composable
 private fun EaseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
     SwitchRow("Ease back to straight", d.ease) { set(d.copy(ease = it)) }
@@ -299,8 +388,19 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     GyroDisplayColor.BALL_EQUATOR -> d.ballShape == BallShape.GLOBE && d.equator
     GyroDisplayColor.BALL_MARK -> d.screenMark
     GyroDisplayColor.BALL_POLE -> d.topMark
+    GyroDisplayColor.LASER_GRID -> d.laserGrid && !d.laserRifle
+    GyroDisplayColor.LASER_X, GyroDisplayColor.LASER_Y, GyroDisplayColor.LASER_Z -> d.laserAxes
+    GyroDisplayColor.LASER_PAINT, GyroDisplayColor.LASER_PAINT_BEHIND -> d.laserDraw
+    GyroDisplayColor.LASER_RIFLE -> d.laserRifle
+    GyroDisplayColor.LASER_SPHERE, GyroDisplayColor.LASER_BEAM, GyroDisplayColor.LASER_DOT -> !d.laserRifle && !d.laserCrosshair
+    GyroDisplayColor.LASER_CROSSHAIR, GyroDisplayColor.LASER_CROSSHAIR_BEHIND -> d.laserCrosshair && !d.laserRifle
+    GyroDisplayColor.LASER_CROSSHAIR_OUTLINE -> d.laserCrosshair && !d.laserRifle && d.crosshairOutline
     else -> true
 }
+
+private val LASER_FADES = listOf("Never fades" to 0, "0.25 s" to 250, "0.5 s" to 500, "1 s" to 1000, "2 s" to 2000, "5 s" to 5000, "10 s" to 10_000, "30 s" to 30_000, "60 s" to 60_000)
+private const val LASER_AXON_HINT = "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot."
+private const val AXON_HINT = "Seen from 30° round and 30° above with the world's axes (yaw toward you red, pitch right green, roll up blue, as the gimbal's rings), as the laser pointer is, instead of face-on."
 
 /** A colour on a checkerboard, so its transparency shows. */
 @Composable
