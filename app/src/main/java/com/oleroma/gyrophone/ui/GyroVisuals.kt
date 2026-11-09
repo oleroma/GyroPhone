@@ -389,7 +389,7 @@ private class VisState {
                 lt.fedVersion = v
                 lt.add(beam[0], beam[1], beam[2], now, d.laserDraw, held, d.laserClearOnRatchet, feed?.firing == true, d.laserFireOnly, d.laserSmoothColours, d.laserLineSmoothing)
             }
-            lt.expire(now, fadeMs)
+            lt.expire(now, fadeMs, d.laserLength.toFloat())
         }
         val rifle = d.laserRifle
         val crosshair = d.laserCrosshair && !rifle
@@ -640,7 +640,7 @@ private class VisState {
             val s = lt?.strokes ?: return
             val n = s.count
             lines(
-                s, front, { i, t -> LaserTrace.strokeLife(i, n, t, now, fadeMs) }, brushPx, true,
+                s, front, { i, t -> LaserTrace.strokeLife(i, n, t, now, fadeMs, s.behindNewest(i), d.laserLength.toFloat()) }, brushPx, true,
                 col(GyroDisplayColor.LASER_FIRE), col(GyroDisplayColor.LASER_FIRE_BEHIND),
             )
         }

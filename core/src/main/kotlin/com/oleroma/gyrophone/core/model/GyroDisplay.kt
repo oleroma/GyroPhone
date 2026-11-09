@@ -177,6 +177,8 @@ data class GyroDisplay(
     val laserDraw: Boolean = false,
     val laserBrush: Int = 4,
     val laserFadeMs: Int = 0,
+    /** LASER Draw mode: keeps only the newest [laserLength] degrees of painted line (0 = all); with fading it also fades along that length. */
+    val laserLength: Int = 0,
     /** LASER Draw mode: a ratchet press clears the drawing. */
     val laserClearOnRatchet: Boolean = false,
     /**

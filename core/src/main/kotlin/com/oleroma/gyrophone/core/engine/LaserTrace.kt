@@ -22,6 +22,8 @@ class LaserTrace {
         private val t = LongArray(capacity)
         private val gap = BooleanArray(capacity)
         private val fire = BooleanArray(capacity)
+        /** Degrees painted up to each point, counted along the lines (a new line adds none). */
+        private val along = DoubleArray(capacity)
         private var head = 0
 
         /** Points kept now. */
@@ -30,12 +32,38 @@ class LaserTrace {
 
         fun add(px: Float, py: Float, pz: Float, ms: Long, startsLine: Boolean, firing: Boolean = false) {
             val i = (head + count) % capacity
+            var a = 0.0
+            if (count > 0) {
+                val l = (head + count - 1) % capacity
+                a = along[l]
+                if (!startsLine) {
+                    val dot = (x[l] * px + y[l] * py + z[l] * pz).toDouble().coerceIn(-1.0, 1.0)
+                    a += Math.toDegrees(kotlin.math.acos(dot))
+                }
+            }
             if (count == capacity) {
                 head = (head + 1) % capacity
                 gap[head] = true // the oldest left has no line from before it
             } else count++
-            x[i] = px; y[i] = py; z[i] = pz; t[i] = ms; gap[i] = startsLine; fire[i] = firing
+            x[i] = px; y[i] = py; z[i] = pz; t[i] = ms; gap[i] = startsLine; fire[i] = firing; along[i] = a
         }
+
+        /** Drops the oldest points more than [deg] degrees of painted line behind the newest. */
+        fun cut(deg: Float) {
+            if (count == 0) return
+            val newest = along[(head + count - 1) % capacity]
+            var dropped = false
+            while (count > 1 && newest - along[head] > deg) {
+                head = (head + 1) % capacity
+                count--
+                dropped = true
+            }
+            if (dropped) gap[head] = true
+        }
+
+        /** Degrees of painted line from point [i] to the newest. */
+        fun behindNewest(i: Int): Float =
+            if (count == 0) 0f else (along[(head + count - 1) % capacity] - along[(head + i) % capacity]).toFloat()
 
         /** Drops points older than [ms] at [nowMs]. */
         fun expire(nowMs: Long, ms: Int) {
@@ -196,9 +224,10 @@ class LaserTrace {
         beamX = x; beamY = y; beamZ = z; beamMs = nowMs
     }
 
-    /** With [fadeMs] > 0, drops strokes older than it. */
-    fun expire(nowMs: Long, fadeMs: Int) {
+    /** With [fadeMs] > 0, drops strokes older than it; with [lengthDeg] > 0, keeps only that many degrees of line. */
+    fun expire(nowMs: Long, fadeMs: Int, lengthDeg: Float = 0f) {
         if (fadeMs > 0) strokes.expire(nowMs, fadeMs)
+        if (lengthDeg > 0f) strokes.cut(lengthDeg)
     }
 
     /** Some stroke is still fading (draw again while it fades). */
@@ -295,10 +324,15 @@ class LaserTrace {
         /** How far round from straight ahead (into the screen) shown-frame direction z is: 0 ahead .. 1 straight behind. */
         fun behind(z: Float): Float = ((1f + z) / 2f).coerceIn(0f, 1f)
 
-        /** How bright stroke point [i] of [count] made at [t] is at [nowMs]: 1 new .. 0 gone ([fadeMs]), or by its place without fading. */
-        fun strokeLife(i: Int, count: Int, t: Long, nowMs: Long, fadeMs: Int): Float =
-            if (fadeMs > 0) (1f - (nowMs - t) / fadeMs.toFloat()).coerceIn(0f, 1f)
-            else if (count <= 1) 1f else (i / (count - 1f))
+        /**
+         * How bright stroke point [i] of [count] made at [t] is at [nowMs]: 1 new .. 0 gone ([fadeMs]), or by its place without fading.
+         * With fading and a [lengthDeg] limit it also fades along the line, to 0 at the cut, [behindDeg] being how far it is behind the newest.
+         */
+        fun strokeLife(i: Int, count: Int, t: Long, nowMs: Long, fadeMs: Int, behindDeg: Float = 0f, lengthDeg: Float = 0f): Float =
+            if (fadeMs > 0) {
+                val byTime = (1f - (nowMs - t) / fadeMs.toFloat()).coerceIn(0f, 1f)
+                if (lengthDeg > 0f) minOf(byTime, (1f - behindDeg / lengthDeg).coerceIn(0f, 1f)) else byTime
+            } else if (count <= 1) 1f else (i / (count - 1f))
 
         /** The unit direction at latitude [lat], longitude [lon] (0 straight ahead, into the screen) into [out] at [at]. */
         fun dir(lat: Float, lon: Float, out: FloatArray, at: Int = 0) {

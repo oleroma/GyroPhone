@@ -254,6 +254,13 @@ internal fun GyroDisplaySettingsScreen(
                             sqrt(d.laserFadeMs.coerceIn(0, LASER_FADE_MAX_MS) / LASER_FADE_MAX_MS.toFloat()), 0f..1f,
                             { p -> sqrt(fadeMs(p) / LASER_FADE_MAX_MS.toFloat()) },
                         ) { set(d.copy(laserFadeMs = fadeMs(it))) }
+                        // Length 0 (all) to 720°, finer toward the short ones: the slider's square, in 5° steps.
+                        SavedSlider(
+                            { p -> lengthDeg(p).let { if (it == 0) "Length: all" else "Length $it°" } },
+                            sqrt(d.laserLength.coerceIn(0, LASER_LENGTH_MAX) / LASER_LENGTH_MAX.toFloat()), 0f..1f,
+                            { p -> sqrt(lengthDeg(p) / LASER_LENGTH_MAX.toFloat()) },
+                        ) { set(d.copy(laserLength = lengthDeg(it))) }
+                        Hint("How much line is kept: past that length the oldest end is cut away as you paint. With Fades after set, the line also fades out along that length.")
                         Text("Strokes", style = MaterialTheme.typography.bodyMedium)
                         SwitchRow("3D paint", d.laserPaint3d, "The paint lies on the round sphere: thinner where the surface turns away toward the rim, and lit by the sphere's light from the upper left.") { set(d.copy(laserPaint3d = it)) }
                         if (d.laserPaint3d) PercentSlider("Lighting", d.laserLighting, 0f..1f) { set(d.copy(laserLighting = it)) }
@@ -485,6 +492,10 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
 
 /** Draw mode's longest fade. */
 private const val LASER_FADE_MAX_MS = 60_000
+private const val LASER_LENGTH_MAX = 720
+
+/** The Length slider at [p] (0..1, its square) in degrees, to 5°; 0 keeps it all. */
+private fun lengthDeg(p: Float): Int = ((p * p * LASER_LENGTH_MAX) / 5f).roundToInt() * 5
 
 /** The Fades after slider at [p] (0..1, its square) in ms, to 50 ms; 0 never fades. */
 private fun fadeMs(p: Float): Int = ((p * p * LASER_FADE_MAX_MS) / 50f).roundToInt() * 50
