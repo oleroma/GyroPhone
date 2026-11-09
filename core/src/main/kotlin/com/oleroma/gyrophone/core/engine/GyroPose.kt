@@ -399,6 +399,15 @@ class GyroPose {
     }
 
     /** Turns by the rotation vector ([ax], [ay], [az], radians) about the phone's own axes; false when it is zero. */
+    /**
+     * Turns about its own axes (as it now points) by the rotation vector ([ax] right, [ay] up, [az]
+     * where it faces; radians): a trackball turning about its own axes.
+     */
+    @Synchronized
+    fun turnOwn(ax: Float, ay: Float, az: Float) {
+        if (turn(ax, ay, az)) version++
+    }
+
     private fun turn(ax: Float, ay: Float, az: Float): Boolean {
         val angle = sqrt(ax * ax + ay * ay + az * az)
         if (angle == 0f) return false

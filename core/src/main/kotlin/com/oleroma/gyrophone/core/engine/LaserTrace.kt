@@ -379,6 +379,33 @@ class LaserTrace {
             out[0] = -m[2]; out[1] = -m[5]; out[2] = -m[8]
         }
 
+        /** The gimbal rings' radii (the sphere's is 1): yaw outside, then pitch, then roll. */
+        val GIMBAL_RADII = floatArrayOf(0.9f, 0.8f, 0.7f)
+
+        /**
+         * Gimbal ring [i] (0 yaw, 1 pitch, 2 roll) for the laser's pose [m] (row-major) as points (x, y, z…): one
+         * rigid set turning with the laser's axes, each round its own axis (yaw round its up Y, pitch round its
+         * right X, roll round the beam Z), so each ring is the path the other axes sweep turning about it.
+         */
+        fun gimbalRing(i: Int, m: FloatArray, steps: Int = 64): FloatArray {
+            val rho = GIMBAL_RADII[i]
+            val out = FloatArray((steps + 1) * 3)
+            for (j in 0..steps) {
+                val t = j * 2f * Math.PI.toFloat() / steps
+                val p = rho * cos(t)
+                val q = rho * sin(t)
+                // Round its axis: yaw XZ (round Y), pitch YZ (round X), roll XY (round Z).
+                val x: Float; val y: Float; val z: Float
+                when (i) {
+                    0 -> { x = p; y = 0f; z = q }
+                    1 -> { x = 0f; y = p; z = q }
+                    else -> { x = p; y = q; z = 0f }
+                }
+                for (k in 0..2) out[j * 3 + k] = m[k * 3] * x + m[k * 3 + 1] * y + m[k * 3 + 2] * z
+            }
+            return out
+        }
+
         /** The crosshair shapes ([com.oleroma.gyrophone.core.model.GyroDisplay.crosshairShape]). */
         val CROSSHAIRS = listOf("Cross", "Cross with gap", "Circle", "Circle and cross", "Dot", "T")
 

@@ -247,4 +247,27 @@ class CameraTurnTest {
         assertTrue(F.held(F.RT, com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(rt = 900))))
         assertFalse(F.held(F.LT, com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(rt = 900))))
     }
+
+    /** Ry(a)·Rx(b)·Rz(c), row-major. */
+    private fun gimbal(a: Float, b: Float, c: Float): FloatArray {
+        fun mul(x: FloatArray, y: FloatArray) = FloatArray(9) { k -> val i = k / 3; val j = k % 3; x[i * 3] * y[j] + x[i * 3 + 1] * y[3 + j] + x[i * 3 + 2] * y[6 + j] }
+        val ry = floatArrayOf(kotlin.math.cos(a), 0f, kotlin.math.sin(a), 0f, 1f, 0f, -kotlin.math.sin(a), 0f, kotlin.math.cos(a))
+        val rx = floatArrayOf(1f, 0f, 0f, 0f, kotlin.math.cos(b), -kotlin.math.sin(b), 0f, kotlin.math.sin(b), kotlin.math.cos(b))
+        val rz = floatArrayOf(kotlin.math.cos(c), -kotlin.math.sin(c), 0f, kotlin.math.sin(c), kotlin.math.cos(c), 0f, 0f, 0f, 1f)
+        return mul(mul(ry, rx), rz)
+    }
+
+    @Test fun gimbalRingsTurnWithTheLasersAxes() {
+        val m = gimbal(0.7f, 0.4f, 0.3f)
+        for (i in 0..2) {
+            val rho = LaserTrace.GIMBAL_RADII[i]
+            val pts = LaserTrace.gimbalRing(i, m, 64)
+            // Its axis: the laser's Y for yaw, X for pitch, Z for roll (columns of its pose).
+            val c = intArrayOf(1, 0, 2)[i]
+            for (j in pts.indices step 3) {
+                assertEquals(rho, kotlin.math.sqrt(pts[j] * pts[j] + pts[j + 1] * pts[j + 1] + pts[j + 2] * pts[j + 2]), 1e-4f)
+                assertEquals(0f, pts[j] * m[c] + pts[j + 1] * m[3 + c] + pts[j + 2] * m[6 + c], 1e-4f)
+            }
+        }
+    }
 }

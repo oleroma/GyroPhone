@@ -204,19 +204,42 @@ public sealed class OverlayPose
             if ((f.Axes & 2) != 0) pitch += f.TurnPitch * gp;
             if ((f.Axes & 4) != 0) roll += f.TurnRoll * gr;
         }
-        // About each of its fixed axes by the turn TrackballAxes picks for it, as the phone turns
-        // (the opposite of holding still against the world).
+        // None (or a lock saved before None meant it) holds an axis: no gyro turn drives it.
         int m = s.TrackballAxes;
-        int locks = Bits(m, OverlaySettings.TrackballLock), stops = Bits(m, OverlaySettings.TrackballStop);
-        if (locks == 0 && stops == 0 && !AnyEase(s))
+        int locks = OverlaySettings.TrackballLocks(m), stops = Bits(m, OverlaySettings.TrackballStop);
+        long now2 = System.Diagnostics.Stopwatch.GetTimestamp();
+        for (int i = 0; i < 3; i++)
         {
-            CounterRotate(-About(m, 0, yaw, pitch, roll), -About(m, 1, yaw, pitch, roll), -About(m, 2, yaw, pitch, roll));
+            _turn[i] = (locks & (1 << i)) != 0 ? 0f : About(m, i, yaw, pitch, roll) * DegToRad;
+            if (MathF.Abs(_turn[i]) > ActiveRad) _activeAt[i] = now2;
+        }
+        if (s.TrackballOwnAxes)
+        {
+            // About its own axes as it now points: up and down, left and right always square to where it aims (no poles).
+            Turn(_turn[1], -_turn[0], -_turn[2]);
             return;
         }
-        // A locked or easing axis: as a game camera turns (a gimbal), so each axis has its own angle;
-        // with the facing axis locked it stops at straight up or down, as Camera does.
-        GimbalTurn(-About(m, 0, yaw, pitch, roll) * DegToRad, About(m, 1, yaw, pitch, roll) * DegToRad,
-            -About(m, 2, yaw, pitch, roll) * DegToRad, locks, stops);
+        // About the sphere's axes, as a game camera turns (a gimbal), so each axis has its own angle.
+        GimbalTurn(-_turn[0], _turn[1], -_turn[2], locks, stops);
+    }
+
+    private readonly float[] _turn = new float[3];
+
+    /// <summary>When each trackball axis (yaw, pitch, roll) last turned by the gyro (Stopwatch ticks).</summary>
+    private readonly long[] _activeAt = [long.MinValue / 2, long.MinValue / 2, long.MinValue / 2];
+
+    /// <summary>A trackball axis turned more than this in one frame lights up (<see cref="Active"/>), for ActiveS.</summary>
+    private const float ActiveRad = 0.002f;
+    private const float ActiveS = 0.15f;
+
+    /// <summary>The trackball axes (bit 0 yaw, 1 pitch, 2 roll) the gyro turned in the last 150 ms, to light them up. As the phone's trackballActive.</summary>
+    public int Active()
+    {
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        int bits = 0;
+        for (int i = 0; i < 3; i++)
+            if (now - _activeAt[i] < (long)(ActiveS * System.Diagnostics.Stopwatch.Frequency)) bits |= 1 << i;
+        return bits;
     }
 
     /// <summary>Bits 0, 1, 2: which trackball axes (up, right, through the screen) <paramref name="m"/> has <paramref name="flag"/> on.</summary>
@@ -296,7 +319,12 @@ public sealed class OverlayPose
             any = true;
         }
         int m = s.TrackballAxes;
-        if (any) GimbalTurn(_easeStep[0], _easeStep[1], _easeStep[2], Bits(m, OverlaySettings.TrackballLock), Bits(m, OverlaySettings.TrackballStop));
+        // About its own axes a held one can still have turned (a loop's twist): ease it too, held by nothing.
+        if (any)
+        {
+            if (s.TrackballOwnAxes) GimbalTurn(_easeStep[0], _easeStep[1], _easeStep[2], 0, 0);
+            else GimbalTurn(_easeStep[0], _easeStep[1], _easeStep[2], OverlaySettings.TrackballLocks(m), Bits(m, OverlaySettings.TrackballStop));
+        }
     }
 
     /// <summary>The gimbal angles (GimbalTurn) and the pose they made: read again from the pose when anything else turned it.</summary>
@@ -373,22 +401,6 @@ public sealed class OverlayPose
         float pitch = Math.Clamp(MathF.Asin(Math.Clamp(by, -1f, 1f)) + pitchDeg * DegToRad, -max, max);
         float cy = MathF.Cos(-heading / 2), sy = MathF.Sin(-heading / 2), cx = MathF.Cos(pitch / 2), sx = MathF.Sin(pitch / 2);
         _w = cy * cx; _x = cy * sx; _y = sy * cx; _z = -sy * sx;
-    }
-
-    /// <summary>The world as the phone sees it while it turns by these degrees: the opposite turn, about the view's axes (q = b * q).</summary>
-    private void CounterRotate(float yaw, float pitch, float roll)
-    {
-        float ax = -pitch * DegToRad, ay = yaw * DegToRad, az = roll * DegToRad;
-        float angle = MathF.Sqrt(ax * ax + ay * ay + az * az);
-        if (angle == 0f) return;
-        float k = MathF.Sin(angle / 2) / angle;
-        float bw = MathF.Cos(angle / 2), bx = ax * k, by = ay * k, bz = az * k;
-        float nw = bw * _w - bx * _x - by * _y - bz * _z;
-        float nx = bw * _x + bx * _w + by * _z - bz * _y;
-        float ny = bw * _y - bx * _z + by * _w + bz * _x;
-        float nz = bw * _z + bx * _y - by * _x + bz * _w;
-        _w = nw; _x = nx; _y = ny; _z = nz;
-        Normalize();
     }
 
     private void SetUp(float ax, float ay, float az, float g)

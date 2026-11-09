@@ -48,8 +48,8 @@ internal sealed class OverlaysPage : Page
 
     // Look
     private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook;
-    private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserDraw, _laserClearOnRatchet;
-    private readonly Seg<int> _laserFade;
+    private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserGimbal, _laserDraw, _laserClearOnRatchet;
+    private readonly SliderRow _laserFade;
     private readonly Seg<int> _laserShape;
     private readonly StackPanel _chOptions;
     private readonly Seg<int> _chShape;
@@ -79,7 +79,7 @@ internal sealed class OverlaysPage : Page
     private readonly StackPanel _trackballAxes;
     private readonly Seg<int>[] _tbFrom = new Seg<int>[3];
     private readonly CheckBox[] _tbInvert = new CheckBox[3];
-    private readonly CheckBox[] _tbLock = new CheckBox[3];
+    private readonly Seg<bool> _tbOwnAxes;
     private readonly CheckBox[] _tbStop = new CheckBox[3];
     private readonly List<Seg<int>> _fireSegs = [];
     private readonly CheckBox _laserFireOnly;
@@ -333,19 +333,20 @@ internal sealed class OverlaysPage : Page
         lb.Children.Add(_laserAxon);
         _laserSphereTurns = Parts.Toggle("Sphere turns, beam stays ahead", () => Change(o => o.LaserSphereTurns = !o.LaserSphereTurns), "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.");
         lb.Children.Add(_laserSphereTurns);
-        _laserAxes = Parts.Toggle("Axes (yaw Y red, pitch X green, roll Z blue)", () => Change(o => o.LaserAxes = !o.LaserAxes));
+        _laserAxes = Parts.Toggle("Axes (yaw Y red, pitch X green, roll Z blue)", () => Change(o => o.LaserAxes = !o.LaserAxes), "They turn with the laser, R along its beam.");
+        _laserGimbal = Parts.Toggle("Gimbal rings", () => Change(o => o.LaserGimbal = !o.LaserGimbal), "Yaw (red, outside), pitch (green) and roll (blue) rings, each around its own axis, turning with the laser's axes as one set. They light up while that axis turns; a None axis's ring is faint and dashed.");
         lb.Children.Add(_laserGrid);
         lb.Children.Add(_laserAxes);
+        lb.Children.Add(_laserGimbal);
         lb.Children.Add(Parts.Divider());
         _laserDraw = Parts.Toggle("Draw mode", () => Change(o => o.LaserDraw = !o.LaserDraw), "The beam paints the inside of the sphere as you aim.");
         lb.Children.Add(_laserDraw);
         _laserDrawOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
         _laserBrush = new SliderRow("Brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserBrush = (int)v));
         _laserDrawOptions.Children.Add(_laserBrush.View);
-        _laserDrawOptions.Children.Add(Parts.Text("Fades after"));
-        _laserFade = new Seg<int>(f => Change(o => o.LaserFadeMs = f), false,
-            ("Never", 0), ("0.25 s", 250), ("0.5 s", 500), ("1 s", 1000), ("2 s", 2000), ("5 s", 5000), ("10 s", 10_000), ("30 s", 30_000), ("60 s", 60_000));
-        _laserFade.View.Margin = new Thickness(0, 6, 0, 2);
+        // 0 never fades; squared so the short times get most of the slider. 50 ms steps, up to 60 s.
+        _laserFade = new SliderRow("Fades after", 0, 1, 0.005,
+            v => FadeMs(v) == 0 ? "never" : $"{FadeMs(v) / 1000.0:0.00} s", v => Change(o => o.LaserFadeMs = FadeMs(v)));
         _laserDrawOptions.Children.Add(_laserFade.View);
         _laserClearOnRatchet = Parts.Toggle("Clear on ratchet", () => Change(o => o.LaserClearOnRatchet = !o.LaserClearOnRatchet), "A ratchet press clears the drawing.");
         _laserDrawOptions.Children.Add(_laserClearOnRatchet);
@@ -391,15 +392,23 @@ internal sealed class OverlaysPage : Page
         // A trackball's axes: for each, the gyro turn that rolls it about that axis, and which way.
         // TrackballAxes bytes: 0 about up Y (yaw), 1 about right X (pitch), 2 along the beam Z (roll).
         _trackballAxes = new StackPanel { Margin = new Thickness(20, 4, 0, 4) };
+        _trackballAxes.Children.Add(Parts.Text("Turns about"));
+        _tbOwnAxes = new Seg<bool>(own => Change(o =>
+        {
+            o.TrackballOwnAxes = own;
+            // About its own axes the loops of yaw and pitch leave a roll; easing roll back levels it.
+            if (own && !o.EaseOf(2).On) { o.EaseOf(2).On = true; o.EaseOf(2).OnRatchet = false; }
+        }), false, ("The sphere's axes", false), ("Its own axes", true));
+        _tbOwnAxes.View.Margin = new Thickness(0, 4, 0, 6);
+        _trackballAxes.Children.Add(_tbOwnAxes.View);
         foreach (var (i, name) in new[] { (0, "Yaw"), (1, "Pitch"), (2, "Roll") })
         {
             int shift = 8 * i;
             void Put(OverlaySettings o, int c) => o.TrackballAxes = (o.TrackballAxes & ~(0xFF << shift)) | (c << shift);
-            _tbLock[i] = Parts.Toggle($"Lock {name} axis", () => Change(o => Put(o, ((o.TrackballAxes >> shift) & 0xFF) ^ OverlaySettings.TrackballLock)));
-            _trackballAxes.Children.Add(_tbLock[i]);
             _tbFromTitle[i] = Parts.Text($"{name} axis turns with");
             _trackballAxes.Children.Add(_tbFromTitle[i]);
-            _tbFrom[i] = new Seg<int>(a => Change(o => Put(o, a | ((o.TrackballAxes >> shift) & ~0x1F & 0xFF))), false,
+            // None locks the axis: it never turns. Picking any chip clears an old Lock flag.
+            _tbFrom[i] = new Seg<int>(a => Change(o => Put(o, a | ((o.TrackballAxes >> shift) & ~0x1F & ~OverlaySettings.TrackballLock & 0xFF))), false,
                 ("Yaw", 3), ("Pitch", 2), ("Roll", 1), ("None", 0));
             _tbFrom[i].View.Margin = new Thickness(0, 4, 0, 2);
             _trackballAxes.Children.Add(_tbFrom[i].View);
@@ -427,8 +436,8 @@ internal sealed class OverlaysPage : Page
             _tbEaseOptions[i] = opts;
             _trackballAxes.Children.Add(opts);
         }
-        _trackballAxes.Children.Add(Parts.Text("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked, stopped or easing back it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces. Stop at ±90° keeps an axis from turning past sideways (Pitch: straight up or down).", "Hint"));
-        _tbAsCamera = Parts.Button("As the camera", () => Change(o => o.TrackballAxes = OverlaySettings.TrackballAsCamera));
+        _trackballAxes.Children.Add(Parts.Text("The sphere's axes: it turns as a game camera, left and right about the sphere's vertical, up and down about its own right, then about where it faces. Its own axes: yaw about its own up, pitch about its own right, so the crosshair moves at right angles as it sees it. None never turns, whatever the others do, as Camera never rolls; it shows grey and dashed with a padlock. Stop at ±90° keeps an axis from turning past sideways (Pitch: straight up or down).", "Hint"));
+        _tbAsCamera = Parts.Button("As the camera", () => Change(o => { o.TrackballAxes = OverlaySettings.TrackballAsCamera; o.TrackballOwnAxes = false; }));
         _trackballAxes.Children.Add(_tbAsCamera);
         tbb.Children.Add(_trackballAxes);
         _turnTab.Children.Add(tb);
@@ -555,6 +564,11 @@ internal sealed class OverlaysPage : Page
 
     private string Keys(OverlayAction a) => _app.Shortcuts.Get(a) is { Length: > 0 } k ? $" ({k})" : "";
 
+    private const int LaserFadeMaxMs = 60_000;
+
+    /// <summary>The draw fade slider's place (0..1) as a time: squared, in 50 ms steps; 0 never fades.</summary>
+    private static int FadeMs(double p) => (int)Math.Round(p * p * LaserFadeMaxMs / 50) * 50;
+
     private static string BackgroundName(OverlayBackground b) => b switch
     {
         OverlayBackground.Green => "Green",
@@ -634,12 +648,14 @@ internal sealed class OverlaysPage : Page
         Parts.SetChecked(_laserSphereTurns, o.LaserSphereTurns);
         Parts.SetChecked(_laserGrid, o.LaserGrid);
         Parts.SetChecked(_laserAxes, o.LaserAxes);
+        Parts.SetChecked(_laserGimbal, o.LaserGimbal);
+        Parts.Show(_laserGimbal, !o.LaserRifle && !o.LaserCrosshair);
         Parts.SetChecked(_laserDraw, o.LaserDraw);
         Parts.Show(_laserDrawOptions, o.LaserDraw);
         _laserBrush.Set(o.LaserBrush);
         foreach (var seg in _fireSegs) seg.Set(o.LaserFire);
         Parts.SetChecked(_laserFireOnly, o.LaserFireOnly);
-        _laserFade.Set(o.LaserFadeMs);
+        _laserFade.Set(Math.Sqrt(o.LaserFadeMs / (double)LaserFadeMaxMs));
         Parts.SetChecked(_laserClearOnRatchet, o.LaserClearOnRatchet);
         Parts.SetChecked(_dots, o.FingerDots);
         Parts.SetChecked(_trails, o.FingerTrails);
@@ -676,15 +692,12 @@ internal sealed class OverlaysPage : Page
         for (int i = 0; i < 3; i++)
         {
             int code = (o.TrackballAxes >> (8 * i)) & 0xFF;
-            bool locked = (code & OverlaySettings.TrackballLock) != 0;
-            Parts.SetChecked(_tbLock[i], locked);
-            Parts.Show(_tbFromTitle[i], !locked);
-            Parts.Show(_tbFrom[i].View, !locked);
-            _tbFrom[i].Set(code & 0x1F);
+            bool locked = (OverlaySettings.TrackballLocks(o.TrackballAxes) & (1 << i)) != 0;
+            _tbFrom[i].Set(locked ? 0 : code & 0x1F);
             Parts.SetChecked(_tbInvert[i], (code & 0x80) != 0);
-            Parts.Show(_tbInvert[i], !locked && (code & 0x1F) != 0);
+            Parts.Show(_tbInvert[i], !locked);
             Parts.SetChecked(_tbStop[i], (code & OverlaySettings.TrackballStop) != 0);
-            Parts.Show(_tbStop[i], !locked);
+            Parts.Show(_tbStop[i], !locked && !o.TrackballOwnAxes);
             var e = o.EaseOf(i);
             Parts.SetChecked(_tbEase[i], e.On);
             Parts.Show(_tbEase[i], !locked);
@@ -697,7 +710,8 @@ internal sealed class OverlaysPage : Page
             Parts.Show(_tbEaseSeconds[i].View, !e.BySpeed);
             Parts.Show(_tbEaseSpeed[i].View, e.BySpeed);
         }
-        Parts.Show(_tbAsCamera, o.TrackballAxes != OverlaySettings.TrackballAsCamera);
+        _tbOwnAxes.Set(o.TrackballOwnAxes);
+        Parts.Show(_tbAsCamera, o.TrackballAxes != OverlaySettings.TrackballAsCamera || o.TrackballOwnAxes);
         // A trackball eases back per axis (in its axis rows), not here. Following the camera: no gravity or compass.
         Parts.Show(_poseCard, !o.IsTrackball);
         Parts.Show(_gravity, !o.FollowsCamera);

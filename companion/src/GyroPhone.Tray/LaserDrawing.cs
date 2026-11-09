@@ -33,7 +33,7 @@ internal static class LaserDrawing
         _ => m,
     };
 
-    public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held)
+    public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held, int active = 0)
     {
         float r = Math.Min(area.Width, area.Height) / 2f * 0.95f;
         var c = new PointF(area.X + area.Width / 2f, area.Y + area.Height / 2f);
@@ -67,26 +67,111 @@ internal static class LaserDrawing
             }
         }
 
+        // Held (None) gimbal axes and those the gyro is turning now (bit 0 yaw, 1 pitch, 2 roll); a laser axis i
+        // (X pitch, Y yaw, Z roll) is gimbal axis GimbalOf[i].
+        int locks = s.GimbalLocks;
+        if (!s.IsTrackball) active = 0;
+        int[] gimbalOf = [1, 0, 2];
+        // A dashed line: every other piece of it.
+        void Dashed(Color col, float w, PointF[] pts)
+        {
+            float dash = px * 4f, on = 0f;
+            bool draw = true;
+            var run = new List<PointF> { pts[0] };
+            for (int k = 1; k < pts.Length; k++)
+            {
+                var a = pts[k - 1];
+                var b = pts[k];
+                float len = MathF.Sqrt((b.X - a.X) * (b.X - a.X) + (b.Y - a.Y) * (b.Y - a.Y));
+                float done = 0f;
+                while (len - done > dash - on)
+                {
+                    done += dash - on;
+                    var q = new PointF(a.X + (b.X - a.X) * done / len, a.Y + (b.Y - a.Y) * done / len);
+                    if (draw) { run.Add(q); if (run.Count >= 2) g.DrawLines(col, w, run.ToArray()); }
+                    run.Clear();
+                    run.Add(q);
+                    draw = !draw;
+                    on = 0f;
+                }
+                on += len - done;
+                run.Add(b);
+            }
+            if (draw && run.Count >= 2) g.DrawLines(col, w, run.ToArray());
+        }
+        void Padlock(PointF p, Color col)
+        {
+            float k = px * 3.5f;
+            g.FillRectangle(col, new RectangleF(p.X - k, p.Y - k * 0.4f, 2 * k, 1.6f * k));
+            g.DrawEllipse(col, px * 1.3f, new RectangleF(p.X - k * 0.65f, p.Y - k * 1.5f, 1.3f * k, 2.2f * k));
+        }
+        var lockedColor = Color.FromArgb(0xFF, 0x8A, 0x8F, 0x98);
+
         void Axes(bool front)
         {
             if (!s.LaserAxes) return;
             for (int i = 0; i < 3; i++)
+            {
+                // Turning with the laser: its own axis i, column i of its pose.
+                float ax = m[i], ay = m[3 + i], az = m[6 + i];
+                bool locked = (locks & (1 << gimbalOf[i])) != 0, lit = (active & (1 << gimbalOf[i])) != 0;
                 foreach (int sign in new[] { 1, -1 })
                 {
-                    var (p, z) = At(i == 0 ? sign : 0, i == 1 ? sign : 0, i == 2 ? sign : 0);
+                    var (p, z) = At(sign * ax, sign * ay, sign * az);
                     if (z > 0f != front) continue;
-                    var a = axisColors[i];
-                    g.DrawLine(Fade(a, (sign > 0 ? 1f : 0.4f) * (front ? 0.7f : 1f)), px * 1.5f, c, p, round: true);
+                    var a = locked ? lockedColor : axisColors[i];
+                    var lineCol = Fade(a, (sign > 0 ? 1f : 0.4f) * (front ? 0.7f : 1f));
+                    float lw = px * (lit ? 3f : 1.5f);
+                    if (locked) Dashed(lineCol, lw, [c, p]);
+                    else g.DrawLine(lineCol, lw, c, p, round: true);
                     if (sign > 0)
                     {
-                        g.FillEllipse(a, new RectangleF(p.X - px * 2.5f, p.Y - px * 2.5f, px * 5f, px * 5f));
+                        if (locked) Padlock(p, a);
+                        else
+                        {
+                            float rr = px * (lit ? 3.5f : 2.5f);
+                            g.FillEllipse(a, new RectangleF(p.X - rr, p.Y - rr, rr * 2, rr * 2));
+                        }
                         // Its letter just beyond the tip: P (X), Y (Y), R (Z), as the laser aims.
                         float k = 1f + 12f * px / r;
-                        var q = At(i == 0 ? k : 0, i == 1 ? k : 0, i == 2 ? k : 0).P;
+                        var q = At(k * ax, k * ay, k * az).P;
                         float size = 11f * px;
                         g.DrawText(AxisLetters[i], size, true, Fade(a, front ? 0.8f : 1f), new RectangleF(q.X - size, q.Y - size, size * 2, size * 2), TextAlign.Center, TextAlign.Center);
                     }
                 }
+            }
+        }
+
+        // The Sphere look's gimbal rings, turning with the laser's axes, coloured as their axes (yaw Y, pitch X, roll Z).
+        (float X, float Y, float Z)[][]? gimbal = null;
+        if (s.LaserGimbal && !s.LaserRifle && !crosshair)
+            gimbal = [LaserTrace.GimbalRing(0, m), LaserTrace.GimbalRing(1, m), LaserTrace.GimbalRing(2, m)];
+        void Rings(bool front)
+        {
+            if (gimbal == null) return;
+            int[] colorOf = [1, 0, 2];
+            for (int i = 0; i < 3; i++)
+            {
+                bool locked = (locks & (1 << i)) != 0, lit = (active & (1 << i)) != 0;
+                var col = Fade(axisColors[colorOf[i]], (locked ? 0.25f : lit ? 1f : 0.75f) * (front ? 1f : 0.45f));
+                float w = px * (lit ? 3.5f : front ? 2.5f : 1.5f);
+                var run = new List<PointF>(66);
+                void Flush()
+                {
+                    if (run.Count >= 2)
+                    {
+                        if (locked) Dashed(col, w, run.ToArray());
+                        else g.DrawLines(col, w, run.ToArray());
+                    }
+                    run.Clear();
+                }
+                foreach (var pt in gimbal[i])
+                {
+                    var (p, z) = At(pt.X, pt.Y, pt.Z);
+                    if (z > 0f == front) run.Add(p); else Flush();
+                }
+                Flush();
+            }
         }
 
         // Strokes: each piece of the way between two points (long hops bent along the
@@ -259,6 +344,7 @@ internal static class LaserDrawing
         }
 
         if (s.LaserGrid) Grid(gridLines.Back, grid);
+        Rings(false);
         Axes(false);
         Paint(false);
         if (!hitFront) Spot();
@@ -266,6 +352,7 @@ internal static class LaserDrawing
         g.FillEllipse(beamCol, new RectangleF(c.X - px * 3, c.Y - px * 3, px * 6, px * 6));
         Paint(true);
         if (s.LaserGrid) Grid(gridLines.Front, Fade(grid, 0.6f));
+        Rings(true);
         Axes(true);
         if (hitFront) Spot();
         g.DrawEllipse(grid, px * 1.5f, new RectangleF(c.X - r, c.Y - r, 2 * r, 2 * r));

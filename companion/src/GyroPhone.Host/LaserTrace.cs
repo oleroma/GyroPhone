@@ -346,6 +346,29 @@ public sealed class LaserTrace
     public static (float X, float Y, float Z) Beam(float[] m) => (-m[2], -m[5], -m[8]);
 
     /// <summary>The crosshair shapes (OverlaySettings.CrosshairShape).</summary>
+    /// <summary>The gimbal rings' radii (the sphere's is 1): yaw outside, then pitch, then roll.</summary>
+    public static readonly float[] GimbalRadii = [0.9f, 0.8f, 0.7f];
+
+    /// <summary>
+    /// Gimbal ring <paramref name="i"/> (0 yaw, 1 pitch, 2 roll) for the laser's pose <paramref name="m"/> (row-major): one
+    /// rigid set turning with the laser's axes, each round its own axis (yaw round its up Y, pitch round its right X, roll
+    /// round the beam Z), so each ring is the path the other axes sweep turning about it. As the phone's LaserTrace.gimbalRing.
+    /// </summary>
+    public static (float X, float Y, float Z)[] GimbalRing(int i, float[] m, int steps = 64)
+    {
+        float rho = GimbalRadii[i];
+        var o = new (float X, float Y, float Z)[steps + 1];
+        for (int j = 0; j <= steps; j++)
+        {
+            float th = j * 2f * MathF.PI / steps;
+            float p = rho * MathF.Cos(th), q = rho * MathF.Sin(th);
+            // Round its axis: yaw XZ (round Y), pitch YZ (round X), roll XY (round Z).
+            var (x, y, z) = i switch { 0 => (p, 0f, q), 1 => (0f, p, q), _ => (p, q, 0f) };
+            o[j] = (m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z);
+        }
+        return o;
+    }
+
     public static readonly string[] Crosshairs = ["Cross", "Cross with gap", "Circle", "Circle and cross", "Dot", "T"];
 
     /// <summary>A crosshair on the sphere: Lines as polylines of points; Dot a closed ring to fill, or null.</summary>

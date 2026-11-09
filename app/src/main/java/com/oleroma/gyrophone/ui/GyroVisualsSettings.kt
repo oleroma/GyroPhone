@@ -33,6 +33,7 @@ import androidx.compose.runtime.Composable
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.core.model.TRACKBALL_AS_CAMERA
 import com.oleroma.gyrophone.core.model.TRACKBALL_LOCK
+import com.oleroma.gyrophone.core.model.trackballLocks
 import com.oleroma.gyrophone.core.model.TRACKBALL_STOP
 import com.oleroma.gyrophone.core.model.AxisEase
 import com.oleroma.gyrophone.core.model.easeOf
@@ -234,14 +235,18 @@ internal fun GyroDisplaySettingsScreen(
                     SwitchRow("Axonometric view", d.laserAxonometric, LASER_AXON_HINT) { set(d.copy(laserAxonometric = it)) }
                     SwitchRow("Sphere turns, beam stays ahead", d.laserSphereTurns, "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.") { set(d.copy(laserSphereTurns = it)) }
                     if (!d.laserRifle) SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
-                    SwitchRow("Axes (yaw Y red, pitch X green, roll Z blue)", d.laserAxes) { set(d.copy(laserAxes = it)) }
+                    SwitchRow("Axes (yaw Y red, pitch X green, roll Z blue)", d.laserAxes, "They turn with the laser, R along its beam.") { set(d.copy(laserAxes = it)) }
+                    if (!d.laserRifle && !d.laserCrosshair) SwitchRow("Gimbal rings", d.laserGimbal, "Yaw (red, outside), pitch (green) and roll (blue) rings turning with the laser's axes, each round its own: the path the beam and crosshair take turning about it. A None axis's ring is faint and dashed, and an axis lights up while the gyro turns it.") { set(d.copy(laserGimbal = it)) }
                     GroupTitle("Draw")
                     SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim.") { set(d.copy(laserDraw = it)) }
                     if (d.laserDraw) Indented {
                         IntSlider("Brush %d°", d.laserBrush, 1..20) { set(d.copy(laserBrush = it)) }
-                        Chips(LASER_FADES, d.laserFadeMs) {
-                            set(d.copy(laserFadeMs = it))
-                        }
+                        // Fades after 0 (never) to 60 s, finer toward the short ones: the slider's square.
+                        SavedSlider(
+                            { p -> fadeMs(p).let { if (it == 0) "Fades after: never" else "Fades after %.2f s".format(it / 1000f) } },
+                            sqrt(d.laserFadeMs.coerceIn(0, LASER_FADE_MAX_MS) / LASER_FADE_MAX_MS.toFloat()), 0f..1f,
+                            { p -> sqrt(fadeMs(p) / LASER_FADE_MAX_MS.toFloat()) },
+                        ) { set(d.copy(laserFadeMs = fadeMs(it))) }
                         SwitchRow("Clear on ratchet", d.laserClearOnRatchet, "A ratchet press clears the drawing.") { set(d.copy(laserClearOnRatchet = it)) }
                         Text("Fire (paints in the Fire colours while GyroPhone sends it)", style = MaterialTheme.typography.bodyMedium)
                         Text("Mouse", style = MaterialTheme.typography.bodySmall)
@@ -359,26 +364,38 @@ private fun PoseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
     EaseSettings(d, set)
 }
 
-/** A trackball's axes: for each, locked or the gyro turn that rolls it about that axis, and which way. */
+/** A trackball's turning: about the sphere's axes or its own, and for each axis the gyro turn that turns it (None: held). */
 @Composable
 private fun TrackballAxesSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
+    Text("Turns about", style = MaterialTheme.typography.bodyMedium)
+    Chips(listOf("The sphere's axes" to false, "Its own axes" to true), d.trackballOwnAxes) { on ->
+        // Its own axes: the loops' roll eases back once the phone stops, unless roll already eases.
+        val roll = d.easeOf(2)
+        set(d.copy(trackballOwnAxes = on).let { if (on && !roll.on) it.withEase(2, roll.copy(on = true, onRatchet = false)) else it })
+    }
+    Hint(
+        if (d.trackballOwnAxes) "As the laser sees it: up and down about its own right, left and right about its own up, so it always moves square to where it aims and never rolls by itself. Moving in a loop leaves it a little rolled (the sphere is curved); Roll's ease back levels that out."
+        else "As a game camera (a gimbal): left and right about the sphere's vertical, up and down about its turned right, then roll about the beam.",
+    )
     // Its bytes: 0 about up Y (yaw), 1 about right X (pitch), 2 along the beam Z (roll).
     for ((i, name) in listOf(0 to "Yaw", 1 to "Pitch", 2 to "Roll")) {
         val code = d.trackballAxes shr (8 * i) and 0xFF
         fun put(c: Int) = set(d.copy(trackballAxes = (d.trackballAxes and (0xFF shl (8 * i)).inv()) or (c shl (8 * i))))
-        val locked = code and TRACKBALL_LOCK != 0
-        SwitchRow("Lock $name axis", locked) { put(if (it) code or TRACKBALL_LOCK else code and TRACKBALL_LOCK.inv()) }
-        if (locked) continue
+        // None holds it (a lock saved before None meant it shows as None).
+        val none = trackballLocks(d.trackballAxes) and (1 shl i) != 0
         Text("$name axis turns with", style = MaterialTheme.typography.bodyMedium)
-        Chips(listOf("Yaw" to 3, "Pitch" to 2, "Roll" to 1, "None" to 0), code and 0x1F) { put(it or (code and 0x1F.inv())) }
-        if (code and 0x1F != 0) SwitchRow("Invert $name axis", code and 0x80 != 0) { put((code and 0x80.inv()) or (if (it) 0x80 else 0)) }
-        SwitchRow("Stop $name at ±90°", code and TRACKBALL_STOP != 0, if (i == 1) "Off: it goes over the top, left and right staying as seen." else null) {
+        Chips(listOf("Yaw" to 3, "Pitch" to 2, "Roll" to 1, "None" to 0), if (none) 0 else code and 0x1F) {
+            put(it or (code and 0x1F.inv() and TRACKBALL_LOCK.inv()))
+        }
+        if (none) continue
+        SwitchRow("Invert $name axis", code and 0x80 != 0) { put((code and 0x80.inv()) or (if (it) 0x80 else 0)) }
+        if (!d.trackballOwnAxes) SwitchRow("Stop $name at ±90°", code and TRACKBALL_STOP != 0, if (i == 1) "Off: it goes over the top, left and right staying as seen." else null) {
             put(if (it) code or TRACKBALL_STOP else code and TRACKBALL_STOP.inv())
         }
         AxisEaseSettings(name, d.easeOf(i)) { set(d.withEase(i, it)) }
     }
-    Hint("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked, stopped or easing back it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces. Stop at ±90° keeps an axis from turning past sideways (Pitch: straight up or down).")
-    if (d.trackballAxes != TRACKBALL_AS_CAMERA) TextButton(onClick = { set(d.copy(trackballAxes = TRACKBALL_AS_CAMERA)) }) { Text("As the camera") }
+    Hint("None holds an axis still: nothing turns it, as Camera never rolls. On the laser pointer a None axis is grey and dashed with a padlock, its gimbal ring faint, and an axis lights up while the gyro turns it.")
+    if (d.trackballAxes != TRACKBALL_AS_CAMERA || d.trackballOwnAxes) TextButton(onClick = { set(d.copy(trackballAxes = TRACKBALL_AS_CAMERA, trackballOwnAxes = false)) }) { Text("As the camera") }
 }
 
 /** A trackball axis [name] easing back to straight, and its own options. */
@@ -440,7 +457,11 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     else -> true
 }
 
-private val LASER_FADES = listOf("Never fades" to 0, "0.25 s" to 250, "0.5 s" to 500, "1 s" to 1000, "2 s" to 2000, "5 s" to 5000, "10 s" to 10_000, "30 s" to 30_000, "60 s" to 60_000)
+/** Draw mode's longest fade. */
+private const val LASER_FADE_MAX_MS = 60_000
+
+/** The Fades after slider at [p] (0..1, its square) in ms, to 50 ms; 0 never fades. */
+private fun fadeMs(p: Float): Int = ((p * p * LASER_FADE_MAX_MS) / 50f).roundToInt() * 50
 private const val LASER_AXON_HINT = "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot."
 private const val AXON_HINT = "Seen from 30° round and 30° above with the world's axes (yaw toward you red, pitch right green, roll up blue, as the gimbal's rings), as the laser pointer is, instead of face-on."
 

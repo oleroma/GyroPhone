@@ -39,6 +39,7 @@ import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayColor
 import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.MotionAxis
+import com.oleroma.gyrophone.core.model.gimbalLocks
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.acos
@@ -253,6 +254,15 @@ private class VisState {
     private val levelPaths = Array(LEVELS * HUES * 2) { Path() }
 
     private val crossPath = Path()
+    /** A small padlock at [p] in [color]: a locked (None) axis's tip. */
+    private fun DrawScope.padlock(p: Offset, color: Color) {
+        val s = 3.5f * density
+        drawRect(color, Offset(p.x - s, p.y - s * 0.4f), androidx.compose.ui.geometry.Size(2 * s, 1.6f * s))
+        drawArc(
+            color, 180f, 180f, false, Offset(p.x - s * 0.65f, p.y - s * 1.5f), androidx.compose.ui.geometry.Size(1.3f * s, 2.2f * s),
+            style = Stroke(1.3f * density),
+        )
+    }
 
     /**
      * The crosshair look's crosshair ([LaserTrace.crosshair]) where [beam] lands on the sphere of
@@ -347,19 +357,34 @@ private class VisState {
             return path
         }
         val axisColors = arrayOf(col(GyroDisplayColor.LASER_X), col(GyroDisplayColor.LASER_Y), col(GyroDisplayColor.LASER_Z))
+        // Locked (None) gimbal axes, those stopping at ±90°, and those the gyro is turning now (bit 0 yaw, 1 pitch, 2 roll).
+        val locks = d.gimbalLocks
+        val active = if (d.turnsWith == com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL) feed?.trackballActive() ?: 0 else 0
+        val dash = PathEffect.dashPathEffect(floatArrayOf(4f * density, 3f * density))
         fun axes(front: Boolean) {
             if (!d.laserAxes) return
             for (i in 0..2) {
+                // Laser axis i (X pitch, Y yaw, Z roll) as a gimbal axis.
+                val g = GIMBAL_COLOR.indexOf(i)
+                val locked = locks and (1 shl g) != 0
+                val lit = active and (1 shl g) != 0
+                // Turning with the laser: its own axis i, column i of its pose.
+                val ax = m[i]
+                val ay = m[3 + i]
+                val az = m[6 + i]
                 for (sign in intArrayOf(1, -1)) {
-                    val p = laserAt(c, r, if (i == 0) sign.toFloat() else 0f, if (i == 1) sign.toFloat() else 0f, if (i == 2) sign.toFloat() else 0f)
+                    val p = laserAt(c, r, sign * ax, sign * ay, sign * az)
                     if ((pv[2] > 0f) != front) continue
-                    val a = axisColors[i]
-                    drawLine(a.copy(alpha = a.alpha * (if (sign > 0) 1f else 0.4f) * (if (front) 0.7f else 1f)), c, p, 1.5f * density, StrokeCap.Round)
+                    val a = if (locked) LOCKED_AXIS else axisColors[i]
+                    drawLine(
+                        a.copy(alpha = a.alpha * (if (sign > 0) 1f else 0.4f) * (if (front) 0.7f else 1f)), c, p,
+                        (if (lit) 3f else 1.5f) * density, StrokeCap.Round, if (locked) dash else null,
+                    )
                     if (sign > 0) {
-                        drawCircle(a, 2.5f * density, p)
+                        if (locked) padlock(p, a) else drawCircle(a, (if (lit) 3.5f else 2.5f) * density, p)
                         // Its letter just beyond the tip: P (X), Y (Y), R (Z), as the laser aims.
                         val k = 1f + 12f * density / r
-                        val q = laserAt(c, r, if (i == 0) k else 0f, if (i == 1) k else 0f, if (i == 2) k else 0f)
+                        val q = laserAt(c, r, k * ax, k * ay, k * az)
                         text.textSize = 11f * density
                         text.color = a.copy(alpha = a.alpha * (if (front) 0.8f else 1f)).toArgb()
                         drawContext.canvas.nativeCanvas.drawText(LASER_AXIS_LETTERS[i], q.x, q.y + text.textSize * 0.35f, text)
@@ -486,7 +511,34 @@ private class VisState {
             axes(true)
             return
         }
+        // The Sphere look's gimbal rings, turning with the laser's axes, each round its own: their far halves
+        // now, near halves over the beam.
+        val gimbal = if (d.laserGimbal) Array(3) { LaserTrace.gimbalRing(it, m) } else null
+        fun rings(front: Boolean) {
+            if (gimbal == null) return
+            for (i in 0..2) {
+                val pts = gimbal[i]
+                val a = axisColors[GIMBAL_COLOR[i]]
+                val locked = locks and (1 shl i) != 0
+                val lit = active and (1 shl i) != 0
+                val color = a.copy(alpha = a.alpha * (if (locked) 0.25f else if (lit) 1f else 0.75f) * (if (front) 1f else 0.45f))
+                path.reset()
+                var down = false
+                var j = 0
+                while (j < pts.size) {
+                    val p = laserAt(c, r, pts[j], pts[j + 1], pts[j + 2])
+                    if ((pv[2] > 0f) == front) {
+                        if (down) path.lineTo(p.x, p.y) else path.moveTo(p.x, p.y)
+                        down = true
+                    } else down = false
+                    j += 3
+                }
+                val w = (if (lit) 3.5f else if (front) 2.5f else 1.5f) * density
+                drawPath(path, color, style = Stroke(w, cap = StrokeCap.Round, join = StrokeJoin.Round, pathEffect = if (locked) dash else null))
+            }
+        }
         if (d.laserGrid) drawPath(gridPath(gridBack), grid, style = thin)
+        rings(false)
         axes(false)
         paint(false)
         if (!hitFront) spot()
@@ -494,6 +546,7 @@ private class VisState {
         drawCircle(beamCol, 3f * density, c)
         paint(true)
         if (d.laserGrid) drawPath(gridPath(gridFront), grid.copy(alpha = grid.alpha * 0.6f), style = thin)
+        rings(true)
         axes(true)
         if (hitFront) spot()
         drawCircle(grid, r, c, style = Stroke(1.5f * density))
@@ -1164,6 +1217,12 @@ private const val POLY_STEPS = 12
 
 /** How strongly edges round the back show. */
 private const val HIDDEN_ALPHA = 0.3f
+
+/** A gimbal ring's colour, as its axis's (laser axis colours X, Y, Z): yaw Y, pitch X, roll Z. */
+private val GIMBAL_COLOR = intArrayOf(1, 0, 2)
+
+/** A locked (None) axis's colour on the laser pointer. */
+private val LOCKED_AXIS = Color(0xFF8A8F98)
 
 /** The gimbal's yaw, pitch and roll rings, in ball radii. */
 private val GIMBAL_RADII = doubleArrayOf(0.95, 0.82, 0.69)

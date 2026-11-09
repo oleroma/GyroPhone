@@ -361,9 +361,14 @@ class GyroDisplayTest {
         assertEquals(0f, cam[3], 1e-3f)
         assertEquals(0f, cam[2], 1e-3f)
         assertEquals(0.5f, -cam[5], 1e-3f)
-        // Nothing locked: it rolls freely about its fixed axes, so the same moves leave it rolled 30°.
-        val free = run(3 or (2 shl 8))
-        assertEquals(0.5f, kotlin.math.abs(free[3]), 1e-3f)
+        // Roll on None (no lock flag): None holds it, so the same moves leave it unrolled, as the camera.
+        val none = run(3 or (2 shl 8))
+        assertEquals(0f, none[3], 1e-3f)
+        // Turning about its own axes: pitching up turns it up as the camera does.
+        val own = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = tb, trackballOwnAxes = true))
+        repeat(100) { own.feed(0f, 30f, 0f, 0.01f, 7, pressed = false, held = false) }
+        own.pose.matrix(m)
+        assertEquals(0.5f, -m[5], 1e-3f)
         // Pitch locked (a turntable): pitching does nothing.
         val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = tb, trackballAxes = 3 or ((2 or com.oleroma.gyrophone.core.model.TRACKBALL_LOCK) shl 8) or (1 shl 16)))
         repeat(100) { f.feed(0f, 60f, 0f, 0.01f, 7, pressed = false, held = false) }
@@ -429,5 +434,21 @@ class GyroDisplayTest {
         val m2 = FloatArray(9)
         f.pose.matrix(m); turned.pose.matrix(m2)
         assertArrayEquals(m2, m, 1e-3f)
+    }
+
+    @Test fun turningAboutItsOwnAxesYawsAboutItsOwnUp() {
+        val p = GyroPose()
+        val m = FloatArray(9)
+        // Pitch up 60°, then yaw 30° about its own (tilted) up: where it faces stays square to that up.
+        p.turnOwn((60.0 * Math.PI / 180).toFloat(), 0f, 0f)
+        p.matrix(m)
+        val up = floatArrayOf(m[1], m[4], m[7])
+        p.turnOwn(0f, (30.0 * Math.PI / 180).toFloat(), 0f)
+        p.matrix(m)
+        // Its up is unchanged by a turn about it, and it hasn't rolled (its right stays square to that up).
+        assertEquals(up[0], m[1], 1e-4f)
+        assertEquals(up[1], m[4], 1e-4f)
+        assertEquals(up[2], m[7], 1e-4f)
+        assertEquals(0f, m[0] * up[0] + m[3] * up[1] + m[6] * up[2], 1e-4f)
     }
 }

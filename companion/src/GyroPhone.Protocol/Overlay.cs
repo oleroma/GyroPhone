@@ -52,6 +52,8 @@ public sealed class OverlayFrame
     public float RwsYaw, RwsPitch, RwsRoll;
     /// <summary>The pose the PC made (not on the wire): phone frame (x right, y up, z out of the screen) to the player's view.</summary>
     public float Qw = 1, Qx, Qy, Qz;
+    /// <summary>Not on the wire: the trackball axes (bit 0 yaw, 1 pitch, 2 roll) the gyro turned just now, to light them up.</summary>
+    public int PoseActive;
     public ushort LayoutVersion;
     public byte Flags;
     public int FingerCount;
@@ -163,6 +165,7 @@ public sealed class OverlayFrame
         o.CameraYaw = CameraYaw; o.CameraPitch = CameraPitch; o.CameraRoll = CameraRoll;
         o.RwsYaw = RwsYaw; o.RwsPitch = RwsPitch; o.RwsRoll = RwsRoll;
         o.Qw = Qw; o.Qx = Qx; o.Qy = Qy; o.Qz = Qz;
+        o.PoseActive = PoseActive;
         o.LayoutVersion = LayoutVersion;
         o.Flags = Flags;
         o.FingerCount = FingerCount;

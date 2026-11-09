@@ -242,4 +242,35 @@ public class LaserTraceTests
         Assert.Equal(5, t.Strokes.Count);
         Assert.True(t.Strokes.Gap(4));
     }
+
+    private static float[] GimbalPose(float a, float b, float c)
+    {
+        static float[] Mul(float[] x, float[] y)
+        {
+            var r = new float[9];
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++) r[i * 3 + j] = x[i * 3] * y[j] + x[i * 3 + 1] * y[3 + j] + x[i * 3 + 2] * y[6 + j];
+            return r;
+        }
+        float[] ry = [MathF.Cos(a), 0f, MathF.Sin(a), 0f, 1f, 0f, -MathF.Sin(a), 0f, MathF.Cos(a)];
+        float[] rx = [1f, 0f, 0f, 0f, MathF.Cos(b), -MathF.Sin(b), 0f, MathF.Sin(b), MathF.Cos(b)];
+        float[] rz = [MathF.Cos(c), -MathF.Sin(c), 0f, MathF.Sin(c), MathF.Cos(c), 0f, 0f, 0f, 1f];
+        return Mul(Mul(ry, rx), rz);
+    }
+
+    [Fact]
+    public void GimbalRingsTurnWithTheLasersAxes()
+    {
+        var m = GimbalPose(0.7f, 0.4f, 0.3f);
+        for (int i = 0; i < 3; i++)
+        {
+            // Ring i lies round laser axis i: yaw round its up (column 1), pitch its right (0), roll its beam (2).
+            int col = new[] { 1, 0, 2 }[i];
+            foreach (var p in LaserTrace.GimbalRing(i, m))
+            {
+                Assert.Equal(LaserTrace.GimbalRadii[i], MathF.Sqrt(p.X * p.X + p.Y * p.Y + p.Z * p.Z), 4);
+                Assert.Equal(0f, p.X * m[col] + p.Y * m[3 + col] + p.Z * m[6 + col], 4);
+            }
+        }
+    }
 }
