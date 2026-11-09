@@ -338,7 +338,7 @@ class LaserTrace {
         fun perspective(z: Float): Float = CAMERA_DISTANCE / (CAMERA_DISTANCE - z.coerceAtMost(CAMERA_DISTANCE - 0.5f))
 
         /** The rifle's muzzle tip in its own frame (x right, y up, z toward the stock). */
-        val MUZZLE = floatArrayOf(0f, 0.03f, -0.93f)
+        val MUZZLE = floatArrayOf(0f, 0f, -0.93f)
 
         /** Aiming ([rifle]'s aim 1) the rifle is shouldered: pulled back toward the player this far. */
         const val AIM_PULL = 0.12f
@@ -485,25 +485,25 @@ class LaserTrace {
          */
         private val RIFLE = floatArrayOf(
             // stock, buffer tube, receiver, carry rail, handguard, barrel, muzzle, front sight, magazine, grip
-            0f, -0.02f, 0.68f, 0.05f, 0.09f, 0.2f,
-            0f, 0.03f, 0.42f, 0.03f, 0.03f, 0.08f,
-            0f, 0.03f, 0.12f, 0.055f, 0.075f, 0.22f,
-            0f, 0.13f, 0.1f, 0.028f, 0.025f, 0.18f,
-            0f, 0.03f, -0.32f, 0.055f, 0.055f, 0.2f,
-            0f, 0.03f, -0.7f, 0.018f, 0.018f, 0.18f,
-            0f, 0.03f, -0.9f, 0.026f, 0.026f, 0.03f,
-            0f, 0.1f, -0.5f, 0.012f, 0.06f, 0.015f,
-            0f, -0.17f, 0.0f, 0.035f, 0.12f, 0.06f,
-            0f, -0.14f, 0.28f, 0.03f, 0.09f, 0.045f,
+            0.0f, -0.05f, 0.68f, 0.05f, 0.09f, 0.2f,
+            0.0f, 0.0f, 0.42f, 0.03f, 0.03f, 0.08f,
+            0.0f, 0.0f, 0.12f, 0.055f, 0.075f, 0.22f,
+            0.0f, 0.1f, 0.1f, 0.028f, 0.025f, 0.18f,
+            0.0f, 0.0f, -0.32f, 0.055f, 0.055f, 0.2f,
+            0.0f, 0.0f, -0.7f, 0.018f, 0.018f, 0.18f,
+            0.0f, 0.0f, -0.9f, 0.026f, 0.026f, 0.03f,
+            0.0f, 0.07f, -0.5f, 0.012f, 0.06f, 0.015f,
+            0.0f, -0.2f, 0.0f, 0.035f, 0.12f, 0.06f,
+            0.0f, -0.17f, 0.28f, 0.03f, 0.09f, 0.045f,
         )
 
         /** The scope that grows onto the rifle's carry rail while aiming: tube, objective bell, eyepiece, two mounts. */
         private val SCOPE = floatArrayOf(
-            0f, 0.2f, 0.08f, 0.032f, 0.032f, 0.2f,
-            0f, 0.2f, -0.14f, 0.045f, 0.045f, 0.035f,
-            0f, 0.2f, 0.3f, 0.04f, 0.04f, 0.03f,
-            0f, 0.162f, 0.0f, 0.014f, 0.01f, 0.014f,
-            0f, 0.162f, 0.16f, 0.014f, 0.01f, 0.014f,
+            0.0f, 0.17f, 0.08f, 0.032f, 0.032f, 0.2f,
+            0.0f, 0.17f, -0.14f, 0.045f, 0.045f, 0.035f,
+            0.0f, 0.17f, 0.3f, 0.04f, 0.04f, 0.03f,
+            0.0f, 0.132f, 0.0f, 0.014f, 0.01f, 0.014f,
+            0.0f, 0.132f, 0.16f, 0.014f, 0.01f, 0.014f,
         )
 
         /** One face of the rifle in the picture: its corners (x, y pairs, unit radius) and how lit it is (0..1). */
