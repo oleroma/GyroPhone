@@ -185,6 +185,8 @@ data class GyroDisplay(
      */
     val laserFire: Int = com.oleroma.gyrophone.core.engine.LaserFire.DEFAULT,
     val laserFireOnly: Boolean = false,
+    /** LASER: the paint's and crosshair's way colours even out small shakes. */
+    val laserSmoothColours: Boolean = true,
     /** What turns it (the pose kinds): the phone, the game's camera, or a trackball. */
     val turnsWith: TurnsWith = TurnsWith.PHONE,
     val opacity: Float = 0.7f,
@@ -337,23 +339,29 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     BALL_GIMBAL_ROLL(GyroDisplayKind.BALL, "groll", "Gimbal roll ring", 0xFF5AA8FF),
     LASER_SPHERE(GyroDisplayKind.LASER, "sphere", "Sphere", 0x332A3446),
     LASER_GRID(GyroDisplayKind.LASER, "grid", "Grid", 0x66FFFFFF),
-    LASER_X(GyroDisplayKind.LASER, "x", "Pitch axis (X, right)", 0xFF5ADB6E),
-    LASER_Y(GyroDisplayKind.LASER, "y", "Yaw axis (Y, up)", 0xFFFF5A5A),
+    LASER_X(GyroDisplayKind.LASER, "x", "Pitch axis (X, right)", 0xFFFF5A5A),
+    LASER_Y(GyroDisplayKind.LASER, "y", "Yaw axis (Y, up)", 0xFF5ADB6E),
     LASER_Z(GyroDisplayKind.LASER, "z", "Roll axis (Z, along the beam)", 0xFF5AA8FF),
     LASER_BEAM(GyroDisplayKind.LASER, "beam", "Beam", 0xFFFF3B3B),
     LASER_DOT(GyroDisplayKind.LASER, "dot", "Dot", 0xFFFFFFFF),
-    LASER_PAINT(GyroDisplayKind.LASER, "paint", "Paint ahead", 0xFFFFC94D),
-    LASER_PAINT_BEHIND(GyroDisplayKind.LASER, "paint_behind", "Paint behind", 0xFF4DA6FF),
+    // The colour of each way the beam moves (paint and crosshair), as a normal map: 0.5 + 0.5 × the way.
+    LASER_MOVE_RIGHT(GyroDisplayKind.LASER, "move_right", "Moving right", 0xFFFF8080),
+    LASER_MOVE_LEFT(GyroDisplayKind.LASER, "move_left", "Moving left", 0xFF008080),
+    LASER_MOVE_UP(GyroDisplayKind.LASER, "move_up", "Moving up", 0xFF80FF80),
+    LASER_MOVE_DOWN(GyroDisplayKind.LASER, "move_down", "Moving down", 0xFF800080),
+    LASER_MOVE_TOWARD(GyroDisplayKind.LASER, "move_toward", "Moving toward you", 0xFF8080FF),
+    LASER_MOVE_AWAY(GyroDisplayKind.LASER, "move_away", "Moving away", 0xFF808000),
     LASER_RIFLE(GyroDisplayKind.LASER, "rifle", "Rifle", 0xFF5A616C),
     LASER_FIRE(GyroDisplayKind.LASER, "fire", "Fire", 0xFFFF4A3D),
     LASER_FIRE_BEHIND(GyroDisplayKind.LASER, "fire_behind", "Fire behind", 0xFF8A1E18),
-    LASER_CROSSHAIR(GyroDisplayKind.LASER, "crosshair", "Crosshair", 0xFF4CFF6A),
-    LASER_CROSSHAIR_BEHIND(GyroDisplayKind.LASER, "crosshair_behind", "Crosshair behind", 0xFF2E8A43),
     LASER_CROSSHAIR_OUTLINE(GyroDisplayKind.LASER, "crosshair_outline", "Crosshair outline", 0xFF0E1116),
     ;
 
     companion object {
         fun of(kind: GyroDisplayKind): List<GyroDisplayColor> = entries.filter { it.kind == kind }
+
+        /** The laser's way colours, in [com.oleroma.gyrophone.core.engine.LaserTrace.directionColor]'s order. */
+        val LASER_MOVES = listOf(LASER_MOVE_RIGHT, LASER_MOVE_LEFT, LASER_MOVE_UP, LASER_MOVE_DOWN, LASER_MOVE_TOWARD, LASER_MOVE_AWAY)
     }
 }
 

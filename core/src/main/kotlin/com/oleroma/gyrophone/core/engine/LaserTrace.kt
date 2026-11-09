@@ -63,6 +63,24 @@ class LaserTrace {
 
         /** Point [i] was painted while firing (the line to it takes the Fire colours). */
         fun fire(i: Int): Boolean = fire[(head + i) % capacity]
+
+        /**
+         * The way the line to point [i] (from point i − 1) moves, a unit direction into [out] (zero
+         * if it doesn't): from up to [reach] points before it to up to [reach] after, within its
+         * line, so with [reach] > 0 small shakes even out.
+         */
+        fun direction(i: Int, reach: Int, out: FloatArray) {
+            var a = i - 1
+            var steps = 0
+            while (steps < reach && a > 0 && !gap(a)) { a--; steps++ }
+            var b = i
+            steps = 0
+            while (steps < reach && b + 1 < count && !gap(b + 1)) { b++; steps++ }
+            val ka = (head + a) % capacity
+            val kb = (head + b) % capacity
+            out[0] = x[kb] - x[ka]; out[1] = y[kb] - y[ka]; out[2] = z[kb] - z[ka]
+            unit(out)
+        }
     }
 
     /** Draw mode's strokes. */
@@ -74,6 +92,16 @@ class LaserTrace {
     private var lastZ = 0f
     private var wasHeld = false
     private var lastFire = false
+    private var beamX = 0f
+    private var beamY = 0f
+    private var beamZ = 0f
+    private var beamMs = Long.MIN_VALUE
+
+    /**
+     * The way the beam last moved (a unit direction in the shown frame, x right, y up, z toward the
+     * viewer; zero before it ever moved): it keeps the last way when the beam stops. The crosshair's colour.
+     */
+    val moving = FloatArray(3)
 
     /** Goes up when the strokes are cleared. */
     var version = 0L
@@ -87,15 +115,17 @@ class LaserTrace {
      * doesn't paint (the pose eases back then, which isn't aiming); with [clearOnPress] pressing
      * one clears the strokes. With [draw] it paints; turning Draw off clears the strokes. While
      * [fire] (the display's fire output is sent) it paints in the Fire colours; with [fireOnly] only then.
+     * [moving] follows the beam, evened out over [SMOOTH_MS] with [smooth].
      */
     fun add(
         x: Float, y: Float, z: Float, nowMs: Long, draw: Boolean, held: Boolean, clearOnPress: Boolean = false,
-        fire: Boolean = false, fireOnly: Boolean = false,
+        fire: Boolean = false, fireOnly: Boolean = false, smooth: Boolean = true,
     ) {
         val pressed = clearOnPress && held && !wasHeld
         wasHeld = held
         if ((!draw || pressed) && strokes.count > 0) clear()
         val l = sqrt(x * x + y * y + z * z)
+        if (l > 1e-6f && !l.isNaN()) follow(x / l, y / l, z / l, nowMs, smooth)
         if (!draw || l < 1e-6f || held || l.isNaN() || (fireOnly && !fire)) {
             strokeGap = true
             return
@@ -109,6 +139,23 @@ class LaserTrace {
         strokeGap = false
         lastFire = fire
         lastX = dx; lastY = dy; lastZ = dz
+    }
+
+    /** Turns [moving] toward the way the beam went to ([x], [y], [z]), a unit direction, at [nowMs]. */
+    private fun follow(x: Float, y: Float, z: Float, nowMs: Long, smooth: Boolean) {
+        if (beamMs == Long.MIN_VALUE) {
+            beamX = x; beamY = y; beamZ = z; beamMs = nowMs
+            return
+        }
+        val d = floatArrayOf(x - beamX, y - beamY, z - beamZ)
+        // Barely moved (a still phone's noise): keep the last way.
+        if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < MOVE_MIN * MOVE_MIN) return
+        unit(d)
+        val k = if (!smooth || moving.all { it == 0f }) 1f
+        else (1f - kotlin.math.exp(-(nowMs - beamMs).coerceAtLeast(1L) / SMOOTH_MS.toFloat())).coerceIn(0f, 1f)
+        for (i in 0..2) moving[i] += (d[i] - moving[i]) * k
+        unit(moving)
+        beamX = x; beamY = y; beamZ = z; beamMs = nowMs
     }
 
     /** With [fadeMs] > 0, drops strokes older than it. */
@@ -128,8 +175,51 @@ class LaserTrace {
 
     companion object {
         const val STROKE_MAX = 4096
+
+        /** Points each side a stroke's colour looks over with smoothing ([Ring.direction]): ±2°. */
+        const val SMOOTH_REACH = 4
+
+        /** How long the crosshair's colour takes to follow a new way with smoothing (ms, 63% of the way). */
+        const val SMOOTH_MS = 60
+
+        // Under this the beam hasn't moved (a radian, about 0.1°).
+        private const val MOVE_MIN = 0.002f
+
+        /** [v] made unit length (left at zero when it is). */
+        fun unit(v: FloatArray) {
+            val l = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+            if (l < 1e-9f || l.isNaN()) v.fill(0f) else for (i in 0..2) v[i] /= l
+        }
+
+        /**
+         * The colour (ARGB) of moving the way of unit direction [d] (x right, y up, z toward the
+         * viewer), blended as a normal map does: [colors] holds the colour of each straight way
+         * (right, left, up, down, toward, away; ARGB); the middle is their average, and each part
+         * of [d] takes its share of the way from the middle to its colour. With the normal-map
+         * colours that is 0.5 + 0.5·d per red, green, blue. Not moving: the middle.
+         */
+        fun directionColor(d: FloatArray, colors: LongArray): Long {
+            var argb = 0L
+            for (ch in 0..3) {
+                val shift = ch * 8
+                fun c(i: Int) = (colors[i] shr shift and 0xFF).toFloat()
+                var mid = 0f
+                for (i in 0..5) mid += c(i)
+                mid /= 6f
+                var v = mid
+                for (a in 0..2) {
+                    val p = d[a]
+                    v += kotlin.math.abs(p) * (c(if (p >= 0f) a * 2 else a * 2 + 1) - mid)
+                }
+                argb = argb or ((v + 0.5f).toInt().coerceIn(0, 255).toLong() shl shift)
+            }
+            return argb
+        }
         const val STROKE_STEP_DEG = 0.5f
         private val STROKE_STEP_COS = cos(Math.toRadians(STROKE_STEP_DEG.toDouble())).toFloat()
+
+        /** The rifle's muzzle tip in its own frame (x right, y up, z toward the stock). */
+        val MUZZLE = floatArrayOf(0f, 0.03f, -0.93f)
 
         /** How far round from straight ahead (into the screen) shown-frame direction z is: 0 ahead .. 1 straight behind. */
         fun behind(z: Float): Float = ((1f + z) / 2f).coerceIn(0f, 1f)

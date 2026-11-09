@@ -256,7 +256,7 @@ internal fun GyroDisplaySettingsScreen(
                         Text("Keyboard", style = MaterialTheme.typography.bodySmall)
                         Chips(com.oleroma.gyrophone.core.engine.LaserFire.KEY_CHOICES, d.laserFire) { set(d.copy(laserFire = it)) }
                         SwitchRow("Paint only while firing", d.laserFireOnly, "Aiming leaves no trail; only shots draw.") { set(d.copy(laserFireOnly = it)) }
-                        Hint("Strokes glow, older ones darker. Their colour goes from Paint ahead (straight ahead) to Paint behind (turned all the way round), so a turn past 90° still reads. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every laser pointer at once.")
+                        Hint("Strokes glow, older ones darker. Each takes the colour of the way the beam moves (the Moving colours below, blended like a normal map: right pink, left teal, up light green, down purple), so you see which way you swept. Shots take the Fire colours. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every laser pointer at once.")
                     }
                     TextButton(onClick = { runtime.clearLaser(control.id) }) { Text("Clear") }
                 }
@@ -273,6 +273,10 @@ internal fun GyroDisplaySettingsScreen(
                     Text(c.label, Modifier.padding(start = 12.dp).weight(1f))
                     if (c.key in d.colors) TextButton(onClick = { set(d.withColor(c, null)) }) { Text("Reset") }
                 }
+            }
+            if (movesShown(d)) {
+                SwitchRow("Smooth way colours", d.laserSmoothColours, "Small shakes don't flicker the Moving colours.") { set(d.copy(laserSmoothColours = it)) }
+                Hint("The Moving colours colour the paint and the crosshair by the way the beam moves (right, left, up, down, toward you, away, as the sphere's axes are when it isn't turned). A slant blends its ways' colours, as a normal map does. The crosshair keeps the last way's colour when you stop.")
             }
             if (d.colors.isNotEmpty()) TextButton(onClick = { set(d.copy(colors = emptyMap())) }) { Text("Default colours") }
         }
@@ -440,6 +444,9 @@ private fun GroupTitle(text: String) = NotSearching {
 }
 
 /** Colour [c] is drawn on [d] (a 3D shape only uses those of its shape). */
+/** The laser's way colours are in use: its paint, or its crosshair. */
+private fun movesShown(d: GyroDisplay): Boolean = d.kind == GyroDisplayKind.LASER && (d.laserDraw || (d.laserCrosshair && !d.laserRifle))
+
 private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     GyroDisplayColor.BALL_GIMBAL_YAW, GyroDisplayColor.BALL_GIMBAL_PITCH, GyroDisplayColor.BALL_GIMBAL_ROLL -> d.ballShape == BallShape.GIMBAL
     GyroDisplayColor.BALL_LINES -> d.ballShape != BallShape.GIMBAL
@@ -449,10 +456,10 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     GyroDisplayColor.BALL_POLE -> d.topMark
     GyroDisplayColor.LASER_GRID -> d.laserGrid && !d.laserRifle
     GyroDisplayColor.LASER_X, GyroDisplayColor.LASER_Y, GyroDisplayColor.LASER_Z -> d.laserAxes
-    GyroDisplayColor.LASER_PAINT, GyroDisplayColor.LASER_PAINT_BEHIND -> d.laserDraw
+    GyroDisplayColor.LASER_MOVE_RIGHT, GyroDisplayColor.LASER_MOVE_LEFT, GyroDisplayColor.LASER_MOVE_UP,
+    GyroDisplayColor.LASER_MOVE_DOWN, GyroDisplayColor.LASER_MOVE_TOWARD, GyroDisplayColor.LASER_MOVE_AWAY -> movesShown(d)
     GyroDisplayColor.LASER_RIFLE -> d.laserRifle
     GyroDisplayColor.LASER_SPHERE, GyroDisplayColor.LASER_BEAM, GyroDisplayColor.LASER_DOT -> !d.laserRifle && !d.laserCrosshair
-    GyroDisplayColor.LASER_CROSSHAIR, GyroDisplayColor.LASER_CROSSHAIR_BEHIND -> d.laserCrosshair && !d.laserRifle
     GyroDisplayColor.LASER_CROSSHAIR_OUTLINE -> d.laserCrosshair && !d.laserRifle && d.crosshairOutline
     else -> true
 }

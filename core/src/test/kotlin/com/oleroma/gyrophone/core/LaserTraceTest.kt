@@ -112,6 +112,55 @@ class LaserTraceTest {
         assertFalse(t.strokes.gap(1))
     }
 
+    private val normalMap = longArrayOf(0xFFFF8080, 0xFF008080, 0xFF80FF80, 0xFF800080, 0xFF8080FF, 0xFF808000)
+
+    @Test fun wayColoursBlendAsANormalMap() {
+        fun rgb(d: FloatArray) = LaserTrace.directionColor(d, normalMap).let { intArrayOf((it shr 16 and 0xFF).toInt(), (it shr 8 and 0xFF).toInt(), (it and 0xFF).toInt()) }
+        assertArrayEquals(intArrayOf(255, 128, 128), rgb(floatArrayOf(1f, 0f, 0f)))
+        assertArrayEquals(intArrayOf(0, 128, 128), rgb(floatArrayOf(-1f, 0f, 0f)))
+        assertArrayEquals(intArrayOf(128, 128, 0), rgb(floatArrayOf(0f, 0f, -1f)))
+        val s = (Math.sqrt(0.5)).toFloat()
+        // A slant: 0.5 + 0.5·d each.
+        val c = rgb(floatArrayOf(s, -s, 0f))
+        assertEquals(128 + 0.5 * s * 255, c[0].toDouble(), 2.0)
+        assertEquals(128 - 0.5 * s * 255, c[1].toDouble(), 2.0)
+        assertEquals(128, c[2])
+        assertEquals(0xFF, (LaserTrace.directionColor(floatArrayOf(1f, 0f, 0f), normalMap) shr 24).toInt())
+    }
+
+    @Test fun aStrokesWayEvensOutWithinItsLine() {
+        val t = LaserTrace()
+        val rad = (Math.PI / 180).toFloat()
+        // Right along the equator, a wobble up in the middle.
+        for (k in 0..8) {
+            val lon = k * rad
+            val lat = if (k == 4) 0.3f * rad else 0f
+            val p = FloatArray(3)
+            LaserTrace.dir(lat, lon, p)
+            t.add(p[0], p[1], p[2], k * 10L, draw = true, held = false, smooth = true)
+        }
+        val raw = FloatArray(3)
+        t.strokes.direction(4, 0, raw)
+        val smooth = FloatArray(3)
+        t.strokes.direction(4, LaserTrace.SMOOTH_REACH, smooth)
+        assertTrue(raw[1] > 0.3f)
+        assertTrue(smooth[1] < raw[1] / 3f)
+        assertTrue(smooth[0] > 0.9f)
+    }
+
+    @Test fun theBeamsWayStaysWhenItStops() {
+        val t = LaserTrace()
+        t.add(0f, 0f, -1f, 0, draw = false, held = false)
+        assertArrayEquals(floatArrayOf(0f, 0f, 0f), t.moving, 0f)
+        t.add(0f, 0.05f, -1f, 10, draw = false, held = false, smooth = false)
+        assertTrue(t.moving[1] > 0.99f)
+        t.add(0f, 0.05f, -1f, 20, draw = false, held = false, smooth = false)
+        assertTrue(t.moving[1] > 0.99f)
+        // Smoothed, a sudden turn right takes a moment.
+        t.add(0.05f, 0.05f, -1f, 30, draw = false, held = false, smooth = true)
+        assertTrue(t.moving[0] > 0.1f && t.moving[1] > 0.1f)
+    }
+
     @Test fun drawOffOrClearWipesTheStrokes() {
         val t = LaserTrace()
         t.add(0f, 0f, -1f, 0, draw = true, held = false)
