@@ -352,6 +352,33 @@ internal sealed class OverlayForm : Form
         }
     }
 
+    /// <summary>
+    /// In Edit, the wheel over a window (<see cref="OverlayWheel"/>) picks it and resizes it, keeping
+    /// its shape and centre: 10% a notch (<paramref name="delta"/> 120), 2% with Shift held.
+    /// </summary>
+    public void ScaleBy(int delta, bool fine)
+    {
+        if (IsDisposed || ClickThrough || _dragging || delta == 0) return;
+        _picked(_id);
+        var b = Bounds;
+        double scale = Math.Pow(fine ? 1.02 : 1.10, delta / 120.0);
+        // Not below the smallest size, with both sides shrinking together.
+        scale = Math.Max(scale, Math.Max((double)MinimumSize.Width / b.Width, (double)MinimumSize.Height / b.Height));
+        int w = (int)Math.Round(b.Width * scale), h = (int)Math.Round(b.Height * scale);
+        // A small window would round a 2% step to nothing: grow or shrink by at least a pixel.
+        if (w == b.Width && h == b.Height)
+        {
+            int d = delta > 0 ? 1 : -1;
+            if (d < 0 && (b.Width <= MinimumSize.Width || b.Height <= MinimumSize.Height)) return;
+            w = b.Width + d;
+            h = (int)Math.Round((double)w * b.Height / b.Width);
+        }
+        if (w == b.Width && h == b.Height) return;
+        int cx = b.X + b.Width / 2, cy = b.Y + b.Height / 2;
+        Bounds = new Rectangle(cx - w / 2, cy - h / 2, w, h);
+        SaveBounds();
+    }
+
     private void SaveBounds()
     {
         var b = Bounds;
