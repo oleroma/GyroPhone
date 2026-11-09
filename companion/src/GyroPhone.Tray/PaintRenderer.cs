@@ -259,7 +259,7 @@ internal static class PaintRenderer
             var p = strokes.Point(i);
             var v = Pic(p.X, p.Y, p.Z);
             float k = s.Perspective ? LaserTrace.Perspective(v.Z) : 1f;
-            float bx = (v.X * k + e) * r * toBuf, by = (e - v.Y * k) * r * toBuf;
+            float bx = (v.X * k * r + e) * toBuf, by = (e - v.Y * k * r) * toBuf;
             if (i > 0 && !strokes.Gap(i) && v.Z > 0f == front)
             {
                 // Its colour: where it is in the scene, or the way it moved; shots in the Fire colours.
