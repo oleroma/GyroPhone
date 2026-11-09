@@ -463,11 +463,11 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
         _dc.DrawLine(V(a), V(b), Brush(color), width, round ? _round : null);
     }
 
-    public void DrawLines(Color color, float width, PointF[] points)
+    public void DrawLines(Color color, float width, PointF[] points, bool flat = false)
     {
         if (points.Length < 2 || color.A == 0) return;
         using var geo = Path(points, false);
-        _dc.DrawGeometry(geo, Brush(color), width, _round);
+        _dc.DrawGeometry(geo, Brush(color), width, flat ? _joined : _round);
     }
 
     private static Ellipse E(RectangleF r) => new(new Vector2(r.X + r.Width / 2, r.Y + r.Height / 2), r.Width / 2, r.Height / 2);

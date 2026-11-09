@@ -69,6 +69,22 @@ public sealed class LaserTrace
 
         /// <summary>Point <paramref name="i"/> was painted while firing (the line to it takes the Fire colours).</summary>
         public bool Fire(int i) => _fire[(_head + i) % capacity];
+
+        /// <summary>
+        /// The way the line to point <paramref name="i"/> (from point i − 1) moves, a unit direction (zero if it
+        /// doesn't): from up to <paramref name="reach"/> points before it to up to <paramref name="reach"/> after,
+        /// within its line, so with <paramref name="reach"/> &gt; 0 small shakes even out. As the phone's Ring.direction.
+        /// </summary>
+        public (float X, float Y, float Z) Direction(int i, int reach)
+        {
+            int a = i - 1, steps = 0;
+            while (steps < reach && a > 0 && !Gap(a)) { a--; steps++; }
+            int b = i;
+            steps = 0;
+            while (steps < reach && b + 1 < Count && !Gap(b + 1)) { b++; steps++; }
+            int ka = (_head + a) % capacity, kb = (_head + b) % capacity;
+            return Unit(_x[kb] - _x[ka], _y[kb] - _y[ka], _z[kb] - _z[ka]);
+        }
     }
 
     /// <summary>Draw mode's strokes.</summary>
@@ -77,32 +93,153 @@ public sealed class LaserTrace
     private bool _strokeGap = true;
     private float _lastX, _lastY, _lastZ;
     private bool _wasHeld, _lastFire;
+    private float _beamX, _beamY, _beamZ;
+    private long _beamMs = long.MinValue;
+    // Line smoothing: the steadied point the paint follows, the raw beam before, and its evened-out speed.
+    private float _steadyX, _steadyY, _steadyZ, _rawX, _rawY, _rawZ, _velX, _velY, _velZ;
+    private long _steadyMs;
+
+    /// <summary>
+    /// The way the beam last moved (a unit direction in the shown frame, x right, y up, z toward the viewer; zero
+    /// before it ever moved): it keeps the last way when the beam stops. The crosshair's colour.
+    /// </summary>
+    public (float X, float Y, float Z) Moving { get; private set; }
+
+    /// <summary>Points each side a stroke's colour looks over with smoothing (<see cref="Ring.Direction"/>): ±2°.</summary>
+    public const int SmoothReach = 4;
+
+    /// <summary>How long the crosshair's colour takes to follow a new way with smoothing (ms, 63% of the way).</summary>
+    public const int SmoothMs = 60;
+
+    /// <summary>Line smoothing at full strength: how long a slow move's paint takes to catch up (ms, 63%).</summary>
+    public const float LineSmoothMs = 150f;
+
+    /// <summary>Line smoothing eases off with speed: at this many degrees a second it catches up twice as fast.</summary>
+    public const float LineSmoothSpeed = 60f;
+
+    // How long line smoothing's speed reading evens out over (ms).
+    private const float SpeedMs = 50f;
+
+    // Under this the beam hasn't moved (a radian, about 0.1°).
+    private const float MoveMin = 0.002f;
+
+    /// <summary>The rifle's muzzle tip in its own frame (x right, y up, z toward the stock).</summary>
+    public static readonly (float X, float Y, float Z) Muzzle = (0f, 0.03f, -0.93f);
 
     /// <summary>
     /// The beam now points at (x, y, z) (any length) at <paramref name="nowMs"/>. While a ratchet is
     /// <paramref name="held"/> it doesn't paint (the pose eases back then, which isn't aiming); with
     /// <paramref name="clearOnPress"/> pressing one clears the strokes. With <paramref name="draw"/> it
     /// paints; turning Draw off clears the strokes. While <paramref name="fire"/> (the overlay's fire output is held)
-    /// it paints in the Fire colours; with <paramref name="fireOnly"/> only then.
+    /// it paints in the Fire colours; with <paramref name="fireOnly"/> only then. <see cref="Moving"/> follows the
+    /// beam, evened out over <see cref="SmoothMs"/> with <paramref name="smooth"/>. With <paramref name="lineSmoothing"/>
+    /// (0 off .. 1 strong) the paint follows a steadied beam (<see cref="SteadyToward"/>).
     /// </summary>
-    public void Add(float x, float y, float z, long nowMs, bool draw, bool held, bool clearOnPress = false, bool fire = false, bool fireOnly = false)
+    public void Add(float x, float y, float z, long nowMs, bool draw, bool held, bool clearOnPress = false, bool fire = false, bool fireOnly = false,
+        bool smooth = true, float lineSmoothing = 0f)
     {
         bool pressed = clearOnPress && held && !_wasHeld;
         _wasHeld = held;
         if ((!draw || pressed) && Strokes.Count > 0) Clear();
         float l = MathF.Sqrt(x * x + y * y + z * z);
+        if (l > 1e-6f && float.IsFinite(l)) Follow(x / l, y / l, z / l, nowMs, smooth);
         if (!draw || l < 1e-6f || held || !float.IsFinite(l) || (fireOnly && !fire))
         {
             _strokeGap = true;
             return;
         }
         float dx = x / l, dy = y / l, dz = z / l;
+        if (lineSmoothing > 0f) (dx, dy, dz) = SteadyToward(dx, dy, dz, nowMs, lineSmoothing);
         // A new point once the beam moved a little (or the firing started or stopped): a still beam adds nothing.
         if (!_strokeGap && fire == _lastFire && _lastX * dx + _lastY * dy + _lastZ * dz > StrokeStepCos) return;
         Strokes.Add(dx, dy, dz, nowMs, _strokeGap, fire);
         _strokeGap = false;
         _lastFire = fire;
         _lastX = dx; _lastY = dy; _lastZ = dz;
+    }
+
+    /// <summary>Turns <see cref="Moving"/> toward the way the beam went to unit (x, y, z) at <paramref name="nowMs"/>.</summary>
+    private void Follow(float x, float y, float z, long nowMs, bool smooth)
+    {
+        if (_beamMs == long.MinValue)
+        {
+            (_beamX, _beamY, _beamZ, _beamMs) = (x, y, z, nowMs);
+            return;
+        }
+        float dx = x - _beamX, dy = y - _beamY, dz = z - _beamZ;
+        // Barely moved (a still phone's noise): keep the last way.
+        if (dx * dx + dy * dy + dz * dz < MoveMin * MoveMin) return;
+        var d = Unit(dx, dy, dz);
+        var m = Moving;
+        float k = !smooth || (m.X == 0f && m.Y == 0f && m.Z == 0f) ? 1f
+            : Math.Clamp(1f - MathF.Exp(-Math.Max(1L, nowMs - _beamMs) / (float)SmoothMs), 0f, 1f);
+        Moving = Unit(m.X + (d.X - m.X) * k, m.Y + (d.Y - m.Y) * k, m.Z + (d.Z - m.Z) * k);
+        (_beamX, _beamY, _beamZ, _beamMs) = (x, y, z, nowMs);
+    }
+
+    /// <summary>
+    /// Moves the steadied point toward the beam at unit (x, y, z) at <paramref name="nowMs"/>, as a drawing app's
+    /// stabiliser: it eases in over up to <see cref="LineSmoothMs"/> × <paramref name="strength"/> when the beam moves
+    /// slowly, much faster when it moves fast (<see cref="LineSmoothSpeed"/>); a new line starts on the beam.
+    /// </summary>
+    private (float X, float Y, float Z) SteadyToward(float x, float y, float z, long nowMs, float strength)
+    {
+        if (_strokeGap)
+        {
+            (_steadyX, _steadyY, _steadyZ) = (x, y, z);
+            (_velX, _velY, _velZ) = (0f, 0f, 0f);
+        }
+        else
+        {
+            float dt = Math.Clamp(nowMs - _steadyMs, 1L, 200L);
+            // The beam's speed, evened out over SpeedMs so a shake back and forth cancels (radians/ms).
+            float kv = 1f - MathF.Exp(-dt / SpeedMs);
+            _velX += ((x - _rawX) / dt - _velX) * kv;
+            _velY += ((y - _rawY) / dt - _velY) * kv;
+            _velZ += ((z - _rawZ) / dt - _velZ) * kv;
+            float degPerS = MathF.Sqrt(_velX * _velX + _velY * _velY + _velZ * _velZ) * 180f / MathF.PI * 1000f;
+            float tau = Math.Clamp(strength, 0f, 1f) * LineSmoothMs / (1f + degPerS / LineSmoothSpeed);
+            float k = tau < 0.5f ? 1f : 1f - MathF.Exp(-dt / tau);
+            (_steadyX, _steadyY, _steadyZ) = Unit(_steadyX + (x - _steadyX) * k, _steadyY + (y - _steadyY) * k, _steadyZ + (z - _steadyZ) * k);
+        }
+        (_rawX, _rawY, _rawZ) = (x, y, z);
+        _steadyMs = nowMs;
+        return (_steadyX, _steadyY, _steadyZ);
+    }
+
+    /// <summary>(x, y, z) made unit length (zero when it is).</summary>
+    public static (float X, float Y, float Z) Unit(float x, float y, float z)
+    {
+        float l = MathF.Sqrt(x * x + y * y + z * z);
+        return l < 1e-9f || !float.IsFinite(l) ? (0f, 0f, 0f) : (x / l, y / l, z / l);
+    }
+
+    /// <summary>
+    /// The colour (ARGB) of moving the way of unit direction <paramref name="d"/> (x right, y up, z toward the
+    /// viewer), blended as a normal map does: <paramref name="colors"/> holds the colour of each straight way (right,
+    /// left, up, down, toward, away; ARGB); the middle is their average, and each part of the way takes its share of
+    /// the way from the middle to its colour. With the normal-map colours that is 0.5 + 0.5·d per red, green, blue.
+    /// Not moving: the middle. As the phone's LaserTrace.directionColor.
+    /// </summary>
+    public static uint DirectionColor((float X, float Y, float Z) d, ReadOnlySpan<uint> colors)
+    {
+        uint argb = 0;
+        Span<float> p = stackalloc float[] { d.X, d.Y, d.Z };
+        for (int ch = 0; ch < 4; ch++)
+        {
+            int shift = ch * 8;
+            float mid = 0f;
+            for (int i = 0; i < 6; i++) mid += (colors[i] >> shift) & 0xFF;
+            mid /= 6f;
+            float v = mid;
+            for (int a = 0; a < 3; a++)
+            {
+                float c = (colors[p[a] >= 0f ? a * 2 : a * 2 + 1] >> shift) & 0xFF;
+                v += MathF.Abs(p[a]) * (c - mid);
+            }
+            argb |= (uint)Math.Clamp((int)(v + 0.5f), 0, 255) << shift;
+        }
+        return argb;
     }
 
     /// <summary>With <paramref name="fadeMs"/> &gt; 0, drops strokes older than it.</summary>

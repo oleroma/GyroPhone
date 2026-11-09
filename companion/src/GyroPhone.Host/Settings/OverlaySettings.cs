@@ -258,6 +258,16 @@ public sealed class OverlaySettings
     /// </summary>
     public int LaserFire { get; set; } = GyroPhone.Host.LaserFire.Default;
     public bool LaserFireOnly { get; set; }
+    /// <summary>Laser pointer: the paint's and crosshair's way colours even out small shakes. As the phone's GyroDisplay.laserSmoothColours.</summary>
+    public bool LaserSmoothColours { get; set; } = true;
+    /// <summary>
+    /// Laser pointer Draw mode's strokes: LaserColourSteps shades per colour channel (4..32); LaserCurve rounds the
+    /// corners between points (0 straight .. 1 round); LaserLineSmoothing evens out hand shake in the painted path
+    /// (0 off .. 1 strong). As the phone's GyroDisplay.laserColourSteps, laserCurve, laserLineSmoothing.
+    /// </summary>
+    public int LaserColourSteps { get; set; } = 16;
+    public float LaserCurve { get; set; } = 0.5f;
+    public float LaserLineSmoothing { get; set; }
 
     // The pose, made on the PC (the phone's own gyro display settings are separate).
     /// <summary>
@@ -439,22 +449,28 @@ public sealed class OverlaySettings
         new("text", "Heading numbers", 0xFFFFFFFF),
     ];
 
+    /// <summary>The laser's way colour keys, in <see cref="LaserTrace.DirectionColor"/>'s order.</summary>
+    public static readonly string[] LaserMoves = ["move_right", "move_left", "move_up", "move_down", "move_toward", "move_away"];
+
     private static readonly OverlayColor[] LaserColors =
     [
         new("sphere", "Sphere", 0x332A3446),
         new("grid", "Grid", 0x66FFFFFF),
-        new("x", "Pitch axis (X, right)", 0xFF5ADB6E),
-        new("y", "Yaw axis (Y, up)", 0xFFFF5A5A),
+        new("x", "Pitch axis (X, right)", 0xFFFF5A5A),
+        new("y", "Yaw axis (Y, up)", 0xFF5ADB6E),
         new("z", "Roll axis (Z, along the beam)", 0xFF5AA8FF),
         new("beam", "Beam", 0xFFFF3B3B),
         new("dot", "Dot", 0xFFFFFFFF),
-        new("paint", "Paint ahead", 0xFFFFC94D),
-        new("paint_behind", "Paint behind", 0xFF4DA6FF),
+        // The colour of each way the beam moves (paint and crosshair), as a normal map: 0.5 + 0.5 × the way.
+        new("move_right", "Moving right", 0xFFFF8080),
+        new("move_left", "Moving left", 0xFF008080),
+        new("move_up", "Moving up", 0xFF80FF80),
+        new("move_down", "Moving down", 0xFF800080),
+        new("move_toward", "Moving toward you", 0xFF8080FF),
+        new("move_away", "Moving away", 0xFF808000),
         new("rifle", "Rifle", 0xFF5A616C),
         new("fire", "Fire", 0xFFFF4A3D),
         new("fire_behind", "Fire behind", 0xFF8A1E18),
-        new("crosshair", "Crosshair", 0xFF4CFF6A),
-        new("crosshair_behind", "Crosshair behind", 0xFF2E8A43),
         new("crosshair_outline", "Crosshair outline", 0xFF0E1116),
     ];
 

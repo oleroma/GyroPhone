@@ -58,7 +58,9 @@ internal sealed class OverlaysPage : Page
     private readonly Seg<int> _laserFaces;
     private readonly TextBlock _laserFacesTitle;
     private readonly TextBlock _laserRifleHint;
-    private readonly SliderRow _laserBrush;
+    private readonly SliderRow _laserBrush, _laserColourSteps, _laserCurve, _laserLineSmoothing;
+    private readonly CheckBox _laserSmoothColours;
+    private readonly TextBlock _laserMovesHint;
     private readonly StackPanel _laserDrawOptions;
     private readonly CheckBox _dots, _trails, _phoneAxon, _shapeAxon;
     private readonly Seg<OverlayHandles> _handles;
@@ -333,8 +335,8 @@ internal sealed class OverlaysPage : Page
         lb.Children.Add(_laserAxon);
         _laserSphereTurns = Parts.Toggle("Sphere turns, beam stays ahead", () => Change(o => o.LaserSphereTurns = !o.LaserSphereTurns), "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.");
         lb.Children.Add(_laserSphereTurns);
-        _laserAxes = Parts.Toggle("Axes (yaw Y red, pitch X green, roll Z blue)", () => Change(o => o.LaserAxes = !o.LaserAxes), "They turn with the laser, R along its beam.");
-        _laserGimbal = Parts.Toggle("Gimbal rings", () => Change(o => o.LaserGimbal = !o.LaserGimbal), "Yaw (red, outside), pitch (green) and roll (blue) rings, each around its own axis, turning with the laser's axes as one set. They light up while that axis turns; a None axis's ring is faint and dashed.");
+        _laserAxes = Parts.Toggle("Axes (pitch X red, yaw Y green, roll Z blue)", () => Change(o => o.LaserAxes = !o.LaserAxes), "They turn with the laser, R along its beam.");
+        _laserGimbal = Parts.Toggle("Gimbal rings", () => Change(o => o.LaserGimbal = !o.LaserGimbal), "Yaw (green, outside), pitch (red) and roll (blue) rings, each around its own axis, turning with the laser's axes as one set. They light up while that axis turns; a None axis's ring is faint and dashed.");
         lb.Children.Add(_laserGrid);
         lb.Children.Add(_laserAxes);
         lb.Children.Add(_laserGimbal);
@@ -348,6 +350,14 @@ internal sealed class OverlaysPage : Page
         _laserFade = new SliderRow("Fades after", 0, 1, 0.005,
             v => FadeMs(v) == 0 ? "never" : $"{FadeMs(v) / 1000.0:0.00} s", v => Change(o => o.LaserFadeMs = FadeMs(v)));
         _laserDrawOptions.Children.Add(_laserFade.View);
+        _laserDrawOptions.Children.Add(Parts.Text("Strokes"));
+        _laserColourSteps = new SliderRow("Colour steps", 4, 32, 1, v => $"{v:0}", v => Change(o => o.LaserColourSteps = (int)v));
+        _laserDrawOptions.Children.Add(_laserColourSteps.View);
+        _laserCurve = new SliderRow("Curve", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserCurve = (float)v));
+        _laserDrawOptions.Children.Add(_laserCurve.View);
+        _laserLineSmoothing = new SliderRow("Line smoothing", 0, 1, 0.05, v => v < 0.025 ? "off" : $"{v * 100:0}%", v => Change(o => o.LaserLineSmoothing = (float)v));
+        _laserDrawOptions.Children.Add(_laserLineSmoothing.View);
+        _laserDrawOptions.Children.Add(Parts.Text("Colour steps: fewer shades change colour less often along a line. Curve rounds the corners between the line's points (only drawing, no lag). Line smoothing steadies the painted line against hand shake, strongly when you move slowly and hardly when you move fast, so the paint may trail a slow aim a little; the beam, dot and crosshair stay as they are.", "Hint"));
         _laserClearOnRatchet = Parts.Toggle("Clear on ratchet", () => Change(o => o.LaserClearOnRatchet = !o.LaserClearOnRatchet), "A ratchet press clears the drawing.");
         _laserDrawOptions.Children.Add(_laserClearOnRatchet);
         _laserDrawOptions.Children.Add(Parts.Text("Fire: paints in the Fire colours while it is sent from the phone, or pressed on the PC's controller with \"Use PC controller for gyro ratchet\" on."));
@@ -360,8 +370,12 @@ internal sealed class OverlaysPage : Page
         }
         _laserFireOnly = Parts.Toggle("Paint only while firing", () => Change(o => o.LaserFireOnly = !o.LaserFireOnly), "Aiming leaves no trail; only shots draw.");
         _laserDrawOptions.Children.Add(_laserFireOnly);
-        _laserDrawOptions.Children.Add(Parts.Text("Strokes glow, older ones darker. Their colour goes from Paint ahead (straight ahead) to Paint behind (turned all the way round), so a turn past 90° still reads. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping on the phone (Other targets) clears every laser pointer at once.", "Hint"));
+        _laserDrawOptions.Children.Add(Parts.Text("Strokes glow, older ones darker. Each takes the colour of the way the beam moves (the Moving colours, blended like a normal map: right pink, left teal, up light green, down purple), so you see which way you swept. Shots take the Fire colours. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping on the phone (Other targets) clears every laser pointer at once.", "Hint"));
         lb.Children.Add(_laserDrawOptions);
+        _laserSmoothColours = Parts.Toggle("Smooth way colours", () => Change(o => o.LaserSmoothColours = !o.LaserSmoothColours), "Small shakes don't flicker the Moving colours.");
+        lb.Children.Add(_laserSmoothColours);
+        _laserMovesHint = Parts.Text("The Moving colours (in Colours) colour the paint and the crosshair by the way the beam moves (right, left, up, down, toward you, away, as the sphere's axes are when it isn't turned). A slant blends its ways' colours, as a normal map does. The crosshair keeps the last way's colour when you stop.", "Hint");
+        lb.Children.Add(_laserMovesHint);
         var clear = Parts.Button("Clear", () => { if (Picked is { } id) _app.ClearOverlay(id); }, glyph: "");
         clear.Margin = new Thickness(0, 8, 0, 0);
         clear.HorizontalAlignment = HorizontalAlignment.Left;
@@ -653,6 +667,13 @@ internal sealed class OverlaysPage : Page
         Parts.SetChecked(_laserDraw, o.LaserDraw);
         Parts.Show(_laserDrawOptions, o.LaserDraw);
         _laserBrush.Set(o.LaserBrush);
+        _laserColourSteps.Set(o.LaserColourSteps);
+        _laserCurve.Set(o.LaserCurve);
+        _laserLineSmoothing.Set(o.LaserLineSmoothing);
+        bool moves = o.LaserDraw || (o.LaserCrosshair && !o.LaserRifle);
+        Parts.Show(_laserSmoothColours, moves);
+        Parts.Show(_laserMovesHint, moves);
+        Parts.SetChecked(_laserSmoothColours, o.LaserSmoothColours);
         foreach (var seg in _fireSegs) seg.Set(o.LaserFire);
         Parts.SetChecked(_laserFireOnly, o.LaserFireOnly);
         _laserFade.Set(Math.Sqrt(o.LaserFadeMs / (double)LaserFadeMaxMs));
