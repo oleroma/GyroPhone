@@ -300,16 +300,28 @@ class LaserTrace {
         /** Perspective: how much bigger a picture point at depth [z] (toward the viewer +, sphere radii) shows. */
         fun perspective(z: Float): Float = CAMERA_DISTANCE / (CAMERA_DISTANCE - z.coerceAtMost(CAMERA_DISTANCE - 0.5f))
 
-        /** The light the sphere and 3D paint are lit by, a unit direction in the picture (x right, y up, z toward the viewer): from the upper left. */
+        /** The default light the sphere and 3D paint are lit by, a unit direction in the picture (x right, y up, z toward the viewer): from the upper left. */
         val LIGHT = floatArrayOf(-0.35f, 0.4f, 0.847f)
+
+        /**
+         * The light's unit direction into [out]: from [fromDeg] round the picture (0 right, 90 top, 180 left,
+         * 270 bottom) and [heightDeg] up from the picture's plane toward the viewer (90 straight from the front).
+         */
+        fun light(fromDeg: Float, heightDeg: Float, out: FloatArray) {
+            val a = Math.toRadians(fromDeg.toDouble())
+            val h = Math.toRadians(heightDeg.coerceIn(0f, 90f).toDouble())
+            out[0] = (cos(h) * cos(a)).toFloat()
+            out[1] = (cos(h) * sin(a)).toFloat()
+            out[2] = sin(h).toFloat()
+        }
 
         /**
          * How bright 3D paint at picture point ([x], [y], [z]) on the unit sphere shows with [lighting] (0..1): seen
          * on the far half from inside (its face toward the viewer looks inward), on the near half from outside;
          * shaded by the light ([LIGHT]), down to a quarter where it faces away.
          */
-        fun paintLight(x: Float, y: Float, z: Float, lighting: Float): Float {
-            val d = x * LIGHT[0] + y * LIGHT[1] + z * LIGHT[2]
+        fun paintLight(x: Float, y: Float, z: Float, lighting: Float, light: FloatArray = LIGHT): Float {
+            val d = x * light[0] + y * light[1] + z * light[2]
             val lit = (if (z >= 0f) d else -d).coerceAtLeast(0f)
             val k = lighting.coerceIn(0f, 1f)
             return 1f - k + k * (0.25f + 0.75f * lit)

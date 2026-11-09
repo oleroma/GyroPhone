@@ -242,6 +242,11 @@ internal fun GyroDisplaySettingsScreen(
                         SwitchRow("Gloss", d.laserGloss, "A shine on the sphere where the light (upper left) hits it.") { set(d.copy(laserGloss = it)) }
                         SwitchRow("Rim glow", d.laserRimGlow, "A soft bright edge round the sphere, so its outline shows on any background.") { set(d.copy(laserRimGlow = it)) }
                     }
+                    if ((!d.laserRifle && !d.laserCrosshair && d.laserGloss) || (d.laserDraw && d.laserPaint3d)) {
+                        IntSlider("Light from %d°", d.laserLightFrom, 0..355, 5) { set(d.copy(laserLightFrom = it)) }
+                        IntSlider("Light height %d°", d.laserLightHeight, 0..90) { set(d.copy(laserLightHeight = it)) }
+                        Hint("Where the light for the gloss and 3D paint comes from: round the picture 0° right, 90° top, 180° left, 270° bottom; height 0° from the side, 90° straight from the front.")
+                    }
                     SwitchRow("Axes (pitch X red, yaw Y green, roll Z blue)", d.laserAxes, "They turn with the laser, R along its beam.") { set(d.copy(laserAxes = it)) }
                     if (!d.laserRifle && !d.laserCrosshair) SwitchRow("Gimbal rings", d.laserGimbal, "Yaw (green, outside), pitch (red) and roll (blue) rings turning with the laser's axes, each round its own: the path the beam and crosshair take turning about it. A None axis's ring is faint and dashed, and an axis lights up while the gyro turns it.") { set(d.copy(laserGimbal = it)) }
                     GroupTitle("Draw")
@@ -264,6 +269,9 @@ internal fun GyroDisplaySettingsScreen(
                         Text("Strokes", style = MaterialTheme.typography.bodyMedium)
                         SwitchRow("3D paint", d.laserPaint3d, "The paint is lit by the sphere's light from the upper left, darker where the surface turns away from it.") { set(d.copy(laserPaint3d = it)) }
                         if (d.laserPaint3d) PercentSlider("Lighting", d.laserLighting, 0f..1f) { set(d.copy(laserLighting = it)) }
+                        PercentSlider("Glow", d.laserGlow, 0f..1f) { set(d.copy(laserGlow = it)) }
+                        SwitchRow("Outline", d.laserOutline, "A thin dark edge along the line (its colour is Paint outline), so it shows on light backgrounds.") { set(d.copy(laserOutline = it)) }
+                        SwitchRow("Older paint darker", d.laserAgeDim, "Without Fades after, older paint shows darker and fainter, so you see which way it was drawn. Off: the whole line the same. With Fades after, paint always fades as it ages.") { set(d.copy(laserAgeDim = it)) }
                         SwitchRow("Thinner toward the rim", d.laserPaintWidth, "The line narrows smoothly where the sphere's surface turns away from you, as paint on a ball looks (and with Perspective is bigger nearer). Off: the same width everywhere.") { set(d.copy(laserPaintWidth = it)) }
                         IntSlider("Colour steps %d", d.laserColourSteps, 4..32) { set(d.copy(laserColourSteps = it)) }
                         PercentSlider("Curve", d.laserCurve, 0f..1f) { set(d.copy(laserCurve = it)) }
@@ -486,6 +494,7 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     GyroDisplayColor.LASER_RIFLE -> d.laserRifle
     GyroDisplayColor.LASER_GLOSS -> d.laserGloss && !d.laserRifle && !d.laserCrosshair
     GyroDisplayColor.LASER_RIM -> d.laserRimGlow && !d.laserRifle && !d.laserCrosshair
+    GyroDisplayColor.LASER_OUTLINE -> d.laserDraw && d.laserOutline
     GyroDisplayColor.LASER_SPHERE, GyroDisplayColor.LASER_BEAM, GyroDisplayColor.LASER_DOT -> !d.laserRifle && !d.laserCrosshair
     GyroDisplayColor.LASER_CROSSHAIR_OUTLINE -> d.laserCrosshair && !d.laserRifle && d.crosshairOutline
     else -> true

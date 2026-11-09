@@ -275,6 +275,8 @@ private class VisState {
     private var rw = FloatArray(4096)
     private var rk = IntArray(4096)
     private val glowPaths = HashMap<Int, Path>()
+    private val outlinePaths = HashMap<Int, Path>()
+    private val light = FloatArray(3)
     private val nA = FloatArray(2)
     private val nB = FloatArray(2)
     private val moveColors = LongArray(6)
@@ -391,6 +393,7 @@ private class VisState {
         val fadeMs = d.laserFadeMs
         val held = feed?.ratchetHeld == true
         LaserTrace.beam(m, beam)
+        LaserTrace.light(d.laserLightFrom.toFloat(), d.laserLightHeight.toFloat(), light)
         val lt = feed?.laser
         if (lt != null) {
             val v = feed?.pose?.version ?: 0L
@@ -486,6 +489,15 @@ private class VisState {
                 movePool.add(p)
             }
             glowPaths.clear()
+            for (p in outlinePaths.values) {
+                p.reset()
+                movePool.add(p)
+            }
+            outlinePaths.clear()
+            val glowK = d.laserGlow.coerceIn(0f, 1f)
+            val outline = d.laserOutline
+            val outlinePx = 1.2f * density
+            val outlineColor = col(GyroDisplayColor.LASER_OUTLINE)
             val steps = d.laserColourSteps.coerceIn(4, 32)
             val paint3d = d.laserPaint3d
             // Varying width: thinner toward the rim (and with perspective bigger nearer), changing smoothly along the ribbon.
@@ -551,12 +563,18 @@ private class VisState {
                     normalAt(i, nB)
                     val key = rk[i]
                     if (key >= 0) {
-                        for (g in 0..1) {
-                            if (g == 1 && !glow) break
-                            val s = if (g == 0) 0.5f else 1.5f
-                            val path = if (g == 0) pathFor(key) else glowPaths.getOrPut(key) { movePool.removeLastOrNull() ?: Path() }
-                            val wa = rw[i - 1] * s
-                            val wb = rw[i] * s
+                        for (g in 0..2) {
+                            if (g == 1 && (!glow || glowK <= 0f)) continue
+                            if (g == 2 && !outline) continue
+                            val s = if (g == 1) 1.5f else 0.5f
+                            val extra = if (g == 2) outlinePx else 0f
+                            val path = when (g) {
+                                0 -> pathFor(key)
+                                1 -> glowPaths.getOrPut(key) { movePool.removeLastOrNull() ?: Path() }
+                                else -> outlinePaths.getOrPut(key) { movePool.removeLastOrNull() ?: Path() }
+                            }
+                            val wa = rw[i - 1] * s + extra
+                            val wb = rw[i] * s + extra
                             path.moveTo(rx[i - 1] + nA[0] * wa, ry[i - 1] + nA[1] * wa)
                             path.lineTo(rx[i] + nB[0] * wb, ry[i] + nB[1] * wb)
                             path.lineTo(rx[i] - nB[0] * wb, ry[i] - nB[1] * wb)
@@ -684,12 +702,12 @@ private class VisState {
                     if (n == 0) vertex(lastX, lastY, -1, lastW)
                     val argb = if (firing) fireArgb(LaserTrace.behind(z)) else base
                     // 3D paint: lit by the sphere's light. Varying width: thinner toward the rim; with perspective, bigger nearer.
-                    val light = if (paint3d) LaserTrace.paintLight(pv[0], pv[1], pv[2], d.laserLighting) else 1f
+                    val lit = if (paint3d) LaserTrace.paintLight(pv[0], pv[1], pv[2], d.laserLighting, light) else 1f
                     val wf = if (!varyWidth) 1f
                     else (if (laserPersp) LaserTrace.perspective(pv[2]) else 1f) * LaserTrace.paintWidth(pv[2])
                     // Colour in [steps] shades a channel: the piece's path.
-                    fun q(shift: Int) = (((argb shr shift and 0xFF) / 255f) * light * (steps - 1) + 0.5f).toInt().coerceIn(0, steps - 1)
-                    vertex(pt.x, pt.y, MOVE_KEYS + ((level - 1) shl 18 or (q(16) shl 10) or (q(8) shl 5) or q(0)), wNow * maxOf(0.15f, wf))
+                    fun q(shift: Int) = (((argb shr shift and 0xFF) / 255f) * lit * (steps - 1) + 0.5f).toInt().coerceIn(0, steps - 1)
+                    vertex(pt.x, pt.y, MOVE_KEYS + ((level - 1) shl 15 or (q(16) shl 10) or (q(8) shl 5) or q(0)), wNow * maxOf(0.15f, wf))
                     lastX = pt.x; lastY = pt.y; lastW = wNow * maxOf(0.15f, wf)
                     lastOurs = ours
                     if (!ours) flush()
@@ -709,11 +727,12 @@ private class VisState {
             // Oldest first (the age step is the key's top), so newer paint lies on top.
             for ((key, path) in movePaths.entries.sortedBy { it.key }) {
                 val q = key - MOVE_KEYS
-                val level = (q shr 18) + 1
+                val level = (q shr 15) + 1
                 val k = level / LEVELS.toFloat()
                 val fade = (0.35f + 0.65f * k) * side
                 val color = shaded(moveColor(key), k)
-                glowPaths[key]?.let { drawPath(it, color.copy(alpha = color.alpha * fade * 0.22f)) }
+                glowPaths[key]?.let { drawPath(it, color.copy(alpha = color.alpha * fade * 0.44f * glowK)) }
+                outlinePaths[key]?.let { drawPath(it, outlineColor.copy(alpha = outlineColor.alpha * fade)) }
                 drawPath(path, color.copy(alpha = color.alpha * fade))
             }
         }
@@ -721,8 +740,10 @@ private class VisState {
         fun paint(front: Boolean) {
             val s = lt?.strokes ?: return
             val n = s.count
+            // Without fading, older paint is darker only with Older paint darker.
+            val ageDim = fadeMs > 0 || d.laserAgeDim
             lines(
-                s, front, { i, t -> LaserTrace.strokeLife(i, n, t, now, fadeMs, s.behindNewest(i), d.laserLength.toFloat()) }, brushPx, true,
+                s, front, { i, t -> if (ageDim) LaserTrace.strokeLife(i, n, t, now, fadeMs, s.behindNewest(i), d.laserLength.toFloat()) else 1f }, brushPx, true,
                 col(GyroDisplayColor.LASER_FIRE), col(GyroDisplayColor.LASER_FIRE_BEHIND),
             )
         }
@@ -823,9 +844,13 @@ private class VisState {
             )
         }
         if (d.laserGloss) {
-            // The shine where the light (upper left) reflects toward the viewer: halfway between them.
+            // The shine where the light reflects toward the viewer: halfway between them.
             val gloss = col(GyroDisplayColor.LASER_GLOSS)
-            val at = Offset(c.x - 0.18f * r, c.y - 0.21f * r)
+            val hx = light[0]
+            val hy = light[1]
+            val hz = light[2] + 1f
+            val hl = kotlin.math.sqrt(hx * hx + hy * hy + hz * hz).coerceAtLeast(1e-4f)
+            val at = Offset(c.x + hx / hl * r, c.y - hy / hl * r)
             val gr = r * 0.24f
             drawCircle(Brush.radialGradient(listOf(gloss, gloss.copy(alpha = 0f)), center = at, radius = gr), gr, at)
         }
@@ -1525,7 +1550,8 @@ private val STROKE_STEP_RAD = Math.toRadians(4.0).toFloat()
 private val WORLD_AXES = arrayOf(Color(0xFF5ADB6E), Color(0xFF5AA8FF), Color(0xFFFF5A5A))
 
 /** A laser pointer's strokes fade in this many steps (one path each). */
-private const val LEVELS = 8
+/** Age steps of the paint's darkening (each its own path). */
+private const val LEVELS = 64
 
 /** A laser pointer's Fire strokes blend from Fire ahead to Fire behind in this many steps (one path each). */
 private const val HUES = 8
