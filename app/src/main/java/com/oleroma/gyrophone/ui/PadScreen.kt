@@ -46,7 +46,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -57,6 +56,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.SideEffect
+import com.oleroma.gyrophone.core.model.FingerAxis
+import com.oleroma.gyrophone.core.model.fingerOf
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -599,7 +600,7 @@ fun PadScreen(
     /** A touch began or ended: watch the live mappings for a while (gestures fire after lifts). */
     fun watchLive() {
         if (!visuals.liveMappings) return
-        liveWatchUntil[0] = SystemClock.uptimeMillis() + ws.doubleTapMs + LIVE_LINGER_MS
+        liveWatchUntil[0] = SystemClock.uptimeMillis() + ws.longPressMs + LIVE_LINGER_MS
         if (!liveWatching) liveWatching = true
     }
 
@@ -638,6 +639,14 @@ fun PadScreen(
     val blackSeconds by runtime.blackScreenSeconds.collectAsStateWithLifecycle()
     val blackRequests by runtime.blackScreenRequests.collectAsStateWithLifecycle()
     var black by remember { mutableStateOf(false) }
+    // The PC's latency test window is open: tracking markers over the pad until it closes or "Hide
+    // markers". While they show, the pad never goes black and the screen stays on (the person films
+    // without touching it).
+    val latencyScreen by runtime.wifi.latencyScreen.collectAsStateWithLifecycle()
+    var latencyHidden by remember { mutableStateOf(false) }
+    LaunchedEffect(latencyScreen) { if (!latencyScreen) latencyHidden = false }
+    val markersShown = !editing && latencyScreen && !latencyHidden
+    LaunchedEffect(markersShown) { if (markersShown) black = false }
     // The last screen touch (uptime ms) and the fingers down now, seen before the pad's handlers.
     val lastTouchMs = remember { longArrayOf(SystemClock.uptimeMillis()) }
     val fingersDown = remember { IntArray(1) }
@@ -645,12 +654,12 @@ fun PadScreen(
     LaunchedEffect(blackRequests) {
         if (blackRequests != seenRequests[0]) {
             seenRequests[0] = blackRequests
-            if (!editing) black = true
+            if (!editing && !markersShown) black = true
         }
     }
     LaunchedEffect(editing) { if (editing) black = false }
-    LaunchedEffect(blackIdle, blackSeconds, editing, black) {
-        if (!blackIdle || editing || black) return@LaunchedEffect
+    LaunchedEffect(blackIdle, blackSeconds, editing, black, markersShown) {
+        if (!blackIdle || editing || black || markersShown) return@LaunchedEffect
         lastTouchMs[0] = SystemClock.uptimeMillis()
         val idleMs = blackSeconds * 1000L
         while (true) {
@@ -664,8 +673,8 @@ fun PadScreen(
     }
     // A black pad keeps the screen on even with Keep the screen on off: if the phone locked, the app
     // would stop reading the controller.
-    DisposableEffect(view, keepAwake, black) {
-        view.keepScreenOn = keepAwake || black
+    DisposableEffect(view, keepAwake, black, markersShown) {
+        view.keepScreenOn = keepAwake || black || markersShown
         onDispose { view.keepScreenOn = false }
     }
     // Play-mode touch reaches the engine as it arrives, not once per frame. Asked on the decor view:
@@ -760,6 +769,8 @@ fun PadScreen(
         val pxPerDp = density.density
         val portrait = h > w
         val unit = minOf(w, h) // control size base: the pad area's shorter side
+        // Where the engine measures finger positions on buttons (finger inputs).
+        SideEffect { runtime.engine.setPadArea(w, h, portrait) }
 
         fun center(c: TouchControl) = Offset(c.placeX(portrait) * w, c.placeY(portrait) * h)
         fun half(c: TouchControl) = c.placeSize(portrait) * unit / 2f
@@ -1901,6 +1912,8 @@ fun PadScreen(
 
         if (!editing) DebugOverlay(runtime, Modifier.align(Alignment.BottomStart))
 
+        if (markersShown) LatencyMarkers { latencyHidden = true }
+
         if (black) BlackScreen { black = false }
 
         if (!editing) {
@@ -2296,7 +2309,7 @@ fun PadScreen(
                                             shape = TouchShape.SQUARE,
                                             aspect = aspect,
                                             layer = TouchLayer.BACK,
-                                            display = GyroDisplay(kind),
+                                            display = GyroDisplay.create(kind),
                                         )
                                         editWorkspace { it.copy(touchControls = it.touchControls + addAt(at, c)) }
                                         selected = id
@@ -2424,8 +2437,12 @@ fun PadScreen(
                 }
                 // The workspace's settings page: edit mode's ⚙ and the touchpad editor's Settings.
                 val workspacePage: @Composable () -> Unit = {
-                    WorkspaceSettingsPage(
-                        runtime, d, editIndex, mapSet, { mapSet = it },
+                    WorkspaceSettingsPage(runtime, d, editIndex, mapSet, { mapSet = it }, onWorkspaceChange = { change -> editWorkspace(change) })
+                }
+                // Rename, duplicate, delete and copy: fixed above the page.
+                val workspaceTop: @Composable () -> Unit = {
+                    WorkspaceTopBar(
+                        runtime, d, editIndex,
                         onProfileChange = { p, at ->
                             val deleted = p.workspaces.size < d.workspaces.size
                             draft = p
@@ -2440,7 +2457,7 @@ fun PadScreen(
                     )
                 }
                 if (menu != EditMenu.MAPPING) {
-                    SettingsDialog(title = ws.name, subtitle = "Workspace settings", onClose = close) { workspacePage() }
+                    SettingsDialog(title = ws.name, subtitle = "Workspace settings", onClose = close, top = workspaceTop) { workspacePage() }
                 } else {
                     // Its settings are the workspace's: the editor's Settings shows them.
                     ControlMappingScreen(
@@ -2462,7 +2479,7 @@ fun PadScreen(
                         },
                         // ⚙ edits the settings of the layer picked in the set bar.
                         settings = touchpadSettings(runtime, setLevel(ws, d.defaults, mapSet) { change -> editWorkspace(change) })
-                            .let { t -> MappingSettings(t.action, shared = workspacePage) },
+                            .let { t -> MappingSettings(t.action, shared = workspacePage, sharedTop = workspaceTop) },
                         // Base takes the Defaults' mappings of what it does not map; a layer shows Base's greyed.
                         inherited = if (mapSet == MappingSet.BASE || ws.sets.none { s -> s.id == mapSet }) {
                             Inheritance.defaults(d.defaults)
@@ -2621,6 +2638,25 @@ fun PadScreen(
         if (showTouchVisuals) TouchOverlay(trails, visuals, Modifier.fillMaxSize())
         if (!editing && visuals.swipeLine) SwipeLineOverlay(swipeLines, Modifier.fillMaxSize())
         if (!editing && visuals.moveRulers) MoveRulerOverlay(moveRulers, Modifier.fillMaxSize())
+        if (!editing && visuals.positionRuler) {
+            // A ruler through the finger on each button whose finger position is mapped (in any layer).
+            val marks = remember(ws, w, h, portrait) {
+                val axes = ws.mappings.mapNotNull { it.source as? InputSource.Finger }.filter { it.id.isNotEmpty() }
+                ws.touchControls.filter { c -> c.kind == TouchKind.BUTTON && axes.any { it.id == c.id } }.map { c ->
+                    val cx = c.placeX(portrait) * w
+                    val cy = c.placeY(portrait) * h
+                    val hw = c.placeSize(portrait) * minOf(w, h) / 2f
+                    val round = c.shape == TouchShape.CIRCLE
+                    val hh = if (round) hw else hw * c.heightRatio
+                    FingerMark(
+                        c.id, cx - hw, cy - hh, cx + hw, cy + hh, round,
+                        FingerAxis.entries.filter { a -> (round || !a.roundOnly) && axes.any { it.id == c.id && it.axis == a } }
+                            .map { a -> c.fingers.fingerOf(a) },
+                    )
+                }.filter { it.axes.isNotEmpty() }
+            }
+            PositionRulerOverlay(runtime.engine, marks, Color(visuals.rulerColor.toInt()), visuals.rulerValueInCorner, Modifier.fillMaxSize())
+        }
     }
 }
 

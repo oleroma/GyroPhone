@@ -189,6 +189,37 @@ public class OverlayTests
     }
 
     [Fact]
+    public void LevelDisplaysPressOnThePhoneLevelsEveryOverlayShown()
+    {
+        var h = new Harness();
+        var tilted = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Shown = true, Gravity = true };
+        var free = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Shown = true, Gravity = false, Rest = [1, 0, 0, 0] };
+        var hidden = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Shown = false, Gravity = false, Rest = [1, 0, 0, 0] };
+        h.Settings.Overlays.AddRange([tilted, free, hidden]);
+        var phone = h.NewPhone();
+        Assert.True(phone.OnWelcome(h.Send(phone, phone.Hello())!));
+        h.Send(phone, phone.State());
+        h.Engine.SetOverlay(true);
+        byte[] Frame(byte levelPresses)
+        {
+            var b = Hex.B(OverlayTests.Frame);
+            b[139] = levelPresses;
+            return b;
+        }
+
+        // The first count seen levels nothing: it may be from before.
+        h.Send(phone, phone.Sealed(PacketType.Overlay, Frame(5)));
+        h.Send(phone, phone.Sealed(PacketType.Overlay, Frame(5)));
+        Assert.Null(tilted.Rest);
+        Assert.NotNull(free.Rest);
+
+        h.Send(phone, phone.Sealed(PacketType.Overlay, Frame(6)));
+        Assert.NotNull(tilted.Rest);
+        Assert.Null(free.Rest);
+        Assert.NotNull(hidden.Rest);
+    }
+
+    [Fact]
     public void OverlayFlagAndDataOnlyWhileOn()
     {
         var h = new Harness();
@@ -326,18 +357,149 @@ public class OverlayTests
     }
 
     [Fact]
-    public void TrackballTurnsAgainstTheGyroAndWithOtherMoves()
+    public void TrackballTurnsAsItsAxesSayAndWithOtherMoves()
     {
-        var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Trackball = true, TrackballRws = false, TrackballSpin = 2f };
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Trackball, TrackballRws = false, TrackballSpin = 2f, TrackballAxes = 1 | (2 << 8) };
         var p = new GyroPhone.Host.OverlayPose();
-        // The gyro turns 10° right while moving the mouse: the ball turns 20° the other way.
+        // Yaw on the up axis: the gyro turns 10° right while moving the mouse, the ball turns 20° with it.
         p.Feed(Motion(10f, 0.01f), s);
-        Assert.Equal(-20f, HeadingDeg(p), 1);
+        Assert.Equal(20f, HeadingDeg(p), 1);
         // Touchpad counts worth a 10° yaw turn turn it as that gyro turn would.
         var f = Motion(0f, 0.01f);
         f.CameraYaw = 10f;
         p.Feed(f, s);
-        Assert.Equal(-40f, HeadingDeg(p), 1);
+        Assert.Equal(40f, HeadingDeg(p), 1);
+        // The up axis inverted: the other way.
+        s.TrackballAxes = 1 | (2 << 8) | 0x80;
+        var q = new GyroPhone.Host.OverlayPose();
+        q.Feed(Motion(10f, 0.01f), s);
+        Assert.Equal(-20f, HeadingDeg(q), 1);
+    }
+
+    [Fact]
+    public void ALockedTrackballAxisNeverTurns()
+    {
+        float[] Run(int axes)
+        {
+            var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Trackball, TrackballRws = false, TrackballSpin = 1f, TrackballAxes = axes };
+            var p = new GyroPhone.Host.OverlayPose();
+            OverlayFrame F(float pitch, float roll)
+            {
+                var f = Motion(0f, 0.01f);
+                f.TurnPitch = pitch;
+                f.TurnRoll = roll;
+                return f;
+            }
+            p.Feed(F(0f, 90f), s); // 90° right
+            p.Feed(F(30f, 0f), s); // 30° up
+            p.Feed(F(0f, -90f), s); // 90° back left
+            float w = p.W, x = p.X, y = p.Y, z = p.Z;
+            // Its right's height, how far its back points sideways and up.
+            return new[] { 2 * (x * y + w * z), -2 * (x * z + w * y), -2 * (y * z - w * x) };
+        }
+        // As the camera (the default, Yaw locked): straight ahead, 30° up, its right still level.
+        var cam = Run(GyroPhone.Host.Settings.OverlaySettings.TrackballAsCamera);
+        Assert.Equal(0f, cam[0], 3);
+        Assert.Equal(0f, cam[1], 3);
+        Assert.Equal(0.5f, cam[2], 3);
+        // Nothing locked: it rolls freely about its fixed axes, so the same moves leave it rolled 30°.
+        Assert.Equal(0.5f, MathF.Abs(Run(3 | (2 << 8))[0]), 3);
+    }
+
+    [Fact]
+    public void TrackballAxesEaseBackEachOnItsOwn()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Trackball, TrackballRws = false, TrackballSpin = 1f };
+        var e = s.EaseOf(0);
+        e.On = true; e.OnRatchet = false; e.DelayMs = 0; e.Seconds = 0.2f;
+        var p = new GyroPhone.Host.OverlayPose();
+        OverlayFrame F(float pitch, float roll)
+        {
+            var f = Motion(0f, 0.01f);
+            f.TurnPitch = pitch;
+            f.TurnRoll = roll;
+            return f;
+        }
+        for (int i = 0; i < 50; i++) p.Feed(F(0f, 0.6f), s); // 30° right
+        for (int i = 0; i < 50; i++) p.Feed(F(0.6f, 0f), s); // 30° up
+        for (int i = 0; i < 100; i++) p.Feed(F(0f, 0f), s); // still: left and right eases back, up and down stays
+        float w = p.W, x = p.X, y = p.Y, z = p.Z;
+        Assert.Equal(0f, 2 * (x * z + w * y), 3);
+        Assert.Equal(0.5f, -2 * (y * z - w * x), 3);
+    }
+
+    [Fact]
+    public void PitchWithoutItsStopGoesOverTheTopAndRightStaysRight()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Trackball, TrackballRws = false, TrackballSpin = 1f };
+        s.TrackballAxes &= ~(GyroPhone.Host.Settings.OverlaySettings.TrackballStop << 8);
+        var p = new GyroPhone.Host.OverlayPose();
+        OverlayFrame F(float pitch, float roll)
+        {
+            var f = Motion(0f, 0.01f);
+            f.TurnPitch = pitch;
+            f.TurnRoll = roll;
+            return f;
+        }
+        for (int i = 0; i < 100; i++) p.Feed(F(1.2f, 0f), s); // 120° up: over the top
+        float BeamX() => -2 * (p.X * p.Z + p.W * p.Y);
+        float BeamY() => -2 * (p.Y * p.Z - p.W * p.X);
+        Assert.Equal(0.866f, BeamY(), 3);
+        for (int i = 0; i < 20; i++) p.Feed(F(0f, 0.6f), s); // turn right
+        Assert.True(BeamX() > 0.05f);
+    }
+
+    [Fact]
+    public void CameraTurnsWithTheGyroOnAnyKindAndIgnoresGravity()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Horizon, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Camera, Gravity = true, Ease = false, TrackballRws = false, TrackballSpin = 2f };
+        var p = new GyroPhone.Host.OverlayPose();
+        var f = Motion(10f, 0.01f);
+        f.CameraXAxis = 1; // yaw moves the mouse sideways
+        f.CameraYAxis = 2;
+        p.Feed(f, s);
+        Assert.Equal(20f, HeadingDeg(p), 1);
+        Assert.False(s.NeedsCompass);
+    }
+
+    [Fact]
+    public void CameraTurnsAsTheGameCameraByTheMouseAxesAndNeverRolls()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Camera, Ease = false, TrackballRws = false, TrackballSpin = 1f };
+        var p = new GyroPhone.Host.OverlayPose();
+        // Older phones send no map: roll moves the mouse sideways, pitch up and down.
+        var f = new OverlayFrame { TurnRoll = 30f, TurnPitch = 10f, TurnSeconds = 0.01f, Axes = 7, Flags = OverlayFrame.FlagPose };
+        p.Feed(f, s);
+        float w = p.W, x = p.X, y = p.Y, z = p.Z;
+        // Right stays level (no roll); the back points 30° right and 10° up.
+        float m3 = 2 * (x * y + w * z);
+        Assert.Equal(0f, m3, 4);
+        float bx = -(2 * (x * z + w * y)), by = -(2 * (y * z - w * x)), bz = -(1 - 2 * (x * x + y * y));
+        Assert.Equal(30f, MathF.Atan2(bx, -bz) * 180f / MathF.PI, 2);
+        Assert.Equal(10f, MathF.Asin(by) * 180f / MathF.PI, 2);
+        // An inverted Y axis turns it down instead.
+        f.CameraXAxis = 3;
+        f.CameraYAxis = 0x82;
+        f.TurnRoll = 0;
+        p.Feed(f, s);
+        w = p.W; x = p.X; y = p.Y; z = p.Z;
+        by = -(2 * (y * z - w * x));
+        Assert.Equal(0f, MathF.Asin(by) * 180f / MathF.PI, 2);
+    }
+
+    [Fact]
+    public void SavedTrackballSwitchesBecomeTurnsWith()
+    {
+        var t = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Trackball = true };
+        t.MigrateOld();
+        Assert.Equal(GyroPhone.Host.Settings.OverlayTurnsWith.Trackball, t.TurnsWith);
+        Assert.Null(t.Trackball);
+        var c = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Trackball = true, TrackballInvert = true };
+        c.MigrateOld();
+        Assert.Equal(GyroPhone.Host.Settings.OverlayTurnsWith.Camera, c.TurnsWith);
+        var n = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Trackball = false };
+        n.MigrateOld();
+        Assert.Equal(GyroPhone.Host.Settings.OverlayTurnsWith.Phone, n.TurnsWith);
     }
 
     [Fact]
@@ -350,7 +512,7 @@ public class OverlayTests
         var a = h.Engine.Settings.Overlays[0].Id;
         h.Engine.UpdateOverlaySettings(a, o => { o.Shown = true; o.Gravity = false; o.Ease = false; });
         var b = h.Engine.AddOverlay(GyroPhone.Host.Settings.OverlayKind.Shape);
-        h.Engine.UpdateOverlaySettings(b, o => { o.Trackball = true; o.TrackballRws = false; });
+        h.Engine.UpdateOverlaySettings(b, o => { o.TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Trackball; o.TrackballRws = false; o.TrackballAxes = GyroPhone.Host.Settings.OverlaySettings.TrackballAsPhone; });
         h.Engine.SetOverlay(true);
         var frame = Hex.B(Frame); // 1° yaw, -0.5° pitch, 0.25° roll; axes yaw + pitch
         h.Send(phone, phone.Sealed(PacketType.Overlay, frame));
@@ -359,9 +521,9 @@ public class OverlayTests
         Assert.True(h.Engine.OverlaySnapshot(fa, a, out _) >= 0);
         h.Engine.OverlaySnapshot(fb, b, out _);
         Assert.NotEqual(1f, fa.Qw);
-        // Opposite turns: the trackball holds still against the world, and the frame's 1° of
+        // The same way (a trackball set to turn as the phone), and the frame's 1° of
         // touchpad yaw turns it as far again.
-        Assert.Equal(-2 * fa.Qy, fb.Qy, 3);
+        Assert.Equal(2 * fa.Qy, fb.Qy, 3);
         h.Engine.RemoveOverlay(b);
         Assert.Single(h.Engine.Settings.Overlays);
     }

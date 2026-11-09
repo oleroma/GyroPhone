@@ -3,8 +3,8 @@ package com.oleroma.gyrophone.core.net
 import kotlin.math.roundToInt
 
 /**
- * The phone's raw motion for the PC's virtual DualShock 4: while the PC takes it ([HostFlags.MOTION]
- * in WELCOME) and its pad is a plugged DualShock 4 (HOST_STATUS), the gyro thread adds every
+ * The phone's raw motion for the PC's virtual DualShock 4 or DualSense: while the PC takes it
+ * ([HostFlags.MOTION] in WELCOME) and its pad is a plugged one of them (HOST_STATUS), the gyro thread adds every
  * sample ([add]) with the newest accelerometer reading ([accel]) and the send loop sends MOTION
  * ([encode]) as soon as one is new. The pad's gyro carries the phone's turn as it is, whatever the
  * app's own gyro does with it; the game's gyro settings decide what it moves.
@@ -25,12 +25,12 @@ class MotionFeed {
     @Volatile var hostTakes = false
         set(v) { if (field != v) { field = v; changed() } }
 
-    /** The PC's pad is a plugged DualShock 4 (HOST_STATUS output mode and PAD_PLUGGED). */
-    @Volatile var padIsDs4 = false
+    /** The PC's pad is a plugged DualShock 4 or DualSense (HOST_STATUS output mode and PAD_PLUGGED). */
+    @Volatile var padTakesMotion = false
         set(v) { if (field != v) { field = v; changed() } }
 
     /** MOTION should go out: the runtime keeps the gyro and accelerometer running. */
-    val wanted: Boolean get() = hostTakes && padIsDs4
+    val wanted: Boolean get() = hostTakes && padTakesMotion
 
     /** Runs when [wanted] changes, so the runtime can start or stop the sensors. */
     @Volatile var onWantedChange: Runnable? = null

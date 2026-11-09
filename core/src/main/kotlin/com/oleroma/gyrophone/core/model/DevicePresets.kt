@@ -252,6 +252,137 @@ object DevicePresets {
         return p.copy(controller = fixed)
     }
 
+    /** What a device does with nothing remapped: [standard]'s mappings of that device. */
+    fun standardOf(device: PhysicalDevice): List<Mapping> = when (device) {
+        PhysicalDevice.CONTROLLER -> KnownLayouts.standardControllerMappings()
+        PhysicalDevice.KEYBOARD -> standardKeyboard()
+        PhysicalDevice.MOUSE -> standardMouse()
+        PhysicalDevice.PHONE -> standardPhone()
+    }
+
+    /** One line of what a control does: in mapping set [set], its input [input] (Press, Tap...) sends [targets]. */
+    data class Remap(val set: Int, val input: String, val targets: List<OutputTarget>)
+
+    /**
+     * What a control with [inputs] of [device] does in [mappings], every set, Base first: its
+     * remaps. A mapping that only does what the control is ([standardOf]: A to A, a key to the
+     * same key, the rocker to the PC's volume) is not a remap.
+     */
+    fun remaps(device: PhysicalDevice, mappings: List<Mapping>, inputs: List<BindableInput>): List<Remap> {
+        val same = standardOf(device).map { it.source to it.target }.toSet()
+        return mappings.map { it.set }.distinct().sorted().flatMap { set ->
+            inputs.mapNotNull { input ->
+                val targets = mappings.filter {
+                    it.set == set && input.sources.any { s -> Bindings.sameSource(s, it.source) } &&
+                        (it.source to it.target) !in same
+                }.map { it.target }.distinct()
+                if (targets.isEmpty()) null else Remap(set, input.label, targets)
+            }
+        }
+    }
+
+    /** How a control swaps: sticks only with sticks, a mouse's movement with nothing, the rest with each other. */
+    private fun swapKind(inputs: List<BindableInput>): Int = when {
+        inputs.any { it.mouseMotion } -> 2
+        inputs.any { it.analog } -> 1
+        else -> 0
+    }
+
+    /** Whether controls with [a] and [b] inputs can swap what they do ([swap]). */
+    fun canSwap(a: List<BindableInput>, b: List<BindableInput>): Boolean = swapKind(a) == swapKind(b) && swapKind(a) != 2
+
+    /** Stands in for a mapping's source while [swap] compares what mappings do. */
+    private val NO_SOURCE = InputSource.Key(-1)
+
+    /** A control's main input: its Press, a trigger's Pull, a stick's Click; else its first. */
+    private fun mainInput(inputs: List<BindableInput>): BindableInput? =
+        inputs.firstOrNull { it.label == "Press" || it.label == "Pull" || it.label == "Click" } ?: inputs.firstOrNull()
+
+    /**
+     * Which input of [b] each input of [a] trades with: main with main ([mainInput]), the others
+     * by gesture (a stick's "Click tap" with a button's "Tap") or name. One with no partner keeps
+     * what it does (a trigger's Full pull swapped with a button).
+     */
+    private fun partners(a: List<BindableInput>, b: List<BindableInput>): List<Pair<BindableInput, BindableInput>> {
+        // A gesture (Tap, Long press, Press pulse...) by its gesture; anything else by its name.
+        fun name(i: BindableInput) = (i.sources.firstOrNull() as? InputSource.KeyGesture)?.let { "gesture " + it.gesture.name }
+            ?: i.label.lowercase()
+        val ma = mainInput(a)
+        val mb = mainInput(b)
+        return a.mapNotNull { i ->
+            val j = if (i === ma) mb else b.firstOrNull { it !== mb && name(it) == name(i) }
+            j?.let { i to it }
+        }
+    }
+
+    /**
+     * [p] with controls [aId] and [bId] of [device] (with inputs [a] and [b]) trading everything
+     * they do, in every mapping set: their mappings, gyro while held ([HeldButton]) and their own
+     * gesture timings. Sticks and triggers keep their tuning: that is about the hardware.
+     */
+    fun swap(
+        p: DevicePreset,
+        device: PhysicalDevice,
+        aId: String,
+        a: List<BindableInput>,
+        bId: String,
+        b: List<BindableInput>,
+    ): DevicePreset {
+        if (aId == bId || !canSwap(a, b)) return p
+        val pairs = partners(a, b)
+        fun owns(input: BindableInput, m: Mapping) = input.sources.any { Bindings.sameSource(it, m.source) }
+        val list = p.mappings(device)
+        val moved = pairs.flatMap { (i, j) ->
+            // What x's mappings do (set, target, options, range), without their source.
+            fun keys(x: BindableInput) = list.filter { owns(x, it) }.map { it.copy(source = NO_SOURCE) }.distinct()
+            j.sources.flatMap { s -> keys(i).map { it.copy(source = s) } } +
+                i.sources.flatMap { s -> keys(j).map { it.copy(source = s) } }
+        }
+        val kept = list.filterNot { m -> pairs.any { (i, j) -> owns(i, m) || owns(j, m) } }
+        // Gyro while held: owned by the control's id.
+        val ga = HeldButton.GYRO_ID + device.name + ":" + aId
+        val gb = HeldButton.GYRO_ID + device.name + ":" + bId
+        fun regyro(m: Mapping): Mapping {
+            val g = m.source as? InputSource.Gyro ?: return m
+            return when (g.id) {
+                ga -> m.copy(source = g.copy(id = gb))
+                gb -> m.copy(source = g.copy(id = ga))
+                else -> m
+            }
+        }
+        var out = p.withMappings(device, kept + moved)
+        out = PhysicalDevice.entries.fold(out) { d, dev -> d.withMappings(dev, d.mappings(dev).map(::regyro)) }
+        val ha = device.name + ":" + aId
+        val hb = device.name + ":" + bId
+        // Held is the control's main input: a button's Press, a trigger's Pull, a stick's Click.
+        fun press(inputs: List<BindableInput>) = mainInput(inputs)?.sources.orEmpty()
+        out = out.copy(
+            held = out.held.map { h ->
+                when (h.id) {
+                    ha -> h.copy(id = hb, sources = press(b))
+                    hb -> h.copy(id = ha, sources = press(a))
+                    else -> h
+                }
+            },
+        )
+        // Own gesture timings follow the button's gestures.
+        fun code(inputs: List<BindableInput>) = mainInput(inputs)?.sources?.firstNotNullOfOrNull { (it as? InputSource.Key)?.keyCode }
+        val ka = code(a)
+        val kb = code(b)
+        if (ka != null && kb != null) {
+            out = out.copy(
+                timings = out.timings.map {
+                    when (it.keyCode) {
+                        ka -> it.copy(keyCode = kb)
+                        kb -> it.copy(keyCode = ka)
+                        else -> it
+                    }
+                },
+            )
+        }
+        return out
+    }
+
     fun newId(taken: Collection<String>): String {
         var n = 1
         while ("preset$n" in taken) n++
@@ -451,6 +582,75 @@ object PhysicalLayouts {
                 paddle("p4", 0.15f, 0.80f),
                 paddle("p1", 0.89f, 0.56f),
                 paddle("p2", 0.85f, 0.80f),
+            ),
+        )
+    }
+
+    // The handles drawing, in handle heights: a handle on each side of the phone (as the companion's
+    // overlay draws them), the bumper and trigger above each handle, the back buttons and Home below.
+    /** Its box's height in handle heights; its width is two handles and what is between them. */
+    const val HANDLES_H = 1.52f
+    /** Between the handles: the phone, or in [controllerHandlesNarrow] just a gap. */
+    const val HANDLES_PHONE = 2f
+    const val HANDLES_GAP = 0.2f
+    /** Each handle's width; the phone fills the rest between them. */
+    const val HANDLE_W = 0.5f
+    /** Where the handles and the phone start, down from the box's top. */
+    const val HANDLES_TOP = 0.36f
+
+    /**
+     * Every controller control in one drawing, laid out on the handles: on the left handle the stick
+     * above the D-pad, on the right the face buttons above the stick, View and Menu in the handles'
+     * inner top corners; above each handle its trigger, then its bumper, the same size; under each
+     * handle its two back buttons, and Home under the phone.
+     */
+    val controllerHandles: ControllerDiagram = handles(HANDLES_PHONE)
+
+    /** [controllerHandles] without the phone: the handles side by side, for a narrow (portrait) screen. */
+    val controllerHandlesNarrow: ControllerDiagram = handles(HANDLES_GAP)
+
+    /** The handles drawing with [between] handle heights between the handles. */
+    private fun handles(between: Float): ControllerDiagram {
+        val width = 2 * HANDLE_W + between
+        val all = (controllerFront.controls + controllerBack.controls).associateBy { it.id }
+        val t = HANDLES_TOP
+        val left = HANDLE_W / 2
+        val right = width - HANDLE_W / 2
+        // A control centred at (x, y), w by h, all in handle heights.
+        fun at(id: String, x: Float, y: Float, w: Float, h: Float = w) =
+            all.getValue(id).copy(x = x / width, y = y / HANDLES_H, w = w / width, h = h / HANDLES_H)
+        val stick = 0.27f
+        val key = 0.125f
+        val gap = 0.125f // from a cluster's centre to each of its keys
+        val bar = HANDLE_W - 0.04f
+        val barH = 0.13f
+        val small = 0.12f
+        val paddle = 0.2f
+        val bottom = t + 1f + 0.03f + 0.06f
+        return ControllerDiagram(
+            "Controller", DiagramStyle.XBOX, width / HANDLES_H,
+            listOf(
+                at("lt", left, 0.02f + barH / 2, bar, barH),
+                at("lb", left, 0.02f + barH * 1.5f + 0.04f, bar, barH),
+                at("rt", right, 0.02f + barH / 2, bar, barH),
+                at("rb", right, 0.02f + barH * 1.5f + 0.04f, bar, barH),
+                at("ls", left, t + 0.38f, stick),
+                at("up", left, t + 0.76f - gap, key),
+                at("down", left, t + 0.76f + gap, key),
+                at("left", left - gap, t + 0.76f, key),
+                at("right", left + gap, t + 0.76f, key),
+                at("y", right, t + 0.38f - gap, key),
+                at("a", right, t + 0.38f + gap, key),
+                at("x", right - gap, t + 0.38f, key),
+                at("b", right + gap, t + 0.38f, key),
+                at("rs", right, t + 0.76f, stick),
+                at("select", HANDLE_W - 0.09f, t + 0.1f, small),
+                at("start", width - HANDLE_W + 0.09f, t + 0.1f, small),
+                at("p3", left - 0.115f, bottom, paddle, 0.12f),
+                at("p4", left + 0.115f, bottom, paddle, 0.12f),
+                at("p2", right - 0.115f, bottom, paddle, 0.12f),
+                at("p1", right + 0.115f, bottom, paddle, 0.12f),
+                at("home", width / 2, bottom, small),
             ),
         )
     }

@@ -53,6 +53,27 @@ enum class MouseMotion(val label: String) {
     MOVE_X("Mouse move X"), MOVE_Y("Mouse move Y"), WHEEL("Scroll"), HWHEEL("Scroll sideways"),
 }
 
+/**
+ * Where a finger is on a touch button or the workspace touchpad ([InputSource.Finger]), 0..1:
+ * X from the left edge, Y from the bottom edge; on round buttons also DISTANCE from the centre
+ * (0) to the rim (1) and ANGLE, a dial from the top (0) clockwise once around (to 1).
+ */
+@Serializable
+enum class FingerAxis(val label: String, val roundOnly: Boolean = false) {
+    X("Finger X"), Y("Finger Y"), DISTANCE("Finger distance", roundOnly = true), ANGLE("Finger angle", roundOnly = true),
+}
+
+/**
+ * A chip's output range ([Mapping.range]): its input's value 0..1 (its size, for a -1..1 axis)
+ * goes from [from] to [to] in a straight line while the input is active; [from] > [to] reverses
+ * it. In the output's own unit: 0..1 of a pad axis or trigger, counts per degree for
+ * [OutputTarget.GyroSens].
+ */
+@Serializable
+data class AxisRange(val from: Float, val to: Float) {
+    fun of(v: Float): Float = from + (to - from) * v.coerceIn(0f, 1f)
+}
+
 /** A diagonal zone of a touch stick split into 8 directions ([StickZones.EIGHT]). */
 @Serializable
 enum class StickDiagonal(val label: String) {
@@ -95,6 +116,47 @@ enum class SurfaceInput(val label: String, val motion: Boolean = false) {
 
     /** A pulse each time exactly that many fingers come down (the hold starting). */
     PRESS("Press"),
+
+    /**
+     * HOLD_ANY: held while the finger is past the hold distance from where it touched down, in any
+     * direction (straight-line distance; its zones go by that distance). SWIPE_ANY: a pulse with
+     * each quick swipe, whichever way. Every swipe direction's chips share one Swipe row, each
+     * chip with its own direction ([Bindings.swipeWheres]).
+     */
+    HOLD_ANY("Swipe"), SWIPE_ANY("Quick swipe any way"),
+}
+
+/** The swipe slots, by [holdSlot]: the four directions ([Direction.ordinal]), then any way ([ANY_SLOT]). */
+const val SWIPE_SLOTS = 5
+const val ANY_SLOT = 4
+
+/** The slot of a held swipe input (Swipe ←→↑↓: [Direction.ordinal]; Swipe any way: [ANY_SLOT]), else -1. */
+val SurfaceInput.holdSlot: Int
+    get() = holdDirection?.ordinal ?: if (this == SurfaceInput.HOLD_ANY) ANY_SLOT else -1
+
+/** The slot of a quick swipe input, as [holdSlot], else -1. */
+val SurfaceInput.quickSlot: Int
+    get() = swipeDirection?.ordinal ?: if (this == SurfaceInput.SWIPE_ANY) ANY_SLOT else -1
+
+/** A held swipe input (any direction, or any way): it has length zones and swipe triggers. */
+val SurfaceInput.heldSwipe: Boolean get() = holdSlot >= 0
+
+/** The held swipe input of [slot] ([holdSlot]). */
+fun holdInputOf(slot: Int): SurfaceInput = when (slot) {
+    0 -> SurfaceInput.HOLD_UP
+    1 -> SurfaceInput.HOLD_RIGHT
+    2 -> SurfaceInput.HOLD_DOWN
+    3 -> SurfaceInput.HOLD_LEFT
+    else -> SurfaceInput.HOLD_ANY
+}
+
+/** The quick swipe input of [slot] ([quickSlot]). */
+fun quickInputOf(slot: Int): SurfaceInput = when (slot) {
+    0 -> SurfaceInput.SWIPE_UP
+    1 -> SurfaceInput.SWIPE_RIGHT
+    2 -> SurfaceInput.SWIPE_DOWN
+    3 -> SurfaceInput.SWIPE_LEFT
+    else -> SurfaceInput.SWIPE_ANY
 }
 
 /** The direction of a swipe input (Swipe ←→↑↓), else null. */
@@ -253,6 +315,15 @@ sealed interface InputSource {
     @SerialName("tilt")
     data class Tilt(val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL, val id: String = "") : InputSource
 
+    /**
+     * Where the first finger is on touch button [id] ("" = the workspace touchpad, its first
+     * finger), 0..1 along [axis] ([FingerAxis]), past the input's deadzones
+     * ([FingerAxisSettings]); active from touch-down to lift (0 is a value too while touching).
+     */
+    @Serializable
+    @SerialName("finger")
+    data class Finger(val id: String, val axis: FingerAxis) : InputSource
+
     /** A shake of the phone: a short press. [id] as for [Tilt]. */
     @Serializable
     @SerialName("shake")
@@ -398,6 +469,29 @@ sealed interface OutputTarget {
     @SerialName("black_screen")
     data object BlackScreen : OutputTarget
 
+    /**
+     * Levels every gyro display in the workspace and every PC overlay to the way the phone is held
+     * now, the same as pressing each one's Level button.
+     */
+    @Serializable
+    @SerialName("level_displays")
+    data object LevelDisplays : OutputTarget
+
+    /** Clears every laser pointer display's paint and trail in the workspace and on the PC overlays. */
+    @Serializable
+    @SerialName("clear_displays")
+    data object ClearDisplays : OutputTarget
+
+    /**
+     * Gyro sensitivity of [axis] ([MotionAxis.NONE] = every axis) from the source's value, through
+     * the chip's range ([Mapping.range], counts per degree) while the source is active. It wins over
+     * every other sensitivity (the button's held, the workspace's); of several active, the last
+     * activated wins.
+     */
+    @Serializable
+    @SerialName("gyro_sens")
+    data class GyroSens(val axis: MotionAxis = MotionAxis.NONE) : OutputTarget
+
     /** Does nothing: in a set used as an override, it stops an input falling through to the set below. */
     @Serializable
     @SerialName("nothing")
@@ -422,23 +516,29 @@ data class Mapping(
     val target: OutputTarget,
     val set: Int = 0,
     val options: MapOptions? = null,
+    /** An analog chip's output range ([AxisRange]); null = the input's value as it is. */
+    val range: AxisRange? = null,
 )
 
 /**
  * How a mapping's output follows its activations ("How" in the editor): HELD for as long as the
- * activation lasts, ONCE a short press as it starts, TOGGLE each activation turns it on, the next off.
+ * activation lasts, ONCE a short press as it starts, TOGGLE each activation turns it on, the next
+ * off, REPEAT [MapOptions.repeat] short presses as it starts.
  */
 @Serializable
 enum class How(val label: String, val mark: String) {
     @SerialName("held") HELD("Held", ""),
     @SerialName("once") ONCE("Once", "¹"),
     @SerialName("toggle") TOGGLE("Toggle", "⟲"),
+    /** [MapOptions.repeat] short presses one after another as it starts (Repeat ×2: a double click). */
+    @SerialName("repeat") REPEAT("Repeat", "×"),
 }
 
 /**
  * How a mapping turns its source's activations into output: [how] (see [How]). [cycle]: the mappings of one source and set with cycle on take turns, one per activation, in
  * list order. [startDelayMs]: output starts this long after the activation; [minHoldMs]: it lasts
- * at least this long; [endDelayMs]: it lasts this much longer after the source lets go.
+ * at least this long (default [DEFAULT_MIN_HOLD_MS], long enough for apps that poll keys, such as
+ * OBS hotkeys; never shorter than the engine's minimum pulse); [endDelayMs]: it lasts this much longer after the source lets go.
  * A TOGGLE also ends ("Also ends on") on [endsOnTap] (the next touch of the same button or
  * surface), [endsOnLetGo] (a [OutputTarget.LetGo] mapping firing), [endsAfterMs] (a timer; 0 =
  * none) and [endsOnNextInput] (once the next other key, mouse button or pad button has been
@@ -453,12 +553,14 @@ data class MapOptions(
     val cycle: Boolean = false,
     val startDelayMs: Int = 0,
     val endDelayMs: Int = 0,
-    val minHoldMs: Int = 0,
+    val minHoldMs: Int = DEFAULT_MIN_HOLD_MS,
     val endsOnTap: Boolean = false,
     val endsOnLetGo: Boolean = false,
     val endsAfterMs: Int = 0,
     val endsOnNextInput: Boolean = false,
     val endsOnSame: Boolean = false,
+    /** [How.REPEAT]: how many short presses ([MIN_REPEAT]..[MAX_REPEAT]). */
+    val repeat: Int = 2,
 ) {
     /** Changes nothing (such a mapping keeps no options). */
     val none: Boolean get() = this == MapOptions()
@@ -468,8 +570,16 @@ data class MapOptions(
 
     companion object {
         const val MAX_DELAY_MS = 2000
+
+        /** OBS checks hotkeys every 25-31 ms and needs a combo seen on two checks in a row. */
+        const val DEFAULT_MIN_HOLD_MS = 80
         const val MAX_TOGGLE_MS = 60_000
+        const val MIN_REPEAT = 2
+        const val MAX_REPEAT = 5
     }
+
+    /** What it outputs as it fires, to tell whether two mappings of a target do the same: its How, and a Repeat's count. */
+    val shape: Pair<How, Int> get() = mode to if (mode == How.REPEAT) repeat.coerceIn(MIN_REPEAT, MAX_REPEAT) else 1
 }
 
 /**

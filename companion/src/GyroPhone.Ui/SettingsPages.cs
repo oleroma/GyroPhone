@@ -104,7 +104,8 @@ internal sealed class GamepadPage : Page
 
         var (output, ob) = Parts.Card("Output");
         _output = new Seg<OutputMode>(app.SetOutputMode, false,
-            ("Xbox 360", OutputMode.Xbox360), ("DualShock 4", OutputMode.DualShock4), ("Off", OutputMode.None));
+            ("Xbox 360", OutputMode.Xbox360), ("DualShock 4", OutputMode.DualShock4), ("DualSense", OutputMode.DualSense),
+            ("Off", OutputMode.None));
         ob.Children.Add(_output.View);
         _outputHint = Parts.Text("", "Hint");
         ob.Children.Add(_outputHint);
@@ -134,8 +135,12 @@ internal sealed class GamepadPage : Page
     {
         var s = v.Status;
         _output.Set(s.OutputMode);
+        _output.Show(OutputMode.DualSense, s.DualSenseOk || s.OutputMode == OutputMode.DualSense);
         _outputHint.Text = s.OutputMode switch
         {
+            OutputMode.DualSense => s.DualSenseOk
+                ? "Games see a PlayStation DualSense controller (through the GyroPhone pad driver). Buttons and sticks only for now: no gyro, touchpad or rumble yet."
+                : "The DualSense needs the GyroPhone pad driver: run driver\\install.cmd in GyroPhone's folder, then restart GyroPhone.",
             OutputMode.Xbox360 => "Games see an Xbox 360 controller: the widest support.",
             OutputMode.DualShock4 => "Games see a PlayStation DualShock 4 controller, with its button prompts.",
             _ => "No gamepad: the phone sends only keyboard and mouse.",
@@ -249,7 +254,7 @@ internal sealed class ConnectionPage : Page
 internal sealed class AppPage : Page
 {
     private readonly StackPanel _root = new();
-    private readonly CheckBox _autoStart, _watcher;
+    private readonly CheckBox _autoStart, _watcher, _inputLog;
     private readonly Seg<TrayClickAction> _trayClick;
     private readonly TextBlock _log, _version;
 
@@ -278,6 +283,10 @@ internal sealed class AppPage : Page
         _root.Children.Add(tray);
 
         var (help, hb) = Parts.Card("Troubleshooting");
+        _inputLog = Parts.Toggle("Record input log", app.ToggleInputLog,
+            "Notes lost, late and stalled input in input.log in the log folder, so a stutter can be traced after you play. Costs almost nothing.");
+        hb.Children.Add(_inputLog);
+        hb.Children.Add(Parts.Divider());
         _log = Parts.Text("", "Sub");
         hb.Children.Add(_log);
         hb.Children.Add(Parts.Row(
@@ -296,6 +305,7 @@ internal sealed class AppPage : Page
     {
         Parts.SetChecked(_autoStart, v.AutoStart);
         Parts.SetChecked(_watcher, v.Watcher);
+        Parts.SetChecked(_inputLog, v.InputLog);
         _trayClick.Set(v.TrayClick);
         _log.Text = $"Log: {v.LogPath}";
         _version.Text = v.UpdatePending is { } p ? $"{v.Version} · restarting into {p}" : v.Version;

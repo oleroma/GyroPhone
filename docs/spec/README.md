@@ -32,7 +32,7 @@ The reference phone is a OnePlus 15 (Android 16, no root). The reference PC is O
 |---|---|
 | `core/` | Plain Kotlin, no Android: the data model (profile, workspaces, mappings), the mapping engine, gyro math, HID descriptor and report scheduling, the wire protocol and crypto. Unit tested on the JVM. |
 | `app/` | The Android app: sensors, controller input, Bluetooth HID, the Wi-Fi/USB link, storage, the foreground service and the Compose UI. |
-| `companion/` | The Windows companion in C# (.NET 8): `GyroPhone.Protocol` (wire format, PC gyro math), `GyroPhone.Host` (engine, pairing, sessions, settings), `GyroPhone.Windows` (ViGEm, SendInput, USB, firewall), `GyroPhone.Ui` (WPF windows), `GyroPhone.Tray` (the tray app, overlays, updater, watcher), `GyroPhone.Headless` (console host). |
+| `companion/` | The Windows companion in C# (.NET 8): `GyroPhone.Protocol` (wire format, PC gyro math), `GyroPhone.Host` (engine, pairing, sessions, settings), `GyroPhone.Windows` (ViGEm, SendInput, USB, firewall), `GyroPhone.Ui` (WPF windows), `GyroPhone.Latency` (the latency test's video analyser), `GyroPhone.Tray` (the tray app, overlays, updater, watcher), `GyroPhone.Headless` (console host). |
 | `core/src/test/resources/protocol/v1/` | Golden vectors both sides test against: `wire-v1.json`, `key-v1.json`, `qr-v1.json`, `gyro-math-v1.json`. |
 | `.agents/` | The build, install and merge scripts and the repo's hooks. |
 | `.github/workflows/` | `fallback.yml` (hand-started cloud build) and `cache.yml` (compiles `main` after each push). |
@@ -57,11 +57,12 @@ On the PC:
 11. [Virtual devices](pc-virtual-devices.md): the ViGEm pad, SendInput keyboard and mouse, PC gyro mode.
 12. [Overlays](pc-overlays.md): the phone, 3D shape, attitude and bubble overlay windows.
 13. [Install and update](pc-install-update.md): where it lives, self-update, firewall, key swap.
+14. [Latency test](pc-latency-test.md): Measure buttons, and timing the gyro from a slow-motion video.
 
 Shared:
 
-14. [Protocol and pairing](protocol.md): wire v1 byte by byte, code pairing, key pairing, QR pairing, sessions, USB framing.
-15. [Build and release](build-release.md): versions, hooks, PC and cloud builds, publishing.
+15. [Protocol and pairing](protocol.md): wire v1 byte by byte, code pairing, key pairing, QR pairing, sessions, USB framing.
+16. [Build and release](build-release.md): versions, hooks, PC and cloud builds, publishing.
 
 ## Words used here
 
