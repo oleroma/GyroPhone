@@ -519,6 +519,10 @@ private class VisState {
                     j += 3
                 }
                 drawPath(path, color, style = Stroke((if (front) 2.5f else 1.5f) * density, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                // Its dot: how far it has turned about its own axis.
+                LaserTrace.gimbalMark(i, gimbalAngles, la)
+                val p = laserAt(c, r, la[0], la[1], la[2])
+                if ((pv[2] > 0f) == front) drawCircle(color.copy(alpha = minOf(1f, color.alpha * 1.4f)), (if (front) 4f else 3f) * density, p)
             }
         }
         if (d.laserGrid) drawPath(gridPath(gridBack), grid, style = thin)

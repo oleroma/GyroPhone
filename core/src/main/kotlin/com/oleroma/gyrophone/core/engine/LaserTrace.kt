@@ -405,9 +405,10 @@ class LaserTrace {
         }
 
         /**
-         * Gimbal ring [i] (0 yaw, 1 pitch, 2 roll) for [angles] ([gimbalAngles]) as points (x, y, z…), nested as a
-         * real gimbal's: the yaw ring turns about the vertical and holds the pitch ring's pivots; the pitch ring
-         * tilts about the yaw ring's right and holds the roll ring's; the roll ring rolls about where it faces.
+         * Gimbal ring [i] (0 yaw, 1 pitch, 2 roll) for [angles] ([gimbalAngles]) as points (x, y, z…), round its
+         * own axis: the yaw ring lies flat round the vertical, the pitch ring round the yaw-turned right, the
+         * roll ring round where the laser faces (the beam). Each is turned by the angles before it, and
+         * [gimbalMark] shows its own.
          */
         fun gimbalRing(i: Int, angles: FloatArray, steps: Int = 64): FloatArray {
             val f = FloatArray(9)
@@ -418,11 +419,23 @@ class LaserTrace {
                 val t = j * 2f * Math.PI.toFloat() / steps
                 val p = rho * cos(t)
                 val q = rho * sin(t)
-                // Yaw: its XY plane (round the vertical and the pitch pivots); pitch: XZ; roll: YZ.
-                val v = when (i) { 0 -> floatArrayOf(p, q, 0f); 1 -> floatArrayOf(p, 0f, q); else -> floatArrayOf(0f, p, q) }
+                // Round its axis: yaw XZ (round Y), pitch YZ (round X), roll XY (round Z).
+                val v = when (i) { 0 -> floatArrayOf(p, 0f, q); 1 -> floatArrayOf(0f, p, q); else -> floatArrayOf(p, q, 0f) }
                 for (k in 0..2) out[j * 3 + k] = f[k * 3] * v[0] + f[k * 3 + 1] * v[1] + f[k * 3 + 2] * v[2]
             }
             return out
+        }
+
+        /**
+         * Where ring [i]'s dot sits for [angles], into [out]: on the yaw ring where the laser points left and right,
+         * on the pitch ring where it points up and down (both ahead, −Z), on the roll ring at the laser's up (+Y).
+         */
+        fun gimbalMark(i: Int, angles: FloatArray, out: FloatArray) {
+            val f = FloatArray(9)
+            gimbalFrame(angles, i, f)
+            val rho = GIMBAL_RADII[i]
+            // Column 2 negated (ahead), or column 1 (up) for roll.
+            for (k in 0..2) out[k] = if (i == 2) rho * f[k * 3 + 1] else -rho * f[k * 3 + 2]
         }
 
         /** Ring [i]'s frame (row-major) into [out]: Ry(yaw), then ·Rx(pitch) for 1 and 2, then ·Rz(roll) for 2. */
