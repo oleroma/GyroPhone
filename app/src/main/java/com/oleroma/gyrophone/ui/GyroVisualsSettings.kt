@@ -80,7 +80,7 @@ import kotlin.math.roundToInt
  */
 @Composable
 fun GyroVisualsSettings(v: TouchVisuals, stillness: () -> Float? = { null }, set: (TouchVisuals) -> Unit) {
-    Hint("The other gyro displays (3D phone, ratchet ring, speed graph, attitude indicator, bubble disk, 3D shape, laser pointer): add them in edit mode, like buttons.")
+    Hint("The other gyro displays (3D phone, ratchet ring, speed graph, attitude indicator, bubble disk, 3D shape, pointer): add them in edit mode, like buttons.")
     SwitchRow("Parallax edge", v.gyroEdge) { set(v.copy(gyroEdge = it)) }
     if (v.gyroEdge) Indented {
         Chips(listOf("Turn" to false, "Tilt" to true), v.gyroEdgeTilt) { set(v.copy(gyroEdgeTilt = it)) }
@@ -235,13 +235,13 @@ internal fun GyroDisplaySettingsScreen(
                 }
 
                 GyroDisplayKind.LASER -> {
-                    GroupTitle("Laser pointer")
-                    Hint("A see-through sphere seen from above and to the side. The laser at its centre aims along the phone's roll axis (out of its top edge, into the screen at rest) onto the inside; the tick at the dot shows which way the phone's screen faces. The beam dims while a ratchet is held.")
+                    GroupTitle("Pointer")
+                    Hint("A see-through sphere seen from above and to the side. The pointer at its centre aims along the phone's roll axis (out of its top edge, into the screen at rest) onto the inside; the tick at the dot shows which way the phone's screen faces. The beam dims while a ratchet is held.")
                     val look = if (d.laserRifle) 1 else if (d.laserCrosshair) 2 else 0
                     Chips(listOf("Sphere" to 0, "Rifle" to 1, "Crosshair" to 2), look) { set(d.copy(laserRifle = it == 1, laserCrosshair = it == 2)) }
                     if (d.laserRifle) Hint("A rifle aims instead: no sphere or beam, and Draw mode still paints where it points. Best with Axonometric view (face-on you look along the barrel).")
                     if (look == 2) Indented {
-                        Hint("A crosshair instead: no sphere or beam, just a crosshair lying on the sphere where the laser lands, facing its centre, so it squashes toward the edge. It turns about the beam as the Trackball's Roll row maps it (Lock keeps it upright, Invert turns it the other way). Draw mode still paints where it points.")
+                        Hint("A crosshair instead: no sphere or beam, just a crosshair lying on the sphere where the pointer lands, facing its centre, so it squashes toward the edge. It turns about the beam as the Trackball's Roll row maps it (Lock keeps it upright, Invert turns it the other way). Draw mode still paints where it points.")
                         Chips(LaserTrace.CROSSHAIRS.mapIndexed { i, n -> n to i }, d.crosshairShape) { set(d.copy(crosshairShape = it)) }
                         IntSlider("Size %d°", d.crosshairSize, 2..30) { set(d.copy(crosshairSize = it)) }
                         if (d.crosshairShape == 1 || d.crosshairShape == 3 || d.crosshairShape == 5) IntSlider("Gap %d°", d.crosshairGap, 0..10) { set(d.copy(crosshairGap = it)) }
@@ -250,15 +250,15 @@ internal fun GyroDisplaySettingsScreen(
                         SwitchRow("Outline", d.crosshairOutline, "A dark edge so it shows on any background.") { set(d.copy(crosshairOutline = it)) }
                     }
                     if (d.turnsWith == TurnsWith.TRACKBALL) {
-                        Text("Laser faces (as a trackball)", style = MaterialTheme.typography.bodyMedium)
+                        Text("Pointer faces (as a trackball)", style = MaterialTheme.typography.bodyMedium)
                         Chips(listOf("−Z (into the screen)" to 0, "+Z" to 1, "+X" to 2, "−X" to 3, "+Y" to 4, "−Y" to 5), d.laserFaces) { set(d.copy(laserFaces = it)) }
                     }
                     SwitchRow("Axonometric view", d.laserAxonometric, LASER_AXON_HINT) { set(d.copy(laserAxonometric = it)) }
                     SwitchRow("Perspective", d.perspective, "Nearer parts show bigger, as a camera sees them. Off: flat, every part the same size wherever it is.") { set(d.copy(perspective = it)) }
                     SwitchRow("Fixed pointer mode", d.laserSphereTurns, "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.") { set(d.copy(laserSphereTurns = it)) }
                     if (!d.laserRifle) SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
-                    SwitchRow("Axes (pitch X red, yaw Y green, roll Z blue)", d.laserAxes, "They turn with the laser, R along its beam.") { set(d.copy(laserAxes = it)) }
-                    if (!d.laserRifle && !d.laserCrosshair) SwitchRow("Gimbal rings", d.laserGimbal, "Yaw (green, outside), pitch (red) and roll (blue) rings turning with the laser's axes, each round its own: the path the beam and crosshair take turning about it. A None axis's ring is faint and dashed, and an axis lights up while the gyro turns it.") { set(d.copy(laserGimbal = it)) }
+                    SwitchRow("Axes (pitch X red, yaw Y green, roll Z blue)", d.laserAxes, "They turn with the pointer, R along its beam.") { set(d.copy(laserAxes = it)) }
+                    if (!d.laserRifle && !d.laserCrosshair) SwitchRow("Gimbal rings", d.laserGimbal, "Yaw (green, outside), pitch (red) and roll (blue) rings turning with the pointer's axes, each round its own: the path the beam and crosshair take turning about it. A None axis's ring is faint and dashed, and an axis lights up while the gyro turns it.") { set(d.copy(laserGimbal = it)) }
                 }
             }
             PercentSlider("Opacity", d.opacity, 0.1f..1f) { set(d.copy(opacity = it)) }
@@ -302,7 +302,7 @@ internal fun GyroDisplaySettingsScreen(
                 SwitchRow("Clear on ratchet", d.laserClearOnRatchet, "A ratchet press clears the drawing.") { set(d.copy(laserClearOnRatchet = it)) }
                 FirePicker(d.laserFire) { set(d.copy(laserFire = it)) }
                 SwitchRow("Paint only while firing", d.laserFireOnly, "Aiming leaves no trail; only shots draw.") { set(d.copy(laserFireOnly = it)) }
-                Hint("Strokes glow, older ones darker. Each takes the colour of the way the beam moves (the Moving colours below, blended like a normal map: right pink, left teal, up light green, down purple), so you see which way you swept. Shots take the Fire colours. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every laser pointer at once.")
+                Hint("Strokes glow, older ones darker. Each takes the colour of the way the beam moves (the Moving colours below, blended like a normal map: right pink, left teal, up light green, down purple), so you see which way you swept. Shots take the Fire colours. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every pointer at once.")
             }
             TextButton(onClick = { runtime.clearLaser(control.id) }) { Text("Clear") }
         }
@@ -418,7 +418,7 @@ private fun TrackballAxesSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
         set(d.copy(trackballOwnAxes = on).let { if (on && !roll.on) it.withEase(2, roll.copy(on = true, onRatchet = false)) else it })
     }
     Hint(
-        if (d.trackballOwnAxes) "As the laser sees it: up and down about its own right, left and right about its own up, so it always moves square to where it aims and never rolls by itself. Moving in a loop leaves it a little rolled (the sphere is curved); Roll's ease back levels that out."
+        if (d.trackballOwnAxes) "As the pointer sees it: up and down about its own right, left and right about its own up, so it always moves square to where it aims and never rolls by itself. Moving in a loop leaves it a little rolled (the sphere is curved); Roll's ease back levels that out."
         else "As a game camera (a gimbal): left and right about the sphere's vertical, up and down about its turned right, then roll about the beam.",
     )
     // Its bytes: 0 about up Y (yaw), 1 about right X (pitch), 2 along the beam Z (roll).
@@ -438,7 +438,7 @@ private fun TrackballAxesSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
         }
         AxisEaseSettings(name, d.easeOf(i)) { set(d.withEase(i, it)) }
     }
-    Hint("None holds an axis still: nothing turns it, as Camera never rolls. On the laser pointer a None axis is grey and dashed with a padlock, its gimbal ring faint, and an axis lights up while the gyro turns it.")
+    Hint("None holds an axis still: nothing turns it, as Camera never rolls. On the pointer a None axis is grey and dashed with a padlock, its gimbal ring faint, and an axis lights up while the gyro turns it.")
     if (d.trackballAxes != TRACKBALL_AS_CAMERA || d.trackballOwnAxes) TextButton(onClick = { set(d.copy(trackballAxes = TRACKBALL_AS_CAMERA, trackballOwnAxes = false)) }) { Text("As the camera") }
 }
 
@@ -517,7 +517,7 @@ private fun lengthDeg(p: Float): Int = ((p * p * LASER_LENGTH_MAX) / 5f).roundTo
 /** The Fades after slider at [p] (0..1, its square) in ms, to 50 ms; 0 never fades. */
 private fun fadeMs(p: Float): Int = ((p * p * LASER_FADE_MAX_MS) / 50f).roundToInt() * 50
 private const val LASER_AXON_HINT = "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot."
-private const val AXON_HINT = "Seen from 30° round and 30° above with the world's axes (yaw toward you red, pitch right green, roll up blue, as the gimbal's rings), as the laser pointer is, instead of face-on."
+private const val AXON_HINT = "Seen from 30° round and 30° above with the world's axes (yaw toward you red, pitch right green, roll up blue, as the gimbal's rings), as the pointer is, instead of face-on."
 
 /** A colour on a checkerboard, so its transparency shows. */
 @Composable

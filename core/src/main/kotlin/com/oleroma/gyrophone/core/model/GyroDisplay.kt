@@ -30,7 +30,7 @@ enum class GyroDisplayKind(val label: String) {
     BALL("3D shape"),
 
     /** A see-through sphere seen from a fixed angle, a laser at its centre shining out of the phone's back onto its inside. */
-    LASER("Laser pointer"),
+    LASER("Pointer"),
 
     ;
 

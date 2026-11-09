@@ -83,7 +83,7 @@ object Describe {
         OutputTarget.LetGo -> "(Let go): ends the toggles set to end on it"
         OutputTarget.BlackScreen -> "Black screen (the phone's screen goes black until tapped)"
         OutputTarget.LevelDisplays -> "Level displays (gyro displays and PC overlays take the way you hold the phone now as level)"
-        OutputTarget.ClearDisplays -> "Clear displays (laser pointers on the pad and the PC lose their paint and trail)"
+        OutputTarget.ClearDisplays -> "Clear displays (pointers on the pad and the PC lose their paint and trail)"
         OutputTarget.NoOutput -> "Nothing (blocks the layer below)"
         is OutputTarget.GyroSens -> gyroSens(t)
     }
