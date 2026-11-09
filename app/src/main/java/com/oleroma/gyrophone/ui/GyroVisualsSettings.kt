@@ -181,14 +181,13 @@ internal fun GyroDisplaySettingsScreen(
                     Chips(listOf("Sphere" to 0, "Rifle" to 1, "Crosshair" to 2), look) { set(d.copy(laserRifle = it == 1, laserCrosshair = it == 2)) }
                     if (d.laserRifle) Hint("A rifle aims instead: no sphere or beam, and Draw mode still paints where it points. Best with Axonometric view (face-on you look along the barrel).")
                     if (look == 2) Indented {
-                        Hint("A crosshair instead: no sphere or beam, just a crosshair lying on the sphere where the laser lands, facing its centre, so it squashes toward the edge. Draw mode still paints where it points.")
+                        Hint("A crosshair instead: no sphere or beam, just a crosshair lying on the sphere where the laser lands, facing its centre, so it squashes toward the edge. It turns about the beam as the Trackball's Roll row maps it (Lock keeps it upright, Invert turns it the other way). Draw mode still paints where it points.")
                         Chips(LaserTrace.CROSSHAIRS.mapIndexed { i, n -> n to i }, d.crosshairShape) { set(d.copy(crosshairShape = it)) }
                         IntSlider("Size %d°", d.crosshairSize, 2..30) { set(d.copy(crosshairSize = it)) }
                         if (d.crosshairShape == 1 || d.crosshairShape == 3 || d.crosshairShape == 5) IntSlider("Gap %d°", d.crosshairGap, 0..10) { set(d.copy(crosshairGap = it)) }
                         if (d.crosshairShape != 4) FloatSlider("Thickness %.1f", d.crosshairThickness, 0.5f..6f, 0.5f) { set(d.copy(crosshairThickness = it)) }
                         if (d.crosshairShape != 4) SwitchRow("Centre dot", d.crosshairDot) { set(d.copy(crosshairDot = it)) }
                         SwitchRow("Outline", d.crosshairOutline, "A dark edge so it shows on any background.") { set(d.copy(crosshairOutline = it)) }
-                        SwitchRow("Turns with roll", d.crosshairRoll, "Off: it stays upright.") { set(d.copy(crosshairRoll = it)) }
                     }
                     if (d.turnsWith == TurnsWith.TRACKBALL) {
                         Text("Laser faces (as a trackball)", style = MaterialTheme.typography.bodyMedium)

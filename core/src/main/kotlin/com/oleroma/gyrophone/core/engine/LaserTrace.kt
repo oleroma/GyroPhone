@@ -387,14 +387,14 @@ class LaserTrace {
 
         /**
          * Crosshair [shape] ([CROSSHAIRS]) lying on the sphere where [beam] lands, facing its centre:
-         * arms [size] radians long from a [gap] radian gap, a centre [dot]. Its up is the phone's up
-         * (pose [m]) with [roll], else the world's up (the phone's when looking straight up or down).
+         * arms [size] radians long from a [gap] radian gap, a centre [dot]. Its up is the pose's up
+         * ([m]), so it turns about the beam only as the pose does: a trackball's roll axis as mapped
+         * (locked, inverted), the phone's own roll when it turns with the phone.
          */
-        fun crosshair(m: FloatArray, beam: FloatArray, shape: Int, size: Float, gap: Float, dot: Boolean, roll: Boolean): Crosshair {
+        fun crosshair(m: FloatArray, beam: FloatArray, shape: Int, size: Float, gap: Float, dot: Boolean): Crosshair {
             val v = FloatArray(3)
-            val world = floatArrayOf(0f, 1f, 0f)
-            if (!(if (roll) rollTick(m, beam, v) else square(world, beam, v)) && !rollTick(m, beam, v)) {
-                // Straight along the phone's up: any way across.
+            if (!rollTick(m, beam, v)) {
+                // Straight along the pose's up: any way across.
                 if (!square(floatArrayOf(0f, 0f, -1f), beam, v)) square(floatArrayOf(1f, 0f, 0f), beam, v)
             }
             // Right: up × the outward normal (the beam).

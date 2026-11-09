@@ -241,7 +241,7 @@ private class VisState {
      */
     private fun DrawScope.drawCrosshair(d: GyroDisplay, c: Offset, r: Float, held: Boolean, col: (GyroDisplayColor) -> Color) {
         val rad = (Math.PI / 180).toFloat()
-        val ch = LaserTrace.crosshair(m, beam, d.crosshairShape, d.crosshairSize * rad, d.crosshairGap * rad, d.crosshairDot, d.crosshairRoll)
+        val ch = LaserTrace.crosshair(m, beam, d.crosshairShape, d.crosshairSize * rad, d.crosshairGap * rad, d.crosshairDot)
         var color = androidx.compose.ui.graphics.lerp(col(GyroDisplayColor.LASER_CROSSHAIR), col(GyroDisplayColor.LASER_CROSSHAIR_BEHIND), LaserTrace.behind(beam[2]))
         if (held) color = color.copy(alpha = color.alpha * 0.35f)
         val outline = col(GyroDisplayColor.LASER_CROSSHAIR_OUTLINE).let { it.copy(alpha = minOf(it.alpha, color.alpha)) }

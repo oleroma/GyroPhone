@@ -233,7 +233,7 @@ internal static class LaserDrawing
         void Crosshair()
         {
             const float rad = MathF.PI / 180f;
-            var ch = LaserTrace.CrosshairOn(m, beam, s.CrosshairShape, s.CrosshairSize * rad, s.CrosshairGap * rad, s.CrosshairDot, s.CrosshairRoll);
+            var ch = LaserTrace.CrosshairOn(m, beam, s.CrosshairShape, s.CrosshairSize * rad, s.CrosshairGap * rad, s.CrosshairDot);
             Color ahead = Color.FromArgb(s.Color("crosshair")), behind = Color.FromArgb(s.Color("crosshair_behind"));
             float h = LaserTrace.Behind(beam.Z);
             var color = Color.FromArgb((int)(ahead.A + (behind.A - ahead.A) * h), (int)(ahead.R + (behind.R - ahead.R) * h),

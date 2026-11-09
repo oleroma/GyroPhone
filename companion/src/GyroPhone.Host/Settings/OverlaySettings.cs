@@ -225,7 +225,7 @@ public sealed class OverlaySettings
     /// Laser pointer: a crosshair where the beam lands instead of the sphere and beam (not with LaserRifle): lying
     /// on the sphere facing its centre, shape CrosshairShape (LaserTrace.Crosshairs), arms CrosshairSize degrees
     /// long from a CrosshairGap degree gap, lines CrosshairThickness thick, a centre dot, a dark outline; turning
-    /// with the phone's roll with CrosshairRoll, else kept upright. As the phone's GyroDisplay.laserCrosshair.
+    /// about the beam as the pose does (a trackball's roll axis as mapped). As the phone's GyroDisplay.laserCrosshair.
     /// </summary>
     public bool LaserCrosshair { get; set; }
     public int CrosshairShape { get; set; } = 1;
@@ -234,7 +234,6 @@ public sealed class OverlaySettings
     public float CrosshairThickness { get; set; } = 2f;
     public bool CrosshairDot { get; set; } = true;
     public bool CrosshairOutline { get; set; } = true;
-    public bool CrosshairRoll { get; set; } = true;
     /// <summary>Laser pointer turned as a trackball: which way of it the laser faces (0 −Z into the screen, 1 +Z, 2 +X, 3 −X, 4 +Y, 5 −Y).</summary>
     public int LaserFaces { get; set; }
     public bool LaserAxes { get; set; } = true;

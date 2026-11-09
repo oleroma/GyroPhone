@@ -187,21 +187,20 @@ public class LaserTraceTests
         // Straight (beam into the screen), the phone rolled 90°: its up now points sideways.
         float[] m = [0f, -1f, 0f, 1f, 0f, 0f, 0f, 0f, 1f];
         var b = LaserTrace.Beam(m);
-        foreach (bool roll in new[] { true, false })
         {
-            var ch = LaserTrace.CrosshairOn(m, b, 0, 10 * rad, 2 * rad, true, roll);
+            var ch = LaserTrace.CrosshairOn(m, b, 0, 10 * rad, 2 * rad, true);
             Assert.Equal(2, ch.Lines.Count);
             foreach (var l in ch.Lines)
                 foreach (var p in l)
                     Assert.Equal(1f, p.X * b.X + p.Y * b.Y + p.Z * b.Z, 4);
             var up = ch.Lines[1];
             float dx = up[1].X - up[0].X, dy = up[1].Y - up[0].Y;
-            Assert.Equal(0f, roll ? dy : dx, 4);
-            Assert.Equal(20 * rad, MathF.Abs(roll ? dx : dy), 4);
+            Assert.Equal(0f, dy, 4);
+            Assert.Equal(20 * rad, MathF.Abs(dx), 4);
             Assert.NotNull(ch.Dot);
         }
-        Assert.Equal(3, LaserTrace.CrosshairOn(m, b, 5, 0.2f, 0.05f, false, true).Lines.Count);
-        var dot = LaserTrace.CrosshairOn(m, b, 4, 0.2f, 0.05f, false, true);
+        Assert.Equal(3, LaserTrace.CrosshairOn(m, b, 5, 0.2f, 0.05f, false).Lines.Count);
+        var dot = LaserTrace.CrosshairOn(m, b, 4, 0.2f, 0.05f, false);
         Assert.Empty(dot.Lines);
         Assert.NotNull(dot.Dot);
     }

@@ -196,24 +196,24 @@ class CameraTurnTest {
         val m = floatArrayOf(0f, -1f, 0f, 1f, 0f, 0f, 0f, 0f, 1f)
         val b = FloatArray(3)
         LaserTrace.beam(m, b)
-        for (roll in listOf(true, false)) {
-            val ch = LaserTrace.crosshair(m, b, 0, 10 * rad, 2 * rad, dot = true, roll = roll)
+        run {
+            val ch = LaserTrace.crosshair(m, b, 0, 10 * rad, 2 * rad, dot = true)
             assertEquals(2, ch.lines.size)
             for (l in ch.lines) for (i in l.indices step 3) {
                 // Facing the centre: every point on the plane touching the sphere there.
                 assertEquals(1f, l[i] * b[0] + l[i + 1] * b[1] + l[i + 2] * b[2], 1e-4f)
             }
-            // Its second arm runs up and down: along the phone's up with roll (sideways now), else the world's.
+            // Its second arm runs along the pose's up: sideways now.
             val up = ch.lines[1]
             val dx = up[3] - up[0]
             val dy = up[4] - up[1]
-            if (roll) assertEquals(0f, dy, 1e-4f) else assertEquals(0f, dx, 1e-4f)
-            assertEquals(20 * rad, kotlin.math.abs(if (roll) dx else dy), 1e-4f)
+            assertEquals(0f, dy, 1e-4f)
+            assertEquals(20 * rad, kotlin.math.abs(dx), 1e-4f)
             assertNotNull(ch.dot)
         }
         // Each shape: a T has three arms, a dot only its dot.
-        assertEquals(3, LaserTrace.crosshair(m, b, 5, 0.2f, 0.05f, dot = false, roll = true).lines.size)
-        val dot = LaserTrace.crosshair(m, b, 4, 0.2f, 0.05f, dot = false, roll = true)
+        assertEquals(3, LaserTrace.crosshair(m, b, 5, 0.2f, 0.05f, dot = false).lines.size)
+        val dot = LaserTrace.crosshair(m, b, 4, 0.2f, 0.05f, dot = false)
         assertEquals(0, dot.lines.size)
         assertNotNull(dot.dot)
     }

@@ -146,7 +146,7 @@ data class GyroDisplay(
      * lying on the sphere facing its centre, shape [crosshairShape]
      * ([com.oleroma.gyrophone.core.engine.LaserTrace.CROSSHAIRS]), arms [crosshairSize] degrees long
      * from a [crosshairGap] degree gap, lines [crosshairThickness] dp, a centre dot, a dark outline;
-     * turning with the phone's roll with [crosshairRoll], else kept upright.
+     * turning about the beam as the pose does (a trackball's roll axis as mapped).
      */
     val laserCrosshair: Boolean = false,
     val crosshairShape: Int = 1,
@@ -155,7 +155,6 @@ data class GyroDisplay(
     val crosshairThickness: Float = 2f,
     val crosshairDot: Boolean = true,
     val crosshairOutline: Boolean = true,
-    val crosshairRoll: Boolean = true,
     /** LASER turned as a trackball: which way of it the laser faces ([com.oleroma.gyrophone.core.engine.LaserTrace.FACES], 0 −Z into the screen). */
     val laserFaces: Int = 0,
     /** LASER: Draw mode, the beam paints the sphere's inside, [laserBrush] degrees round; it fades after [laserFadeMs] ms (0 = never). */

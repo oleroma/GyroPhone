@@ -354,14 +354,13 @@ public sealed class LaserTrace
     /// <summary>
     /// Crosshair <paramref name="shape"/> (<see cref="Crosshairs"/>) lying on the sphere where <paramref name="beam"/>
     /// lands, facing its centre: arms <paramref name="size"/> radians long from a <paramref name="gap"/> radian gap, a
-    /// centre <paramref name="dot"/>. Its up is the phone's up (pose <paramref name="m"/>) with <paramref name="roll"/>,
-    /// else the world's up (the phone's when looking straight up or down). As the phone's LaserTrace.crosshair.
+    /// centre <paramref name="dot"/>. Its up is the pose's up (<paramref name="m"/>), so it turns about the beam only as
+    /// the pose does: a trackball's roll axis as mapped (locked, inverted), the phone's own roll when it turns with the
+    /// phone. As the phone's LaserTrace.crosshair.
     /// </summary>
-    public static Crosshair CrosshairOn(float[] m, (float X, float Y, float Z) beam, int shape, float size, float gap, bool dot, bool roll)
+    public static Crosshair CrosshairOn(float[] m, (float X, float Y, float Z) beam, int shape, float size, float gap, bool dot)
     {
-        var v = roll ? RollTick(m, beam) : Square((0f, 1f, 0f), beam);
-        v ??= RollTick(m, beam) ?? Square((0f, 0f, -1f), beam) ?? Square((1f, 0f, 0f), beam) ?? (0f, 1f, 0f);
-        var up = v.Value;
+        var up = RollTick(m, beam) ?? Square((0f, 0f, -1f), beam) ?? Square((1f, 0f, 0f), beam) ?? (0f, 1f, 0f);
         // Right: up × the outward normal (the beam).
         var u = (X: up.Y * beam.Z - up.Z * beam.Y, Y: up.Z * beam.X - up.X * beam.Z, Z: up.X * beam.Y - up.Y * beam.X);
         (float X, float Y, float Z) At(float a, float b) =>
