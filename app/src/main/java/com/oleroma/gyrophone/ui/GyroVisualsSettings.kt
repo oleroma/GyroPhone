@@ -723,7 +723,8 @@ private fun <T> Chips(options: List<Pair<String, T>>, selected: T, onPick: (T) -
 
 /**
  * The laser's Fire pick: a row showing the picked button that opens a popup listing every
- * button (mouse, controller, keyboard) as chips wrapped to the screen's width, scrolling if they don't fit.
+ * button as chips wrapped to the screen's width, scrolling if they don't fit, in two tabs:
+ * Keyboard & mouse and Gamepad (opening on the picked one's).
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -752,8 +753,14 @@ private fun FirePicker(selected: Int, onPick: (Int) -> Unit) {
         onDismissRequest = { open = false },
         title = { Text("Fire") },
         text = {
+            var pad by remember { mutableStateOf(groups[1].second.any { it.second == selected }) }
+            Column {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(selected = !pad, onClick = { pad = false }, label = { Text("Keyboard & mouse") })
+                    FilterChip(selected = pad, onClick = { pad = true }, label = { Text("Gamepad") })
+                }
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                for ((g, list) in groups) {
+                for ((g, list) in if (pad) groups.subList(1, 2) else listOf(groups[0], groups[2])) {
                     Text(g, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
                     androidx.compose.foundation.layout.FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -766,6 +773,7 @@ private fun FirePicker(selected: Int, onPick: (Int) -> Unit) {
                         }
                     }
                 }
+            }
             }
         },
         confirmButton = { TextButton(onClick = { open = false }) { Text("Close") } },
