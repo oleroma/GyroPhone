@@ -454,6 +454,7 @@ private class VisState {
                     snakeDeg = if (d.laserSnake) d.laserSnakeDeg.toFloat() else 0f,
                     wayColors = if (d.laserColourByWay) moveColors else null,
                     mapWidth = PAINT_WIDTHS[d.laserPaintDetail.coerceIn(0, 2)],
+                    soft = d.laserSoftness,
                 )
             }
         }
@@ -526,7 +527,7 @@ private class VisState {
         // Draw mode's paint: the paint map drawn on the sphere by the GPU, its near or far half.
         val look = if (lt?.paint == null || !d.laserDraw) null else PointerPaintShader.Look(
             eye = if (laserPersp) LaserTrace.CAMERA_DISTANCE else 0f,
-            byWay = d.laserColourByWay, soft = d.laserSoftness, glow = d.laserGlow, outline = d.laserOutline,
+            byWay = d.laserColourByWay, glow = d.laserGlow, outline = d.laserOutline,
             shade = d.laserShade, inside = d.laserInside, light = d.laserLight, lightFrom = d.laserLightFrom, shine = d.laserShine,
             moves = IntArray(6) { moveColors[it].toInt() },
             fireAhead = col(GyroDisplayColor.LASER_FIRE).toArgb(), fireBehind = col(GyroDisplayColor.LASER_FIRE_BEHIND).toArgb(),

@@ -19,14 +19,16 @@ internal class PointerPaintShader {
     private val near = RuntimeShader(SOURCE)
     private val far = RuntimeShader(SOURCE)
     private val paint = Paint()
-    private var reachMap: Bitmap? = null
+    private var amountMap: Bitmap? = null
+    private var fireMap: Bitmap? = null
+    private var glowMap: Bitmap? = null
     private var wayMap: Bitmap? = null
     private var uploaded = Long.MIN_VALUE
     private val col = FloatArray(3)
 
     /** What every draw of one frame shares. */
     class Look(
-        val eye: Float, val byWay: Boolean, val soft: Float, val glow: Float, val outline: Boolean,
+        val eye: Float, val byWay: Boolean, val glow: Float, val outline: Boolean,
         val shade: Float, val inside: Float, val light: Float, val lightFrom: Int, val shine: Float, val moves: IntArray, val fireAhead: Int, val fireBehind: Int,
         val outlineColor: Int, val wayAlpha: Float,
     )
@@ -42,25 +44,29 @@ internal class PointerPaintShader {
         view: (Float, Float, Float, FloatArray) -> Unit, scene: (Float, Float, Float, FloatArray) -> Unit, look: Look,
     ) {
         val s = if (front) near else far
-        if (lp.version != uploaded || reachMap?.width != lp.width) {
-            if (reachMap?.width != lp.width) {
-                reachMap = null
-                wayMap = null
+        if (lp.version != uploaded || amountMap?.width != lp.width || (look.byWay && lp.way != null && wayMap == null)) {
+            if (amountMap?.width != lp.width) {
+                amountMap = null; fireMap = null; glowMap = null; wayMap = null
             }
-            // The map's bytes as they are, in an alpha-only bitmap: alpha is never colour-converted
-            // on the way to the GPU, so the numbers arrive exact.
-            val rm = reachMap ?: Bitmap.createBitmap(lp.width, lp.height, Bitmap.Config.ALPHA_8).also { reachMap = it }
-            rm.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(lp.data))
+            // The map's bytes as they are, each in an alpha-only bitmap: alpha is never colour-converted
+            // on the way to the GPU, so the amounts arrive exact.
+            fun a8(old: Bitmap?, bytes: ByteArray): Bitmap =
+                (old ?: Bitmap.createBitmap(lp.width, lp.height, Bitmap.Config.ALPHA_8)).also { it.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(bytes)) }
+            val am = a8(amountMap, lp.amount).also { amountMap = it }
+            val fm = a8(fireMap, lp.fire).also { fireMap = it }
+            val gm = a8(glowMap, lp.glow).also { glowMap = it }
             val ways = lp.way
-            if (ways != null) {
+            if (ways != null && look.byWay) {
                 val wb = wayMap ?: Bitmap.createBitmap(lp.width, lp.height, Bitmap.Config.ARGB_8888).also { wayMap = it }
                 wb.setPixels(ways, 0, lp.width, 0, 0, lp.width, lp.height)
             }
             uploaded = lp.version
             // New shaders for the changed pixels, so the GPU takes them up.
             for (sh in arrayOf(near, far)) {
-                sh.setInputBuffer("reach", exact(rm))
-                sh.setInputShader("way", exact(wayMap ?: rm))
+                sh.setInputBuffer("amount", smooth(am))
+                sh.setInputBuffer("fire", smooth(fm))
+                sh.setInputBuffer("glow", smooth(gm))
+                sh.setInputBuffer("way", smooth(wayMap ?: am))
             }
         }
         s.setFloatUniform("mapSize", lp.width.toFloat(), lp.height.toFloat())
@@ -74,10 +80,8 @@ internal class PointerPaintShader {
         scene(1f, 0f, 0f, col); s.setFloatUniform("sceneX", col[0], col[1], col[2])
         scene(0f, 1f, 0f, col); s.setFloatUniform("sceneY", col[0], col[1], col[2])
         scene(0f, 0f, 1f, col); s.setFloatUniform("sceneZ", col[0], col[1], col[2])
-        s.setFloatUniform("wayMode", if (look.byWay && lp.way != null) 1f else 0f)
-        s.setFloatUniform("edge", LaserPaint.EDGE)
-        s.setFloatUniform("soft", look.soft)
-        s.setFloatUniform("glow", look.glow)
+        s.setFloatUniform("wayMode", if (look.byWay && wayMap != null) 1f else 0f)
+        s.setFloatUniform("glowK", look.glow)
         s.setFloatUniform("outline", if (look.outline) 1f else 0f)
         s.setFloatUniform("shade", look.shade)
         s.setFloatUniform("inside", look.inside)
@@ -95,8 +99,8 @@ internal class PointerPaintShader {
         canvas.drawRect(cx - e, cy - e, cx + e, cy + e, paint)
     }
 
-    // The map read texel by texel (no blending between them: its bytes are numbers).
-    private fun exact(bm: Bitmap) = BitmapShader(bm, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { filterMode = BitmapShader.FILTER_MODE_NEAREST }
+    // The map read smoothly between texels (its values are premultiplied amounts), round the sphere in longitude.
+    private fun smooth(bm: Bitmap) = BitmapShader(bm, Shader.TileMode.REPEAT, Shader.TileMode.CLAMP).apply { filterMode = BitmapShader.FILTER_MODE_LINEAR }
 
     companion object {
         /** The scene's light, a unit direction in the picture (x right, y up, z toward you), from 0 upper left, 1 above, 2 upper right, 3 front. */
@@ -110,7 +114,9 @@ internal class PointerPaintShader {
         private val MOVE_NAMES = arrayOf("cRight", "cLeft", "cUp", "cDown", "cToward", "cAway")
 
         private val SOURCE = """
-            uniform shader reach;
+            uniform shader amount;
+            uniform shader fire;
+            uniform shader glow;
             uniform shader way;
             uniform float2 mapSize;
             uniform float2 center;
@@ -124,9 +130,7 @@ internal class PointerPaintShader {
             uniform float3 sceneY;
             uniform float3 sceneZ;
             uniform float wayMode;
-            uniform float edge;
-            uniform float soft;
-            uniform float glow;
+            uniform float glowK;
             uniform float outline;
             uniform float shade;
             uniform float inside;
@@ -143,22 +147,6 @@ internal class PointerPaintShader {
             layout(color) uniform half4 fireAhead;
             layout(color) uniform half4 fireBehind;
             layout(color) uniform half4 outlineColor;
-
-            float2 at(float i, float j) {
-                return float2(mod(i, mapSize.x) + 0.5, clamp(j, 0.0, mapSize.y - 1.0) + 0.5);
-            }
-
-            // A texel's reach (as much as shows) and its share fired.
-            float2 cell(float i, float j) {
-                float2 x = at(i, j);
-                float r8 = floor(float(reach.eval(x).a) * 255.0 + 0.5);
-                float c = floor(r8 / 2.0) / 127.0;
-                return float2(c, c * mod(r8, 2.0));
-            }
-
-            float3 wayAt(float i, float j) {
-                return float3(way.eval(at(i, j)).rgb);
-            }
 
             half4 main(float2 xy) {
                 float2 q = (xy - center) / radius;
@@ -185,31 +173,18 @@ internal class PointerPaintShader {
                 float3 s = float3(dot(colX, p), dot(colY, p), dot(colZ, p));
                 float lon = atan(s.x, -s.z);
                 float lat = asin(clamp(s.y, -1.0, 1.0));
-                float u = (lon / 6.28318531 + 0.5) * mapSize.x - 0.5;
-                float v = (0.5 - lat / 3.14159265) * mapSize.y - 0.5;
-                float i0 = floor(u);
-                float j0 = floor(v);
-                float fx = u - i0;
-                float fy = v - j0;
-                float w00 = (1.0 - fx) * (1.0 - fy);
-                float w10 = fx * (1.0 - fy);
-                float w01 = (1.0 - fx) * fy;
-                float w11 = fx * fy;
-                float2 a00 = cell(i0, j0);
-                float2 a10 = cell(i0 + 1.0, j0);
-                float2 a01 = cell(i0, j0 + 1.0);
-                float2 a11 = cell(i0 + 1.0, j0 + 1.0);
-                float c = w00 * a00.x + w10 * a10.x + w01 * a01.x + w11 * a11.x;
-                if (c < 0.004) return half4(0.0);
+                float2 uv = float2((lon / 6.28318531 + 0.5) * mapSize.x, (0.5 - lat / 3.14159265) * mapSize.y);
+                float c = float(amount.eval(uv).a);
+                float gl = float(glow.eval(uv).a);
+                if (c < 0.004 && gl < 0.004) return half4(0.0);
+                float cs = max(c, 0.004);
+                float fired = clamp(float(fire.eval(uv).a) / cs, 0.0, 1.0);
                 // The point in the scene's frame: what its colour goes by.
                 float3 g = float3(dot(sceneX, p), dot(sceneY, p), dot(sceneZ, p));
-                float fired = (w00 * a00.y + w10 * a10.y + w01 * a01.y + w11 * a11.y) / c;
 
                 float4 base;
                 if (wayMode > 0.5) {
-                    float3 w = w00 * a00.x * wayAt(i0, j0) + w10 * a10.x * wayAt(i0 + 1.0, j0)
-                        + w01 * a01.x * wayAt(i0, j0 + 1.0) + w11 * a11.x * wayAt(i0 + 1.0, j0 + 1.0);
-                    base = float4(w / c, wayAlpha);
+                    base = float4(clamp(float3(way.eval(uv).rgb) / cs, 0.0, 1.0), wayAlpha);
                 } else {
                     // The sphere's own colour here, blended as a normal map ([LaserTrace.directionColor]).
                     float4 mid = float4(cRight + cLeft + cUp + cDown + cToward + cAway) / 6.0;
@@ -229,11 +204,10 @@ internal class PointerPaintShader {
                 float spec = shine * pow(max(dot(nv, normalize(lightDir + float3(0.0, 0.0, 1.0))), 0.0), 24.0);
                 col.rgb = min(col.rgb * k + spec, float3(1.0));
 
-                float sw = mix(0.03, 0.3, soft);
-                float paintA = smoothstep(edge - sw, edge + sw, c) * col.a;
-                float glowA = glow * 0.45 * smoothstep(0.0, edge, c) * col.a;
+                float paintA = c * col.a;
+                float glowA = glowK * 0.45 * gl * col.a;
                 float4 o = float4(col.rgb, 1.0) * glowA;
-                float oa = outline * smoothstep(edge - sw - 0.14, edge - sw - 0.05, c) * float(outlineColor.a);
+                float oa = outline * smoothstep(0.2, 0.4, gl) * (1.0 - c) * float(outlineColor.a);
                 o = float4(float3(outlineColor.rgb) * oa, oa) + o * (1.0 - oa);
                 o = float4(col.rgb * paintA, paintA) + o * (1.0 - paintA);
                 return half4(o);

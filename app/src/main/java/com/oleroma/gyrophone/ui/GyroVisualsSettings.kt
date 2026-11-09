@@ -311,7 +311,7 @@ internal fun GyroDisplaySettingsScreen(
                 { if (it < 0.025f) "Line smoothing: off" else "Line smoothing %.0f%%".format(it * 100) },
                 d.laserLineSmoothing, 0f..1f, { (it * 20).roundToInt() / 20f },
             ) { set(d.copy(laserLineSmoothing = it)) }
-            Hint("Softness: how soft the paint's edge is (0 sharp). Facing shade darkens paint where the sphere's surface turns away from you, so you see its roundness (0 off). Inside: how bright the far half's paint is, seen from inside the sphere, next to the near half's seen from outside. Line smoothing steadies the painted line against hand shake, strongly when you move slowly and hardly when you move fast, so the paint may trail a slow aim a little; the beam, dot and crosshair stay as they are.")
+            Hint("Softness: how soft the paint's edge is (0 sharp); it shapes the paint as you lay it down, so changing it changes only new strokes. Where lines cross, the paint builds up and their colours blend. Facing shade darkens paint where the sphere's surface turns away from you, so you see its roundness (0 off). Inside: how bright the far half's paint is, seen from inside the sphere, next to the near half's seen from outside. Line smoothing steadies the painted line against hand shake, strongly when you move slowly and hardly when you move fast, so the paint may trail a slow aim a little; the beam, dot and crosshair stay as they are.")
         }
         val colours = if (!laser) null else category(runtime, "gyroDisplayColours", "Colours", "Each part's colour") { Colours() }
         val turning = if (!d.kind.pose) null else category(runtime, "gyroDisplayTurning", "Turning", "Turns with, gravity, ease back, turn amount, Level", defaultOpen = true) {
