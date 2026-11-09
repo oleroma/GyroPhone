@@ -300,13 +300,7 @@ internal fun GyroDisplaySettingsScreen(
                 ) { set(d.copy(laserLength = lengthDeg(it))) }
                 Hint("How much line is kept: past that length the oldest end is cut away as you paint. With Fades after set, the line also fades out along that length.")
                 SwitchRow("Clear on ratchet", d.laserClearOnRatchet, "A ratchet press clears the drawing.") { set(d.copy(laserClearOnRatchet = it)) }
-                Text("Fire (paints in the Fire colours while GyroPhone sends it)", style = MaterialTheme.typography.bodyMedium)
-                Text("Mouse", style = MaterialTheme.typography.bodySmall)
-                Chips(com.oleroma.gyrophone.core.engine.LaserFire.MOUSE_CHOICES, d.laserFire) { set(d.copy(laserFire = it)) }
-                Text("Controller", style = MaterialTheme.typography.bodySmall)
-                Chips(com.oleroma.gyrophone.core.engine.LaserFire.PAD_CHOICES, d.laserFire) { set(d.copy(laserFire = it)) }
-                Text("Keyboard", style = MaterialTheme.typography.bodySmall)
-                Chips(com.oleroma.gyrophone.core.engine.LaserFire.KEY_CHOICES, d.laserFire) { set(d.copy(laserFire = it)) }
+                FirePicker(d.laserFire) { set(d.copy(laserFire = it)) }
                 SwitchRow("Paint only while firing", d.laserFireOnly, "Aiming leaves no trail; only shots draw.") { set(d.copy(laserFireOnly = it)) }
                 Hint("Strokes glow, older ones darker. Each takes the colour of the way the beam moves (the Moving colours below, blended like a normal map: right pink, left teal, up light green, down purple), so you see which way you swept. Shots take the Fire colours. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every laser pointer at once.")
             }
@@ -725,6 +719,59 @@ private fun <T> Chips(options: List<Pair<String, T>>, selected: T, onPick: (T) -
             FilterChip(selected = selected == value, onClick = { onPick(value) }, label = { Text(label) })
         }
     }
+}
+
+/**
+ * The laser's Fire pick: a row showing the picked button that opens a popup listing every
+ * button (mouse, controller, keyboard) as chips wrapped to the screen's width, scrolling if they don't fit.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun FirePicker(selected: Int, onPick: (Int) -> Unit) {
+    val groups = listOf(
+        "Mouse" to com.oleroma.gyrophone.core.engine.LaserFire.MOUSE_CHOICES,
+        "Controller" to com.oleroma.gyrophone.core.engine.LaserFire.PAD_CHOICES,
+        "Keyboard" to com.oleroma.gyrophone.core.engine.LaserFire.KEY_CHOICES,
+    )
+    var open by remember { mutableStateOf(false) }
+    val name = groups.firstNotNullOfOrNull { (g, list) -> list.firstOrNull { it.second == selected }?.let { "$g ${it.first}" } } ?: "None"
+    Searchable("Fire", *groups.flatMap { g -> g.second.map { it.first } }.toTypedArray()) {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { open = true }.padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Fire", style = MaterialTheme.typography.bodyMedium)
+                Text("Paints in the Fire colours while GyroPhone sends it", style = MaterialTheme.typography.bodySmall)
+            }
+            Text(name, color = MaterialTheme.colorScheme.primary)
+        }
+    }
+    if (!open) return
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { open = false },
+        title = { Text("Fire") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                for ((g, list) in groups) {
+                    Text(g, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        for ((label, value) in list) {
+                            FilterChip(selected = selected == value, onClick = {
+                                onPick(value)
+                                open = false
+                            }, label = { Text(label) })
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { open = false }) { Text("Close") } },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier.padding(16.dp),
+    )
 }
 
 /** A slider that saves on release, [format] showing its value. */
