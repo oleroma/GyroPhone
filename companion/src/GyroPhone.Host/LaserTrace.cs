@@ -2,10 +2,11 @@ namespace GyroPhone.Host;
 
 /// <summary>
 /// What a laser pointer overlay remembers between frames: in Draw mode, the strokes the beam
-/// painted on the sphere's inside (they fade after a while, or stay), a ring of unit directions in the shown frame (x right, y up, z toward the viewer) with their
+/// painted on the sphere's inside, a ring of unit directions in the shown frame (x right, y up, z toward the viewer) with their
 /// times; a point starts a new line after a gap (a held ratchet, Draw just turned on). Strokes keep
 /// a point each time the beam moved <see cref="StrokeStepDeg"/>° or more, up to <see cref="StrokeMax"/>
-/// (the oldest go first), so drawing them costs the same however long you paint. Same as the phone's
+/// (the oldest go first); each new point paints the <see cref="Paint"/> map, which is what shows, and Snake keeps
+/// only its newest stretch of them. Same as the phone's
 /// LaserTrace. One thread at a time.
 /// </summary>
 public sealed class LaserTrace
@@ -23,6 +24,8 @@ public sealed class LaserTrace
         private readonly long[] _t = new long[capacity];
         private readonly bool[] _gap = new bool[capacity];
         private readonly bool[] _fire = new bool[capacity];
+        /// <summary>Degrees painted up to each point, counted along the lines (a new line adds none).</summary>
+        private readonly double[] _along = new double[capacity];
         private int _head;
 
         /// <summary>Points kept now.</summary>
@@ -31,31 +34,53 @@ public sealed class LaserTrace
         public void Add(float x, float y, float z, long ms, bool startsLine, bool firing = false)
         {
             int i = (_head + Count) % capacity;
+            double a = 0;
+            if (Count > 0)
+            {
+                int l = (_head + Count - 1) % capacity;
+                a = _along[l];
+                if (!startsLine)
+                {
+                    double dot = Math.Clamp((double)(_x[l] * x + _y[l] * y + _z[l] * z), -1.0, 1.0);
+                    a += Math.Acos(dot) * 180.0 / Math.PI;
+                }
+            }
             if (Count == capacity)
             {
                 _head = (_head + 1) % capacity;
                 _gap[_head] = true; // the oldest left has no line from before it
             }
             else Count++;
-            _x[i] = x; _y[i] = y; _z[i] = z; _t[i] = ms; _gap[i] = startsLine; _fire[i] = firing;
+            _x[i] = x; _y[i] = y; _z[i] = z; _t[i] = ms; _gap[i] = startsLine; _fire[i] = firing; _along[i] = a;
         }
 
-        /// <summary>Drops points older than <paramref name="ms"/> at <paramref name="nowMs"/>.</summary>
-        public void Expire(long nowMs, int ms)
+        /// <summary>Drops the oldest points more than <paramref name="deg"/> degrees of painted line behind the newest.</summary>
+        public void Cut(float deg)
         {
-            while (Count > 0 && nowMs - _t[_head] > ms)
+            if (Count == 0) return;
+            double newest = _along[(_head + Count - 1) % capacity];
+            bool dropped = false;
+            while (Count > 1 && newest - _along[_head] > deg + 0.05) // a hair over: sums of steps round
             {
                 _head = (_head + 1) % capacity;
                 Count--;
+                dropped = true;
             }
-            if (Count > 0) _gap[_head] = true;
+            if (dropped) _gap[_head] = true;
         }
+
+        /// <summary>Degrees of painted line from point <paramref name="i"/> to the newest.</summary>
+        public float BehindNewest(int i) =>
+            Count == 0 ? 0f : (float)(_along[(_head + Count - 1) % capacity] - _along[(_head + i) % capacity]);
 
         public void Clear()
         {
             Count = 0;
             _head = 0;
         }
+
+        /// <summary>Degrees painted up to point <paramref name="i"/> (0 oldest), counted along the lines.</summary>
+        public double Along(int i) => _along[(_head + i) % capacity];
 
         /// <summary>Point <paramref name="i"/> (0 oldest): its direction and time (ms).</summary>
         public (float X, float Y, float Z, long T) Point(int i)
@@ -136,14 +161,17 @@ public sealed class LaserTrace
     /// (0 off .. 1 strong) the paint follows a steadied beam (<see cref="SteadyToward"/>).
     /// </summary>
     public void Add(float x, float y, float z, long nowMs, bool draw, bool held, bool clearOnPress = false, bool fire = false, bool fireOnly = false,
-        bool smooth = true, float lineSmoothing = 0f)
+        bool smooth = true, float lineSmoothing = 0f, float brushDeg = 0f, float snakeDeg = 0f, uint[]? wayColors = null,
+        int mapWidth = LaserPaint.DefaultWidth, float soft = 0.5f)
     {
         bool pressed = clearOnPress && held && !_wasHeld;
         _wasHeld = held;
-        if ((!draw || pressed) && Strokes.Count > 0) Clear();
+        bool snake = snakeDeg > 0f;
+        if (!draw && _paintUsed) ClearPaint(); // Draw off wipes the paint (a snake goes on)
+        if ((!(draw || snake) || pressed) && (Strokes.Count > 0 || _paintUsed)) Clear();
         float l = MathF.Sqrt(x * x + y * y + z * z);
         if (l > 1e-6f && float.IsFinite(l)) Follow(x / l, y / l, z / l, nowMs, smooth);
-        if (!draw || l < 1e-6f || held || !float.IsFinite(l) || (fireOnly && !fire))
+        if (!(draw || snake) || l < 1e-6f || held || !float.IsFinite(l) || (fireOnly && !fire))
         {
             _strokeGap = true;
             return;
@@ -153,9 +181,47 @@ public sealed class LaserTrace
         // A new point once the beam moved a little (or the firing started or stopped): a still beam adds nothing.
         if (!_strokeGap && fire == _lastFire && _lastX * dx + _lastY * dy + _lastZ * dz > StrokeStepCos) return;
         Strokes.Add(dx, dy, dz, nowMs, _strokeGap, fire);
+        if (draw && brushDeg > 0f) StampNewest(brushDeg / 2f, fire, wayColors, smooth ? SmoothReach : 0, mapWidth, soft);
+        if (snake) Strokes.Cut(snakeDeg);
         _strokeGap = false;
         _lastFire = fire;
         _lastX = dx; _lastY = dy; _lastZ = dz;
+    }
+
+    /// <summary>The paint map (Draw mode), made at the first painted point.</summary>
+    public LaserPaint? Paint { get; private set; }
+
+    // Something is painted on the map (since the last clear).
+    private bool _paintUsed;
+
+    /// <summary>Goes up when the strokes or paint are cleared.</summary>
+    public long Version { get; private set; }
+
+    private void ClearPaint()
+    {
+        Paint?.Clear();
+        _paintUsed = false;
+        Version++;
+    }
+
+    /// <summary>Paints the newest stroke point into <see cref="Paint"/>, from the point before it unless it starts a line.</summary>
+    private void StampNewest(float halfDeg, bool fire, uint[]? wayColors, int reach, int mapWidth, float soft)
+    {
+        // A new map when the detail changed (the paint so far goes).
+        var p = Paint is { } old && old.Width == mapWidth ? old : (Paint = new LaserPaint(mapWidth, mapWidth / 2));
+        int n = Strokes.Count, b = n - 1;
+        int a = Strokes.Gap(b) || n < 2 ? b : b - 1;
+        var pa = Strokes.Point(a);
+        var pb = Strokes.Point(b);
+        int? rgb = null;
+        if (wayColors != null)
+        {
+            var dir = a == b ? (0f, 0f, 0f) : Strokes.Direction(b, reach);
+            rgb = (int)(DirectionColor(dir, wayColors) & 0xFFFFFF);
+        }
+        if (a == b) p.NewLine();
+        p.Stamp(pa.X, pa.Y, pa.Z, pb.X, pb.Y, pb.Z, Strokes.Along(b), halfDeg, fire, soft, rgb);
+        _paintUsed = true;
     }
 
     /// <summary>Turns <see cref="Moving"/> toward the way the beam went to unit (x, y, z) at <paramref name="nowMs"/>.</summary>
@@ -242,29 +308,25 @@ public sealed class LaserTrace
         return argb;
     }
 
-    /// <summary>With <paramref name="fadeMs"/> &gt; 0, drops strokes older than it.</summary>
-    public void Expire(long nowMs, int fadeMs)
-    {
-        if (fadeMs > 0) Strokes.Expire(nowMs, fadeMs);
-    }
-
-    /// <summary>Some stroke is still fading (draw again while it fades).</summary>
-    public bool Fading(int fadeMs) => fadeMs > 0 && Strokes.Count > 0;
-
     /// <summary>Clears the strokes.</summary>
     public void Clear()
     {
         Strokes.Clear();
+        Paint?.Clear();
+        _paintUsed = false;
         _strokeGap = true;
+        Version++;
     }
 
     /// <summary>How far round from straight ahead (into the screen) shown-frame direction z is: 0 ahead .. 1 straight behind.</summary>
     public static float Behind(float z) => Math.Clamp((1f + z) / 2f, 0f, 1f);
 
-    /// <summary>How bright stroke point <paramref name="i"/> of <paramref name="count"/> made at <paramref name="t"/> is: 1 new .. 0 gone (<paramref name="fadeMs"/>), or by its place without fading.</summary>
-    public static float StrokeLife(int i, int count, long t, long nowMs, int fadeMs) =>
-        fadeMs > 0 ? Math.Clamp(1f - (nowMs - t) / (float)fadeMs, 0f, 1f)
-        : count <= 1 ? 1f : i / (count - 1f);
+    /// <summary>Perspective: the eye's distance from the centre, in sphere radii (as the 3D phone's).</summary>
+    public const float CameraDistance = 6f;
+
+    /// <summary>Perspective: how much bigger a picture point at depth <paramref name="z"/> (toward the viewer +, sphere radii) shows.</summary>
+    public static float Perspective(float z) => CameraDistance / (CameraDistance - Math.Min(z, CameraDistance - 0.5f));
+
 
     /// <summary>The unit direction at latitude <paramref name="lat"/>, longitude <paramref name="lon"/>.</summary>
     public static (float X, float Y, float Z) Dir(float lat, float lon)
@@ -397,17 +459,24 @@ public sealed class LaserTrace
     /// The rifle turned by pose <paramref name="m"/>, seen as <see cref="ToView"/> sees it: the faces toward
     /// the viewer, farthest first, lit from above left.
     /// </summary>
-    public static List<Face> RifleFaces(float[] m, bool axon, float[]? turned)
+    public static List<Face> RifleFaces(float[] m, bool axon, float[]? turned, bool persp = false)
     {
         var faces = new List<Face>(32);
         var p = new (float X, float Y, float Z)[8];
         const float lx = -0.35f, ly = 0.6f, lz = 0.72f;
         (float X, float Y, float Z) Turn(float x, float y, float z) =>
             ToView(m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z, axon, turned);
+        (float X, float Y, float Z) Corner(float x, float y, float z)
+        {
+            var v = Turn(x, y, z);
+            if (!persp) return v;
+            float f = Perspective(v.Z);
+            return (v.X * f, v.Y * f, v.Z);
+        }
         for (int o = 0; o < Rifle.Length; o += 6)
         {
             for (int k = 0; k < 8; k++)
-                p[k] = Turn(Rifle[o] + ((k & 1) != 0 ? Rifle[o + 3] : -Rifle[o + 3]),
+                p[k] = Corner(Rifle[o] + ((k & 1) != 0 ? Rifle[o + 3] : -Rifle[o + 3]),
                     Rifle[o + 1] + ((k & 2) != 0 ? Rifle[o + 4] : -Rifle[o + 4]),
                     Rifle[o + 2] + ((k & 4) != 0 ? Rifle[o + 5] : -Rifle[o + 5]));
             for (int f = 0; f < 6; f++)

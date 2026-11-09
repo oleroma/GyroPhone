@@ -146,6 +146,8 @@ public sealed class OverlaySettings
     public bool TopMark { get; set; } = true;
     /// <summary>Phone and 3D shape: seen from a fixed angle (30° round, 30° above) with the world's axes, as the laser pointer is, instead of face-on.</summary>
     public bool Axonometric { get; set; }
+    /// <summary>Phone, 3D shape and pointer: seen in perspective (nearer parts bigger, eye LaserTrace.CameraDistance radii away); off, flat. As the phone's GyroDisplay.perspective.</summary>
+    public bool Perspective { get; set; } = true;
     /// <summary>What turns it: the phone, the game's camera, or a trackball (see <see cref="OverlayTurnsWith"/>).</summary>
     public OverlayTurnsWith TurnsWith { get; set; } = OverlayTurnsWith.Phone;
     /// <summary>
@@ -245,10 +247,14 @@ public sealed class OverlaySettings
     public bool LaserAxes { get; set; } = true;
     /// <summary>Laser pointer, Sphere look: the gimbal's yaw, pitch and roll rings (LaserTrace.GimbalRing), a locked axis's faint. As the phone's GyroDisplay.laserGimbal.</summary>
     public bool LaserGimbal { get; set; }
-    /// <summary>Draw mode: the beam paints the sphere's inside, <see cref="LaserBrush"/> degrees round; it fades after <see cref="LaserFadeMs"/> ms (0 = never).</summary>
+    /// <summary>Draw mode: the beam paints the sphere's inside (LaserPaint), <see cref="LaserBrush"/> degrees round.</summary>
     public bool LaserDraw { get; set; }
     public int LaserBrush { get; set; } = 4;
-    public int LaserFadeMs { get; set; }
+    /// <summary>Snake (with or without Draw mode): a line along the newest LaserSnakeDeg degrees of the beam's path, thinning to its tail.</summary>
+    public bool LaserSnake { get; set; }
+    public int LaserSnakeDeg { get; set; } = 180;
+    /// <summary>Draw mode: the paint map's detail, 0 low (512 texels round), 1 normal (1024), 2 high (2048).</summary>
+    public int LaserPaintDetail { get; set; } = 1;
     /// <summary>Draw mode: a ratchet press clears the drawing.</summary>
     public bool LaserClearOnRatchet { get; set; }
     /// <summary>
@@ -258,16 +264,29 @@ public sealed class OverlaySettings
     /// </summary>
     public int LaserFire { get; set; } = GyroPhone.Host.LaserFire.Default;
     public bool LaserFireOnly { get; set; }
-    /// <summary>Laser pointer: the paint's and crosshair's way colours even out small shakes. As the phone's GyroDisplay.laserSmoothColours.</summary>
+    /// <summary>Laser pointer: the way colours (crosshair, and paint with LaserColourByWay) even out small shakes. As the phone's GyroDisplay.laserSmoothColours.</summary>
     public bool LaserSmoothColours { get; set; } = true;
-    /// <summary>
-    /// Laser pointer Draw mode's strokes: LaserColourSteps shades per colour channel (4..32); LaserCurve rounds the
-    /// corners between points (0 straight .. 1 round); LaserLineSmoothing evens out hand shake in the painted path
-    /// (0 off .. 1 strong). As the phone's GyroDisplay.laserColourSteps, laserCurve, laserLineSmoothing.
-    /// </summary>
-    public int LaserColourSteps { get; set; } = 16;
-    public float LaserCurve { get; set; } = 0.5f;
+    /// <summary>Draw mode and Snake: LaserLineSmoothing evens out hand shake in the painted path (0 off .. 1 strong).</summary>
     public float LaserLineSmoothing { get; set; }
+    /// <summary>
+    /// Draw mode: LaserGlow the glow round the paint (0 none .. 1 strong); LaserOutline a dark "outline" edge;
+    /// LaserSoftness how soft the paint's edge is as it is laid down (0 sharp .. 1 soft). As the phone's GyroDisplay.
+    /// </summary>
+    public float LaserGlow { get; set; } = 0.5f;
+    public bool LaserOutline { get; set; }
+    public float LaserSoftness { get; set; } = 0.5f;
+    /// <summary>
+    /// Draw mode and Snake: darker where the sphere's surface turns away from you (LaserShade, 0 off .. 1 strong), the
+    /// far half (seen from inside) at LaserInside of the near half's brightness; a light fixed in the scene
+    /// (LaserLightFrom 0 upper left, 1 above, 2 upper right, 3 front) of strength LaserLight (0 off), with a glossy
+    /// highlight LaserShine. LaserColourByWay: colour by the way the beam moved; off, by where it is in the scene.
+    /// </summary>
+    public float LaserShade { get; set; } = 0.5f;
+    public float LaserInside { get; set; } = 0.7f;
+    public float LaserLight { get; set; } = 0.5f;
+    public int LaserLightFrom { get; set; }
+    public float LaserShine { get; set; } = 0.3f;
+    public bool LaserColourByWay { get; set; }
 
     // The pose, made on the PC (the phone's own gyro display settings are separate).
     /// <summary>
@@ -403,7 +422,7 @@ public sealed class OverlaySettings
         OverlayKind.Phone => "Phone",
         OverlayKind.Shape => "3D shape",
         OverlayKind.Horizon => "Attitude indicator",
-        OverlayKind.Laser => "Laser pointer",
+        OverlayKind.Laser => "Pointer",
         _ => "Bubble disk",
     };
 
@@ -468,6 +487,7 @@ public sealed class OverlaySettings
         new("move_down", "Moving down", 0xFF800080),
         new("move_toward", "Moving toward you", 0xFF8080FF),
         new("move_away", "Moving away", 0xFF808000),
+        new("outline", "Paint outline", 0xB3000000),
         new("rifle", "Rifle", 0xFF5A616C),
         new("fire", "Fire", 0xFFFF4A3D),
         new("fire_behind", "Fire behind", 0xFF8A1E18),

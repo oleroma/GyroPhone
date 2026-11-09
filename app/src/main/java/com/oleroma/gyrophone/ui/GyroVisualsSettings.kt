@@ -180,11 +180,11 @@ internal fun GyroDisplaySettingsScreen(
             }
             if (movesShown(d)) {
                 SwitchRow("Smooth way colours", d.laserSmoothColours, "Small shakes don't flicker the Moving colours.") { set(d.copy(laserSmoothColours = it)) }
-                Hint("The Moving colours colour the paint and the crosshair by the way the beam moves (right, left, up, down, toward you, away, as the sphere's axes are when it isn't turned). A slant blends its ways' colours, as a normal map does. The crosshair keeps the last way's colour when you stop.")
+                Hint("The Moving colours colour the crosshair, and with Colour by the way it moved the paint, by the way the beam moves (right, left, up, down, toward you, away, as the sphere's axes are when it isn't turned). A slant blends its ways' colours, as a normal map does. The crosshair keeps the last way's colour when you stop. With Colour by where it is, the paint takes them by where on the sphere it lands: its right side Moving right's colour, and so on.")
             }
             if (d.colors.isNotEmpty()) TextButton(onClick = { set(d.copy(colors = emptyMap())) }) { Text("Default colours") }
         }
-        // As the PC overlays' tabs: Look (what it shows, colours) and Turning (how the pose moves); the laser pointer, with much to set, also Light, Draw, Strokes and Colours.
+        // As the PC overlays' tabs: Look (what it shows, colours) and Turning (how the pose moves); the laser pointer, with much to set, also Draw, Paint and Colours.
         val look = category(runtime, "gyroDisplayLook", "Look", "What it shows, opacity, colours", defaultOpen = true) {
             when (d.kind) {
                 GyroDisplayKind.PHONE -> {
@@ -269,42 +269,49 @@ internal fun GyroDisplaySettingsScreen(
                 Colours()
             }
         }
-        val draw = if (!laser) null else category(runtime, "gyroDisplayDraw", "Draw", "Draw mode, brush, fade, length, Fire, Clear") {
-            SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim.") { set(d.copy(laserDraw = it)) }
-            if (d.laserDraw) Indented {
-                IntSlider("Brush %d°", d.laserBrush, 1..20) { set(d.copy(laserBrush = it)) }
-                // Fades after 0 (never) to 60 s, finer toward the short ones: the slider's square.
+        val draw = if (!laser) null else category(runtime, "gyroDisplayDraw", "Draw", "Draw mode, snake, brush, Fire, Clear") {
+            SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim; the paint stays until you clear it.") { set(d.copy(laserDraw = it)) }
+            SwitchRow("Snake", d.laserSnake, "A line following the beam along the newest stretch of its path, thinning to its tail. With or without Draw mode.") { set(d.copy(laserSnake = it)) }
+            // Length 10° to 720°, finer toward the short ones: the slider's square, in 5° steps.
+            if (d.laserSnake) Indented {
                 SavedSlider(
-                    { p -> fadeMs(p).let { if (it == 0) "Fades after: never" else "Fades after %.2f s".format(it / 1000f) } },
-                    sqrt(d.laserFadeMs.coerceIn(0, LASER_FADE_MAX_MS) / LASER_FADE_MAX_MS.toFloat()), 0f..1f,
-                    { p -> sqrt(fadeMs(p) / LASER_FADE_MAX_MS.toFloat()) },
-                ) { set(d.copy(laserFadeMs = fadeMs(it))) }
-                // Length 0 (all) to 720°, finer toward the short ones: the slider's square, in 5° steps.
-                SavedSlider(
-                    { p -> lengthDeg(p).let { if (it == 0) "Length: all" else "Length $it°" } },
-                    sqrt(d.laserLength.coerceIn(0, LASER_LENGTH_MAX) / LASER_LENGTH_MAX.toFloat()), 0f..1f,
+                    { p -> "Length ${lengthDeg(p)}°" },
+                    sqrt(d.laserSnakeDeg.coerceIn(LASER_LENGTH_MIN, LASER_LENGTH_MAX) / LASER_LENGTH_MAX.toFloat()), 0f..1f,
                     { p -> sqrt(lengthDeg(p) / LASER_LENGTH_MAX.toFloat()) },
-                ) { set(d.copy(laserLength = lengthDeg(it))) }
-                Hint("How much line is kept: past that length the oldest end is cut away as you paint. With Fades after set, the line also fades out along that length.")
+                ) { set(d.copy(laserSnakeDeg = lengthDeg(it))) }
+            }
+            if (d.laserDraw || d.laserSnake) Indented {
+                IntSlider("Brush %d°", d.laserBrush, 1..20) { set(d.copy(laserBrush = it)) }
                 SwitchRow("Clear on ratchet", d.laserClearOnRatchet, "A ratchet press clears the drawing.") { set(d.copy(laserClearOnRatchet = it)) }
                 FirePicker(d.laserFire) { set(d.copy(laserFire = it)) }
                 SwitchRow("Paint only while firing", d.laserFireOnly, "Aiming leaves no trail; only shots draw.") { set(d.copy(laserFireOnly = it)) }
-                Hint("Strokes glow, older ones darker. Each takes the colour of the way the beam moves (the Moving colours below, blended like a normal map: right pink, left teal, up light green, down purple), so you see which way you swept. Shots take the Fire colours. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every pointer at once.")
+                Hint("The paint uncovers the sphere's own colours where it lands (the Moving colours, laid on the sphere as a normal map: right pink, left teal, up light green, down purple), or with Colour by the way it moved, the colour of each sweep's direction. Shots take the Fire colours. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every pointer at once.")
             }
             TextButton(onClick = { runtime.clearLaser(control.id) }) { Text("Clear") }
         }
-        val strokes = if (!laser || !d.laserDraw) null else category(runtime, "gyroDisplayStrokes", "Strokes", "Glow, outline, width, colour steps, curve, smoothing") {
-            PercentSlider("Glow", d.laserGlow, 0f..1f) { set(d.copy(laserGlow = it)) }
-            SwitchRow("Outline", d.laserOutline, "A thin dark edge along the line (its colour is Paint outline), so it shows on light backgrounds.") { set(d.copy(laserOutline = it)) }
-            SwitchRow("Older paint darker", d.laserAgeDim, "Without Fades after, older paint shows darker and fainter, so you see which way it was drawn. Off: the whole line the same. With Fades after, paint always fades as it ages.") { set(d.copy(laserAgeDim = it)) }
-            SwitchRow("Thinner toward the rim", d.laserPaintWidth, "The line narrows smoothly where the sphere's surface turns away from you, as paint on a ball looks (and with Perspective is bigger nearer). Off: the same width everywhere.") { set(d.copy(laserPaintWidth = it)) }
-            IntSlider("Colour steps %d", d.laserColourSteps, 4..32) { set(d.copy(laserColourSteps = it)) }
-            PercentSlider("Curve", d.laserCurve, 0f..1f) { set(d.copy(laserCurve = it)) }
+        val strokes = if (!laser || !(d.laserDraw || d.laserSnake)) null else category(runtime, "gyroDisplayStrokes", "Paint", "Colour by, detail, softness, glow, outline, shade, light, shine, smoothing") {
+            GroupTitle("Colour by")
+            Chips(listOf("Where it is" to false, "The way it moved" to true), d.laserColourByWay) { set(d.copy(laserColourByWay = it)) }
+            if (d.laserDraw) {
+                GroupTitle("Paint detail")
+                Chips(listOf("Low" to 0, "Normal" to 1, "High" to 2), d.laserPaintDetail.coerceIn(0, 2)) { set(d.copy(laserPaintDetail = it)) }
+                Hint("How finely Draw mode's paint is kept. Low is lightest on the battery; High is sharpest, best with the charger in. Changing it clears the paint.")
+                PercentSlider("Softness", d.laserSoftness, 0f..1f) { set(d.copy(laserSoftness = it)) }
+                PercentSlider("Glow", d.laserGlow, 0f..1f) { set(d.copy(laserGlow = it)) }
+                SwitchRow("Outline", d.laserOutline, "A thin dark edge round the paint (its colour is Paint outline), so it shows on light backgrounds.") { set(d.copy(laserOutline = it)) }
+            }
+            PercentSlider("Facing shade", d.laserShade, 0f..1f) { set(d.copy(laserShade = it)) }
+            PercentSlider("Inside", d.laserInside, 0.2f..1f) { set(d.copy(laserInside = it)) }
+            GroupTitle("Light")
+            PercentSlider("Light strength", d.laserLight, 0f..1f) { set(d.copy(laserLight = it)) }
+            Chips(listOf("Upper left" to 0, "Above" to 1, "Upper right" to 2, "Front" to 3), d.laserLightFrom.coerceIn(0, 3)) { set(d.copy(laserLightFrom = it)) }
+            PercentSlider("Shine", d.laserShine, 0f..1f) { set(d.copy(laserShine = it)) }
+            Hint("A light fixed in the scene, shining from where you pick: it stays put while the sphere or the pointer turns. Light strength darkens what faces away from it (0 off); Shine adds a glossy highlight where it reflects toward you (0 none).")
             SavedSlider(
                 { if (it < 0.025f) "Line smoothing: off" else "Line smoothing %.0f%%".format(it * 100) },
                 d.laserLineSmoothing, 0f..1f, { (it * 20).roundToInt() / 20f },
             ) { set(d.copy(laserLineSmoothing = it)) }
-            Hint("Colour steps: fewer shades change colour less often along a line. Curve rounds the corners between the line's points (only drawing, no lag). Line smoothing steadies the painted line against hand shake, strongly when you move slowly and hardly when you move fast, so the paint may trail a slow aim a little; the beam, dot and crosshair stay as they are.")
+            Hint("Softness: how soft the paint's edge is (0 sharp); it shapes the paint as you lay it down, so changing it changes only new strokes. Where lines cross, the paint builds up and their colours blend. Facing shade darkens paint where the sphere's surface turns away from you, so you see its roundness (0 off). Inside: how bright the far half's paint is, seen from inside the sphere, next to the near half's seen from outside. Line smoothing steadies the painted line against hand shake, strongly when you move slowly and hardly when you move fast, so the paint may trail a slow aim a little; the beam, dot and crosshair stay as they are.")
         }
         val colours = if (!laser) null else category(runtime, "gyroDisplayColours", "Colours", "Each part's colour") { Colours() }
         val turning = if (!d.kind.pose) null else category(runtime, "gyroDisplayTurning", "Turning", "Turns with, gravity, ease back, turn amount, Level", defaultOpen = true) {
@@ -472,7 +479,7 @@ private fun GroupTitle(text: String) = NotSearching {
 
 /** Colour [c] is drawn on [d] (a 3D shape only uses those of its shape). */
 /** The laser's way colours are in use: its paint, or its crosshair. */
-private fun movesShown(d: GyroDisplay): Boolean = d.kind == GyroDisplayKind.LASER && (d.laserDraw || (d.laserCrosshair && !d.laserRifle))
+private fun movesShown(d: GyroDisplay): Boolean = d.kind == GyroDisplayKind.LASER && (d.laserDraw || d.laserSnake || (d.laserCrosshair && !d.laserRifle))
 
 private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     GyroDisplayColor.BALL_GIMBAL_YAW, GyroDisplayColor.BALL_GIMBAL_PITCH, GyroDisplayColor.BALL_GIMBAL_ROLL -> d.ballShape == BallShape.GIMBAL
@@ -493,14 +500,11 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
 }
 
 /** Draw mode's longest fade. */
-private const val LASER_FADE_MAX_MS = 60_000
+private const val LASER_LENGTH_MIN = 10
 private const val LASER_LENGTH_MAX = 720
 
-/** The Length slider at [p] (0..1, its square) in degrees, to 5°; 0 keeps it all. */
-private fun lengthDeg(p: Float): Int = ((p * p * LASER_LENGTH_MAX) / 5f).roundToInt() * 5
-
-/** The Fades after slider at [p] (0..1, its square) in ms, to 50 ms; 0 never fades. */
-private fun fadeMs(p: Float): Int = ((p * p * LASER_FADE_MAX_MS) / 50f).roundToInt() * 50
+/** Snake's Length slider at [p] (0..1, its square) in degrees, to 5°, from [LASER_LENGTH_MIN]. */
+private fun lengthDeg(p: Float): Int = maxOf(LASER_LENGTH_MIN, ((p * p * LASER_LENGTH_MAX) / 5f).roundToInt() * 5)
 private const val LASER_AXON_HINT = "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot."
 private const val AXON_HINT = "Seen from 30° round and 30° above with the world's axes (yaw toward you red, pitch right green, roll up blue, as the gimbal's rings), as the pointer is, instead of face-on."
 

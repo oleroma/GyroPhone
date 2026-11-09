@@ -7,10 +7,10 @@ import kotlin.math.sqrt
 
 /**
  * What a laser pointer display remembers between frames: in Draw mode, the strokes the beam
- * painted on the sphere's inside (they fade after a while, or stay), a ring of unit directions in the shown frame (x right, y up, z toward the viewer) with their
+ * painted on the sphere's inside, a ring of unit directions in the shown frame (x right, y up, z toward the viewer) with their
  * times; a point starts a new line after a gap (a held ratchet, Draw just turned on). Strokes keep
  * a point each time the beam moved [STROKE_STEP_DEG]° or more, up to [STROKE_MAX] (the oldest go
- * first), so drawing them costs the same however long you paint. Same as the companion's
+ * first); each new point paints the [paint] map, which is what shows. Same as the companion's
  * LaserTrace. One thread at a time (the UI's).
  */
 class LaserTrace {
@@ -48,7 +48,12 @@ class LaserTrace {
             x[i] = px; y[i] = py; z[i] = pz; t[i] = ms; gap[i] = startsLine; fire[i] = firing; along[i] = a
         }
 
-        /** Drops the oldest points more than [deg] degrees of painted line behind the newest. */
+        fun clear() {
+            count = 0
+            head = 0
+        }
+
+        /** Drops the oldest points more than [deg] degrees of line behind the newest. */
         fun cut(deg: Float) {
             if (count == 0) return
             val newest = along[(head + count - 1) % capacity]
@@ -61,23 +66,12 @@ class LaserTrace {
             if (dropped) gap[head] = true
         }
 
-        /** Degrees of painted line from point [i] to the newest. */
+        /** Degrees of line from point [i] to the newest. */
         fun behindNewest(i: Int): Float =
             if (count == 0) 0f else (along[(head + count - 1) % capacity] - along[(head + i) % capacity]).toFloat()
 
-        /** Drops points older than [ms] at [nowMs]. */
-        fun expire(nowMs: Long, ms: Int) {
-            while (count > 0 && nowMs - t[head] > ms) {
-                head = (head + 1) % capacity
-                count--
-            }
-            if (count > 0) gap[head] = true
-        }
-
-        fun clear() {
-            count = 0
-            head = 0
-        }
+        /** Degrees painted up to point [i] (0 oldest), counted along the lines. */
+        fun along(i: Int): Double = along[(head + i) % capacity]
 
         /** Point [i] (0 oldest) into [out] (x, y, z); returns its time (ms). */
         fun point(i: Int, out: FloatArray, at: Int = 0): Long {
@@ -149,18 +143,24 @@ class LaserTrace {
      * one clears the strokes. With [draw] it paints; turning Draw off clears the strokes. While
      * [fire] (the display's fire output is sent) it paints in the Fire colours; with [fireOnly] only then.
      * [moving] follows the beam, evened out over [SMOOTH_MS] with [smooth]. With [lineSmoothing]
-     * (0 off .. 1 strong) the paint follows a steadied beam ([steadyToward]).
+     * (0 off .. 1 strong) the paint follows a steadied beam ([steadyToward]). With [draw] each new
+     * point paints [paint] from the point before, [brushDeg] wide, its edge [soft], with [wayColors] (as
+     * [directionColor]'s) also keeping each texel's way colour, the map [mapWidth] texels round. With [snakeDeg] > 0 (Snake) the
+     * strokes are kept (even without Draw) only for the newest that many degrees: the snake's line.
      */
     fun add(
         x: Float, y: Float, z: Float, nowMs: Long, draw: Boolean, held: Boolean, clearOnPress: Boolean = false,
         fire: Boolean = false, fireOnly: Boolean = false, smooth: Boolean = true, lineSmoothing: Float = 0f,
+        brushDeg: Float = 0f, snakeDeg: Float = 0f, wayColors: LongArray? = null, mapWidth: Int = LaserPaint.WIDTH, soft: Float = 0.5f,
     ) {
         val pressed = clearOnPress && held && !wasHeld
         wasHeld = held
-        if ((!draw || pressed) && strokes.count > 0) clear()
+        val snake = snakeDeg > 0f
+        if (!draw && paintUsed) clearPaint() // Draw off wipes the paint (a snake goes on)
+        if ((!(draw || snake) || pressed) && (strokes.count > 0 || paintUsed)) clear()
         val l = sqrt(x * x + y * y + z * z)
         if (l > 1e-6f && !l.isNaN()) follow(x / l, y / l, z / l, nowMs, smooth)
-        if (!draw || l < 1e-6f || held || l.isNaN() || (fireOnly && !fire)) {
+        if (!(draw || snake) || l < 1e-6f || held || l.isNaN() || (fireOnly && !fire)) {
             strokeGap = true
             return
         }
@@ -174,6 +174,8 @@ class LaserTrace {
         // A new point once the beam moved a little (or the firing started or stopped): a still beam adds nothing.
         if (!strokeGap && fire == lastFire && lastX * dx + lastY * dy + lastZ * dz > STROKE_STEP_COS) return
         strokes.add(dx, dy, dz, nowMs, strokeGap, fire)
+        if (draw && brushDeg > 0f) stampNewest(brushDeg / 2f, fire, wayColors, if (smooth) SMOOTH_REACH else 0, mapWidth, soft)
+        if (snake) strokes.cut(snakeDeg)
         strokeGap = false
         lastFire = fire
         lastX = dx; lastY = dy; lastZ = dz
@@ -207,6 +209,41 @@ class LaserTrace {
         steadyMs = nowMs
     }
 
+    // Something is painted on the map (since the last clear).
+    private var paintUsed = false
+
+    private fun clearPaint() {
+        paint?.clear()
+        paintUsed = false
+        version++
+    }
+
+    /** The paint map, made at the first painted point. */
+    var paint: LaserPaint? = null
+        private set
+
+    private val wayDir = FloatArray(3)
+    private val pa = FloatArray(3)
+    private val pb = FloatArray(3)
+
+    /** Paints the newest stroke point into [paint], from the point before it unless it starts a line. */
+    private fun stampNewest(halfDeg: Float, fire: Boolean, wayColors: LongArray?, reach: Int, mapWidth: Int, soft: Float) {
+        // A new map when the detail changed (the paint so far goes).
+        val p = paint?.takeIf { it.width == mapWidth } ?: LaserPaint(mapWidth, mapWidth / 2).also { paint = it }
+        val n = strokes.count
+        val b = n - 1
+        val a = if (strokes.gap(b) || n < 2) b else b - 1
+        strokes.point(a, pa)
+        strokes.point(b, pb)
+        val rgb = if (wayColors == null) null else {
+            if (a == b) wayDir.fill(0f) else strokes.direction(b, reach, wayDir)
+            (directionColor(wayDir, wayColors) and 0xFFFFFF).toInt()
+        }
+        if (a == b) p.newLine()
+        p.stamp(pa[0], pa[1], pa[2], pb[0], pb[1], pb[2], strokes.along(b), halfDeg, fire, soft, rgb)
+        paintUsed = true
+    }
+
     /** Turns [moving] toward the way the beam went to ([x], [y], [z]), a unit direction, at [nowMs]. */
     private fun follow(x: Float, y: Float, z: Float, nowMs: Long, smooth: Boolean) {
         if (beamMs == Long.MIN_VALUE) {
@@ -224,18 +261,11 @@ class LaserTrace {
         beamX = x; beamY = y; beamZ = z; beamMs = nowMs
     }
 
-    /** With [fadeMs] > 0, drops strokes older than it; with [lengthDeg] > 0, keeps only that many degrees of line. */
-    fun expire(nowMs: Long, fadeMs: Int, lengthDeg: Float = 0f) {
-        if (fadeMs > 0) strokes.expire(nowMs, fadeMs)
-        if (lengthDeg > 0f) strokes.cut(lengthDeg)
-    }
-
-    /** Some stroke is still fading (draw again while it fades). */
-    fun fading(fadeMs: Int): Boolean = fadeMs > 0 && strokes.count > 0
-
     /** Clears the strokes. */
     fun clear() {
         strokes.clear()
+        paint?.clear()
+        paintUsed = false
         strokeGap = true
         version++
     }
@@ -300,24 +330,11 @@ class LaserTrace {
         /** Perspective: how much bigger a picture point at depth [z] (toward the viewer +, sphere radii) shows. */
         fun perspective(z: Float): Float = CAMERA_DISTANCE / (CAMERA_DISTANCE - z.coerceAtMost(CAMERA_DISTANCE - 0.5f))
 
-        /** How wide 3D paint at picture depth [z] on the unit sphere shows: foreshortened toward the rim (0.2 edge-on .. 1 face-on). */
-        fun paintWidth(z: Float): Float = 0.2f + 0.8f * kotlin.math.abs(z).coerceAtMost(1f)
-
         /** The rifle's muzzle tip in its own frame (x right, y up, z toward the stock). */
         val MUZZLE = floatArrayOf(0f, 0.03f, -0.93f)
 
         /** How far round from straight ahead (into the screen) shown-frame direction z is: 0 ahead .. 1 straight behind. */
         fun behind(z: Float): Float = ((1f + z) / 2f).coerceIn(0f, 1f)
-
-        /**
-         * How bright stroke point [i] of [count] made at [t] is at [nowMs]: 1 new .. 0 gone ([fadeMs]), or by its place without fading.
-         * With fading and a [lengthDeg] limit it also fades along the line, to 0 at the cut, [behindDeg] being how far it is behind the newest.
-         */
-        fun strokeLife(i: Int, count: Int, t: Long, nowMs: Long, fadeMs: Int, behindDeg: Float = 0f, lengthDeg: Float = 0f): Float =
-            if (fadeMs > 0) {
-                val byTime = (1f - (nowMs - t) / fadeMs.toFloat()).coerceIn(0f, 1f)
-                if (lengthDeg > 0f) minOf(byTime, (1f - behindDeg / lengthDeg).coerceIn(0f, 1f)) else byTime
-            } else if (count <= 1) 1f else (i / (count - 1f))
 
         /** The unit direction at latitude [lat], longitude [lon] (0 straight ahead, into the screen) into [out] at [at]. */
         fun dir(lat: Float, lon: Float, out: FloatArray, at: Int = 0) {
