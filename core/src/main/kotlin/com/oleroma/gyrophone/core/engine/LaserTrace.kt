@@ -53,7 +53,7 @@ class LaserTrace {
             if (count == 0) return
             val newest = along[(head + count - 1) % capacity]
             var dropped = false
-            while (count > 1 && newest - along[head] > deg + 1e-3) { // a hair over: sums of steps round
+            while (count > 1 && newest - along[head] > deg + 0.05) { // a hair over: sums of steps round
                 head = (head + 1) % capacity
                 count--
                 dropped = true

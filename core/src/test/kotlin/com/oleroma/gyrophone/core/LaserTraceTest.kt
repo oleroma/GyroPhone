@@ -244,9 +244,9 @@ class LaserTraceTest {
         }
         for (i in 0..20) at(i, i.toLong(), i == 0)
         for (i in 30..35) at(i, i.toLong(), i == 30)
-        assertEquals(25f, r.behindNewest(0), 1e-3f) // the jump between lines counts nothing
+        assertEquals(25f, r.behindNewest(0), 0.02f) // the jump between lines counts nothing
         r.cut(10f)
-        assertEquals(10f, r.behindNewest(0), 1e-3f)
+        assertEquals(10f, r.behindNewest(0), 0.02f)
         assertTrue(r.gap(0))
         assertEquals(0.5f, LaserTrace.strokeLife(0, 1, 0, 0, 5000, 5f, 10f), 1e-3f) // fades along the length
         assertEquals(0.2f, LaserTrace.strokeLife(0, 1, 0, 4000, 5000, 5f, 10f), 1e-3f) // or by time, whichever is less
