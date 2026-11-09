@@ -361,9 +361,14 @@ class GyroDisplayTest {
         assertEquals(0f, cam[3], 1e-3f)
         assertEquals(0f, cam[2], 1e-3f)
         assertEquals(0.5f, -cam[5], 1e-3f)
-        // Nothing locked: it rolls freely about its fixed axes, so the same moves leave it rolled 30°.
-        val free = run(3 or (2 shl 8))
-        assertEquals(0.5f, kotlin.math.abs(free[3]), 1e-3f)
+        // Roll on None (no lock flag): None holds it, so the same moves leave it unrolled, as the camera.
+        val none = run(3 or (2 shl 8))
+        assertEquals(0f, none[3], 1e-3f)
+        // Turning about its own axes: pitching up turns it up as the camera does.
+        val own = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = tb, trackballOwnAxes = true))
+        repeat(100) { own.feed(0f, 30f, 0f, 0.01f, 7, pressed = false, held = false) }
+        own.pose.matrix(m)
+        assertEquals(0.5f, -m[5], 1e-3f)
         // Pitch locked (a turntable): pitching does nothing.
         val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = tb, trackballAxes = 3 or ((2 or com.oleroma.gyrophone.core.model.TRACKBALL_LOCK) shl 8) or (1 shl 16)))
         repeat(100) { f.feed(0f, 60f, 0f, 0.01f, 7, pressed = false, held = false) }

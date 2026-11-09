@@ -8,7 +8,7 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
-import com.oleroma.gyrophone.core.model.TRACKBALL_LOCK
+import com.oleroma.gyrophone.core.model.trackballLocks
 import com.oleroma.gyrophone.core.model.TRACKBALL_STOP
 import com.oleroma.gyrophone.core.model.easeOf
 import com.oleroma.gyrophone.core.model.TurnsWith
@@ -227,30 +227,34 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
      */
     private fun trackballTurn(d: GyroDisplay, yaw: Float, pitch: Float, roll: Float, dt: Float) {
         val m = d.trackballAxes
-        val locks = trackballBits(m, TRACKBALL_LOCK)
+        // None (or a lock saved before None meant it) holds an axis: no gyro turn drives it.
+        val locks = trackballLocks(m)
         val stops = trackballBits(m, TRACKBALL_STOP)
-        if (d.trackballOwnAxes) {
-            // About its own axes as it now points: up and down, left and right always square to where it aims,
-            // a locked axis never turning it (no stops: there are no poles).
-            val k = DEG_TO_RAD * dt
-            fun on(i: Int) = if (locks and (1 shl i) != 0) 0f else 1f
-            pose.turnOwn(
-                about(m, 1, yaw, pitch, roll) * k * on(1), -about(m, 0, yaw, pitch, roll) * k * on(0), -about(m, 2, yaw, pitch, roll) * k * on(2),
-            )
-            return
-        }
-        if (locks == 0 && stops == 0 && d.trackballEase.none { it.on }) {
-            // As the phone turns, about the view's fixed axes (the opposite of holding still against the world).
-            pose.counterRotate(-about(m, 0, yaw, pitch, roll), -about(m, 1, yaw, pitch, roll), -about(m, 2, yaw, pitch, roll), dt)
-            return
-        }
-        // A locked, stopped or easing axis: as a game camera turns (a gimbal), so each axis has its own angle.
         val k = DEG_TO_RAD * dt
-        pose.gimbalTurn(
-            -about(m, 0, yaw, pitch, roll) * k, about(m, 1, yaw, pitch, roll) * k, -about(m, 2, yaw, pitch, roll) * k,
-            locks, stops,
-        )
+        val now = System.nanoTime()
+        val turn = turnStep
+        for (i in 0..2) {
+            turn[i] = if (locks and (1 shl i) != 0) 0f else about(m, i, yaw, pitch, roll) * k
+            if (abs(turn[i]) > ACTIVE_RAD) activeAt[i] = now
+        }
+        if (d.trackballOwnAxes) {
+            // About its own axes as it now points: up and down, left and right always square to where it aims
+            // (no stops: there are no poles).
+            pose.turnOwn(turn[1], -turn[0], -turn[2])
+            return
+        }
+        // About the sphere's axes, as a game camera turns (a gimbal), so each axis has its own angle.
+        pose.gimbalTurn(-turn[0], turn[1], -turn[2], locks, stops)
     }
+
+    private val turnStep = FloatArray(3)
+
+    /** When each trackball axis (yaw, pitch, roll) last turned by the gyro (System.nanoTime). */
+    private val activeAt = LongArray(3) { Long.MIN_VALUE / 2 }
+
+    /** The trackball axes (bit 0 yaw, 1 pitch, 2 roll) the gyro turned in the last [ACTIVE_NS], to light them up. */
+    fun trackballActive(nowNs: Long = System.nanoTime()): Int =
+        (0..2).fold(0) { acc, i -> if (nowNs - activeAt[i] < ACTIVE_NS) acc or (1 shl i) else acc }
 
     /** Per trackball axis: seconds since the phone stopped (or since the ratchet press), easing on a held ratchet. */
     private val axisCalm = FloatArray(3)
@@ -303,7 +307,7 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         // About its own axes a locked one can still have turned (a loop's twist): ease it too, held by nothing.
         if (any) {
             if (d.trackballOwnAxes) pose.gimbalTurn(easeStep[0], easeStep[1], easeStep[2], 0, 0)
-            else pose.gimbalTurn(easeStep[0], easeStep[1], easeStep[2], trackballBits(m, TRACKBALL_LOCK), trackballBits(m, TRACKBALL_STOP))
+            else pose.gimbalTurn(easeStep[0], easeStep[1], easeStep[2], trackballLocks(m), trackballBits(m, TRACKBALL_STOP))
         }
     }
 
@@ -440,6 +444,10 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
 
         /** Eased this close (radians), it is straight. */
         private const val STRAIGHT_RAD = 0.2f * (Math.PI / 180).toFloat()
+
+        /** A trackball axis turned more than this in one step lights up ([trackballActive]), for this long. */
+        private const val ACTIVE_RAD = 0.002f
+        private const val ACTIVE_NS = 150_000_000L
 
         private const val DEG_TO_RAD = (Math.PI / 180).toFloat()
     }

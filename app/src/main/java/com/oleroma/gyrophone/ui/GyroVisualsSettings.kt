@@ -33,6 +33,7 @@ import androidx.compose.runtime.Composable
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.core.model.TRACKBALL_AS_CAMERA
 import com.oleroma.gyrophone.core.model.TRACKBALL_LOCK
+import com.oleroma.gyrophone.core.model.trackballLocks
 import com.oleroma.gyrophone.core.model.TRACKBALL_STOP
 import com.oleroma.gyrophone.core.model.AxisEase
 import com.oleroma.gyrophone.core.model.easeOf
@@ -235,7 +236,7 @@ internal fun GyroDisplaySettingsScreen(
                     SwitchRow("Sphere turns, beam stays ahead", d.laserSphereTurns, "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.") { set(d.copy(laserSphereTurns = it)) }
                     if (!d.laserRifle) SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
                     SwitchRow("Axes (yaw Y red, pitch X green, roll Z blue)", d.laserAxes, "They turn with the laser, R along its beam.") { set(d.copy(laserAxes = it)) }
-                    if (!d.laserRifle && !d.laserCrosshair) SwitchRow("Gimbal rings", d.laserGimbal, "Yaw (red, outside), pitch (green) and roll (blue) rings round the sphere's own axes, fixed to it: they turn only as the sphere does, while the laser's axes turn inside them. A locked axis's ring is faint.") { set(d.copy(laserGimbal = it)) }
+                    if (!d.laserRifle && !d.laserCrosshair) SwitchRow("Gimbal rings", d.laserGimbal, "Yaw (red, outside), pitch (green) and roll (blue) rings, each round its axis, stepped as the gimbal turns: yaw turns only the yaw ring, pitch the pitch and roll rings, roll the roll ring, so the dots and the gaps between rings show each axis's angle. A None axis's ring is faint and dashed; Stop at ±90° shows its limits as ticks.") { set(d.copy(laserGimbal = it)) }
                     GroupTitle("Draw")
                     SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim.") { set(d.copy(laserDraw = it)) }
                     if (d.laserDraw) Indented {
@@ -360,34 +361,38 @@ private fun PoseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
     EaseSettings(d, set)
 }
 
-/** A trackball's axes: for each, locked or the gyro turn that rolls it about that axis, and which way. */
+/** A trackball's turning: about the sphere's axes or its own, and for each axis the gyro turn that turns it (None: held). */
 @Composable
 private fun TrackballAxesSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
-    SwitchRow(
-        "Turn about its own axes", d.trackballOwnAxes,
-        "Up and down about its own right, left and right about its own up, so it always moves square to where it aims and never rolls by itself. Moving in a loop leaves it a little rolled; Roll's ease back levels that out. Off: as a game camera.",
-    ) { on ->
-        // Turning it on eases the loops' roll back once the phone stops, unless roll already eases.
+    Text("Turns about", style = MaterialTheme.typography.bodyMedium)
+    Chips(listOf("The sphere's axes" to false, "Its own axes" to true), d.trackballOwnAxes) { on ->
+        // Its own axes: the loops' roll eases back once the phone stops, unless roll already eases.
         val roll = d.easeOf(2)
         set(d.copy(trackballOwnAxes = on).let { if (on && !roll.on) it.withEase(2, roll.copy(on = true, onRatchet = false)) else it })
     }
+    Hint(
+        if (d.trackballOwnAxes) "As the laser sees it: up and down about its own right, left and right about its own up, so it always moves square to where it aims and never rolls by itself. Moving in a loop leaves it a little rolled (the sphere is curved); Roll's ease back levels that out."
+        else "As a game camera (a gimbal): left and right about the sphere's vertical, up and down about its turned right, then roll about the beam. The gimbal rings show each angle.",
+    )
     // Its bytes: 0 about up Y (yaw), 1 about right X (pitch), 2 along the beam Z (roll).
     for ((i, name) in listOf(0 to "Yaw", 1 to "Pitch", 2 to "Roll")) {
         val code = d.trackballAxes shr (8 * i) and 0xFF
         fun put(c: Int) = set(d.copy(trackballAxes = (d.trackballAxes and (0xFF shl (8 * i)).inv()) or (c shl (8 * i))))
-        val locked = code and TRACKBALL_LOCK != 0
-        SwitchRow("Lock $name axis", locked) { put(if (it) code or TRACKBALL_LOCK else code and TRACKBALL_LOCK.inv()) }
-        if (locked) continue
+        // None holds it (a lock saved before None meant it shows as None).
+        val none = trackballLocks(d.trackballAxes) and (1 shl i) != 0
         Text("$name axis turns with", style = MaterialTheme.typography.bodyMedium)
-        Chips(listOf("Yaw" to 3, "Pitch" to 2, "Roll" to 1, "None" to 0), code and 0x1F) { put(it or (code and 0x1F.inv())) }
-        if (code and 0x1F != 0) SwitchRow("Invert $name axis", code and 0x80 != 0) { put((code and 0x80.inv()) or (if (it) 0x80 else 0)) }
+        Chips(listOf("Yaw" to 3, "Pitch" to 2, "Roll" to 1, "None" to 0), if (none) 0 else code and 0x1F) {
+            put(it or (code and 0x1F.inv() and TRACKBALL_LOCK.inv()))
+        }
+        if (none) continue
+        SwitchRow("Invert $name axis", code and 0x80 != 0) { put((code and 0x80.inv()) or (if (it) 0x80 else 0)) }
         if (!d.trackballOwnAxes) SwitchRow("Stop $name at ±90°", code and TRACKBALL_STOP != 0, if (i == 1) "Off: it goes over the top, left and right staying as seen." else null) {
             put(if (it) code or TRACKBALL_STOP else code and TRACKBALL_STOP.inv())
         }
         AxisEaseSettings(name, d.easeOf(i)) { set(d.withEase(i, it)) }
     }
-    Hint("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked, stopped or easing back it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces. Stop at ±90° keeps an axis from turning past sideways (Pitch: straight up or down).")
-    if (d.trackballAxes != TRACKBALL_AS_CAMERA) TextButton(onClick = { set(d.copy(trackballAxes = TRACKBALL_AS_CAMERA)) }) { Text("As the camera") }
+    Hint("None holds an axis still: nothing turns it, as Camera never rolls. On the laser pointer a None axis is grey and dashed with a padlock, its gimbal ring faint; Stop at ±90° shows ticks at the limits on its ring, and an axis lights up while the gyro turns it.")
+    if (d.trackballAxes != TRACKBALL_AS_CAMERA || d.trackballOwnAxes) TextButton(onClick = { set(d.copy(trackballAxes = TRACKBALL_AS_CAMERA, trackballOwnAxes = false)) }) { Text("As the camera") }
 }
 
 /** A trackball axis [name] easing back to straight, and its own options. */

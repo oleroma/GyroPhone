@@ -383,11 +383,36 @@ class LaserTrace {
         val GIMBAL_RADII = floatArrayOf(0.9f, 0.8f, 0.7f)
 
         /**
-         * Gimbal ring [i] (0 yaw, 1 pitch, 2 roll) as points (x, y, z…): one rigid set fixed to the sphere like its
-         * own axes, each round its axis (yaw flat round Y, pitch round X, roll round Z), so they turn only as the
-         * sphere does (Sphere turns), while the laser's axes turn inside them.
+         * The gimbal angles of pose [m] (row-major, as Ry(yaw)·Rx(pitch)·Rz(roll), radians) into [out]:
+         * of the two ways to read them, the one with the [locks] axes (bit 0 yaw, 1 pitch, 2 roll) nearest
+         * straight, so a locked axis reads 0 even past the poles.
          */
-        fun gimbalRing(i: Int, steps: Int = 64): FloatArray {
+        fun gimbalAngles(m: FloatArray, locks: Int, out: FloatArray) {
+            val pi = Math.PI.toFloat()
+            val a = kotlin.math.atan2(m[2], m[8])
+            val b = kotlin.math.asin((-m[5]).coerceIn(-1f, 1f))
+            val c = kotlin.math.atan2(m[3], m[4])
+            fun wrap(x: Float) = if (x > pi) x - 2 * pi else if (x < -pi) x + 2 * pi else x
+            val alt = floatArrayOf(wrap(a + pi), wrap(pi - b), wrap(c + pi))
+            out[0] = a; out[1] = b; out[2] = c
+            var here = 0f
+            var there = 0f
+            for (i in 0..2) if (locks and (1 shl i) != 0) {
+                here += abs(out[i])
+                there += abs(alt[i])
+            }
+            if (there < here - 1e-4f) alt.copyInto(out)
+        }
+
+        /**
+         * Gimbal ring [i] (0 yaw, 1 pitch, 2 roll) for [angles] ([gimbalAngles]) as points (x, y, z…), round its
+         * own axis: the yaw ring lies flat round the vertical, the pitch ring round the yaw-turned right, the
+         * roll ring round where the laser faces (the beam). Each is turned by the angles before it, and
+         * [gimbalMark] shows its own.
+         */
+        fun gimbalRing(i: Int, angles: FloatArray, steps: Int = 64): FloatArray {
+            val f = FloatArray(9)
+            gimbalFrame(angles, i, f)
             val rho = GIMBAL_RADII[i]
             val out = FloatArray((steps + 1) * 3)
             for (j in 0..steps) {
@@ -395,13 +420,43 @@ class LaserTrace {
                 val p = rho * cos(t)
                 val q = rho * sin(t)
                 // Round its axis: yaw XZ (round Y), pitch YZ (round X), roll XY (round Z).
-                when (i) {
-                    0 -> { out[j * 3] = p; out[j * 3 + 2] = q }
-                    1 -> { out[j * 3 + 1] = p; out[j * 3 + 2] = q }
-                    else -> { out[j * 3] = p; out[j * 3 + 1] = q }
-                }
+                val v = when (i) { 0 -> floatArrayOf(p, 0f, q); 1 -> floatArrayOf(0f, p, q); else -> floatArrayOf(p, q, 0f) }
+                for (k in 0..2) out[j * 3 + k] = f[k * 3] * v[0] + f[k * 3 + 1] * v[1] + f[k * 3 + 2] * v[2]
             }
             return out
+        }
+
+        /**
+         * Where ring [i]'s dot sits for [angles], into [out]: on the yaw ring where the laser points left and right,
+         * on the pitch ring where it points up and down (both ahead, −Z), on the roll ring at the laser's up (+Y).
+         */
+        fun gimbalMark(i: Int, angles: FloatArray, out: FloatArray) {
+            val f = FloatArray(9)
+            gimbalFrame(angles, i, f)
+            val rho = GIMBAL_RADII[i]
+            // Column 2 negated (ahead), or column 1 (up) for roll.
+            for (k in 0..2) out[k] = if (i == 2) rho * f[k * 3 + 1] else -rho * f[k * 3 + 2]
+        }
+
+        /** Ring [i]'s frame (row-major) into [out]: Ry(yaw), then ·Rx(pitch) for 1 and 2, then ·Rz(roll) for 2. */
+        private fun gimbalFrame(angles: FloatArray, i: Int, out: FloatArray) {
+            val ca = cos(angles[0]); val sa = sin(angles[0])
+            val b = if (i >= 1) angles[1] else 0f
+            val c = if (i >= 2) angles[2] else 0f
+            val cb = cos(b); val sb = sin(b)
+            val cc = cos(c); val sc = sin(c)
+            // Ry(a)·Rx(b)·Rz(c)
+            val ry = floatArrayOf(ca, 0f, sa, 0f, 1f, 0f, -sa, 0f, ca)
+            val rx = floatArrayOf(1f, 0f, 0f, 0f, cb, -sb, 0f, sb, cb)
+            val rz = floatArrayOf(cc, -sc, 0f, sc, cc, 0f, 0f, 0f, 1f)
+            val t = mul(mul(ry, rx), rz)
+            t.copyInto(out)
+        }
+
+        private fun mul(x: FloatArray, y: FloatArray): FloatArray {
+            val r = FloatArray(9)
+            for (i in 0..2) for (j in 0..2) r[i * 3 + j] = x[i * 3] * y[j] + x[i * 3 + 1] * y[3 + j] + x[i * 3 + 2] * y[6 + j]
+            return r
         }
 
         /** The crosshair shapes ([com.oleroma.gyrophone.core.model.GyroDisplay.crosshairShape]). */

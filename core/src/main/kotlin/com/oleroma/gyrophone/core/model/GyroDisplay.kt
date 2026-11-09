@@ -134,10 +134,12 @@ data class GyroDisplay(
      */
     val trackballEase: List<AxisEase> = List(3) { AxisEase() },
     /**
-     * [TurnsWith.TRACKBALL]: it turns about its own axes as it now points (up and down about its own
+     * [TurnsWith.TRACKBALL], Turns about: its own axes as it now points (up and down about its own
      * right, left and right about its own up), so the laser always moves square to where it aims and
-     * never rolls by itself; a locked axis never turns it and there are no stops (no poles). Moving in
-     * a loop leaves it a little rolled, which roll's ease back levels out. Off: as a game camera.
+     * never rolls by itself; a None axis never turns it and there are no stops (no poles). Moving in
+     * a loop leaves it a little rolled, which roll's ease back levels out. Off: the sphere's axes, as
+     * a game camera (a gimbal: left and right about the vertical, up and down about its turned right,
+     * then about the beam), a None axis held at 0.
      */
     val trackballOwnAxes: Boolean = false,
     /** Branch builds before v3: a trackball turning as the camera ([TurnsWith.CAMERA] since). */
@@ -383,10 +385,27 @@ fun GyroDisplay.withEase(i: Int, e: AxisEase): GyroDisplay = copy(trackballEase 
  */
 val GyroDisplay.gimbalLocks: Int
     get() = when (turnsWith) {
-        TurnsWith.TRACKBALL -> (0..2).fold(0) { acc, i -> if (trackballAxes shr (8 * i) and TRACKBALL_LOCK != 0) acc or (1 shl i) else acc }
+        TurnsWith.TRACKBALL -> trackballLocks(trackballAxes)
         TurnsWith.CAMERA -> 4
         else -> 0
     }
+
+/** The gimbal axes that stop at ±90° (bits as [gimbalLocks]): a trackball's (turning about the sphere's axes), Camera's pitch. */
+val GyroDisplay.gimbalStops: Int
+    get() = when (turnsWith) {
+        TurnsWith.TRACKBALL -> if (trackballOwnAxes) 0 else (0..2).fold(0) { acc, i -> if (trackballAxes shr (8 * i) and TRACKBALL_STOP != 0) acc or (1 shl i) else acc }
+        TurnsWith.CAMERA -> 2
+        else -> 0
+    }
+
+/**
+ * A trackball's locked axes in [axes] ([GyroDisplay.trackballAxes]; bit 0 yaw, 1 pitch, 2 roll): those
+ * no gyro turn drives (None), held at 0; and those saved with [TRACKBALL_LOCK] before None meant it.
+ */
+fun trackballLocks(axes: Int): Int = (0..2).fold(0) { acc, i ->
+    val code = axes shr (8 * i) and 0xFF
+    if (code and 0x1F == 0 || code and TRACKBALL_LOCK != 0) acc or (1 shl i) else acc
+}
 
 /**
  * In a [GyroDisplay.trackballAxes] byte: that axis is locked, held at 0 whatever turns the others
