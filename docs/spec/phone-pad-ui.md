@@ -44,10 +44,9 @@ Opened by tapping the current workspace's capsule. It works on a **draft** of th
 - **Done** saves (switches to the edited workspace); **Cancel** asks "Discard your changes?" if anything changed;
 - **Select** (pick several controls, whole groups; a drag moves them all), **Group** / **Ungroup** (`ControlGroups`: grouped controls move and size together);
 - **Configure** (the selected control's settings) and **Map** (its mapping editor);
-- **+ Button**, **+ Empty button** (every inherited input cleared), **+ Stick**, and one entry per **gyro display** kind; items can also be dragged out of the menu onto the pad;
+- **Add +** opens the **Add** row under the menu's strip (**Add ▴** closes it), holding everything that can be added: **Button**, **Empty button** (every inherited input cleared), **Stick**, one entry per **gyro display** kind, then the **Library** (buttons saved to the button library, outlined; long-press one to remove it, asks first). Tap one to add it in the middle of the pad, or drag it down onto the pad to add it there; adding closes the row;
 - **Snap: on/off** (edges on a 2 % grid);
 - **Devices: <preset>**: which device preset this workspace pins ("None" leaves attached devices doing nothing);
-- **Library**: buttons saved to the button library, to add again (long-press to remove, asks first).
 
 New buttons start at 14 % of the short side, sticks 30 %.
 
