@@ -71,6 +71,10 @@ class WifiPump(private val engine: MappingEngine) {
     /** The clock offset (host us - phone us, [com.oleroma.gyrophone.core.net.ClockSync]) of this session, or null before a clock sample. */
     @Volatile var clockOffsetUs: Long? = null
 
+    /** The PC runs a Link test (TEST_MODE): STATEs carry fake moving input at the full rate, marked LINK_TEST, instead of the engine's. */
+    @Volatile var linkTest = false
+    private var linkTestTick = 0
+
     /** STATE packets handed to / refused by the socket during the last full second. */
     @Volatile var sentPerSecond = 0
         private set
@@ -209,8 +213,13 @@ class WifiPump(private val engine: MappingEngine) {
             val hz = rateHz
             if (scheduler.rateHz != hz) scheduler.rateHz = hz
 
-            frame.fill(s, totals, engine.gyroActive, hires)
-            frame.gyroExt = hires && gyroSnapshot
+            if (linkTest) {
+                // The engine's input is still drained above but not sent: the PC must never see it mid-test.
+                frame.fillLinkTest(linkTestTick, hires)
+            } else {
+                frame.fill(s, totals, engine.gyroActive, hires)
+                frame.gyroExt = hires && gyroSnapshot
+            }
             val discrete = !frame.discreteEquals(lastSent)
             val dirty = discrete || !frame.totalsEqual(lastSent)
             val kind = scheduler.poll(now, dirty, discrete)
@@ -222,6 +231,7 @@ class WifiPump(private val engine: MappingEngine) {
                 if (discrete && pressStamp.enabled) sendPressTime(c, frame.phoneTimeUs, now)
                 lastSent.copyFrom(frame)
                 scheduler.markSent(now, kind, discrete)
+                if (linkTest) linkTestTick++
             }
             if (now >= nextPingNs) {
                 plain.putU64(0, phoneUs())

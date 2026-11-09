@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using GyroPhone.Host.Abstractions;
 using GyroPhone.Host.Settings;
@@ -168,6 +169,8 @@ public sealed class HostEngine
     private readonly PressLatency _press = new();
     private bool MeasuringButtons => _settings.MeasureButtons;
     private bool _latencyScreen;
+    /// <summary>Host time a Link test ends; long.MinValue: none.</summary>
+    private long _linkTestUntilUs = long.MinValue;
     /// <summary>HOST_STATUSes still to carry a TEST_MODE of 0 after the last test ended.</summary>
     private int _testModeOffRepeats;
     private readonly OverlayFrame _overlayFrame = new();
@@ -348,6 +351,11 @@ public sealed class HostEngine
                 return;
             case PacketType.Hello:
                 OnHello(d, from, nowUs);
+                return;
+            case PacketType.LinkTestCtl:
+                // Only a program on this PC may start one (tools/link-test.sh); anything else is dropped.
+                if (from.Family == AddressFamily.InterNetwork && from[4] == 127) SetLinkTest(Le.U16(d, Wire.Header), "asked on this PC");
+                else _dropped++;
                 return;
             case PacketType.KeyEnroll:
                 if (WireCodec.TryDecodeKeyEnroll(d, out var ke)) OnKeyEnroll(d, ke, from, nowUs);
@@ -742,6 +750,11 @@ public sealed class HostEngine
             if (_catchUp.BacklogTaken) Rec?.CatchUp(_catchUp.BacklogSpanUs, _catchUp.BacklogPx, _catchUp.BacklogCatchUpUs, nowUs);
             int dw = _accWheel, dh = _accHWheel;
             _accWheel = _accHWheel = 0;
+            if ((_pending.Flags & StateFlags.LinkTest) != 0)
+            {
+                // Link test input is counted (input log, catch-up), never moved.
+                dx = dy = dw = dh = 0;
+            }
             if (_paused || _locked)
             {
                 _catchUp.Clear();
@@ -963,6 +976,7 @@ public sealed class HostEngine
     {
         lock (_lock)
         {
+            if (_linkTestUntilUs != long.MinValue && nowUs >= _linkTestUntilUs) SetLinkTest(0, "time is up");
             var a = _sessions.Active;
             if (a != null)
             {
@@ -1383,6 +1397,39 @@ public sealed class HostEngine
         {
             if (on == _latencyScreen) return;
             _latencyScreen = on;
+            _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
+            if (_sessions.Active is { } a) SendTestMode(a);
+        }
+    }
+
+    /// <summary>A Link test runs (<see cref="SetLinkTest"/>).</summary>
+    public bool LinkTesting
+    {
+        get { lock (_lock) return _linkTestUntilUs != long.MinValue; }
+    }
+
+    /// <summary>
+    /// Starts a Link test for <paramref name="seconds"/> (0 stops one): the phone sends fake moving
+    /// input at its full rate, which the input log counts like real input but which is never injected.
+    /// </summary>
+    public void SetLinkTest(int seconds, string why = "")
+    {
+        lock (_lock)
+        {
+            long now = _clock.NowUs;
+            bool was = _linkTestUntilUs != long.MinValue;
+            _linkTestUntilUs = seconds > 0 ? now + Math.Min(seconds, 3600) * 1_000_000L : long.MinValue;
+            if (seconds > 0)
+            {
+                _events.Log($"link test started for {Math.Min(seconds, 3600)} s" + (why.Length > 0 ? $" ({why})" : ""));
+                Rec?.Note("link test", $"started for {Math.Min(seconds, 3600)} s", now);
+            }
+            else if (was)
+            {
+                _events.Log("link test stopped" + (why.Length > 0 ? $" ({why})" : ""));
+                Rec?.Note("link test", "stopped", now);
+            }
+            else return;
             _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
             if (_sessions.Active is { } a) SendTestMode(a);
         }
@@ -1941,6 +1988,7 @@ public sealed class HostEngine
         byte flags = 0;
         if (MeasuringButtons) flags |= TestModeFlags.PressTimes;
         if (_latencyScreen) flags |= TestModeFlags.LatencyScreen;
+        if (_linkTestUntilUs != long.MinValue) flags |= TestModeFlags.LinkTest;
         return flags;
     }
 

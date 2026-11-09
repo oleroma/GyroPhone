@@ -102,4 +102,19 @@ class StateFrameTest {
         assertTrue(f.discreteEquals(StateFrame()))
         assertEquals(9, f.mouseTotalX)
     }
+
+    @Test fun linkTestFrameHoldsNothingAndAlwaysMoves() {
+        val s = HidState(keyboard = KeyboardState(keys = listOf(0x1A)))
+        val a = StateFrame().apply { fill(s, totals, true) }
+        a.fillLinkTest(0)
+        assertTrue(a.discreteEquals(StateFrame()))
+        assertEquals(StateFlags.LINK_TEST, a.flags)
+        val b = StateFrame()
+        for (tick in 1..1500) {
+            b.fillLinkTest(tick)
+            assertFalse(b.totalsEqual(a))
+            assertTrue(kotlin.math.abs(b.mouseTotalX - a.mouseTotalX) <= 3)
+            a.copyFrom(b)
+        }
+    }
 }

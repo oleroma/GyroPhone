@@ -647,6 +647,8 @@ fun PadScreen(
     LaunchedEffect(latencyScreen) { if (!latencyScreen) latencyHidden = false }
     val markersShown = !editing && latencyScreen && !latencyHidden
     LaunchedEffect(markersShown) { if (markersShown) black = false }
+    // The PC runs a Link test: the phone sends fake input, so a note covers the pad and the screen stays on.
+    val linkTest by runtime.wifi.linkTest.collectAsStateWithLifecycle()
     // The last screen touch (uptime ms) and the fingers down now, seen before the pad's handlers.
     val lastTouchMs = remember { longArrayOf(SystemClock.uptimeMillis()) }
     val fingersDown = remember { IntArray(1) }
@@ -673,8 +675,8 @@ fun PadScreen(
     }
     // A black pad keeps the screen on even with Keep the screen on off: if the phone locked, the app
     // would stop reading the controller.
-    DisposableEffect(view, keepAwake, black, markersShown) {
-        view.keepScreenOn = keepAwake || black || markersShown
+    DisposableEffect(view, keepAwake, black, markersShown, linkTest) {
+        view.keepScreenOn = keepAwake || black || markersShown || linkTest
         onDispose { view.keepScreenOn = false }
     }
     // Play-mode touch reaches the engine as it arrives, not once per frame. Asked on the decor view:
@@ -1913,6 +1915,8 @@ fun PadScreen(
         if (!editing) DebugOverlay(runtime, Modifier.align(Alignment.BottomStart))
 
         if (markersShown) LatencyMarkers { latencyHidden = true }
+
+        if (linkTest && !editing) LinkTestNote()
 
         if (black) BlackScreen { black = false }
 

@@ -296,6 +296,9 @@ object StateFlags {
     const val GYRO_ACTIVE = 1
     const val REPEAT = 2
     const val KEEPALIVE = 4
+
+    /** A Link test packet: fake input the PC counts but never injects. */
+    const val LINK_TEST = 8
 }
 
 /** LINK_INFO flags. */
@@ -340,6 +343,9 @@ object TestModeFlags {
 
     /** The PC's latency test window is open: the pad shows the tracking markers. */
     const val LATENCY_SCREEN = 2
+
+    /** The PC runs a Link test: the phone sends fake moving input at its full rate, marked [StateFlags.LINK_TEST]. */
+    const val LINK_TEST = 4
 }
 
 /** BYE reason (phone). */

@@ -130,12 +130,18 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** The PC's latency test window is open (TEST_MODE): the pad shows the tracking markers. */
     val latencyScreen: StateFlow<Boolean> = _latencyScreen
 
+    private val _linkTest = MutableStateFlow(false)
+    /** The PC runs a Link test (TEST_MODE): the pump sends fake input, the pad shows a note. */
+    val linkTest: StateFlow<Boolean> = _linkTest
+
     /** The PC's TEST_MODE flags; 0 without a session. */
     @Volatile private var testMode = 0
         set(v) {
             field = v
             pump.pressTimes = v and TestModeFlags.PRESS_TIMES != 0
             _latencyScreen.value = v and TestModeFlags.LATENCY_SCREEN != 0
+            pump.linkTest = v and TestModeFlags.LINK_TEST != 0
+            _linkTest.value = v and TestModeFlags.LINK_TEST != 0
         }
     private val accessory = AccessoryBridge(appContext)
 

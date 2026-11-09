@@ -90,6 +90,12 @@ public sealed class InputRecorder
             $"extra delay ms p50 {Pct(0.5)} p99 {Pct(0.99)} p99.9 {Pct(0.999)}");
     }
 
+    /// <summary>A free-form event line (a Link test starting or ending).</summary>
+    public void Note(string what, string detail, long nowUs)
+    {
+        if (_active) Line(nowUs, what, detail);
+    }
+
     /// <summary>Lost packets: a gap in the shared seq.</summary>
     public void Lost(long count, uint seq, long nowUs)
     {
