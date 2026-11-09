@@ -285,12 +285,14 @@ public sealed class OverlayPose
         bool live = f.PoseLive && dt > 0f;
         bool busy = live && MathF.Sqrt(f.TurnYaw * f.TurnYaw + f.TurnPitch * f.TurnPitch + f.TurnRoll * f.TurnRoll) / dt > StillDps;
         GimbalSync();
+        // A None axis never eases back, whatever its (hidden) ease setting says.
+        int locked = OverlaySettings.TrackballLocks(s.TrackballAxes);
         bool any = false;
         for (int i = 0; i < 3; i++)
         {
             _easeStep[i] = 0f;
             var e = s.EaseOf(i);
-            if (!e.On)
+            if (!e.On || (locked & (1 << i)) != 0)
             {
                 _axisEasing[i] = false;
                 continue;
