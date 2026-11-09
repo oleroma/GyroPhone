@@ -849,7 +849,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     private void UpdateOverlayWheel()
     {
         bool on = OverlayEdit && _overlayForms.Count > 0;
-        if (on) _overlayWheel ??= new OverlayWheel(h => _overlayList.FirstOrDefault(f => f.IsHandleCreated && f.Handle == h));
+        if (on) _overlayWheel ??= new OverlayWheel(
+            h => _overlayList.FirstOrDefault(f => f.IsHandleCreated && f.Handle == h),
+            () => _selectedOverlay != null && _overlayForms.TryGetValue(_selectedOverlay, out var f) && f.Visible ? f : null);
         if (_overlayWheel != null) _overlayWheel.Enabled = on;
     }
 

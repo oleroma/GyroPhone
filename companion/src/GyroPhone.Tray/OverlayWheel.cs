@@ -6,18 +6,22 @@ namespace GyroPhone.Tray;
 /// The mouse wheel over an overlay window in Edit. Overlays never take focus, and Windows sends the
 /// wheel to the focused window when "Scroll inactive windows" is off, so a low-level mouse hook
 /// (only while Edit is on and an overlay is open) catches it over an overlay and keeps it from the
-/// window behind. Runs on the UI thread, which installed it.
+/// window behind. Away from every overlay it resizes the picked one, so the wheel then reaches no
+/// other window while Edit is on and one is picked. Runs on the UI thread, which installed it.
 /// </summary>
 internal sealed class OverlayWheel : IDisposable
 {
     private readonly Func<IntPtr, OverlayForm?> _formAt;
+    private readonly Func<OverlayForm?> _picked;
     private readonly HookProc _proc;
     private IntPtr _hook;
 
     /// <param name="formAt">The open overlay window with this handle, or null.</param>
-    public OverlayWheel(Func<IntPtr, OverlayForm?> formAt)
+    /// <param name="picked">The picked overlay window, or null.</param>
+    public OverlayWheel(Func<IntPtr, OverlayForm?> formAt, Func<OverlayForm?> picked)
     {
         _formAt = formAt;
+        _picked = picked;
         _proc = OnHook; // kept alive while the hook is installed
     }
 
@@ -43,7 +47,7 @@ internal sealed class OverlayWheel : IDisposable
         if (code >= 0 && (int)wParam == WmMouseWheel)
         {
             var info = Marshal.PtrToStructure<MsLlHookStruct>(lParam);
-            var form = _formAt(GetAncestor(WindowFromPoint(info.Pt), GaRoot));
+            var form = _formAt(GetAncestor(WindowFromPoint(info.Pt), GaRoot)) ?? _picked();
             if (form != null)
             {
                 int delta = unchecked((short)(info.MouseData >> 16));
