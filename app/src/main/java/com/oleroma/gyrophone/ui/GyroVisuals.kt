@@ -258,6 +258,7 @@ private class VisState {
     // Each pointer's paint drawing (its map's upload).
     private val paintShaders = java.util.WeakHashMap<LaserTrace, PointerPaintShader>()
     private val viewOf: (Float, Float, Float, FloatArray) -> Unit = { x, y, z, out -> LaserTrace.view(x, y, z, out, axon = laserAxon, turned = laserTurned) }
+    private val sceneOf: (Float, Float, Float, FloatArray) -> Unit = { x, y, z, out -> LaserTrace.view(x, y, z, out, axon = laserAxon) }
     private val moveColors = LongArray(6)
 
     private val crossPath = Path()
@@ -469,7 +470,7 @@ private class VisState {
             val lp = t.paint ?: return
             val lk = look ?: return
             val sh = paintShaders.getOrPut(t) { PointerPaintShader() }
-            sh.draw(drawContext.canvas.nativeCanvas, lp, front, c.x, c.y, r, viewOf, lk)
+            sh.draw(drawContext.canvas.nativeCanvas, lp, front, c.x, c.y, r, viewOf, sceneOf, lk)
         }
         val hit = laserAt(c, r, beam[0], beam[1], beam[2])
         val hitFront = pv[2] > 0f

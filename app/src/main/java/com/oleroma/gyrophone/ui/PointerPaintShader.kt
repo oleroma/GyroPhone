@@ -19,7 +19,12 @@ internal class PointerPaintShader {
     private val near = RuntimeShader(SOURCE)
     private val far = RuntimeShader(SOURCE)
     private val paint = Paint()
-    private var map: Bitmap? = null
+    // The map's three bytes a texel, each in the alpha of its own ALPHA_8 bitmap: alpha is never
+    // colour-converted on the way to the GPU, so the numbers arrive exact.
+    private var reachMap: Bitmap? = null
+    private var hiMap: Bitmap? = null
+    private var loMap: Bitmap? = null
+    private var bytes: Array<java.nio.ByteBuffer>? = null
     private var wayMap: Bitmap? = null
     private var uploaded = Long.MIN_VALUE
     private val col = FloatArray(3)
@@ -34,12 +39,34 @@ internal class PointerPaintShader {
     /**
      * Draws [lp]'s paint on the sphere of radius [r] at ([cx], [cy]): its [front] (near) half or far
      * half, the shown frame seen through [view] (shown-frame direction to picture, as [LaserTrace.view]).
+     * The paint's colours (as light would) stay with the scene, seen through [scene] (the view without
+     * the sphere's turn), so in Fixed pointer mode they don't turn with the sphere.
      */
-    fun draw(canvas: Canvas, lp: LaserPaint, front: Boolean, cx: Float, cy: Float, r: Float, view: (Float, Float, Float, FloatArray) -> Unit, look: Look) {
+    fun draw(
+        canvas: Canvas, lp: LaserPaint, front: Boolean, cx: Float, cy: Float, r: Float,
+        view: (Float, Float, Float, FloatArray) -> Unit, scene: (Float, Float, Float, FloatArray) -> Unit, look: Look,
+    ) {
         val s = if (front) near else far
-        if (lp.version != uploaded || map == null) {
-            val bm = map ?: Bitmap.createBitmap(lp.width, lp.height, Bitmap.Config.ARGB_8888).also { map = it }
-            bm.setPixels(lp.data, 0, lp.width, 0, 0, lp.width, lp.height)
+        if (lp.version != uploaded || reachMap == null) {
+            val n = lp.width * lp.height
+            val bufs = bytes ?: Array(3) { java.nio.ByteBuffer.allocateDirect(n) }.also { bytes = it }
+            for (b in bufs) b.clear()
+            val data = lp.data
+            for (k in 0 until n) {
+                val v = data[k]
+                bufs[0].put((v shr 16).toByte())
+                bufs[1].put((v shr 8).toByte())
+                bufs[2].put(v.toByte())
+            }
+            fun a8(old: Bitmap?, buf: java.nio.ByteBuffer): Bitmap {
+                val bm = old ?: Bitmap.createBitmap(lp.width, lp.height, Bitmap.Config.ALPHA_8)
+                buf.rewind()
+                bm.copyPixelsFromBuffer(buf)
+                return bm
+            }
+            val rm = a8(reachMap, bufs[0]).also { reachMap = it }
+            val hm = a8(hiMap, bufs[1]).also { hiMap = it }
+            val lm = a8(loMap, bufs[2]).also { loMap = it }
             val ways = lp.way
             if (ways != null) {
                 val wb = wayMap ?: Bitmap.createBitmap(lp.width, lp.height, Bitmap.Config.ARGB_8888).also { wayMap = it }
@@ -48,8 +75,10 @@ internal class PointerPaintShader {
             uploaded = lp.version
             // New shaders for the changed pixels, so the GPU takes them up.
             for (sh in arrayOf(near, far)) {
-                sh.setInputBuffer("paint", BitmapShader(bm, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP))
-                sh.setInputBuffer("way", BitmapShader(wayMap ?: bm, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP))
+                sh.setInputBuffer("reach", exact(rm))
+                sh.setInputBuffer("alongHi", exact(hm))
+                sh.setInputBuffer("alongLo", exact(lm))
+                sh.setInputShader("way", exact(wayMap ?: rm))
             }
         }
         s.setFloatUniform("mapSize", lp.width.toFloat(), lp.height.toFloat())
@@ -60,6 +89,9 @@ internal class PointerPaintShader {
         view(1f, 0f, 0f, col); s.setFloatUniform("colX", col[0], col[1], col[2])
         view(0f, 1f, 0f, col); s.setFloatUniform("colY", col[0], col[1], col[2])
         view(0f, 0f, 1f, col); s.setFloatUniform("colZ", col[0], col[1], col[2])
+        scene(1f, 0f, 0f, col); s.setFloatUniform("sceneX", col[0], col[1], col[2])
+        scene(0f, 1f, 0f, col); s.setFloatUniform("sceneY", col[0], col[1], col[2])
+        scene(0f, 0f, 1f, col); s.setFloatUniform("sceneZ", col[0], col[1], col[2])
         s.setFloatUniform("newest", lp.newest.toFloat())
         s.setFloatUniform("snake", if (look.snakeDeg > 0f) look.snakeDeg / LaserPaint.ALONG_UNIT else 0f)
         s.setFloatUniform("wayMode", if (look.byWay && lp.way != null) 1f else 0f)
@@ -79,12 +111,17 @@ internal class PointerPaintShader {
         canvas.drawRect(cx - e, cy - e, cx + e, cy + e, paint)
     }
 
+    // The map read texel by texel (no blending between them: its bytes are numbers).
+    private fun exact(bm: Bitmap) = BitmapShader(bm, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { filterMode = BitmapShader.FILTER_MODE_NEAREST }
+
     companion object {
         // In LaserTrace.directionColor's order.
         private val MOVE_NAMES = arrayOf("cRight", "cLeft", "cUp", "cDown", "cToward", "cAway")
 
         private val SOURCE = """
-            uniform shader paint;
+            uniform shader reach;
+            uniform shader alongHi;
+            uniform shader alongLo;
             uniform shader way;
             uniform float2 mapSize;
             uniform float2 center;
@@ -94,6 +131,9 @@ internal class PointerPaintShader {
             uniform float3 colX;
             uniform float3 colY;
             uniform float3 colZ;
+            uniform float3 sceneX;
+            uniform float3 sceneY;
+            uniform float3 sceneZ;
             uniform float newest;
             uniform float snake;
             uniform float wayMode;
@@ -120,11 +160,11 @@ internal class PointerPaintShader {
 
             // A texel's reach (as much as shows) and its share fired.
             float2 cell(float i, float j) {
-                float4 t = float4(paint.eval(at(i, j)));
-                float r8 = floor(t.r * 255.0 + 0.5);
+                float2 x = at(i, j);
+                float r8 = floor(float(reach.eval(x).a) * 255.0 + 0.5);
                 float c = floor(r8 / 2.0) / 127.0;
                 if (snake > 0.0) {
-                    float a = floor(t.g * 255.0 + 0.5) * 256.0 + floor(t.b * 255.0 + 0.5);
+                    float a = floor(float(alongHi.eval(x).a) * 255.0 + 0.5) * 256.0 + floor(float(alongLo.eval(x).a) * 255.0 + 0.5);
                     float age = mod(newest - a + 65536.0, 65536.0);
                     c *= clamp((snake - age) / (0.2 * snake), 0.0, 1.0);
                 }
@@ -176,6 +216,8 @@ internal class PointerPaintShader {
                 float2 a11 = cell(i0 + 1.0, j0 + 1.0);
                 float c = w00 * a00.x + w10 * a10.x + w01 * a01.x + w11 * a11.x;
                 if (c < 0.004) return half4(0.0);
+                // The point in the scene's frame: what its colour goes by.
+                float3 g = float3(dot(sceneX, p), dot(sceneY, p), dot(sceneZ, p));
                 float fired = (w00 * a00.y + w10 * a10.y + w01 * a01.y + w11 * a11.y) / c;
 
                 float4 base;
@@ -186,12 +228,12 @@ internal class PointerPaintShader {
                 } else {
                     // The sphere's own colour here, blended as a normal map ([LaserTrace.directionColor]).
                     float4 mid = float4(cRight + cLeft + cUp + cDown + cToward + cAway) / 6.0;
-                    float3 n = abs(s);
-                    base = mid + n.x * (float4(s.x >= 0.0 ? cRight : cLeft) - mid)
-                        + n.y * (float4(s.y >= 0.0 ? cUp : cDown) - mid)
-                        + n.z * (float4(s.z >= 0.0 ? cToward : cAway) - mid);
+                    float3 n = abs(g);
+                    base = mid + n.x * (float4(g.x >= 0.0 ? cRight : cLeft) - mid)
+                        + n.y * (float4(g.y >= 0.0 ? cUp : cDown) - mid)
+                        + n.z * (float4(g.z >= 0.0 ? cToward : cAway) - mid);
                 }
-                float4 fc = mix(float4(fireAhead), float4(fireBehind), clamp((1.0 + s.z) / 2.0, 0.0, 1.0));
+                float4 fc = mix(float4(fireAhead), float4(fireBehind), clamp((1.0 + g.z) / 2.0, 0.0, 1.0));
                 float4 col = mix(base, fc, fired);
                 // Facing shade (darker where the surface turns away), the far half seen from inside darker still.
                 float k = mix(1.0, 0.25 + 0.75 * facing, shade) * (front > 0.5 ? 1.0 : inside);
