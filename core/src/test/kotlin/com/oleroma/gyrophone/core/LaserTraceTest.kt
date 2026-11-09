@@ -148,6 +148,39 @@ class LaserTraceTest {
         assertTrue(smooth[0] > 0.9f)
     }
 
+    @Test fun lineSmoothingSteadiesSlowShakeButKeepsUpWithFastMoves() {
+        val rad = (Math.PI / 180).toFloat()
+        fun paint(lineSmoothing: Float, speedDegPerS: Float): Float {
+            // Moving right at a speed, shaking 1° up and down every 10 ms frame; how far off the equator the paint strays.
+            val t = LaserTrace()
+            val p = FloatArray(3)
+            var worst = 0f
+            for (k in 0..60) {
+                val lon = speedDegPerS * k * 0.01f * rad
+                val lat = (if (k % 2 == 0) 1f else -1f) * rad
+                LaserTrace.dir(lat, lon, p)
+                t.add(p[0], p[1], p[2], k * 10L, draw = true, held = false, lineSmoothing = lineSmoothing)
+            }
+            for (i in 10 until t.strokes.count) {
+                t.strokes.point(i, p)
+                worst = maxOf(worst, kotlin.math.abs(p[1]))
+            }
+            return worst / rad
+        }
+        assertTrue(paint(0f, 20f) > 0.9f)
+        assertTrue(paint(1f, 20f) < 0.5f)
+        // Fast: it keeps up (the last point painted is near the beam).
+        val t = LaserTrace()
+        val p = FloatArray(3)
+        for (k in 0..30) {
+            LaserTrace.dir(0f, 600f * k * 0.01f * rad, p)
+            t.add(p[0], p[1], p[2], k * 10L, draw = true, held = false, lineSmoothing = 1f)
+        }
+        t.strokes.point(t.strokes.count - 1, p)
+        val lon = kotlin.math.atan2(p[0], -p[2]) / rad
+        assertTrue("lags ${180f - lon}°", 180f - lon < 15f)
+    }
+
     @Test fun theBeamsWayStaysWhenItStops() {
         val t = LaserTrace()
         t.add(0f, 0f, -1f, 0, draw = false, held = false)

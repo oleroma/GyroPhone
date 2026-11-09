@@ -96,6 +96,11 @@ class LaserTrace {
     private var beamY = 0f
     private var beamZ = 0f
     private var beamMs = Long.MIN_VALUE
+    // Line smoothing: the steadied point the paint follows, and the raw beam before.
+    private val steady = FloatArray(3)
+    private val rawLast = FloatArray(3)
+    private val velocity = FloatArray(3)
+    private var steadyMs = 0L
 
     /**
      * The way the beam last moved (a unit direction in the shown frame, x right, y up, z toward the
@@ -115,11 +120,12 @@ class LaserTrace {
      * doesn't paint (the pose eases back then, which isn't aiming); with [clearOnPress] pressing
      * one clears the strokes. With [draw] it paints; turning Draw off clears the strokes. While
      * [fire] (the display's fire output is sent) it paints in the Fire colours; with [fireOnly] only then.
-     * [moving] follows the beam, evened out over [SMOOTH_MS] with [smooth].
+     * [moving] follows the beam, evened out over [SMOOTH_MS] with [smooth]. With [lineSmoothing]
+     * (0 off .. 1 strong) the paint follows a steadied beam ([steadyToward]).
      */
     fun add(
         x: Float, y: Float, z: Float, nowMs: Long, draw: Boolean, held: Boolean, clearOnPress: Boolean = false,
-        fire: Boolean = false, fireOnly: Boolean = false, smooth: Boolean = true,
+        fire: Boolean = false, fireOnly: Boolean = false, smooth: Boolean = true, lineSmoothing: Float = 0f,
     ) {
         val pressed = clearOnPress && held && !wasHeld
         wasHeld = held
@@ -130,15 +136,47 @@ class LaserTrace {
             strokeGap = true
             return
         }
-        val dx = x / l
-        val dy = y / l
-        val dz = z / l
+        var dx = x / l
+        var dy = y / l
+        var dz = z / l
+        if (lineSmoothing > 0f) {
+            steadyToward(dx, dy, dz, nowMs, lineSmoothing)
+            dx = steady[0]; dy = steady[1]; dz = steady[2]
+        }
         // A new point once the beam moved a little (or the firing started or stopped): a still beam adds nothing.
         if (!strokeGap && fire == lastFire && lastX * dx + lastY * dy + lastZ * dz > STROKE_STEP_COS) return
         strokes.add(dx, dy, dz, nowMs, strokeGap, fire)
         strokeGap = false
         lastFire = fire
         lastX = dx; lastY = dy; lastZ = dz
+    }
+
+    /**
+     * Moves the steadied point toward the beam at unit ([x], [y], [z]) at [nowMs], as a drawing
+     * app's stabiliser: it eases in over up to [LINE_SMOOTH_MS] × [strength] when the beam moves
+     * slowly, much faster when it moves fast ([LINE_SMOOTH_SPEED]); a new line starts on the beam.
+     */
+    private fun steadyToward(x: Float, y: Float, z: Float, nowMs: Long, strength: Float) {
+        if (strokeGap) {
+            steady[0] = x; steady[1] = y; steady[2] = z
+            velocity.fill(0f)
+        } else {
+            val dt = (nowMs - steadyMs).coerceIn(1L, 200L).toFloat()
+            // The beam's speed, evened out over [SPEED_MS] so a shake back and forth cancels (radians/ms).
+            val kv = 1f - kotlin.math.exp(-dt / SPEED_MS)
+            velocity[0] += ((x - rawLast[0]) / dt - velocity[0]) * kv
+            velocity[1] += ((y - rawLast[1]) / dt - velocity[1]) * kv
+            velocity[2] += ((z - rawLast[2]) / dt - velocity[2]) * kv
+            val degPerS = Math.toDegrees(sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]).toDouble()).toFloat() * 1000f
+            val tau = strength.coerceIn(0f, 1f) * LINE_SMOOTH_MS / (1f + degPerS / LINE_SMOOTH_SPEED)
+            val k = if (tau < 0.5f) 1f else 1f - kotlin.math.exp(-dt / tau)
+            steady[0] += (x - steady[0]) * k
+            steady[1] += (y - steady[1]) * k
+            steady[2] += (z - steady[2]) * k
+            unit(steady)
+        }
+        rawLast[0] = x; rawLast[1] = y; rawLast[2] = z
+        steadyMs = nowMs
     }
 
     /** Turns [moving] toward the way the beam went to ([x], [y], [z]), a unit direction, at [nowMs]. */
@@ -178,6 +216,15 @@ class LaserTrace {
 
         /** Points each side a stroke's colour looks over with smoothing ([Ring.direction]): ±2°. */
         const val SMOOTH_REACH = 4
+
+        /** Line smoothing at full strength: how long a slow move's paint takes to catch up (ms, 63%). */
+        const val LINE_SMOOTH_MS = 150f
+
+        /** Line smoothing eases off with speed: at this many degrees a second it catches up twice as fast. */
+        const val LINE_SMOOTH_SPEED = 60f
+
+        // How long line smoothing's speed reading evens out over (ms).
+        private const val SPEED_MS = 50f
 
         /** How long the crosshair's colour takes to follow a new way with smoothing (ms, 63% of the way). */
         const val SMOOTH_MS = 60
