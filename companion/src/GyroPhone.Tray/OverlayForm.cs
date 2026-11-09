@@ -423,6 +423,10 @@ internal sealed class OverlayForm : Form
         }
     }
 
+    /// <summary>The paint map's width for Paint detail low, normal, high (as the phone's).</summary>
+    private static readonly int[] PaintWidths = [512, 1024, 2048];
+    private readonly uint[] _moveColors = new uint[6];
+
     private void TickCore()
     {
         // A new OVERLAY, a new layout, or now and then for the status: draw again.
@@ -438,9 +442,15 @@ internal sealed class OverlayForm : Form
             if (Settings is { Kind: OverlayKind.Laser } ls)
             {
                 var beam = LaserTrace.Beam(LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(_scene.Frame, ls), ls));
-                bool fire = ls.LaserDraw && _engine.OutputHeld(ls.LaserFire);
+                bool fire = (ls.LaserDraw || ls.LaserSnake) && _engine.OutputHeld(ls.LaserFire);
+                for (int i = 0; i < 6; i++) _moveColors[i] = unchecked((uint)ls.Color(OverlaySettings.LaserMoves[i]));
                 _laser.Add(beam.X, beam.Y, beam.Z, now, ls.LaserDraw, _scene.Frame.RatchetHeld, ls.LaserClearOnRatchet, fire, ls.LaserFireOnly,
-                    ls.LaserSmoothColours, ls.LaserLineSmoothing);
+                    ls.LaserSmoothColours, ls.LaserLineSmoothing,
+                    brushDeg: Math.Clamp(ls.LaserBrush, 1, 20) * 0.6f,
+                    snakeDeg: ls.LaserSnake ? ls.LaserSnakeDeg : 0f,
+                    wayColors: ls.LaserColourByWay ? _moveColors : null,
+                    mapWidth: PaintWidths[Math.Clamp(ls.LaserPaintDetail, 0, 2)],
+                    soft: ls.LaserSoftness);
             }
         }
         // A Clear displays mapping on the phone: the paint goes (the first count seen clears nothing).
@@ -457,8 +467,6 @@ internal sealed class OverlayForm : Form
         bool laserFading = false;
         if (Settings is { Kind: OverlayKind.Laser } lf)
         {
-            _laser.Expire(now, lf.LaserFadeMs);
-            laserFading = _laser.Fading(lf.LaserFadeMs);
             // The rifle's muzzle flash flickers while it fires.
             _scene.Firing = _engine.OutputHeld(lf.LaserFire);
             if (lf.LaserRifle && _scene.Firing) laserFading = true;

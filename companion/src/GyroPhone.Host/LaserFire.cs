@@ -5,12 +5,13 @@ namespace GyroPhone.Host;
 /// <summary>
 /// A laser pointer overlay's fire output (OverlaySettings.LaserFire): while it is held, Draw paints in the Fire
 /// colours. One number: <see cref="Mouse"/> + a mouse button's bit, <see cref="Key"/> + a keyboard usage,
-/// <see cref="Pad"/> + a controller button's bit, <see cref="Lt"/> or <see cref="Rt"/>; 0 none. Same numbers as the
+/// <see cref="Pad"/> + a controller button's bit, <see cref="Lt"/> or <see cref="Rt"/>, <see cref="Dpad"/> + 0 up,
+/// 1 down, 2 left, 3 right; 0 none. Same numbers as the
 /// phone's LaserFire.
 /// </summary>
 public static class LaserFire
 {
-    public const int Mouse = 0x100, Key = 0x200, Pad = 0x300, Lt = 0x400, Rt = 0x401;
+    public const int Mouse = 0x100, Key = 0x200, Pad = 0x300, Lt = 0x400, Rt = 0x401, Dpad = 0x500;
     public const int Default = Mouse; // left
 
     /// <summary>A trigger past this much (of 1023) counts as held.</summary>
@@ -21,7 +22,10 @@ public static class LaserFire
         [("Left", Mouse), ("Right", Mouse + 1), ("Middle", Mouse + 2), ("Back", Mouse + 3), ("Forward", Mouse + 4)];
 
     public static readonly (string Label, int Code)[] PadChoices =
-        [("A", Pad), ("B", Pad + 1), ("X", Pad + 2), ("Y", Pad + 3), ("LB", Pad + 4), ("RB", Pad + 5), ("LT", Lt), ("RT", Rt), ("LS", Pad + 8), ("RS", Pad + 9)];
+        [("A", Pad), ("B", Pad + 1), ("X", Pad + 2), ("Y", Pad + 3), ("LB", Pad + 4), ("RB", Pad + 5), ("LT", Lt), ("RT", Rt), ("LS", Pad + 8), ("RS", Pad + 9),
+         ("View", Pad + 6), ("Menu", Pad + 7), ("Guide", Pad + 10), ("Share", Pad + 15),
+         ("D-pad up", Dpad), ("D-pad down", Dpad + 1), ("D-pad left", Dpad + 2), ("D-pad right", Dpad + 3),
+         ("M1", Pad + 11), ("M2", Pad + 12), ("M3", Pad + 13), ("M4", Pad + 14)];
 
     public static readonly (string Label, int Code)[] KeyChoices = MakeKeys();
 
@@ -54,9 +58,24 @@ public static class LaserFire
             case Lt & 0xF00:
                 return code == Lt ? s.Lt > TriggerHeld || pcL2 > 0.3f || (pcHeld & OverlayFrame.PadL2) != 0
                     : s.Rt > TriggerHeld || pcR2 > 0.3f || (pcHeld & OverlayFrame.PadR2) != 0;
+            case Dpad:
+                return DpadHeld(v, s.Hat) || (pcHeld & (v switch
+                {
+                    0 => OverlayFrame.PadUp, 1 => OverlayFrame.PadDown, 2 => OverlayFrame.PadLeft, 3 => OverlayFrame.PadRight, _ => 0u,
+                })) != 0;
             default: return false;
         }
     }
+
+    /// <summary>D-pad way <paramref name="way"/> (0 up, 1 down, 2 left, 3 right) is held at hat value <paramref name="hat"/> (0 up, clockwise; diagonals hold both ways).</summary>
+    public static bool DpadHeld(int way, int hat) => way switch
+    {
+        0 => hat == 7 || hat == 0 || hat == 1,
+        1 => hat == 3 || hat == 4 || hat == 5,
+        2 => hat == 5 || hat == 6 || hat == 7,
+        3 => hat == 1 || hat == 2 || hat == 3,
+        _ => false,
+    };
 
     /// <summary>A controller button's bit (the phone's GamepadButton) as a PC controller place bit; null when it has none.</summary>
     private static uint? PadPlace(int bit) => bit switch

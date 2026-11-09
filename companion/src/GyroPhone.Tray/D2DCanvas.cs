@@ -445,6 +445,27 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
         _dc.FillGeometry(_lastGeo, Brush(color));
     }
 
+    public void FillQuads(Color color, List<PointF> quads)
+    {
+        if (quads.Count < 4 || color.A == 0) return;
+        using var geo = _factory.CreatePathGeometry();
+        using (var sink = geo.Open())
+        {
+            // Winding: where quads overlap the shape is filled once.
+            sink.SetFillMode(Vortice.Direct2D1.FillMode.Winding);
+            for (int i = 0; i + 3 < quads.Count; i += 4)
+            {
+                sink.BeginFigure(V(quads[i]), FigureBegin.Filled);
+                sink.AddLine(V(quads[i + 1]));
+                sink.AddLine(V(quads[i + 2]));
+                sink.AddLine(V(quads[i + 3]));
+                sink.EndFigure(FigureEnd.Closed);
+            }
+            sink.Close();
+        }
+        _dc.FillGeometry(geo, Brush(color));
+    }
+
     public void DrawPolygon(Color color, float width, PointF[] points, bool dashed = false)
     {
         if (points.Length < 2 || color.A == 0) return;
@@ -501,6 +522,29 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
         var props = new RadialGradientBrushProperties(e.Point, new Vector2(litAt.X - e.Point.X, litAt.Y - e.Point.Y), e.RadiusX, e.RadiusY);
         using var brush = _dc.CreateRadialGradientBrush(props, stops);
         _dc.FillEllipse(e, brush);
+    }
+
+    private sealed class Picture { public ID2D1Bitmap1? Bitmap; public long Stamp = long.MinValue; }
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<int[], Picture> _pictures = new();
+
+    public void DrawPixels(RectangleF dest, int w, int h, int[] pixels, long stamp)
+    {
+        var pic = _pictures.GetOrCreateValue(pixels);
+        if (pic.Bitmap == null || pic.Bitmap.PixelSize.Width != w || pic.Bitmap.PixelSize.Height != h)
+        {
+            pic.Bitmap?.Dispose();
+            pic.Bitmap = _dc.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0,
+                new BitmapProperties1(new D2DPixelFormat(Vortice.DXGI.Format.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied), 96, 96, BitmapOptions.None));
+            pic.Stamp = long.MinValue;
+        }
+        if (pic.Stamp != stamp)
+        {
+            var pin = System.Runtime.InteropServices.GCHandle.Alloc(pixels, System.Runtime.InteropServices.GCHandleType.Pinned);
+            try { pic.Bitmap.CopyFromMemory(pin.AddrOfPinnedObject(), (uint)(w * 4)); }
+            finally { pin.Free(); }
+            pic.Stamp = stamp;
+        }
+        _dc.DrawBitmap(pic.Bitmap, new Rect(dest.X, dest.Y, dest.Width, dest.Height), 1f, BitmapInterpolationMode.Linear, null);
     }
 
     private void PushMask(ID2D1Geometry geo, Rect bounds)

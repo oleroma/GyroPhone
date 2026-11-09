@@ -141,23 +141,6 @@ public class LaserTraceTests
     }
 
     [Fact]
-    public void StrokesFade()
-    {
-        var t = new LaserTrace();
-        t.Add(0, 0, -1, 0, true, false);
-        Assert.Equal(1f, LaserTrace.StrokeLife(0, 1, 0, 0, 5000));
-        Assert.Equal(0.5f, LaserTrace.StrokeLife(0, 1, 0, 2500, 5000), 3);
-        t.Expire(600, 5000);
-        Assert.True(t.Fading(5000));
-        t.Expire(5001, 5000);
-        Assert.Equal(0, t.Strokes.Count);
-        Assert.False(t.Fading(5000));
-        // Without fading, older points are darker by their place.
-        Assert.Equal(0f, LaserTrace.StrokeLife(0, 3, 0, 0, 0));
-        Assert.Equal(1f, LaserTrace.StrokeLife(2, 3, 0, 0, 0));
-    }
-
-    [Fact]
     public void RingDropsTheOldestWhenFull()
     {
         var r = new LaserTrace.Ring(3);

@@ -625,7 +625,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         });
         menu.DropDownItems.Add(new ToolStripMenuItem("Level all: as held now shows face-on" + KeysSuffix(OverlayAction.LevelAll), null, (_, _) => LevelAll()));
         if (_engine.Settings.Overlays.Any(o => o.Kind == OverlayKind.Laser))
-            menu.DropDownItems.Add(new ToolStripMenuItem("Clear laser pointers", null, (_, _) => ClearAllLasers()));
+            menu.DropDownItems.Add(new ToolStripMenuItem("Clear pointers", null, (_, _) => ClearAllLasers()));
         menu.DropDownItems.Add(new ToolStripMenuItem("Overlay settings…", null, (_, _) => ShowMainWindow(MainPage.Overlays)));
     }
 
