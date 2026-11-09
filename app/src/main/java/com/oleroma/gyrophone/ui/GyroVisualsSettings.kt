@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.oleroma.gyrophone.core.engine.GyroPose
+import com.oleroma.gyrophone.core.engine.LaserTrace
 import com.oleroma.gyrophone.core.model.BallShape
 import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayColor
@@ -175,8 +176,19 @@ internal fun GyroDisplaySettingsScreen(
                 GyroDisplayKind.LASER -> {
                     GroupTitle("Laser pointer")
                     Hint("A see-through sphere seen from above and to the side. The laser at its centre aims along the phone's roll axis (out of its top edge, into the screen at rest) onto the inside; the tick at the dot shows which way the phone's screen faces. The beam dims while a ratchet is held.")
-                    Chips(listOf("Sphere" to false, "Rifle" to true), d.laserRifle) { set(d.copy(laserRifle = it)) }
+                    val look = if (d.laserRifle) 1 else if (d.laserCrosshair) 2 else 0
+                    Chips(listOf("Sphere" to 0, "Rifle" to 1, "Crosshair" to 2), look) { set(d.copy(laserRifle = it == 1, laserCrosshair = it == 2)) }
                     if (d.laserRifle) Hint("A rifle aims instead: no sphere or beam, and Draw mode still paints where it points. Best with Axonometric view (face-on you look along the barrel).")
+                    if (look == 2) Indented {
+                        Hint("A crosshair instead: no sphere or beam, just a crosshair lying on the sphere where the laser lands, facing its centre, so it squashes toward the edge. Draw mode still paints where it points.")
+                        Chips(LaserTrace.CROSSHAIRS.mapIndexed { i, n -> n to i }, d.crosshairShape) { set(d.copy(crosshairShape = it)) }
+                        IntSlider("Size %d°", d.crosshairSize, 2..30) { set(d.copy(crosshairSize = it)) }
+                        if (d.crosshairShape == 1 || d.crosshairShape == 3 || d.crosshairShape == 5) IntSlider("Gap %d°", d.crosshairGap, 0..10) { set(d.copy(crosshairGap = it)) }
+                        if (d.crosshairShape != 4) FloatSlider("Thickness %.1f", d.crosshairThickness, 0.5f..6f, 0.5f) { set(d.copy(crosshairThickness = it)) }
+                        if (d.crosshairShape != 4) SwitchRow("Centre dot", d.crosshairDot) { set(d.copy(crosshairDot = it)) }
+                        SwitchRow("Outline", d.crosshairOutline, "A dark edge so it shows on any background.") { set(d.copy(crosshairOutline = it)) }
+                        SwitchRow("Turns with roll", d.crosshairRoll, "Off: it stays upright.") { set(d.copy(crosshairRoll = it)) }
+                    }
                     if (d.turnsWith == TurnsWith.TRACKBALL) {
                         Text("Laser faces (as a trackball)", style = MaterialTheme.typography.bodyMedium)
                         Chips(listOf("−Z (into the screen)" to 0, "+Z" to 1, "+X" to 2, "−X" to 3, "+Y" to 4, "−Y" to 5), d.laserFaces) { set(d.copy(laserFaces = it)) }
@@ -369,7 +381,9 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     GyroDisplayColor.LASER_X, GyroDisplayColor.LASER_Y, GyroDisplayColor.LASER_Z -> d.laserAxes
     GyroDisplayColor.LASER_PAINT, GyroDisplayColor.LASER_PAINT_BEHIND -> d.laserDraw
     GyroDisplayColor.LASER_RIFLE -> d.laserRifle
-    GyroDisplayColor.LASER_SPHERE, GyroDisplayColor.LASER_BEAM, GyroDisplayColor.LASER_DOT -> !d.laserRifle
+    GyroDisplayColor.LASER_SPHERE, GyroDisplayColor.LASER_BEAM, GyroDisplayColor.LASER_DOT -> !d.laserRifle && !d.laserCrosshair
+    GyroDisplayColor.LASER_CROSSHAIR, GyroDisplayColor.LASER_CROSSHAIR_BEHIND -> d.laserCrosshair && !d.laserRifle
+    GyroDisplayColor.LASER_CROSSHAIR_OUTLINE -> d.laserCrosshair && !d.laserRifle && d.crosshairOutline
     else -> true
 }
 

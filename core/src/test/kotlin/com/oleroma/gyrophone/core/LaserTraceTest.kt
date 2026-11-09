@@ -5,6 +5,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 class LaserTraceTest {
@@ -187,5 +188,33 @@ class CameraTurnTest {
         val gs = com.oleroma.gyrophone.core.model.GyroSettings()
         assertEquals(com.oleroma.gyrophone.core.engine.GyroDisplayFeed.DEFAULT_CAMERA_MAP,
             com.oleroma.gyrophone.core.engine.GyroDisplayFeed.cameraMapOf(emptyList(), gs))
+    }
+
+    @Test fun aCrosshairLiesOnTheSphereWhereTheBeamLands() {
+        val rad = (Math.PI / 180).toFloat()
+        // Straight (beam into the screen), the phone rolled 90°: its up now points sideways.
+        val m = floatArrayOf(0f, -1f, 0f, 1f, 0f, 0f, 0f, 0f, 1f)
+        val b = FloatArray(3)
+        LaserTrace.beam(m, b)
+        for (roll in listOf(true, false)) {
+            val ch = LaserTrace.crosshair(m, b, 0, 10 * rad, 2 * rad, dot = true, roll = roll)
+            assertEquals(2, ch.lines.size)
+            for (l in ch.lines) for (i in l.indices step 3) {
+                // Facing the centre: every point on the plane touching the sphere there.
+                assertEquals(1f, l[i] * b[0] + l[i + 1] * b[1] + l[i + 2] * b[2], 1e-4f)
+            }
+            // Its second arm runs up and down: along the phone's up with roll (sideways now), else the world's.
+            val up = ch.lines[1]
+            val dx = up[3] - up[0]
+            val dy = up[4] - up[1]
+            if (roll) assertEquals(0f, dy, 1e-4f) else assertEquals(0f, dx, 1e-4f)
+            assertEquals(20 * rad, kotlin.math.abs(if (roll) dx else dy), 1e-4f)
+            assertNotNull(ch.dot)
+        }
+        // Each shape: a T has three arms, a dot only its dot.
+        assertEquals(3, LaserTrace.crosshair(m, b, 5, 0.2f, 0.05f, dot = false, roll = true).lines.size)
+        val dot = LaserTrace.crosshair(m, b, 4, 0.2f, 0.05f, dot = false, roll = true)
+        assertEquals(0, dot.lines.size)
+        assertNotNull(dot.dot)
     }
 }

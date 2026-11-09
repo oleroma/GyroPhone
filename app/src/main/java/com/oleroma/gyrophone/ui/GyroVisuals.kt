@@ -232,6 +232,41 @@ private class VisState {
     private var laserTurned: FloatArray? = null
     private val levelPaths = Array(LEVELS * HUES) { Path() }
 
+    private val crossPath = Path()
+
+    /**
+     * The crosshair look's crosshair ([LaserTrace.crosshair]) where [beam] lands on the sphere of
+     * radius [r] at [c]: its colour from Crosshair ahead to Crosshair behind, a dark outline under it,
+     * dimmed while a ratchet is [held].
+     */
+    private fun DrawScope.drawCrosshair(d: GyroDisplay, c: Offset, r: Float, held: Boolean, col: (GyroDisplayColor) -> Color) {
+        val rad = (Math.PI / 180).toFloat()
+        val ch = LaserTrace.crosshair(m, beam, d.crosshairShape, d.crosshairSize * rad, d.crosshairGap * rad, d.crosshairDot, d.crosshairRoll)
+        var color = androidx.compose.ui.graphics.lerp(col(GyroDisplayColor.LASER_CROSSHAIR), col(GyroDisplayColor.LASER_CROSSHAIR_BEHIND), LaserTrace.behind(beam[2]))
+        if (held) color = color.copy(alpha = color.alpha * 0.35f)
+        val outline = col(GyroDisplayColor.LASER_CROSSHAIR_OUTLINE).let { it.copy(alpha = minOf(it.alpha, color.alpha)) }
+        val w = d.crosshairThickness.coerceIn(0.5f, 8f) * density
+        fun pathOf(pts: FloatArray): Path {
+            crossPath.reset()
+            var i = 0
+            while (i < pts.size) {
+                val p = laserAt(c, r, pts[i], pts[i + 1], pts[i + 2])
+                if (i == 0) crossPath.moveTo(p.x, p.y) else crossPath.lineTo(p.x, p.y)
+                i += 3
+            }
+            return crossPath
+        }
+        val dot = ch.dot
+        if (d.crosshairOutline) {
+            val ow = Stroke(w + 2f * density, cap = StrokeCap.Round, join = StrokeJoin.Round)
+            for (l in ch.lines) drawPath(pathOf(l), outline, style = ow)
+            if (dot != null) drawPath(pathOf(dot), outline, style = Stroke(2f * density, join = StrokeJoin.Round))
+        }
+        val line = Stroke(w, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        for (l in ch.lines) drawPath(pathOf(l), color, style = line)
+        if (dot != null) drawPath(pathOf(dot), color)
+    }
+
     /** Picture point of shown-frame direction ([x], [y], [z]) on a sphere of radius [r] at [c]; its depth (toward the viewer +) left in [pv]. */
     private fun laserAt(c: Offset, r: Float, x: Float, y: Float, z: Float): Offset {
         LaserTrace.view(x, y, z, pv, axon = laserAxon, turned = laserTurned)
@@ -270,8 +305,9 @@ private class VisState {
             lt.expire(now, fadeMs)
         }
         val rifle = d.laserRifle
+        val crosshair = d.laserCrosshair && !rifle
         val sphere = col(GyroDisplayColor.LASER_SPHERE)
-        if (!rifle) {
+        if (!rifle && !crosshair) {
         val lit = Color(sphere.red + (1 - sphere.red) * 0.35f, sphere.green + (1 - sphere.green) * 0.35f, sphere.blue + (1 - sphere.blue) * 0.35f, sphere.alpha)
         drawCircle(Brush.radialGradient(listOf(lit, sphere), Offset(c.x - r * 0.35f, c.y - r * 0.4f), r * 1.3f), r, c)
         }
@@ -402,6 +438,17 @@ private class VisState {
                 drawPath(path, Color(body.red * 0.5f, body.green * 0.5f, body.blue * 0.5f, body.alpha), style = Stroke(density * 0.75f, join = StrokeJoin.Round))
             }
             paint(true)
+            axes(true)
+            return
+        }
+        if (crosshair) {
+            // The crosshair look: no sphere or beam; a crosshair lying on the sphere where it aims.
+            if (d.laserGrid) drawPath(gridPath(gridBack), grid, style = thin)
+            axes(false)
+            paint(false)
+            drawCrosshair(d, c, r, held, col)
+            paint(true)
+            if (d.laserGrid) drawPath(gridPath(gridFront), grid.copy(alpha = grid.alpha * 0.6f), style = thin)
             axes(true)
             return
         }

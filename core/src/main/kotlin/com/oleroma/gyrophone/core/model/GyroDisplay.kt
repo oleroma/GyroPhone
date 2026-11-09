@@ -141,6 +141,21 @@ data class GyroDisplay(
     val laserSphereTurns: Boolean = false,
     /** LASER: a rifle aiming instead of the sphere and beam; Draw mode still paints where it points. */
     val laserRifle: Boolean = false,
+    /**
+     * LASER: a crosshair where the beam lands instead of the sphere and beam (not with [laserRifle]):
+     * lying on the sphere facing its centre, shape [crosshairShape]
+     * ([com.oleroma.gyrophone.core.engine.LaserTrace.CROSSHAIRS]), arms [crosshairSize] degrees long
+     * from a [crosshairGap] degree gap, lines [crosshairThickness] dp, a centre dot, a dark outline;
+     * turning with the phone's roll with [crosshairRoll], else kept upright.
+     */
+    val laserCrosshair: Boolean = false,
+    val crosshairShape: Int = 1,
+    val crosshairSize: Int = 6,
+    val crosshairGap: Int = 2,
+    val crosshairThickness: Float = 2f,
+    val crosshairDot: Boolean = true,
+    val crosshairOutline: Boolean = true,
+    val crosshairRoll: Boolean = true,
     /** LASER turned as a trackball: which way of it the laser faces ([com.oleroma.gyrophone.core.engine.LaserTrace.FACES], 0 −Z into the screen). */
     val laserFaces: Int = 0,
     /** LASER: Draw mode, the beam paints the sphere's inside, [laserBrush] degrees round; it fades after [laserFadeMs] ms (0 = never). */
@@ -309,6 +324,9 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     LASER_PAINT(GyroDisplayKind.LASER, "paint", "Paint ahead", 0xFFFFC94D),
     LASER_PAINT_BEHIND(GyroDisplayKind.LASER, "paint_behind", "Paint behind", 0xFF4DA6FF),
     LASER_RIFLE(GyroDisplayKind.LASER, "rifle", "Rifle", 0xFF5A616C),
+    LASER_CROSSHAIR(GyroDisplayKind.LASER, "crosshair", "Crosshair", 0xFF4CFF6A),
+    LASER_CROSSHAIR_BEHIND(GyroDisplayKind.LASER, "crosshair_behind", "Crosshair behind", 0xFF2E8A43),
+    LASER_CROSSHAIR_OUTLINE(GyroDisplayKind.LASER, "crosshair_outline", "Crosshair outline", 0xFF0E1116),
     ;
 
     companion object {

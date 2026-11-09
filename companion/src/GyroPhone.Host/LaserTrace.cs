@@ -339,6 +339,74 @@ public sealed class LaserTrace
     /// <summary>The beam's direction for pose matrix <paramref name="m"/> (row-major, phone frame to shown): out of the phone's back.</summary>
     public static (float X, float Y, float Z) Beam(float[] m) => (-m[2], -m[5], -m[8]);
 
+    /// <summary>The crosshair shapes (OverlaySettings.CrosshairShape).</summary>
+    public static readonly string[] Crosshairs = ["Cross", "Cross with gap", "Circle", "Circle and cross", "Dot", "T"];
+
+    /// <summary>A crosshair on the sphere: Lines as polylines of points; Dot a closed ring to fill, or null.</summary>
+    public sealed record Crosshair(List<(float X, float Y, float Z)[]> Lines, (float X, float Y, float Z)[]? Dot);
+
+    /// <summary>
+    /// Crosshair <paramref name="shape"/> (<see cref="Crosshairs"/>) lying on the sphere where <paramref name="beam"/>
+    /// lands, facing its centre: arms <paramref name="size"/> radians long from a <paramref name="gap"/> radian gap, a
+    /// centre <paramref name="dot"/>. Its up is the phone's up (pose <paramref name="m"/>) with <paramref name="roll"/>,
+    /// else the world's up (the phone's when looking straight up or down). As the phone's LaserTrace.crosshair.
+    /// </summary>
+    public static Crosshair CrosshairOn(float[] m, (float X, float Y, float Z) beam, int shape, float size, float gap, bool dot, bool roll)
+    {
+        var v = roll ? RollTick(m, beam) : Square((0f, 1f, 0f), beam);
+        v ??= RollTick(m, beam) ?? Square((0f, 0f, -1f), beam) ?? Square((1f, 0f, 0f), beam) ?? (0f, 1f, 0f);
+        var up = v.Value;
+        // Right: up × the outward normal (the beam).
+        var u = (X: up.Y * beam.Z - up.Z * beam.Y, Y: up.Z * beam.X - up.X * beam.Z, Z: up.X * beam.Y - up.Y * beam.X);
+        (float X, float Y, float Z) At(float a, float b) =>
+            (beam.X + a * u.X + b * up.X, beam.Y + a * u.Y + b * up.Y, beam.Z + a * u.Z + b * up.Z);
+        (float X, float Y, float Z)[] Line(float a0, float b0, float a1, float b1) => [At(a0, b0), At(a1, b1)];
+        (float X, float Y, float Z)[] Ring(float rad)
+        {
+            const int n = 32;
+            var o = new (float X, float Y, float Z)[n + 1];
+            for (int i = 0; i <= n; i++)
+            {
+                float t = i * 2f * MathF.PI / n;
+                o[i] = At(rad * MathF.Cos(t), rad * MathF.Sin(t));
+            }
+            return o;
+        }
+        var lines = new List<(float X, float Y, float Z)[]>(6);
+        float g = Math.Clamp(gap, 0f, size * 0.9f);
+        void Arms(bool top)
+        {
+            lines.Add(Line(g, 0f, size, 0f));
+            lines.Add(Line(-g, 0f, -size, 0f));
+            lines.Add(Line(0f, -g, 0f, -size));
+            if (top) lines.Add(Line(0f, g, 0f, size));
+        }
+        switch (shape)
+        {
+            case 0:
+                lines.Add(Line(-size, 0f, size, 0f));
+                lines.Add(Line(0f, -size, 0f, size));
+                break;
+            case 2: lines.Add(Ring(size * 0.6f)); break;
+            case 3: lines.Add(Ring(size * 0.6f)); Arms(true); break;
+            case 4: break;
+            case 5: Arms(false); break;
+            default: Arms(true); break;
+        }
+        float dotRad = shape == 4 ? size * 0.35f : dot ? size * 0.12f : 0f;
+        return new Crosshair(lines, dotRad > 0f ? Ring(dotRad) : null);
+    }
+
+    /// <summary><paramref name="d"/> squared against <paramref name="beam"/>, normalized; null when they are (nearly) the same way.</summary>
+    private static (float X, float Y, float Z)? Square((float X, float Y, float Z) d, (float X, float Y, float Z) beam)
+    {
+        float k = d.X * beam.X + d.Y * beam.Y + d.Z * beam.Z;
+        float x = d.X - k * beam.X, y = d.Y - k * beam.Y, z = d.Z - k * beam.Z;
+        float l = MathF.Sqrt(x * x + y * y + z * z);
+        if (l < 1e-3f) return null;
+        return (x / l, y / l, z / l);
+    }
+
     /// <summary>The phone's up for pose matrix <paramref name="m"/>, squared against <paramref name="beam"/> (the roll tick's way); null when none.</summary>
     public static (float X, float Y, float Z)? RollTick(float[] m, (float X, float Y, float Z) beam)
     {

@@ -214,6 +214,20 @@ public sealed class OverlaySettings
     public bool LaserSphereTurns { get; set; }
     /// <summary>Laser pointer: a rifle aiming instead of the sphere and beam; Draw mode still paints where it points.</summary>
     public bool LaserRifle { get; set; }
+    /// <summary>
+    /// Laser pointer: a crosshair where the beam lands instead of the sphere and beam (not with LaserRifle): lying
+    /// on the sphere facing its centre, shape CrosshairShape (LaserTrace.Crosshairs), arms CrosshairSize degrees
+    /// long from a CrosshairGap degree gap, lines CrosshairThickness thick, a centre dot, a dark outline; turning
+    /// with the phone's roll with CrosshairRoll, else kept upright. As the phone's GyroDisplay.laserCrosshair.
+    /// </summary>
+    public bool LaserCrosshair { get; set; }
+    public int CrosshairShape { get; set; } = 1;
+    public int CrosshairSize { get; set; } = 6;
+    public int CrosshairGap { get; set; } = 2;
+    public float CrosshairThickness { get; set; } = 2f;
+    public bool CrosshairDot { get; set; } = true;
+    public bool CrosshairOutline { get; set; } = true;
+    public bool CrosshairRoll { get; set; } = true;
     /// <summary>Laser pointer turned as a trackball: which way of it the laser faces (0 −Z into the screen, 1 +Z, 2 +X, 3 −X, 4 +Y, 5 −Y).</summary>
     public int LaserFaces { get; set; }
     public bool LaserAxes { get; set; } = true;
@@ -387,6 +401,9 @@ public sealed class OverlaySettings
         new("paint", "Paint ahead", 0xFFFFC94D),
         new("paint_behind", "Paint behind", 0xFF4DA6FF),
         new("rifle", "Rifle", 0xFF5A616C),
+        new("crosshair", "Crosshair", 0xFF4CFF6A),
+        new("crosshair_behind", "Crosshair behind", 0xFF2E8A43),
+        new("crosshair_outline", "Crosshair outline", 0xFF0E1116),
     ];
 
     private static readonly OverlayColor[] DiskColors =

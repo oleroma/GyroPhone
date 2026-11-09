@@ -46,7 +46,11 @@ internal sealed class OverlaysPage : Page
     private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook;
     private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserDraw, _laserClearOnRatchet;
     private readonly Seg<int> _laserFade;
-    private readonly Seg<bool> _laserShape;
+    private readonly Seg<int> _laserShape;
+    private readonly StackPanel _chOptions;
+    private readonly Seg<int> _chShape;
+    private readonly SliderRow _chSize, _chGap, _chThick;
+    private readonly CheckBox _chDot, _chOutline, _chRoll;
     private readonly Seg<int> _laserFaces;
     private readonly TextBlock _laserFacesTitle;
     private readonly TextBlock _laserRifleHint;
@@ -263,11 +267,30 @@ internal sealed class OverlaysPage : Page
 
         var (laser, lb) = Parts.Card("Laser pointer");
         lb.Children.Add(Parts.Text("A see-through sphere seen from above and to the side. The laser at its centre aims along the phone's roll axis (out of its top edge, into the screen at rest) onto the inside; the tick at the dot shows which way the phone's screen faces. The beam dims while a ratchet is held.", "Hint"));
-        _laserShape = new Seg<bool>(r => Change(o => o.LaserRifle = r), false, ("Sphere", false), ("Rifle", true));
+        _laserShape = new Seg<int>(k => Change(o => { o.LaserRifle = k == 1; o.LaserCrosshair = k == 2; }), false, ("Sphere", 0), ("Rifle", 1), ("Crosshair", 2));
         _laserShape.View.Margin = new Thickness(0, 6, 0, 2);
         lb.Children.Add(_laserShape.View);
         _laserRifleHint = Parts.Text("A rifle aims instead: no sphere or beam, and Draw mode still paints where it points. Best with Axonometric view (face-on you look along the barrel).", "Hint");
         lb.Children.Add(_laserRifleHint);
+        _chOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 4) };
+        _chOptions.Children.Add(Parts.Text("A crosshair instead: no sphere or beam, just a crosshair lying on the sphere where the laser lands, facing its centre, so it squashes toward the edge. Draw mode still paints where it points.", "Hint"));
+        _chShape = new Seg<int>(k => Change(o => o.CrosshairShape = k), true,
+            [.. GyroPhone.Host.LaserTrace.Crosshairs.Select((n, i) => (n, i))]);
+        _chShape.View.Margin = new Thickness(0, 6, 0, 2);
+        _chOptions.Children.Add(_chShape.View);
+        _chSize = new SliderRow("Size", 2, 30, 1, v => $"{v:0}°", v => Change(o => o.CrosshairSize = (int)v));
+        _chGap = new SliderRow("Gap", 0, 10, 1, v => $"{v:0}°", v => Change(o => o.CrosshairGap = (int)v));
+        _chThick = new SliderRow("Thickness", 0.5, 6, 0.5, v => $"{v:0.0}", v => Change(o => o.CrosshairThickness = (float)v));
+        _chOptions.Children.Add(_chSize.View);
+        _chOptions.Children.Add(_chGap.View);
+        _chOptions.Children.Add(_chThick.View);
+        _chDot = Parts.Toggle("Centre dot", () => Change(o => o.CrosshairDot = !o.CrosshairDot));
+        _chOutline = Parts.Toggle("Outline", () => Change(o => o.CrosshairOutline = !o.CrosshairOutline), "A dark edge so it shows on any background.");
+        _chRoll = Parts.Toggle("Turns with roll", () => Change(o => o.CrosshairRoll = !o.CrosshairRoll), "Off: it stays upright.");
+        _chOptions.Children.Add(_chDot);
+        _chOptions.Children.Add(_chOutline);
+        _chOptions.Children.Add(_chRoll);
+        lb.Children.Add(_chOptions);
         _laserFacesTitle = Parts.Text("Laser faces (as a trackball)");
         lb.Children.Add(_laserFacesTitle);
         _laserFaces = new Seg<int>(f => Change(o => o.LaserFaces = f), false,
@@ -534,7 +557,19 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_laserLook, o.Kind == OverlayKind.Laser);
         Parts.SetChecked(_phoneAxon, o.Axonometric);
         Parts.SetChecked(_shapeAxon, o.Axonometric);
-        _laserShape.Set(o.LaserRifle);
+        _laserShape.Set(o.LaserRifle ? 1 : o.LaserCrosshair ? 2 : 0);
+        bool ch = o.LaserCrosshair && !o.LaserRifle;
+        Parts.Show(_chOptions, ch);
+        _chShape.Set(o.CrosshairShape);
+        _chSize.Set(o.CrosshairSize);
+        _chGap.Set(o.CrosshairGap);
+        _chThick.Set(o.CrosshairThickness);
+        Parts.SetChecked(_chDot, o.CrosshairDot);
+        Parts.SetChecked(_chOutline, o.CrosshairOutline);
+        Parts.SetChecked(_chRoll, o.CrosshairRoll);
+        Parts.Show(_chGap.View, o.CrosshairShape is 1 or 3 or 5);
+        Parts.Show(_chThick.View, o.CrosshairShape != 4);
+        Parts.Show(_chDot, o.CrosshairShape != 4);
         _laserFaces.Set(o.LaserFaces);
         Parts.Show(_laserFaces.View, o.IsTrackball);
         Parts.Show(_laserFacesTitle, o.IsTrackball);

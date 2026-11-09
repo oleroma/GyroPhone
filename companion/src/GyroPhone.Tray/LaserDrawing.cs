@@ -49,7 +49,8 @@ internal static class LaserDrawing
         var beam = LaserTrace.Beam(m);
         var sphere = Color.FromArgb(s.Color("sphere"));
         var lit = Color.FromArgb(sphere.A, sphere.R + (int)((255 - sphere.R) * 0.35f), sphere.G + (int)((255 - sphere.G) * 0.35f), sphere.B + (int)((255 - sphere.B) * 0.35f));
-        if (!s.LaserRifle) g.FillBall(new RectangleF(c.X - r, c.Y - r, 2 * r, 2 * r), new PointF(c.X - r * 0.35f, c.Y - r * 0.4f), lit, sphere);
+        bool crosshair = s.LaserCrosshair && !s.LaserRifle;
+        if (!s.LaserRifle && !crosshair) g.FillBall(new RectangleF(c.X - r, c.Y - r, 2 * r, 2 * r), new PointF(c.X - r * 0.35f, c.Y - r * 0.4f), lit, sphere);
         var grid = Color.FromArgb(s.Color("grid"));
         Color[] axisColors = [Color.FromArgb(s.Color("x")), Color.FromArgb(s.Color("y")), Color.FromArgb(s.Color("z"))];
 
@@ -199,6 +200,47 @@ internal static class LaserDrawing
             return;
         }
         var gridLines = LaserTrace.GridFor(s.LaserAxonometric, turned);
+        if (crosshair)
+        {
+            // The crosshair look: no sphere or beam; a crosshair lying on the sphere where it aims.
+            if (s.LaserGrid) Grid(gridLines.Back, grid);
+            Axes(false);
+            Paint(false);
+            Crosshair();
+            Paint(true);
+            if (s.LaserGrid) Grid(gridLines.Front, Fade(grid, 0.6f));
+            Axes(true);
+            return;
+        }
+
+        void Crosshair()
+        {
+            const float rad = MathF.PI / 180f;
+            var ch = LaserTrace.CrosshairOn(m, beam, s.CrosshairShape, s.CrosshairSize * rad, s.CrosshairGap * rad, s.CrosshairDot, s.CrosshairRoll);
+            Color ahead = Color.FromArgb(s.Color("crosshair")), behind = Color.FromArgb(s.Color("crosshair_behind"));
+            float h = LaserTrace.Behind(beam.Z);
+            var color = Color.FromArgb((int)(ahead.A + (behind.A - ahead.A) * h), (int)(ahead.R + (behind.R - ahead.R) * h),
+                (int)(ahead.G + (behind.G - ahead.G) * h), (int)(ahead.B + (behind.B - ahead.B) * h));
+            if (held) color = Fade(color, 0.35f);
+            var o = Color.FromArgb(s.Color("crosshair_outline"));
+            var outline = Color.FromArgb(Math.Min(o.A, color.A), o);
+            float w = Math.Clamp(s.CrosshairThickness, 0.5f, 8f) * px;
+            PointF[] Pts((float X, float Y, float Z)[] l)
+            {
+                var pts = new PointF[l.Length];
+                for (int i = 0; i < l.Length; i++) pts[i] = At(l[i].X, l[i].Y, l[i].Z).P;
+                return pts;
+            }
+            var dot = ch.Dot is { } d ? Pts(d) : null;
+            if (s.CrosshairOutline)
+            {
+                foreach (var l in ch.Lines) g.DrawLines(outline, w + 2f * px, Pts(l));
+                if (dot != null) g.DrawPolygon(outline, 2f * px, dot);
+            }
+            foreach (var l in ch.Lines) g.DrawLines(color, w, Pts(l));
+            if (dot != null) g.FillPolygon(color, dot);
+        }
+
         if (s.LaserGrid) Grid(gridLines.Back, grid);
         Axes(false);
         Paint(false);

@@ -369,6 +369,77 @@ class LaserTrace {
             out[0] = -m[2]; out[1] = -m[5]; out[2] = -m[8]
         }
 
+        /** The crosshair shapes ([com.oleroma.gyrophone.core.model.GyroDisplay.crosshairShape]). */
+        val CROSSHAIRS = listOf("Cross", "Cross with gap", "Circle", "Circle and cross", "Dot", "T")
+
+        /** A crosshair on the sphere: [lines] as polylines of points (x, y, z, x, y, z…); [dot] a closed ring to fill, or null. */
+        class Crosshair(val lines: List<FloatArray>, val dot: FloatArray?)
+
+        /**
+         * Crosshair [shape] ([CROSSHAIRS]) lying on the sphere where [beam] lands, facing its centre:
+         * arms [size] radians long from a [gap] radian gap, a centre [dot]. Its up is the phone's up
+         * (pose [m]) with [roll], else the world's up (the phone's when looking straight up or down).
+         */
+        fun crosshair(m: FloatArray, beam: FloatArray, shape: Int, size: Float, gap: Float, dot: Boolean, roll: Boolean): Crosshair {
+            val v = FloatArray(3)
+            val world = floatArrayOf(0f, 1f, 0f)
+            if (!(if (roll) rollTick(m, beam, v) else square(world, beam, v)) && !rollTick(m, beam, v)) {
+                // Straight along the phone's up: any way across.
+                if (!square(floatArrayOf(0f, 0f, -1f), beam, v)) square(floatArrayOf(1f, 0f, 0f), beam, v)
+            }
+            // Right: up × the outward normal (the beam).
+            val u = floatArrayOf(v[1] * beam[2] - v[2] * beam[1], v[2] * beam[0] - v[0] * beam[2], v[0] * beam[1] - v[1] * beam[0])
+            fun at(out: FloatArray, i: Int, a: Float, b: Float) {
+                for (k in 0..2) out[i * 3 + k] = beam[k] + a * u[k] + b * v[k]
+            }
+            fun line(a0: Float, b0: Float, a1: Float, b1: Float) = FloatArray(6).also { at(it, 0, a0, b0); at(it, 1, a1, b1) }
+            fun ring(rad: Float): FloatArray {
+                val n = 32
+                val out = FloatArray((n + 1) * 3)
+                for (i in 0..n) {
+                    val t = i * 2f * Math.PI.toFloat() / n
+                    at(out, i, rad * kotlin.math.cos(t), rad * kotlin.math.sin(t))
+                }
+                return out
+            }
+            val lines = ArrayList<FloatArray>(6)
+            val g = gap.coerceIn(0f, size * 0.9f)
+            fun arms(up: Boolean) {
+                lines += line(g, 0f, size, 0f)
+                lines += line(-g, 0f, -size, 0f)
+                lines += line(0f, -g, 0f, -size)
+                if (up) lines += line(0f, g, 0f, size)
+            }
+            when (shape) {
+                0 -> {
+                    lines += line(-size, 0f, size, 0f)
+                    lines += line(0f, -size, 0f, size)
+                }
+                2 -> lines += ring(size * 0.6f)
+                3 -> {
+                    lines += ring(size * 0.6f)
+                    arms(true)
+                }
+                4 -> {}
+                5 -> arms(false)
+                else -> arms(true)
+            }
+            val dotRad = if (shape == 4) size * 0.35f else if (dot) size * 0.12f else 0f
+            return Crosshair(lines, if (dotRad > 0f) ring(dotRad) else null)
+        }
+
+        /** [d] squared against [beam], normalized, into [out]; false when they are (nearly) the same way. */
+        private fun square(d: FloatArray, beam: FloatArray, out: FloatArray): Boolean {
+            val k = d[0] * beam[0] + d[1] * beam[1] + d[2] * beam[2]
+            val x = d[0] - k * beam[0]
+            val y = d[1] - k * beam[1]
+            val z = d[2] - k * beam[2]
+            val l = sqrt(x * x + y * y + z * z)
+            if (l < 1e-3f) return false
+            out[0] = x / l; out[1] = y / l; out[2] = z / l
+            return true
+        }
+
         /** The phone's up for pose matrix [m], squared against [beam] (the roll tick's way), into [out]; false when none. */
         fun rollTick(m: FloatArray, beam: FloatArray, out: FloatArray): Boolean {
             val ux = m[1]
