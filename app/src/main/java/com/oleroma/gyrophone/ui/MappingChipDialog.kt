@@ -120,6 +120,7 @@ internal class ChipRange(
  * The settings of one mapping (a chip): When it starts ([triggers] offered, named by
  * [triggerLabel]; one = none to pick), How it outputs, and its options. [swipe]: a swipe direction's. [onApply] gets the trigger and options picked (null = none); [onRemove]
  * removes the mapping. [onTargetSettings] (a buzz's): a button that opens the target's own settings.
+ * [targetOptions]: the target's own settings shown in the dialog (Set orientation's Granular).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -136,6 +137,7 @@ internal fun MappingChipDialog(
     onRemove: () -> Unit,
     onDismiss: () -> Unit,
     onTargetSettings: (() -> Unit)? = null,
+    targetOptions: (@Composable () -> Unit)? = null,
     /** Where the chip can be (Touch, Area, Outside; a swipe's directions), and where it is; none = no choice. */
     wheres: List<String> = emptyList(),
     where: Int = 0,
@@ -205,6 +207,7 @@ internal fun MappingChipDialog(
                 if (onTargetSettings != null) {
                     OutlinedButton(onClick = onTargetSettings, modifier = Modifier.fillMaxWidth()) { Text("Buzz settings") }
                 }
+                targetOptions?.invoke()
                 if (range != null) {
                     Text("Range " + range.format(rFrom) + " – " + range.format(rTo), style = MaterialTheme.typography.titleSmall)
                     TwoHandleSlider(

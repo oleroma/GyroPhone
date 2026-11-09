@@ -470,12 +470,15 @@ sealed interface OutputTarget {
     data object BlackScreen : OutputTarget
 
     /**
-     * Levels every gyro display in the workspace and every PC overlay to the way the phone is held
-     * now, the same as pressing each one's Level button.
+     * Set orientation: the way the phone is held now becomes the workspace's base orientation
+     * ([GyroSettings.yawAxis], Set grip) for everything gyro, and every gyro display in the
+     * workspace and every PC overlay starts level from it. Not [granular]: the grip snaps to the
+     * nearest screen axis, either way up; [granular]: the exact tilt back ([GyroSettings.gripPitch]),
+     * side tilt left out. Saved by its old name ("Level displays").
      */
     @Serializable
     @SerialName("level_displays")
-    data object LevelDisplays : OutputTarget
+    data class SetOrientation(val granular: Boolean = false) : OutputTarget
 
     /** Clears every laser pointer display's paint and trail in the workspace and on the PC overlays. */
     @Serializable

@@ -116,7 +116,7 @@ private fun RestFadeSettings(r: RestFade, stillness: () -> Float?, set: (RestFad
     if (!r.on) return
     Indented {
         IntSlider("Flat within %d°", r.flatWithinDeg.roundToInt(), 1..45) { set(r.copy(flatWithinDeg = it.toFloat())) }
-        Hint("Of the tilt each display was leveled at (its Level button or a Level displays mapping).")
+        Hint("Of the tilt each display was leveled at (its Level button or Set orientation).")
         FloatSlider("Still below %.1f°/s", r.stillBelowDps, 0.1f..5f, 0.1f) { set(r.copy(stillBelowDps = it)) }
         var live by remember { mutableStateOf<Float?>(null) }
         LaunchedEffect(Unit) {

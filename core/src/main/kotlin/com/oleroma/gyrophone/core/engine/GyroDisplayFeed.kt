@@ -57,7 +57,23 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     private var easing = false
 
     /** [GyroDisplay.restNow] of [restOf], kept so a sample does not make it again. */
-    private var restOf: GyroDisplay? = null
+    @Volatile private var restOf: GyroDisplay? = null
+
+    /**
+     * The World or Player gyro space is on: the pose is the phone's real one, fed about the
+     * screen's own axes whatever the base orientation, level from gravity alone (no saved grip,
+     * [GyroDisplay.rest]). Switching starts the pose again.
+     */
+    @Volatile var realWorld = false
+        set(v) {
+            if (field == v) return
+            field = v
+            restOf = null
+            pose.reset()
+        }
+
+    /** [d]'s resting grip as shown now: none in the real world ([realWorld]). */
+    private fun restIn(d: GyroDisplay): FloatArray? = if (realWorld) null else d.restNow
 
     /** Its mode at the last sample (gravity, what turns it): switching starts it straight. */
     private var wasGravity = display.needsGravity
@@ -115,7 +131,7 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         val compass = d.needsCompass
         if (restOf !== d) {
             restOf = d
-            pose.rest = d.restNow
+            pose.rest = restIn(d)
         }
         // Turning the compass on takes the way the phone faces as heading 0.
         if (compass && !wasCompass) pose.aimHere()
@@ -184,7 +200,7 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         pose.quaternion(q)
         val d = display
         // Following the camera it turns by Spin (or as far as the game's camera): no turn amount on top.
-        shownMatrix(q, d.restNow, if (d.followsCamera) 1f else d.motionScale, out)
+        shownMatrix(q, restIn(d), if (d.followsCamera) 1f else d.motionScale, out)
     }
 
     /**
@@ -192,6 +208,12 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
      * tilt now as [GyroDisplay.rest], from [GyroPose.tiltFromUp]).
      */
     fun restart() = pose.straighten()
+
+    /** Set orientation: the pose starts again, from gravity where it has it, facing ahead. */
+    fun startOver() {
+        restOf = null
+        if (display.needsGravity) pose.reset() else pose.straighten()
+    }
 
     /**
      * Mouse counts [dx], [dy] sent by anything but the live gyro ([MappingEngine.cameraSink]), on

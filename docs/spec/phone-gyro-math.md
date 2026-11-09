@@ -23,13 +23,17 @@ A gyro axis can go to **mouse move X/Y**, **scroll** or **scroll sideways** (`Ou
 - **World**: against gravity. Yaw turns around the vertical, pitch tilts around the horizontal axis to the right, roll turns around the horizontal way the phone faces. Uses `GravityPose` (the accelerometer runs).
 - **Player**: yaw blends the phone's yaw and roll by how the phone is tilted (forgiving when leaning back or lying down); pitch and roll stay the phone's.
 
-**Yaw axis** (workspace gyro setting, `YawAxis`, workspace and Defaults only): which screen axis is yaw, a 90° turn of the phone's frame applied in `GyroMouse.motion`, so everything that reads the phone's axes follows it: the gyro mouse (in every gyro space), the PC controller's gyro and accelerometer, the gyro displays and their Level, and the PC overlays (the phone sends them the turned frame, so the companion needs no change).
+**Yaw axis** (workspace gyro setting, `YawAxis` + `gripPitch`, workspace and Defaults only): the phone's base orientation, which screen axis is yaw, a turn of the phone's frame applied in `GyroMouse.motion`, so everything that reads the phone's axes follows it: the gyro mouse (in every gyro space), the PC controller's gyro and accelerometer, the gyro displays and their Level in Local space, and the PC overlays (the phone sends them the turned frame, so the companion needs no change).
 
 - **Screen Z** (default): held flat, screen up. Yaw through the screen, pitch across it, roll along it.
 - **Screen Y**: held upright, screen facing you (the frame tilted back 90°). Yaw about the screen's vertical axis, roll through the screen, pitch across it.
 - **Screen X**: held on its side, right edge up. Yaw about the screen's horizontal axis, pitch through the screen, roll about its vertical axis.
+- **Flipped** (a chip beside them): the same axis the other way up (screen down, upside down, left edge up), turned 180° more, so turns are not mirrored.
+- **Custom N°** (only after a granular Set orientation): the frame tilted back by exactly N° about the screen's across axis (0° = Screen Z, 90° = Screen Y). Only the tilt back is kept; leaning sideways is left out.
 
-**Set grip**, beside the chips, reads gravity and picks the screen axis pointing most nearly up (`YawAxis.nearest`). Holding the phone upside down (or left edge up) picks the same axis, so turns come out mirrored. Tilt and shake still read the screen's own axes. A display's saved Level grip is in the turned frame, so press Level again after changing the yaw axis.
+**Set orientation**, the button under the chips, reads gravity and picks the screen axis, either way up, pointing most nearly up (`YawAxis.nearest`), saves it as the workspace's own, and starts every 3D gyro display on the pad again from it: level, facing ahead, its saved Level grip cleared. Every PC overlay shown levels too. The **Set orientation** mapping (Other targets) does the same in play; its chip's **Granular** switch (off by default) saves the exact tilt back instead (`YawAxis.CUSTOM`, `YawAxis.pitchOf`). Tilt and shake still read the screen's own axes.
+
+**World and Player space displays**: the gyro displays on the pad (and the parallax edge) ignore the base orientation and are fed about the screen's own axes, level from gravity with no saved grip, so they show the phone's real pose against gravity, as the gyro mouse measures turns there. Displays that turn with the Camera or as a Trackball take the gyro mouse's own turns in that space. The PC overlays still get the turned frame (ported once the phone side is settled).
 
 ## Sensitivity
 

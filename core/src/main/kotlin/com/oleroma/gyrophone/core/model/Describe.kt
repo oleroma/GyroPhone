@@ -82,7 +82,8 @@ object Describe {
         OutputTarget.LayerBack -> "Layer back (to the layers before the last change)"
         OutputTarget.LetGo -> "(Let go): ends the toggles set to end on it"
         OutputTarget.BlackScreen -> "Black screen (the phone's screen goes black until tapped)"
-        OutputTarget.LevelDisplays -> "Level displays (gyro displays and PC overlays take the way you hold the phone now as level)"
+        is OutputTarget.SetOrientation -> "Set orientation" + (if (t.granular) ", granular" else "") +
+            " (the way you hold the phone now becomes the base for the gyro, the displays and the PC overlays)"
         OutputTarget.ClearDisplays -> "Clear displays (pointers on the pad and the PC lose their paint and trail)"
         OutputTarget.NoOutput -> "Nothing (blocks the layer below)"
         is OutputTarget.GyroSens -> gyroSens(t)
@@ -99,9 +100,9 @@ object Describe {
         OutputTarget.LayerBack, OutputTarget.NoOutput,
     )
 
-    /** The "Other" picker group: (Let go), Black screen, Level displays and Clear displays. */
+    /** The "Other" picker group: (Let go), Black screen, Set orientation and Clear displays. */
     val otherTargets: List<OutputTarget> =
-        listOf(OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.LevelDisplays, OutputTarget.ClearDisplays)
+        listOf(OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.SetOrientation(), OutputTarget.ClearDisplays)
 
     /** "Layer set", "Layer hold", "Override layer set" or "Override layer hold". */
     fun layer(t: OutputTarget.Layer): String = when {
@@ -191,7 +192,7 @@ object Describe {
         OutputTarget.LayerBack -> "Layer back"
         OutputTarget.LetGo -> "(Let go)"
         OutputTarget.BlackScreen -> "Black screen"
-        OutputTarget.LevelDisplays -> "Level displays"
+        is OutputTarget.SetOrientation -> if (t.granular) "Set orientation (granular)" else "Set orientation"
         OutputTarget.ClearDisplays -> "Clear displays"
 
         OutputTarget.NoOutput -> "Nothing"

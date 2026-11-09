@@ -36,6 +36,9 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
     /** Which screen axis is yaw ([YawAxis]): [motion] turns the screen's frame by it. */
     @Volatile var yawAxis: YawAxis = YawAxis.SCREEN_Z
 
+    /** [YawAxis.CUSTOM]'s tilt back in degrees ([com.oleroma.gyrophone.core.model.GyroSettings.gripPitch]). */
+    @Volatile var gripPitch: Float = 0f
+
     data class Counts(val dx: Int, val dy: Int)
 
     /**
@@ -56,7 +59,7 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
      * counter-clockwise looking down the axis. Each orientation names which device axis points
      * up / right / toward the player.
      */
-    fun motion(gx: Float, gy: Float, gz: Float): Motion = withYawAxis(screenMotion(gx, gy, gz), yawAxis)
+    fun motion(gx: Float, gy: Float, gz: Float): Motion = withYawAxis(screenMotion(gx, gy, gz), yawAxis, gripPitch)
 
     /** As [motion], about the screen's own axes whatever [yawAxis] says. */
     fun screenMotion(gx: Float, gy: Float, gz: Float): Motion = motion(gx, gy, gz, resolvedOrientation())
@@ -79,10 +82,35 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
      * - Screen X, turned 90° about the vertical: right becomes away from the player, toward becomes
      *   the screen's right. Stored roll (shown yaw) is then the turn about the screen's horizontal.
      */
-    fun withYawAxis(m: Motion, axis: YawAxis): Motion = when (axis) {
+    fun withYawAxis(m: Motion, axis: YawAxis, pitchDeg: Float = 0f): Motion = when (axis) {
         YawAxis.SCREEN_Z -> m
         YawAxis.SCREEN_Y -> Motion(yaw = -m.roll, pitch = m.pitch, roll = m.yaw)
         YawAxis.SCREEN_X -> Motion(yaw = m.yaw, pitch = m.roll, roll = -m.pitch)
+        // The other way up: turned 180° more about the across axis (Z, Y) or the vertical one (X).
+        YawAxis.SCREEN_Z_FLIPPED -> Motion(yaw = -m.yaw, pitch = m.pitch, roll = -m.roll)
+        YawAxis.SCREEN_Y_FLIPPED -> Motion(yaw = m.roll, pitch = m.pitch, roll = -m.yaw)
+        YawAxis.SCREEN_X_FLIPPED -> Motion(yaw = m.yaw, pitch = -m.roll, roll = m.pitch)
+        YawAxis.CUSTOM -> tiltedBack(m, pitchDeg)
+    }
+
+    /**
+     * [m] in the frame tilted back by [deg] about the screen's across axis: right stays, toward
+     * becomes (0, sin, cos) and up (0, cos, -sin) in the screen's frame (90° = [YawAxis.SCREEN_Y]).
+     */
+    private fun tiltedBack(m: Motion, deg: Float): Motion {
+        val a = Math.toRadians(deg.toDouble())
+        val s = kotlin.math.sin(a).toFloat(); val c = kotlin.math.cos(a).toFloat()
+        val wu = -m.yaw; val wt = -m.roll
+        return Motion(yaw = -(c * wu - s * wt), pitch = m.pitch, roll = -(s * wu + c * wt))
+    }
+
+    /**
+     * The world's [up] (right, up, toward the player, the screen's frame) in the base orientation
+     * [axis] (and [pitchDeg]) makes, as [motion] turns a sample: for a display's level after Set orientation.
+     */
+    fun upInFrame(up: FloatArray, axis: YawAxis, pitchDeg: Float): FloatArray {
+        val m = withYawAxis(Motion(yaw = -up[1], pitch = up[0], roll = -up[2]), axis, pitchDeg)
+        return floatArrayOf(m.pitch, -m.yaw, -m.roll)
     }
 
     /**

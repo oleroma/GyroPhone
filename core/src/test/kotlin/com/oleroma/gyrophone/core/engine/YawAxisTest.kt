@@ -42,11 +42,11 @@ class YawAxisTest {
     fun eachAxisIsARotation() {
         // A rotation keeps the frame right-handed: the images of right and up cross to the image of toward.
         for (ax in YawAxis.entries) {
-            val r = vec(mouse.withYawAxis(motion(1f, 0f, 0f), ax))
-            val u = vec(mouse.withYawAxis(motion(0f, 1f, 0f), ax))
-            val t = vec(mouse.withYawAxis(motion(0f, 0f, 1f), ax))
+            val r = vec(mouse.withYawAxis(motion(1f, 0f, 0f), ax, 37f))
+            val u = vec(mouse.withYawAxis(motion(0f, 1f, 0f), ax, 37f))
+            val t = vec(mouse.withYawAxis(motion(0f, 0f, 1f), ax, 37f))
             val c = floatArrayOf(r[1] * u[2] - r[2] * u[1], r[2] * u[0] - r[0] * u[2], r[0] * u[1] - r[1] * u[0])
-            assertArrayEquals("$ax", t, c, 0f)
+            assertArrayEquals("$ax", t, c, 1e-6f)
         }
     }
 
@@ -54,7 +54,38 @@ class YawAxisTest {
     fun setGripPicksTheAxisPointingUp() {
         assertEquals(YawAxis.SCREEN_Z, YawAxis.nearest(floatArrayOf(0.1f, 0.3f, 0.9f)))
         assertEquals(YawAxis.SCREEN_Y, YawAxis.nearest(floatArrayOf(0.1f, 0.9f, 0.4f)))
-        assertEquals(YawAxis.SCREEN_Y, YawAxis.nearest(floatArrayOf(0.1f, -0.9f, 0.4f)))
-        assertEquals(YawAxis.SCREEN_X, YawAxis.nearest(floatArrayOf(-0.95f, 0.1f, 0.2f)))
+        assertEquals(YawAxis.SCREEN_Y_FLIPPED, YawAxis.nearest(floatArrayOf(0.1f, -0.9f, 0.4f)))
+        assertEquals(YawAxis.SCREEN_X_FLIPPED, YawAxis.nearest(floatArrayOf(-0.95f, 0.1f, 0.2f)))
+        assertEquals(YawAxis.SCREEN_X, YawAxis.nearest(floatArrayOf(0.95f, 0.1f, 0.2f)))
+        assertEquals(YawAxis.SCREEN_Z_FLIPPED, YawAxis.nearest(floatArrayOf(0.1f, 0.2f, -0.9f)))
+    }
+
+    @Test
+    fun theAxisPointingUpBecomesYaw() {
+        // Held each snapped way, the world's up lands on the frame's toward axis (shown yaw), pointing up.
+        val ups = mapOf(
+            YawAxis.SCREEN_Z to floatArrayOf(0f, 0f, 1f), YawAxis.SCREEN_Z_FLIPPED to floatArrayOf(0f, 0f, -1f),
+            YawAxis.SCREEN_Y to floatArrayOf(0f, 1f, 0f), YawAxis.SCREEN_Y_FLIPPED to floatArrayOf(0f, -1f, 0f),
+            YawAxis.SCREEN_X to floatArrayOf(1f, 0f, 0f), YawAxis.SCREEN_X_FLIPPED to floatArrayOf(-1f, 0f, 0f),
+        )
+        for ((ax, up) in ups) {
+            assertEquals(ax, YawAxis.nearest(up))
+            assertArrayEquals("$ax", floatArrayOf(0f, 0f, 1f), mouse.upInFrame(up, ax, 0f), 1e-6f)
+        }
+    }
+
+    @Test
+    fun granularTakesOnlyTheTiltBack() {
+        // Leaning back 60° and 20° to the side: the pitch is 60°, the side lean is left out.
+        val a = Math.toRadians(60.0)
+        val up = floatArrayOf(0.34f, Math.sin(a).toFloat(), Math.cos(a).toFloat())
+        assertEquals(60f, YawAxis.pitchOf(up), 1e-3f)
+        val f = mouse.upInFrame(up, YawAxis.CUSTOM, 60f)
+        assertEquals(0.34f, f[0], 1e-5f); assertEquals(0f, f[1], 1e-5f)
+        // 90° is Screen Y and 0° Screen Z.
+        val m = motion(0.2f, 0.5f, 0.7f)
+        val y = mouse.withYawAxis(m, YawAxis.SCREEN_Y); val c = mouse.withYawAxis(m, YawAxis.CUSTOM, 90f)
+        assertEquals(y.yaw, c.yaw, 1e-5f); assertEquals(y.pitch, c.pitch, 1e-5f); assertEquals(y.roll, c.roll, 1e-5f)
+        assertEquals(m, mouse.withYawAxis(m, YawAxis.CUSTOM, 0f))
     }
 }

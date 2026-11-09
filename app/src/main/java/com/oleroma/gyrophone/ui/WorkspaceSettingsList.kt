@@ -33,6 +33,7 @@ import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 
 import com.oleroma.gyrophone.runtime.GamepadRuntime
+import kotlin.math.roundToInt
 
 /** Slider top: high, for fast flicks. */
 internal const val MAX_GYRO_SENS = 250f
@@ -217,33 +218,41 @@ internal fun WorkspaceSettings(
                 }
             }
             if (level.shows(g("yawAxis"))) {
+                val yawKeys = listOf(g("yawAxis"), g("gripPitch"))
+                val ya = ws.gyro.yawAxis
                 OverrideRow(
-                    "Yaw axis", own(g("yawAxis")), reset(g("yawAxis")), children = kids(g("yawAxis")),
-                    hint = when (ws.gyro.yawAxis) {
-                        YawAxis.SCREEN_Z -> "For holding the phone flat, screen up: yaw is the turn through the screen, pitch across it, roll along it."
-                        YawAxis.SCREEN_Y -> "For holding the phone upright, screen facing you: yaw is the turn about the screen's vertical axis, " +
-                            "roll through the screen, pitch across it."
-                        YawAxis.SCREEN_X -> "For holding the phone on its side, right edge up: yaw is the turn about the screen's horizontal axis, " +
-                            "pitch through the screen, roll about its vertical axis."
-                    } + " The gyro mouse, the PC controller's gyro and the gyro displays all follow it. " +
-                        "Set grip picks the axis pointing up the way you hold the phone now.",
+                    "Yaw axis", level.ownAny(yawKeys), level.resetKeys(yawKeys), children = level.kids(yawKeys),
+                    hint = when (ya.axis) {
+                        YawAxis.SCREEN_Z -> if (ya.flipped) "For holding the phone flat, screen down: yaw is the turn through the screen, pitch across it, roll along it."
+                        else "For holding the phone flat, screen up: yaw is the turn through the screen, pitch across it, roll along it."
+                        YawAxis.SCREEN_Y -> (if (ya.flipped) "For holding the phone upside down, screen facing you" else "For holding the phone upright, screen facing you") +
+                            ": yaw is the turn about the screen's vertical axis, roll through the screen, pitch across it."
+                        YawAxis.SCREEN_X -> (if (ya.flipped) "For holding the phone on its side, left edge up" else "For holding the phone on its side, right edge up") +
+                            ": yaw is the turn about the screen's horizontal axis, pitch through the screen, roll about its vertical axis."
+                        else -> "Tilted back " + ws.gyro.gripPitch.roundToInt() + "° from flat (90° is upright), as a granular Set orientation took it: " +
+                            "yaw is the turn about the axis that pointed up, pitch across the screen."
+                    } + " The gyro mouse and the gyro displays in Local space and the PC controller's gyro follow it; in World and Player space " +
+                        "the displays show the phone's real pose. Set orientation picks the axis pointing up the way you hold the phone now, " +
+                        "and starts every display level from it.",
                 ) {
                     Row(
                         Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        YawAxis.entries.forEach { ax ->
-                            FilterChip(selected = ws.gyro.yawAxis == ax, onClick = {
-                                editWs { it.copy(gyro = it.gyro.copy(yawAxis = ax)) }
+                        listOf(YawAxis.SCREEN_Z, YawAxis.SCREEN_Y, YawAxis.SCREEN_X).forEach { ax ->
+                            FilterChip(selected = ya.axis == ax, onClick = {
+                                editWs { it.copy(gyro = it.gyro.copy(yawAxis = ax.withFlip(ya.flipped))) }
                             }, label = { Text(ax.label) })
                         }
-                        TextButton(onClick = {
-                            runtime.readUp(screen = true) { up ->
-                                val ax = up?.let(YawAxis::nearest) ?: return@readUp
-                                editWs { it.copy(gyro = it.gyro.copy(yawAxis = ax)) }
-                            }
-                        }) { Text("Set grip") }
+                        if (ya == YawAxis.CUSTOM) {
+                            FilterChip(selected = true, onClick = {}, label = { Text("Custom " + ws.gyro.gripPitch.roundToInt() + "°") })
+                        } else {
+                            FilterChip(selected = ya.flipped, onClick = {
+                                editWs { it.copy(gyro = it.gyro.copy(yawAxis = ya.withFlip(!ya.flipped))) }
+                            }, label = { Text("Flipped") })
+                        }
                     }
+                    TextButton(onClick = { runtime.setOrientation(granular = false) }) { Text("Set orientation") }
                 }
             }
             if (level.shows(g("padYaw"))) {
