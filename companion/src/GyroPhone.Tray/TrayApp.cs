@@ -705,6 +705,18 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     /// </summary>
     private void OverlayClicked(string id, Point at)
     {
+        // A second click soon after, close by: a double-click opens the companion window on the picked
+        // overlay's settings (or brings it to the front), instead of cycling on to the next window.
+        long now = Environment.TickCount64;
+        var dbl = SystemInformation.DoubleClickSize;
+        bool doubled = _lastOverlayClick is { } last && now - last.Ms <= SystemInformation.DoubleClickTime
+            && Math.Abs(at.X - last.At.X) <= dbl.Width && Math.Abs(at.Y - last.At.Y) <= dbl.Height;
+        _lastOverlayClick = doubled ? null : (now, at);
+        if (doubled && _selectedOverlay != null && _overlayForms.ContainsKey(_selectedOverlay))
+        {
+            ShowMainWindow(MainPage.Overlays);
+            return;
+        }
         var under = _engine.Settings.Overlays
             .Where(o => _overlayForms.TryGetValue(o.Id, out var f) && f.Visible && f.Bounds.Contains(at))
             .Select(o => o.Id).ToList();
@@ -715,6 +727,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         if (_overlayForms.TryGetValue(pick, out var form)) form.BringUp();
         Refresh();
     }
+
+    private (long Ms, Point At)? _lastOverlayClick;
 
     private void OverlayPicked(string id)
     {
