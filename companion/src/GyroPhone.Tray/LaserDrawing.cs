@@ -71,9 +71,12 @@ internal static class LaserDrawing
         {
             if (!s.LaserAxes) return;
             for (int i = 0; i < 3; i++)
+            {
+                // Turning with the laser: its own axis i, column i of its pose.
+                float ax = m[i], ay = m[3 + i], az = m[6 + i];
                 foreach (int sign in new[] { 1, -1 })
                 {
-                    var (p, z) = At(i == 0 ? sign : 0, i == 1 ? sign : 0, i == 2 ? sign : 0);
+                    var (p, z) = At(sign * ax, sign * ay, sign * az);
                     if (z > 0f != front) continue;
                     var a = axisColors[i];
                     g.DrawLine(Fade(a, (sign > 0 ? 1f : 0.4f) * (front ? 0.7f : 1f)), px * 1.5f, c, p, round: true);
@@ -82,11 +85,42 @@ internal static class LaserDrawing
                         g.FillEllipse(a, new RectangleF(p.X - px * 2.5f, p.Y - px * 2.5f, px * 5f, px * 5f));
                         // Its letter just beyond the tip: P (X), Y (Y), R (Z), as the laser aims.
                         float k = 1f + 12f * px / r;
-                        var q = At(i == 0 ? k : 0, i == 1 ? k : 0, i == 2 ? k : 0).P;
+                        var q = At(k * ax, k * ay, k * az).P;
                         float size = 11f * px;
                         g.DrawText(AxisLetters[i], size, true, Fade(a, front ? 0.8f : 1f), new RectangleF(q.X - size, q.Y - size, size * 2, size * 2), TextAlign.Center, TextAlign.Center);
                     }
                 }
+            }
+        }
+
+        // The Sphere look's gimbal rings, coloured as their axes (yaw Y, pitch X, roll Z); a locked one faint.
+        (float X, float Y, float Z)[][]? gimbal = null;
+        if (s.LaserGimbal && !s.LaserRifle && !crosshair)
+        {
+            var angles = LaserTrace.GimbalAngles(m, s.GimbalLocks);
+            gimbal = [LaserTrace.GimbalRing(0, angles), LaserTrace.GimbalRing(1, angles), LaserTrace.GimbalRing(2, angles)];
+        }
+        void Rings(bool front)
+        {
+            if (gimbal == null) return;
+            int locks = s.GimbalLocks;
+            int[] colorOf = [1, 0, 2];
+            for (int i = 0; i < 3; i++)
+            {
+                var col = Fade(axisColors[colorOf[i]], ((locks & (1 << i)) != 0 ? 0.25f : 1f) * (front ? 0.85f : 0.4f));
+                var run = new List<PointF>(66);
+                void Flush()
+                {
+                    if (run.Count >= 2) g.DrawLines(col, px * (front ? 2.5f : 1.5f), run.ToArray());
+                    run.Clear();
+                }
+                foreach (var pt in gimbal[i])
+                {
+                    var (p, z) = At(pt.X, pt.Y, pt.Z);
+                    if (z > 0f == front) run.Add(p); else Flush();
+                }
+                Flush();
+            }
         }
 
         // Strokes: each piece of the way between two points (long hops bent along the
@@ -259,6 +293,7 @@ internal static class LaserDrawing
         }
 
         if (s.LaserGrid) Grid(gridLines.Back, grid);
+        Rings(false);
         Axes(false);
         Paint(false);
         if (!hitFront) Spot();
@@ -266,6 +301,7 @@ internal static class LaserDrawing
         g.FillEllipse(beamCol, new RectangleF(c.X - px * 3, c.Y - px * 3, px * 6, px * 6));
         Paint(true);
         if (s.LaserGrid) Grid(gridLines.Front, Fade(grid, 0.6f));
+        Rings(true);
         Axes(true);
         if (hitFront) Spot();
         g.DrawEllipse(grid, px * 1.5f, new RectangleF(c.X - r, c.Y - r, 2 * r, 2 * r));

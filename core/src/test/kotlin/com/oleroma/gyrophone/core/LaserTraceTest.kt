@@ -247,4 +247,45 @@ class CameraTurnTest {
         assertTrue(F.held(F.RT, com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(rt = 900))))
         assertFalse(F.held(F.LT, com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(rt = 900))))
     }
+
+    /** Ry(a)·Rx(b)·Rz(c), row-major. */
+    private fun gimbal(a: Float, b: Float, c: Float): FloatArray {
+        fun mul(x: FloatArray, y: FloatArray) = FloatArray(9) { k -> val i = k / 3; val j = k % 3; x[i * 3] * y[j] + x[i * 3 + 1] * y[3 + j] + x[i * 3 + 2] * y[6 + j] }
+        val ry = floatArrayOf(kotlin.math.cos(a), 0f, kotlin.math.sin(a), 0f, 1f, 0f, -kotlin.math.sin(a), 0f, kotlin.math.cos(a))
+        val rx = floatArrayOf(1f, 0f, 0f, 0f, kotlin.math.cos(b), -kotlin.math.sin(b), 0f, kotlin.math.sin(b), kotlin.math.cos(b))
+        val rz = floatArrayOf(kotlin.math.cos(c), -kotlin.math.sin(c), 0f, kotlin.math.sin(c), kotlin.math.cos(c), 0f, 0f, 0f, 1f)
+        return mul(mul(ry, rx), rz)
+    }
+
+    @Test fun gimbalAnglesReadBackAPose() {
+        val out = FloatArray(3)
+        LaserTrace.gimbalAngles(gimbal(0.5f, -0.3f, 0.2f), 0, out)
+        assertEquals(0.5f, out[0], 1e-4f)
+        assertEquals(-0.3f, out[1], 1e-4f)
+        assertEquals(0.2f, out[2], 1e-4f)
+        // Over the top with roll locked: read the way that keeps roll at 0.
+        val over = 2.2f
+        LaserTrace.gimbalAngles(gimbal(0.4f, over, 0f), 4, out)
+        assertEquals(0f, out[2], 1e-4f)
+        assertEquals(over, out[1], 1e-4f)
+        assertEquals(0.4f, out[0], 1e-4f)
+    }
+
+    @Test fun gimbalRingsNestAsAGimbal() {
+        val angles = floatArrayOf(0.7f, 0.4f, 0.3f)
+        val f = gimbal(0.7f, 0.4f, 0f)
+        val rings = Array(3) { LaserTrace.gimbalRing(it, angles, 64) }
+        for (i in 0..2) {
+            val rho = LaserTrace.GIMBAL_RADII[i]
+            val pts = rings[i]
+            for (j in pts.indices step 3) assertEquals(rho, kotlin.math.sqrt(pts[j] * pts[j] + pts[j + 1] * pts[j + 1] + pts[j + 2] * pts[j + 2]), 1e-4f)
+        }
+        // The yaw ring stays round the vertical: its first point at angle 0 lies along its right, level.
+        assertEquals(0f, rings[0][1], 1e-4f)
+        // The pitch ring holds its right (the pitch pivot) at its first point.
+        for (k in 0..2) assertEquals(LaserTrace.GIMBAL_RADII[1] * f[k * 3], rings[1][k], 1e-4f)
+        // The roll ring goes through where the laser faces (the roll pivot, Z) a quarter round.
+        val q = 16 * 3
+        for (k in 0..2) assertEquals(LaserTrace.GIMBAL_RADII[2] * f[k * 3 + 2], rings[2][q + k], 1e-4f)
+    }
 }

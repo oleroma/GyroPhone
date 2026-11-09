@@ -237,6 +237,8 @@ public sealed class OverlaySettings
     /// <summary>Laser pointer turned as a trackball: which way of it the laser faces (0 −Z into the screen, 1 +Z, 2 +X, 3 −X, 4 +Y, 5 −Y).</summary>
     public int LaserFaces { get; set; }
     public bool LaserAxes { get; set; } = true;
+    /// <summary>Laser pointer, Sphere look: the gimbal's yaw, pitch and roll rings (LaserTrace.GimbalRing), a locked axis's faint. As the phone's GyroDisplay.laserGimbal.</summary>
+    public bool LaserGimbal { get; set; }
     /// <summary>Draw mode: the beam paints the sphere's inside, <see cref="LaserBrush"/> degrees round; it fades after <see cref="LaserFadeMs"/> ms (0 = never).</summary>
     public bool LaserDraw { get; set; }
     public int LaserBrush { get; set; } = 4;
@@ -296,6 +298,15 @@ public sealed class OverlaySettings
     /// <summary>A trackball (no gravity, compass or ease back).</summary>
     [JsonIgnore]
     public bool IsTrackball => TurnsWith == OverlayTurnsWith.Trackball;
+
+    /// <summary>The gimbal axes held at 0 (bit 0 yaw, 1 pitch, 2 roll): a trackball's locked rows, Camera's roll, none with the phone. As the phone's GyroDisplay.gimbalLocks.</summary>
+    [JsonIgnore]
+    public int GimbalLocks => TurnsWith switch
+    {
+        OverlayTurnsWith.Trackball => Enumerable.Range(0, 3).Aggregate(0, (acc, i) => ((TrackballAxes >> (8 * i)) & TrackballLock) != 0 ? acc | (1 << i) : acc),
+        OverlayTurnsWith.Camera => 4,
+        _ => 0,
+    };
 
     /// <summary>It turns with the game's camera (no gravity, compass or turn amount).</summary>
     [JsonIgnore]

@@ -242,4 +242,49 @@ public class LaserTraceTests
         Assert.Equal(5, t.Strokes.Count);
         Assert.True(t.Strokes.Gap(4));
     }
+
+    private static float[] GimbalPose(float a, float b, float c)
+    {
+        static float[] Mul(float[] x, float[] y)
+        {
+            var r = new float[9];
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++) r[i * 3 + j] = x[i * 3] * y[j] + x[i * 3 + 1] * y[3 + j] + x[i * 3 + 2] * y[6 + j];
+            return r;
+        }
+        float[] ry = [MathF.Cos(a), 0f, MathF.Sin(a), 0f, 1f, 0f, -MathF.Sin(a), 0f, MathF.Cos(a)];
+        float[] rx = [1f, 0f, 0f, 0f, MathF.Cos(b), -MathF.Sin(b), 0f, MathF.Sin(b), MathF.Cos(b)];
+        float[] rz = [MathF.Cos(c), -MathF.Sin(c), 0f, MathF.Sin(c), MathF.Cos(c), 0f, 0f, 0f, 1f];
+        return Mul(Mul(ry, rx), rz);
+    }
+
+    [Fact]
+    public void GimbalAnglesReadBackAPose()
+    {
+        var g = LaserTrace.GimbalAngles(GimbalPose(0.5f, -0.3f, 0.2f), 0);
+        Assert.Equal(0.5f, g[0], 4);
+        Assert.Equal(-0.3f, g[1], 4);
+        Assert.Equal(0.2f, g[2], 4);
+        // Over the top with roll locked: read the way that keeps roll at 0.
+        g = LaserTrace.GimbalAngles(GimbalPose(0.4f, 2.2f, 0f), 4);
+        Assert.Equal(0f, g[2], 4);
+        Assert.Equal(2.2f, g[1], 4);
+        Assert.Equal(0.4f, g[0], 4);
+    }
+
+    [Fact]
+    public void GimbalRingsNestAsAGimbal()
+    {
+        float[] angles = [0.7f, 0.4f, 0.3f];
+        var f = GimbalPose(0.7f, 0.4f, 0f);
+        var rings = new[] { LaserTrace.GimbalRing(0, angles), LaserTrace.GimbalRing(1, angles), LaserTrace.GimbalRing(2, angles) };
+        for (int i = 0; i < 3; i++)
+            foreach (var p in rings[i])
+                Assert.Equal(LaserTrace.GimbalRadii[i], MathF.Sqrt(p.X * p.X + p.Y * p.Y + p.Z * p.Z), 4);
+        Assert.Equal(0f, rings[0][0].Y, 4);
+        Assert.Equal(LaserTrace.GimbalRadii[1] * f[0], rings[1][0].X, 4);
+        Assert.Equal(LaserTrace.GimbalRadii[1] * f[3], rings[1][0].Y, 4);
+        Assert.Equal(LaserTrace.GimbalRadii[2] * f[2], rings[2][16].X, 4);
+        Assert.Equal(LaserTrace.GimbalRadii[2] * f[8], rings[2][16].Z, 4);
+    }
 }

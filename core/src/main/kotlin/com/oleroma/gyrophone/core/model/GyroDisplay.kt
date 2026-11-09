@@ -137,9 +137,11 @@ data class GyroDisplay(
     val trackballInvert: Boolean = false,
     /** PHONE and BALL: seen from a fixed angle (30° round, 30° above) with the world's axes, as the laser pointer is, instead of face-on. */
     val axonometric: Boolean = false,
-    /** LASER: the 15° grid on the sphere, and its three axes. */
+    /** LASER: the 15° grid on the sphere, and the laser's three axes (turning with it). */
     val laserGrid: Boolean = true,
     val laserAxes: Boolean = true,
+    /** LASER, Sphere look: the gimbal's yaw, pitch and roll rings ([com.oleroma.gyrophone.core.engine.LaserTrace.gimbalRing]), a locked axis's faint. */
+    val laserGimbal: Boolean = false,
     /** LASER: seen from the fixed axonometric angle (30° round, 30° above); off, face-on. */
     val laserAxonometric: Boolean = true,
     /** LASER: the beam stays pointing ahead and the sphere (grid, axes, paint) turns under it instead. */
@@ -367,6 +369,17 @@ fun GyroDisplay.easeOf(i: Int): AxisEase = trackballEase.getOrNull(i) ?: AxisEas
 
 /** This display with trackball axis [i] easing as [e]. */
 fun GyroDisplay.withEase(i: Int, e: AxisEase): GyroDisplay = copy(trackballEase = List(3) { if (it == i) e else easeOf(it) })
+
+/**
+ * The gimbal axes held at 0 (bit 0 yaw, 1 pitch, 2 roll): a trackball's locked rows, Camera's roll
+ * (it never rolls), none turning with the phone.
+ */
+val GyroDisplay.gimbalLocks: Int
+    get() = when (turnsWith) {
+        TurnsWith.TRACKBALL -> (0..2).fold(0) { acc, i -> if (trackballAxes shr (8 * i) and TRACKBALL_LOCK != 0) acc or (1 shl i) else acc }
+        TurnsWith.CAMERA -> 4
+        else -> 0
+    }
 
 /**
  * In a [GyroDisplay.trackballAxes] byte: that axis is locked, held at 0 whatever turns the others

@@ -346,6 +346,64 @@ public sealed class LaserTrace
     public static (float X, float Y, float Z) Beam(float[] m) => (-m[2], -m[5], -m[8]);
 
     /// <summary>The crosshair shapes (OverlaySettings.CrosshairShape).</summary>
+    /// <summary>The gimbal rings' radii (the sphere's is 1): yaw outside, then pitch, then roll.</summary>
+    public static readonly float[] GimbalRadii = [0.9f, 0.8f, 0.7f];
+
+    /// <summary>
+    /// The gimbal angles of pose <paramref name="m"/> (row-major, as Ry(yaw)·Rx(pitch)·Rz(roll), radians): of the two
+    /// ways to read them, the one with the <paramref name="locks"/> axes (bit 0 yaw, 1 pitch, 2 roll) nearest straight,
+    /// so a locked axis reads 0 even past the poles. As the phone's LaserTrace.gimbalAngles.
+    /// </summary>
+    public static float[] GimbalAngles(float[] m, int locks)
+    {
+        float a = MathF.Atan2(m[2], m[8]);
+        float b = MathF.Asin(Math.Clamp(-m[5], -1f, 1f));
+        float c = MathF.Atan2(m[3], m[4]);
+        static float Wrap(float x) => x > MathF.PI ? x - 2 * MathF.PI : x < -MathF.PI ? x + 2 * MathF.PI : x;
+        float[] here = [a, b, c];
+        float[] alt = [Wrap(a + MathF.PI), Wrap(MathF.PI - b), Wrap(c + MathF.PI)];
+        float h = 0f, t = 0f;
+        for (int i = 0; i < 3; i++)
+            if ((locks & (1 << i)) != 0) { h += MathF.Abs(here[i]); t += MathF.Abs(alt[i]); }
+        return t < h - 1e-4f ? alt : here;
+    }
+
+    /// <summary>
+    /// Gimbal ring <paramref name="i"/> (0 yaw, 1 pitch, 2 roll) for <paramref name="angles"/> (<see cref="GimbalAngles"/>),
+    /// nested as a real gimbal's: the yaw ring turns about the vertical and holds the pitch ring's pivots; the pitch
+    /// ring tilts about the yaw ring's right and holds the roll ring's; the roll ring rolls about where it faces.
+    /// As the phone's LaserTrace.gimbalRing.
+    /// </summary>
+    public static (float X, float Y, float Z)[] GimbalRing(int i, float[] angles, int steps = 64)
+    {
+        float ca = MathF.Cos(angles[0]), sa = MathF.Sin(angles[0]);
+        float b = i >= 1 ? angles[1] : 0f, c = i >= 2 ? angles[2] : 0f;
+        float cb = MathF.Cos(b), sb = MathF.Sin(b), cc = MathF.Cos(c), sc = MathF.Sin(c);
+        float[] ry = [ca, 0f, sa, 0f, 1f, 0f, -sa, 0f, ca];
+        float[] rx = [1f, 0f, 0f, 0f, cb, -sb, 0f, sb, cb];
+        float[] rz = [cc, -sc, 0f, sc, cc, 0f, 0f, 0f, 1f];
+        var f = Mul(Mul(ry, rx), rz);
+        float rho = GimbalRadii[i];
+        var o = new (float X, float Y, float Z)[steps + 1];
+        for (int j = 0; j <= steps; j++)
+        {
+            float th = j * 2f * MathF.PI / steps;
+            float p = rho * MathF.Cos(th), q = rho * MathF.Sin(th);
+            // Yaw: its XY plane (round the vertical and the pitch pivots); pitch: XZ; roll: YZ.
+            var (x, y, z) = i switch { 0 => (p, q, 0f), 1 => (p, 0f, q), _ => (0f, p, q) };
+            o[j] = (f[0] * x + f[1] * y + f[2] * z, f[3] * x + f[4] * y + f[5] * z, f[6] * x + f[7] * y + f[8] * z);
+        }
+        return o;
+    }
+
+    private static float[] Mul(float[] x, float[] y)
+    {
+        var r = new float[9];
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++) r[i * 3 + j] = x[i * 3] * y[j] + x[i * 3 + 1] * y[3 + j] + x[i * 3 + 2] * y[6 + j];
+        return r;
+    }
+
     public static readonly string[] Crosshairs = ["Cross", "Cross with gap", "Circle", "Circle and cross", "Dot", "T"];
 
     /// <summary>A crosshair on the sphere: Lines as polylines of points; Dot a closed ring to fill, or null.</summary>

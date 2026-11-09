@@ -234,7 +234,8 @@ internal fun GyroDisplaySettingsScreen(
                     SwitchRow("Axonometric view", d.laserAxonometric, LASER_AXON_HINT) { set(d.copy(laserAxonometric = it)) }
                     SwitchRow("Sphere turns, beam stays ahead", d.laserSphereTurns, "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.") { set(d.copy(laserSphereTurns = it)) }
                     if (!d.laserRifle) SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
-                    SwitchRow("Axes (yaw Y red, pitch X green, roll Z blue)", d.laserAxes) { set(d.copy(laserAxes = it)) }
+                    SwitchRow("Axes (yaw Y red, pitch X green, roll Z blue)", d.laserAxes, "They turn with the laser, R along its beam.") { set(d.copy(laserAxes = it)) }
+                    if (!d.laserRifle && !d.laserCrosshair) SwitchRow("Gimbal rings", d.laserGimbal, "Yaw (red, outside), pitch (green) and roll (blue) rings nested as a gimbal's, each turned by its own angle; a locked axis's ring is faint.") { set(d.copy(laserGimbal = it)) }
                     GroupTitle("Draw")
                     SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim.") { set(d.copy(laserDraw = it)) }
                     if (d.laserDraw) Indented {

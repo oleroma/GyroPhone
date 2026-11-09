@@ -48,7 +48,7 @@ internal sealed class OverlaysPage : Page
 
     // Look
     private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook;
-    private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserDraw, _laserClearOnRatchet;
+    private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserGimbal, _laserDraw, _laserClearOnRatchet;
     private readonly Seg<int> _laserFade;
     private readonly Seg<int> _laserShape;
     private readonly StackPanel _chOptions;
@@ -333,9 +333,11 @@ internal sealed class OverlaysPage : Page
         lb.Children.Add(_laserAxon);
         _laserSphereTurns = Parts.Toggle("Sphere turns, beam stays ahead", () => Change(o => o.LaserSphereTurns = !o.LaserSphereTurns), "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.");
         lb.Children.Add(_laserSphereTurns);
-        _laserAxes = Parts.Toggle("Axes (yaw Y red, pitch X green, roll Z blue)", () => Change(o => o.LaserAxes = !o.LaserAxes));
+        _laserAxes = Parts.Toggle("Axes (yaw Y red, pitch X green, roll Z blue)", () => Change(o => o.LaserAxes = !o.LaserAxes), "They turn with the laser, R along its beam.");
+        _laserGimbal = Parts.Toggle("Gimbal rings", () => Change(o => o.LaserGimbal = !o.LaserGimbal), "Yaw (red, outside), pitch (green) and roll (blue) rings nested as a gimbal's, each turned by its own angle; a locked axis's ring is faint.");
         lb.Children.Add(_laserGrid);
         lb.Children.Add(_laserAxes);
+        lb.Children.Add(_laserGimbal);
         lb.Children.Add(Parts.Divider());
         _laserDraw = Parts.Toggle("Draw mode", () => Change(o => o.LaserDraw = !o.LaserDraw), "The beam paints the inside of the sphere as you aim.");
         lb.Children.Add(_laserDraw);
@@ -634,6 +636,8 @@ internal sealed class OverlaysPage : Page
         Parts.SetChecked(_laserSphereTurns, o.LaserSphereTurns);
         Parts.SetChecked(_laserGrid, o.LaserGrid);
         Parts.SetChecked(_laserAxes, o.LaserAxes);
+        Parts.SetChecked(_laserGimbal, o.LaserGimbal);
+        Parts.Show(_laserGimbal, !o.LaserRifle && !o.LaserCrosshair);
         Parts.SetChecked(_laserDraw, o.LaserDraw);
         Parts.Show(_laserDrawOptions, o.LaserDraw);
         _laserBrush.Set(o.LaserBrush);

@@ -39,6 +39,7 @@ import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayColor
 import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.MotionAxis
+import com.oleroma.gyrophone.core.model.gimbalLocks
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.acos
@@ -253,6 +254,13 @@ private class VisState {
     private val levelPaths = Array(LEVELS * HUES * 2) { Path() }
 
     private val crossPath = Path()
+    private val gimbalAngles = FloatArray(3)
+
+    /** The gimbal's yaw, pitch and roll rings for the laser's pose [m] ([LaserTrace.gimbalRing]). */
+    private fun gimbalRings(d: GyroDisplay): Array<FloatArray> {
+        LaserTrace.gimbalAngles(m, d.gimbalLocks, gimbalAngles)
+        return Array(3) { LaserTrace.gimbalRing(it, gimbalAngles) }
+    }
 
     /**
      * The crosshair look's crosshair ([LaserTrace.crosshair]) where [beam] lands on the sphere of
@@ -350,8 +358,12 @@ private class VisState {
         fun axes(front: Boolean) {
             if (!d.laserAxes) return
             for (i in 0..2) {
+                // Turning with the laser: its own axis i, column i of its pose.
+                val ax = m[i]
+                val ay = m[3 + i]
+                val az = m[6 + i]
                 for (sign in intArrayOf(1, -1)) {
-                    val p = laserAt(c, r, if (i == 0) sign.toFloat() else 0f, if (i == 1) sign.toFloat() else 0f, if (i == 2) sign.toFloat() else 0f)
+                    val p = laserAt(c, r, sign * ax, sign * ay, sign * az)
                     if ((pv[2] > 0f) != front) continue
                     val a = axisColors[i]
                     drawLine(a.copy(alpha = a.alpha * (if (sign > 0) 1f else 0.4f) * (if (front) 0.7f else 1f)), c, p, 1.5f * density, StrokeCap.Round)
@@ -359,7 +371,7 @@ private class VisState {
                         drawCircle(a, 2.5f * density, p)
                         // Its letter just beyond the tip: P (X), Y (Y), R (Z), as the laser aims.
                         val k = 1f + 12f * density / r
-                        val q = laserAt(c, r, if (i == 0) k else 0f, if (i == 1) k else 0f, if (i == 2) k else 0f)
+                        val q = laserAt(c, r, k * ax, k * ay, k * az)
                         text.textSize = 11f * density
                         text.color = a.copy(alpha = a.alpha * (if (front) 0.8f else 1f)).toArgb()
                         drawContext.canvas.nativeCanvas.drawText(LASER_AXIS_LETTERS[i], q.x, q.y + text.textSize * 0.35f, text)
@@ -486,7 +498,31 @@ private class VisState {
             axes(true)
             return
         }
+        // The Sphere look's gimbal rings: their far halves now, near halves over the beam.
+        val gimbal = if (d.laserGimbal) gimbalRings(d) else null
+        fun rings(front: Boolean) {
+            if (gimbal == null) return
+            val locks = d.gimbalLocks
+            for (i in 0..2) {
+                val pts = gimbal[i]
+                val a = axisColors[GIMBAL_COLOR[i]]
+                val color = a.copy(alpha = a.alpha * (if (locks and (1 shl i) != 0) 0.25f else 1f) * (if (front) 0.85f else 0.4f))
+                path.reset()
+                var down = false
+                var j = 0
+                while (j < pts.size) {
+                    val p = laserAt(c, r, pts[j], pts[j + 1], pts[j + 2])
+                    if ((pv[2] > 0f) == front) {
+                        if (down) path.lineTo(p.x, p.y) else path.moveTo(p.x, p.y)
+                        down = true
+                    } else down = false
+                    j += 3
+                }
+                drawPath(path, color, style = Stroke((if (front) 2.5f else 1.5f) * density, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            }
+        }
         if (d.laserGrid) drawPath(gridPath(gridBack), grid, style = thin)
+        rings(false)
         axes(false)
         paint(false)
         if (!hitFront) spot()
@@ -494,6 +530,7 @@ private class VisState {
         drawCircle(beamCol, 3f * density, c)
         paint(true)
         if (d.laserGrid) drawPath(gridPath(gridFront), grid.copy(alpha = grid.alpha * 0.6f), style = thin)
+        rings(true)
         axes(true)
         if (hitFront) spot()
         drawCircle(grid, r, c, style = Stroke(1.5f * density))
@@ -1164,6 +1201,9 @@ private const val POLY_STEPS = 12
 
 /** How strongly edges round the back show. */
 private const val HIDDEN_ALPHA = 0.3f
+
+/** A gimbal ring's colour, as its axis's (laser axis colours X, Y, Z): yaw Y, pitch X, roll Z. */
+private val GIMBAL_COLOR = intArrayOf(1, 0, 2)
 
 /** The gimbal's yaw, pitch and roll rings, in ball radii. */
 private val GIMBAL_RADII = doubleArrayOf(0.95, 0.82, 0.69)
