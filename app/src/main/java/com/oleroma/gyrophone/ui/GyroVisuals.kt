@@ -254,13 +254,8 @@ private class VisState {
     private val levelPaths = Array(LEVELS * HUES * 2) { Path() }
 
     private val crossPath = Path()
-    private val gimbalAngles = FloatArray(3)
-
-    /** The gimbal's yaw, pitch and roll rings for the laser's pose [m] ([LaserTrace.gimbalRing]). */
-    private fun gimbalRings(d: GyroDisplay): Array<FloatArray> {
-        LaserTrace.gimbalAngles(m, d.gimbalLocks, gimbalAngles)
-        return Array(3) { LaserTrace.gimbalRing(it, gimbalAngles) }
-    }
+    /** The gimbal's yaw, pitch and roll rings, fixed to the sphere ([LaserTrace.gimbalRing]). */
+    private val gimbalRingPts = Array(3) { LaserTrace.gimbalRing(it) }
 
     /**
      * The crosshair look's crosshair ([LaserTrace.crosshair]) where [beam] lands on the sphere of
@@ -499,7 +494,7 @@ private class VisState {
             return
         }
         // The Sphere look's gimbal rings: their far halves now, near halves over the beam.
-        val gimbal = if (d.laserGimbal) gimbalRings(d) else null
+        val gimbal = if (d.laserGimbal) gimbalRingPts else null
         fun rings(front: Boolean) {
             if (gimbal == null) return
             val locks = d.gimbalLocks
@@ -519,10 +514,6 @@ private class VisState {
                     j += 3
                 }
                 drawPath(path, color, style = Stroke((if (front) 2.5f else 1.5f) * density, cap = StrokeCap.Round, join = StrokeJoin.Round))
-                // Its dot: how far it has turned about its own axis.
-                LaserTrace.gimbalMark(i, gimbalAngles, la)
-                val p = laserAt(c, r, la[0], la[1], la[2])
-                if ((pv[2] > 0f) == front) drawCircle(color.copy(alpha = minOf(1f, color.alpha * 1.4f)), (if (front) 4f else 3f) * density, p)
             }
         }
         if (d.laserGrid) drawPath(gridPath(gridBack), grid, style = thin)

@@ -248,56 +248,16 @@ class CameraTurnTest {
         assertFalse(F.held(F.LT, com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(rt = 900))))
     }
 
-    /** Ry(a)·Rx(b)·Rz(c), row-major. */
-    private fun gimbal(a: Float, b: Float, c: Float): FloatArray {
-        fun mul(x: FloatArray, y: FloatArray) = FloatArray(9) { k -> val i = k / 3; val j = k % 3; x[i * 3] * y[j] + x[i * 3 + 1] * y[3 + j] + x[i * 3 + 2] * y[6 + j] }
-        val ry = floatArrayOf(kotlin.math.cos(a), 0f, kotlin.math.sin(a), 0f, 1f, 0f, -kotlin.math.sin(a), 0f, kotlin.math.cos(a))
-        val rx = floatArrayOf(1f, 0f, 0f, 0f, kotlin.math.cos(b), -kotlin.math.sin(b), 0f, kotlin.math.sin(b), kotlin.math.cos(b))
-        val rz = floatArrayOf(kotlin.math.cos(c), -kotlin.math.sin(c), 0f, kotlin.math.sin(c), kotlin.math.cos(c), 0f, 0f, 0f, 1f)
-        return mul(mul(ry, rx), rz)
-    }
-
-    @Test fun gimbalAnglesReadBackAPose() {
-        val out = FloatArray(3)
-        LaserTrace.gimbalAngles(gimbal(0.5f, -0.3f, 0.2f), 0, out)
-        assertEquals(0.5f, out[0], 1e-4f)
-        assertEquals(-0.3f, out[1], 1e-4f)
-        assertEquals(0.2f, out[2], 1e-4f)
-        // Over the top with roll locked: read the way that keeps roll at 0.
-        val over = 2.2f
-        LaserTrace.gimbalAngles(gimbal(0.4f, over, 0f), 4, out)
-        assertEquals(0f, out[2], 1e-4f)
-        assertEquals(over, out[1], 1e-4f)
-        assertEquals(0.4f, out[0], 1e-4f)
-    }
-
-    @Test fun gimbalRingsGoRoundTheirAxes() {
-        val angles = floatArrayOf(0.7f, 0.4f, 0.3f)
-        val f0 = gimbal(0.7f, 0f, 0f)
-        val f1 = gimbal(0.7f, 0.4f, 0f)
-        val f2 = gimbal(0.7f, 0.4f, 0.3f)
-        // Each ring's axis: yaw the vertical (f0 Y), pitch the turned right (f1 X), roll the beam (f2 Z).
-        val axes = arrayOf(
-            floatArrayOf(f0[1], f0[4], f0[7]), floatArrayOf(f1[0], f1[3], f1[6]), floatArrayOf(f2[2], f2[5], f2[8]),
-        )
+    @Test fun gimbalRingsGoRoundTheSpheresAxes() {
+        val axes = arrayOf(floatArrayOf(0f, 1f, 0f), floatArrayOf(1f, 0f, 0f), floatArrayOf(0f, 0f, 1f))
         for (i in 0..2) {
             val rho = LaserTrace.GIMBAL_RADII[i]
-            val pts = LaserTrace.gimbalRing(i, angles, 64)
+            val pts = LaserTrace.gimbalRing(i, 64)
             val ax = axes[i]
             for (j in pts.indices step 3) {
                 assertEquals(rho, kotlin.math.sqrt(pts[j] * pts[j] + pts[j + 1] * pts[j + 1] + pts[j + 2] * pts[j + 2]), 1e-4f)
-                // Square to its axis: round it.
-                assertEquals(0f, pts[j] * ax[0] + pts[j + 1] * ax[1] + pts[j + 2] * ax[2], 1e-4f)
+                assertEquals(0f, pts[j] * ax[0] + pts[j + 1] * ax[1] + pts[j + 2] * ax[2], 1e-6f)
             }
         }
-        assertEquals(0f, axes[0][0], 1e-6f)
-        // The dots: yaw and pitch where the laser faces (beam, −Z of f1 for pitch), roll at the laser's up.
-        val mk = FloatArray(3)
-        LaserTrace.gimbalMark(1, angles, mk)
-        for (k in 0..2) assertEquals(-LaserTrace.GIMBAL_RADII[1] * f1[k * 3 + 2], mk[k], 1e-4f)
-        LaserTrace.gimbalMark(2, angles, mk)
-        for (k in 0..2) assertEquals(LaserTrace.GIMBAL_RADII[2] * f2[k * 3 + 1], mk[k], 1e-4f)
-        LaserTrace.gimbalMark(0, angles, mk)
-        assertEquals(0f, mk[1], 1e-4f)
     }
 }
