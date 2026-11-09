@@ -212,6 +212,7 @@ private class VisState {
             GyroDisplayKind.PHONE -> {
                 poseOf(feed, d)
                 val model = if (size.width >= size.height) landscape else portrait
+                model.perspective = d.perspective
                 // The model's long side is 2 units, its box about 2.3 of them.
                 val unit = minOf(box.width, box.height) / 2.3f
                 if (d.ghosts) {
@@ -228,14 +229,14 @@ private class VisState {
                         model.drawOutline(this, g.poses, at, path, box.center, unit, col(GyroDisplayColor.PHONE_EDGE).copy(alpha = col(GyroDisplayColor.PHONE_EDGE).alpha * 0.4f * (1f - (i - 1f) / GHOSTS)))
                     }
                 } else ghosts.remove(id)
-                if (d.axonometric) worldAxes(box.center, unit * 1.25f, false, op)
+                if (d.axonometric) worldAxes(box.center, unit * 1.25f, false, op, d.perspective)
                 model.draw(
                     this, m, path, box.center, unit,
                     col(GyroDisplayColor.PHONE_FRONT), col(GyroDisplayColor.PHONE_BACK), col(GyroDisplayColor.PHONE_SIDE),
                     col(GyroDisplayColor.PHONE_EDGE),
                     if (d.axes) arrayOf(col(GyroDisplayColor.PHONE_X), col(GyroDisplayColor.PHONE_Y), col(GyroDisplayColor.PHONE_Z)) else null,
                 )
-                if (d.axonometric) worldAxes(box.center, unit * 1.25f, true, op)
+                if (d.axonometric) worldAxes(box.center, unit * 1.25f, true, op, d.perspective)
             }
 
             GyroDisplayKind.RATCHET_RING -> drawRing(box, live, col(GyroDisplayColor.RING_TEXT),
@@ -256,7 +257,9 @@ private class VisState {
     private val pv = FloatArray(3)
     private var laserAxon = true
     private var laserTurned: FloatArray? = null
-    private val levelPaths = Array(LEVELS * HUES) { Path() }
+    private var laserPersp = false
+    // The 3D shape seen in perspective ([GyroDisplay.perspective]).
+    private var ballPersp = false
     // Paint by the way it moves: a path per (age step, colour), kept for reuse.
     private val movePaths = HashMap<Int, Path>()
     private val movePool = ArrayList<Path>()
@@ -352,7 +355,8 @@ private class VisState {
     /** Picture point of shown-frame direction ([x], [y], [z]) on a sphere of radius [r] at [c]; its depth (toward the viewer +) left in [pv]. */
     private fun laserAt(c: Offset, r: Float, x: Float, y: Float, z: Float): Offset {
         LaserTrace.view(x, y, z, pv, axon = laserAxon, turned = laserTurned)
-        return Offset(c.x + pv[0] * r, c.y - pv[1] * r)
+        val k = if (laserPersp) LaserTrace.perspective(pv[2]) else 1f
+        return Offset(c.x + pv[0] * r * k, c.y - pv[1] * r * k)
     }
 
     /**
@@ -370,6 +374,7 @@ private class VisState {
             else -> {}
         }
         laserAxon = d.laserAxonometric
+        laserPersp = d.perspective
         // Sphere turns: everything on it is seen from the pose, so the beam stays ahead.
         laserTurned = if (d.laserSphereTurns) m else null
         val r = minOf(box.width, box.height) / 2f * 0.95f
@@ -396,13 +401,21 @@ private class VisState {
         val grid = col(GyroDisplayColor.LASER_GRID)
         val thin = Stroke(density, cap = StrokeCap.Round, join = StrokeJoin.Round)
         val (gridFront, gridBack) = LaserTrace.grid(laserAxon, laserTurned)
-        fun gridPath(lines: List<FloatArray>): Path {
+        // A grid point (on the unit sphere, its depth from x and y, + on the near half) in the picture, with perspective.
+        fun gridK(x: Float, y: Float, near: Boolean): Float {
+            if (!laserPersp) return r
+            val z = kotlin.math.sqrt((1f - x * x - y * y).coerceAtLeast(0f))
+            return r * LaserTrace.perspective(if (near) z else -z)
+        }
+        fun gridPath(lines: List<FloatArray>, near: Boolean): Path {
             path.reset()
             for (l in lines) {
-                path.moveTo(c.x + l[0] * r, c.y - l[1] * r)
+                var k = gridK(l[0], l[1], near)
+                path.moveTo(c.x + l[0] * k, c.y - l[1] * k)
                 var i = 2
                 while (i < l.size) {
-                    path.lineTo(c.x + l[i] * r, c.y - l[i + 1] * r)
+                    k = gridK(l[i], l[i + 1], near)
+                    path.lineTo(c.x + l[i] * k, c.y - l[i + 1] * k)
                     i += 2
                 }
             }
@@ -454,18 +467,31 @@ private class VisState {
         // [fireAhead] straight ahead to [fireBehind] turned all the way round), so a few paths draw them all.
         fun lines(ring: LaserTrace.Ring, front: Boolean, life: (Int, Long) -> Float, width: Float, glow: Boolean, fireAhead: Color, fireBehind: Color) {
             if (ring.count < 2) return
-            for (p in levelPaths) p.reset()
             for (p in movePaths.values) {
                 p.reset()
                 movePool.add(p)
             }
             movePaths.clear()
             val steps = d.laserColourSteps.coerceIn(4, 32)
+            val paint3d = d.laserPaint3d
+            val fa = fireAhead.toArgb().toLong() and 0xFFFFFFFFL
+            val fb = fireBehind.toArgb().toLong() and 0xFFFFFFFFL
+            // The Fire colour [h] of the way from ahead (0) to behind (1), in [HUES] steps.
+            fun fireArgb(h: Float): Long {
+                val t = (h * (HUES - 1) + 0.5f).toInt().coerceIn(0, HUES - 1) / (HUES - 1f)
+                var out = 0L
+                for (ch in 0..3) {
+                    val a = (fa shr (ch * 8) and 0xFF).toFloat()
+                    val b = (fb shr (ch * 8) and 0xFF).toFloat()
+                    out = out or ((a + (b - a) * t + 0.5f).toLong().coerceIn(0L, 255L) shl (ch * 8))
+                }
+                return out
+            }
             val curve = d.laserCurve.coerceIn(0f, 1f)
             // The visible run of picture points being gathered (vx, vy), with the path key of the piece ending at each.
             var n = 0
             val wNow = width * (if (front) 0.6f else 1f)
-            fun pathFor(key: Int): Path = if (key < MOVE_KEYS) levelPaths[key] else movePaths.getOrPut(key) { movePool.removeLastOrNull() ?: Path() }
+            fun pathFor(key: Int): Path = movePaths.getOrPut(key) { movePool.removeLastOrNull() ?: Path() }
             // Draws the run: straight hops, or with [curve] its corners rounded (each corner a quadratic
             // curve split in two halves, one in each neighbouring piece's path).
             fun flush() {
@@ -540,14 +566,12 @@ private class VisState {
                     continue
                 }
                 val level = (kotlin.math.ceil(k * LEVELS).toInt()).coerceIn(1, LEVELS)
-                // Painted while firing: the Fire colours' paths; else the colour of the way it moves, in [steps] shades a channel.
+                // Painted while firing: a Fire colour (by how far round it is); else the colour of the way it moves.
                 val firing = ring.fire(i)
-                var moveKey = 0
+                var base = 0L
                 if (!firing) {
                     ring.direction(i, reach, way)
-                    val argb = LaserTrace.directionColor(way, moveColors)
-                    fun q(shift: Int) = (((argb shr shift and 0xFF) / 255f) * (steps - 1) + 0.5f).toInt().coerceIn(0, steps - 1)
-                    moveKey = MOVE_KEYS + ((level - 1) shl 15 or (q(16) shl 10) or (q(8) shl 5) or q(0))
+                    base = LaserTrace.directionColor(way, moveColors)
                 }
                 val dot = (la[0] * lb[0] + la[1] * lb[1] + la[2] * lb[2]).coerceIn(-1f, 1f)
                 val sub = (acos(dot) / STROKE_STEP_RAD).toInt().coerceIn(1, 32)
@@ -567,8 +591,22 @@ private class VisState {
                         flush()
                         continue
                     }
-                    val key = if (firing) (level - 1) * HUES + (LaserTrace.behind(z) * (HUES - 1) + 0.5f).toInt().coerceIn(0, HUES - 1) else moveKey
-                    vertex(pt.x, pt.y, if (n == 0) -1 else key)
+                    if (n == 0) {
+                        vertex(pt.x, pt.y, -1)
+                        continue
+                    }
+                    val argb = if (firing) fireArgb(LaserTrace.behind(z)) else base
+                    // 3D paint: lit by the sphere's light, thinner toward the rim; with perspective, bigger nearer.
+                    var light = 1f
+                    var wf = if (laserPersp) LaserTrace.perspective(pv[2]) else 1f
+                    if (paint3d) {
+                        light = LaserTrace.paintLight(pv[0], pv[1], pv[2], d.laserLighting)
+                        wf *= LaserTrace.paintWidth(pv[2])
+                    }
+                    // Colour in [steps] shades a channel, width in 8 steps: the piece's path.
+                    fun q(shift: Int) = (((argb shr shift and 0xFF) / 255f) * light * (steps - 1) + 0.5f).toInt().coerceIn(0, steps - 1)
+                    val wb = (wf / WIDTH_MAX * 7f + 0.5f).toInt().coerceIn(0, 7)
+                    vertex(pt.x, pt.y, MOVE_KEYS + ((level - 1) shl 18 or (wb shl 15) or (q(16) shl 10) or (q(8) shl 5) or q(0)))
                 }
             }
             flush()
@@ -576,8 +614,6 @@ private class VisState {
             val w = wNow
             // Flat ends: pieces of different colours meet without poking into each other or overlapping.
             val cap = StrokeCap.Butt
-            val core = Stroke(w, cap = cap, join = StrokeJoin.Round)
-            val wide = Stroke(w * 3f, cap = cap, join = StrokeJoin.Round)
             fun shaded(color: Color, k: Float): Color {
                 val shade = 0.35f + 0.65f * k
                 return Color(color.red * shade, color.green * shade, color.blue * shade, color.alpha)
@@ -587,24 +623,16 @@ private class VisState {
                 fun ch(shift: Int) = (q shr shift and 31) / (steps - 1f)
                 return Color(ch(10).coerceAtMost(1f), ch(5).coerceAtMost(1f), ch(0).coerceAtMost(1f), moveAlpha)
             }
-            // Oldest first, so newer paint lies on top; Fire over the way colours.
-            val moves = movePaths.entries.sortedBy { it.key }
-            var mi = 0
-            for (level in 1..LEVELS) {
+            // Oldest first (the age step is the key's top), so newer paint lies on top.
+            for ((key, path) in movePaths.entries.sortedBy { it.key }) {
+                val q = key - MOVE_KEYS
+                val level = (q shr 18) + 1
                 val k = level / LEVELS.toFloat()
                 val fade = (0.35f + 0.65f * k) * side
-                val from = mi
-                while (mi < moves.size && ((moves[mi].key - MOVE_KEYS) shr 15) + 1 == level) mi++
-                val fires = (0 until HUES).filter { !levelPaths[(level - 1) * HUES + it].isEmpty }
-                if (from == mi && fires.isEmpty()) continue
-                fun each(draw: (Path, Color) -> Unit) {
-                    for (e in from until mi) draw(moves[e].value, shaded(moveColor(moves[e].key), k))
-                    for (hue in fires) draw(levelPaths[(level - 1) * HUES + hue], shaded(androidx.compose.ui.graphics.lerp(fireAhead, fireBehind, hue / (HUES - 1f)), k))
-                }
-                each { path, color ->
-                    if (glow) drawPath(path, color.copy(alpha = color.alpha * fade * 0.22f), style = wide)
-                    drawPath(path, color.copy(alpha = color.alpha * fade), style = core)
-                }
+                val pw = w * maxOf(0.15f, (q shr 15 and 7) / 7f * WIDTH_MAX)
+                val color = shaded(moveColor(key), k)
+                if (glow) drawPath(path, color.copy(alpha = color.alpha * fade * 0.22f), style = Stroke(pw * 3f, cap = cap, join = StrokeJoin.Round))
+                drawPath(path, color.copy(alpha = color.alpha * fade), style = Stroke(pw, cap = cap, join = StrokeJoin.Round))
             }
         }
         val brushPx = maxOf(1.5f * density, r * Math.toRadians(d.laserBrush.coerceIn(1, 20).toDouble()).toFloat() * 0.6f)
@@ -637,7 +665,7 @@ private class VisState {
             axes(false)
             paint(false)
             val body = col(GyroDisplayColor.LASER_RIFLE)
-            for (f in LaserTrace.rifle(m, laserAxon, laserTurned)) {
+            for (f in LaserTrace.rifle(m, laserAxon, laserTurned, laserPersp)) {
                 path.reset()
                 for (i in 0 until 4) {
                     val x = c.x + f.xy[i * 2] * r
@@ -656,12 +684,12 @@ private class VisState {
         }
         if (crosshair) {
             // The crosshair look: no sphere or beam; a crosshair lying on the sphere where it aims.
-            if (d.laserGrid) drawPath(gridPath(gridBack), grid, style = thin)
+            if (d.laserGrid) drawPath(gridPath(gridBack, false), grid, style = thin)
             axes(false)
             paint(false)
             drawCrosshair(d, c, r, held, Color(LaserTrace.directionColor(lt?.moving ?: way.also { it.fill(0f) }, moveColors).toInt()), col)
             paint(true)
-            if (d.laserGrid) drawPath(gridPath(gridFront), grid.copy(alpha = grid.alpha * 0.6f), style = thin)
+            if (d.laserGrid) drawPath(gridPath(gridFront, true), grid.copy(alpha = grid.alpha * 0.6f), style = thin)
             axes(true)
             return
         }
@@ -691,7 +719,7 @@ private class VisState {
                 drawPath(path, color, style = Stroke(w, cap = StrokeCap.Round, join = StrokeJoin.Round, pathEffect = if (locked) dash else null))
             }
         }
-        if (d.laserGrid) drawPath(gridPath(gridBack), grid, style = thin)
+        if (d.laserGrid) drawPath(gridPath(gridBack, false), grid, style = thin)
         rings(false)
         axes(false)
         paint(false)
@@ -699,10 +727,26 @@ private class VisState {
         drawLine(beamCol, c, hit, 2.5f * density, StrokeCap.Round)
         drawCircle(beamCol, 3f * density, c)
         paint(true)
-        if (d.laserGrid) drawPath(gridPath(gridFront), grid.copy(alpha = grid.alpha * 0.6f), style = thin)
+        if (d.laserGrid) drawPath(gridPath(gridFront, true), grid.copy(alpha = grid.alpha * 0.6f), style = thin)
         rings(true)
         axes(true)
         if (hitFront) spot()
+        if (d.laserRimGlow) {
+            // A soft bright edge round the sphere's outline, inside and a little out.
+            val rim = col(GyroDisplayColor.LASER_RIM)
+            val out = r * 1.08f
+            drawCircle(
+                Brush.radialGradient(0.78f to Color.Transparent, 0.925f to rim, 1f to Color.Transparent, center = c, radius = out),
+                out, c,
+            )
+        }
+        if (d.laserGloss) {
+            // The shine where the light (upper left) reflects toward the viewer: halfway between them.
+            val gloss = col(GyroDisplayColor.LASER_GLOSS)
+            val at = Offset(c.x - 0.18f * r, c.y - 0.21f * r)
+            val gr = r * 0.24f
+            drawCircle(Brush.radialGradient(listOf(gloss, gloss.copy(alpha = 0f)), center = at, radius = gr), gr, at)
+        }
         drawCircle(grid, r, c, style = Stroke(1.5f * density))
     }
 
@@ -710,13 +754,14 @@ private class VisState {
      * The world's axes in the axonometric view (pitch right green, roll up blue, yaw toward you red), [len] long
      * from [c]: the halves behind the middle ([front] false) or in front of it.
      */
-    private fun DrawScope.worldAxes(c: Offset, len: Float, front: Boolean, op: Float) {
+    private fun DrawScope.worldAxes(c: Offset, len: Float, front: Boolean, op: Float, persp: Boolean = false) {
         for (i in 0..2) {
             for (sign in intArrayOf(1, -1)) {
                 LaserTrace.view(if (i == 0) sign.toFloat() else 0f, if (i == 1) sign.toFloat() else 0f, if (i == 2) sign.toFloat() else 0f, pv)
                 if ((pv[2] > 0f) != front) continue
                 val a = WORLD_AXES[i].copy(alpha = op * (if (sign > 0) 0.9f else 0.35f))
-                val p = Offset(c.x + pv[0] * len, c.y - pv[1] * len)
+                val k = if (persp) len * LaserTrace.perspective(pv[2]) else len
+                val p = Offset(c.x + pv[0] * k, c.y - pv[1] * k)
                 drawLine(a, c, p, 1.5f * density, StrokeCap.Round)
                 if (sign > 0) drawCircle(a, 2.5f * density, p)
             }
@@ -777,10 +822,11 @@ private class VisState {
 
     private fun DrawScope.drawBall(feed: GyroDisplayFeed?, d: GyroDisplay, box: Rect, live: Int, col: (GyroDisplayColor) -> Color) {
         poseOf(feed, d)
+        ballPersp = d.perspective
         // Axonometric: the world's axes poke out of the shape, so it is shorter.
         val r = minOf(box.width, box.height) / 2f * (if (d.axonometric) 0.78f else 0.95f)
         val c = box.center
-        if (d.axonometric) worldAxes(c, r * 1.22f, false, d.opacity.coerceIn(0.05f, 1f))
+        if (d.axonometric) worldAxes(c, r * 1.22f, false, d.opacity.coerceIn(0.05f, 1f), d.perspective)
         val lines = col(GyroDisplayColor.BALL_LINES)
         val faint = lines.copy(alpha = lines.alpha * HIDDEN_ALPHA)
         val body = col(GyroDisplayColor.BALL_BODY)
@@ -847,7 +893,7 @@ private class VisState {
             }
 
             else -> {
-                mesh.project(m)
+                mesh.project(m, if (ballPersp) LaserTrace.CAMERA_DISTANCE else 0f)
                 val e = mesh.edges
                 for (k in 0 until e.size / 2) {
                     val ia = e[k * 2]
@@ -877,7 +923,7 @@ private class VisState {
         penBack = null
         if (d.screenMark) sphereDot(c, r, 0f, 0f, 1f, col(GyroDisplayColor.BALL_MARK))
         if (d.topMark) sphereDot(c, r, 0f, 1f, 0f, col(GyroDisplayColor.BALL_POLE))
-        if (d.axonometric) worldAxes(c, r * 1.22f, true, d.opacity.coerceIn(0.05f, 1f))
+        if (d.axonometric) worldAxes(c, r * 1.22f, true, d.opacity.coerceIn(0.05f, 1f), d.perspective)
     }
 
     /** A smooth ball's fill: one disk, lit from the top left. */
@@ -971,8 +1017,9 @@ private class VisState {
         val x = m[0] * px + m[1] * py + m[2] * pz
         val y = m[3] * px + m[4] * py + m[5] * pz
         val z = m[6] * px + m[7] * py + m[8] * pz
-        val sx = c.x + x * r
-        val sy = c.y - y * r
+        val pk = if (ballPersp) r * LaserTrace.perspective(z) else r
+        val sx = c.x + x * pk
+        val sy = c.y - y * pk
         val back = penBack
         if (!penDown) {
             if (z >= 0f) pen.moveTo(sx, sy) else back?.moveTo(sx, sy)
@@ -1008,8 +1055,9 @@ private class VisState {
     private fun DrawScope.sphereDot(c: Offset, r: Float, px: Float, py: Float, pz: Float, color: Color) {
         val z = m[6] * px + m[7] * py + m[8] * pz
         if (z <= 0f) return
-        val x = c.x + (m[0] * px + m[1] * py + m[2] * pz) * r
-        val y = c.y - (m[3] * px + m[4] * py + m[5] * pz) * r
+        val pk = if (ballPersp) r * LaserTrace.perspective(z) else r
+        val x = c.x + (m[0] * px + m[1] * py + m[2] * pz) * pk
+        val y = c.y - (m[3] * px + m[4] * py + m[5] * pz) * pk
         // Foreshortened toward the rim.
         drawCircle(color, r * 0.1f * (0.4f + 0.6f * z), Offset(x, y))
     }
@@ -1228,12 +1276,15 @@ private class PhoneModel(landscape: Boolean) {
     private var cy = 0f
     private var unit = 0f
 
+    /** Seen in perspective (nearer parts bigger), as [GyroDisplay.perspective]; off, flat. */
+    var perspective = true
+
     /** Projects (x, y, z) turned by [m] (from [at]) into [p]: screen x, y and the scale there. */
     private fun project(m: FloatArray, x: Float, y: Float, z: Float, at: Int = 0) {
         val rx = m[at] * x + m[at + 1] * y + m[at + 2] * z
         val ry = m[at + 3] * x + m[at + 4] * y + m[at + 5] * z
         val rz = m[at + 6] * x + m[at + 7] * y + m[at + 8] * z
-        val k = unit * CAMERA / (CAMERA - rz)
+        val k = if (perspective) unit * CAMERA / (CAMERA - rz) else unit
         p[0] = cx + rx * k
         p[1] = cy - ry * k
         p[2] = k
@@ -1397,8 +1448,11 @@ private const val LEVELS = 8
 /** A laser pointer's Fire strokes blend from Fire ahead to Fire behind in this many steps (one path each). */
 private const val HUES = 8
 
-// Way-coloured paint paths' keys start here (after the Fire paths').
-private const val MOVE_KEYS = 1 shl 20
+// Paint paths' keys start here: age step (bits 18-20), width step (15-17), colour (5 bits a channel).
+private const val MOVE_KEYS = 1 shl 21
+
+// The widest a paint piece's width step reaches (×, foreshortening and perspective included).
+private const val WIDTH_MAX = 1.3f
 
 /** The edge's swing per degree, its furthest swing, each layer's step inwards and the outer corner radius. */
 private const val EDGE_PX_PER_DEG = 1.5f

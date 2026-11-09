@@ -89,13 +89,19 @@ internal class Mesh(
     /**
      * Projects every vertex by row-major [m] into [tx], [ty], [tz] (view frame, z toward the viewer)
      * and marks each face front facing or not, its depth and its shade (how squarely it faces).
+     * With [camera] > 0 (the eye's distance, in the shape's radii) x and y are in perspective.
      */
-    fun project(m: FloatArray) {
+    fun project(m: FloatArray, camera: Float = 0f) {
         for (i in tx.indices) {
             val x = vertices[i * 3]; val y = vertices[i * 3 + 1]; val z = vertices[i * 3 + 2]
             tx[i] = m[0] * x + m[1] * y + m[2] * z
             ty[i] = m[3] * x + m[4] * y + m[5] * z
             tz[i] = m[6] * x + m[7] * y + m[8] * z
+            if (camera > 0f) {
+                val k = camera / (camera - tz[i].coerceAtMost(camera - 0.5f))
+                tx[i] *= k
+                ty[i] *= k
+            }
         }
         for (f in faces.indices) {
             val nz = m[6] * normals[f * 3] + m[7] * normals[f * 3 + 1] + m[8] * normals[f * 3 + 2]

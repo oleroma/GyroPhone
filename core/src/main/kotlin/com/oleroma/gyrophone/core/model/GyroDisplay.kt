@@ -195,6 +195,17 @@ data class GyroDisplay(
     val laserColourSteps: Int = 16,
     val laserCurve: Float = 0.5f,
     val laserLineSmoothing: Float = 0f,
+    /**
+     * LASER: [laserPaint3d] draws the paint as lying on the round sphere: thinner where its surface turns away
+     * toward the rim, and lit by the sphere's light (from the upper left) as strongly as [laserLighting] (0..1).
+     * The Sphere look's [laserGloss] (a shine where the light hits) and [laserRimGlow] (a soft bright edge).
+     */
+    val laserPaint3d: Boolean = true,
+    val laserLighting: Float = 0.6f,
+    val laserGloss: Boolean = true,
+    val laserRimGlow: Boolean = true,
+    /** 3D phone, 3D shape and laser pointer: seen in perspective (nearer parts bigger); off, flat (no perspective). */
+    val perspective: Boolean = true,
     /** What turns it (the pose kinds): the phone, the game's camera, or a trackball. */
     val turnsWith: TurnsWith = TurnsWith.PHONE,
     val opacity: Float = 0.7f,
@@ -359,6 +370,8 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     LASER_MOVE_DOWN(GyroDisplayKind.LASER, "move_down", "Moving down", 0xFF800080),
     LASER_MOVE_TOWARD(GyroDisplayKind.LASER, "move_toward", "Moving toward you", 0xFF8080FF),
     LASER_MOVE_AWAY(GyroDisplayKind.LASER, "move_away", "Moving away", 0xFF808000),
+    LASER_GLOSS(GyroDisplayKind.LASER, "gloss", "Gloss", 0x99FFFFFF),
+    LASER_RIM(GyroDisplayKind.LASER, "rim", "Rim glow", 0x66BFE3FF),
     LASER_RIFLE(GyroDisplayKind.LASER, "rifle", "Rifle", 0xFF5A616C),
     LASER_FIRE(GyroDisplayKind.LASER, "fire", "Fire", 0xFFFF4A3D),
     LASER_FIRE_BEHIND(GyroDisplayKind.LASER, "fire_behind", "Fire behind", 0xFF8A1E18),

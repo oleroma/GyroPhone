@@ -173,6 +173,7 @@ internal fun GyroDisplaySettingsScreen(
                     SwitchRow("Axis arrows", d.axes) { set(d.copy(axes = it)) }
                     Hint("Arrows along the phone's own right, up and screen directions.")
                     SwitchRow("Axonometric view", d.axonometric, AXON_HINT) { set(d.copy(axonometric = it)) }
+                    SwitchRow("Perspective", d.perspective, "Nearer parts show bigger, as a camera sees them. Off: flat, every part the same size wherever it is.") { set(d.copy(perspective = it)) }
                 }
 
                 GyroDisplayKind.RATCHET_RING ->
@@ -211,6 +212,7 @@ internal fun GyroDisplaySettingsScreen(
                     SwitchRow("Mark where the screen faces", d.screenMark) { set(d.copy(screenMark = it)) }
                     SwitchRow("Mark at the top", d.topMark) { set(d.copy(topMark = it)) }
                     SwitchRow("Axonometric view", d.axonometric, AXON_HINT) { set(d.copy(axonometric = it)) }
+                    SwitchRow("Perspective", d.perspective, "Nearer parts show bigger, as a camera sees them. Off: flat, every part the same size wherever it is.") { set(d.copy(perspective = it)) }
                 }
 
                 GyroDisplayKind.LASER -> {
@@ -233,8 +235,13 @@ internal fun GyroDisplaySettingsScreen(
                         Chips(listOf("−Z (into the screen)" to 0, "+Z" to 1, "+X" to 2, "−X" to 3, "+Y" to 4, "−Y" to 5), d.laserFaces) { set(d.copy(laserFaces = it)) }
                     }
                     SwitchRow("Axonometric view", d.laserAxonometric, LASER_AXON_HINT) { set(d.copy(laserAxonometric = it)) }
+                    SwitchRow("Perspective", d.perspective, "Nearer parts show bigger, as a camera sees them. Off: flat, every part the same size wherever it is.") { set(d.copy(perspective = it)) }
                     SwitchRow("Sphere turns, beam stays ahead", d.laserSphereTurns, "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.") { set(d.copy(laserSphereTurns = it)) }
                     if (!d.laserRifle) SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
+                    if (!d.laserRifle && !d.laserCrosshair) {
+                        SwitchRow("Gloss", d.laserGloss, "A shine on the sphere where the light (upper left) hits it.") { set(d.copy(laserGloss = it)) }
+                        SwitchRow("Rim glow", d.laserRimGlow, "A soft bright edge round the sphere, so its outline shows on any background.") { set(d.copy(laserRimGlow = it)) }
+                    }
                     SwitchRow("Axes (pitch X red, yaw Y green, roll Z blue)", d.laserAxes, "They turn with the laser, R along its beam.") { set(d.copy(laserAxes = it)) }
                     if (!d.laserRifle && !d.laserCrosshair) SwitchRow("Gimbal rings", d.laserGimbal, "Yaw (green, outside), pitch (red) and roll (blue) rings turning with the laser's axes, each round its own: the path the beam and crosshair take turning about it. A None axis's ring is faint and dashed, and an axis lights up while the gyro turns it.") { set(d.copy(laserGimbal = it)) }
                     GroupTitle("Draw")
@@ -248,6 +255,8 @@ internal fun GyroDisplaySettingsScreen(
                             { p -> sqrt(fadeMs(p) / LASER_FADE_MAX_MS.toFloat()) },
                         ) { set(d.copy(laserFadeMs = fadeMs(it))) }
                         Text("Strokes", style = MaterialTheme.typography.bodyMedium)
+                        SwitchRow("3D paint", d.laserPaint3d, "The paint lies on the round sphere: thinner where the surface turns away toward the rim, and lit by the sphere's light from the upper left.") { set(d.copy(laserPaint3d = it)) }
+                        if (d.laserPaint3d) PercentSlider("Lighting", d.laserLighting, 0f..1f) { set(d.copy(laserLighting = it)) }
                         IntSlider("Colour steps %d", d.laserColourSteps, 4..32) { set(d.copy(laserColourSteps = it)) }
                         PercentSlider("Curve", d.laserCurve, 0f..1f) { set(d.copy(laserCurve = it)) }
                         SavedSlider(
@@ -467,6 +476,8 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     GyroDisplayColor.LASER_MOVE_RIGHT, GyroDisplayColor.LASER_MOVE_LEFT, GyroDisplayColor.LASER_MOVE_UP,
     GyroDisplayColor.LASER_MOVE_DOWN, GyroDisplayColor.LASER_MOVE_TOWARD, GyroDisplayColor.LASER_MOVE_AWAY -> movesShown(d)
     GyroDisplayColor.LASER_RIFLE -> d.laserRifle
+    GyroDisplayColor.LASER_GLOSS -> d.laserGloss && !d.laserRifle && !d.laserCrosshair
+    GyroDisplayColor.LASER_RIM -> d.laserRimGlow && !d.laserRifle && !d.laserCrosshair
     GyroDisplayColor.LASER_SPHERE, GyroDisplayColor.LASER_BEAM, GyroDisplayColor.LASER_DOT -> !d.laserRifle && !d.laserCrosshair
     GyroDisplayColor.LASER_CROSSHAIR_OUTLINE -> d.laserCrosshair && !d.laserRifle && d.crosshairOutline
     else -> true

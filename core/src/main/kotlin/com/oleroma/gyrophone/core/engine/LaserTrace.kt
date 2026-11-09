@@ -265,6 +265,30 @@ class LaserTrace {
         const val STROKE_STEP_DEG = 0.5f
         private val STROKE_STEP_COS = cos(Math.toRadians(STROKE_STEP_DEG.toDouble())).toFloat()
 
+        /** Perspective: the eye's distance from the centre, in sphere radii (as the 3D phone's). */
+        const val CAMERA_DISTANCE = 6f
+
+        /** Perspective: how much bigger a picture point at depth [z] (toward the viewer +, sphere radii) shows. */
+        fun perspective(z: Float): Float = CAMERA_DISTANCE / (CAMERA_DISTANCE - z.coerceAtMost(CAMERA_DISTANCE - 0.5f))
+
+        /** The light the sphere and 3D paint are lit by, a unit direction in the picture (x right, y up, z toward the viewer): from the upper left. */
+        val LIGHT = floatArrayOf(-0.35f, 0.4f, 0.847f)
+
+        /**
+         * How bright 3D paint at picture point ([x], [y], [z]) on the unit sphere shows with [lighting] (0..1): seen
+         * on the far half from inside (its face toward the viewer looks inward), on the near half from outside;
+         * shaded by the light ([LIGHT]), down to a quarter where it faces away.
+         */
+        fun paintLight(x: Float, y: Float, z: Float, lighting: Float): Float {
+            val d = x * LIGHT[0] + y * LIGHT[1] + z * LIGHT[2]
+            val lit = (if (z >= 0f) d else -d).coerceAtLeast(0f)
+            val k = lighting.coerceIn(0f, 1f)
+            return 1f - k + k * (0.25f + 0.75f * lit)
+        }
+
+        /** How wide 3D paint at picture depth [z] on the unit sphere shows: foreshortened toward the rim (0.2 edge-on .. 1 face-on). */
+        fun paintWidth(z: Float): Float = 0.2f + 0.8f * kotlin.math.abs(z).coerceAtMost(1f)
+
         /** The rifle's muzzle tip in its own frame (x right, y up, z toward the stock). */
         val MUZZLE = floatArrayOf(0f, 0.03f, -0.93f)
 
@@ -429,7 +453,7 @@ class LaserTrace {
          * The rifle turned by pose [m], seen as [view] sees it ([axon], [turned]): the faces toward the
          * viewer, farthest first, lit from above left.
          */
-        fun rifle(m: FloatArray, axon: Boolean, turned: FloatArray?): List<Face> {
+        fun rifle(m: FloatArray, axon: Boolean, turned: FloatArray?, persp: Boolean = false): List<Face> {
             val faces = ArrayList<Face>(32)
             val p = FloatArray(24)
             val n = FloatArray(3)
@@ -443,6 +467,11 @@ class LaserTrace {
                     val y = RIFLE[o + 1] + (if (k and 2 != 0) RIFLE[o + 4] else -RIFLE[o + 4])
                     val z = RIFLE[o + 2] + (if (k and 4 != 0) RIFLE[o + 5] else -RIFLE[o + 5])
                     view(m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z, p, k * 3, axon, turned)
+                    if (persp) {
+                        val f = perspective(p[k * 3 + 2])
+                        p[k * 3] *= f
+                        p[k * 3 + 1] *= f
+                    }
                 }
                 for (f in 0 until 6) {
                     val axis = f / 2
