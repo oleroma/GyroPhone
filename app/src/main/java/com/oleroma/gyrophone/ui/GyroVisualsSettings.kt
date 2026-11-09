@@ -248,7 +248,7 @@ internal fun GyroDisplaySettingsScreen(
                             { p -> sqrt(fadeMs(p) / LASER_FADE_MAX_MS.toFloat()) },
                         ) { set(d.copy(laserFadeMs = fadeMs(it))) }
                         Text("Strokes", style = MaterialTheme.typography.bodyMedium)
-                        SwitchRow("Seamless strokes", d.laserSeamless, "On: each stroke is drawn as one solid layer, no dots where pieces meet. Off: cheaper, pieces meet with flat ends (tiny notches at sharp bends).") { set(d.copy(laserSeamless = it)) }
+                        SwitchRow("Seamless strokes", d.laserSeamless, "On: smoother, bends filled and each stroke drawn as one solid layer. Off: cheaper, tiny notches at sharp bends (Curve hides most).") { set(d.copy(laserSeamless = it)) }
                         IntSlider("Colour steps %d", d.laserColourSteps, 4..32) { set(d.copy(laserColourSteps = it)) }
                         PercentSlider("Curve", d.laserCurve, 0f..1f) { set(d.copy(laserCurve = it)) }
                         SavedSlider(

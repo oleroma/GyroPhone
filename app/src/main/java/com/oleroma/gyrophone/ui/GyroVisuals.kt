@@ -464,6 +464,8 @@ private class VisState {
             val curve = d.laserCurve.coerceIn(0f, 1f)
             // The visible run of picture points being gathered (vx, vy), with the path key of the piece ending at each.
             var n = 0
+            val seamless = d.laserSeamless
+            val wNow = width * (if (front) 0.6f else 1f)
             fun pathFor(key: Int): Path = if (key < MOVE_KEYS) levelPaths[key] else movePaths.getOrPut(key) { movePool.removeLastOrNull() ?: Path() }
             // Draws the run: straight hops, or with [curve] its corners rounded (each corner a quadratic
             // curve split in two halves, one in each neighbouring piece's path).
@@ -472,24 +474,40 @@ private class VisState {
                     var curKey = -1
                     var px = vx[0]
                     var py = vy[0]
+                    // The pen before the last move: a new piece's lead-in comes back along it.
+                    var qx = px
+                    var qy = py
                     fun into(key: Int): Path {
                         val path = pathFor(key)
                         if (curKey != key) {
-                            path.moveTo(px, py)
+                            // Seamless: the piece starts with a short lead-in over the end of the one before
+                            // (along the line, in the layer, so it neither pokes out nor brightens), filling the bend.
+                            val bx = qx - px
+                            val by = qy - py
+                            val bl = kotlin.math.sqrt(bx * bx + by * by)
+                            if (seamless && curKey != -1 && bl > 1e-3f) {
+                                val f = minOf(1f, wNow / bl)
+                                path.moveTo(px + bx * f, py + by * f)
+                                path.lineTo(px, py)
+                            } else path.moveTo(px, py)
                             curKey = key
                         }
                         return path
                     }
+                    fun pen(x: Float, y: Float) {
+                        qx = px; qy = py
+                        px = x; py = y
+                    }
                     if (curve <= 0f || n == 2) {
                         for (k in 1 until n) {
                             into(vk[k]).lineTo(vx[k], vy[k])
-                            px = vx[k]; py = vy[k]
+                            pen(vx[k], vy[k])
                         }
                     } else {
                         var mx = (vx[0] + vx[1]) / 2f
                         var my = (vy[0] + vy[1]) / 2f
                         into(vk[1]).lineTo(mx, my)
-                        px = mx; py = my
+                        pen(mx, my)
                         for (k in 1..n - 2) {
                             val cx = vx[k]
                             val cy = vy[k]
@@ -500,15 +518,15 @@ private class VisState {
                             val bx = cx + (nx - cx) * curve
                             val by = cy + (ny - cy) * curve
                             into(vk[k]).lineTo(ax, ay)
-                            px = ax; py = ay
-                            val qx = (ax + 2f * cx + bx) / 4f
-                            val qy = (ay + 2f * cy + by) / 4f
-                            into(vk[k]).quadraticTo((ax + cx) / 2f, (ay + cy) / 2f, qx, qy)
-                            px = qx; py = qy
+                            pen(ax, ay)
+                            val cqx = (ax + 2f * cx + bx) / 4f
+                            val cqy = (ay + 2f * cy + by) / 4f
+                            into(vk[k]).quadraticTo((ax + cx) / 2f, (ay + cy) / 2f, cqx, cqy)
+                            pen(cqx, cqy)
                             into(vk[k + 1]).quadraticTo((cx + bx) / 2f, (cy + by) / 2f, bx, by)
-                            px = bx; py = by
+                            pen(bx, by)
                             into(vk[k + 1]).lineTo(nx, ny)
-                            px = nx; py = ny
+                            pen(nx, ny)
                             mx = nx; my = ny
                         }
                         into(vk[n - 1]).lineTo(vx[n - 1], vy[n - 1])
@@ -569,10 +587,9 @@ private class VisState {
             }
             flush()
             val side = if (front) 0.5f else 1f
-            val w = width * (if (front) 0.6f else 1f)
-            val seamless = d.laserSeamless
-            // Seamless: pieces flat, overlapping round, in a layer faded once; else flat-ended pieces that don't overlap.
-            val cap = if (seamless) StrokeCap.Round else StrokeCap.Butt
+            val w = wNow
+            // Flat ends: pieces meet without poking into each other (seamless adds lead-ins, drawn in a layer faded once).
+            val cap = StrokeCap.Butt
             val core = Stroke(w, cap = cap, join = StrokeJoin.Round)
             val wide = Stroke(w * 3f, cap = cap, join = StrokeJoin.Round)
             fun shaded(color: Color, k: Float): Color {
