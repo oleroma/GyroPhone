@@ -241,9 +241,12 @@ internal fun GyroDisplaySettingsScreen(
                     SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim.") { set(d.copy(laserDraw = it)) }
                     if (d.laserDraw) Indented {
                         IntSlider("Brush %d°", d.laserBrush, 1..20) { set(d.copy(laserBrush = it)) }
-                        Chips(LASER_FADES, d.laserFadeMs) {
-                            set(d.copy(laserFadeMs = it))
-                        }
+                        // Fades after 0 (never) to 60 s, finer toward the short ones: the slider's square.
+                        SavedSlider(
+                            { p -> fadeMs(p).let { if (it == 0) "Fades after: never" else "Fades after %.2f s".format(it / 1000f) } },
+                            sqrt(d.laserFadeMs.coerceIn(0, LASER_FADE_MAX_MS) / LASER_FADE_MAX_MS.toFloat()), 0f..1f,
+                            { p -> sqrt(fadeMs(p) / LASER_FADE_MAX_MS.toFloat()) },
+                        ) { set(d.copy(laserFadeMs = fadeMs(it))) }
                         SwitchRow("Clear on ratchet", d.laserClearOnRatchet, "A ratchet press clears the drawing.") { set(d.copy(laserClearOnRatchet = it)) }
                         Text("Fire (paints in the Fire colours while GyroPhone sends it)", style = MaterialTheme.typography.bodyMedium)
                         Text("Mouse", style = MaterialTheme.typography.bodySmall)
@@ -454,7 +457,11 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     else -> true
 }
 
-private val LASER_FADES = listOf("Never fades" to 0, "0.25 s" to 250, "0.5 s" to 500, "1 s" to 1000, "2 s" to 2000, "5 s" to 5000, "10 s" to 10_000, "30 s" to 30_000, "60 s" to 60_000)
+/** Draw mode's longest fade. */
+private const val LASER_FADE_MAX_MS = 60_000
+
+/** The Fades after slider at [p] (0..1, its square) in ms, to 50 ms; 0 never fades. */
+private fun fadeMs(p: Float): Int = ((p * p * LASER_FADE_MAX_MS) / 50f).roundToInt() * 50
 private const val LASER_AXON_HINT = "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot."
 private const val AXON_HINT = "Seen from 30° round and 30° above with the world's axes (yaw toward you red, pitch right green, roll up blue, as the gimbal's rings), as the laser pointer is, instead of face-on."
 
