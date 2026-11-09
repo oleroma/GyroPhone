@@ -134,7 +134,7 @@ class LaserTraceTest {
         // Right along the equator, a wobble up in the middle.
         for (k in 0..8) {
             val lon = k * rad
-            val lat = if (k == 4) 0.3f * rad else 0f
+            val lat = if (k == 4) 1f * rad else 0f
             val p = FloatArray(3)
             LaserTrace.dir(lat, lon, p)
             t.add(p[0], p[1], p[2], k * 10L, draw = true, held = false, smooth = true)
