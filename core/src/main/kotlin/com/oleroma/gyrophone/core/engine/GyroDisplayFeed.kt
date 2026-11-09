@@ -39,10 +39,10 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
 
     /** A ratchet was held at the last sample (the laser pointer dims its beam and stops trailing). */
     @Volatile var ratchetHeld = false
+        private set
 
     /** A laser pointer's fire output ([GyroDisplay.laserFire]) is being sent; set by the runtime. */
     @Volatile var firing = false
-        private set
 
     /**
      * Which gyro axis moves the mouse sideways and which up and down, and which way ([cameraMapOf]):
