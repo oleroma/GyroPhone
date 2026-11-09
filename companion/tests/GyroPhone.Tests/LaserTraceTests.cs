@@ -205,4 +205,42 @@ public class LaserTraceTests
         Assert.Empty(dot.Lines);
         Assert.NotNull(dot.Dot);
     }
+
+    [Fact]
+    public void FireIsHeldWhileItsOutputIsSentOrPressedOnThePcController()
+    {
+        var s = new StateFrame();
+        Assert.False(LaserFire.Held(LaserFire.Default, s));
+        s.MouseButtons = 1;
+        Assert.True(LaserFire.Held(LaserFire.Default, s));
+        s.SetKey(0x2C, true);
+        Assert.True(LaserFire.Held(LaserFire.Key + 0x2C, s));
+        s.Buttons = 32;
+        Assert.True(LaserFire.Held(LaserFire.Pad + 5, s));
+        Assert.False(LaserFire.Held(LaserFire.Pad + 4, s));
+        // The PC's controller: LB by place, RT pulled.
+        Assert.True(LaserFire.Held(LaserFire.Pad + 4, s, OverlayFrame.PadL1));
+        Assert.True(LaserFire.Held(LaserFire.Rt, s, 0, 0f, 0.8f));
+        Assert.False(LaserFire.Held(LaserFire.Lt, s, 0, 0f, 0.8f));
+    }
+
+    [Fact]
+    public void FiringPaintsInItsOwnColoursAndCanBeTheOnlyPaint()
+    {
+        var t = new LaserTrace();
+        void Aim(int deg, bool fire, bool only = false)
+        {
+            float a = deg * MathF.PI / 180f;
+            t.Add(MathF.Sin(a), 0f, -MathF.Cos(a), deg, true, false, fire: fire, fireOnly: only);
+        }
+        Aim(0, false); Aim(2, false); Aim(4, true); Aim(6, true);
+        Assert.Equal(4, t.Strokes.Count);
+        Assert.False(t.Strokes.Fire(1));
+        Assert.True(t.Strokes.Fire(2));
+        Aim(8, false, true); Aim(10, false, true);
+        Assert.Equal(4, t.Strokes.Count);
+        Aim(12, true, true);
+        Assert.Equal(5, t.Strokes.Count);
+        Assert.True(t.Strokes.Gap(4));
+    }
 }

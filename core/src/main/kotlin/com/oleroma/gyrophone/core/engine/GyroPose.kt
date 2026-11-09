@@ -227,18 +227,24 @@ class GyroPose {
      * Turns as a gimbal (a game camera's order): by [a] radians about the vertical, then [b] about
      * its own right, then [c] about where it faces, as Ry(a)·Rx(b)·Rz(c). The angles add up and
      * [locks] (bit 0 the vertical, 1 the right, 2 the facing axis) holds those at 0, so nothing,
-     * not even the other two, ever turns a locked one. [maxPitch] (radians, 0 none) limits [b].
+     * not even the other two, ever turns a locked one; [stops] (the same bits) holds those within ±90°
+     * (the right one within ±89°, short of the poles). Over the top (beyond ±90° about the right),
+     * [a] turns the other way, so left and right stay as seen.
      */
     @Synchronized
-    fun gimbalTurn(a: Float, b: Float, c: Float, locks: Int, maxPitch: Float) {
+    fun gimbalTurn(a: Float, b: Float, c: Float, locks: Int, stops: Int) {
         syncGimbal()
-        gimbal[0] += a; gimbal[1] += b; gimbal[2] += c
+        gimbal[0] += if (abs(gimbal[1]) > PI_F / 2) -a else a
+        gimbal[1] += b; gimbal[2] += c
         for (i in 0..2) {
             // Within half a turn either way, so easing back never unwinds whole turns.
             if (gimbal[i] > PI_F) gimbal[i] -= 2 * PI_F else if (gimbal[i] < -PI_F) gimbal[i] += 2 * PI_F
             if (locks and (1 shl i) != 0) gimbal[i] = 0f
         }
-        if (maxPitch > 0f) gimbal[1] = gimbal[1].coerceIn(-maxPitch, maxPitch)
+        for (i in 0..2) if (stops and (1 shl i) != 0) {
+            val max = if (i == 1) MAX_CAMERA_PITCH else PI_F / 2
+            gimbal[i] = gimbal[i].coerceIn(-max, max)
+        }
         // Ry(a) · Rx(b), then · Rz(c)
         val cy = cos(gimbal[0] / 2); val sy = sin(gimbal[0] / 2)
         val cx = cos(gimbal[1] / 2); val sx = sin(gimbal[1] / 2)

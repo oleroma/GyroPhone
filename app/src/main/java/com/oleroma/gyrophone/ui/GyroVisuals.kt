@@ -230,7 +230,7 @@ private class VisState {
     private val pv = FloatArray(3)
     private var laserAxon = true
     private var laserTurned: FloatArray? = null
-    private val levelPaths = Array(LEVELS * HUES) { Path() }
+    private val levelPaths = Array(LEVELS * HUES * 2) { Path() }
 
     private val crossPath = Path()
 
@@ -300,7 +300,7 @@ private class VisState {
             val v = feed?.pose?.version ?: 0L
             if (v != lt.fedVersion) {
                 lt.fedVersion = v
-                lt.add(beam[0], beam[1], beam[2], now, d.laserDraw, held, d.laserClearOnRatchet)
+                lt.add(beam[0], beam[1], beam[2], now, d.laserDraw, held, d.laserClearOnRatchet, feed?.firing == true, d.laserFireOnly)
             }
             lt.expire(now, fadeMs)
         }
@@ -342,7 +342,7 @@ private class VisState {
         // Strokes: each piece of the way between two points (long hops bent along
         // the sphere) goes into the path of its side, strength and colour step (from [ahead] straight
         // ahead to [behind] turned all the way round), so a few paths draw them all.
-        fun lines(ring: LaserTrace.Ring, front: Boolean, life: (Int, Long) -> Float, width: Float, glow: Boolean, ahead: Color, behind: Color) {
+        fun lines(ring: LaserTrace.Ring, front: Boolean, life: (Int, Long) -> Float, width: Float, glow: Boolean, ahead: Color, behind: Color, fireAhead: Color, fireBehind: Color) {
             if (ring.count < 2) return
             for (p in levelPaths) p.reset()
             var lastPath = -1
@@ -359,6 +359,8 @@ private class VisState {
                     continue
                 }
                 val level = (kotlin.math.ceil(k * LEVELS).toInt()).coerceIn(1, LEVELS)
+                // Painted while firing: the Fire colours' paths.
+                val fireAt = if (ring.fire(i)) LEVELS * HUES else 0
                 val dot = (la[0] * lb[0] + la[1] * lb[1] + la[2] * lb[2]).coerceIn(-1f, 1f)
                 val n = (acos(dot) / STROKE_STEP_RAD).toInt().coerceIn(1, 32)
                 var prev = laserAt(c, r, la[0], la[1], la[2])
@@ -374,7 +376,7 @@ private class VisState {
                     val nowFront = pv[2] > 0f
                     if (nowFront == front && prevFront == front) {
                         val hue = (LaserTrace.behind(z) * (HUES - 1) + 0.5f).toInt().coerceIn(0, HUES - 1)
-                        val at = (level - 1) * HUES + hue
+                        val at = fireAt + (level - 1) * HUES + hue
                         val into = levelPaths[at]
                         if (lastPath != at) into.moveTo(prev.x, prev.y)
                         into.lineTo(pt.x, pt.y)
@@ -386,11 +388,12 @@ private class VisState {
             }
             val side = if (front) 0.5f else 1f
             val w = width * (if (front) 0.6f else 1f)
-            for (level in 1..LEVELS) for (hue in 0 until HUES) {
-                val path = levelPaths[(level - 1) * HUES + hue]
+            for (fi in 0..1) for (level in 1..LEVELS) for (hue in 0 until HUES) {
+                val path = levelPaths[fi * LEVELS * HUES + (level - 1) * HUES + hue]
                 if (path.isEmpty) continue
                 val k = level / LEVELS.toFloat()
-                val color = androidx.compose.ui.graphics.lerp(ahead, behind, hue / (HUES - 1f))
+                val color = if (fi == 1) androidx.compose.ui.graphics.lerp(fireAhead, fireBehind, hue / (HUES - 1f))
+                else androidx.compose.ui.graphics.lerp(ahead, behind, hue / (HUES - 1f))
                 // Older: darker and fainter.
                 val shade = 0.35f + 0.65f * k
                 val col = Color(color.red * shade, color.green * shade, color.blue * shade, color.alpha * (0.35f + 0.65f * k) * side)
@@ -402,7 +405,10 @@ private class VisState {
         fun paint(front: Boolean) {
             val s = lt?.strokes ?: return
             val n = s.count
-            lines(s, front, { i, t -> LaserTrace.strokeLife(i, n, t, now, fadeMs) }, brushPx, true, col(GyroDisplayColor.LASER_PAINT), col(GyroDisplayColor.LASER_PAINT_BEHIND))
+            lines(
+                s, front, { i, t -> LaserTrace.strokeLife(i, n, t, now, fadeMs) }, brushPx, true, col(GyroDisplayColor.LASER_PAINT),
+                col(GyroDisplayColor.LASER_PAINT_BEHIND), col(GyroDisplayColor.LASER_FIRE), col(GyroDisplayColor.LASER_FIRE_BEHIND),
+            )
         }
         val hit = laserAt(c, r, beam[0], beam[1], beam[2])
         val hitFront = pv[2] > 0f

@@ -1784,6 +1784,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * pressed or released since the last snapshot shows its edge here even if it already flipped
      * back, so only the pumps may call this (OutputLink).
      */
+    /** The output last sent ([snapshot]), for displays that show it (a laser pointer's fire). */
+    @Volatile var lastOutput: HidState = HidState()
+        private set
+
     fun snapshot(): HidState {
         var dx = 0
         var dy = 0
@@ -1792,6 +1796,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 dx = cameraDx; dy = cameraDy
             }
         }
+        lastOutput = s
         // The gyro's part of the motion is what the camera moves did not make.
         trace?.output(s, s.mouse.dx - dx, s.mouse.dy - dy)
         if (hapticDue) {

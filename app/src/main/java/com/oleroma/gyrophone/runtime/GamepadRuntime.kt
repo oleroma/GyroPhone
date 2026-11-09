@@ -1360,8 +1360,11 @@ class GamepadRuntime(context: Context) {
         val m = gyroMouse.motion(x, y, z)
         val gs = if (axes != 0) engine.gyroSettings else null
         val map = if (axes != 0) cameraMapNow() else 0
+        val out = engine.lastOutput
         for (f in feeds) {
             if (map != 0) f.cameraMap = map
+            f.firing = f.display.kind == com.oleroma.gyrophone.core.model.GyroDisplayKind.LASER &&
+                inputAllowed && com.oleroma.gyrophone.core.engine.LaserFire.held(f.display.laserFire, out)
             f.feed(m.yaw, m.pitch, m.roll, dt, axes, pressed, ratchets != 0, gs)
         }
         if (dt == 0f || !v.gyroEdge) return

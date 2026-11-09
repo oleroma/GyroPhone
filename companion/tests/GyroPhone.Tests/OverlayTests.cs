@@ -429,6 +429,27 @@ public class OverlayTests
     }
 
     [Fact]
+    public void PitchWithoutItsStopGoesOverTheTopAndRightStaysRight()
+    {
+        var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Trackball, TrackballRws = false, TrackballSpin = 1f };
+        s.TrackballAxes &= ~(GyroPhone.Host.Settings.OverlaySettings.TrackballStop << 8);
+        var p = new GyroPhone.Host.OverlayPose();
+        OverlayFrame F(float pitch, float roll)
+        {
+            var f = Motion(0f, 0.01f);
+            f.TurnPitch = pitch;
+            f.TurnRoll = roll;
+            return f;
+        }
+        for (int i = 0; i < 100; i++) p.Feed(F(1.2f, 0f), s); // 120° up: over the top
+        float BeamX() => -2 * (p.X * p.Z + p.W * p.Y);
+        float BeamY() => -2 * (p.Y * p.Z - p.W * p.X);
+        Assert.Equal(0.866f, BeamY(), 3);
+        for (int i = 0; i < 20; i++) p.Feed(F(0f, 0.6f), s); // turn right
+        Assert.True(BeamX() > 0.05f);
+    }
+
+    [Fact]
     public void CameraTurnsWithTheGyroOnAnyKindAndIgnoresGravity()
     {
         var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Horizon, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Camera, Gravity = true, Ease = false, TrackballRws = false, TrackballSpin = 2f };

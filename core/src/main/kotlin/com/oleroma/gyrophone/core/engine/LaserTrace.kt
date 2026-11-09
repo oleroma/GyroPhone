@@ -21,19 +21,20 @@ class LaserTrace {
         private val z = FloatArray(capacity)
         private val t = LongArray(capacity)
         private val gap = BooleanArray(capacity)
+        private val fire = BooleanArray(capacity)
         private var head = 0
 
         /** Points kept now. */
         var count = 0
             private set
 
-        fun add(px: Float, py: Float, pz: Float, ms: Long, startsLine: Boolean) {
+        fun add(px: Float, py: Float, pz: Float, ms: Long, startsLine: Boolean, firing: Boolean = false) {
             val i = (head + count) % capacity
             if (count == capacity) {
                 head = (head + 1) % capacity
                 gap[head] = true // the oldest left has no line from before it
             } else count++
-            x[i] = px; y[i] = py; z[i] = pz; t[i] = ms; gap[i] = startsLine
+            x[i] = px; y[i] = py; z[i] = pz; t[i] = ms; gap[i] = startsLine; fire[i] = firing
         }
 
         /** Drops points older than [ms] at [nowMs]. */
@@ -59,6 +60,9 @@ class LaserTrace {
 
         /** Point [i] starts a new line (none drawn from the point before it). */
         fun gap(i: Int): Boolean = gap[(head + i) % capacity]
+
+        /** Point [i] was painted while firing (the line to it takes the Fire colours). */
+        fun fire(i: Int): Boolean = fire[(head + i) % capacity]
     }
 
     /** Draw mode's strokes. */
@@ -69,6 +73,7 @@ class LaserTrace {
     private var lastY = 0f
     private var lastZ = 0f
     private var wasHeld = false
+    private var lastFire = false
 
     /** Goes up when the strokes are cleared. */
     var version = 0L
@@ -80,24 +85,29 @@ class LaserTrace {
     /**
      * The beam now points at ([x], [y], [z]) (any length) at [nowMs]. While a ratchet is [held] it
      * doesn't paint (the pose eases back then, which isn't aiming); with [clearOnPress] pressing
-     * one clears the strokes. With [draw] it paints; turning Draw off clears the strokes.
+     * one clears the strokes. With [draw] it paints; turning Draw off clears the strokes. While
+     * [fire] (the display's fire output is sent) it paints in the Fire colours; with [fireOnly] only then.
      */
-    fun add(x: Float, y: Float, z: Float, nowMs: Long, draw: Boolean, held: Boolean, clearOnPress: Boolean = false) {
+    fun add(
+        x: Float, y: Float, z: Float, nowMs: Long, draw: Boolean, held: Boolean, clearOnPress: Boolean = false,
+        fire: Boolean = false, fireOnly: Boolean = false,
+    ) {
         val pressed = clearOnPress && held && !wasHeld
         wasHeld = held
         if ((!draw || pressed) && strokes.count > 0) clear()
         val l = sqrt(x * x + y * y + z * z)
-        if (!draw || l < 1e-6f || held || l.isNaN()) {
+        if (!draw || l < 1e-6f || held || l.isNaN() || (fireOnly && !fire)) {
             strokeGap = true
             return
         }
         val dx = x / l
         val dy = y / l
         val dz = z / l
-        // A new point once the beam moved a little: a still beam adds nothing.
-        if (!strokeGap && lastX * dx + lastY * dy + lastZ * dz > STROKE_STEP_COS) return
-        strokes.add(dx, dy, dz, nowMs, strokeGap)
+        // A new point once the beam moved a little (or the firing started or stopped): a still beam adds nothing.
+        if (!strokeGap && fire == lastFire && lastX * dx + lastY * dy + lastZ * dz > STROKE_STEP_COS) return
+        strokes.add(dx, dy, dz, nowMs, strokeGap, fire)
         strokeGap = false
+        lastFire = fire
         lastX = dx; lastY = dy; lastZ = dz
     }
 

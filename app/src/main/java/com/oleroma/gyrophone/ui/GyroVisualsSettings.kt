@@ -33,6 +33,7 @@ import androidx.compose.runtime.Composable
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.core.model.TRACKBALL_AS_CAMERA
 import com.oleroma.gyrophone.core.model.TRACKBALL_LOCK
+import com.oleroma.gyrophone.core.model.TRACKBALL_STOP
 import com.oleroma.gyrophone.core.model.AxisEase
 import com.oleroma.gyrophone.core.model.easeOf
 import com.oleroma.gyrophone.core.model.withEase
@@ -205,6 +206,14 @@ internal fun GyroDisplaySettingsScreen(
                             set(d.copy(laserFadeMs = it))
                         }
                         SwitchRow("Clear on ratchet", d.laserClearOnRatchet, "A ratchet press clears the drawing.") { set(d.copy(laserClearOnRatchet = it)) }
+                        Text("Fire (paints in the Fire colours while GyroPhone sends it)", style = MaterialTheme.typography.bodyMedium)
+                        Text("Mouse", style = MaterialTheme.typography.bodySmall)
+                        Chips(com.oleroma.gyrophone.core.engine.LaserFire.MOUSE_CHOICES, d.laserFire) { set(d.copy(laserFire = it)) }
+                        Text("Controller", style = MaterialTheme.typography.bodySmall)
+                        Chips(com.oleroma.gyrophone.core.engine.LaserFire.PAD_CHOICES, d.laserFire) { set(d.copy(laserFire = it)) }
+                        Text("Keyboard", style = MaterialTheme.typography.bodySmall)
+                        Chips(com.oleroma.gyrophone.core.engine.LaserFire.KEY_CHOICES, d.laserFire) { set(d.copy(laserFire = it)) }
+                        SwitchRow("Paint only while firing", d.laserFireOnly, "Aiming leaves no trail; only shots draw.") { set(d.copy(laserFireOnly = it)) }
                         Hint("Strokes glow, older ones darker. Their colour goes from Paint ahead (straight ahead) to Paint behind (turned all the way round), so a turn past 90° still reads. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every laser pointer at once.")
                     }
                     TextButton(onClick = { runtime.clearLaser(control.id) }) { Text("Clear") }
@@ -320,11 +329,14 @@ private fun TrackballAxesSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
         SwitchRow("Lock $name axis", locked) { put(if (it) code or TRACKBALL_LOCK else code and TRACKBALL_LOCK.inv()) }
         if (locked) continue
         Text("$name axis turns with", style = MaterialTheme.typography.bodyMedium)
-        Chips(listOf("Yaw" to 3, "Pitch" to 2, "Roll" to 1, "None" to 0), code and 0x3F) { put(it or (code and 0x80)) }
-        if (code and 0x3F != 0) SwitchRow("Invert $name axis", code and 0x80 != 0) { put((code and 0x3F) or (if (it) 0x80 else 0)) }
+        Chips(listOf("Yaw" to 3, "Pitch" to 2, "Roll" to 1, "None" to 0), code and 0x1F) { put(it or (code and 0x1F.inv())) }
+        if (code and 0x1F != 0) SwitchRow("Invert $name axis", code and 0x80 != 0) { put((code and 0x80.inv()) or (if (it) 0x80 else 0)) }
+        SwitchRow("Stop $name at ±90°", code and TRACKBALL_STOP != 0, if (i == 1) "Off: it goes over the top, left and right staying as seen." else null) {
+            put(if (it) code or TRACKBALL_STOP else code and TRACKBALL_STOP.inv())
+        }
         AxisEaseSettings(name, d.easeOf(i)) { set(d.withEase(i, it)) }
     }
-    Hint("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked or easing back it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces; with Yaw locked it stops at straight up or down.")
+    Hint("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked, stopped or easing back it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces; with Yaw locked it stops at straight up or down.")
     if (d.trackballAxes != TRACKBALL_AS_CAMERA) TextButton(onClick = { set(d.copy(trackballAxes = TRACKBALL_AS_CAMERA)) }) { Text("As the camera") }
 }
 

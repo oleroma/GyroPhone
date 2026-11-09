@@ -118,7 +118,7 @@ data class GyroDisplay(
     /**
      * [TurnsWith.TRACKBALL]: which gyro turn rolls it about each of its axes, one byte each: about
      * its up axis (shown as roll), its right axis (pitch), the axis through the screen (shown as
-     * yaw); each byte 1 yaw (stored), 2 pitch, 3 roll (stored), 0 none, | 0x80 the other way, | [TRACKBALL_LOCK]
+     * yaw); each byte 1 yaw (stored), 2 pitch, 3 roll (stored), 0 none, | 0x80 the other way, | [TRACKBALL_STOP], | [TRACKBALL_LOCK]
      * locked (held at 0: then it turns as a gimbal, as a game camera does).
      * The default turns it as the Camera mode does with the default gyro mouse ([TRACKBALL_AS_CAMERA]).
      */
@@ -164,6 +164,12 @@ data class GyroDisplay(
     val laserFadeMs: Int = 0,
     /** LASER Draw mode: a ratchet press clears the drawing. */
     val laserClearOnRatchet: Boolean = false,
+    /**
+     * LASER Draw mode: while GyroPhone sends this output ([com.oleroma.gyrophone.core.engine.LaserFire],
+     * default the left mouse button) it paints in the Fire colours; with [laserFireOnly] only then.
+     */
+    val laserFire: Int = com.oleroma.gyrophone.core.engine.LaserFire.DEFAULT,
+    val laserFireOnly: Boolean = false,
     /** What turns it (the pose kinds): the phone, the game's camera, or a trackball. */
     val turnsWith: TurnsWith = TurnsWith.PHONE,
     val opacity: Float = 0.7f,
@@ -324,6 +330,8 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     LASER_PAINT(GyroDisplayKind.LASER, "paint", "Paint ahead", 0xFFFFC94D),
     LASER_PAINT_BEHIND(GyroDisplayKind.LASER, "paint_behind", "Paint behind", 0xFF4DA6FF),
     LASER_RIFLE(GyroDisplayKind.LASER, "rifle", "Rifle", 0xFF5A616C),
+    LASER_FIRE(GyroDisplayKind.LASER, "fire", "Fire", 0xFFFF4A3D),
+    LASER_FIRE_BEHIND(GyroDisplayKind.LASER, "fire_behind", "Fire behind", 0xFF8A1E18),
     LASER_CROSSHAIR(GyroDisplayKind.LASER, "crosshair", "Crosshair", 0xFF4CFF6A),
     LASER_CROSSHAIR_BEHIND(GyroDisplayKind.LASER, "crosshair_behind", "Crosshair behind", 0xFF2E8A43),
     LASER_CROSSHAIR_OUTLINE(GyroDisplayKind.LASER, "crosshair_outline", "Crosshair outline", 0xFF0E1116),
@@ -358,15 +366,22 @@ fun GyroDisplay.withEase(i: Int, e: AxisEase): GyroDisplay = copy(trackballEase 
 
 /**
  * In a [GyroDisplay.trackballAxes] byte: that axis is locked, held at 0 whatever turns the others
- * make, as Camera's roll is. With any axis locked the trackball turns as a gimbal (left and right
- * about the vertical, then up and down about its own right, then about where it faces), and with
- * the axis through the screen locked it stops at straight up or down (±89°).
+ * make, as Camera's roll is. With any axis locked, stopped ([TRACKBALL_STOP]) or easing back the
+ * trackball turns as a gimbal (left and right about the vertical, then up and down about its own
+ * right, then about where it faces).
  */
 const val TRACKBALL_LOCK = 0x40
+
+/**
+ * In a [GyroDisplay.trackballAxes] byte: that axis stops at ±90° from straight (up and down at ±89°,
+ * the poles); without, it turns all the way round (up and down over the top, left and right then
+ * staying as seen).
+ */
+const val TRACKBALL_STOP = 0x20
 
 /**
  * [GyroDisplay.trackballAxes] turning a trackball as the camera turns with the default gyro mouse
  * (roll on mouse X, pitch on mouse Y): left and right by roll (stored), up and down by pitch, the
  * axis through the screen locked (no roll, stopping at straight up or down).
  */
-const val TRACKBALL_AS_CAMERA = 3 or (2 shl 8) or (TRACKBALL_LOCK shl 16)
+const val TRACKBALL_AS_CAMERA = 3 or ((2 or TRACKBALL_STOP) shl 8) or (TRACKBALL_LOCK shl 16)

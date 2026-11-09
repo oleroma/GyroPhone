@@ -157,7 +157,7 @@ public sealed class OverlaySettings
     /// <summary>
     /// Trackball: which gyro turn rolls it about each of its axes, one byte each: about its up axis
     /// (shown as roll), its right axis (pitch), the axis through the screen (shown as yaw); each byte
-    /// 1 yaw (as sent), 2 pitch, 3 roll (as sent), 0 none, | 0x80 the other way, | TrackballLock locked. The default turns it
+    /// 1 yaw (as sent), 2 pitch, 3 roll (as sent), 0 none, | 0x80 the other way, | TrackballStop stopping at ±90°, | TrackballLock locked. The default turns it
     /// as Camera does with the default gyro mouse. As the phone's GyroDisplay.trackballAxes.
     /// </summary>
     public int TrackballAxes { get; set; } = TrackballAsCamera;
@@ -181,7 +181,7 @@ public sealed class OverlaySettings
     }
 
     /// <summary><see cref="TrackballAxes"/> turning it as Camera does with the default gyro mouse (roll on mouse X, pitch on mouse Y): left and right by roll (as sent), up and down by pitch, the axis through the screen locked.</summary>
-    public const int TrackballAsCamera = 3 | (2 << 8) | (TrackballLock << 16);
+    public const int TrackballAsCamera = 3 | ((2 | TrackballStop) << 8) | (TrackballLock << 16);
 
     /// <summary>
     /// In a <see cref="TrackballAxes"/> byte: that axis is locked, held at 0 whatever turns the others make, as
@@ -190,6 +190,13 @@ public sealed class OverlaySettings
     /// stops at straight up or down (±89°). As the phone's TRACKBALL_LOCK.
     /// </summary>
     public const int TrackballLock = 0x40;
+
+    /// <summary>
+    /// In a <see cref="TrackballAxes"/> byte: that axis stops at ±90° from straight (up and down at ±89°, the poles);
+    /// without, it turns all the way round (up and down over the top, left and right then staying as seen). As the
+    /// phone's TRACKBALL_STOP.
+    /// </summary>
+    public const int TrackballStop = 0x20;
 
     /// <summary><see cref="TrackballAxes"/> turning it as the phone turns: each axis by its own gyro turn.</summary>
     public const int TrackballAsPhone = 1 | (2 << 8) | (3 << 16);
@@ -237,6 +244,13 @@ public sealed class OverlaySettings
     public int LaserFadeMs { get; set; }
     /// <summary>Draw mode: a ratchet press clears the drawing.</summary>
     public bool LaserClearOnRatchet { get; set; }
+    /// <summary>
+    /// Laser pointer Draw mode: while this output is held (LaserFire numbers, default the left mouse button), from the
+    /// phone or, with "Use PC controller for gyro ratchet", the PC's controller, it paints in the Fire colours; with
+    /// LaserFireOnly only then. As the phone's GyroDisplay.laserFire.
+    /// </summary>
+    public int LaserFire { get; set; } = GyroPhone.Host.LaserFire.Default;
+    public bool LaserFireOnly { get; set; }
 
     // The pose, made on the PC (the phone's own gyro display settings are separate).
     /// <summary>
@@ -401,6 +415,8 @@ public sealed class OverlaySettings
         new("paint", "Paint ahead", 0xFFFFC94D),
         new("paint_behind", "Paint behind", 0xFF4DA6FF),
         new("rifle", "Rifle", 0xFF5A616C),
+        new("fire", "Fire", 0xFFFF4A3D),
+        new("fire_behind", "Fire behind", 0xFF8A1E18),
         new("crosshair", "Crosshair", 0xFF4CFF6A),
         new("crosshair_behind", "Crosshair behind", 0xFF2E8A43),
         new("crosshair_outline", "Crosshair outline", 0xFF0E1116),

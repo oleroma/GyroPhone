@@ -217,4 +217,34 @@ class CameraTurnTest {
         assertEquals(0, dot.lines.size)
         assertNotNull(dot.dot)
     }
+
+    @Test fun firingPaintsInItsOwnColoursAndCanBeTheOnlyPaint() {
+        val t = LaserTrace()
+        fun aim(deg: Int, fire: Boolean, only: Boolean = false) {
+            val a = Math.toRadians(deg.toDouble()).toFloat()
+            t.add(kotlin.math.sin(a), 0f, -kotlin.math.cos(a), deg.toLong(), draw = true, held = false, fire = fire, fireOnly = only)
+        }
+        aim(0, false); aim(2, false); aim(4, true); aim(6, true)
+        assertEquals(4, t.strokes.count)
+        assertFalse(t.strokes.fire(1))
+        assertTrue(t.strokes.fire(2))
+        // Only while firing: aiming adds nothing and the next shot starts a new line.
+        aim(8, false, only = true); aim(10, false, only = true)
+        assertEquals(4, t.strokes.count)
+        aim(12, true, only = true)
+        assertEquals(5, t.strokes.count)
+        assertTrue(t.strokes.gap(4))
+    }
+
+    @Test fun fireIsHeldWhileItsOutputIsSent() {
+        val F = com.oleroma.gyrophone.core.engine.LaserFire
+        val none = com.oleroma.gyrophone.core.hid.HidState()
+        assertFalse(F.held(F.DEFAULT, none))
+        assertTrue(F.held(F.DEFAULT, com.oleroma.gyrophone.core.hid.HidState(mouse = com.oleroma.gyrophone.core.hid.MouseState(buttons = 1))))
+        assertTrue(F.held(F.KEY + 0x2C, com.oleroma.gyrophone.core.hid.HidState(keyboard = com.oleroma.gyrophone.core.hid.KeyboardState(keys = listOf(0x2C)))))
+        assertTrue(F.held(F.KEY + 0xE1, com.oleroma.gyrophone.core.hid.HidState(keyboard = com.oleroma.gyrophone.core.hid.KeyboardState(modifiers = 2))))
+        assertTrue(F.held(F.PAD + 5, com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(buttons = 32))))
+        assertTrue(F.held(F.RT, com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(rt = 900))))
+        assertFalse(F.held(F.LT, com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(rt = 900))))
+    }
 }

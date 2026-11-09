@@ -434,7 +434,8 @@ internal sealed class OverlayForm : Form
             if (Settings is { Kind: OverlayKind.Laser } ls)
             {
                 var beam = LaserTrace.Beam(LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(_scene.Frame, ls), ls));
-                _laser.Add(beam.X, beam.Y, beam.Z, now, ls.LaserDraw, _scene.Frame.RatchetHeld, ls.LaserClearOnRatchet);
+                bool fire = ls.LaserDraw && _engine.OutputHeld(ls.LaserFire);
+                _laser.Add(beam.X, beam.Y, beam.Z, now, ls.LaserDraw, _scene.Frame.RatchetHeld, ls.LaserClearOnRatchet, fire, ls.LaserFireOnly);
             }
         }
         // A Clear displays mapping on the phone: the paint goes (the first count seen clears nothing).

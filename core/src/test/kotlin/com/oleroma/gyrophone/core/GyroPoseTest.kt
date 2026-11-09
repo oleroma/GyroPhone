@@ -398,6 +398,25 @@ class GyroDisplayTest {
         assertEquals(0.5f, m[6], 1e-3f)
     }
 
+    @Test fun pitchWithoutItsStopGoesOverTheTopAndRightStaysRight() {
+        val axes = com.oleroma.gyrophone.core.model.TRACKBALL_AS_CAMERA and (com.oleroma.gyrophone.core.model.TRACKBALL_STOP shl 8).inv()
+        val f = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL, trackballAxes = axes))
+        val m = FloatArray(9)
+        repeat(100) { f.feed(0f, 120f, 0f, 0.01f, 7, pressed = false, held = false) } // 120° up: over the top
+        f.pose.matrix(m)
+        assertEquals(0.866f, -m[5], 1e-3f)
+        assertEquals(0.5f, -m[8], 1e-3f) // the beam now points back toward you
+        repeat(20) { f.feed(0f, 0f, 60f, 0.01f, 7, pressed = false, held = false) } // turn right
+        f.pose.matrix(m)
+        org.junit.Assert.assertTrue(-m[2] > 0.05f) // the beam went right on screen
+        // A stopped Roll (left and right) turns no further than sideways.
+        val side = feed(com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL,
+            trackballAxes = com.oleroma.gyrophone.core.model.TRACKBALL_AS_CAMERA or com.oleroma.gyrophone.core.model.TRACKBALL_STOP))
+        repeat(100) { side.feed(0f, 0f, 150f, 0.01f, 7, pressed = false, held = false) }
+        side.pose.matrix(m)
+        assertEquals(1f, -m[2], 1e-3f)
+    }
+
     @Test fun trackballWithoutRwsSpinsOtherCountsAsTheGyro() {
         val d = com.oleroma.gyrophone.core.model.GyroDisplay(ball, turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL, trackballRws = false, trackballSpin = 2f)
         val f = feed(d)

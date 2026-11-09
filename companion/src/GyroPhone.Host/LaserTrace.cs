@@ -22,12 +22,13 @@ public sealed class LaserTrace
         private readonly float[] _x = new float[capacity], _y = new float[capacity], _z = new float[capacity];
         private readonly long[] _t = new long[capacity];
         private readonly bool[] _gap = new bool[capacity];
+        private readonly bool[] _fire = new bool[capacity];
         private int _head;
 
         /// <summary>Points kept now.</summary>
         public int Count { get; private set; }
 
-        public void Add(float x, float y, float z, long ms, bool startsLine)
+        public void Add(float x, float y, float z, long ms, bool startsLine, bool firing = false)
         {
             int i = (_head + Count) % capacity;
             if (Count == capacity)
@@ -36,7 +37,7 @@ public sealed class LaserTrace
                 _gap[_head] = true; // the oldest left has no line from before it
             }
             else Count++;
-            _x[i] = x; _y[i] = y; _z[i] = z; _t[i] = ms; _gap[i] = startsLine;
+            _x[i] = x; _y[i] = y; _z[i] = z; _t[i] = ms; _gap[i] = startsLine; _fire[i] = firing;
         }
 
         /// <summary>Drops points older than <paramref name="ms"/> at <paramref name="nowMs"/>.</summary>
@@ -65,6 +66,9 @@ public sealed class LaserTrace
 
         /// <summary>Point <paramref name="i"/> starts a new line (none drawn from the point before it).</summary>
         public bool Gap(int i) => _gap[(_head + i) % capacity];
+
+        /// <summary>Point <paramref name="i"/> was painted while firing (the line to it takes the Fire colours).</summary>
+        public bool Fire(int i) => _fire[(_head + i) % capacity];
     }
 
     /// <summary>Draw mode's strokes.</summary>
@@ -72,30 +76,32 @@ public sealed class LaserTrace
 
     private bool _strokeGap = true;
     private float _lastX, _lastY, _lastZ;
-    private bool _wasHeld;
+    private bool _wasHeld, _lastFire;
 
     /// <summary>
     /// The beam now points at (x, y, z) (any length) at <paramref name="nowMs"/>. While a ratchet is
     /// <paramref name="held"/> it doesn't paint (the pose eases back then, which isn't aiming); with
     /// <paramref name="clearOnPress"/> pressing one clears the strokes. With <paramref name="draw"/> it
-    /// paints; turning Draw off clears the strokes.
+    /// paints; turning Draw off clears the strokes. While <paramref name="fire"/> (the overlay's fire output is held)
+    /// it paints in the Fire colours; with <paramref name="fireOnly"/> only then.
     /// </summary>
-    public void Add(float x, float y, float z, long nowMs, bool draw, bool held, bool clearOnPress = false)
+    public void Add(float x, float y, float z, long nowMs, bool draw, bool held, bool clearOnPress = false, bool fire = false, bool fireOnly = false)
     {
         bool pressed = clearOnPress && held && !_wasHeld;
         _wasHeld = held;
         if ((!draw || pressed) && Strokes.Count > 0) Clear();
         float l = MathF.Sqrt(x * x + y * y + z * z);
-        if (!draw || l < 1e-6f || held || !float.IsFinite(l))
+        if (!draw || l < 1e-6f || held || !float.IsFinite(l) || (fireOnly && !fire))
         {
             _strokeGap = true;
             return;
         }
         float dx = x / l, dy = y / l, dz = z / l;
-        // A new point once the beam moved a little: a still beam adds nothing.
-        if (!_strokeGap && _lastX * dx + _lastY * dy + _lastZ * dz > StrokeStepCos) return;
-        Strokes.Add(dx, dy, dz, nowMs, _strokeGap);
+        // A new point once the beam moved a little (or the firing started or stopped): a still beam adds nothing.
+        if (!_strokeGap && fire == _lastFire && _lastX * dx + _lastY * dy + _lastZ * dz > StrokeStepCos) return;
+        Strokes.Add(dx, dy, dz, nowMs, _strokeGap, fire);
         _strokeGap = false;
+        _lastFire = fire;
         _lastX = dx; _lastY = dy; _lastZ = dz;
     }
 

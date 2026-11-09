@@ -9,6 +9,7 @@ import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.TRACKBALL_LOCK
+import com.oleroma.gyrophone.core.model.TRACKBALL_STOP
 import com.oleroma.gyrophone.core.model.easeOf
 import com.oleroma.gyrophone.core.model.TurnsWith
 import kotlin.math.abs
@@ -38,6 +39,9 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
 
     /** A ratchet was held at the last sample (the laser pointer dims its beam and stops trailing). */
     @Volatile var ratchetHeld = false
+
+    /** A laser pointer's fire output ([GyroDisplay.laserFire]) is being sent; set by the runtime. */
+    @Volatile var firing = false
         private set
 
     /**
@@ -223,22 +227,20 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
      */
     private fun trackballTurn(d: GyroDisplay, yaw: Float, pitch: Float, roll: Float, dt: Float) {
         val m = d.trackballAxes
-        val locks = trackballLocks(m)
-        if (locks == 0 && d.trackballEase.none { it.on }) {
+        val locks = trackballBits(m, TRACKBALL_LOCK)
+        val stops = trackballBits(m, TRACKBALL_STOP)
+        if (locks == 0 && stops == 0 && d.trackballEase.none { it.on }) {
             // As the phone turns, about the view's fixed axes (the opposite of holding still against the world).
             pose.counterRotate(-about(m, 0, yaw, pitch, roll), -about(m, 1, yaw, pitch, roll), -about(m, 2, yaw, pitch, roll), dt)
             return
         }
-        // A locked or easing axis: as a game camera turns (a gimbal), so each axis has its own angle;
-        // with the facing axis locked it stops at straight up or down, as Camera does.
+        // A locked, stopped or easing axis: as a game camera turns (a gimbal), so each axis has its own angle.
         val k = DEG_TO_RAD * dt
         pose.gimbalTurn(
             -about(m, 0, yaw, pitch, roll) * k, about(m, 1, yaw, pitch, roll) * k, -about(m, 2, yaw, pitch, roll) * k,
-            locks, maxPitch(locks),
+            locks, stops,
         )
     }
-
-    private fun maxPitch(locks: Int) = if (locks and 4 != 0 && locks and 2 == 0) GyroPose.MAX_CAMERA_PITCH else 0f
 
     /** Per trackball axis: seconds since the phone stopped (or since the ratchet press), easing on a held ratchet. */
     private val axisCalm = FloatArray(3)
@@ -287,18 +289,18 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
             easeStep[i] = next - a
             any = true
         }
-        val locks = trackballLocks(d.trackballAxes)
-        if (any) pose.gimbalTurn(easeStep[0], easeStep[1], easeStep[2], locks, maxPitch(locks))
+        val m = d.trackballAxes
+        if (any) pose.gimbalTurn(easeStep[0], easeStep[1], easeStep[2], trackballBits(m, TRACKBALL_LOCK), trackballBits(m, TRACKBALL_STOP))
     }
 
-    /** Bits 0, 1, 2: which trackball axes (up, right, through the screen) [m] ([GyroDisplay.trackballAxes]) locks. */
-    private fun trackballLocks(m: Int): Int =
-        (0..2).fold(0) { acc, i -> if (m shr (8 * i) and TRACKBALL_LOCK != 0) acc or (1 shl i) else acc }
+    /** Bits 0, 1, 2: which trackball axes (up, right, through the screen) [m] ([GyroDisplay.trackballAxes]) has [flag] on. */
+    private fun trackballBits(m: Int, flag: Int): Int =
+        (0..2).fold(0) { acc, i -> if (m shr (8 * i) and flag != 0) acc or (1 shl i) else acc }
 
     /** Axis [i]'s turn (0 up, 1 right, 2 through the screen) by axis mapping [m] ([GyroDisplay.trackballAxes]) of gyro turns [yaw], [pitch], [roll]. */
     private fun about(m: Int, i: Int, yaw: Float, pitch: Float, roll: Float): Float {
         val code = m shr (8 * i) and 0xFF
-        val v = when (code and 0x3F) { 1 -> yaw; 2 -> pitch; 3 -> roll; else -> 0f }
+        val v = when (code and 0x1F) { 1 -> yaw; 2 -> pitch; 3 -> roll; else -> 0f }
         return if (code and 0x80 != 0) -v else v
     }
 

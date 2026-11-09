@@ -76,6 +76,9 @@ internal sealed class OverlaysPage : Page
     private readonly Seg<int>[] _tbFrom = new Seg<int>[3];
     private readonly CheckBox[] _tbInvert = new CheckBox[3];
     private readonly CheckBox[] _tbLock = new CheckBox[3];
+    private readonly CheckBox[] _tbStop = new CheckBox[3];
+    private readonly List<Seg<int>> _fireSegs = [];
+    private readonly CheckBox _laserFireOnly;
     private readonly CheckBox[] _tbEase = new CheckBox[3];
     private readonly StackPanel[] _tbEaseOptions = new StackPanel[3];
     private readonly Seg<bool>[] _tbEaseWhen = new Seg<bool>[3];
@@ -318,6 +321,16 @@ internal sealed class OverlaysPage : Page
         _laserDrawOptions.Children.Add(_laserFade.View);
         _laserClearOnRatchet = Parts.Toggle("Clear on ratchet", () => Change(o => o.LaserClearOnRatchet = !o.LaserClearOnRatchet), "A ratchet press clears the drawing.");
         _laserDrawOptions.Children.Add(_laserClearOnRatchet);
+        _laserDrawOptions.Children.Add(Parts.Text("Fire: paints in the Fire colours while it is sent from the phone, or pressed on the PC's controller with \"Use PC controller for gyro ratchet\" on."));
+        foreach (var (group, choices) in new[] { ("Mouse", GyroPhone.Host.LaserFire.MouseChoices), ("Controller", GyroPhone.Host.LaserFire.PadChoices), ("Keyboard", GyroPhone.Host.LaserFire.KeyChoices) })
+        {
+            _laserDrawOptions.Children.Add(Parts.Text(group, "Hint"));
+            var seg = new Seg<int>(k => Change(o => o.LaserFire = k), true, choices);
+            _fireSegs.Add(seg);
+            _laserDrawOptions.Children.Add(seg.View);
+        }
+        _laserFireOnly = Parts.Toggle("Paint only while firing", () => Change(o => o.LaserFireOnly = !o.LaserFireOnly), "Aiming leaves no trail; only shots draw.");
+        _laserDrawOptions.Children.Add(_laserFireOnly);
         _laserDrawOptions.Children.Add(Parts.Text("Strokes glow, older ones darker. Their colour goes from Paint ahead (straight ahead) to Paint behind (turned all the way round), so a turn past 90° still reads. Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping on the phone (Other targets) clears every laser pointer at once.", "Hint"));
         lb.Children.Add(_laserDrawOptions);
         var clear = Parts.Button("Clear", () => { if (Picked is { } id) _app.ClearOverlay(id); }, glyph: "");
@@ -358,12 +371,15 @@ internal sealed class OverlaysPage : Page
             _trackballAxes.Children.Add(_tbLock[i]);
             _tbFromTitle[i] = Parts.Text($"{name} axis turns with");
             _trackballAxes.Children.Add(_tbFromTitle[i]);
-            _tbFrom[i] = new Seg<int>(a => Change(o => Put(o, a | ((o.TrackballAxes >> shift) & 0x80))), false,
+            _tbFrom[i] = new Seg<int>(a => Change(o => Put(o, a | ((o.TrackballAxes >> shift) & ~0x1F & 0xFF))), false,
                 ("Yaw", 3), ("Pitch", 2), ("Roll", 1), ("None", 0));
             _tbFrom[i].View.Margin = new Thickness(0, 4, 0, 2);
             _trackballAxes.Children.Add(_tbFrom[i].View);
             _tbInvert[i] = Parts.Toggle($"Invert {name} axis", () => Change(o => Put(o, ((o.TrackballAxes >> shift) & 0xFF) ^ 0x80)));
             _trackballAxes.Children.Add(_tbInvert[i]);
+            _tbStop[i] = Parts.Toggle($"Stop {name} at ±90°", () => Change(o => Put(o, ((o.TrackballAxes >> shift) & 0xFF) ^ OverlaySettings.TrackballStop)),
+                i == 1 ? "Off: it goes over the top, left and right staying as seen." : null);
+            _trackballAxes.Children.Add(_tbStop[i]);
             // Easing this axis back to straight, with its own options.
             int ai = i;
             _tbEase[i] = Parts.Toggle($"Ease {name} axis back", () => Change(o => o.EaseOf(ai).On = !o.EaseOf(ai).On));
@@ -383,7 +399,7 @@ internal sealed class OverlaysPage : Page
             _tbEaseOptions[i] = opts;
             _trackballAxes.Children.Add(opts);
         }
-        _trackballAxes.Children.Add(Parts.Text("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked or easing back it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces; with Yaw locked it stops at straight up or down.", "Hint"));
+        _trackballAxes.Children.Add(Parts.Text("A locked axis never turns, whatever the others do, as Camera never rolls. With one locked, stopped or easing back it turns as a game camera: left and right about the vertical, up and down about its own right, then about where it faces; with Yaw locked it stops at straight up or down.", "Hint"));
         _tbAsCamera = Parts.Button("As the camera", () => Change(o => o.TrackballAxes = OverlaySettings.TrackballAsCamera));
         _trackballAxes.Children.Add(_tbAsCamera);
         tbb.Children.Add(_trackballAxes);
@@ -582,6 +598,8 @@ internal sealed class OverlaysPage : Page
         Parts.SetChecked(_laserDraw, o.LaserDraw);
         Parts.Show(_laserDrawOptions, o.LaserDraw);
         _laserBrush.Set(o.LaserBrush);
+        foreach (var seg in _fireSegs) seg.Set(o.LaserFire);
+        Parts.SetChecked(_laserFireOnly, o.LaserFireOnly);
         _laserFade.Set(o.LaserFadeMs);
         Parts.SetChecked(_laserClearOnRatchet, o.LaserClearOnRatchet);
         Parts.SetChecked(_dots, o.FingerDots);
@@ -623,9 +641,11 @@ internal sealed class OverlaysPage : Page
             Parts.SetChecked(_tbLock[i], locked);
             Parts.Show(_tbFromTitle[i], !locked);
             Parts.Show(_tbFrom[i].View, !locked);
-            _tbFrom[i].Set(code & 0x3F);
+            _tbFrom[i].Set(code & 0x1F);
             Parts.SetChecked(_tbInvert[i], (code & 0x80) != 0);
-            Parts.Show(_tbInvert[i], !locked && (code & 0x3F) != 0);
+            Parts.Show(_tbInvert[i], !locked && (code & 0x1F) != 0);
+            Parts.SetChecked(_tbStop[i], (code & OverlaySettings.TrackballStop) != 0);
+            Parts.Show(_tbStop[i], !locked);
             var e = o.EaseOf(i);
             Parts.SetChecked(_tbEase[i], e.On);
             Parts.Show(_tbEase[i], !locked);

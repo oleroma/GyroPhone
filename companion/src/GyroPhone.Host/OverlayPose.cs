@@ -207,8 +207,8 @@ public sealed class OverlayPose
         // About each of its fixed axes by the turn TrackballAxes picks for it, as the phone turns
         // (the opposite of holding still against the world).
         int m = s.TrackballAxes;
-        int locks = Locks(m);
-        if (locks == 0 && !AnyEase(s))
+        int locks = Bits(m, OverlaySettings.TrackballLock), stops = Bits(m, OverlaySettings.TrackballStop);
+        if (locks == 0 && stops == 0 && !AnyEase(s))
         {
             CounterRotate(-About(m, 0, yaw, pitch, roll), -About(m, 1, yaw, pitch, roll), -About(m, 2, yaw, pitch, roll));
             return;
@@ -216,18 +216,17 @@ public sealed class OverlayPose
         // A locked or easing axis: as a game camera turns (a gimbal), so each axis has its own angle;
         // with the facing axis locked it stops at straight up or down, as Camera does.
         GimbalTurn(-About(m, 0, yaw, pitch, roll) * DegToRad, About(m, 1, yaw, pitch, roll) * DegToRad,
-            -About(m, 2, yaw, pitch, roll) * DegToRad, locks, MaxPitch(locks));
+            -About(m, 2, yaw, pitch, roll) * DegToRad, locks, stops);
     }
 
-    private static int Locks(int m)
+    /// <summary>Bits 0, 1, 2: which trackball axes (up, right, through the screen) <paramref name="m"/> has <paramref name="flag"/> on.</summary>
+    private static int Bits(int m, int flag)
     {
-        int locks = 0;
+        int bits = 0;
         for (int i = 0; i < 3; i++)
-            if (((m >> (8 * i)) & OverlaySettings.TrackballLock) != 0) locks |= 1 << i;
-        return locks;
+            if (((m >> (8 * i)) & flag) != 0) bits |= 1 << i;
+        return bits;
     }
-
-    private static float MaxPitch(int locks) => (locks & 4) != 0 && (locks & 2) == 0 ? 89f * DegToRad : 0f;
 
     private static bool AnyEase(OverlaySettings s)
     {
@@ -296,8 +295,8 @@ public sealed class OverlayPose
             _easeStep[i] = next - a;
             any = true;
         }
-        int locks = Locks(s.TrackballAxes);
-        if (any) GimbalTurn(_easeStep[0], _easeStep[1], _easeStep[2], locks, MaxPitch(locks));
+        int m = s.TrackballAxes;
+        if (any) GimbalTurn(_easeStep[0], _easeStep[1], _easeStep[2], Bits(m, OverlaySettings.TrackballLock), Bits(m, OverlaySettings.TrackballStop));
     }
 
     /// <summary>The gimbal angles (GimbalTurn) and the pose they made: read again from the pose when anything else turned it.</summary>
@@ -317,20 +316,27 @@ public sealed class OverlayPose
     /// Turns as a gimbal (a game camera's order): by <paramref name="a"/> radians about the vertical, then
     /// <paramref name="b"/> about its own right, then <paramref name="c"/> about where it faces, as
     /// Ry(a)·Rx(b)·Rz(c). The angles add up and <paramref name="locks"/> (bit 0 the vertical, 1 the right, 2
-    /// the facing axis) holds those at 0, so nothing ever turns a locked one. <paramref name="maxPitch"/>
-    /// (radians, 0 none) limits b. As the phone's GyroPose.gimbalTurn.
+    /// the facing axis) holds those at 0, so nothing ever turns a locked one; <paramref name="stops"/> holds those
+    /// within ±90° (the right one within ±89°, short of the poles). As the phone's GyroPose.gimbalTurn.
     /// </summary>
-    private void GimbalTurn(float a, float b, float c, int locks, float maxPitch)
+    private void GimbalTurn(float a, float b, float c, int locks, int stops)
     {
         GimbalSync();
-        _gimbal[0] += a; _gimbal[1] += b; _gimbal[2] += c;
+        // Over the top, left and right stay as seen.
+        _gimbal[0] += MathF.Abs(_gimbal[1]) > MathF.PI / 2 ? -a : a;
+        _gimbal[1] += b; _gimbal[2] += c;
         for (int i = 0; i < 3; i++)
         {
             // Within half a turn either way, so easing back never unwinds whole turns.
             if (_gimbal[i] > MathF.PI) _gimbal[i] -= 2 * MathF.PI; else if (_gimbal[i] < -MathF.PI) _gimbal[i] += 2 * MathF.PI;
             if ((locks & (1 << i)) != 0) _gimbal[i] = 0f;
         }
-        if (maxPitch > 0f) _gimbal[1] = Math.Clamp(_gimbal[1], -maxPitch, maxPitch);
+        for (int i = 0; i < 3; i++)
+            if ((stops & (1 << i)) != 0)
+            {
+                float max = i == 1 ? 89f * DegToRad : MathF.PI / 2;
+                _gimbal[i] = Math.Clamp(_gimbal[i], -max, max);
+            }
         // Ry(a) · Rx(b), then · Rz(c)
         float cy = MathF.Cos(_gimbal[0] / 2), sy = MathF.Sin(_gimbal[0] / 2);
         float cx = MathF.Cos(_gimbal[1] / 2), sx = MathF.Sin(_gimbal[1] / 2);
@@ -347,7 +353,7 @@ public sealed class OverlayPose
     private static float About(int m, int i, float yaw, float pitch, float roll)
     {
         int code = (m >> (8 * i)) & 0xFF;
-        float v = (code & 0x3F) switch { 1 => yaw, 2 => pitch, 3 => roll, _ => 0f };
+        float v = (code & 0x1F) switch { 1 => yaw, 2 => pitch, 3 => roll, _ => 0f };
         return (code & 0x80) != 0 ? -v : v;
     }
 
