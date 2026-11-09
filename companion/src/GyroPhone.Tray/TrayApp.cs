@@ -619,7 +619,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         {
             Checked = OverlaysHidden,
         });
-        menu.DropDownItems.Add(new ToolStripMenuItem("Edit: drag the windows to move and resize" + KeysSuffix(OverlayAction.Edit), null, (_, _) => SetOverlayEdit(!OverlayEdit))
+        menu.DropDownItems.Add(new ToolStripMenuItem("Edit: drag the windows to move and resize, scroll to scale" + KeysSuffix(OverlayAction.Edit), null, (_, _) => SetOverlayEdit(!OverlayEdit))
         {
             Checked = OverlayEdit,
         });
