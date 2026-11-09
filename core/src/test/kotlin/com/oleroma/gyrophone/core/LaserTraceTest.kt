@@ -345,6 +345,11 @@ class CameraTurnTest {
         assertTrue(F.held(F.PAD + 5, com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(buttons = 32))))
         assertTrue(F.held(F.RT, com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(rt = 900))))
         assertFalse(F.held(F.LT, com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(rt = 900))))
+        val upRight = com.oleroma.gyrophone.core.hid.HidState(gamepad = com.oleroma.gyrophone.core.hid.GamepadState(hat = com.oleroma.gyrophone.core.hid.Hat.UP_RIGHT))
+        assertTrue(F.held(F.DPAD, upRight))
+        assertTrue(F.held(F.DPAD + 3, upRight))
+        assertFalse(F.held(F.DPAD + 1, upRight))
+        assertFalse(F.held(F.DPAD, none))
     }
 
     /** Ry(a)·Rx(b)·Rz(c), row-major. */
