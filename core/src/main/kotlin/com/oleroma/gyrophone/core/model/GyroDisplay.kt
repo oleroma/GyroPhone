@@ -197,25 +197,12 @@ data class GyroDisplay(
     val laserColourSteps: Int = 16,
     val laserCurve: Float = 0.5f,
     val laserLineSmoothing: Float = 0f,
-    /**
-     * LASER: [laserPaint3d] lights the paint by the sphere's light (from the upper left) as strongly as [laserLighting] (0..1).
-     * The Sphere look's [laserGloss] (a shine where the light hits) and [laserRimGlow] (a soft bright edge).
-     */
-    val laserPaint3d: Boolean = true,
-    /** LASER: where the light comes from: [laserLightFrom] degrees round the picture (0 right, 90 top, 180 left), [laserLightHeight] degrees up toward the viewer. */
-    val laserLightFrom: Int = 130,
-    val laserLightHeight: Int = 58,
-    /** LASER without [laserSphereTurns]: the light turns with the pointer, as it does (staying put with the pointer) in that mode. */
-    val laserLightFollows: Boolean = false,
     /** LASER Draw mode: the glow round the paint (0 none .. 1 strong), a dark [GyroDisplayColor.LASER_OUTLINE] edge, older paint darker. */
     val laserGlow: Float = 0.5f,
     val laserOutline: Boolean = false,
     val laserAgeDim: Boolean = false,
     /** LASER Draw mode: the paint gets thinner toward the sphere's rim (and with [perspective] bigger nearer), changing smoothly along the line. */
     val laserPaintWidth: Boolean = true,
-    val laserLighting: Float = 0.6f,
-    val laserGloss: Boolean = true,
-    val laserRimGlow: Boolean = true,
     /** 3D phone, 3D shape and laser pointer: seen in perspective (nearer parts bigger); off, flat (no perspective). */
     val perspective: Boolean = true,
     /** What turns it (the pose kinds): the phone, the game's camera, or a trackball. */
@@ -382,8 +369,6 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     LASER_MOVE_DOWN(GyroDisplayKind.LASER, "move_down", "Moving down", 0xFF800080),
     LASER_MOVE_TOWARD(GyroDisplayKind.LASER, "move_toward", "Moving toward you", 0xFF8080FF),
     LASER_MOVE_AWAY(GyroDisplayKind.LASER, "move_away", "Moving away", 0xFF808000),
-    LASER_GLOSS(GyroDisplayKind.LASER, "gloss", "Gloss", 0x99FFFFFF),
-    LASER_RIM(GyroDisplayKind.LASER, "rim", "Rim glow", 0x66BFE3FF),
     LASER_OUTLINE(GyroDisplayKind.LASER, "outline", "Paint outline", 0xB3000000),
     LASER_RIFLE(GyroDisplayKind.LASER, "rifle", "Rifle", 0xFF5A616C),
     LASER_FIRE(GyroDisplayKind.LASER, "fire", "Fire", 0xFFFF4A3D),

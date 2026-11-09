@@ -269,20 +269,6 @@ internal fun GyroDisplaySettingsScreen(
                 Colours()
             }
         }
-        val light = if (!laser || ((d.laserRifle || d.laserCrosshair) && !d.laserDraw)) null else category(runtime, "gyroDisplayLight", "Light", "Gloss, rim glow, 3D paint, where the light comes from") {
-            if (!d.laserRifle && !d.laserCrosshair) {
-                SwitchRow("Gloss", d.laserGloss, "A shine on the sphere where the light (upper left) hits it.") { set(d.copy(laserGloss = it)) }
-                SwitchRow("Rim glow", d.laserRimGlow, "A soft bright edge round the sphere, so its outline shows on any background.") { set(d.copy(laserRimGlow = it)) }
-            }
-            if ((!d.laserRifle && !d.laserCrosshair && d.laserGloss) || (d.laserDraw && d.laserPaint3d)) {
-                IntSlider("Light from %d°", d.laserLightFrom, 0..355, 5) { set(d.copy(laserLightFrom = it)) }
-                IntSlider("Light height %d°", d.laserLightHeight, 0..90) { set(d.copy(laserLightHeight = it)) }
-                if (!d.laserSphereTurns) SwitchRow("Light follows the pointer", d.laserLightFollows, "The light turns with the beam, like a lamp on the pointer, so the paint and gloss stay lit the same way from where you aim (as Fixed pointer mode always shows it). Off: the light stays put while the beam turns.") { set(d.copy(laserLightFollows = it)) }
-                Hint("Where the light for the gloss and 3D paint comes from: round the picture 0° right, 90° top, 180° left, 270° bottom; height 0° from the side, 90° straight from the front.")
-            }
-            if (d.laserDraw) SwitchRow("3D paint", d.laserPaint3d, "The paint is lit by the sphere's light from the upper left, darker where the surface turns away from it.") { set(d.copy(laserPaint3d = it)) }
-            if (d.laserDraw && d.laserPaint3d) PercentSlider("Lighting", d.laserLighting, 0f..1f) { set(d.copy(laserLighting = it)) }
-        }
         val draw = if (!laser) null else category(runtime, "gyroDisplayDraw", "Draw", "Draw mode, brush, fade, length, Fire, Clear") {
             SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim.") { set(d.copy(laserDraw = it)) }
             if (d.laserDraw) Indented {
@@ -368,7 +354,7 @@ internal fun GyroDisplaySettingsScreen(
                 }
             }) { Text("Level") }
         }
-        val items = listOfNotNull(look, light, draw, strokes, colours, turning)
+        val items = listOfNotNull(look, draw, strokes, colours, turning)
         ReorderableSections(runtime, "gyroDisplay", items)
     }
     picking?.let { c ->
@@ -500,8 +486,6 @@ private fun shown(d: GyroDisplay, c: GyroDisplayColor): Boolean = when (c) {
     GyroDisplayColor.LASER_MOVE_RIGHT, GyroDisplayColor.LASER_MOVE_LEFT, GyroDisplayColor.LASER_MOVE_UP,
     GyroDisplayColor.LASER_MOVE_DOWN, GyroDisplayColor.LASER_MOVE_TOWARD, GyroDisplayColor.LASER_MOVE_AWAY -> movesShown(d)
     GyroDisplayColor.LASER_RIFLE -> d.laserRifle
-    GyroDisplayColor.LASER_GLOSS -> d.laserGloss && !d.laserRifle && !d.laserCrosshair
-    GyroDisplayColor.LASER_RIM -> d.laserRimGlow && !d.laserRifle && !d.laserCrosshair
     GyroDisplayColor.LASER_OUTLINE -> d.laserDraw && d.laserOutline
     GyroDisplayColor.LASER_SPHERE, GyroDisplayColor.LASER_BEAM, GyroDisplayColor.LASER_DOT -> !d.laserRifle && !d.laserCrosshair
     GyroDisplayColor.LASER_CROSSHAIR_OUTLINE -> d.laserCrosshair && !d.laserRifle && d.crosshairOutline

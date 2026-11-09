@@ -276,7 +276,6 @@ private class VisState {
     private var rk = IntArray(4096)
     private val glowPaths = HashMap<Int, Path>()
     private val outlinePaths = HashMap<Int, Path>()
-    private val light = FloatArray(3)
     private val nA = FloatArray(2)
     private val nB = FloatArray(2)
     private val moveColors = LongArray(6)
@@ -393,9 +392,6 @@ private class VisState {
         val fadeMs = d.laserFadeMs
         val held = feed?.ratchetHeld == true
         LaserTrace.beam(m, beam)
-        LaserTrace.light(d.laserLightFrom.toFloat(), d.laserLightHeight.toFloat(), light)
-        // Light follows the pointer: turned with the pose, as the fixed pointer mode shows it.
-        if (d.laserLightFollows && !d.laserSphereTurns) LaserTrace.lightWithPose(light, m, d.laserAxonometric)
         val lt = feed?.laser
         if (lt != null) {
             val v = feed?.pose?.version ?: 0L
@@ -501,7 +497,6 @@ private class VisState {
             val outlinePx = 1.2f * density
             val outlineColor = col(GyroDisplayColor.LASER_OUTLINE)
             val steps = d.laserColourSteps.coerceIn(4, 32)
-            val paint3d = d.laserPaint3d
             // Varying width: thinner toward the rim (and with perspective bigger nearer), changing smoothly along the ribbon.
             val varyWidth = d.laserPaintWidth
             val fa = fireAhead.toArgb().toLong() and 0xFFFFFFFFL
@@ -703,12 +698,11 @@ private class VisState {
                     }
                     if (n == 0) vertex(lastX, lastY, -1, lastW)
                     val argb = if (firing) fireArgb(LaserTrace.behind(z)) else base
-                    // 3D paint: lit by the sphere's light. Varying width: thinner toward the rim; with perspective, bigger nearer.
-                    val lit = if (paint3d) LaserTrace.paintLight(pv[0], pv[1], pv[2], d.laserLighting, light) else 1f
+                    // Varying width: thinner toward the rim; with perspective, bigger nearer.
                     val wf = if (!varyWidth) 1f
                     else (if (laserPersp) LaserTrace.perspective(pv[2]) else 1f) * LaserTrace.paintWidth(pv[2])
                     // Colour in [steps] shades a channel: the piece's path.
-                    fun q(shift: Int) = (((argb shr shift and 0xFF) / 255f) * lit * (steps - 1) + 0.5f).toInt().coerceIn(0, steps - 1)
+                    fun q(shift: Int) = (((argb shr shift and 0xFF) / 255f) * (steps - 1) + 0.5f).toInt().coerceIn(0, steps - 1)
                     vertex(pt.x, pt.y, MOVE_KEYS + ((level - 1) shl 15 or (q(16) shl 10) or (q(8) shl 5) or q(0)), wNow * maxOf(0.15f, wf))
                     lastX = pt.x; lastY = pt.y; lastW = wNow * maxOf(0.15f, wf)
                     lastOurs = ours
@@ -836,26 +830,6 @@ private class VisState {
         rings(true)
         axes(true)
         if (hitFront) spot()
-        if (d.laserRimGlow) {
-            // A soft bright edge round the sphere's outline, inside and a little out.
-            val rim = col(GyroDisplayColor.LASER_RIM)
-            val out = r * 1.08f
-            drawCircle(
-                Brush.radialGradient(0.78f to Color.Transparent, 0.925f to rim, 1f to Color.Transparent, center = c, radius = out),
-                out, c,
-            )
-        }
-        if (d.laserGloss) {
-            // The shine where the light reflects toward the viewer: halfway between them.
-            val gloss = col(GyroDisplayColor.LASER_GLOSS)
-            val hx = light[0]
-            val hy = light[1]
-            val hz = light[2] + 1f
-            val hl = kotlin.math.sqrt(hx * hx + hy * hy + hz * hz).coerceAtLeast(1e-4f)
-            val at = Offset(c.x + hx / hl * r, c.y - hy / hl * r)
-            val gr = r * 0.24f
-            drawCircle(Brush.radialGradient(listOf(gloss, gloss.copy(alpha = 0f)), center = at, radius = gr), gr, at)
-        }
         drawCircle(grid, r, c, style = Stroke(1.5f * density))
     }
 

@@ -300,46 +300,6 @@ class LaserTrace {
         /** Perspective: how much bigger a picture point at depth [z] (toward the viewer +, sphere radii) shows. */
         fun perspective(z: Float): Float = CAMERA_DISTANCE / (CAMERA_DISTANCE - z.coerceAtMost(CAMERA_DISTANCE - 0.5f))
 
-        /** The default light the sphere and 3D paint are lit by, a unit direction in the picture (x right, y up, z toward the viewer): from the upper left. */
-        val LIGHT = floatArrayOf(-0.35f, 0.4f, 0.847f)
-
-        /**
-         * The light's unit direction into [out]: from [fromDeg] round the picture (0 right, 90 top, 180 left,
-         * 270 bottom) and [heightDeg] up from the picture's plane toward the viewer (90 straight from the front).
-         */
-        fun light(fromDeg: Float, heightDeg: Float, out: FloatArray) {
-            val a = Math.toRadians(fromDeg.toDouble())
-            val h = Math.toRadians(heightDeg.coerceIn(0f, 90f).toDouble())
-            out[0] = (cos(h) * cos(a)).toFloat()
-            out[1] = (cos(h) * sin(a)).toFloat()
-            out[2] = sin(h).toFloat()
-        }
-
-        /**
-         * How bright 3D paint at picture point ([x], [y], [z]) on the unit sphere shows with [lighting] (0..1): seen
-         * on the far half from inside (its face toward the viewer looks inward), on the near half from outside;
-         * shaded by the light ([LIGHT]), down to a quarter where it faces away.
-         */
-        /**
-         * Turns the picture light [l] with the pointer's pose [m] (row-major), as the fixed pointer mode
-         * shows it: through [VIEW]'s transpose, the pose, and back ([axon]; face-on just the pose).
-         */
-        fun lightWithPose(l: FloatArray, m: FloatArray, axon: Boolean) {
-            val v = VIEW
-            val t = FloatArray(3)
-            for (i in 0..2) t[i] = if (axon) v[i] * l[0] + v[3 + i] * l[1] + v[6 + i] * l[2] else l[i]
-            val u = FloatArray(3)
-            for (i in 0..2) u[i] = m[3 * i] * t[0] + m[3 * i + 1] * t[1] + m[3 * i + 2] * t[2]
-            for (i in 0..2) l[i] = if (axon) v[3 * i] * u[0] + v[3 * i + 1] * u[1] + v[3 * i + 2] * u[2] else u[i]
-        }
-
-        fun paintLight(x: Float, y: Float, z: Float, lighting: Float, light: FloatArray = LIGHT): Float {
-            val d = x * light[0] + y * light[1] + z * light[2]
-            val lit = (if (z >= 0f) d else -d).coerceAtLeast(0f)
-            val k = lighting.coerceIn(0f, 1f)
-            return 1f - k + k * (0.25f + 0.75f * lit)
-        }
-
         /** How wide 3D paint at picture depth [z] on the unit sphere shows: foreshortened toward the rim (0.2 edge-on .. 1 face-on). */
         fun paintWidth(z: Float): Float = 0.2f + 0.8f * kotlin.math.abs(z).coerceAtMost(1f)
 

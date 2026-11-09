@@ -361,23 +361,6 @@ class CameraTurnTest {
         return mul(mul(ry, rx), rz)
     }
 
-    @Test fun lightFollowingThePointerShadesAsFixedPointerMode() {
-        val m = gimbal(0.7f, 0.4f, 0.3f)
-        val l = FloatArray(3)
-        LaserTrace.light(130f, 58f, l)
-        val lf = l.copyOf()
-        LaserTrace.lightWithPose(lf, m, axon = true)
-        // A point p: fixed pointer mode sees it at VIEW·mᵀ·p under light l; normal mode at VIEW·p under the followed light.
-        val p = floatArrayOf(0.3f, -0.5f, 0.81f)
-        val a = FloatArray(3)
-        val b = FloatArray(3)
-        LaserTrace.view(p[0], p[1], p[2], a, axon = true, turned = m)
-        LaserTrace.view(p[0], p[1], p[2], b, axon = true)
-        val fixed = a[0] * l[0] + a[1] * l[1] + a[2] * l[2]
-        val follows = b[0] * lf[0] + b[1] * lf[1] + b[2] * lf[2]
-        assertEquals(fixed, follows, 1e-4f)
-    }
-
     @Test fun gimbalRingsTurnWithTheLasersAxes() {
         val m = gimbal(0.7f, 0.4f, 0.3f)
         for (i in 0..2) {
