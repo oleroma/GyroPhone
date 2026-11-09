@@ -133,6 +133,13 @@ data class GyroDisplay(
      * screen) back to straight, each with its own options. Easing any turns it as a gimbal, as a lock does.
      */
     val trackballEase: List<AxisEase> = List(3) { AxisEase() },
+    /**
+     * [TurnsWith.TRACKBALL]: it turns about its own axes as it now points (up and down about its own
+     * right, left and right about its own up), so the laser always moves square to where it aims and
+     * never rolls by itself; a locked axis never turns it and there are no stops (no poles). Moving in
+     * a loop leaves it a little rolled, which roll's ease back levels out. Off: as a game camera.
+     */
+    val trackballOwnAxes: Boolean = false,
     /** Branch builds before v3: a trackball turning as the camera ([TurnsWith.CAMERA] since). */
     val trackballInvert: Boolean = false,
     /** PHONE and BALL: seen from a fixed angle (30° round, 30° above) with the world's axes, as the laser pointer is, instead of face-on. */

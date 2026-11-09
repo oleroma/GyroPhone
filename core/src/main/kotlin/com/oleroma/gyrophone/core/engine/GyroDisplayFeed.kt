@@ -229,6 +229,16 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         val m = d.trackballAxes
         val locks = trackballBits(m, TRACKBALL_LOCK)
         val stops = trackballBits(m, TRACKBALL_STOP)
+        if (d.trackballOwnAxes) {
+            // About its own axes as it now points: up and down, left and right always square to where it aims,
+            // a locked axis never turning it (no stops: there are no poles).
+            val k = DEG_TO_RAD * dt
+            fun on(i: Int) = if (locks and (1 shl i) != 0) 0f else 1f
+            pose.turnOwn(
+                about(m, 1, yaw, pitch, roll) * k * on(1), -about(m, 0, yaw, pitch, roll) * k * on(0), -about(m, 2, yaw, pitch, roll) * k * on(2),
+            )
+            return
+        }
         if (locks == 0 && stops == 0 && d.trackballEase.none { it.on }) {
             // As the phone turns, about the view's fixed axes (the opposite of holding still against the world).
             pose.counterRotate(-about(m, 0, yaw, pitch, roll), -about(m, 1, yaw, pitch, roll), -about(m, 2, yaw, pitch, roll), dt)
@@ -290,7 +300,11 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
             any = true
         }
         val m = d.trackballAxes
-        if (any) pose.gimbalTurn(easeStep[0], easeStep[1], easeStep[2], trackballBits(m, TRACKBALL_LOCK), trackballBits(m, TRACKBALL_STOP))
+        // About its own axes a locked one can still have turned (a loop's twist): ease it too, held by nothing.
+        if (any) {
+            if (d.trackballOwnAxes) pose.gimbalTurn(easeStep[0], easeStep[1], easeStep[2], 0, 0)
+            else pose.gimbalTurn(easeStep[0], easeStep[1], easeStep[2], trackballBits(m, TRACKBALL_LOCK), trackballBits(m, TRACKBALL_STOP))
+        }
     }
 
     /** Bits 0, 1, 2: which trackball axes (up, right, through the screen) [m] ([GyroDisplay.trackballAxes]) has [flag] on. */

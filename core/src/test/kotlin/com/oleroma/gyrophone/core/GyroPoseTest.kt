@@ -430,4 +430,20 @@ class GyroDisplayTest {
         f.pose.matrix(m); turned.pose.matrix(m2)
         assertArrayEquals(m2, m, 1e-3f)
     }
+
+    @Test fun turningAboutItsOwnAxesYawsAboutItsOwnUp() {
+        val p = GyroPose()
+        val m = FloatArray(9)
+        // Pitch up 60°, then yaw 30° about its own (tilted) up: where it faces stays square to that up.
+        p.turnOwn((60.0 * Math.PI / 180).toFloat(), 0f, 0f)
+        p.matrix(m)
+        val up = floatArrayOf(m[1], m[4], m[7])
+        p.turnOwn(0f, (30.0 * Math.PI / 180).toFloat(), 0f)
+        p.matrix(m)
+        // Its up is unchanged by a turn about it, and it hasn't rolled (its right stays square to that up).
+        assertEquals(up[0], m[1], 1e-4f)
+        assertEquals(up[1], m[4], 1e-4f)
+        assertEquals(up[2], m[7], 1e-4f)
+        assertEquals(0f, m[0] * up[0] + m[3] * up[1] + m[6] * up[2], 1e-4f)
+    }
 }

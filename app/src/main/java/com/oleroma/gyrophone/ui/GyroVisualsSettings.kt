@@ -363,6 +363,14 @@ private fun PoseSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
 /** A trackball's axes: for each, locked or the gyro turn that rolls it about that axis, and which way. */
 @Composable
 private fun TrackballAxesSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
+    SwitchRow(
+        "Turn about its own axes", d.trackballOwnAxes,
+        "Up and down about its own right, left and right about its own up, so it always moves square to where it aims and never rolls by itself. Moving in a loop leaves it a little rolled; Roll's ease back levels that out. Off: as a game camera.",
+    ) { on ->
+        // Turning it on eases the loops' roll back once the phone stops, unless roll already eases.
+        val roll = d.easeOf(2)
+        set(d.copy(trackballOwnAxes = on).let { if (on && !roll.on) it.withEase(2, roll.copy(on = true, onRatchet = false)) else it })
+    }
     // Its bytes: 0 about up Y (yaw), 1 about right X (pitch), 2 along the beam Z (roll).
     for ((i, name) in listOf(0 to "Yaw", 1 to "Pitch", 2 to "Roll")) {
         val code = d.trackballAxes shr (8 * i) and 0xFF
@@ -373,7 +381,7 @@ private fun TrackballAxesSettings(d: GyroDisplay, set: (GyroDisplay) -> Unit) {
         Text("$name axis turns with", style = MaterialTheme.typography.bodyMedium)
         Chips(listOf("Yaw" to 3, "Pitch" to 2, "Roll" to 1, "None" to 0), code and 0x1F) { put(it or (code and 0x1F.inv())) }
         if (code and 0x1F != 0) SwitchRow("Invert $name axis", code and 0x80 != 0) { put((code and 0x80.inv()) or (if (it) 0x80 else 0)) }
-        SwitchRow("Stop $name at ±90°", code and TRACKBALL_STOP != 0, if (i == 1) "Off: it goes over the top, left and right staying as seen." else null) {
+        if (!d.trackballOwnAxes) SwitchRow("Stop $name at ±90°", code and TRACKBALL_STOP != 0, if (i == 1) "Off: it goes over the top, left and right staying as seen." else null) {
             put(if (it) code or TRACKBALL_STOP else code and TRACKBALL_STOP.inv())
         }
         AxisEaseSettings(name, d.easeOf(i)) { set(d.withEase(i, it)) }
