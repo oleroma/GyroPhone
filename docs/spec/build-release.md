@@ -17,7 +17,7 @@ Docs, `media/` and `tools/` belong to no part. Any other change (hooks, workflow
 
 `<version>` is **`0.1.<build number>`**; Android's `versionCode` is the number. `.agents/build-number` claims the next number by pushing a `build/<n>` tag (never by hand), starting at **400** (`.agents/hooks/first-build-number`). The companion exe is stamped `<version>-<commit>`. Local Gradle builds without a number are `0.1.0-dev`.
 
-App: `applicationId com.oleroma.gyrophone`, minSdk 35, target/compile SDK 36, signed with `keystore/debug.keystore` (always the same key, so updates install in place). Native code: `app/src/main/cpp/gyrobuffer.c` (gralloc buffer reader).
+App: `applicationId com.oleroma.gyrophone`, minSdk 35, target/compile SDK 36, signed with `keystore/debug.keystore` (always the same key, so updates install in place). Native code: `app/src/main/cpp/gyrobuffer.c` (gralloc buffer reader). Every native library in the APK must be 16 KB page aligned (Android 15+ phones with 16 KB pages, such as the OnePlus 15 on ColorOS 17, warn otherwise): `gyrobuffer` links with `-z max-page-size=16384`, and `androidx.graphics:graphics-path` is pinned to 1.1.0 because the 1.0.1 that Compose brings in is 4 KB aligned.
 
 ## Hooks
 
