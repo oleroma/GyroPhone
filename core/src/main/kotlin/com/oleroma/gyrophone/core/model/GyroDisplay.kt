@@ -188,12 +188,10 @@ data class GyroDisplay(
     /** LASER: the paint's and crosshair's way colours even out small shakes. */
     val laserSmoothColours: Boolean = true,
     /**
-     * LASER Draw mode's strokes: [laserSeamless] draws each age step in one layer (no overlap
-     * beads; else pieces meet with flat ends, cheaper); [laserColourSteps] shades per colour
+     * LASER Draw mode's strokes: [laserColourSteps] shades per colour
      * channel (4..32); [laserCurve] rounds the corners between points (0 straight .. 1 round);
      * [laserLineSmoothing] evens out hand shake in the painted path (0 off .. 1 strong).
      */
-    val laserSeamless: Boolean = true,
     val laserColourSteps: Int = 16,
     val laserCurve: Float = 0.5f,
     val laserLineSmoothing: Float = 0f,

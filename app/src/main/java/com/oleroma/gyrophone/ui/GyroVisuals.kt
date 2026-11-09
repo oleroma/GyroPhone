@@ -464,7 +464,6 @@ private class VisState {
             val curve = d.laserCurve.coerceIn(0f, 1f)
             // The visible run of picture points being gathered (vx, vy), with the path key of the piece ending at each.
             var n = 0
-            val seamless = d.laserSeamless
             val wNow = width * (if (front) 0.6f else 1f)
             fun pathFor(key: Int): Path = if (key < MOVE_KEYS) levelPaths[key] else movePaths.getOrPut(key) { movePool.removeLastOrNull() ?: Path() }
             // Draws the run: straight hops, or with [curve] its corners rounded (each corner a quadratic
@@ -474,28 +473,15 @@ private class VisState {
                     var curKey = -1
                     var px = vx[0]
                     var py = vy[0]
-                    // The pen before the last move: a new piece's lead-in comes back along it.
-                    var qx = px
-                    var qy = py
                     fun into(key: Int): Path {
                         val path = pathFor(key)
                         if (curKey != key) {
-                            // Seamless: the piece starts with a short lead-in over the end of the one before
-                            // (along the line, in the layer, so it neither pokes out nor brightens), filling the bend.
-                            val bx = qx - px
-                            val by = qy - py
-                            val bl = kotlin.math.sqrt(bx * bx + by * by)
-                            if (seamless && curKey != -1 && bl > 1e-3f) {
-                                val f = minOf(1f, wNow / bl)
-                                path.moveTo(px + bx * f, py + by * f)
-                                path.lineTo(px, py)
-                            } else path.moveTo(px, py)
+                            path.moveTo(px, py)
                             curKey = key
                         }
                         return path
                     }
                     fun pen(x: Float, y: Float) {
-                        qx = px; qy = py
                         px = x; py = y
                     }
                     if (curve <= 0f || n == 2) {
@@ -588,7 +574,7 @@ private class VisState {
             flush()
             val side = if (front) 0.5f else 1f
             val w = wNow
-            // Flat ends: pieces meet without poking into each other (seamless adds lead-ins, drawn in a layer faded once).
+            // Flat ends: pieces of different colours meet without poking into each other or overlapping.
             val cap = StrokeCap.Butt
             val core = Stroke(w, cap = cap, join = StrokeJoin.Round)
             val wide = Stroke(w * 3f, cap = cap, join = StrokeJoin.Round)
@@ -615,22 +601,9 @@ private class VisState {
                     for (e in from until mi) draw(moves[e].value, shaded(moveColor(moves[e].key), k))
                     for (hue in fires) draw(levelPaths[(level - 1) * HUES + hue], shaded(androidx.compose.ui.graphics.lerp(fireAhead, fireBehind, hue / (HUES - 1f)), k))
                 }
-                if (seamless) {
-                    // Drawn solid into a layer, then the layer faded: overlaps can't add up into dots.
-                    val canvas = drawContext.canvas
-                    if (glow) {
-                        canvas.saveLayer(box, androidx.compose.ui.graphics.Paint().apply { alpha = (fade * moveAlpha * 0.22f).coerceIn(0f, 1f) })
-                        each { path, color -> drawPath(path, color.copy(alpha = 1f), style = wide) }
-                        canvas.restore()
-                    }
-                    canvas.saveLayer(box, androidx.compose.ui.graphics.Paint().apply { alpha = (fade * moveAlpha).coerceIn(0f, 1f) })
-                    each { path, color -> drawPath(path, color.copy(alpha = 1f), style = core) }
-                    canvas.restore()
-                } else {
-                    each { path, color ->
-                        if (glow) drawPath(path, color.copy(alpha = color.alpha * fade * 0.22f), style = wide)
-                        drawPath(path, color.copy(alpha = color.alpha * fade), style = core)
-                    }
+                each { path, color ->
+                    if (glow) drawPath(path, color.copy(alpha = color.alpha * fade * 0.22f), style = wide)
+                    drawPath(path, color.copy(alpha = color.alpha * fade), style = core)
                 }
             }
         }
