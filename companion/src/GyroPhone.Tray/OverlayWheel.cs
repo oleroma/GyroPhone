@@ -7,7 +7,7 @@ namespace GyroPhone.Tray;
 /// wheel to the focused window when "Scroll inactive windows" is off, so a low-level mouse hook
 /// (only while Edit is on and an overlay is open) catches it over an overlay and keeps it from the
 /// window behind. Away from every overlay it resizes the picked one, so the wheel then reaches no
-/// other window while Edit is on and one is picked. Runs on the UI thread, which installed it.
+/// other window while Edit is on and one is picked, except the companion's own windows. Runs on the UI thread, which installed it.
 /// </summary>
 internal sealed class OverlayWheel : IDisposable
 {
@@ -47,7 +47,9 @@ internal sealed class OverlayWheel : IDisposable
         if (code >= 0 && (int)wParam == WmMouseWheel)
         {
             var info = Marshal.PtrToStructure<MsLlHookStruct>(lParam);
-            var form = _formAt(GetAncestor(WindowFromPoint(info.Pt), GaRoot)) ?? _picked();
+            var root = GetAncestor(WindowFromPoint(info.Pt), GaRoot);
+            // Over the companion's own windows (settings, Debug) the wheel scrolls them as usual.
+            var form = _formAt(root) ?? (IsOurs(root) ? null : _picked());
             if (form != null)
             {
                 int delta = unchecked((short)(info.MouseData >> 16));
@@ -59,6 +61,11 @@ internal sealed class OverlayWheel : IDisposable
         }
         return CallNextHookEx(_hook, code, wParam, lParam);
     }
+
+    private static readonly uint OwnProcess = (uint)Environment.ProcessId;
+
+    private static bool IsOurs(IntPtr hwnd) =>
+        hwnd != IntPtr.Zero && GetWindowThreadProcessId(hwnd, out uint pid) != 0 && pid == OwnProcess;
 
     public void Dispose() => Enabled = false;
 
@@ -97,6 +104,9 @@ internal sealed class OverlayWheel : IDisposable
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
