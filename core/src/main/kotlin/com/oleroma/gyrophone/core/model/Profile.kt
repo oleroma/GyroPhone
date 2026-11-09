@@ -619,6 +619,36 @@ enum class GyroSpace(val label: String) {
     PLAYER("Player"),
 }
 
+/**
+ * Which screen axis the gyro takes as yaw ([GyroSettings.yawAxis]): the phone's frame as the gyro
+ * sees it, for every use of the phone's own axes (the gyro mouse, the PC controller's gyro and
+ * accelerometer, the gyro displays and the PC overlays).
+ * - [SCREEN_Z]: yaw through the screen (held flat, screen up), pitch across, roll along it.
+ * - [SCREEN_Y]: yaw along the screen's vertical axis (held upright, screen facing you), roll through
+ *   the screen, pitch across it: the frame tilted back 90°.
+ * - [SCREEN_X]: yaw along the screen's horizontal axis (held on its side, right edge up), pitch
+ *   through the screen, roll along its vertical axis: the frame turned 90° about that axis.
+ */
+@Serializable
+enum class YawAxis(val label: String) {
+    SCREEN_Z("Screen Z"),
+    SCREEN_Y("Screen Y"),
+    SCREEN_X("Screen X"),
+    ;
+
+    companion object {
+        /** The screen axis that points most nearly up, from [up] (right, up, toward the player): "Set grip". */
+        fun nearest(up: FloatArray): YawAxis {
+            val x = kotlin.math.abs(up[0]); val y = kotlin.math.abs(up[1]); val z = kotlin.math.abs(up[2])
+            return when {
+                z >= x && z >= y -> SCREEN_Z
+                y >= x -> SCREEN_Y
+                else -> SCREEN_X
+            }
+        }
+    }
+}
+
 @Serializable
 enum class GyroMode(val label: String) {
     OFF("Ratchet enables"),
@@ -1039,6 +1069,8 @@ data class GyroSettings(
     val gameName: String = "",
     /** Which axes yaw, pitch and roll are measured about ([GyroSpace]); the workspace's (and Defaults') only. */
     val gyroSpace: GyroSpace = GyroSpace.LOCAL,
+    /** Which screen axis is yaw ([YawAxis]): the phone's frame for everything gyro; the workspace's (and Defaults') only. */
+    val yawAxis: YawAxis = YawAxis.SCREEN_Z,
     /**
      * Inertia: when a ratchet turns a gyro axis off, its mouse and wheel motion glides on and slows
      * down over [glideMs] ([InertiaCurve]); it stops at once when the axis is on again. Sticks never glide.

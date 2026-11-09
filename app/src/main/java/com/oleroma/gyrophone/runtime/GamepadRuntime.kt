@@ -350,10 +350,11 @@ class GamepadRuntime(context: Context) {
 
     /**
      * Gravity now, for a gyro display's Level (the sensors may be off, as in edit mode): a few
-     * accelerometer readings averaged, as "up" in the phone's frame (right, up, toward the player),
-     * given to [onUp] on the main thread; null when there is none within a second.
+     * accelerometer readings averaged, as "up" in the phone's frame (right, up, toward the player,
+     * turned by the workspace's yaw axis; with [screen], the screen's own), given to [onUp] on the
+     * main thread; null when there is none within a second.
      */
-    fun readUp(onUp: (FloatArray?) -> Unit) {
+    fun readUp(screen: Boolean = false, onUp: (FloatArray?) -> Unit) {
         val source = appContext.getSystemService(SensorManager::class.java)?.let { AccelSource(it) }
         val done = java.util.concurrent.atomic.AtomicBoolean(false)
         val sum = FloatArray(3)
@@ -364,7 +365,8 @@ class GamepadRuntime(context: Context) {
         }
         val started = source?.start { x, y, z, _ ->
             if (done.get()) return@start
-            val m = gyroMouse.motion(x, y, z)
+            syncYawAxis()
+            val m = if (screen) gyroMouse.screenMotion(x, y, z) else gyroMouse.motion(x, y, z)
             sum[0] += m.pitch; sum[1] += -m.yaw; sum[2] += -m.roll
             if (++n >= 8 && done.compareAndSet(false, true)) {
                 val up = sum.copyOf()
@@ -448,6 +450,11 @@ class GamepadRuntime(context: Context) {
 
     /** [gravityPose] followed the gyro last sample (World or Player space). Gyro thread only. */
     private var gravityPoseUsed = false
+
+    /** The phone's frame follows the workspace's yaw axis ([YawAxis]), checked on every sensor sample. */
+    private fun syncYawAxis() {
+        gyroMouse.yawAxis = _activeProfile.value.workspace(_workspaceIndex.value).gyro.yawAxis
+    }
 
     /** The gyro space ([GyroSpace]) yaw, pitch and roll are measured in now: the workspace's. */
     private fun gyroSpace(): GyroSpace = _activeProfile.value.workspace(_workspaceIndex.value).gyro.gyroSpace
@@ -926,6 +933,7 @@ class GamepadRuntime(context: Context) {
 
     /** A magnetometer reading (µT, Android sensor frame) for the gyro displays with a compass. */
     private fun onMagnetSample(x: Float, y: Float, z: Float) {
+        syncYawAxis()
         // The same axes as the gyro's: right, up and toward the player in the phone's frame.
         val m = gyroMouse.motion(x, y, z)
         for (f in gyroFeeds) f.north(m.pitch, -m.yaw, -m.roll)
@@ -950,6 +958,7 @@ class GamepadRuntime(context: Context) {
     }
 
     private fun onAccelSample(x: Float, y: Float, z: Float, ts: Long) {
+        syncYawAxis()
         val feeds = gyroFeeds
         val spaced = gyroSpace() != GyroSpace.LOCAL
         val overlay = wifi.overlay.wanted
@@ -1480,6 +1489,7 @@ class GamepadRuntime(context: Context) {
 
     private fun onGyroSample(source: GyroSource, x: Float, y: Float, z: Float, ts: Long) {
         gyroSamples++
+        syncYawAxis()
         val dt = if (lastGyroTs == 0L) 0f else ((ts - lastGyroTs) / 1e9f).coerceIn(0f, 0.05f)
         lastGyroTs = ts
         debug.trace?.gyro((x - biasX) * RAD_TO_DEG, (y - biasY) * RAD_TO_DEG, (z - biasZ) * RAD_TO_DEG)

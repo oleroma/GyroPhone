@@ -60,6 +60,7 @@ object OverridingChildren {
             is Number -> v.toString()
             is GyroMode -> v.label
             is GyroSpace -> v.label
+            is YawAxis -> v.label
             is InertiaCurve -> v.label
             is MotionAxis -> v.label
             is HapticEdge -> v.label

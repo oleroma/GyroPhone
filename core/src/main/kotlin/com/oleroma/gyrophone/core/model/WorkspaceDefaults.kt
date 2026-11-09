@@ -93,9 +93,9 @@ object WorkspaceDefaults {
     /** The PC's DualShock 4 gyro axes ([GyroSettings.padYaw]...): the workspace's and Defaults' only. */
     val PAD_GYRO_KEYS: List<String> = listOf("padYaw", "padPitch", "padRoll", "padYawInvert", "padPitchInvert", "padRollInvert").map(::gyroKey)
 
-    /** The keys a layer ([MappingSet.settings]) may set: all but the controls' opacity, the game's turn, the gyro space and the PC pad's gyro axes. */
+    /** The keys a layer ([MappingSet.settings]) may set: all but the controls' opacity, the game's turn, the gyro space, the yaw axis and the PC pad's gyro axes. */
     val layerKeys: List<String> = keys - setOf(
-        CONTROL_OPACITY, gyroKey("gameCountsPer360"), gyroKey("gameName"), gyroKey("gyroSpace"),
+        CONTROL_OPACITY, gyroKey("gameCountsPer360"), gyroKey("gameName"), gyroKey("gyroSpace"), gyroKey("yawAxis"),
     ) - PAD_GYRO_KEYS.toSet()
 
     /** The touchpad's keys: shared and per direction. */
@@ -143,6 +143,7 @@ object WorkspaceDefaults {
         val name = p.content
         return when {
             prop == "gyroSpace" -> GyroSpace.entries.firstOrNull { it.name == name }
+            prop == "yawAxis" -> YawAxis.entries.firstOrNull { it.name == name }
             prop == "mode" || prop.endsWith("Mode") -> GyroMode.entries.firstOrNull { it.name == name }
             prop.endsWith("Curve") -> InertiaCurve.entries.firstOrNull { it.name == name }
             prop.startsWith("pad") -> MotionAxis.entries.firstOrNull { it.name == name }
