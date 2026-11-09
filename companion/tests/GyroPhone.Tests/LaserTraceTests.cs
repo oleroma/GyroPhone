@@ -273,4 +273,82 @@ public class LaserTraceTests
             }
         }
     }
+
+    private static readonly uint[] NormalMap = [0xFFFF8080, 0xFF008080, 0xFF80FF80, 0xFF800080, 0xFF8080FF, 0xFF808000];
+
+    [Fact]
+    public void WayColoursBlendAsANormalMap()
+    {
+        static (int R, int G, int B) Rgb((float, float, float) d)
+        {
+            uint c = LaserTrace.DirectionColor(d, NormalMap);
+            return ((int)((c >> 16) & 0xFF), (int)((c >> 8) & 0xFF), (int)(c & 0xFF));
+        }
+        Assert.Equal((255, 128, 128), Rgb((1f, 0f, 0f)));
+        Assert.Equal((0, 128, 128), Rgb((-1f, 0f, 0f)));
+        Assert.Equal((128, 128, 0), Rgb((0f, 0f, -1f)));
+        float s = MathF.Sqrt(0.5f);
+        var c = Rgb((s, -s, 0f));
+        Assert.InRange(c.R, 128 + 0.5 * s * 255 - 2, 128 + 0.5 * s * 255 + 2);
+        Assert.InRange(c.G, 128 - 0.5 * s * 255 - 2, 128 - 0.5 * s * 255 + 2);
+        Assert.Equal(128, c.B);
+    }
+
+    [Fact]
+    public void AStrokesWayEvensOutWithinItsLine()
+    {
+        var t = new LaserTrace();
+        const float rad = MathF.PI / 180f;
+        for (int k = 0; k <= 8; k++)
+        {
+            var p = LaserTrace.Dir(k == 4 ? rad : 0f, k * rad);
+            t.Add(p.X, p.Y, p.Z, k * 10L, draw: true, held: false);
+        }
+        var raw = t.Strokes.Direction(4, 0);
+        var smooth = t.Strokes.Direction(4, LaserTrace.SmoothReach);
+        Assert.True(raw.Y > 0.3f);
+        Assert.True(smooth.Y < raw.Y / 3f);
+        Assert.True(smooth.X > 0.9f);
+    }
+
+    [Fact]
+    public void TheBeamsWayStaysWhenItStops()
+    {
+        var t = new LaserTrace();
+        t.Add(0f, 0f, -1f, 0, draw: false, held: false);
+        Assert.Equal((0f, 0f, 0f), t.Moving);
+        t.Add(0f, 0.05f, -1f, 10, draw: false, held: false, smooth: false);
+        Assert.True(t.Moving.Y > 0.99f);
+        t.Add(0f, 0.05f, -1f, 20, draw: false, held: false, smooth: false);
+        Assert.True(t.Moving.Y > 0.99f);
+    }
+
+    [Fact]
+    public void LineSmoothingSteadiesSlowShakeButKeepsUpWithFastMoves()
+    {
+        const float rad = MathF.PI / 180f;
+        static float Stray(float smoothing)
+        {
+            var t = new LaserTrace();
+            for (int k = 0; k <= 60; k++)
+            {
+                var p = LaserTrace.Dir((k % 2 == 0 ? 1f : -1f) * rad, 20f * k * 0.01f * rad);
+                t.Add(p.X, p.Y, p.Z, k * 10L, draw: true, held: false, lineSmoothing: smoothing);
+            }
+            float worst = 0f;
+            for (int i = 10; i < t.Strokes.Count; i++) worst = Math.Max(worst, MathF.Abs(t.Strokes.Point(i).Y));
+            return worst / rad;
+        }
+        Assert.True(Stray(0f) > 0.9f);
+        Assert.True(Stray(1f) < 0.5f);
+        var fast = new LaserTrace();
+        for (int k = 0; k <= 30; k++)
+        {
+            var p = LaserTrace.Dir(0f, 600f * k * 0.01f * rad);
+            fast.Add(p.X, p.Y, p.Z, k * 10L, draw: true, held: false, lineSmoothing: 1f);
+        }
+        var last = fast.Strokes.Point(fast.Strokes.Count - 1);
+        float lon = MathF.Atan2(last.X, -last.Z) / rad;
+        Assert.True(180f - lon < 15f, $"lags {180f - lon}°");
+    }
 }

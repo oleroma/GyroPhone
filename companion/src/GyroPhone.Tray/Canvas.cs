@@ -19,8 +19,8 @@ internal interface ICanvas
     void FillPolygon(Color color, PointF[] points);
     void DrawPolygon(Color color, float width, PointF[] points, bool dashed = false);
     void DrawLine(Color color, float width, PointF a, PointF b, bool round = false);
-    /// <summary>An open polyline with round caps and joins.</summary>
-    void DrawLines(Color color, float width, PointF[] points);
+    /// <summary>An open polyline with round joins and round caps, or flat ones with <paramref name="flat"/>.</summary>
+    void DrawLines(Color color, float width, PointF[] points, bool flat = false);
     void FillEllipse(Color color, RectangleF r);
     void DrawEllipse(Color color, float width, RectangleF r);
     void FillRectangle(Color color, RectangleF r);
@@ -96,9 +96,10 @@ internal sealed class GdiCanvas : ICanvas
         _g.DrawLine(p, a, b);
     }
 
-    public void DrawLines(Color color, float width, PointF[] points)
+    public void DrawLines(Color color, float width, PointF[] points, bool flat = false)
     {
-        using var p = new Pen(color, width) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+        var cap = flat ? LineCap.Flat : LineCap.Round;
+        using var p = new Pen(color, width) { StartCap = cap, EndCap = cap, LineJoin = LineJoin.Round };
         _g.DrawLines(p, points);
     }
 

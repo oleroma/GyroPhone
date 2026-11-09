@@ -439,7 +439,8 @@ internal sealed class OverlayForm : Form
             {
                 var beam = LaserTrace.Beam(LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(_scene.Frame, ls), ls));
                 bool fire = ls.LaserDraw && _engine.OutputHeld(ls.LaserFire);
-                _laser.Add(beam.X, beam.Y, beam.Z, now, ls.LaserDraw, _scene.Frame.RatchetHeld, ls.LaserClearOnRatchet, fire, ls.LaserFireOnly);
+                _laser.Add(beam.X, beam.Y, beam.Z, now, ls.LaserDraw, _scene.Frame.RatchetHeld, ls.LaserClearOnRatchet, fire, ls.LaserFireOnly,
+                    ls.LaserSmoothColours, ls.LaserLineSmoothing);
             }
         }
         // A Clear displays mapping on the phone: the paint goes (the first count seen clears nothing).
@@ -458,6 +459,9 @@ internal sealed class OverlayForm : Form
         {
             _laser.Expire(now, lf.LaserFadeMs);
             laserFading = _laser.Fading(lf.LaserFadeMs);
+            // The rifle's muzzle flash flickers while it fires.
+            _scene.Firing = _engine.OutputHeld(lf.LaserFire);
+            if (lf.LaserRifle && _scene.Firing) laserFading = true;
         }
         StepRestFade(now);
         UpdateStats();

@@ -22,8 +22,11 @@ internal static class LaserDrawing
     /// <summary>Strokes fade in this many steps.</summary>
     private const int Levels = 8;
 
-    /// <summary>Strokes blend from Paint ahead to Paint behind in this many steps.</summary>
+    /// <summary>Fire strokes blend from Fire ahead to Fire behind in this many steps.</summary>
     private const int Hues = 8;
+
+    /// <summary>Each half of a rounded corner (Curve) is drawn as this many straight pieces.</summary>
+    private const int CurveSteps = 3;
 
     /// <summary>The pose as the laser aims: turned by the phone, with its roll axis (<see cref="LaserTrace.Aim"/>); a trackball the way picked (<see cref="LaserTrace.Faces"/>); a game camera already aims ahead.</summary>
     public static float[] Aimed(float[] m, OverlaySettings s) => s.TurnsWith switch
@@ -33,7 +36,7 @@ internal static class LaserDrawing
         _ => m,
     };
 
-    public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held, int active = 0)
+    public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held, int active = 0, bool firing = false)
     {
         float r = Math.Min(area.Width, area.Height) / 2f * 0.95f;
         var c = new PointF(area.X + area.Width / 2f, area.Y + area.Height / 2f);
@@ -142,7 +145,7 @@ internal static class LaserDrawing
             }
         }
 
-        // The Sphere look's gimbal rings, turning with the laser's axes, coloured as their axes (yaw Y, pitch X, roll Z).
+        // The Sphere look's gimbal rings, turning with the laser's axes, coloured as their axes (yaw Y green, pitch X red, roll Z blue).
         (float X, float Y, float Z)[][]? gimbal = null;
         if (s.LaserGimbal && !s.LaserRifle && !crosshair)
             gimbal = [LaserTrace.GimbalRing(0, m), LaserTrace.GimbalRing(1, m), LaserTrace.GimbalRing(2, m)];
@@ -174,37 +177,98 @@ internal static class LaserDrawing
             }
         }
 
-        // Strokes: each piece of the way between two points (long hops bent along the
-        // sphere), drawn on its side, older pieces darker and fainter.
-        // Their colour goes from ahead (straight ahead) to behind (turned all the way round).
-        void Lines(LaserTrace.Ring ring, bool front, Func<int, long, float> life, float width, bool glow, Color ahead, Color behind, Color fireAhead, Color fireBehind)
+        // The way colours, in LaserTrace.DirectionColor's order.
+        var moveColors = new uint[6];
+        for (int i = 0; i < 6; i++) moveColors[i] = unchecked((uint)s.Color(OverlaySettings.LaserMoves[i]));
+        int reach = s.LaserSmoothColours ? LaserTrace.SmoothReach : 0;
+        int steps = Math.Clamp(s.LaserColourSteps, 4, 32);
+        float curve = Math.Clamp(s.LaserCurve, 0f, 1f);
+
+        // Strokes: each piece of the way between two points (long hops bent along the sphere), drawn on its side,
+        // older pieces darker and fainter, in the colour of the way it moves (blended as a normal map, in
+        // LaserColourSteps shades a channel), or while firing a Fire colour step (from ahead straight ahead to behind
+        // turned all the way round). A line is drawn in pieces of one colour with flat ends, so pieces meet without
+        // poking into or overlapping each other; with Curve its corners are rounded. As the phone's lines().
+        void Lines(LaserTrace.Ring ring, bool front, Func<int, long, float> life, float width, bool glow, Color fireAhead, Color fireBehind)
         {
             if (ring.Count < 2) return;
             float side = front ? 0.5f : 1f;
             float w = width * (front ? 0.6f : 1f);
+            // The visible run of picture points being gathered, with the (level, colour) of the piece ending at each.
             var run = new List<PointF>(64);
-            int runLevel = -1, runHue = -1;
-            bool runFire = false;
+            var keys = new List<(int Level, Color Col)>(64);
+            var piece = new List<PointF>(64);
+            void DrawPiece((int Level, Color Col) key)
+            {
+                if (piece.Count >= 2)
+                {
+                    float k = key.Level / (float)Levels;
+                    float shade = 0.35f + 0.65f * k;
+                    var col = Color.FromArgb(Math.Clamp((int)(key.Col.A * (0.35f + 0.65f * k) * side), 0, 255),
+                        (int)(key.Col.R * shade), (int)(key.Col.G * shade), (int)(key.Col.B * shade));
+                    var pts = piece.ToArray();
+                    if (glow) g.DrawLines(Fade(col, 0.22f), w * 3f, pts, flat: true);
+                    g.DrawLines(col, w, pts, flat: true);
+                }
+                var last = piece.Count > 0 ? piece[^1] : default;
+                piece.Clear();
+                piece.Add(last);
+            }
             void Flush()
             {
                 if (run.Count >= 2)
                 {
-                    float k = runLevel / (float)Levels;
-                    float h = runHue / (Hues - 1f);
-                    // Painted while firing: the Fire colours.
-                    var (a0, a1) = runFire ? (fireAhead, fireBehind) : (ahead, behind);
-                    var color = Color.FromArgb((int)(a0.A + (a1.A - a0.A) * h), (int)(a0.R + (a1.R - a0.R) * h),
-                        (int)(a0.G + (a1.G - a0.G) * h), (int)(a0.B + (a1.B - a0.B) * h));
-                    float shade = 0.35f + 0.65f * k;
-                    var col = Color.FromArgb(Math.Clamp((int)(color.A * (0.35f + 0.65f * k) * side), 0, 255),
-                        (int)(color.R * shade), (int)(color.G * shade), (int)(color.B * shade));
-                    var pts = run.ToArray();
-                    if (glow) g.DrawLines(Fade(col, 0.22f), w * 3f, pts);
-                    g.DrawLines(col, w, pts);
+                    var cur = keys[1];
+                    piece.Clear();
+                    piece.Add(run[0]);
+                    void To(int ki, PointF p)
+                    {
+                        var key = keys[ki];
+                        if (key != cur)
+                        {
+                            DrawPiece(cur);
+                            cur = key;
+                        }
+                        piece.Add(p);
+                    }
+                    // A quadratic curve from the pen's point through control c to e, as a few straight pieces.
+                    void Quad(int ki, PointF a, PointF ctl, PointF e)
+                    {
+                        for (int t = 1; t <= CurveSteps; t++)
+                        {
+                            float u = t / (float)CurveSteps, v = 1f - u;
+                            To(ki, new PointF(v * v * a.X + 2 * v * u * ctl.X + u * u * e.X, v * v * a.Y + 2 * v * u * ctl.Y + u * u * e.Y));
+                        }
+                    }
+                    int n = run.Count;
+                    if (curve <= 0f || n == 2)
+                        for (int k = 1; k < n; k++) To(k, run[k]);
+                    else
+                    {
+                        PointF Mid(PointF a, PointF b) => new((a.X + b.X) / 2f, (a.Y + b.Y) / 2f);
+                        PointF Lerp(PointF a, PointF b, float f) => new(a.X + (b.X - a.X) * f, a.Y + (b.Y - a.Y) * f);
+                        var mPrev = Mid(run[0], run[1]);
+                        To(1, mPrev);
+                        for (int k = 1; k <= n - 2; k++)
+                        {
+                            var cpt = run[k];
+                            var mNext = Mid(cpt, run[k + 1]);
+                            var a = Lerp(cpt, mPrev, curve);
+                            var b = Lerp(cpt, mNext, curve);
+                            To(k, a);
+                            // The corner's curve (a, through cpt, to b) split in two halves, one in each piece.
+                            var q = new PointF((a.X + 2f * cpt.X + b.X) / 4f, (a.Y + 2f * cpt.Y + b.Y) / 4f);
+                            Quad(k, a, Mid(a, cpt), q);
+                            Quad(k + 1, q, Mid(cpt, b), b);
+                            To(k + 1, mNext);
+                            mPrev = mNext;
+                        }
+                        To(n - 1, run[n - 1]);
+                    }
+                    DrawPiece(cur);
                 }
                 run.Clear();
-                runLevel = -1;
-                runHue = -1;
+                keys.Clear();
             }
             for (int i = 1; i < ring.Count; i++)
             {
@@ -223,31 +287,44 @@ internal static class LaserDrawing
                 }
                 int level = Math.Clamp((int)MathF.Ceiling(k * Levels), 1, Levels);
                 bool fire = ring.Fire(i);
-                float dot = Math.Clamp(a.X * b.X + a.Y * b.Y + a.Z * b.Z, -1f, 1f);
-                int n = Math.Clamp((int)(MathF.Acos(dot) / StrokeStep), 1, 32);
-                var (prev, prevZ) = At(a.X, a.Y, a.Z);
-                for (int j = 1; j <= n; j++)
+                var moveCol = Color.Empty;
+                if (!fire)
                 {
-                    float t = j / (float)n;
+                    uint argb = LaserTrace.DirectionColor(ring.Direction(i, reach), moveColors);
+                    int Q(int shift) => (int)((((argb >> shift) & 0xFF) / 255f * (steps - 1)) + 0.5f) * 255 / (steps - 1);
+                    moveCol = Color.FromArgb((int)(argb >> 24), Q(16), Q(8), Q(0));
+                }
+                float dot = Math.Clamp(a.X * b.X + a.Y * b.Y + a.Z * b.Z, -1f, 1f);
+                int sub = Math.Clamp((int)(MathF.Acos(dot) / StrokeStep), 1, 32);
+                if (run.Count == 0)
+                {
+                    var (p0, z0) = At(a.X, a.Y, a.Z);
+                    if (z0 > 0f == front)
+                    {
+                        run.Add(p0);
+                        keys.Add((0, Color.Empty));
+                    }
+                }
+                for (int j = 1; j <= sub; j++)
+                {
+                    float t = j / (float)sub;
                     float x = a.X + (b.X - a.X) * t, y = a.Y + (b.Y - a.Y) * t, z = a.Z + (b.Z - a.Z) * t;
                     float l = Math.Max(1e-4f, MathF.Sqrt(x * x + y * y + z * z));
                     var (p, depth) = At(x / l, y / l, z / l);
-                    if (depth > 0f == front && prevZ > 0f == front)
+                    if (depth > 0f != front)
                     {
-                        int hue = Math.Clamp((int)(LaserTrace.Behind(z / l) * (Hues - 1) + 0.5f), 0, Hues - 1);
-                        if (level != runLevel || hue != runHue || fire != runFire) Flush();
-                        if (run.Count == 0)
-                        {
-                            run.Add(prev);
-                            runLevel = level;
-                            runHue = hue;
-                            runFire = fire;
-                        }
-                        run.Add(p);
+                        Flush();
+                        continue;
                     }
-                    else Flush();
-                    prev = p;
-                    prevZ = depth;
+                    var col = moveCol;
+                    if (fire)
+                    {
+                        float h = Math.Clamp((int)(LaserTrace.Behind(z / l) * (Hues - 1) + 0.5f), 0, Hues - 1) / (Hues - 1f);
+                        col = Color.FromArgb((int)(fireAhead.A + (fireBehind.A - fireAhead.A) * h), (int)(fireAhead.R + (fireBehind.R - fireAhead.R) * h),
+                            (int)(fireAhead.G + (fireBehind.G - fireAhead.G) * h), (int)(fireAhead.B + (fireBehind.B - fireAhead.B) * h));
+                    }
+                    run.Add(p);
+                    keys.Add(run.Count == 1 ? (0, Color.Empty) : (level, col));
                 }
             }
             Flush();
@@ -258,8 +335,45 @@ internal static class LaserDrawing
         {
             if (trace == null) return;
             int n = trace.Strokes.Count;
-            Lines(trace.Strokes, front, (i, t) => LaserTrace.StrokeLife(i, n, t, nowMs, fadeMs), brushPx, true, Color.FromArgb(s.Color("paint")), Color.FromArgb(s.Color("paint_behind")),
+            Lines(trace.Strokes, front, (i, t) => LaserTrace.StrokeLife(i, n, t, nowMs, fadeMs), brushPx, true,
                 Color.FromArgb(s.Color("fire")), Color.FromArgb(s.Color("fire_behind")));
+        }
+
+        // The rifle's muzzle flash: a flickering star at its muzzle tip (LaserTrace.Muzzle) in the Fire colour with a
+        // white-hot middle, longest along the barrel. As the phone's muzzleFlash.
+        void MuzzleFlash()
+        {
+            var mz = LaserTrace.Muzzle;
+            PointF Along(float k)
+            {
+                float x = mz.X, y = mz.Y, z = mz.Z - k;
+                return At(m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z).P;
+            }
+            var tip = Along(0f);
+            var ahead = Along(0.1f);
+            float fx = ahead.X - tip.X, fy = ahead.Y - tip.Y;
+            float fl = Math.Max(1e-3f, MathF.Sqrt(fx * fx + fy * fy));
+            // Flickers: a new shape every 35 ms.
+            long step = nowMs / 35L;
+            float Rnd(int i) => Math.Abs(((step * 7919L + i * 104729L) ^ (step >> 3)) % 1000L) / 1000f;
+            var fireCol = Color.FromArgb(s.Color("fire"));
+            float size = r * (0.07f + 0.04f * Rnd(0));
+            float turn = Rnd(1) * 6.2832f;
+            const int spikes = 8;
+            var star = new PointF[spikes * 2];
+            for (int j = 0; j < spikes * 2; j++)
+            {
+                float a = turn + j * MathF.PI / spikes;
+                float ca = MathF.Cos(a), sa = MathF.Sin(a);
+                // Along the barrel the star stretches out (up to 2.2×).
+                float along = MathF.Abs(ca * fx / fl + sa * fy / fl);
+                float len = j % 2 == 0 ? size * (0.6f + 0.6f * Rnd(j + 2)) * (1f + 1.2f * along * along) : size * 0.28f;
+                star[j] = new PointF(tip.X + ca * len, tip.Y + sa * len);
+            }
+            float glowR = size * 1.3f, core = size * 0.25f;
+            g.FillEllipse(Fade(fireCol, 0.3f), new RectangleF(tip.X - glowR, tip.Y - glowR, glowR * 2, glowR * 2));
+            g.FillPolygon(fireCol, star);
+            g.FillEllipse(Color.FromArgb(Math.Clamp((int)(fireCol.A * 0.9f), 0, 255), 255, 255, 255), new RectangleF(tip.X - core, tip.Y - core, core * 2, core * 2));
         }
 
         var (hit, hitZ) = At(beam.X, beam.Y, beam.Z);
@@ -297,6 +411,7 @@ internal static class LaserDrawing
                 g.FillPolygon(Color.FromArgb(body.A, (int)(body.R * f.Light), (int)(body.G * f.Light), (int)(body.B * f.Light)), pts);
                 g.DrawPolygon(Color.FromArgb(body.A, body.R / 2, body.G / 2, body.B / 2), edge, pts);
             }
+            if (firing) MuzzleFlash();
             Paint(true);
             Axes(true);
             return;
@@ -319,10 +434,8 @@ internal static class LaserDrawing
         {
             const float rad = MathF.PI / 180f;
             var ch = LaserTrace.CrosshairOn(m, beam, s.CrosshairShape, s.CrosshairSize * rad, s.CrosshairGap * rad, s.CrosshairDot);
-            Color ahead = Color.FromArgb(s.Color("crosshair")), behind = Color.FromArgb(s.Color("crosshair_behind"));
-            float h = LaserTrace.Behind(beam.Z);
-            var color = Color.FromArgb((int)(ahead.A + (behind.A - ahead.A) * h), (int)(ahead.R + (behind.R - ahead.R) * h),
-                (int)(ahead.G + (behind.G - ahead.G) * h), (int)(ahead.B + (behind.B - ahead.B) * h));
+            // The colour of the way the beam last moved (it keeps the last way's when the beam stops).
+            var color = Color.FromArgb(unchecked((int)LaserTrace.DirectionColor(trace?.Moving ?? (0f, 0f, 0f), moveColors)));
             if (held) color = Fade(color, 0.35f);
             var o = Color.FromArgb(s.Color("crosshair_outline"));
             var outline = Color.FromArgb(Math.Min(o.A, color.A), o);
