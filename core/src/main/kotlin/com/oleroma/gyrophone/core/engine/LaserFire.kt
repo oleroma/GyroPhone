@@ -8,8 +8,8 @@ import com.oleroma.gyrophone.core.model.GamepadButton
 import com.oleroma.gyrophone.core.model.MouseButton
 
 /**
- * A laser pointer's fire output ([com.oleroma.gyrophone.core.model.GyroDisplay.laserFire]): while
- * GyroPhone sends it, Draw paints in the Fire colours. One number: [MOUSE] + a mouse button's bit,
+ * A laser pointer's Fire display or Aim display output ([com.oleroma.gyrophone.core.model.GyroDisplay.laserFire]): while
+ * GyroPhone sends it, the pointer shows it (Draw paints in the Fire or Aim colours). One number: [MOUSE] + a mouse button's bit,
  * [KEY] + a keyboard usage, [PAD] + a controller button's bit, [LT] or [RT], [DPAD] + 0 up, 1 down,
  * 2 left, 3 right; 0 none. Same numbers
  * as the companion's LaserFire.
@@ -22,6 +22,10 @@ object LaserFire {
     const val RT = 0x401
     const val DPAD = 0x500
     const val DEFAULT = MOUSE // left
+    const val NONE = 0
+
+    /** The Aim display's default: the right mouse button. */
+    val AIM_DEFAULT = MOUSE + MouseButton.RIGHT.bit
 
     /** A trigger past this much counts as held. */
     private const val TRIGGER_HELD = GamepadState.TRIGGER_MAX * 3 / 10

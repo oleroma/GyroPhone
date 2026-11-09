@@ -264,6 +264,20 @@ public sealed class OverlaySettings
     /// </summary>
     public int LaserFire { get; set; } = GyroPhone.Host.LaserFire.Default;
     public bool LaserFireOnly { get; set; }
+
+    /// <summary>Fire display: the Fire paint's brush (degrees) and glow (0 .. 3). As the phone's laserFireBrush, laserFireGlow.</summary>
+    public int LaserFireBrush { get; set; } = 6;
+    public float LaserFireGlow { get; set; } = 1.5f;
+
+    /// <summary>
+    /// Aim display: while this output is held (LaserFire numbers, default the right mouse button; 0 none) the crosshair
+    /// shrinks to LaserAimSize, the rifle is shouldered with a scope and a laser sight, and Draw paints in the Aim colours,
+    /// LaserAimBrush degrees round, its glow LaserAimGlow (0 .. 3). Firing wins over aiming. As the phone's laserAim.
+    /// </summary>
+    public int LaserAim { get; set; } = GyroPhone.Host.LaserFire.AimDefault;
+    public float LaserAimSize { get; set; } = 0.75f;
+    public int LaserAimBrush { get; set; } = 3;
+    public float LaserAimGlow { get; set; } = 0.5f;
     /// <summary>Laser pointer: the way colours (crosshair, and paint with LaserColourByWay) even out small shakes. As the phone's GyroDisplay.laserSmoothColours.</summary>
     public bool LaserSmoothColours { get; set; } = true;
     /// <summary>Draw mode and Snake: LaserLineSmoothing evens out hand shake in the painted path (0 off .. 1 strong).</summary>
@@ -491,6 +505,8 @@ public sealed class OverlaySettings
         new("rifle", "Rifle", 0xFF5A616C),
         new("fire", "Fire", 0xFFFF4A3D),
         new("fire_behind", "Fire behind", 0xFF8A1E18),
+        new("aim", "Aim", 0xFF4AD8FF),
+        new("aim_behind", "Aim behind", 0xFF185A8A),
         new("crosshair_outline", "Crosshair outline", 0xFF0E1116),
     ];
 

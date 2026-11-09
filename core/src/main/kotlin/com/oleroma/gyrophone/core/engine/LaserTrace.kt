@@ -21,7 +21,7 @@ class LaserTrace {
         private val z = FloatArray(capacity)
         private val t = LongArray(capacity)
         private val gap = BooleanArray(capacity)
-        private val fire = BooleanArray(capacity)
+        private val kind = ByteArray(capacity)
         /** Degrees painted up to each point, counted along the lines (a new line adds none). */
         private val along = DoubleArray(capacity)
         private var head = 0
@@ -30,7 +30,7 @@ class LaserTrace {
         var count = 0
             private set
 
-        fun add(px: Float, py: Float, pz: Float, ms: Long, startsLine: Boolean, firing: Boolean = false) {
+        fun add(px: Float, py: Float, pz: Float, ms: Long, startsLine: Boolean, paintKind: Int = LaserPaint.PAINT) {
             val i = (head + count) % capacity
             var a = 0.0
             if (count > 0) {
@@ -45,7 +45,7 @@ class LaserTrace {
                 head = (head + 1) % capacity
                 gap[head] = true // the oldest left has no line from before it
             } else count++
-            x[i] = px; y[i] = py; z[i] = pz; t[i] = ms; gap[i] = startsLine; fire[i] = firing; along[i] = a
+            x[i] = px; y[i] = py; z[i] = pz; t[i] = ms; gap[i] = startsLine; kind[i] = paintKind.toByte(); along[i] = a
         }
 
         fun clear() {
@@ -83,8 +83,11 @@ class LaserTrace {
         /** Point [i] starts a new line (none drawn from the point before it). */
         fun gap(i: Int): Boolean = gap[(head + i) % capacity]
 
+        /** What painted point [i] (the line to it): [LaserPaint.PAINT], [LaserPaint.AIM] or [LaserPaint.FIRE] (its colours). */
+        fun kind(i: Int): Int = kind[(head + i) % capacity].toInt()
+
         /** Point [i] was painted while firing (the line to it takes the Fire colours). */
-        fun fire(i: Int): Boolean = fire[(head + i) % capacity]
+        fun fire(i: Int): Boolean = kind(i) == LaserPaint.FIRE
 
         /**
          * The way the line to point [i] (from point i − 1) moves, a unit direction into [out] (zero
@@ -113,7 +116,7 @@ class LaserTrace {
     private var lastY = 0f
     private var lastZ = 0f
     private var wasHeld = false
-    private var lastFire = false
+    private var lastKind = LaserPaint.PAINT
     private var beamX = 0f
     private var beamY = 0f
     private var beamZ = 0f
@@ -141,7 +144,8 @@ class LaserTrace {
      * The beam now points at ([x], [y], [z]) (any length) at [nowMs]. While a ratchet is [held] it
      * doesn't paint (the pose eases back then, which isn't aiming); with [clearOnPress] pressing
      * one clears the strokes. With [draw] it paints; turning Draw off clears the strokes. While
-     * [fire] (the display's fire output is sent) it paints in the Fire colours; with [fireOnly] only then.
+     * [fire] (the display's Fire display output is sent) it paints in the Fire colours, [fireBrushDeg] wide; else
+     * while [aim] (its Aim display output) in the Aim colours, [aimBrushDeg] wide; with [fireOnly] only then.
      * [moving] follows the beam, evened out over [SMOOTH_MS] with [smooth]. With [lineSmoothing]
      * (0 off .. 1 strong) the paint follows a steadied beam ([steadyToward]). With [draw] each new
      * point paints [paint] from the point before, [brushDeg] wide, its edge [soft], with [wayColors] (as
@@ -152,6 +156,7 @@ class LaserTrace {
         x: Float, y: Float, z: Float, nowMs: Long, draw: Boolean, held: Boolean, clearOnPress: Boolean = false,
         fire: Boolean = false, fireOnly: Boolean = false, smooth: Boolean = true, lineSmoothing: Float = 0f,
         brushDeg: Float = 0f, snakeDeg: Float = 0f, wayColors: LongArray? = null, mapWidth: Int = LaserPaint.WIDTH, soft: Float = 0.5f,
+        aim: Boolean = false, fireBrushDeg: Float = brushDeg, aimBrushDeg: Float = brushDeg,
     ) {
         val pressed = clearOnPress && held && !wasHeld
         wasHeld = held
@@ -160,7 +165,7 @@ class LaserTrace {
         if ((!(draw || snake) || pressed) && (strokes.count > 0 || paintUsed)) clear()
         val l = sqrt(x * x + y * y + z * z)
         if (l > 1e-6f && !l.isNaN()) follow(x / l, y / l, z / l, nowMs, smooth)
-        if (!(draw || snake) || l < 1e-6f || held || l.isNaN() || (fireOnly && !fire)) {
+        if (!(draw || snake) || l < 1e-6f || held || l.isNaN() || (fireOnly && !fire && !aim)) {
             strokeGap = true
             return
         }
@@ -171,13 +176,15 @@ class LaserTrace {
             steadyToward(dx, dy, dz, nowMs, lineSmoothing)
             dx = steady[0]; dy = steady[1]; dz = steady[2]
         }
-        // A new point once the beam moved a little (or the firing started or stopped): a still beam adds nothing.
-        if (!strokeGap && fire == lastFire && lastX * dx + lastY * dy + lastZ * dz > STROKE_STEP_COS) return
-        strokes.add(dx, dy, dz, nowMs, strokeGap, fire)
-        if (draw && brushDeg > 0f) stampNewest(brushDeg / 2f, fire, wayColors, if (smooth) SMOOTH_REACH else 0, mapWidth, soft)
+        val kind = if (fire) LaserPaint.FIRE else if (aim) LaserPaint.AIM else LaserPaint.PAINT
+        val brush = when (kind) { LaserPaint.FIRE -> fireBrushDeg; LaserPaint.AIM -> aimBrushDeg; else -> brushDeg }
+        // A new point once the beam moved a little (or the firing or aiming started or stopped): a still beam adds nothing.
+        if (!strokeGap && kind == lastKind && lastX * dx + lastY * dy + lastZ * dz > STROKE_STEP_COS) return
+        strokes.add(dx, dy, dz, nowMs, strokeGap, kind)
+        if (draw && brush > 0f) stampNewest(brush / 2f, kind, wayColors, if (smooth) SMOOTH_REACH else 0, mapWidth, soft)
         if (snake) strokes.cut(snakeDeg)
         strokeGap = false
-        lastFire = fire
+        lastKind = kind
         lastX = dx; lastY = dy; lastZ = dz
     }
 
@@ -227,7 +234,7 @@ class LaserTrace {
     private val pb = FloatArray(3)
 
     /** Paints the newest stroke point into [paint], from the point before it unless it starts a line. */
-    private fun stampNewest(halfDeg: Float, fire: Boolean, wayColors: LongArray?, reach: Int, mapWidth: Int, soft: Float) {
+    private fun stampNewest(halfDeg: Float, kind: Int, wayColors: LongArray?, reach: Int, mapWidth: Int, soft: Float) {
         // A new map when the detail changed (the paint so far goes).
         val p = paint?.takeIf { it.width == mapWidth } ?: LaserPaint(mapWidth, mapWidth / 2).also { paint = it }
         val n = strokes.count
@@ -240,7 +247,7 @@ class LaserTrace {
             (directionColor(wayDir, wayColors) and 0xFFFFFF).toInt()
         }
         if (a == b) p.newLine()
-        p.stamp(pa[0], pa[1], pa[2], pb[0], pb[1], pb[2], strokes.along(b), halfDeg, fire, soft, rgb)
+        p.stamp(pa[0], pa[1], pa[2], pb[0], pb[1], pb[2], strokes.along(b), halfDeg, kind, soft, rgb)
         paintUsed = true
     }
 
@@ -332,6 +339,14 @@ class LaserTrace {
 
         /** The rifle's muzzle tip in its own frame (x right, y up, z toward the stock). */
         val MUZZLE = floatArrayOf(0f, 0.03f, -0.93f)
+
+        /** Aiming ([rifle]'s aim 1) the rifle is shouldered: pulled back toward the player this far. */
+        const val AIM_PULL = 0.12f
+
+        /** The rifle's muzzle tip at aim [aim] (0 .. 1), in its own frame, into [out]. */
+        fun muzzle(aim: Float, out: FloatArray) {
+            out[0] = MUZZLE[0]; out[1] = MUZZLE[1]; out[2] = MUZZLE[2] + AIM_PULL * aim.coerceIn(0f, 1f)
+        }
 
         /** How far round from straight ahead (into the screen) shown-frame direction z is: 0 ahead .. 1 straight behind. */
         fun behind(z: Float): Float = ((1f + z) / 2f).coerceIn(0f, 1f)
@@ -482,26 +497,42 @@ class LaserTrace {
             0f, -0.14f, 0.28f, 0.03f, 0.09f, 0.045f,
         )
 
+        /** The scope that grows onto the rifle's carry rail while aiming: tube, objective bell, eyepiece, two mounts. */
+        private val SCOPE = floatArrayOf(
+            0f, 0.2f, 0.08f, 0.032f, 0.032f, 0.2f,
+            0f, 0.2f, -0.14f, 0.045f, 0.045f, 0.035f,
+            0f, 0.2f, 0.3f, 0.04f, 0.04f, 0.03f,
+            0f, 0.162f, 0.0f, 0.014f, 0.01f, 0.014f,
+            0f, 0.162f, 0.16f, 0.014f, 0.01f, 0.014f,
+        )
+
         /** One face of the rifle in the picture: its corners (x, y pairs, unit radius) and how lit it is (0..1). */
         class Face(val xy: FloatArray, val light: Float, val depth: Float)
 
         /**
          * The rifle turned by pose [m], seen as [view] sees it ([axon], [turned]): the faces toward the
-         * viewer, farthest first, lit from above left.
+         * viewer, farthest first, lit from above left. Aiming ([aim] 0 .. 1, eased) it is shouldered
+         * ([AIM_PULL]) and a scope grows onto it.
          */
-        fun rifle(m: FloatArray, axon: Boolean, turned: FloatArray?, persp: Boolean = false): List<Face> {
+        fun rifle(m: FloatArray, axon: Boolean, turned: FloatArray?, persp: Boolean = false, aim: Float = 0f): List<Face> {
             val faces = ArrayList<Face>(32)
             val p = FloatArray(24)
             val n = FloatArray(3)
             val lx = -0.35f
             val ly = 0.6f
             val lz = 0.72f
-            for (b in 0 until RIFLE.size / 6) {
-                val o = b * 6
+            val a = aim.coerceIn(0f, 1f)
+            val pull = AIM_PULL * a
+            val boxes = RIFLE.size / 6 + (if (a > 0.02f) SCOPE.size / 6 else 0)
+            for (b in 0 until boxes) {
+                val scope = b >= RIFLE.size / 6
+                val src = if (scope) SCOPE else RIFLE
+                val o = (if (scope) b - RIFLE.size / 6 else b) * 6
+                val g = if (scope) a else 1f // the scope grows in
                 for (k in 0 until 8) {
-                    val x = RIFLE[o] + (if (k and 1 != 0) RIFLE[o + 3] else -RIFLE[o + 3])
-                    val y = RIFLE[o + 1] + (if (k and 2 != 0) RIFLE[o + 4] else -RIFLE[o + 4])
-                    val z = RIFLE[o + 2] + (if (k and 4 != 0) RIFLE[o + 5] else -RIFLE[o + 5])
+                    val x = src[o] + (if (k and 1 != 0) src[o + 3] * g else -src[o + 3] * g)
+                    val y = src[o + 1] + (if (k and 2 != 0) src[o + 4] * g else -src[o + 4] * g)
+                    val z = src[o + 2] + pull + (if (k and 4 != 0) src[o + 5] * g else -src[o + 5] * g)
                     view(m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z, p, k * 3, axon, turned)
                     if (persp) {
                         val f = perspective(p[k * 3 + 2])

@@ -207,6 +207,26 @@ public class LaserTraceTests
     }
 
     [Fact]
+    public void AimingPaintsInItsOwnKindAndFiringWins()
+    {
+        var t = new LaserTrace();
+        void Go(int deg, bool fire, bool aim, bool only = false)
+        {
+            float a = deg * MathF.PI / 180f;
+            t.Add(MathF.Sin(a), 0f, -MathF.Cos(a), deg, true, false, fire: fire, fireOnly: only, brushDeg: 2f, aim: aim);
+        }
+        Go(0, false, false); Go(2, false, true); Go(4, true, true);
+        Assert.Equal(LaserPaint.PaintKind, t.Strokes.Kind(0));
+        Assert.Equal(LaserPaint.AimKind, t.Strokes.Kind(1));
+        Assert.Equal(LaserPaint.FireKind, t.Strokes.Kind(2));
+        // Only while firing or aiming: aiming still paints.
+        Go(6, false, true, true);
+        Assert.Equal(4, t.Strokes.Count);
+        Go(8, false, false, true);
+        Assert.Equal(4, t.Strokes.Count);
+    }
+
+    [Fact]
     public void FiringPaintsInItsOwnColoursAndCanBeTheOnlyPaint()
     {
         var t = new LaserTrace();

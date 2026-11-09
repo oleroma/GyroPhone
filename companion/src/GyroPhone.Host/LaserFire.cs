@@ -3,8 +3,8 @@ using GyroPhone.Protocol;
 namespace GyroPhone.Host;
 
 /// <summary>
-/// A laser pointer overlay's fire output (OverlaySettings.LaserFire): while it is held, Draw paints in the Fire
-/// colours. One number: <see cref="Mouse"/> + a mouse button's bit, <see cref="Key"/> + a keyboard usage,
+/// A laser pointer overlay's Fire display or Aim display output (OverlaySettings.LaserFire, LaserAim): while it is
+/// held, the pointer shows it (Draw paints in the Fire or Aim colours). One number: <see cref="Mouse"/> + a mouse button's bit, <see cref="Key"/> + a keyboard usage,
 /// <see cref="Pad"/> + a controller button's bit, <see cref="Lt"/> or <see cref="Rt"/>, <see cref="Dpad"/> + 0 up,
 /// 1 down, 2 left, 3 right; 0 none. Same numbers as the
 /// phone's LaserFire.
@@ -13,6 +13,10 @@ public static class LaserFire
 {
     public const int Mouse = 0x100, Key = 0x200, Pad = 0x300, Lt = 0x400, Rt = 0x401, Dpad = 0x500;
     public const int Default = Mouse; // left
+    public const int None = 0;
+
+    /// <summary>The Aim display's default: the right mouse button.</summary>
+    public const int AimDefault = Mouse + 1;
 
     /// <summary>A trigger past this much (of 1023) counts as held.</summary>
     private const int TriggerHeld = 1023 * 3 / 10;

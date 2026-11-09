@@ -28,7 +28,7 @@ internal static class LaserDrawing
     /// Draws the pointer posed <paramref name="m"/> (as <see cref="Aimed"/> gives it); <paramref name="raw"/> is the pose
     /// before that, which a trackball's sphere turns by in Fixed pointer mode, so Pointer faces moves only the pointer.
     /// </summary>
-    public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held, int active = 0, bool firing = false, float[]? raw = null)
+    public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held, int active = 0, bool firing = false, float[]? raw = null, float aim = 0f)
     {
         float r = Math.Min(area.Width, area.Height) / 2f * 0.95f;
         var c = new PointF(area.X + area.Width / 2f, area.Y + area.Height / 2f);
@@ -194,7 +194,7 @@ internal static class LaserDrawing
         // white-hot middle, longest along the barrel. As the phone's muzzleFlash.
         void MuzzleFlash()
         {
-            var mz = LaserTrace.Muzzle;
+            var mz = LaserTrace.MuzzleAt(aim);
             PointF Along(float k)
             {
                 float x = mz.X, y = mz.Y, z = mz.Z - k;
@@ -228,6 +228,21 @@ internal static class LaserDrawing
         }
 
         var (hit, hitZ) = At(beam.X, beam.Y, beam.Z);
+
+        // The rifle's laser sight while aiming (aim eases it in): a thin line in the Aim colour from its muzzle along
+        // the barrel to where it lands on the sphere, and a dot there with a soft halo. As the phone's laserSight.
+        void LaserSight()
+        {
+            var mz = LaserTrace.MuzzleAt(aim);
+            var tip = At(m[0] * mz.X + m[1] * mz.Y + m[2] * mz.Z, m[3] * mz.X + m[4] * mz.Y + m[5] * mz.Z, m[6] * mz.X + m[7] * mz.Y + m[8] * mz.Z).P;
+            var col = Color.FromArgb(s.Color("aim"));
+            g.DrawLine(Fade(col, 0.25f * aim), px * 4f, tip, hit, round: true);
+            g.DrawLine(Fade(col, 0.8f * aim), px * 1.2f, tip, hit, round: true);
+            float size = r * 0.025f, halo = size * 2.5f, core = size * 0.4f;
+            g.FillEllipse(Fade(col, 0.3f * aim), new RectangleF(hit.X - halo, hit.Y - halo, halo * 2, halo * 2));
+            g.FillEllipse(Fade(col, aim), new RectangleF(hit.X - size, hit.Y - size, size * 2, size * 2));
+            g.FillEllipse(Color.FromArgb(Math.Clamp((int)(col.A * 0.9f * aim), 0, 255), 255, 255, 255), new RectangleF(hit.X - core, hit.Y - core, core * 2, core * 2));
+        }
         bool hitFront = hitZ > 0f;
         var beamCol = Color.FromArgb(s.Color("beam"));
         if (held) beamCol = Fade(beamCol, 0.35f);
@@ -255,13 +270,14 @@ internal static class LaserDrawing
             Paint(false);
             var body = Color.FromArgb(s.Color("rifle"));
             float edge = Math.Max(1f, px * 0.75f);
-            foreach (var f in LaserTrace.RifleFaces(m, s.LaserAxonometric, turned, s.Perspective))
+            foreach (var f in LaserTrace.RifleFaces(m, s.LaserAxonometric, turned, s.Perspective, aim))
             {
                 var pts = new PointF[4];
                 for (int i = 0; i < 4; i++) pts[i] = new PointF(c.X + f.Corners[i].X * r, c.Y - f.Corners[i].Y * r);
                 g.FillPolygon(Color.FromArgb(body.A, (int)(body.R * f.Light), (int)(body.G * f.Light), (int)(body.B * f.Light)), pts);
                 g.DrawPolygon(Color.FromArgb(body.A, body.R / 2, body.G / 2, body.B / 2), edge, pts);
             }
+            if (aim > 0f) LaserSight();
             if (firing) MuzzleFlash();
             Paint(true);
             Axes(true);
@@ -284,7 +300,9 @@ internal static class LaserDrawing
         void Crosshair()
         {
             const float rad = MathF.PI / 180f;
-            var ch = LaserTrace.CrosshairOn(m, beam, s.CrosshairShape, s.CrosshairSize * rad, s.CrosshairGap * rad, s.CrosshairDot);
+            // Aiming shrinks it to the Aim display's size.
+            float ak = 1f + (Math.Clamp(s.LaserAimSize, 0.1f, 1f) - 1f) * aim;
+            var ch = LaserTrace.CrosshairOn(m, beam, s.CrosshairShape, s.CrosshairSize * rad * ak, s.CrosshairGap * rad * ak, s.CrosshairDot);
             // The colour of the way the beam last moved (it keeps the last way's when the beam stops).
             var color = Color.FromArgb(unchecked((int)LaserTrace.DirectionColor(trace?.Moving ?? (0f, 0f, 0f), moveColors)));
             if (held) color = Fade(color, 0.35f);

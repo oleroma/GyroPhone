@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
+import com.oleroma.gyrophone.core.engine.LaserPaint
 import com.oleroma.gyrophone.core.engine.LaserTrace
 import com.oleroma.gyrophone.core.engine.RestDetector
 import com.oleroma.gyrophone.core.engine.MappingEngine
@@ -72,6 +73,8 @@ fun GyroDisplaysLayer(
     val inEdit by rememberUpdatedState(editing)
     // "Fade when phone rests": each display's share of its opacity now (1 = not faded).
     val fades = remember { HashMap<String, Float>() }
+    // Each pointer's Aim display now, eased (0 .. 1): the crosshair shrinks and the rifle shoulders by it.
+    val aims = remember { HashMap<String, Float>() }
     // Redraws only while some display's data changes (and a moment after, so ghost trails catch up):
     // a still pose, as in edit mode or with the gyro off, draws nothing new.
     LaunchedEffect(Unit) {
@@ -104,6 +107,16 @@ fun GyroDisplaysLayer(
                 last = sig
                 until = t + (GHOSTS + 2) * GHOST_MS
             }
+            // Aiming eases in and out over AIM_EASE_MS.
+            for (b in shown) {
+                val id = b.control.id
+                val was = aims[id] ?: 0f
+                val goal = if (runtime.gyroFeed(id)?.aiming == true) 1f else 0f
+                if (was == goal) continue
+                val step = if (dt <= 0f) 1f else dt / AIM_EASE_MS
+                aims[id] = if (goal > was) minOf(goal, was + step) else maxOf(goal, was - step)
+                until = maxOf(until, t + 20)
+            }
             // A rifle's muzzle flash flickers while it fires.
             for (b in shown) {
                 val d = b.control.display ?: continue
@@ -119,6 +132,7 @@ fun GyroDisplaysLayer(
             val shownAs = b.control.display ?: continue
             val k = fades[b.control.id] ?: 1f
             val d = if (k < 1f) shownAs.copy(opacity = shownAs.opacity * k) else shownAs
+            st.aim = aims[b.control.id] ?: 0f
             st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
             if (editing) {
                 val sel = b.control.id in selected
@@ -162,6 +176,9 @@ private class VisState {
     /** The path [penTo] draws into. */
     var pen = path
     var now = 0L
+
+    /** The display being drawn's Aim display now, eased (0 .. 1). */
+    var aim = 0f
 
     /** Per phone with a ghost trail: its last [GHOSTS] poses. */
     val ghosts = HashMap<String, Ghosts>()
@@ -282,7 +299,9 @@ private class VisState {
      */
     private fun DrawScope.drawCrosshair(d: GyroDisplay, c: Offset, r: Float, held: Boolean, moveColor: Color, col: (GyroDisplayColor) -> Color) {
         val rad = (Math.PI / 180).toFloat()
-        val ch = LaserTrace.crosshair(m, beam, d.crosshairShape, d.crosshairSize * rad, d.crosshairGap * rad, d.crosshairDot)
+        // Aiming shrinks it to the Aim display's size.
+        val k = 1f + (d.laserAimSize.coerceIn(0.1f, 1f) - 1f) * aim
+        val ch = LaserTrace.crosshair(m, beam, d.crosshairShape, d.crosshairSize * rad * k, d.crosshairGap * rad * k, d.crosshairDot)
         var color = moveColor
         if (held) color = color.copy(alpha = color.alpha * 0.35f)
         val outline = col(GyroDisplayColor.LASER_CROSSHAIR_OUTLINE).let { it.copy(alpha = minOf(it.alpha, color.alpha)) }
@@ -313,7 +332,7 @@ private class VisState {
      * with a white-hot middle, longest along the barrel.
      */
     private fun DrawScope.muzzleFlash(c: Offset, r: Float, fire: Color) {
-        val mz = LaserTrace.MUZZLE
+        val mz = FloatArray(3).also { LaserTrace.muzzle(aim, it) }
         fun at(k: Float): Offset {
             val x = mz[0]; val y = mz[1]; val z = mz[2] - k
             return laserAt(c, r, m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z)
@@ -347,6 +366,24 @@ private class VisState {
     }
 
     /**
+     * The rifle's laser sight while aiming ([aim] eases it in): a thin line in [color] from its muzzle
+     * along the barrel to where it lands on the sphere, and a dot there with a soft halo.
+     */
+    private fun DrawScope.laserSight(c: Offset, r: Float, color: Color) {
+        val mz = FloatArray(3).also { LaserTrace.muzzle(aim, it) }
+        val x = mz[0]; val y = mz[1]; val z = mz[2]
+        val tip = laserAt(c, r, m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z)
+        val hit = laserAt(c, r, beam[0], beam[1], beam[2])
+        val a = color.alpha * aim
+        drawLine(color.copy(alpha = a * 0.25f), tip, hit, 4f * density, StrokeCap.Round)
+        drawLine(color.copy(alpha = a * 0.8f), tip, hit, 1.2f * density, StrokeCap.Round)
+        val size = r * 0.025f
+        drawCircle(color.copy(alpha = a * 0.3f), size * 2.5f, hit)
+        drawCircle(color.copy(alpha = a), size, hit)
+        drawCircle(Color.White.copy(alpha = a * 0.9f), size * 0.4f, hit)
+    }
+
+    /**
      * Snake: the line along the newest stretch of [t]'s strokes, its [front] (near) or far pieces, [width]
      * wide at the head thinning to a fifth at the tail; coloured as the paint (the Moving colours by where it
      * is in the scene, or by the way it moved; shots in the Fire colours), shaded as the paint. Pieces are
@@ -359,6 +396,8 @@ private class VisState {
         val len = d.laserSnakeDeg.toFloat().coerceAtLeast(1f)
         val fa = col(GyroDisplayColor.LASER_FIRE)
         val fb = col(GyroDisplayColor.LASER_FIRE_BEHIND)
+        val aa = col(GyroDisplayColor.LASER_AIM)
+        val ab = col(GyroDisplayColor.LASER_AIM_BEHIND)
         val alpha = (moveColors.sumOf { it shr 24 and 0xFF } / 6f).toInt().coerceIn(0, 255)
         val canvas = drawContext.canvas.nativeCanvas
         val e = r * 1.1f
@@ -376,9 +415,11 @@ private class VisState {
                     turned[1] * la[0] + turned[4] * la[1] + turned[7] * la[2],
                     turned[2] * la[0] + turned[5] * la[1] + turned[8] * la[2],
                 )
-                val argb = if (s.fire(i)) {
+                val kind = s.kind(i)
+                val argb = if (kind != LaserPaint.PAINT) {
                     val k = LaserTrace.behind(gz)
-                    Color(fa.red + (fb.red - fa.red) * k, fa.green + (fb.green - fa.green) * k, fa.blue + (fb.blue - fa.blue) * k)
+                    val (ca, cb) = if (kind == LaserPaint.FIRE) fa to fb else aa to ab
+                    Color(ca.red + (cb.red - ca.red) * k, ca.green + (cb.green - ca.green) * k, ca.blue + (cb.blue - ca.blue) * k)
                 } else {
                     if (d.laserColourByWay) s.direction(i, if (d.laserSmoothColours) LaserTrace.SMOOTH_REACH else 0, way)
                     else { way[0] = gx; way[1] = gy; way[2] = gz }
@@ -396,7 +437,7 @@ private class VisState {
                 LaserTrace.unit(hv)
                 val spec = d.laserShine * Math.pow((nv[0] * hv[0] + nv[1] * hv[1] + nv[2] * hv[2]).coerceAtLeast(0f).toDouble(), 24.0).toFloat()
                 val tail = 1f - s.behindNewest(i) / len
-                val w = width * (0.2f + 0.8f * tail.coerceIn(0f, 1f)) * (if (laserPersp) LaserTrace.perspective(z) else 1f)
+                val w = width * brushScale(d, kind) * (0.2f + 0.8f * tail.coerceIn(0f, 1f)) * (if (laserPersp) LaserTrace.perspective(z) else 1f)
                 drawLine(
                     Color((argb.red * k + spec).coerceAtMost(1f), (argb.green * k + spec).coerceAtMost(1f), (argb.blue * k + spec).coerceAtMost(1f)),
                     prev, p, w, StrokeCap.Round,
@@ -405,6 +446,13 @@ private class VisState {
             prev = p
         }
         canvas.restoreToCount(layer)
+    }
+
+    /** A Fire or Aim line's width as a share of the beam's ([GyroDisplay.laserBrush]). */
+    private fun brushScale(d: GyroDisplay, kind: Int): Float = when (kind) {
+        LaserPaint.FIRE -> d.laserFireBrush.coerceIn(1, 20).toFloat() / d.laserBrush.coerceIn(1, 20)
+        LaserPaint.AIM -> d.laserAimBrush.coerceIn(1, 20).toFloat() / d.laserBrush.coerceIn(1, 20)
+        else -> 1f
     }
 
     /** Picture point of shown-frame direction ([x], [y], [z]) on a sphere of radius [r] at [c]; its depth (toward the viewer +) left in [pv]. */
@@ -455,6 +503,9 @@ private class VisState {
                     wayColors = if (d.laserColourByWay) moveColors else null,
                     mapWidth = PAINT_WIDTHS[d.laserPaintDetail.coerceIn(0, 2)],
                     soft = d.laserSoftness,
+                    aim = feed?.aiming == true,
+                    fireBrushDeg = d.laserFireBrush.coerceIn(1, 20) * BRUSH_WIDTH,
+                    aimBrushDeg = d.laserAimBrush.coerceIn(1, 20) * BRUSH_WIDTH,
                 )
             }
         }
@@ -531,6 +582,8 @@ private class VisState {
             shade = d.laserShade, inside = d.laserInside, light = d.laserLight, lightFrom = d.laserLightFrom, shine = d.laserShine,
             moves = IntArray(6) { moveColors[it].toInt() },
             fireAhead = col(GyroDisplayColor.LASER_FIRE).toArgb(), fireBehind = col(GyroDisplayColor.LASER_FIRE_BEHIND).toArgb(),
+            aimAhead = col(GyroDisplayColor.LASER_AIM).toArgb(), aimBehind = col(GyroDisplayColor.LASER_AIM_BEHIND).toArgb(),
+            fireGlow = d.laserFireGlow, aimGlow = d.laserAimGlow,
             outlineColor = col(GyroDisplayColor.LASER_OUTLINE).toArgb(), wayAlpha = moveAlpha,
         )
         val brushPx = maxOf(1.5f * density, r * Math.toRadians(d.laserBrush.coerceIn(1, 20).toDouble()).toFloat() * BRUSH_WIDTH)
@@ -563,7 +616,7 @@ private class VisState {
             axes(false)
             paint(false)
             val body = col(GyroDisplayColor.LASER_RIFLE)
-            for (f in LaserTrace.rifle(m, laserAxon, laserTurned, laserPersp)) {
+            for (f in LaserTrace.rifle(m, laserAxon, laserTurned, laserPersp, aim)) {
                 path.reset()
                 for (i in 0 until 4) {
                     val x = c.x + f.xy[i * 2] * r
@@ -575,6 +628,7 @@ private class VisState {
                 drawPath(path, Color(body.red * k, body.green * k, body.blue * k, body.alpha))
                 drawPath(path, Color(body.red * 0.5f, body.green * 0.5f, body.blue * 0.5f, body.alpha), style = Stroke(density * 0.75f, join = StrokeJoin.Round))
             }
+            if (aim > 0f) laserSight(c, r, col(GyroDisplayColor.LASER_AIM))
             if (feed?.firing == true) muzzleFlash(c, r, col(GyroDisplayColor.LASER_FIRE))
             paint(true)
             axes(true)
@@ -1316,6 +1370,9 @@ private val GIMBAL_RADII = doubleArrayOf(0.95, 0.82, 0.69)
 
 private const val GHOSTS = 6
 private const val GHOST_MS = 45L
+
+/** How long a pointer's Aim display takes to ease fully in or out. */
+private const val AIM_EASE_MS = 120f
 
 /** The world's axes in the axonometric view: right, up, toward you. */
 // By turn, as the gimbal's rings: right is the pitch axis (green), up roll (blue), toward you yaw (red).

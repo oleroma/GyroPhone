@@ -184,11 +184,25 @@ data class GyroDisplay(
     /** LASER Draw mode: a ratchet press clears the drawing. */
     val laserClearOnRatchet: Boolean = false,
     /**
-     * LASER Draw mode: while GyroPhone sends this output ([com.oleroma.gyrophone.core.engine.LaserFire],
-     * default the left mouse button) it paints in the Fire colours; with [laserFireOnly] only then.
+     * LASER Fire display: while GyroPhone sends this output ([com.oleroma.gyrophone.core.engine.LaserFire],
+     * default the left mouse button; 0 none) the rifle flashes and Draw paints in the Fire colours,
+     * [laserFireBrush] degrees round, its glow [laserFireGlow] (0 .. 3); with [laserFireOnly] only it
+     * and the Aim display paint.
      */
     val laserFire: Int = com.oleroma.gyrophone.core.engine.LaserFire.DEFAULT,
     val laserFireOnly: Boolean = false,
+    val laserFireBrush: Int = 6,
+    val laserFireGlow: Float = 1.5f,
+    /**
+     * LASER Aim display: while GyroPhone sends this output (default the right mouse button; 0 none)
+     * the crosshair shrinks to [laserAimSize] of its size, the rifle is shouldered with a scope and a
+     * laser sight, and Draw paints in the Aim colours, [laserAimBrush] degrees round, its glow
+     * [laserAimGlow] (0 .. 3). Firing wins over aiming.
+     */
+    val laserAim: Int = com.oleroma.gyrophone.core.engine.LaserFire.AIM_DEFAULT,
+    val laserAimSize: Float = 0.75f,
+    val laserAimBrush: Int = 3,
+    val laserAimGlow: Float = 0.5f,
     /** LASER: the paint's and crosshair's way colours even out small shakes. */
     val laserSmoothColours: Boolean = true,
     /** LASER Draw mode: [laserLineSmoothing] evens out hand shake in the painted path (0 off .. 1 strong). */
@@ -383,6 +397,8 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     LASER_RIFLE(GyroDisplayKind.LASER, "rifle", "Rifle", 0xFF5A616C),
     LASER_FIRE(GyroDisplayKind.LASER, "fire", "Fire", 0xFFFF4A3D),
     LASER_FIRE_BEHIND(GyroDisplayKind.LASER, "fire_behind", "Fire behind", 0xFF8A1E18),
+    LASER_AIM(GyroDisplayKind.LASER, "aim", "Aim", 0xFF4AD8FF),
+    LASER_AIM_BEHIND(GyroDisplayKind.LASER, "aim_behind", "Aim behind", 0xFF185A8A),
     LASER_CROSSHAIR_OUTLINE(GyroDisplayKind.LASER, "crosshair_outline", "Crosshair outline", 0xFF0E1116),
     ;
 

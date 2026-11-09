@@ -21,7 +21,10 @@ internal class PointerPaintShader {
     private val paint = Paint()
     private var amountMap: Bitmap? = null
     private var fireMap: Bitmap? = null
+    private var aimMap: Bitmap? = null
     private var glowMap: Bitmap? = null
+    private var glowFireMap: Bitmap? = null
+    private var glowAimMap: Bitmap? = null
     private var wayMap: Bitmap? = null
     private var uploaded = Long.MIN_VALUE
     private val col = FloatArray(3)
@@ -31,6 +34,7 @@ internal class PointerPaintShader {
         val eye: Float, val byWay: Boolean, val glow: Float, val outline: Boolean,
         val shade: Float, val inside: Float, val light: Float, val lightFrom: Int, val shine: Float, val moves: IntArray, val fireAhead: Int, val fireBehind: Int,
         val outlineColor: Int, val wayAlpha: Float,
+        val aimAhead: Int, val aimBehind: Int, val fireGlow: Float, val aimGlow: Float,
     )
 
     /**
@@ -46,7 +50,7 @@ internal class PointerPaintShader {
         val s = if (front) near else far
         if (lp.version != uploaded || amountMap?.width != lp.width || (look.byWay && lp.way != null && wayMap == null)) {
             if (amountMap?.width != lp.width) {
-                amountMap = null; fireMap = null; glowMap = null; wayMap = null
+                amountMap = null; fireMap = null; aimMap = null; glowMap = null; glowFireMap = null; glowAimMap = null; wayMap = null
             }
             // The map's bytes as they are, each in an alpha-only bitmap: alpha is never colour-converted
             // on the way to the GPU, so the amounts arrive exact.
@@ -55,6 +59,9 @@ internal class PointerPaintShader {
             val am = a8(amountMap, lp.amount).also { amountMap = it }
             val fm = a8(fireMap, lp.fire).also { fireMap = it }
             val gm = a8(glowMap, lp.glow).also { glowMap = it }
+            val im = a8(aimMap, lp.aim).also { aimMap = it }
+            val gfm = a8(glowFireMap, lp.glowFire).also { glowFireMap = it }
+            val gim = a8(glowAimMap, lp.glowAim).also { glowAimMap = it }
             val ways = lp.way
             if (ways != null && look.byWay) {
                 val wb = wayMap ?: Bitmap.createBitmap(lp.width, lp.height, Bitmap.Config.ARGB_8888).also { wayMap = it }
@@ -66,6 +73,9 @@ internal class PointerPaintShader {
                 sh.setInputBuffer("amount", smooth(am))
                 sh.setInputBuffer("fire", smooth(fm))
                 sh.setInputBuffer("glow", smooth(gm))
+                sh.setInputBuffer("aim", smooth(im))
+                sh.setInputBuffer("glowFire", smooth(gfm))
+                sh.setInputBuffer("glowAim", smooth(gim))
                 sh.setInputBuffer("way", smooth(wayMap ?: am))
             }
         }
@@ -82,6 +92,8 @@ internal class PointerPaintShader {
         scene(0f, 0f, 1f, col); s.setFloatUniform("sceneZ", col[0], col[1], col[2])
         s.setFloatUniform("wayMode", if (look.byWay && wayMap != null) 1f else 0f)
         s.setFloatUniform("glowK", look.glow)
+        s.setFloatUniform("fireGlowK", look.fireGlow)
+        s.setFloatUniform("aimGlowK", look.aimGlow)
         s.setFloatUniform("outline", if (look.outline) 1f else 0f)
         s.setFloatUniform("shade", look.shade)
         s.setFloatUniform("inside", look.inside)
@@ -93,6 +105,8 @@ internal class PointerPaintShader {
         for ((i, name) in MOVE_NAMES.withIndex()) s.setColorUniform(name, look.moves[i])
         s.setColorUniform("fireAhead", look.fireAhead)
         s.setColorUniform("fireBehind", look.fireBehind)
+        s.setColorUniform("aimAhead", look.aimAhead)
+        s.setColorUniform("aimBehind", look.aimBehind)
         s.setColorUniform("outlineColor", look.outlineColor)
         paint.shader = s
         val e = r * 1.05f
@@ -117,6 +131,9 @@ internal class PointerPaintShader {
             uniform shader amount;
             uniform shader fire;
             uniform shader glow;
+            uniform shader aim;
+            uniform shader glowFire;
+            uniform shader glowAim;
             uniform shader way;
             uniform float2 mapSize;
             uniform float2 center;
@@ -131,6 +148,8 @@ internal class PointerPaintShader {
             uniform float3 sceneZ;
             uniform float wayMode;
             uniform float glowK;
+            uniform float fireGlowK;
+            uniform float aimGlowK;
             uniform float outline;
             uniform float shade;
             uniform float inside;
@@ -146,6 +165,8 @@ internal class PointerPaintShader {
             layout(color) uniform half4 cAway;
             layout(color) uniform half4 fireAhead;
             layout(color) uniform half4 fireBehind;
+            layout(color) uniform half4 aimAhead;
+            layout(color) uniform half4 aimBehind;
             layout(color) uniform half4 outlineColor;
 
             half4 main(float2 xy) {
@@ -179,6 +200,11 @@ internal class PointerPaintShader {
                 if (c < 0.004 && gl < 0.004) return half4(0.0);
                 float cs = max(c, 0.004);
                 float fired = clamp(float(fire.eval(uv).a) / cs, 0.0, 1.0);
+                float aimed = clamp(float(aim.eval(uv).a) / cs, 0.0, 1.0 - fired);
+                // The glow's shares that are shots' and aiming's.
+                float gs = max(gl, 0.004);
+                float gFired = clamp(float(glowFire.eval(uv).a) / gs, 0.0, 1.0);
+                float gAimed = clamp(float(glowAim.eval(uv).a) / gs, 0.0, 1.0 - gFired);
                 // The point in the scene's frame: what its colour goes by.
                 float3 g = float3(dot(sceneX, p), dot(sceneY, p), dot(sceneZ, p));
 
@@ -193,8 +219,13 @@ internal class PointerPaintShader {
                         + n.y * (float4(g.y >= 0.0 ? cUp : cDown) - mid)
                         + n.z * (float4(g.z >= 0.0 ? cToward : cAway) - mid);
                 }
-                float4 fc = mix(float4(fireAhead), float4(fireBehind), clamp((1.0 + g.z) / 2.0, 0.0, 1.0));
-                float4 col = mix(base, fc, fired);
+                float back = clamp((1.0 + g.z) / 2.0, 0.0, 1.0);
+                float4 fc = mix(float4(fireAhead), float4(fireBehind), back);
+                float4 ac = mix(float4(aimAhead), float4(aimBehind), back);
+                float4 col = base * (1.0 - fired - aimed) + fc * fired + ac * aimed;
+                // The glow takes the colours of what laid it, each as strong as its own glow (up to 3: a bright bloom).
+                float4 gcol = base * (1.0 - gFired - gAimed) + fc * gFired + ac * gAimed;
+                float gk = glowK * (1.0 - gFired - gAimed) + fireGlowK * gFired + aimGlowK * gAimed;
                 // Facing shade (darker where the surface turns away), the far half seen from inside darker still.
                 float k = mix(1.0, 0.25 + 0.75 * facing, shade) * (front > 0.5 ? 1.0 : inside);
                 // The scene's light on the side you see (outside on the near half, inside on the far).
@@ -203,10 +234,15 @@ internal class PointerPaintShader {
                 k *= mix(1.0, 0.3 + 0.9 * diffuse, light);
                 float spec = shine * pow(max(dot(nv, normalize(lightDir + float3(0.0, 0.0, 1.0))), 0.0), 24.0);
                 col.rgb = min(col.rgb * k + spec, float3(1.0));
+                gcol.rgb = min(gcol.rgb * k, float3(1.0));
+                // A glow over 100% also lights the line's core toward white, as hot light.
+                float hot = clamp((fireGlowK - 1.0) / 2.0, 0.0, 1.0) * fired + clamp((aimGlowK - 1.0) / 2.0, 0.0, 1.0) * aimed;
+                col.rgb = mix(col.rgb, float3(1.0), 0.6 * hot);
 
                 float paintA = c * col.a;
-                float glowA = glowK * 0.45 * gl * col.a;
-                float4 o = float4(col.rgb, 1.0) * glowA;
+                // Glow over 100% blooms: brighter, and wider as its faint edge is lifted (gl^(1/k)).
+                float glowA = (gk <= 1.0 ? gk * 0.45 * gl : min(0.9, 0.45 * pow(gl, 1.0 / gk) * sqrt(gk))) * gcol.a;
+                float4 o = float4(gcol.rgb, 1.0) * glowA;
                 float oa = outline * smoothstep(0.2, 0.4, gl) * (1.0 - c) * float(outlineColor.a);
                 o = float4(float3(outlineColor.rgb) * oa, oa) + o * (1.0 - oa);
                 o = float4(col.rgb * paintA, paintA) + o * (1.0 - paintA);

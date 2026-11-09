@@ -13,7 +13,7 @@ public class LaserPaintTests
     private static float Fire(LaserPaint p, (float X, float Y, float Z) d) => p.Fire[K(p, d)] / 255f;
 
     // A line along the equator in 0.5° steps, as the trace stamps it.
-    private static void Line(LaserPaint p, float from, float to, float up = 0f, float soft = 0.5f, bool fired = false, int? way = null)
+    private static void Line(LaserPaint p, float from, float to, float up = 0f, float soft = 0.5f, bool fired = false, int? way = null, int? kind = null)
     {
         p.NewLine();
         double along = 0;
@@ -22,8 +22,27 @@ public class LaserPaintTests
             var a = At(x, up);
             var b = At(x + 0.5f, up);
             along += 0.5;
-            p.Stamp(a.X, a.Y, a.Z, b.X, b.Y, b.Z, along, 1f, fired, soft, way);
+            p.Stamp(a.X, a.Y, a.Z, b.X, b.Y, b.Z, along, 1f, kind ?? (fired ? LaserPaint.FireKind : LaserPaint.PaintKind), soft, way);
         }
+    }
+
+    [Fact]
+    public void AimPaintAndGlowAreKeptApartFromFire()
+    {
+        var p = new LaserPaint();
+        Line(p, 0f, 20f, kind: LaserPaint.AimKind);
+        var a = At(10f);
+        int t = p.TexelOf(a.X, a.Y, a.Z);
+        Assert.InRange(p.Aim[t], 250, 255);
+        Assert.InRange(p.Fire[t], 0, 5);
+        var e = At(10f, 2f);
+        int g = p.TexelOf(e.X, e.Y, e.Z);
+        Assert.Equal(p.Glow[g], p.GlowAim[g]); // all of the glow there is aiming's
+        Assert.Equal(0, p.GlowFire[g]);
+        Line(p, 0f, 20f, fired: true); // a shot over it takes its place
+        Assert.InRange(p.Aim[t], 0, 5);
+        Assert.InRange(p.Fire[t], 250, 255);
+        Assert.True(p.GlowFire[g] > p.GlowAim[g]);
     }
 
     [Fact]

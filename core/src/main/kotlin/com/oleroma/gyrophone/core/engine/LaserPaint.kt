@@ -24,14 +24,19 @@ import kotlin.math.sqrt
  *
  * The bytes the GPU reads, one per texel each (alpha-only bitmaps), all premultiplied by the
  * amount so the GPU can blend between texels: [amount] (0 .. 255), [fire] (the amount that is
- * shots, Fire colours) and [glow] (a wide faint halo, built up the same way). With way colours kept,
+ * shots, Fire colours), [aim] (the amount painted while aiming, Aim colours) and [glow] (a wide
+ * faint halo, built up the same way), with [glowFire] and [glowAim] the shares of the glow that are
+ * shots' and aiming's (premultiplied by the glow), so theirs can shine stronger. With way colours kept,
  * [way] holds each texel's colour times its amount (RGB, alpha 255).
  */
 class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
     private val n = width * height
     val amount = ByteArray(n)
     val fire = ByteArray(n)
+    val aim = ByteArray(n)
     val glow = ByteArray(n)
+    val glowFire = ByteArray(n)
+    val glowAim = ByteArray(n)
 
     /** Each texel's way colour times its amount (RGB, alpha 255), made at the first stamp that keeps one. */
     var way: IntArray? = null
@@ -60,7 +65,10 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
     fun clear() {
         amount.fill(0)
         fire.fill(0)
+        aim.fill(0)
         glow.fill(0)
+        glowFire.fill(0)
+        glowAim.fill(0)
         way?.fill(0)
         lineAmount.fill(0)
         lineGlow.fill(0)
@@ -78,11 +86,12 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
     /**
      * Paints the line from unit direction ([ax], [ay], [az]) to ([bx], [by], [bz]) (the same point for
      * a dot), [alongDeg] degrees along its line at its end, [halfDeg] degrees each side of its middle,
-     * its edge [soft] (0 sharp .. 1 soft); [fired] while firing; [wayRgb] its way colour (RGB, or null).
+     * its edge [soft] (0 sharp .. 1 soft); [kind] what painted it ([PAINT], [AIM] while aiming, [FIRE]
+     * while firing); [wayRgb] its way colour (RGB, or null).
      */
     fun stamp(
         ax: Float, ay: Float, az: Float, bx: Float, by: Float, bz: Float, alongDeg: Double, halfDeg: Float,
-        fired: Boolean, soft: Float = 0.5f, wayRgb: Int? = null,
+        kind: Int, soft: Float = 0.5f, wayRgb: Int? = null,
     ) {
         if (line == 0.toShort()) newLine()
         if (wayRgb != null && way == null) way = IntArray(n)
@@ -97,7 +106,7 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
         for (k in 0 until pieces) {
             slerp(ax, ay, az, bx, by, bz, hop, k / pieces.toFloat(), a)
             slerp(ax, ay, az, bx, by, bz, hop, (k + 1) / pieces.toFloat(), b)
-            piece(a, b, brush, fired, wayRgb, along)
+            piece(a, b, brush, kind, wayRgb, along)
         }
         version++
     }
@@ -120,7 +129,7 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
         }
     }
 
-    private fun piece(a: FloatArray, b: FloatArray, brush: Brush, fired: Boolean, wayRgb: Int?, along: Int) {
+    private fun piece(a: FloatArray, b: FloatArray, brush: Brush, kind: Int, wayRgb: Int?, along: Int) {
         val abx = b[0] - a[0]
         val aby = b[1] - a[1]
         val abz = b[2] - a[2]
@@ -148,7 +157,8 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
         val wg = if (wayRgb == null) 0f else (wayRgb shr 8 and 0xFF).toFloat()
         val wb = if (wayRgb == null) 0f else (wayRgb and 0xFF).toFloat()
         val ways = way
-        val f = if (fired) 1f else 0f
+        val f = if (kind == FIRE) 1f else 0f
+        val ai = if (kind == AIM) 1f else 0f
         for (j in j0..j1) {
             val lat = latOf(j)
             // The longitudes of this row within the cap: cos(d) = sin φ sin φc + cos φ cos φc cos Δλ ≥ cos(span).
@@ -199,6 +209,7 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
                 var baseA = oldA
                 var baseG = oldG
                 var keep = 1f // how much of the old colour stays, as a share of the old
+                var keepG = 1f // the same for the glow's
                 if (lineTag[k] == line && Math.floorMod(along - lineAlong[k], 0x10000) <= samePass) {
                     val la = (lineAmount[k].toInt() and 0xFF) / 255f
                     val lg = (lineGlow[k].toInt() and 0xFF) / 255f
@@ -209,15 +220,25 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
                     if (lg < 0.995f) baseG = ((oldG - lg) / (1f - lg)).coerceIn(0f, 1f)
                     // The old colour's share that was the base's, before this line's part.
                     keep = if (oldA > 1e-4f) (baseA / oldA).coerceIn(0f, 1f) else 0f
+                    keepG = if (oldG > 1e-4f) (baseG / oldG).coerceIn(0f, 1f) else 0f
                 }
                 val newA = baseA + pa * (1f - baseA)
                 val newG = baseG + pg * (1f - baseG)
                 // Premultiplied colours: the base's part, under the new paint, plus the new paint's.
                 val oldF = (fire[k].toInt() and 0xFF) / 255f
                 val newF = oldF * keep * (1f - pa) + f * pa
+                val oldI = (aim[k].toInt() and 0xFF) / 255f
+                val newI = oldI * keep * (1f - pa) + ai * pa
+                val oldGF = (glowFire[k].toInt() and 0xFF) / 255f
+                val newGF = oldGF * keepG * (1f - pg) + f * pg
+                val oldGI = (glowAim[k].toInt() and 0xFF) / 255f
+                val newGI = oldGI * keepG * (1f - pg) + ai * pg
                 amount[k] = (newA * 255f + 0.5f).toInt().toByte()
                 glow[k] = (newG * 255f + 0.5f).toInt().toByte()
                 fire[k] = (newF.coerceAtMost(newA) * 255f + 0.5f).toInt().toByte()
+                aim[k] = (newI.coerceAtMost(newA - newF.coerceAtMost(newA)) * 255f + 0.5f).toInt().toByte()
+                glowFire[k] = (newGF.coerceAtMost(newG) * 255f + 0.5f).toInt().toByte()
+                glowAim[k] = (newGI.coerceAtMost(newG - newGF.coerceAtMost(newG)) * 255f + 0.5f).toInt().toByte()
                 if (ways != null && wayRgb != null) {
                     val o = ways[k]
                     val under = keep * (1f - pa)
@@ -244,6 +265,11 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
     }
 
     companion object {
+        /** What painted a stamp: the beam, the beam while aiming, while firing. */
+        const val PAINT = 0
+        const val AIM = 1
+        const val FIRE = 2
+
         const val WIDTH = 1024
         const val HEIGHT = 512
 
