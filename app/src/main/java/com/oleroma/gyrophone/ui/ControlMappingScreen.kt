@@ -222,9 +222,9 @@ private fun allows(allowed: Set<OutputTarget>, t: OutputTarget): Boolean {
         is OutputTarget.MouseAxis -> allowed.any { it is OutputTarget.MouseAxis && it.motion == t.motion }
         is OutputTarget.Key -> allowed.any { it is OutputTarget.Key }
         OutputTarget.GyroHold -> OutputTarget.GyroPause in allowed
-        // Layer actions, (Let go), Black screen, Level and Clear displays and Nothing go where button outputs do.
+        // Layer actions, (Let go), Black screen, Set orientation, Clear displays and Nothing go where button outputs do.
         is OutputTarget.Layer, OutputTarget.LayerBack, OutputTarget.LetGo, OutputTarget.BlackScreen,
-        OutputTarget.LevelDisplays, OutputTarget.ClearDisplays, OutputTarget.NoOutput ->
+        is OutputTarget.SetOrientation, OutputTarget.ClearDisplays, OutputTarget.NoOutput ->
             allowed.any { it is OutputTarget.Key }
         else -> false
     }
@@ -1825,6 +1825,8 @@ internal fun ControlMappingScreen(
     chipDialog?.let { (input, chip) ->
         val zi = chipInput(input, chip)
         val ti = trig(zi, chip.trigger)
+        // Set orientation's Granular switch, applied with the rest.
+        var granular by remember(chip) { mutableStateOf((chip.target as? OutputTarget.SetOrientation)?.granular == true) }
         // A button's touch card: a chip can move between its Touch, Area and Outside (Where); the Swipe
         // card's between its directions (Any, ↑ → ↓ ←), in its zone.
         val group = groupOf(input)
@@ -1851,6 +1853,7 @@ internal fun ControlMappingScreen(
             range = chipRange(chip.target, Bindings.entry(view, ti, chip.target, chip.n)?.range, runtime.engine.workspace.gyro),
             onApply = { tr, o, w, r ->
                 chipDialog = null
+                val target = (chip.target as? OutputTarget.SetOrientation)?.copy(granular = granular) ?: chip.target
                 val destInput = if (whereInputs.isEmpty()) zi else inputAt(w)
                 val dest = trig(destInput, if (tr in Bindings.triggersOf(destInput)) tr else Trigger.HOLD)
                 // Another trigger: it leaves this one's chips and joins that one's (keeping their order); one
@@ -1858,7 +1861,7 @@ internal fun ControlMappingScreen(
                 val es = Bindings.entries(currentMappings, ti)
                 var k = -1
                 val at = es.indexOfFirst { it.target == chip.target && ++k == chip.n }
-                val now = Bindings.Entry(chip.target, o, r)
+                val now = Bindings.Entry(target, o, r)
                 change(
                     if (dest == ti && at >= 0) Bindings.setEntries(currentMappings, ti, es.toMutableList().apply { set(at, now) })
                     else Bindings.removeEntry(currentMappings, ti, chip.target, chip.n).let { base ->
@@ -1877,6 +1880,16 @@ internal fun ControlMappingScreen(
                 {
                     chipDialog = null
                     hapticDraft = ti to chip.target
+                }
+            } else null,
+            targetOptions = if (chip.target is OutputTarget.SetOrientation) {
+                {
+                    OverrideSwitch(
+                        "Granular",
+                        if (granular) "Takes the exact angle you tilt the phone back as the new hold position (leaning sideways is left out)."
+                        else "Snaps to the screen axis pointing most nearly up, either way up.",
+                        granular, overridden = false, onReset = null,
+                    ) { granular = it }
                 }
             } else null,
         )

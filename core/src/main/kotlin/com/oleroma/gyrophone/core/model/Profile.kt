@@ -620,32 +620,63 @@ enum class GyroSpace(val label: String) {
 }
 
 /**
- * Which screen axis the gyro takes as yaw ([GyroSettings.yawAxis]): the phone's frame as the gyro
- * sees it, for every use of the phone's own axes (the gyro mouse, the PC controller's gyro and
- * accelerometer, the gyro displays and the PC overlays).
+ * Which screen axis the gyro takes as yaw ([GyroSettings.yawAxis]): the phone's base orientation,
+ * the frame the gyro sees, for every use of the phone's own axes (the gyro mouse in Local space,
+ * the PC controller's gyro and accelerometer, the gyro displays in Local space and the PC overlays).
  * - [SCREEN_Z]: yaw through the screen (held flat, screen up), pitch across, roll along it.
  * - [SCREEN_Y]: yaw along the screen's vertical axis (held upright, screen facing you), roll through
  *   the screen, pitch across it: the frame tilted back 90°.
  * - [SCREEN_X]: yaw along the screen's horizontal axis (held on its side, right edge up), pitch
  *   through the screen, roll along its vertical axis: the frame turned 90° about that axis.
+ * - The [flipped] ones: the same axis the other way up (screen down, upside down, left edge up).
+ * - [CUSTOM]: tilted back by [GyroSettings.gripPitch] (0° = Screen Z, 90° = Screen Y), from a
+ *   granular Set orientation.
  */
 @Serializable
-enum class YawAxis(val label: String) {
+enum class YawAxis(val label: String, val flipped: Boolean = false) {
     SCREEN_Z("Screen Z"),
     SCREEN_Y("Screen Y"),
     SCREEN_X("Screen X"),
+    SCREEN_Z_FLIPPED("Screen Z flipped", true),
+    SCREEN_Y_FLIPPED("Screen Y flipped", true),
+    SCREEN_X_FLIPPED("Screen X flipped", true),
+    CUSTOM("Custom"),
     ;
 
+    /** The axis either way up ([SCREEN_Z], [SCREEN_Y] or [SCREEN_X]; [CUSTOM] stays). */
+    val axis: YawAxis get() = when (this) {
+        SCREEN_Z_FLIPPED -> SCREEN_Z
+        SCREEN_Y_FLIPPED -> SCREEN_Y
+        SCREEN_X_FLIPPED -> SCREEN_X
+        else -> this
+    }
+
+    /** [axis] the way up [flip] says. */
+    fun withFlip(flip: Boolean): YawAxis = when (axis) {
+        SCREEN_Z -> if (flip) SCREEN_Z_FLIPPED else SCREEN_Z
+        SCREEN_Y -> if (flip) SCREEN_Y_FLIPPED else SCREEN_Y
+        SCREEN_X -> if (flip) SCREEN_X_FLIPPED else SCREEN_X
+        else -> this
+    }
+
     companion object {
-        /** The screen axis that points most nearly up, from [up] (right, up, toward the player): "Set grip". */
+        /** The screen axis, either way up, that points most nearly up, from [up] (right, up, toward the player): Set orientation. */
         fun nearest(up: FloatArray): YawAxis {
             val x = kotlin.math.abs(up[0]); val y = kotlin.math.abs(up[1]); val z = kotlin.math.abs(up[2])
             return when {
-                z >= x && z >= y -> SCREEN_Z
-                y >= x -> SCREEN_Y
-                else -> SCREEN_X
+                z >= x && z >= y -> SCREEN_Z.withFlip(up[2] < 0f)
+                y >= x -> SCREEN_Y.withFlip(up[1] < 0f)
+                else -> SCREEN_X.withFlip(up[0] < 0f)
             }
         }
+
+        /**
+         * A granular Set orientation's tilt back (degrees, -180..180, 0 = flat screen up, 90 =
+         * upright) from [up] (right, up, toward the player): how far the phone leans about the
+         * screen's horizontal axis; leaning sideways is left out.
+         */
+        fun pitchOf(up: FloatArray): Float =
+            Math.toDegrees(kotlin.math.atan2(up[1].toDouble(), up[2].toDouble())).toFloat()
     }
 }
 
@@ -1071,6 +1102,8 @@ data class GyroSettings(
     val gyroSpace: GyroSpace = GyroSpace.LOCAL,
     /** Which screen axis is yaw ([YawAxis]): the phone's frame for everything gyro; the workspace's (and Defaults') only. */
     val yawAxis: YawAxis = YawAxis.SCREEN_Z,
+    /** [YawAxis.CUSTOM]'s tilt back (degrees, 0 = Screen Z, 90 = Screen Y), from a granular Set orientation; the workspace's (and Defaults') only. */
+    val gripPitch: Float = 0f,
     /**
      * Inertia: when a ratchet turns a gyro axis off, its mouse and wheel motion glides on and slows
      * down over [glideMs] ([InertiaCurve]); it stops at once when the axis is on again. Sticks never glide.

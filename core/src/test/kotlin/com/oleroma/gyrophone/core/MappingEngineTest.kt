@@ -86,11 +86,11 @@ class MappingEngineTest {
         assertEquals(2, fired)
     }
 
-    @Test fun levelDisplaysFiresOncePerPress() {
-        val p = profileOf(listOf(Mapping(InputSource.Key(AndroidKey.BUTTON_SELECT), OutputTarget.LevelDisplays)))
+    @Test fun setOrientationFiresOncePerPressWithItsGranularSwitch() {
+        val p = profileOf(listOf(Mapping(InputSource.Key(AndroidKey.BUTTON_SELECT), OutputTarget.SetOrientation(granular = true))))
         val e = MappingEngine(p)
         var fired = 0
-        e.onLevelDisplays = Runnable { fired++ }
+        e.onSetOrientation = { g -> assertEquals(true, g); fired++ }
         e.setKey(AndroidKey.BUTTON_SELECT, true)
         e.setKey(AndroidKey.BUTTON_SELECT, false)
         assertEquals(1, fired)

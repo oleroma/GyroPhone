@@ -812,13 +812,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     var onBlackScreen: Runnable? = null
 
     /**
-     * Called when a [OutputTarget.LevelDisplays] mapping fires, inside the engine lock: it must only
-     * hand the request on (gyro displays and PC overlays level), never call back into the engine.
+     * Called with its granular switch when a [OutputTarget.SetOrientation] mapping fires, inside the
+     * engine lock: it must only hand the request on, never call back into the engine.
      */
     @Volatile
-    var onLevelDisplays: Runnable? = null
+    var onSetOrientation: ((Boolean) -> Unit)? = null
 
-    /** Called when a [OutputTarget.ClearDisplays] mapping fires, inside the engine lock, as [onLevelDisplays]. */
+    /** Called when a [OutputTarget.ClearDisplays] mapping fires, inside the engine lock, as [onSetOrientation]. */
     @Volatile
     var onClearDisplays: Runnable? = null
 
@@ -2020,7 +2020,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 is OutputTarget.Wheel, is OutputTarget.MouseAxis,
                 OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause, is OutputTarget.GyroPauseAxis,
                 OutputTarget.SwitchApps, OutputTarget.Zoom, is OutputTarget.Layer, OutputTarget.LayerBack,
-                OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.LevelDisplays, OutputTarget.ClearDisplays,
+                OutputTarget.LetGo, OutputTarget.BlackScreen, is OutputTarget.SetOrientation, OutputTarget.ClearDisplays,
                 OutputTarget.NoOutput -> Unit
 
                 // The gyro reads it on every sample ([refreshSens]).
@@ -2440,7 +2440,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** [t] fires when it is pressed ([onPress]) rather than being held. */
     private fun isEvent(t: OutputTarget) = t is OutputTarget.Wheel || t == OutputTarget.GyroToggle || t is OutputTarget.Layer ||
             t == OutputTarget.LayerBack || t == OutputTarget.LetGo || t == OutputTarget.BlackScreen ||
-            t == OutputTarget.LevelDisplays || t == OutputTarget.ClearDisplays
+            t is OutputTarget.SetOrientation || t == OutputTarget.ClearDisplays
 
     /** [m]'s shaper in [dev]'s group (the touch group for null). */
     private fun shaperOf(m: Mapping, dev: Dev?): Shaper =
@@ -2617,7 +2617,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             OutputTarget.LayerBack -> layerBack()
             OutputTarget.LetGo -> letGoAll(clock())
             OutputTarget.BlackScreen -> onBlackScreen?.run()
-            OutputTarget.LevelDisplays -> onLevelDisplays?.run()
+            is OutputTarget.SetOrientation -> onSetOrientation?.invoke(t.granular)
             OutputTarget.ClearDisplays -> onClearDisplays?.run()
             else -> Unit
         }
