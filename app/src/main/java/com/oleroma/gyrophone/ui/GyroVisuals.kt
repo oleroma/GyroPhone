@@ -258,6 +258,7 @@ private class VisState {
     // Each pointer's paint drawing (its map's upload).
     private val paintShaders = java.util.WeakHashMap<LaserTrace, PointerPaintShader>()
     private val viewOf: (Float, Float, Float, FloatArray) -> Unit = { x, y, z, out -> LaserTrace.view(x, y, z, out, axon = laserAxon, turned = laserTurned) }
+    private val turnBase = FloatArray(9)
     private val nv = FloatArray(3)
     private val hv = FloatArray(3)
     private val sceneOf: (Float, Float, Float, FloatArray) -> Unit = { x, y, z, out -> LaserTrace.view(x, y, z, out, axon = laserAxon) }
@@ -421,6 +422,9 @@ private class VisState {
      */
     private fun DrawScope.drawLaser(feed: GyroDisplayFeed?, d: GyroDisplay, box: Rect, col: (GyroDisplayColor) -> Color) {
         poseOf(feed, d)
+        // The pose before a trackball's Pointer faces: Fixed pointer mode turns the sphere by this, so the
+        // beam stays pointing the way it faces.
+        m.copyInto(turnBase)
         // Turned by the phone it aims with its roll axis; a trackball faces the way picked; a game camera already aims ahead.
         when (d.turnsWith) {
             com.oleroma.gyrophone.core.model.TurnsWith.PHONE -> LaserTrace.aim(m)
@@ -430,7 +434,7 @@ private class VisState {
         laserAxon = d.laserAxonometric
         laserPersp = d.perspective
         // Sphere turns: everything on it is seen from the pose, so the beam stays ahead.
-        laserTurned = if (d.laserSphereTurns) m else null
+        laserTurned = if (!d.laserSphereTurns) null else if (d.turnsWith == com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL) turnBase else m
         val r = minOf(box.width, box.height) / 2f * 0.95f
         val c = box.center
         val held = feed?.ratchetHeld == true
