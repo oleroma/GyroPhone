@@ -98,7 +98,7 @@ jobs:
         # The companion job may have made the release first; then the APK is added to it.
         run: >-
           gh release create "$TAG" "$FILE" --verify-tag --prerelease
-          --title "$VERSION" --notes "CI fallback build of $GITHUB_REF_NAME ($GITHUB_SHA)"
+          --title "$VERSION" --notes "$(bash .agents/release-notes "$GITHUB_SHA" "${TAG#build/}" "CI fallback build of $GITHUB_REF_NAME ($GITHUB_SHA)")"
           || gh release upload "$TAG" "$FILE"
 
       - name: Full checks
@@ -152,7 +152,7 @@ jobs:
           VERSION: ${{ steps.build.outputs.version }}
         run: >-
           gh release create "$TAG" "$FILE" --verify-tag --prerelease
-          --title "$VERSION" --notes "CI fallback build of $GITHUB_REF_NAME ($GITHUB_SHA)"
+          --title "$VERSION" --notes "$(bash .agents/release-notes "$GITHUB_SHA" "${TAG#build/}" "CI fallback build of $GITHUB_REF_NAME ($GITHUB_SHA)")"
           || gh release upload "$TAG" "$FILE"
 
   # Runs only when every build job that ran passed (a part the branch didn't change is skipped).
