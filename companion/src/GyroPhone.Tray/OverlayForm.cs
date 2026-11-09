@@ -79,6 +79,10 @@ internal sealed class OverlayForm : Form
     private ushort _lastLayout;
     private long _lastDrawTicks;
     private bool _dirty = true;
+    // "Fade when phone rests": this window's share of its opacity now (1 = not faded), and when it was last stepped.
+    private float _restFade = 1f;
+    private long _restFadeAt;
+    private int _alphaQueued;
 
     public OverlayForm(HostEngine engine, string id, Action<string> log, Action<string, Point> clicked, Action<string> picked)
     {
@@ -455,6 +459,7 @@ internal sealed class OverlayForm : Form
             _laser.Expire(now, lf.LaserFadeMs);
             laserFading = _laser.Fading(lf.LaserFadeMs);
         }
+        StepRestFade(now);
         UpdateStats();
         bool changed = _dirty || fresh || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||
             !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now) || laserFading;
@@ -465,6 +470,48 @@ internal sealed class OverlayForm : Form
         _scene.FrameAgeUs = age;
         _scene.Layout = layout;
         Render();
+    }
+
+    /// <summary>
+    /// "Fade when phone rests": fades toward the faded opacity over the fade time while the phone rests,
+    /// and back to full at once when it doesn't (never in Edit). A swap-chain window just gets its
+    /// new constant alpha; a copied one draws again with it.
+    /// </summary>
+    private void StepRestFade(long now)
+    {
+        var rf = _engine.Settings.OverlayRestFade;
+        bool resting = ClickThrough && _engine.OverlayResting(_id);
+        float target = resting ? Math.Clamp(rf.FadeTo, 0.05f, 1f) : 1f;
+        float was = _restFade;
+        long dtMs = _restFadeAt == 0 ? 0 : Math.Clamp(now - _restFadeAt, 0, 100);
+        _restFadeAt = now;
+        if (target >= _restFade) _restFade = target;
+        else _restFade = rf.FadeMs <= 0 ? target : Math.Max(target, _restFade - (1f - target) * dtMs / rf.FadeMs);
+        if (Math.Abs(_restFade - was) < 1e-4f) return;
+        if (!_direct)
+        {
+            _dirty = true;
+            return;
+        }
+        if (!_revealed || WindowAlpha() == _directAlpha) return;
+        // Set on the UI thread (the window's), one at a time; it reads the newest fade when it runs.
+        if (Interlocked.Exchange(ref _alphaQueued, 1) != 0) return;
+        try
+        {
+            BeginInvoke(() =>
+            {
+                Volatile.Write(ref _alphaQueued, 0);
+                if (!IsHandleCreated || !_direct || !_revealed) return;
+                byte a = WindowAlpha();
+                if (a == _directAlpha) return;
+                _directAlpha = a;
+                SetLayeredWindowAttributes(Handle, 0, a, LwaAlpha);
+            });
+        }
+        catch (Exception e) when (e is InvalidOperationException or ObjectDisposedException)
+        {
+            Volatile.Write(ref _alphaQueued, 0);
+        }
     }
 
     private void Render()
@@ -673,6 +720,7 @@ internal sealed class OverlayForm : Form
     {
         float op = Math.Clamp(Settings?.Opacity ?? 1f, 0.1f, 1f);
         if (!ClickThrough) op = Math.Max(op, 0.6f);
+        else op = Math.Max(op * _restFade, 0.02f);
         return (byte)Math.Round(op * 255);
     }
 

@@ -30,6 +30,8 @@ public sealed class HostSettings
     public bool InputLog { get; set; } = true;
     /// <summary>The overlays' global shortcuts.</summary>
     public OverlayShortcuts OverlayShortcuts { get; set; } = new();
+    /// <summary>"Fade when phone rests": every overlay fades while the phone lies still at its Level, untouched.</summary>
+    public OverlayRestFade OverlayRestFade { get; set; } = new();
     /// <summary>The one phone overlay of earlier builds: read once into <see cref="Overlays"/>.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public OverlaySettings? Overlay { get; set; }
@@ -41,6 +43,8 @@ public sealed class HostSettings
         Overlays ??= [];
         OverlayShortcuts ??= new();
         OverlayShortcuts.Normalize();
+        OverlayRestFade ??= new();
+        OverlayRestFade.Normalize();
         if (Overlay != null)
         {
             if (Overlays.Count == 0) Overlays.Add(Overlay);
@@ -133,6 +137,34 @@ public enum TrayClickAction
 {
     OpenMainWindow,
     PairNewPhone,
+}
+
+/// <summary>
+/// "Fade when phone rests" (all overlays): the phone lies at an overlay's Level tilt (within
+/// <see cref="FlatWithinDeg"/>), turns slower than <see cref="StillBelowDps"/> and gets no input,
+/// all for <see cref="QuietMs"/>: that overlay fades to <see cref="FadeTo"/> of its opacity over
+/// <see cref="FadeMs"/>, and comes back at once on any input or movement.
+/// </summary>
+public sealed class OverlayRestFade
+{
+    public bool On { get; set; } = true;
+    public float FlatWithinDeg { get; set; } = 10f;
+    public float StillBelowDps { get; set; } = 0.5f;
+    public int QuietMs { get; set; } = 3000;
+    /// <summary>The opacity faded to, as a share of the overlay's own (0.05..1).</summary>
+    public float FadeTo { get; set; } = 0.3f;
+    public int FadeMs { get; set; } = 500;
+    /// <summary>Also fade when no OVERLAY came for <see cref="QuietMs"/> (screen off, app closed, link stopped).</summary>
+    public bool WhenSilent { get; set; } = true;
+
+    public void Normalize()
+    {
+        FlatWithinDeg = Math.Clamp(float.IsFinite(FlatWithinDeg) ? FlatWithinDeg : 10f, 1f, 90f);
+        StillBelowDps = Math.Clamp(float.IsFinite(StillBelowDps) ? StillBelowDps : 0.5f, 0.05f, 10f);
+        QuietMs = Math.Clamp(QuietMs, 500, 60_000);
+        FadeTo = Math.Clamp(float.IsFinite(FadeTo) ? FadeTo : 0.3f, 0.05f, 1f);
+        FadeMs = Math.Clamp(FadeMs, 0, 5000);
+    }
 }
 
 public sealed class PairedPhone

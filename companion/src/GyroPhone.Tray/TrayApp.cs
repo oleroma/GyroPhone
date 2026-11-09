@@ -768,6 +768,16 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         foreach (var f in _overlayForms.Values.ToList()) f.ClearPaint();
     }
 
+    public OverlayRestFade RestFade => _engine.Settings.OverlayRestFade;
+
+    public void ChangeRestFade(Action<OverlayRestFade> change)
+    {
+        _engine.UpdateOverlayRestFade(change);
+        Refresh();
+    }
+
+    public float? StillnessDps => _engine.OverlayStillnessDps();
+
     public void LevelAll()
     {
         foreach (var f in _overlayForms.Values.ToList()) f.Level();

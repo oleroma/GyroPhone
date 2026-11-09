@@ -176,7 +176,8 @@ internal sealed class SliderRow
 
     public Grid View { get; }
 
-    public SliderRow(string label, double min, double max, double step, Func<double, string> format, Action<double> changed)
+    /// <param name="stacked">The name and value above the slider, for a narrow column.</param>
+    public SliderRow(string label, double min, double max, double step, Func<double, string> format, Action<double> changed, bool stacked = false)
     {
         _format = format;
         _slider = new Slider
@@ -198,6 +199,23 @@ internal sealed class SliderRow
             if (!_setting) changed(Math.Round(e.NewValue / step) * step);
         };
         var g = new Grid { Margin = new Thickness(0, 4, 0, 4) };
+        if (stacked)
+        {
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var top = Parts.Text(label);
+            g.Children.Add(top);
+            Grid.SetColumn(_value, 1);
+            g.Children.Add(_value);
+            Grid.SetRow(_slider, 1);
+            Grid.SetColumnSpan(_slider, 2);
+            _slider.Margin = new Thickness(0, 4, 0, 0);
+            g.Children.Add(_slider);
+            View = g;
+            return;
+        }
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MaxWidth = 260 });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });

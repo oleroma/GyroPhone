@@ -27,6 +27,10 @@ internal sealed class OverlaysPage : Page
     private readonly List<(string Id, RadioButton Row, CheckBox Shown, TextBlock Sub)> _rows = [];
     private readonly WrapPanel _addKinds;
     private readonly List<ShortcutBox> _shortcuts = [];
+    private readonly CheckBox _restOn, _restSilent;
+    private readonly StackPanel _restOptions = new();
+    private readonly SliderRow _restFlat, _restStill, _restQuiet, _restTo, _restOver;
+    private readonly TextBlock _restLive;
 
     // Right
     private readonly StackPanel _settings = new();
@@ -165,6 +169,32 @@ internal sealed class OverlaysPage : Page
             kb.Children.Add(box.View);
         }
         left.Children.Add(keys);
+
+        // "Fade when phone rests", for every overlay.
+        var (restCard, restBody) = Parts.Card("Fade when phone rests");
+        restCard.Margin = new Thickness(0, 0, 0, 12);
+        _restOn = Parts.Toggle("Fade overlays", () => _app.ChangeRestFade(r => r.On = !r.On),
+            "While the phone lies still at its Level with nothing pressed. Any touch or movement brings them back at once.");
+        restBody.Children.Add(_restOn);
+        restBody.Children.Add(_restOptions);
+        _restFlat = new SliderRow("Flat within", 1, 45, 1, v => $"{v:0}°", v => _app.ChangeRestFade(r => r.FlatWithinDeg = (float)v), stacked: true);
+        _restOptions.Children.Add(_restFlat.View);
+        _restStill = new SliderRow("Still below", 0.1, 5, 0.1, v => $"{v:0.0}°/s", v => _app.ChangeRestFade(r => r.StillBelowDps = (float)v), stacked: true);
+        _restOptions.Children.Add(_restStill.View);
+        _restLive = Parts.Text("", "Hint");
+        _restLive.Margin = new Thickness(0, 0, 0, 4);
+        _restOptions.Children.Add(_restLive);
+        _restQuiet = new SliderRow("Quiet for", 0.5, 30, 0.5, v => $"{v:0.0} s", v => _app.ChangeRestFade(r => r.QuietMs = (int)Math.Round(v * 1000)), stacked: true);
+        _restOptions.Children.Add(_restQuiet.View);
+        _restTo = new SliderRow("Fade to", 5, 100, 5, v => $"{v:0}%", v => _app.ChangeRestFade(r => r.FadeTo = (float)v / 100f), stacked: true);
+        _restOptions.Children.Add(_restTo.View);
+        _restOver = new SliderRow("Fade over", 0, 3, 0.1, v => $"{v:0.0} s", v => _app.ChangeRestFade(r => r.FadeMs = (int)Math.Round(v * 1000)), stacked: true);
+        _restOptions.Children.Add(_restOver.View);
+        _restSilent = Parts.Toggle("Also when the phone stops sending", () => _app.ChangeRestFade(r => r.WhenSilent = !r.WhenSilent),
+            "Screen off, app closed or link stopped, for the quiet time.");
+        _restSilent.Margin = new Thickness(0, 6, 0, 0);
+        _restOptions.Children.Add(_restSilent);
+        left.Children.Add(restCard);
 
         // Right: the picked overlay's settings.
         var right = new StackPanel();
@@ -496,6 +526,18 @@ internal sealed class OverlaysPage : Page
             }
             Parts.SetChecked(_edit, _app.OverlayEdit);
             Parts.SetChecked(_hideAll, _app.OverlaysHidden);
+            var rf = _app.RestFade;
+            Parts.SetChecked(_restOn, rf.On);
+            Parts.Show(_restOptions, rf.On);
+            _restFlat.Set(rf.FlatWithinDeg);
+            _restStill.Set(Math.Round(rf.StillBelowDps, 1));
+            _restQuiet.Set(rf.QuietMs / 1000.0);
+            _restTo.Set(Math.Round(rf.FadeTo * 100f));
+            _restOver.Set(rf.FadeMs / 1000.0);
+            Parts.SetChecked(_restSilent, rf.WhenSilent);
+            _restLive.Text = _app.StillnessDps is { } dps
+                ? $"Phone now: {dps:0.00}°/s" + (dps < rf.StillBelowDps ? ", still" : ", moving")
+                : "Phone now: no data (show an overlay with the phone connected)";
             _edit.ToolTip = "Drag the overlay windows to move and resize them. Click where they overlap to pick the next one." + Keys(OverlayAction.Edit);
             _hideAll.ToolTip = "Closes every overlay window; each keeps its own Show for when this is off." + Keys(OverlayAction.HideAll);
             _levelAll.ToolTip = "Held the way it is now, every overlay shows the phone face-on." + Keys(OverlayAction.LevelAll);

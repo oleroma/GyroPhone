@@ -258,6 +258,11 @@ public sealed class OverlaySettings
     /// own); null = upright, facing the player.
     /// </summary>
     public float[]? Rest { get; set; }
+    /// <summary>
+    /// Which way was up at the last Level (the accelerometer, phone frame, unit length), kept with or
+    /// without gravity: "Fade when phone rests" counts the phone flat while it lies within its angle of this.
+    /// </summary>
+    public float[]? LevelUp { get; set; }
     /// <summary>Tilt held to gravity (never drifts); off, turned by the gyro axes that move the mouse.</summary>
     public bool Gravity { get; set; } = true;
     /// <summary>With gravity: the heading held by the phone's compass to the way it faced at the start.</summary>
