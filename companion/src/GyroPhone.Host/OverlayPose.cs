@@ -37,6 +37,7 @@ public sealed class OverlayPose
     private float _calm;
     private bool _wasGravity, _wasCompass, _started;
     private OverlayTurnsWith _wasTurns;
+    private bool _wasReal;
     private int _lastPresses = -1;
     private float[]? _rest;
 
@@ -75,13 +76,16 @@ public sealed class OverlayPose
         bool camera = s.FollowsCamera;
         bool gravity = s.Gravity && !camera;
         bool compass = gravity && s.Compass;
+        // In World or Player space the pose is the phone's real one, level from gravity alone.
+        bool real = f.RealWorld;
         // Face-on is the Level grip; it is kept only with gravity (without, Level restarts the pose).
-        _rest = gravity ? s.Rest : null;
-        if (!_started || gravity != _wasGravity || s.TurnsWith != _wasTurns)
+        _rest = gravity && !real ? s.Rest : null;
+        if (!_started || gravity != _wasGravity || s.TurnsWith != _wasTurns || real != _wasReal)
         {
             _started = true;
             _wasGravity = gravity;
             _wasTurns = s.TurnsWith;
+            _wasReal = real;
             ResetPose();
         }
         // A trackball eases back only on the axes picked to.
@@ -177,6 +181,8 @@ public sealed class OverlayPose
     /// </summary>
     private void CameraTurn(OverlayFrame f, OverlaySettings s)
     {
+        // The live gyro's turn adds here, unless the phone already put it (in its gyro space) in the camera degrees.
+        static bool Live(OverlayFrame f) => f.PoseLive && !f.RealWorld;
         if (s.TurnsWith == OverlayTurnsWith.Camera)
         {
             // As the game's camera: the axis on mouse X turns it right, the one on mouse Y up; no roll.
@@ -188,7 +194,7 @@ public sealed class OverlayPose
                 float rws = a == 1 ? f.RwsYaw : a == 2 ? f.RwsPitch : f.RwsRoll;
                 float cam = a == 1 ? f.CameraYaw : a == 2 ? f.CameraPitch : f.CameraRoll;
                 float turn = a == 1 ? f.TurnYaw : a == 2 ? f.TurnPitch : f.TurnRoll;
-                float deg = cam + (f.PoseLive && (f.Axes & (1 << (a - 1))) != 0 ? turn : 0f);
+                float deg = cam + (Live(f) && (f.Axes & (1 << (a - 1))) != 0 ? turn : 0f);
                 float speed = s.TrackballRws ? (rws > 0f ? rws : 1f) : Math.Clamp(s.TrackballSpin, 0.05f, 20f);
                 return deg * speed * ((code & 0x80) != 0 ? -1f : 1f);
             }
@@ -198,7 +204,7 @@ public sealed class OverlayPose
         float Gain(float rws) => s.TrackballRws ? (rws > 0f ? rws : 1f) : Math.Clamp(s.TrackballSpin, 0.05f, 20f);
         float gy = Gain(f.RwsYaw), gp = Gain(f.RwsPitch), gr = Gain(f.RwsRoll);
         float yaw = f.CameraYaw * gy, pitch = f.CameraPitch * gp, roll = f.CameraRoll * gr;
-        if (f.PoseLive)
+        if (Live(f))
         {
             if ((f.Axes & 1) != 0) yaw += f.TurnYaw * gy;
             if ((f.Axes & 2) != 0) pitch += f.TurnPitch * gp;
@@ -279,12 +285,14 @@ public sealed class OverlayPose
         bool live = f.PoseLive && dt > 0f;
         bool busy = live && MathF.Sqrt(f.TurnYaw * f.TurnYaw + f.TurnPitch * f.TurnPitch + f.TurnRoll * f.TurnRoll) / dt > StillDps;
         GimbalSync();
+        // A None axis never eases back, whatever its (hidden) ease setting says.
+        int locked = OverlaySettings.TrackballLocks(s.TrackballAxes);
         bool any = false;
         for (int i = 0; i < 3; i++)
         {
             _easeStep[i] = 0f;
             var e = s.EaseOf(i);
-            if (!e.On)
+            if (!e.On || (locked & (1 << i)) != 0)
             {
                 _axisEasing[i] = false;
                 continue;

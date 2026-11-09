@@ -21,6 +21,12 @@ public sealed class OverlayFrame
     public const byte FlagRatchetHeld = 32;
     /// <summary>The turn, time and camera degrees are running totals (sent only while HOST_STATUS has <see cref="HostStatusFlags.OverlayTotals"/>).</summary>
     public const byte FlagTotals = 64;
+    /// <summary>
+    /// The phone's gyro space is World or Player: the turn, up and north come about the screen's own
+    /// axes (the phone's real pose), poses ignore their saved grip, and the live gyro's camera turn
+    /// (in that space) is already in the camera degrees.
+    /// </summary>
+    public const byte FlagRealWorld = 128;
     public const byte NoControl = 0xFF;
     /// <summary>The accelerometer's 1 g in OVERLAY.</summary>
     public const float GScale = 8192f;
@@ -89,6 +95,7 @@ public sealed class OverlayFrame
     public bool HasNorth => (Flags & FlagNorth) != 0;
     public bool RatchetHeld => (Flags & FlagRatchetHeld) != 0;
     public bool Totals => (Flags & FlagTotals) != 0;
+    public bool RealWorld => (Flags & FlagRealWorld) != 0;
 
     public bool IsPressed(int i) => i is >= 0 and < 128 && (Pressed[i >> 3] & (1 << (i & 7))) != 0;
     public bool IsLatched(int i) => i is >= 0 and < 128 && (Latched[i >> 3] & (1 << (i & 7))) != 0;

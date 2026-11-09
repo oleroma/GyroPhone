@@ -189,10 +189,10 @@ public class OverlayTests
     }
 
     [Fact]
-    public void LevelDisplaysPressOnThePhoneLevelsEveryOverlayShown()
+    public void SetOrientationPressOnThePhoneStartsEveryOverlayShownOver()
     {
         var h = new Harness();
-        var tilted = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Shown = true, Gravity = true };
+        var tilted = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Shown = true, Gravity = true, Rest = [0.9f, 0.1f, 0, 0] };
         var free = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Shown = true, Gravity = false, Rest = [1, 0, 0, 0] };
         var hidden = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Shown = false, Gravity = false, Rest = [1, 0, 0, 0] };
         h.Settings.Overlays.AddRange([tilted, free, hidden]);
@@ -210,11 +210,12 @@ public class OverlayTests
         // The first count seen levels nothing: it may be from before.
         h.Send(phone, phone.Sealed(PacketType.Overlay, Frame(5)));
         h.Send(phone, phone.Sealed(PacketType.Overlay, Frame(5)));
-        Assert.Null(tilted.Rest);
+        Assert.NotNull(tilted.Rest);
         Assert.NotNull(free.Rest);
 
+        // A press: their saved grips go, the frames now come in the new base orientation.
         h.Send(phone, phone.Sealed(PacketType.Overlay, Frame(6)));
-        Assert.NotNull(tilted.Rest);
+        Assert.Null(tilted.Rest);
         Assert.Null(free.Rest);
         Assert.NotNull(hidden.Rest);
     }

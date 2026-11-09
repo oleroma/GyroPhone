@@ -434,10 +434,10 @@ public sealed class HostEngine
                     if (!_overlayPoses.TryGetValue(o.Id, out var pose)) _overlayPoses[o.Id] = pose = new OverlayPose();
                     pose.Feed(_overlayFrame, o);
                 }
-                // A Level displays mapping on the phone: every overlay shown levels, as its Level button does.
+                // Set orientation on the phone: every overlay shown starts again from its new base orientation.
                 if (_levelPresses >= 0 && _overlayFrame.LevelPresses != _levelPresses)
                     foreach (var o in _settings.Overlays)
-                        if (o.Shown) LevelOverlay(o.Id);
+                        if (o.Shown) StartOverOverlay(o);
                 _levelPresses = _overlayFrame.LevelPresses;
                 _overlayRest.Feed(_overlayFrame, nowUs, _settings);
                 _overlayRxUs = nowUs;
@@ -1503,6 +1503,24 @@ public sealed class HostEngine
                 pose?.Reset();
                 o.Rest = null;
             }
+            _settingsDirty = true;
+        }
+    }
+
+    /// <summary>
+    /// Set orientation on the phone: overlay <paramref name="o"/> starts again from the phone's new base
+    /// orientation, which the frames now come in: level (no saved grip), facing ahead, and "Fade when
+    /// phone rests" counts the phone flat near the way it is held now.
+    /// </summary>
+    private void StartOverOverlay(OverlaySettings o)
+    {
+        lock (_lock)
+        {
+            if (_overlayFrame.HasUp &&
+                MathF.Sqrt(_overlayFrame.UpX * _overlayFrame.UpX + _overlayFrame.UpY * _overlayFrame.UpY + _overlayFrame.UpZ * _overlayFrame.UpZ) is var g and > 0f)
+                o.LevelUp = [_overlayFrame.UpX / g, _overlayFrame.UpY / g, _overlayFrame.UpZ / g];
+            o.Rest = null;
+            if (_overlayPoses.TryGetValue(o.Id, out var pose)) pose.Reset();
             _settingsDirty = true;
         }
     }

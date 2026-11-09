@@ -296,11 +296,13 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         }
         val busy = sqrt(yaw * yaw + pitch * pitch + roll * roll) > STILL_DPS
         pose.gimbalAngles(angles)
+        // A None axis never eases back, whatever its (hidden) ease setting says.
+        val locked = trackballLocks(d.trackballAxes)
         var any = false
         for (i in 0..2) {
             easeStep[i] = 0f
             val e = d.easeOf(i)
-            if (!e.on) {
+            if (!e.on || locked and (1 shl i) != 0) {
                 axisEasing[i] = false
                 continue
             }
