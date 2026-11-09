@@ -379,9 +379,9 @@ public class OverlayTests
     [Fact]
     public void ALockedTrackballAxisNeverTurns()
     {
-        float[] Run(int axes)
+        float[] Run(int axes, bool own = false)
         {
-            var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Trackball, TrackballRws = false, TrackballSpin = 1f, TrackballAxes = axes };
+            var s = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Trackball, TrackballRws = false, TrackballSpin = 1f, TrackballAxes = axes, TrackballOwnAxes = own };
             var p = new GyroPhone.Host.OverlayPose();
             OverlayFrame F(float pitch, float roll)
             {
@@ -402,8 +402,12 @@ public class OverlayTests
         Assert.Equal(0f, cam[0], 3);
         Assert.Equal(0f, cam[1], 3);
         Assert.Equal(0.5f, cam[2], 3);
-        // Nothing locked: it rolls freely about its fixed axes, so the same moves leave it rolled 30°.
-        Assert.Equal(0.5f, MathF.Abs(Run(3 | (2 << 8))[0]), 3);
+        // Roll set to None holds roll at 0 about the sphere's axes too.
+        var none = Run(3 | (2 << 8));
+        Assert.Equal(0f, none[0], 3);
+        Assert.Equal(0.5f, none[2], 3);
+        // About its own axes the same loop leaves it rolled 30°: the sphere's curvature.
+        Assert.Equal(0.5f, MathF.Abs(Run(3 | (2 << 8), true)[0]), 3);
     }
 
     [Fact]

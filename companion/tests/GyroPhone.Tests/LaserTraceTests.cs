@@ -259,32 +259,18 @@ public class LaserTraceTests
     }
 
     [Fact]
-    public void GimbalAnglesReadBackAPose()
+    public void GimbalRingsTurnWithTheLasersAxes()
     {
-        var g = LaserTrace.GimbalAngles(GimbalPose(0.5f, -0.3f, 0.2f), 0);
-        Assert.Equal(0.5f, g[0], 4);
-        Assert.Equal(-0.3f, g[1], 4);
-        Assert.Equal(0.2f, g[2], 4);
-        // Over the top with roll locked: read the way that keeps roll at 0.
-        g = LaserTrace.GimbalAngles(GimbalPose(0.4f, 2.2f, 0f), 4);
-        Assert.Equal(0f, g[2], 4);
-        Assert.Equal(2.2f, g[1], 4);
-        Assert.Equal(0.4f, g[0], 4);
-    }
-
-    [Fact]
-    public void GimbalRingsNestAsAGimbal()
-    {
-        float[] angles = [0.7f, 0.4f, 0.3f];
-        var f = GimbalPose(0.7f, 0.4f, 0f);
-        var rings = new[] { LaserTrace.GimbalRing(0, angles), LaserTrace.GimbalRing(1, angles), LaserTrace.GimbalRing(2, angles) };
+        var m = GimbalPose(0.7f, 0.4f, 0.3f);
         for (int i = 0; i < 3; i++)
-            foreach (var p in rings[i])
+        {
+            // Ring i lies round laser axis i: yaw round its up (column 1), pitch its right (0), roll its beam (2).
+            int col = new[] { 1, 0, 2 }[i];
+            foreach (var p in LaserTrace.GimbalRing(i, m))
+            {
                 Assert.Equal(LaserTrace.GimbalRadii[i], MathF.Sqrt(p.X * p.X + p.Y * p.Y + p.Z * p.Z), 4);
-        Assert.Equal(0f, rings[0][0].Y, 4);
-        Assert.Equal(LaserTrace.GimbalRadii[1] * f[0], rings[1][0].X, 4);
-        Assert.Equal(LaserTrace.GimbalRadii[1] * f[3], rings[1][0].Y, 4);
-        Assert.Equal(LaserTrace.GimbalRadii[2] * f[2], rings[2][16].X, 4);
-        Assert.Equal(LaserTrace.GimbalRadii[2] * f[8], rings[2][16].Z, 4);
+                Assert.Equal(0f, p.X * m[col] + p.Y * m[3 + col] + p.Z * m[6 + col], 4);
+            }
+        }
     }
 }

@@ -1464,10 +1464,12 @@ public sealed class HostEngine
             if (id != null && _overlayPoses.TryGetValue(id, out var p))
             {
                 into.Qw = p.W; into.Qx = p.X; into.Qy = p.Y; into.Qz = p.Z;
+                into.PoseActive = p.Active();
             }
             else
             {
                 into.Qw = 1; into.Qx = into.Qy = into.Qz = 0;
+                into.PoseActive = 0;
             }
             if (id != null && _settings.Overlays.FirstOrDefault(o => o.Id == id) is { HandleSource: OverlayHandleSource.Pc })
                 PcPadOnHandles(into);

@@ -168,6 +168,12 @@ public sealed class OverlaySettings
     /// GyroDisplay.trackballEase.
     /// </summary>
     public AxisEase[] TrackballEase { get; set; } = [new(), new(), new()];
+    /// <summary>
+    /// Trackball, Turns about: its own axes as it now points (up and down about its own right, left and right about its
+    /// own up), so the laser always moves square to where it aims and never rolls by itself; a None axis never turns it
+    /// and there are no stops. Off: the sphere's axes, as a game camera (a gimbal). As the phone's GyroDisplay.trackballOwnAxes.
+    /// </summary>
+    public bool TrackballOwnAxes { get; set; }
 
     /// <summary>Trackball axis <paramref name="i"/>'s easing, made when not saved.</summary>
     public AxisEase EaseOf(int i)
@@ -299,11 +305,26 @@ public sealed class OverlaySettings
     [JsonIgnore]
     public bool IsTrackball => TurnsWith == OverlayTurnsWith.Trackball;
 
+    /// <summary>
+    /// A trackball's locked axes in <paramref name="axes"/> (TrackballAxes; bit 0 yaw, 1 pitch, 2 roll): those no gyro
+    /// turn drives (None), held at 0, and those saved with TrackballLock before None meant it. As the phone's trackballLocks.
+    /// </summary>
+    public static int TrackballLocks(int axes)
+    {
+        int bits = 0;
+        for (int i = 0; i < 3; i++)
+        {
+            int code = (axes >> (8 * i)) & 0xFF;
+            if ((code & 0x1F) == 0 || (code & TrackballLock) != 0) bits |= 1 << i;
+        }
+        return bits;
+    }
+
     /// <summary>The gimbal axes held at 0 (bit 0 yaw, 1 pitch, 2 roll): a trackball's locked rows, Camera's roll, none with the phone. As the phone's GyroDisplay.gimbalLocks.</summary>
     [JsonIgnore]
     public int GimbalLocks => TurnsWith switch
     {
-        OverlayTurnsWith.Trackball => Enumerable.Range(0, 3).Aggregate(0, (acc, i) => ((TrackballAxes >> (8 * i)) & TrackballLock) != 0 ? acc | (1 << i) : acc),
+        OverlayTurnsWith.Trackball => TrackballLocks(TrackballAxes),
         OverlayTurnsWith.Camera => 4,
         _ => 0,
     };

@@ -99,7 +99,7 @@ internal static class OverlayRenderer
                 DialDrawing.DrawHorizon(g, area, settings, m, m);
                 break;
             case OverlayKind.Laser:
-                LaserDrawing.Draw(g, area, settings, LaserDrawing.Aimed(m, settings), scene.Laser, scene.NowTicks, live && scene.Frame.RatchetHeld);
+                LaserDrawing.Draw(g, area, settings, LaserDrawing.Aimed(m, settings), scene.Laser, scene.NowTicks, live && scene.Frame.RatchetHeld, live ? scene.Frame.PoseActive : 0);
                 break;
             default:
                 DialDrawing.DrawDisk(g, area, settings, m, m);
