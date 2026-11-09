@@ -45,6 +45,8 @@ public static class PacketType
     /// <summary>Host to phone, with every HOST_STATUS and on change: the latency tests the phone takes part in (<see cref="TestModeFlags"/>).</summary>
     public const byte TestMode = 0x35;
     public const byte HostBye = 0x3F;
+    /// <summary>Unsealed, from a program on this PC (loopback only): start or stop a Link test (tools/link-test.sh).</summary>
+    public const byte LinkTestCtl = 0x7E;
     public const byte Error = 0x7F;
 
     /// <summary>Sealed (AES-GCM) packets are types 0x20..0x3F.</summary>
@@ -67,6 +69,7 @@ public static class PacketType
         Hello => Wire.HelloSize,
         Welcome => Wire.WelcomeSize,
         Error => Wire.ErrorSize,
+        LinkTestCtl => Wire.LinkTestCtlSize,
         KeyEnroll => Wire.KeyEnrollSize,
         KeyEnrollAck => Wire.KeyEnrollAckSize,
         _ => PlainSize(type) is var p && p >= 0 ? Wire.Header + p + Wire.GcmTag : -1,

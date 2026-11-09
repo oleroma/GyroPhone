@@ -40,7 +40,8 @@ public sealed record CompanionView(
     IReadOnlyList<Problem> Problems,
     bool MeasureButtons = false,
     ButtonLatency? Buttons = null,
-    bool InputLog = true);
+    bool InputLog = true,
+    int CatchUpMs = 16);
 
 /// <summary>
 /// The tray app as the windows see it. Every setter saves the setting and refreshes the open windows,
@@ -88,6 +89,8 @@ public interface ICompanion
     void OpenLogFolder();
     void ShowDebugWindow();
     void ToggleInputLog();
+    /// <summary>"Catch-up time", ms (0 = off).</summary>
+    void SetCatchUpMs(int ms);
 
     // Overlays
     IReadOnlyList<OverlaySettings> Overlays { get; }

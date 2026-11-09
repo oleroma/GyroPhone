@@ -397,10 +397,17 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _refreshing?.Problems ?? Problems(s),
             _engine.Settings.MeasureButtons,
             _engine.PressLatencyNow(),
-            _engine.Settings.InputLog);
+            _engine.Settings.InputLog,
+            _engine.Settings.CatchUpMs);
     }
 
     public void SetLatencyScreen(bool on) => _engine.SetLatencyScreen(on);
+
+    public void SetCatchUpMs(int ms)
+    {
+        _engine.SetCatchUpMs(ms);
+        Refresh();
+    }
 
     public void ToggleInputLog()
     {

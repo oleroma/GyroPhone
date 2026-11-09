@@ -28,6 +28,8 @@ public static class Wire
     public const int HelloSize = 68;
     public const int WelcomeSize = 80;
     public const int ErrorSize = 16;
+    /// <summary>LINK_TEST_CTL: u16 seconds@12 (0 = stop), 2 reserved bytes; only from this PC (loopback).</summary>
+    public const int LinkTestCtlSize = 16;
     /// <summary>QR code pairing: the phone's key, MACed with the QR's one-time token.</summary>
     public const int KeyEnrollSize = 137;
     public const int KeyEnrollAckSize = 41;
@@ -210,6 +212,8 @@ public static class StateFlags
     public const ushort GyroActive = 1 << 0;
     public const ushort Repeat = 1 << 1;
     public const ushort Keepalive = 1 << 2;
+    /// <summary>A Link test packet: fake input to count, never to inject.</summary>
+    public const ushort LinkTest = 1 << 3;
 }
 
 /// <summary>LINK_INFO flags.</summary>
@@ -239,6 +243,8 @@ public static class TestModeFlags
     public const byte PressTimes = 1 << 0;
     /// <summary>The latency test window is open: the phone's pad shows the tracking markers.</summary>
     public const byte LatencyScreen = 1 << 1;
+    /// <summary>A Link test runs: the phone sends fake moving input at its full rate, marked <see cref="StateFlags.LinkTest"/>.</summary>
+    public const byte LinkTest = 1 << 2;
 }
 
 public static class HostStatusFlags

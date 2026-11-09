@@ -80,7 +80,7 @@ public sealed class UdpHostServer : IDatagramSender, IDisposable
         return true;
     }
 
-    private const int GlideWakeUs = 1000;
+    private const int CatchUpWakeUs = 1000;
 
     private void RxLoop()
     {
@@ -100,8 +100,8 @@ public sealed class UdpHostServer : IDatagramSender, IDisposable
         {
             try
             {
-                // While a lost stretch of mouse motion glides out, wake every millisecond to move it on.
-                if (_engine.MouseGliding && !socket.Poll(GlideWakeUs, SelectMode.SelectRead))
+                // While a lost stretch of mouse motion catches up, wake every millisecond to move it on.
+                if (_engine.MouseCatchingUp && !socket.Poll(CatchUpWakeUs, SelectMode.SelectRead))
                 {
                     _engine.Flush(_clock.NowUs);
                     continue;

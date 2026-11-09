@@ -51,7 +51,7 @@ All engine state is under one lock. Engine callbacks only post to the UI thread.
 - **Overlays**: see [Overlays](pc-overlays.md).
 - **Connection**: network category, firewall and USB checks with their fixes, the USB cable (direct cable on/off, default on), the server's port and addresses.
 - **Latency test**: times the gyro from a slow-motion video, see [Latency test](pc-latency-test.md).
-- **App**: Startup (Start with Windows, default off; **Start when my phone appears**, the watcher), Tray icon click (Opens this window / Pairs a new phone), Troubleshooting (**Record input log**, default on; Open log folder, Debug window…), About (version).
+- **App**: Startup (Start with Windows, default off; **Start when my phone appears**, the watcher), Tray icon click (Opens this window / Pairs a new phone), Mouse (**Catch-up time**: Off / 8 / 16 / 32 ms, default 16, `HostSettings.CatchUpMs`; the longest a lost or late stretch of mouse motion is spread over, Off = the old one-step jump), Troubleshooting (**Record input log**, default on; Open log folder, Debug window…), About (version).
 
 **Pairing window** (`PairWindow`): a QR code for the phone's Scan QR code (a one-time token, renewed when it expires, gone when the window closes; holds up to four of this PC's IPv4 addresses), and for code pairing the PC's name, addresses, port and the pairing countdown, then "Pair <phone>? Code 123 456" with **Allow** / **Deny**. On first run with nothing paired the pairing window opens by itself.
 
@@ -61,13 +61,17 @@ All engine state is under one lock. Engine callbacks only post to the UI thread.
 - `lost`: 3 or more packets missing from the seq.
 - `late`: packets more than 15 ms later than the session's fastest ones of the last 5-10 s (receive time minus phone send time, so no clock sync is needed), one line per stretch; "held up on the way" when the phone sent them on time.
 - `phone gap`: the phone sent nothing for over 30 ms (its keepalive is 20 ms) with nothing lost, while input was moving or held.
-- `glide`: late or lost motion spread out by `MouseCatchUp` instead of landing at once.
+- `catch-up`: late or lost motion spread out by `MouseCatchUp` instead of landing at once.
 - `big move`: 64 px or more in one SendInput.
 - `slow hand-off`: over 2 ms from receive to SendInput.
 - `refused`: Windows took fewer events than given.
 - `release`: everything let go after 250 ms of silence.
 - `session start` / `session end` (with the session's totals and extra-delay percentiles).
 At most 10 event lines a second: the rest are counted in that second's `sec` line (`bigmoves N`, "N more events not written"), so a fast flick that moves 64 px every millisecond stays cheap. Like every log it counts keys and buttons but never names them.
+
+## Link test
+
+Finds out why phone packets get lost or held up, without anyone playing: `tools/link-test.sh [minutes] [--open]` (Git Bash on the PC, default 10 minutes; `--open` starts GyroPhone on the phone over adb first). It sends LINK_TEST_CTL to the companion on loopback; the companion logs `link test started` (companion.log and input.log) and sets TEST_MODE LINK_TEST until the time is up or it is stopped. The phone then sends, in place of its real input, STATEs with nothing held and the mouse totals sweeping 3 counts a packet (`StateFrame.fillLinkTest`), marked LINK_TEST, so it sends at its full rate; the pad shows **Link test running** over it and keeps the screen on. The companion handles them like any STATE (seq, loss, lateness, catch-up, input log) but never moves, presses or submits anything from them. Meanwhile the script records, when the phone is on adb, logcat (all buffers), `cmd wifi status` every 2 s and `dumpsys wifi` / `wifiscanner` before and after, then copies input.log and companion.log and runs `tools/link-test-analyze.py`, which groups the dropouts, says how regularly they come (and at which second of the minute) and lists the phone's Wi-Fi-related log lines from 1.5 s before to 0.5 s after each one. Everything goes to `build/link-test/<time>/` (`report.txt`).
 
 ## Watcher
 

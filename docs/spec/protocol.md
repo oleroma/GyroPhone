@@ -24,6 +24,7 @@ All integers little-endian. Every packet starts with a 12-byte **header**: `'G' 
 | KEY_ENROLL_ACK | 0x0A | H→P | 41 | reqId@12, tokenId@16, status@24, mac@25 (16) |
 | HELLO | 0x10 | P→H | 68 | phoneId@12, nP@28 (16), caps@44 (u32), maxRateHz@48 (u32), mac@52 (16) |
 | WELCOME | 0x11 | H→P | 80 | sid in header; hostId@12, nP@28, nH@44, outputMode@60, hostFlags@61, keepaliveMs@62 (u16), mac@64 (16) |
+| LINK_TEST_CTL | 0x7E | PC program → companion, loopback only | 16 | seconds@12 (u16, 0 = stop, at most 3600): starts or stops a [Link test](pc-companion.md#link-test); from any other address it is dropped |
 | ERROR | 0x7F | H→P | 16 | code@12 (u16), maxVersion@14 |
 
 Sealed plaintext sizes:
@@ -46,11 +47,11 @@ Sealed plaintext sizes:
 | FOREGROUND | 0x33 | H→P | 66 | reserved, never sent |
 | KEY_LABELS | 0x34 | H→P | 100 | layout id u32, then a u16 character per character key (`KeyLabels.USAGES`: 0x04..0x27, 0x2D..0x31, 0x33..0x38, 0x64; 0 = types nothing): what each key types on the PC's current layout, sent with every HOST_STATUS. Older phones drop it as an unknown type |
 | PRESS_TIME | 0x2A | P→H | 8 | STATE time u32, input event time u32 (both the phone's µs clock, low 32 bits): sent while TEST_MODE has PRESS_TIMES, after the STATE that first carries a new press or release ([Latency test](pc-latency-test.md#measure-buttons)) |
-| TEST_MODE | 0x35 | H→P | 4 | u8 flags: PRESS_TIMES 1 ("Measure buttons"), LATENCY_SCREEN 2 (the latency test window is open: the pad shows its markers); 3 reserved. Sent on change, with every HOST_STATUS while a flag is set, and with the 3 after one ends. Older phones drop it |
+| TEST_MODE | 0x35 | H→P | 4 | u8 flags: PRESS_TIMES 1 ("Measure buttons"), LATENCY_SCREEN 2 (the latency test window is open: the pad shows its markers), LINK_TEST 4 (a Link test runs: the phone sends fake moving input marked LINK_TEST); 3 reserved. Sent on change, with every HOST_STATUS while a flag is set, and with the 3 after one ends. Older phones drop it |
 | BYE | 0x2F | P→H | 4 | reason: USER, TRANSPORT_SWITCH, SHUTDOWN, REKEY |
 | HOST_BYE | 0x3F | H→P | 4 | reason: EXIT, FORGOTTEN, REPLACED |
 
-STATE's mouse and wheel values are **cumulative wrapping totals**, so a lost packet loses no motion; the PC injects the difference (each step capped at 16384). A lost or late stretch of mouse motion is not injected as one jump: the newest motion goes out at once, and older motion covering more than 4 ms of phone time (lost packets, found by gaps in seq, or a late burst) glides out over half the time it covers, at most 16 ms (`MouseCatchUp`). STATE flags: GYRO_ACTIVE 1, REPEAT 2, KEEPALIVE 4.
+STATE's mouse and wheel values are **cumulative wrapping totals**, so a lost packet loses no motion; the PC injects the difference (each step capped at 16384). A lost or late stretch of mouse motion is not injected as one jump: the newest motion goes out at once, and older motion covering more than 4 ms of phone time (lost packets, found by gaps in seq, or a late burst) catches up over half the time it covers, at most the PC's **Catch-up time** (default 16 ms; `MouseCatchUp`). STATE flags: GYRO_ACTIVE 1, REPEAT 2, KEEPALIVE 4, LINK_TEST 8 (fake Link test input: counted, never injected).
 
 **Gyro tail** (STATE_GYRO): flags, count, seq u16, time u32, 8 samples × 9 bytes, 3 × i64 per-axis running totals, then the 181-byte config block: sensitivities f32 × 3, glide f32 × 3, glide bits, route count, tightening, smoothing, 12 routes × 6 bytes @34, 3 curves × 25 bytes @106. Layout in `PcGyroFeed.encodeTail` / `PcGyroTail.cs`.
 

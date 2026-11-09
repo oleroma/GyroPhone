@@ -256,6 +256,7 @@ internal sealed class AppPage : Page
     private readonly StackPanel _root = new();
     private readonly CheckBox _autoStart, _watcher, _inputLog;
     private readonly Seg<TrayClickAction> _trayClick;
+    private readonly Seg<int> _catchUp;
     private readonly TextBlock _log, _version;
 
     public override FrameworkElement View => _root;
@@ -282,6 +283,14 @@ internal sealed class AppPage : Page
         tb.Children.Add(Parts.Text("Right-click the icon for the quick menu: pause, output, overlays.", "Hint"));
         _root.Children.Add(tray);
 
+        var (input, ib) = Parts.Card("Mouse");
+        ib.Children.Add(Parts.Text("Catch-up time"));
+        _catchUp = new Seg<int>(app.SetCatchUpMs, false, ("Off", 0), ("8 ms", 8), ("16 ms", 16), ("32 ms", 32));
+        _catchUp.View.Margin = new Thickness(0, 8, 0, 4);
+        ib.Children.Add(_catchUp.View);
+        ib.Children.Add(Parts.Text("When Wi-Fi loses or holds up a stretch of gyro or mouse movement, it is played out over up to this long instead of landing as one jump. New movement always goes out at once. Off: the old one-step jump.", "Hint"));
+        _root.Children.Add(input);
+
         var (help, hb) = Parts.Card("Troubleshooting");
         _inputLog = Parts.Toggle("Record input log", app.ToggleInputLog,
             "Notes lost, late and stalled input in input.log in the log folder, so a stutter can be traced after you play. Costs almost nothing.");
@@ -307,6 +316,7 @@ internal sealed class AppPage : Page
         Parts.SetChecked(_watcher, v.Watcher);
         Parts.SetChecked(_inputLog, v.InputLog);
         _trayClick.Set(v.TrayClick);
+        _catchUp.Set(v.CatchUpMs);
         _log.Text = $"Log: {v.LogPath}";
         _version.Text = v.UpdatePending is { } p ? $"{v.Version} · restarting into {p}" : v.Version;
     }

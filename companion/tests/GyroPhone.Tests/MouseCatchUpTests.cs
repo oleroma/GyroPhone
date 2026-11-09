@@ -31,7 +31,7 @@ public class MouseCatchUpTests
         var c = Warmed(ref now);
         c.Add(7, -2, 1000, false);
         Assert.Equal((7, -2), Take(c, now + 1000));
-        Assert.False(c.Gliding);
+        Assert.False(c.CatchingUp);
     }
 
     [Fact]
@@ -44,7 +44,7 @@ public class MouseCatchUpTests
         c.Add(5, 0, 1000, false);
         c.Add(5, 0, 1000, false);
         Assert.Equal((15, 0), Take(c, now + 3000));
-        Assert.False(c.Gliding);
+        Assert.False(c.CatchingUp);
     }
 
     [Fact]
@@ -57,11 +57,11 @@ public class MouseCatchUpTests
         Take(c, now += 18000);
         c.Add(40, 10, 18000, false);
         Assert.Equal((40, 10), Take(c, now + 18000));
-        Assert.False(c.Gliding);
+        Assert.False(c.CatchingUp);
     }
 
     [Fact]
-    public void LostStretchGlidesOutAndNothingIsLost()
+    public void LostStretchCatchesUpAndNothingIsLost()
     {
         long now = 0;
         var c = Warmed(ref now);
@@ -69,12 +69,12 @@ public class MouseCatchUpTests
         c.Add(300, -60, 30000, true);
         now += 30000;
         var first = Take(c, now);
-        // Only the newest 1 ms goes out now; the rest glides.
+        // Only the newest 1 ms goes out now; the rest catches up.
         Assert.Equal((10, -2), first);
-        Assert.True(c.Gliding);
-        Assert.Equal(now + 14500, c.GlideEndUs); // half the 29 ms backlog
+        Assert.True(c.CatchingUp);
+        Assert.Equal(now + 14500, c.CatchUpEndUs); // half the 29 ms backlog
         int sx = first.X, sy = first.Y, steps = 0, biggest = 0;
-        while (c.Gliding)
+        while (c.CatchingUp)
         {
             now += 1000;
             var d = Take(c, now);
@@ -89,23 +89,23 @@ public class MouseCatchUpTests
     }
 
     [Fact]
-    public void FreshMotionStillGoesOutAtOnceDuringAGlide()
+    public void FreshMotionStillGoesOutAtOnceDuringACatchUp()
     {
         long now = 0;
         var c = Warmed(ref now);
         c.Add(300, 0, 30000, true);
         Take(c, now += 30000);
-        long before = c.GlideEndUs;
+        long before = c.CatchUpEndUs;
         now += 1000;
-        // The same glide step plus a new packet's 50 counts.
+        // The same catch-up step plus a new packet's 50 counts.
         c.Add(50, 0, 1000, false);
         var d = Take(c, now);
         Assert.True(d.X >= 50 + 15, $"{d.X}");
-        Assert.Equal(before, c.GlideEndUs);
+        Assert.Equal(before, c.CatchUpEndUs);
     }
 
     [Fact]
-    public void LateBurstGlidesAllButTheNewest()
+    public void LateBurstCatchesUpAllButTheNewest()
     {
         long now = 0;
         var c = Warmed(ref now);
@@ -113,9 +113,9 @@ public class MouseCatchUpTests
         for (int i = 0; i < 20; i++) c.Add(4, 1, 1000, false);
         now += 20000;
         Assert.Equal((4, 1), Take(c, now));
-        Assert.True(c.Gliding);
+        Assert.True(c.CatchingUp);
         int sx = 4, sy = 1;
-        while (c.Gliding)
+        while (c.CatchingUp)
         {
             now += 1000;
             var d = Take(c, now);
@@ -126,13 +126,67 @@ public class MouseCatchUpTests
     }
 
     [Fact]
-    public void GlideCapsAtMaxGlide()
+    public void CatchUpCapsAtCatchUpTime()
     {
         long now = 0;
         var c = Warmed(ref now);
         c.Add(2000, 0, 200000, true);
         Take(c, now += 200000);
-        Assert.Equal(now + MouseCatchUp.MaxGlideUs, c.GlideEndUs);
+        Assert.Equal(now + MouseCatchUp.DefaultMaxUs, c.CatchUpEndUs);
+    }
+
+    [Fact]
+    public void OffSendsEverythingAtOnce()
+    {
+        long now = 0;
+        var c = Warmed(ref now);
+        c.MaxUs = 0;
+        c.Add(300, -60, 30000, true);
+        Assert.Equal((300, -60), Take(c, now + 30000));
+        Assert.False(c.CatchingUp);
+    }
+
+    [Fact]
+    public void CatchUpTimeSetsTheLongestSpread()
+    {
+        long now = 0;
+        var c = Warmed(ref now);
+        c.MaxUs = 8000;
+        c.Add(300, 0, 30000, true);
+        Take(c, now += 30000);
+        Assert.Equal(now + 8000, c.CatchUpEndUs);
+    }
+
+    [Fact]
+    public void SettingPicksTheNearestChoice()
+    {
+        Assert.Equal(16, GyroPhone.Host.Settings.HostSettings.ClampCatchUpMs(15));
+        Assert.Equal(0, GyroPhone.Host.Settings.HostSettings.ClampCatchUpMs(-5));
+        Assert.Equal(32, GyroPhone.Host.Settings.HostSettings.ClampCatchUpMs(500));
+    }
+
+    [Fact]
+    public void EngineCatchUpOffJumpsAtOnce()
+    {
+        var h = new Harness();
+        h.Engine.SetCatchUpMs(0);
+        Assert.Equal(0, h.Engine.Settings.CatchUpMs);
+        var phone = h.NewPhone();
+        Assert.True(phone.OnWelcome(h.Send(phone, phone.Hello())!));
+        long t0 = h.Clock.NowUs;
+        int total = 0;
+        void Send(int i, int x)
+        {
+            h.Clock.NowUs = t0 + i * 1000L;
+            h.Send(phone, phone.State(f => { f.PhoneTimeUs = (uint)(i * 1000); f.MouseTotalX = x; }));
+        }
+        int Moved() => h.KeyMouse.Calls.SelectMany(c => c).Where(e => (e.Flags & InjectEvent.MouseMove) != 0).Sum(e => e.Dx);
+        for (int i = 0; i <= 40; i++) Send(i, total = i * 3);
+        phone.Seq += 29;
+        total += 300;
+        Send(70, total);
+        Assert.Equal(total, Moved());
+        Assert.False(h.Engine.MouseCatchingUp);
     }
 
     [Fact]
@@ -143,7 +197,7 @@ public class MouseCatchUpTests
         c.Add(300, 0, 30000, true);
         Take(c, now += 30000);
         c.Clear();
-        Assert.False(c.Gliding);
+        Assert.False(c.CatchingUp);
         Assert.Equal((0, 0), Take(c, now + 1000));
     }
 
@@ -159,9 +213,9 @@ public class MouseCatchUpTests
         Assert.InRange(c.FreshUs, 3800, 4000);
     }
 
-    /// <summary>Through the engine: lost packets with real phone times glide out, Flush without packets moves the glide on.</summary>
+    /// <summary>Through the engine: lost packets with real phone times catch up, Flush without packets moves the catch-up on.</summary>
     [Fact]
-    public void EngineGlidesALostStretch()
+    public void EngineCatchesUpALostStretch()
     {
         var h = new Harness();
         var phone = h.NewPhone();
@@ -176,7 +230,7 @@ public class MouseCatchUpTests
         int Moved() => h.KeyMouse.Calls.SelectMany(c => c).Where(e => (e.Flags & InjectEvent.MouseMove) != 0).Sum(e => e.Dx);
         for (int i = 0; i <= 40; i++) Send(i, total = i * 3);
         Assert.Equal(120, Moved());
-        Assert.False(h.Engine.MouseGliding);
+        Assert.False(h.Engine.MouseCatchingUp);
 
         // 29 packets lost (their seqs skipped), then one with 30 ms of motion.
         phone.Seq += 29;
@@ -184,13 +238,13 @@ public class MouseCatchUpTests
         Send(70, total);
         int afterArrival = Moved();
         Assert.InRange(afterArrival - 120, 1, 30);
-        Assert.True(h.Engine.MouseGliding);
-        for (int k = 1; k <= 20 && h.Engine.MouseGliding; k++)
+        Assert.True(h.Engine.MouseCatchingUp);
+        for (int k = 1; k <= 20 && h.Engine.MouseCatchingUp; k++)
         {
             h.Clock.NowUs = t0 + 70_000 + k * 1000L;
             h.Engine.Flush(h.Clock.NowUs);
         }
-        Assert.False(h.Engine.MouseGliding);
+        Assert.False(h.Engine.MouseCatchingUp);
         Assert.Equal(total, Moved());
     }
 }

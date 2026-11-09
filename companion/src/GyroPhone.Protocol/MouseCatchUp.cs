@@ -10,17 +10,17 @@ namespace GyroPhone.Protocol;
 /// <item>Older motion that arrives in the same injection (a late burst, or the part of a gap that
 /// lost packets would have carried) goes out at once too while it covers at most
 /// <see cref="MinBacklogUs"/>, which is ordinary Wi-Fi jitter. A longer backlog is played out over
-/// half the time it covers, at most <see cref="MaxGlideUs"/>, on top of the newest motion.</item>
+/// half the time it covers, at most <see cref="MaxUs"/> ("Catch-up time"), on top of the newest motion.</item>
 /// </list>
-/// Nothing is lost: every count goes out, a glide just spreads some over a few milliseconds.
+/// Nothing is lost: every count goes out, a catch-up just spreads some over a few milliseconds.
 /// Not thread safe.
 /// </summary>
 public sealed class MouseCatchUp
 {
     /// <summary>A backlog covering at most this much phone time goes out at once.</summary>
     public const long MinBacklogUs = 4_000;
-    /// <summary>The longest a backlog is spread over.</summary>
-    public const long MaxGlideUs = 16_000;
+    /// <summary>The longest a backlog is spread over by default.</summary>
+    public const long DefaultMaxUs = 16_000;
     private const int MinFreshUs = 500, MaxFreshUs = 8_000, StartFreshUs = 1_000;
     /// <summary>Spans longer than this are idle pauses, not the phone's send spacing.</summary>
     private const int MaxSpacingUs = 25_000;
@@ -30,24 +30,27 @@ public sealed class MouseCatchUp
     private long _freshSpan, _oldSpan;
     private bool _hasFresh;
 
-    // The glide: counts still to go out, from _glideFromUs until _glideEndUs.
-    private double _glideX, _glideY;
-    private long _glideFromUs, _glideEndUs;
+    // The catch-up: counts still to go out, from _spreadFromUs until _spreadEndUs.
+    private double _spreadX, _spreadY;
+    private long _spreadFromUs, _spreadEndUs;
     private double _fracX, _fracY;
+
+    /// <summary>The longest a backlog is spread over ("Catch-up time"); 0: off, everything goes out at once.</summary>
+    public long MaxUs { get; set; } = DefaultMaxUs;
 
     /// <summary>The phone's usual spacing between moving STATEs, µs (learned).</summary>
     public int FreshUs { get; private set; } = StartFreshUs;
 
-    /// <summary>Some backlog is still to go out: <see cref="Take"/> should run again by <see cref="GlideEndUs"/>.</summary>
-    public bool Gliding { get; private set; }
+    /// <summary>Some backlog is still to go out: <see cref="Take"/> should run again by <see cref="CatchUpEndUs"/>.</summary>
+    public bool CatchingUp { get; private set; }
 
-    public long GlideEndUs => _glideEndUs;
+    public long CatchUpEndUs => _spreadEndUs;
 
-    /// <summary>The last <see cref="Take"/> started or lengthened a glide: the backlog's phone time, counts and glide length (for the input log).</summary>
+    /// <summary>The last <see cref="Take"/> started or lengthened a catch-up: the backlog's phone time, counts and catch-up length (for the input log).</summary>
     public bool BacklogTaken { get; private set; }
     public long BacklogSpanUs { get; private set; }
     public int BacklogPx { get; private set; }
-    public long BacklogGlideUs { get; private set; }
+    public long BacklogCatchUpUs { get; private set; }
 
     /// <summary>Nothing pending (a new session, a release, a pause): the backlog is dropped.</summary>
     public void Clear()
@@ -55,9 +58,9 @@ public sealed class MouseCatchUp
         _freshX = _freshY = _oldX = _oldY = 0;
         _freshSpan = _oldSpan = 0;
         _hasFresh = false;
-        _glideX = _glideY = 0;
+        _spreadX = _spreadY = 0;
         _fracX = _fracY = 0;
-        Gliding = false;
+        CatchingUp = false;
     }
 
     /// <summary>
@@ -109,22 +112,22 @@ public sealed class MouseCatchUp
     {
         double x = _freshX, y = _freshY;
         BacklogTaken = false;
-        if (_oldSpan > MinBacklogUs)
+        if (MaxUs > 0 && _oldSpan > MinBacklogUs)
         {
-            long end = nowUs + Math.Min(_oldSpan / 2, MaxGlideUs);
+            long end = nowUs + Math.Max(1, Math.Min(_oldSpan / 2, MaxUs));
             BacklogTaken = true;
             BacklogSpanUs = _oldSpan;
             BacklogPx = Math.Abs(_oldX) + Math.Abs(_oldY);
-            BacklogGlideUs = end - nowUs;
-            if (!Gliding)
+            BacklogCatchUpUs = end - nowUs;
+            if (!CatchingUp)
             {
-                _glideFromUs = nowUs;
-                _glideEndUs = end;
+                _spreadFromUs = nowUs;
+                _spreadEndUs = end;
             }
-            else if (end > _glideEndUs) _glideEndUs = end;
-            _glideX += _oldX;
-            _glideY += _oldY;
-            Gliding = true;
+            else if (end > _spreadEndUs) _spreadEndUs = end;
+            _spreadX += _oldX;
+            _spreadY += _oldY;
+            CatchingUp = true;
         }
         else
         {
@@ -135,34 +138,34 @@ public sealed class MouseCatchUp
         _freshSpan = _oldSpan = 0;
         _hasFresh = false;
 
-        if (Gliding)
+        if (CatchingUp)
         {
-            double part = nowUs >= _glideEndUs ? 1.0 : (double)(nowUs - _glideFromUs) / (_glideEndUs - _glideFromUs);
+            double part = nowUs >= _spreadEndUs ? 1.0 : (double)(nowUs - _spreadFromUs) / (_spreadEndUs - _spreadFromUs);
             if (part > 0)
             {
-                double gx = _glideX * part, gy = _glideY * part;
-                _glideX -= gx;
-                _glideY -= gy;
+                double gx = _spreadX * part, gy = _spreadY * part;
+                _spreadX -= gx;
+                _spreadY -= gy;
                 x += gx;
                 y += gy;
-                _glideFromUs = nowUs;
+                _spreadFromUs = nowUs;
             }
-            if (nowUs >= _glideEndUs)
+            if (nowUs >= _spreadEndUs)
             {
-                Gliding = false;
-                _glideX = _glideY = 0;
+                CatchingUp = false;
+                _spreadX = _spreadY = 0;
             }
         }
-        // Whole counts go out; the glide's fractions wait for the next injection.
+        // Whole counts go out; the catch-up's fractions wait for the next injection.
         x += _fracX;
         y += _fracY;
         dx = (int)Math.Truncate(x);
         dy = (int)Math.Truncate(y);
         _fracX = x - dx;
         _fracY = y - dy;
-        if (!Gliding)
+        if (!CatchingUp)
         {
-            // Fractions only come from a glide; once it ends, the last of them go out with it.
+            // Fractions only come from a catch-up; once it ends, the last of them go out with it.
             dx += (int)Math.Round(_fracX);
             dy += (int)Math.Round(_fracY);
             _fracX = _fracY = 0;
