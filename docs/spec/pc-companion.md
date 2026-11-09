@@ -51,7 +51,7 @@ All engine state is under one lock. Engine callbacks only post to the UI thread.
 - **Overlays**: see [Overlays](pc-overlays.md).
 - **Connection**: network category, firewall and USB checks with their fixes, the USB cable (direct cable on/off, default on), the server's port and addresses.
 - **Latency test**: times the gyro from a slow-motion video, see [Latency test](pc-latency-test.md).
-- **App**: Startup (Start with Windows, default off; **Start when my phone appears**, the watcher), Tray icon click (Opens this window / Pairs a new phone), Troubleshooting (**Record input log**, default on; Open log folder, Debug window…), About (version).
+- **App**: Startup (Start with Windows, default off; **Start when my phone appears**, the watcher), Tray icon click (Opens this window / Pairs a new phone), Mouse (**Catch-up time**: Off / 8 / 16 / 32 ms, default 16, `HostSettings.CatchUpMs`; the longest a lost or late stretch of mouse motion is spread over, Off = the old one-step jump), Troubleshooting (**Record input log**, default on; Open log folder, Debug window…), About (version).
 
 **Pairing window** (`PairWindow`): a QR code for the phone's Scan QR code (a one-time token, renewed when it expires, gone when the window closes; holds up to four of this PC's IPv4 addresses), and for code pairing the PC's name, addresses, port and the pairing countdown, then "Pair <phone>? Code 123 456" with **Allow** / **Deny**. On first run with nothing paired the pairing window opens by itself.
 
@@ -61,7 +61,7 @@ All engine state is under one lock. Engine callbacks only post to the UI thread.
 - `lost`: 3 or more packets missing from the seq.
 - `late`: packets more than 15 ms later than the session's fastest ones of the last 5-10 s (receive time minus phone send time, so no clock sync is needed), one line per stretch; "held up on the way" when the phone sent them on time.
 - `phone gap`: the phone sent nothing for over 30 ms (its keepalive is 20 ms) with nothing lost, while input was moving or held.
-- `glide`: late or lost motion spread out by `MouseCatchUp` instead of landing at once.
+- `catch-up`: late or lost motion spread out by `MouseCatchUp` instead of landing at once.
 - `big move`: 64 px or more in one SendInput.
 - `slow hand-off`: over 2 ms from receive to SendInput.
 - `refused`: Windows took fewer events than given.

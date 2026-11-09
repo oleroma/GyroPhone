@@ -121,7 +121,7 @@ public sealed class HostEngine
     private readonly MouseDeltaTracker _mouse = new();
     /// <summary>Wheel motion since the last Flush, both in 1/120 notch.</summary>
     private int _accWheel, _accHWheel;
-    /// <summary>Mouse motion since the last Flush; a lost or late stretch glides out instead of jumping.</summary>
+    /// <summary>Mouse motion since the last Flush; a lost or late stretch catches up over a few ms instead of jumping.</summary>
     private readonly MouseCatchUp _catchUp = new();
     private uint _lastStatePhoneUs;
     private bool _hasStatePhone;
@@ -208,6 +208,7 @@ public sealed class HostEngine
     {
         _settings = settings;
         _settings.Normalize();
+        _catchUp.MaxUs = _settings.CatchUpMs * 1000L;
         _hostKey = hostKey;
         _hostKeyId = hostKey == null ? null : KeyPairing.KeyId(hostKey.PublicKey);
         _hostKeyFingerprint = hostKey == null ? null : KeyPairing.Fingerprint(hostKey.PublicKey);
@@ -718,10 +719,10 @@ public sealed class HostEngine
         _events.StateChanged();
     }
 
-    /// <summary>A lost or late stretch of mouse motion is still gliding out: <see cref="Flush(long)"/> should run within a millisecond, even without packets.</summary>
-    public bool MouseGliding
+    /// <summary>A lost or late stretch of mouse motion is still catching up: <see cref="Flush(long)"/> should run within a millisecond, even without packets.</summary>
+    public bool MouseCatchingUp
     {
-        get { lock (_lock) return _catchUp.Gliding; }
+        get { lock (_lock) return _catchUp.CatchingUp; }
     }
 
     /// <summary>Injects the newest STATE received since the last Flush: pad only when the mapped frame changed, SendInput only with events.</summary>
@@ -733,12 +734,12 @@ public sealed class HostEngine
         lock (_lock)
         {
             SendPendingRumble(nowUs);
-            // Without a new STATE, only a gliding catch-up has something to move.
+            // Without a new STATE, only a running catch-up has something to move.
             bool frame = _hasPending;
-            if (!frame && !_catchUp.Gliding) return;
+            if (!frame && !_catchUp.CatchingUp) return;
             _hasPending = false;
             _catchUp.Take(nowUs, out int dx, out int dy);
-            if (_catchUp.BacklogTaken) Rec?.Glide(_catchUp.BacklogSpanUs, _catchUp.BacklogPx, _catchUp.BacklogGlideUs, nowUs);
+            if (_catchUp.BacklogTaken) Rec?.CatchUp(_catchUp.BacklogSpanUs, _catchUp.BacklogPx, _catchUp.BacklogCatchUpUs, nowUs);
             int dw = _accWheel, dh = _accHWheel;
             _accWheel = _accHWheel = 0;
             if (_paused || _locked)
@@ -1221,6 +1222,19 @@ public sealed class HostEngine
     private void OverlayCompassChanged(bool before)
     {
         if (_overlayOn && before != OverlayCompassLocked() && _sessions.Active is { } a) SendStatus(a, _clock.NowUs);
+    }
+
+    /// <summary>"Catch-up time" (ms; 0 = off): the longest a lost or late stretch of mouse motion is spread over.</summary>
+    public void SetCatchUpMs(int ms)
+    {
+        lock (_lock)
+        {
+            ms = HostSettings.ClampCatchUpMs(ms);
+            if (ms == _settings.CatchUpMs) return;
+            _settings.CatchUpMs = ms;
+            _catchUp.MaxUs = ms * 1000L;
+            _settingsDirty = true;
+        }
     }
 
     /// <summary>What a left click on the tray icon does; the tray reads it from <see cref="Settings"/>.</summary>

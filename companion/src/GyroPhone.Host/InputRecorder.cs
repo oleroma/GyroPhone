@@ -8,7 +8,7 @@ namespace GyroPhone.Host;
 /// Always-on record of how the phone's input reached Windows, for finding stutter in real play
 /// (docs/spec/pc-companion.md, "Input log"). Called by the engine under its lock; <c>write</c> only
 /// enqueues a line. Per second it writes one summary line while a session is up, and at once one line
-/// per event: lost packets, packets held up on the way, the phone going quiet, a catch-up glide, a big
+/// per event: lost packets, packets held up on the way, the phone going quiet, a catch-up, a big
 /// single move, a slow hand-off to Windows, Windows refusing input, a release after silence. It never
 /// writes which keys or buttons, only how many.
 /// <para>
@@ -56,10 +56,10 @@ public sealed class InputRecorder
     private long _holdPhoneSpanMaxUs;
 
     // This second.
-    private int _sStates, _sMoving, _sLost, _sLate, _sInjects, _sMaxStep, _sSlow, _sGlides, _sJumps, _sEvents, _sSkipped;
+    private int _sStates, _sMoving, _sLost, _sLate, _sInjects, _sMaxStep, _sSlow, _sCatchUps, _sJumps, _sEvents, _sSkipped;
     private long _sPx, _sMaxLateUs, _sMaxInjectUs;
     // Whole session.
-    private long _tStates, _tLost, _tLate, _tHoldups, _tGaps, _tGlides, _tJumps, _tSlow, _tReleases, _tRefused;
+    private long _tStates, _tLost, _tLate, _tHoldups, _tGaps, _tCatchUps, _tJumps, _tSlow, _tReleases, _tRefused;
     private readonly long[] _lateHist = new long[64]; // 1 ms buckets of extra delay, last = 63+ ms
 
     public InputRecorder(Action<string> write) => _write = write;
@@ -75,7 +75,7 @@ public sealed class InputRecorder
         _havePrev = false;
         _inHoldup = false;
         ClearSecond();
-        _tStates = _tLost = _tLate = _tHoldups = _tGaps = _tGlides = _tJumps = _tSlow = _tReleases = _tRefused = 0;
+        _tStates = _tLost = _tLate = _tHoldups = _tGaps = _tCatchUps = _tJumps = _tSlow = _tReleases = _tRefused = 0;
         Array.Clear(_lateHist);
         Line(nowUs, "session start", $"phone '{phone}'");
     }
@@ -86,7 +86,7 @@ public sealed class InputRecorder
         EndHoldup();
         _active = false;
         Line(nowUs, "session end", $"{why} after {(nowUs - _sessionStartUs) / 1e6:0} s: states {_tStates} lost {_tLost} late {_tLate} " +
-            $"holdups {_tHoldups} phone-gaps {_tGaps} glides {_tGlides} jumps {_tJumps} slow {_tSlow} releases {_tReleases} refused {_tRefused}; " +
+            $"holdups {_tHoldups} phone-gaps {_tGaps} catch-ups {_tCatchUps} jumps {_tJumps} slow {_tSlow} releases {_tReleases} refused {_tRefused}; " +
             $"extra delay ms p50 {Pct(0.5)} p99 {Pct(0.99)} p99.9 {Pct(0.999)}");
     }
 
@@ -206,13 +206,13 @@ public sealed class InputRecorder
         }
     }
 
-    /// <summary>A late or lost stretch of motion is gliding out instead of landing at once.</summary>
-    public void Glide(long backlogUs, int px, long glideUs, long nowUs)
+    /// <summary>A late or lost stretch of motion is catching up instead of landing at once.</summary>
+    public void CatchUp(long backlogUs, int px, long spreadUs, long nowUs)
     {
         if (!_active) return;
-        _sGlides++;
-        _tGlides++;
-        Event(nowUs, "glide", $"{px} px from {backlogUs / 1000.0:0.0} ms of late or lost motion spread over {glideUs / 1000.0:0.0} ms");
+        _sCatchUps++;
+        _tCatchUps++;
+        Event(nowUs, "catch-up", $"{px} px from {backlogUs / 1000.0:0.0} ms of late or lost motion spread over {spreadUs / 1000.0:0.0} ms");
     }
 
     /// <summary>Everything let go after the phone was silent (Wire.ReleaseTimeoutMs).</summary>
@@ -231,7 +231,7 @@ public sealed class InputRecorder
         _sb.Append(CultureInfo.InvariantCulture, $"rx {stats.RxPerSec} moving {_sMoving} lost {_sLost} late {_sLate} maxlate {_sMaxLateUs / 1000.0:0.0}");
         if (stats.LatP50Us != HostStatus.Unknown) _sb.Append(CultureInfo.InvariantCulture, $" lat {stats.LatP50Us / 1000.0:0.0}/{stats.LatP99Us / 1000.0:0.0}");
         _sb.Append(CultureInfo.InvariantCulture, $" jitter {stats.JitterUs / 1000.0:0.0} inj {_sInjects} px {_sPx} maxstep {_sMaxStep} handoff {_sMaxInjectUs / 1000.0:0.0}");
-        if (_sGlides > 0) _sb.Append(" glides ").Append(_sGlides);
+        if (_sCatchUps > 0) _sb.Append(" catch-ups ").Append(_sCatchUps);
         if (_sSlow > 0) _sb.Append(" slow ").Append(_sSlow);
         if (_sJumps > 0) _sb.Append(" bigmoves ").Append(_sJumps);
         if (_sSkipped > 0) _sb.Append(" (").Append(_sSkipped).Append(" more events not written)");
@@ -241,7 +241,7 @@ public sealed class InputRecorder
 
     private void ClearSecond()
     {
-        _sStates = _sMoving = _sLost = _sLate = _sInjects = _sMaxStep = _sSlow = _sGlides = _sJumps = _sEvents = _sSkipped = 0;
+        _sStates = _sMoving = _sLost = _sLate = _sInjects = _sMaxStep = _sSlow = _sCatchUps = _sJumps = _sEvents = _sSkipped = 0;
         _sPx = _sMaxLateUs = _sMaxInjectUs = 0;
     }
 

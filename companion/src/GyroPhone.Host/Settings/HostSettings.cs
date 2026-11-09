@@ -28,6 +28,12 @@ public sealed class HostSettings
     public bool MeasureButtons { get; set; }
     /// <summary>"Record input log" on the App page: the engine writes input.log (<see cref="InputRecorder"/>).</summary>
     public bool InputLog { get; set; } = true;
+    /// <summary>"Catch-up time" on the App page, ms: the longest a lost or late stretch of mouse motion is spread over (<see cref="CatchUpChoices"/>; 0 = off).</summary>
+    public int CatchUpMs { get; set; } = (int)(MouseCatchUp.DefaultMaxUs / 1000);
+    /// <summary>The "Catch-up time" choices, ms.</summary>
+    public static readonly int[] CatchUpChoices = [0, 8, 16, 32];
+    /// <summary>The nearest of <see cref="CatchUpChoices"/> (an edited file may hold anything).</summary>
+    public static int ClampCatchUpMs(int ms) => CatchUpChoices.MinBy(c => Math.Abs(c - ms));
     /// <summary>The overlays' global shortcuts.</summary>
     public OverlayShortcuts OverlayShortcuts { get; set; } = new();
     /// <summary>"Fade when phone rests": every overlay fades while the phone lies still at its Level, untouched.</summary>
@@ -40,6 +46,7 @@ public sealed class HostSettings
     public void Normalize()
     {
         PairedPhones ??= [];
+        CatchUpMs = ClampCatchUpMs(CatchUpMs);
         Overlays ??= [];
         OverlayShortcuts ??= new();
         OverlayShortcuts.Normalize();
