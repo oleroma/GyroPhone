@@ -737,15 +737,13 @@ private fun FirePicker(selected: Int, onPick: (Int) -> Unit) {
     var open by remember { mutableStateOf(false) }
     val name = groups.firstNotNullOfOrNull { (g, list) -> list.firstOrNull { it.second == selected }?.let { "$g ${it.first}" } } ?: "None"
     Searchable("Fire", *groups.flatMap { g -> g.second.map { it.first } }.toTypedArray()) {
-        Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { open = true }.padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("Fire", style = MaterialTheme.typography.bodyMedium)
-                Text("Paints in the Fire colours while GyroPhone sends it", style = MaterialTheme.typography.bodySmall)
+        // As every settings row: its title, the picked button on the right, the tip below.
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Fire", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                androidx.compose.material3.OutlinedButton(onClick = { open = true }) { Text(name) }
             }
-            Text(name, color = MaterialTheme.colorScheme.primary)
+            Hint("Paints in the Fire colours while GyroPhone sends this button. Tap to pick another.")
         }
     }
     if (!open) return
