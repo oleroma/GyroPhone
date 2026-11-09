@@ -75,6 +75,11 @@ data class GyroDisplay(
     val easeSeconds: Float = 0.5f,
     val easeSpeed: Int = 90,
     val rest: List<Float>? = null,
+    /**
+     * Which way was up at the last Level (the accelerometer in the phone's frame, unit length), kept
+     * with or without gravity: "Fade when phone rests" ([RestFade]) counts the phone flat near it.
+     */
+    val levelUp: List<Float>? = null,
     val motionScale: Float = 1f,
     /** v1: each ratchet press set it straight (the whole pose, or with [resetHeadingOnly] the heading). */
     val resetOnRatchet: Boolean = true,

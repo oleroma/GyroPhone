@@ -8,6 +8,7 @@ import android.os.Looper
 import com.oleroma.gyrophone.core.engine.CountStream
 import com.oleroma.gyrophone.core.engine.GyroCalibration
 import com.oleroma.gyrophone.core.engine.GravityPose
+import com.oleroma.gyrophone.core.engine.RestDetector
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
 import com.oleroma.gyrophone.core.model.MotionAxis
@@ -309,6 +310,7 @@ class GamepadRuntime(context: Context) {
         if (v.gyroEdge && !old.gyroEdge) gyroSway.reset()
         vis = v
         _touchVisuals.value = v
+        restDetector.settings = v.restFade
         // updateGyro starts and stops the accelerometer under this lock too.
         synchronized(this) { updateMotion() }
     }
@@ -384,21 +386,25 @@ class GamepadRuntime(context: Context) {
      */
     private fun levelDisplays() {
         wifi.overlay.levelDisplays()
-        val rests = HashMap<String, List<Float>?>()
+        // Which way is up now, for "Fade when phone rests" (while the accelerometer runs).
+        val up = restDetector.upNow()
+        val rests = HashMap<String, Pair<List<Float>?, List<Float>?>>()
         for (f in gyroFeeds) {
             val d = f.display
             if (!d.kind.pose) continue
             val rest = if (d.needsGravity) f.pose.tiltOnly().toList() else null
             if (rest == null) f.restart()
-            f.display = d.copy(rest = rest)
-            if (d.rest != rest) rests[f.id] = rest
+            val levelUp = up ?: d.levelUp
+            f.display = d.copy(rest = rest, levelUp = levelUp)
+            if (d.rest != rest || d.levelUp != levelUp) rests[f.id] = rest to levelUp
         }
         if (rests.isEmpty()) return
         val before = _activeProfile.value
         val index = _workspaceIndex.value
         fun level(c: TouchControl): TouchControl {
             val d = c.display ?: return c
-            return if (c.id in rests) c.copy(display = d.copy(rest = rests[c.id])) else c
+            val r = rests[c.id] ?: return c
+            return c.copy(display = d.copy(rest = r.first, levelUp = r.second))
         }
         val changed = before.updateWorkspace(index) { w -> w.copy(touchControls = w.touchControls.map(::level)) }
             .let { it.copy(corners = it.corners.map(::level)) }
@@ -423,8 +429,18 @@ class GamepadRuntime(context: Context) {
         gyroFeed(id)?.laser?.clear()
     }
 
-    /** Some gyro display holds its pose to gravity (and so needs the accelerometer). */
+    /**
+     * "Fade when phone rests" for the gyro displays ([TouchVisuals.restFade]): fed by the gyro and
+     * accelerometer while a display is on the pad, and by every touch, key and stick (MainActivity).
+     */
+    val restDetector = RestDetector()
+
+    /** The phone's turning speed now (deg/s) as "Fade when phone rests" measures it, or null while it isn't measured. */
+    fun restStillnessDps(): Float? = restDetector.liveDps(System.nanoTime())
+
+    /** Some gyro display holds its pose to gravity, or may fade when the phone rests (and so needs the accelerometer). */
     private val needsGravity: Boolean get() = vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity } || wifi.overlay.wanted ||
+        (vis.restFade.on && gyroFeeds.isNotEmpty()) ||
         _activeProfile.value.workspace(_workspaceIndex.value).gyro.gyroSpace != GyroSpace.LOCAL
 
     /** The phone's pose against gravity, for the World and Player gyro spaces ([GyroSpace]). */
@@ -929,6 +945,7 @@ class GamepadRuntime(context: Context) {
         a.stop()
         accel = null
         tiltShake.reset()
+        restDetector.clear()
         engine.setTilt(0f, 0f)
     }
 
@@ -943,6 +960,7 @@ class GamepadRuntime(context: Context) {
             if (vis.gyroNeedsGravity) worldPose.setUp(m.pitch, -m.yaw, -m.roll, g)
             if (overlay) wifi.overlay.up(m.pitch, -m.yaw, -m.roll, g)
             for (f in feeds) f.up(m.pitch, -m.yaw, -m.roll, g)
+            if (feeds.isNotEmpty() && vis.restFade.on) restDetector.up(m.pitch, -m.yaw, -m.roll, g, System.nanoTime(), feeds)
             if (spaced) gravityPose.setUp(m.pitch, -m.yaw, -m.roll, g)
         }
         if (wifi.motion.wanted) {
@@ -1487,6 +1505,11 @@ class GamepadRuntime(context: Context) {
         // With the PC doing the gyro math the phone's gyro displays are off: what moves is the PC's to say.
         if (pcMode) gyroLiveAxes = 0
         else if (v.gyroEdge || feeds.isNotEmpty()) feedVisuals(v, feeds, x - biasX, y - biasY, z - biasZ, dt, axes)
+        if (!pcMode && feeds.isNotEmpty() && v.restFade.on) {
+            restDetector.settings = v.restFade
+            val m = gyroMouse.motion(x - biasX, y - biasY, z - biasZ)
+            restDetector.gyro(m.yaw, m.pitch, m.roll, dt, System.nanoTime())
+        }
         val overlay = wifi.overlay
         if (overlay.wanted && !measuring) {
             // The PC's phone overlay turns its pose from these, with its own settings.
