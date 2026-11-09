@@ -268,6 +268,15 @@ private class VisState {
     private var vx = FloatArray(1024)
     private var vy = FloatArray(1024)
     private var vk = IntArray(1024)
+    private var vw = FloatArray(1024)
+    // Varying width: the run's centre line, its corners rounded, as dense points (x, y, width, key of the piece ending there).
+    private var rx = FloatArray(4096)
+    private var ry = FloatArray(4096)
+    private var rw = FloatArray(4096)
+    private var rk = IntArray(4096)
+    private val glowPaths = HashMap<Int, Path>()
+    private val nA = FloatArray(2)
+    private val nB = FloatArray(2)
     private val moveColors = LongArray(6)
 
     private val crossPath = Path()
@@ -472,8 +481,15 @@ private class VisState {
                 movePool.add(p)
             }
             movePaths.clear()
+            for (p in glowPaths.values) {
+                p.reset()
+                movePool.add(p)
+            }
+            glowPaths.clear()
             val steps = d.laserColourSteps.coerceIn(4, 32)
             val paint3d = d.laserPaint3d
+            // Varying width: thinner toward the rim (and with perspective bigger nearer), changing smoothly along the ribbon.
+            val varyWidth = d.laserPaintWidth
             val fa = fireAhead.toArgb().toLong() and 0xFFFFFFFFL
             val fb = fireBehind.toArgb().toLong() and 0xFFFFFFFFL
             // The Fire colour [h] of the way from ahead (0) to behind (1), in [HUES] steps.
@@ -491,66 +507,135 @@ private class VisState {
             // The visible run of picture points being gathered (vx, vy), with the path key of the piece ending at each.
             var n = 0
             val wNow = width * (if (front) 0.6f else 1f)
+            fun startWidth(z: Float): Float =
+                if (!varyWidth) 1f else (if (laserPersp) LaserTrace.perspective(z) else 1f) * LaserTrace.paintWidth(z)
             fun pathFor(key: Int): Path = movePaths.getOrPut(key) { movePool.removeLastOrNull() ?: Path() }
+            // The dense run as filled ribbons: each piece a quad whose ends sit across the line at
+            // that point's width (corners mitred, so neighbours share their edge and leave no gap
+            // or overlap), into its key's path, and a 3× wider one into its glow path.
+            fun ribbons(m: Int) {
+                var lnx = 0f
+                var lny = 0f
+                fun normalAt(i: Int, out: FloatArray) {
+                    // The unit normal of the hop into point i and of the hop out of it, averaged (mitre, at most 2×).
+                    var ax = 0f
+                    var ay = 0f
+                    var hops = 0
+                    fun add(a: Int, b: Int) {
+                        val dx = rx[b] - rx[a]
+                        val dy = ry[b] - ry[a]
+                        val l = kotlin.math.sqrt(dx * dx + dy * dy)
+                        if (l > 1e-4f) {
+                            ax += -dy / l; ay += dx / l
+                            hops++
+                        }
+                    }
+                    if (i > 0) add(i - 1, i)
+                    if (i < m - 1) add(i, i + 1)
+                    val l = kotlin.math.sqrt(ax * ax + ay * ay)
+                    if (l < 1e-4f) {
+                        out[0] = lnx; out[1] = lny
+                        return
+                    }
+                    var nx = ax / l
+                    var ny = ay / l
+                    // Mitre: half the turn's cosine, so the edge stays the width off both hops.
+                    val single = if (hops == 2) l / 2f else 1f
+                    val k = 1f / single.coerceAtLeast(0.5f)
+                    nx *= k; ny *= k
+                    out[0] = nx; out[1] = ny
+                    lnx = ax / l; lny = ay / l
+                }
+                normalAt(0, nA)
+                for (i in 1 until m) {
+                    normalAt(i, nB)
+                    val key = rk[i]
+                    if (key >= 0) {
+                        for (g in 0..1) {
+                            if (g == 1 && !glow) break
+                            val s = if (g == 0) 0.5f else 1.5f
+                            val path = if (g == 0) pathFor(key) else glowPaths.getOrPut(key) { movePool.removeLastOrNull() ?: Path() }
+                            val wa = rw[i - 1] * s
+                            val wb = rw[i] * s
+                            path.moveTo(rx[i - 1] + nA[0] * wa, ry[i - 1] + nA[1] * wa)
+                            path.lineTo(rx[i] + nB[0] * wb, ry[i] + nB[1] * wb)
+                            path.lineTo(rx[i] - nB[0] * wb, ry[i] - nB[1] * wb)
+                            path.lineTo(rx[i - 1] - nA[0] * wa, ry[i - 1] - nA[1] * wa)
+                            path.close()
+                        }
+                    }
+                    nA[0] = nB[0]; nA[1] = nB[1]
+                }
+            }
             // Draws the run: straight hops, or with [curve] its corners rounded (each corner a quadratic
             // curve split in two halves, one in each neighbouring piece's path).
             fun flush() {
                 if (n >= 2) {
-                    var curKey = -1
                     var px = vx[0]
                     var py = vy[0]
-                    fun into(key: Int): Path {
-                        val path = pathFor(key)
-                        if (curKey != key) {
-                            path.moveTo(px, py)
-                            curKey = key
+                    var pw = vw[0]
+                    var m = 0
+                    fun dense(x: Float, y: Float, w: Float, key: Int) {
+                        if (m == rx.size) {
+                            rx = rx.copyOf(m * 2); ry = ry.copyOf(m * 2); rw = rw.copyOf(m * 2); rk = rk.copyOf(m * 2)
                         }
-                        return path
+                        rx[m] = x; ry[m] = y; rw[m] = w; rk[m] = key
+                        m++
                     }
-                    fun pen(x: Float, y: Float) {
-                        px = x; py = y
+                    dense(px, py, pw, -1)
+                    // The centre line, piece by piece, as dense ribbon points.
+                    fun line(key: Int, x: Float, y: Float, w: Float) {
+                        dense(x, y, w, key)
+                        px = x; py = y; pw = w
+                    }
+                    fun quad(key: Int, cx: Float, cy: Float, x: Float, y: Float, w: Float) {
+                        val x0 = px
+                        val y0 = py
+                        val w0 = pw
+                        for (j in 1..RIBBON_QUAD_STEPS) {
+                            val t = j / RIBBON_QUAD_STEPS.toFloat()
+                            val u = 1f - t
+                            dense(u * u * x0 + 2f * u * t * cx + t * t * x, u * u * y0 + 2f * u * t * cy + t * t * y, w0 + (w - w0) * t, key)
+                        }
+                        px = x; py = y; pw = w
                     }
                     if (curve <= 0f || n == 2) {
-                        for (k in 1 until n) {
-                            into(vk[k]).lineTo(vx[k], vy[k])
-                            pen(vx[k], vy[k])
-                        }
+                        for (k in 1 until n) line(vk[k], vx[k], vy[k], vw[k])
                     } else {
                         var mx = (vx[0] + vx[1]) / 2f
                         var my = (vy[0] + vy[1]) / 2f
-                        into(vk[1]).lineTo(mx, my)
-                        pen(mx, my)
+                        var mw = (vw[0] + vw[1]) / 2f
+                        line(vk[1], mx, my, mw)
                         for (k in 1..n - 2) {
                             val cx = vx[k]
                             val cy = vy[k]
+                            val cw = vw[k]
                             val nx = (cx + vx[k + 1]) / 2f
                             val ny = (cy + vy[k + 1]) / 2f
+                            val nw = (cw + vw[k + 1]) / 2f
                             val ax = cx + (mx - cx) * curve
                             val ay = cy + (my - cy) * curve
                             val bx = cx + (nx - cx) * curve
                             val by = cy + (ny - cy) * curve
-                            into(vk[k]).lineTo(ax, ay)
-                            pen(ax, ay)
+                            line(vk[k], ax, ay, cw + (mw - cw) * curve)
                             val cqx = (ax + 2f * cx + bx) / 4f
                             val cqy = (ay + 2f * cy + by) / 4f
-                            into(vk[k]).quadraticTo((ax + cx) / 2f, (ay + cy) / 2f, cqx, cqy)
-                            pen(cqx, cqy)
-                            into(vk[k + 1]).quadraticTo((cx + bx) / 2f, (cy + by) / 2f, bx, by)
-                            pen(bx, by)
-                            into(vk[k + 1]).lineTo(nx, ny)
-                            pen(nx, ny)
-                            mx = nx; my = ny
+                            quad(vk[k], (ax + cx) / 2f, (ay + cy) / 2f, cqx, cqy, cw)
+                            quad(vk[k + 1], (cx + bx) / 2f, (cy + by) / 2f, bx, by, cw + (nw - cw) * curve)
+                            line(vk[k + 1], nx, ny, nw)
+                            mx = nx; my = ny; mw = nw
                         }
-                        into(vk[n - 1]).lineTo(vx[n - 1], vy[n - 1])
+                        line(vk[n - 1], vx[n - 1], vy[n - 1], vw[n - 1])
                     }
+                    if (m >= 2) ribbons(m)
                 }
                 n = 0
             }
-            fun vertex(x: Float, y: Float, key: Int) {
+            fun vertex(x: Float, y: Float, key: Int, w: Float = wNow) {
                 if (n == vx.size) {
-                    vx = vx.copyOf(n * 2); vy = vy.copyOf(n * 2); vk = vk.copyOf(n * 2)
+                    vx = vx.copyOf(n * 2); vy = vy.copyOf(n * 2); vk = vk.copyOf(n * 2); vw = vw.copyOf(n * 2)
                 }
-                vx[n] = x; vy[n] = y; vk[n] = key
+                vx[n] = x; vy[n] = y; vk[n] = key; vw[n] = w
                 n++
             }
             for (i in 1 until ring.count) {
@@ -575,10 +660,13 @@ private class VisState {
                 }
                 val dot = (la[0] * lb[0] + la[1] * lb[1] + la[2] * lb[2]).coerceIn(-1f, 1f)
                 val sub = (acos(dot) / STROKE_STEP_RAD).toInt().coerceIn(1, 32)
-                if (n == 0) {
-                    val p0 = laserAt(c, r, la[0], la[1], la[2])
-                    if ((pv[2] > 0f) == front) vertex(p0.x, p0.y, -1)
-                }
+                // The point before (the last sub-point), whichever side it is on.
+                val p0 = laserAt(c, r, la[0], la[1], la[2])
+                var lastX = p0.x
+                var lastY = p0.y
+                var lastW = wNow * maxOf(0.15f, startWidth(pv[2]))
+                var lastOurs = (pv[2] > 0f) == front
+                if (n == 0 && lastOurs) vertex(lastX, lastY, -1, lastW)
                 for (j in 1..sub) {
                     val f = j / sub.toFloat()
                     var x = la[0] + (lb[0] - la[0]) * f
@@ -587,33 +675,28 @@ private class VisState {
                     val l = kotlin.math.sqrt(x * x + y * y + z * z).coerceAtLeast(1e-4f)
                     x /= l; y /= l; z /= l
                     val pt = laserAt(c, r, x, y, z)
-                    if ((pv[2] > 0f) != front) {
-                        flush()
+                    val ours = (pv[2] > 0f) == front
+                    // Crossing the rim: the piece over it is drawn on both sides, so the line has no gap there.
+                    if (!ours && !lastOurs) {
+                        lastX = pt.x; lastY = pt.y; lastW = wNow * maxOf(0.15f, startWidth(pv[2]))
                         continue
                     }
-                    if (n == 0) {
-                        vertex(pt.x, pt.y, -1)
-                        continue
-                    }
+                    if (n == 0) vertex(lastX, lastY, -1, lastW)
                     val argb = if (firing) fireArgb(LaserTrace.behind(z)) else base
-                    // 3D paint: lit by the sphere's light, thinner toward the rim; with perspective, bigger nearer.
-                    var light = 1f
-                    var wf = if (laserPersp) LaserTrace.perspective(pv[2]) else 1f
-                    if (paint3d) {
-                        light = LaserTrace.paintLight(pv[0], pv[1], pv[2], d.laserLighting)
-                        wf *= LaserTrace.paintWidth(pv[2])
-                    }
-                    // Colour in [steps] shades a channel, width in 8 steps: the piece's path.
+                    // 3D paint: lit by the sphere's light. Varying width: thinner toward the rim; with perspective, bigger nearer.
+                    val light = if (paint3d) LaserTrace.paintLight(pv[0], pv[1], pv[2], d.laserLighting) else 1f
+                    val wf = if (!varyWidth) 1f
+                    else (if (laserPersp) LaserTrace.perspective(pv[2]) else 1f) * LaserTrace.paintWidth(pv[2])
+                    // Colour in [steps] shades a channel: the piece's path.
                     fun q(shift: Int) = (((argb shr shift and 0xFF) / 255f) * light * (steps - 1) + 0.5f).toInt().coerceIn(0, steps - 1)
-                    val wb = (wf / WIDTH_MAX * 7f + 0.5f).toInt().coerceIn(0, 7)
-                    vertex(pt.x, pt.y, MOVE_KEYS + ((level - 1) shl 18 or (wb shl 15) or (q(16) shl 10) or (q(8) shl 5) or q(0)))
+                    vertex(pt.x, pt.y, MOVE_KEYS + ((level - 1) shl 18 or (q(16) shl 10) or (q(8) shl 5) or q(0)), wNow * maxOf(0.15f, wf))
+                    lastX = pt.x; lastY = pt.y; lastW = wNow * maxOf(0.15f, wf)
+                    lastOurs = ours
+                    if (!ours) flush()
                 }
             }
             flush()
             val side = if (front) 0.5f else 1f
-            val w = wNow
-            // Flat ends: pieces of different colours meet without poking into each other or overlapping.
-            val cap = StrokeCap.Butt
             fun shaded(color: Color, k: Float): Color {
                 val shade = 0.35f + 0.65f * k
                 return Color(color.red * shade, color.green * shade, color.blue * shade, color.alpha)
@@ -629,10 +712,9 @@ private class VisState {
                 val level = (q shr 18) + 1
                 val k = level / LEVELS.toFloat()
                 val fade = (0.35f + 0.65f * k) * side
-                val pw = w * maxOf(0.15f, (q shr 15 and 7) / 7f * WIDTH_MAX)
                 val color = shaded(moveColor(key), k)
-                if (glow) drawPath(path, color.copy(alpha = color.alpha * fade * 0.22f), style = Stroke(pw * 3f, cap = cap, join = StrokeJoin.Round))
-                drawPath(path, color.copy(alpha = color.alpha * fade), style = Stroke(pw, cap = cap, join = StrokeJoin.Round))
+                glowPaths[key]?.let { drawPath(it, color.copy(alpha = color.alpha * fade * 0.22f)) }
+                drawPath(path, color.copy(alpha = color.alpha * fade))
             }
         }
         val brushPx = maxOf(1.5f * density, r * Math.toRadians(d.laserBrush.coerceIn(1, 20).toDouble()).toFloat() * 0.6f)
@@ -1452,7 +1534,8 @@ private const val HUES = 8
 private const val MOVE_KEYS = 1 shl 21
 
 // The widest a paint piece's width step reaches (×, foreshortening and perspective included).
-private const val WIDTH_MAX = 1.3f
+/** Varying width: pieces each rounded corner's half-curve is cut into. */
+private const val RIBBON_QUAD_STEPS = 4
 
 /** The edge's swing per degree, its furthest swing, each layer's step inwards and the outer corner radius. */
 private const val EDGE_PX_PER_DEG = 1.5f

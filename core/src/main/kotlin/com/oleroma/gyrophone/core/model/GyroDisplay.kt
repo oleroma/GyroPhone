@@ -198,11 +198,12 @@ data class GyroDisplay(
     val laserCurve: Float = 0.5f,
     val laserLineSmoothing: Float = 0f,
     /**
-     * LASER: [laserPaint3d] draws the paint as lying on the round sphere: thinner where its surface turns away
-     * toward the rim, and lit by the sphere's light (from the upper left) as strongly as [laserLighting] (0..1).
+     * LASER: [laserPaint3d] lights the paint by the sphere's light (from the upper left) as strongly as [laserLighting] (0..1).
      * The Sphere look's [laserGloss] (a shine where the light hits) and [laserRimGlow] (a soft bright edge).
      */
     val laserPaint3d: Boolean = true,
+    /** LASER Draw mode: the paint gets thinner toward the sphere's rim (and with [perspective] bigger nearer), changing smoothly along the line. */
+    val laserPaintWidth: Boolean = true,
     val laserLighting: Float = 0.6f,
     val laserGloss: Boolean = true,
     val laserRimGlow: Boolean = true,

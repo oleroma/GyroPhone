@@ -262,8 +262,9 @@ internal fun GyroDisplaySettingsScreen(
                         ) { set(d.copy(laserLength = lengthDeg(it))) }
                         Hint("How much line is kept: past that length the oldest end is cut away as you paint. With Fades after set, the line also fades out along that length.")
                         Text("Strokes", style = MaterialTheme.typography.bodyMedium)
-                        SwitchRow("3D paint", d.laserPaint3d, "The paint lies on the round sphere: thinner where the surface turns away toward the rim, and lit by the sphere's light from the upper left.") { set(d.copy(laserPaint3d = it)) }
+                        SwitchRow("3D paint", d.laserPaint3d, "The paint is lit by the sphere's light from the upper left, darker where the surface turns away from it.") { set(d.copy(laserPaint3d = it)) }
                         if (d.laserPaint3d) PercentSlider("Lighting", d.laserLighting, 0f..1f) { set(d.copy(laserLighting = it)) }
+                        SwitchRow("Thinner toward the rim", d.laserPaintWidth, "The line narrows smoothly where the sphere's surface turns away from you, as paint on a ball looks (and with Perspective is bigger nearer). Off: the same width everywhere.") { set(d.copy(laserPaintWidth = it)) }
                         IntSlider("Colour steps %d", d.laserColourSteps, 4..32) { set(d.copy(laserColourSteps = it)) }
                         PercentSlider("Curve", d.laserCurve, 0f..1f) { set(d.copy(laserCurve = it)) }
                         SavedSlider(
