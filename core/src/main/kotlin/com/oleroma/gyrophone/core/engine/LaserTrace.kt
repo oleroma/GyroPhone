@@ -320,6 +320,19 @@ class LaserTrace {
          * on the far half from inside (its face toward the viewer looks inward), on the near half from outside;
          * shaded by the light ([LIGHT]), down to a quarter where it faces away.
          */
+        /**
+         * Turns the picture light [l] with the pointer's pose [m] (row-major), as the fixed pointer mode
+         * shows it: through [VIEW]'s transpose, the pose, and back ([axon]; face-on just the pose).
+         */
+        fun lightWithPose(l: FloatArray, m: FloatArray, axon: Boolean) {
+            val v = VIEW
+            val t = FloatArray(3)
+            for (i in 0..2) t[i] = if (axon) v[i] * l[0] + v[3 + i] * l[1] + v[6 + i] * l[2] else l[i]
+            val u = FloatArray(3)
+            for (i in 0..2) u[i] = m[3 * i] * t[0] + m[3 * i + 1] * t[1] + m[3 * i + 2] * t[2]
+            for (i in 0..2) l[i] = if (axon) v[3 * i] * u[0] + v[3 * i + 1] * u[1] + v[3 * i + 2] * u[2] else u[i]
+        }
+
         fun paintLight(x: Float, y: Float, z: Float, lighting: Float, light: FloatArray = LIGHT): Float {
             val d = x * light[0] + y * light[1] + z * light[2]
             val lit = (if (z >= 0f) d else -d).coerceAtLeast(0f)

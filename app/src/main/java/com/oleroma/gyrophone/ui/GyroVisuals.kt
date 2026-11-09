@@ -394,6 +394,8 @@ private class VisState {
         val held = feed?.ratchetHeld == true
         LaserTrace.beam(m, beam)
         LaserTrace.light(d.laserLightFrom.toFloat(), d.laserLightHeight.toFloat(), light)
+        // Light follows the pointer: turned with the pose, as the fixed pointer mode shows it.
+        if (d.laserLightFollows && !d.laserSphereTurns) LaserTrace.lightWithPose(light, m, d.laserAxonometric)
         val lt = feed?.laser
         if (lt != null) {
             val v = feed?.pose?.version ?: 0L

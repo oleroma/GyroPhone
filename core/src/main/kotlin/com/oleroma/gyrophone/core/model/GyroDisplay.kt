@@ -205,6 +205,8 @@ data class GyroDisplay(
     /** LASER: where the light comes from: [laserLightFrom] degrees round the picture (0 right, 90 top, 180 left), [laserLightHeight] degrees up toward the viewer. */
     val laserLightFrom: Int = 130,
     val laserLightHeight: Int = 58,
+    /** LASER without [laserSphereTurns]: the light turns with the pointer, as it does (staying put with the pointer) in that mode. */
+    val laserLightFollows: Boolean = false,
     /** LASER Draw mode: the glow round the paint (0 none .. 1 strong), a dark [GyroDisplayColor.LASER_OUTLINE] edge, older paint darker. */
     val laserGlow: Float = 0.5f,
     val laserOutline: Boolean = false,

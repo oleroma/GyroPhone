@@ -277,6 +277,7 @@ internal fun GyroDisplaySettingsScreen(
             if ((!d.laserRifle && !d.laserCrosshair && d.laserGloss) || (d.laserDraw && d.laserPaint3d)) {
                 IntSlider("Light from %d°", d.laserLightFrom, 0..355, 5) { set(d.copy(laserLightFrom = it)) }
                 IntSlider("Light height %d°", d.laserLightHeight, 0..90) { set(d.copy(laserLightHeight = it)) }
+                if (!d.laserSphereTurns) SwitchRow("Light follows the pointer", d.laserLightFollows, "The light turns with the beam, like a lamp on the pointer, so the paint and gloss stay lit the same way from where you aim (as Fixed pointer mode always shows it). Off: the light stays put while the beam turns.") { set(d.copy(laserLightFollows = it)) }
                 Hint("Where the light for the gloss and 3D paint comes from: round the picture 0° right, 90° top, 180° left, 270° bottom; height 0° from the side, 90° straight from the front.")
             }
             if (d.laserDraw) SwitchRow("3D paint", d.laserPaint3d, "The paint is lit by the sphere's light from the upper left, darker where the surface turns away from it.") { set(d.copy(laserPaint3d = it)) }
