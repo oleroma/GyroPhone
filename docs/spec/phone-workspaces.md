@@ -21,7 +21,7 @@ A **workspace** (`core/.../model/Workspace.kt`) is one complete setup: its touch
 
 - **Controller**: a touchscreen game pad (sticks, ABXY, D-pad, bumpers, triggers, L3/R3, View, Menu) plus a "Gyro" button mapped to Ratchet; gyro mode Ratchet enables. Its pad mappings became a device preset it pins.
 - **WASD**: a WASD stick and keys for keyboard-and-mouse games; gyro mode Ratchet disables.
-- **Keyboard**: a full keyboard (K380 layout, plus Del, Home, End, PgUp and PgDn) under a touchpad strip; gyro Ratchet enables.
+- **Keyboard**: a full keyboard (compact keyboard layout, plus Del, Home, End, PgUp and PgDn) under a touchpad strip; gyro Ratchet enables.
 
 **Adding** a workspace ("+" capsule, added at the front) offers **Blank**, **Windows touchpad** and these presets. Its last choice, **From a file…**, imports a workspace someone exported (added last, under a free name such as "WASD 2", never replacing one). A blank workspace starts with no mappings and no layers of its own (it follows the Defaults' mappings); Windows touchpad is a blank one whose touchpad works like a Windows one (`BuiltinProfiles.touchpadWorkspace`). **Rename, Duplicate, Delete** (not the last), **Copy mappings from…** and **Export** are fixed at the top of its settings, outside the scrolling list; **Copy mappings from…** (`ui/CopyMappingsDialog.kt`) brings another workspace's mappings in, either with its buttons (replacing this one's) or mappings only (matched to this workspace's buttons by name; buttons with no match are listed first).
 

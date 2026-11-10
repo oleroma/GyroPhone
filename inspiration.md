@@ -7,7 +7,6 @@ GyroPhone was written with the help of AI (Claude). No screenshots, images or co
 - **Alpakka** (Input Labs, [alpakka_firmware](https://github.com/inputlabs/alpakka_firmware)): named as the inspiration. The README says GyroPhone is "in the spirit of" the Alpakka controller, and the gyro-to-mouse code comment says "Alpakka / JoyShockMapper style". No Alpakka code is included.
 - **JoyShockMapper** (Jibb Smart): named for the "player space" gyro mode and its "relax factor" in code comments and the README. No JoyShockMapper code is included.
 - **Steam Input** (Valve): named in the spec as the style for an idea (split touch zones and radial menus), and in docs as something that can sit between GyroPhone's pad and a game.
-- **Logitech K380**: named as the layout the built-in keyboard's key rows follow.
 
 ## Controllers and devices
 
