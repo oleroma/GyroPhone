@@ -1,5 +1,7 @@
 package com.oleroma.gyrophone.ui
 
+import android.content.res.Configuration
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.geometry.CornerRadius
@@ -1829,132 +1831,154 @@ internal fun ControlMappingScreen(
             ) {
                 Column(Modifier.fillMaxSize()) {
                     val compact = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                    Row(
-                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                            .padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        Column(Modifier.widthIn(max = 220.dp).padding(end = 8.dp)) {
-                            if (label != null && onLabel != null) {
-                                // The title is the label: type, add emoji or pick a symbol (☺).
-                                LabelField(label, if (control.isTouchpadStandIn) "Touchpad" else "Label", onLabel)
-                            } else Text(
-                                control.label.ifBlank { control.id },
-                                style = MaterialTheme.typography.titleLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                controlKindName(control) + " · mapping",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colors.onSurfaceVariant,
-                                maxLines = 1,
-                            )
-                        }
-                        if (labelShown != null && onLabelShown != null) {
-                            FilterChip(
-                                selected = labelShown,
-                                onClick = { onLabelShown(!labelShown) },
-                                label = { Text("Show on pad") },
-                            )
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        if (onSetsChange != null) {
-                            SetChip("Base", MappingSet.BASE, editSet == MappingSet.BASE, { onEditSet(MappingSet.BASE) }, null)
-                            for (st in sets) {
-                                SetChip(st.label, st.id, editSet == st.id, { onEditSet(st.id) }, { setMenu = st })
-                            }
-                            if (sets.size < MappingSet.MAX) {
-                                TextButton(onClick = {
-                                    val id = (1..MappingSet.MAX).first { n -> sets.none { it.id == n } }
-                                    onSetsChange((sets + MappingSet(id)).sortedBy { it.id }, null)
-                                    onEditSet(id)
-                                }, contentPadding = compact) { Text("+ Layer") }
-                            }
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Box {
-                            TextButton(onClick = { sortMenu = true }, contentPadding = compact) { Text("Sort ▾") }
-                            DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("Default") },
-                                    onClick = { sortMenu = false; confirmDefault = true },
+                    val portrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
+                    // The bar has two rows. The title (the label field) leads the first row in portrait;
+                    // the layer chips always lead their row; the actions follow them.
+                    val titleBar: @Composable () -> Unit = {
+                            Column(Modifier.widthIn(max = 220.dp).padding(end = 8.dp)) {
+                                if (label != null && onLabel != null) {
+                                    // The title is the label: type, add emoji or pick a symbol (☺).
+                                    LabelField(label, if (control.isTouchpadStandIn) "Touchpad" else "Label", onLabel)
+                                } else Text(
+                                    control.label.ifBlank { control.id },
+                                    style = MaterialTheme.typography.titleLarge,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
-                                DropdownMenuItem(
-                                    text = { Text("Custom") },
-                                    enabled = custom.isNotEmpty() && custom != order,
-                                    onClick = { sortMenu = false; saveOrder(custom) },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Mapped first") },
-                                    onClick = {
-                                        sortMenu = false
-                                        // Every action of the control in the order shown, the ones mapped in any layer first.
-                                        val all = sorted(control, inputs, order)
-                                        val keys = all.map { orderKey(control, it) }.distinct()
-                                        val mapped = all.filter { input ->
-                                            val zones = (0 until zonesOf(input)).map { z -> if (z == 0) input else Bindings.zoneInput(input, z) }
-                                            zones.any { zi -> mappings.any { m -> zi.sources.any { it == m.source } } }
-                                        }.mapTo(HashSet()) { orderKey(control, it) }
-                                        saveOrder(keys.filter { it in mapped } + keys.filter { it !in mapped } + order.filter { it !in keys })
-                                    },
+                                Text(
+                                    controlKindName(control) + " · mapping",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.onSurfaceVariant,
+                                    maxLines = 1,
                                 )
                             }
-                        }
-                        val bulk = bulkInputs()
-                        if (bulk.any { Bindings.targets(parentView, it).isNotEmpty() && Bindings.targets(view, it).isNotEmpty() }) {
-                            var asking by remember { mutableStateOf(false) }
-                            TextButton(onClick = { asking = true }, contentPadding = compact) { Text("↺ Reset all") }
-                            if (asking) ConfirmResetAll(
-                                "Every action follows $parentName again; what it maps here goes.",
-                                { asking = false },
-                            ) { asking = false; followAll() }
-                        }
-                        if (bulk.any { (Bindings.targets(view, it).ifEmpty { Bindings.targets(parentView, it) }).any { t -> t != OutputTarget.NoOutput } }) {
-                            TextButton(onClick = { clearAll() }, contentPadding = compact) { Text("✕ Clear all") }
-                        }
-                        // The whole control as a button preset (its mappings in the edited layer, its settings).
-                        if (bulk.any { Bindings.targets(view, it).any { t -> t != OutputTarget.NoOutput } }) {
-                            TextButton(onClick = {
-                                askName("Save button preset", control.label.ifBlank { controlKindName(control) }) { name ->
-                                    val own = view.filter { m -> m.set == MappingSet.BASE && controlInputs.any { Bindings.belongs(m, it) } }
-                                    val touch = !physical && !control.isTouchpadStandIn
-                                    runtime.addToLibrary(
-                                        LibraryButton(
-                                            ButtonLibrary.newId(library.map { it.id }), control.copy(group = null),
-                                            mappings = if (touch) own else emptyList(), name = name,
-                                            chips = if (touch) emptyList() else buttonChips(view),
-                                        ),
+                            if (labelShown != null && onLabelShown != null) {
+                                FilterChip(
+                                    selected = labelShown,
+                                    onClick = { onLabelShown(!labelShown) },
+                                    label = { Text("Show on pad") },
+                                )
+                                Spacer(Modifier.width(8.dp))
+                            }
+                    }
+                    val layerChips: @Composable () -> Unit = {
+                            if (onSetsChange != null) {
+                                SetChip("Base", MappingSet.BASE, editSet == MappingSet.BASE, { onEditSet(MappingSet.BASE) }, null)
+                                for (st in sets) {
+                                    SetChip(st.label, st.id, editSet == st.id, { onEditSet(st.id) }, { setMenu = st })
+                                }
+                                if (sets.size < MappingSet.MAX) {
+                                    TextButton(onClick = {
+                                        val id = (1..MappingSet.MAX).first { n -> sets.none { it.id == n } }
+                                        onSetsChange((sets + MappingSet(id)).sortedBy { it.id }, null)
+                                        onEditSet(id)
+                                    }, contentPadding = compact) { Text("+ Layer") }
+                                }
+                                Spacer(Modifier.width(8.dp))
+                            }
+                    }
+                    val actionButtons: @Composable () -> Unit = {
+                            Box {
+                                TextButton(onClick = { sortMenu = true }, contentPadding = compact) { Text("Sort ▾") }
+                                DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text("Default") },
+                                        onClick = { sortMenu = false; confirmDefault = true },
                                     )
-                                    scope.launch {
-                                        snackbar.showSnackbar("Saved button preset " + name + if (touch) " (Presets, and the Add menu's library)" else " (Presets)")
+                                    DropdownMenuItem(
+                                        text = { Text("Custom") },
+                                        enabled = custom.isNotEmpty() && custom != order,
+                                        onClick = { sortMenu = false; saveOrder(custom) },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Mapped first") },
+                                        onClick = {
+                                            sortMenu = false
+                                            // Every action of the control in the order shown, the ones mapped in any layer first.
+                                            val all = sorted(control, inputs, order)
+                                            val keys = all.map { orderKey(control, it) }.distinct()
+                                            val mapped = all.filter { input ->
+                                                val zones = (0 until zonesOf(input)).map { z -> if (z == 0) input else Bindings.zoneInput(input, z) }
+                                                zones.any { zi -> mappings.any { m -> zi.sources.any { it == m.source } } }
+                                            }.mapTo(HashSet()) { orderKey(control, it) }
+                                            saveOrder(keys.filter { it in mapped } + keys.filter { it !in mapped } + order.filter { it !in keys })
+                                        },
+                                    )
+                                }
+                            }
+                            val bulk = bulkInputs()
+                            if (bulk.any { Bindings.targets(parentView, it).isNotEmpty() && Bindings.targets(view, it).isNotEmpty() }) {
+                                var asking by remember { mutableStateOf(false) }
+                                TextButton(onClick = { asking = true }, contentPadding = compact) { Text("↺ Reset all") }
+                                if (asking) ConfirmResetAll(
+                                    "Every action follows $parentName again; what it maps here goes.",
+                                    { asking = false },
+                                ) { asking = false; followAll() }
+                            }
+                            if (bulk.any { (Bindings.targets(view, it).ifEmpty { Bindings.targets(parentView, it) }).any { t -> t != OutputTarget.NoOutput } }) {
+                                TextButton(onClick = { clearAll() }, contentPadding = compact) { Text("✕ Clear all") }
+                            }
+                            // The whole control as a button preset (its mappings in the edited layer, its settings).
+                            if (bulk.any { Bindings.targets(view, it).any { t -> t != OutputTarget.NoOutput } }) {
+                                TextButton(onClick = {
+                                    askName("Save button preset", control.label.ifBlank { controlKindName(control) }) { name ->
+                                        val own = view.filter { m -> m.set == MappingSet.BASE && controlInputs.any { Bindings.belongs(m, it) } }
+                                        val touch = !physical && !control.isTouchpadStandIn
+                                        runtime.addToLibrary(
+                                            LibraryButton(
+                                                ButtonLibrary.newId(library.map { it.id }), control.copy(group = null),
+                                                mappings = if (touch) own else emptyList(), name = name,
+                                                chips = if (touch) emptyList() else buttonChips(view),
+                                            ),
+                                        )
+                                        scope.launch {
+                                            snackbar.showSnackbar("Saved button preset " + name + if (touch) " (Presets, and the Add menu's library)" else " (Presets)")
+                                        }
+                                    }
+                                }, contentPadding = compact) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("+")
+                                        PresetIcon(PresetLevel.BUTTON, colors.primary)
+                                        Text("Preset")
                                     }
                                 }
-                            }, contentPadding = compact) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text("+")
-                                    PresetIcon(PresetLevel.BUTTON, colors.primary)
-                                    Text("Preset")
-                                }
                             }
+                            // One Settings: a touch control's own page (its look and the settings its actions
+                            // share), else the shared settings (the touchpad's: the workspace's).
+                            val shared = settings?.shared
+                            val ownSettings = onSettings != null && !control.isTouchpadStandIn && physicalInputs == null
+                            val openSettings: (() -> Unit)? = when {
+                                ownSettings -> onSettings
+                                shared != null -> ({ sharedOpen = true })
+                                else -> onSettings
+                            }
+                            if (openSettings != null) TextButton(onClick = openSettings, contentPadding = compact) { Text("⚙ Settings") }
+                            TextButton(
+                                onClick = { undoLast() },
+                                enabled = undo.isNotEmpty(),
+                                contentPadding = compact
+                            ) { Text("↶ Undo") }
+                    }
+                    val doneButton: @Composable () -> Unit = {
+                            FilledTonalButton(onClick = onClose, contentPadding = compact) { Text("Done") }
+                    }
+                    val barRow = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                        .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)
+                    if (portrait) {
+                        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) { titleBar() }
+                            doneButton()
                         }
-                        // One Settings: a touch control's own page (its look and the settings its actions
-                        // share), else the shared settings (the touchpad's: the workspace's).
-                        val shared = settings?.shared
-                        val ownSettings = onSettings != null && !control.isTouchpadStandIn && physicalInputs == null
-                        val openSettings: (() -> Unit)? = when {
-                            ownSettings -> onSettings
-                            shared != null -> ({ sharedOpen = true })
-                            else -> onSettings
+                        Row(barRow, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            layerChips(); actionButtons()
                         }
-                        if (openSettings != null) TextButton(onClick = openSettings, contentPadding = compact) { Text("⚙ Settings") }
-                        TextButton(
-                            onClick = { undoLast() },
-                            enabled = undo.isNotEmpty(),
-                            contentPadding = compact
-                        ) { Text("↶ Undo") }
-                        FilledTonalButton(onClick = onClose, contentPadding = compact) { Text("Done") }
+                    } else {
+                        Row(barRow, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            layerChips(); titleBar()
+                        }
+                        Row(barRow, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            actionButtons(); doneButton()
+                        }
                     }
                     BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                         val landscape = maxWidth > maxHeight
