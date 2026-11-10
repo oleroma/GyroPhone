@@ -381,10 +381,31 @@ class LaserTrace {
         /** Aiming ([rifle]'s aim 1) the rifle is shouldered: pulled back toward the player this far. */
         const val AIM_PULL = 0.12f
 
-        /** The rifle's muzzle tip at aim [aim] (0 .. 1), in its own frame, into [out]. */
-        fun muzzle(aim: Float, out: FloatArray) {
-            out[0] = MUZZLE[0]; out[1] = MUZZLE[1]; out[2] = MUZZLE[2] + AIM_PULL * aim.coerceIn(0f, 1f)
+        /** Firing, the rifle kicks ([rifle]'s kick 1): back toward the player this far ... */
+        const val KICK_BACK = 0.12f
+
+        /** ... and its muzzle up this many degrees, about [KICK_PIVOT_Z] (the shoulder, where the stock meets it). */
+        const val KICK_RISE_DEG = 10f
+        const val KICK_PIVOT_Z = 0.6f
+
+        /**
+         * A point (x, y, z) of the rifle's own frame at aim [aim] (0 .. 1) and kick [kick] (0 rest .. 1 full,
+         * a little under 0 as it springs back), into [out] at [at]: shouldered by [AIM_PULL], kicked back by
+         * [KICK_BACK] and its muzzle up by [KICK_RISE_DEG]. [dir]: a direction (a face's normal), turned only.
+         */
+        fun rifleAt(x: Float, y: Float, z: Float, aim: Float, kick: Float, out: FloatArray, at: Int = 0, dir: Boolean = false) {
+            val a = Math.toRadians((KICK_RISE_DEG * kick).toDouble())
+            val c = cos(a).toFloat()
+            val s = sin(a).toFloat()
+            val pz = if (dir) 0f else KICK_PIVOT_Z
+            val dz = z - pz
+            out[at] = x
+            out[at + 1] = y * c - dz * s
+            out[at + 2] = pz + y * s + dz * c + (if (dir) 0f else AIM_PULL * aim.coerceIn(0f, 1f) + KICK_BACK * kick)
         }
+
+        /** The rifle's muzzle tip at aim [aim] (0 .. 1) and kick [kick], in its own frame, into [out]. */
+        fun muzzle(aim: Float, out: FloatArray, kick: Float = 0f) = rifleAt(MUZZLE[0], MUZZLE[1], MUZZLE[2], aim, kick, out)
 
         /** How far round from straight ahead (into the screen) shown-frame direction z is: 0 ahead .. 1 straight behind. */
         fun behind(z: Float): Float = ((1f + z) / 2f).coerceIn(0f, 1f)
@@ -556,17 +577,17 @@ class LaserTrace {
         /**
          * The rifle turned by pose [m], seen as [view] sees it ([axon], [turned]): the faces toward the
          * viewer, farthest first, lit from above left. Aiming ([aim] 0 .. 1, eased) it is shouldered
-         * ([AIM_PULL]) and a scope grows onto it.
+         * ([AIM_PULL]) and a scope grows onto it; firing it kicks ([kick], [rifleAt]).
          */
-        fun rifle(m: FloatArray, axon: Boolean, turned: FloatArray?, persp: Boolean = false, aim: Float = 0f): List<Face> {
+        fun rifle(m: FloatArray, axon: Boolean, turned: FloatArray?, persp: Boolean = false, aim: Float = 0f, kick: Float = 0f): List<Face> {
             val faces = ArrayList<Face>(32)
             val p = FloatArray(24)
             val n = FloatArray(3)
+            val q = FloatArray(3)
             val lx = -0.35f
             val ly = 0.6f
             val lz = 0.72f
             val a = aim.coerceIn(0f, 1f)
-            val pull = AIM_PULL * a
             val boxes = RIFLE.size / 6 + (if (a > 0.02f) SCOPE.size / 6 else 0)
             for (b in 0 until boxes) {
                 val scope = b >= RIFLE.size / 6
@@ -574,9 +595,13 @@ class LaserTrace {
                 val o = (if (scope) b - RIFLE.size / 6 else b) * 6
                 val g = if (scope) a else 1f // the scope grows in
                 for (k in 0 until 8) {
-                    val x = src[o] + (if (k and 1 != 0) src[o + 3] * g else -src[o + 3] * g)
-                    val y = src[o + 1] + (if (k and 2 != 0) src[o + 4] * g else -src[o + 4] * g)
-                    val z = src[o + 2] + pull + (if (k and 4 != 0) src[o + 5] * g else -src[o + 5] * g)
+                    rifleAt(
+                        src[o] + (if (k and 1 != 0) src[o + 3] * g else -src[o + 3] * g),
+                        src[o + 1] + (if (k and 2 != 0) src[o + 4] * g else -src[o + 4] * g),
+                        src[o + 2] + (if (k and 4 != 0) src[o + 5] * g else -src[o + 5] * g),
+                        a, kick, q,
+                    )
+                    val x = q[0]; val y = q[1]; val z = q[2]
                     view(m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z, p, k * 3, axon, turned)
                     if (persp) {
                         val f = perspective(p[k * 3 + 2])
@@ -587,9 +612,8 @@ class LaserTrace {
                 for (f in 0 until 6) {
                     val axis = f / 2
                     val sign = if (f % 2 == 0) -1f else 1f
-                    val nx = if (axis == 0) sign else 0f
-                    val ny = if (axis == 1) sign else 0f
-                    val nz = if (axis == 2) sign else 0f
+                    rifleAt(if (axis == 0) sign else 0f, if (axis == 1) sign else 0f, if (axis == 2) sign else 0f, a, kick, q, dir = true)
+                    val nx = q[0]; val ny = q[1]; val nz = q[2]
                     view(m[0] * nx + m[1] * ny + m[2] * nz, m[3] * nx + m[4] * ny + m[5] * nz, m[6] * nx + m[7] * ny + m[8] * nz, n, 0, axon, turned)
                     if (n[2] <= 1e-4f) continue
                     val bit = 1 shl axis

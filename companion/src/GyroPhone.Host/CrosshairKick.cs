@@ -5,7 +5,9 @@ namespace GyroPhone.Host;
 /// recoil. The bounce is one curve baked into <see cref="Curve"/> once (a sharp rise over <see cref="RiseMs"/>, then a
 /// damped spring that dips a little under its rest size and settles by <see cref="LengthMs"/>), so a frame only reads
 /// the table. <see cref="Once"/> kicks once per press; <see cref="Auto"/> keeps kicking every period while the Fire
-/// display button is held, each shot rising from wherever the last one is. As the phone's CrosshairKick.
+/// display button is held, each shot rising from wherever the last one is. The rifle look kicks back along the same
+/// curve, and the muzzle flash (<see cref="MuzzleFlash"/>) times itself by the same shots (<see cref="State.ShotAt"/>).
+/// As the phone's CrosshairKick.
 /// </summary>
 public static class CrosshairKick
 {
@@ -54,18 +56,31 @@ public static class CrosshairKick
     /// <summary>Auto rifle's shots per minute to a shot's period in milliseconds.</summary>
     public static long PeriodMs(int rpm) => 60_000L / Math.Clamp(rpm, 60, 1800);
 
-    /// <summary>One crosshair's kick: <see cref="Step"/> it each frame with whether it fires; <see cref="Value"/> is −0.2 .. 1 (0 rest).</summary>
+    /// <summary>One crosshair's or rifle's kick: <see cref="Step"/> it each frame with whether it fires; <see cref="Value"/> is −0.2 .. 1 (0 rest).</summary>
     public sealed class State
     {
         private long _shotAt = -1;
+
+        /// <summary>When the last shot was (ms), until its kick has settled (<see cref="LengthMs"/>); −1 none.</summary>
+        public long ShotAt => _shotAt;
         private float _from;
         private bool _held;
 
         public float Value { get; private set; }
 
-        /// <summary>At <paramref name="t"/> ms, with <paramref name="firing"/> held, in <paramref name="mode"/>: the kick now; true while it still moves.</summary>
-        public bool Step(long t, bool firing, int mode, long periodMs)
+        /// <summary>
+        /// At <paramref name="t"/> ms, with <paramref name="firing"/> held, in <paramref name="mode"/>: the kick now; true while it
+        /// still moves. With <paramref name="flash"/> the shots still count in <see cref="Off"/> (once per press) for the muzzle
+        /// flash, without kicking.
+        /// </summary>
+        public bool Step(long t, bool firing, int mode, long periodMs, bool flash = false)
         {
+            if (mode == Off && flash)
+            {
+                bool moving = Step(t, firing, Once, periodMs);
+                Value = 0f;
+                return moving;
+            }
             if (mode == Off)
             {
                 _held = firing;

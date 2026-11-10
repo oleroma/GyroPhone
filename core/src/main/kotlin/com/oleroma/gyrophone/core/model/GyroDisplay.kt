@@ -175,12 +175,19 @@ data class GyroDisplay(
      * LASER crosshair: on each Fire display shot it kicks out by [crosshairKickScale] of its size and bounces back
      * ([com.oleroma.gyrophone.core.engine.CrosshairKick]): [crosshairKick] 0 off, 1 once per press, 2 auto rifle at
      * [crosshairKickRpm] shots a minute while held. [crosshairKickLinesOnly]: only the lines grow (length and gap);
-     * off, the whole crosshair grows evenly, line thickness and dot too.
+     * off, the whole crosshair grows evenly, line thickness and dot too. The rifle look kicks back along the same
+     * curve, by the same size and rate.
      */
     val crosshairKick: Int = 1,
     val crosshairKickScale: Float = 0.5f,
     val crosshairKickRpm: Int = 600,
     val crosshairKickLinesOnly: Boolean = true,
+    /**
+     * LASER crosshair and rifle: each Fire display shot flashes ([com.oleroma.gyrophone.core.engine.MuzzleFlash]),
+     * in time with the kicks: white, then the Flash colour, then Flash end, back to its own colour. The crosshair
+     * glows as it flashes; the rifle's muzzle bursts.
+     */
+    val muzzleFlash: Boolean = true,
     /** LASER turned as a trackball: which way of it the laser faces ([com.oleroma.gyrophone.core.engine.LaserTrace.FACES], 0 −Z into the screen). */
     val laserFaces: Int = 0,
     /** LASER: Draw mode, the beam paints the sphere's inside ([com.oleroma.gyrophone.core.engine.LaserPaint]), [laserBrush] degrees round. */
@@ -419,6 +426,9 @@ enum class GyroDisplayColor(val kind: GyroDisplayKind, val key: String, val labe
     LASER_AIM(GyroDisplayKind.LASER, "aim", "Aim", 0xFF4AD8FF),
     LASER_AIM_BEHIND(GyroDisplayKind.LASER, "aim_behind", "Aim behind", 0xFF185A8A),
     LASER_CROSSHAIR_OUTLINE(GyroDisplayKind.LASER, "crosshair_outline", "Crosshair outline", 0xFF0E1116),
+    LASER_CROSSHAIR_AIM(GyroDisplayKind.LASER, "crosshair_aim", "Crosshair aiming", 0xFFFF2020),
+    LASER_FLASH(GyroDisplayKind.LASER, "flash", "Flash", 0xFFFFE04A),
+    LASER_FLASH_END(GyroDisplayKind.LASER, "flash_end", "Flash end", 0xFFFF7A1A),
     ;
 
     companion object {
