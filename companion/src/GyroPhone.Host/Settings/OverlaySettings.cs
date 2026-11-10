@@ -252,6 +252,12 @@ public sealed class OverlaySettings
     public float CrosshairKickScale { get; set; } = 0.5f;
     public int CrosshairKickRpm { get; set; } = 600;
     public bool CrosshairKickLinesOnly { get; set; } = true;
+    /// <summary>
+    /// Crosshair and rifle: each Fire display shot flashes (<see cref="GyroPhone.Host.MuzzleFlash"/>), in time with the kicks:
+    /// white, then the Flash colour, then Flash end, back to its own colour. The crosshair glows as it flashes; the rifle's
+    /// muzzle bursts. The rifle kicks back by the same Kick settings.
+    /// </summary>
+    public bool MuzzleFlash { get; set; } = true;
     /// <summary>Laser pointer turned as a trackball: which way of it the laser faces (0 −Z into the screen, 1 +Z, 2 +X, 3 −X, 4 +Y, 5 −Y).</summary>
     public int LaserFaces { get; set; }
     public bool LaserAxes { get; set; } = true;
@@ -527,6 +533,9 @@ public sealed class OverlaySettings
         new("aim", "Aim", 0xFF4AD8FF),
         new("aim_behind", "Aim behind", 0xFF185A8A),
         new("crosshair_outline", "Crosshair outline", 0xFF0E1116),
+        new("crosshair_aim", "Crosshair aiming", 0xFFFF2020),
+        new("flash", "Flash", 0xFFFFE04A),
+        new("flash_end", "Flash end", 0xFFFF7A1A),
     ];
 
     private static readonly OverlayColor[] DiskColors =

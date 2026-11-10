@@ -30,7 +30,7 @@ internal static class LaserDrawing
     /// <paramref name="buf"/> (the window's) keeps the grid between pictures.
     /// </summary>
     public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held, int active = 0, bool firing = false, float[]? raw = null, float aim = 0f,
-        DrawBuffers? buf = null, float kick = 0f)
+        DrawBuffers? buf = null, float kick = 0f, long shotAt = -1)
     {
         float r = Math.Min(area.Width, area.Height) / 2f * 0.95f;
         var c = new PointF(area.X + area.Width / 2f, area.Y + area.Height / 2f);
@@ -202,11 +202,17 @@ internal static class LaserDrawing
             if (trace != null) PaintRenderer.Draw(g, trace, s, front, c, r, turned, moveColors);
         }
 
-        // The rifle's muzzle flash: a flickering star at its muzzle tip (LaserTrace.Muzzle) in the Fire colour with a
-        // white-hot middle, longest along the barrel. As the phone's muzzleFlash.
+        // The muzzle flash's age now (ms), or −1 when there is none or Muzzle flash is off.
+        float flashMs = !s.MuzzleFlash || shotAt < 0 || nowMs - shotAt >= GyroPhone.Host.MuzzleFlash.LengthMs ? -1f : nowMs - shotAt;
+        int flashHot = s.Color("flash"), flashEnd = s.Color("flash_end");
+
+        // The rifle's muzzle flash (MuzzleFlash): a star at its muzzle tip (LaserTrace.Muzzle), longest along the barrel,
+        // white, then the Flash colour, then Flash end as it shrinks and fades, a new shape each shot. As the phone's muzzleFlash.
         void MuzzleFlash()
         {
-            var mz = LaserTrace.MuzzleAt(aim);
+            float gl = GyroPhone.Host.MuzzleFlash.Glow(flashMs);
+            if (gl <= 0f) return;
+            var mz = LaserTrace.MuzzleAt(aim, kick);
             PointF Along(float k)
             {
                 float x = mz.X, y = mz.Y, z = mz.Z - k;
@@ -216,11 +222,11 @@ internal static class LaserDrawing
             var ahead = Along(0.1f);
             float fx = ahead.X - tip.X, fy = ahead.Y - tip.Y;
             float fl = Math.Max(1e-3f, MathF.Sqrt(fx * fx + fy * fy));
-            // Flickers: a new shape every 35 ms.
-            long step = nowMs / 35L;
+            // A new shape each shot, bursting out and shrinking back.
+            long step = shotAt;
             float Rnd(int i) => Math.Abs(((step * 7919L + i * 104729L) ^ (step >> 3)) % 1000L) / 1000f;
-            var fireCol = Color.FromArgb(s.Color("fire"));
-            float size = r * (0.07f + 0.04f * Rnd(0));
+            var fireCol = Color.FromArgb(GyroPhone.Host.MuzzleFlash.Color(flashMs, flashHot, flashEnd, flashEnd & 0x00FFFFFF));
+            float size = r * (0.07f + 0.04f * Rnd(0)) * (0.5f + 0.7f * MathF.Sqrt(gl));
             float turn = Rnd(1) * 6.2832f;
             const int spikes = 8;
             var star = new PointF[spikes * 2];
@@ -233,10 +239,10 @@ internal static class LaserDrawing
                 float len = j % 2 == 0 ? size * (0.6f + 0.6f * Rnd(j + 2)) * (1f + 1.2f * along * along) : size * 0.28f;
                 star[j] = new PointF(tip.X + ca * len, tip.Y + sa * len);
             }
-            float glowR = size * 1.3f, core = size * 0.25f;
-            g.FillEllipse(Fade(fireCol, 0.3f), new RectangleF(tip.X - glowR, tip.Y - glowR, glowR * 2, glowR * 2));
+            float glowR = size * 1.8f, core = size * 0.3f;
+            g.FillEllipse(Fade(fireCol, 0.3f * gl), new RectangleF(tip.X - glowR, tip.Y - glowR, glowR * 2, glowR * 2));
             g.FillPolygon(fireCol, star);
-            g.FillEllipse(Color.FromArgb(Math.Clamp((int)(fireCol.A * 0.9f), 0, 255), 255, 255, 255), new RectangleF(tip.X - core, tip.Y - core, core * 2, core * 2));
+            g.FillEllipse(Color.FromArgb(Math.Clamp((int)(fireCol.A * gl), 0, 255), 255, 255, 255), new RectangleF(tip.X - core, tip.Y - core, core * 2, core * 2));
         }
 
         var (hit, hitZ) = At(beam.X, beam.Y, beam.Z);
@@ -245,7 +251,7 @@ internal static class LaserDrawing
         // the barrel to where it lands on the sphere, and a dot there with a soft halo. As the phone's laserSight.
         void LaserSight()
         {
-            var mz = LaserTrace.MuzzleAt(aim);
+            var mz = LaserTrace.MuzzleAt(aim, kick);
             var tip = At(m[0] * mz.X + m[1] * mz.Y + m[2] * mz.Z, m[3] * mz.X + m[4] * mz.Y + m[5] * mz.Z, m[6] * mz.X + m[7] * mz.Y + m[8] * mz.Z).P;
             var col = Color.FromArgb(s.Color("aim"));
             g.DrawLine(Fade(col, 0.25f * aim), px * 4f, tip, hit, round: true);
@@ -282,7 +288,7 @@ internal static class LaserDrawing
             Paint(false);
             var body = Color.FromArgb(s.Color("rifle"));
             float edge = Math.Max(1f, px * 0.75f);
-            foreach (var f in LaserTrace.RifleFaces(m, s.LaserAxonometric, turned, s.Perspective, aim))
+            foreach (var f in LaserTrace.RifleFaces(m, s.LaserAxonometric, turned, s.Perspective, aim, kick))
             {
                 var pts = new PointF[4];
                 for (int i = 0; i < 4; i++) pts[i] = new PointF(c.X + f.Corners[i].X * r, c.Y - f.Corners[i].Y * r);
@@ -290,7 +296,7 @@ internal static class LaserDrawing
                 g.DrawPolygon(Color.FromArgb(body.A, body.R / 2, body.G / 2, body.B / 2), edge, pts);
             }
             if (aim > 0f) LaserSight();
-            if (firing) MuzzleFlash();
+            MuzzleFlash();
             Paint(true);
             Axes(true);
             return;
@@ -321,6 +327,10 @@ internal static class LaserDrawing
                 s.CrosshairSize * rad * ak * (even ? kk : 1f));
             // The colour of the way the beam last moved (it keeps the last way's when the beam stops).
             var color = Color.FromArgb(unchecked((int)LaserTrace.DirectionColor(trace?.Moving ?? (0f, 0f, 0f), moveColors)));
+            // Aiming turns it laser red; each shot flashes white, then yellow, then orange, and back.
+            if (aim > 0f) color = Color.FromArgb(GyroPhone.Host.MuzzleFlash.Mix(color.ToArgb(), s.Color("crosshair_aim"), aim));
+            float glow = GyroPhone.Host.MuzzleFlash.Glow(flashMs);
+            if (flashMs >= 0f) color = Color.FromArgb(GyroPhone.Host.MuzzleFlash.Color(flashMs, flashHot, flashEnd, color.ToArgb()));
             if (held) color = Fade(color, 0.35f);
             var o = Color.FromArgb(s.Color("crosshair_outline"));
             var outline = Color.FromArgb(Math.Min(o.A, color.A), o);
@@ -336,6 +346,16 @@ internal static class LaserDrawing
             {
                 foreach (var l in ch.Lines) g.DrawLines(outline, w + 2f * px, Pts(l));
                 if (dot != null) g.DrawPolygon(outline, 2f * px, dot);
+            }
+            if (glow > 0f)
+            {
+                // The flash's burst of light: two soft, wide strokes under the lines.
+                foreach (var (wide, a) in new[] { (w + 10f * px, 0.22f), (w + 5f * px, 0.4f) })
+                {
+                    var gc = Fade(color, a * glow);
+                    foreach (var l in ch.Lines) g.DrawLines(gc, wide, Pts(l));
+                    if (dot != null) g.DrawPolygon(gc, wide, dot);
+                }
             }
             foreach (var l in ch.Lines) g.DrawLines(color, w, Pts(l));
             if (dot != null) g.FillPolygon(color, dot);

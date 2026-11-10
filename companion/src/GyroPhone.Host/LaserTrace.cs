@@ -159,7 +159,24 @@ public sealed class LaserTrace
     public const float AimPull = 0.12f;
 
     /// <summary>The rifle's muzzle tip at aim <paramref name="aim"/> (0 .. 1), in its own frame.</summary>
-    public static (float X, float Y, float Z) MuzzleAt(float aim) => (Muzzle.X, Muzzle.Y, Muzzle.Z + AimPull * Math.Clamp(aim, 0f, 1f));
+    public static (float X, float Y, float Z) MuzzleAt(float aim, float kick = 0f) => RifleAt(Muzzle.X, Muzzle.Y, Muzzle.Z, aim, kick);
+
+    /// <summary>Firing, the rifle kicks (<see cref="RifleFaces"/>' kick 1): back toward the player this far, and its muzzle up
+    /// this many degrees about <see cref="KickPivotZ"/> (the shoulder, where the stock meets it).</summary>
+    public const float KickBack = 0.12f, KickRiseDeg = 10f, KickPivotZ = 0.6f;
+
+    /// <summary>
+    /// A point of the rifle's own frame at aim <paramref name="aim"/> (0 .. 1) and kick <paramref name="kick"/> (0 rest .. 1
+    /// full, a little under 0 as it springs back): shouldered by <see cref="AimPull"/>, kicked back by <see cref="KickBack"/>
+    /// and its muzzle up by <see cref="KickRiseDeg"/>. <paramref name="dir"/>: a direction (a face's normal), turned only.
+    /// As the phone's LaserTrace.rifleAt.
+    /// </summary>
+    public static (float X, float Y, float Z) RifleAt(float x, float y, float z, float aim, float kick, bool dir = false)
+    {
+        float a = KickRiseDeg * kick * MathF.PI / 180f, c = MathF.Cos(a), s = MathF.Sin(a);
+        float pz = dir ? 0f : KickPivotZ, dz = z - pz;
+        return (x, y * c - dz * s, pz + y * s + dz * c + (dir ? 0f : AimPull * Math.Clamp(aim, 0f, 1f) + KickBack * kick));
+    }
 
     /// <summary>
     /// The beam now points at (x, y, z) (any length) at <paramref name="nowMs"/>. While a ratchet is
@@ -542,9 +559,9 @@ public sealed class LaserTrace
     /// <summary>
     /// The rifle turned by pose <paramref name="m"/>, seen as <see cref="ToView"/> sees it: the faces toward
     /// the viewer, farthest first, lit from above left. Aiming (<paramref name="aim"/> 0 .. 1, eased) it is shouldered
-    /// (<see cref="AimPull"/>) and a scope grows onto it. As the phone's.
+    /// (<see cref="AimPull"/>) and a scope grows onto it; firing it kicks (<paramref name="kick"/>, <see cref="RifleAt"/>). As the phone's.
     /// </summary>
-    public static List<Face> RifleFaces(float[] m, bool axon, float[]? turned, bool persp = false, float aim = 0f)
+    public static List<Face> RifleFaces(float[] m, bool axon, float[]? turned, bool persp = false, float aim = 0f, float kick = 0f)
     {
         var faces = new List<Face>(32);
         var p = new (float X, float Y, float Z)[8];
@@ -553,12 +570,13 @@ public sealed class LaserTrace
             ToView(m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z, axon, turned);
         (float X, float Y, float Z) Corner(float x, float y, float z)
         {
-            var v = Turn(x, y, z);
+            var q = RifleAt(x, y, z, aim, kick);
+            var v = Turn(q.X, q.Y, q.Z);
             if (!persp) return v;
             float f = Perspective(v.Z);
             return (v.X * f, v.Y * f, v.Z);
         }
-        float ak = Math.Clamp(aim, 0f, 1f), pull = AimPull * ak;
+        float ak = Math.Clamp(aim, 0f, 1f);
         int boxes = Rifle.Length / 6 + (ak > 0.02f ? Scope.Length / 6 : 0);
         for (int bi = 0; bi < boxes; bi++)
         {
@@ -569,12 +587,13 @@ public sealed class LaserTrace
             for (int k = 0; k < 8; k++)
                 p[k] = Corner(src[o] + ((k & 1) != 0 ? src[o + 3] * g : -src[o + 3] * g),
                     src[o + 1] + ((k & 2) != 0 ? src[o + 4] * g : -src[o + 4] * g),
-                    src[o + 2] + pull + ((k & 4) != 0 ? src[o + 5] * g : -src[o + 5] * g));
+                    src[o + 2] + ((k & 4) != 0 ? src[o + 5] * g : -src[o + 5] * g));
             for (int f = 0; f < 6; f++)
             {
                 int axis = f / 2;
                 float sign = f % 2 == 0 ? -1f : 1f;
-                var n = Turn(axis == 0 ? sign : 0f, axis == 1 ? sign : 0f, axis == 2 ? sign : 0f);
+                var nq = RifleAt(axis == 0 ? sign : 0f, axis == 1 ? sign : 0f, axis == 2 ? sign : 0f, aim, kick, dir: true);
+                var n = Turn(nq.X, nq.Y, nq.Z);
                 if (n.Z <= 1e-4f) continue;
                 int on = sign > 0 ? 1 << axis : 0;
                 // The face's corners, in order round it.

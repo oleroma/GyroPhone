@@ -562,9 +562,7 @@ internal sealed class OverlayForm : Form
         bool laserFading = false;
         if (Settings is { Kind: OverlayKind.Laser } lf)
         {
-            // The rifle's muzzle flash flickers while it fires.
             _scene.Firing = _engine.OutputHeld(lf.LaserFire);
-            if (lf.LaserRifle && _scene.Firing) laserFading = true;
             // Aiming eases in and out over AimEaseMs.
             float goal = _engine.OutputHeld(lf.LaserAim) ? 1f : 0f;
             float dt = _aimTicks == 0 ? 0f : Math.Clamp(now - _aimTicks, 0L, 100L);
@@ -575,10 +573,12 @@ internal sealed class OverlayForm : Form
                 _scene.Aim = goal > _scene.Aim ? Math.Min(goal, _scene.Aim + step) : Math.Max(goal, _scene.Aim - step);
                 laserFading = true;
             }
-            // A crosshair kicks on each shot and bounces back.
-            int kickMode = lf.LaserCrosshair && !lf.LaserRifle ? lf.CrosshairKick : CrosshairKick.Off;
-            if (_kick.Step(now, _scene.Firing, kickMode, CrosshairKick.PeriodMs(lf.CrosshairKickRpm))) laserFading = true;
+            // A crosshair or rifle kicks on each shot and bounces back, its muzzle flash in time.
+            bool kicks = lf.LaserCrosshair || lf.LaserRifle;
+            int kickMode = kicks ? lf.CrosshairKick : CrosshairKick.Off;
+            if (_kick.Step(now, _scene.Firing, kickMode, CrosshairKick.PeriodMs(lf.CrosshairKickRpm), kicks && lf.MuzzleFlash)) laserFading = true;
             _scene.Kick = _kick.Value;
+            _scene.ShotAt = _kick.ShotAt;
         }
         bool rested = StepRestFade(now);
         UpdateStats();

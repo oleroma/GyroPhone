@@ -32,6 +32,8 @@ internal sealed class OverlayScene
     public float Aim;
     /// <summary>The crosshair's fire kick now (CrosshairKick.State.Value).</summary>
     public float Kick;
+    /// <summary>When the last Fire display shot was (CrosshairKick.State.ShotAt, ms), for its muzzle flash; −1 none.</summary>
+    public long ShotAt = -1;
     /// <summary>This window's drawing buffers (drawn by one thread at a time, under the window's render lock).</summary>
     public readonly DrawBuffers Buffers = new();
 }
@@ -219,7 +221,7 @@ internal static class OverlayRenderer
                 DialDrawing.DrawHorizon(g, area, settings, m, m);
                 break;
             case OverlayKind.Laser:
-                LaserDrawing.Draw(g, area, settings, LaserDrawing.Aimed(m, settings), scene.Laser, scene.NowTicks, live && scene.Frame.RatchetHeld, live ? scene.Frame.PoseActive : 0, live && scene.Firing, m, live ? scene.Aim : 0f, scene.Buffers, live ? scene.Kick : 0f);
+                LaserDrawing.Draw(g, area, settings, LaserDrawing.Aimed(m, settings), scene.Laser, scene.NowTicks, live && scene.Frame.RatchetHeld, live ? scene.Frame.PoseActive : 0, live && scene.Firing, m, live ? scene.Aim : 0f, scene.Buffers, live ? scene.Kick : 0f, live ? scene.ShotAt : -1);
                 break;
             default:
                 DialDrawing.DrawDisk(g, area, settings, m, m);
