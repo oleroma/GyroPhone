@@ -19,8 +19,7 @@ GyroPhone was written with the help of AI (Claude). No screenshots, images or co
 
 ## Games
 
-- **Counter-Strike 2, Apex Legends, Valorant, Overwatch 2, Destiny 2, Titanfall 2, Quake Champions**: named in sensitivity presets (how far each game turns per mouse count).
-- **The Finals**: named in the README as an example of a game with its own controller gyro.
+- Popular shooters (such as Counter-Strike 2 and Apex Legends) are named in sensitivity presets, so gyro speed can match the game's camera.
 
 ## Other software
 
