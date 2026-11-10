@@ -159,10 +159,13 @@ internal fun GyroDisplaySettingsScreen(
     var confirmDelete by remember { mutableStateOf(false) }
     var picking by remember { mutableStateOf<GyroDisplayColor?>(null) }
     fun set(nd: GyroDisplay) = onChange(control.copy(display = nd))
+    // Its label names it only here and in lists, never on the display itself.
+    val name = control.label.ifBlank { d.kind.label }
     SettingsDialog(
-        title = d.kind.label,
+        title = name,
         subtitle = "Gyro display · settings",
         onClose = onClose,
+        titleField = { LabelField(control.label, d.kind.label, { onChange(latest.value.copy(label = it)) }) },
         actions = {
             TextButton(onClick = onDuplicate) { Text("Duplicate") }
             TextButton(onClick = { confirmDelete = true }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
@@ -443,7 +446,7 @@ internal fun GyroDisplaySettingsScreen(
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete this ${d.kind.label.lowercase()}?") },
+            title = { Text(if (control.label.isBlank()) "Delete this ${d.kind.label.lowercase()}?" else "Delete $name?") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false

@@ -105,6 +105,8 @@ public sealed class OverlaySettings
 {
     public string Id { get; set; } = NewId();
     public OverlayKind Kind { get; set; } = OverlayKind.Phone;
+    /// <summary>The user's name for it, shown in the lists and its settings, never drawn in the overlay; empty = its kind's name.</summary>
+    public string Label { get; set; } = "";
     public bool Shown { get; set; }
     public OverlayBackground Background { get; set; } = OverlayBackground.Transparent;
     /// <summary>Turns are shown this many times larger (0.5..3).</summary>

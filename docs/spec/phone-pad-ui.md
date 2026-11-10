@@ -80,7 +80,7 @@ A layer in use other than Base shows a pill for a second.
 
 ## Gyro displays
 
-Touch controls of kind DISPLAY (`core/.../model/GyroDisplay.kt`, drawn by `ui/GyroVisuals.kt` in plain 2D, no 3D library), placed in edit mode, each with its own settings (`ui/GyroVisualsSettings.kt`):
+Touch controls of kind DISPLAY (`core/.../model/GyroDisplay.kt`, drawn by `ui/GyroVisuals.kt` in plain 2D, no 3D library), placed in edit mode, each with its own settings (`ui/GyroVisualsSettings.kt`). Its **label** is edited in place in the settings' title (as a button's in the mapping editor, with the ☺ symbol picker); empty, the title shows the kind's name greyed. The label only names it there and in the delete question: the display never draws it, and the PC's phone overlay gets no label for it.
 
 - **3D phone** (the phone turned by the gyro);
 - **Ratchet ring** (yaw/pitch/roll arcs, lit while that axis moves the mouse, dim while ratcheted);

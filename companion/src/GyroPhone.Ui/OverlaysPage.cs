@@ -36,6 +36,9 @@ internal sealed class OverlaysPage : Page
     // Right
     private readonly StackPanel _settings = new();
     private readonly TextBlock _empty;
+    /// <summary>The picked overlay's label, and the name it has without one greyed behind it.</summary>
+    private readonly TextBox _label;
+    private readonly TextBlock _labelHint;
     private readonly Seg<int> _tabs;
     private int _tab;
     /// <summary>Tabs as on the phone: Window (PC only), Look, Draw, Paint, Colours and Turning; Draw, Paint and Colours only for the pointer.</summary>
@@ -230,6 +233,22 @@ internal sealed class OverlaysPage : Page
         _empty = Parts.Text("No overlays yet. Press \"Add overlay\" to put the phone, a 3D shape, an attitude indicator, a bubble disk or a pointer over your game.", "Sub");
         right.Children.Add(_empty);
         right.Children.Add(_settings);
+        // Label: names it in the lists and the tray, never drawn in the overlay.
+        _label = new TextBox { FontSize = 18, MaxLength = 40, Padding = new Thickness(4, 2, 4, 2), ToolTip = "Its name in the lists and the tray menu. The overlay itself never shows it." };
+        _labelHint = new TextBlock { FontSize = 18, Margin = new Thickness(8, 3, 0, 0), IsHitTestVisible = false };
+        _labelHint.SetResourceReference(TextBlock.ForegroundProperty, "FaintBrush");
+        _label.TextChanged += (_, _) =>
+        {
+            Parts.Show(_labelHint, _label.Text.Length == 0);
+            if (_refreshing) return;
+            var text = _label.Text;
+            Change(o => o.Label = text);
+            _window.RefreshNow();
+        };
+        var labelBox = new Grid { Margin = new Thickness(0, 0, 0, 10), MaxWidth = 360, HorizontalAlignment = HorizontalAlignment.Left, MinWidth = 220 };
+        labelBox.Children.Add(_label);
+        labelBox.Children.Add(_labelHint);
+        _settings.Children.Add(labelBox);
         var tabBar = new Border { BorderThickness = new Thickness(0, 0, 0, 1), Margin = new Thickness(0, 0, 0, 14) };
         tabBar.SetResourceReference(Border.BorderBrushProperty, "LineBrush");
         _tabs = new Seg<int>(t =>
@@ -789,6 +808,10 @@ internal sealed class OverlaysPage : Page
 
     private void ShowSettings(OverlaySettings o)
     {
+        // Not while typing in it: the caret would jump.
+        if (!_label.IsKeyboardFocused && _label.Text != o.Label) _label.Text = o.Label;
+        _labelHint.Text = o.Label.Length == 0 ? _app.OverlayName(o) : "";
+        Parts.Show(_labelHint, _label.Text.Length == 0);
         Parts.SetChecked(_shown, o.Shown);
         _background.Set(o.Background);
         _opacity.Set(MathF.Round(o.Opacity * 100f));
