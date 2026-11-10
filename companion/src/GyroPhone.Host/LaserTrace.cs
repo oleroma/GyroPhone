@@ -152,30 +152,35 @@ public sealed class LaserTrace
     // Under this the beam hasn't moved (a radian, about 0.1°).
     private const float MoveMin = 0.002f;
 
-    /// <summary>The rifle's muzzle tip in its own frame (x right, y up, z toward the stock).</summary>
+    /// <summary>The assault rifle's muzzle tip in its own frame (x right, y up, z toward the stock).</summary>
     public static readonly (float X, float Y, float Z) Muzzle = (0f, 0f, -0.93f);
 
-    /// <summary>Aiming (Rifle's aim 1) the rifle is shouldered: pulled back toward the player this far.</summary>
+    /// <summary>Aiming (RifleFaces' aim 1) the gun is shouldered: pulled back toward the player this far.</summary>
     public const float AimPull = 0.12f;
 
-    /// <summary>The rifle's muzzle tip at aim <paramref name="aim"/> (0 .. 1), in its own frame.</summary>
-    public static (float X, float Y, float Z) MuzzleAt(float aim, float kick = 0f) => RifleAt(Muzzle.X, Muzzle.Y, Muzzle.Z, aim, kick);
+    /// <summary>With Lowered when idle (RifleFaces' lower 1) the gun rests pitched this many degrees down.</summary>
+    public const float LowerDeg = 15f;
 
-    /// <summary>Firing, the rifle kicks (<see cref="RifleFaces"/>' kick 1): back toward the player this far, and its muzzle up
-    /// this many degrees about <see cref="KickPivotZ"/> (the shoulder, where the stock meets it).</summary>
-    public const float KickBack = 0.12f, KickRiseDeg = 10f, KickPivotZ = 0.6f;
+    /// <summary>The gun's muzzle tip at aim <paramref name="aim"/> (0 .. 1), kick and lowered, in its own frame.</summary>
+    public static (float X, float Y, float Z) MuzzleAt(float aim, float kick = 0f, Guns.Gun? gun = null, float lower = 0f)
+    {
+        var g = gun ?? Guns.AR;
+        return RifleAt(0f, 0f, g.MuzzleZ, aim, kick, false, g, lower);
+    }
 
     /// <summary>
-    /// A point of the rifle's own frame at aim <paramref name="aim"/> (0 .. 1) and kick <paramref name="kick"/> (0 rest .. 1
-    /// full, a little under 0 as it springs back): shouldered by <see cref="AimPull"/>, kicked back by <see cref="KickBack"/>
-    /// and its muzzle up by <see cref="KickRiseDeg"/>. <paramref name="dir"/>: a direction (a face's normal), turned only.
+    /// A point of <paramref name="gun"/>'s own frame at aim <paramref name="aim"/> (0 .. 1), kick <paramref name="kick"/> (0 rest
+    /// .. 1 full, a little under 0 as it springs back) and lowered by <paramref name="lower"/> (0 .. 1): shouldered by
+    /// <see cref="AimPull"/>, kicked back by its recoil's Back and its muzzle up by its ClimbDeg, and pitched down by
+    /// <see cref="LowerDeg"/>, both about its pivot. <paramref name="dir"/>: a direction (a face's normal), turned only.
     /// As the phone's LaserTrace.rifleAt.
     /// </summary>
-    public static (float X, float Y, float Z) RifleAt(float x, float y, float z, float aim, float kick, bool dir = false)
+    public static (float X, float Y, float Z) RifleAt(float x, float y, float z, float aim, float kick, bool dir = false, Guns.Gun? gun = null, float lower = 0f)
     {
-        float a = KickRiseDeg * kick * MathF.PI / 180f, c = MathF.Cos(a), s = MathF.Sin(a);
-        float pz = dir ? 0f : KickPivotZ, dz = z - pz;
-        return (x, y * c - dz * s, pz + y * s + dz * c + (dir ? 0f : AimPull * Math.Clamp(aim, 0f, 1f) + KickBack * kick));
+        var g = gun ?? Guns.AR;
+        float a = (g.Recoil.ClimbDeg * kick - LowerDeg * Math.Clamp(lower, 0f, 1f)) * MathF.PI / 180f, c = MathF.Cos(a), s = MathF.Sin(a);
+        float pz = dir ? 0f : g.PivotZ, dz = z - pz;
+        return (x, y * c - dz * s, pz + y * s + dz * c + (dir ? 0f : AimPull * Math.Clamp(aim, 0f, 1f) + g.Recoil.Back * kick));
     }
 
     /// <summary>
@@ -524,94 +529,105 @@ public sealed class LaserTrace
         return (front, back);
     }
 
-    /// <summary>
-    /// The rifle look's model in the phone's frame (x right, y up, z toward the player), the muzzle out of
-    /// the phone's back as the beam: boxes as centre x, y, z and half sizes, unit radius. As the phone's.
-    /// </summary>
-    private static readonly float[] Rifle =
-    [
-        // stock, buffer tube, receiver, carry rail, handguard, barrel, muzzle, front sight, magazine, grip
-        0.0f, -0.05f, 0.68f, 0.05f, 0.09f, 0.2f,
-        0.0f, 0.0f, 0.42f, 0.03f, 0.03f, 0.08f,
-        0.0f, 0.0f, 0.12f, 0.055f, 0.075f, 0.22f,
-        0.0f, 0.1f, 0.1f, 0.028f, 0.025f, 0.18f,
-        0.0f, 0.0f, -0.32f, 0.055f, 0.055f, 0.2f,
-        0.0f, 0.0f, -0.7f, 0.018f, 0.018f, 0.18f,
-        0.0f, 0.0f, -0.9f, 0.026f, 0.026f, 0.03f,
-        0.0f, 0.07f, -0.5f, 0.012f, 0.06f, 0.015f,
-        0.0f, -0.2f, 0.0f, 0.035f, 0.12f, 0.06f,
-        0.0f, -0.17f, 0.28f, 0.03f, 0.09f, 0.045f,
-    ];
+    /// <summary>A round scope's sides: this many.</summary>
+    private const int ScopeSides = 12;
 
-    /// <summary>The scope that grows onto the rifle's carry rail while aiming: tube, objective bell, eyepiece, two mounts.</summary>
-    private static readonly float[] Scope =
-    [
-        0.0f, 0.17f, 0.08f, 0.032f, 0.032f, 0.2f,
-        0.0f, 0.17f, -0.14f, 0.045f, 0.045f, 0.035f,
-        0.0f, 0.17f, 0.3f, 0.04f, 0.04f, 0.03f,
-        0.0f, 0.132f, 0.0f, 0.014f, 0.01f, 0.014f,
-        0.0f, 0.132f, 0.16f, 0.014f, 0.01f, 0.014f,
-    ];
-
-    /// <summary>One face of the rifle in the picture: its corners (x, y, unit radius), how lit it is (0..1) and its depth.</summary>
+    /// <summary>One face of the gun in the picture: its corners (x, y, unit radius, any number), how lit it is (0..1) and its depth.</summary>
     public readonly record struct Face((float X, float Y)[] Corners, float Light, float Depth);
 
     /// <summary>
-    /// The rifle turned by pose <paramref name="m"/>, seen as <see cref="ToView"/> sees it: the faces toward
-    /// the viewer, farthest first, lit from above left. Aiming (<paramref name="aim"/> 0 .. 1, eased) it is shouldered
-    /// (<see cref="AimPull"/>) and a scope grows onto it; firing it kicks (<paramref name="kick"/>, <see cref="RifleAt"/>). As the phone's.
+    /// <paramref name="gun"/> turned by pose <paramref name="m"/>, seen as <see cref="ToView"/> sees it: the faces toward the
+    /// viewer, farthest first, lit from above left. Aiming (<paramref name="aim"/> 0 .. 1, eased) it is shouldered
+    /// (<see cref="AimPull"/>) and, with <paramref name="scope"/>, its round scope grows onto it; firing it kicks
+    /// (<paramref name="kick"/>, <see cref="RifleAt"/>); <paramref name="lower"/> pitches it down. As the phone's.
     /// </summary>
-    public static List<Face> RifleFaces(float[] m, bool axon, float[]? turned, bool persp = false, float aim = 0f, float kick = 0f)
+    public static List<Face> RifleFaces(float[] m, bool axon, float[]? turned, bool persp = false, float aim = 0f, float kick = 0f,
+        Guns.Gun? gun = null, float lower = 0f, bool scope = true)
     {
-        var faces = new List<Face>(32);
-        var p = new (float X, float Y, float Z)[8];
+        var g = gun ?? Guns.AR;
+        List<Face> shown = new(64);
         const float lx = -0.35f, ly = 0.6f, lz = 0.72f;
-        (float X, float Y, float Z) Turn(float x, float y, float z) =>
-            ToView(m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z, axon, turned);
-        (float X, float Y, float Z) Corner(float x, float y, float z)
-        {
-            var q = RifleAt(x, y, z, aim, kick);
-            var v = Turn(q.X, q.Y, q.Z);
-            if (!persp) return v;
-            float f = Perspective(v.Z);
-            return (v.X * f, v.Y * f, v.Z);
-        }
         float ak = Math.Clamp(aim, 0f, 1f);
-        int boxes = Rifle.Length / 6 + (ak > 0.02f ? Scope.Length / 6 : 0);
-        for (int bi = 0; bi < boxes; bi++)
+        (float X, float Y, float Z) Turn((float X, float Y, float Z) q) =>
+            ToView(m[0] * q.X + m[1] * q.Y + m[2] * q.Z, m[3] * q.X + m[4] * q.Y + m[5] * q.Z, m[6] * q.X + m[7] * q.Y + m[8] * q.Z, axon, turned);
+        // One face: its corners in the gun's own frame, and its normal.
+        void AddFace((float X, float Y, float Z)[] c, float nx, float ny, float nz)
         {
-            bool scope = bi >= Rifle.Length / 6;
-            var src = scope ? Scope : Rifle;
-            int o = (scope ? bi - Rifle.Length / 6 : bi) * 6;
-            float g = scope ? ak : 1f; // the scope grows in
-            for (int k = 0; k < 8; k++)
-                p[k] = Corner(src[o] + ((k & 1) != 0 ? src[o + 3] * g : -src[o + 3] * g),
-                    src[o + 1] + ((k & 2) != 0 ? src[o + 4] * g : -src[o + 4] * g),
-                    src[o + 2] + ((k & 4) != 0 ? src[o + 5] * g : -src[o + 5] * g));
+            var n = Turn(RifleAt(nx, ny, nz, ak, kick, true, g, lower));
+            if (n.Z <= 1e-4f) return;
+            float light = Math.Clamp(0.45f + 0.55f * Math.Max(0f, n.X * lx + n.Y * ly + n.Z * lz), 0f, 1f);
+            var corners = new (float X, float Y)[c.Length];
+            float depth = 0f;
+            for (int i = 0; i < c.Length; i++)
+            {
+                var v = Turn(RifleAt(c[i].X, c[i].Y, c[i].Z, ak, kick, false, g, lower));
+                float f = persp ? Perspective(v.Z) : 1f;
+                corners[i] = (v.X * f, v.Y * f);
+                depth += v.Z;
+            }
+            shown.Add(new Face(corners, light, depth / c.Length));
+        }
+        void Box(float cx, float cy, float cz, float hx, float hy, float hz)
+        {
+            float[] ctr = [cx, cy, cz], h = [hx, hy, hz], us = [-1f, 1f, 1f, -1f], ws = [-1f, -1f, 1f, 1f];
             for (int f = 0; f < 6; f++)
             {
-                int axis = f / 2;
+                int axis = f / 2, o1 = (axis + 1) % 3, o2 = (axis + 2) % 3;
                 float sign = f % 2 == 0 ? -1f : 1f;
-                var nq = RifleAt(axis == 0 ? sign : 0f, axis == 1 ? sign : 0f, axis == 2 ? sign : 0f, aim, kick, dir: true);
-                var n = Turn(nq.X, nq.Y, nq.Z);
-                if (n.Z <= 1e-4f) continue;
-                int on = sign > 0 ? 1 << axis : 0;
-                // The face's corners, in order round it.
-                int a = 1 << ((axis + 1) % 3), b = 1 << ((axis + 2) % 3);
-                int[] ring = [on, a | on, a | b | on, b | on];
-                var corners = new (float X, float Y)[4];
-                float depth = 0f;
-                for (int i = 0; i < 4; i++)
+                var c = new (float X, float Y, float Z)[4];
+                for (int k = 0; k < 4; k++)
                 {
-                    corners[i] = (p[ring[i]].X, p[ring[i]].Y);
-                    depth += p[ring[i]].Z;
+                    var p = (float[])ctr.Clone();
+                    p[axis] += sign * h[axis];
+                    p[o1] += us[k] * h[o1];
+                    p[o2] += ws[k] * h[o2];
+                    c[k] = (p[0], p[1], p[2]);
                 }
-                float light = Math.Clamp(0.45f + 0.55f * Math.Max(0f, n.X * lx + n.Y * ly + n.Z * lz), 0f, 1f);
-                faces.Add(new Face(corners, light, depth / 4f));
+                AddFace(c, axis == 0 ? sign : 0f, axis == 1 ? sign : 0f, axis == 2 ? sign : 0f);
             }
         }
-        faces.Sort((x, y) => x.Depth.CompareTo(y.Depth));
-        return faces;
+        // A round tube along z at height y, from z0 (front) to z1, radius r: its sides and both ends.
+        void Tube(float y, float z0, float z1, float r)
+        {
+            const int k = ScopeSides;
+            for (int i = 0; i < k; i++)
+            {
+                float t0 = 2f * MathF.PI * i / k, t1 = 2f * MathF.PI * (i + 1) / k, tm = (t0 + t1) / 2f;
+                AddFace([(r * MathF.Cos(t0), y + r * MathF.Sin(t0), z0), (r * MathF.Cos(t1), y + r * MathF.Sin(t1), z0),
+                    (r * MathF.Cos(t1), y + r * MathF.Sin(t1), z1), (r * MathF.Cos(t0), y + r * MathF.Sin(t0), z1)],
+                    MathF.Cos(tm), MathF.Sin(tm), 0f);
+            }
+            foreach (var (z, nz) in new[] { (z0, -1f), (z1, 1f) })
+            {
+                var c = new (float X, float Y, float Z)[k];
+                for (int j = 0; j < k; j++)
+                {
+                    float t = 2f * MathF.PI * j / k;
+                    c[j] = (r * MathF.Cos(t), y + r * MathF.Sin(t), z);
+                }
+                AddFace(c, 0f, 0f, nz);
+            }
+        }
+        var b = g.Boxes;
+        for (int o = 0; o < b.Length; o += 6) Box(b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5]);
+        if (scope && g.Scope is { } sc && ak > 0.02f)
+        {
+            // It grows in about its middle.
+            float mid = (sc.Front + sc.Back) / 2f;
+            float Zz(float z) => mid + (z - mid) * ak;
+            float baseY = sc.Y - sc.Radius, rail = 0f;
+            for (int o = 0; o < b.Length; o += 6) rail = Math.Max(rail, b[o + 1] + b[o + 4]);
+            foreach (float mz in new[] { sc.Front + 0.06f, sc.Back - 0.08f })
+            {
+                float h = Math.Max((baseY - rail) / 2f, 0.004f) * ak;
+                Box(0f, rail + h, Zz(mz), 0.012f * ak, h, 0.014f);
+            }
+            Tube(sc.Y, Zz(sc.Front + 0.04f), Zz(sc.Back - 0.03f), sc.Radius * ak);
+            Tube(sc.Y, Zz(sc.Front - 0.03f), Zz(sc.Front + 0.04f), sc.Bell * ak);
+            Tube(sc.Y, Zz(sc.Back - 0.03f), Zz(sc.Back), sc.Radius * 1.25f * ak);
+        }
+        shown.Sort((x, y) => x.Depth.CompareTo(y.Depth));
+        return shown;
     }
 
     /// <summary>

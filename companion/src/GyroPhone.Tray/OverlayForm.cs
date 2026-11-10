@@ -573,12 +573,23 @@ internal sealed class OverlayForm : Form
                 _scene.Aim = goal > _scene.Aim ? Math.Min(goal, _scene.Aim + step) : Math.Max(goal, _scene.Aim - step);
                 laserFading = true;
             }
-            // A crosshair or rifle kicks on each shot and bounces back, its muzzle flash in time.
+            // A crosshair or gun kicks on each shot with the gun's recoil and bounces back, its muzzle flash in time.
             bool kicks = lf.LaserCrosshair || lf.LaserRifle;
             int kickMode = kicks ? lf.CrosshairKick : CrosshairKick.Off;
-            if (_kick.Step(now, _scene.Firing, kickMode, CrosshairKick.PeriodMs(lf.CrosshairKickRpm), kicks && lf.MuzzleFlash)) laserFading = true;
+            var gun = lf.Gun();
+            if (_kick.Step(now, _scene.Firing, kickMode, CrosshairKick.PeriodMs(lf.RpmOf(gun)), kicks && lf.MuzzleFlash, gun.Recoil)) laserFading = true;
             _scene.Kick = _kick.Value;
             _scene.ShotAt = _kick.ShotAt;
+            // A gun lowered when idle comes up while aiming or firing.
+            float up = !lf.LaserRifle || !lf.GunLowered || _scene.Firing || _kick.ShotAt >= 0 || goal > 0f ? 1f : 0f;
+            float raised = 1f - _scene.Lower;
+            if (raised != up)
+            {
+                float step = dt <= 0f ? 1f : dt / AimEaseMs;
+                raised = up > raised ? Math.Min(up, raised + step) : Math.Max(up, raised - step);
+                _scene.Lower = 1f - raised;
+                laserFading = true;
+            }
         }
         bool rested = StepRestFade(now);
         UpdateStats();
