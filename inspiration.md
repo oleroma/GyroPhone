@@ -11,7 +11,7 @@ GyroPhone was written with the help of AI (Claude). No screenshots, images or co
 
 ## Controllers and devices
 
-- **Sony DualSense** and **DualShock 4**: named as pads GyroPhone's PC side can appear as. The optional DualSense output is an accessibility measure for games that accept no controller other than a DualSense. Its driver header lists a wired DualSense's USB IDs and HID report layout so those games accept it. The driver is not part of GyroPhone's releases. A code comment once named the DualSense as the shape of the on-screen controller drawing.
+- **Sony DualSense** and **DualShock 4**: named as pads GyroPhone's PC side can appear as. The optional DualSense output is an accessibility measure for games that accept no controller other than a DualSense. Its driver header lists a wired DualSense's USB IDs and HID report layout so those games accept it. The driver is a trial: it can appear in test pre-releases, but not in GyroPhone's releases. A code comment once named the DualSense as the shape of the on-screen controller drawing.
 - **Xbox 360 / Xbox**: named as an output mode and a controller diagram style.
 - **GameSir X5 / X5 Lite**: named as the clip-on controller GyroPhone was tested with, and as a controller diagram style. An early app icon was described as a phone in an X5 Lite grip (since replaced by an original icon).
 - **Nintendo**, **PlayStation**, **8BitDo**, **Razer Kishi**, **Backbone One**: named in the list of controllers the app recognises by name, to pick button labels and diagrams.
