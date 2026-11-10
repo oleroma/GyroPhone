@@ -622,6 +622,22 @@ public sealed class LaserTrace
     /// <summary>A round scope's sides: this many.</summary>
     private const int ScopeSides = 12;
 
+    /// <summary>The gun look's picture may reach this far out (sphere radii): its frame's edge.</summary>
+    public const float GunFrame = 1f / 0.95f;
+
+    /// <summary>
+    /// How much the gun look is drawn smaller so <paramref name="gun"/> fits its frame (<see cref="GunFrame"/>) even fully hip
+    /// fired by <paramref name="hip"/> and kicked by <paramref name="kick"/>: measured at rest, aiming straight ahead (pose
+    /// <paramref name="m"/>, unturned); 1 when it fits. As the phone's gunFrameScale.
+    /// </summary>
+    public static float GunFrameScale(float[] m, bool axon, bool persp, Guns.Gun gun, float hip, float kick)
+    {
+        float e = 0f;
+        foreach (var f in RifleFaces(m, axon, null, persp, 0f, kick, gun, 0f, false, hip))
+            foreach (var p in f.Corners) e = Math.Max(e, MathF.Sqrt(p.X * p.X + p.Y * p.Y));
+        return e <= GunFrame ? 1f : GunFrame / e;
+    }
+
     /// <summary>One face of the gun in the picture: its corners (x, y, unit radius, any number), how lit it is (0..1) and its depth.</summary>
     public readonly record struct Face((float X, float Y)[] Corners, float Light, float Depth);
 

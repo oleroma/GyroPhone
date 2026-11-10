@@ -74,4 +74,20 @@ public class SpreadTests
             Assert.True(muzzle.Z > -1.1f && muzzle.Z < -0.3f, g.Name);
         }
     }
+
+    [Fact]
+    public void HipFiredGunFitsItsFrame()
+    {
+        var m = LaserTrace.Aim(Identity);
+        foreach (var g in Guns.All)
+        {
+            float k = LaserTrace.GunFrameScale(m, true, true, g, 1f, 1f);
+            Assert.True(k > 0.3f && k <= 1f, g.Name);
+            float e = 0f;
+            foreach (var f in LaserTrace.RifleFaces(m, true, null, true, 0f, 1f, g, 0f, false, 1f))
+                foreach (var p in f.Corners) e = Math.Max(e, MathF.Sqrt(p.X * p.X + p.Y * p.Y));
+            Assert.True(e * k <= LaserTrace.GunFrame + 1e-4f, g.Name);
+        }
+        Assert.Equal(1f, LaserTrace.GunFrameScale(m, true, false, Guns.Pistol, 0f, 0f));
+    }
 }

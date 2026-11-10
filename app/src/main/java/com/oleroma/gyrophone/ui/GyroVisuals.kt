@@ -168,7 +168,9 @@ fun GyroDisplaysLayer(
                 val hipGoal = if (d.laserRifle && (firing || k.shotAt >= 0L) && runtime.gyroFeed(b.control.id)?.aiming != true) 1f else 0f
                 val hipWas = hips[b.control.id] ?: hipGoal
                 if (hipWas != hipGoal) {
-                    val step = if (dt <= 0f) 1f else dt / AIM_EASE_MS
+                    // Into hip fire quickly; back out over Hip fire recovery.
+                    val ms = if (hipGoal > hipWas) AIM_EASE_MS else d.gunHipRecoverMs.coerceIn(50, 2000).toFloat()
+                    val step = if (dt <= 0f) 1f else dt / ms
                     hips[b.control.id] = if (hipGoal > hipWas) minOf(hipGoal, hipWas + step) else maxOf(hipGoal, hipWas - step)
                     until = maxOf(until, t + 20)
                 } else hips[b.control.id] = hipGoal
@@ -275,6 +277,26 @@ private class VisState {
     private val hitU = FloatArray(3)
     private val hitV = FloatArray(3)
     private val sightAt = FloatArray(3)
+
+    // The last gunFrameScale: its inputs and result.
+    private var frameKey = ""
+    private var frameScale = 1f
+    private val restPose = FloatArray(9)
+
+    /** [LaserTrace.gunFrameScale] for [d]'s gun, fully hip fired and kicked, kept while its inputs stay the same. */
+    private fun gunFrameScale(d: GyroDisplay): Float {
+        val gun = d.gun()
+        val kickK = d.kickOf(gun).coerceIn(0f, 3f) * 2f
+        val hip = d.gunHipPull.coerceIn(0f, 1f)
+        val key = "${gun.key} $hip $kickK ${d.laserAxonometric} ${d.perspective}"
+        if (key != frameKey) {
+            restPose.fill(0f); restPose[0] = 1f; restPose[4] = 1f; restPose[8] = 1f
+            LaserTrace.aim(restPose)
+            frameScale = LaserTrace.gunFrameScale(restPose, d.laserAxonometric, d.perspective, gun, hip, kickK)
+            frameKey = key
+        }
+        return frameScale
+    }
 
     /** The muzzle flash's age now (ms), or −1 when there is none or [GyroDisplay.muzzleFlash] is off. */
     private fun flashMs(d: GyroDisplay): Float =
@@ -834,7 +856,8 @@ private class VisState {
         laserPersp = d.perspective
         // Sphere turns: everything on it is seen from the pose, so the beam stays ahead.
         laserTurned = if (!d.laserSphereTurns) null else if (d.turnsWith == com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL) turnBase else m
-        val r = minOf(box.width, box.height) / 2f * 0.95f
+        // The gun look drawn a little smaller where hip fire would push the gun out of its frame.
+        val r = minOf(box.width, box.height) / 2f * 0.95f * (if (d.laserRifle) gunFrameScale(d) else 1f)
         val c = box.center
         val held = feed?.ratchetHeld == true
         LaserTrace.beam(m, beam)

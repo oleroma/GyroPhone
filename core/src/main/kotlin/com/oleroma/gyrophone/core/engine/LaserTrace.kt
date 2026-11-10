@@ -659,6 +659,21 @@ class LaserTrace {
         /** A round scope's sides: this many. */
         private const val SCOPE_SIDES = 12
 
+        /** The gun look's picture may reach this far out (sphere radii): its frame's edge. */
+        const val GUN_FRAME = 1f / 0.95f
+
+        /**
+         * How much the gun look is drawn smaller so [gun] fits its frame ([GUN_FRAME]) even fully hip fired by
+         * [hip] and kicked by [kick]: measured at rest, aiming straight ahead (pose [m], unturned); 1 when it fits.
+         */
+        fun gunFrameScale(m: FloatArray, axon: Boolean, persp: Boolean, gun: Guns.Gun, hip: Float, kick: Float): Float {
+            var e = 0f
+            for (f in rifle(m, axon, null, persp, 0f, kick, gun, 0f, false, hip)) {
+                for (i in 0 until f.xy.size / 2) e = maxOf(e, sqrt(f.xy[i * 2] * f.xy[i * 2] + f.xy[i * 2 + 1] * f.xy[i * 2 + 1]))
+            }
+            return if (e <= GUN_FRAME) 1f else GUN_FRAME / e
+        }
+
         /** One face of the gun in the picture: its corners (x, y pairs, unit radius, any number) and how lit it is (0..1). */
         class Face(val xy: FloatArray, val light: Float, val depth: Float)
 

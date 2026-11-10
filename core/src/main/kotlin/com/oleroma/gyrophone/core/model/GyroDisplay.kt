@@ -189,6 +189,8 @@ data class GyroDisplay(
     val gunScope: Boolean = true,
     /** LASER Gun look, hip fire (firing without aiming): it comes up level and pulls back toward you, this share of the way to its muzzle at the sphere's centre. */
     val gunHipPull: Float = 0.85f,
+    /** LASER Gun look: how long it takes to ease back from hip fire once firing stops (ms). */
+    val gunHipRecoverMs: Int = 300,
     val crosshairKickLinesOnly: Boolean = true,
     /**
      * LASER crosshair and rifle: each Fire display shot flashes ([com.oleroma.gyrophone.core.engine.MuzzleFlash]),
