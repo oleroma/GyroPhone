@@ -94,6 +94,22 @@ class GyroPoseGravityTest {
         p.matrix(m)
         assertEquals(1f, m[8], 1e-2f) // screen faces the player again
     }
+
+    @Test fun resettlingAfterAPauseTakesGravityAtOnce() {
+        val p = GyroPose()
+        p.setUp(0f, 9.8f, 0f, 9.8f)
+        repeat(400) { p.fuse(0f, 0f, 0f, 0.005f, 0f) }
+        // Covered (no samples) while the phone was laid screen up; then samples again.
+        p.resettle()
+        p.setUp(0f, 0f, 9.8f, 9.8f)
+        repeat(80) { p.fuse(0f, 0f, 0f, 0.005f, 0f) }
+        val m = FloatArray(9)
+        p.matrix(m)
+        // Up as the pose has it (the matrix's middle row) is the measured one.
+        assertEquals(0f, m[3], 0.05f)
+        assertEquals(0f, m[4], 0.05f)
+        assertEquals(1f, m[5], 0.05f)
+    }
 }
 
 class GyroTraceTest {

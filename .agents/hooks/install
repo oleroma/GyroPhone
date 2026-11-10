@@ -6,7 +6,9 @@
 #    touched (it reads parts of itself by path while it runs): the new build waits next to it
 #    as GyroPhoneCompanion.exe.new, and the running companion (or watcher) shuts down, copies
 #    it into place and starts again within a few seconds, even with a phone connected
-#    (pairing and settings live in %APPDATA%\GyroPhone).
+#    (pairing and settings live in %APPDATA%\GyroPhone). OpenCV's DLLs, which ship beside the exe,
+#    are copied next to it when they changed; one a running companion holds waits as <dll>.new,
+#    and the update finisher moves it in.
 # 2. Copies the optional pad driver's files (the folder the build zipped for releases) to the
 #    repo's build\GyroPhonePad-driver folder (next to the newest APK and companion), without installing it: Olex runs its install.cmd himself
 #    (admin prompt, its own signing key on this PC), and uninstall.cmd removes it.
@@ -23,10 +25,11 @@ note() { echo "note: $*"; }
 
 ver="$1"
 shift
-exe="" driver_zip=""
+exe="" driver_zip="" dlls=()
 for f in "$@"; do
   case "$f" in
     */GyroPhoneCompanion.exe) exe="$f" ;;
+    *.dll) dlls+=("$f") ;;
     */GyroPhonePad-driver.zip) driver_zip="$f" ;;
   esac
 done
@@ -49,12 +52,36 @@ companion_running() {
   powershell -NoProfile -Command '$p = @(Get-Process -Name GyroPhoneCompanion -ErrorAction SilentlyContinue | Where-Object { -not $_.Path -or $_.Path -eq $env:APP_EXE_W }); if ($p.Count -gt 0) { exit 0 } else { exit 1 }'
 }
 
+# The DLLs that ship beside the exe (OpenCV's, for the latency test), copied in only when they
+# changed. A running companion holds one only after it opened the latency test: then the new file
+# waits as <dll>.new, and the update finisher (which comes with the new exe) moves it in.
+install_dlls() {
+  local f dest
+  for f in "${dlls[@]}"; do
+    dest="$app/$(basename "$f")"
+    if cmp -s "$f" "$dest"; then
+      # Already in place: an older build's DLL still waiting would otherwise replace it at the next update.
+      if [ -e "$dest.new" ]; then rm -f "$dest.new" 2>/dev/null || true; fi
+      continue
+    fi
+    cp "$f" "$dest.new.tmp"
+    if mv -f "$dest.new.tmp" "$dest" 2>/dev/null; then
+      if [ -e "$dest.new" ]; then rm -f "$dest.new" 2>/dev/null || true; fi
+    else
+      mv -f "$dest.new.tmp" "$dest.new"
+      note "$(basename "$f") is in use: it waits as $(basename "$f").new until the companion updates."
+    fi
+  done
+}
+
 install_companion() {
   if [ -z "$exe" ]; then
     note "This build has no companion."
     return
   fi
   mkdir -p "$app"
+  # Before the exe, so they are in place when a running companion sees the new exe and updates.
+  install_dlls
   # The build the exe was made from, stamped in it as <version>-<commit>. The build hook reuses
   # an unchanged companion from an older build, so this can be older than this build ($ver).
   local cver f

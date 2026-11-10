@@ -58,14 +58,18 @@ merge() {
   } >"$dest"
 }
 
+# The phone keeps its recordings in the app's external files, which adb reads directly (the
+# phone runs a non-debuggable build, so run-as doesn't work there).
+phone_dir=/sdcard/Android/data/$pkg/files/debug
+
 pull_newest_phone() {
   local name
-  name="$(adb exec-out run-as "$pkg" ls files/debug 2>/dev/null | tr -d '\r' | grep '^phone-.*\.txt$' | sort | tail -1 || true)"
+  name="$(adb exec-out ls "$phone_dir" 2>/dev/null | tr -d '\r' | grep '^phone-.*\.txt$' | sort | tail -1 || true)"
   if [ -z "$name" ]; then
     echo "No phone recording yet. Turn on Settings > Debug tools and tap Record on the pad, or run: $0 record" >&2
     exit 1
   fi
-  adb exec-out run-as "$pkg" cat "files/debug/$name" >"$out/$name"
+  adb exec-out cat "$phone_dir/$name" >"$out/$name"
   echo "$out/$name"
 }
 

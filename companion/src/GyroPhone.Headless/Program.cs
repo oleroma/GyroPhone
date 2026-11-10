@@ -107,7 +107,7 @@ internal static class Program
         var marker = new HeldKeysMarker(markerPath);
         var watchdog = new Watchdog(engine, clock, marker, store,
             networkPublicProbe: NetworkCategory.IsAnyConnectedPublic, log: log.Write,
-            keyLabelsProbe: KeyboardLayoutProbe.Read);
+            keyLabelsProbe: KeyboardLayoutProbe.Read, tickSleep: () => new HighResolutionSleep());
 
         engine.Start(clock.NowUs);
         if (pair) engine.OpenPairingWindow();

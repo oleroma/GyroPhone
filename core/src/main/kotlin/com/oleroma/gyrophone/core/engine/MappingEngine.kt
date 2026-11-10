@@ -178,6 +178,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         return r
     }
 
+    // [refreshSens]' per-axis working arrays, kept so a touch makes none.
+    private val sensBest = arrayOfNulls<Mapping>(MotionAxis.entries.size)
+    private val sensBestSeq = LongArray(MotionAxis.entries.size)
+    private val sensVals = FloatArray(MotionAxis.entries.size)
+
     /**
      * Works out the Gyro sensitivity chips in effect from their inputs now ([OutputTarget.GyroSens]):
      * per axis the last activated with a range; [gyroNow] follows when they change. An "every
@@ -186,9 +191,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun refreshSens() {
         if (!sensMapped && sensOrder.isEmpty()) return
         sensSeen.clear()
-        val best = arrayOfNulls<Mapping>(MotionAxis.entries.size)
-        val bestSeq = LongArray(MotionAxis.entries.size) { -1L }
-        val vals = FloatArray(MotionAxis.entries.size)
+        val best = sensBest
+        val bestSeq = sensBestSeq
+        val vals = sensVals
+        best.fill(null); bestSeq.fill(-1L); vals.fill(0f)
         forEachGroup { ms, dev ->
             for (i in ms.indices) {
                 val m = ms[i]
@@ -1402,6 +1408,33 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (!fingers.containsKey(s.id)) null else fingerValue(s)
     }
 
+    /**
+     * The position ruler's frame, under one lock: where the finger on each of [ids] is now (0..1
+     * from its bottom-left) into [at] (x, y per id; NaN where none is), and the finger mappings in
+     * use on those fingers into [inUse] (cleared first), with the value of each one's input now
+     * (as [fingerValueNow]) into [values], as many as it holds. False when no finger is on any.
+     */
+    fun fingerRuler(ids: List<String>, at: FloatArray, inUse: MutableList<Mapping>, values: FloatArray): Boolean = synchronized(lock) {
+        var any = false
+        for (i in ids.indices) {
+            val f = fingers[ids[i]]
+            at[2 * i] = f?.x ?: Float.NaN
+            at[2 * i + 1] = f?.y ?: Float.NaN
+            if (f != null) any = true
+        }
+        inUse.clear()
+        if (any) {
+            for (mp in touchMappings) {
+                if (inUse.size >= values.size) break
+                val src = mp.source as? InputSource.Finger ?: continue
+                if (!fingers.containsKey(src.id) || src.id !in ids) continue
+                values[inUse.size] = fingerValue(src)
+                inUse.add(mp)
+            }
+        }
+        any
+    }
+
     /** Where the finger on [id] is now (0..1 from its bottom-left) into [out], or false when none is. */
     fun fingerAt(id: String, out: FloatArray): Boolean = synchronized(lock) {
         val f = fingers[id] ?: return false
@@ -2467,7 +2500,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     /** [m]'s output goes through a [Shaper]: it has options, a swipe trigger, or is a told-apart double tap chip ([splitInfo]). */
-    private fun shaped(m: Mapping): Boolean = m.options != null || derivedTrigger(m.source) != Trigger.HOLD || m in splitInfo
+    private fun shaped(m: Mapping): Boolean =
+        m.options != null || derivedTrigger(m.source) != Trigger.HOLD || (splitInfo.isNotEmpty() && m in splitInfo)
 
     /** [s] is a double tap held from its second press (not a swipe's double swipe, which the engine works out itself). */
     private fun isDoubleTap(s: InputSource): Boolean = when (s) {
@@ -2483,7 +2517,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val src = m.source
         val derived = derivedTrigger(src)
         val v = value(src, dev, output)
-        val split = splitInfo[m] ?: Shaper.Split.NONE
+        // Most layouts have no told-apart double taps: no lookup then.
+        val split = if (splitInfo.isEmpty()) Shaper.Split.NONE else splitInfo[m] ?: Shaper.Split.NONE
         val o = m.options ?: if (derived == Trigger.HOLD && split == Shaper.Split.NONE) return v else NO_OPTIONS
         var on = abs(v) >= PRESS_THRESHOLD
         val sh = shaperOf(m, dev)

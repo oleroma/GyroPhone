@@ -290,6 +290,26 @@ object Bindings {
     )
 
     /**
+     * [a] and [b] are the same to [matchSwipeModes]: the same mappings and touch controls by id,
+     * kind (a button swipes) and "press only on a tap". An edit that keeps them (a control moved or
+     * resized) has nothing new to match: [matchSwipeModes] of it changes nothing [a]'s didn't.
+     */
+    fun sameSwipeInputs(a: Workspace, b: Workspace): Boolean {
+        if (a.mappings !== b.mappings && a.mappings != b.mappings) return false
+        val ca = a.touchControls
+        val cb = b.touchControls
+        if (ca === cb) return true
+        if (ca.size != cb.size) return false
+        for (i in ca.indices) {
+            val x = ca[i]
+            val y = cb[i]
+            if (x === y) continue
+            if (x.id != y.id || x.kind != y.kind || x.swipeTapOnRelease != y.swipeTapOnRelease) return false
+        }
+        return true
+    }
+
+    /**
      * [w] with each touch button's mappings where its mode reads them, so a button has one tap,
      * double tap, long press, release and hold. In swipe mode those are its surface's one-finger
      * ones (a swipe is never a tap there) and its press is the hold: its own gestures move to the

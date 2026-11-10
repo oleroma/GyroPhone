@@ -24,6 +24,12 @@ internal interface ICanvas
     void DrawLine(Color color, float width, PointF a, PointF b, bool round = false);
     /// <summary>An open polyline with round joins and round caps, or flat ones with <paramref name="flat"/>.</summary>
     void DrawLines(Color color, float width, PointF[] points, bool flat = false);
+    /// <summary>
+    /// Each of <paramref name="lines"/> as <see cref="DrawLines"/> (round). The canvas may keep the built
+    /// shapes for this array and build them again only when <paramref name="stamp"/> changes, so the
+    /// arrays must not change while the stamp stays the same.
+    /// </summary>
+    void DrawLinesSet(Color color, float width, PointF[][] lines, long stamp);
     void FillEllipse(Color color, RectangleF r);
     void DrawEllipse(Color color, float width, RectangleF r);
     void FillRectangle(Color color, RectangleF r);
@@ -124,6 +130,11 @@ internal sealed class GdiCanvas : ICanvas
         var cap = flat ? LineCap.Flat : LineCap.Round;
         using var p = new Pen(color, width) { StartCap = cap, EndCap = cap, LineJoin = LineJoin.Round };
         _g.DrawLines(p, points);
+    }
+
+    public void DrawLinesSet(Color color, float width, PointF[][] lines, long stamp)
+    {
+        foreach (var l in lines) DrawLines(color, width, l);
     }
 
     public void FillEllipse(Color color, RectangleF r)

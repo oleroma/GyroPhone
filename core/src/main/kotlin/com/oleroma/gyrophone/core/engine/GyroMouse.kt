@@ -183,8 +183,13 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
         gx: Float, gy: Float, gz: Float, dtSeconds: Float, routes: List<Mapping>, axes: Int = MappingEngine.ALL_GYRO,
         space: GyroSpace = GyroSpace.LOCAL, up: FloatArray? = null,
     ): GyroMath.Routed {
-        val s = settings
         val m = inSpace(motion(gx, gy, gz, resolvedOrientation()), space, up)
+        return route(m, dtSeconds, routes, axes)
+    }
+
+    /** As [route], for a sample already turned and measured in its space ([motion], [inSpace]). */
+    fun route(m: Motion, dtSeconds: Float, routes: List<Mapping>, axes: Int = MappingEngine.ALL_GYRO): GyroMath.Routed {
+        val s = settings
         return math.step(m.yaw, m.pitch, m.roll, dtSeconds, config(s, routes), axes,
             tightening ?: s.tighteningThreshold, smoothing ?: s.smoothingThreshold)
     }

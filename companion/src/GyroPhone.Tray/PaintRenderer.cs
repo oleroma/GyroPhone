@@ -10,21 +10,21 @@ namespace GyroPhone.Tray;
 /// picture of premultiplied pixels the canvas then scales up smoothly: every pixel finds the point of the sphere it
 /// shows (in perspective or flat, the near or the far half), reads the map round it and shows the paint there, so
 /// the paint is smooth, foreshortened and bigger nearer as paint on a ball is. As the phone's PointerPaintShader.
-/// Each pointer keeps its pictures and draws them again only when something they show changed.
+/// Each pointer keeps its pictures and draws again only what changed: a new stamp redraws just the pixels that
+/// show the map's tiles it touched (<see cref="PaintPicture"/>).
 /// </summary>
 internal static class PaintRenderer
 {
     /// <summary>The picture's most pixels across for Paint detail low, normal, high.</summary>
     private static readonly int[] MaxSize = [160, 256, 420];
 
-    /// <summary>The scene's light, a unit direction in the picture (x right, y up, z toward you): upper left, above, upper right, front.</summary>
-    private static readonly (float X, float Y, float Z)[] Lights =
-        [LaserTrace.Unit(-0.5f, 0.6f, 0.6f), LaserTrace.Unit(0f, 0.8f, 0.6f), LaserTrace.Unit(0.5f, 0.6f, 0.6f), (0f, 0f, 1f)];
-
-    public static (float X, float Y, float Z) LightDir(int from) => Lights[Math.Clamp(from, 0, 3)];
+    /// <summary>The light for Light from <paramref name="from"/> (upper left, above, upper right, front).</summary>
+    public static (float X, float Y, float Z) LightDir(int from) => PaintPicture.LightDir(from);
 
     private sealed class State
     {
+        // Each half's paint (kept up to date stamp by stamp), and the picture shown with Snake over it.
+        public readonly PaintPicture NearPaint = new(), FarPaint = new();
         public int[] Near = [], Far = [];
         public object? NearKey, FarKey;
         public long NearStamp, FarStamp;
@@ -34,11 +34,10 @@ internal static class PaintRenderer
 
     private static readonly ConditionalWeakTable<LaserTrace, State> States = new();
 
-    /// <summary>What a half's picture shows: when any of it changes it is drawn again.</summary>
+    /// <summary>What a half's Snake shows: when any of it (or the paint under it) changes it is drawn again.</summary>
     private readonly record struct Key(
-        long PaintVersion, int StrokeCount, double Newest, long TraceVersion, int Size, float R,
-        (float, float, float) ColX, (float, float, float) ColY, (float, float, float) ColZ,
-        (float, float, float) SceneX, (float, float, float) SceneY, (float, float, float) SceneZ, int SettingsHash);
+        long PaintStamp, int StrokeCount, double Newest, long TraceVersion, int Size, float R,
+        (float, float, float) ColX, (float, float, float) ColY, (float, float, float) ColZ, int SettingsHash);
 
     /// <summary>
     /// Draws the paint and Snake of <paramref name="trace"/> on its <paramref name="front"/> (near) or far half, on
@@ -49,173 +48,57 @@ internal static class PaintRenderer
     {
         var lp = s.LaserDraw ? trace.Paint : null;
         bool snake = s.LaserSnake && trace.Strokes.Count >= 2;
-        if (lp == null && !snake) return;
+        if (lp == null && !snake)
+        {
+            // Nothing to show: let go of the paint's tables until there is.
+            if (States.TryGetValue(trace, out var idle)) { idle.NearPaint.DropTables(); idle.FarPaint.DropTables(); }
+            return;
+        }
         var st = States.GetOrCreateValue(trace);
         float e = r * 1.05f;
         int size = Math.Max(16, Math.Min((int)MathF.Ceiling(2 * e), MaxSize[Math.Clamp(s.LaserPaintDetail, 0, 2)]));
         var colX = LaserTrace.ToView(1f, 0f, 0f, s.LaserAxonometric, turned);
         var colY = LaserTrace.ToView(0f, 1f, 0f, s.LaserAxonometric, turned);
         var colZ = LaserTrace.ToView(0f, 0f, 1f, s.LaserAxonometric, turned);
-        var scX = LaserTrace.ToView(1f, 0f, 0f, s.LaserAxonometric);
-        var scY = LaserTrace.ToView(0f, 1f, 0f, s.LaserAxonometric);
-        var scZ = LaserTrace.ToView(0f, 0f, 1f, s.LaserAxonometric);
+        // The paint: only what changed is drawn again (PaintPicture).
+        var paint = front ? st.NearPaint : st.FarPaint;
+        if (lp != null)
+        {
+            var scX = LaserTrace.ToView(1f, 0f, 0f, s.LaserAxonometric);
+            var scY = LaserTrace.ToView(0f, 1f, 0f, s.LaserAxonometric);
+            var scZ = LaserTrace.ToView(0f, 0f, 1f, s.LaserAxonometric);
+            paint.Update(lp, s, front, size, colX, colY, colZ, scX, scY, scZ, moveColors);
+        }
+        else paint.Empty(size);
+        ref long stamp = ref front ? ref st.NearStamp : ref st.FarStamp;
+        if (!snake)
+        {
+            // The paint alone: shown as it is.
+            if (front) st.NearKey = null; else st.FarKey = null;
+            g.DrawPixels(new RectangleF(c.X - e, c.Y - e, 2 * e, 2 * e), size, size, paint.Pixels, paint.Stamp);
+            return;
+        }
         int hash = HashCode.Combine(
-            HashCode.Combine(s.Perspective, s.LaserColourByWay, s.LaserGlow, s.LaserOutline, s.LaserShade, s.LaserInside, s.LaserLight, s.LaserLightFrom),
-            HashCode.Combine(s.LaserShine, s.LaserSnake, s.LaserSnakeDeg, s.LaserBrush, s.LaserDraw, s.Color("fire"), s.Color("fire_behind"), s.Color("outline")),
-            HashCode.Combine(moveColors[0], moveColors[1], moveColors[2], moveColors[3], moveColors[4], moveColors[5], s.LaserSmoothColours),
-            HashCode.Combine(s.Color("aim"), s.Color("aim_behind"), s.LaserFireGlow, s.LaserAimGlow, s.LaserFireBrush, s.LaserAimBrush));
-        var key = new Key(lp?.Version ?? -1, trace.Strokes.Count, trace.Strokes.Count > 0 ? trace.Strokes.Along(trace.Strokes.Count - 1) : 0,
-            trace.Version, size, r, colX, colY, colZ, scX, scY, scZ, hash);
+            HashCode.Combine(s.Perspective, s.LaserColourByWay, s.LaserShade, s.LaserInside, s.LaserLight, s.LaserLightFrom, s.LaserShine, s.LaserAxonometric),
+            HashCode.Combine(s.LaserSnakeDeg, s.LaserBrush, s.Color("fire"), s.Color("fire_behind"), s.Color("aim"), s.Color("aim_behind"), s.LaserFireBrush, s.LaserAimBrush),
+            HashCode.Combine(moveColors[0], moveColors[1], moveColors[2], moveColors[3], moveColors[4], moveColors[5], s.LaserSmoothColours));
+        var key = new Key(paint.Stamp, trace.Strokes.Count, trace.Strokes.Count > 0 ? trace.Strokes.Along(trace.Strokes.Count - 1) : 0,
+            trace.Version, size, r, colX, colY, colZ, hash);
         ref int[] buf = ref front ? ref st.Near : ref st.Far;
         object? had = front ? st.NearKey : st.FarKey;
         if (buf.Length != size * size || had is not Key k || k != key)
         {
+            // Snake over a copy of the paint.
             if (buf.Length != size * size) buf = new int[size * size];
-            else Array.Clear(buf);
-            if (lp != null) Paint(buf, size, lp, s, front, colX, colY, colZ, scX, scY, scZ, moveColors);
-            if (snake) Snake(st, buf, size, e, trace, s, front, r, turned, moveColors);
-            if (front) { st.NearKey = key; st.NearStamp++; } else { st.FarKey = key; st.FarStamp++; }
+            Array.Copy(paint.Pixels, buf, size * size);
+            Snake(st, buf, size, e, trace, s, front, r, turned, moveColors);
+            if (front) st.NearKey = key; else st.FarKey = key;
+            stamp++;
         }
-        g.DrawPixels(new RectangleF(c.X - e, c.Y - e, 2 * e, 2 * e), size, size, buf, front ? st.NearStamp : st.FarStamp);
+        g.DrawPixels(new RectangleF(c.X - e, c.Y - e, 2 * e, 2 * e), size, size, buf, stamp);
     }
 
-    private static float Smooth(float a, float b, float x)
-    {
-        float t = Math.Clamp((x - a) / (b - a), 0f, 1f);
-        return t * t * (3f - 2f * t);
-    }
-
-    private static void Paint(int[] buf, int size, LaserPaint lp, OverlaySettings s, bool front,
-        (float X, float Y, float Z) cx, (float X, float Y, float Z) cy, (float X, float Y, float Z) cz,
-        (float X, float Y, float Z) sx, (float X, float Y, float Z) sy, (float X, float Y, float Z) sz, uint[] moves)
-    {
-        float eye = s.Perspective ? LaserTrace.CameraDistance : 0f;
-        int w = lp.Width, h = lp.Height;
-        var amount = lp.Amount;
-        var fire = lp.Fire;
-        var aimMap = lp.Aim;
-        var glow = lp.Glow;
-        var glowFire = lp.GlowFire;
-        var glowAim = lp.GlowAim;
-        var way = s.LaserColourByWay ? lp.Way : null;
-        float moveAlpha = 0f;
-        foreach (var m in moves) moveAlpha += (m >> 24) / 255f;
-        moveAlpha /= 6f;
-        var fa = Color.FromArgb(s.Color("fire"));
-        var fb = Color.FromArgb(s.Color("fire_behind"));
-        var aa = Color.FromArgb(s.Color("aim"));
-        var ab = Color.FromArgb(s.Color("aim_behind"));
-        var oc = Color.FromArgb(s.Color("outline"));
-        var light = LightDir(s.LaserLightFrom);
-        var hv = LaserTrace.Unit(light.X, light.Y, light.Z + 1f);
-        float fireGlowK = s.LaserFireGlow, aimGlowK = s.LaserAimGlow;
-        float glowK = s.LaserGlow, shade = s.LaserShade, inside = s.LaserInside, lightK = s.LaserLight, shine = s.LaserShine;
-        bool outline = s.LaserOutline;
-        float e = 1.05f;
-        // Rows in parallel: each writes only its own pixels.
-        Parallel.For(0, size, iy =>
-        {
-            float qy = e - (iy + 0.5f) * 2f * e / size;
-            for (int ix = 0; ix < size; ix++)
-            {
-                float qx = -e + (ix + 0.5f) * 2f * e / size;
-                float px, py, pz, facing;
-                if (eye > 0f)
-                {
-                    var d = LaserTrace.Unit(qx, qy, -eye);
-                    float b = eye * d.Z;
-                    float disc = b * b - (eye * eye - 1f);
-                    if (disc < 0f) continue;
-                    float t = front ? -b - MathF.Sqrt(disc) : -b + MathF.Sqrt(disc);
-                    px = d.X * t; py = d.Y * t; pz = eye + d.Z * t;
-                    facing = MathF.Abs(px * d.X + py * d.Y + pz * d.Z);
-                }
-                else
-                {
-                    float rr = qx * qx + qy * qy;
-                    if (rr >= 1f) continue;
-                    float z = MathF.Sqrt(1f - rr);
-                    px = qx; py = qy; pz = front ? z : -z;
-                    facing = z;
-                }
-                // The point in the shown frame, and where it is in the map.
-                float vx = cx.X * px + cx.Y * py + cx.Z * pz;
-                float vy = cy.X * px + cy.Y * py + cy.Z * pz;
-                float vz = cz.X * px + cz.Y * py + cz.Z * pz;
-                float lon = MathF.Atan2(vx, -vz), lat = MathF.Asin(Math.Clamp(vy, -1f, 1f));
-                float u = (lon / (2f * MathF.PI) + 0.5f) * w - 0.5f, v = (0.5f - lat / MathF.PI) * h - 0.5f;
-                int i0 = (int)MathF.Floor(u), j0 = (int)MathF.Floor(v);
-                float fx = u - i0, fy = v - j0;
-                int ia = ((i0 % w) + w) % w, ib = (ia + 1) % w;
-                int ja = Math.Clamp(j0, 0, h - 1), jb = Math.Clamp(j0 + 1, 0, h - 1);
-                int k00 = ja * w + ia, k10 = ja * w + ib, k01 = jb * w + ia, k11 = jb * w + ib;
-                float w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
-                float c = (amount[k00] * w00 + amount[k10] * w10 + amount[k01] * w01 + amount[k11] * w11) / 255f;
-                float gl = (glow[k00] * w00 + glow[k10] * w10 + glow[k01] * w01 + glow[k11] * w11) / 255f;
-                if (c < 0.004f && gl < 0.004f) continue;
-                float cs = Math.Max(c, 0.004f);
-                float fired = Math.Clamp((fire[k00] * w00 + fire[k10] * w10 + fire[k01] * w01 + fire[k11] * w11) / 255f / cs, 0f, 1f);
-                float aimed = Math.Clamp((aimMap[k00] * w00 + aimMap[k10] * w10 + aimMap[k01] * w01 + aimMap[k11] * w11) / 255f / cs, 0f, 1f - fired);
-                // The glow's shares that are shots' and aiming's.
-                float gsum = Math.Max(gl, 0.004f);
-                float gFired = Math.Clamp((glowFire[k00] * w00 + glowFire[k10] * w10 + glowFire[k01] * w01 + glowFire[k11] * w11) / 255f / gsum, 0f, 1f);
-                float gAimed = Math.Clamp((glowAim[k00] * w00 + glowAim[k10] * w10 + glowAim[k01] * w01 + glowAim[k11] * w11) / 255f / gsum, 0f, 1f - gFired);
-                // The point in the scene's frame: what its colour goes by.
-                float gx = sx.X * px + sx.Y * py + sx.Z * pz;
-                float gy = sy.X * px + sy.Y * py + sy.Z * pz;
-                float gz = sz.X * px + sz.Y * py + sz.Z * pz;
-                float br, bg, bb, ba;
-                if (way != null)
-                {
-                    float Ch(int sh) => ((way[k00] >> sh & 0xFF) * w00 + (way[k10] >> sh & 0xFF) * w10 + (way[k01] >> sh & 0xFF) * w01 + (way[k11] >> sh & 0xFF) * w11) / 255f / cs;
-                    br = Math.Min(Ch(16), 1f); bg = Math.Min(Ch(8), 1f); bb = Math.Min(Ch(0), 1f); ba = moveAlpha;
-                }
-                else
-                {
-                    uint argb = LaserTrace.DirectionColor((gx, gy, gz), moves);
-                    br = (argb >> 16 & 0xFF) / 255f; bg = (argb >> 8 & 0xFF) / 255f; bb = (argb & 0xFF) / 255f; ba = (argb >> 24) / 255f;
-                }
-                float kb = LaserTrace.Behind(gz);
-                float fr = (fa.R + (fb.R - fa.R) * kb) / 255f, fg = (fa.G + (fb.G - fa.G) * kb) / 255f;
-                float fbl = (fa.B + (fb.B - fa.B) * kb) / 255f, fal = (fa.A + (fb.A - fa.A) * kb) / 255f;
-                float ar = (aa.R + (ab.R - aa.R) * kb) / 255f, ag = (aa.G + (ab.G - aa.G) * kb) / 255f;
-                float abl = (aa.B + (ab.B - aa.B) * kb) / 255f, aal = (aa.A + (ab.A - aa.A) * kb) / 255f;
-                float pb = 1f - fired - aimed, gb = 1f - gFired - gAimed;
-                float cr = br * pb + fr * fired + ar * aimed, cg = bg * pb + fg * fired + ag * aimed;
-                float cb = bb * pb + fbl * fired + abl * aimed, ca = ba * pb + fal * fired + aal * aimed;
-                // The glow takes the colours of what laid it, each as strong as its own glow (up to 3: a bright bloom).
-                float hr = br * gb + fr * gFired + ar * gAimed, hg = bg * gb + fg * gFired + ag * gAimed;
-                float hb = bb * gb + fbl * gFired + abl * gAimed, ha = ba * gb + fal * gFired + aal * gAimed;
-                float gk = glowK * gb + fireGlowK * gFired + aimGlowK * gAimed;
-                // Facing shade, the far half (seen from inside) darker, and the scene's light on the side you see.
-                float kk = (1f + (0.25f + 0.75f * facing - 1f) * shade) * (front ? 1f : inside);
-                float nx = front ? px : -px, ny = front ? py : -py, nz = front ? pz : -pz;
-                float diffuse = Math.Max(nx * light.X + ny * light.Y + nz * light.Z, 0f);
-                kk *= 1f + (0.3f + 0.9f * diffuse - 1f) * lightK;
-                float spec = shine * MathF.Pow(Math.Max(nx * hv.X + ny * hv.Y + nz * hv.Z, 0f), 24f);
-                cr = Math.Min(cr * kk + spec, 1f); cg = Math.Min(cg * kk + spec, 1f); cb = Math.Min(cb * kk + spec, 1f);
-                hr = Math.Min(hr * kk, 1f); hg = Math.Min(hg * kk, 1f); hb = Math.Min(hb * kk, 1f);
-                // A glow over 100% also lights the line's core toward white, as hot light.
-                float hot = 0.6f * (Math.Clamp((fireGlowK - 1f) / 2f, 0f, 1f) * fired + Math.Clamp((aimGlowK - 1f) / 2f, 0f, 1f) * aimed);
-                cr += (1f - cr) * hot; cg += (1f - cg) * hot; cb += (1f - cb) * hot;
-                // Glow under an outline under the paint (premultiplied). Over 100% it blooms: brighter, and wider as its
-                // faint edge is lifted (gl^(1/k)).
-                float pa = c * ca;
-                float ga = (gk <= 1f ? gk * 0.45f * gl : Math.Min(0.9f, 0.45f * MathF.Pow(gl, 1f / gk) * MathF.Sqrt(gk))) * ha;
-                float or = hr * ga, og = hg * ga, ob = hb * ga, oa = ga;
-                if (outline)
-                {
-                    float la = Smooth(0.2f, 0.4f, gl) * (1f - c) * oc.A / 255f;
-                    or = oc.R / 255f * la + or * (1 - la); og = oc.G / 255f * la + og * (1 - la); ob = oc.B / 255f * la + ob * (1 - la); oa = la + oa * (1 - la);
-                }
-                or = cr * pa + or * (1 - pa); og = cg * pa + og * (1 - pa); ob = cb * pa + ob * (1 - pa); oa = pa + oa * (1 - pa);
-                buf[iy * size + ix] = Pack(or, og, ob, oa);
-            }
-        });
-    }
-
-    private static int Pack(float r, float g, float b, float a) =>
-        (int)(a * 255f + 0.5f) << 24 | (int)(r * 255f + 0.5f) << 16 | (int)(g * 255f + 0.5f) << 8 | (int)(b * 255f + 0.5f);
+    private static int Pack(float r, float g, float b, float a) => PaintPicture.Pack(r, g, b, a);
 
     /// <summary>
     /// Snake: the line along the newest stretch of the strokes, its near or far pieces, Brush wide at its head thinning
@@ -250,6 +133,8 @@ internal static class PaintRenderer
         float fireW = Math.Clamp(s.LaserFireBrush, 1, 20) / (float)brush, aimW = Math.Clamp(s.LaserAimBrush, 1, 20) / (float)brush;
         var light = LightDir(s.LaserLightFrom);
         var hv = LaserTrace.Unit(light.X, light.Y, light.Z + 1f);
+        // The way colours' middle, worked out once for all the points.
+        var mix = new LaserTrace.WayMix(moves);
         int reach = s.LaserSmoothColours ? LaserTrace.SmoothReach : 0;
         (float X, float Y, float Z) Pic(float x, float y, float z) => LaserTrace.ToView(x, y, z, s.LaserAxonometric, turned);
         float bx0 = 0, by0 = 0;
@@ -277,7 +162,7 @@ internal static class PaintRenderer
                 }
                 else
                 {
-                    uint argb = LaserTrace.DirectionColor(s.LaserColourByWay ? strokes.Direction(i, reach) : gs, moves);
+                    uint argb = mix.Of(s.LaserColourByWay ? strokes.Direction(i, reach) : gs);
                     cr = (argb >> 16 & 0xFF) / 255f; cg = (argb >> 8 & 0xFF) / 255f; cb = (argb & 0xFF) / 255f;
                 }
                 float facing = Math.Min(MathF.Abs(v.Z), 1f);

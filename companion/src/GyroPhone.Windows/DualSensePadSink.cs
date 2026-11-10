@@ -9,7 +9,8 @@ namespace GyroPhone.Windows;
 /// A virtual DualSense through the optional GyroPhone pad driver (driver/ in the repo, installed by
 /// its install.cmd). The driver's device interface takes a PLUG, then each 64-byte input report, then
 /// an UNPLUG; closing the handle unplugs too, so a crashed companion leaves no pad behind. The control
-/// codes and protocol version match driver/src/gyropad_ioctl.h. Called under the engine lock.
+/// codes and protocol version match driver/src/gyropad_ioctl.h. Submit runs under the engine lock, Plug and
+/// Unplug on its pad thread.
 /// </summary>
 public sealed class DualSensePadSink : IDisposable
 {

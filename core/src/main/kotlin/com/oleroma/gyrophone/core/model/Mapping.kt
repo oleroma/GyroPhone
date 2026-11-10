@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.core.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 /** Buttons of the game pad the host sees. Bit index = HID button number - 1. */
 @Serializable
@@ -521,7 +522,14 @@ data class Mapping(
     val options: MapOptions? = null,
     /** An analog chip's output range ([AxisRange]); null = the input's value as it is. */
     val range: AxisRange? = null,
-)
+) {
+    // The engine looks mappings up in hash maps on every snapshot: the hash of all its parts is
+    // worked out once, as it never changes. Equal mappings still have equal hashes.
+    @Transient
+    private val hash: Int = java.util.Objects.hash(source, target, set, options, range)
+
+    override fun hashCode(): Int = hash
+}
 
 /**
  * How a mapping's output follows its activations ("How" in the editor): HELD for as long as the

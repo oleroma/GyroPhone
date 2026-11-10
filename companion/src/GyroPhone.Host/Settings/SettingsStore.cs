@@ -11,13 +11,23 @@ namespace GyroPhone.Host.Settings;
 /// </summary>
 public sealed class SettingsStore
 {
-    private const int ReadAttempts = 8; // about 3 s in all
+    /// <summary>How long a locked file is waited for by default (a start by hand: the user can try again).</summary>
+    public const int DefaultLockedWaitMs = 3000;
+    /// <summary>The wait for a start by the watcher or an update, right after login or a copy.</summary>
+    public const int LongLockedWaitMs = 15_000;
 
     private readonly object _writeLock = new();
 
-    public SettingsStore(string path) => Path = path;
+    public SettingsStore(string path, int lockedWaitMs = DefaultLockedWaitMs)
+    {
+        Path = path;
+        LockedWaitMs = lockedWaitMs;
+    }
 
     public string Path { get; }
+
+    /// <summary>How long a file another program holds is retried before Load gives up.</summary>
+    public int LockedWaitMs { get; }
 
     public static string DefaultPath() => System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GyroPhone", "settings.json");
@@ -30,7 +40,7 @@ public sealed class SettingsStore
     {
         if (File.Exists(Path))
         {
-            var s = Read(Path, defaultHostName, log, out bool corrupt);
+            var s = Read(Path, defaultHostName, log, LockedWaitMs, out bool corrupt);
             if (s != null) return s;
             if (corrupt)
             {
@@ -41,7 +51,7 @@ public sealed class SettingsStore
         var bak = Path + ".bak";
         if (File.Exists(bak))
         {
-            var b = Read(bak, defaultHostName, log, out _);
+            var b = Read(bak, defaultHostName, log, LockedWaitMs, out _);
             if (b != null)
             {
                 log?.Invoke("settings restored from the .bak copy");
@@ -56,10 +66,11 @@ public sealed class SettingsStore
     }
 
     /// <summary>One settings file, validated; null if its content is bad. Throws IOException when it stays unreadable.</summary>
-    private static HostSettings? Read(string path, string defaultHostName, Action<string>? log, out bool corrupt)
+    private static HostSettings? Read(string path, string defaultHostName, Action<string>? log, int lockedWaitMs, out bool corrupt)
     {
         corrupt = false;
         var name = System.IO.Path.GetFileName(path);
+        var waited = System.Diagnostics.Stopwatch.StartNew();
         for (int attempt = 1; ; attempt++)
         {
             try
@@ -79,16 +90,19 @@ public sealed class SettingsStore
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 // A scanner or backup tool can hold the file for a moment, e.g. right after boot.
-                if (attempt >= ReadAttempts)
+                if (waited.ElapsedMilliseconds >= lockedWaitMs)
                 {
                     // Not corrupt, only locked: falling back would save defaults or the older .bak over it.
                     log?.Invoke($"{name} unreadable ({e.GetType().Name})");
                     throw new IOException($"{name} is held by another program", e);
                 }
-                Thread.Sleep(100 * attempt);
+                Thread.Sleep(LockedRetryDelayMs(attempt));
             }
         }
     }
+
+    /// <summary>The pause before attempt <paramref name="attempt"/> + 1 at a locked file: 100 ms, growing to 1 s.</summary>
+    public static int LockedRetryDelayMs(int attempt) => Math.Min(100 * attempt, 1000);
 
     private void TrySave(HostSettings s, Action<string>? log)
     {

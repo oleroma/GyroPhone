@@ -157,6 +157,36 @@ public sealed class OverlayFrame
 
     private static float Finite(float v) => float.IsFinite(v) ? Math.Clamp(v, -3600f, 3600f) : 0f;
 
+    /// <summary>
+    /// Everything an overlay draws from this frame other than the pose is as in <paramref name="o"/>:
+    /// flags, gyro axes, layout version, fingers, pressed and latched controls, stick knobs, the
+    /// lit trackball axes and the attached controller.
+    /// </summary>
+    public bool SameShown(OverlayFrame o)
+    {
+        if (Flags != o.Flags || Axes != o.Axes || LayoutVersion != o.LayoutVersion || PoseActive != o.PoseActive
+            || FingerCount != o.FingerCount || StickCount != o.StickCount
+            || PadFlags != o.PadFlags || PadButtons != o.PadButtons || PadL2Pull != o.PadL2Pull || PadR2Pull != o.PadR2Pull)
+            return false;
+        return Fingers.AsSpan(0, FingerCount * 2).SequenceEqual(o.Fingers.AsSpan(0, FingerCount * 2))
+            && Pressed.AsSpan().SequenceEqual(o.Pressed)
+            && Latched.AsSpan().SequenceEqual(o.Latched)
+            && StickIndex.AsSpan(0, StickCount).SequenceEqual(o.StickIndex.AsSpan(0, StickCount))
+            && StickXY.AsSpan(0, StickCount * 2).SequenceEqual(o.StickXY.AsSpan(0, StickCount * 2))
+            && PadSticks.AsSpan().SequenceEqual(o.PadSticks);
+    }
+
+    /// <summary>The angle (radians, 0..π) between <paramref name="a"/>'s pose and <paramref name="b"/>'s, exact for tiny turns.</summary>
+    public static float TurnBetween(OverlayFrame a, OverlayFrame b)
+    {
+        // a's conjugate times b: its vector part is sin(angle / 2), its w cos(angle / 2).
+        float w = a.Qw * b.Qw + a.Qx * b.Qx + a.Qy * b.Qy + a.Qz * b.Qz;
+        float x = a.Qw * b.Qx - a.Qx * b.Qw - a.Qy * b.Qz + a.Qz * b.Qy;
+        float y = a.Qw * b.Qy + a.Qx * b.Qz - a.Qy * b.Qw - a.Qz * b.Qx;
+        float z = a.Qw * b.Qz - a.Qx * b.Qy + a.Qy * b.Qx - a.Qz * b.Qw;
+        return 2f * MathF.Atan2(MathF.Sqrt(x * x + y * y + z * z), MathF.Abs(w));
+    }
+
     public void CopyTo(OverlayFrame o)
     {
         o.PhoneTimeUs = PhoneTimeUs;

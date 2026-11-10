@@ -86,6 +86,29 @@ public sealed class SettingsAndStatsTests : IDisposable
     }
 
     [Fact]
+    public void SettingsLockedForAWhileAreWaitedFor()
+    {
+        var store = new SettingsStore(Path.Combine(_dir, "settings.json"));
+        var s = store.Load("PC");
+        s.PairedPhones.Add(new PairedPhone { PhoneId = Hex.Range(0, 16), Name = "A", ProtectedKey = [1] });
+        store.Save(s);
+        // Held longer than a short wait: Load gives up (and replaces nothing).
+        using (new FileStream(store.Path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Assert.Throws<IOException>(() => new SettingsStore(store.Path, lockedWaitMs: 300).Load("other"));
+        // A start by the watcher or an update waits longer, and gets the file once it is let go.
+        var held = new FileStream(store.Path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        var release = new Thread(() =>
+        {
+            Thread.Sleep(800);
+            held.Dispose();
+        });
+        release.Start();
+        var loaded = new SettingsStore(store.Path, SettingsStore.LongLockedWaitMs).Load("other");
+        release.Join();
+        Assert.Equal("A", Assert.Single(loaded.PairedPhones).Name);
+    }
+
+    [Fact]
     public void FailedSettingsWriteIsRetried()
     {
         var store = new SettingsStore(Path.Combine(_dir, "settings.json"));
@@ -94,13 +117,14 @@ public sealed class SettingsAndStatsTests : IDisposable
         using var wd = new Watchdog(h.Engine, h.Clock, store: store);
         Assert.True(h.Engine.Forget(Harness.Phone1Id));
         wd.Tick();
+        wd.WriteFiles();
         Assert.False(File.Exists(store.Path));
         Directory.Delete(store.Path + ".tmp");
         h.Clock.AdvanceMs(100);
-        wd.Tick(); // still waiting out the retry pause
+        wd.WriteFiles(); // still waiting out the retry pause
         Assert.False(File.Exists(store.Path));
         h.Clock.AdvanceMs(1000);
-        wd.Tick();
+        wd.WriteFiles();
         Assert.True(File.Exists(store.Path));
         Assert.Empty(store.Load("x").PairedPhones);
     }
@@ -113,6 +137,8 @@ public sealed class SettingsAndStatsTests : IDisposable
         using var wd = new Watchdog(h.Engine, h.Clock, store: store);
         Assert.True(h.Engine.Forget(Harness.Phone1Id));
         wd.Tick();
+        Assert.False(File.Exists(store.Path)); // the tick never writes
+        wd.WriteFiles();
         Assert.Empty(store.Load("x").PairedPhones);
     }
 

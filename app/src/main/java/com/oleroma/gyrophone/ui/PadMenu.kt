@@ -26,12 +26,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material3.FilterChip
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -93,34 +95,55 @@ fun PadTab(runtime: GamepadRuntime, fullscreen: Boolean, onFullscreen: (Boolean)
     /** The workspace page was opened from edit mode: back on the pad, edit mode again. */
     var editOnReturn by rememberSaveable { mutableStateOf(false) }
 
-    if (stack.isEmpty()) {
-        PadScreen(
-            runtime,
-            fullscreen = fullscreen,
-            onFullscreen = onFullscreen,
-            onOpenMenu = { page ->
-                onFullscreen(false)
-                go(listOf(page))
-            },
-            onWorkspaceSettings = {
-                editOnReturn = true
-                go(listOf(PadMenuPage.Root))
-            },
-            startInEdit = editOnReturn,
-            onEditResumed = { editOnReturn = false },
-        )
-    } else {
-        BackHandler { go(stack.dropLast(1)) }
-        PadMenu(
-            runtime = runtime,
-            stack = stack,
-            onNavigate = { go(it) },
-            onRetry = onRetry,
-            onWorkspaceDeleted = {
-                editOnReturn = false
-                go(emptyList())
-            },
-        )
+    // The pad stays composed under a menu page, only hidden: coming back shows it at once, with its
+    // caches, instead of building the whole pad again ([PadScreen] pauses itself while hidden).
+    val menuOpen = stack.isNotEmpty()
+    Box(Modifier.fillMaxSize()) {
+        KeptUnder(hidden = menuOpen) {
+            PadScreen(
+                runtime,
+                fullscreen = fullscreen,
+                onFullscreen = onFullscreen,
+                onOpenMenu = { page ->
+                    onFullscreen(false)
+                    go(listOf(page))
+                },
+                onWorkspaceSettings = {
+                    editOnReturn = true
+                    go(listOf(PadMenuPage.Root))
+                },
+                startInEdit = editOnReturn,
+                onEditResumed = { editOnReturn = false },
+                hidden = menuOpen,
+            )
+        }
+        if (menuOpen) {
+            BackHandler { go(stack.dropLast(1)) }
+            PadMenu(
+                runtime = runtime,
+                stack = stack,
+                onNavigate = { go(it) },
+                onRetry = onRetry,
+                onWorkspaceDeleted = {
+                    editOnReturn = false
+                    go(emptyList())
+                },
+            )
+        }
+    }
+}
+
+/**
+ * [content] stays composed, but while [hidden] it is only measured: not placed, so it is neither
+ * drawn nor touched, and what lies over it gets the whole screen.
+ */
+@Composable
+private fun KeptUnder(hidden: Boolean, content: @Composable () -> Unit) {
+    Layout(content, Modifier.fillMaxSize()) { measurables, constraints ->
+        val placeables = measurables.map { it.measure(constraints) }
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            if (!hidden) placeables.forEach { it.place(0, 0) }
+        }
     }
 }
 
@@ -281,7 +304,9 @@ internal fun WorkspaceSettingsPage(
         else "While this layer is in use. Each setting follows Base unless it is set here: those are " +
                 "highlighted, with ↺ to follow Base again.",
     )
-    val level = setLevel(ws, profile.defaults, shown, onWorkspaceChange)
+    // Kept while the workspace and Defaults are: its own keys and children are worked out once, not per recomposition.
+    val update by rememberUpdatedState(onWorkspaceChange)
+    val level = remember(ws, profile.defaults, shown) { setLevel(ws, profile.defaults, shown) { change -> update(change) } }
     WorkspaceSettings(runtime, level, profile.id + "/" + ws.id + "/" + shown)
 }
 

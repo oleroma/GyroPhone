@@ -42,6 +42,25 @@ public sealed class LaserPaint
     /// <summary>Goes up at each change.</summary>
     public long Version { get; private set; }
 
+    /// <summary>The map is kept track of in square tiles this many texels across (2^<see cref="TileShift"/>).</summary>
+    public const int TileShift = 5;
+
+    // Each tile's version: the Version a change to it made (marked before its texels change).
+    private readonly int _tilesX;
+    private readonly long[] _tileVersion;
+
+    /// <summary>How many tiles the map has.</summary>
+    public int TileCount => _tileVersion.Length;
+
+    /// <summary>
+    /// The <see cref="Version"/> that last changed a texel of tile <paramref name="tile"/>: one reading the map at
+    /// version v needs to read again only the tiles over v. A change marks its tiles before it changes their texels.
+    /// </summary>
+    public long TileVersion(int tile) => _tileVersion[tile];
+
+    /// <summary>The tile holding texel <paramref name="texel"/> (row × <see cref="Width"/> + column).</summary>
+    public int TileOf(int texel) => (texel / Width >> TileShift) * _tilesX + (texel % Width >> TileShift);
+
     private readonly int _n;
     private readonly byte[] _lineAmount, _lineGlow;
     private readonly short[] _lineTag, _lineAlong;
@@ -63,6 +82,8 @@ public sealed class LaserPaint
         _lineGlow = new byte[_n];
         _lineTag = new short[_n];
         _lineAlong = new short[_n];
+        _tilesX = (width + (1 << TileShift) - 1) >> TileShift;
+        _tileVersion = new long[_tilesX * ((height + (1 << TileShift) - 1) >> TileShift)];
         _sinLat = new float[height];
         _cosLat = new float[height];
         for (int j = 0; j < height; j++)
@@ -95,6 +116,7 @@ public sealed class LaserPaint
         Array.Clear(_lineGlow);
         Array.Clear(_lineTag);
         _line = 0;
+        Array.Fill(_tileVersion, Version + 1);
         Version++;
     }
 
@@ -194,6 +216,7 @@ public sealed class LaserPaint
                     count = Math.Min(Width, (int)Math.Floor((lonC + dl + Math.PI) / (2 * Math.PI) * Width) - i0 + 1);
                 }
             }
+            MarkTiles(j, i0, count);
             float sl = _sinLat[j], clat = _cosLat[j];
             int row = j * Width;
             for (int s = 0; s < count; s++)
@@ -254,6 +277,20 @@ public sealed class LaserPaint
                 _lineGlow[k] = (byte)(pg * 255f + 0.5f);
             }
         }
+    }
+
+    /// <summary>Marks the tiles of row <paramref name="j"/>'s texels <paramref name="i0"/> .. + <paramref name="count"/> (round the map) as changing in the next <see cref="Version"/>.</summary>
+    private void MarkTiles(int j, int i0, int count)
+    {
+        long next = Version + 1;
+        int row = (j >> TileShift) * _tilesX;
+        int first = ((i0 % Width) + Width) % Width;
+        int last = first + Math.Max(count, 1) - 1;
+        if (count >= Width) (first, last) = (0, Width - 1);
+        for (int i = first >> TileShift; i <= last >> TileShift; i++) _tileVersion[row + i % _tilesX] = next;
+        // Past the map's right edge it goes on at its left.
+        if (last >= Width && _tilesX * (1 << TileShift) != Width)
+            for (int i = 0; i <= (last - Width) >> TileShift; i++) _tileVersion[row + i] = next;
     }
 
     /// <summary>The texel holding unit direction (x, y, z).</summary>

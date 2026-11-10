@@ -27,33 +27,60 @@ internal class PointerPaintShader {
     private var glowAimMap: Bitmap? = null
     private var wayMap: Bitmap? = null
     private var uploaded = Long.MIN_VALUE
+    private var uploadedMs = Long.MIN_VALUE / 2
+    private var uploadedOf: LaserPaint? = null
+    // The way colours' picture missed some paint (it is kept only while colour by way is on).
+    private var wayStale = true
     private val col = FloatArray(3)
 
-    /** What every draw of one frame shares. */
-    class Look(
-        val eye: Float, val byWay: Boolean, val glow: Float, val outline: Boolean,
-        val shade: Float, val inside: Float, val light: Float, val lightFrom: Int, val shine: Float, val moves: IntArray, val fireAhead: Int, val fireBehind: Int,
-        val outlineColor: Int, val wayAlpha: Float,
-        val aimAhead: Int, val aimBehind: Int, val fireGlow: Float, val aimGlow: Float,
-    )
+    /**
+     * What every draw of one frame shares. One is kept per display and filled in each frame
+     * ([com.oleroma.gyrophone.ui.GyroDisplaysLayer]), so drawing makes none.
+     */
+    class Look {
+        var eye = 0f
+        var byWay = false
+        var glow = 0f
+        var outline = false
+        var shade = 0f
+        var inside = 0f
+        var light = 0f
+        var lightFrom = 0
+        var shine = 0f
+        val moves = IntArray(6)
+        var fireAhead = 0
+        var fireBehind = 0
+        var outlineColor = 0
+        var wayAlpha = 0f
+        var aimAhead = 0
+        var aimBehind = 0
+        var fireGlow = 0f
+        var aimGlow = 0f
+    }
 
     /**
      * Draws [lp]'s paint on the sphere of radius [r] at ([cx], [cy]): its [front] (near) half or far
      * half, the shown frame seen through [view] (shown-frame direction to picture, as [LaserTrace.view]).
      * The paint's colours (as light would) stay with the scene, seen through [scene] (the view without
-     * the sphere's turn), so in Fixed pointer mode they don't turn with the sphere.
+     * the sphere's turn), so in Fixed pointer mode they don't turn with the sphere. [nowMs] is the
+     * frame's time: new paint goes up to the GPU at most every [UPLOAD_MS], the rest at the next.
      */
     fun draw(
         canvas: Canvas, lp: LaserPaint, front: Boolean, cx: Float, cy: Float, r: Float,
         view: (Float, Float, Float, FloatArray) -> Unit, scene: (Float, Float, Float, FloatArray) -> Unit, look: Look,
+        nowMs: Long,
     ) {
         val s = if (front) near else far
-        if (lp.version != uploaded || amountMap?.width != lp.width || (look.byWay && lp.way != null && wayMap == null)) {
+        val fresh = lp !== uploadedOf || amountMap?.width != lp.width || (look.byWay && lp.way != null && (wayMap == null || wayStale))
+        // While the beam paints, the map changes on nearly every frame: it goes up about 30 times a
+        // second (the beam's dot and the snake still move every frame), a new or cleared map at once.
+        if (fresh || (lp.version != uploaded && (nowMs - uploadedMs >= UPLOAD_MS || nowMs < uploadedMs || lp.changedTo - lp.changedFrom >= lp.height - 1))) {
             if (amountMap?.width != lp.width) {
                 amountMap = null; fireMap = null; aimMap = null; glowMap = null; glowFireMap = null; glowAimMap = null; wayMap = null
             }
             // The map's bytes as they are, each in an alpha-only bitmap: alpha is never colour-converted
-            // on the way to the GPU, so the amounts arrive exact.
+            // on the way to the GPU, so the amounts arrive exact. (A plain copy: fast, and the GPU takes
+            // the whole picture up again anyway.)
             fun a8(old: Bitmap?, bytes: ByteArray): Bitmap =
                 (old ?: Bitmap.createBitmap(lp.width, lp.height, Bitmap.Config.ALPHA_8)).also { it.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(bytes)) }
             val am = a8(amountMap, lp.amount).also { amountMap = it }
@@ -64,19 +91,29 @@ internal class PointerPaintShader {
             val gim = a8(glowAimMap, lp.glowAim).also { glowAimMap = it }
             val ways = lp.way
             if (ways != null && look.byWay) {
+                // The way colours are converted pixel by pixel: only the rows painted since the last upload.
+                val all = fresh || wayMap == null
                 val wb = wayMap ?: Bitmap.createBitmap(lp.width, lp.height, Bitmap.Config.ARGB_8888).also { wayMap = it }
-                wb.setPixels(ways, 0, lp.width, 0, 0, lp.width, lp.height)
-            }
+                val j0 = if (all) 0 else lp.changedFrom.coerceAtLeast(0)
+                val j1 = if (all) lp.height - 1 else lp.changedTo.coerceAtMost(lp.height - 1)
+                if (j1 >= j0) wb.setPixels(ways, j0 * lp.width, lp.width, 0, j0, lp.width, j1 - j0 + 1)
+                wayStale = false
+            } else wayStale = true
+            lp.takeChanged()
             uploaded = lp.version
-            // New shaders for the changed pixels, so the GPU takes them up.
+            uploadedMs = nowMs
+            uploadedOf = lp
+            // New shaders for the changed pixels, so the GPU takes them up; both halves share them.
+            val way = smooth(wayMap ?: am)
+            val maps = arrayOf(smooth(am), smooth(fm), smooth(gm), smooth(im), smooth(gfm), smooth(gim))
             for (sh in arrayOf(near, far)) {
-                sh.setInputBuffer("amount", smooth(am))
-                sh.setInputBuffer("fire", smooth(fm))
-                sh.setInputBuffer("glow", smooth(gm))
-                sh.setInputBuffer("aim", smooth(im))
-                sh.setInputBuffer("glowFire", smooth(gfm))
-                sh.setInputBuffer("glowAim", smooth(gim))
-                sh.setInputBuffer("way", smooth(wayMap ?: am))
+                sh.setInputBuffer("amount", maps[0])
+                sh.setInputBuffer("fire", maps[1])
+                sh.setInputBuffer("glow", maps[2])
+                sh.setInputBuffer("aim", maps[3])
+                sh.setInputBuffer("glowFire", maps[4])
+                sh.setInputBuffer("glowAim", maps[5])
+                sh.setInputBuffer("way", way)
             }
         }
         s.setFloatUniform("mapSize", lp.width.toFloat(), lp.height.toFloat())
@@ -119,6 +156,9 @@ internal class PointerPaintShader {
     companion object {
         /** The scene's light, a unit direction in the picture (x right, y up, z toward you), from 0 upper left, 1 above, 2 upper right, 3 front. */
         fun lightDir(from: Int): FloatArray = LIGHTS[from.coerceIn(0, 3)]
+
+        /** How often new paint goes up to the GPU while the beam paints (ms): about 30 times a second. */
+        const val UPLOAD_MS = 33L
 
         private val LIGHTS = arrayOf(
             floatArrayOf(-0.5f, 0.6f, 0.6f), floatArrayOf(0f, 0.8f, 0.6f), floatArrayOf(0.5f, 0.6f, 0.6f), floatArrayOf(0f, 0f, 1f),

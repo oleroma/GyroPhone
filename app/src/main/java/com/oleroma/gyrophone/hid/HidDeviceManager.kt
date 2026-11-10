@@ -21,7 +21,9 @@ import java.util.concurrent.TimeUnit
  * reports to the connected host. Classic BR/EDR HID is what Windows pairs with natively; the
  * interrupt channel QoS below asks for guaranteed service sized for 1000 reports/s at minimal latency.
  * When the link to the host drops without the user asking, the last host is reconnected with
- * backoff ([HostReconnect]).
+ * backoff, then every few seconds for as long as the app runs and the host stays bonded
+ * ([HostReconnect]). Its address is kept in prefs, so a later start tries it too when the stack
+ * reports no host.
  *
  * Callers must hold BLUETOOTH_CONNECT (requested by MainActivity before the service starts).
  */
@@ -57,6 +59,8 @@ class HidDeviceManager(private val context: Context) {
     @Volatile private var lastHost: BluetoothDevice? = null
     /** Retry rules; guarded by itself. */
     private val reconnect = HostReconnect()
+    /** The last host's address, kept for the next start ([rememberedHost]). */
+    private val prefs = context.getSharedPreferences("gyrophone_bt", Context.MODE_PRIVATE)
 
     /** Supplies the current report bytes when the host polls with GET_REPORT. */
     var reportProvider: ((reportId: Int) -> ByteArray?)? = null
@@ -110,15 +114,19 @@ class HidDeviceManager(private val context: Context) {
         connectNow(device)
     }
 
-    private fun connectNow(device: BluetoothDevice) {
-        val proxy = hid ?: return
+    /** Asks the stack to connect [device]; false when it refused at once (no state change follows). */
+    private fun connectNow(device: BluetoothDevice): Boolean {
+        val proxy = hid ?: return false
         _state.value = State.Connecting(device.name ?: device.address)
-        if (!proxy.connect(device)) _state.value = State.Failed("Could not connect to ${device.name}")
+        if (proxy.connect(device)) return true
+        _state.value = State.Failed("Could not connect to ${device.name}")
+        return false
     }
 
-    /** The user disconnects: that link is not reconnected. */
+    /** The user disconnects: that link is not reconnected, not even at the next start. */
     fun disconnect() {
         synchronized(reconnect) { reconnect.userDisconnect() }
+        forgetHost()
         val proxy = hid ?: return
         host?.let { proxy.disconnect(it) }
     }
@@ -148,6 +156,20 @@ class HidDeviceManager(private val context: Context) {
     }
 
     private fun canRetry() = wanted && appRegistered && hid != null
+
+    /** The host kept from an earlier connection, if it is still bonded. */
+    private fun rememberedHost(): BluetoothDevice? {
+        val address = prefs.getString(KEY_LAST_HOST, null) ?: return null
+        return bondedHosts().firstOrNull { it.address == address }
+    }
+
+    private fun rememberHost(address: String) {
+        if (prefs.getString(KEY_LAST_HOST, null) != address) prefs.edit().putString(KEY_LAST_HOST, address).apply()
+    }
+
+    private fun forgetHost() {
+        prefs.edit().remove(KEY_LAST_HOST).apply()
+    }
 
     /** Applies [step] to the retry rules and schedules the attempt it asks for, if any. */
     private fun retryStep(step: HostReconnect.() -> Long) {
@@ -221,8 +243,17 @@ class HidDeviceManager(private val context: Context) {
                 return
             }
             _state.value = State.Ready
-            // Reconnect to the last host if the stack remembers one.
-            pluggedDevice?.let { connectNow(it) }
+            // Reconnect to the last host: the one the stack remembers, else the one kept from
+            // before. A failed try is retried like a drop.
+            (pluggedDevice ?: rememberedHost())?.let { device ->
+                lastHost = device
+                synchronized(reconnect) { reconnect.remembered(device.address) }
+                // A refused connect brings no STATE_DISCONNECTED to schedule the retry: do it here.
+                if (!connectNow(device)) {
+                    if (hid != null) _state.value = State.Ready
+                    retryStep { disconnected(device.address, canRetry()) }
+                }
+            }
         }
 
         override fun onConnectionStateChanged(device: BluetoothDevice, state: Int) {
@@ -231,6 +262,7 @@ class HidDeviceManager(private val context: Context) {
                     host = device
                     lastHost = device
                     synchronized(reconnect) { reconnect.connected(device.address) }
+                    rememberHost(device.address)
                     _state.value = State.Connected(device.name ?: device.address, device.address)
                     onHostConnected?.invoke()
                 }
@@ -252,6 +284,7 @@ class HidDeviceManager(private val context: Context) {
             // link on purpose and it is not retried.
             Log.i(TAG, "virtual cable unplug from ${device.address}")
             synchronized(reconnect) { reconnect.userDisconnect() }
+            forgetHost()
         }
 
         override fun onGetReport(device: BluetoothDevice, type: Byte, id: Byte, bufferSize: Int) {
@@ -279,6 +312,7 @@ class HidDeviceManager(private val context: Context) {
 
     companion object {
         private const val TAG = "HidDeviceManager"
+        private const val KEY_LAST_HOST = "last_host"
 
         private val sdp = BluetoothHidDeviceAppSdpSettings(
             "GyroPhone",

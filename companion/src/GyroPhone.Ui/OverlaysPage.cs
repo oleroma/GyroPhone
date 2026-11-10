@@ -251,10 +251,10 @@ internal sealed class OverlaysPage : Page
         db.Children.Add(_quality.View);
         db.Children.Add(Parts.Text("High: smooth edges and text. Balanced: smooth edges, plain text. Fast: no smoothing, the quickest for big windows.", "Hint"));
         db.Children.Add(Parts.Text("Frame rate"));
-        _fps = new Seg<int>(f => Change(o => o.MaxFps = f), false, ("Every screen refresh", 0), ("60 fps", 60), ("30 fps", 30));
+        _fps = new Seg<int>(f => Change(o => o.MaxFps = f), false, ("Every screen refresh", 0), ("About 60 fps", 60), ("About 30 fps", 30));
         _fps.View.Margin = new Thickness(0, 6, 0, 2);
         db.Children.Add(_fps.View);
-        db.Children.Add(Parts.Text("Every screen refresh is smoothest but costs more. Draw times are in the Debug window (App page).", "Hint"));
+        db.Children.Add(Parts.Text("Every screen refresh is smoothest but costs more. About 60 and 30 draw every 2nd, 3rd… refresh, whichever is nearest (72 fps on a 144 Hz screen, 55 on 165 Hz), so the motion stays even. Draw times are in the Debug window (App page).", "Hint"));
         _windowTab.Children.Add(draw);
 
         // Look tab
@@ -875,7 +875,13 @@ internal sealed class OverlaysPage : Page
         foreach (var (k, swatch) in _swatches)
         {
             int argb = o.Color(k);
-            swatch.Background = new SolidColorBrush(Color.FromRgb((byte)(argb >> 16), (byte)(argb >> 8), (byte)argb));
+            var c = Color.FromRgb((byte)(argb >> 16), (byte)(argb >> 8), (byte)argb);
+            // One brush per swatch, changed only when its colour does: a new brush redraws it every refresh.
+            if (swatch.Background is SolidColorBrush { IsFrozen: false } b)
+            {
+                if (b.Color != c) b.Color = c;
+            }
+            else swatch.Background = new SolidColorBrush(c);
         }
     }
 

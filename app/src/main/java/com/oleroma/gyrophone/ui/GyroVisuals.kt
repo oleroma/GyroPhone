@@ -28,8 +28,10 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalDensity
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
 import com.oleroma.gyrophone.core.engine.LaserPaint
 import com.oleroma.gyrophone.core.engine.LaserTrace
@@ -75,9 +77,13 @@ fun GyroDisplaysLayer(
     val fades = remember { HashMap<String, Float>() }
     // Each pointer's Aim display now, eased (0 .. 1): the crosshair shrinks and the rifle shoulders by it.
     val aims = remember { HashMap<String, Float>() }
+    // The pose each display showed when it last moved visibly ([VISIBLE_TURN]).
+    val seen = remember { HashMap<String, FloatArray>() }
     // Redraws only while some display's data changes (and a moment after, so ghost trails catch up):
-    // a still pose, as in edit mode or with the gyro off, draws nothing new.
+    // a still pose, as in edit mode, with the gyro off or the phone lying still (its sensor noise
+    // moves the pose by less than shows), draws nothing new.
     LaunchedEffect(Unit) {
+        val pose = FloatArray(9)
         var last = 0L
         var until = 0L
         var lastT = 0L
@@ -96,14 +102,27 @@ fun GyroDisplaysLayer(
                 }
             }
             var sig = runtime.gyroLiveAxes.toLong()
+            var moved = false
             for (b in shown) {
                 val f = runtime.gyroFeed(b.control.id)
                 sig = sig * 31 + System.identityHashCode(f)
-                sig = sig * 31 + (f?.pose?.version ?: 0L)
                 sig = sig * 31 + (f?.trace?.version ?: 0L)
                 sig = sig * 31 + (f?.laser?.version ?: 0L)
+                if (f == null) continue
+                // Held, firing or aiming change what a pointer paints even on a still phone.
+                sig = sig * 31 + (if (f.ratchetHeld) 1 else 0) + (if (f.firing) 2 else 0) + (if (f.aiming) 4 else 0)
+                val d = f.display
+                if (d.isTrackball) sig = sig * 31 + f.trackballActive()
+                if (!d.kind.pose) continue
+                // The pose as shown: redrawn once it moved by a visible amount since it last did.
+                f.shown(pose)
+                val was = seen[b.control.id]
+                if (was == null || movedVisibly(was, pose)) {
+                    seen[b.control.id] = pose.copyInto(was ?: FloatArray(9))
+                    moved = true
+                }
             }
-            if (sig != last || frame == 0L) {
+            if (moved || sig != last || frame == 0L) {
                 last = sig
                 until = t + (GHOSTS + 2) * GHOST_MS
             }
@@ -126,7 +145,8 @@ fun GyroDisplaysLayer(
         }
     }
     val st = remember { VisState() }
-    Canvas(modifier) {
+    // Its own layer: the overlays drawn over it redraw without drawing the displays again.
+    Canvas(modifier.graphicsLayer()) {
         st.now = frame
         for (b in boxes) {
             val shownAs = b.control.display ?: continue
@@ -149,16 +169,36 @@ fun GyroDisplaysLayer(
     }
 }
 
+/** The pose matrix [now] moved from [was] by more than [VISIBLE_TURN] in any entry (a turn of about that many radians). */
+private fun movedVisibly(was: FloatArray, now: FloatArray): Boolean {
+    for (i in 0..8) if (kotlin.math.abs(now[i] - was[i]) > VISIBLE_TURN) return true
+    return false
+}
+
 /** The parallax edge ([TouchVisuals.gyroEdge]): outlines just inside the screen's edge that sway as the phone turns. */
 @Composable
 fun GyroEdgeLayer(runtime: GamepadRuntime, v: TouchVisuals, modifier: Modifier = Modifier) {
     var frame by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(Unit) {
-        while (true) withFrameMillis { frame = it }
-    }
     val st = remember { VisState() }
-    Canvas(modifier) {
-        @Suppress("UNUSED_EXPRESSION") frame // redraw each frame
+    val visuals by rememberUpdatedState(v)
+    val density = LocalDensity.current.density
+    // Redrawn only when where it is drawn moved by a visible amount (or its tint changed): a still phone draws nothing new.
+    LaunchedEffect(Unit) {
+        val drawn = FloatArray(EDGE_STATE)
+        val now = FloatArray(EDGE_STATE)
+        while (true) withFrameMillis { t ->
+            st.edgeState(runtime, visuals, density, now)
+            var moved = frame == 0L
+            for (i in 0 until EDGE_STATE) if (kotlin.math.abs(now[i] - drawn[i]) > EDGE_STEP[i]) moved = true
+            if (moved) {
+                now.copyInto(drawn)
+                frame = t
+            }
+        }
+    }
+    // Its own layer: its redraws leave the gyro displays alone.
+    Canvas(modifier.graphicsLayer()) {
+        @Suppress("UNUSED_EXPRESSION") frame // redrawn when it moved
         st.drawEdge(this, runtime, v)
     }
 }
@@ -280,6 +320,55 @@ private class VisState {
     private val hv = FloatArray(3)
     private val sceneOf: (Float, Float, Float, FloatArray) -> Unit = { x, y, z, out -> LaserTrace.view(x, y, z, out, axon = laserAxon) }
     private val moveColors = LongArray(6)
+    // Reused from frame to frame: the paint's look, the gimbal rings' points, the rifle's muzzle.
+    private val paintLook = PointerPaintShader.Look()
+    private val gimbalPts = Array(3) { FloatArray(65 * 3) }
+    private val muzzleAt = FloatArray(3)
+    // Made again only when what they are made from changes.
+    private var thinCache: Stroke? = null
+    private var dashCache: PathEffect? = null
+    private var strokesFor = 0f
+    private var sphereFill: Brush? = null
+    private val sphereKey = FloatArray(3)
+    private var turnedGrid: Pair<List<FloatArray>, List<FloatArray>>? = null
+    private val turnedGridOf = FloatArray(9)
+    private var turnedGridAxon = false
+    private var sphereKeyLit = Color.Unspecified
+    private var sphereKeyColor = Color.Unspecified
+
+    private fun thinStroke(density: Float): Stroke {
+        val t = thinCache
+        if (density == strokesFor && t != null) return t
+        strokesFor = density
+        dashCache = PathEffect.dashPathEffect(floatArrayOf(4f * density, 3f * density))
+        return Stroke(density, cap = StrokeCap.Round, join = StrokeJoin.Round).also { thinCache = it }
+    }
+
+    private fun lockDash(density: Float): PathEffect {
+        thinStroke(density)
+        return dashCache!!
+    }
+
+    /** [LaserTrace.grid], a turned one made again only when the turn changed. */
+    private fun laserGrid(axon: Boolean, turned: FloatArray?): Pair<List<FloatArray>, List<FloatArray>> {
+        if (turned == null) return LaserTrace.grid(axon)
+        val g = turnedGrid
+        if (g != null && axon == turnedGridAxon && turned.contentEquals(turnedGridOf)) return g
+        turned.copyInto(turnedGridOf)
+        turnedGridAxon = axon
+        return LaserTrace.grid(axon, turned).also { turnedGrid = it }
+    }
+
+    /** The Sphere look's shading, lit from upper left: the same one while its colours and place stay. */
+    private fun sphereBrush(lit: Color, sphere: Color, c: Offset, r: Float): Brush {
+        val k = sphereKey
+        val b = sphereFill
+        if (b != null && lit == sphereKeyLit && sphere == sphereKeyColor && k[0] == c.x && k[1] == c.y && k[2] == r) return b
+        sphereKeyLit = lit
+        sphereKeyColor = sphere
+        k[0] = c.x; k[1] = c.y; k[2] = r
+        return Brush.radialGradient(listOf(lit, sphere), Offset(c.x - r * 0.35f, c.y - r * 0.4f), r * 1.3f).also { sphereFill = it }
+    }
 
     private val crossPath = Path()
     /** A small padlock at [p] in [color]: a locked (None) axis's tip. */
@@ -332,7 +421,7 @@ private class VisState {
      * with a white-hot middle, longest along the barrel.
      */
     private fun DrawScope.muzzleFlash(c: Offset, r: Float, fire: Color) {
-        val mz = FloatArray(3).also { LaserTrace.muzzle(aim, it) }
+        val mz = muzzleAt.also { LaserTrace.muzzle(aim, it) }
         fun at(k: Float): Offset {
             val x = mz[0]; val y = mz[1]; val z = mz[2] - k
             return laserAt(c, r, m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z)
@@ -370,7 +459,7 @@ private class VisState {
      * along the barrel to where it lands on the sphere, and a dot there with a soft halo.
      */
     private fun DrawScope.laserSight(c: Offset, r: Float, color: Color) {
-        val mz = FloatArray(3).also { LaserTrace.muzzle(aim, it) }
+        val mz = muzzleAt.also { LaserTrace.muzzle(aim, it) }
         val x = mz[0]; val y = mz[1]; val z = mz[2]
         val tip = laserAt(c, r, m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z)
         val hit = laserAt(c, r, beam[0], beam[1], beam[2])
@@ -410,15 +499,21 @@ private class VisState {
             val z = pv[2]
             if (i > 0 && !s.gap(i) && (z > 0f) == front) {
                 // The scene's frame (without the sphere's turn): what the colour goes by.
-                val (gx, gy, gz) = if (turned == null) Triple(la[0], la[1], la[2]) else Triple(
-                    turned[0] * la[0] + turned[3] * la[1] + turned[6] * la[2],
-                    turned[1] * la[0] + turned[4] * la[1] + turned[7] * la[2],
-                    turned[2] * la[0] + turned[5] * la[1] + turned[8] * la[2],
-                )
+                val gx: Float
+                val gy: Float
+                val gz: Float
+                if (turned == null) {
+                    gx = la[0]; gy = la[1]; gz = la[2]
+                } else {
+                    gx = turned[0] * la[0] + turned[3] * la[1] + turned[6] * la[2]
+                    gy = turned[1] * la[0] + turned[4] * la[1] + turned[7] * la[2]
+                    gz = turned[2] * la[0] + turned[5] * la[1] + turned[8] * la[2]
+                }
                 val kind = s.kind(i)
                 val argb = if (kind != LaserPaint.PAINT) {
                     val k = LaserTrace.behind(gz)
-                    val (ca, cb) = if (kind == LaserPaint.FIRE) fa to fb else aa to ab
+                    val ca = if (kind == LaserPaint.FIRE) fa else aa
+                    val cb = if (kind == LaserPaint.FIRE) fb else ab
                     Color(ca.red + (cb.red - ca.red) * k, ca.green + (cb.green - ca.green) * k, ca.blue + (cb.blue - ca.blue) * k)
                 } else {
                     if (d.laserColourByWay) s.direction(i, if (d.laserSmoothColours) LaserTrace.SMOOTH_REACH else 0, way)
@@ -514,11 +609,11 @@ private class VisState {
         val sphere = col(GyroDisplayColor.LASER_SPHERE)
         if (!rifle && !crosshair) {
         val lit = Color(sphere.red + (1 - sphere.red) * 0.35f, sphere.green + (1 - sphere.green) * 0.35f, sphere.blue + (1 - sphere.blue) * 0.35f, sphere.alpha)
-        drawCircle(Brush.radialGradient(listOf(lit, sphere), Offset(c.x - r * 0.35f, c.y - r * 0.4f), r * 1.3f), r, c)
+        drawCircle(sphereBrush(lit, sphere, c, r), r, c)
         }
         val grid = col(GyroDisplayColor.LASER_GRID)
-        val thin = Stroke(density, cap = StrokeCap.Round, join = StrokeJoin.Round)
-        val (gridFront, gridBack) = LaserTrace.grid(laserAxon, laserTurned)
+        val thin = thinStroke(density)
+        val (gridFront, gridBack) = laserGrid(laserAxon, laserTurned)
         // A grid point (on the unit sphere, its depth from x and y, + on the near half) in the picture, with perspective.
         fun gridK(x: Float, y: Float, near: Boolean): Float {
             if (!laserPersp) return r
@@ -543,7 +638,7 @@ private class VisState {
         // Locked (None) gimbal axes, those stopping at ±90°, and those the gyro is turning now (bit 0 yaw, 1 pitch, 2 roll).
         val locks = d.gimbalLocks
         val active = if (d.turnsWith == com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL) feed?.trackballActive() ?: 0 else 0
-        val dash = PathEffect.dashPathEffect(floatArrayOf(4f * density, 3f * density))
+        val dash = lockDash(density)
         fun axes(front: Boolean) {
             if (!d.laserAxes) return
             for (i in 0..2) {
@@ -576,22 +671,22 @@ private class VisState {
             }
         }
         // Draw mode's paint: the paint map drawn on the sphere by the GPU, its near or far half.
-        val look = if (lt?.paint == null || !d.laserDraw) null else PointerPaintShader.Look(
-            eye = if (laserPersp) LaserTrace.CAMERA_DISTANCE else 0f,
-            byWay = d.laserColourByWay, glow = d.laserGlow, outline = d.laserOutline,
-            shade = d.laserShade, inside = d.laserInside, light = d.laserLight, lightFrom = d.laserLightFrom, shine = d.laserShine,
-            moves = IntArray(6) { moveColors[it].toInt() },
-            fireAhead = col(GyroDisplayColor.LASER_FIRE).toArgb(), fireBehind = col(GyroDisplayColor.LASER_FIRE_BEHIND).toArgb(),
-            aimAhead = col(GyroDisplayColor.LASER_AIM).toArgb(), aimBehind = col(GyroDisplayColor.LASER_AIM_BEHIND).toArgb(),
-            fireGlow = d.laserFireGlow, aimGlow = d.laserAimGlow,
-            outlineColor = col(GyroDisplayColor.LASER_OUTLINE).toArgb(), wayAlpha = moveAlpha,
-        )
+        val look = if (lt?.paint == null || !d.laserDraw) null else paintLook.apply {
+            eye = if (laserPersp) LaserTrace.CAMERA_DISTANCE else 0f
+            byWay = d.laserColourByWay; glow = d.laserGlow; outline = d.laserOutline
+            shade = d.laserShade; inside = d.laserInside; light = d.laserLight; lightFrom = d.laserLightFrom; shine = d.laserShine
+            for (i in 0..5) moves[i] = moveColors[i].toInt()
+            fireAhead = col(GyroDisplayColor.LASER_FIRE).toArgb(); fireBehind = col(GyroDisplayColor.LASER_FIRE_BEHIND).toArgb()
+            aimAhead = col(GyroDisplayColor.LASER_AIM).toArgb(); aimBehind = col(GyroDisplayColor.LASER_AIM_BEHIND).toArgb()
+            fireGlow = d.laserFireGlow; aimGlow = d.laserAimGlow
+            outlineColor = col(GyroDisplayColor.LASER_OUTLINE).toArgb(); wayAlpha = moveAlpha
+        }
         val brushPx = maxOf(1.5f * density, r * Math.toRadians(d.laserBrush.coerceIn(1, 20).toDouble()).toFloat() * BRUSH_WIDTH)
         fun paint(front: Boolean) {
             val t = lt ?: return
             val lp = t.paint
             if (lp != null && look != null) {
-                paintShaders.getOrPut(t) { PointerPaintShader() }.draw(drawContext.canvas.nativeCanvas, lp, front, c.x, c.y, r, viewOf, sceneOf, look)
+                paintShaders.getOrPut(t) { PointerPaintShader() }.draw(drawContext.canvas.nativeCanvas, lp, front, c.x, c.y, r, viewOf, sceneOf, look, now)
             }
             if (d.laserSnake) snake(t, d, front, c, r, brushPx, col)
         }
@@ -647,7 +742,7 @@ private class VisState {
         }
         // The Sphere look's gimbal rings, turning with the laser's axes, each round its own: their far halves
         // now, near halves over the beam.
-        val gimbal = if (d.laserGimbal) Array(3) { LaserTrace.gimbalRing(it, m) } else null
+        val gimbal = if (d.laserGimbal) gimbalPts.also { for (i in 0..2) LaserTrace.gimbalRing(i, m, out = it[i]) } else null
         fun rings(front: Boolean) {
             if (gimbal == null) return
             for (i in 0..2) {
@@ -1119,23 +1214,44 @@ private class VisState {
         drawLine(sym, Offset(c.x, tRect.top), Offset(c.x, tRect.bottom), 2 * density)
     }
 
-    fun drawEdge(scope: DrawScope, runtime: GamepadRuntime, v: TouchVisuals) = with(scope) {
-        val op = v.gyroOpacity.coerceIn(0.05f, 1f)
-        val live = runtime.gyroLiveAxes
-        val sx: Float
-        val sy: Float
-        val rot: Float
+    private val sway = FloatArray(3)
+
+    /** The edge's sway now (x, y degrees and its turn) into [sway]. */
+    private fun edgeSway(runtime: GamepadRuntime, v: TouchVisuals) {
         if (v.gyroEdgeTilt) {
             runtime.worldPose.matrix(raw)
             level(v.gyroLevelDeg)
             // Tilt as if turning: rolling right reads as a turn right, pitching up as up.
-            sx = -horizonRollDeg()
-            sy = pitchDeg()
-            rot = 0f
+            sway[0] = -horizonRollDeg()
+            sway[1] = pitchDeg()
+            sway[2] = 0f
         } else {
             val s = runtime.gyroSway
-            sx = s.x; sy = s.y; rot = s.rot
+            sway[0] = s.x; sway[1] = s.y; sway[2] = s.rot
         }
+    }
+
+    /**
+     * What the edge's picture depends on that moves, into [out] ([EDGE_STATE] numbers): its outer
+     * outline's shift in pixels (x, y), its turn in degrees and the live gyro axes (its tint).
+     * The edge is drawn again once one moved by its [EDGE_STEP].
+     */
+    fun edgeState(runtime: GamepadRuntime, v: TouchVisuals, density: Float, out: FloatArray) {
+        edgeSway(runtime, v)
+        val k = EDGE_PX_PER_DEG * density * v.gyroEdgeStrength
+        out[0] = sway[0] * k
+        out[1] = sway[1] * k
+        out[2] = sway[2]
+        out[3] = runtime.gyroLiveAxes.toFloat()
+    }
+
+    fun drawEdge(scope: DrawScope, runtime: GamepadRuntime, v: TouchVisuals) = with(scope) {
+        val op = v.gyroOpacity.coerceIn(0.05f, 1f)
+        val live = runtime.gyroLiveAxes
+        edgeSway(runtime, v)
+        val sx = sway[0]
+        val sy = sway[1]
+        val rot = sway[2]
         val dir = if (v.gyroEdgeInvert) -1f else 1f
         val k = EDGE_PX_PER_DEG * density * v.gyroEdgeStrength * dir
         val limit = EDGE_MAX_DP * density
@@ -1389,6 +1505,14 @@ private const val EDGE_PX_PER_DEG = 1.5f
 private const val EDGE_MAX_DP = 80f
 private const val EDGE_GAP_DP = 10f
 private const val EDGE_CORNER_DP = 34f
+
+// The parallax edge's numbers that move ([VisState.edgeState]), and how far one moves before it is drawn again
+// (a quarter pixel; a turn of a hundredth of a degree).
+private const val EDGE_STATE = 4
+private val EDGE_STEP = floatArrayOf(0.25f, 0.25f, 0.01f, 0.5f)
+
+// How far a gyro display's shown pose (a matrix entry) moves before it is drawn again: about 0.05°.
+private const val VISIBLE_TURN = 0.0009f
 
 
 /** Yaw, pitch, roll: the edge's tint. */
