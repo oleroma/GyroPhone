@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.model.AxisRange
 import com.oleroma.gyrophone.core.model.How
 import com.oleroma.gyrophone.core.model.MapOptions
+import com.oleroma.gyrophone.core.model.PresetLevel
 import com.oleroma.gyrophone.core.model.Trigger
 import kotlin.math.roundToInt
 
@@ -145,6 +146,8 @@ internal fun MappingChipDialog(
     whereTitle: String? = null,
     /** An axis chip's output range; null = it has none. */
     range: ChipRange? = null,
+    /** Saves the chip (as it is mapped now) as a chip preset; null = none. */
+    onSavePreset: (() -> Unit)? = null,
 ) {
     val o0 = options ?: MapOptions()
     val r0 = range?.let { it.current ?: it.initial }
@@ -286,6 +289,12 @@ internal fun MappingChipDialog(
                     msSlider("Hold time", minHold, MapOptions.DEFAULT_MIN_HOLD_MS) { minHold = it }
                     msSlider("End delay", end) { end = it }
                     hint("Start delay: it starts this much later. Hold time: it lasts at least this long (80 ms by default, so apps that check keys now and then, like OBS hotkeys, see a quick tap). End delay: it lasts this much longer after you let go.")
+                }
+                if (onSavePreset != null) TextButton(onClick = onSavePreset) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        PresetIcon(PresetLevel.CHIP, colors.primary)
+                        Text("Save as chip preset")
+                    }
                 }
                 TextButton(onClick = onRemove) { Text("Remove this mapping", color = colors.error) }
             }

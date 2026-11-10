@@ -28,6 +28,7 @@ import com.oleroma.gyrophone.core.model.KnownController
 import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.LibraryButton
+import com.oleroma.gyrophone.core.model.MappingPreset
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.YawAxis
 import com.oleroma.gyrophone.core.model.WorkspaceMappings
@@ -1147,6 +1148,29 @@ class GamepadRuntime(context: Context) {
     fun removeFromLibrary(id: String) {
         _buttonLibrary.value = _buttonLibrary.value.filterNot { it.id == id }
         store.saveButtonLibrary(_buttonLibrary.value)
+    }
+
+    /** Replaces library button [button] (same id): renamed. */
+    fun updateLibrary(button: LibraryButton) {
+        _buttonLibrary.value = _buttonLibrary.value.map { if (it.id == button.id) button else it }
+        store.saveButtonLibrary(_buttonLibrary.value)
+    }
+
+    private val _mappingPresets = MutableStateFlow(store.mappingPresets())
+
+    /** The chip and card presets made in the mapping editor, shared by every workspace. */
+    val mappingPresets: StateFlow<List<MappingPreset>> = _mappingPresets
+
+    /** Adds [preset], or replaces the one with its id (renamed). */
+    fun saveMappingPreset(preset: MappingPreset) {
+        val now = _mappingPresets.value
+        _mappingPresets.value = if (now.any { it.id == preset.id }) now.map { if (it.id == preset.id) preset else it } else now + preset
+        store.saveMappingPresets(_mappingPresets.value)
+    }
+
+    fun removeMappingPreset(id: String) {
+        _mappingPresets.value = _mappingPresets.value.filterNot { it.id == id }
+        store.saveMappingPresets(_mappingPresets.value)
     }
 
     /** Live value of a phone-side source (for highlighting pressed controls). */

@@ -112,6 +112,9 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
@@ -2417,7 +2420,9 @@ fun PadScreen(
                                             addOpen = false
                                         }
                                     }
-                                    if (library.isNotEmpty()) {
+                                    // Presets of a physical control or the touchpad stay in the mapping editor.
+                                    val padLibrary = library.filterNot(ButtonLibrary::presetOnly)
+                                    if (padLibrary.isNotEmpty()) {
                                         Text(
                                             "Library",
                                             color = Color.White.copy(alpha = 0.7f),
@@ -2425,7 +2430,7 @@ fun PadScreen(
                                             modifier = Modifier.padding(horizontal = 4.dp),
                                         )
                                     }
-                                    for (b in library) {
+                                    for (b in padLibrary) {
                                         AddChip(ButtonLibrary.name(b), true, onLongPress = { removingLib = b }) addLib@{ at ->
                                             val d = draft ?: return@addLib
                                             val wk = d.workspace(editIndex)
@@ -2620,6 +2625,8 @@ fun PadScreen(
                         },
                         parentName = "Workspace",
                         timing = { sel.longPress(ws) to sel.doubleTap(ws) },
+                        workspace = ws,
+                        onControlChange = { change -> updateControl(sel.id, change) },
                     )
                 } else {
                     // A long press: all of the control's settings.
@@ -2949,17 +2956,24 @@ private fun PadControl(
                     .background(tint.copy(alpha = 0.6f), CircleShape),
             )
         }
-        Text(
+        // The label shrinks to fit (a circle's inside is narrower than its width), so a long one
+        // ("Shift", "Ratchet") on a small key stays readable instead of ending in "…".
+        val inset = if (control.shape == TouchShape.SQUARE && control.kind != TouchKind.STICK) 4.dp else widthDp * 0.15f + 2.dp
+        val style = MaterialTheme.typography.labelLarge
+        BasicText(
             label,
-            color = if (live) LIVE_LABEL_COLOR else Color.White,
+            color = { if (live) LIVE_LABEL_COLOR else Color.White },
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = if (live) FontWeight.Bold else null,
-            modifier = Modifier.padding(horizontal = 4.dp),
+            overflow = TextOverflow.Clip,
+            style = if (live) style.copy(fontWeight = FontWeight.Bold) else style,
+            autoSize = TextAutoSize.StepBased(minFontSize = MIN_LABEL_SP.sp, maxFontSize = style.fontSize, stepSize = 0.5.sp),
+            modifier = Modifier.padding(horizontal = inset),
         )
     }
 }
+
+/** The smallest a control's label shrinks to. */
+private const val MIN_LABEL_SP = 7f
 
 /** Settings of a workspace corner, shown next to it. Corner settings change [profile]. */
 @Composable

@@ -5,6 +5,8 @@ import android.util.Log
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.ButtonLibrary
 import com.oleroma.gyrophone.core.model.LibraryButton
+import com.oleroma.gyrophone.core.model.MappingPreset
+import com.oleroma.gyrophone.core.model.MappingPresets
 import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.Profile
@@ -182,6 +184,19 @@ class ProfileStore(context: Context) {
     @Synchronized fun saveButtonLibrary(buttons: List<LibraryButton>) {
         if (libraryFile.exists() && ButtonLibrary.decode(libraryFile.readText()) == null) return
         replaceFile(libraryFile, ButtonLibrary.encode(buttons))
+    }
+
+    private val presetFile = File(context.filesDir, "mapping_presets.json")
+
+    /** The chip and card presets of the mapping editor (empty if none saved, or unreadable: the file is then left alone). */
+    @Synchronized fun mappingPresets(): List<MappingPreset> =
+        if (!presetFile.exists()) emptyList()
+        else MappingPresets.decode(presetFile.readText()).orEmpty()
+
+    /** Saves the mapping editor's presets; refuses to replace a file that exists but cannot be read. */
+    @Synchronized fun saveMappingPresets(presets: List<MappingPreset>) {
+        if (presetFile.exists() && MappingPresets.decode(presetFile.readText()) == null) return
+        replaceFile(presetFile, MappingPresets.encode(presets))
     }
 
     /** True once each workspace holds its own mappings (moved out of the mapping profiles). */
