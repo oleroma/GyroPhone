@@ -12,10 +12,11 @@ namespace GyroPhone.Tray;
 /// <summary>
 /// GyroPhoneCompanion.exe --watch: no window, no tray. While the companion is off it holds UDP 47800,
 /// and the first DISCOVER from a known phone makes it free the port and start the installed companion
-/// (%LOCALAPPDATA%\Programs\GyroPhone, the copy with the firewall rule). While the companion runs the
-/// port is taken, so it only retries the bind. A companion started any other way (by hand, Start with
-/// Windows, its own update restart) signals <see cref="YieldEventName"/> first and the watcher lets go
-/// of the port. Started at login by the GyroPhoneWatcher Run entry.
+/// (%LOCALAPPDATA%\Programs\GyroPhone, the copy with the firewall rule). While the companion runs or is
+/// starting (its lock is taken), and for up to 30 s after the watcher started it, the watcher never binds.
+/// A companion started any other way (by hand, Start with Windows, its own update restart) signals
+/// <see cref="YieldEventName"/> before its first bind and the watcher lets go of the port at once. Started
+/// at login by the GyroPhoneWatcher Run entry.
 ///
 /// DISCOVER is not authenticated: anyone on the LAN who copies a known phone id or key id can make the
 /// watcher start the companion (at most once per <see cref="RelaunchGapMs"/>). That only starts the
@@ -32,6 +33,9 @@ internal static class Watcher
     /// <summary>How long the watcher stays off the port after yielding, so the companion can bind.</summary>
     private const int YieldMs = 10_000;
     private const int BindRetryMs = 3000;
+    /// <summary>After starting the companion, how long it may take to take its lock before the watcher binds again.</summary>
+    private const int LaunchWaitMs = 30_000;
+    /// <summary>How often the watcher looks at the update and reloads between packets; packets, the yield and stop requests wake it at once.</summary>
     private const int ReceiveTimeoutMs = 1000;
     private const long ReloadMs = 10_000;
     private const long RelaunchGapMs = 30_000;
@@ -48,6 +52,8 @@ internal static class Watcher
         using var yieldPort = new EventWaitHandle(false, EventResetMode.AutoReset, YieldEventName);
         using var log = new FileLog();
         log.Write($"watcher {Application.ProductVersion} started");
+        // Quiet mode must not slow the hand-over of the port: the watcher only ever waits, so this costs nothing.
+        PowerQos.TryDisableForProcess(log.Write);
         var update = new UpdateCheck(Environment.ProcessPath ?? Application.ExecutablePath, log);
         bool stopped = false;
         // The stop event resets when a wait sees it, so remember it once seen.
@@ -55,63 +61,97 @@ internal static class Watcher
         var keyFiles = new KeyFiles(KeyFiles.DefaultDirectory());
         var settingsPath = SettingsStore.DefaultPath();
         long lastLaunch = -RelaunchGapMs;
+        long launchedAt = -LaunchWaitMs;
         var clock = Stopwatch.StartNew();
+        var buf = new byte[Wire.MaxDatagram];
+        EndPoint any = new IPEndPoint(IPAddress.Any, 0);
 
         while (!Stopped(0))
         {
             if (update.HandOff()) break;
+            // A request left from a companion that has the port by now is stale: clear it before looking.
+            yieldPort.Reset();
+            // Never take the port from a companion that runs or is still starting: it takes its lock first
+            // thing, long before it binds. Just after starting one, give it time to take that lock.
+            if (Program.IsRunning() || clock.ElapsedMilliseconds - launchedAt < LaunchWaitMs)
+            {
+                if (Stopped(Program.IsRunning() ? BindRetryMs : 250)) break;
+                continue;
+            }
             using var s = TryBind();
             if (s == null)
             {
-                if (Stopped(BindRetryMs)) break; // the companion (or something else) has the port
+                if (Stopped(BindRetryMs)) break; // something else has the port
                 continue;
             }
             var known = PhoneWatch.Load(settingsPath, keyFiles);
             long loadedAt = clock.ElapsedMilliseconds;
-            var buf = new byte[Wire.MaxDatagram];
-            EndPoint from = new IPEndPoint(IPAddress.Any, 0);
             bool yielded = false;
-            while (!Stopped(0))
+            Task<SocketReceiveFromResult>? pending = null;
+            try
             {
-                if (update.HandOff())
+                while (!stopped)
                 {
-                    stopped = true;
+                    if (update.HandOff())
+                    {
+                        stopped = true;
+                        break;
+                    }
+                    // Wait for a packet, the companion's request and the stop switch together, so the
+                    // port is let go of within milliseconds of the request.
+                    pending ??= s.ReceiveFromAsync(new ArraySegment<byte>(buf), SocketFlags.None, any);
+                    int which = WaitHandle.WaitAny([stop, yieldPort, ((IAsyncResult)pending).AsyncWaitHandle], ReceiveTimeoutMs);
+                    if (which == 0)
+                    {
+                        stopped = true;
+                        break;
+                    }
+                    if (which == 1)
+                    {
+                        yielded = true;
+                        log.Write("companion starting: port released");
+                        break;
+                    }
+                    if (clock.ElapsedMilliseconds - loadedAt >= ReloadMs)
+                    {
+                        known = PhoneWatch.Load(settingsPath, keyFiles);
+                        loadedAt = clock.ElapsedMilliseconds;
+                    }
+                    if (which == WaitHandle.WaitTimeout) continue;
+                    int n;
+                    try
+                    {
+                        n = pending.GetAwaiter().GetResult().ReceivedBytes;
+                    }
+                    catch (SocketException)
+                    {
+                        n = 0; // ICMP noise
+                    }
+                    // Done with: free its wait handle now rather than at some later GC (one per packet).
+                    pending.Dispose();
+                    pending = null;
+                    if (n == 0 || !known.IsKnownPhone(buf.AsSpan(0, n))) continue;
+                    if (clock.ElapsedMilliseconds - lastLaunch < RelaunchGapMs) continue;
+                    lastLaunch = clock.ElapsedMilliseconds;
+                    s.Close(); // the companion binds next; the phone repeats DISCOVER every second
+                    if (Program.IsRunning()) log.Write("known phone seen: the companion is already starting");
+                    else if (Launch(log)) launchedAt = clock.ElapsedMilliseconds;
                     break;
                 }
-                if (yieldPort.WaitOne(0))
-                {
-                    s.Close();
-                    yielded = true;
-                    log.Write("companion starting: port released");
-                    break;
-                }
-                int n;
-                try
-                {
-                    n = s.ReceiveFrom(buf, ref from);
-                }
-                catch (SocketException)
-                {
-                    n = 0; // timeout or ICMP noise
-                }
-                if (clock.ElapsedMilliseconds - loadedAt >= ReloadMs)
-                {
-                    known = PhoneWatch.Load(settingsPath, keyFiles);
-                    loadedAt = clock.ElapsedMilliseconds;
-                }
-                if (n == 0 || !known.IsKnownPhone(buf.AsSpan(0, n))) continue;
-                if (clock.ElapsedMilliseconds - lastLaunch < RelaunchGapMs) continue;
-                lastLaunch = clock.ElapsedMilliseconds;
-                s.Close(); // the companion binds next; the phone repeats DISCOVER every second
-                if (Program.IsRunning()) log.Write("known phone seen: the companion is already starting");
-                else Launch(log);
-                break;
             }
-            if (Stopped(yielded ? YieldMs : BindRetryMs)) break;
+            finally
+            {
+                s.Close(); // ends a receive still waiting
+                Observe(pending);
+            }
+            if (Stopped(yielded ? YieldMs : 0)) break;
         }
         log.Write("watcher stopped");
         return 0;
     }
+
+    /// <summary>A receive ended by closing its socket fails; its error is expected, so it is read and dropped.</summary>
+    private static void Observe(Task? t) => t?.ContinueWith(x => _ = x.Exception, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
 
     /// <summary>True while a watcher runs in this session.</summary>
     public static bool IsRunning()
@@ -139,7 +179,7 @@ internal static class Watcher
 
     /// <summary>
     /// Asks a running watcher to let go of UDP 47800. True when a watcher was asked; it releases the
-    /// port within about a second (its receive timeout).
+    /// port within milliseconds (it waits on this request and the socket together).
     /// </summary>
     public static bool AskToYieldPort()
     {
@@ -154,7 +194,6 @@ internal static class Watcher
         try
         {
             s.ExclusiveAddressUse = true;
-            s.ReceiveTimeout = ReceiveTimeoutMs;
             s.Bind(new IPEndPoint(IPAddress.Any, Wire.Port));
             return s;
         }
@@ -165,21 +204,23 @@ internal static class Watcher
         }
     }
 
-    private static void Launch(FileLog log)
+    private static bool Launch(FileLog log)
     {
         var exe = File.Exists(InstalledExe) ? InstalledExe : Environment.ProcessPath ?? Application.ExecutablePath;
         try
         {
-            using var p = Process.Start(new ProcessStartInfo(exe)
+            using var p = Process.Start(new ProcessStartInfo(exe, Program.WokenArg)
             {
                 UseShellExecute = true,
                 WorkingDirectory = Path.GetDirectoryName(exe) ?? "",
             });
             log.Write($"known phone seen: started {exe}");
+            return true;
         }
         catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException)
         {
             log.Write($"could not start the companion: {e.GetType().Name}");
+            return false;
         }
     }
 

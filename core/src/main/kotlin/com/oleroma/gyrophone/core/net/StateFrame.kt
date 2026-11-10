@@ -60,6 +60,25 @@ class StateFrame : WirePacket {
         hwheelTotal = if (hires) totals.hwheel else 0
     }
 
+    /**
+     * A Link test frame for send number [tick]: nothing held, the mouse totals sweeping 3 counts a
+     * packet back and forth (300 packets each way), so every packet differs and the pump sends at
+     * its full rate. Flags: [StateFlags.LINK_TEST] only.
+     */
+    fun fillLinkTest(tick: Int, hires: Boolean = false) {
+        this.hires = hires
+        gyroExt = false
+        flags = StateFlags.LINK_TEST
+        buttons = 0; hat = Hat.CENTER; mouseButtons = 0
+        lx = 0; ly = 0; rx = 0; ry = 0; lt = 0; rt = 0
+        keyBitmap.fill(0)
+        val phase = tick % 600
+        mouseTotalX = 3 * (if (phase < 300) phase else 600 - phase)
+        mouseTotalY = tick
+        wheelTotal = 0
+        hwheelTotal = 0
+    }
+
     /** Marks [usage] held. Usages 0..3 (no event / error codes) are never set. */
     fun setKey(usage: Int) {
         if (usage < FIRST_KEY_USAGE || usage > 0xFF) return

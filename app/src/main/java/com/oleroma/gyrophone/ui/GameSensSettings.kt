@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -57,21 +56,31 @@ internal fun GyroSensSlider(
     overridden: Boolean,
     onReset: (() -> Unit)?,
     hint: String,
+    children: ChildInfo? = null,
     onDone: (Float) -> Unit,
 ) {
-    // The app's jitter cutoff (Settings, App, Gyro), the same in every workspace.
-    val tightening by LocalContext.current.runtime.gyroTightening.collectAsStateWithLifecycle()
+    // The app's jitter cutoff (App › Gyro), the same in every workspace.
+    val runtime = LocalContext.current.runtime
+    val tightening by runtime.gyroTightening.collectAsStateWithLifecycle()
+    val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
+    val capCounts by runtime.sensCapCounts.collectAsStateWithLifecycle()
     val c = g.gameCountsPer360
     if (c <= 0f) {
-        OverrideSlider(key, "$label %.0f", sens, 0f..MAX_GYRO_SENS, 1f, overridden, onReset, hint, onDone = onDone)
+        OverrideSlider(
+            key, "$label %.0f", sens, 0f..capCounts.coerceAtMost(MAX_GYRO_SENS), 1f, overridden, onReset, hint,
+            children = children, typedRange = 0f..MAX_GYRO_SENS, onDone = onDone,
+        )
         return
     }
     val tight = if (tightening > 0f) {
         " Exact above the jitter cutoff (%.1f°/s): slower turns move less.".format(tightening)
     } else ""
+    val top = GameSens.rws(MAX_GYRO_SENS, c)
     OverrideSlider(
-        key + "rws", "$label %.2f RWS", GameSens.rws(sens, c), 0f..GameSens.rws(MAX_GYRO_SENS, c), 0.01f, overridden, onReset,
+        key + "rws", "$label %.2f RWS", GameSens.rws(sens, c), 0f..capRws.coerceAtMost(top), 0.01f, overridden, onReset,
         "%.1f counts per degree in %s. %s%s %s".format(sens, g.gameName.ifEmpty { "this game" }, RWS_HINT, tight, hint),
+        children = children,
+        typedRange = 0f..top,
     ) { v -> onDone(GameSens.sensOf(v, c)) }
 }
 
@@ -80,7 +89,7 @@ internal fun GyroSensSlider(
  * set it from a preset, by hand or by measuring in the game ([GameSensDialog]).
  */
 @Composable
-internal fun GameTurnRow(runtime: GamepadRuntime, level: WorkspaceLevel, own: Boolean, onReset: () -> Unit) {
+internal fun GameTurnRow(runtime: GamepadRuntime, level: WorkspaceLevel, own: Boolean, children: ChildInfo?, onReset: () -> Unit) {
     val g = level.ws.gyro
     var open by remember { mutableStateOf(false) }
     OverrideRow(
@@ -88,6 +97,7 @@ internal fun GameTurnRow(runtime: GamepadRuntime, level: WorkspaceLevel, own: Bo
         hint = if (g.gameCountsPer360 > 0f) {
             "%.0f mouse counts turn the camera once around; gyro sensitivities show in RWS. ".format(g.gameCountsPer360) + RWS_HINT
         } else "Set the game's full turn to see and set gyro sensitivity as real world sensitivity (RWS) instead of counts per degree.",
+        children = children,
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { open = true }) { Text(if (g.gameCountsPer360 > 0f) "Change game" else "Set game") }

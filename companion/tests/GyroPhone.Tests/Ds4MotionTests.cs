@@ -48,7 +48,7 @@ public class Ds4MotionTests
     {
         var r = new byte[Ds4Report.Size];
         var f = new Ds4Frame((ushort)(Ds4Buttons.Cross | Ds4Buttons.ThumbRight), Ds4Special.Ps, 2, 1, 2, 3, 4, 5, 6);
-        Ds4Report.Build(r, f, new Ds4Motion(0x1234, 16, -16, 300, -8192, 8192, 7));
+        Ds4Report.Build(r, f, new Ds4Motion(0x12340, 16, -16, 300, -8192, 8192, 7));
         Assert.Equal(new byte[] { 1, 2, 3, 4 }, r[..4]);
         Assert.Equal(Ds4Buttons.Cross | Ds4Buttons.ThumbRight | 2, Le.U16(r, 4));
         Assert.Equal(Ds4Special.Ps, r[6]);
@@ -79,7 +79,9 @@ public class Ds4MotionTests
         Assert.Equal(16, o[0].Gx);
         Assert.Equal(253, o[1].Gz);
         // 1000 µs is 187.5 ticks of 16/3 µs.
-        Assert.Equal(187, (ushort)(o[1].Timestamp - o[0].Timestamp));
+        Assert.Equal(187, (ushort)(o[1].Ds4Timestamp - o[0].Ds4Timestamp));
+        // The DualSense's clock is exact: 1000 µs is 3000 ticks of 1/3 µs.
+        Assert.Equal(3000u, o[1].Clock - o[0].Clock);
         // The same packet again (a repeat): nothing new.
         Assert.Equal(0, feed.Take(f, o, 100));
         // The next one repeats sample 5 and adds 6: only 6 is new.

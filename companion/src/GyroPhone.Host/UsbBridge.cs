@@ -10,22 +10,25 @@ namespace GyroPhone.Host;
 /// server's port from a loopback socket of our own, and whatever the server sends back to that
 /// socket goes down the cable. The engine sees one more phone address (127.0.0.1:port), so
 /// pairing, sessions and encryption are exactly those of Wi-Fi. Thread gp-usb-rx reads the cable,
-/// gp-usb-tx the loopback socket.
+/// gp-usb-tx the loopback socket. Both run the start hook first, which on Windows registers them with
+/// MMCSS and opts them out of power throttling, like gp-rx.
 /// </summary>
 public sealed class UsbBridge : IDisposable
 {
     private readonly IUsbPipe _pipe;
     private readonly IPEndPoint _server;
     private readonly Action<string> _log;
+    private readonly Action? _onThreadStart;
     private readonly Socket _socket;
     private readonly Thread _rx, _tx;
     private volatile bool _stopping;
     private volatile bool _dead;
     private long _fromPhone, _toPhone, _writeFailures;
 
-    public UsbBridge(IUsbPipe pipe, int serverPort, Action<string>? log = null)
+    public UsbBridge(IUsbPipe pipe, int serverPort, Action<string>? log = null, Action? onThreadStart = null)
     {
         _pipe = pipe;
+        _onThreadStart = onThreadStart;
         _server = new IPEndPoint(IPAddress.Loopback, serverPort);
         _log = log ?? (_ => { });
         _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
@@ -50,8 +53,21 @@ public sealed class UsbBridge : IDisposable
         _tx.Start();
     }
 
+    private void ThreadStarted()
+    {
+        try
+        {
+            _onThreadStart?.Invoke();
+        }
+        catch (Exception e)
+        {
+            _log($"usb thread start hook failed: {e.GetType().Name}");
+        }
+    }
+
     private void RxLoop()
     {
+        ThreadStarted();
         var buf = new byte[16384];
         var deframer = new UsbDeframer();
         try
@@ -75,6 +91,7 @@ public sealed class UsbBridge : IDisposable
 
     private void TxLoop()
     {
+        ThreadStarted();
         var buf = new byte[2048];
         var frame = new byte[UsbFraming.MaxSize(Wire.MaxDatagram)];
         EndPoint from = new IPEndPoint(IPAddress.Any, 0);

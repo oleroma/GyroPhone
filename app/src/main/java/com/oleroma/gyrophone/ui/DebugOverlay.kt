@@ -35,7 +35,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -56,7 +59,7 @@ import kotlin.math.roundToInt
  * link and what is held. It stays on screen. Record saves the last 30 s ([PhoneDebug.record]).
  */
 @Composable
-fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
+fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier, covered: Boolean = false) {
     val on by runtime.debug.enabled.collectAsStateWithLifecycle()
     val link by runtime.linkState.collectAsStateWithLifecycle()
     val g by runtime.gyroInfo.collectAsStateWithLifecycle()
@@ -82,8 +85,9 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
     }
     fun saveBox() = runtime.setUiPref(PREF_BOX, "${pos.x},${pos.y},${size.width.value},${size.height.value}")
 
-    LaunchedEffect(trace) {
-        while (true) {
+    // Live values every 200 ms; none while the black screen or the latency markers cover the panel.
+    LaunchedEffect(trace, covered) {
+        while (!covered) {
             delay(200)
             tick++
         }
@@ -192,19 +196,23 @@ fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
                         }
                         // Newest first; rows that don't fit are cut off at the bottom (the oldest).
                         // With timings on, each row ends with the ms since the event below it.
-                        val events = (if (paused) frozen else trace.latest(EVENTS, shownKinds)).asReversed()
-                        Column(Modifier.weight(1f, fill = false).clipToBounds()) {
-                            for ((i, e) in events.withIndex()) {
-                                val gap = events.getOrNull(i + 1)?.let { " +${(e.nanos - it.nanos) / 1_000_000} ms" } ?: ""
-                                Text(
-                                    "%-5s %s".format(e.kind.tag, e.text) + if (timings) gap else "",
-                                    color = kindColor(e.kind),
-                                    style = mono,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Clip,
-                                )
+                        // One text, made again only when a new event came (or what is shown changed).
+                        // Paused, new events change nothing.
+                        val newest = if (paused) -1L else trace.version
+                        val rows = remember(newest, shownKinds, paused, frozen, timings) {
+                            val events = (if (paused) frozen else trace.latest(EVENTS, shownKinds)).asReversed()
+                            buildAnnotatedString {
+                                for ((i, e) in events.withIndex()) {
+                                    if (i > 0) append('\n')
+                                    val gap = events.getOrNull(i + 1)?.let { " +${(e.nanos - it.nanos) / 1_000_000} ms" } ?: ""
+                                    withStyle(SpanStyle(color = kindColor(e.kind))) {
+                                        append("%-5s %s".format(e.kind.tag, e.text) + if (timings) gap else "")
+                                    }
+                                }
                             }
+                        }
+                        Column(Modifier.weight(1f, fill = false).clipToBounds()) {
+                            Text(rows, style = mono, softWrap = false, overflow = TextOverflow.Clip)
                         }
                     }
                 }

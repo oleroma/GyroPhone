@@ -28,7 +28,31 @@ object WorkspaceMappings {
             defaults = defaults,
             devicePresets = presets,
             workspaces = set.workspaces.map {
-                resolve(ToggleUpgrade.latches(WorkspaceDefaults.apply(it, d)), presets)
+                Inheritance.chipByChip(resolve(ToggleUpgrade.latches(WorkspaceDefaults.apply(it, d)), presets), defaults)
+            },
+        )
+    }
+
+    /**
+     * [resolve] of [set], reusing what [lastResolved] (the [resolve] of [last]) holds where nothing
+     * it depends on changed: with the same defaults and device presets, each workspace stored as it
+     * was in [last] resolves as it did then, so only the workspaces an edit touched are worked out again.
+     */
+    fun resolve(set: Profile, last: Profile?, lastResolved: Profile?): Profile {
+        if (last == null || lastResolved == null || last.workspaces.size != lastResolved.workspaces.size ||
+            last.defaults != set.defaults || last.devicePresets != set.devicePresets
+        ) return resolve(set)
+        val at = HashMap<String, Int>()
+        last.workspaces.forEachIndexed { i, w -> at.putIfAbsent(w.id, i) }
+        val d = set.defaults
+        val presets = lastResolved.devicePresets
+        return set.copy(
+            defaults = lastResolved.defaults,
+            devicePresets = presets,
+            workspaces = set.workspaces.map { w ->
+                val i = at[w.id]
+                if (i != null && last.workspaces[i] == w) lastResolved.workspaces[i]
+                else Inheritance.chipByChip(resolve(ToggleUpgrade.latches(WorkspaceDefaults.apply(w, d)), presets), lastResolved.defaults)
             },
         )
     }
@@ -57,17 +81,16 @@ object WorkspaceMappings {
     )
 
     /**
-     * [after] (an edit of the resolved [before]) with each workspace new in it and holding no
-     * mappings of its own (a blank one) starting with a copy of [current]'s touchpad mappings and
-     * sets; one that comes with mappings (a builtin preset) keeps them, and its pad and keyboard
-     * mappings, if any, become a device preset of its own that it uses.
+     * [after] (an edit of the resolved [before]) with each workspace new in it kept as it comes (a
+     * blank one stays blank: it takes nothing from the current one); one that comes with pad and keyboard
+     * mappings (a builtin preset) gets them as a device preset of its own that it uses.
      */
-    fun settle(before: Profile, after: Profile, current: Workspace?): Profile {
+    fun settle(before: Profile, after: Profile): Profile {
         var set = after
         for (w in after.workspaces) {
             if (before.workspaces.any { it.id == w.id }) continue
             val padMappings = w.pads.firstOrNull()?.mappings.orEmpty()
-            val fresh = startFrom(w, current)
+            val fresh = w
             if (w.devicePreset != null || (padMappings.isEmpty() && w.keyboard.isEmpty())) {
                 set = set.copy(workspaces = set.workspaces.map { if (it.id == w.id) fresh else it })
                 continue
@@ -81,15 +104,6 @@ object WorkspaceMappings {
             )
         }
         return set
-    }
-
-    private fun startFrom(w: Workspace, current: Workspace?): Workspace {
-        if (current == null || w.mappings.any { !it.source.isTouchpad }) return w
-        return w.copy(
-            mappings = w.mappings.filterNot { it.source.isTouchpad } + current.mappings.filter { it.source.isTouchpad },
-            touchpad = w.touchpad.copy(mapped = current.touchpad.mapped),
-            sets = current.sets,
-        )
     }
 
     /**
@@ -129,6 +143,7 @@ object WorkspaceMappings {
             is InputSource.Gyro -> if (s.id.isEmpty()) return null else s.copy(id = to)
             is InputSource.Tilt -> if (s.id.isEmpty()) return null else s.copy(id = to)
             is InputSource.Shake -> if (s.id.isEmpty()) return null else s.copy(id = to)
+            is InputSource.Finger -> if (s.id.isEmpty()) return null else s.copy(id = to)
             else -> return null
         }
         return m.copy(source = moved)

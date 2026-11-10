@@ -42,7 +42,7 @@ object HidUsage {
         put(0x53, "Num Lock"); put(0x54, "Keypad /"); put(0x55, "Keypad *"); put(0x56, "Keypad -")
         put(0x57, "Keypad +"); put(0x58, "Keypad Enter")
         (1..9).forEach { put(0x59 + it - 1, "Keypad $it") }
-        put(0x62, "Keypad 0"); put(0x63, "Keypad .")
+        put(0x62, "Keypad 0"); put(0x63, "Keypad ."); put(0x64, "Non-US \\")
         (13..24).forEach { put(0x68 + it - 13, "F$it") }
         put(LEFT_CTRL, "Left Ctrl"); put(LEFT_SHIFT, "Left Shift"); put(LEFT_ALT, "Left Alt")
         put(LEFT_GUI, "Left Win"); put(RIGHT_CTRL, "Right Ctrl"); put(RIGHT_SHIFT, "Right Shift")
@@ -52,6 +52,20 @@ object HidUsage {
     }
 
     fun byName(name: String): Int? = names.entries.firstOrNull { it.value.equals(name, ignoreCase = true) }?.key
+
+    /**
+     * What each character key types on the connected PC's keyboard layout (KEY_LABELS), by usage.
+     * The phone sends key positions, so on a non-US layout the usage named "\\" may type something
+     * else: these names follow the PC. Empty until a PC has sent them; kept from the last PC.
+     */
+    @Volatile
+    var pcLabels: Map<Int, String> = emptyMap()
+
+    /** The key's name: what it types on the PC's layout, else its US name; null for an unknown usage. */
+    fun label(usage: Int): String? = pcLabels[usage] ?: names[usage]
+
+    /** [label], or the usage in hex. */
+    fun labelOrHex(usage: Int): String = label(usage) ?: "0x%02X".format(usage)
 }
 
 /** Android KeyEvent keycodes of a physical keyboard to HID usages (for "press a key" capture). */
