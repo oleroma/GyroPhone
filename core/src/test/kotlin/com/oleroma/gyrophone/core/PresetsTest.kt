@@ -143,7 +143,7 @@ class PresetsTest {
         }
     }
 
-    @Test fun keyboardIsAFullK380() {
+    @Test fun keyboardIsAFullCompactKeyboard() {
         val w = BuiltinProfiles.keyboardWorkspace
         assertTrue(w.pads.isEmpty())
         assertTrue(w.touchControls.all { it.shape == TouchShape.SQUARE && it.kind == TouchKind.BUTTON })

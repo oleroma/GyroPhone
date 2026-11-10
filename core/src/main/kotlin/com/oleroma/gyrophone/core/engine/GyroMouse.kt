@@ -19,7 +19,7 @@ import kotlin.math.sign
 import kotlin.math.sqrt
 
 /**
- * Gyro-to-mouse conversion. Converts the sensor's angular
+ * Gyro-to-mouse conversion (Alpakka / JoyShockMapper style). Converts the sensor's angular
  * velocity into yaw / pitch / roll for the way the screen is turned ([displayRotation]), routes each where the gyro
  * mappings say, optionally applies soft tightening and tiered smoothing at low speeds (both off
  * by default: raw gyro), scales to mouse counts and keeps the sub-count remainder so slow motion
@@ -138,7 +138,7 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
             }
 
             GyroSpace.PLAYER -> {
-                // Player space: shown yaw (stored as roll) from the turns about the
+                // JoyShockMapper's player space: shown yaw (stored as roll) from the turns about the
                 // screen's vertical axis and through the screen, by how gravity lies in their plane,
                 // eased (×1.41) but never faster than both together. Pitch and roll stay the phone's.
                 val world = -(wu * uy + wt * uz)
@@ -217,7 +217,7 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
         /** World space: the right axis this close to vertical has no flat direction to pitch about. */
         private const val FLAT_MIN = 0.1f
 
-        /** Player space's yaw easing (relax factor). */
+        /** Player space's yaw easing (JoyShockMapper's relax factor). */
         private const val PLAYER_RELAX = 1.41f
 
         const val GLIDE_MIN_DEG_PER_S = GyroMath.GLIDE_MIN_DEG_PER_S
