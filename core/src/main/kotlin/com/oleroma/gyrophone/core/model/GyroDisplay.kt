@@ -171,6 +171,16 @@ data class GyroDisplay(
     val crosshairThickness: Float = 2f,
     val crosshairDot: Boolean = true,
     val crosshairOutline: Boolean = true,
+    /**
+     * LASER crosshair: on each Fire display shot it kicks out by [crosshairKickScale] of its size and bounces back
+     * ([com.oleroma.gyrophone.core.engine.CrosshairKick]): [crosshairKick] 0 off, 1 once per press, 2 auto rifle at
+     * [crosshairKickRpm] shots a minute while held. [crosshairKickLinesOnly]: only the lines grow (length and gap);
+     * off, the whole crosshair grows evenly, line thickness and dot too.
+     */
+    val crosshairKick: Int = 1,
+    val crosshairKickScale: Float = 0.5f,
+    val crosshairKickRpm: Int = 600,
+    val crosshairKickLinesOnly: Boolean = true,
     /** LASER turned as a trackball: which way of it the laser faces ([com.oleroma.gyrophone.core.engine.LaserTrace.FACES], 0 −Z into the screen). */
     val laserFaces: Int = 0,
     /** LASER: Draw mode, the beam paints the sphere's inside ([com.oleroma.gyrophone.core.engine.LaserPaint]), [laserBrush] degrees round. */

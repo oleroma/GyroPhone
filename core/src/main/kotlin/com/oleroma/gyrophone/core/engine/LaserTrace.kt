@@ -693,9 +693,10 @@ class LaserTrace {
          * Crosshair [shape] ([CROSSHAIRS]) lying on the sphere where [beam] lands, facing its centre:
          * arms [size] radians long from a [gap] radian gap, a centre [dot]. Its up is the pose's up
          * ([m]), so it turns about the beam only as the pose does: a trackball's roll axis as mapped
-         * (locked, inverted), the phone's own roll when it turns with the phone.
+         * (locked, inverted), the phone's own roll when it turns with the phone. The dot is sized from [dotSize]
+         * (by default [size]), so a kick can grow the lines alone.
          */
-        fun crosshair(m: FloatArray, beam: FloatArray, shape: Int, size: Float, gap: Float, dot: Boolean): Crosshair {
+        fun crosshair(m: FloatArray, beam: FloatArray, shape: Int, size: Float, gap: Float, dot: Boolean, dotSize: Float = size): Crosshair {
             val v = FloatArray(3)
             if (!rollTick(m, beam, v)) {
                 // Straight along the pose's up: any way across.
@@ -738,7 +739,7 @@ class LaserTrace {
                 5 -> arms(false)
                 else -> arms(true)
             }
-            val dotRad = if (shape == 4) size * 0.35f else if (dot) size * 0.12f else 0f
+            val dotRad = if (shape == 4) size * 0.35f else if (dot) dotSize * 0.12f else 0f
             return Crosshair(lines, if (dotRad > 0f) ring(dotRad) else null)
         }
 

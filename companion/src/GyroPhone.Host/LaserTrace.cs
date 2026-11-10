@@ -678,7 +678,7 @@ public sealed class LaserTrace
     /// the pose does: a trackball's roll axis as mapped (locked, inverted), the phone's own roll when it turns with the
     /// phone. As the phone's LaserTrace.crosshair.
     /// </summary>
-    public static Crosshair CrosshairOn(float[] m, (float X, float Y, float Z) beam, int shape, float size, float gap, bool dot)
+    public static Crosshair CrosshairOn(float[] m, (float X, float Y, float Z) beam, int shape, float size, float gap, bool dot, float dotSize = -1f)
     {
         var up = RollTick(m, beam) ?? Square((0f, 0f, -1f), beam) ?? Square((1f, 0f, 0f), beam) ?? (0f, 1f, 0f);
         // Right: up × the outward normal (the beam).
@@ -718,7 +718,8 @@ public sealed class LaserTrace
             case 5: Arms(false); break;
             default: Arms(true); break;
         }
-        float dotRad = shape == 4 ? size * 0.35f : dot ? size * 0.12f : 0f;
+        // The dot is sized from dotSize (by default size), so a kick can grow the lines alone.
+        float dotRad = shape == 4 ? size * 0.35f : dot ? (dotSize < 0f ? size : dotSize) * 0.12f : 0f;
         return new Crosshair(lines, dotRad > 0f ? Ring(dotRad) : null);
     }
 

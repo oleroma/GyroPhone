@@ -31,6 +31,7 @@ internal sealed class OverlayForm : Form
     private long _aimTicks;
     /// <summary>How long the Aim display takes to ease fully in or out (as the phone's).</summary>
     private const float AimEaseMs = 120f;
+    private readonly CrosshairKick.State _kick = new();
     private readonly Action<string> _log;
     private readonly OverlayScene _scene = new();
     private DibSurface? _surface;
@@ -574,6 +575,10 @@ internal sealed class OverlayForm : Form
                 _scene.Aim = goal > _scene.Aim ? Math.Min(goal, _scene.Aim + step) : Math.Max(goal, _scene.Aim - step);
                 laserFading = true;
             }
+            // A crosshair kicks on each shot and bounces back.
+            int kickMode = lf.LaserCrosshair && !lf.LaserRifle ? lf.CrosshairKick : CrosshairKick.Off;
+            if (_kick.Step(now, _scene.Firing, kickMode, CrosshairKick.PeriodMs(lf.CrosshairKickRpm))) laserFading = true;
+            _scene.Kick = _kick.Value;
         }
         bool rested = StepRestFade(now);
         UpdateStats();
