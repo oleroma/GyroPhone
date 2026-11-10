@@ -164,13 +164,13 @@ fun GyroDisplaysLayer(
                     raises[b.control.id] = if (up > was) minOf(up, was + step) else maxOf(up, was - step)
                     until = maxOf(until, t + 20)
                 } else raises[b.control.id] = up
-                // Hip fire: firing (or a shot's kick lasting) without aiming.
-                val hipGoal = if (d.laserRifle && (firing || k.shotAt >= 0L) && runtime.gyroFeed(b.control.id)?.aiming != true) 1f else 0f
+                // Hip fire: firing without aiming; letting go starts the recovery at once (the last kick plays out on top).
+                val hipGoal = if (d.laserRifle && firing && runtime.gyroFeed(b.control.id)?.aiming != true) 1f else 0f
                 val hipWas = hips[b.control.id] ?: hipGoal
                 if (hipWas != hipGoal) {
                     // Into hip fire quickly; back out over Hip fire recovery.
-                    val ms = if (hipGoal > hipWas) AIM_EASE_MS else d.gunHipRecoverMs.coerceIn(50, 2000).toFloat()
-                    val step = if (dt <= 0f) 1f else dt / ms
+                    val ms = if (hipGoal > hipWas) AIM_EASE_MS else d.gunHipRecoverMs.coerceIn(0, 2000).toFloat()
+                    val step = if (dt <= 0f || ms <= 0f) 1f else dt / ms
                     hips[b.control.id] = if (hipGoal > hipWas) minOf(hipGoal, hipWas + step) else maxOf(hipGoal, hipWas - step)
                     until = maxOf(until, t + 20)
                 } else hips[b.control.id] = hipGoal

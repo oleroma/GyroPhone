@@ -363,7 +363,7 @@ internal sealed class OverlaysPage : Page
         _gunOptions.Children.Add(_gunLowered);
         _gunHipPull = new SliderRow("Hip fire pull", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.GunHipPull = (float)v));
         _gunOptions.Children.Add(_gunHipPull.View);
-        _gunHipRecover = new SliderRow("Hip fire recovery", 50, 2000, 50, v => $"{v:0} ms", v => Change(o => o.GunHipRecoverMs = (int)v));
+        _gunHipRecover = new SliderRow("Hip fire recovery", 0, 2000, 10, v => $"{v:0} ms", v => Change(o => o.GunHipRecoverMs = (int)v));
         _gunOptions.Children.Add(_gunHipRecover.View);
         _gunScope = Parts.Toggle("Scope while aiming", () => Change(o => o.GunScope = !o.GunScope), "Aiming, a round scope grows onto it.");
         _gunOptions.Children.Add(_gunScope);

@@ -614,13 +614,13 @@ internal sealed class OverlayForm : Form
                 _scene.Lower = 1f - raised;
                 laserFading = true;
             }
-            // Hip fire: firing (or a shot's kick lasting) without aiming.
-            float hipGoal = lf.LaserRifle && (_scene.Firing || _kick.ShotAt >= 0) && goal == 0f ? 1f : 0f;
+            // Hip fire: firing without aiming; letting go starts the recovery at once (the last kick plays out on top).
+            float hipGoal = lf.LaserRifle && _scene.Firing && goal == 0f ? 1f : 0f;
             if (_scene.Hip != hipGoal)
             {
                 // Into hip fire quickly; back out over Hip fire recovery.
-                float ms = hipGoal > _scene.Hip ? AimEaseMs : Math.Clamp(lf.GunHipRecoverMs, 50, 2000);
-                float step = dt <= 0f ? 1f : dt / ms;
+                float ms = hipGoal > _scene.Hip ? AimEaseMs : Math.Clamp(lf.GunHipRecoverMs, 0, 2000);
+                float step = dt <= 0f || ms <= 0f ? 1f : dt / ms;
                 _scene.Hip = hipGoal > _scene.Hip ? Math.Min(hipGoal, _scene.Hip + step) : Math.Max(hipGoal, _scene.Hip - step);
                 laserFading = true;
             }
