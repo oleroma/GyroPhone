@@ -614,6 +614,14 @@ internal sealed class OverlayForm : Form
                 _scene.Lower = 1f - raised;
                 laserFading = true;
             }
+            // Hip fire: firing (or a shot's kick lasting) without aiming.
+            float hipGoal = lf.LaserRifle && (_scene.Firing || _kick.ShotAt >= 0) && goal == 0f ? 1f : 0f;
+            if (_scene.Hip != hipGoal)
+            {
+                float step = dt <= 0f ? 1f : dt / AimEaseMs;
+                _scene.Hip = hipGoal > _scene.Hip ? Math.Min(hipGoal, _scene.Hip + step) : Math.Max(hipGoal, _scene.Hip - step);
+                laserFading = true;
+            }
         }
         bool rested = StepRestFade(now);
         UpdateStats();

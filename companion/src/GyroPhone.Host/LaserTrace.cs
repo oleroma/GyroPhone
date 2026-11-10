@@ -161,11 +161,14 @@ public sealed class LaserTrace
     /// <summary>With Lowered when idle (RifleFaces' lower 1) the gun rests pitched this many degrees down.</summary>
     public const float LowerDeg = 15f;
 
+    /// <summary>Hip fire (RifleFaces' hip 1: firing without aiming) the gun comes up level, pulled back toward the player this far.</summary>
+    public const float HipPull = 0.22f;
+
     /// <summary>The gun's muzzle tip at aim <paramref name="aim"/> (0 .. 1), kick and lowered, in its own frame.</summary>
-    public static (float X, float Y, float Z) MuzzleAt(float aim, float kick = 0f, Guns.Gun? gun = null, float lower = 0f)
+    public static (float X, float Y, float Z) MuzzleAt(float aim, float kick = 0f, Guns.Gun? gun = null, float lower = 0f, float hip = 0f)
     {
         var g = gun ?? Guns.AR;
-        return RifleAt(0f, 0f, g.MuzzleZ, aim, kick, false, g, lower);
+        return RifleAt(0f, 0f, g.MuzzleZ, aim, kick, false, g, lower, hip);
     }
 
     /// <summary>
@@ -175,14 +178,14 @@ public sealed class LaserTrace
     /// <see cref="LowerDeg"/>, both about its pivot. <paramref name="dir"/>: a direction (a face's normal), turned only.
     /// As the phone's LaserTrace.rifleAt.
     /// </summary>
-    public static (float X, float Y, float Z) RifleAt(float x, float y, float z, float aim, float kick, bool dir = false, Guns.Gun? gun = null, float lower = 0f)
+    public static (float X, float Y, float Z) RifleAt(float x, float y, float z, float aim, float kick, bool dir = false, Guns.Gun? gun = null, float lower = 0f, float hip = 0f)
     {
         var g = gun ?? Guns.AR;
         float a = (g.Recoil.ClimbDeg * kick - LowerDeg * Math.Clamp(lower, 0f, 1f)) * MathF.PI / 180f, c = MathF.Cos(a), s = MathF.Sin(a);
         // Scaled to fit (Guns.Gun.Fit): a direction stays as it is.
         float f = dir ? 1f : g.Fit, yf = y * f;
         float pz = dir ? 0f : g.FitZ(g.PivotZ), dz = (dir ? z : g.FitZ(z)) - pz;
-        return (x * f, yf * c - dz * s, pz + yf * s + dz * c + (dir ? 0f : AimPull * Math.Clamp(aim, 0f, 1f) + g.Recoil.Back * kick));
+        return (x * f, yf * c - dz * s, pz + yf * s + dz * c + (dir ? 0f : AimPull * Math.Clamp(aim, 0f, 1f) + HipPull * Math.Clamp(hip, 0f, 1f) + g.Recoil.Back * kick));
     }
 
     /// <summary>
@@ -615,7 +618,7 @@ public sealed class LaserTrace
     /// (<paramref name="kick"/>, <see cref="RifleAt"/>); <paramref name="lower"/> pitches it down. As the phone's.
     /// </summary>
     public static List<Face> RifleFaces(float[] m, bool axon, float[]? turned, bool persp = false, float aim = 0f, float kick = 0f,
-        Guns.Gun? gun = null, float lower = 0f, bool scope = true)
+        Guns.Gun? gun = null, float lower = 0f, bool scope = true, float hip = 0f)
     {
         var g = gun ?? Guns.AR;
         List<Face> shown = new(64);
@@ -626,14 +629,14 @@ public sealed class LaserTrace
         // One face: its corners in the gun's own frame, and its normal.
         void AddFace((float X, float Y, float Z)[] c, float nx, float ny, float nz)
         {
-            var n = Turn(RifleAt(nx, ny, nz, ak, kick, true, g, lower));
+            var n = Turn(RifleAt(nx, ny, nz, ak, kick, true, g, lower, hip));
             if (n.Z <= 1e-4f) return;
             float light = Math.Clamp(0.45f + 0.55f * Math.Max(0f, n.X * lx + n.Y * ly + n.Z * lz), 0f, 1f);
             var corners = new (float X, float Y)[c.Length];
             float depth = 0f;
             for (int i = 0; i < c.Length; i++)
             {
-                var v = Turn(RifleAt(c[i].X, c[i].Y, c[i].Z, ak, kick, false, g, lower));
+                var v = Turn(RifleAt(c[i].X, c[i].Y, c[i].Z, ak, kick, false, g, lower, hip));
                 float f = persp ? Perspective(v.Z) : 1f;
                 corners[i] = (v.X * f, v.Y * f);
                 depth += v.Z;

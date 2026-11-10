@@ -85,6 +85,8 @@ fun GyroDisplaysLayer(
     val kicks = remember { HashMap<String, CrosshairKick.State>() }
     // Each gun's raise now, eased (0 lowered .. 1 up): with Lowered when idle it comes up while aiming or firing.
     val raises = remember { HashMap<String, Float>() }
+    // Each gun's hip fire now, eased (0 .. 1): firing without aiming pulls it back toward you.
+    val hips = remember { HashMap<String, Float>() }
     // The pose each display showed when it last moved visibly ([VISIBLE_TURN]).
     val seen = remember { HashMap<String, FloatArray>() }
     // Redraws only while some display's data changes (and a moment after, so ghost trails catch up):
@@ -162,6 +164,14 @@ fun GyroDisplaysLayer(
                     raises[b.control.id] = if (up > was) minOf(up, was + step) else maxOf(up, was - step)
                     until = maxOf(until, t + 20)
                 } else raises[b.control.id] = up
+                // Hip fire: firing (or a shot's kick lasting) without aiming.
+                val hipGoal = if (d.laserRifle && (firing || k.shotAt >= 0L) && runtime.gyroFeed(b.control.id)?.aiming != true) 1f else 0f
+                val hipWas = hips[b.control.id] ?: hipGoal
+                if (hipWas != hipGoal) {
+                    val step = if (dt <= 0f) 1f else dt / AIM_EASE_MS
+                    hips[b.control.id] = if (hipGoal > hipWas) minOf(hipGoal, hipWas + step) else maxOf(hipGoal, hipWas - step)
+                    until = maxOf(until, t + 20)
+                } else hips[b.control.id] = hipGoal
             }
             if (t <= until) frame = t
         }
@@ -179,6 +189,7 @@ fun GyroDisplaysLayer(
             st.shotAt = kicks[b.control.id]?.shotAt ?: -1L
             st.shots = kicks[b.control.id]
             st.lower = 1f - (raises[b.control.id] ?: 1f)
+            st.hip = hips[b.control.id] ?: 0f
             st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
             if (editing) {
                 val sel = b.control.id in selected
@@ -250,6 +261,9 @@ private class VisState {
 
     /** How far the gun is lowered now (0 up .. 1 lowered when idle). */
     var lower = 0f
+
+    /** Hip fire now (0 .. 1): firing without aiming, the gun pulled back toward you ([LaserTrace.HIP_PULL]). */
+    var hip = 0f
 
     /** When the last Fire display shot was ([CrosshairKick.State.shotAt]), for its muzzle flash; −1 none. */
     var shotAt = -1L
@@ -500,7 +514,7 @@ private class VisState {
         val g = MuzzleFlash.glow(ms)
         if (g <= 0f) return
         val fire = Color(MuzzleFlash.color(ms, hot.toArgb(), end.toArgb(), end.copy(alpha = 0f).toArgb()))
-        val mz = muzzleAt.also { LaserTrace.muzzle(aim, it, kick * kickK, gun, lower) }
+        val mz = muzzleAt.also { LaserTrace.muzzle(aim, it, kick * kickK, gun, lower, hip) }
         val dir = FloatArray(3)
         fun at(x: Float, y: Float, z: Float): Offset =
             laserAt(c, r, m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z)
@@ -556,7 +570,7 @@ private class VisState {
      * along the barrel to where it lands on the sphere, and a dot there with a soft halo.
      */
     private fun DrawScope.laserSight(c: Offset, r: Float, color: Color, gun: Guns.Gun, kickK: Float) {
-        val mz = muzzleAt.also { LaserTrace.muzzle(aim, it, kick * kickK, gun, lower) }
+        val mz = muzzleAt.also { LaserTrace.muzzle(aim, it, kick * kickK, gun, lower, hip) }
         val x = mz[0]; val y = mz[1]; val z = mz[2]
         val tip = laserAt(c, r, m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z)
         val hit = laserAt(c, r, beam[0], beam[1], beam[2])
@@ -977,7 +991,7 @@ private class VisState {
             val gun = d.gun()
             // Kick size scales the gun's own recoil (50% is the gun as it is).
             val kickK = d.kickOf().coerceIn(0f, 3f) * 2f
-            for (f in LaserTrace.rifle(m, laserAxon, laserTurned, laserPersp, aim, kick * kickK, gun, lower, d.gunScope)) {
+            for (f in LaserTrace.rifle(m, laserAxon, laserTurned, laserPersp, aim, kick * kickK, gun, lower, d.gunScope, hip)) {
                 path.reset()
                 for (i in 0 until f.xy.size / 2) {
                     val x = c.x + f.xy[i * 2] * r

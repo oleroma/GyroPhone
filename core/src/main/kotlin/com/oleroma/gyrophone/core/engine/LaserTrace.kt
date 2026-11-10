@@ -462,6 +462,9 @@ class LaserTrace {
         /** With Lowered when idle ([rifle]'s lower 1) the gun rests pitched this many degrees down. */
         const val LOWER_DEG = 15f
 
+        /** Hip fire ([rifle]'s hip 1: firing without aiming) the gun comes up level, pulled back toward the player this far. */
+        const val HIP_PULL = 0.22f
+
         /**
          * A point (x, y, z) of [gun]'s own frame at aim [aim] (0 .. 1), kick [kick] (0 rest .. 1 full, a little under
          * 0 as it springs back) and lowered by [lower] (0 .. 1), into [out] at [at]: shouldered by [AIM_PULL], kicked
@@ -470,7 +473,7 @@ class LaserTrace {
          */
         fun rifleAt(
             x: Float, y: Float, z: Float, aim: Float, kick: Float, out: FloatArray, at: Int = 0, dir: Boolean = false,
-            gun: Guns.Gun = Guns.AR, lower: Float = 0f,
+            gun: Guns.Gun = Guns.AR, lower: Float = 0f, hip: Float = 0f,
         ) {
             val r = gun.recoil
             val a = Math.toRadians((r.climbDeg * kick - LOWER_DEG * lower.coerceIn(0f, 1f)).toDouble())
@@ -483,12 +486,12 @@ class LaserTrace {
             val yf = y * f
             out[at] = x * f
             out[at + 1] = yf * c - dz * s
-            out[at + 2] = pz + yf * s + dz * c + (if (dir) 0f else AIM_PULL * aim.coerceIn(0f, 1f) + r.back * kick)
+            out[at + 2] = pz + yf * s + dz * c + (if (dir) 0f else AIM_PULL * aim.coerceIn(0f, 1f) + HIP_PULL * hip.coerceIn(0f, 1f) + r.back * kick)
         }
 
         /** [gun]'s muzzle tip at aim [aim] (0 .. 1), kick [kick] and lowered by [lower], in its own frame, into [out]. */
-        fun muzzle(aim: Float, out: FloatArray, kick: Float = 0f, gun: Guns.Gun = Guns.AR, lower: Float = 0f) =
-            rifleAt(0f, 0f, gun.muzzleZ, aim, kick, out, gun = gun, lower = lower)
+        fun muzzle(aim: Float, out: FloatArray, kick: Float = 0f, gun: Guns.Gun = Guns.AR, lower: Float = 0f, hip: Float = 0f) =
+            rifleAt(0f, 0f, gun.muzzleZ, aim, kick, out, gun = gun, lower = lower, hip = hip)
 
         /** [gun]'s direction [dx], [dy], [dz] of its own frame at kick [kick] and lowered by [lower], into [out]. */
         fun gunDir(dx: Float, dy: Float, dz: Float, out: FloatArray, kick: Float = 0f, gun: Guns.Gun = Guns.AR, lower: Float = 0f) =
@@ -644,7 +647,7 @@ class LaserTrace {
          */
         fun rifle(
             m: FloatArray, axon: Boolean, turned: FloatArray?, persp: Boolean = false, aim: Float = 0f, kick: Float = 0f,
-            gun: Guns.Gun = Guns.AR, lower: Float = 0f, scope: Boolean = true,
+            gun: Guns.Gun = Guns.AR, lower: Float = 0f, scope: Boolean = true, hip: Float = 0f,
         ): List<Face> {
             val faces = ArrayList<Face>(64)
             val q = FloatArray(3)
@@ -655,7 +658,7 @@ class LaserTrace {
             val a = aim.coerceIn(0f, 1f)
             // One face: its corners in the gun's own frame (x, y, z each), and its normal.
             fun face(c: FloatArray, nx: Float, ny: Float, nz: Float) {
-                rifleAt(nx, ny, nz, a, kick, q, dir = true, gun = gun, lower = lower)
+                rifleAt(nx, ny, nz, a, kick, q, dir = true, gun = gun, lower = lower, hip = hip)
                 view(m[0] * q[0] + m[1] * q[1] + m[2] * q[2], m[3] * q[0] + m[4] * q[1] + m[5] * q[2], m[6] * q[0] + m[7] * q[1] + m[8] * q[2], v, 0, axon, turned)
                 if (v[2] <= 1e-4f) return
                 val light = (0.45f + 0.55f * (v[0] * lx + v[1] * ly + v[2] * lz).coerceAtLeast(0f)).coerceIn(0f, 1f)
@@ -663,7 +666,7 @@ class LaserTrace {
                 val xy = FloatArray(n * 2)
                 var depth = 0f
                 for (i in 0 until n) {
-                    rifleAt(c[i * 3], c[i * 3 + 1], c[i * 3 + 2], a, kick, q, gun = gun, lower = lower)
+                    rifleAt(c[i * 3], c[i * 3 + 1], c[i * 3 + 2], a, kick, q, gun = gun, lower = lower, hip = hip)
                     view(m[0] * q[0] + m[1] * q[1] + m[2] * q[2], m[3] * q[0] + m[4] * q[1] + m[5] * q[2], m[6] * q[0] + m[7] * q[1] + m[8] * q[2], v, 0, axon, turned)
                     val f = if (persp) perspective(v[2]) else 1f
                     xy[i * 2] = v[0] * f

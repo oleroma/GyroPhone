@@ -33,7 +33,7 @@ internal static class LaserDrawing
     /// <paramref name="buf"/> (the window's) keeps the grid between pictures.
     /// </summary>
     public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held, int active = 0, bool firing = false, float[]? raw = null, float aim = 0f,
-        DrawBuffers? buf = null, float kick = 0f, long shotAt = -1, float lower = 0f)
+        DrawBuffers? buf = null, float kick = 0f, long shotAt = -1, float lower = 0f, float hip = 0f)
     {
         float r = Math.Min(area.Width, area.Height) / 2f * 0.95f;
         var c = new PointF(area.X + area.Width / 2f, area.Y + area.Height / 2f);
@@ -263,7 +263,7 @@ internal static class LaserDrawing
         {
             float gl = GyroPhone.Host.MuzzleFlash.Glow(flashMs);
             if (gl <= 0f) return;
-            var mz = LaserTrace.MuzzleAt(aim, kick * kickK, gun, lower);
+            var mz = LaserTrace.MuzzleAt(aim, kick * kickK, gun, lower, hip);
             PointF P(float x, float y, float z) => At(m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z).P;
             var tip = P(mz.X, mz.Y, mz.Z);
             long step = shotAt;
@@ -317,7 +317,7 @@ internal static class LaserDrawing
         // the barrel to where it lands on the sphere, and a dot there with a soft halo. As the phone's laserSight.
         void LaserSight()
         {
-            var mz = LaserTrace.MuzzleAt(aim, kick * kickK, gun, lower);
+            var mz = LaserTrace.MuzzleAt(aim, kick * kickK, gun, lower, hip);
             var tip = At(m[0] * mz.X + m[1] * mz.Y + m[2] * mz.Z, m[3] * mz.X + m[4] * mz.Y + m[5] * mz.Z, m[6] * mz.X + m[7] * mz.Y + m[8] * mz.Z).P;
             var col = Color.FromArgb(s.Color("aim"));
             g.DrawLine(Fade(col, 0.25f * aim), px * 4f, tip, hit, round: true);
@@ -354,7 +354,7 @@ internal static class LaserDrawing
             Paint(false);
             var body = Color.FromArgb(s.Color("rifle"));
             float edge = Math.Max(1f, px * 0.75f);
-            foreach (var f in LaserTrace.RifleFaces(m, s.LaserAxonometric, turned, s.Perspective, aim, kick * kickK, gun, lower, s.GunScope))
+            foreach (var f in LaserTrace.RifleFaces(m, s.LaserAxonometric, turned, s.Perspective, aim, kick * kickK, gun, lower, s.GunScope, hip))
             {
                 var pts = new PointF[f.Corners.Length];
                 for (int i = 0; i < pts.Length; i++) pts[i] = new PointF(c.X + f.Corners[i].X * r, c.Y - f.Corners[i].Y * r);
