@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace GyroPhone.Host.Settings;
@@ -447,6 +448,15 @@ public sealed class OverlaySettings
     public bool NeedsCompass => Gravity && Compass && !FollowsCamera;
 
     public static string NewId() => Guid.NewGuid().ToString("N")[..12];
+
+    /// <summary>A copy of every setting (through the settings file's JSON), under a new id.</summary>
+    public OverlaySettings Copy()
+    {
+        var c = JsonSerializer.Deserialize(JsonSerializer.Serialize(this, HostSettingsJson.Default.OverlaySettings), HostSettingsJson.Default.OverlaySettings)!;
+        c.Id = NewId();
+        c.Colors ??= [];
+        return c;
+    }
 
     /// <summary>
     /// Carries the trackball and ratchet settings of earlier builds over: Reset on ratchet becomes Ease on ratchet

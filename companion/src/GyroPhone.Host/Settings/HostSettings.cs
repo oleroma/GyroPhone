@@ -19,6 +19,11 @@ public sealed class HostSettings
     public List<PairedPhone> PairedPhones { get; set; } = [];
     /// <summary>The overlay windows (phone, 3D shape, attitude indicator, bubble disk), each with its own settings.</summary>
     public List<OverlaySettings> Overlays { get; set; } = [];
+    /// <summary>
+    /// Overlays saved as presets ("Save as preset"), offered with a ★ under Add overlay: every setting
+    /// and the window's size, named by <see cref="OverlaySettings.Label"/>; not where the window was.
+    /// </summary>
+    public List<OverlaySettings> OverlayPresets { get; set; } = [];
     /// <summary>Overlay windows can be dragged to move and resize; off, the mouse goes through them to the game.</summary>
     public bool OverlayEdit { get; set; }
     /// <summary>Every overlay window is hidden (shortcut or tray), each keeping its own Show for when this is off.</summary>
@@ -48,6 +53,14 @@ public sealed class HostSettings
         PairedPhones ??= [];
         CatchUpMs = ClampCatchUpMs(CatchUpMs);
         Overlays ??= [];
+        OverlayPresets ??= [];
+        OverlayPresets.RemoveAll(o => o == null);
+        foreach (var p in OverlayPresets)
+        {
+            if (string.IsNullOrEmpty(p.Id)) p.Id = OverlaySettings.NewId();
+            p.Colors ??= [];
+            p.MigrateOld();
+        }
         OverlayShortcuts ??= new();
         OverlayShortcuts.Normalize();
         OverlayRestFade ??= new();
@@ -186,4 +199,5 @@ public sealed class PairedPhone
 
 [JsonSourceGenerationOptions(WriteIndented = true, UseStringEnumConverter = true)]
 [JsonSerializable(typeof(HostSettings))]
+[JsonSerializable(typeof(OverlaySettings))]
 internal sealed partial class HostSettingsJson : JsonSerializerContext;

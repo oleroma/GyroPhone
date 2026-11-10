@@ -872,6 +872,34 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         return id;
     }
 
+    public IReadOnlyList<OverlaySettings> OverlayPresets => _engine.Settings.OverlayPresets;
+
+    public void SaveOverlayPreset(string id, string name)
+    {
+        _engine.SaveOverlayPreset(id, name);
+        Refresh();
+    }
+
+    public string? AddOverlayFromPreset(string presetId)
+    {
+        var id = _engine.AddOverlayFromPreset(presetId);
+        ApplyOverlays();
+        Refresh();
+        return id;
+    }
+
+    public void RenameOverlayPreset(string presetId, string name)
+    {
+        _engine.RenameOverlayPreset(presetId, name);
+        Refresh();
+    }
+
+    public void RemoveOverlayPreset(string presetId)
+    {
+        _engine.RemoveOverlayPreset(presetId);
+        Refresh();
+    }
+
     public void RemoveOverlay(string id)
     {
         if (_overlayForms.Remove(id, out var f)) f.Close();

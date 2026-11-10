@@ -25,6 +25,8 @@ Overlays page: the switches for all (Edit, Hide all, Level all), the list of win
 
 The phone's own gyro displays use the same Look and Turning settings, names and defaults (see [Pad UI](phone-pad-ui.md#gyro-displays)); their values are separate.
 
+**Save as preset** (above Remove) saves the picked overlay as a preset named by its label (else its kind's name): every setting and the window's size, not its place (`HostSettings.OverlayPresets`). Presets show under **Add overlay** after the kinds with a ★; clicking one opens a new window from it where a new overlay opens; right-click one to **Rename…** or **Delete** it. The phone's presets are separate.
+
 An overlay's label names it in the list, the tray menu's **Show** items, the Remove question and the caption at its bottom edge while Edit is on; the overlay never draws it otherwise.
 
 **Shortcuts** (global, `Hotkeys`, a hidden message window so they work with no overlay open; reconfigurable, one press never does two things): **Ctrl+Alt+R** Level all, **Ctrl+Alt+O** Hide all, **Ctrl+Alt+E** Edit. A **Set orientation** mapping on the phone (or its Set orientation button) starts every overlay shown again from the phone's new base orientation: its saved Level grip cleared, facing ahead, Fade when phone rests counting from the way the phone is held then (OVERLAY byte 139 counts its presses; a change starts them over, the first count seen in a session does nothing). In the phone's World and Player gyro space (OVERLAY flag 128) overlays show the phone's real pose against gravity and take no saved grip. A **Clear displays** mapping clears every laser pointer overlay the same way (OVERLAY byte 148).
