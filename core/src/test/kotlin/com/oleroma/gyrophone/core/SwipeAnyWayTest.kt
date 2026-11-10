@@ -149,7 +149,7 @@ class SwipeAnyWayTest {
 
     @Test
     fun theSwipeRowIsOneActionForInheritance() {
-        // The touchpad maps Swipe ← and a quick swipe ↓; a button mapping only Swipe ↑ overrides the whole Swipe row.
+        // The touchpad maps Swipe ← and a quick swipe ↓; a button mapping only Swipe ↑ takes them beside it; clearing the row (Nothing) stops them all.
         val pad = listOf(
             Mapping(InputSource.Surface(1, SurfaceInput.HOLD_LEFT), OutputTarget.Mouse(MouseButton.LEFT)),
             Mapping(InputSource.Surface(1, SurfaceInput.SWIPE_DOWN), OutputTarget.Mouse(MouseButton.RIGHT)),
@@ -157,6 +157,8 @@ class SwipeAnyWayTest {
         )
         assertEquals(3, Inheritance.inherited(pad, emptyList(), "b", 0).size)
         val own = listOf(Mapping(InputSource.Surface(1, SurfaceInput.HOLD_UP, "b"), OutputTarget.Mouse(MouseButton.LEFT)))
-        assertEquals(listOf(SurfaceInput.TAP), Inheritance.inherited(pad, own, "b", 0).map { (it.source as InputSource.Surface).input })
+        assertEquals(3, Inheritance.inherited(pad, own, "b", 0).size)
+        val cleared = own + Mapping(InputSource.Surface(1, SurfaceInput.HOLD_ANY, "b"), OutputTarget.NoOutput)
+        assertEquals(listOf(SurfaceInput.TAP), Inheritance.inherited(pad, cleared, "b", 0).map { (it.source as InputSource.Surface).input })
     }
 }

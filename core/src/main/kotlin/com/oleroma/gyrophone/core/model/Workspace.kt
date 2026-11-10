@@ -17,6 +17,12 @@ data class Workspace(
      * once [TouchpadSettings.mapped], of the touchpad ([InputSource.isTouchpad]).
      */
     val mappings: List<Mapping> = emptyList(),
+    /**
+     * Its mappings follow the levels above chip by chip ([Inheritance]); false = saved before,
+     * when mapping anything on an action overrode all of the level above's, until
+     * [Inheritance.chipByChip] has turned that into Offs.
+     */
+    val chipInherit: Boolean = false,
     val touchpad: TouchpadSettings = TouchpadSettings(),
     val gyro: GyroSettings = GyroSettings(),
     /** Opacity of the on-screen controls in play ([Profile.MIN_CONTROL_OPACITY]..1). */

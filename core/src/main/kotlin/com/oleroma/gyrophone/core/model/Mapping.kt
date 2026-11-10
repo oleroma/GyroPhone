@@ -500,7 +500,18 @@ sealed interface OutputTarget {
     @Serializable
     @SerialName("nothing")
     data object NoOutput : OutputTarget
+
+    /**
+     * Does nothing, and stops the one chip of [of] this input would take from the level above
+     * (an "override" of an inherited chip, [Inheritance]); the level above's other chips still come.
+     */
+    @Serializable
+    @SerialName("off")
+    data class Off(val of: OutputTarget) : OutputTarget
 }
+
+/** A chip that does nothing: [OutputTarget.NoOutput] or an [OutputTarget.Off]. */
+val OutputTarget.nothing: Boolean get() = this == OutputTarget.NoOutput || this is OutputTarget.Off
 
 /**
  * How a key target ([OutputTarget.Key]) holds its key. HOLD: while the source is held. TOGGLE:
@@ -615,7 +626,7 @@ data class MappingSet(val id: Int, val name: String = "", val settings: Workspac
  * no other sets is [ms] itself.
  */
 fun layered(ms: List<Mapping>, full: Int, overrides: List<Int>, keepNothing: Boolean = false): List<Mapping> {
-    if (full == MappingSet.BASE && overrides.isEmpty() && ms.none { it.set != 0 || (!keepNothing && it.target == OutputTarget.NoOutput) }) return ms
+    if (full == MappingSet.BASE && overrides.isEmpty() && ms.none { it.set != 0 || (!keepNothing && it.target.nothing) }) return ms
     var out = ms.filter { it.set == full }
     for (o in overrides) {
         if (o == full) continue
@@ -624,7 +635,7 @@ fun layered(ms: List<Mapping>, full: Int, overrides: List<Int>, keepNothing: Boo
         val sources = top.mapTo(HashSet()) { it.source }
         out = out.filterNot { it.source in sources } + top
     }
-    return if (keepNothing) out else out.filter { it.target != OutputTarget.NoOutput }
+    return if (keepNothing) out else out.filter { !it.target.nothing }
 }
 
 /**

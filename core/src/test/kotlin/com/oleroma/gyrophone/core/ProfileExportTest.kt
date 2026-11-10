@@ -37,7 +37,8 @@ class ProfileExportTest {
         assertEquals(stored.devicePresets.size + 1, after.devicePresets.size)
         // Same Defaults on both sides: nothing became its own.
         assertEquals(WorkspaceDefaults.own(stored.workspaces[wasd]), WorkspaceDefaults.own(added))
-        assertEquals(stored.workspaces[wasd].mappings.toSet(), added.mappings.toSet())
+        val same = com.oleroma.gyrophone.core.model.Inheritance.chipByChip(stored.workspaces[wasd], stored.defaults)
+        assertEquals(same.mappings.toSet(), added.mappings.toSet())
     }
 
     @Test fun defaultsThatDifferAreKeptAsItsOwn() {
@@ -52,8 +53,8 @@ class ProfileExportTest {
         val added = ProfileExport.addWorkspace(other, r).workspaces.last()
         assertTrue(WorkspaceDefaults.LONG_PRESS in WorkspaceDefaults.own(added))
         assertEquals(stored.workspaces[0].longPressMs, WorkspaceDefaults.apply(added, defaults).longPressMs)
-        // Yaw did nothing where it came from: cleared, so it still does nothing.
-        assertTrue(added.mappings.any { it.source == InputSource.Gyro(MotionAxis.YAW) && it.target == OutputTarget.NoOutput && it.set == MappingSet.BASE })
+        // Yaw did nothing where it came from: the new Defaults' yaw chip is stopped, so it still does nothing.
+        assertTrue(added.mappings.any { it.source == InputSource.Gyro(MotionAxis.YAW) && it.target == OutputTarget.Off(OutputTarget.MouseAxis(MouseMotion.MOVE_X)) && it.set == MappingSet.BASE })
     }
 
     @Test fun everythingRoundTrips() {

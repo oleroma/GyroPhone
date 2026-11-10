@@ -29,6 +29,7 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.nothing
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.StickAxis
 import com.oleroma.gyrophone.core.model.StickDiagonal
@@ -631,6 +632,33 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private val bpDownY = FloatArray(MAX_BUTTON_FINGERS)
     private val bpDownNs = LongArray(MAX_BUTTON_FINGERS)
 
+    /** The finger is also a touchpad finger: its button passes the touchpad's chips it takes on ([Inheritance.passedOn]). */
+    private val bpPass = BooleanArray(MAX_BUTTON_FINGERS)
+
+    /**
+     * The passed finger is a full touchpad finger (taps, swipes, multi-finger gestures). Button
+     * and background fingers never make one gesture together: a finger landing while the other
+     * kind holds the touchpad only aims ([Touchpad.down]'s aiming), so a thumb resting on a button
+     * never turns the other thumb's cursor into a scroll. [passFull] counts them.
+     */
+    private val bpPassFull = BooleanArray(MAX_BUTTON_FINGERS)
+    private var passFull = 0
+
+    /**
+     * Per button that takes any of the touchpad's chips: the touchpad's chips it overrides, which must
+     * not fire while one of its fingers is in the touchpad's gesture. Buttons not here keep their fingers.
+     */
+    private var passBlocks: Map<String, Set<Mapping>> = emptyMap()
+
+    /** Buttons that only take the touchpad's chips (nothing of their own): they never show pressed. */
+    private var seeThrough: Set<String> = emptySet()
+
+    /** Buttons with a finger in the touchpad's gesture now ([passBlocks]), until the touchpad settles. */
+    private val gestureButtons = HashSet<String>()
+
+    /** The touchpad's chips that must not fire now: [passBlocks] of [gestureButtons]. */
+    private var touchBlocked: Set<Mapping> = emptySet()
+
     /** The workspace's touch buttons: each takes the touchpad's mappings it does not map itself. */
     private var buttonIds: List<String> = emptyList()
 
@@ -994,7 +1022,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (s in surfaceList) s.reset()
         for (a in areas) a.clear()
         hapticWas.clear(); hapticNow.clear(); hapticSteps.clear()
-        bpState.fill(BP_FREE); bpControl.fill(null)
+        bpState.fill(BP_FREE); bpControl.fill(null); bpPass.fill(false); bpPassFull.fill(false); passFull = 0; gestureButtons.clear()
         pulses.clear()
         keyModeHeld.clear(); toggledKeys.fill(false); nextKeys.clear()
         shakeOn = false; shakeShown = true
@@ -1125,6 +1153,18 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                     bpState[slot] = BP_SWIPE
                     surface.down(pointer, x, y, now, eventNs = eventNanos)
                 } else bpState[slot] = BP_PRESSED
+                // What it takes from the touchpad runs on the touchpad: the finger is one of its too.
+                val blocks = passBlocks[id]
+                bpPass[slot] = blocks != null
+                if (blocks != null) {
+                    // A new gesture: what the last one's buttons stopped no longer counts.
+                    if (touchpad.fingers == 0) gestureButtons.clear()
+                    gestureButtons.add(id); blockTouchpad()
+                    val aiming = touchpad.fullFingers > passFull
+                    bpPassFull[slot] = !aiming
+                    if (!aiming) passFull++
+                    touchpad.down(pointer, x, y, now, aiming = aiming, eventNs = eventNanos)
+                }
             }
         }
         onChange?.run()
@@ -1138,6 +1178,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val slot = slotOf(pointer)
                 if (slot < 0) return@firingEvents
                 fingerTrack(bpControl[slot]!!, pointer, x, y, 1)
+                if (bpPass[slot]) touchpad.move(pointer, x, y, now, eventNanos)
                 if (bpState[slot] != BP_SWIPE) return@firingEvents
                 surfaces[bpControl[slot]]?.move(pointer, x, y, now, eventNanos)
             }
@@ -1156,6 +1197,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 trace?.let { traceTouch(it, id, "up after ${(now - bpDownNs[slot]) / 1_000_000} ms", withTargets = false) }
                 fingerTrack(id, pointer, 0f, 0f, 2)
                 if (bpState[slot] == BP_SWIPE) surfaces[id]?.up(pointer, now)
+                if (bpPass[slot]) { touchpad.up(pointer, now); unpass(slot); settleTouchpad() }
                 // A quick tap stays pressed until a snapshot has shown it for the minimum pulse,
                 // so a pump that ticks between its down and up still sends it.
                 if (now - bpDownNs[slot] < touchpad.minPulseNanos) pulses.add(Pulse(id, bpDownNs[slot])) else release(id)
@@ -1179,6 +1221,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 trace?.let { traceTouch(it, id, "cancelled by the system", withTargets = false) }
                 fingerTrack(id, pointer, 0f, 0f, 2)
                 if (bpState[slot] == BP_SWIPE) surfaces[id]?.cancelFinger(pointer, now)
+                if (bpPass[slot]) { touchpad.cancelFinger(pointer, now); unpass(slot); settleTouchpad() }
                 release(id)
                 bpState[slot] = BP_FREE; bpControl[slot] = null
             }
@@ -1205,7 +1248,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * [MOVES_GLIDING] while inertia carries them on; 0 = no Move mapped.
      */
     fun moveTrack(id: String, out: FloatArray): Int = synchronized(lock) {
-        val s = surfaces[id] ?: return 0
+        // A button that passes its fingers on moves with the touchpad's Move.
+        val own = surfaces[id]?.takeIf { it.movesMapped() != 0 }
+        val s = own ?: (if (id in passBlocks) touchpad else null) ?: return 0
         val mapped = s.movesMapped()
         if (mapped == 0) return 0
         out[0] = s.moveTravelX; out[1] = s.moveTravelY
@@ -1249,6 +1294,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     fun pressedTouches(): Set<String> = synchronized(lock) {
         resolveIfDue(clock())
         val out = HashSet(touches.keys)
+        if (seeThrough.isNotEmpty()) out.removeAll(seeThrough)
         val zone = areas[TouchAreaKind.ZONE.ordinal]
         out.addAll(zone.since.keys); out.addAll(zone.late.keys)
         out
@@ -1262,7 +1308,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         synchronized(lock) {
             resolveIfDue(clock())
             pressed.clear(); latched.clear()
-            pressed.addAll(touches.keys)
+            for (id in touches.keys) if (id !in seeThrough) pressed.add(id)
             val zone = areas[TouchAreaKind.ZONE.ordinal]
             pressed.addAll(zone.since.keys); pressed.addAll(zone.late.keys)
             for ((id, s) in surfaces) if (s.latched) latched.add(id)
@@ -1518,7 +1564,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val axes = own.mapTo(HashSet()) { (it.source as InputSource.Gyro).axis }
             out = out.filterNot { (it.source as InputSource.Gyro).axis in axes } + own
         }
-        return out.filter { it.target != OutputTarget.NoOutput }
+        return out.filter { !it.target.nothing }
     }
 
     /** How far the phone is tilted: [x] sideways (+ right), [y] forward and back (+ back), each -1..1. */
@@ -1563,7 +1609,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val now = clock()
             resolveIfDue(now)
             trace?.input("touchpad finger $pointer down at ${x.toInt()},${y.toInt()}")
-            touchpad.down(pointer, x, y, now, eventNs = eventNanos)
+            // While button fingers hold the touchpad's gesture, a background finger only aims ([bpPassFull]).
+            if (touchpad.fingers == 0 && gestureButtons.isNotEmpty()) { gestureButtons.clear(); blockTouchpad() }
+            touchpad.down(pointer, x, y, now, aiming = passFull > 0, eventNs = eventNanos)
             if ("" in fingerMapped) { fingerTrack("", pointer, x, y, 0); refreshSens() }
         }
         onChange?.run()
@@ -1585,6 +1633,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             resolveIfDue(now)
             trace?.input("touchpad finger $pointer up")
             touchpad.up(pointer, now)
+            settleTouchpad()
             if ("" in fingerMapped) { fingerTrack("", pointer, 0f, 0f, 2); refreshSens() }
         }
         onChange?.run()
@@ -1803,6 +1852,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             layerSet = MappingSet.BASE; layerOverrides.clear(); layerHolds.clear(); backLayers = null
             for (c in carried) c.clear()
             anyCarried = false
+            gestureButtons.clear(); bpPass.fill(false); bpPassFull.fill(false); passFull = 0
             applyLayers()
             mouseDx = 0; mouseDy = 0; wheel = 0; hwheel = 0; gyroDx = 0; gyroDy = 0
             gyroPad.fill(0f)
@@ -1851,6 +1901,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         // engages a wheel or gyro toggle fires it.
         var padButtons = 0
         if (touchpad.queued) firingEvents(now) { padButtons = touchpad.poll(now) } else padButtons = touchpad.poll(now)
+        if (gestureButtons.isNotEmpty()) settleTouchpad()
         for (s in surfaceList) {
             padButtons = padButtons or if (s.queued) {
                 var b = 0; firingEvents(now) { b = s.poll(now) }; b
@@ -2054,7 +2105,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause, is OutputTarget.GyroPauseAxis,
                 OutputTarget.SwitchApps, OutputTarget.Zoom, is OutputTarget.Layer, OutputTarget.LayerBack,
                 OutputTarget.LetGo, OutputTarget.BlackScreen, is OutputTarget.SetOrientation, OutputTarget.ClearDisplays,
-                OutputTarget.NoOutput -> Unit
+                OutputTarget.NoOutput, is OutputTarget.Off -> Unit
 
                 // The gyro reads it on every sample ([refreshSens]).
                 is OutputTarget.GyroSens -> Unit
@@ -2461,6 +2512,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             for (i in ms.indices) {
                 val m = ms[i]
                 val t = m.target
+                if (dev == null && touchBlocked.isNotEmpty() && m in touchBlocked) continue
                 val on = if (!shaped(m)) value(m.source, dev) >= PRESS_THRESHOLD else {
                     val sh = shaperOf(m, dev)
                     if (before) sh.eventOn else (out(m, dev, now) >= PRESS_THRESHOLD).also { sh.eventOn = it }
@@ -2514,6 +2566,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * shaped as a press (1 or 0) by its toggle, turbo, cycle and delays.
      */
     private fun out(m: Mapping, dev: Dev?, now: Long, output: Boolean = false): Float {
+        if (dev == null && touchBlocked.isNotEmpty() && m in touchBlocked) return 0f
         val src = m.source
         val derived = derivedTrigger(src)
         val v = value(src, dev, output)
@@ -2618,7 +2671,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val split = HashMap<Mapping, Shaper.Split>()
         fun splits(ms: List<Mapping>) {
             val groups = LinkedHashMap<InputSource, ArrayList<Mapping>>()
-            for (m in ms) if (isDoubleTap(m.source) && m.target != OutputTarget.NoOutput) groups.getOrPut(m.source) { ArrayList() }.add(m)
+            for (m in ms) if (isDoubleTap(m.source) && !m.target.nothing) groups.getOrPut(m.source) { ArrayList() }.add(m)
             for (list in groups.values) {
                 val held = list.filter { (it.options?.mode ?: How.HELD) == How.HELD }
                 if (held.isEmpty() || held.size == list.size) continue
@@ -2820,7 +2873,18 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val touchInUse = inUse(allTouch, carried.getOrNull(0), keepNothing = true)
         gyroInUse = touchInUse.filter { it.source is InputSource.Gyro }
         routesCache = null
-        touchMappings = Inheritance.toButtons(touchInUse, buttonIds).filter { it.target != OutputTarget.NoOutput }
+        // A button's fingers drive the touchpad for the touchpad's chips it takes ([Inheritance.passedOn]);
+        // only its own chips run on the button.
+        touchMappings = touchInUse.filter { !it.target.nothing }
+        val blocks = HashMap<String, Set<Mapping>>()
+        val clear = HashSet<String>()
+        for (id in buttonIds) {
+            val b = Inheritance.passedOn(touchInUse, id) ?: continue
+            blocks[id] = b
+            if (touchMappings.none { MappingProfiles.touchId(it.source) == id }) clear.add(id)
+        }
+        passBlocks = blocks
+        seeThrough = clear
         padMappings = Array(allPads.size) { inUse(allPads[it], carried.getOrNull(it + 1)) }
         mapsLeftTriggerAxis =
             BooleanArray(padMappings.size) { mapsTriggerAxis(padMappings[it], AndroidAxis.LTRIGGER, AndroidAxis.BRAKE) }
@@ -2846,7 +2910,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         sensMapped = touchMappings.any { it.target is OutputTarget.GyroSens } ||
                 padMappings.any { l -> l.any { it.target is OutputTarget.GyroSens } }
         trace?.let { traceLayers(it) }
-        touchpad.map = SurfaceMap(touchMappings)
+        blockTouchpad(force = true)
         for ((id, s) in surfaces) s.map = SurfaceMap(touchMappings, id)
         for ((id, st) in tapStates) {
             val double = targetsOf(touchMappings, InputSource.TouchDoubleTap(id))
@@ -2899,6 +2963,29 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val own = ws.keyTimings.firstOrNull { it.keyCode == code }
         g.longNs = (own?.longPressMs ?: eff.longPressMs).coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
         g.doubleNs = g.longNs
+    }
+
+    // ---- Buttons passing touches on to the touchpad ----
+
+    /** The touchpad runs its chips but those [gestureButtons] override ([touchBlocked]). */
+    private fun blockTouchpad(force: Boolean = false) {
+        val blocked = if (gestureButtons.isEmpty()) emptySet() else gestureButtons.flatMapTo(HashSet()) { passBlocks[it].orEmpty() }
+        if (!force && blocked == touchBlocked) return
+        touchBlocked = blocked
+        touchpad.map = SurfaceMap(if (blocked.isEmpty()) touchMappings else touchMappings.filterNot { it in blocked })
+    }
+
+    private fun unpass(slot: Int) {
+        if (bpPassFull[slot]) passFull--
+        bpPass[slot] = false; bpPassFull[slot] = false
+    }
+
+    /** The touchpad's gesture with button fingers ended (no finger, nothing waiting to fire): its chips all run again. */
+    private fun settleTouchpad() {
+        if (gestureButtons.isEmpty() || !touchpad.settled) return
+        for (i in bpPass.indices) if (bpPass[i]) return
+        gestureButtons.clear()
+        blockTouchpad()
     }
 
     // ---- Touch presses ----

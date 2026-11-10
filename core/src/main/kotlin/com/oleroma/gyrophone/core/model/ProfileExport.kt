@@ -118,18 +118,18 @@ object ProfileExport {
         val now = WorkspaceDefaults.apply(w.copy(ownSettings = own), to)
         val differ = WorkspaceDefaults.keys.filter { k -> k !in own && !WorkspaceDefaults.same(k, had, now) }
         w = differ.fold(now) { acc, k -> WorkspaceDefaults.take(k, acc, had) }.copy(ownSettings = own + differ)
-        // Touchpad and gyro mappings it took from the old Defaults: its own where the new ones map that action otherwise.
-        val hadMappings = Inheritance.workspace(w, from)
-        val nowMappings = Inheritance.workspace(w, to)
-        val keys = (hadMappings + nowMappings).mapNotNull { m -> m.takeIf { it.set == MappingSet.BASE }?.let { Inheritance.levelKey(it.source) } }.toSet()
-        val add = keys.flatMap { k ->
-            val a = hadMappings.filter { it.set == MappingSet.BASE && Inheritance.levelKey(it.source) == k }
-            val b = nowMappings.filter { it.set == MappingSet.BASE && Inheritance.levelKey(it.source) == k }
-            if (a.toSet() == b.toSet()) emptyList()
-            // Nothing there before: it did nothing; cleared here so the new Defaults don't add it.
-            else a.ifEmpty { b.take(1).map { it.copy(target = OutputTarget.NoOutput, options = null, range = null) } }
-        }
-        w = w.copy(mappings = w.mappings + add.filter { m -> w.mappings.none { it.source == m.source && it.set == m.set } })
+        // Touchpad and gyro chips it took from the old Defaults (chip by chip, [Inheritance]): what
+        // it took there and the new Defaults lack becomes its own; what the new Defaults add, it stops.
+        w = Inheritance.chipByChip(w, from)
+        fun base(ms: List<Mapping>) = ms.filter { it.set == MappingSet.BASE && it.source.isWorkspaceInput && !it.target.nothing }
+            .mapTo(LinkedHashSet()) { it.source to it.target }
+        val hadMs = Inheritance.workspace(w, from)
+        val hadChips = base(hadMs)
+        val nowChips = base(Inheritance.workspace(w, to))
+        val add = hadMs.filter { it.set == MappingSet.BASE && (it.source to it.target) in hadChips && (it.source to it.target) !in nowChips }
+            .map { it.copy(set = MappingSet.BASE) } +
+            (nowChips - hadChips).map { (src, t) -> Mapping(src, OutputTarget.Off(t)) }
+        w = w.copy(mappings = (w.mappings + add).distinct())
         // Its device preset, beside the ones here.
         var presets = p.devicePresets
         val dp = src.devicePresets.firstOrNull { it.id == w.devicePreset }
