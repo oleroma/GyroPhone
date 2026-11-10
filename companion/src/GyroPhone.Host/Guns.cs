@@ -13,7 +13,40 @@ public static class Guns
 
     /// <summary>One gun. Boxes: centre x, y, z and half sizes. PivotZ: what it pitches about (the shoulder, or the wrist for a pistol).</summary>
     public sealed record Gun(string Key, string Name, float[] Boxes, float MuzzleZ, float Bore, float Flash,
-        CrosshairKick.Recoil Recoil, int Rpm, Scope? Scope, float PivotZ = 0.6f);
+        CrosshairKick.Recoil Recoil, int Rpm, Scope? Scope, float PivotZ = 0.6f, float SpreadDeg = 1f, int Pellets = 1)
+    {
+        /// <summary>Scale to fit: its own frame is shown this many times bigger, its middle (z) at the assault rifle's.</summary>
+        public float Fit { get; private set; } = 1f;
+        private float _mid, _fitMid;
+
+        // Its extent along axis 1 (y) or 2 (z): min, max.
+        private (float Lo, float Hi) Extent(int axis)
+        {
+            float lo = axis == 2 ? MuzzleZ : float.MaxValue, hi = axis == 2 ? MuzzleZ : -float.MaxValue;
+            for (int i = 0; i + 5 < Boxes.Length; i += 6)
+            {
+                lo = Math.Min(lo, Boxes[i + axis] - Boxes[i + 3 + axis]);
+                hi = Math.Max(hi, Boxes[i + axis] + Boxes[i + 3 + axis]);
+            }
+            return (lo, hi);
+        }
+
+        /// <summary>Scales it to fit <paramref name="reference"/>'s length, no taller than <see cref="FitTall"/> times its height, centred on its middle.</summary>
+        internal void FitTo(Gun reference)
+        {
+            var z = Extent(2); var y = Extent(1);
+            var rz = reference.Extent(2); var ry = reference.Extent(1);
+            Fit = Math.Min((rz.Hi - rz.Lo) / (z.Hi - z.Lo), FitTall * (ry.Hi - ry.Lo) / (y.Hi - y.Lo));
+            _mid = (z.Lo + z.Hi) / 2f;
+            _fitMid = (rz.Lo + rz.Hi) / 2f;
+        }
+
+        /// <summary>Model z <paramref name="z"/> as shown, fitted.</summary>
+        public float FitZ(float z) => _fitMid + (z - _mid) * Fit;
+    }
+
+    /// <summary>Scale to fit: no gun is shown taller than this many times the assault rifle.</summary>
+    public const float FitTall = 1.4f;
 
     public static readonly Gun Pistol = new(
         "pistol", "Pistol",
@@ -28,7 +61,7 @@ public static class Guns
         ],
         MuzzleZ: -0.46f, Bore: 0.012f, Flash: 0.12f,
         Recoil: new CrosshairKick.Recoil(18f, 35f, 120f, 220f, 0.1f, 16f),
-        Rpm: 400, Scope: null, PivotZ: 0.15f);
+        Rpm: 400, Scope: null, PivotZ: 0.15f, SpreadDeg: 1.5f);
 
     public static readonly Gun SMG = new(
         "smg", "SMG",
@@ -44,7 +77,7 @@ public static class Guns
         ],
         MuzzleZ: -0.56f, Bore: 0.016f, Flash: 0.16f,
         Recoil: new CrosshairKick.Recoil(14f, 25f, 90f, 150f, 0.06f, 5f),
-        Rpm: 800, Scope: new Scope(0.13f, -0.12f, 0.16f, 0.042f, 0.058f), PivotZ: 0.45f);
+        Rpm: 800, Scope: new Scope(0.13f, -0.12f, 0.16f, 0.042f, 0.058f), PivotZ: 0.45f, SpreadDeg: 2.5f);
 
     public static readonly Gun AR = new(
         "ar", "Assault rifle",
@@ -63,7 +96,7 @@ public static class Guns
         ],
         MuzzleZ: -0.93f, Bore: 0.02f, Flash: 0.22f,
         Recoil: new CrosshairKick.Recoil(24f, 42f, 150f, 280f, 0.12f, 10f),
-        Rpm: 600, Scope: new Scope(0.17f, -0.12f, 0.3f, 0.051f, 0.072f), PivotZ: 0.6f);
+        Rpm: 600, Scope: new Scope(0.17f, -0.12f, 0.3f, 0.051f, 0.072f), PivotZ: 0.6f, SpreadDeg: 1.2f);
 
     public static readonly Gun BattleRifle = new(
         "battle", "Battle rifle",
@@ -81,7 +114,7 @@ public static class Guns
         ],
         MuzzleZ: -0.975f, Bore: 0.024f, Flash: 0.28f,
         Recoil: new CrosshairKick.Recoil(28f, 55f, 180f, 340f, 0.16f, 13f),
-        Rpm: 450, Scope: new Scope(0.17f, -0.16f, 0.3f, 0.054f, 0.08f), PivotZ: 0.6f);
+        Rpm: 450, Scope: new Scope(0.17f, -0.16f, 0.3f, 0.054f, 0.08f), PivotZ: 0.6f, SpreadDeg: 1f);
 
     public static readonly Gun LMG = new(
         "lmg", "LMG",
@@ -98,7 +131,7 @@ public static class Guns
         ],
         MuzzleZ: -0.94f, Bore: 0.022f, Flash: 0.28f,
         Recoil: new CrosshairKick.Recoil(22f, 40f, 140f, 260f, 0.1f, 8f),
-        Rpm: 700, Scope: new Scope(0.17f, -0.2f, 0.18f, 0.051f, 0.072f), PivotZ: 0.6f);
+        Rpm: 700, Scope: new Scope(0.17f, -0.2f, 0.18f, 0.051f, 0.072f), PivotZ: 0.6f, SpreadDeg: 2f);
 
     public static readonly Gun Shotgun = new(
         "shotgun", "Shotgun",
@@ -113,7 +146,7 @@ public static class Guns
         ],
         MuzzleZ: -0.85f, Bore: 0.034f, Flash: 0.36f,
         Recoil: new CrosshairKick.Recoil(30f, 80f, 240f, 450f, 0.22f, 18f),
-        Rpm: 80, Scope: new Scope(0.12f, -0.1f, 0.22f, 0.048f, 0.067f), PivotZ: 0.6f);
+        Rpm: 80, Scope: new Scope(0.12f, -0.1f, 0.22f, 0.048f, 0.067f), PivotZ: 0.6f, SpreadDeg: 4f, Pellets: 8);
 
     public static readonly Gun Sniper = new(
         "sniper", "Sniper",
@@ -130,7 +163,7 @@ public static class Guns
         ],
         MuzzleZ: -0.975f, Bore: 0.024f, Flash: 0.38f,
         Recoil: new CrosshairKick.Recoil(34f, 100f, 300f, 600f, 0.26f, 14f),
-        Rpm: 45, Scope: new Scope(0.16f, -0.26f, 0.32f, 0.064f, 0.104f), PivotZ: 0.6f);
+        Rpm: 45, Scope: new Scope(0.16f, -0.26f, 0.32f, 0.064f, 0.104f), PivotZ: 0.6f, SpreadDeg: 0.3f);
 
     /// <summary>Every gun, by its number.</summary>
     public static readonly Gun[] All = [Pistol, SMG, AR, BattleRifle, LMG, Shotgun, Sniper];
@@ -140,4 +173,10 @@ public static class Guns
 
     /// <summary>Gun <paramref name="i"/>, or the assault rifle.</summary>
     public static Gun Of(int i) => i >= 0 && i < All.Length ? All[i] : AR;
+
+    static Guns()
+    {
+        // Every gun shown as long as the assault rifle (scaled to fit, not to real size).
+        foreach (var g in All) g.FitTo(AR);
+    }
 }

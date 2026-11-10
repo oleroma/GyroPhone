@@ -147,11 +147,12 @@ fun GyroDisplaysLayer(
             // A crosshair or rifle kicks on each shot and bounces back, its muzzle flash in time.
             for (b in shown) {
                 val d = b.control.display ?: continue
-                if (d.kind != GyroDisplayKind.LASER || !(d.laserCrosshair || d.laserRifle)) continue
+                // Draw each shot counts the shots on the Sphere look too.
+                if (d.kind != GyroDisplayKind.LASER || !(d.laserCrosshair || d.laserRifle || (d.laserShotDraw && d.laserDraw))) continue
                 val k = kicks.getOrPut(b.control.id) { CrosshairKick.State() }
                 val firing = runtime.gyroFeed(b.control.id)?.firing == true
                 val gun = d.gun()
-                if (k.step(t, firing, d.crosshairKick, CrosshairKick.periodMs(d.rpmOf(gun)), d.muzzleFlash, gun.recoil)) until = maxOf(until, t + 20)
+                if (k.step(t, firing, d.crosshairKick, CrosshairKick.periodMs(d.rpmOf(gun)), d.countsShots, gun.recoil, gun.pellets)) until = maxOf(until, t + 20)
                 // A gun lowered when idle comes up while aiming or firing.
                 val up = if (!d.laserRifle || !d.gunLowered) 1f
                 else if (firing || k.shotAt >= 0L || runtime.gyroFeed(b.control.id)?.aiming == true) 1f else 0f
@@ -176,6 +177,7 @@ fun GyroDisplaysLayer(
             st.aim = aims[b.control.id] ?: 0f
             st.kick = kicks[b.control.id]?.value ?: 0f
             st.shotAt = kicks[b.control.id]?.shotAt ?: -1L
+            st.shots = kicks[b.control.id]
             st.lower = 1f - (raises[b.control.id] ?: 1f)
             st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
             if (editing) {
@@ -251,6 +253,13 @@ private class VisState {
 
     /** When the last Fire display shot was ([CrosshairKick.State.shotAt]), for its muzzle flash; −1 none. */
     var shotAt = -1L
+
+    /** The display's shots ([CrosshairKick.State]): their spread and Draw each shot's hits; null none. */
+    var shots: CrosshairKick.State? = null
+    private val shotDir = FloatArray(3)
+    private val turnedCopy = FloatArray(9)
+    private val hitU = FloatArray(3)
+    private val hitV = FloatArray(3)
 
     /** The muzzle flash's age now (ms), or −1 when there is none or [GyroDisplay.muzzleFlash] is off. */
     private fun flashMs(d: GyroDisplay): Float =
@@ -500,7 +509,7 @@ private class VisState {
         fun rnd(i: Int): Float = (((step * 7919L + i * 104729L) xor (step shr 3)) % 1000L).let { kotlin.math.abs(it) / 1000f }
         // Bursts out at once, then shrinks back as it cools.
         val grow = 0.55f + 0.45f * kotlin.math.sqrt(g)
-        val width = gun.bore * 2.4f * r * grow
+        val width = gun.bore * gun.fit * 2.4f * r * grow
         // One flame from the muzzle along gun direction (dx, dy, dz), [len] long, [w] wide at its widest.
         fun flame(dx: Float, dy: Float, dz: Float, len: Float, w: Float, color: Color) {
             LaserTrace.gunDir(dx, dy, dz, dir, kick * kickK, gun, lower)
@@ -525,7 +534,7 @@ private class VisState {
             drawPath(crossPath, color)
         }
         drawCircle(fire.copy(alpha = fire.alpha * 0.3f * g), width * 2.2f, tip)
-        val len = gun.flash * grow * (0.8f + 0.4f * rnd(0))
+        val len = gun.flash * gun.fit * grow * (0.8f + 0.4f * rnd(0))
         val turn = rnd(1) * 1.5708f
         val slant = 0.9f // about 52° off the barrel
         val core = Color.White.copy(alpha = fire.alpha * g)
@@ -732,6 +741,62 @@ private class VisState {
     }
 
     /**
+     * Draw each shot's hits ([LaserTrace.hits]) on the near or far ([front]) half, in the Fire colours (Fire
+     * behind on the far half), each a little disc lying on the sphere as [GyroDisplay.laserHitLook] shows it:
+     * a dot, a ring, a cross, or a bullet hole (a dark centre in a bright rim).
+     */
+    private fun DrawScope.hits(t: LaserTrace, d: GyroDisplay, front: Boolean, c: Offset, r: Float, col: (GyroDisplayColor) -> Color) {
+        if (t.hitCount == 0) return
+        val look = d.laserHitLook.coerceIn(0, LaserTrace.HIT_LOOKS.size - 1)
+        val color = col(if (front) GyroDisplayColor.LASER_FIRE else GyroDisplayColor.LASER_FIRE_BEHIND)
+        val rim = path
+        val hole = path2
+        rim.reset()
+        hole.reset()
+        val h = t.hits
+        for (n in 0 until t.hitCount) {
+            val x = h[n * 4]; val y = h[n * 4 + 1]; val z = h[n * 4 + 2]
+            val p0 = laserAt(c, r, x, y, z)
+            if ((pv[2] > 0f) != front) continue
+            // Across the sphere there: right (round its up) and up.
+            if (kotlin.math.abs(y) > 0.99f) { hitU[0] = 1f; hitU[1] = 0f; hitU[2] = 0f }
+            else { hitU[0] = -z; hitU[1] = 0f; hitU[2] = x; LaserTrace.unit(hitU) }
+            hitV[0] = y * hitU[2] - z * hitU[1]; hitV[1] = z * hitU[0] - x * hitU[2]; hitV[2] = x * hitU[1] - y * hitU[0]
+            val k = kotlin.math.tan(h[n * 4 + 3])
+            val pa = laserAt(c, r, x + hitU[0] * k, y + hitU[1] * k, z + hitU[2] * k)
+            val ax = pa.x - p0.x; val ay = pa.y - p0.y
+            val pb = laserAt(c, r, x + hitV[0] * k, y + hitV[1] * k, z + hitV[2] * k)
+            val bx = pb.x - p0.x; val by = pb.y - p0.y
+            if (look == 2) {
+                rim.moveTo(p0.x - ax - bx, p0.y - ay - by); rim.lineTo(p0.x + ax + bx, p0.y + ay + by)
+                rim.moveTo(p0.x - ax + bx, p0.y - ay + by); rim.lineTo(p0.x + ax - bx, p0.y + ay - by)
+                continue
+            }
+            fun disc(into: Path, s: Float) {
+                for (i in 0 until HIT_SIDES) {
+                    val a = i * 2f * Math.PI.toFloat() / HIT_SIDES
+                    val cs = kotlin.math.cos(a) * s; val sn = kotlin.math.sin(a) * s
+                    val px = p0.x + ax * cs + bx * sn; val py = p0.y + ay * cs + by * sn
+                    if (i == 0) into.moveTo(px, py) else into.lineTo(px, py)
+                }
+                into.close()
+            }
+            disc(rim, 1f)
+            if (look == 3) disc(hole, 0.55f)
+        }
+        val w = maxOf(1.2f * density, 0.5f)
+        when (look) {
+            1 -> drawPath(rim, color, style = Stroke(w * 1.3f, join = StrokeJoin.Round))
+            2 -> drawPath(rim, color, style = Stroke(w * 1.5f, cap = StrokeCap.Round))
+            3 -> {
+                drawPath(rim, color)
+                drawPath(hole, Color(0.06f, 0.05f, 0.04f, 0.9f * color.alpha))
+            }
+            else -> drawPath(rim, color)
+        }
+    }
+
+    /**
      * The laser pointer: a see-through sphere seen from a fixed angle (30° round, 30° above), its
      * grid and axes, the beam from its centre out of the phone's back to the inside, a dot and a roll
      * tick where it hits; Draw mode's paint ([GyroDisplayFeed.laser]). Far
@@ -765,7 +830,9 @@ private class VisState {
             if (v != lt.fedVersion) {
                 lt.fedVersion = v
                 lt.add(
-                    beam[0], beam[1], beam[2], now, d.laserDraw, held, d.laserClearOnRatchet, feed?.firing == true, d.laserFireOnly,
+                    // Draw each shot: firing paints its hits, not a Fire line.
+                    beam[0], beam[1], beam[2], now, d.laserDraw, held, d.laserClearOnRatchet,
+                    feed?.firing == true && !(d.laserShotDraw && d.laserDraw), d.laserFireOnly,
                     d.laserSmoothColours, d.laserLineSmoothing,
                     brushDeg = d.laserBrush.coerceIn(1, 20) * BRUSH_WIDTH,
                     snakeDeg = if (d.laserSnake) d.laserSnakeDeg.toFloat() else 0f,
@@ -780,6 +847,28 @@ private class VisState {
         }
         val rifle = d.laserRifle
         val crosshair = d.laserCrosshair && !rifle
+        val ks = shots
+        val rad = (Math.PI / 180).toFloat()
+        val gunNow = d.gun()
+        // Simulate spread: how far off a shot lands now (radians, the gun's spread, bloomed).
+        val spread = if (ks == null || !d.laserSpread) 0f else d.spreadOf(gunNow).coerceIn(0f, 20f) * rad * (if (d.laserBloom) ks.bloom else 1f)
+        // Draw each shot: each new shot marks its hits (its pellets) where they land.
+        if (lt != null && ks != null && ks.shots != lt.hitShots) {
+            lt.hitShots = ks.shots
+            if (d.laserShotDraw && d.laserDraw && !held) {
+                val half = d.laserFireBrush.coerceIn(1, 20) * BRUSH_WIDTH / 2f * rad * (if (ks.pellets > 1) 0.5f else 1f)
+                for (i in 0 until ks.pellets) {
+                    LaserTrace.shotPoint(m, beam, ks.offsets[i * 2] * spread, ks.offsets[i * 2 + 1] * spread, shotDir)
+                    lt.addHit(shotDir[0], shotDir[1], shotDir[2], half)
+                }
+            }
+        }
+        // The crosshair and gun kick toward where the shot landed and spring back with the kick.
+        if ((rifle || crosshair) && ks != null && spread > 0f && ks.shotAt >= 0L && kick != 0f) {
+            if (laserTurned === m) laserTurned = m.copyInto(turnedCopy)
+            LaserTrace.shotPoint(m, beam, ks.towardX * spread, ks.towardY * spread, shotDir)
+            LaserTrace.turnToward(m, beam, shotDir, kick.coerceIn(-0.5f, 1.5f))
+        }
         val sphere = col(GyroDisplayColor.LASER_SPHERE)
         if (!rifle && !crosshair) {
         val lit = Color(sphere.red + (1 - sphere.red) * 0.35f, sphere.green + (1 - sphere.green) * 0.35f, sphere.blue + (1 - sphere.blue) * 0.35f, sphere.alpha)
@@ -862,6 +951,7 @@ private class VisState {
                 paintShaders.getOrPut(t) { PointerPaintShader() }.draw(drawContext.canvas.nativeCanvas, lp, front, c.x, c.y, r, viewOf, sceneOf, look, now)
             }
             if (d.laserSnake) snake(t, d, front, c, r, col)
+            if (d.laserShotDraw && d.laserDraw) hits(t, d, front, c, r, col)
         }
         val hit = laserAt(c, r, beam[0], beam[1], beam[2])
         val hitFront = pv[2] > 0f
@@ -1676,6 +1766,9 @@ private val PAINT_WIDTHS = intArrayOf(512, 1024, 2048)
 
 /** A pointer's paint is this many degrees wide per Brush degree. */
 private const val BRUSH_WIDTH = 0.6f
+
+// A Draw each shot hit's corners.
+private const val HIT_SIDES = 12
 
 // The Snake's glow: copies this many times its width, at this share of the glow's strength (widest first).
 private val SNAKE_GLOW = listOf(3.2f to 0.18f, 2.2f to 0.3f, 1.5f to 0.45f)

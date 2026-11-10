@@ -285,6 +285,30 @@ internal fun GyroDisplaySettingsScreen(
                             }
                             SwitchRow("Muzzle flash", d.muzzleFlash, if (look == 2) "Each shot the crosshair flashes in time with its kick: a burst of white light cooling to the Flash colour (yellow), then Flash end (orange), and back to its own colour." else "Each shot a blast of flame from the muzzle in time with the kick, as wide as the gun's muzzle and as long as its calibre (pistol shortest, shotgun and sniper longest): white, cooling to the Flash colour (yellow), then Flash end (orange).") { set(d.copy(muzzleFlash = it)) }
                         }
+                        if (look == 0 && d.laserDraw) {
+                            Text("Shoots like", style = MaterialTheme.typography.bodySmall)
+                            Chips(Guns.ALL.mapIndexed { i, g -> g.name to i }, d.laserGun) { set(d.copy(laserGun = it)) }
+                        }
+                        if (look != 0 || d.laserDraw) {
+                            val gun = d.gun()
+                            SwitchRow("Simulate spread", d.laserSpread, "Each shot lands a little off the aim point, a random way, by up to the gun's spread." + (if (look != 0) " The ${if (look == 2) "crosshair" else "gun"} kicks toward it and springs back." else "") + " Each gun keeps its own spread.") { set(d.copy(laserSpread = it)) }
+                            if (d.laserSpread) Indented {
+                                FloatSlider("Spread %.1f° (${gun.name})", d.spreadOf(gun), 0f..10f, 0.1f) { set(d.copy(gunSpread = d.gunSpread + (gun.key to it))) }
+                                SwitchRow("Bloom", d.laserBloom, "Shots fired in a row spread wider, up to twice over ${CrosshairKick.BLOOM_SHOTS} shots; it settles half a second after you let go.") { set(d.copy(laserBloom = it)) }
+                            }
+                        }
+                        if (d.laserDraw) {
+                            SwitchRow("Draw each shot", d.laserShotDraw, "Each shot marks a hit where it lands, in the Fire colours, as wide as the Fire brush (a shotgun's pellets half that). Firing then paints no Fire line. Hits stay until you clear the drawing.") { set(d.copy(laserShotDraw = it)) }
+                            if (d.laserShotDraw) Indented {
+                                if (look == 0) {
+                                    // The Sphere look has no Kick: its shots' beat here.
+                                    Chips(CrosshairKick.MODES.drop(1).mapIndexed { i, n -> n to i + 1 }, d.crosshairKick.coerceAtLeast(CrosshairKick.ONCE)) { set(d.copy(crosshairKick = it)) }
+                                    if (d.crosshairKick == CrosshairKick.AUTO) IntSlider("Fire rate %d a minute (${d.gun().name})", d.rpmOf(d.gun()), CrosshairKick.RPM_MIN..1200, 5) { set(d.copy(gunRpm = d.gunRpm + (d.gun().key to it))) }
+                                }
+                                Text("Hit look", style = MaterialTheme.typography.bodySmall)
+                                Chips(LaserTrace.HIT_LOOKS.mapIndexed { i, n -> n to i }, d.laserHitLook) { set(d.copy(laserHitLook = it)) }
+                            }
+                        }
                         if (paints) IntSlider("Fire brush %d°", d.laserFireBrush, 1..20) { set(d.copy(laserFireBrush = it)) }
                         if (d.laserDraw) PercentSlider("Fire glow", d.laserFireGlow, 0f..3f) { set(d.copy(laserFireGlow = it)) }
                     }

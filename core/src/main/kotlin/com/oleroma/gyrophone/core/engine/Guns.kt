@@ -24,7 +24,43 @@ object Guns {
         val scope: Scope?,
         /** What it pitches about kicking and lowered: the shoulder, or the wrist for a pistol. */
         val pivotZ: Float = 0.6f,
-    )
+        /** Simulate spread: how far off the aim point a shot can land (degrees), by default. */
+        val spreadDeg: Float = 1f,
+        /** Pellets a shot fires (a shotgun's cluster). */
+        val pellets: Int = 1,
+    ) {
+        /** Scale to fit: its own frame is shown this many times bigger, its middle (z) at [fitMid]'s. */
+        var fit = 1f
+            private set
+        private var mid = 0f
+        private var fitMid = 0f
+
+        // Its length (z, muzzle to stock) and height (y) and their middles: min, max of each.
+        private fun extent(axis: Int): FloatArray {
+            var lo = if (axis == 2) muzzleZ else Float.MAX_VALUE
+            var hi = if (axis == 2) muzzleZ else -Float.MAX_VALUE
+            for (i in boxes.indices step 6) {
+                lo = minOf(lo, boxes[i + axis] - boxes[i + 3 + axis])
+                hi = maxOf(hi, boxes[i + axis] + boxes[i + 3 + axis])
+            }
+            return floatArrayOf(lo, hi)
+        }
+
+        /** Scales it to fit [ref]'s length, no taller than [FIT_TALL] times its height, centred on its middle. */
+        internal fun fitTo(ref: Gun) {
+            val z = extent(2); val y = extent(1)
+            val rz = ref.extent(2); val ry = ref.extent(1)
+            fit = minOf((rz[1] - rz[0]) / (z[1] - z[0]), Guns.FIT_TALL * (ry[1] - ry[0]) / (y[1] - y[0]))
+            mid = (z[0] + z[1]) / 2f
+            fitMid = (rz[0] + rz[1]) / 2f
+        }
+
+        /** Model z [z] as shown, fitted. */
+        fun fitZ(z: Float): Float = fitMid + (z - mid) * fit
+    }
+
+    /** Scale to fit: no gun is shown taller than this many times the assault rifle. */
+    const val FIT_TALL = 1.4f
 
     val PISTOL = Gun(
         "pistol", "Pistol",
@@ -39,7 +75,7 @@ object Guns {
         ),
         muzzleZ = -0.46f, bore = 0.012f, flash = 0.12f,
         recoil = CrosshairKick.Recoil(riseMs = 18f, decayMs = 35f, swingMs = 120f, lengthMs = 220f, back = 0.1f, climbDeg = 16f),
-        rpm = 400, scope = null, pivotZ = 0.15f,
+        rpm = 400, scope = null, pivotZ = 0.15f, spreadDeg = 1.5f,
     )
 
     val SMG = Gun(
@@ -56,7 +92,7 @@ object Guns {
         ),
         muzzleZ = -0.56f, bore = 0.016f, flash = 0.16f,
         recoil = CrosshairKick.Recoil(riseMs = 14f, decayMs = 25f, swingMs = 90f, lengthMs = 150f, back = 0.06f, climbDeg = 5f),
-        rpm = 800, scope = Scope(0.13f, -0.12f, 0.16f, 0.042f, 0.058f), pivotZ = 0.45f,
+        rpm = 800, scope = Scope(0.13f, -0.12f, 0.16f, 0.042f, 0.058f), pivotZ = 0.45f, spreadDeg = 2.5f,
     )
 
     val AR = Gun(
@@ -76,7 +112,7 @@ object Guns {
         ),
         muzzleZ = -0.93f, bore = 0.02f, flash = 0.22f,
         recoil = CrosshairKick.Recoil(riseMs = 24f, decayMs = 42f, swingMs = 150f, lengthMs = 280f, back = 0.12f, climbDeg = 10f),
-        rpm = 600, scope = Scope(0.17f, -0.12f, 0.3f, 0.051f, 0.072f),
+        rpm = 600, scope = Scope(0.17f, -0.12f, 0.3f, 0.051f, 0.072f), spreadDeg = 1.2f,
     )
 
     val BATTLE_RIFLE = Gun(
@@ -95,7 +131,7 @@ object Guns {
         ),
         muzzleZ = -0.975f, bore = 0.024f, flash = 0.28f,
         recoil = CrosshairKick.Recoil(riseMs = 28f, decayMs = 55f, swingMs = 180f, lengthMs = 340f, back = 0.16f, climbDeg = 13f),
-        rpm = 450, scope = Scope(0.17f, -0.16f, 0.3f, 0.054f, 0.08f),
+        rpm = 450, scope = Scope(0.17f, -0.16f, 0.3f, 0.054f, 0.08f), spreadDeg = 1f,
     )
 
     val LMG = Gun(
@@ -113,7 +149,7 @@ object Guns {
         ),
         muzzleZ = -0.94f, bore = 0.022f, flash = 0.28f,
         recoil = CrosshairKick.Recoil(riseMs = 22f, decayMs = 40f, swingMs = 140f, lengthMs = 260f, back = 0.1f, climbDeg = 8f),
-        rpm = 700, scope = Scope(0.17f, -0.2f, 0.18f, 0.051f, 0.072f),
+        rpm = 700, scope = Scope(0.17f, -0.2f, 0.18f, 0.051f, 0.072f), spreadDeg = 2f,
     )
 
     val SHOTGUN = Gun(
@@ -129,7 +165,7 @@ object Guns {
         ),
         muzzleZ = -0.85f, bore = 0.034f, flash = 0.36f,
         recoil = CrosshairKick.Recoil(riseMs = 30f, decayMs = 80f, swingMs = 240f, lengthMs = 450f, back = 0.22f, climbDeg = 18f),
-        rpm = 80, scope = Scope(0.12f, -0.1f, 0.22f, 0.048f, 0.067f),
+        rpm = 80, scope = Scope(0.12f, -0.1f, 0.22f, 0.048f, 0.067f), spreadDeg = 4f, pellets = 8,
     )
 
     val SNIPER = Gun(
@@ -147,7 +183,7 @@ object Guns {
         ),
         muzzleZ = -0.975f, bore = 0.024f, flash = 0.38f,
         recoil = CrosshairKick.Recoil(riseMs = 34f, decayMs = 100f, swingMs = 300f, lengthMs = 600f, back = 0.26f, climbDeg = 14f),
-        rpm = 45, scope = Scope(0.16f, -0.26f, 0.32f, 0.064f, 0.104f),
+        rpm = 45, scope = Scope(0.16f, -0.26f, 0.32f, 0.064f, 0.104f), spreadDeg = 0.3f,
     )
 
     /** Every gun, by its number. */
@@ -158,4 +194,9 @@ object Guns {
 
     /** Gun [i], or the assault rifle. */
     fun of(i: Int): Gun = ALL.getOrElse(i) { AR }
+
+    init {
+        // Every gun shown as long as the assault rifle (scaled to fit, not to real size).
+        for (g in ALL) g.fitTo(AR)
+    }
 }

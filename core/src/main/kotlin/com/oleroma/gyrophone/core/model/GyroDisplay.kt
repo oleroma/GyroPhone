@@ -194,6 +194,23 @@ data class GyroDisplay(
      * glows as it flashes; the gun's muzzle blasts a forward plume and side jets, as wide as its muzzle and as long as its calibre.
      */
     val muzzleFlash: Boolean = true,
+    /**
+     * LASER crosshair and gun, Simulate spread: each Fire display shot lands off the aim point, a random way, by
+     * up to the gun's spread ([spreadOf]); the crosshair and gun kick toward it. With [laserBloom], shots fired in
+     * a row widen it up to twice ([com.oleroma.gyrophone.core.engine.CrosshairKick.BLOOM_SHOTS]), settling half a
+     * second after letting go.
+     */
+    val laserSpread: Boolean = false,
+    val laserBloom: Boolean = true,
+    /** Each gun's own spread (degrees), by its key, where changed from its default. */
+    val gunSpread: Map<String, Float> = emptyMap(),
+    /**
+     * LASER, Draw each shot: in Draw mode each Fire display shot marks a hit where it lands (a shotgun its pellets),
+     * in the Fire colours, [laserHitLook] ([com.oleroma.gyrophone.core.engine.LaserTrace.HIT_LOOKS]) as wide as the Fire brush; it stays until cleared. Firing
+     * then paints no Fire line.
+     */
+    val laserShotDraw: Boolean = false,
+    val laserHitLook: Int = 0,
     /** LASER turned as a trackball: which way of it the laser faces ([com.oleroma.gyrophone.core.engine.LaserTrace.FACES], 0 −Z into the screen). */
     val laserFaces: Int = 0,
     /** LASER: Draw mode, the beam paints the sphere's inside ([com.oleroma.gyrophone.core.engine.LaserPaint]), [laserBrush] degrees round. */
@@ -325,6 +342,12 @@ data class GyroDisplay(
 
     /** [gun]'s kick size (0.05 .. 2): its own setting or 50%. */
     fun kickOf(gun: com.oleroma.gyrophone.core.engine.Guns.Gun = gun()): Float = gunKick[gun.key] ?: 0.5f
+
+    /** [gun]'s spread (degrees): its own setting or its default. */
+    fun spreadOf(gun: com.oleroma.gyrophone.core.engine.Guns.Gun = gun()): Float = gunSpread[gun.key] ?: gun.spreadDeg
+
+    /** Shots are counted (for the kick, flash, spread or hits) even with the kick off. */
+    val countsShots: Boolean get() = muzzleFlash || laserSpread || (laserShotDraw && laserDraw)
 
     fun withColor(c: GyroDisplayColor, argb: Long?): GyroDisplay =
         copy(colors = if (argb == null || argb == c.default) colors - c.key else colors + (c.key to argb))

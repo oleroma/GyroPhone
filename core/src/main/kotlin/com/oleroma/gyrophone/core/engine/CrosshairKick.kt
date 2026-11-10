@@ -76,6 +76,15 @@ object CrosshairKick {
     /** The slowest fire rate, shots a minute (a sniper's bolt). */
     const val RPM_MIN = 30
 
+    /** Bloom: shots in a row widen the spread up to twice over this many shots. */
+    const val BLOOM_SHOTS = 10
+
+    /** Bloom settles this long after letting go of fire (ms). */
+    const val BLOOM_SETTLE_MS = 500L
+
+    /** The most pellets a shot fires. */
+    const val PELLETS_MAX = 8
+
     /** One crosshair's or rifle's kick: [step] it each frame with whether it fires; [value] is −0.2 .. 1 (0 rest). */
     class State {
         /** When the last shot was (ms), until its kick and flash are over; −1 none. */
@@ -86,13 +95,42 @@ object CrosshairKick {
         var value = 0f
             private set
 
+        /** Shots so far: goes up by one each shot. */
+        var shots = 0L
+            private set
+
+        /**
+         * The last shot's pellets ([pellets] of them) as offsets from the aim point (x right, y up, pairs), each
+         * within the unit circle, a random way and distance; times [bloom], the spread it was fired with.
+         */
+        val offsets = FloatArray(PELLETS_MAX * 2)
+        var pellets = 1
+            private set
+
+        /** The bloom the last shot was fired with (1 .. 2): shots in a row widen the spread. */
+        var bloom = 1f
+            private set
+
+        /** Where the gun and crosshair kick toward: the pellets' middle (x, y as [offsets]). */
+        var towardX = 0f
+            private set
+        var towardY = 0f
+            private set
+
+        private var streak = 0
+        private var releasedAt = Long.MIN_VALUE / 2
+        private var pelletsNext = 1
+        private val random = kotlin.random.Random(System.nanoTime())
+
         /**
          * At [t] ms, with [firing] held, in [mode] at [periodMs] per shot: the kick now; true while it still moves.
          * With [flash] the shots still count in [OFF] (once per press) for the muzzle flash, without kicking.
          */
-        fun step(t: Long, firing: Boolean, mode: Int, periodMs: Long, flash: Boolean = false, recoil: Recoil = DEFAULT): Boolean {
+        fun step(t: Long, firing: Boolean, mode: Int, periodMs: Long, flash: Boolean = false, recoil: Recoil = DEFAULT, pellets: Int = 1): Boolean {
+            pelletsNext = pellets.coerceIn(1, PELLETS_MAX)
+            if (held && !firing) releasedAt = t
             if (mode == OFF && flash) {
-                val moving = step(t, firing, ONCE, periodMs, recoil = recoil)
+                val moving = step(t, firing, ONCE, periodMs, recoil = recoil, pellets = pellets)
                 value = 0f
                 return moving
             }
@@ -118,6 +156,23 @@ object CrosshairKick {
 
         private fun shoot(t: Long, now: Float) {
             from = now.coerceIn(0f, 1f)
+            // Bloom: a new press after settling starts the streak again.
+            if (!held && t - releasedAt >= BLOOM_SETTLE_MS) streak = 0
+            bloom = 1f + minOf(streak, BLOOM_SHOTS).toFloat() / BLOOM_SHOTS
+            streak++
+            pellets = pelletsNext
+            towardX = 0f
+            towardY = 0f
+            for (i in 0 until pellets) {
+                // Evenly over the circle: a random way, the distance's square root.
+                val a = random.nextFloat() * 2f * Math.PI.toFloat()
+                val d = kotlin.math.sqrt(random.nextFloat())
+                offsets[i * 2] = d * kotlin.math.cos(a)
+                offsets[i * 2 + 1] = d * kotlin.math.sin(a)
+                towardX += offsets[i * 2] / pellets
+                towardY += offsets[i * 2 + 1] / pellets
+            }
+            shots++
             shotAt = t
         }
     }

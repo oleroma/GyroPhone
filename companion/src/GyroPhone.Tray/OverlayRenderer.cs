@@ -36,6 +36,8 @@ internal sealed class OverlayScene
     public long ShotAt = -1;
     /// <summary>How far the gun is lowered now (0 up .. 1 lowered when idle).</summary>
     public float Lower;
+    /// <summary>Simulate spread: where the last shot landed, right and up of the aim point (radians); the crosshair and gun kick toward it.</summary>
+    public float SpreadX, SpreadY;
     /// <summary>This window's drawing buffers (drawn by one thread at a time, under the window's render lock).</summary>
     public readonly DrawBuffers Buffers = new();
 }
@@ -223,7 +225,14 @@ internal static class OverlayRenderer
                 DialDrawing.DrawHorizon(g, area, settings, m, m);
                 break;
             case OverlayKind.Laser:
-                LaserDrawing.Draw(g, area, settings, LaserDrawing.Aimed(m, settings), scene.Laser, scene.NowTicks, live && scene.Frame.RatchetHeld, live ? scene.Frame.PoseActive : 0, live && scene.Firing, m, live ? scene.Aim : 0f, scene.Buffers, live ? scene.Kick : 0f, live ? scene.ShotAt : -1, live ? scene.Lower : 0f);
+                var aimed = LaserDrawing.Aimed(m, settings);
+                // The crosshair and gun kick toward where the shot landed and spring back with the kick.
+                if (live && (settings.LaserCrosshair || settings.LaserRifle) && scene.ShotAt >= 0 && scene.Kick != 0f && (scene.SpreadX != 0f || scene.SpreadY != 0f))
+                {
+                    var b = LaserTrace.Beam(aimed);
+                    aimed = LaserTrace.TurnToward(aimed, b, LaserTrace.ShotPoint(aimed, b, scene.SpreadX, scene.SpreadY), Math.Clamp(scene.Kick, -0.5f, 1.5f));
+                }
+                LaserDrawing.Draw(g, area, settings, aimed, scene.Laser, scene.NowTicks, live && scene.Frame.RatchetHeld, live ? scene.Frame.PoseActive : 0, live && scene.Firing, m, live ? scene.Aim : 0f, scene.Buffers, live ? scene.Kick : 0f, live ? scene.ShotAt : -1, live ? scene.Lower : 0f);
                 break;
             default:
                 DialDrawing.DrawDisk(g, area, settings, m, m);

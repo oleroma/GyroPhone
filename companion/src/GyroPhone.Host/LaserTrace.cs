@@ -179,8 +179,10 @@ public sealed class LaserTrace
     {
         var g = gun ?? Guns.AR;
         float a = (g.Recoil.ClimbDeg * kick - LowerDeg * Math.Clamp(lower, 0f, 1f)) * MathF.PI / 180f, c = MathF.Cos(a), s = MathF.Sin(a);
-        float pz = dir ? 0f : g.PivotZ, dz = z - pz;
-        return (x, y * c - dz * s, pz + y * s + dz * c + (dir ? 0f : AimPull * Math.Clamp(aim, 0f, 1f) + g.Recoil.Back * kick));
+        // Scaled to fit (Guns.Gun.Fit): a direction stays as it is.
+        float f = dir ? 1f : g.Fit, yf = y * f;
+        float pz = dir ? 0f : g.FitZ(g.PivotZ), dz = (dir ? z : g.FitZ(z)) - pz;
+        return (x * f, yf * c - dz * s, pz + yf * s + dz * c + (dir ? 0f : AimPull * Math.Clamp(aim, 0f, 1f) + g.Recoil.Back * kick));
     }
 
     /// <summary>
@@ -237,7 +239,76 @@ public sealed class LaserTrace
     {
         Paint?.Clear();
         _paintUsed = false;
+        HitCount = 0;
+        _hitNext = 0;
         Version++;
+    }
+
+    /// <summary>The most Draw each shot hits kept (the oldest go).</summary>
+    public const int HitMax = 2048;
+
+    /// <summary>Draw each shot's hit looks (OverlaySettings.LaserHitLook).</summary>
+    public static readonly string[] HitLooks = ["Dot", "Ring", "Cross", "Bullet hole"];
+
+    /// <summary>Draw each shot's hits: x, y, z (a unit direction, as the strokes), half width (radians) each. The newest <see cref="HitMax"/> are kept.</summary>
+    public float[] Hits { get; } = new float[HitMax * 4];
+
+    /// <summary>How many <see cref="Hits"/> there are.</summary>
+    public int HitCount { get; private set; }
+    private int _hitNext;
+
+    /// <summary>The last shot (CrosshairKick.State.Shots) marked.</summary>
+    public long HitShots { get; set; }
+
+    /// <summary>Marks a hit at (<paramref name="x"/>, <paramref name="y"/>, <paramref name="z"/>) (any length), <paramref name="halfRad"/> radians round.</summary>
+    public void AddHit(float x, float y, float z, float halfRad)
+    {
+        float l = MathF.Sqrt(x * x + y * y + z * z);
+        if (!(l > 1e-6f)) return;
+        int i = _hitNext * 4;
+        Hits[i] = x / l; Hits[i + 1] = y / l; Hits[i + 2] = z / l; Hits[i + 3] = halfRad;
+        _hitNext = (_hitNext + 1) % HitMax;
+        if (HitCount < HitMax) HitCount++;
+        Version++;
+    }
+
+    /// <summary>
+    /// Where a shot lands (unit) off <paramref name="beam"/> by (<paramref name="ox"/>, <paramref name="oy"/>) radians to the right
+    /// and up of pose <paramref name="m"/> (the crosshair's right and up, <see cref="RollTick"/>). As the phone's LaserTrace.shotPoint.
+    /// </summary>
+    public static (float X, float Y, float Z) ShotPoint(float[] m, (float X, float Y, float Z) beam, float ox, float oy)
+    {
+        var b = Unit(beam.X, beam.Y, beam.Z);
+        var v = RollTick(m, b) ?? Square((0f, 0f, -1f), b) ?? Square((1f, 0f, 0f), b) ?? (0f, 1f, 0f);
+        var u = (X: v.Y * b.Z - v.Z * b.Y, Y: v.Z * b.X - v.X * b.Z, Z: v.X * b.Y - v.Y * b.X);
+        float tx = MathF.Tan(ox), ty = MathF.Tan(oy);
+        return Unit(b.X + tx * u.X + ty * v.X, b.Y + tx * u.Y + ty * v.Y, b.Z + tx * u.Z + ty * v.Z);
+    }
+
+    /// <summary>
+    /// Pose <paramref name="m"/> (row-major, phone to shown) turned by the turn that takes <paramref name="beam"/> onto
+    /// <paramref name="to"/> (unit), <paramref name="k"/> of the way: a gun or crosshair kicking toward where a shot lands. A new array.
+    /// </summary>
+    public static float[] TurnToward(float[] m, (float X, float Y, float Z) beam, (float X, float Y, float Z) to, float k)
+    {
+        var b = Unit(beam.X, beam.Y, beam.Z);
+        float ax = b.Y * to.Z - b.Z * to.Y, ay = b.Z * to.X - b.X * to.Z, az = b.X * to.Y - b.Y * to.X;
+        float sinA = MathF.Sqrt(ax * ax + ay * ay + az * az);
+        var n = (float[])m.Clone();
+        if (k == 0f || sinA < 1e-7f) return n;
+        ax /= sinA; ay /= sinA; az /= sinA;
+        float angle = MathF.Atan2(sinA, b.X * to.X + b.Y * to.Y + b.Z * to.Z) * k;
+        float c = MathF.Cos(angle), s = MathF.Sin(angle), t = 1f - c;
+        float[] r =
+        [
+            t * ax * ax + c, t * ax * ay - s * az, t * ax * az + s * ay,
+            t * ax * ay + s * az, t * ay * ay + c, t * ay * az - s * ax,
+            t * ax * az - s * ay, t * ay * az + s * ax, t * az * az + c,
+        ];
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                n[i * 3 + j] = r[i * 3] * m[j] + r[i * 3 + 1] * m[3 + j] + r[i * 3 + 2] * m[6 + j];
+        return n;
     }
 
     /// <summary>Paints the newest stroke point into <see cref="Paint"/>, from the point before it unless it starts a line.</summary>
@@ -410,6 +481,8 @@ public sealed class LaserTrace
         Strokes.Clear();
         Paint?.Clear();
         _paintUsed = false;
+        HitCount = 0;
+        _hitNext = 0;
         _strokeGap = true;
         Version++;
     }

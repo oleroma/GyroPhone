@@ -274,6 +274,27 @@ public sealed class OverlaySettings
     /// muzzle blasts a forward plume and side jets, as wide as its muzzle and as long as its calibre.
     /// </summary>
     public bool MuzzleFlash { get; set; } = true;
+    /// <summary>
+    /// Crosshair and gun, Simulate spread: each Fire display shot lands off the aim point, a random way, by up to the gun's
+    /// spread (<see cref="SpreadOf"/>); the crosshair and gun kick toward it. With LaserBloom shots fired in a row widen it up to
+    /// twice (CrosshairKick.BloomShots), settling half a second after letting go. As the phone's GyroDisplay.laserSpread.
+    /// </summary>
+    public bool LaserSpread { get; set; }
+    public bool LaserBloom { get; set; } = true;
+    /// <summary>Each gun's own spread (degrees), by its key, where changed from its default.</summary>
+    public Dictionary<string, float> GunSpread { get; set; } = [];
+    /// <summary>
+    /// Draw each shot: in Draw mode each Fire display shot marks a hit where it lands (a shotgun its pellets), in the Fire
+    /// colours, LaserHitLook (LaserTrace.HitLooks) as wide as the Fire brush; it stays until cleared. Firing then paints no Fire line.
+    /// </summary>
+    public bool LaserShotDraw { get; set; }
+    public int LaserHitLook { get; set; }
+
+    /// <summary><paramref name="gun"/>'s spread (degrees): its own setting or its default.</summary>
+    public float SpreadOf(Guns.Gun gun) => GunSpread != null && GunSpread.TryGetValue(gun.Key, out var v) ? v : gun.SpreadDeg;
+
+    /// <summary>Shots are counted (for the kick, flash, spread or hits) even with the kick off.</summary>
+    public bool CountsShots => MuzzleFlash || LaserSpread || (LaserShotDraw && LaserDraw);
     /// <summary>Laser pointer turned as a trackball: which way of it the laser faces (0 −Z into the screen, 1 +Z, 2 +X, 3 −X, 4 +Y, 5 −Y).</summary>
     public int LaserFaces { get; set; }
     public bool LaserAxes { get; set; } = true;

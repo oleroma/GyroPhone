@@ -83,6 +83,15 @@ public static class CrosshairKick
     /// <summary>The slowest fire rate, shots a minute (a sniper's bolt).</summary>
     public const int RpmMin = 30;
 
+    /// <summary>Bloom: shots in a row widen the spread up to twice over this many shots.</summary>
+    public const int BloomShots = 10;
+
+    /// <summary>Bloom settles this long after letting go of fire (ms).</summary>
+    public const long BloomSettleMs = 500;
+
+    /// <summary>The most pellets a shot fires.</summary>
+    public const int PelletsMax = 8;
+
     /// <summary>One crosshair's or rifle's kick: <see cref="Step"/> it each frame with whether it fires; <see cref="Value"/> is −0.2 .. 1 (0 rest).</summary>
     public sealed class State
     {
@@ -95,17 +104,41 @@ public static class CrosshairKick
 
         public float Value { get; private set; }
 
+        /// <summary>Shots so far: goes up by one each shot.</summary>
+        public long Shots { get; private set; }
+
+        /// <summary>
+        /// The last shot's pellets (<see cref="Pellets"/> of them) as offsets from the aim point (x right, y up, pairs),
+        /// each within the unit circle, a random way and distance; times <see cref="Bloom"/>, the spread it was fired with.
+        /// </summary>
+        public float[] Offsets { get; } = new float[PelletsMax * 2];
+        public int Pellets { get; private set; } = 1;
+
+        /// <summary>The bloom the last shot was fired with (1 .. 2): shots in a row widen the spread.</summary>
+        public float Bloom { get; private set; } = 1f;
+
+        /// <summary>Where the gun and crosshair kick toward: the pellets' middle (as <see cref="Offsets"/>).</summary>
+        public float TowardX { get; private set; }
+        public float TowardY { get; private set; }
+
+        private int _streak;
+        private long _releasedAt = long.MinValue / 2;
+        private int _pelletsNext = 1;
+        private readonly Random _random = new();
+
         /// <summary>
         /// At <paramref name="t"/> ms, with <paramref name="firing"/> held, in <paramref name="mode"/>: the kick now; true while it
         /// still moves. With <paramref name="flash"/> the shots still count in <see cref="Off"/> (once per press) for the muzzle
         /// flash, without kicking.
         /// </summary>
-        public bool Step(long t, bool firing, int mode, long periodMs, bool flash = false, Recoil? recoil = null)
+        public bool Step(long t, bool firing, int mode, long periodMs, bool flash = false, Recoil? recoil = null, int pellets = 1)
         {
             var rc = recoil ?? DefaultRecoil;
+            _pelletsNext = Math.Clamp(pellets, 1, PelletsMax);
+            if (_held && !firing) _releasedAt = t;
             if (mode == Off && flash)
             {
-                bool moving = Step(t, firing, Once, periodMs, recoil: rc);
+                bool moving = Step(t, firing, Once, periodMs, recoil: rc, pellets: pellets);
                 Value = 0f;
                 return moving;
             }
@@ -134,6 +167,25 @@ public static class CrosshairKick
         private void Shoot(long t, float now)
         {
             _from = Math.Clamp(now, 0f, 1f);
+            // Bloom: a new press after settling starts the streak again.
+            if (!_held && t - _releasedAt >= BloomSettleMs) _streak = 0;
+            Bloom = 1f + Math.Min(_streak, BloomShots) / (float)BloomShots;
+            _streak++;
+            Pellets = _pelletsNext;
+            float tx = 0f, ty = 0f;
+            for (int i = 0; i < Pellets; i++)
+            {
+                // Evenly over the circle: a random way, the distance's square root.
+                float a = _random.NextSingle() * 2f * MathF.PI;
+                float d = MathF.Sqrt(_random.NextSingle());
+                Offsets[i * 2] = d * MathF.Cos(a);
+                Offsets[i * 2 + 1] = d * MathF.Sin(a);
+                tx += Offsets[i * 2] / Pellets;
+                ty += Offsets[i * 2 + 1] / Pellets;
+            }
+            TowardX = tx;
+            TowardY = ty;
+            Shots++;
             _shotAt = t;
         }
     }

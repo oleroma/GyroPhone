@@ -223,6 +223,29 @@ class LaserTrace {
     private fun clearPaint() {
         paint?.clear()
         paintUsed = false
+        hitCount = 0
+        version++
+    }
+
+    /** Draw each shot's hits: x, y, z (a unit direction, as the strokes), half width (radians) each. The newest [HIT_MAX] are kept. */
+    val hits = FloatArray(HIT_MAX * 4)
+
+    /** How many [hits] there are. */
+    var hitCount = 0
+        private set
+    private var hitNext = 0
+
+    /** The last shot ([CrosshairKick.State.shots]) marked. */
+    var hitShots = 0L
+
+    /** Marks a hit at ([x], [y], [z]) (any length), [halfRad] radians round. */
+    fun addHit(x: Float, y: Float, z: Float, halfRad: Float) {
+        val l = sqrt(x * x + y * y + z * z)
+        if (l < 1e-6f || l.isNaN()) return
+        val i = hitNext * 4
+        hits[i] = x / l; hits[i + 1] = y / l; hits[i + 2] = z / l; hits[i + 3] = halfRad
+        hitNext = (hitNext + 1) % HIT_MAX
+        if (hitCount < HIT_MAX) hitCount++
         version++
     }
 
@@ -274,12 +297,66 @@ class LaserTrace {
         strokes.clear()
         paint?.clear()
         paintUsed = false
+        hitCount = 0
+        hitNext = 0
         strokeGap = true
         version++
     }
 
     companion object {
         const val STROKE_MAX = 4096
+
+        /** The most Draw each shot hits kept (the oldest go). */
+        const val HIT_MAX = 2048
+
+        /** Draw each shot's hit looks ([com.oleroma.gyrophone.core.model.GyroDisplay.laserHitLook]). */
+        val HIT_LOOKS = listOf("Dot", "Ring", "Cross", "Bullet hole")
+
+        /**
+         * Where a shot lands ([out], unit) off [beam] by ([ox], [oy]) radians to the right and up of pose [m]
+         * (the crosshair's right and up, [rollTick]).
+         */
+        fun shotPoint(m: FloatArray, beam: FloatArray, ox: Float, oy: Float, out: FloatArray) {
+            val bl = sqrt(beam[0] * beam[0] + beam[1] * beam[1] + beam[2] * beam[2]).coerceAtLeast(1e-6f)
+            val b = floatArrayOf(beam[0] / bl, beam[1] / bl, beam[2] / bl)
+            val v = FloatArray(3)
+            if (!rollTick(m, b, v)) {
+                if (!square(floatArrayOf(0f, 0f, -1f), b, v)) square(floatArrayOf(1f, 0f, 0f), b, v)
+            }
+            val u = floatArrayOf(v[1] * b[2] - v[2] * b[1], v[2] * b[0] - v[0] * b[2], v[0] * b[1] - v[1] * b[0])
+            val tx = kotlin.math.tan(ox)
+            val ty = kotlin.math.tan(oy)
+            for (k in 0..2) out[k] = b[k] + tx * u[k] + ty * v[k]
+            unit(out)
+        }
+
+        /**
+         * Turns pose [m] (row-major, phone to shown) and its [beam] by the turn that takes the beam onto [to]
+         * (unit), [k] (0 .. 1) of the way: a gun or crosshair kicking toward where a shot lands.
+         */
+        fun turnToward(m: FloatArray, beam: FloatArray, to: FloatArray, k: Float) {
+            if (k == 0f) return
+            val bl = sqrt(beam[0] * beam[0] + beam[1] * beam[1] + beam[2] * beam[2]).coerceAtLeast(1e-6f)
+            val bx = beam[0] / bl; val by = beam[1] / bl; val bz = beam[2] / bl
+            var ax = by * to[2] - bz * to[1]
+            var ay = bz * to[0] - bx * to[2]
+            var az = bx * to[1] - by * to[0]
+            val sinA = sqrt(ax * ax + ay * ay + az * az)
+            if (sinA < 1e-7f) return
+            ax /= sinA; ay /= sinA; az /= sinA
+            val angle = kotlin.math.atan2(sinA, bx * to[0] + by * to[1] + bz * to[2]) * k
+            val c = cos(angle); val s = sin(angle); val t = 1f - c
+            val r = floatArrayOf(
+                t * ax * ax + c, t * ax * ay - s * az, t * ax * az + s * ay,
+                t * ax * ay + s * az, t * ay * ay + c, t * ay * az - s * ax,
+                t * ax * az - s * ay, t * ay * az + s * ax, t * az * az + c,
+            )
+            val n = FloatArray(9)
+            for (i in 0..2) for (j in 0..2) n[i * 3 + j] = r[i * 3] * m[j] + r[i * 3 + 1] * m[3 + j] + r[i * 3 + 2] * m[6 + j]
+            n.copyInto(m)
+            val x = beam[0]; val y = beam[1]; val z = beam[2]
+            for (i in 0..2) beam[i] = r[i * 3] * x + r[i * 3 + 1] * y + r[i * 3 + 2] * z
+        }
 
         /** Points each side a stroke's colour looks over with smoothing ([Ring.direction]): ±2°. */
         const val SMOOTH_REACH = 4
@@ -399,11 +476,14 @@ class LaserTrace {
             val a = Math.toRadians((r.climbDeg * kick - LOWER_DEG * lower.coerceIn(0f, 1f)).toDouble())
             val c = cos(a).toFloat()
             val s = sin(a).toFloat()
-            val pz = if (dir) 0f else gun.pivotZ
-            val dz = z - pz
-            out[at] = x
-            out[at + 1] = y * c - dz * s
-            out[at + 2] = pz + y * s + dz * c + (if (dir) 0f else AIM_PULL * aim.coerceIn(0f, 1f) + r.back * kick)
+            // Scaled to fit (Guns.Gun.fit): a direction stays as it is.
+            val f = if (dir) 1f else gun.fit
+            val pz = if (dir) 0f else gun.fitZ(gun.pivotZ)
+            val dz = (if (dir) z else gun.fitZ(z)) - pz
+            val yf = y * f
+            out[at] = x * f
+            out[at + 1] = yf * c - dz * s
+            out[at + 2] = pz + yf * s + dz * c + (if (dir) 0f else AIM_PULL * aim.coerceIn(0f, 1f) + r.back * kick)
         }
 
         /** [gun]'s muzzle tip at aim [aim] (0 .. 1), kick [kick] and lowered by [lower], in its own frame, into [out]. */
