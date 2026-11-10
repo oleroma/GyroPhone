@@ -50,7 +50,8 @@ internal sealed class OverlaysPage : Page
     private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook;
     private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserGimbal, _laserDraw, _laserClearOnRatchet;
     private readonly CheckBox _laserPerspective, _laserSnake, _laserOutline;
-    private readonly SliderRow _laserSnakeLength, _laserSoftness, _laserGlow, _laserShade, _laserInside, _laserLight, _laserShine;
+    private readonly StackPanel _laserSnakeOptions;
+    private readonly SliderRow _laserSnakeLength, _laserSnakeBrush, _laserSnakeTaper, _laserSnakeFade, _laserSnakeGlow, _laserSoftness, _laserGlow, _laserShade, _laserInside, _laserLight, _laserShine;
     private readonly Seg<bool> _laserColourBy;
     private readonly Seg<int> _laserPaintDetail, _laserLightFrom;
     private readonly StackPanel _laserPaintOptions, _laserDrawLook;
@@ -376,12 +377,22 @@ internal sealed class OverlaysPage : Page
 
         _laserDraw = Parts.Toggle("Draw mode", () => Change(o => o.LaserDraw = !o.LaserDraw), "The beam paints the inside of the sphere as you aim; the paint stays until you clear it.");
         lb.Children.Add(_laserDraw);
-        _laserSnake = Parts.Toggle("Snake", () => Change(o => o.LaserSnake = !o.LaserSnake), "A line following the beam along the newest stretch of its path, thinning to its tail. With or without Draw mode.");
+        _laserSnake = Parts.Toggle("Snake", () => Change(o => o.LaserSnake = !o.LaserSnake), "A line following the beam along the newest stretch of its path, thinning and fading toward its tail as set. With or without Draw mode.");
         lb.Children.Add(_laserSnake);
         // Length 10° to 720°, finer toward the short ones: the slider's square, in 5° steps.
         _laserSnakeLength = new SliderRow("Length", 0, 1, 0.005, v => $"{SnakeDeg(v)}°", v => Change(o => o.LaserSnakeDeg = SnakeDeg(v)));
-        _laserSnakeLength.View.Margin = new Thickness(20, 0, 0, 0);
-        lb.Children.Add(_laserSnakeLength.View);
+        _laserSnakeOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
+        _laserSnakeOptions.Children.Add(_laserSnakeLength.View);
+        _laserSnakeBrush = new SliderRow("Snake brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserSnakeBrush = (int)v));
+        _laserSnakeOptions.Children.Add(_laserSnakeBrush.View);
+        _laserSnakeTaper = new SliderRow("Taper", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserSnakeTaper = (float)v));
+        _laserSnakeOptions.Children.Add(_laserSnakeTaper.View);
+        _laserSnakeFade = new SliderRow("Tail fade", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserSnakeFade = (float)v));
+        _laserSnakeOptions.Children.Add(_laserSnakeFade.View);
+        _laserSnakeGlow = new SliderRow("Snake glow", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserSnakeGlow = (float)v));
+        _laserSnakeOptions.Children.Add(_laserSnakeGlow.View);
+        _laserSnakeOptions.Children.Add(Parts.Text("Snake brush: how wide its head is. Taper: how much it thins toward its tail (0 keeps it the same width). Tail fade: how see-through it gets toward its tail (0 none). Snake glow: a soft glow round it (0 none). Shots and aiming keep their own brushes.", "Hint"));
+        lb.Children.Add(_laserSnakeOptions);
         _laserDrawOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
         _laserBrush = new SliderRow("Brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserBrush = (int)v));
         _laserDrawOptions.Children.Add(_laserBrush.View);
@@ -719,13 +730,18 @@ internal sealed class OverlaysPage : Page
         Parts.SetChecked(_laserPerspective, o.Perspective);
         Parts.SetChecked(_laserDraw, o.LaserDraw);
         Parts.SetChecked(_laserSnake, o.LaserSnake);
-        Parts.Show(_laserSnakeLength.View, o.LaserSnake);
+        Parts.Show(_laserSnakeOptions, o.LaserSnake);
+        _laserSnakeBrush.Set(o.LaserSnakeBrush);
+        _laserSnakeTaper.Set(o.LaserSnakeTaper);
+        _laserSnakeFade.Set(o.LaserSnakeFade);
+        _laserSnakeGlow.Set(o.LaserSnakeGlow);
         _laserSnakeLength.Set(Math.Sqrt(Math.Clamp(o.LaserSnakeDeg, SnakeMinDeg, SnakeMaxDeg) / (double)SnakeMaxDeg));
         bool paints = o.LaserDraw || o.LaserSnake;
         Parts.Show(_laserDrawOptions, paints);
         Parts.Show(_laserPaintOptions, paints);
         Parts.Show(_laserDrawLook, o.LaserDraw);
         _laserBrush.Set(o.LaserBrush);
+        Parts.Show(_laserBrush.View, o.LaserDraw);
         _laserColourBy.Set(o.LaserColourByWay);
         _laserPaintDetail.Set(Math.Clamp(o.LaserPaintDetail, 0, 2));
         _laserSoftness.Set(o.LaserSoftness);

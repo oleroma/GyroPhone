@@ -253,6 +253,15 @@ public sealed class OverlaySettings
     /// <summary>Snake (with or without Draw mode): a line along the newest LaserSnakeDeg degrees of the beam's path, thinning to its tail.</summary>
     public bool LaserSnake { get; set; }
     public int LaserSnakeDeg { get; set; } = 180;
+    /// <summary>
+    /// Snake: its own brush (LaserSnakeBrush degrees at the head); LaserSnakeTaper how much it thins toward its tail
+    /// (0 none .. 1 to nothing); LaserSnakeFade how see-through it gets toward its tail (0 none .. 1 gone);
+    /// LaserSnakeGlow a soft glow round it (0 none .. 1 strong). As the phone's GyroDisplay.laserSnake*.
+    /// </summary>
+    public int LaserSnakeBrush { get; set; } = 4;
+    public float LaserSnakeTaper { get; set; } = 0.8f;
+    public float LaserSnakeFade { get; set; } = 0.5f;
+    public float LaserSnakeGlow { get; set; }
     /// <summary>Draw mode: the paint map's detail, 0 low (512 texels round), 1 normal (1024), 2 high (2048).</summary>
     public int LaserPaintDetail { get; set; } = 1;
     /// <summary>Draw mode: a ratchet press clears the drawing.</summary>
