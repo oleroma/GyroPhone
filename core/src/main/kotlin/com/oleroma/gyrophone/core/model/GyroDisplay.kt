@@ -172,22 +172,47 @@ data class GyroDisplay(
     val crosshairDot: Boolean = true,
     val crosshairOutline: Boolean = true,
     /**
-     * LASER crosshair: on each Fire display shot it kicks out by [crosshairKickScale] of its size and bounces back
-     * ([com.oleroma.gyrophone.core.engine.CrosshairKick]): [crosshairKick] 0 off, 1 once per press, 2 auto rifle at
-     * [crosshairKickRpm] shots a minute while held. [crosshairKickLinesOnly]: only the lines grow (length and gap);
-     * off, the whole crosshair grows evenly, line thickness and dot too. The rifle look kicks back along the same
-     * curve, by the same size and rate.
+     * LASER crosshair and gun: on each Fire display shot it kicks and bounces back with [laserGun]'s recoil
+     * ([com.oleroma.gyrophone.core.engine.CrosshairKick]): [crosshairKick] 0 off, 1 once per press, 2 auto at the gun's
+     * fire rate ([rpmOf]) while held, by the gun's kick size ([kickOf]). [crosshairKickLinesOnly]: only the crosshair's
+     * lines grow (length and gap); off, the whole crosshair grows evenly, line thickness and dot too.
      */
     val crosshairKick: Int = 1,
-    val crosshairKickScale: Float = 0.5f,
-    val crosshairKickRpm: Int = 600,
+    /** LASER: the Gun look's gun, and the recoil the crosshair kicks like ([com.oleroma.gyrophone.core.engine.Guns.ALL]). */
+    val laserGun: Int = com.oleroma.gyrophone.core.engine.Guns.DEFAULT,
+    /** Each gun's own fire rate (shots a minute) and kick size, by its key, where changed from its default. */
+    val gunRpm: Map<String, Int> = emptyMap(),
+    val gunKick: Map<String, Float> = emptyMap(),
+    /** LASER Gun look: it rests pitched down ([com.oleroma.gyrophone.core.engine.LaserTrace.LOWER_DEG]) unless aiming or firing. */
+    val gunLowered: Boolean = true,
+    /** LASER Gun look: aiming, a round scope grows onto it (never on the pistol). */
+    val gunScope: Boolean = true,
+    /** LASER Gun look, hip fire (firing without aiming): it comes up level and pulls back toward you, this share of the way to its muzzle at the sphere's centre. */
+    val gunHipPull: Float = 0.85f,
     val crosshairKickLinesOnly: Boolean = true,
     /**
      * LASER crosshair and rifle: each Fire display shot flashes ([com.oleroma.gyrophone.core.engine.MuzzleFlash]),
      * in time with the kicks: white, then the Flash colour, then Flash end, back to its own colour. The crosshair
-     * glows as it flashes; the rifle's muzzle bursts.
+     * glows as it flashes; the gun's muzzle blasts a forward plume and side jets, as wide as its muzzle and as long as its calibre.
      */
     val muzzleFlash: Boolean = true,
+    /**
+     * LASER crosshair and gun, Simulate spread: each Fire display shot lands off the aim point, a random way, by
+     * up to the gun's spread ([spreadOf]); the crosshair and gun kick toward it. With [laserBloom], shots fired in
+     * a row widen it up to twice ([com.oleroma.gyrophone.core.engine.CrosshairKick.BLOOM_SHOTS]), settling half a
+     * second after letting go.
+     */
+    val laserSpread: Boolean = false,
+    val laserBloom: Boolean = true,
+    /** Each gun's own spread (degrees), by its key, where changed from its default. */
+    val gunSpread: Map<String, Float> = emptyMap(),
+    /**
+     * LASER, Draw each shot: in Draw mode each Fire display shot marks a hit where it lands (a shotgun its pellets),
+     * in the Fire colours, [laserHitLook] ([com.oleroma.gyrophone.core.engine.LaserTrace.HIT_LOOKS]) as wide as the Fire brush; it stays until cleared. Firing
+     * then paints no Fire line.
+     */
+    val laserShotDraw: Boolean = false,
+    val laserHitLook: Int = 0,
     /** LASER turned as a trackball: which way of it the laser faces ([com.oleroma.gyrophone.core.engine.LaserTrace.FACES], 0 −Z into the screen). */
     val laserFaces: Int = 0,
     /** LASER: Draw mode, the beam paints the sphere's inside ([com.oleroma.gyrophone.core.engine.LaserPaint]), [laserBrush] degrees round. */
@@ -310,6 +335,21 @@ data class GyroDisplay(
 
     /** Colour [c] as ARGB: its own or the default. */
     fun color(c: GyroDisplayColor): Long = colors[c.key] ?: c.default
+
+    /** The gun picked ([laserGun]). */
+    fun gun(): com.oleroma.gyrophone.core.engine.Guns.Gun = com.oleroma.gyrophone.core.engine.Guns.of(laserGun)
+
+    /** [gun]'s fire rate, shots a minute: its own setting or its default. */
+    fun rpmOf(gun: com.oleroma.gyrophone.core.engine.Guns.Gun = gun()): Int = gunRpm[gun.key] ?: gun.rpm
+
+    /** [gun]'s kick size (0.05 .. 2): its own setting or 50%. */
+    fun kickOf(gun: com.oleroma.gyrophone.core.engine.Guns.Gun = gun()): Float = gunKick[gun.key] ?: 0.5f
+
+    /** [gun]'s spread (degrees): its own setting or its default. */
+    fun spreadOf(gun: com.oleroma.gyrophone.core.engine.Guns.Gun = gun()): Float = gunSpread[gun.key] ?: gun.spreadDeg
+
+    /** Shots are counted (for the kick, flash, spread or hits) even with the kick off. */
+    val countsShots: Boolean get() = muzzleFlash || laserSpread || (laserShotDraw && laserDraw)
 
     fun withColor(c: GyroDisplayColor, argb: Long?): GyroDisplay =
         copy(colors = if (argb == null || argb == c.default) colors - c.key else colors + (c.key to argb))

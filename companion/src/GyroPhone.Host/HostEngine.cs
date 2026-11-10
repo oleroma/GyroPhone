@@ -1385,6 +1385,60 @@ public sealed class HostEngine
         }
     }
 
+    /// <summary>Saves overlay <paramref name="id"/> as a preset named <paramref name="name"/> (all but its place); returns the preset's id.</summary>
+    public string? SaveOverlayPreset(string id, string name)
+    {
+        using (Lock(ByUi))
+        {
+            var o = _settings.Overlays.Find(x => x.Id == id);
+            if (o == null) return null;
+            var p = o.Copy();
+            p.Label = name.Trim();
+            p.Shown = false;
+            p.X = p.Y = -1;
+            _settings.OverlayPresets.Add(p);
+            _settingsDirty = true;
+            return p.Id;
+        }
+    }
+
+    /// <summary>A new overlay window (shown) from preset <paramref name="presetId"/>, placed as a new one is; returns its id.</summary>
+    public string? AddOverlayFromPreset(string presetId)
+    {
+        using (Lock(ByUi))
+        {
+            var p = _settings.OverlayPresets.Find(x => x.Id == presetId);
+            if (p == null) return null;
+            bool compass = OverlayCompassLocked();
+            var o = p.Copy();
+            o.Shown = true;
+            o.X = o.Y = -1;
+            _settings.Overlays.Add(o);
+            _settingsDirty = true;
+            _overlayDirty = true;
+            OverlayCompassChanged(compass);
+            return o.Id;
+        }
+    }
+
+    public void RenameOverlayPreset(string presetId, string name)
+    {
+        using (Lock(ByUi))
+        {
+            if (_settings.OverlayPresets.Find(x => x.Id == presetId) is not { } p) return;
+            p.Label = name.Trim();
+            _settingsDirty = true;
+        }
+    }
+
+    public void RemoveOverlayPreset(string presetId)
+    {
+        using (Lock(ByUi))
+        {
+            if (_settings.OverlayPresets.RemoveAll(x => x.Id == presetId) > 0) _settingsDirty = true;
+        }
+    }
+
     /// <summary>Removes overlay window <paramref name="id"/> and its settings.</summary>
     public void RemoveOverlay(string id)
     {

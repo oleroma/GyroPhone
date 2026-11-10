@@ -64,7 +64,7 @@ import kotlin.math.sqrt
 
 /**
  * The one settings page of a touch control (Settings in its mapping editor, or Configure in edit
- * mode). Duplicate, Save to library and Delete sit fixed on top (beside the title in landscape,
+ * mode). Duplicate, Save as preset (Add preset) and Delete sit fixed on top (beside the title in landscape,
  * under it in portrait); then categories: its look, layers, then the settings its actions share
  * ([shared], from [touchControlSettings]: gyro, a touchpad button's surface, a stick's). [onEditMappings] opens the mapping editor. Edits go through the callbacks.
  */
@@ -108,7 +108,7 @@ internal fun ControlSettingsScreen(
                         val b = ButtonLibrary.save(workspace, control, library.map { it.id })
                         runtime.addToLibrary(b)
                         savedTo = b.id
-                    }) { Text(if (saved) "In library" else "Save to library") }
+                    }) { Text(if (saved) "Saved as preset" else "Save as preset") }
                 }
                 TextButton(contentPadding = compact, onClick = { confirmDelete = true }) {
                     Text("Delete", color = MaterialTheme.colorScheme.error)

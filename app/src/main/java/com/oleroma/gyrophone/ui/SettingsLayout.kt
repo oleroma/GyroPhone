@@ -268,6 +268,8 @@ internal fun SettingsDialog(
     actions: @Composable RowScope.() -> Unit = {},
     /** Fixed, so it doesn't scroll with [content]: in the title row in landscape, under it in portrait; null = none. */
     top: (@Composable () -> Unit)? = null,
+    /** In place of [title]'s text, such as a field that edits it; null = the text. */
+    titleField: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.(searching: Boolean) -> Unit,
 ) {
     FullScreenDialog(onDismiss = onClose) {
@@ -279,7 +281,8 @@ internal fun SettingsDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(if (wide) Modifier.widthIn(max = 220.dp).padding(end = 12.dp) else Modifier.weight(1f)) {
-                        Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (titleField != null) titleField()
+                        else Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (subtitle != null) {
                             Text(
                                 subtitle,

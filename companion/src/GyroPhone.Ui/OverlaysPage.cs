@@ -27,6 +27,9 @@ internal sealed class OverlaysPage : Page
     private string _listKey = "\0";
     private readonly List<(string Id, RadioButton Row, CheckBox Shown, TextBlock Sub)> _rows = [];
     private readonly WrapPanel _addKinds;
+    /// <summary>How many of <see cref="_addKinds"/>' buttons are the built-in kinds (the ★ presets follow).</summary>
+    private int _kindButtons;
+    private string _presetKey = "\0";
     private readonly List<ShortcutBox> _shortcuts = [];
     private readonly CheckBox _restOn, _restSilent;
     private readonly StackPanel _restOptions = new();
@@ -36,6 +39,9 @@ internal sealed class OverlaysPage : Page
     // Right
     private readonly StackPanel _settings = new();
     private readonly TextBlock _empty;
+    /// <summary>The picked overlay's label, and the name it has without one greyed behind it.</summary>
+    private readonly TextBox _label;
+    private readonly TextBlock _labelHint;
     private readonly Seg<int> _tabs;
     private int _tab;
     /// <summary>Tabs as on the phone: Window (PC only), Look, Draw, Paint, Colours and Turning; Draw, Paint and Colours only for the pointer.</summary>
@@ -99,8 +105,15 @@ internal sealed class OverlaysPage : Page
     private readonly Seg<int> _kickMode;
     private readonly Seg<bool> _kickLines;
     private readonly SliderRow _kickScale, _kickRpm;
-    private readonly UIElement _kickTitle, _kickHint, _rifleKickHint;
-    private readonly CheckBox _muzzleFlash;
+    private readonly UIElement _kickTitle, _kickHint, _rifleKickHint, _recoilLikeTitle;
+    private readonly StackPanel _gunOptions;
+    private readonly Seg<int> _gunPick, _recoilLike;
+    private readonly CheckBox _gunLowered, _gunScope;
+    private readonly SliderRow _gunHipPull;
+    private readonly CheckBox _muzzleFlash, _laserSpread, _laserBloom, _laserShotDraw;
+    private readonly SliderRow _gunSpread;
+    private readonly Seg<int> _hitLook;
+    private readonly UIElement _hitLookTitle;
     private readonly CheckBox _laserFireOnly;
     private readonly CheckBox[] _tbEase = new CheckBox[3];
     private readonly StackPanel[] _tbEaseOptions = new StackPanel[3];
@@ -176,6 +189,7 @@ internal sealed class OverlaysPage : Page
             b.Margin = new Thickness(0, 0, 6, 6);
             _addKinds.Children.Add(b);
         }
+        _kindButtons = _addKinds.Children.Count;
         left.Children.Add(_addKinds);
 
         var (keys, kb) = Parts.Card("Shortcuts");
@@ -223,6 +237,22 @@ internal sealed class OverlaysPage : Page
         _empty = Parts.Text("No overlays yet. Press \"Add overlay\" to put the phone, a 3D shape, an attitude indicator, a bubble disk or a pointer over your game.", "Sub");
         right.Children.Add(_empty);
         right.Children.Add(_settings);
+        // Label: names it in the lists and the tray, never drawn in the overlay.
+        _label = new TextBox { FontSize = 18, MaxLength = 40, Padding = new Thickness(4, 2, 4, 2), ToolTip = "Its name in the lists and the tray menu. The overlay itself never shows it." };
+        _labelHint = new TextBlock { FontSize = 18, Margin = new Thickness(8, 3, 0, 0), IsHitTestVisible = false };
+        _labelHint.SetResourceReference(TextBlock.ForegroundProperty, "FaintBrush");
+        _label.TextChanged += (_, _) =>
+        {
+            Parts.Show(_labelHint, _label.Text.Length == 0);
+            if (_refreshing) return;
+            var text = _label.Text;
+            Change(o => o.Label = text);
+            _window.RefreshNow();
+        };
+        var labelBox = new Grid { Margin = new Thickness(0, 0, 0, 10), MaxWidth = 360, HorizontalAlignment = HorizontalAlignment.Left, MinWidth = 220 };
+        labelBox.Children.Add(_label);
+        labelBox.Children.Add(_labelHint);
+        _settings.Children.Add(labelBox);
         var tabBar = new Border { BorderThickness = new Thickness(0, 0, 0, 1), Margin = new Thickness(0, 0, 0, 14) };
         tabBar.SetResourceReference(Border.BorderBrushProperty, "LineBrush");
         _tabs = new Seg<int>(t =>
@@ -320,11 +350,22 @@ internal sealed class OverlaysPage : Page
 
         var (laser, lb) = Parts.Card("Pointer");
         lb.Children.Add(Parts.Text("A see-through sphere seen from above and to the side. The laser at its centre aims along the phone's roll axis (out of its top edge, into the screen at rest) onto the inside; the tick at the dot shows which way the phone's screen faces. The beam dims while a ratchet is held.", "Hint"));
-        _laserShape = new Seg<int>(k => Change(o => { o.LaserRifle = k == 1; o.LaserCrosshair = k == 2; }), false, ("Sphere", 0), ("Rifle", 1), ("Crosshair", 2));
+        _laserShape = new Seg<int>(k => Change(o => { o.LaserRifle = k == 1; o.LaserCrosshair = k == 2; }), false, ("Sphere", 0), ("Gun", 1), ("Crosshair", 2));
         _laserShape.View.Margin = new Thickness(0, 6, 0, 2);
         lb.Children.Add(_laserShape.View);
-        _laserRifleHint = Parts.Text("A rifle aims instead: no sphere or beam, and Draw mode still paints where it points. Best with Axonometric view (face-on you look along the barrel).", "Hint");
+        _laserRifleHint = Parts.Text("A gun aims instead: no sphere or beam, and Draw mode still paints where it points. Best with Axonometric view (face-on you look along the barrel). Each gun has its own model, recoil, fire rate and muzzle flash.", "Hint");
         lb.Children.Add(_laserRifleHint);
+        _gunOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 4) };
+        _gunPick = new Seg<int>(k => Change(o => o.LaserGun = k), true, [.. GyroPhone.Host.Guns.All.Select((g, i) => (g.Name, i))]);
+        _gunPick.View.Margin = new Thickness(0, 6, 0, 2);
+        _gunOptions.Children.Add(_gunPick.View);
+        _gunLowered = Parts.Toggle("Lowered when idle", () => Change(o => o.GunLowered = !o.GunLowered), "It rests pitched down and comes up straight while you aim or fire.");
+        _gunOptions.Children.Add(_gunLowered);
+        _gunHipPull = new SliderRow("Hip fire pull", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.GunHipPull = (float)v));
+        _gunOptions.Children.Add(_gunHipPull.View);
+        _gunScope = Parts.Toggle("Scope while aiming", () => Change(o => o.GunScope = !o.GunScope), "Aiming, a round scope grows onto it.");
+        _gunOptions.Children.Add(_gunScope);
+        lb.Children.Add(_gunOptions);
         _chOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 4) };
         _chOptions.Children.Add(Parts.Text("A crosshair instead: no sphere or beam, just a crosshair lying on the sphere where the laser lands, facing its centre, so it squashes toward the edge. It turns about the beam as the Trackball's Roll row maps it (Lock keeps it upright, Invert turns it the other way). Draw mode still paints where it points.", "Hint"));
         _chShape = new Seg<int>(k => Change(o => o.CrosshairShape = k), true,
@@ -364,36 +405,52 @@ internal sealed class OverlaysPage : Page
 
         // Fire display and Aim display: the buttons, sent from the phone or pressed on the PC's controller with
         // "Use PC controller for gyro ratchet" on.
-        _firePick = new ButtonPick("Fire display", "While this button is sent from the phone (or pressed on the PC's controller with \"Use PC controller for gyro ratchet\" on) the rifle and crosshair kick and flash with each shot, and Draw mode paints in the Fire colours. Click to pick another, or None.", k => Change(o => o.LaserFire = k));
+        _firePick = new ButtonPick("Fire display", "While this button is sent from the phone (or pressed on the PC's controller with \"Use PC controller for gyro ratchet\" on) the gun and crosshair kick and flash with each shot, and Draw mode paints in the Fire colours. Click to pick another, or None.", k => Change(o => o.LaserFire = k));
         lb.Children.Add(_firePick.View);
         _fireOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
         _fireBrush = new SliderRow("Fire brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserFireBrush = (int)v));
         _fireGlow = new SliderRow("Fire glow", 0, 3, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserFireGlow = (float)v));
         _kickTitle = Parts.Text("Kick");
-        _kickHint = Parts.Text("Each shot the crosshair jumps bigger and bounces back like a rifle's recoil. Once: one kick per press. Auto rifle: keeps kicking while the button is held.", "Hint");
-        _rifleKickHint = Parts.Text("Each shot the rifle kicks back toward you, its muzzle jumping up, and springs back. Once: one kick per press. Auto rifle: keeps kicking while the button is held.", "Hint");
+        _kickHint = Parts.Text("Each shot the crosshair jumps bigger and bounces back with the recoil of the gun picked here. Once: one kick per press. Auto rifle: keeps kicking while the button is held. Each gun keeps its own kick size and fire rate.", "Hint");
+        _rifleKickHint = Parts.Text("Each shot the gun kicks back toward you, its muzzle jumping up, and springs back with its own recoil. Once: one kick per press. Auto rifle: keeps kicking while the button is held. Each gun keeps its own kick size and fire rate.", "Hint");
         _fireOptions.Children.Add(_kickTitle);
         _fireOptions.Children.Add(_kickHint);
         _fireOptions.Children.Add(_rifleKickHint);
+        _recoilLikeTitle = Parts.Text("Recoil like", "Sub");
+        _fireOptions.Children.Add(_recoilLikeTitle);
+        _recoilLike = new Seg<int>(k => Change(o => o.LaserGun = k), true, [.. GyroPhone.Host.Guns.All.Select((g, i) => (g.Name, i))]);
+        _fireOptions.Children.Add(_recoilLike.View);
         _kickMode = new Seg<int>(k => Change(o => o.CrosshairKick = k), false,
             [.. GyroPhone.Host.CrosshairKick.Modes.Select((n, i) => (n, i))]);
         _kickMode.View.Margin = new Thickness(0, 6, 0, 2);
         _fireOptions.Children.Add(_kickMode.View);
         _kickOptions = new StackPanel();
-        _kickScale = new SliderRow("Kick size", 0.05, 2, 0.05, v => $"{v * 100:0}%", v => Change(o => o.CrosshairKickScale = (float)v));
-        _kickRpm = new SliderRow("Fire rate", 120, 1200, 30, v => $"{v:0} a minute", v => Change(o => o.CrosshairKickRpm = (int)v));
+        _kickScale = new SliderRow("Kick size (this gun)", 0.05, 2, 0.05, v => $"{v * 100:0}%", v => Change(o => (o.GunKick ??= [])[o.Gun().Key] = (float)v));
+        _kickRpm = new SliderRow("Fire rate (this gun)", GyroPhone.Host.CrosshairKick.RpmMin, 1200, 5, v => $"{v:0} a minute", v => Change(o => (o.GunRpm ??= [])[o.Gun().Key] = (int)v));
         _kickLines = new Seg<bool>(b => Change(o => o.CrosshairKickLinesOnly = b), false, ("Lines only", true), ("Evenly, thickness too", false));
         _kickLines.View.Margin = new Thickness(0, 6, 0, 2);
         _kickOptions.Children.Add(_kickScale.View);
         _kickOptions.Children.Add(_kickRpm.View);
         _kickOptions.Children.Add(_kickLines.View);
         _fireOptions.Children.Add(_kickOptions);
-        _muzzleFlash = Parts.Toggle("Muzzle flash", () => Change(o => o.MuzzleFlash = !o.MuzzleFlash), "Each shot a burst of light in time with the kick: white, cooling to the Flash colour (yellow), then Flash end (orange); the crosshair glows and takes those colours, then its own again.");
+        _muzzleFlash = Parts.Toggle("Muzzle flash", () => Change(o => o.MuzzleFlash = !o.MuzzleFlash), "Each shot a flash in time with the kick: white, cooling to the Flash colour (yellow), then Flash end (orange). The crosshair glows and takes those colours, then its own again; the gun's muzzle blasts flame as wide as its muzzle and as long as its calibre (pistol shortest, shotgun and sniper longest).");
         _fireOptions.Children.Add(_muzzleFlash);
+        _laserSpread = Parts.Toggle("Simulate spread", () => Change(o => o.LaserSpread = !o.LaserSpread), "Each shot lands a little off the aim point, a random way, by up to the gun's spread; the crosshair or gun kicks toward it and springs back. Each gun keeps its own spread.");
+        _fireOptions.Children.Add(_laserSpread);
+        _gunSpread = new SliderRow("Spread (this gun)", 0, 10, 0.1, v => $"{v:0.0}°", v => Change(o => (o.GunSpread ??= [])[o.Gun().Key] = (float)v));
+        _fireOptions.Children.Add(_gunSpread.View);
+        _laserBloom = Parts.Toggle("Bloom", () => Change(o => o.LaserBloom = !o.LaserBloom), $"Shots fired in a row spread wider, up to twice over {GyroPhone.Host.CrosshairKick.BloomShots} shots; it settles half a second after you let go.");
+        _fireOptions.Children.Add(_laserBloom);
+        _laserShotDraw = Parts.Toggle("Draw each shot", () => Change(o => o.LaserShotDraw = !o.LaserShotDraw), "In Draw mode each shot marks a hit where it lands, in the Fire colours, as wide as the Fire brush (a shotgun's pellets half that). Firing then paints no Fire line. Hits stay until you clear the drawing.");
+        _fireOptions.Children.Add(_laserShotDraw);
+        _hitLookTitle = Parts.Text("Hit look", "Sub");
+        _fireOptions.Children.Add(_hitLookTitle);
+        _hitLook = new Seg<int>(k => Change(o => o.LaserHitLook = k), false, [.. GyroPhone.Host.LaserTrace.HitLooks.Select((n, i) => (n, i))]);
+        _fireOptions.Children.Add(_hitLook.View);
         _fireOptions.Children.Add(_fireBrush.View);
         _fireOptions.Children.Add(_fireGlow.View);
         lb.Children.Add(_fireOptions);
-        _aimPick = new ButtonPick("Aim display", "While this button is held the crosshair shrinks and turns laser red (its Crosshair aiming colour), the rifle is shouldered with a scope and a laser sight, and Draw mode paints in the Aim colours. Firing wins over aiming. Click to pick another, or None.", k => Change(o => o.LaserAim = k));
+        _aimPick = new ButtonPick("Aim display", "While this button is held the crosshair shrinks and turns laser red (its Crosshair aiming colour), the gun is shouldered with a scope and a laser sight, and Draw mode paints in the Aim colours. Firing wins over aiming. Click to pick another, or None.", k => Change(o => o.LaserAim = k));
         lb.Children.Add(_aimPick.View);
         _aimOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
         _aimSize = new SliderRow("Crosshair while aiming", 0.2, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserAimSize = (float)v));
@@ -597,6 +654,10 @@ internal sealed class OverlaysPage : Page
         var remove = Parts.Button("Remove this overlay", Remove, glyph: "");
         remove.Margin = new Thickness(0, 4, 0, 0);
         remove.SetResourceReference(Control.ForegroundProperty, "DangerBrush");
+        var savePreset = Parts.Button("Save as preset", SavePreset, glyph: "\uE734");
+        savePreset.ToolTip = "Adds it to Add overlay with a ★: every setting and its size, named by its label. Right-click a preset there to rename or delete it.";
+        savePreset.Margin = new Thickness(0, 4, 0, 0);
+        _settings.Children.Add(savePreset);
         _settings.Children.Add(remove);
         _tabs.Set(0);
         ShowTab();
@@ -639,6 +700,86 @@ internal sealed class OverlaysPage : Page
         ShowTab();
     }
 
+    private void SavePreset()
+    {
+        if (Picked is not { } id || _app.OverlayOf(id) is not { } o) return;
+        _app.SaveOverlayPreset(id, _app.OverlayName(o));
+        Parts.Show(_addKinds, true);
+    }
+
+    /// <summary>The ★ presets after the kinds under Add overlay, rebuilt when they change.</summary>
+    private void RebuildPresets()
+    {
+        var presets = _app.OverlayPresets;
+        var key = string.Join("|", presets.Select(p => p.Id + ":" + p.Label));
+        if (key == _presetKey) return;
+        _presetKey = key;
+        while (_addKinds.Children.Count > _kindButtons) _addKinds.Children.RemoveAt(_addKinds.Children.Count - 1);
+        foreach (var p in presets)
+        {
+            var pid = p.Id;
+            var name = p.Label.Length > 0 ? p.Label : OverlaySettings.KindName(p.Kind);
+            var b = Parts.Button("★ " + name, () =>
+            {
+                if (_app.AddOverlayFromPreset(pid) is { } nid) _app.SelectOverlay(nid);
+                Parts.Show(_addKinds, false);
+                _window.RefreshNow();
+            });
+            b.Margin = new Thickness(0, 0, 6, 6);
+            b.ToolTip = $"Your saved {OverlaySettings.KindName(p.Kind)} overlay. Right-click to rename or delete it.";
+            var menu = new ContextMenu();
+            var rename = new MenuItem { Header = "Rename…" };
+            rename.Click += (_, _) =>
+            {
+                if (AskName("Rename preset", name) is { } n) _app.RenameOverlayPreset(pid, n);
+            };
+            var delete = new MenuItem { Header = "Delete" };
+            delete.Click += (_, _) =>
+            {
+                var r = MessageBox.Show(_window, $"Delete the preset \"{name}\"? Overlays added from it stay.", _window.Title,
+                    MessageBoxButton.OKCancel, MessageBoxImage.Question);
+                if (r == MessageBoxResult.OK) _app.RemoveOverlayPreset(pid);
+            };
+            menu.Items.Add(rename);
+            menu.Items.Add(delete);
+            b.ContextMenu = menu;
+            _addKinds.Children.Add(b);
+        }
+    }
+
+    /// <summary>A small window asking for a name; null when cancelled or left empty.</summary>
+    private string? AskName(string title, string initial)
+    {
+        var box = new TextBox { Text = initial, MaxLength = 40, Margin = new Thickness(0, 0, 0, 12), FontSize = 14 };
+        var w = new Window
+        {
+            Title = title,
+            Owner = _window,
+            SizeToContent = SizeToContent.WidthAndHeight,
+            ResizeMode = ResizeMode.NoResize,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ShowInTaskbar = false,
+        };
+        w.SetResourceReference(Control.BackgroundProperty, "BgBrush");
+        var ok = Parts.Button("OK", () => w.DialogResult = true);
+        ok.IsDefault = true;
+        var cancel = Parts.Button("Cancel", () => w.DialogResult = false);
+        cancel.IsCancel = true;
+        cancel.Margin = new Thickness(8, 0, 0, 0);
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+        var body = new StackPanel { Margin = new Thickness(16), MinWidth = 280 };
+        body.Children.Add(box);
+        body.Children.Add(buttons);
+        w.Content = body;
+        w.SourceInitialized += (_, _) => Theme.TitleBar(w);
+        w.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
+        if (w.ShowDialog() != true) return null;
+        var text = box.Text.Trim();
+        return text.Length > 0 ? text : null;
+    }
+
     private void Remove()
     {
         if (Picked is not { } id || _app.OverlayOf(id) is not { } o) return;
@@ -664,6 +805,7 @@ internal sealed class OverlaysPage : Page
             var all = _app.Overlays;
             if (Picked == null || all.All(o => o.Id != Picked)) _app.SelectOverlay(all.Count > 0 ? all[0].Id : null);
             RebuildList(all);
+            RebuildPresets();
             foreach (var (id, row, shown, sub) in _rows)
             {
                 Parts.SetChecked(row, id == Picked);
@@ -755,6 +897,10 @@ internal sealed class OverlaysPage : Page
 
     private void ShowSettings(OverlaySettings o)
     {
+        // Not while typing in it: the caret would jump.
+        if (!_label.IsKeyboardFocused && _label.Text != o.Label) _label.Text = o.Label;
+        _labelHint.Text = o.Label.Length == 0 ? _app.OverlayName(o) : "";
+        Parts.Show(_labelHint, _label.Text.Length == 0);
         Parts.SetChecked(_shown, o.Shown);
         _background.Set(o.Background);
         _opacity.Set(MathF.Round(o.Opacity * 100f));
@@ -784,6 +930,13 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_laserFaces.View, o.IsTrackball);
         Parts.Show(_laserFacesTitle, o.IsTrackball);
         Parts.Show(_laserRifleHint, o.LaserRifle);
+        Parts.Show(_gunOptions, o.LaserRifle);
+        _gunPick.Set(o.LaserGun);
+        _recoilLike.Set(o.LaserGun);
+        Parts.SetChecked(_gunLowered, o.GunLowered);
+        _gunHipPull.Set(o.GunHipPull);
+        Parts.SetChecked(_gunScope, o.GunScope);
+        Parts.Show(_gunScope, o.Gun().Scope != null);
         Parts.Show(_laserGrid, !o.LaserRifle);
         Parts.SetChecked(_laserAxon, o.LaserAxonometric);
         Parts.SetChecked(_laserSphereTurns, o.LaserSphereTurns);
@@ -825,18 +978,34 @@ internal sealed class OverlaysPage : Page
         _aimPick.Set(o.LaserAim);
         bool fires = o.LaserFire != GyroPhone.Host.LaserFire.None, aims = o.LaserAim != GyroPhone.Host.LaserFire.None;
         bool kicks = ch || o.LaserRifle;
+        // The Sphere look with Draw each shot: its shots' gun and beat.
+        bool sphereShots = !kicks && o.LaserDraw && o.LaserShotDraw;
         Parts.Show(_fireOptions, fires && (paints || kicks));
         Parts.Show(_kickTitle, kicks);
         Parts.Show(_kickHint, ch);
         Parts.Show(_rifleKickHint, o.LaserRifle);
-        Parts.Show(_kickMode.View, kicks);
+        Parts.Show(_kickMode.View, kicks || sphereShots);
         _kickMode.Set(o.CrosshairKick);
-        Parts.Show(_kickOptions, kicks && o.CrosshairKick != GyroPhone.Host.CrosshairKick.Off);
+        Parts.Show(_kickOptions, (kicks || sphereShots) && o.CrosshairKick != GyroPhone.Host.CrosshairKick.Off);
+        Parts.Show(_kickScale.View, kicks);
         Parts.Show(_kickLines.View, ch);
+        Parts.Show(_recoilLikeTitle, ch || (!kicks && o.LaserDraw));
+        Parts.Show(_recoilLike.View, ch || (!kicks && o.LaserDraw));
+        Parts.Show(_laserSpread, kicks || o.LaserDraw);
+        Parts.SetChecked(_laserSpread, o.LaserSpread);
+        Parts.Show(_gunSpread.View, (kicks || o.LaserDraw) && o.LaserSpread);
+        _gunSpread.Set(o.SpreadOf(o.Gun()));
+        Parts.Show(_laserBloom, (kicks || o.LaserDraw) && o.LaserSpread);
+        Parts.SetChecked(_laserBloom, o.LaserBloom);
+        Parts.Show(_laserShotDraw, o.LaserDraw);
+        Parts.SetChecked(_laserShotDraw, o.LaserShotDraw);
+        Parts.Show(_hitLookTitle, o.LaserDraw && o.LaserShotDraw);
+        Parts.Show(_hitLook.View, o.LaserDraw && o.LaserShotDraw);
+        _hitLook.Set(o.LaserHitLook);
         Parts.Show(_muzzleFlash, kicks);
         Parts.SetChecked(_muzzleFlash, o.MuzzleFlash);
-        _kickScale.Set(o.CrosshairKickScale);
-        _kickRpm.Set(o.CrosshairKickRpm);
+        _kickScale.Set(o.KickOf(o.Gun()));
+        _kickRpm.Set(o.RpmOf(o.Gun()));
         Parts.Show(_kickRpm.View, o.CrosshairKick == GyroPhone.Host.CrosshairKick.Auto);
         _kickLines.Set(o.CrosshairKickLinesOnly);
         _fireBrush.Set(o.LaserFireBrush);
