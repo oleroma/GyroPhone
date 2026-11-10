@@ -27,14 +27,17 @@ public sealed class UdpHostServer : IDatagramSender, IDisposable
     private readonly IPEndPoint _bind;
     private readonly Action? _onRxThreadStart;
     private readonly Action<string> _log;
+    private readonly ICatchUpWait _catchUpWait;
     private Socket? _socket;
     private Thread? _thread;
     private volatile bool _stopping;
     private long _rxExceptions;
 
+    /// <param name="catchUpWait">How gp-rx waits while a catch-up runs (Windows: an exact 1 ms wake); default socket.Poll.</param>
     public UdpHostServer(HostEngine engine, IClock clock, IPEndPoint? bind = null, Action? onRxThreadStart = null,
-        Action<string>? log = null)
+        Action<string>? log = null, ICatchUpWait? catchUpWait = null)
     {
+        _catchUpWait = catchUpWait ?? PollCatchUpWait.Instance;
         _engine = engine;
         _clock = clock;
         _bind = bind ?? new IPEndPoint(IPAddress.Any, Wire.Port);
@@ -49,8 +52,11 @@ public sealed class UdpHostServer : IDatagramSender, IDisposable
 
     public long RxExceptions => Interlocked.Read(ref _rxExceptions);
 
-    /// <summary>Binds and starts gp-rx. False (State = PortInUse or Failed) when the bind fails.</summary>
-    public bool Start()
+    /// <summary>
+    /// Binds and starts gp-rx. False (State = PortInUse or Failed) when the bind fails, which is logged
+    /// unless <paramref name="logFailure"/> is false (a retry loop logs for itself).
+    /// </summary>
+    public bool Start(bool logFailure = true)
     {
         var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         try
@@ -68,7 +74,7 @@ public sealed class UdpHostServer : IDatagramSender, IDisposable
         {
             s.Dispose();
             State = e.SocketErrorCode is SocketError.AddressAlreadyInUse or SocketError.AccessDenied ? ServerState.PortInUse : ServerState.Failed;
-            _log($"bind {_bind} failed: {e.SocketErrorCode}");
+            if (logFailure) _log($"bind {_bind} failed: {e.SocketErrorCode}");
             return false;
         }
         _socket = s;
@@ -79,6 +85,8 @@ public sealed class UdpHostServer : IDatagramSender, IDisposable
         State = ServerState.Running;
         return true;
     }
+
+    private const int CatchUpWakeUs = 1000;
 
     private void RxLoop()
     {
@@ -98,6 +106,13 @@ public sealed class UdpHostServer : IDatagramSender, IDisposable
         {
             try
             {
+                // While a lost stretch of mouse motion catches up, wake every millisecond to move it on
+                // (a datagram still wakes it at once).
+                if (_engine.MouseCatchingUp && !_catchUpWait.Wait(socket, CatchUpWakeUs))
+                {
+                    _engine.Flush(_clock.NowUs);
+                    continue;
+                }
                 int n = socket.ReceiveFrom(buf, SocketFlags.None, from);
                 _engine.OnDatagram(buf.AsSpan(0, n), from, _clock.NowUs);
                 while (socket.Available > 0)
@@ -122,6 +137,7 @@ public sealed class UdpHostServer : IDatagramSender, IDisposable
                 _log($"rx error: {e.GetType().Name}");
             }
         }
+        (_catchUpWait as IDisposable)?.Dispose(); // its handles; made again if the server starts again
     }
 
     public void Send(ReadOnlySpan<byte> datagram, SocketAddress to)

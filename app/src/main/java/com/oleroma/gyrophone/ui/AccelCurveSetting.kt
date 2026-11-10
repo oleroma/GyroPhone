@@ -11,12 +11,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -38,6 +36,8 @@ import com.oleroma.gyrophone.core.model.GyroCurves
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.runtime
+import kotlinx.coroutines.delay
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.max
@@ -62,14 +62,15 @@ internal fun AccelCurveSetting(
     hint: String,
     perAxis: Boolean = false,
     axis: MotionAxis? = null,
+    children: ChildInfo? = null,
     onSet: (GyroCurve) -> Unit,
 ) {
     var draft by remember(key, curve) { mutableStateOf(curve) }
     var dragged by remember(key, curve) { mutableIntStateOf(-1) }
     val counts = g.gameCountsPer360
-    fun shown(gain: Float): String = if (counts > 0f) "%.2f RWS".format(GameSens.rws(sens * gain, counts)) else "%.1f".format(sens * gain)
+    fun shown(gain: Float): String = shownGain(gain, sens, counts)
 
-    OverrideRow(title, overridden, onReset, hint) {
+    OverrideRow(title, overridden, onReset, hint, children = children) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FilterChip(selected = draft.isOff, onClick = { onSet(GyroCurve.OFF) }, label = { Text("Off") })
             for ((name, p) in PRESETS) {
@@ -98,14 +99,18 @@ internal fun AccelCurveSetting(
                 axis != null -> listOf(axis)
                 else -> MotionAxis.shown
             }
-            var live by remember { mutableStateOf(FloatArray(0)) }
+            // Read only where it is drawn (the graph's line, the "Now" text), so a new speed redraws just those;
+            // updated about 30 times a second, and only when it moved by a visible amount.
+            val liveState = remember { mutableStateOf(FloatArray(0)) }
             LaunchedEffect(runtime, axes) {
                 while (true) {
-                    withFrameNanos { }
+                    delay(LIVE_MS)
                     val now = axes.mapNotNull { runtime.liveGyroSpeed(it) }.toFloatArray()
-                    if (!now.contentEquals(live)) live = now
+                    val was = liveState.value
+                    if (now.size != was.size || now.indices.any { abs(now[it] - was[it]) > LIVE_STEP_DPS }) liveState.value = now
                 }
             }
+            val curvePath = remember { CurvePath() }
             // The graph's span stays put while a point is dragged, so it doesn't run away under the finger.
             // The "°/s cap" sets it; unset, it fits the points. It never cuts off a point.
             val lastSpeed = curve.points.maxOfOrNull { it.speed } ?: 0f
@@ -194,22 +199,28 @@ internal fun AccelCurveSetting(
                 )
                 drawLine(colors.outline, Offset(0f, h), Offset(w, h), 2f)
                 drawLine(colors.outline, Offset(0f, 0f), Offset(0f, h), 2f)
-                val path = Path()
-                path.moveTo(0f, y(pts.first().gain))
-                if (draft.smooth) {
-                    // Sampled every few pixels through the same math the gyro uses.
-                    val flat = draft.flat()
-                    var px = 0f
-                    while (px < w) {
-                        path.lineTo(px, y(GyroCurves.gain(flat, px / w * maxSpeed, true)))
-                        px += 3f
+                // The curve, made again only when it or the graph's size or span changed.
+                val c = curvePath
+                if (c.of !== draft || c.w != w || c.h != h || c.maxSpeed != maxSpeed || c.maxGain != maxGain) {
+                    c.of = draft; c.w = w; c.h = h; c.maxSpeed = maxSpeed; c.maxGain = maxGain
+                    val path = c.path
+                    path.reset()
+                    path.moveTo(0f, y(pts.first().gain))
+                    if (draft.smooth) {
+                        // Sampled every few pixels through the same math the gyro uses.
+                        val flat = draft.flat()
+                        var px = 0f
+                        while (px < w) {
+                            path.lineTo(px, y(GyroCurves.gain(flat, px / w * maxSpeed, true)))
+                            px += 3f
+                        }
+                    } else {
+                        for (p in pts) path.lineTo(x(p.speed), y(p.gain))
                     }
-                } else {
-                    for (p in pts) path.lineTo(x(p.speed), y(p.gain))
+                    path.lineTo(w, y(pts.last().gain))
                 }
-                path.lineTo(w, y(pts.last().gain))
-                drawPath(path, colors.primary, style = Stroke(width = 5f))
-                for (v in live) {
+                drawPath(c.path, colors.primary, style = Stroke(width = 5f))
+                for (v in liveState.value) {
                     val lx = x(v.coerceAtMost(maxSpeed))
                     drawLine(colors.tertiary, Offset(lx, 0f), Offset(lx, h), 3f)
                     drawCircle(colors.tertiary, 9f, Offset(lx, y(draft.gainAt(v))))
@@ -219,15 +230,17 @@ internal fun AccelCurveSetting(
                 }
             }
             val d = dragged.takeIf { it in pts.indices }?.let { pts[it] }
-            val now = live.maxOrNull() ?: 0f
             // One line that always shows, so the layout doesn't jump: the dragged point, else the speed now.
-            Text(
-                if (d != null) "Point %.0f°/s: %s (×%.2f)".format(d.speed, shown(d.gain), d.gain)
-                else "Now %.0f°/s: %s (×%.2f)".format(now, shown(draft.gainAt(now)), draft.gainAt(now)),
-                style = MaterialTheme.typography.bodySmall,
-                color = colors.onSurfaceVariant,
-                maxLines = 1,
-            )
+            if (d != null) {
+                Text(
+                    "Point %.0f°/s: %s (×%.2f)".format(d.speed, shown(d.gain), d.gain),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            } else {
+                NowLine({ liveState.value.maxOrNull() ?: 0f }, draft, sens, counts)
+            }
             Text(
                 "Across: turning speed, 0 to %.0f°/s; the coloured line is the speed now. Up: sensitivity; dashed = %s.".format(maxSpeed, shown(1f)),
                 style = MaterialTheme.typography.bodySmall,
@@ -263,6 +276,37 @@ internal fun AccelCurveSetting(
         }
     }
 }
+
+/** The speed now's line under the graph: its own scope, so a new speed doesn't recompose the whole setting. */
+@Composable
+private fun NowLine(now: () -> Float, curve: GyroCurve, sens: Float, counts: Float) {
+    val v = now()
+    val gain = curve.gainAt(v)
+    Text(
+        "Now %.0f°/s: %s (×%.2f)".format(v, shownGain(gain, sens, counts), gain),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+    )
+}
+
+/** Sensitivity [sens] times [gain] as the setting shows it: in RWS with the game's [counts] per 360, else plain. */
+private fun shownGain(gain: Float, sens: Float, counts: Float): String =
+    if (counts > 0f) "%.2f RWS".format(GameSens.rws(sens * gain, counts)) else "%.1f".format(sens * gain)
+
+/** The graph's curve, kept from draw to draw with what it was made for. */
+private class CurvePath {
+    val path = Path()
+    var of: GyroCurve? = null
+    var w = 0f
+    var h = 0f
+    var maxSpeed = 0f
+    var maxGain = 0f
+}
+
+// The live speed's update interval (ms) and the change (°/s) it must make to be shown.
+private const val LIVE_MS = 33L
+private const val LIVE_STEP_DPS = 0.5f
 
 /** [v] rounded up to a tidy graph span (a multiple of 50 or 100). */
 private fun niceCeil(v: Float): Float {

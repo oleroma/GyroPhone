@@ -34,6 +34,9 @@ internal sealed class GpuDevice
     public readonly ID2D1Device Device;
     public readonly IDWriteFactory Write;
     private readonly ID2D1Multithread _lock;
+    // For the frame queue's length (null where it can't be set), and the swap chains on this device.
+    private readonly IDXGIDevice1? _dxgi1;
+    private int _swapChains;
 
     private GpuDevice()
     {
@@ -48,6 +51,7 @@ internal sealed class GpuDevice
             _lock = Factory.QueryInterface<ID2D1Multithread>();
             Device = Factory.CreateDevice(Dxgi);
             Write = DWrite.DWriteCreateFactory<IDWriteFactory>();
+            _dxgi1 = D3D.QueryInterfaceOrNull<IDXGIDevice1>();
         }
         catch
         {
@@ -115,9 +119,30 @@ internal sealed class GpuDevice
 
     public void Leave() => _lock.Leave();
 
+    /// <summary>
+    /// A swap chain was made (+1) or let go (−1) on this device: at most one picture per swap chain
+    /// waits for the graphics card (Windows' default is 3 for the whole device), so on a busy card an
+    /// overlay shows its newest picture instead of one 2–3 frames old. Not 1 for the device: the
+    /// windows present one after another on the pacer's thread, and each would wait for the one before.
+    /// Called between <see cref="Enter"/> and <see cref="Leave"/>.
+    /// </summary>
+    public void SwapChains(int change)
+    {
+        _swapChains = Math.Max(0, _swapChains + change);
+        try
+        {
+            _dxgi1?.SetMaximumFrameLatency((uint)Math.Clamp(_swapChains, 1, 3));
+        }
+        catch (Exception)
+        {
+            // Not set: Windows' default stays.
+        }
+    }
+
     private void DisposeAll()
     {
         Write?.Dispose();
+        _dxgi1?.Dispose();
         Device?.Dispose();
         _lock?.Dispose();
         Factory?.Dispose();
@@ -181,6 +206,7 @@ internal sealed class GpuSurface : IDisposable
                 using var adapter = _shared.Dxgi.GetAdapter();
                 using var dxgiFactory = adapter.GetParent<IDXGIFactory2>();
                 _swap = dxgiFactory.CreateSwapChainForHwnd(_shared.D3D, hwnd, desc);
+                _shared.SwapChains(+1); // counted from here: Dispose lets it go
                 // No Alt+Enter full screen, and DXGI never touches the window (it lives on another thread).
                 dxgiFactory.MakeWindowAssociation(hwnd, WindowAssociationFlags.IgnoreAll);
                 _width = (int)desc.Width;
@@ -202,6 +228,9 @@ internal sealed class GpuSurface : IDisposable
 
     /// <summary>Presented by a swap chain (no copy through the CPU).</summary>
     public bool Direct => _swap != null;
+
+    /// <summary>A swap chain whose buffers are not <paramref name="width"/>×<paramref name="height"/>: drawing at that size resizes it first.</summary>
+    public bool NeedsResize(int width, int height) => _swap != null && (Math.Max(1, width) != _width || Math.Max(1, height) != _height);
 
     /// <summary>Its device was found lost (by any window): make a new surface, which gets the new device.</summary>
     public bool Lost => _shared.Lost;
@@ -333,7 +362,11 @@ internal sealed class GpuSurface : IDisposable
         try
         {
             Unbind();
-            _swap?.Dispose();
+            if (_swap != null)
+            {
+                _swap.Dispose();
+                _shared.SwapChains(-1);
+            }
             _canvas?.Dispose();
             _dc?.Dispose();
         }
@@ -445,6 +478,27 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
         _dc.FillGeometry(_lastGeo, Brush(color));
     }
 
+    public void FillQuads(Color color, List<PointF> quads)
+    {
+        if (quads.Count < 4 || color.A == 0) return;
+        using var geo = _factory.CreatePathGeometry();
+        using (var sink = geo.Open())
+        {
+            // Winding: where quads overlap the shape is filled once.
+            sink.SetFillMode(Vortice.Direct2D1.FillMode.Winding);
+            for (int i = 0; i + 3 < quads.Count; i += 4)
+            {
+                sink.BeginFigure(V(quads[i]), FigureBegin.Filled);
+                sink.AddLine(V(quads[i + 1]));
+                sink.AddLine(V(quads[i + 2]));
+                sink.AddLine(V(quads[i + 3]));
+                sink.EndFigure(FigureEnd.Closed);
+            }
+            sink.Close();
+        }
+        _dc.FillGeometry(geo, Brush(color));
+    }
+
     public void DrawPolygon(Color color, float width, PointF[] points, bool dashed = false)
     {
         if (points.Length < 2 || color.A == 0) return;
@@ -463,11 +517,49 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
         _dc.DrawLine(V(a), V(b), Brush(color), width, round ? _round : null);
     }
 
-    public void DrawLines(Color color, float width, PointF[] points)
+    public void DrawLines(Color color, float width, PointF[] points, bool flat = false)
     {
         if (points.Length < 2 || color.A == 0) return;
         using var geo = Path(points, false);
-        _dc.DrawGeometry(geo, Brush(color), width, _round);
+        _dc.DrawGeometry(geo, Brush(color), width, flat ? _joined : _round);
+    }
+
+    // Built line sets (DrawLinesSet), by their array, with the stamp they were built for.
+    private sealed class LineSet
+    {
+        public ID2D1PathGeometry?[] Geos = [];
+        public long Stamp;
+    }
+
+    private readonly Dictionary<PointF[][], LineSet> _lineSets = new(ReferenceEqualityComparer.Instance);
+
+    public void DrawLinesSet(Color color, float width, PointF[][] lines, long stamp)
+    {
+        if (color.A == 0) return;
+        if (!_lineSets.TryGetValue(lines, out var set) || set.Stamp != stamp)
+        {
+            if (set == null)
+            {
+                // A window keeps a couple (the grid's two halves): more means old ones are left behind.
+                if (_lineSets.Count >= 8) ForgetLineSets();
+                _lineSets[lines] = set = new LineSet();
+            }
+            foreach (var old in set.Geos) old?.Dispose();
+            set.Geos = new ID2D1PathGeometry?[lines.Length];
+            for (int i = 0; i < lines.Length; i++)
+                if (lines[i].Length >= 2) set.Geos[i] = Path(lines[i], false);
+            set.Stamp = stamp;
+        }
+        var brush = Brush(color);
+        foreach (var geo in set.Geos)
+            if (geo != null) _dc.DrawGeometry(geo, brush, width, _round);
+    }
+
+    private void ForgetLineSets()
+    {
+        foreach (var set in _lineSets.Values)
+            foreach (var geo in set.Geos) geo?.Dispose();
+        _lineSets.Clear();
     }
 
     private static Ellipse E(RectangleF r) => new(new Vector2(r.X + r.Width / 2, r.Y + r.Height / 2), r.Width / 2, r.Height / 2);
@@ -494,13 +586,54 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
 
     private static Color4 C4(Color c) => new(c.R / 255f, c.G / 255f, c.B / 255f, c.A / 255f);
 
+    // The ball's gradient brush, kept for its two colours (its place and size are set each time).
+    private ID2D1RadialGradientBrush? _ball;
+    private (int Lit, int Body) _ballColors;
+
     public void FillBall(RectangleF r, PointF litAt, Color lit, Color body)
     {
         var e = E(r);
-        using var stops = _dc.CreateGradientStopCollection([new GradientStop(0f, C4(lit)), new GradientStop(1f, C4(body))]);
-        var props = new RadialGradientBrushProperties(e.Point, new Vector2(litAt.X - e.Point.X, litAt.Y - e.Point.Y), e.RadiusX, e.RadiusY);
-        using var brush = _dc.CreateRadialGradientBrush(props, stops);
-        _dc.FillEllipse(e, brush);
+        var origin = new Vector2(litAt.X - e.Point.X, litAt.Y - e.Point.Y);
+        var colors = (lit.ToArgb(), body.ToArgb());
+        if (_ball == null || _ballColors != colors)
+        {
+            _ball?.Dispose();
+            _ball = null;
+            using var stops = _dc.CreateGradientStopCollection([new GradientStop(0f, C4(lit)), new GradientStop(1f, C4(body))]);
+            _ball = _dc.CreateRadialGradientBrush(new RadialGradientBrushProperties(e.Point, origin, e.RadiusX, e.RadiusY), stops);
+            _ballColors = colors;
+        }
+        else
+        {
+            _ball.Center = e.Point;
+            _ball.GradientOriginOffset = origin;
+            _ball.RadiusX = e.RadiusX;
+            _ball.RadiusY = e.RadiusY;
+        }
+        _dc.FillEllipse(e, _ball);
+    }
+
+    private sealed class Picture { public ID2D1Bitmap1? Bitmap; public long Stamp = long.MinValue; }
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<int[], Picture> _pictures = new();
+
+    public void DrawPixels(RectangleF dest, int w, int h, int[] pixels, long stamp)
+    {
+        var pic = _pictures.GetOrCreateValue(pixels);
+        if (pic.Bitmap == null || pic.Bitmap.PixelSize.Width != w || pic.Bitmap.PixelSize.Height != h)
+        {
+            pic.Bitmap?.Dispose();
+            pic.Bitmap = _dc.CreateBitmap(new SizeI(w, h), IntPtr.Zero, 0,
+                new BitmapProperties1(new D2DPixelFormat(Vortice.DXGI.Format.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied), 96, 96, BitmapOptions.None));
+            pic.Stamp = long.MinValue;
+        }
+        if (pic.Stamp != stamp)
+        {
+            var pin = System.Runtime.InteropServices.GCHandle.Alloc(pixels, System.Runtime.InteropServices.GCHandleType.Pinned);
+            try { pic.Bitmap.CopyFromMemory(pin.AddrOfPinnedObject(), (uint)(w * 4)); }
+            finally { pin.Free(); }
+            pic.Stamp = stamp;
+        }
+        _dc.DrawBitmap(pic.Bitmap, new Rect(dest.X, dest.Y, dest.Width, dest.Height), 1f, BitmapInterpolationMode.Linear, null);
     }
 
     private void PushMask(ID2D1Geometry geo, Rect bounds)
@@ -656,6 +789,8 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
         foreach (var b in _texts.Values) b.Dispose();
         _texts.Clear();
         ForgetLast();
+        ForgetLineSets();
+        _ball?.Dispose();
         _textBrush.Dispose();
         _textDc.Dispose();
         _round.Dispose();

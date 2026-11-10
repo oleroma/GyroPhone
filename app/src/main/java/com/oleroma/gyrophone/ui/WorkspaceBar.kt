@@ -9,12 +9,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -39,7 +39,7 @@ import com.oleroma.gyrophone.core.model.WorkspaceEdits
 import com.oleroma.gyrophone.runtime.AttachedController
 
 /**
- * Rename, duplicate and delete (not the last) for workspace [index], at the top of its settings
+ * Rename, duplicate and delete (not the last) for workspace [index], fixed above its settings
  * (reorder by dragging its capsule on the pad). [onProfileChange] gets the edited profile and the index to show next.
  */
 @Composable
@@ -47,6 +47,8 @@ internal fun WorkspaceActions(
     profile: Profile,
     index: Int,
     onProfileChange: (Profile, Int) -> Unit,
+    /** More buttons at the end of the row. */
+    extra: @Composable RowScope.() -> Unit = {},
 ) {
     val i = index.coerceIn(0, profile.workspaces.lastIndex)
     val current = profile.workspace(i)
@@ -69,6 +71,7 @@ internal fun WorkspaceActions(
                 Text("Delete", color = MaterialTheme.colorScheme.error)
             }
         }
+        extra()
     }
 
     renaming?.let { name ->

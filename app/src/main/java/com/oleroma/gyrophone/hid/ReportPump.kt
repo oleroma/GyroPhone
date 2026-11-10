@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.hid
 
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.hid.ReportScheduler
+import com.oleroma.gyrophone.runtime.WorkHint
 import java.util.concurrent.locks.LockSupport
 
 /**
@@ -98,6 +99,7 @@ class ReportPump(
     private fun loop(s: ReportScheduler) {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
         val me = Thread.currentThread()
+        val hint = WorkHint.forThisThread()
         while (running && thread === me) {
             val start = System.nanoTime()
             val connected = hid.isConnected
@@ -105,12 +107,18 @@ class ReportPump(
                 engine.snapshot() // drain motion while idle
                 false
             }
+            // The pass is done: how long it took goes to the performance hint.
+            if (hint != null) {
+                val end = System.nanoTime()
+                hint.done(end - start, end)
+            }
             if (start - statsWindowStart >= 1_000_000_000L) {
                 sentPerSecond = sentCount; failedPerSecond = failedCount
                 sentCount = 0; failedCount = 0; statsWindowStart = start
             }
             waitUntil(s, start + intervalNanos, me, inputWakes = connected && !sent)
         }
+        hint?.close()
     }
 
     /**

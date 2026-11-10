@@ -35,7 +35,9 @@ public sealed class OverlayPose
     private float _settling = SettleS;
 
     private float _calm;
-    private bool _wasGravity, _wasCompass, _wasTrackball, _started;
+    private bool _wasGravity, _wasCompass, _started;
+    private OverlayTurnsWith _wasTurns;
+    private bool _wasReal;
     private int _lastPresses = -1;
     private float[]? _rest;
 
@@ -71,22 +73,31 @@ public sealed class OverlayPose
     /// <summary>One OVERLAY: turns the pose by its motion with settings <paramref name="s"/>.</summary>
     public void Feed(OverlayFrame f, OverlaySettings s)
     {
-        bool trackball = s.IsTrackball;
-        bool gravity = s.Gravity && !trackball;
+        bool camera = s.FollowsCamera;
+        bool gravity = s.Gravity && !camera;
         bool compass = gravity && s.Compass;
+        // In World or Player space the pose is the phone's real one, level from gravity alone.
+        bool real = f.RealWorld;
         // Face-on is the Level grip; it is kept only with gravity (without, Level restarts the pose).
-        _rest = gravity ? s.Rest : null;
-        if (!_started || gravity != _wasGravity || trackball != _wasTrackball)
+        _rest = gravity && !real ? s.Rest : null;
+        if (!_started || gravity != _wasGravity || s.TurnsWith != _wasTurns || real != _wasReal)
         {
             _started = true;
             _wasGravity = gravity;
-            _wasTrackball = trackball;
+            _wasTurns = s.TurnsWith;
+            _wasReal = real;
             ResetPose();
         }
-        if (trackball)
+        // A trackball eases back only on the axes picked to.
+        if (s.IsTrackball)
         {
+            bool press = _lastPresses >= 0 && f.RatchetPresses != _lastPresses;
             _lastPresses = f.RatchetPresses;
-            Trackball(f, s);
+            long at = System.Diagnostics.Stopwatch.GetTimestamp();
+            float clock = _lastFeedAt == 0 ? 0f : Math.Min((at - _lastFeedAt) / (float)System.Diagnostics.Stopwatch.Frequency, 0.1f);
+            _lastFeedAt = at;
+            CameraTurn(f, s);
+            TrackballEase(f, s, press, clock);
             return;
         }
         if (compass && !_wasCompass) _aimPending = true;
@@ -116,11 +127,15 @@ public sealed class OverlayPose
         else if (!f.RatchetHeld) _easing = false;
         // While a ratchet is held it eases back until straight (the gyro is paused then).
         if (_easing) EaseAfterPress(s, gravity, wall);
+        // The camera's turn comes even while the gyro is paused (touchpad, buttons...).
+        if (camera) CameraTurn(f, s);
 
         float dt = f.TurnSeconds;
         if (!f.PoseLive || dt <= 0f) return;
         float yaw = f.TurnYaw / dt, pitch = f.TurnPitch / dt, roll = f.TurnRoll / dt;
-        if (gravity) Fuse(yaw, pitch, roll, dt, compass);
+        // Following the camera it already turned above.
+        if (camera) { /* turned by CameraTurn */ }
+        else if (gravity) Fuse(yaw, pitch, roll, dt, compass);
         else if (f.Axes != 0)
         {
             float k = DegToRad * dt;
@@ -161,37 +176,244 @@ public sealed class OverlayPose
     }
 
     /// <summary>
-    /// A trackball: while the gyro moves the mouse it holds still against the world (turns the other
-    /// way); every other mouse move turns it as the gyro turn that would send it.
+    /// Following the camera: the live gyro axes and every other mouse move turn it as the camera turns
+    /// (Camera), or about its fixed axes as its axis mapping says (Trackball).
     /// </summary>
-    private void Trackball(OverlayFrame f, OverlaySettings s)
+    private void CameraTurn(OverlayFrame f, OverlaySettings s)
     {
+        // The live gyro's turn adds here, unless the phone already put it (in its gyro space) in the camera degrees.
+        static bool Live(OverlayFrame f) => f.PoseLive && !f.RealWorld;
+        if (s.TurnsWith == OverlayTurnsWith.Camera)
+        {
+            // As the game's camera: the axis on mouse X turns it right, the one on mouse Y up; no roll.
+            float Deg(byte code, byte fallback)
+            {
+                if (code == 0) code = fallback;
+                int a = code & 0x7F;
+                if (a is < 1 or > 3) return 0f;
+                float rws = a == 1 ? f.RwsYaw : a == 2 ? f.RwsPitch : f.RwsRoll;
+                float cam = a == 1 ? f.CameraYaw : a == 2 ? f.CameraPitch : f.CameraRoll;
+                float turn = a == 1 ? f.TurnYaw : a == 2 ? f.TurnPitch : f.TurnRoll;
+                float deg = cam + (Live(f) && (f.Axes & (1 << (a - 1))) != 0 ? turn : 0f);
+                float speed = s.TrackballRws ? (rws > 0f ? rws : 1f) : Math.Clamp(s.TrackballSpin, 0.05f, 20f);
+                return deg * speed * ((code & 0x80) != 0 ? -1f : 1f);
+            }
+            CameraLook(Deg(f.CameraXAxis, 3), Deg(f.CameraYAxis, 2));
+            return;
+        }
         float Gain(float rws) => s.TrackballRws ? (rws > 0f ? rws : 1f) : Math.Clamp(s.TrackballSpin, 0.05f, 20f);
         float gy = Gain(f.RwsYaw), gp = Gain(f.RwsPitch), gr = Gain(f.RwsRoll);
         float yaw = f.CameraYaw * gy, pitch = f.CameraPitch * gp, roll = f.CameraRoll * gr;
-        if (f.PoseLive)
+        if (Live(f))
         {
             if ((f.Axes & 1) != 0) yaw += f.TurnYaw * gy;
             if ((f.Axes & 2) != 0) pitch += f.TurnPitch * gp;
             if ((f.Axes & 4) != 0) roll += f.TurnRoll * gr;
         }
-        CounterRotate(yaw, pitch, roll);
+        // None (or a lock saved before None meant it) holds an axis: no gyro turn drives it.
+        int m = s.TrackballAxes;
+        int locks = OverlaySettings.TrackballLocks(m), stops = Bits(m, OverlaySettings.TrackballStop);
+        long now2 = System.Diagnostics.Stopwatch.GetTimestamp();
+        for (int i = 0; i < 3; i++)
+        {
+            _turn[i] = (locks & (1 << i)) != 0 ? 0f : About(m, i, yaw, pitch, roll) * DegToRad;
+            if (MathF.Abs(_turn[i]) > ActiveRad) _activeAt[i] = now2;
+        }
+        if (s.TrackballOwnAxes)
+        {
+            // About its own axes as it now points: up and down, left and right always square to where it aims (no poles).
+            Turn(_turn[1], -_turn[0], -_turn[2]);
+            return;
+        }
+        // About the sphere's axes, as a game camera turns (a gimbal), so each axis has its own angle.
+        GimbalTurn(-_turn[0], _turn[1], -_turn[2], locks, stops);
     }
 
-    /// <summary>The world as the phone sees it while it turns by these degrees: the opposite turn, about the view's axes (q = b * q).</summary>
-    private void CounterRotate(float yaw, float pitch, float roll)
+    private readonly float[] _turn = new float[3];
+
+    /// <summary>When each trackball axis (yaw, pitch, roll) last turned by the gyro (Stopwatch ticks).</summary>
+    private readonly long[] _activeAt = [long.MinValue / 2, long.MinValue / 2, long.MinValue / 2];
+
+    /// <summary>A trackball axis turned more than this in one frame lights up (<see cref="Active"/>), for ActiveS.</summary>
+    private const float ActiveRad = 0.002f;
+    private const float ActiveS = 0.15f;
+
+    /// <summary>The trackball axes (bit 0 yaw, 1 pitch, 2 roll) the gyro turned in the last 150 ms, to light them up. As the phone's trackballActive.</summary>
+    public int Active() => ActiveOf(_activeAt, System.Diagnostics.Stopwatch.GetTimestamp());
+
+    /// <summary>When each trackball axis last turned (Stopwatch ticks), for a copy read without the engine lock (<see cref="ActiveOf"/>).</summary>
+    public void CopyActiveAt(Span<long> into) => _activeAt.CopyTo(into);
+
+    /// <summary><see cref="Active"/> from a copy of <see cref="CopyActiveAt"/> at Stopwatch time <paramref name="now"/>.</summary>
+    public static int ActiveOf(ReadOnlySpan<long> activeAt, long now)
     {
-        float ax = -pitch * DegToRad, ay = yaw * DegToRad, az = roll * DegToRad;
-        float angle = MathF.Sqrt(ax * ax + ay * ay + az * az);
-        if (angle == 0f) return;
-        float k = MathF.Sin(angle / 2) / angle;
-        float bw = MathF.Cos(angle / 2), bx = ax * k, by = ay * k, bz = az * k;
-        float nw = bw * _w - bx * _x - by * _y - bz * _z;
-        float nx = bw * _x + bx * _w + by * _z - bz * _y;
-        float ny = bw * _y - bx * _z + by * _w + bz * _x;
-        float nz = bw * _z + bx * _y - by * _x + bz * _w;
-        _w = nw; _x = nx; _y = ny; _z = nz;
-        Normalize();
+        int bits = 0;
+        for (int i = 0; i < 3; i++)
+            if (now - activeAt[i] < (long)(ActiveS * System.Diagnostics.Stopwatch.Frequency)) bits |= 1 << i;
+        return bits;
+    }
+
+    /// <summary>Bits 0, 1, 2: which trackball axes (up, right, through the screen) <paramref name="m"/> has <paramref name="flag"/> on.</summary>
+    private static int Bits(int m, int flag)
+    {
+        int bits = 0;
+        for (int i = 0; i < 3; i++)
+            if (((m >> (8 * i)) & flag) != 0) bits |= 1 << i;
+        return bits;
+    }
+
+    private static bool AnyEase(OverlaySettings s)
+    {
+        for (int i = 0; i < 3; i++)
+            if (s.EaseOf(i).On) return true;
+        return false;
+    }
+
+    /// <summary>Per trackball axis: seconds since the phone stopped (or since the ratchet press), easing on a held ratchet.</summary>
+    private readonly float[] _axisCalm = new float[3];
+    private readonly bool[] _axisEasing = new bool[3];
+    private readonly float[] _easeStep = new float[3];
+
+    /// <summary>
+    /// Eases the trackball's axes picked to (TrackballEase) back toward straight: on a ratchet press while it is held
+    /// (by the PC's <paramref name="clock"/>, as the gyro is paused then), or once the phone stopped; each by its own
+    /// delay and speed. As the phone's GyroDisplayFeed.trackballEase.
+    /// </summary>
+    private void TrackballEase(OverlayFrame f, OverlaySettings s, bool pressed, float clock)
+    {
+        if (!AnyEase(s))
+        {
+            Array.Clear(_axisEasing);
+            return;
+        }
+        float dt = f.TurnSeconds;
+        bool live = f.PoseLive && dt > 0f;
+        bool busy = live && MathF.Sqrt(f.TurnYaw * f.TurnYaw + f.TurnPitch * f.TurnPitch + f.TurnRoll * f.TurnRoll) / dt > StillDps;
+        GimbalSync();
+        // A None axis never eases back, whatever its (hidden) ease setting says.
+        int locked = OverlaySettings.TrackballLocks(s.TrackballAxes);
+        bool any = false;
+        for (int i = 0; i < 3; i++)
+        {
+            _easeStep[i] = 0f;
+            var e = s.EaseOf(i);
+            if (!e.On || (locked & (1 << i)) != 0)
+            {
+                _axisEasing[i] = false;
+                continue;
+            }
+            float step;
+            if (e.OnRatchet)
+            {
+                if (pressed)
+                {
+                    _axisEasing[i] = true;
+                    _axisCalm[i] = 0f;
+                }
+                else if (!f.RatchetHeld) _axisEasing[i] = false;
+                if (!_axisEasing[i]) continue;
+                step = clock;
+            }
+            else
+            {
+                if (!live) continue;
+                step = dt;
+            }
+            if (!e.OnRatchet && busy) { _axisCalm[i] = 0f; continue; }
+            _axisCalm[i] += step;
+            if (step == 0f || _axisCalm[i] < Math.Clamp(e.DelayMs, 0, 3000) / 1000f) continue;
+            float a = _gimbal[i];
+            if (a == 0f) continue;
+            // By time: an exponential, 95% of the way back after its seconds; then exactly straight.
+            float max = Math.Clamp(e.Speed, 1, 3600) * DegToRad * step;
+            float next = e.BySpeed ? a - Math.Clamp(a, -max, max) : a * (1f - Math.Min(3f * step / Math.Max(e.Seconds, 0.05f), 1f));
+            if (MathF.Abs(next) < StraightRad) next = 0f;
+            _easeStep[i] = next - a;
+            any = true;
+        }
+        int m = s.TrackballAxes;
+        // About its own axes a held one can still have turned (a loop's twist): ease it too, held by nothing.
+        if (any)
+        {
+            if (s.TrackballOwnAxes) GimbalTurn(_easeStep[0], _easeStep[1], _easeStep[2], 0, 0);
+            else GimbalTurn(_easeStep[0], _easeStep[1], _easeStep[2], OverlaySettings.TrackballLocks(m), Bits(m, OverlaySettings.TrackballStop));
+        }
+    }
+
+    /// <summary>The gimbal angles (GimbalTurn) and the pose they made: read again from the pose when anything else turned it.</summary>
+    private readonly float[] _gimbal = new float[3];
+    private readonly float[] _gimbalOf = { float.NaN, float.NaN, float.NaN, float.NaN };
+
+    /// <summary>Reads the gimbal angles from the pose again when anything but GimbalTurn turned it.</summary>
+    private void GimbalSync()
+    {
+        if (_w == _gimbalOf[0] && _x == _gimbalOf[1] && _y == _gimbalOf[2] && _z == _gimbalOf[3]) return;
+        _gimbal[0] = MathF.Atan2(2 * (_x * _z + _w * _y), 1 - 2 * (_x * _x + _y * _y));
+        _gimbal[1] = MathF.Asin(Math.Clamp(-2 * (_y * _z - _w * _x), -1f, 1f));
+        _gimbal[2] = MathF.Atan2(2 * (_x * _y + _w * _z), 1 - 2 * (_x * _x + _z * _z));
+    }
+
+    /// <summary>
+    /// Turns as a gimbal (a game camera's order): by <paramref name="a"/> radians about the vertical, then
+    /// <paramref name="b"/> about its own right, then <paramref name="c"/> about where it faces, as
+    /// Ry(a)·Rx(b)·Rz(c). The angles add up and <paramref name="locks"/> (bit 0 the vertical, 1 the right, 2
+    /// the facing axis) holds those at 0, so nothing ever turns a locked one; <paramref name="stops"/> holds those
+    /// within ±90° (the right one within ±89°, short of the poles). As the phone's GyroPose.gimbalTurn.
+    /// </summary>
+    private void GimbalTurn(float a, float b, float c, int locks, int stops)
+    {
+        GimbalSync();
+        // Over the top, left and right stay as seen.
+        _gimbal[0] += MathF.Abs(_gimbal[1]) > MathF.PI / 2 ? -a : a;
+        _gimbal[1] += b; _gimbal[2] += c;
+        for (int i = 0; i < 3; i++)
+        {
+            // Within half a turn either way, so easing back never unwinds whole turns.
+            if (_gimbal[i] > MathF.PI) _gimbal[i] -= 2 * MathF.PI; else if (_gimbal[i] < -MathF.PI) _gimbal[i] += 2 * MathF.PI;
+            if ((locks & (1 << i)) != 0) _gimbal[i] = 0f;
+        }
+        for (int i = 0; i < 3; i++)
+            if ((stops & (1 << i)) != 0)
+            {
+                float max = i == 1 ? 89f * DegToRad : MathF.PI / 2;
+                _gimbal[i] = Math.Clamp(_gimbal[i], -max, max);
+            }
+        // Ry(a) · Rx(b), then · Rz(c)
+        float cy = MathF.Cos(_gimbal[0] / 2), sy = MathF.Sin(_gimbal[0] / 2);
+        float cx = MathF.Cos(_gimbal[1] / 2), sx = MathF.Sin(_gimbal[1] / 2);
+        float cz = MathF.Cos(_gimbal[2] / 2), sz = MathF.Sin(_gimbal[2] / 2);
+        float pw = cy * cx, px = cy * sx, py = sy * cx, pz = -sy * sx;
+        _w = pw * cz - pz * sz;
+        _x = px * cz + py * sz;
+        _y = py * cz - px * sz;
+        _z = pw * sz + pz * cz;
+        _gimbalOf[0] = _w; _gimbalOf[1] = _x; _gimbalOf[2] = _y; _gimbalOf[3] = _z;
+    }
+
+    /// <summary>Axis <paramref name="i"/>'s turn (0 up, 1 right, 2 through the screen) by axis mapping <paramref name="m"/> (TrackballAxes) of these gyro turns.</summary>
+    private static float About(int m, int i, float yaw, float pitch, float roll)
+    {
+        int code = (m >> (8 * i)) & 0xFF;
+        float v = (code & 0x1F) switch { 1 => yaw, 2 => pitch, 3 => roll, _ => 0f };
+        return (code & 0x80) != 0 ? -v : v;
+    }
+
+    /// <summary>
+    /// Turns as a game camera does: <paramref name="yawDeg"/> right about the vertical,
+    /// <paramref name="pitchDeg"/> up about its own right, pitch held within ±89°, never any roll.
+    /// Where it points now is read from the pose (so easing back keeps working), then the pose is
+    /// made again from that heading and pitch alone. As the phone's GyroPose.cameraTurn.
+    /// </summary>
+    private void CameraLook(float yawDeg, float pitchDeg)
+    {
+        float bx = -(2 * (_x * _z + _w * _y));
+        float by = -(2 * (_y * _z - _w * _x));
+        float bz = -(1 - 2 * (_x * _x + _y * _y));
+        float heading = MathF.Atan2(bx, -bz) + yawDeg * DegToRad;
+        float max = 89f * DegToRad;
+        float pitch = Math.Clamp(MathF.Asin(Math.Clamp(by, -1f, 1f)) + pitchDeg * DegToRad, -max, max);
+        float cy = MathF.Cos(-heading / 2), sy = MathF.Sin(-heading / 2), cx = MathF.Cos(pitch / 2), sx = MathF.Sin(pitch / 2);
+        _w = cy * cx; _x = cy * sx; _y = sy * cx; _z = -sy * sx;
     }
 
     private void SetUp(float ax, float ay, float az, float g)

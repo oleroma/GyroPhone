@@ -21,6 +21,12 @@ public sealed class OverlayFrame
     public const byte FlagRatchetHeld = 32;
     /// <summary>The turn, time and camera degrees are running totals (sent only while HOST_STATUS has <see cref="HostStatusFlags.OverlayTotals"/>).</summary>
     public const byte FlagTotals = 64;
+    /// <summary>
+    /// The phone's gyro space is World or Player: the turn, up and north come about the screen's own
+    /// axes (the phone's real pose), poses ignore their saved grip, and the live gyro's camera turn
+    /// (in that space) is already in the camera degrees.
+    /// </summary>
+    public const byte FlagRealWorld = 128;
     public const byte NoControl = 0xFF;
     /// <summary>The accelerometer's 1 g in OVERLAY.</summary>
     public const float GScale = 8192f;
@@ -36,12 +42,24 @@ public sealed class OverlayFrame
     public byte Axes;
     /// <summary>Ratchet presses so far (wraps at 256): a change is a press.</summary>
     public byte RatchetPresses;
+    /// <summary>Level displays presses so far (wraps at 256): a change levels every overlay shown.</summary>
+    public byte LevelPresses;
+    /// <summary>Clear displays presses so far (wraps at 256): a change clears every laser pointer's paint and trail.</summary>
+    public byte ClearPresses;
+    /// <summary>
+    /// The gyro axis on mouse X and on mouse Y: 1 yaw, 2 pitch, 3 roll (+ 0x80 when it moves the mouse
+    /// the other way); 0 = not sent (older phones: roll and pitch). An overlay turning with the camera
+    /// turns as the game's camera by them.
+    /// </summary>
+    public byte CameraXAxis, CameraYAxis;
     /// <summary>The phone turn (degrees on yaw, pitch, roll) that would send the mouse counts sent since the last OVERLAY by anything but the live gyro (a trackball turns by it).</summary>
     public float CameraYaw, CameraPitch, CameraRoll;
     /// <summary>The game's camera degrees per phone degree on yaw, pitch, roll; 0 = unknown.</summary>
     public float RwsYaw, RwsPitch, RwsRoll;
     /// <summary>The pose the PC made (not on the wire): phone frame (x right, y up, z out of the screen) to the player's view.</summary>
     public float Qw = 1, Qx, Qy, Qz;
+    /// <summary>Not on the wire: the trackball axes (bit 0 yaw, 1 pitch, 2 roll) the gyro turned just now, to light them up.</summary>
+    public int PoseActive;
     public ushort LayoutVersion;
     public byte Flags;
     public int FingerCount;
@@ -77,6 +95,7 @@ public sealed class OverlayFrame
     public bool HasNorth => (Flags & FlagNorth) != 0;
     public bool RatchetHeld => (Flags & FlagRatchetHeld) != 0;
     public bool Totals => (Flags & FlagTotals) != 0;
+    public bool RealWorld => (Flags & FlagRealWorld) != 0;
 
     public bool IsPressed(int i) => i is >= 0 and < 128 && (Pressed[i >> 3] & (1 << (i & 7))) != 0;
     public bool IsLatched(int i) => i is >= 0 and < 128 && (Latched[i >> 3] & (1 << (i & 7))) != 0;
@@ -126,13 +145,47 @@ public sealed class OverlayFrame
         PadFlags = b[136];
         PadL2Pull = b[137] / 255f;
         PadR2Pull = b[138] / 255f;
+        LevelPresses = b[139];
         PadButtons = Le.U32(b, 140);
         for (int i = 0; i < 4; i++) PadSticks[i] = Math.Max(-1f, (sbyte)b[144 + i] / 127f);
+        ClearPresses = b[148];
+        CameraXAxis = b[149];
+        CameraYAxis = b[150];
     }
 
     private static float Gain(float v) => float.IsFinite(v) && v > 0f ? Math.Min(v, 100f) : 0f;
 
     private static float Finite(float v) => float.IsFinite(v) ? Math.Clamp(v, -3600f, 3600f) : 0f;
+
+    /// <summary>
+    /// Everything an overlay draws from this frame other than the pose is as in <paramref name="o"/>:
+    /// flags, gyro axes, layout version, fingers, pressed and latched controls, stick knobs, the
+    /// lit trackball axes and the attached controller.
+    /// </summary>
+    public bool SameShown(OverlayFrame o)
+    {
+        if (Flags != o.Flags || Axes != o.Axes || LayoutVersion != o.LayoutVersion || PoseActive != o.PoseActive
+            || FingerCount != o.FingerCount || StickCount != o.StickCount
+            || PadFlags != o.PadFlags || PadButtons != o.PadButtons || PadL2Pull != o.PadL2Pull || PadR2Pull != o.PadR2Pull)
+            return false;
+        return Fingers.AsSpan(0, FingerCount * 2).SequenceEqual(o.Fingers.AsSpan(0, FingerCount * 2))
+            && Pressed.AsSpan().SequenceEqual(o.Pressed)
+            && Latched.AsSpan().SequenceEqual(o.Latched)
+            && StickIndex.AsSpan(0, StickCount).SequenceEqual(o.StickIndex.AsSpan(0, StickCount))
+            && StickXY.AsSpan(0, StickCount * 2).SequenceEqual(o.StickXY.AsSpan(0, StickCount * 2))
+            && PadSticks.AsSpan().SequenceEqual(o.PadSticks);
+    }
+
+    /// <summary>The angle (radians, 0..π) between <paramref name="a"/>'s pose and <paramref name="b"/>'s, exact for tiny turns.</summary>
+    public static float TurnBetween(OverlayFrame a, OverlayFrame b)
+    {
+        // a's conjugate times b: its vector part is sin(angle / 2), its w cos(angle / 2).
+        float w = a.Qw * b.Qw + a.Qx * b.Qx + a.Qy * b.Qy + a.Qz * b.Qz;
+        float x = a.Qw * b.Qx - a.Qx * b.Qw - a.Qy * b.Qz + a.Qz * b.Qy;
+        float y = a.Qw * b.Qy + a.Qx * b.Qz - a.Qy * b.Qw - a.Qz * b.Qx;
+        float z = a.Qw * b.Qz - a.Qx * b.Qy + a.Qy * b.Qx - a.Qz * b.Qw;
+        return 2f * MathF.Atan2(MathF.Sqrt(x * x + y * y + z * z), MathF.Abs(w));
+    }
 
     public void CopyTo(OverlayFrame o)
     {
@@ -142,9 +195,14 @@ public sealed class OverlayFrame
         o.NorthX = NorthX; o.NorthY = NorthY; o.NorthZ = NorthZ;
         o.Axes = Axes;
         o.RatchetPresses = RatchetPresses;
+        o.LevelPresses = LevelPresses;
+        o.ClearPresses = ClearPresses;
+        o.CameraXAxis = CameraXAxis;
+        o.CameraYAxis = CameraYAxis;
         o.CameraYaw = CameraYaw; o.CameraPitch = CameraPitch; o.CameraRoll = CameraRoll;
         o.RwsYaw = RwsYaw; o.RwsPitch = RwsPitch; o.RwsRoll = RwsRoll;
         o.Qw = Qw; o.Qx = Qx; o.Qy = Qy; o.Qz = Qz;
+        o.PoseActive = PoseActive;
         o.LayoutVersion = LayoutVersion;
         o.Flags = Flags;
         o.FingerCount = FingerCount;

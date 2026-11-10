@@ -11,6 +11,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import com.oleroma.gyrophone.core.engine.MappingEngine
+import com.oleroma.gyrophone.core.hid.HidUsage
 import com.oleroma.gyrophone.core.net.Announce
 import com.oleroma.gyrophone.core.net.AnnounceFlags
 import com.oleroma.gyrophone.core.net.ByeReason
@@ -22,6 +23,7 @@ import com.oleroma.gyrophone.core.net.EnrollResult
 import com.oleroma.gyrophone.core.net.HostFlags
 import com.oleroma.gyrophone.core.net.HostStatus
 import com.oleroma.gyrophone.core.net.HostStatusFlags
+import com.oleroma.gyrophone.core.net.KeyLabels
 import com.oleroma.gyrophone.core.net.KeyPairing
 import com.oleroma.gyrophone.core.net.KeyStatus
 import com.oleroma.gyrophone.core.net.KeyTakeover
@@ -31,6 +33,9 @@ import com.oleroma.gyrophone.core.net.LiveSession
 import com.oleroma.gyrophone.core.net.MotionFeed
 import com.oleroma.gyrophone.core.net.OutputMode
 import com.oleroma.gyrophone.core.net.OverlayFeed
+import com.oleroma.gyrophone.core.net.PressStamp
+import com.oleroma.gyrophone.core.net.TestMode
+import com.oleroma.gyrophone.core.net.TestModeFlags
 import com.oleroma.gyrophone.core.net.PcGyroFeed
 import com.oleroma.gyrophone.core.net.PacketType
 import com.oleroma.gyrophone.core.net.PairFailure
@@ -64,6 +69,8 @@ import java.net.InetSocketAddress
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** A PC that answered DISCOVER within the last [Wire.HOST_EXPIRY_MS]. */
 data class DiscoveredHost(
@@ -95,8 +102,9 @@ data class PairingView(val hostName: String, val state: PairState)
  *
  * One unconnected socket carries everything. The `gp-wifi-rx` thread owns all protocol state:
  * it receives with a 50 ms timeout, drives [PhonePairingFlow] and [PhoneSessionFlow], runs
- * discovery and executes UI commands from a queue, so no flow is touched from two threads.
- * [WifiPump] sends input on the live session.
+ * discovery and executes UI commands from a queue, so no flow is touched from two threads. A
+ * queued command wakes it out of its receive wait at once ([wakeRx]). [WifiPump] sends input on
+ * the live session. [stop] returns at once; the threads wind down on `gp-wifi-stop`.
  */
 class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink {
     override val kind = TransportKind.WIFI
@@ -115,8 +123,29 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** "Use PC controller for gyro ratchet": the gyro's samples and the controller's gyro buttons for a PC that runs the gyro. */
     val pcGyro = PcGyroFeed()
 
-    /** The raw motion for the PC's DualShock 4 (its gyro and accelerometer), sent while its pad is one. */
+    /** The raw motion for the PC's DualShock 4 or DualSense (its gyro and accelerometer), sent while its pad is one. */
     val motion = MotionFeed()
+
+    /** Press and release input times for "Measure buttons" (PRESS_TIME); the input code notes each edge. */
+    val pressStamp: PressStamp get() = pump.pressStamp
+
+    private val _latencyScreen = MutableStateFlow(false)
+    /** The PC's latency test window is open (TEST_MODE): the pad shows the tracking markers. */
+    val latencyScreen: StateFlow<Boolean> = _latencyScreen
+
+    private val _linkTest = MutableStateFlow(false)
+    /** The PC runs a Link test (TEST_MODE): the pump sends fake input, the pad shows a note. */
+    val linkTest: StateFlow<Boolean> = _linkTest
+
+    /** The PC's TEST_MODE flags; 0 without a session. */
+    @Volatile private var testMode = 0
+        set(v) {
+            field = v
+            pump.pressTimes = v and TestModeFlags.PRESS_TIMES != 0
+            _latencyScreen.value = v and TestModeFlags.LATENCY_SCREEN != 0
+            pump.linkTest = v and TestModeFlags.LINK_TEST != 0
+            _linkTest.value = v and TestModeFlags.LINK_TEST != 0
+        }
     private val accessory = AccessoryBridge(appContext)
 
     private val _state = MutableStateFlow<LinkState>(LinkState.Off)
@@ -149,6 +178,19 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     private val _autoConnect = MutableStateFlow(prefs.getBoolean(KEY_AUTO_CONNECT, true))
     /** Connect by key without a tap while GyroPhone is on screen (never from the background). */
     val autoConnect: StateFlow<Boolean> = _autoConnect
+
+    /** The last PC's KEY_LABELS, kept so key names follow its layout while no PC is connected. */
+    private var keyLabels: KeyLabels? = prefs.getString(KEY_PC_KEY_LABELS, null)?.let { stored ->
+        val v = stored.split(',').mapNotNull { it.toIntOrNull() }
+        if (v.size != 1 + KeyLabels.USAGES.size) null else KeyLabels(v[0], v.drop(1).toIntArray())
+    }.also { if (it != null) HidUsage.pcLabels = it.labels() }
+
+    private fun onKeyLabels(p: KeyLabels) {
+        if (p == keyLabels) return
+        keyLabels = p
+        HidUsage.pcLabels = p.labels()
+        prefs.edit().putString(KEY_PC_KEY_LABELS, (listOf(p.layout) + p.chars.toList()).joinToString(",")).apply()
+    }
 
     fun setAutoConnect(on: Boolean) {
         prefs.edit().putBoolean(KEY_AUTO_CONNECT, on).apply()
@@ -193,6 +235,11 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     @Volatile private var usbCabled = true
     private val usbStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            // The user allowed GyroPhone to use the accessory: open the cable now, not at the next check.
+            if (intent.action == AccessoryBridge.ACTION_PERMISSION) {
+                checkUsbNow()
+                return
+            }
             val cabled = intent.getBooleanExtra(EXTRA_USB_CONNECTED, true)
             if (cabled != usbCabled) {
                 usbCabled = cabled
@@ -209,6 +256,14 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     private var usbBackoffUntilMs = 0L
     private var rxThread: Thread? = null
     private val commands = ConcurrentLinkedQueue<Runnable>()
+    /** A wake datagram is on its way to the rx thread; it clears this before it runs the queue. */
+    private val wakePending = AtomicBoolean(false)
+    /** Sends the wake datagrams, so no caller (the UI thread) touches the network itself. */
+    private val waker = Executors.newSingleThreadExecutor { Thread(it, "gp-wifi-wake").apply { isDaemon = true } }
+    /** The waker's own socket; waker thread only. */
+    private var wakeSocket: DatagramSocket? = null
+    /** The last [stop]'s wind-down; [start] waits for it, so the old threads never meet the new ones. */
+    @Volatile private var stopThread: Thread? = null
 
     // Rx-thread state.
     private var session: PhoneSessionFlow? = null
@@ -255,8 +310,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             overlay.wanted = v != null && v.flags and HostStatusFlags.OVERLAY != 0
             overlay.compassWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_COMPASS != 0
             overlay.totalsWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_TOTALS != 0
-            if (v != null) motion.padIsDs4 = v.outputMode == OutputMode.DUALSHOCK4 && v.flags and HostStatusFlags.PAD_PLUGGED != 0
-            else motion.padIsDs4 = false
+            if (v != null) motion.padTakesMotion = OutputMode.takesMotion(v.outputMode) && v.flags and HostStatusFlags.PAD_PLUGGED != 0
+            else motion.padTakesMotion = false
         }
     @Volatile private var welcomeHostFlags: Int? = null
 
@@ -272,6 +327,15 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     override fun start() {
         if (running) return
+        // A stop just before (a quick switch back) still winding down: its state must be gone first.
+        stopThread?.let { t ->
+            try {
+                t.join()
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+        stopThread = null
         val s = try {
             DatagramSocket(0).apply {
                 broadcast = true
@@ -295,7 +359,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         keys.startWatching { post { onTrustedChanged(keys.rescan()) } }
         usbCabled = true
         // The sticky USB_STATE comes back at once; without one USB is looked for every second as before.
-        appContext.registerReceiver(usbStateReceiver, IntentFilter(ACTION_USB_STATE), Context.RECEIVER_NOT_EXPORTED)
+        val filter = IntentFilter(ACTION_USB_STATE).apply { addAction(AccessoryBridge.ACTION_PERMISSION) }
+        appContext.registerReceiver(usbStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
             ?.let { usbCabled = it.getBooleanExtra(EXTRA_USB_CONNECTED, true) }
         _state.value = LinkState.Searching
         post { autoConnect() }
@@ -304,13 +369,25 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     override fun stop() = stop(ByeReason.SHUTDOWN)
 
-    /** Stops the link; a live session first gets a neutral STATE and BYE([byeReason]). */
+    /**
+     * Stops the link; a live session first gets a neutral STATE and BYE([byeReason]). Returns at
+     * once: waiting for the rx and pump threads (and the goodbye) happens on `gp-wifi-stop`, so the
+     * UI thread never waits for them. Commands and UI calls are refused from now on, and the next
+     * [start] waits for the wind-down to finish.
+     */
     fun stop(byeReason: Int) {
         if (!running) return
         running = false
         engine.onChange = null
         keys.stopWatching()
         runCatching { appContext.unregisterReceiver(usbStateReceiver) }
+        wakeRx() // out of its receive wait now, so the join below is short
+        _state.value = LinkState.Off
+        stopThread = Thread({ windDown(byeReason) }, "gp-wifi-stop").apply { start() }
+    }
+
+    /** The second half of [stop], on `gp-wifi-stop`. */
+    private fun windDown(byeReason: Int) {
         rxThread?.let { t ->
             try {
                 t.join(RX_JOIN_MS)
@@ -356,9 +433,13 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         _nothingFound.value = false
         _notice.value = null
         hostStatus = null
+        testMode = 0
         welcomeHostFlags = null
         _state.value = LinkState.Off
     }
+
+    /** Runs a USB check now instead of at the next once-a-second one (the accessory was just attached or allowed). */
+    fun checkUsbNow() = post { nextUsbCheckMs = 0L }
 
     override fun stats(): LinkStats {
         val info = if (usbActive) WifiRadioInfo() else binder.info
@@ -469,7 +550,29 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     }
 
     private fun post(r: Runnable) {
-        if (running) commands.add(r)
+        if (!running) return
+        commands.add(r)
+        wakeRx()
+    }
+
+    /**
+     * Wakes the rx thread out of its receive wait: a datagram of no bytes to its own socket, which
+     * [onDatagram] drops. Sent from [waker]; only one is under way at a time.
+     */
+    private fun wakeRx() {
+        if (!wakePending.compareAndSet(false, true)) return
+        waker.execute {
+            val s = socket ?: return@execute
+            try {
+                if (s.isClosed) return@execute
+                val local = s.localAddress
+                val to = InetSocketAddress(if (local == null || local.isAnyLocalAddress) InetAddress.getLoopbackAddress() else local, s.localPort)
+                val w = wakeSocket ?: DatagramSocket().also { wakeSocket = it }
+                w.send(DatagramPacket(ByteArray(0), 0, to))
+            } catch (e: Exception) {
+                Log.d(TAG, "wake failed: ${e.message}") // the receive timeout runs the queue anyway
+            }
+        }
     }
 
     // ---- rx thread ----
@@ -479,6 +582,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         val buf = ByteArray(Wire.MAX_DATAGRAM)
         val packet = DatagramPacket(buf, buf.size)
         while (running) {
+            wakePending.set(false) // a command queued from now on sends a new wake
             while (true) {
                 val r = commands.poll() ?: break
                 try {
@@ -733,12 +837,27 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         }
     }
 
+    /**
+     * At start: the most recently used code-paired PC, unless a key session was used more recently
+     * and key auto-connect will take that PC as soon as it answers ([onAnnounce]). The first try
+     * gives way to a PC ready by key quickly ([KeyTakeover.FIRST_TRY_MS]), in case it is an old PC.
+     */
     private fun autoConnect() {
         val last = store.mostRecent() ?: return
-        connectTo(last.hostIdHex)
+        val keyUsedMs = prefs.getLong(KEY_LAST_KEY_USED, 0L)
+        if (keyUsedMs > last.lastUsedMs && _autoConnect.value && keys.trusted.value.isNotEmpty() && appOnScreen()) return
+        connectTo(last.hostIdHex, firstTry = true)
     }
 
-    private fun connectTo(hostIdHex: String) {
+    /** The session to [sessionHostId] came up: it is the pairing used last, of whichever kind. */
+    private fun noteUsed() {
+        val id = sessionHostId ?: return
+        if (sessionKeyId != null) prefs.edit().putLong(KEY_LAST_KEY_USED, System.currentTimeMillis()).apply()
+        else store.touch(id)
+    }
+
+    /** [firstTry]: the link's automatic try at start, which does not count as a use until it comes up. */
+    private fun connectTo(hostIdHex: String, firstTry: Boolean = false) {
         val stored = store.find(hostIdHex) ?: return
         // A fresh ANNOUNCE beats the stored address (DHCP may have moved the PC).
         val seen = foundMap[hostIdHex]?.let { runCatching { InetSocketAddress(InetAddress.getByName(it.address), it.port) }.getOrNull() }
@@ -749,11 +868,11 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         }
         _notice.value = null
         endSession(ByeReason.USER)
-        store.touch(hostIdHex)
+        if (!firstTry) store.touch(hostIdHex)
         val f = PhoneSessionFlow(store.phoneId, host, ::broadcastTargets, Caps.RUMBLE, rateHz)
         session = f
         sessionHostId = hostIdHex
-        takeover.started(SystemClock.elapsedRealtime())
+        takeover.started(SystemClock.elapsedRealtime(), firstTry)
         _currentHostId.value = hostIdHex
         sessionHostName = stored.name
         handleSessionOuts(f.connect(SystemClock.elapsedRealtime()))
@@ -778,6 +897,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         if (usbActive) useWifi()
         locks.release()
         hostStatus = null
+        testMode = 0
         welcomeHostFlags = null
         publishState()
     }
@@ -943,21 +1063,24 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 clockOffsetUs = 0L
                 rttMinUs = -1L
                 // A replacement is the same PC: its overlay stays on until its next HOST_STATUS says otherwise.
-                if (s == null) hostStatus = null
-                // Until the first HOST_STATUS, WELCOME's output mode says whether the pad is a DualShock 4.
-                else if (hostStatus == null) motion.padIsDs4 = s.outputMode == OutputMode.DUALSHOCK4
+                if (s == null) { hostStatus = null; testMode = 0 }
+                // Until the first HOST_STATUS, WELCOME's output mode says whether the pad takes motion.
+                else if (hostStatus == null) motion.padTakesMotion = OutputMode.takesMotion(s.outputMode)
                 welcomeHostFlags = s?.hostFlags
                 if (s != null) locks.acquire() else locks.release()
                 changed = true
             }
             is PhoneSessionFlow.Out.Status -> {
                 takeover.onStatus(o.status, SystemClock.elapsedRealtime())
+                if (o.status == SessionStatus.LIVE) noteUsed()
                 changed = true
             }
             is PhoneSessionFlow.Out.HostAddress -> sessionHostId?.let { store.updateAddress(it, o.addr) }
             is PhoneSessionFlow.Out.Received -> when (val p = o.packet) {
                 is Pong -> onPong(p)
                 is HostStatus -> hostStatus = p
+                is KeyLabels -> onKeyLabels(p)
+                is TestMode -> testMode = p.flags
                 else -> Unit // RUMBLE is ignored in v1; ANNOUNCE was handled already
             }
         }
@@ -1233,6 +1356,9 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         private const val UNKNOWN_LATENCY = -1 // 0xFFFFFFFF
         private const val MAX_KEY_DISCOVERS = 4
         private const val KEY_AUTO_CONNECT = "keyAutoConnect"
+        private const val KEY_PC_KEY_LABELS = "pcKeyLabels"
+        /** When a key session last came up (wall clock ms), to compare with [StoredHost.lastUsedMs]. */
+        private const val KEY_LAST_KEY_USED = "lastKeyUsedMs"
         private const val KEY_RESCAN_MS = 2000L
         /** How often USB tethering is looked for, and the PC on it. */
         private const val USB_CHECK_MS = 1000L

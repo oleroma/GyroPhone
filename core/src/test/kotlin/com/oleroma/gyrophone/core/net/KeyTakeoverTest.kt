@@ -17,6 +17,25 @@ class KeyTakeoverTest {
         assertTrue(t.allows(SessionStatus.NOT_PAIRED, true, true, 4000))
     }
 
+    @Test fun theFirstTryAtStartGivesWayQuicklyUntilItComesUp() {
+        val t = KeyTakeover()
+        t.started(1000, firstTry = true)
+        t.onStatus(SessionStatus.CONNECTING, 1000)
+        assertFalse(t.allows(SessionStatus.CONNECTING, true, false, 1000 + KeyTakeover.FIRST_TRY_MS - 1))
+        assertTrue(t.allows(SessionStatus.CONNECTING, true, false, 1000 + KeyTakeover.FIRST_TRY_MS))
+        // An old PC that refuses this phone gives way just as fast.
+        t.onStatus(SessionStatus.NOT_PAIRED, 1100)
+        assertTrue(t.allows(SessionStatus.NOT_PAIRED, true, false, 1000 + KeyTakeover.FIRST_TRY_MS))
+        // Once it came up, a drop waits the usual time.
+        t.onStatus(SessionStatus.LIVE, 2000)
+        t.onStatus(SessionStatus.HOST_EXITED, 3000)
+        assertFalse(t.allows(SessionStatus.HOST_EXITED, true, true, 3000 + KeyTakeover.FIRST_TRY_MS))
+        assertTrue(t.allows(SessionStatus.HOST_EXITED, true, true, 3000 + KeyTakeover.TAKEOVER_MS))
+        // A later flow (a tap on Connect) is not a first try.
+        t.started(10_000)
+        assertFalse(t.allows(SessionStatus.CONNECTING, true, false, 10_000 + KeyTakeover.FIRST_TRY_MS))
+    }
+
     @Test fun downTimeCountsNotAge() {
         val t = KeyTakeover()
         t.started(0)

@@ -37,7 +37,11 @@ public sealed record CompanionView(
     string HostKey,
     string KeysFolder,
     string LogPath,
-    IReadOnlyList<Problem> Problems);
+    IReadOnlyList<Problem> Problems,
+    bool MeasureButtons = false,
+    ButtonLatency? Buttons = null,
+    bool InputLog = true,
+    int CatchUpMs = 16);
 
 /// <summary>
 /// The tray app as the windows see it. Every setter saves the setting and refreshes the open windows,
@@ -50,6 +54,13 @@ public interface ICompanion
 
     /// <summary>The full status text (Home's "Details").</summary>
     string DetailsText();
+
+    // Latency
+    void ToggleMeasureButtons();
+    /// <summary>The latency test window is open: the phone shows its tracking markers.</summary>
+    void SetLatencyScreen(bool on);
+    /// <summary>A line in the companion's log.</summary>
+    void Log(string message);
 
     // Gamepad and input
     void SetOutputMode(OutputMode mode);
@@ -77,6 +88,9 @@ public interface ICompanion
     void SetTrayClick(TrayClickAction action);
     void OpenLogFolder();
     void ShowDebugWindow();
+    void ToggleInputLog();
+    /// <summary>"Catch-up time", ms (0 = off).</summary>
+    void SetCatchUpMs(int ms);
 
     // Overlays
     IReadOnlyList<OverlaySettings> Overlays { get; }
@@ -93,7 +107,14 @@ public interface ICompanion
     string AddOverlay(OverlayKind kind);
     void RemoveOverlay(string id);
     void LevelOverlay(string id);
+    /// <summary>Clears laser pointer overlay <paramref name="id"/>'s paint and trail.</summary>
+    void ClearOverlay(string id);
     void LevelAll();
+    /// <summary>"Fade when phone rests", for every overlay.</summary>
+    OverlayRestFade RestFade { get; }
+    void ChangeRestFade(Action<OverlayRestFade> change);
+    /// <summary>The phone's turning speed now (deg/s) from its overlay data, or null without any lately.</summary>
+    float? StillnessDps { get; }
 
     // Overlay shortcuts
     OverlayShortcuts Shortcuts { get; }

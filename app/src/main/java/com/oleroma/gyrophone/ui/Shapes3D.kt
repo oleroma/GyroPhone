@@ -89,13 +89,19 @@ internal class Mesh(
     /**
      * Projects every vertex by row-major [m] into [tx], [ty], [tz] (view frame, z toward the viewer)
      * and marks each face front facing or not, its depth and its shade (how squarely it faces).
+     * With [camera] > 0 (the eye's distance, in the shape's radii) x and y are in perspective.
      */
-    fun project(m: FloatArray) {
+    fun project(m: FloatArray, camera: Float = 0f) {
         for (i in tx.indices) {
             val x = vertices[i * 3]; val y = vertices[i * 3 + 1]; val z = vertices[i * 3 + 2]
             tx[i] = m[0] * x + m[1] * y + m[2] * z
             ty[i] = m[3] * x + m[4] * y + m[5] * z
             tz[i] = m[6] * x + m[7] * y + m[8] * z
+            if (camera > 0f) {
+                val k = camera / (camera - tz[i].coerceAtMost(camera - 0.5f))
+                tx[i] *= k
+                ty[i] *= k
+            }
         }
         for (f in faces.indices) {
             val nz = m[6] * normals[f * 3] + m[7] * normals[f * 3 + 1] + m[8] * normals[f * 3 + 2]
@@ -144,6 +150,7 @@ internal object Meshes {
         BallShape.DODECAHEDRON -> cache.getOrPut("dodeca") { dodecahedron() }
         BallShape.TORUS -> cache.getOrPut("torus$smooth") { if (smooth) torus(28, 14) else torus(12, 6) }
         BallShape.PLANE -> cache.getOrPut("plane") { plane() }
+        BallShape.CAMERA -> cache.getOrPut("camera") { camera() }
     }
 
     const val MAX_SUBDIVISION = 3
@@ -300,6 +307,50 @@ internal object Meshes {
         val faces = arrayOf(intArrayOf(0, 1, 2), intArrayOf(0, 2, 3), intArrayOf(0, 2, 4))
         return Mesh(v, faces, twoSided = true, convex = false)
     }
+
+    /**
+     * A camera seen from behind: a body, a lens pointing away from the viewer (into the screen,
+     * where the camera looks) and a viewfinder on top, left.
+     */
+    private fun camera(): Mesh {
+        val v = ArrayList<Float>()
+        val faces = ArrayList<IntArray>()
+        val normals = ArrayList<FloatArray>()
+        fun box(x0: Float, x1: Float, y0: Float, y1: Float, z0: Float, z1: Float) {
+            val b = v.size / 3
+            for (x in listOf(x0, x1)) for (y in listOf(y0, y1)) for (z in listOf(z0, z1)) { v += x; v += y; v += z }
+            fun at(x: Int, y: Int, z: Int) = b + x * 4 + y * 2 + z
+            faces += intArrayOf(at(0, 0, 0), at(0, 1, 0), at(0, 1, 1), at(0, 0, 1)); normals += floatArrayOf(-1f, 0f, 0f)
+            faces += intArrayOf(at(1, 0, 0), at(1, 0, 1), at(1, 1, 1), at(1, 1, 0)); normals += floatArrayOf(1f, 0f, 0f)
+            faces += intArrayOf(at(0, 0, 0), at(0, 0, 1), at(1, 0, 1), at(1, 0, 0)); normals += floatArrayOf(0f, -1f, 0f)
+            faces += intArrayOf(at(0, 1, 0), at(1, 1, 0), at(1, 1, 1), at(0, 1, 1)); normals += floatArrayOf(0f, 1f, 0f)
+            faces += intArrayOf(at(0, 0, 0), at(1, 0, 0), at(1, 1, 0), at(0, 1, 0)); normals += floatArrayOf(0f, 0f, -1f)
+            faces += intArrayOf(at(0, 0, 1), at(0, 1, 1), at(1, 1, 1), at(1, 0, 1)); normals += floatArrayOf(0f, 0f, 1f)
+        }
+        box(-0.75f, 0.75f, -0.45f, 0.45f, -0.2f, 0.45f)
+        box(-0.55f, -0.2f, 0.45f, 0.62f, 0f, 0.35f)
+        val n = CAMERA_LENS_SIDES
+        val b = v.size / 3
+        for (i in 0 until n) {
+            val a = 2 * PI * i / n
+            val x = (CAMERA_LENS_R * cos(a)).toFloat()
+            val y = (CAMERA_LENS_R * sin(a)).toFloat()
+            v += x; v += y; v += -0.2f
+            v += x; v += y; v += -0.75f
+        }
+        for (i in 0 until n) {
+            val j = (i + 1) % n
+            faces += intArrayOf(b + 2 * i, b + 2 * j, b + 2 * j + 1, b + 2 * i + 1)
+            val a = 2 * PI * (i + 0.5) / n
+            normals += floatArrayOf(cos(a).toFloat(), sin(a).toFloat(), 0f)
+        }
+        faces += IntArray(n) { b + 2 * (n - 1 - it) + 1 }
+        normals += floatArrayOf(0f, 0f, -1f)
+        return Mesh(v.toFloatArray(), faces.toTypedArray(), convex = false) { normals[it] }
+    }
+
+    private const val CAMERA_LENS_SIDES = 12
+    private const val CAMERA_LENS_R = 0.32
 
     private const val TORUS_R = 0.66
     private const val TORUS_TUBE = 0.3

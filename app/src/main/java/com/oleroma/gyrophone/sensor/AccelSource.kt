@@ -14,12 +14,14 @@ fun interface AccelSink {
 }
 
 /**
- * The accelerometer at game rate on a thread of its own, for tilt and shake; or another 3-axis
- * sensor of [type] (the magnetometer, for a gyro display's compass).
+ * The accelerometer at about 200 Hz ([ACCEL_PERIOD_US]) on a thread of its own, for tilt, shake and
+ * gravity; or another 3-axis sensor of [type] at game rate (the magnetometer, for a gyro display's
+ * compass).
  */
 class AccelSource(private val sensorManager: SensorManager, private val type: Int = Sensor.TYPE_ACCELEROMETER) {
     private var thread: HandlerThread? = null
     private var listener: SensorEventListener? = null
+    private val periodUs = if (type == Sensor.TYPE_ACCELEROMETER) ACCEL_PERIOD_US else SensorManager.SENSOR_DELAY_GAME
 
     /** Starts reading into [sink]; false when the phone has no accelerometer. */
     fun start(sink: AccelSink): Boolean {
@@ -30,7 +32,7 @@ class AccelSource(private val sensorManager: SensorManager, private val type: In
             override fun onSensorChanged(e: SensorEvent) = sink.onAccel(e.values[0], e.values[1], e.values[2], e.timestamp)
             override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
         }
-        if (!sensorManager.registerListener(l, sensor, SensorManager.SENSOR_DELAY_GAME, Handler(t.looper))) {
+        if (!sensorManager.registerListener(l, sensor, periodUs, Handler(t.looper))) {
             t.quitSafely()
             return false
         }
@@ -42,5 +44,10 @@ class AccelSource(private val sensorManager: SensorManager, private val type: In
         listener?.let { sensorManager.unregisterListener(it) }
         thread?.let { it.quitSafely(); it.join(50) }
         listener = null; thread = null
+    }
+
+    companion object {
+        /** One reading every 5 ms: tilt waits less for its next sample than at game rate (20 ms). */
+        const val ACCEL_PERIOD_US = 5000
     }
 }

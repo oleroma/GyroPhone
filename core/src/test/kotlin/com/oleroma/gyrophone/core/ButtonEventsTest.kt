@@ -9,6 +9,12 @@ import com.oleroma.gyrophone.core.model.ButtonActivators
 import com.oleroma.gyrophone.core.model.ButtonGesture
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.How
+import com.oleroma.gyrophone.core.model.MapOptions
+import com.oleroma.gyrophone.core.model.Bindings
+import com.oleroma.gyrophone.core.model.BindableInput
+import com.oleroma.gyrophone.core.model.Triggers
+import com.oleroma.gyrophone.core.model.MouseButton
 import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.Mapping
@@ -70,6 +76,81 @@ class ButtonEventsTest {
         assertEquals(emptySet<Int>(), e.keys())
     }
 
+    /** Key [k]'s presses while polled every 5 ms for [ms]: how many times it went down. */
+    private fun MappingEngine.presses(k: Int, ms: Long): Int {
+        var n = 0
+        var was = false
+        repeat((ms / 5).toInt()) {
+            val on = k in keys()
+            if (on && !was) n++
+            was = on; t += 5 * MS
+        }
+        return n
+    }
+
+    @Test
+    fun repeatPressesItsCount() {
+        val e = engine(tap.copy(options = MapOptions(how = How.REPEAT, repeat = 3)))
+        e.buttonDown(1, "b", 10f, 10f); e.keys(); t += 50 * MS; e.buttonUp(1)
+        assertEquals(3, e.presses(B, 400))
+    }
+
+    @Test
+    fun doubleTapWithHeldAndAnotherChipTellsAQuickTapFromAHold() {
+        val held = double.copy(target = OutputTarget.Key(A))
+        // Quick second tap: the other chip (C, Once), not the Held one.
+        val e = engine(tap, double.copy(options = MapOptions(how = How.ONCE)), held)
+        e.tap()
+        e.buttonDown(1, "b", 10f, 10f)
+        assertEquals(emptySet<Int>(), e.keys()) // waits for the lift or the Tap time
+        t += 50 * MS; e.buttonUp(1)
+        assertEquals(setOf(C), e.keys())
+        t += 400 * MS; e.keys()
+        // Held second touch: the Held chip from the Tap time until the lift, and no C.
+        e.tap()
+        e.buttonDown(1, "b", 10f, 10f); e.keys()
+        t += 290 * MS
+        assertEquals(emptySet<Int>(), e.keys())
+        t += 20 * MS
+        assertEquals(setOf(A), e.keys())
+        t += 500 * MS
+        assertEquals(setOf(A), e.keys())
+        e.buttonUp(1); t += 20 * MS
+        assertEquals(emptySet<Int>(), e.keys())
+    }
+
+    @Test
+    fun doubleTapWithOneChipFiresAtTheSecondTouch() {
+        val e = engine(double.copy(options = MapOptions()))
+        e.tap()
+        e.buttonDown(1, "b", 10f, 10f)
+        assertEquals(setOf(C), e.keys())
+    }
+
+    @Test
+    fun oneWhenHoldsTheSameOutputWithAnotherHowButNeverTwiceAlike() {
+        val input = BindableInput("b", listOf(InputSource.TouchDoubleTap("b")))
+        val rep = Bindings.Entry(OutputTarget.Key(C), MapOptions(how = How.REPEAT, repeat = 2))
+        val held = Bindings.Entry(OutputTarget.Key(C), null)
+        val m = Bindings.setEntries(emptyList(), input, listOf(rep, held, held.copy(options = MapOptions())))
+        assertEquals(listOf(rep, held), Bindings.entries(m, input))
+        assertEquals(listOf(held), Bindings.entries(Bindings.removeEntry(m, input, OutputTarget.Key(C), 0), input))
+    }
+
+    @Test
+    fun oldTapDragBecomesTapAndDoubleTapRepeatAndHeld() {
+        val left = OutputTarget.Mouse(MouseButton.LEFT)
+        val out = Triggers.upgrade(listOf(Mapping(InputSource.Surface(1, SurfaceInput.TAP_DRAG), left)))
+        assertEquals(
+            listOf(
+                Mapping(InputSource.Surface(1, SurfaceInput.TAP), left),
+                Mapping(InputSource.Surface(1, SurfaceInput.DOUBLE_TAP), left, options = MapOptions(how = How.REPEAT, repeat = 2)),
+                Mapping(InputSource.Surface(1, SurfaceInput.DOUBLE_TAP), left),
+            ),
+            out,
+        )
+    }
+
     @Test
     fun tapFiresOnLiftOnlyWhenShort() {
         val e = engine(press, tap)
@@ -90,7 +171,7 @@ class ButtonEventsTest {
     fun longPressComesAtTheTimeAndHoldsUntilLift() {
         val e = engine(tap, long)
         e.buttonDown(1, "b", 10f, 10f)
-        t += 390 * MS
+        t += 290 * MS // the Tap time is 300 ms
         assertEquals(emptySet<Int>(), e.keys())
         t += 20 * MS
         assertEquals(setOf(D), e.keys())
@@ -150,7 +231,7 @@ class ButtonEventsTest {
         assertEquals(setOf(D), e.keys())
         e.buttonUp(1); t += 20 * MS; e.keys()
 
-        val own = engine(tap, double, control = button().copy(doubleTapMs = 600), ws = { it.copy(doubleTapMs = 150) })
+        val own = engine(tap, double, control = button().copy(longPressMs = 600), ws = { it.copy(longPressMs = 150) })
         own.tap()
         t += 400 * MS
         assertEquals(emptySet<Int>(), own.keys()) // its own 600 ms window, not the workspace's 150

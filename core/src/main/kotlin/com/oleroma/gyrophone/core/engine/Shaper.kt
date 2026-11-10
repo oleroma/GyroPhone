@@ -12,10 +12,25 @@ import kotlin.math.max
  * a rise within [doubleNs] of the one before, while on). Then [MapOptions.mode]: HELD is on from
  * an activation's start plus the start delay until its end, held at least the minimum hold
  * (and [pulseNs]), plus the end delay; ONCE is on for that minimum only; TOGGLE turns on at one
- * activation (from the start delay) and off at the next (after the minimum hold and end delay).
+ * activation (from the start delay) and off at the next (after the minimum hold and end delay);
+ * REPEAT is [MapOptions.repeat] such minimum presses, each followed by as long a gap.
+ * With a [split] (a double tap with Held and other chips), its press is told apart first: QUICK
+ * fires at a lift before [splitNs] that never [moved]; HOLD from [splitNs] down, or a move, to the lift.
  * Not thread-safe.
  */
 internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HOLD) {
+    /** How its press is told apart from another chip's on the same source ([Split]). */
+    enum class Split { NONE, QUICK, HOLD }
+
+    var split = Split.NONE
+
+    /** [split]: the longest quick press (the Tap time). */
+    var splitNs = 0L
+
+    /** [split]: the source's touch has moved (left the tap slop) now; set before [update]. */
+    var moved = false
+    private var pressMoved = false
+
     /** The long-press time and double-tap window of its source, for [trigger]. */
     var longNs = 0L
     var doubleNs = 0L
@@ -47,10 +62,51 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
     /** The output is in its on window at [now]. */
     private fun inWindow(now: Long) = now >= startNs && now < endNs
 
+    private val repeats get() = options.repeat.coerceIn(MapOptions.MIN_REPEAT, MapOptions.MAX_REPEAT)
+
+    /** A Repeat's presses: in a gap between two at [now] (its window counts as off there). */
+    private fun inGap(now: Long): Boolean {
+        if (options.mode != How.REPEAT || !inWindow(now)) return false
+        val period = 2 * minHold
+        val t = now - startNs
+        if (t >= period * (repeats - 1)) return false // the last press, with its end delay
+        return t % period >= minHold
+    }
+
+    /** A Repeat's next press edge after [now] inside its window; Long.MAX_VALUE = none. */
+    private fun repeatEdge(now: Long): Long {
+        if (options.mode != How.REPEAT || !inWindow(now)) return Long.MAX_VALUE
+        val period = 2 * minHold
+        val t = now - startNs
+        if (t >= period * (repeats - 1)) return Long.MAX_VALUE
+        val inPeriod = t % period
+        return now + (if (inPeriod < minHold) minHold - inPeriod else period - inPeriod)
+    }
+
     /** The source is [on] at [now]. */
     fun update(on: Boolean, now: Long) {
         val rose = on && !raw
+        val fell = !on && raw
         raw = on
+        if (rose) pressMoved = false
+        if (on && moved) pressMoved = true
+        when (split) {
+            Split.QUICK -> {
+                if (fell && now - rawStartNs < splitNs && !pressMoved) {
+                    activation(true, now); activation(false, now)
+                }
+                if (rose) rawStartNs = now
+                return
+            }
+
+            Split.HOLD -> {
+                if (rose) rawStartNs = now
+                level(on && (pressMoved || now - rawStartNs >= splitNs), now)
+                return
+            }
+
+            Split.NONE -> Unit
+        }
         if (rose) {
             rawStartNs = now
             double = lastRiseNs != Long.MIN_VALUE && now - lastRiseNs <= doubleNs
@@ -87,6 +143,10 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
             How.HELD -> if (on) open(now) else endNs = max(now, startNs + minHold) + endDelay
             How.ONCE -> if (on) {
                 startNs = now + startDelay; endNs = startNs + minHold + endDelay
+            }
+
+            How.REPEAT -> if (on) {
+                startNs = now + startDelay; endNs = startNs + 2 * minHold * (repeats - 1) + minHold + endDelay
             }
 
             How.TOGGLE -> if (on) {
@@ -153,20 +213,21 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
     fun busy(now: Long): Boolean = latched || now < endNs
 
     /** Whether the output is pressed at [now]. */
-    fun on(now: Long): Boolean = inWindow(now)
+    fun on(now: Long): Boolean = inWindow(now) && !inGap(now)
 
     /** When the output next changes without input after [now]; Long.MAX_VALUE = not by itself. */
     fun deadline(now: Long): Long {
         var d = Long.MAX_VALUE
         if (trigger == Trigger.LONG_PRESS && raw && !active) d = rawStartNs + longNs
+        if (split == Split.HOLD && raw && !active) d = minOf(d, rawStartNs + splitNs)
         if (now < startNs) return minOf(d, startNs)
         if (now >= endNs) return d
-        return minOf(d, endNs)
+        return minOf(d, endNs, repeatEdge(now))
     }
 
     fun reset() {
         raw = false; active = false; double = false; latched = false; eventOn = false; baseOn = false
-        swallow = false; nextUsed = false; sameArmed = false; baseRiseNs = Long.MIN_VALUE
+        swallow = false; nextUsed = false; sameArmed = false; baseRiseNs = Long.MIN_VALUE; pressMoved = false
         rawStartNs = Long.MIN_VALUE; lastRiseNs = Long.MIN_VALUE; startNs = Long.MIN_VALUE; endNs = Long.MIN_VALUE
     }
 
