@@ -8,7 +8,8 @@ namespace GyroPhone.Ui;
 /// <summary>
 /// Overlays: the switches for all of them (Edit, Hide all, Level all) at the top; the overlay windows
 /// as a plain list on the left (each with its Show switch, then Add and the shortcuts); the picked
-/// one's settings on the right in three tabs: Window, Look and Turning. Nothing scrolls but the page.
+/// one's settings on the right in tabs as on the phone: Window, Look, Draw, Paint, Colours and Turning (Draw, Paint and
+/// Colours only for the pointer). Nothing scrolls but the page.
 /// </summary>
 internal sealed class OverlaysPage : Page
 {
@@ -37,7 +38,11 @@ internal sealed class OverlaysPage : Page
     private readonly TextBlock _empty;
     private readonly Seg<int> _tabs;
     private int _tab;
-    private readonly StackPanel _windowTab, _lookTab, _turnTab;
+    /// <summary>Tabs as on the phone: Window (PC only), Look, Draw, Paint, Colours and Turning; Draw, Paint and Colours only for the pointer.</summary>
+    private const int WindowTab = 0, LookTab = 1, DrawTab = 2, PaintTab = 3, ColoursTab = 4, TurnTab = 5;
+    private readonly StackPanel _windowTab, _lookTab, _drawTab, _paintTab, _coloursTab, _turnTab;
+    /// <summary>The Colours card: in the Look tab, or the pointer's own Colours tab.</summary>
+    private readonly Border _coloursCard;
 
     // Window
     private readonly CheckBox _shown;
@@ -224,17 +229,18 @@ internal sealed class OverlaysPage : Page
         {
             _tab = t;
             ShowTab();
-        }, true, ("Window", 0), ("Look", 1), ("Turning", 2));
+        }, true, ("Window", WindowTab), ("Look", LookTab), ("Draw", DrawTab), ("Paint", PaintTab), ("Colours", ColoursTab), ("Turning", TurnTab));
         // Tabs: the segmented buttons in the tab style.
         foreach (var rb in ((Panel)_tabs.View).Children.OfType<RadioButton>()) rb.Style = Parts.Style("Tab");
         tabBar.Child = _tabs.View;
         _settings.Children.Add(tabBar);
         _windowTab = new StackPanel();
         _lookTab = new StackPanel();
+        _drawTab = new StackPanel();
+        _paintTab = new StackPanel();
+        _coloursTab = new StackPanel();
         _turnTab = new StackPanel();
-        _settings.Children.Add(_windowTab);
-        _settings.Children.Add(_lookTab);
-        _settings.Children.Add(_turnTab);
+        foreach (var t in new[] { _windowTab, _lookTab, _drawTab, _paintTab, _coloursTab, _turnTab }) _settings.Children.Add(t);
 
         // Window tab
         var (show, sb) = Parts.Card();
@@ -399,12 +405,15 @@ internal sealed class OverlaysPage : Page
         lb.Children.Add(_aimOptions);
         _laserFireOnly = Parts.Toggle("Paint only while firing or aiming", () => Change(o => o.LaserFireOnly = !o.LaserFireOnly), "The beam alone leaves no trail; only shots and aiming draw.");
         lb.Children.Add(_laserFireOnly);
-        lb.Children.Add(Parts.Divider());
+
+        // Draw tab (pointer): Draw mode, Snake, brush and Clear.
+        var (drawCard, dwb) = Parts.Card("Draw");
+        _drawTab.Children.Add(drawCard);
 
         _laserDraw = Parts.Toggle("Draw mode", () => Change(o => o.LaserDraw = !o.LaserDraw), "The beam paints the inside of the sphere as you aim; the paint stays until you clear it.");
-        lb.Children.Add(_laserDraw);
+        dwb.Children.Add(_laserDraw);
         _laserSnake = Parts.Toggle("Snake", () => Change(o => o.LaserSnake = !o.LaserSnake), "A line following the beam along the newest stretch of its path, thinning and fading toward its tail as set. With or without Draw mode.");
-        lb.Children.Add(_laserSnake);
+        dwb.Children.Add(_laserSnake);
         // Length 10° to 720°, finer toward the short ones: the slider's square, in 5° steps.
         _laserSnakeLength = new SliderRow("Length", 0, 1, 0.005, v => $"{SnakeDeg(v)}°", v => Change(o => o.LaserSnakeDeg = SnakeDeg(v)));
         _laserSnakeOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
@@ -418,18 +427,19 @@ internal sealed class OverlaysPage : Page
         _laserSnakeGlow = new SliderRow("Snake glow", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserSnakeGlow = (float)v));
         _laserSnakeOptions.Children.Add(_laserSnakeGlow.View);
         _laserSnakeOptions.Children.Add(Parts.Text("Snake brush: how wide its head is. Taper: how much it thins toward its tail (0 keeps it the same width). Tail fade: how see-through it gets toward its tail (0 none). Snake glow: a soft glow round it (0 none). Shots and aiming keep their own brushes.", "Hint"));
-        lb.Children.Add(_laserSnakeOptions);
+        dwb.Children.Add(_laserSnakeOptions);
         _laserDrawOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
         _laserBrush = new SliderRow("Brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserBrush = (int)v));
         _laserDrawOptions.Children.Add(_laserBrush.View);
         _laserClearOnRatchet = Parts.Toggle("Clear on ratchet", () => Change(o => o.LaserClearOnRatchet = !o.LaserClearOnRatchet), "A ratchet press clears the drawing.");
         _laserDrawOptions.Children.Add(_laserClearOnRatchet);
         _laserDrawOptions.Children.Add(Parts.Text("The paint uncovers the sphere's own colours where it lands (the Moving colours, laid on the sphere as a normal map: right pink, left teal, up light green, down purple), or with Colour by the way it moved, the colour of each sweep's direction. Shots take the Fire colours and aiming the Aim colours, each with its own brush and glow (Fire display, Aim display). Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping on the phone (Other targets) clears every pointer at once.", "Hint"));
-        lb.Children.Add(_laserDrawOptions);
+        dwb.Children.Add(_laserDrawOptions);
 
-        // Paint: how Draw mode's paint and Snake look.
+        // Paint tab (pointer, while Draw mode or Snake is on): how the paint and Snake look.
+        var (paintCard, pab) = Parts.Card("Paint");
+        _paintTab.Children.Add(paintCard);
         _laserPaintOptions = new StackPanel();
-        _laserPaintOptions.Children.Add(Parts.Text("Paint"));
         _laserPaintOptions.Children.Add(Parts.Text("Colour by", "Hint"));
         _laserColourBy = new Seg<bool>(w => Change(o => o.LaserColourByWay = w), true, ("Where it is", false), ("The way it moved", true));
         _laserPaintOptions.Children.Add(_laserColourBy.View);
@@ -460,23 +470,25 @@ internal sealed class OverlaysPage : Page
         _laserLineSmoothing = new SliderRow("Line smoothing", 0, 1, 0.05, v => v < 0.025 ? "off" : $"{v * 100:0}%", v => Change(o => o.LaserLineSmoothing = (float)v));
         _laserPaintOptions.Children.Add(_laserLineSmoothing.View);
         _laserPaintOptions.Children.Add(Parts.Text("Softness: how soft the paint's edge is (0 sharp); it shapes the paint as you lay it down, so changing it changes only new strokes. Where lines cross, the paint builds up and their colours blend. Facing shade darkens paint where the sphere's surface turns away from you, so you see its roundness (0 off). Inside: how bright the far half's paint is, seen from inside the sphere, next to the near half's seen from outside. Line smoothing steadies the painted line against hand shake, strongly when you move slowly and hardly when you move fast, so the paint may trail a slow aim a little; the beam, dot and crosshair stay as they are.", "Hint"));
-        lb.Children.Add(_laserPaintOptions);
+        pab.Children.Add(_laserPaintOptions);
         _laserSmoothColours = Parts.Toggle("Smooth way colours", () => Change(o => o.LaserSmoothColours = !o.LaserSmoothColours), "Small shakes don't flicker the Moving colours.");
-        lb.Children.Add(_laserSmoothColours);
-        _laserMovesHint = Parts.Text("The Moving colours (in Colours) colour the crosshair, and with Colour by the way it moved the paint, by the way the beam moves (right, left, up, down, toward you, away, as the sphere's axes are when it isn't turned). A slant blends its ways' colours, as a normal map does. The crosshair keeps the last way's colour when you stop. With Colour by where it is, the paint takes them by where on the sphere it lands: its right side Moving right's colour, and so on.", "Hint");
-        lb.Children.Add(_laserMovesHint);
+        _laserMovesHint = Parts.Text("The Moving colours colour the crosshair, and with Colour by the way it moved the paint, by the way the beam moves (right, left, up, down, toward you, away, as the sphere's axes are when it isn't turned). A slant blends its ways' colours, as a normal map does. The crosshair keeps the last way's colour when you stop. With Colour by where it is, the paint takes them by where on the sphere it lands: its right side Moving right's colour, and so on.", "Hint");
         var clear = Parts.Button("Clear", () => { if (Picked is { } id) _app.ClearOverlay(id); }, glyph: "");
         clear.Margin = new Thickness(0, 8, 0, 0);
         clear.HorizontalAlignment = HorizontalAlignment.Left;
-        lb.Children.Add(clear);
+        dwb.Children.Add(clear);
         _laserLook = laser;
         _lookTab.Children.Add(laser);
 
+        // Colours: in Look, or for the pointer, with much to set, its own tab (as on the phone).
         var (colors, cb) = Parts.Card("Colours");
         cb.Children.Add(_colors);
+        cb.Children.Add(_laserSmoothColours);
+        cb.Children.Add(_laserMovesHint);
         var defaults = Parts.Button("Default colours", () => Change(o => o.Colors.Clear()), glyph: "");
         defaults.Margin = new Thickness(0, 8, 0, 0);
         cb.Children.Add(defaults);
+        _coloursCard = colors;
         _lookTab.Children.Add(colors);
 
         // Turning tab
@@ -597,9 +609,34 @@ internal sealed class OverlaysPage : Page
 
     private void ShowTab()
     {
-        Parts.Show(_windowTab, _tab == 0);
-        Parts.Show(_lookTab, _tab == 1);
-        Parts.Show(_turnTab, _tab == 2);
+        Parts.Show(_windowTab, _tab == WindowTab);
+        Parts.Show(_lookTab, _tab == LookTab);
+        Parts.Show(_drawTab, _tab == DrawTab);
+        Parts.Show(_paintTab, _tab == PaintTab);
+        Parts.Show(_coloursTab, _tab == ColoursTab);
+        Parts.Show(_turnTab, _tab == TurnTab);
+    }
+
+    /// <summary>Draw, Paint (while Draw mode or Snake is on) and Colours tabs only for the pointer; other overlays keep their colours in Look.
+    /// A tab that goes away falls back to Look.</summary>
+    private void ShowTabs(bool laser, bool paints)
+    {
+        var home = laser ? _coloursTab : _lookTab;
+        if (_coloursCard.Parent != home)
+        {
+            ((Panel)_coloursCard.Parent).Children.Remove(_coloursCard);
+            home.Children.Add(_coloursCard);
+        }
+        _tabs.Show(DrawTab, laser);
+        _tabs.Show(PaintTab, laser && paints);
+        _tabs.Show(ColoursTab, laser);
+        bool gone = _tab switch { DrawTab or ColoursTab => !laser, PaintTab => !laser || !paints, _ => false };
+        if (gone)
+        {
+            _tab = LookTab;
+            _tabs.Set(_tab);
+        }
+        ShowTab();
     }
 
     private void Remove()
@@ -727,7 +764,8 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_phoneLook, o.Kind == OverlayKind.Phone);
         Parts.Show(_shapeLook, o.Kind == OverlayKind.Shape);
         Parts.Show(_diskLook, o.Kind == OverlayKind.Disk);
-        Parts.Show(_laserLook, o.Kind == OverlayKind.Laser);
+        bool laser = o.Kind == OverlayKind.Laser;
+        Parts.Show(_laserLook, laser);
         Parts.SetChecked(_phoneAxon, o.Axonometric);
         Parts.SetChecked(_shapeAxon, o.Axonometric);
         _laserShape.Set(o.LaserRifle ? 1 : o.LaserCrosshair ? 2 : 0);
@@ -780,8 +818,8 @@ internal sealed class OverlaysPage : Page
         _laserShine.Set(o.LaserShine);
         _laserLineSmoothing.Set(o.LaserLineSmoothing);
         bool moves = paints || (o.LaserCrosshair && !o.LaserRifle);
-        Parts.Show(_laserSmoothColours, moves);
-        Parts.Show(_laserMovesHint, moves);
+        Parts.Show(_laserSmoothColours, laser && moves);
+        Parts.Show(_laserMovesHint, laser && moves);
         Parts.SetChecked(_laserSmoothColours, o.LaserSmoothColours);
         _firePick.Set(o.LaserFire);
         _aimPick.Set(o.LaserAim);
@@ -834,6 +872,7 @@ internal sealed class OverlaysPage : Page
         _diskRange.Set(o.DiskRange);
         Parts.SetChecked(_crosshair, o.Crosshair);
         ShowColors(o);
+        ShowTabs(laser, paints);
 
         _turnsWith.Set(o.TurnsWith);
         _turnsHint.Text = o.TurnsWith switch
