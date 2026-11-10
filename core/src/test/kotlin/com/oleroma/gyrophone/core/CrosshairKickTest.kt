@@ -21,13 +21,14 @@ class CrosshairKickTest {
         val s = CrosshairKick.State()
         assertFalse(s.step(0, false, CrosshairKick.ONCE, 100))
         s.step(10, true, CrosshairKick.ONCE, 100)
-        s.step(40, true, CrosshairKick.ONCE, 100)
-        assertEquals(1f, s.value, 0.1f)
+        s.step(34, true, CrosshairKick.ONCE, 100)
+        assertEquals(1f, s.value, 0.05f)
         // Held on: no second kick, it settles.
         assertFalse(s.step(400, true, CrosshairKick.ONCE, 100))
         assertEquals(0f, s.value, 0f)
         s.step(410, false, CrosshairKick.ONCE, 100)
         s.step(420, true, CrosshairKick.ONCE, 100)
+        s.step(440, true, CrosshairKick.ONCE, 100)
         assertTrue(s.value > 0.3f)
     }
 

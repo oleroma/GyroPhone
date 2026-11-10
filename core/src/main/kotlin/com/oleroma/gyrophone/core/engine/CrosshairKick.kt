@@ -25,16 +25,12 @@ object CrosshairKick {
     private const val SWING_MS = 150f
     private const val STEPS = 128
 
-    /** The bounce after the rise, from 1 at [RISE_MS] to 0 at [LENGTH_MS], one entry per [LENGTH_MS] / [STEPS]. */
+    /** The bounce after the rise, from 1 just at [RISE_MS] to 0 at [LENGTH_MS], one entry per ([LENGTH_MS] − [RISE_MS]) / [STEPS]. */
     val CURVE: FloatArray = FloatArray(STEPS + 1) { i ->
-        val t = i * LENGTH_MS / STEPS
-        if (t <= RISE_MS) 1f
-        else {
-            val s = t - RISE_MS
-            // Fades out over the last fifth so it ends at exactly 0.
-            val tail = ((LENGTH_MS - t) / (LENGTH_MS * 0.2f)).coerceIn(0f, 1f)
-            (exp(-s / DECAY_MS) * cos(2f * PI.toFloat() * s / SWING_MS) * tail)
-        }
+        val s = i * (LENGTH_MS - RISE_MS) / STEPS
+        // Fades out over the last fifth so it ends at exactly 0.
+        val tail = ((LENGTH_MS - RISE_MS - s) / (LENGTH_MS * 0.2f)).coerceIn(0f, 1f)
+        exp(-s / DECAY_MS) * cos(2f * PI.toFloat() * s / SWING_MS) * tail
     }.also { it[STEPS] = 0f }
 
     /** The baked curve at [ms] after a shot that rose from [from] (0 rest .. 1 full kick). */
@@ -46,7 +42,7 @@ object CrosshairKick {
             val e = 1f - (1f - u) * (1f - u)
             return from + (1f - from) * e
         }
-        val x = ms / LENGTH_MS * STEPS
+        val x = (ms - RISE_MS) / (LENGTH_MS - RISE_MS) * STEPS
         val i = x.toInt().coerceAtMost(STEPS - 1)
         val f = x - i
         return CURVE[i] + (CURVE[i + 1] - CURVE[i]) * f
