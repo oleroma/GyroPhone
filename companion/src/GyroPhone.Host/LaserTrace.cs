@@ -287,6 +287,42 @@ public sealed class LaserTrace
         return (_steadyX, _steadyY, _steadyZ);
     }
 
+    /// <summary>Snake: its curve is cut into steps of at most this many degrees.</summary>
+    public const float CurveStepDeg = 0.5f;
+
+    /// <summary>Snake: at most this many steps between two stroke points.</summary>
+    public const int CurveMaxSteps = 64;
+
+    /// <summary>
+    /// A smooth curve through unit directions <paramref name="p1"/> → <paramref name="p2"/> at <paramref name="t"/> (0..1),
+    /// unit: a centripetal Catmull-Rom spline with neighbours <paramref name="p0"/> (before p1) and <paramref name="p3"/>
+    /// (after p2), which never loops or overshoots however unevenly the points are spaced. A line's ends pass the end
+    /// point itself as its missing neighbour. As the phone's LaserTrace.curve.
+    /// </summary>
+    public static (float X, float Y, float Z) Curve(
+        (float X, float Y, float Z) p0, (float X, float Y, float Z) p1, (float X, float Y, float Z) p2, (float X, float Y, float Z) p3, float t)
+    {
+        // Centripetal: each span's knot is the square root of its chord.
+        static float Knot((float X, float Y, float Z) a, (float X, float Y, float Z) b)
+        {
+            float dx = b.X - a.X, dy = b.Y - a.Y, dz = b.Z - a.Z;
+            return MathF.Sqrt(MathF.Sqrt(dx * dx + dy * dy + dz * dz));
+        }
+        float d1 = Math.Max(Knot(p1, p2), 1e-6f);
+        float d0 = Knot(p0, p1); if (d0 < 1e-6f) d0 = d1;
+        float d2 = Knot(p2, p3); if (d2 < 1e-6f) d2 = d1;
+        float t2 = t * t, t3 = t2 * t;
+        float h1 = 2f * t3 - 3f * t2 + 1f, h2 = t3 - 2f * t2 + t, h3 = -2f * t3 + 3f * t2, h4 = t3 - t2;
+        // Hermite form: the tangents at p1 and p2 scaled to the middle span.
+        float One(float q0, float q1, float q2, float q3)
+        {
+            float m1 = d1 * ((q1 - q0) / d0 - (q2 - q0) / (d0 + d1) + (q2 - q1) / d1);
+            float m2 = d1 * ((q2 - q1) / d1 - (q3 - q1) / (d1 + d2) + (q3 - q2) / d2);
+            return h1 * q1 + h2 * m1 + h3 * q2 + h4 * m2;
+        }
+        return Unit(One(p0.X, p1.X, p2.X, p3.X), One(p0.Y, p1.Y, p2.Y, p3.Y), One(p0.Z, p1.Z, p2.Z, p3.Z));
+    }
+
     /// <summary>(x, y, z) made unit length (zero when it is).</summary>
     public static (float X, float Y, float Z) Unit(float x, float y, float z)
     {
