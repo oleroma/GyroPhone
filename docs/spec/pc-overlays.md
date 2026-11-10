@@ -17,7 +17,7 @@ The phone overlay is only drawn on the PC; the phone sends its raw motion, layou
 
 ## Per-window settings
 
-Overlays page: the switches for all (Edit, Hide all, Level all), the list of windows (Show each, Add, shortcuts), and the picked window's settings in three tabs.
+Overlays page: the switches for all (Edit, Hide all, Level all), the list of windows (Show each, Add, shortcuts), and the picked window's settings in tabs, grouped as on the phone: Window, Look, Turning, and for the pointer also Draw (Draw mode, Snake, brushes, Clear), Paint (shown while Draw mode or Snake is on) and Colours (its colours and Smooth way colours) between Look and Turning. Other overlays keep their colours in Look. A tab that goes away (another overlay picked, Draw mode and Snake off) falls back to Look.
 
 - **Window**: place and size (default 420 × 300), opacity (0.1–1), background **Transparent** or **Green** (for an OBS chroma key), **Quality** High (default) / Balanced / Fast, **Frame rate** every screen refresh / about 60 (default) / about 30: a cap draws every Nth refresh of the screen the window is on, N = refresh ÷ cap rounded, at least 1 (60 → 72 fps at 144 Hz, 55 at 165 Hz, 60 at 120 or 60 Hz), so pictures stay tied to the screen.
 - **Look**: kind-specific options above, colours (one swatch per colour; Windows colour picker), finger dots (off) and trails (on).
