@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.core
 import com.oleroma.gyrophone.core.engine.Guns
 import com.oleroma.gyrophone.core.engine.LaserTrace
 import com.oleroma.gyrophone.core.model.GyroDisplay
+import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,7 +38,7 @@ class GunsTest {
     }
 
     @Test fun eachGunKeepsItsOwnFireRate() {
-        val d = GyroDisplay()
+        val d = GyroDisplay(GyroDisplayKind.LASER)
         assertEquals(600, d.rpmOf(Guns.AR))
         assertEquals(800, d.rpmOf(Guns.SMG))
         val e = d.copy(gunRpm = mapOf("smg" to 900))
