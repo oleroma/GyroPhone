@@ -133,6 +133,7 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.LibraryButton
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingProfiles
+import com.oleroma.gyrophone.core.model.isTouchpad
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.OutputTarget
@@ -576,7 +577,7 @@ fun PadScreen(
         val inUse = runtime.engine.touchMappingsInUse
         if (inUse !== inUseCache[0]) {
             inUseCache[0] = inUse
-            inUseShown[0] = inUse.filter { MappingProfiles.touchId(it.source) != null }
+            inUseShown[0] = inUse.filter { MappingProfiles.touchId(it.source) != null || it.source.isTouchpad }
                 .filterNot { Describe.isHaptic(it.target) || it.target == OutputTarget.NoOutput }
         }
         // One engine call per poll; the labels are rebuilt only when what is on changes.
@@ -584,7 +585,8 @@ fun PadScreen(
         val last = activeCache[0]
         if (active.size != last.size || active.indices.any { active[it] !== last[it] }) {
             activeCache[0] = active
-            activeText[0] = active.groupBy { MappingProfiles.touchId(it.source)!! }
+            // The touchpad's under "" (shown at the pad's top centre when the workspace asks).
+            activeText[0] = active.groupBy { MappingProfiles.touchId(it.source) ?: "" }
                 .mapValues { (_, ms) -> ms.map { Describe.shortTarget(it.target) }.distinct().joinToString(" + ") }
                 .filterValues { it.isNotEmpty() }
         }
@@ -1871,6 +1873,8 @@ fun PadScreen(
                         .alpha(ws.controlOpacity.let { if (editing) max(it, MIN_EDIT_OPACITY) else it }),
                 )
             }
+            // The touchpad's label and what it sends now, at the pad's top centre (when the workspace asks).
+            if (ws.touchpadLabelShown) TouchpadLabel(ws.touchpadLabel, live = { if (editing) null else liveLabels[""] })
             // The corners: shared by all workspaces, drawn over the controls, always shown.
             for (c in shown.shownCorners) {
                 val r = half(c)
@@ -2533,6 +2537,10 @@ fun PadScreen(
                         control = TOUCHPAD_STAND_IN,
                         mappings = ws.mappings,
                         runtime = runtime,
+                        label = ws.touchpadLabel,
+                        onLabel = { v -> editWorkspace { it.copy(touchpadLabel = v) } },
+                        labelShown = ws.touchpadLabelShown,
+                        onLabelShown = { v -> editWorkspace { it.copy(touchpadLabelShown = v) } },
                         onMappingsChange = { m ->
                             editWorkspace { it.copy(mappings = m) }
                         },
@@ -2603,6 +2611,8 @@ fun PadScreen(
                         control = sel,
                         mappings = ws.mappings,
                         runtime = runtime,
+                        label = sel.label,
+                        onLabel = { v -> updateControl(sel.id) { it.copy(label = v) } },
                         onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
                         onSettings = { settingsFromMap = true; menu = EditMenu.CONTEXT },
                         // The control stays selected (ready to pinch); a tap on empty space clears it.
@@ -3155,5 +3165,28 @@ private fun <T> State<T>.heldWhile(hidden: Boolean): State<T> {
     return remember(live) {
         var last = live.value
         derivedStateOf { if (hiddenNow.value) last else live.value.also { last = it } }
+    }
+}
+
+/**
+ * The touchpad's label at the top centre of the pad, and while it sends something, that instead
+ * (yellow, as a button's live mapping shows); nothing while both are empty.
+ */
+@Composable
+private fun TouchpadLabel(label: String, live: () -> String?) {
+    val now = live()
+    val text = now ?: label
+    if (text.isEmpty()) return
+    Box(Modifier.fillMaxWidth().padding(top = 10.dp), contentAlignment = Alignment.TopCenter) {
+        Text(
+            text,
+            style = MaterialTheme.typography.titleMedium,
+            color = if (now != null) Color(0xFFFFD54F) else Color.White.copy(alpha = 0.8f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .background(Color(0x66000000), RoundedCornerShape(8.dp))
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+        )
     }
 }

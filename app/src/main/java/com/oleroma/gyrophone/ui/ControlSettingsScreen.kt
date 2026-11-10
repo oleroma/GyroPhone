@@ -23,7 +23,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -149,7 +148,7 @@ internal fun ControlSettingsScreen(
     }
 }
 
-/** Label, shape and size of a control. */
+/** Shape and size of a control (its label is edited in the mapping editor's title). */
 @Composable
 internal fun LookSettings(
     control: TouchControl,
@@ -158,16 +157,7 @@ internal fun LookSettings(
     onSize: (Float) -> Unit,
 ) {
     val current by rememberUpdatedState(control)
-    Searchable("Label", "name text shows the mapping") {
-        OutlinedTextField(
-            value = control.label,
-            onValueChange = { onControlChange(current.copy(label = it)) },
-            label = { Text("Label") },
-            placeholder = { Text("Shows the mapping") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
+    // The label is edited in the mapping editor's title (LabelField).
     Searchable("Shape", "Circle Square") { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Shape", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(52.dp))
         SelectChip(

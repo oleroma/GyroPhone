@@ -9,6 +9,7 @@ import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.nothing
 import com.oleroma.gyrophone.core.model.StickAxis
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchpadSettings
@@ -88,7 +89,7 @@ class SurfaceMap(mappings: List<Mapping>, val id: String = "") {
         val split = HashSet<InputSource>()
         mappings.filter { m ->
             val s = m.source as? InputSource.Surface
-            s != null && s.id == id && s.on == Trigger.HOLD && s.input == SurfaceInput.DOUBLE_TAP && m.target != OutputTarget.NoOutput
+            s != null && s.id == id && s.on == Trigger.HOLD && s.input == SurfaceInput.DOUBLE_TAP && !m.target.nothing
         }.groupBy { it.source }.forEach { (src, list) ->
             val held = list.count { (it.options?.mode ?: How.HELD) == How.HELD }
             if (held in 1 until list.size) split.add(src)

@@ -289,6 +289,9 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
     /** Fingers down, aiming ones included. */
     val fingers: Int get() = count + aimCount
 
+    /** Fingers in its gesture (not aiming ones). */
+    val fullFingers: Int get() = count
+
     /** Background fingers only (not a touch button's aiming finger). */
     val padFingers: Int get() = count
 
@@ -1196,6 +1199,11 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
 
     /** A finger is on it. */
     val touching: Boolean get() = count > 0
+
+    /** No finger down and nothing waiting to fire or show: a gesture that ended has done everything. */
+    val settled: Boolean
+        get() = count == 0 && aimCount == 0 && state == State.IDLE && pendingTapN == 0 && kSize == 0 &&
+            vis0 == 0L && vis1 == 0L && vis2 == 0L && want0 == 0L && want1 == 0L && want2 == 0L && flipCount == 0
 
     /** The touch has moved past the tap slop (a drag rather than a tap). */
     val pastTapSlop: Boolean get() = count > 0 && primary in 0 until MAX_FINGERS && used[primary] && pastSlop(primary)

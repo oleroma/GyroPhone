@@ -145,6 +145,8 @@ class GyroModesTest {
             mappings = listOf(
                 Mapping(InputSource.Surface(1, SurfaceInput.HOLD), OutputTarget.GyroPause),
                 Mapping(InputSource.Touch("plain"), OutputTarget.Pad(GamepadButton.A)),
+                // Its press stops the touchpad's ratchet chip (Override).
+                Mapping(InputSource.Touch("plain"), OutputTarget.Off(OutputTarget.GyroPause)),
             ),
             gyro = GyroSettings(mode = GyroMode.ALWAYS),
         )
@@ -153,10 +155,11 @@ class GyroModesTest {
         assertTrue(e.gyroActive)
         now += 100_000_000L
         e.buttonUp(1)
-        e.buttonDown(2, "rat", 10f, 10f)
+        // "rat" takes the touchpad's ratchet: its finger holds the touchpad (seen on the next frame, as a touchpad finger is).
+        e.buttonDown(2, "rat", 10f, 10f); e.frame()
         assertFalse(e.gyroActive)
         now += 100_000_000L // past the shortest press, so the lift releases at once
-        e.buttonUp(2)
+        e.buttonUp(2); e.frame()
         assertTrue(e.gyroActive)
         e.touchpadDown(3, 10f, 10f); e.frame()
         assertFalse(e.gyroActive)

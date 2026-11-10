@@ -42,9 +42,11 @@ class GyroMappingsTest {
         val moveY = OutputTarget.MouseAxis(MouseMotion.MOVE_Y)
         val e = MappingEngine(single(Workspace("w", "w")))
         assertEquals(listOf(gyro(MotionAxis.ROLL, moveX), gyro(MotionAxis.PITCH, moveY)), e.gyroRoutes())
-        // Mapping pitch to something else takes it over; roll still moves the mouse.
+        // Mapping pitch to something else adds it; an Off stops the Defaults' pitch chip.
         val w = MappingEngine(single(Workspace("w", "w", mappings = listOf(gyro(MotionAxis.PITCH, wheel)))))
-        assertEquals(setOf(gyro(MotionAxis.PITCH, wheel), gyro(MotionAxis.ROLL, moveX)), w.gyroRoutes().toSet())
+        assertEquals(setOf(gyro(MotionAxis.PITCH, wheel), gyro(MotionAxis.PITCH, moveY), gyro(MotionAxis.ROLL, moveX)), w.gyroRoutes().toSet())
+        val off = MappingEngine(single(Workspace("w", "w", mappings = listOf(gyro(MotionAxis.PITCH, wheel), gyro(MotionAxis.PITCH, OutputTarget.Off(moveY))))))
+        assertEquals(setOf(gyro(MotionAxis.PITCH, wheel), gyro(MotionAxis.ROLL, moveX)), off.gyroRoutes().toSet())
         assertTrue(engine().gyroRoutes().isEmpty())
     }
 
