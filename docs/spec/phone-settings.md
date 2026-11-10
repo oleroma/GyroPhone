@@ -29,6 +29,7 @@ Every settings page (`ui/SettingsLayout.kt`) has a low **search** field on top (
 | Gyro display | Parallax edge (Turn / Tilt); **Fade when phone rests**: the gyro displays on the pad (the kinds with a Level) fade while the phone lies within Flat within (10°) of the tilt each was last leveled at, turning slower than Still below (0.5 °/s, live speed shown), with no finger, key or controller stick in use, for Quiet for (3 s); they fade to Fade to (30 %) over Fade over (0.5 s) and come back at once. Same rules as the PC's overlays ([PC overlays](pc-overlays.md)); never in edit mode (`RestDetector`, `TouchVisuals.restFade`, `GyroDisplay.levelUp`) | parallax off; fade on |
 | Controllers | The attached game pads | — |
 | Debugging | Debug tools | off |
+| Backup | **Export everything**, **Import everything…** (asks first; see [Workspaces](phone-workspaces.md)) | — |
 | About | Version, gyro source and measured rate | — |
 
 ### Defaults page

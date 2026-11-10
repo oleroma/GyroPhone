@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.ProfileExport
+import androidx.compose.ui.platform.LocalContext
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
@@ -254,6 +256,8 @@ internal fun WorkspaceTopBar(
 ) {
     val current = index.coerceIn(0, profile.workspaces.lastIndex)
     var copying by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val export = rememberExportFile { note(context, it) }
     Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
         WorkspaceActions(profile, current, onProfileChange) {
             if (profile.workspaces.size > 1) {
@@ -261,6 +265,12 @@ internal fun WorkspaceTopBar(
                     Text("Copy mappings from…")
                 }
             }
+            // The workspace as saved: edit mode's changes go in once saved.
+            OutlinedButton(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp), onClick = {
+                val w = profile.workspace(current)
+                val text = runtime.exportWorkspace(w.id)
+                if (text == null) note(context, "Save this workspace first") else export(ProfileExport.fileName(w.name), text)
+            }) { Text("Export") }
         }
     }
     if (copying) {

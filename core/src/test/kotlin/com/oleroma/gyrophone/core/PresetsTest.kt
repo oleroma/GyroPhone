@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.hid.HidUsage
+import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.InputSource
@@ -110,7 +111,7 @@ class PresetsTest {
     @Test fun controllerKeepsItsIdsAndPassThroughPad() {
         val w = BuiltinProfiles.controllerWorkspace
         assertEquals(
-            setOf("ls", "rs", "a", "b", "x", "y", "up", "down", "left", "right", "lb", "lt", "rb", "rt", "view", "menu", "gyro"),
+            setOf("ls", "rs", "a", "b", "x", "y", "up", "down", "left", "right", "lb", "lt", "rb", "rt", "view", "menu", "gyro", "l3", "r3"),
             w.touchControls.map { it.id }.toSet(),
         )
         assertEquals(GyroMode.OFF, w.gyro.mode)
@@ -124,6 +125,10 @@ class PresetsTest {
         assertEquals(BuiltinProfiles.kbmPadMappings(), w.pads.single().mappings)
         assertEquals(null, w.pads.single().match)
         assertTrue(w.mappings.any { it.source == InputSource.Touch("ratchet") && it.target == OutputTarget.GyroPause })
+        // Every button and the d-pad of a physical controller does something.
+        for (k in listOf(AndroidKey.DPAD_LEFT, AndroidKey.DPAD_RIGHT, AndroidKey.BUTTON_THUMBR)) {
+            assertTrue("pad key $k", w.pads.single().mappings.any { it.source == InputSource.Key(k) })
+        }
         val e = MappingEngine(single(w))
         e.setTouchStick("move", 0f, -1f)
         assertEquals(listOf(0x1A), e.snapshot().keyboard.keys)
@@ -145,6 +150,7 @@ class PresetsTest {
         val usages = w.mappings.mapNotNull { (it.target as? OutputTarget.Key)?.usage }.toSet()
         val expected = (0x04..0x1D) + (0x1E..0x27) + (0x3A..0x45) + listOf(0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x39) +
             listOf(0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38) + listOf(0x4F, 0x50, 0x51, 0x52) +
+            listOf(0x4A, 0x4B, 0x4C, 0x4D, 0x4E) +
             listOf(HidUsage.LEFT_CTRL, HidUsage.LEFT_SHIFT, HidUsage.LEFT_ALT, HidUsage.LEFT_GUI,
                 HidUsage.RIGHT_CTRL, HidUsage.RIGHT_SHIFT, HidUsage.RIGHT_ALT)
         assertEquals(expected.toSet(), usages)

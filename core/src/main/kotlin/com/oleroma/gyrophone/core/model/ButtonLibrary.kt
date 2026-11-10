@@ -6,7 +6,10 @@ import kotlinx.serialization.json.Json
 
 /**
  * A touch control saved to the button library, shared by every workspace: its look and size, and
- * its [mappings] (keyed by [control]'s id, as in a workspace).
+ * its [mappings] (keyed by [control]'s id, as in a workspace). It is also a button preset of the
+ * mapping editor: its mappings (and [control]'s settings) go onto a control of the same kind
+ * ([ButtonLibrary.kindOf]). One saved from a physical control ([control] a stand-in, id "dev:...")
+ * is a button preset only, its mappings as [chips]; so is one of the touchpad ([control] id "").
  */
 @Serializable
 data class LibraryButton(
@@ -15,6 +18,10 @@ data class LibraryButton(
     val mappings: List<Mapping> = emptyList(),
     /** The mapping sets [mappings] use or switch to, with their names. */
     val sets: List<MappingSet> = emptyList(),
+    /** Its name as a preset; null = [ButtonLibrary.name]'s. */
+    val name: String? = null,
+    /** A physical control's mappings, by input place ([MappingPresets.slot]); empty for a touch control (its [mappings] say it). */
+    val chips: List<PresetChip> = emptyList(),
 )
 
 object ButtonLibrary {
@@ -43,9 +50,22 @@ object ButtonLibrary {
     private fun setsOf(mappings: List<Mapping>): Set<Int> =
         mappings.flatMapTo(HashSet()) { m -> listOfNotNull(m.set, (m.target as? OutputTarget.Layer)?.set) } - MappingSet.BASE
 
-    /** The name shown for [b]: its label, else its first mapping's short name. */
+    /** One saved from a physical control or the touchpad: a button preset only, never added to the pad. */
+    fun presetOnly(b: LibraryButton): Boolean = b.control.id.isEmpty() || b.control.id.startsWith("dev:")
+
+    /**
+     * What kind of control [c] is, for button presets: a touch button, a touch stick, the touchpad
+     * (id ""), or a physical device's button or stick.
+     */
+    fun kindOf(c: TouchControl): String = when {
+        c.id.isEmpty() -> "touchpad"
+        c.id.startsWith("dev:") -> "dev." + c.id.removePrefix("dev:").substringBefore(':') + "." + c.kind.name
+        else -> c.kind.name
+    }
+
+    /** The name shown for [b]: its own, else its label, else its first mapping's short name. */
     fun name(b: LibraryButton): String =
-        b.control.label.ifBlank {
+        b.name ?: b.control.label.ifBlank {
             Bindings.touchInputs(b.control).firstNotNullOfOrNull { Bindings.targets(b.mappings, it).firstOrNull() }
                 ?.let { Describe.shortTarget(it) } ?: "Button"
         }

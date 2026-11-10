@@ -1,5 +1,9 @@
 package com.oleroma.gyrophone.ui
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.material3.Switch
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -106,6 +110,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import com.oleroma.gyrophone.core.hid.HidUsage
 import com.oleroma.gyrophone.core.model.BindableInput
+import com.oleroma.gyrophone.core.model.ButtonLibrary
+import com.oleroma.gyrophone.core.model.LibraryButton
+import com.oleroma.gyrophone.core.model.MappingPreset
+import com.oleroma.gyrophone.core.model.MappingPresets
+import com.oleroma.gyrophone.core.model.PresetChip
+import com.oleroma.gyrophone.core.model.PresetLevel
+import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.HoldMode
@@ -155,7 +166,14 @@ private sealed interface Dragged {
      * A target from the library ([from] null) or a chip of action [from]; [inherited]: one of the
      * level above's faded chips on card [from] (taken away, the card overrides it).
      */
-    data class Target(val target: OutputTarget, val from: BindableInput?, val inherited: Boolean = false, val n: Int = 0) : Dragged
+    data class Target(
+        val target: OutputTarget,
+        val from: BindableInput?,
+        val inherited: Boolean = false,
+        val n: Int = 0,
+        /** A chip preset's How and options, which the new chip takes. */
+        val options: MapOptions? = null,
+    ) : Dragged
     data class Preset(val preset: MapPreset) : Dragged
 
     /** An action card moved within its [group] (the one list: the control's actions, a swipe button's with the chosen fingers). */
@@ -187,8 +205,22 @@ private sealed interface RowItem {
 /** A faded chip: what the level above maps a card's Where [where] to on [trigger]. */
 private data class Faded(val trigger: Trigger, val target: OutputTarget, val where: Int = 0)
 
-/** A ready-made mapping of one or more actions; [apply] rewrites the mapping list. */
-private class MapPreset(val label: String, val apply: (List<Mapping>) -> List<Mapping>)
+/**
+ * A preset of the library, built in or the user's ([user]: its [MappingPreset] or [LibraryButton]).
+ * A CHIP adds its one chip to any card that takes it; a CARD fits cards of [kind]; a BUTTON fills
+ * the whole control. [chips] on their slots ([MappingPresets.slot]; a button's keep their finger
+ * counts and physical places). [control]: the touch control whose settings it can bring.
+ * [stick]: a built-in stick preset (lit while the stick does just that).
+ */
+private class MapPreset(
+    val label: String,
+    val level: PresetLevel,
+    val chips: List<PresetChip>,
+    val kind: InputSource? = null,
+    val control: TouchControl? = null,
+    val user: Any? = null,
+    val stick: Bindings.StickPreset? = null,
+)
 
 private enum class LibraryTab(val label: String) {
     RECENT("Recent"), PRESETS("Presets"), KEYBOARD("Keyboard"), MOUSE("Mouse"), GAMEPAD("Gamepad"),
@@ -293,65 +325,53 @@ private fun loadRecent(runtime: GamepadRuntime): List<OutputTarget> =
     runtime.uiPref(PREF_RECENT)?.let { runCatching { prefJson.decodeFromString(recentSerializer, it) }.getOrNull() }
         .orEmpty()
 
-/** Presets of [control]: stick presets, or common button actions (and touchpad set-ups for swipe buttons). */
-private fun presetsFor(control: TouchControl, inputs: List<BindableInput>, physical: Boolean): List<MapPreset> = buildList {
+/**
+ * The built-in presets of [control]: whole-stick set-ups for a stick; common outputs as chips for
+ * anything with a press; touchpad and gyro set-ups for a touch button or the touchpad. [toChips]
+ * turns mappings the control would have (from nothing) into a button preset's chips.
+ */
+private fun presetsFor(
+    control: TouchControl,
+    inputs: List<BindableInput>,
+    physical: Boolean,
+    toChips: (List<Mapping>) -> List<PresetChip>,
+): List<MapPreset> = buildList {
     if (control.kind == TouchKind.STICK) {
-        for (p in Bindings.StickPreset.entries) add(MapPreset(p.label) { m -> Bindings.applyStickPreset(m, inputs, p) })
+        for (p in Bindings.StickPreset.entries) {
+            add(MapPreset(p.label, PresetLevel.BUTTON, toChips(Bindings.applyStickPreset(emptyList(), inputs, p)), stick = p))
+        }
         return@buildList
     }
-    val press = inputs.firstOrNull { !isSurface(it) }
-    if (press != null && !press.mouseMotion) {
-        // A preset replaces the press; a ratchet stays.
-        fun main(label: String, t: OutputTarget) = add(
-            MapPreset(label) { m ->
-                Bindings.setTargets(
-                    m,
-                    press,
-                    listOf(t) + Bindings.targets(m, press).filter(::isRatchet)
-                )
-            },
-        )
-        main("Mouse left", OutputTarget.Mouse(MouseButton.LEFT))
-        main("Mouse right", OutputTarget.Mouse(MouseButton.RIGHT))
-        main("Space", OutputTarget.Key(0x2C))
-        main("Shift", OutputTarget.Key(HidUsage.LEFT_SHIFT))
-        main("Ctrl", OutputTarget.Key(HidUsage.LEFT_CTRL))
-        main("Esc", OutputTarget.Key(0x29))
-        main("Tab", OutputTarget.Key(0x2B))
-        main("Enter", OutputTarget.Key(0x28))
-        add(MapPreset("Ratchet") { m ->
-            Bindings.setTargets(
-                m,
-                press,
-                Bindings.targets(m, press).filterNot(::isRatchet) + OutputTarget.GyroPause
-            )
-        })
+    // A press to put chips on: the touchpad has none (its first other input is a finger's position).
+    val press = inputs.firstOrNull { !isSurface(it) && !it.analog && !it.swipe && !it.mouseMotion }
+    if (press != null && !control.isTouchpadStandIn) {
+        fun chip(label: String, t: OutputTarget) = add(MapPreset(label, PresetLevel.CHIP, listOf(PresetChip(press.sources.first(), t))))
+        chip("Mouse left", OutputTarget.Mouse(MouseButton.LEFT))
+        chip("Mouse right", OutputTarget.Mouse(MouseButton.RIGHT))
+        chip("Space", OutputTarget.Key(0x2C))
+        chip("Shift", OutputTarget.Key(HidUsage.LEFT_SHIFT))
+        chip("Ctrl", OutputTarget.Key(HidUsage.LEFT_CTRL))
+        chip("Esc", OutputTarget.Key(0x29))
+        chip("Tab", OutputTarget.Key(0x2B))
+        chip("Enter", OutputTarget.Key(0x28))
+        chip("Ratchet", OutputTarget.GyroPause)
     }
     if (control.swipes && !physical) {
-        add(MapPreset("Windows touchpad") { m ->
-            // Only the edited set's (Base in this view) surface mappings are replaced.
-            m.filterNot { it.set == MappingSet.BASE && (it.source as? InputSource.Surface)?.id == control.id } +
-                    Bindings.defaultTouchpadMappings(TouchpadSettings()).map { d ->
-                        val s = d.source
-                        if (s is InputSource.Surface) d.copy(source = s.copy(id = control.id)) else d
-                    }
-        })
-        add(MapPreset("Mouse cursor") { m ->
-            fun move(i: SurfaceInput) =
-                BindableInput(i.label, listOf(InputSource.Surface(1, i, control.id)), analog = true, swipe = true)
-
-            val x =
-                Bindings.setTargets(m, move(SurfaceInput.MOTION_X), listOf(OutputTarget.MouseAxis(MouseMotion.MOVE_X)))
-            Bindings.setTargets(x, move(SurfaceInput.MOTION_Y), listOf(OutputTarget.MouseAxis(MouseMotion.MOVE_Y)))
-        })
+        add(MapPreset("Windows touchpad", PresetLevel.BUTTON, toChips(
+            Bindings.defaultTouchpadMappings(TouchpadSettings()).map { d ->
+                val s = d.source
+                if (s is InputSource.Surface) d.copy(source = s.copy(id = control.id)) else d
+            },
+        )))
+        fun move(i: SurfaceInput) =
+            BindableInput(i.label, listOf(InputSource.Surface(1, i, control.id)), analog = true, swipe = true)
+        val x = Bindings.setTargets(emptyList(), move(SurfaceInput.MOTION_X), listOf(OutputTarget.MouseAxis(MouseMotion.MOVE_X)))
+        add(MapPreset("Mouse cursor", PresetLevel.BUTTON, toChips(
+            Bindings.setTargets(x, move(SurfaceInput.MOTION_Y), listOf(OutputTarget.MouseAxis(MouseMotion.MOVE_Y))),
+        )))
     }
-    // Sets roll and pitch only; the other gyro axes stay. A physical control has no gyro.
-    if (!physical) add(MapPreset("Gyro mouse") { m ->
-        Bindings.gyroMouseMappings(control.id).fold(m) { r, g ->
-            val input = Bindings.gyroInputs(control.id).first { it.sources.single() == g.source }
-            Bindings.setTargets(r, input, listOf(g.target))
-        }
-    })
+    // Roll and pitch move the mouse. A physical control has no gyro of its own here.
+    if (!physical) add(MapPreset("Gyro mouse", PresetLevel.BUTTON, toChips(Bindings.gyroMouseMappings(control.id))))
 }
 
 /**
@@ -454,6 +474,10 @@ internal fun ControlMappingScreen(
     parentName: String = "",
     /** An action's long-press time and double-tap window (ms), for the timing line under its card; null = none shown. */
     timing: (BindableInput) -> Pair<Int, Int>? = { null },
+    /** The workspace a touch control is in: presets bring only the settings that change what it does there. */
+    workspace: Workspace? = null,
+    /** Changes the touch control (a preset's settings); null = presets bring mappings only. */
+    onControlChange: (((TouchControl) -> TouchControl) -> Unit)? = null,
 ) {
     // The edited set seen as Base, so the Base-only Bindings helpers edit it.
     val view = remember(mappings, editSet) { Bindings.viewSet(mappings, editSet) }
@@ -495,7 +519,35 @@ internal fun ControlMappingScreen(
     // A physical button or stick: only its own inputs, none of a touch button's (touch, moves, swipes).
     val physical = physicalInputs != null
     val surfaceCards = control.swipes && !physical
-    val presets = remember(control, inputs) { presetsFor(control, inputs, physical) }
+
+    /** [input]'s place among the control's inputs (its own input's, for a When of it): a physical slot ([MappingPresets.slot]). */
+    fun placeOf(input: BindableInput): Int {
+        val b = Triggers.base(input.sources.first()).let { if (it is InputSource.Surface) it.copy(zone = 0) else it }
+        return inputs.indexOfFirst { top -> top.sources.any { Bindings.sameSource(it, b) } }.coerceAtLeast(0)
+    }
+    /** Every input of the whole control a button preset may map (a physical button's Motion gyro too). */
+    val controlInputs = remember(inputs, physicalMotionId) {
+        MappingPresets.allInputs(inputs + physicalMotionId?.let { Bindings.gyroInputs(it) }.orEmpty())
+    }
+    fun buttonChips(m: List<Mapping>) = MappingPresets.chipsOf(m, controlInputs, ::placeOf, keepFingers = true)
+    val presetKind = remember(control) { ButtonLibrary.kindOf(control) }
+    val userPresets by runtime.mappingPresets.collectAsStateWithLifecycle()
+    val library by runtime.buttonLibrary.collectAsStateWithLifecycle()
+    val builtins = remember(control, inputs) { presetsFor(control, inputs, physical, ::buttonChips) }
+    // Button presets: library buttons of this kind (a touch one's Base mappings as chips).
+    val libraryPresets = remember(library, presetKind) {
+        library.filter { ButtonLibrary.kindOf(it.control) == presetKind }.map { b ->
+            val chips = b.chips.ifEmpty {
+                MappingPresets.chipsOf(
+                    b.mappings.filter { it.set == MappingSet.BASE },
+                    MappingPresets.allInputs(Bindings.touchInputs(b.control)), keepFingers = true,
+                )
+            }
+            MapPreset(ButtonLibrary.name(b), PresetLevel.BUTTON, chips, control = b.control.takeUnless { ButtonLibrary.presetOnly(b) }, user = b)
+        }
+    }
+    val ownPresets = remember(userPresets) { userPresets.map { MapPreset(it.name, it.level, it.chips, it.kind, it.control, it) } }
+    val presets = builtins + ownPresets + libraryPresets
     val extras = remember(inputs) { inputs.flatMap { it.extra }.distinct() }
 
     var fingers by remember(control.id) { mutableIntStateOf(1) }
@@ -609,7 +661,8 @@ internal fun ControlMappingScreen(
     val selected = shown.flatMap(::linesOf).firstOrNull { it.sources.first() == selectedSrc } ?: shown.firstOrNull()
     val selectedAllowed = remember(selected) { selected?.let(::allowedTargets).orEmpty() }
 
-    val undo = remember(control.id) { mutableStateListOf<List<Mapping>>() }
+    // Each step: the mappings before, and the control before when a preset changed its settings too.
+    val undo = remember(control.id) { mutableStateListOf<Pair<List<Mapping>, TouchControl?>>() }
     var recent by remember { mutableStateOf(loadRecent(runtime)) }
     var hapticDraft by remember { mutableStateOf<Pair<BindableInput, OutputTarget>?>(null) }
     var layerDraft by remember { mutableStateOf<Pair<BindableInput, OutputTarget.Layer>?>(null) }
@@ -620,20 +673,24 @@ internal fun ControlMappingScreen(
     }
 
     fun undoLast() {
-        val prev = undo.removeLastOrNull() ?: return
+        val (prev, was) = undo.removeLastOrNull() ?: return
         // Its snackbar's Undo would undo the change before it.
         snackbar.currentSnackbarData?.dismiss()
         emit(prev)
+        if (was != null) onControlChange?.invoke { was }
     }
 
-    /** [next] is the edited set's view; undo keeps every set as it was. */
-    fun change(next: List<Mapping>, message: String) {
+    /**
+     * [next] is the edited set's view; undo keeps every set as it was. [controlBefore]: the control
+     * before a preset changed its settings too (undo brings them back).
+     */
+    fun change(next: List<Mapping>, message: String, controlBefore: TouchControl? = null) {
         val prev = allMappings
         // A zone left empty closes up: the ones after it move down.
         // Mapping something to a cleared action replaces the clear.
         val all = Inheritance.tidy(Bindings.compactZones(Bindings.viewSet(next, currentSet)))
-        if (all == prev) return
-        undo.add(prev)
+        if (all == prev && controlBefore == null) return
+        undo.add(prev to controlBefore)
         if (undo.size > MAX_UNDO) undo.removeAt(0)
         emit(all)
         scope.launch {
@@ -677,7 +734,6 @@ internal fun ControlMappingScreen(
         "Removed " + Describe.shortTarget(t) + " from " + actionTitle(currentControl, input),
     )
 
-    fun applyPreset(p: MapPreset) = change(p.apply(currentMappings), "Applied " + p.label)
 
     // Drag & drop geometry, in root coordinates.
     val cardBounds = remember { mutableStateMapOf<InputSource, Rect>() }
@@ -749,6 +805,91 @@ internal fun ControlMappingScreen(
         cardInputs(input).fold(currentMappings) { m, ti -> Bindings.setTargets(m, ti, emptyList()) },
         actionTitle(currentControl, input) + " follows " + parentName,
     )
+
+    /** The card [line] belongs to: the Swipe card for one of its lines, else itself. */
+    fun cardOf(line: BindableInput): BindableInput =
+        shownNow.firstOrNull { c -> linesOf(c).any { it.sources == line.sources } } ?: line
+
+    /** Every input [card] may map: its lines', Wheres', zones' and Whens'. */
+    fun cardSlots(card: BindableInput): List<BindableInput> =
+        MappingPresets.allInputs(groupOf(card).flatMap { wheresOf(it).filterNotNull() })
+
+    /** [p] may go onto [card] (a button preset onto the control, whatever card). */
+    fun presetFits(p: MapPreset, card: BindableInput?): Boolean = when (p.level) {
+        PresetLevel.CHIP -> card != null && allows(allowedTargets(card), p.chips.single().target)
+        PresetLevel.CARD -> card != null && MappingPresets.kindOf(cardOf(card)) == p.kind
+        PresetLevel.BUTTON -> true
+    }
+
+    /**
+     * [m] with the own chips of [cards] that only repeat what the level above maps there taken
+     * away: those cards follow it again instead of showing an override that changes nothing.
+     */
+    fun followSame(m: List<Mapping>, cards: List<BindableInput>): List<Mapping> {
+        if (currentSet != MappingSet.BASE) return m
+        return cards.fold(m) { acc, card ->
+            val all = cardInputs(card)
+            val own = all.map { Bindings.entries(acc, it) }
+            if (own.all { it.isEmpty() } || own != all.map { Bindings.entries(parentView, it) }) acc
+            else all.fold(acc) { a, ti -> Bindings.setTargets(a, ti, emptyList()) }
+        }
+    }
+
+    /** The settings [p] can bring to this control (its card's, or all for a button preset); empty = none. */
+    fun presetSettings(p: MapPreset): Set<String> {
+        val from = p.control ?: return emptySet()
+        if (physical || control.isTouchpadStandIn || onControlChange == null || workspace == null) return emptySet()
+        val keys = when (p.level) {
+            PresetLevel.CARD -> p.kind?.let(MappingPresets::cardSettings).orEmpty()
+            PresetLevel.BUTTON -> MappingPresets.BUTTON_SETTINGS
+            PresetLevel.CHIP -> emptySet()
+        }
+        return if (from.kind == control.kind) keys else emptySet()
+    }
+
+    /**
+     * Applies [p] to [card] (a chip or card preset) or the whole control (a button preset): added
+     * beside what is there, or [replace]-ing it; [withSettings]: with the settings it brings,
+     * written only where they change something. Chips that just repeat the level above follow it.
+     */
+    fun applyPreset(p: MapPreset, card: BindableInput?, replace: Boolean, withSettings: Boolean) {
+        val next = when (p.level) {
+            PresetLevel.CHIP -> {
+                val c = card ?: return
+                val ch = p.chips.single()
+                val base = if (!replace) currentMappings
+                else cardInputs(cardOf(c)).fold(currentMappings) { m, ti -> Bindings.setTargets(m, ti, emptyList()) }
+                val now = Bindings.entries(base, c)
+                val e = Bindings.Entry(ch.target, ch.options, ch.range)
+                if (now.any { it.target == e.target && it.shape == e.shape }) base else Bindings.setEntries(base, c, now + e)
+            }
+            PresetLevel.CARD -> MappingPresets.place(currentMappings, p.chips, cardSlots(cardOf(card ?: return)), replace)
+            PresetLevel.BUTTON -> MappingPresets.place(currentMappings, p.chips, controlInputs, replace, ::placeOf, keepFingers = true)
+        }
+        val cards = if (p.level == PresetLevel.BUTTON || card == null) inputs.filterNot(Bindings::isTriggerOf) else listOf(cardOf(card))
+        val keys = if (withSettings) presetSettings(p) else emptySet()
+        val from = p.control
+        val ws = workspace
+        val before = currentControl
+        val changed = from != null && ws != null && keys.isNotEmpty() && MappingPresets.applySettings(before, from, keys, ws) != before
+        if (changed) onControlChange?.invoke { MappingPresets.applySettings(it, from!!, keys, ws!!) }
+        change(
+            followSame(next, cards),
+            (if (replace) "Replaced with " else "Added ") + p.label + if (changed) " and its settings" else "",
+            controlBefore = if (changed) before else null,
+        )
+    }
+
+    /** A preset asking Add or Replace, for a card (null: the whole control). */
+    var presetAsk by remember { mutableStateOf<Pair<MapPreset, BindableInput?>?>(null) }
+
+    /** A preset being named before it is saved: its title, the name offered, and what saves it. */
+    var naming by remember { mutableStateOf<Triple<String, String, (String) -> Unit>?>(null) }
+
+    /** Asks for a preset's name ([title], [initial] offered), then [save]s it. */
+    fun askName(title: String, initial: String, save: (String) -> Unit) {
+        naming = Triple(title, initial, save)
+    }
 
     /** The card whose faded chip maps [from] (one of a card's Wheres on one of its triggers). */
     fun inheritedCard(from: BindableInput): BindableInput? =
@@ -995,7 +1136,7 @@ internal fun ControlMappingScreen(
         }
     }
 
-    val hovered by remember { derivedStateOf { if (dragged is Dragged.Target) cardAt(dragPos) else null } }
+    val hovered by remember { derivedStateOf { if (dragged is Dragged.Target || dragged is Dragged.Preset) cardAt(dragPos) else null } }
     var zoneDialog by remember { mutableStateOf<Pair<BindableInput, Int?>?>(null) }
     var actionDialog by remember { mutableStateOf<BindableInput?>(null) }
 
@@ -1105,10 +1246,11 @@ internal fun ControlMappingScreen(
                         // A new one already mapped there goes to the next When that does not map it yet
                         // (On touch Crouch, then Long press Crouch), its settings opened to pick When and How.
                         // A moved chip keeps its options (Toggle, Once, delays...).
+                        // A chip preset's new chip takes its How and options.
                         val kept = from?.let {
                             (if (d.inherited) null else Bindings.entry(currentMappings, it, d.target, d.n)?.options)
                                 ?: Bindings.options(parentView, it, d.target)
-                        }
+                        } ?: d.options
                         val shape = (kept ?: MapOptions()).shape
                         fun maps(t: Trigger) = Bindings.entries(currentMappings, trig(zi, t)).any { it.target == d.target && it.shape == shape }
                         val fresh = if (from == null && maps(tr0)) Bindings.triggersOf(zi).firstOrNull { !maps(it) } else null
@@ -1127,7 +1269,7 @@ internal fun ControlMappingScreen(
                         row.add(to.coerceIn(0, row.size), RowItem.Chip(zone, d.target, tr, w, -1))
                         // A faded chip moved: its card overrides the level above without it (with it, where it landed there).
                         val over = from?.takeIf { d.inherited }?.let(::inheritedCard)
-                        val placed = withRow(base, card, row, from?.let { d.target to kept })
+                        val placed = withRow(base, card, row, if (from != null || d.options != null) d.target to kept else null)
                         change(
                             if (over != null && from != null) withoutInherited(placed, over, Triggers.of(from.sources.first()), d.target, from) else placed,
                             (if (from == null) "Mapped " else "Moved ") + Describe.shortTarget(d.target) + " to " + actionTitle(currentControl, zi),
@@ -1165,9 +1307,18 @@ internal fun ControlMappingScreen(
                 done = true
             }
 
-            is Dragged.Preset -> if (actionsBounds.contains(dragPos)) {
-                applyPreset(d.preset)
-                done = true
+            // A card preset onto a card of its kind, a button preset anywhere on the cards: Add or Replace?
+            is Dragged.Preset -> if (d.preset.level == PresetLevel.BUTTON) {
+                if (actionsBounds.contains(dragPos)) {
+                    presetAsk = d.preset to null
+                    done = true
+                }
+            } else {
+                cardAt(dragPos)?.let(::cardOf)?.takeIf { presetFits(d.preset, it) }?.let { c ->
+                    selectedSrc = c.sources.first()
+                    presetAsk = d.preset to c
+                    done = true
+                }
             }
 
             is Dragged.Card -> {
@@ -1238,7 +1389,7 @@ internal fun ControlMappingScreen(
                         for (p in Bindings.StickPreset.entries) {
                             FilterChip(
                                 selected = presetMatches(view, inputs, p),
-                                onClick = { presets.getOrNull(p.ordinal)?.let { applyPreset(it) } },
+                                onClick = { presets.firstOrNull { it.stick == p }?.let { presetAsk = it to null } },
                                 label = { Text(p.label) },
                             )
                         }
@@ -1306,7 +1457,9 @@ internal fun ControlMappingScreen(
                     val src = input.sources.first()
                     val d = dragged
                     val dragTarget = (d as? Dragged.Target)?.target
-                    val fits = dragTarget == null || allows(allowedTargets(input), dragTarget)
+                    // A card preset fits only cards of its kind: the others grey out.
+                    val dragCard = (d as? Dragged.Preset)?.preset?.takeIf { it.level == PresetLevel.CARD }
+                    val fits = (dragTarget == null || allows(allowedTargets(input), dragTarget)) && (dragCard == null || presetFits(dragCard, input))
                     val zoneCount = zonesOf(input)
                     val zoneInputs = List(zoneCount) { z -> if (z == 0) input else Bindings.zoneInput(input, z) }
                     val row = liveRow(input)
@@ -1426,7 +1579,7 @@ internal fun ControlMappingScreen(
                         selected = cardLines.any { it == selected } && hovered.let { h ->
                             h == null || h == input || hoverHere || dragTarget == null || !allows(allowedTargets(h), dragTarget)
                         },
-                        hover = dragTarget != null && fits && (hovered == input || hoverHere),
+                        hover = (dragTarget != null || dragCard != null) && fits && (hovered == input || hoverHere),
                         landingLabel = when (d) {
                             is Dragged.Target -> Describe.shortTarget(d.target)
                             else -> null
@@ -1458,6 +1611,19 @@ internal fun ControlMappingScreen(
                             startDrag(Dragged.Target(f.target, trig(wheresOf(input).getOrNull(f.where) ?: input, f.trigger), inherited = true), at)
                         },
                         onHandleDrag = { at -> startCardDrag(input, at) },
+                        onSavePreset = if (own.any { it != OutputTarget.NoOutput }) ({
+                            val title = actionTitle(control, input)
+                            askName("Save card preset", title) { name ->
+                                runtime.saveMappingPreset(
+                                    MappingPreset(
+                                        MappingPresets.newId(userPresets.map { it.id }), name, PresetLevel.CARD,
+                                        MappingPresets.kindOf(input), MappingPresets.chipsOf(view, cardSlots(input)),
+                                        control.takeIf { !physical && !control.isTouchpadStandIn },
+                                    ),
+                                )
+                                scope.launch { snackbar.showSnackbar("Saved card preset " + name + " (Presets)") }
+                            }
+                        }) else null,
                         modifier = Modifier.animateItem(),
                     )
                 }
@@ -1488,6 +1654,7 @@ internal fun ControlMappingScreen(
             tab == LibraryTab.PRESETS -> presets
             else -> emptyList()
         }
+        val presetsTab = q.isEmpty() && tab == LibraryTab.PRESETS
         val shownTargets = when {
             q.isNotEmpty() -> (Describe.allTargets + extras).distinct().filter {
                 Describe.shortTarget(it).contains(q, ignoreCase = true) || Describe.target(it)
@@ -1526,9 +1693,13 @@ internal fun ControlMappingScreen(
                         for (t in tabs) FilterChip(selected = tab == t, onClick = { tab = t }, label = { Text(t.label) })
                     }
                 }
+                if (presetsTab) PresetLegend(Modifier.padding(horizontal = 16.dp, vertical = 2.dp))
                 Text(
-                    if (selected == null) "Long-press a target to drag it onto an action."
-                    else "Tap to add to " + actionTitle(control, selected) + " · long-press to drag",
+                    when {
+                        presetsTab -> "Tap to add or replace · long-press to drag onto a card"
+                        selected == null -> "Long-press a target to drag it onto an action."
+                        else -> "Tap to add to " + actionTitle(control, selected) + " · long-press to drag"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant,
                     maxLines = 1,
@@ -1554,17 +1725,24 @@ internal fun ControlMappingScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         for (p in shownPresets) {
+                            val chip = p.chips.singleOrNull()?.takeIf { p.level == PresetLevel.CHIP }
                             LibraryChip(
-                                text = "✦ " + p.label,
-                                enabled = true,
-                                mapped = control.kind == TouchKind.STICK &&
-                                        Bindings.StickPreset.entries.getOrNull(presets.indexOf(p))
-                                            ?.let { presetMatches(view, inputs, it) } == true,
+                                text = p.label,
+                                // A chip or card preset goes onto the selected card: greyed where it doesn't fit.
+                                enabled = p.level == PresetLevel.BUTTON || presetFits(p, selected),
+                                mapped = p.stick?.let { presetMatches(view, inputs, it) } == true,
                                 preset = true,
-                                dragging = (dragged as? Dragged.Preset)?.preset == p,
-                                dragKey = p.label,
-                                onClick = { applyPreset(p) },
-                                onDragStart = { at -> startDrag(Dragged.Preset(p), at) },
+                                level = p.level,
+                                dragging = (dragged as? Dragged.Preset)?.preset == p ||
+                                    (chip != null && (dragged as? Dragged.Target)?.let { it.from == null && it.target == chip.target && it.options == chip.options } == true),
+                                dragKey = "preset:" + p.level + ":" + p.label + ":" +
+                                    ((p.user as? MappingPreset)?.id ?: (p.user as? LibraryButton)?.id ?: ""),
+                                onClick = { presetAsk = p to (if (p.level == PresetLevel.BUTTON) null else selected) },
+                                // A chip preset drags as its chip; a card or button preset asks where it lands.
+                                onDragStart = { at ->
+                                    if (chip != null) startDrag(Dragged.Target(chip.target, null, options = chip.options), at)
+                                    else startDrag(Dragged.Preset(p), at)
+                                },
                             )
                         }
                         for (t in shownTargets) {
@@ -1707,6 +1885,31 @@ internal fun ControlMappingScreen(
                         if (bulk.any { (Bindings.targets(view, it).ifEmpty { Bindings.targets(parentView, it) }).any { t -> t != OutputTarget.NoOutput } }) {
                             TextButton(onClick = { clearAll() }, contentPadding = compact) { Text("✕ Clear all") }
                         }
+                        // The whole control as a button preset (its mappings in the edited layer, its settings).
+                        if (bulk.any { Bindings.targets(view, it).any { t -> t != OutputTarget.NoOutput } }) {
+                            TextButton(onClick = {
+                                askName("Save button preset", control.label.ifBlank { controlKindName(control) }) { name ->
+                                    val own = view.filter { m -> m.set == MappingSet.BASE && controlInputs.any { Bindings.belongs(m, it) } }
+                                    val touch = !physical && !control.isTouchpadStandIn
+                                    runtime.addToLibrary(
+                                        LibraryButton(
+                                            ButtonLibrary.newId(library.map { it.id }), control.copy(group = null),
+                                            mappings = if (touch) own else emptyList(), name = name,
+                                            chips = if (touch) emptyList() else buttonChips(view),
+                                        ),
+                                    )
+                                    scope.launch {
+                                        snackbar.showSnackbar("Saved button preset " + name + if (touch) " (Presets, and the Add menu's library)" else " (Presets)")
+                                    }
+                                }
+                            }, contentPadding = compact) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("+")
+                                    PresetIcon(PresetLevel.BUTTON, colors.primary)
+                                    Text("Preset")
+                                }
+                            }
+                        }
                         // One Settings: a touch control's own page (its look and the settings its actions
                         // share), else the shared settings (the touchpad's: the workspace's).
                         val shared = settings?.shared
@@ -1833,6 +2036,36 @@ internal fun ControlMappingScreen(
             for (c in timingContents) c()
         }
     }
+    presetAsk?.let { (p, card) ->
+        val user = p.user
+        PresetApplyDialog(
+            name = p.label,
+            level = p.level,
+            where = if (card == null) "this " + controlKindName(control).lowercase() else actionTitle(control, cardOf(card)),
+            canAdd = p.chips.isNotEmpty(),
+            withSettings = presetSettings(p).isNotEmpty(),
+            onApply = { replace, withSettings ->
+                presetAsk = null
+                if (p.level != PresetLevel.BUTTON && (card == null || !presetFits(p, card))) {
+                    scope.launch { snackbar.showSnackbar("Select a card it fits first") }
+                } else applyPreset(p, card, replace, withSettings)
+            },
+            onDismiss = { presetAsk = null },
+            onRename = when (user) {
+                is MappingPreset -> ({ presetAsk = null; askName("Rename preset", user.name) { n -> runtime.saveMappingPreset(user.copy(name = n)) } })
+                is LibraryButton -> ({ presetAsk = null; askName("Rename preset", ButtonLibrary.name(user)) { n -> runtime.updateLibrary(user.copy(name = n)) } })
+                else -> null
+            },
+            onDelete = when (user) {
+                is MappingPreset -> ({ presetAsk = null; runtime.removeMappingPreset(user.id) })
+                is LibraryButton -> ({ presetAsk = null; runtime.removeFromLibrary(user.id) })
+                else -> null
+            },
+        )
+    }
+    naming?.let { (title, initial, save) ->
+        PresetNameDialog(title, initial, onSave = { n -> naming = null; save(n) }, onDismiss = { naming = null })
+    }
     chipDialog?.let { (input, chip) ->
         val zi = chipInput(input, chip)
         val ti = trig(zi, chip.trigger)
@@ -1885,6 +2118,19 @@ internal fun ControlMappingScreen(
             onRemove = {
                 chipDialog = null
                 remove(ti, chip.target, chip.n)
+            },
+            onSavePreset = {
+                chipDialog = null
+                val e = Bindings.entry(view, ti, chip.target, chip.n)
+                askName("Save chip preset", chipText("", chip.target, e?.options)) { name ->
+                    runtime.saveMappingPreset(
+                        MappingPreset(
+                            MappingPresets.newId(userPresets.map { it.id }), name, PresetLevel.CHIP, MappingPresets.kindOf(input),
+                            listOf(PresetChip(MappingPresets.slot(ti.sources.first()), chip.target, e?.options, e?.range)),
+                        ),
+                    )
+                    scope.launch { snackbar.showSnackbar("Saved chip preset " + name + " (Presets)") }
+                }
             },
             onDismiss = { chipDialog = null },
             onTargetSettings = if (Describe.isHaptic(chip.target)) {
@@ -2081,6 +2327,8 @@ private fun ActionCard(
     /** The ⠿ handle starts moving the card. */
     onHandleDrag: (Offset) -> Unit,
     modifier: Modifier = Modifier,
+    /** Saves the card as a card preset (its icon with a +, before ✕ and ↺); null = nothing to save. */
+    onSavePreset: (() -> Unit)? = null,
     /** A card of several labelled lines (the Swipe card's directions), each its own row; null = the one [row]. */
     lines: List<CardLine>? = null,
 ) {
@@ -2137,6 +2385,15 @@ private fun ActionCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                if (onSavePreset != null) {
+                    Row(
+                        Modifier.height(32.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = onSavePreset).padding(horizontal = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("+", style = MaterialTheme.typography.titleSmall, color = colors.onSurfaceVariant)
+                        PresetIcon(PresetLevel.CARD, colors.onSurfaceVariant)
+                    }
+                }
                 for ((label, action) in listOf("✕" to onClear, "↺" to onFollow)) if (action != null) {
                     Box(
                         Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = action),
@@ -2530,6 +2787,8 @@ private fun LibraryChip(
     dragKey: Any,
     onClick: () -> Unit,
     onDragStart: (Offset) -> Unit,
+    /** A preset's level, shown by its icon before the text; null = none (a target). */
+    level: PresetLevel? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val coords = remember { arrayOfNulls<LayoutCoordinates>(1) }
@@ -2552,13 +2811,160 @@ private fun LibraryChip(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            if (mapped) "✓ " + text else text,
-            style = MaterialTheme.typography.labelLarge,
-            color = fg,
-            maxLines = 1,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (level != null) PresetIcon(level, fg)
+            Text(
+                if (mapped) "✓ " + text else text,
+                style = MaterialTheme.typography.labelLarge,
+                color = fg,
+                maxLines = 1,
+            )
+        }
     }
+}
+
+/**
+ * A preset level's icon: a chip (a small pill), a card (a card holding a pill), a whole button (a
+ * round button with a card in it).
+ */
+@Composable
+internal fun PresetIcon(level: PresetLevel, color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier.size(16.dp)) {
+        val w = size.width
+        val h = size.height
+        val stroke = Stroke(width = w * 0.11f)
+        fun pill(x: Float, y: Float, pw: Float, ph: Float, fill: Boolean) {
+            val r = CornerRadius(ph / 2f, ph / 2f)
+            if (fill) drawRoundRect(color, Offset(x, y), Size(pw, ph), r)
+            else drawRoundRect(color, Offset(x, y), Size(pw, ph), r, style = stroke)
+        }
+        when (level) {
+            PresetLevel.CHIP -> pill(w * 0.08f, h * 0.3f, w * 0.84f, h * 0.4f, fill = true)
+            PresetLevel.CARD -> {
+                drawRoundRect(color, Offset(w * 0.06f, h * 0.14f), Size(w * 0.88f, h * 0.72f), CornerRadius(w * 0.14f), style = stroke)
+                pill(w * 0.24f, h * 0.4f, w * 0.52f, h * 0.2f, fill = true)
+            }
+            PresetLevel.BUTTON -> {
+                drawCircle(color, radius = w * 0.44f, style = stroke)
+                drawRoundRect(color, Offset(w * 0.3f, h * 0.36f), Size(w * 0.4f, h * 0.28f), CornerRadius(w * 0.06f))
+            }
+        }
+    }
+}
+
+/** What the presets' icons mean, above the Presets tab. */
+@Composable
+private fun PresetLegend(modifier: Modifier = Modifier) {
+    val c = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        for ((level, name) in listOf(PresetLevel.CHIP to "chip", PresetLevel.CARD to "card", PresetLevel.BUTTON to "whole button")) {
+            PresetIcon(level, c)
+            Text(name, style = MaterialTheme.typography.bodySmall, color = c, modifier = Modifier.padding(end = 8.dp))
+        }
+    }
+}
+
+/**
+ * Applying preset [name] ([level]) to [where] (a card's name, or "this button"): Add (beside what
+ * is there), or Replace (asks first). [withSettings]: the "Apply with settings" switch (on by
+ * default), when the preset brings settings. A preset of the user's can be renamed or deleted here.
+ */
+@Composable
+private fun PresetApplyDialog(
+    name: String,
+    level: PresetLevel,
+    where: String,
+    canAdd: Boolean,
+    withSettings: Boolean,
+    onApply: (replace: Boolean, settings: Boolean) -> Unit,
+    onDismiss: () -> Unit,
+    onRename: (() -> Unit)?,
+    onDelete: (() -> Unit)?,
+) {
+    var settings by remember { mutableStateOf(true) }
+    var confirmReplace by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val colors = MaterialTheme.colorScheme
+    if (confirmReplace) {
+        AlertDialog(
+            onDismissRequest = { confirmReplace = false },
+            title = { Text("Replace?") },
+            text = { Text("What $where maps now goes, and $name takes its place.") },
+            confirmButton = { TextButton(onClick = { confirmReplace = false; onApply(true, withSettings && settings) }) { Text("Replace", color = colors.error) } },
+            dismissButton = { TextButton(onClick = { confirmReplace = false }) { Text("Cancel") } },
+        )
+        return
+    }
+    if (confirmDelete && onDelete != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete preset \"$name\"?") },
+            text = { Text("Mappings it already filled stay.") },
+            confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete() }) { Text("Delete", color = colors.error) } },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
+        return
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PresetIcon(level, colors.onSurface, Modifier.size(20.dp))
+                Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Add: onto $where, beside what it maps. Replace: instead of what it maps.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (withSettings) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Apply with settings", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                if (settings) "Its " + (if (level == PresetLevel.BUTTON) "button" else "card") +
+                                    " settings too, only those that change something here."
+                                else "Only its mappings, with their own options.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = settings, onCheckedChange = { settings = it })
+                    }
+                }
+                if (onRename != null || onDelete != null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (onRename != null) TextButton(onClick = onRename) { Text("Rename") }
+                        if (onDelete != null) TextButton(onClick = { confirmDelete = true }) { Text("Delete preset", color = colors.error) }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row {
+                TextButton(onClick = { confirmReplace = true }) { Text("Replace") }
+                TextButton(onClick = { onApply(false, withSettings && settings) }, enabled = canAdd) { Text("Add") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Names a preset before saving it ([title]), [initial] offered. */
+@Composable
+private fun PresetNameDialog(title: String, initial: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var name by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Name") })
+        },
+        confirmButton = { TextButton(onClick = { onSave(name.trim().ifEmpty { initial }) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 /** The bar between the two panes: drag it to resize them ([onMove] gets px along the split). */
