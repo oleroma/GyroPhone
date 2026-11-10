@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.ProfileExport
 import com.oleroma.gyrophone.core.model.isWorkspaceInput
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.runtime.ScreenOrientation
@@ -112,6 +113,37 @@ private fun AppTab(runtime: GamepadRuntime) {
     val blackSeconds by runtime.blackScreenSeconds.collectAsStateWithLifecycle()
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val visuals by runtime.touchVisuals.collectAsStateWithLifecycle()
+    // Export and import of everything ("Backup"); a workspace alone is exported from its settings.
+    val export = rememberExportFile { note(context, it) }
+    var importing by remember { mutableStateOf<ProfileExport.Read?>(null) }
+    val importFile = rememberImportFile(
+        onRead = { r ->
+            if (r.kind == ProfileExport.EVERYTHING) importing = r
+            else note(context, "This file holds one workspace: add it with + in the workspace row")
+        },
+        onError = { note(context, it) },
+    )
+    importing?.let { r ->
+        AlertDialog(
+            onDismissRequest = { importing = null },
+            title = { Text("Replace everything?") },
+            text = {
+                Text(
+                    "Every workspace, the Defaults and the device presets are replaced by the file's " +
+                        "(${r.profile.workspaces.size} workspaces). What you have now is kept as a backup file in the app. " +
+                        "Button and mapping presets from the file are added beside yours.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    importing = null
+                    runtime.importEverything(r)
+                    note(context, "Imported" + if (r.dropped > 0) " (${r.dropped} mappings this version can't use left out)" else "")
+                }) { Text("Replace", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { importing = null }) { Text("Cancel") } },
+        )
+    }
     val debugOn by runtime.debug.enabled.collectAsStateWithLifecycle()
     val tight by runtime.gyroTightening.collectAsStateWithLifecycle()
     val smooth by runtime.gyroSmoothing.collectAsStateWithLifecycle()
@@ -326,6 +358,25 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "Record saves the last 30 seconds (the PC saves its side too over Wi-Fi or USB). " +
                         "Off: nothing is logged.",
             ) { runtime.debug.setEnabled(it) }
+        },
+        category(runtime, "backup", "Backup", "Export or import everything as a file") {
+            Searchable(
+                "Export or import everything", "backup file export import share move to another phone restore",
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "One file with every workspace, the Defaults, device presets, the button library and your mapping presets. " +
+                            "To share one workspace, use Export in its settings.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { export(ProfileExport.fileName("GyroPhone everything"), runtime.exportEverything()) }) {
+                            Text("Export everything")
+                        }
+                        OutlinedButton(onClick = importFile) { Text("Import everything…") }
+                    }
+                }
+            }
         },
         category(runtime, "about", "About", "Version and gyro sensor") {
             Searchable("About", "version GyroPhone gyro rate sensor Hz", gyro.source) {

@@ -28,6 +28,9 @@ import com.oleroma.gyrophone.core.model.KnownController
 import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.LibraryButton
+import com.oleroma.gyrophone.core.model.ButtonLibrary
+import com.oleroma.gyrophone.core.model.MappingPresets
+import com.oleroma.gyrophone.core.model.ProfileExport
 import com.oleroma.gyrophone.core.model.MappingPreset
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.YawAxis
@@ -1170,6 +1173,40 @@ class GamepadRuntime(context: Context) {
 
     fun removeMappingPreset(id: String) {
         _mappingPresets.value = _mappingPresets.value.filterNot { it.id == id }
+        store.saveMappingPresets(_mappingPresets.value)
+    }
+
+    /** Workspace [id] as saved, as an export file (null when there is no such workspace). */
+    fun exportWorkspace(id: String): String? =
+        stored.workspaces.indexOfFirst { it.id == id }.takeIf { it >= 0 }?.let { ProfileExport.workspace(stored, it) }
+
+    /** Everything as an export file: all workspaces, the Defaults, device presets, the button library and the mapping presets. */
+    fun exportEverything(): String = ProfileExport.everything(stored, _buttonLibrary.value, _mappingPresets.value)
+
+    /** Adds the workspace of export file [r] last (never replacing one) and switches to it. */
+    fun importWorkspace(r: ProfileExport.Read) {
+        val set = WorkspaceMappings.store(ProfileExport.addWorkspace(stored, r))
+        stored = set
+        store.saveLater(set)
+        activate(resolveStored(stored))
+        switchWorkspace(set.workspaces.lastIndex)
+    }
+
+    /**
+     * Replaces every workspace, the Defaults and device presets with those of export file [r]; the
+     * set as it was is kept beside it first ("<file>.import-<time>.bak"). Its library buttons and
+     * presets join the ones here (nothing here is lost).
+     */
+    fun importEverything(r: ProfileExport.Read) {
+        store.backup(stored, "import-" + System.currentTimeMillis())
+        val set = WorkspaceMappings.store(r.profile.copy(id = stored.id, name = stored.name))
+        stored = set
+        store.saveLater(set)
+        store.setWorkspaceIndex(set.id, 0)
+        activate(resolveStored(stored))
+        _buttonLibrary.value = ProfileExport.merge(_buttonLibrary.value, r.library, { it.id }, { b, id -> b.copy(id = id) }, ButtonLibrary::newId)
+        store.saveButtonLibrary(_buttonLibrary.value)
+        _mappingPresets.value = ProfileExport.merge(_mappingPresets.value, r.presets, { it.id }, { b, id -> b.copy(id = id) }, MappingPresets::newId)
         store.saveMappingPresets(_mappingPresets.value)
     }
 

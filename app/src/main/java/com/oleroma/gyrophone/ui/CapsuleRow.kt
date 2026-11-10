@@ -35,6 +35,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -53,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
+import com.oleroma.gyrophone.core.model.ProfileExport
 import com.oleroma.gyrophone.core.model.WorkspaceEdits
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
@@ -227,6 +229,18 @@ internal fun CapsuleRow(
         }
     }
 
+    val context = LocalContext.current
+    val importFile = rememberImportFile(
+        onRead = { r ->
+            if (r.kind != ProfileExport.WORKSPACE) {
+                note(context, "This file holds everything: import it in App settings")
+            } else {
+                runtime.importWorkspace(r)
+                note(context, "Added " + runtime.activeProfile.value.workspaces.last().name + if (r.dropped > 0) " (${r.dropped} mappings this version can't use left out)" else "")
+            }
+        },
+        onError = { note(context, it) },
+    )
     if (adding) {
         AlertDialog(
             onDismissRequest = { adding = false },
@@ -247,6 +261,14 @@ internal fun CapsuleRow(
                             }.padding(12.dp),
                         )
                     }
+                    // A workspace someone exported (Export in its settings): added last, never replacing one.
+                    Text(
+                        "From a file…",
+                        Modifier.fillMaxWidth().clickable {
+                            adding = false
+                            importFile()
+                        }.padding(12.dp),
+                    )
                 }
             },
             confirmButton = { TextButton(onClick = { adding = false }) { Text("Cancel") } },
