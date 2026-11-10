@@ -26,8 +26,6 @@ GyroPhone was written with the help of AI (Claude). No screenshots, images or co
 
 - **ViGEmBus** (Nefarius): named as the separately installed driver the companion talks to for a virtual Xbox 360 / DualShock 4 pad.
 - **Material Icons** (Google, Apache 2.0): named as the source of the edit menu's icon paths, which are copied from it.
-- **Android**, **Windows**, **Windows Driver Kit / Virtual HID Framework**, **Segoe UI** (Microsoft): named as the platforms, build tools and system font. None of them is shipped with GyroPhone.
-- **Obtainium**: named as the way test builds reach the phone.
 
 ## History
 
