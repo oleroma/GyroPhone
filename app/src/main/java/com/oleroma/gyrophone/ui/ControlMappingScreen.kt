@@ -569,7 +569,7 @@ internal fun ControlMappingScreen(
     val builtins = remember(control, inputs) { presetsFor(control, inputs, physical, ::buttonChips) }
     // Button presets: library buttons of this kind (a touch one's Base mappings as chips).
     val libraryPresets = remember(library, presetKind) {
-        library.filter { ButtonLibrary.kindOf(it.control) == presetKind }.map { b ->
+        library.filter { !ButtonLibrary.isGroup(it) && ButtonLibrary.kindOf(it.control) == presetKind }.map { b ->
             val chips = b.chips.ifEmpty {
                 MappingPresets.chipsOf(
                     b.mappings.filter { it.set == MappingSet.BASE },
@@ -3043,7 +3043,7 @@ private fun PresetApplyDialog(
 
 /** Names a preset before saving it ([title]), [initial] offered. */
 @Composable
-private fun PresetNameDialog(title: String, initial: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+internal fun PresetNameDialog(title: String, initial: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
     var name by remember { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,

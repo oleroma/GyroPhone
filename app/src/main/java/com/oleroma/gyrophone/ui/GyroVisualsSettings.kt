@@ -152,11 +152,14 @@ internal fun GyroDisplaySettingsScreen(
     onDelete: () -> Unit,
     onClose: () -> Unit,
     gameKnown: Boolean = false,
+    /** Saves it (look, settings and size) as a preset under the name given, for Add preset. */
+    onSavePreset: ((String) -> Unit)? = null,
 ) {
     val d = control.display ?: return
     // Level reads the accelerometer a moment later: it changes the control as it is then.
     val latest = rememberUpdatedState(control)
     var confirmDelete by remember { mutableStateOf(false) }
+    var naming by remember { mutableStateOf(false) }
     var picking by remember { mutableStateOf<GyroDisplayColor?>(null) }
     fun set(nd: GyroDisplay) = onChange(control.copy(display = nd))
     // Its label names it only here and in lists, never on the display itself.
@@ -168,6 +171,7 @@ internal fun GyroDisplaySettingsScreen(
         titleField = { LabelField(control.label, d.kind.label, { onChange(latest.value.copy(label = it)) }) },
         actions = {
             TextButton(onClick = onDuplicate) { Text("Duplicate") }
+            if (onSavePreset != null) TextButton(onClick = { naming = true }) { Text("Save as preset") }
             TextButton(onClick = { confirmDelete = true }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
         },
     ) {
@@ -442,6 +446,9 @@ internal fun GyroDisplaySettingsScreen(
             onPick = { set(d.withColor(c, it.toArgb().toLong() and 0xFFFFFFFFL)); picking = null },
             onDismiss = { picking = null },
         )
+    }
+    if (naming && onSavePreset != null) {
+        PresetNameDialog("Save as preset", name, onSave = { n -> naming = false; onSavePreset(n) }, onDismiss = { naming = false })
     }
     if (confirmDelete) {
         AlertDialog(
