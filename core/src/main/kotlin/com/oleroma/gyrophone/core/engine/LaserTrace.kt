@@ -462,8 +462,6 @@ class LaserTrace {
         /** With Lowered when idle ([rifle]'s lower 1) the gun rests pitched this many degrees down. */
         const val LOWER_DEG = 15f
 
-        /** Hip fire ([rifle]'s hip 1: firing without aiming) the gun comes up level, pulled back toward the player this far. */
-        const val HIP_PULL = 0.22f
 
         /**
          * A point (x, y, z) of [gun]'s own frame at aim [aim] (0 .. 1), kick [kick] (0 rest .. 1 full, a little under
@@ -486,7 +484,7 @@ class LaserTrace {
             val yf = y * f
             out[at] = x * f
             out[at + 1] = yf * c - dz * s
-            out[at + 2] = pz + yf * s + dz * c + (if (dir) 0f else AIM_PULL * aim.coerceIn(0f, 1f) + HIP_PULL * hip.coerceIn(0f, 1f) + r.back * kick)
+            out[at + 2] = pz + yf * s + dz * c + (if (dir) 0f else AIM_PULL * aim.coerceIn(0f, 1f) + -gun.fitZ(gun.muzzleZ) * hip.coerceIn(0f, 1f) + r.back * kick)
         }
 
         /** [gun]'s muzzle tip at aim [aim] (0 .. 1), kick [kick] and lowered by [lower], in its own frame, into [out]. */
@@ -496,6 +494,30 @@ class LaserTrace {
         /** [gun]'s direction [dx], [dy], [dz] of its own frame at kick [kick] and lowered by [lower], into [out]. */
         fun gunDir(dx: Float, dy: Float, dz: Float, out: FloatArray, kick: Float = 0f, gun: Guns.Gun = Guns.AR, lower: Float = 0f) =
             rifleAt(dx, dy, dz, 0f, kick, out, dir = true, gun = gun, lower = lower)
+
+        /**
+         * Where [gun]'s laser sight lands on the sphere ([out], unit, the shown frame) for pose [m] at aim [aim], kick
+         * [kick], lowered [lower] and hip fire [hip]: straight out of its muzzle along its barrel, so it kicks with it.
+         */
+        fun sightHit(m: FloatArray, aim: Float, kick: Float, gun: Guns.Gun, lower: Float, hip: Float, out: FloatArray) {
+            val p = FloatArray(3)
+            val d = FloatArray(3)
+            muzzle(aim, p, kick, gun, lower, hip)
+            gunDir(0f, 0f, -1f, d, kick, gun, lower)
+            val px = m[0] * p[0] + m[1] * p[1] + m[2] * p[2]
+            val py = m[3] * p[0] + m[4] * p[1] + m[5] * p[2]
+            val pz = m[6] * p[0] + m[7] * p[1] + m[8] * p[2]
+            var dx = m[0] * d[0] + m[1] * d[1] + m[2] * d[2]
+            var dy = m[3] * d[0] + m[4] * d[1] + m[5] * d[2]
+            var dz = m[6] * d[0] + m[7] * d[1] + m[8] * d[2]
+            val dl = sqrt(dx * dx + dy * dy + dz * dz).coerceAtLeast(1e-6f)
+            dx /= dl; dy /= dl; dz /= dl
+            // The ray from the muzzle (inside the sphere) out to the shell.
+            val b = px * dx + py * dy + pz * dz
+            val t = -b + sqrt((b * b - (px * px + py * py + pz * pz - 1f)).coerceAtLeast(0f))
+            out[0] = px + dx * t; out[1] = py + dy * t; out[2] = pz + dz * t
+            unit(out)
+        }
 
         /** How far round from straight ahead (into the screen) shown-frame direction z is: 0 ahead .. 1 straight behind. */
         fun behind(z: Float): Float = ((1f + z) / 2f).coerceIn(0f, 1f)

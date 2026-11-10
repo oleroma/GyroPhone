@@ -187,6 +187,8 @@ data class GyroDisplay(
     val gunLowered: Boolean = true,
     /** LASER Gun look: aiming, a round scope grows onto it (never on the pistol). */
     val gunScope: Boolean = true,
+    /** LASER Gun look, hip fire (firing without aiming): it comes up level and pulls back toward you, this share of the way to its muzzle at the sphere's centre. */
+    val gunHipPull: Float = 0.85f,
     val crosshairKickLinesOnly: Boolean = true,
     /**
      * LASER crosshair and rifle: each Fire display shot flashes ([com.oleroma.gyrophone.core.engine.MuzzleFlash]),

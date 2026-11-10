@@ -103,6 +103,7 @@ internal sealed class OverlaysPage : Page
     private readonly StackPanel _gunOptions;
     private readonly Seg<int> _gunPick, _recoilLike;
     private readonly CheckBox _gunLowered, _gunScope;
+    private readonly SliderRow _gunHipPull;
     private readonly CheckBox _muzzleFlash, _laserSpread, _laserBloom, _laserShotDraw;
     private readonly SliderRow _gunSpread;
     private readonly Seg<int> _hitLook;
@@ -337,6 +338,8 @@ internal sealed class OverlaysPage : Page
         _gunOptions.Children.Add(_gunPick.View);
         _gunLowered = Parts.Toggle("Lowered when idle", () => Change(o => o.GunLowered = !o.GunLowered), "It rests pitched down and comes up straight while you aim or fire.");
         _gunOptions.Children.Add(_gunLowered);
+        _gunHipPull = new SliderRow("Hip fire pull", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.GunHipPull = (float)v));
+        _gunOptions.Children.Add(_gunHipPull.View);
         _gunScope = Parts.Toggle("Scope while aiming", () => Change(o => o.GunScope = !o.GunScope), "Aiming, a round scope grows onto it.");
         _gunOptions.Children.Add(_gunScope);
         lb.Children.Add(_gunOptions);
@@ -819,6 +822,7 @@ internal sealed class OverlaysPage : Page
         _gunPick.Set(o.LaserGun);
         _recoilLike.Set(o.LaserGun);
         Parts.SetChecked(_gunLowered, o.GunLowered);
+        _gunHipPull.Set(o.GunHipPull);
         Parts.SetChecked(_gunScope, o.GunScope);
         Parts.Show(_gunScope, o.Gun().Scope != null);
         Parts.Show(_laserGrid, !o.LaserRifle);

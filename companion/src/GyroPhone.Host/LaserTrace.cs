@@ -158,11 +158,25 @@ public sealed class LaserTrace
     /// <summary>Aiming (RifleFaces' aim 1) the gun is shouldered: pulled back toward the player this far.</summary>
     public const float AimPull = 0.12f;
 
+    /// <summary>
+    /// Where <paramref name="gun"/>'s laser sight lands on the sphere (unit, the shown frame) for pose <paramref name="m"/>:
+    /// straight out of its muzzle along its barrel, so it kicks with it. As the phone's LaserTrace.sightHit.
+    /// </summary>
+    public static (float X, float Y, float Z) SightHit(float[] m, float aim, float kick, Guns.Gun gun, float lower, float hip)
+    {
+        var p = MuzzleAt(aim, kick, gun, lower, hip);
+        var d = RifleAt(0f, 0f, -1f, 0f, kick, true, gun, lower);
+        float px = m[0] * p.X + m[1] * p.Y + m[2] * p.Z, py = m[3] * p.X + m[4] * p.Y + m[5] * p.Z, pz = m[6] * p.X + m[7] * p.Y + m[8] * p.Z;
+        var u = Unit(m[0] * d.X + m[1] * d.Y + m[2] * d.Z, m[3] * d.X + m[4] * d.Y + m[5] * d.Z, m[6] * d.X + m[7] * d.Y + m[8] * d.Z);
+        // The ray from the muzzle (inside the sphere) out to the shell.
+        float b = px * u.X + py * u.Y + pz * u.Z;
+        float t = -b + MathF.Sqrt(Math.Max(0f, b * b - (px * px + py * py + pz * pz - 1f)));
+        return Unit(px + u.X * t, py + u.Y * t, pz + u.Z * t);
+    }
+
     /// <summary>With Lowered when idle (RifleFaces' lower 1) the gun rests pitched this many degrees down.</summary>
     public const float LowerDeg = 15f;
 
-    /// <summary>Hip fire (RifleFaces' hip 1: firing without aiming) the gun comes up level, pulled back toward the player this far.</summary>
-    public const float HipPull = 0.22f;
 
     /// <summary>The gun's muzzle tip at aim <paramref name="aim"/> (0 .. 1), kick and lowered, in its own frame.</summary>
     public static (float X, float Y, float Z) MuzzleAt(float aim, float kick = 0f, Guns.Gun? gun = null, float lower = 0f, float hip = 0f)
@@ -185,7 +199,7 @@ public sealed class LaserTrace
         // Scaled to fit (Guns.Gun.Fit): a direction stays as it is.
         float f = dir ? 1f : g.Fit, yf = y * f;
         float pz = dir ? 0f : g.FitZ(g.PivotZ), dz = (dir ? z : g.FitZ(z)) - pz;
-        return (x * f, yf * c - dz * s, pz + yf * s + dz * c + (dir ? 0f : AimPull * Math.Clamp(aim, 0f, 1f) + HipPull * Math.Clamp(hip, 0f, 1f) + g.Recoil.Back * kick));
+        return (x * f, yf * c - dz * s, pz + yf * s + dz * c + (dir ? 0f : AimPull * Math.Clamp(aim, 0f, 1f) + -g.FitZ(g.MuzzleZ) * Math.Clamp(hip, 0f, 1f) + g.Recoil.Back * kick));
     }
 
     /// <summary>

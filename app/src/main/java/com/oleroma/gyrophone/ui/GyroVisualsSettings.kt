@@ -246,6 +246,8 @@ internal fun GyroDisplaySettingsScreen(
                         Hint("A gun aims instead: no sphere or beam, and Draw mode still paints where it points. Best with Axonometric view (face-on you look along the barrel). Each gun has its own model, recoil, fire rate and muzzle flash.")
                         Chips(Guns.ALL.mapIndexed { i, g -> g.name to i }, d.laserGun) { set(d.copy(laserGun = it)) }
                         SwitchRow("Lowered when idle", d.gunLowered, "It rests pitched down and comes up straight while you aim or fire.") { set(d.copy(gunLowered = it)) }
+                        PercentSlider("Hip fire pull", d.gunHipPull, 0f..1f) { set(d.copy(gunHipPull = it)) }
+                        Hint("Firing without aiming, the gun pulls back toward you this share of the way to its muzzle at the sphere's centre.")
                         if (d.gun().scope != null) SwitchRow("Scope while aiming", d.gunScope, "Aiming, a round scope grows onto it.") { set(d.copy(gunScope = it)) }
                     }
                     if (look == 2) Indented {

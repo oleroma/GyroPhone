@@ -189,7 +189,7 @@ fun GyroDisplaysLayer(
             st.shotAt = kicks[b.control.id]?.shotAt ?: -1L
             st.shots = kicks[b.control.id]
             st.lower = 1f - (raises[b.control.id] ?: 1f)
-            st.hip = hips[b.control.id] ?: 0f
+            st.hip = (hips[b.control.id] ?: 0f) * shownAs.gunHipPull.coerceIn(0f, 1f)
             st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
             if (editing) {
                 val sel = b.control.id in selected
@@ -262,7 +262,7 @@ private class VisState {
     /** How far the gun is lowered now (0 up .. 1 lowered when idle). */
     var lower = 0f
 
-    /** Hip fire now (0 .. 1): firing without aiming, the gun pulled back toward you ([LaserTrace.HIP_PULL]). */
+    /** Hip fire now (0 .. 1, eased, times [GyroDisplay.gunHipPull]): firing without aiming, the gun pulled back toward you. */
     var hip = 0f
 
     /** When the last Fire display shot was ([CrosshairKick.State.shotAt]), for its muzzle flash; −1 none. */
@@ -274,6 +274,7 @@ private class VisState {
     private val turnedCopy = FloatArray(9)
     private val hitU = FloatArray(3)
     private val hitV = FloatArray(3)
+    private val sightAt = FloatArray(3)
 
     /** The muzzle flash's age now (ms), or −1 when there is none or [GyroDisplay.muzzleFlash] is off. */
     private fun flashMs(d: GyroDisplay): Float =
@@ -573,7 +574,9 @@ private class VisState {
         val mz = muzzleAt.also { LaserTrace.muzzle(aim, it, kick * kickK, gun, lower, hip) }
         val x = mz[0]; val y = mz[1]; val z = mz[2]
         val tip = laserAt(c, r, m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z)
-        val hit = laserAt(c, r, beam[0], beam[1], beam[2])
+        // Straight along the barrel: the dot kicks with it (the paint stays on the aim).
+        LaserTrace.sightHit(m, aim, kick * kickK, gun, lower, hip, sightAt)
+        val hit = laserAt(c, r, sightAt[0], sightAt[1], sightAt[2])
         val a = color.alpha * aim
         drawLine(color.copy(alpha = a * 0.25f), tip, hit, 4f * density, StrokeCap.Round)
         drawLine(color.copy(alpha = a * 0.8f), tip, hit, 1.2f * density, StrokeCap.Round)

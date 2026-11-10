@@ -38,7 +38,7 @@ internal sealed class OverlayScene
     public float Lower;
     /// <summary>Simulate spread: where the last shot landed, right and up of the aim point (radians); the crosshair and gun kick toward it.</summary>
     public float SpreadX, SpreadY;
-    /// <summary>Hip fire now (0 .. 1, eased): firing without aiming, the gun pulled back toward you (LaserTrace.HipPull).</summary>
+    /// <summary>Hip fire now (0 .. 1, eased): firing without aiming, the gun pulled back toward you (times GunHipPull).</summary>
     public float Hip;
     /// <summary>This window's drawing buffers (drawn by one thread at a time, under the window's render lock).</summary>
     public readonly DrawBuffers Buffers = new();
@@ -234,7 +234,7 @@ internal static class OverlayRenderer
                     var b = LaserTrace.Beam(aimed);
                     aimed = LaserTrace.TurnToward(aimed, b, LaserTrace.ShotPoint(aimed, b, scene.SpreadX, scene.SpreadY), Math.Clamp(scene.Kick, -0.5f, 1.5f));
                 }
-                LaserDrawing.Draw(g, area, settings, aimed, scene.Laser, scene.NowTicks, live && scene.Frame.RatchetHeld, live ? scene.Frame.PoseActive : 0, live && scene.Firing, m, live ? scene.Aim : 0f, scene.Buffers, live ? scene.Kick : 0f, live ? scene.ShotAt : -1, live ? scene.Lower : 0f, live ? scene.Hip : 0f);
+                LaserDrawing.Draw(g, area, settings, aimed, scene.Laser, scene.NowTicks, live && scene.Frame.RatchetHeld, live ? scene.Frame.PoseActive : 0, live && scene.Firing, m, live ? scene.Aim : 0f, scene.Buffers, live ? scene.Kick : 0f, live ? scene.ShotAt : -1, live ? scene.Lower : 0f, live ? scene.Hip * Math.Clamp(settings.GunHipPull, 0f, 1f) : 0f);
                 break;
             default:
                 DialDrawing.DrawDisk(g, area, settings, m, m);

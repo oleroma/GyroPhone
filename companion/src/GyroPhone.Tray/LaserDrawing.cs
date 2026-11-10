@@ -320,6 +320,9 @@ internal static class LaserDrawing
             var mz = LaserTrace.MuzzleAt(aim, kick * kickK, gun, lower, hip);
             var tip = At(m[0] * mz.X + m[1] * mz.Y + m[2] * mz.Z, m[3] * mz.X + m[4] * mz.Y + m[5] * mz.Z, m[6] * mz.X + m[7] * mz.Y + m[8] * mz.Z).P;
             var col = Color.FromArgb(s.Color("aim"));
+            // Straight along the barrel: the dot kicks with it (the paint stays on the aim).
+            var sh = LaserTrace.SightHit(m, aim, kick * kickK, gun, lower, hip);
+            var hit = At(sh.X, sh.Y, sh.Z).P;
             g.DrawLine(Fade(col, 0.25f * aim), px * 4f, tip, hit, round: true);
             g.DrawLine(Fade(col, 0.8f * aim), px * 1.2f, tip, hit, round: true);
             float size = r * 0.025f, halo = size * 2.5f, core = size * 0.4f;

@@ -258,6 +258,8 @@ public sealed class OverlaySettings
     public bool GunLowered { get; set; } = true;
     /// <summary>Gun look: aiming, a round scope grows onto it (never on the pistol).</summary>
     public bool GunScope { get; set; } = true;
+    /// <summary>Gun look, hip fire (firing without aiming): it comes up level and pulls back toward you, this share of the way to its muzzle at the sphere's centre.</summary>
+    public float GunHipPull { get; set; } = 0.85f;
 
     /// <summary>The gun picked (LaserGun).</summary>
     public Guns.Gun Gun() => Guns.Of(LaserGun);
