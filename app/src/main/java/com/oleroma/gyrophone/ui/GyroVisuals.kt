@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
 import com.oleroma.gyrophone.core.engine.LaserPaint
+import com.oleroma.gyrophone.core.engine.CrosshairKick
 import com.oleroma.gyrophone.core.engine.LaserTrace
 import com.oleroma.gyrophone.core.engine.RestDetector
 import com.oleroma.gyrophone.core.engine.MappingEngine
@@ -77,6 +78,8 @@ fun GyroDisplaysLayer(
     val fades = remember { HashMap<String, Float>() }
     // Each pointer's Aim display now, eased (0 .. 1): the crosshair shrinks and the rifle shoulders by it.
     val aims = remember { HashMap<String, Float>() }
+    // Each crosshair's fire kick (CrosshairKick), stepped once a frame.
+    val kicks = remember { HashMap<String, CrosshairKick.State>() }
     // The pose each display showed when it last moved visibly ([VISIBLE_TURN]).
     val seen = remember { HashMap<String, FloatArray>() }
     // Redraws only while some display's data changes (and a moment after, so ghost trails catch up):
@@ -136,6 +139,14 @@ fun GyroDisplaysLayer(
                 aims[id] = if (goal > was) minOf(goal, was + step) else maxOf(goal, was - step)
                 until = maxOf(until, t + 20)
             }
+            // A crosshair kicks on each shot and bounces back.
+            for (b in shown) {
+                val d = b.control.display ?: continue
+                if (!d.laserCrosshair || d.laserRifle) continue
+                val k = kicks.getOrPut(b.control.id) { CrosshairKick.State() }
+                val firing = runtime.gyroFeed(b.control.id)?.firing == true
+                if (k.step(t, firing, d.crosshairKick, CrosshairKick.periodMs(d.crosshairKickRpm))) until = maxOf(until, t + 20)
+            }
             // A rifle's muzzle flash flickers while it fires.
             for (b in shown) {
                 val d = b.control.display ?: continue
@@ -153,6 +164,7 @@ fun GyroDisplaysLayer(
             val k = fades[b.control.id] ?: 1f
             val d = if (k < 1f) shownAs.copy(opacity = shownAs.opacity * k) else shownAs
             st.aim = aims[b.control.id] ?: 0f
+            st.kick = kicks[b.control.id]?.value ?: 0f
             st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
             if (editing) {
                 val sel = b.control.id in selected
@@ -219,6 +231,8 @@ private class VisState {
 
     /** The display being drawn's Aim display now, eased (0 .. 1). */
     var aim = 0f
+    /** The crosshair's fire kick now ([CrosshairKick.State.value]). */
+    var kick = 0f
 
     /** Per phone with a ghost trail: its last [GHOSTS] poses. */
     val ghosts = HashMap<String, Ghosts>()
@@ -400,11 +414,17 @@ private class VisState {
         val rad = (Math.PI / 180).toFloat()
         // Aiming shrinks it to the Aim display's size.
         val k = 1f + (d.laserAimSize.coerceIn(0.1f, 1f) - 1f) * aim
-        val ch = LaserTrace.crosshair(m, beam, d.crosshairShape, d.crosshairSize * rad * k, d.crosshairGap * rad * k, d.crosshairDot)
+        // Firing kicks it out ([CrosshairKick]): the lines alone, or evenly with their thickness and the dot.
+        val kk = 1f + d.crosshairKickScale.coerceIn(0f, 3f) * kick
+        val even = !d.crosshairKickLinesOnly
+        val ch = LaserTrace.crosshair(
+            m, beam, d.crosshairShape, d.crosshairSize * rad * k * kk, d.crosshairGap * rad * k * kk, d.crosshairDot,
+            d.crosshairSize * rad * k * (if (even) kk else 1f),
+        )
         var color = moveColor
         if (held) color = color.copy(alpha = color.alpha * 0.35f)
         val outline = col(GyroDisplayColor.LASER_CROSSHAIR_OUTLINE).let { it.copy(alpha = minOf(it.alpha, color.alpha)) }
-        val w = d.crosshairThickness.coerceIn(0.5f, 8f) * density
+        val w = d.crosshairThickness.coerceIn(0.5f, 8f) * density * (if (even) kk.coerceAtLeast(0.2f) else 1f)
         fun pathOf(pts: FloatArray): Path {
             crossPath.reset()
             var i = 0

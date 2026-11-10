@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.oleroma.gyrophone.core.engine.GyroPose
 import com.oleroma.gyrophone.core.engine.LaserFire
+import com.oleroma.gyrophone.core.engine.CrosshairKick
 import com.oleroma.gyrophone.core.engine.LaserTrace
 import com.oleroma.gyrophone.core.model.BallShape
 import com.oleroma.gyrophone.core.model.GyroDisplay
@@ -260,9 +261,19 @@ internal fun GyroDisplaySettingsScreen(
                     if (!d.laserRifle) SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
                     SwitchRow("Axes (pitch X red, yaw Y green, roll Z blue)", d.laserAxes, "They turn with the pointer, R along its beam.") { set(d.copy(laserAxes = it)) }
                     val paints = d.laserDraw || d.laserSnake
-                    ButtonPicker("Fire display", d.laserFire, "While GyroPhone sends this button the rifle's muzzle flashes and Draw mode paints in the Fire colours. Tap to pick another, or None.") { set(d.copy(laserFire = it)) }
-                    if (d.laserFire != LaserFire.NONE && paints) Indented {
-                        IntSlider("Fire brush %d°", d.laserFireBrush, 1..20) { set(d.copy(laserFireBrush = it)) }
+                    ButtonPicker("Fire display", d.laserFire, "While GyroPhone sends this button the rifle's muzzle flashes, the crosshair kicks and Draw mode paints in the Fire colours. Tap to pick another, or None.") { set(d.copy(laserFire = it)) }
+                    if (d.laserFire != LaserFire.NONE && (paints || look == 2)) Indented {
+                        if (look == 2) {
+                            Text("Crosshair kick", style = MaterialTheme.typography.bodyMedium)
+                            Hint("Each shot the crosshair jumps bigger and bounces back like a rifle's recoil. Once: one kick per press. Auto rifle: keeps kicking while the button is held.")
+                            Chips(CrosshairKick.MODES.mapIndexed { i, n -> n to i }, d.crosshairKick) { set(d.copy(crosshairKick = it)) }
+                            if (d.crosshairKick != CrosshairKick.OFF) {
+                                PercentSlider("Kick size", d.crosshairKickScale, 0.05f..2f) { set(d.copy(crosshairKickScale = it)) }
+                                if (d.crosshairKick == CrosshairKick.AUTO) IntSlider("Fire rate %d a minute", d.crosshairKickRpm, 120..1200, 30) { set(d.copy(crosshairKickRpm = it)) }
+                                Chips(listOf("Lines only" to 1, "Evenly, thickness too" to 0), if (d.crosshairKickLinesOnly) 1 else 0) { set(d.copy(crosshairKickLinesOnly = it == 1)) }
+                            }
+                        }
+                        if (paints) IntSlider("Fire brush %d°", d.laserFireBrush, 1..20) { set(d.copy(laserFireBrush = it)) }
                         if (d.laserDraw) PercentSlider("Fire glow", d.laserFireGlow, 0f..3f) { set(d.copy(laserFireGlow = it)) }
                     }
                     ButtonPicker("Aim display", d.laserAim, "While GyroPhone sends this button the crosshair shrinks, the rifle is shouldered with a scope and a laser sight, and Draw mode paints in the Aim colours. Firing wins over aiming. Tap to pick another, or None.") { set(d.copy(laserAim = it)) }
