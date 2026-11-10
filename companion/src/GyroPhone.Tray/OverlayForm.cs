@@ -533,7 +533,8 @@ internal sealed class OverlayForm : Form
             if (Settings is { Kind: OverlayKind.Laser } ls)
             {
                 var beam = LaserTrace.Beam(LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(_scene.Frame, ls), ls));
-                bool fire = (ls.LaserDraw || ls.LaserSnake) && _engine.OutputHeld(ls.LaserFire);
+                // Draw each shot: firing paints its hits, not a Fire line.
+                bool fire = (ls.LaserDraw || ls.LaserSnake) && _engine.OutputHeld(ls.LaserFire) && !(ls.LaserShotDraw && ls.LaserDraw);
                 bool aim = (ls.LaserDraw || ls.LaserSnake) && _engine.OutputHeld(ls.LaserAim);
                 for (int i = 0; i < 6; i++) _moveColors[i] = unchecked((uint)ls.Color(OverlaySettings.LaserMoves[i]));
                 _laser.Add(beam.X, beam.Y, beam.Z, now, ls.LaserDraw, _scene.Frame.RatchetHeld, ls.LaserClearOnRatchet, fire, ls.LaserFireOnly,
@@ -573,12 +574,54 @@ internal sealed class OverlayForm : Form
                 _scene.Aim = goal > _scene.Aim ? Math.Min(goal, _scene.Aim + step) : Math.Max(goal, _scene.Aim - step);
                 laserFading = true;
             }
-            // A crosshair or rifle kicks on each shot and bounces back, its muzzle flash in time.
+            // A crosshair or gun kicks on each shot with the gun's recoil and bounces back, its muzzle flash in time.
             bool kicks = lf.LaserCrosshair || lf.LaserRifle;
-            int kickMode = kicks ? lf.CrosshairKick : CrosshairKick.Off;
-            if (_kick.Step(now, _scene.Firing, kickMode, CrosshairKick.PeriodMs(lf.CrosshairKickRpm), kicks && lf.MuzzleFlash)) laserFading = true;
+            var gun = lf.Gun();
+            // Draw each shot counts the shots on the Sphere look too.
+            bool shotDraw = lf.LaserShotDraw && lf.LaserDraw;
+            int kickMode = kicks || shotDraw ? lf.CrosshairKick : CrosshairKick.Off;
+            if (_kick.Step(now, _scene.Firing, kickMode, CrosshairKick.PeriodMs(lf.RpmOf(gun)), (kicks || shotDraw) && lf.CountsShots, gun.Recoil, gun.Pellets)) laserFading = true;
             _scene.Kick = _kick.Value;
             _scene.ShotAt = _kick.ShotAt;
+            // Simulate spread: how far off a shot lands now (radians, the gun's spread, bloomed).
+            float spread = lf.LaserSpread ? Math.Clamp(lf.SpreadOf(gun), 0f, 20f) * MathF.PI / 180f * (lf.LaserBloom ? _kick.Bloom : 1f) : 0f;
+            _scene.SpreadX = _kick.TowardX * spread;
+            _scene.SpreadY = _kick.TowardY * spread;
+            // Draw each shot: each new shot marks its hits (its pellets) where they land.
+            if (_kick.Shots != _laser.HitShots)
+            {
+                _laser.HitShots = _kick.Shots;
+                if (shotDraw && !_scene.Frame.RatchetHeld && age >= 0)
+                {
+                    var pm = LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(_scene.Frame, lf), lf);
+                    var beam = LaserTrace.Beam(pm);
+                    float half = Math.Clamp(lf.LaserFireBrush, 1, 20) * 0.6f / 2f * MathF.PI / 180f * (_kick.Pellets > 1 ? 0.5f : 1f);
+                    for (int i = 0; i < _kick.Pellets; i++)
+                    {
+                        var p = LaserTrace.ShotPoint(pm, beam, _kick.Offsets[i * 2] * spread, _kick.Offsets[i * 2 + 1] * spread);
+                        _laser.AddHit(p.X, p.Y, p.Z, half);
+                    }
+                    laserFading = true;
+                }
+            }
+            // A gun lowered when idle comes up while aiming or firing.
+            float up = !lf.LaserRifle || !lf.GunLowered || _scene.Firing || _kick.ShotAt >= 0 || goal > 0f ? 1f : 0f;
+            float raised = 1f - _scene.Lower;
+            if (raised != up)
+            {
+                float step = dt <= 0f ? 1f : dt / AimEaseMs;
+                raised = up > raised ? Math.Min(up, raised + step) : Math.Max(up, raised - step);
+                _scene.Lower = 1f - raised;
+                laserFading = true;
+            }
+            // Hip fire: firing (or a shot's kick lasting) without aiming.
+            float hipGoal = lf.LaserRifle && (_scene.Firing || _kick.ShotAt >= 0) && goal == 0f ? 1f : 0f;
+            if (_scene.Hip != hipGoal)
+            {
+                float step = dt <= 0f ? 1f : dt / AimEaseMs;
+                _scene.Hip = hipGoal > _scene.Hip ? Math.Min(hipGoal, _scene.Hip + step) : Math.Max(hipGoal, _scene.Hip - step);
+                laserFading = true;
+            }
         }
         bool rested = StepRestFade(now);
         UpdateStats();

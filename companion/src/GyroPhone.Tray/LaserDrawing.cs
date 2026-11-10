@@ -16,6 +16,9 @@ internal static class LaserDrawing
     /// <summary>The axis letters, X, Y, Z: pitch, yaw, roll as the laser aims (facing −Z).</summary>
     private static readonly string[] AxisLetters = ["P", "Y", "R"];
 
+    // A Draw each shot hit's corners.
+    private const int HitSides = 12;
+
     /// <summary>The pose as the laser aims: turned by the phone, with its roll axis (<see cref="LaserTrace.Aim"/>); a trackball the way picked (<see cref="LaserTrace.Faces"/>); a game camera already aims ahead.</summary>
     public static float[] Aimed(float[] m, OverlaySettings s) => s.TurnsWith switch
     {
@@ -30,7 +33,7 @@ internal static class LaserDrawing
     /// <paramref name="buf"/> (the window's) keeps the grid between pictures.
     /// </summary>
     public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held, int active = 0, bool firing = false, float[]? raw = null, float aim = 0f,
-        DrawBuffers? buf = null, float kick = 0f, long shotAt = -1)
+        DrawBuffers? buf = null, float kick = 0f, long shotAt = -1, float lower = 0f, float hip = 0f)
     {
         float r = Math.Min(area.Width, area.Height) / 2f * 0.95f;
         var c = new PointF(area.X + area.Width / 2f, area.Y + area.Height / 2f);
@@ -200,49 +203,112 @@ internal static class LaserDrawing
         void Paint(bool front)
         {
             if (trace != null) PaintRenderer.Draw(g, trace, s, front, c, r, turned, moveColors);
+            if (trace != null && s.LaserShotDraw && s.LaserDraw) Hits(trace, front);
+        }
+
+        // Draw each shot's hits on the near or far half, in the Fire colours (Fire behind on the far half), each a little
+        // disc lying on the sphere as Hit look shows it: a dot, a ring, a cross, or a bullet hole (a dark centre in a bright rim).
+        void Hits(LaserTrace t, bool front)
+        {
+            if (t.HitCount == 0) return;
+            int look = Math.Clamp(s.LaserHitLook, 0, LaserTrace.HitLooks.Length - 1);
+            var col = Color.FromArgb(s.Color(front ? "fire" : "fire_behind"));
+            var dark = Color.FromArgb((int)(col.A * 0.9f), 15, 13, 10);
+            var h = t.Hits;
+            var disc = new PointF[HitSides];
+            var hole = new PointF[HitSides];
+            float w = Math.Max(px * 1.2f, 1f);
+            for (int n = 0; n < t.HitCount; n++)
+            {
+                float x = h[n * 4], y = h[n * 4 + 1], z = h[n * 4 + 2];
+                var (p0, d0) = At(x, y, z);
+                if (d0 > 0f != front) continue;
+                // Across the sphere there: right (round its up) and up.
+                var u = MathF.Abs(y) > 0.99f ? (X: 1f, Y: 0f, Z: 0f) : LaserTrace.Unit(-z, 0f, x);
+                var v = (X: y * u.Z - z * u.Y, Y: z * u.X - x * u.Z, Z: x * u.Y - y * u.X);
+                float k = MathF.Tan(h[n * 4 + 3]);
+                var pa = At(x + u.X * k, y + u.Y * k, z + u.Z * k).P;
+                var pb = At(x + v.X * k, y + v.Y * k, z + v.Z * k).P;
+                float ax = pa.X - p0.X, ay = pa.Y - p0.Y, bx = pb.X - p0.X, by = pb.Y - p0.Y;
+                if (look == 2)
+                {
+                    g.DrawLine(col, w * 1.5f, new PointF(p0.X - ax - bx, p0.Y - ay - by), new PointF(p0.X + ax + bx, p0.Y + ay + by), true);
+                    g.DrawLine(col, w * 1.5f, new PointF(p0.X - ax + bx, p0.Y - ay + by), new PointF(p0.X + ax - bx, p0.Y + ay - by), true);
+                    continue;
+                }
+                for (int i = 0; i < HitSides; i++)
+                {
+                    float an = i * 2f * MathF.PI / HitSides, cs = MathF.Cos(an), sn = MathF.Sin(an);
+                    disc[i] = new PointF(p0.X + ax * cs + bx * sn, p0.Y + ay * cs + by * sn);
+                    hole[i] = new PointF(p0.X + (ax * cs + bx * sn) * 0.55f, p0.Y + (ay * cs + by * sn) * 0.55f);
+                }
+                if (look == 1) g.DrawPolygon(col, w * 1.3f, disc);
+                else g.FillPolygon(col, disc);
+                if (look == 3) g.FillPolygon(dark, hole);
+            }
         }
 
         // The muzzle flash's age now (ms), or −1 when there is none or Muzzle flash is off.
         float flashMs = !s.MuzzleFlash || shotAt < 0 || nowMs - shotAt >= GyroPhone.Host.MuzzleFlash.LengthMs ? -1f : nowMs - shotAt;
         int flashHot = s.Color("flash"), flashEnd = s.Color("flash_end");
 
-        // The rifle's muzzle flash (MuzzleFlash): a star at its muzzle tip (LaserTrace.Muzzle), longest along the barrel,
-        // white, then the Flash colour, then Flash end as it shrinks and fades, a new shape each shot. As the phone's muzzleFlash.
+        var gun = s.Gun();
+        // Kick size scales the gun's own recoil (50% is the gun as it is).
+        float kickK = Math.Clamp(s.KickOf(gun), 0f, 3f) * 2f;
+
+        // The gun's muzzle blast (MuzzleFlash): a flame plume out along the barrel and four short jets slanting out round
+        // it, as wide as its muzzle (Bore) and as long as its calibre (Flash), white, then the Flash colour, then Flash end
+        // as they shrink and fade, with a white-hot core; each shot its own lengths and turn. As the phone's muzzleFlash.
         void MuzzleFlash()
         {
             float gl = GyroPhone.Host.MuzzleFlash.Glow(flashMs);
             if (gl <= 0f) return;
-            var mz = LaserTrace.MuzzleAt(aim, kick);
-            PointF Along(float k)
-            {
-                float x = mz.X, y = mz.Y, z = mz.Z - k;
-                return At(m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z).P;
-            }
-            var tip = Along(0f);
-            var ahead = Along(0.1f);
-            float fx = ahead.X - tip.X, fy = ahead.Y - tip.Y;
-            float fl = Math.Max(1e-3f, MathF.Sqrt(fx * fx + fy * fy));
-            // A new shape each shot, bursting out and shrinking back.
+            var mz = LaserTrace.MuzzleAt(aim, kick * kickK, gun, lower, hip);
+            PointF P(float x, float y, float z) => At(m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z).P;
+            var tip = P(mz.X, mz.Y, mz.Z);
             long step = shotAt;
             float Rnd(int i) => Math.Abs(((step * 7919L + i * 104729L) ^ (step >> 3)) % 1000L) / 1000f;
             var fireCol = Color.FromArgb(GyroPhone.Host.MuzzleFlash.Color(flashMs, flashHot, flashEnd, flashEnd & 0x00FFFFFF));
-            float size = r * (0.07f + 0.04f * Rnd(0)) * (0.5f + 0.7f * MathF.Sqrt(gl));
-            float turn = Rnd(1) * 6.2832f;
-            const int spikes = 8;
-            var star = new PointF[spikes * 2];
-            for (int j = 0; j < spikes * 2; j++)
+            // Bursts out at once, then shrinks back as it cools.
+            float grow = 0.55f + 0.45f * MathF.Sqrt(gl);
+            float width = gun.Bore * gun.Fit * 2.4f * r * grow;
+            // One flame from the muzzle along gun direction (dx, dy, dz), len long, w wide at its widest.
+            void Flame(float dx, float dy, float dz, float len, float w, Color col)
             {
-                float a = turn + j * MathF.PI / spikes;
-                float ca = MathF.Cos(a), sa = MathF.Sin(a);
-                // Along the barrel the star stretches out (up to 2.2×).
-                float along = MathF.Abs(ca * fx / fl + sa * fy / fl);
-                float len = j % 2 == 0 ? size * (0.6f + 0.6f * Rnd(j + 2)) * (1f + 1.2f * along * along) : size * 0.28f;
-                star[j] = new PointF(tip.X + ca * len, tip.Y + sa * len);
+                var d = LaserTrace.RifleAt(dx, dy, dz, 0f, kick * kickK, true, gun, lower);
+                var e = P(mz.X + d.X * len, mz.Y + d.Y * len, mz.Z + d.Z * len);
+                float fx = e.X - tip.X, fy = e.Y - tip.Y, fl = MathF.Sqrt(fx * fx + fy * fy);
+                if (fl < w * 0.5f)
+                {
+                    // Seen end on: a round burst.
+                    float rr = w * 0.7f;
+                    g.FillEllipse(col, new RectangleF(tip.X - rr, tip.Y - rr, rr * 2, rr * 2));
+                    return;
+                }
+                float px = -fy / fl * w / 2f, py = fx / fl * w / 2f;
+                g.FillPolygon(col, [
+                    new PointF(tip.X + px * 0.6f, tip.Y + py * 0.6f),
+                    new PointF(tip.X + fx * 0.35f + px * 1.3f, tip.Y + fy * 0.35f + py * 1.3f),
+                    e,
+                    new PointF(tip.X + fx * 0.35f - px * 1.3f, tip.Y + fy * 0.35f - py * 1.3f),
+                    new PointF(tip.X - px * 0.6f, tip.Y - py * 0.6f),
+                ]);
             }
-            float glowR = size * 1.8f, core = size * 0.3f;
+            float glowR = width * 2.2f;
             g.FillEllipse(Fade(fireCol, 0.3f * gl), new RectangleF(tip.X - glowR, tip.Y - glowR, glowR * 2, glowR * 2));
-            g.FillPolygon(fireCol, star);
-            g.FillEllipse(Color.FromArgb(Math.Clamp((int)(fireCol.A * gl), 0, 255), 255, 255, 255), new RectangleF(tip.X - core, tip.Y - core, core * 2, core * 2));
+            float len = gun.Flash * gun.Fit * grow * (0.8f + 0.4f * Rnd(0));
+            float turn = Rnd(1) * 1.5708f;
+            const float slant = 0.9f; // about 52° off the barrel
+            var core = Color.FromArgb(Math.Clamp((int)(fireCol.A * gl), 0, 255), 255, 255, 255);
+            for (int k = 0; k < 4; k++)
+            {
+                float a = turn + k * 1.5708f;
+                Flame(MathF.Cos(a) * MathF.Sin(slant), MathF.Sin(a) * MathF.Sin(slant), -MathF.Cos(slant), len * (0.3f + 0.2f * Rnd(k + 2)), width * 0.6f, fireCol);
+            }
+            Flame(0f, 0f, -1f, len, width, fireCol);
+            Flame(0f, 0f, -1f, len * 0.45f, width * 0.5f, core);
+            float cr = width * 0.45f;
+            g.FillEllipse(core, new RectangleF(tip.X - cr, tip.Y - cr, cr * 2, cr * 2));
         }
 
         var (hit, hitZ) = At(beam.X, beam.Y, beam.Z);
@@ -251,9 +317,12 @@ internal static class LaserDrawing
         // the barrel to where it lands on the sphere, and a dot there with a soft halo. As the phone's laserSight.
         void LaserSight()
         {
-            var mz = LaserTrace.MuzzleAt(aim, kick);
+            var mz = LaserTrace.MuzzleAt(aim, kick * kickK, gun, lower, hip);
             var tip = At(m[0] * mz.X + m[1] * mz.Y + m[2] * mz.Z, m[3] * mz.X + m[4] * mz.Y + m[5] * mz.Z, m[6] * mz.X + m[7] * mz.Y + m[8] * mz.Z).P;
             var col = Color.FromArgb(s.Color("aim"));
+            // Straight along the barrel: the dot kicks with it (the paint stays on the aim).
+            var sh = LaserTrace.SightHit(m, aim, kick * kickK, gun, lower, hip);
+            var hit = At(sh.X, sh.Y, sh.Z).P;
             g.DrawLine(Fade(col, 0.25f * aim), px * 4f, tip, hit, round: true);
             g.DrawLine(Fade(col, 0.8f * aim), px * 1.2f, tip, hit, round: true);
             float size = r * 0.025f, halo = size * 2.5f, core = size * 0.4f;
@@ -283,15 +352,15 @@ internal static class LaserDrawing
 
         if (s.LaserRifle)
         {
-            // The rifle look: no sphere or beam; the paint still lands where it aims.
+            // The gun look: no sphere or beam; the paint still lands where it aims.
             Axes(false);
             Paint(false);
             var body = Color.FromArgb(s.Color("rifle"));
             float edge = Math.Max(1f, px * 0.75f);
-            foreach (var f in LaserTrace.RifleFaces(m, s.LaserAxonometric, turned, s.Perspective, aim, kick))
+            foreach (var f in LaserTrace.RifleFaces(m, s.LaserAxonometric, turned, s.Perspective, aim, kick * kickK, gun, lower, s.GunScope, hip))
             {
-                var pts = new PointF[4];
-                for (int i = 0; i < 4; i++) pts[i] = new PointF(c.X + f.Corners[i].X * r, c.Y - f.Corners[i].Y * r);
+                var pts = new PointF[f.Corners.Length];
+                for (int i = 0; i < pts.Length; i++) pts[i] = new PointF(c.X + f.Corners[i].X * r, c.Y - f.Corners[i].Y * r);
                 g.FillPolygon(Color.FromArgb(body.A, (int)(body.R * f.Light), (int)(body.G * f.Light), (int)(body.B * f.Light)), pts);
                 g.DrawPolygon(Color.FromArgb(body.A, body.R / 2, body.G / 2, body.B / 2), edge, pts);
             }
@@ -321,7 +390,7 @@ internal static class LaserDrawing
             // Aiming shrinks it to the Aim display's size.
             float ak = 1f + (Math.Clamp(s.LaserAimSize, 0.1f, 1f) - 1f) * aim;
             // Firing kicks it out (CrosshairKick): the lines alone, or evenly with their thickness and the dot.
-            float kk = 1f + Math.Clamp(s.CrosshairKickScale, 0f, 3f) * kick;
+            float kk = 1f + Math.Clamp(s.KickOf(gun), 0f, 3f) * gun.Recoil.Strength * kick;
             bool even = !s.CrosshairKickLinesOnly;
             var ch = LaserTrace.CrosshairOn(m, beam, s.CrosshairShape, s.CrosshairSize * rad * ak * kk, s.CrosshairGap * rad * ak * kk, s.CrosshairDot,
                 s.CrosshairSize * rad * ak * (even ? kk : 1f));

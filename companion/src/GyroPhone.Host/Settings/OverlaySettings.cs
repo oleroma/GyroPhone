@@ -243,21 +243,60 @@ public sealed class OverlaySettings
     public bool CrosshairDot { get; set; } = true;
     public bool CrosshairOutline { get; set; } = true;
     /// <summary>
-    /// Crosshair: on each Fire display shot it kicks out by CrosshairKickScale of its size and bounces back (CrosshairKick):
-    /// CrosshairKick 0 off, 1 once per press, 2 auto rifle at CrosshairKickRpm shots a minute while held.
-    /// CrosshairKickLinesOnly: only the lines grow (length and gap); off, the whole crosshair grows evenly, thickness and dot
-    /// too. As the phone's GyroDisplay.crosshairKick*.
+    /// Crosshair and gun: on each Fire display shot it kicks and bounces back with LaserGun's recoil (CrosshairKick):
+    /// CrosshairKick 0 off, 1 once per press, 2 auto at the gun's fire rate (<see cref="RpmOf"/>) while held, by the gun's
+    /// kick size (<see cref="KickOf"/>). CrosshairKickLinesOnly: only the crosshair's lines grow (length and gap); off, the
+    /// whole crosshair grows evenly, thickness and dot too. As the phone's GyroDisplay.crosshairKick*.
     /// </summary>
     public int CrosshairKick { get; set; } = 1;
-    public float CrosshairKickScale { get; set; } = 0.5f;
-    public int CrosshairKickRpm { get; set; } = 600;
+    /// <summary>The Gun look's gun, and the recoil the crosshair kicks like (Guns.All).</summary>
+    public int LaserGun { get; set; } = Guns.Default;
+    /// <summary>Each gun's own fire rate (shots a minute) and kick size, by its key, where changed from its default.</summary>
+    public Dictionary<string, int> GunRpm { get; set; } = [];
+    public Dictionary<string, float> GunKick { get; set; } = [];
+    /// <summary>Gun look: it rests pitched down (LaserTrace.LowerDeg) unless aiming or firing.</summary>
+    public bool GunLowered { get; set; } = true;
+    /// <summary>Gun look: aiming, a round scope grows onto it (never on the pistol).</summary>
+    public bool GunScope { get; set; } = true;
+    /// <summary>Gun look, hip fire (firing without aiming): it comes up level and pulls back toward you, this share of the way to its muzzle at the sphere's centre.</summary>
+    public float GunHipPull { get; set; } = 0.85f;
+
+    /// <summary>The gun picked (LaserGun).</summary>
+    public Guns.Gun Gun() => Guns.Of(LaserGun);
+
+    /// <summary><paramref name="gun"/>'s fire rate, shots a minute: its own setting or its default.</summary>
+    public int RpmOf(Guns.Gun gun) => GunRpm != null && GunRpm.TryGetValue(gun.Key, out var r) ? r : gun.Rpm;
+
+    /// <summary><paramref name="gun"/>'s kick size (0.05 .. 2): its own setting or 50%.</summary>
+    public float KickOf(Guns.Gun gun) => GunKick != null && GunKick.TryGetValue(gun.Key, out var k) ? k : 0.5f;
     public bool CrosshairKickLinesOnly { get; set; } = true;
     /// <summary>
     /// Crosshair and rifle: each Fire display shot flashes (<see cref="GyroPhone.Host.MuzzleFlash"/>), in time with the kicks:
     /// white, then the Flash colour, then Flash end, back to its own colour. The crosshair glows as it flashes; the rifle's
-    /// muzzle bursts. The rifle kicks back by the same Kick settings.
+    /// muzzle blasts a forward plume and side jets, as wide as its muzzle and as long as its calibre.
     /// </summary>
     public bool MuzzleFlash { get; set; } = true;
+    /// <summary>
+    /// Crosshair and gun, Simulate spread: each Fire display shot lands off the aim point, a random way, by up to the gun's
+    /// spread (<see cref="SpreadOf"/>); the crosshair and gun kick toward it. With LaserBloom shots fired in a row widen it up to
+    /// twice (CrosshairKick.BloomShots), settling half a second after letting go. As the phone's GyroDisplay.laserSpread.
+    /// </summary>
+    public bool LaserSpread { get; set; }
+    public bool LaserBloom { get; set; } = true;
+    /// <summary>Each gun's own spread (degrees), by its key, where changed from its default.</summary>
+    public Dictionary<string, float> GunSpread { get; set; } = [];
+    /// <summary>
+    /// Draw each shot: in Draw mode each Fire display shot marks a hit where it lands (a shotgun its pellets), in the Fire
+    /// colours, LaserHitLook (LaserTrace.HitLooks) as wide as the Fire brush; it stays until cleared. Firing then paints no Fire line.
+    /// </summary>
+    public bool LaserShotDraw { get; set; }
+    public int LaserHitLook { get; set; }
+
+    /// <summary><paramref name="gun"/>'s spread (degrees): its own setting or its default.</summary>
+    public float SpreadOf(Guns.Gun gun) => GunSpread != null && GunSpread.TryGetValue(gun.Key, out var v) ? v : gun.SpreadDeg;
+
+    /// <summary>Shots are counted (for the kick, flash, spread or hits) even with the kick off.</summary>
+    public bool CountsShots => MuzzleFlash || LaserSpread || (LaserShotDraw && LaserDraw);
     /// <summary>Laser pointer turned as a trackball: which way of it the laser faces (0 −Z into the screen, 1 +Z, 2 +X, 3 −X, 4 +Y, 5 −Y).</summary>
     public int LaserFaces { get; set; }
     public bool LaserAxes { get; set; } = true;
