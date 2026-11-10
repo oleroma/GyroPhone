@@ -27,6 +27,9 @@ internal sealed class OverlaysPage : Page
     private string _listKey = "\0";
     private readonly List<(string Id, RadioButton Row, CheckBox Shown, TextBlock Sub)> _rows = [];
     private readonly WrapPanel _addKinds;
+    /// <summary>How many of <see cref="_addKinds"/>' buttons are the built-in kinds (the ★ presets follow).</summary>
+    private int _kindButtons;
+    private string _presetKey = "\0";
     private readonly List<ShortcutBox> _shortcuts = [];
     private readonly CheckBox _restOn, _restSilent;
     private readonly StackPanel _restOptions = new();
@@ -36,6 +39,9 @@ internal sealed class OverlaysPage : Page
     // Right
     private readonly StackPanel _settings = new();
     private readonly TextBlock _empty;
+    /// <summary>The picked overlay's label, and the name it has without one greyed behind it.</summary>
+    private readonly TextBox _label;
+    private readonly TextBlock _labelHint;
     private readonly Seg<int> _tabs;
     private int _tab;
     /// <summary>Tabs as on the phone: Window (PC only), Look, Draw, Paint, Colours and Turning; Draw, Paint and Colours only for the pointer.</summary>
@@ -183,6 +189,7 @@ internal sealed class OverlaysPage : Page
             b.Margin = new Thickness(0, 0, 6, 6);
             _addKinds.Children.Add(b);
         }
+        _kindButtons = _addKinds.Children.Count;
         left.Children.Add(_addKinds);
 
         var (keys, kb) = Parts.Card("Shortcuts");
@@ -230,6 +237,22 @@ internal sealed class OverlaysPage : Page
         _empty = Parts.Text("No overlays yet. Press \"Add overlay\" to put the phone, a 3D shape, an attitude indicator, a bubble disk or a pointer over your game.", "Sub");
         right.Children.Add(_empty);
         right.Children.Add(_settings);
+        // Label: names it in the lists and the tray, never drawn in the overlay.
+        _label = new TextBox { FontSize = 18, MaxLength = 40, Padding = new Thickness(4, 2, 4, 2), ToolTip = "Its name in the lists and the tray menu. The overlay itself never shows it." };
+        _labelHint = new TextBlock { FontSize = 18, Margin = new Thickness(8, 3, 0, 0), IsHitTestVisible = false };
+        _labelHint.SetResourceReference(TextBlock.ForegroundProperty, "FaintBrush");
+        _label.TextChanged += (_, _) =>
+        {
+            Parts.Show(_labelHint, _label.Text.Length == 0);
+            if (_refreshing) return;
+            var text = _label.Text;
+            Change(o => o.Label = text);
+            _window.RefreshNow();
+        };
+        var labelBox = new Grid { Margin = new Thickness(0, 0, 0, 10), MaxWidth = 360, HorizontalAlignment = HorizontalAlignment.Left, MinWidth = 220 };
+        labelBox.Children.Add(_label);
+        labelBox.Children.Add(_labelHint);
+        _settings.Children.Add(labelBox);
         var tabBar = new Border { BorderThickness = new Thickness(0, 0, 0, 1), Margin = new Thickness(0, 0, 0, 14) };
         tabBar.SetResourceReference(Border.BorderBrushProperty, "LineBrush");
         _tabs = new Seg<int>(t =>
@@ -631,6 +654,10 @@ internal sealed class OverlaysPage : Page
         var remove = Parts.Button("Remove this overlay", Remove, glyph: "");
         remove.Margin = new Thickness(0, 4, 0, 0);
         remove.SetResourceReference(Control.ForegroundProperty, "DangerBrush");
+        var savePreset = Parts.Button("Save as preset", SavePreset, glyph: "\uE734");
+        savePreset.ToolTip = "Adds it to Add overlay with a ★: every setting and its size, named by its label. Right-click a preset there to rename or delete it.";
+        savePreset.Margin = new Thickness(0, 4, 0, 0);
+        _settings.Children.Add(savePreset);
         _settings.Children.Add(remove);
         _tabs.Set(0);
         ShowTab();
@@ -673,6 +700,86 @@ internal sealed class OverlaysPage : Page
         ShowTab();
     }
 
+    private void SavePreset()
+    {
+        if (Picked is not { } id || _app.OverlayOf(id) is not { } o) return;
+        _app.SaveOverlayPreset(id, _app.OverlayName(o));
+        Parts.Show(_addKinds, true);
+    }
+
+    /// <summary>The ★ presets after the kinds under Add overlay, rebuilt when they change.</summary>
+    private void RebuildPresets()
+    {
+        var presets = _app.OverlayPresets;
+        var key = string.Join("|", presets.Select(p => p.Id + ":" + p.Label));
+        if (key == _presetKey) return;
+        _presetKey = key;
+        while (_addKinds.Children.Count > _kindButtons) _addKinds.Children.RemoveAt(_addKinds.Children.Count - 1);
+        foreach (var p in presets)
+        {
+            var pid = p.Id;
+            var name = p.Label.Length > 0 ? p.Label : OverlaySettings.KindName(p.Kind);
+            var b = Parts.Button("★ " + name, () =>
+            {
+                if (_app.AddOverlayFromPreset(pid) is { } nid) _app.SelectOverlay(nid);
+                Parts.Show(_addKinds, false);
+                _window.RefreshNow();
+            });
+            b.Margin = new Thickness(0, 0, 6, 6);
+            b.ToolTip = $"Your saved {OverlaySettings.KindName(p.Kind)} overlay. Right-click to rename or delete it.";
+            var menu = new ContextMenu();
+            var rename = new MenuItem { Header = "Rename…" };
+            rename.Click += (_, _) =>
+            {
+                if (AskName("Rename preset", name) is { } n) _app.RenameOverlayPreset(pid, n);
+            };
+            var delete = new MenuItem { Header = "Delete" };
+            delete.Click += (_, _) =>
+            {
+                var r = MessageBox.Show(_window, $"Delete the preset \"{name}\"? Overlays added from it stay.", _window.Title,
+                    MessageBoxButton.OKCancel, MessageBoxImage.Question);
+                if (r == MessageBoxResult.OK) _app.RemoveOverlayPreset(pid);
+            };
+            menu.Items.Add(rename);
+            menu.Items.Add(delete);
+            b.ContextMenu = menu;
+            _addKinds.Children.Add(b);
+        }
+    }
+
+    /// <summary>A small window asking for a name; null when cancelled or left empty.</summary>
+    private string? AskName(string title, string initial)
+    {
+        var box = new TextBox { Text = initial, MaxLength = 40, Margin = new Thickness(0, 0, 0, 12), FontSize = 14 };
+        var w = new Window
+        {
+            Title = title,
+            Owner = _window,
+            SizeToContent = SizeToContent.WidthAndHeight,
+            ResizeMode = ResizeMode.NoResize,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ShowInTaskbar = false,
+        };
+        w.SetResourceReference(Control.BackgroundProperty, "BgBrush");
+        var ok = Parts.Button("OK", () => w.DialogResult = true);
+        ok.IsDefault = true;
+        var cancel = Parts.Button("Cancel", () => w.DialogResult = false);
+        cancel.IsCancel = true;
+        cancel.Margin = new Thickness(8, 0, 0, 0);
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+        var body = new StackPanel { Margin = new Thickness(16), MinWidth = 280 };
+        body.Children.Add(box);
+        body.Children.Add(buttons);
+        w.Content = body;
+        w.SourceInitialized += (_, _) => Theme.TitleBar(w);
+        w.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
+        if (w.ShowDialog() != true) return null;
+        var text = box.Text.Trim();
+        return text.Length > 0 ? text : null;
+    }
+
     private void Remove()
     {
         if (Picked is not { } id || _app.OverlayOf(id) is not { } o) return;
@@ -698,6 +805,7 @@ internal sealed class OverlaysPage : Page
             var all = _app.Overlays;
             if (Picked == null || all.All(o => o.Id != Picked)) _app.SelectOverlay(all.Count > 0 ? all[0].Id : null);
             RebuildList(all);
+            RebuildPresets();
             foreach (var (id, row, shown, sub) in _rows)
             {
                 Parts.SetChecked(row, id == Picked);
@@ -789,6 +897,10 @@ internal sealed class OverlaysPage : Page
 
     private void ShowSettings(OverlaySettings o)
     {
+        // Not while typing in it: the caret would jump.
+        if (!_label.IsKeyboardFocused && _label.Text != o.Label) _label.Text = o.Label;
+        _labelHint.Text = o.Label.Length == 0 ? _app.OverlayName(o) : "";
+        Parts.Show(_labelHint, _label.Text.Length == 0);
         Parts.SetChecked(_shown, o.Shown);
         _background.Set(o.Background);
         _opacity.Set(MathF.Round(o.Opacity * 100f));

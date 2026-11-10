@@ -96,6 +96,13 @@ public interface ICompanion
     IReadOnlyList<OverlaySettings> Overlays { get; }
     OverlaySettings? OverlayOf(string id);
     string OverlayName(OverlaySettings o);
+    /// <summary>Overlays saved as presets, named by their <see cref="OverlaySettings.Label"/>.</summary>
+    IReadOnlyList<OverlaySettings> OverlayPresets { get; }
+    void SaveOverlayPreset(string id, string name);
+    /// <summary>Adds a new overlay window from a preset; returns its id (null: the preset is gone).</summary>
+    string? AddOverlayFromPreset(string presetId);
+    void RenameOverlayPreset(string presetId, string name);
+    void RemoveOverlayPreset(string presetId);
     string? SelectedOverlay { get; }
     void SelectOverlay(string? id);
     void SetOverlayShown(string id, bool shown);

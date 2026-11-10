@@ -361,6 +361,12 @@ fun PadScreen(
     var removingLib by remember { mutableStateOf<LibraryButton?>(null) }
     /** The edit panel's Add row is open (Add +). */
     var addOpen by remember { mutableStateOf(false) }
+    /** The Add preset row: saved buttons, displays and groups (the library). */
+    var presetsOpen by remember { mutableStateOf(false) }
+    /** A group being saved as a preset (its members, in workspace order), asking its name. */
+    var savingGroup by remember { mutableStateOf<List<TouchControl>?>(null) }
+    /** A saved preset being renamed. */
+    var renamingLib by remember { mutableStateOf<LibraryButton?>(null) }
 
     /** The pad's top-left in the window, to turn a drop from the edit menu into a place on the pad. */
     var padOrigin by remember { mutableStateOf(Offset.Zero) }
@@ -2285,6 +2291,13 @@ fun PadScreen(
                                                 colors = pickColors,
                                                 onClick = { editWorkspace { ControlGroups.ungroup(it, picked) } }) { Text("Ungroup") }
                                         }
+                                        // One whole group picked: save it as a preset (Add preset).
+                                        if (ControlGroups.units(controls, picked) == 1 && ControlGroups.anyGrouped(controls, picked)) {
+                                            FilledTonalButton(
+                                                contentPadding = compact,
+                                                colors = pickColors,
+                                                onClick = { savingGroup = controls.filter { it.id in ControlGroups.expand(controls, picked) } }) { Text("Save as preset") }
+                                        }
                                     } else {
                                         OutlinedButton(contentPadding = compact, onClick = {
                                             val s = findControl(selected)
@@ -2303,6 +2316,14 @@ fun PadScreen(
                                             contentPadding = compact,
                                             colors = ButtonDefaults.filledTonalButtonColors(containerColor = SELECTED_COLOR, contentColor = Color.Black),
                                             onClick = { editWorkspace { ControlGroups.ungroup(it, listOf(grouped.id)) } }) { Text("Ungroup") }
+                                        FilledTonalButton(
+                                            contentPadding = compact,
+                                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = SELECTED_COLOR, contentColor = Color.Black),
+                                            onClick = {
+                                                val controls = editControls()
+                                                val unit = ControlGroups.unitOf(controls, grouped.id)
+                                                savingGroup = controls.filter { it.id in unit }
+                                            }) { Text("Save as preset") }
                                     }
                                 }
                                 // The selected control's settings and mappings (a long press opens the mappings).
@@ -2328,7 +2349,13 @@ fun PadScreen(
                                 if (addOpen) {
                                     FilledTonalButton(contentPadding = compact, onClick = { addOpen = false }) { Text("Add ▴") }
                                 } else {
-                                    OutlinedButton(contentPadding = compact, onClick = { addOpen = true }) { Text("Add +") }
+                                    OutlinedButton(contentPadding = compact, onClick = { addOpen = true; presetsOpen = false }) { Text("Add +") }
+                                }
+                                // Your saved buttons, displays and groups, in their own row.
+                                if (presetsOpen) {
+                                    FilledTonalButton(contentPadding = compact, onClick = { presetsOpen = false }) { Text("Add preset ▴") }
+                                } else {
+                                    OutlinedButton(contentPadding = compact, onClick = { presetsOpen = true; addOpen = false }) { Text("Add preset ★") }
                                 }
                                 if (snap) {
                                     FilledTonalButton(
@@ -2366,83 +2393,99 @@ fun PadScreen(
                                 )
                             }
                         }
-                        // Add (opened by Add + above): every control and display that can be added, then the
-                        // button library (outlined). Tap one to add it in the middle, drag it down onto the pad to
-                        // add it there; a library button's long press removes it from the library.
-                        if (addOpen) {
+                        // Add (opened by Add + above): every control and display that can be added. Add preset (★):
+                        // the saved buttons, displays and groups (the library, outlined). Tap one to add it in the
+                        // middle, drag it down onto the pad to add it there; a preset's long press renames or deletes it.
+                        if (addOpen || presetsOpen) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "Add",
+                                    if (addOpen) "Add" else "Presets",
                                     color = Color.White.copy(alpha = 0.7f),
                                     style = MaterialTheme.typography.labelLarge,
                                     modifier = Modifier.padding(start = 12.dp, end = 8.dp),
                                 )
                                 ScrollStrip {
-                                    /** Adds a button; [empty]: with every action it would take from the workspace cleared. */
-                                    fun addButton(empty: Boolean, at: Offset?) {
-                                        val d = draft ?: return
-                                        val wk = d.workspace(editIndex)
-                                        val id = freshId(wk, "btn", takenIds(d))
-                                        val c = newControl(wk, id, TouchKind.BUTTON, NEW_BUTTON_SIZE, portrait)
-                                        val cleared = if (empty) Inheritance.cleared(Inheritance.workspace(wk, d.defaults), id) else emptyList()
-                                        editWorkspace {
-                                            it.copy(
-                                                touchControls = it.touchControls + addAt(at, c),
-                                                mappings = it.mappings + cleared,
-                                            )
-                                        }
-                                        // Only added (and selected): Map opens its mappings.
-                                        selected = id
-                                        addOpen = false
-                                    }
-                                    AddChip("Button", false) { addButton(false, it) }
-                                    AddChip("Empty button", false) { addButton(true, it) }
-                                    AddChip("Stick", false) addStick@{ at ->
-                                        val d = draft ?: return@addStick
-                                        val wk = d.workspace(editIndex)
-                                        val id = freshId(wk, "stick", takenIds(d))
-                                        val c = newControl(wk, id, TouchKind.STICK, NEW_STICK_SIZE, portrait)
-                                        editWorkspace { it.copy(touchControls = it.touchControls + addAt(at, c)) }
-                                        selected = id
-                                        addOpen = false
-                                    }
-                                    // Gyro displays: placed and sized like buttons, drawn under everything in play.
-                                    for (kind in GyroDisplayKind.entries) {
-                                        AddChip(kind.label, false) addDisplay@{ at ->
-                                            val d = draft ?: return@addDisplay
+                                    if (addOpen) {
+                                        /** Adds a button; [empty]: with every action it would take from the workspace cleared. */
+                                        fun addButton(empty: Boolean, at: Offset?) {
+                                            val d = draft ?: return
                                             val wk = d.workspace(editIndex)
-                                            val id = freshId(wk, "disp", takenIds(d))
-                                            val (size, aspect) = GyroDisplay.newSize(kind)
-                                            val c = newControl(wk, id, TouchKind.DISPLAY, size, portrait).copy(
-                                                shape = TouchShape.SQUARE,
-                                                aspect = aspect,
-                                                layer = TouchLayer.BACK,
-                                                display = GyroDisplay.create(kind),
-                                            )
+                                            val id = freshId(wk, "btn", takenIds(d))
+                                            val c = newControl(wk, id, TouchKind.BUTTON, NEW_BUTTON_SIZE, portrait)
+                                            val cleared = if (empty) Inheritance.cleared(Inheritance.workspace(wk, d.defaults), id) else emptyList()
+                                            editWorkspace {
+                                                it.copy(
+                                                    touchControls = it.touchControls + addAt(at, c),
+                                                    mappings = it.mappings + cleared,
+                                                )
+                                            }
+                                            // Only added (and selected): Map opens its mappings.
+                                            selected = id
+                                            addOpen = false
+                                        }
+                                        AddChip("Button", false) { addButton(false, it) }
+                                        AddChip("Empty button", false) { addButton(true, it) }
+                                        AddChip("Stick", false) addStick@{ at ->
+                                            val d = draft ?: return@addStick
+                                            val wk = d.workspace(editIndex)
+                                            val id = freshId(wk, "stick", takenIds(d))
+                                            val c = newControl(wk, id, TouchKind.STICK, NEW_STICK_SIZE, portrait)
                                             editWorkspace { it.copy(touchControls = it.touchControls + addAt(at, c)) }
                                             selected = id
                                             addOpen = false
                                         }
-                                    }
-                                    // Presets of a physical control or the touchpad stay in the mapping editor.
-                                    val padLibrary = library.filterNot(ButtonLibrary::presetOnly)
-                                    if (padLibrary.isNotEmpty()) {
-                                        Text(
-                                            "Library",
-                                            color = Color.White.copy(alpha = 0.7f),
-                                            style = MaterialTheme.typography.labelLarge,
-                                            modifier = Modifier.padding(horizontal = 4.dp),
-                                        )
-                                    }
-                                    for (b in padLibrary) {
-                                        AddChip(ButtonLibrary.name(b), true, onLongPress = { removingLib = b }) addLib@{ at ->
-                                            val d = draft ?: return@addLib
-                                            val wk = d.workspace(editIndex)
-                                            val prefix = if (b.control.kind == TouchKind.STICK) "stick" else "btn"
-                                            val id = freshId(wk, prefix, takenIds(d))
-                                            editWorkspace { ButtonLibrary.addTo(it, b, id) { c -> addAt(at, c) } }
-                                            selected = id
-                                            addOpen = false
+                                        // Gyro displays: placed and sized like buttons, drawn under everything in play.
+                                        for (kind in GyroDisplayKind.entries) {
+                                            AddChip(kind.label, false) addDisplay@{ at ->
+                                                val d = draft ?: return@addDisplay
+                                                val wk = d.workspace(editIndex)
+                                                val id = freshId(wk, "disp", takenIds(d))
+                                                val (size, aspect) = GyroDisplay.newSize(kind)
+                                                val c = newControl(wk, id, TouchKind.DISPLAY, size, portrait).copy(
+                                                    shape = TouchShape.SQUARE,
+                                                    aspect = aspect,
+                                                    layer = TouchLayer.BACK,
+                                                    display = GyroDisplay.create(kind),
+                                                )
+                                                editWorkspace { it.copy(touchControls = it.touchControls + addAt(at, c)) }
+                                                selected = id
+                                                addOpen = false
+                                            }
+                                        }
+                                    } else {
+                                        // Presets of a physical control or the touchpad stay in the mapping editor.
+                                        val padLibrary = library.filterNot(ButtonLibrary::presetOnly)
+                                        if (padLibrary.isEmpty()) {
+                                            Text(
+                                                "None yet: Save as preset in a display's settings, a button's settings or a picked group",
+                                                color = Color.White.copy(alpha = 0.7f),
+                                                style = MaterialTheme.typography.labelLarge,
+                                                modifier = Modifier.padding(horizontal = 4.dp),
+                                            )
+                                        }
+                                        for (b in padLibrary) {
+                                            AddChip("★ " + ButtonLibrary.name(b), true, onLongPress = { removingLib = b }) addLib@{ at ->
+                                                val d = draft ?: return@addLib
+                                                val wk = d.workspace(editIndex)
+                                                fun prefix(c: TouchControl) = when (c.kind) {
+                                                    TouchKind.STICK -> "stick"
+                                                    TouchKind.DISPLAY -> "disp"
+                                                    else -> "btn"
+                                                }
+                                                if (ButtonLibrary.isGroup(b)) {
+                                                    val taken = HashSet(takenIds(d))
+                                                    val ids = ButtonLibrary.members(b).map { c ->
+                                                        freshId(wk, prefix(c), taken).also { taken += it }
+                                                    }
+                                                    editWorkspace { ButtonLibrary.addGroupTo(it, b, ids) { c -> addAt(at, c) } }
+                                                    selected = ids.first()
+                                                } else {
+                                                    val id = freshId(wk, prefix(b.control), takenIds(d))
+                                                    editWorkspace { ButtonLibrary.addTo(it, b, id) { c -> addAt(at, c) } }
+                                                    selected = id
+                                                }
+                                                presetsOpen = false
+                                            }
                                         }
                                     }
                                 }
@@ -2603,6 +2646,9 @@ fun PadScreen(
                             selected = null
                             menu = EditMenu.NONE
                         },
+                        onSavePreset = { name ->
+                            runtime.addToLibrary(ButtonLibrary.save(ws, sel, library.map { it.id }).copy(name = name))
+                        },
                         onClose = { menu = EditMenu.NONE },
                     )
                 } else if (menu == EditMenu.MAPPING) {
@@ -2704,16 +2750,34 @@ fun PadScreen(
         removingLib?.let { b ->
             AlertDialog(
                 onDismissRequest = { removingLib = null },
-                title = { Text("Remove \"${ButtonLibrary.name(b)}\" from the library?") },
-                text = { Text("Buttons already added from it stay where they are.") },
+                title = { Text("★ " + ButtonLibrary.name(b)) },
+                text = { Text("Rename this preset, or delete it. What was already added from it stays where it is.") },
                 confirmButton = {
                     TextButton(onClick = {
                         removingLib = null
                         runtime.removeFromLibrary(b.id)
-                    }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+                    }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
                 },
-                dismissButton = { TextButton(onClick = { removingLib = null }) { Text("Cancel") } },
+                dismissButton = {
+                    Row {
+                        TextButton(onClick = { removingLib = null; renamingLib = b }) { Text("Rename") }
+                        TextButton(onClick = { removingLib = null }) { Text("Cancel") }
+                    }
+                },
             )
+        }
+        renamingLib?.let { b ->
+            PresetNameDialog("Rename preset", ButtonLibrary.name(b), onSave = { n ->
+                renamingLib = null
+                runtime.updateLibrary(b.copy(name = n))
+            }, onDismiss = { renamingLib = null })
+        }
+        savingGroup?.let { members ->
+            PresetNameDialog("Save group as preset", "Group of ${members.size}", onSave = { n ->
+                savingGroup = null
+                val wk = draft?.workspace(editIndex)
+                if (wk != null) runtime.addToLibrary(ButtonLibrary.saveGroup(wk, members, library.map { it.id }).copy(name = n))
+            }, onDismiss = { savingGroup = null })
         }
         // Touches and trails: over everything, never taking a touch.
         if (showTouchVisuals) TouchOverlay(trails, visuals, Modifier.fillMaxSize())

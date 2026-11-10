@@ -532,9 +532,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
 
     public OverlaySettings? OverlayOf(string id) => _engine.Settings.Overlays.Find(o => o.Id == id);
 
-    /// <summary>Its kind's name, numbered when there are several of that kind.</summary>
+    /// <summary>Its label, else its kind's name, numbered when there are several of that kind.</summary>
     public string OverlayName(OverlaySettings o)
     {
+        if (!string.IsNullOrWhiteSpace(o.Label)) return o.Label.Trim();
         var same = _engine.Settings.Overlays.Where(x => x.Kind == o.Kind).ToList();
         var name = OverlaySettings.KindName(o.Kind);
         return same.Count > 1 ? $"{name} {same.IndexOf(o) + 1}" : name;
@@ -869,6 +870,34 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         ApplyOverlays();
         Refresh();
         return id;
+    }
+
+    public IReadOnlyList<OverlaySettings> OverlayPresets => _engine.Settings.OverlayPresets;
+
+    public void SaveOverlayPreset(string id, string name)
+    {
+        _engine.SaveOverlayPreset(id, name);
+        Refresh();
+    }
+
+    public string? AddOverlayFromPreset(string presetId)
+    {
+        var id = _engine.AddOverlayFromPreset(presetId);
+        ApplyOverlays();
+        Refresh();
+        return id;
+    }
+
+    public void RenameOverlayPreset(string presetId, string name)
+    {
+        _engine.RenameOverlayPreset(presetId, name);
+        Refresh();
+    }
+
+    public void RemoveOverlayPreset(string presetId)
+    {
+        _engine.RemoveOverlayPreset(presetId);
+        Refresh();
     }
 
     public void RemoveOverlay(string id)
