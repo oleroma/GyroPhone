@@ -1,33 +1,33 @@
-# Inspiration and third-party names
+# Inspiration and names mentioned
 
-GyroPhone was written with the help of AI (Claude). This page lists, by name, every product, project and piece of other people's work that shaped it or is named in it, and how it was used. GyroPhone is not affiliated with or endorsed by any of them. All trademarks belong to their owners.
+GyroPhone was written with the help of AI (Claude). This page lists, by name, every product, project and piece of other people's work that is named somewhere in GyroPhone's code, docs or history, and the context it was named in. Being named here doesn't mean GyroPhone includes or depends on it. GyroPhone is not affiliated with or endorsed by any of them. All trademarks belong to their owners.
 
-## Ideas and approaches
+## Inspiration
 
-- **Alpakka** (Input Labs, [alpakka_firmware](https://github.com/inputlabs/alpakka_firmware)): the overall idea of a gyro-first controller that moves the mouse. The README calls GyroPhone "in the spirit of" Alpakka, and the gyro-to-mouse code is described as "Alpakka / JoyShockMapper style". No Alpakka code is included.
-- **JoyShockMapper** (Jibb Smart): the "player space" gyro mode and its yaw easing ("relax factor") follow the approach JoyShockMapper describes. No JoyShockMapper code is included.
-- **Steam Input** (Valve): the idea of split touch zones and radial menus (listed in the spec as "Steam Input style"), and Steam Input as a way to play with GyroPhone's pads.
-- **Logitech K380**: the built-in Keyboard layout copies the K380's key rows.
+- **Alpakka** (Input Labs, [alpakka_firmware](https://github.com/inputlabs/alpakka_firmware)): named as the inspiration. The README says GyroPhone is "in the spirit of" the Alpakka controller, and the gyro-to-mouse code comment says "Alpakka / JoyShockMapper style". No Alpakka code is included.
+- **JoyShockMapper** (Jibb Smart): named for the "player space" gyro mode and its "relax factor" in code comments and the README. No JoyShockMapper code is included.
+- **Steam Input** (Valve): named in the spec as the style for an idea (split touch zones and radial menus), and in docs as something that can sit between GyroPhone's pad and a game.
+- **Logitech K380**: named as the layout the built-in keyboard's key rows follow.
 
-## Controllers and devices named or emulated
+## Controllers and devices
 
-- **Sony DualSense** and **DualShock 4**: GyroPhone can present itself to Windows as one. `driver/src/dualsense.h` holds a wired DualSense's USB IDs (054C:0CE6) and HID report descriptor so games accept it. The on-screen controller drawing was first laid out as a DualSense.
-- **Microsoft Xbox 360 / Xbox** controllers: output mode (through ViGEmBus) and a controller diagram style.
-- **GameSir X5 / X5 Lite**: the clip-on controller GyroPhone was built and tested with. It has its own controller diagram, and an early app icon showed a phone in an X5 Lite grip (since replaced by an original icon).
-- **Nintendo**, **PlayStation**, **8BitDo**, **Razer Kishi**, **Backbone One**: recognised by name so the app picks the right button labels and diagram.
-- **OnePlus 15**: the reference phone used for testing; named in docs, code comments and test data.
+- **Sony DualSense** and **DualShock 4**: named as pads GyroPhone's PC side can appear as. The driver header lists a wired DualSense's USB IDs and HID report layout so games accept it. A code comment once named the DualSense as the shape of the on-screen controller drawing.
+- **Xbox 360 / Xbox**: named as an output mode and a controller diagram style.
+- **GameSir X5 / X5 Lite**: named as the clip-on controller GyroPhone was tested with, and as a controller diagram style. An early app icon was described as a phone in an X5 Lite grip (since replaced by an original icon).
+- **Nintendo**, **PlayStation**, **8BitDo**, **Razer Kishi**, **Backbone One**: named in the list of controllers the app recognises by name, to pick button labels and diagrams.
+- **OnePlus 15**: named as the test phone, in docs, code comments and test data.
 
-## Games named
+## Games
 
-- **Counter-Strike 2, Apex Legends, Valorant, Overwatch 2, Destiny 2, Titanfall 2, Quake Champions**: sensitivity presets (how far each game's camera turns per mouse count), so gyro speed can be set in real-world degrees.
-- **The Finals**: named in the README as a game with its own controller gyro.
+- **Counter-Strike 2, Apex Legends, Valorant, Overwatch 2, Destiny 2, Titanfall 2, Quake Champions**: named in sensitivity presets (how far each game turns per mouse count).
+- **The Finals**: named in the README as an example of a game with its own controller gyro.
 
-## Software and libraries used
+## Other software
 
-- **ViGEmBus** (Nefarius): the virtual Xbox 360 / DualShock 4 driver the Windows companion uses. Installed separately by the user.
-- **Material Icons** (Google, Apache 2.0): the edit menu's icon paths are copied from Material Icons.
-- **Android**, **Windows**, **Windows Driver Kit / Virtual HID Framework**, **Segoe UI** (Microsoft): platforms and system fonts used, not redistributed.
-- **Obtainium**: used to install test builds on the phone.
+- **ViGEmBus** (Nefarius): named as the separately installed driver the companion talks to for a virtual Xbox 360 / DualShock 4 pad.
+- **Material Icons** (Google, Apache 2.0): named as the source of the edit menu's icon paths, which are copied from it.
+- **Android**, **Windows**, **Windows Driver Kit / Virtual HID Framework**, **Segoe UI** (Microsoft): named as the platforms, build tools and system font. None of them is shipped with GyroPhone.
+- **Obtainium**: named as the way test builds reach the phone.
 
 ## History
 
