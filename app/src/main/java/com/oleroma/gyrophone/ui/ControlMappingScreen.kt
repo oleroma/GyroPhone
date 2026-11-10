@@ -1690,13 +1690,11 @@ internal fun ControlMappingScreen(
             if (b != libraryBounds) libraryBounds = b
         }) {
             Column(Modifier.fillMaxSize().background(colors.surfaceContainerLow).imePadding().padding(top = 8.dp)) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    singleLine = true,
-                    placeholder = { Text("Search, e.g. W, LT, wheel") },
-                    trailingIcon = { if (query.isNotEmpty()) TextButton(onClick = { query = "" }) { Text("✕") } },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                SettingsSearchField(
+                    query,
+                    { query = it },
+                    Modifier.padding(horizontal = 12.dp),
+                    placeholder = "Search, e.g. W, LT, wheel",
                 )
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
