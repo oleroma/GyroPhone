@@ -4,6 +4,7 @@ using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using GyroPhone.Host;
 using GyroPhone.Host.Settings;
+using GyroPhone.Protocol;
 
 namespace GyroPhone.Tray;
 
@@ -33,14 +34,18 @@ internal sealed class OverlayForm : Form
     private readonly Action<string> _log;
     private readonly OverlayScene _scene = new();
     private DibSurface? _surface;
-    // Drawing runs on the pacer's thread (so the main window never waits for it), or on the UI
-    // thread in Edit (the window moves and resizes there) and for settings changes: one at a time.
+    // Drawing runs on the pacer's thread (so the main window never waits for it), Edit or not, settings
+    // changes too, or on the UI thread for a copied window in Edit (it moves and resizes there) and a
+    // swap-chain window whose size changed (its swap chain is resized there): one at a time.
     private readonly object _renderLock = new();
     // The window, for the pacer's thread (Handle is the UI thread's); zero once destroyed.
     private IntPtr _hwnd;
     private readonly int _uiThread = Environment.CurrentManagedThreadId;
-    // A tick posted to the UI thread (Edit) and not run yet.
+    // A tick posted to the UI thread and not run yet.
     private int _uiTickQueued;
+    // The window's size changed: its next picture is drawn on the UI thread, which resizes the swap
+    // chain there once (not on every mouse move of an edge drag, and never on the pacer's thread).
+    private volatile bool _resizePending;
     // UpdateLayeredWindow refused a call from the pacer's thread: this window draws on the UI thread.
     private bool _uiOnly;
     // The graphics card draws every window. A window whose graphics card surface fails makes a new one
@@ -57,9 +62,14 @@ internal sealed class OverlayForm : Form
     // This window showed a swap chain before its surface failed: its next try makes its handle
     // again for a new swap chain, not a copied surface.
     private bool _wasDirect;
-    // The swap chain (picture shown straight from the graphics card) failed once in this run: every
-    // window copies its picture through the CPU (UpdateLayeredWindow) instead.
-    private static bool _directBroken;
+    // The swap chain (picture shown straight from the graphics card) failed: every window copies its
+    // picture through the CPU (UpdateLayeredWindow) until this time (2 s after a failure, 5 minutes
+    // after 3 in a row; 0 = none). Then one copied window tries a swap chain again (it takes the next
+    // 2 s so the others wait), and once that works the others follow.
+    private static long _directRetryAt;
+    private static int _directFailures;
+    // This window makes its handle again to try the swap chain (it took the try).
+    private bool _directTry;
     // The window shows a swap chain (constant alpha + extended frame), not UpdateLayeredWindow pictures.
     private bool _direct;
     private byte _directAlpha;
@@ -83,6 +93,15 @@ internal sealed class OverlayForm : Form
     private ushort _lastLayout;
     private long _lastDrawTicks;
     private bool _dirty = true;
+    // What the last picture showed, live from the phone (_drawnLive): a new frame that shows nothing
+    // new (the pose moved under OverlayPacing.StillPx, the rest the same) draws nothing.
+    private readonly OverlayFrame _drawnFrame = new();
+    private bool _drawnLive, _drawnFiring;
+    private int _drawnSize;
+    private int _drawnLaser;
+    // The refresh rate of the screen this window is on (0 = not known yet), read every 2 s.
+    private volatile int _screenHz;
+    private long _screenHzAt;
     // "Fade when phone rests": this window's share of its opacity now (1 = not faded), and when it was last stepped.
     private float _restFade = 1f;
     private long _restFadeAt;
@@ -95,6 +114,8 @@ internal sealed class OverlayForm : Form
         _log = log;
         _clicked = clicked;
         _picked = picked;
+        _drawPicture = DrawPicture;
+        _presentPicture = PresentPicture;
         var s = Settings ?? new OverlaySettings();
         Text = $"{Program.AppName} {OverlaySettings.KindName(s.Kind).ToLowerInvariant()} overlay";
         FormBorderStyle = FormBorderStyle.None;
@@ -129,12 +150,28 @@ internal sealed class OverlayForm : Form
 
     public string Id => _id;
 
-    /// <summary>Its frame-rate cap (0: every screen refresh).</summary>
+    /// <summary>The window's handle for other threads (the wheel hook's); zero while it has none.</summary>
+    public IntPtr Hwnd => Volatile.Read(ref _hwnd);
+
+    /// <summary>Its frame-rate cap (0: every screen refresh), in whole refreshes (<see cref="OverlayPacing.RefreshesPerPicture"/>).</summary>
     public int MaxFps => Settings?.MaxFps ?? 60;
+
+    /// <summary>The refresh rate of the screen it is on (Hz), or 0 before it is known.</summary>
+    public int ScreenHz => _screenHz;
 
     /// <summary>This window's settings, or null once removed.</summary>
     // The base Form constructor reads CreateParams before this constructor has set _engine.
-    private OverlaySettings? Settings => _engine?.Settings.Overlays.Find(o => o.Id == _id);
+    // A plain loop: looked up several times a frame, a lambda would be a new object each time.
+    private OverlaySettings? Settings
+    {
+        get
+        {
+            if (_engine == null) return null;
+            foreach (var o in _engine.Settings.Overlays)
+                if (o.Id == _id) return o;
+            return null;
+        }
+    }
 
     private bool ClickThrough => !(_engine?.Settings.OverlayEdit ?? false);
 
@@ -168,7 +205,11 @@ internal sealed class OverlayForm : Form
         if (IsHandleCreated) SetWindowPos(Handle, HwndTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
     }
 
-    /// <summary>Settings changed (background, scale, dots, Edit): applied at the next frame.</summary>
+    /// <summary>
+    /// Settings changed (background, scale, dots, Edit): the window style and alpha change now, the picture
+    /// at the next frame (the pacer draws a dirty window at once, whatever its frame cap), so a slider drag
+    /// never draws on the UI thread.
+    /// </summary>
     public void SettingsChanged()
     {
         if (!IsHandleCreated) return;
@@ -181,7 +222,6 @@ internal sealed class OverlayForm : Form
         long want = ClickThrough ? ex | WsExTransparent : ex & ~WsExTransparent;
         if (want != ex) SetWindowLongPtr(Handle, GwlExStyle, new IntPtr(want));
         _dirty = true;
-        Render();
     }
 
     /// <summary>Level: the way the phone is held now shows face-on.</summary>
@@ -207,7 +247,9 @@ internal sealed class OverlayForm : Form
             _direct = false;
             _recreating = false;
             bool gpuOff = GpuOff;
-            if (!gpuOff && !_directBroken)
+            bool tryDirect = !gpuOff && (_directTry || !DirectBroken);
+            _directTry = false;
+            if (tryDirect)
             {
                 try
                 {
@@ -221,11 +263,17 @@ internal sealed class OverlayForm : Form
                     _gpuSurface = new GpuSurface(Handle, Width, Height);
                     _direct = true;
                     _wasDirect = true;
+                    _uiOnly = false; // that was UpdateLayeredWindow's, which a swap chain doesn't use
+                    if (Interlocked.Exchange(ref _directRetryAt, 0) != 0)
+                        _log("overlay: showing straight from the graphics card works again");
+                    Volatile.Write(ref _directFailures, 0);
                 }
                 catch (Exception ex)
                 {
-                    _log($"overlay: showing straight from the graphics card failed, copying through the CPU: {ex.GetType().Name}: {ex.Message}");
-                    _directBroken = true;
+                    int failures = Interlocked.Increment(ref _directFailures);
+                    long wait = failures >= 3 ? 5 * 60_000 : 2000;
+                    Interlocked.Exchange(ref _directRetryAt, Environment.TickCount64 + wait);
+                    _log($"overlay: showing straight from the graphics card failed, copying through the CPU, trying again in {wait / 1000} s: {ex.GetType().Name}: {ex.Message}");
                     // Out of constant-alpha mode, so UpdateLayeredWindow works again.
                     long ex0 = GetWindowLongPtr(Handle, GwlExStyle).ToInt64();
                     SetWindowLongPtr(Handle, GwlExStyle, new IntPtr(ex0 & ~WsExLayered));
@@ -302,8 +350,9 @@ internal sealed class OverlayForm : Form
     protected override void OnSizeChanged(EventArgs e)
     {
         base.OnSizeChanged(e);
+        // Drawn at the next tick, on the UI thread: an edge drag moves many times a frame.
         _dirty = true;
-        if (IsHandleCreated) Render();
+        _resizePending = true;
     }
 
     protected override void OnMouseDown(MouseEventArgs e)
@@ -417,12 +466,15 @@ internal sealed class OverlayForm : Form
 
     /// <summary>
     /// One screen refresh, on the pacer's thread (<see cref="OverlayPacer"/>): draws again if anything
-    /// changed, right there, or on the UI thread while in Edit (one tick queued at most).
+    /// changed, right there, Edit or not (moving a swap-chain window needs no new picture). On the UI
+    /// thread instead (one tick queued at most) right after a size change, for a copied window in Edit
+    /// (its UpdateLayeredWindow would race the move and resize there) and for one whose
+    /// UpdateLayeredWindow refused the pacer's thread.
     /// </summary>
     public void Tick()
     {
         if (IsDisposed) return;
-        if (ClickThrough && !_uiOnly)
+        if (!_uiOnly && !_resizePending && (ClickThrough || _direct))
         {
             TickLocked();
             return;
@@ -433,6 +485,8 @@ internal sealed class OverlayForm : Form
             BeginInvoke(() =>
             {
                 Volatile.Write(ref _uiTickQueued, 0);
+                // A new size is drawn now, whatever else changed.
+                if (_resizePending) _dirty = true;
                 TickLocked();
             });
         }
@@ -460,10 +514,15 @@ internal sealed class OverlayForm : Form
 
     private void TickCore()
     {
-        // A new OVERLAY, a new layout, or now and then for the status: draw again.
+        // A new OVERLAY that shows something new, a new layout, or now and then for the status: draw again.
         long age = _engine.OverlaySnapshot(_scene.Frame, _id, out var layout);
         bool fresh = age >= 0 && _scene.Frame.PhoneTimeUs != _lastTime;
         long now = Environment.TickCount64;
+        if (now - _screenHzAt >= 2000)
+        {
+            _screenHzAt = now;
+            if (ScreenRate.Of(_hwnd) is > 0 and var hz) _screenHz = hz;
+        }
         // Each frame goes into the trails once: a frame-capped tick leaves it fresh for the next one.
         if (fresh && _scene.Frame.PhoneTimeUs != _lastTrailTime)
         {
@@ -516,25 +575,54 @@ internal sealed class OverlayForm : Form
                 laserFading = true;
             }
         }
-        StepRestFade(now);
+        bool rested = StepRestFade(now);
         UpdateStats();
-        bool changed = _dirty || fresh || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||
-            !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now) || laserFading;
+        // A frame showing nothing new (a still phone's gyro noise) is passed over as drawn.
+        bool shows = fresh && ShowsNew(age);
+        if (fresh && !shows) _lastTime = _scene.Frame.PhoneTimeUs;
+        bool changed = _dirty || shows || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||
+            !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now) || laserFading ||
+            _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser;
         if (!changed && now - _lastDrawTicks < 500) return;
-        // Frame-rate cap (a little early, so a 60 Hz cap on a 60 Hz screen never skips a refresh).
+        // Faded out by "Fade when phone rests": a few pictures a second at most. Any input or movement
+        // ends the rest, and the next tick draws at once.
+        if (rested && !_dirty && !laserFading && now - _lastDrawTicks < OverlayPacing.RestedFrameMs) return;
+        // Frame-rate cap, in whole refreshes of this window's screen (a little early, so it never skips one).
         int fps = MaxFps;
-        if (fps > 0 && !_dirty && _clock.Elapsed.TotalMilliseconds - _lastDrawAt < 1000.0 / fps - 3) return;
+        if (fps > 0 && !_dirty && _clock.Elapsed.TotalMilliseconds - _lastDrawAt < OverlayPacing.MinGapMs(_screenHz, fps)) return;
         _scene.FrameAgeUs = age;
         _scene.Layout = layout;
         Render();
     }
 
     /// <summary>
+    /// Whether the new frame in <see cref="_scene"/> shows anything the last picture didn't: what it
+    /// draws besides the pose (<see cref="OverlayFrame.SameShown"/>), or a pose turned by
+    /// <see cref="OverlayPacing.StillPx"/> or more at the window's size.
+    /// </summary>
+    private bool ShowsNew(long age)
+    {
+        bool live = _engine.Connected && age is >= 0 and < 1_500_000;
+        if (!live || !_drawnLive || !_scene.Frame.SameShown(_drawnFrame)) return true;
+        var s = Settings;
+        float scale = s == null || s.FollowsCamera ? 1f : Math.Clamp(s.MotionScale, 0.25f, 4f);
+        return OverlayPacing.TurnShows(OverlayFrame.TurnBetween(_drawnFrame, _scene.Frame), _drawnSize, scale);
+    }
+
+    /// <summary>The laser pointer's trail and paint as they are now: it changes when they do.</summary>
+    private int LaserStamp()
+    {
+        var st = _laser.Strokes;
+        long newest = st.Count > 0 ? st.Point(st.Count - 1).T : 0;
+        return HashCode.Combine(st.Count, newest, _laser.Version, _laser.Moving);
+    }
+
+    /// <summary>
     /// "Fade when phone rests": fades toward the faded opacity over the fade time while the phone rests,
     /// and back to full at once when it doesn't (never in Edit). A swap-chain window just gets its
-    /// new constant alpha; a copied one draws again with it.
+    /// new constant alpha; a copied one draws again with it. True while it rests and has faded all the way.
     /// </summary>
-    private void StepRestFade(long now)
+    private bool StepRestFade(long now)
     {
         var rf = _engine.Settings.OverlayRestFade;
         bool resting = ClickThrough && _engine.OverlayResting(_id);
@@ -544,15 +632,16 @@ internal sealed class OverlayForm : Form
         _restFadeAt = now;
         if (target >= _restFade) _restFade = target;
         else _restFade = rf.FadeMs <= 0 ? target : Math.Max(target, _restFade - (1f - target) * dtMs / rf.FadeMs);
-        if (Math.Abs(_restFade - was) < 1e-4f) return;
+        bool fadedOut = resting && target < 1f && _restFade <= target + 1e-4f;
+        if (Math.Abs(_restFade - was) < 1e-4f) return fadedOut;
         if (!_direct)
         {
             _dirty = true;
-            return;
+            return fadedOut;
         }
-        if (!_revealed || WindowAlpha() == _directAlpha) return;
+        if (!_revealed || WindowAlpha() == _directAlpha) return fadedOut;
         // Set on the UI thread (the window's), one at a time; it reads the newest fade when it runs.
-        if (Interlocked.Exchange(ref _alphaQueued, 1) != 0) return;
+        if (Interlocked.Exchange(ref _alphaQueued, 1) != 0) return fadedOut;
         try
         {
             BeginInvoke(() =>
@@ -569,6 +658,7 @@ internal sealed class OverlayForm : Form
         {
             Volatile.Write(ref _alphaQueued, 0);
         }
+        return fadedOut;
     }
 
     private void Render()
@@ -588,14 +678,30 @@ internal sealed class OverlayForm : Form
         // The window's size as Windows has it now (no message to the UI thread): drawing at exactly
         // this size, UpdateLayeredWindow never resizes the window from the pacer's thread.
         IntPtr hwnd = _hwnd;
+        bool onUi = Environment.CurrentManagedThreadId == _uiThread;
+        // Read before the size: a size change after this draws again.
+        if (onUi) _resizePending = false;
         if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var wr)) return;
         int width = wr.Right - wr.Left, height = wr.Bottom - wr.Top;
         if (width <= 0 || height <= 0) return;
+        // A swap chain is resized on the UI thread (the window's), at most once a frame: the next tick goes there.
+        if (!onUi && _gpuSurface is { } sized && sized.NeedsResize(width, height))
+        {
+            _resizePending = true;
+            _dirty = true;
+            return;
+        }
         _dirty = false;
         _lastTime = _scene.Frame.PhoneTimeUs;
         _lastLayout = _scene.Frame.LayoutVersion;
         _lastDrawTicks = Environment.TickCount64;
         _scene.Connected = _engine.Connected;
+        // What this picture shows, for ShowsNew.
+        _drawnLive = _scene.Connected && _scene.FrameAgeUs is >= 0 and < 1_500_000;
+        if (_drawnLive) _scene.Frame.CopyTo(_drawnFrame);
+        _drawnSize = Math.Max(width, height);
+        _drawnFiring = _scene.Firing;
+        _drawnLaser = LaserStamp();
         _scene.Arranging = !ClickThrough;
         _scene.Selected = _selected;
         _scene.Title = _title;
@@ -616,7 +722,7 @@ internal sealed class OverlayForm : Form
         // for a new one (OnHandleCreated); the others make a new copied surface here.
         if (_gpuSurface == null && !_direct && !_recreating && _lastDrawTicks >= _gpuRetryAt && !GpuOff)
         {
-            if (_wasDirect && !_directBroken)
+            if (_wasDirect && !DirectBroken)
             {
                 _recreating = true;
                 try { BeginInvoke(RecreateHandle); } catch (Exception) { _recreating = false; }
@@ -642,20 +748,9 @@ internal sealed class OverlayForm : Form
                     _scene.Trails = gs.FingerTrails ? _trails : null;
                     _scene.Laser = _laser;
                     _scene.NowTicks = _lastDrawTicks;
-                    var size = new Size(width, height);
-                    _gpuSurface.Draw(width, height, gs.Quality, c =>
-                    {
-                        try
-                        {
-                            OverlayRenderer.Draw(c, size, _scene, gs);
-                        }
-                        catch (Exception e) when (e is not SharpGen.Runtime.SharpGenException)
-                        {
-                            // A bug in the drawing, not the graphics card: keep the surface (its End
-                            // undoes any clips and transforms left pushed).
-                            _log($"overlay: drawing failed: {e.GetType().Name}: {e.Message}");
-                        }
-                    }, dc => Present(hwnd, dc, width, height));
+                    // What the two callbacks (made once, not per picture) draw and present.
+                    (_drawSize, _drawSettings, _drawHwnd) = (new Size(width, height), gs, hwnd);
+                    _gpuSurface.Draw(width, height, gs.Quality, _drawPicture, _presentPicture);
                 }
             }
             catch (Exception e)
@@ -665,6 +760,7 @@ internal sealed class OverlayForm : Form
                 return;
             }
             Count(start);
+            if (!_gpuSurface.Direct) TryDirectAgain();
             return;
         }
         // One picture in the format the layered window takes (premultiplied, top-down DIB), kept
@@ -697,6 +793,60 @@ internal sealed class OverlayForm : Form
         Present(hwnd, _surface.Dc, width, height);
         Count(start);
     }
+
+    /// <summary>The swap chain failed lately: windows copy their pictures for now (see <see cref="_directRetryAt"/>).</summary>
+    private static bool DirectBroken => Environment.TickCount64 < Volatile.Read(ref _directRetryAt);
+
+    /// <summary>
+    /// A copied window that has just drawn (so the graphics card works) tries the swap chain again once
+    /// its time has come: it makes its handle again (UI thread). Only one window takes each try; the
+    /// others follow once it worked. Called with _renderLock held.
+    /// </summary>
+    private void TryDirectAgain()
+    {
+        if (_recreating || GpuOff) return;
+        long at = Volatile.Read(ref _directRetryAt), now = Environment.TickCount64;
+        if (now < at) return;
+        // A try after a failure: this window takes it, and the others wait for it (2 s).
+        if (at != 0)
+        {
+            if (Interlocked.CompareExchange(ref _directRetryAt, now + 2000, at) != at) return;
+            _directTry = true;
+        }
+        _recreating = true;
+        try
+        {
+            BeginInvoke(RecreateHandle);
+        }
+        catch (Exception)
+        {
+            _recreating = false;
+            _directTry = false;
+        }
+    }
+
+    // GpuSurface.Draw's callbacks and what they draw: set just before each call, under _renderLock.
+    private readonly Action<ICanvas> _drawPicture;
+    private readonly Action<IntPtr> _presentPicture;
+    private Size _drawSize;
+    private OverlaySettings? _drawSettings;
+    private IntPtr _drawHwnd;
+
+    private void DrawPicture(ICanvas c)
+    {
+        try
+        {
+            OverlayRenderer.Draw(c, _drawSize, _scene, _drawSettings!);
+        }
+        catch (Exception e) when (e is not SharpGen.Runtime.SharpGenException)
+        {
+            // A bug in the drawing, not the graphics card: keep the surface (its End
+            // undoes any clips and transforms left pushed).
+            _log($"overlay: drawing failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    private void PresentPicture(IntPtr dc) => Present(_drawHwnd, dc, _drawSize.Width, _drawSize.Height);
 
     /// <summary>This window draws with the CPU for now: its graphics card surface failed 3 times in a minute.</summary>
     private bool GpuOff => Environment.TickCount64 < _gpuOffUntil;

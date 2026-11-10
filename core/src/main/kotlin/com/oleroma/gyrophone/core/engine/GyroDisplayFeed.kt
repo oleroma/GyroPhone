@@ -110,13 +110,13 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
             if (dtSeconds == 0f || axes == 0) return
             if (d.turnsWith == TurnsWith.CAMERA) {
                 // As the game's camera: the axis on mouse X turns it right, the one on mouse Y up; no roll.
-                val rates = floatArrayOf(yaw, pitch, roll)
                 fun deg(code: Int): Float {
                     val a = code and 0x7F
                     if (a == 0) return 0f
                     val axis = CAMERA_AXES[a - 1]
                     if (axes and MappingEngine.gyroBit(axis) == 0) return 0f
-                    return rates[a - 1] * dtSeconds * cameraSpeed(d, gyro, axis) * (if (code and 0x80 != 0) -1f else 1f)
+                    val rate = when (a) { 1 -> yaw; 2 -> pitch; else -> roll }
+                    return rate * dtSeconds * cameraSpeed(d, gyro, axis) * (if (code and 0x80 != 0) -1f else 1f)
                 }
                 val map = cameraMap
                 pose.cameraTurn(deg(map and 0xFF), deg(map shr 8 and 0xFF))
@@ -204,6 +204,14 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         val d = display
         // Following the camera it turns by Spin (or as far as the game's camera): no turn amount on top.
         shownMatrix(q, restIn(d), if (d.followsCamera) 1f else d.motionScale, out)
+    }
+
+    /**
+     * Its samples start again after a pause (the pad was covered by the black screen or the
+     * latency markers): one held to gravity settles onto it again at once ([GyroPose.resettle]).
+     */
+    fun resume() {
+        if (display.needsGravity) pose.resettle()
     }
 
     /**

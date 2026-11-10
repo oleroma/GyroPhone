@@ -18,6 +18,7 @@ import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.Workspace
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FingerAxesTest {
@@ -131,5 +132,34 @@ class FingerAxesTest {
         e.buttonUp(1)
         e.snapshot()
         assertEquals(0, e.snapshot().gamepad.lt)
+    }
+
+    @Test
+    fun theRulerReadsEveryFingerAndValueAtOnce() {
+        val e = engine(
+            listOf(
+                Mapping(InputSource.Finger("aim", FingerAxis.X), OutputTarget.PadAxis(GamepadAxis.LT)),
+                Mapping(InputSource.Finger("aim", FingerAxis.Y), OutputTarget.PadAxis(GamepadAxis.RT)),
+            ),
+        )
+        val at = FloatArray(4)
+        val inUse = ArrayList<Mapping>()
+        val values = FloatArray(8)
+        val ids = listOf("aim", "other")
+        assertEquals(false, e.fingerRuler(ids, at, inUse, values))
+        assertTrue(at[0].isNaN())
+        assertTrue(inUse.isEmpty())
+        e.setFinger("aim", 0.25f, 0.75f)
+        assertEquals(true, e.fingerRuler(ids, at, inUse, values))
+        assertEquals(0.25f, at[0], 1e-6f)
+        assertEquals(0.75f, at[1], 1e-6f)
+        assertTrue(at[2].isNaN())
+        assertEquals(2, inUse.size)
+        for (i in inUse.indices) {
+            assertEquals(e.fingerValueNow(inUse[i].source as InputSource.Finger)!!, values[i], 1e-6f)
+        }
+        e.fingerUp("aim")
+        assertEquals(false, e.fingerRuler(ids, at, inUse, values))
+        assertTrue(inUse.isEmpty())
     }
 }

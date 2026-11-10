@@ -5,7 +5,8 @@ namespace GyroPhone.Host.Abstractions;
 
 /// <summary>
 /// Virtual game pad: ViGEm on Windows for Xbox 360 and DualShock 4, the optional GyroPhone pad driver
-/// for the DualSense. Called under the engine lock; must not block.
+/// for the DualSense. Submit is called under the engine lock and must not block. Plug and Unplug block in
+/// the driver, so the engine calls them on its pad thread outside the lock, never while it submits.
 /// </summary>
 public interface IPadSink
 {

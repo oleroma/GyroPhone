@@ -27,8 +27,10 @@ internal static class LaserDrawing
     /// <summary>
     /// Draws the pointer posed <paramref name="m"/> (as <see cref="Aimed"/> gives it); <paramref name="raw"/> is the pose
     /// before that, which a trackball's sphere turns by in Fixed pointer mode, so Pointer faces moves only the pointer.
+    /// <paramref name="buf"/> (the window's) keeps the grid between pictures.
     /// </summary>
-    public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held, int active = 0, bool firing = false, float[]? raw = null, float aim = 0f)
+    public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held, int active = 0, bool firing = false, float[]? raw = null, float aim = 0f,
+        DrawBuffers? buf = null)
     {
         float r = Math.Min(area.Width, area.Height) / 2f * 0.95f;
         var c = new PointF(area.X + area.Width / 2f, area.Y + area.Height / 2f);
@@ -53,24 +55,34 @@ internal static class LaserDrawing
         Color[] axisColors = [Color.FromArgb(s.Color("x")), Color.FromArgb(s.Color("y")), Color.FromArgb(s.Color("z"))];
 
         // The grid's lines (picture x, y on the sphere), on the near half (front) or the far one: with perspective
-        // each point by its depth, ±√(1 − x² − y²).
+        // each point by its depth, ±√(1 − x² − y²). Kept (with their built shapes, by the canvas) until the
+        // lines, the window's size or Perspective change: a still sphere's grid is never built again.
         void Grid(List<(float X, float Y)[]> lines, Color col, bool front)
         {
-            foreach (var l in lines)
+            var memo = buf == null ? new DrawBuffers.GridPoints() : front ? buf.GridFront : buf.GridBack;
+            if (!ReferenceEquals(memo.Lines, lines) || memo.Cx != c.X || memo.Cy != c.Y || memo.R != r || memo.Perspective != s.Perspective)
             {
-                var pts = new PointF[l.Length];
-                for (int i = 0; i < l.Length; i++)
+                // The arrays filled again in place when the lines are as many and as long (a turning sphere's grid).
+                var all = memo.Points.Length == lines.Count ? memo.Points : new PointF[lines.Count][];
+                for (int n = 0; n < lines.Count; n++)
                 {
-                    float k = 1f;
-                    if (s.Perspective)
+                    var l = lines[n];
+                    var pts = all[n] = all[n] is { } kept && kept.Length == l.Length ? kept : new PointF[l.Length];
+                    for (int i = 0; i < l.Length; i++)
                     {
-                        float z = MathF.Sqrt(Math.Max(0f, 1f - l[i].X * l[i].X - l[i].Y * l[i].Y));
-                        k = LaserTrace.Perspective(front ? z : -z);
+                        float k = 1f;
+                        if (s.Perspective)
+                        {
+                            float z = MathF.Sqrt(Math.Max(0f, 1f - l[i].X * l[i].X - l[i].Y * l[i].Y));
+                            k = LaserTrace.Perspective(front ? z : -z);
+                        }
+                        pts[i] = new PointF(c.X + l[i].X * r * k, c.Y - l[i].Y * r * k);
                     }
-                    pts[i] = new PointF(c.X + l[i].X * r * k, c.Y - l[i].Y * r * k);
                 }
-                g.DrawLines(col, px, pts);
+                (memo.Lines, memo.Cx, memo.Cy, memo.R, memo.Perspective, memo.Points) = (lines, c.X, c.Y, r, s.Perspective, all);
+                memo.Stamp++;
             }
+            g.DrawLinesSet(col, px, memo.Points, memo.Stamp);
         }
 
         // Held (None) gimbal axes and those the gyro is turning now (bit 0 yaw, 1 pitch, 2 roll); a laser axis i
@@ -121,7 +133,7 @@ internal static class LaserDrawing
                 // Turning with the laser: its own axis i, column i of its pose.
                 float ax = m[i], ay = m[3 + i], az = m[6 + i];
                 bool locked = (locks & (1 << gimbalOf[i])) != 0, lit = (active & (1 << gimbalOf[i])) != 0;
-                foreach (int sign in new[] { 1, -1 })
+                for (int sign = 1; sign >= -1; sign -= 2)
                 {
                     var (p, z) = At(sign * ax, sign * ay, sign * az);
                     if (z > 0f != front) continue;
@@ -283,7 +295,7 @@ internal static class LaserDrawing
             Axes(true);
             return;
         }
-        var gridLines = LaserTrace.GridFor(s.LaserAxonometric, turned);
+        var gridLines = buf != null ? buf.GridFor(s.LaserAxonometric, turned) : LaserTrace.GridFor(s.LaserAxonometric, turned);
         if (crosshair)
         {
             // The crosshair look: no sphere or beam; a crosshair lying on the sphere where it aims.

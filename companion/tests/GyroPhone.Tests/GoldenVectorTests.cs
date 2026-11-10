@@ -318,7 +318,7 @@ public class GoldenVectorTests
         byte[] Rand(int n) => n == 4 ? (byte[])sidBytes.Clone() : S.Bytes("nH");
         using var h = new Harness(random: Rand, pairDefault: false);
         h.AddPaired(P.Bytes("phoneId"), "OnePlus 15", S.Bytes("pairKey"));
-        var engine = new Host.HostEngine(h.Settings, h.Pad, h.KeyMouse, h.Prompt, new PlainProtector(), h.Clock, h.Events, Rand);
+        var engine = new Host.HostEngine(h.Settings, h.Pad, h.KeyMouse, h.Prompt, new PlainProtector(), h.Clock, h.Events, Rand) { PadWorker = job => job() };
         engine.AttachSender(h.Sender);
         var from = new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 5000).Serialize();
 

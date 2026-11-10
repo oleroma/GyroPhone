@@ -59,9 +59,16 @@ internal class WorkspaceLevel(
     /** Makes every child follow this level again for these keys. */
     val resetChildren: (List<String>) -> Unit = {},
 ) {
+    /** [kids] by keys: a level lives as long as its settings (remembered), so each row looks its children up once. */
+    private val kidsOf = HashMap<List<String>, ChildInfo?>()
+
     /** The children setting any of [keys] themselves, for a [ChildLine]; null = none. */
-    fun kids(keys: List<String>): ChildInfo? =
-        children(keys).takeIf { it.isNotEmpty() }?.let { c -> ChildInfo(c) { resetChildren(keys) } }
+    fun kids(keys: List<String>): ChildInfo? {
+        if (keys in kidsOf) return kidsOf[keys]
+        val info = children(keys).takeIf { it.isNotEmpty() }?.let { c -> ChildInfo(c) { resetChildren(keys) } }
+        kidsOf[keys] = info
+        return info
+    }
 
     fun kids(vararg keys: String): ChildInfo? = kids(keys.toList())
 
@@ -73,6 +80,7 @@ internal class WorkspaceLevel(
 /** Workspace [ws]'s settings over [defaults]; [update] changes the workspace. */
 internal fun workspaceLevel(ws: Workspace, defaults: Workspace, update: ((Workspace) -> Workspace) -> Unit): WorkspaceLevel {
     val own = WorkspaceDefaults.own(ws)
+    val kids = OverridingChildren.Children(ws)
     return WorkspaceLevel(
         ws = ws,
         parentName = "Defaults",
@@ -80,7 +88,7 @@ internal fun workspaceLevel(ws: Workspace, defaults: Workspace, update: ((Worksp
         edit = update,
         reset = { k -> update { WorkspaceDefaults.reset(it, k, defaults) } },
         resetAll = { update { WorkspaceDefaults.resetAll(it, defaults) } },
-        children = { k -> OverridingChildren.ofWorkspace(ws, k) },
+        children = { k -> kids.ofWorkspace(k) },
         resetChildren = { k -> update { OverridingChildren.resetWorkspace(it, k) } },
     )
 }
@@ -92,6 +100,7 @@ internal fun workspaceLevel(ws: Workspace, defaults: Workspace, update: ((Worksp
 internal fun layerLevel(ws: Workspace, setId: Int, update: ((Workspace) -> Workspace) -> Unit): WorkspaceLevel {
     val set = ws.sets.firstOrNull { it.id == setId }
     val own = WorkspaceDefaults.layerOwn(set)
+    val kids = OverridingChildren.Children(ws)
     fun editSet(change: (Workspace, MappingSet) -> MappingSet) =
         update { w -> w.copy(sets = w.sets.map { if (it.id == setId) change(w, it) else it }) }
     return WorkspaceLevel(
@@ -108,7 +117,7 @@ internal fun layerLevel(ws: Workspace, setId: Int, update: ((Workspace) -> Works
         resetAll = { editSet { _, s -> s.copy(settings = null) } },
         shows = { it in WorkspaceDefaults.layerKeys },
         key = ws.id + "/layer" + setId,
-        children = { k -> OverridingChildren.ofLayer(ws, setId, k) },
+        children = { k -> kids.ofLayer(setId, k) },
         resetChildren = { k -> update { OverridingChildren.resetLayer(it, setId, k) } },
     )
 }
@@ -122,14 +131,17 @@ internal fun setLevel(ws: Workspace, defaults: Workspace, setId: Int, update: ((
 internal fun defaultsLevel(runtime: GamepadRuntime, profile: Profile): WorkspaceLevel {
     val d = profile.defaults
     val builtin = WorkspaceDefaults.builtin
+    // Worked out once per level, not per row: what the Defaults set, and what every workspace below sets.
+    val own = WorkspaceDefaults.differing(d, builtin)
+    val kids = profile.workspaces.map { OverridingChildren.Children(it) }
     return WorkspaceLevel(
         ws = d,
         parentName = "built-in",
-        isOwn = { !WorkspaceDefaults.same(it, d, builtin) },
+        isOwn = { it in own },
         edit = { change -> runtime.editActiveProfile { it.copy(defaults = change(it.defaults)) } },
         reset = { k -> runtime.editActiveProfile { it.copy(defaults = WorkspaceDefaults.take(k, it.defaults, builtin)) } },
         resetAll = { runtime.editActiveProfile { p -> p.copy(defaults = WorkspaceDefaults.keys.fold(p.defaults) { r, k -> WorkspaceDefaults.take(k, r, builtin) }) } },
-        children = { k -> OverridingChildren.ofDefaults(profile, k) },
+        children = { k -> OverridingChildren.ofDefaults(kids, k) },
         resetChildren = { k -> runtime.editActiveProfile { OverridingChildren.resetDefaults(it, k) } },
     )
 }

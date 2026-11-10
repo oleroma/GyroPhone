@@ -18,6 +18,7 @@ For playing with a controller while the phone sits on the desk.
 - **Black screen when idle** (App › Screen, default off) blacks out the pad after **Black screen after** (30 s, 1, 2 or 5 min; default 1 min) without a screen touch, in play mode only.
 - A mapping to **Black screen** (Other targets) blacks it out at once, for example from a controller button.
 - While black, the touch controls are off. Gyro, controllers, the volume rocker and the PC link keep working.
+- While black (and while the PC's latency test markers cover the pad), the gyro displays, the parallax edge, the position ruler and the debug panel stop drawing, and the displays and the edge are not fed: their poses hold, a pointer paints nothing, and the accelerometer and magnetometer stop unless something else needs them (a tilt or shake mapping, World or Player gyro space, the PC overlay). Uncovered, they go on from where they were; one held to gravity settles onto it again at once (`GamepadRuntime.setVisualsCovered`, `GyroPose.resettle`).
 - A **tap** on the screen brings the pad back; that tap presses nothing.
 - A black pad keeps the screen on even with **Keep the screen on** off, so the phone doesn't lock under it.
 - The app **never touches brightness**: it draws a black overlay only (black OLED pixels are off anyway). Brightness is left to the phone.

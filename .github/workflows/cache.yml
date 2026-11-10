@@ -60,7 +60,7 @@ jobs:
           path: ~/.gradle/caches/build-cache-1
           key: gradle-build-cache-${{ github.run_id }}
           restore-keys: gradle-build-cache-
-      - run: ./gradlew :app:assembleDebug :core:testClasses
+      - run: ./gradlew :app:assembleRelease :core:testClasses
 
   # The NuGet cache, the only one the companion job keeps: restoring the packages fills it.
   companion:
@@ -82,5 +82,6 @@ jobs:
           key: nuget-${{ hashFiles('companion/**/*.csproj', 'companion/Directory.Build.props') }}
           restore-keys: nuget-
       - run: dotnet restore companion/GyroPhone.Companion.sln
-      # The build hook publishes the tray app for win-x64, which needs that runtime's packages.
-      - run: dotnet restore companion/src/GyroPhone.Tray -r win-x64
+      # The build hook publishes the tray app for win-x64 ReadyToRun, which needs that runtime's
+      # packages and the ReadyToRun compiler (crossgen2) package.
+      - run: dotnet restore companion/src/GyroPhone.Tray -r win-x64 -p:PublishReadyToRun=true

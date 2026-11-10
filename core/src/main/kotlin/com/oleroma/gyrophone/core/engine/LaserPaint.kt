@@ -46,6 +46,26 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
     var version = 0L
         private set
 
+    /**
+     * The rows (j) changed since the last [takeChanged]: [changedFrom] .. [changedTo], none while
+     * [changedFrom] > [changedTo]. The UI copies only those rows into its pictures of the map.
+     */
+    var changedFrom = 0
+        private set
+    var changedTo = height - 1
+        private set
+
+    /** Forgets the changed rows (the UI took them up). */
+    fun takeChanged() {
+        changedFrom = Int.MAX_VALUE
+        changedTo = -1
+    }
+
+    private fun changed(j0: Int, j1: Int) {
+        if (j0 < changedFrom) changedFrom = j0
+        if (j1 > changedTo) changedTo = j1
+    }
+
     // The current line's own part of each texel it reached (its strongest stamp there), and which line
     // and how far along it that was: a later stamp of the same line nearby replaces it rather than adding.
     private val lineAmount = ByteArray(n)
@@ -74,6 +94,7 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
         lineGlow.fill(0)
         lineTag.fill(0)
         line = 0
+        changed(0, height - 1)
         version++
     }
 
@@ -94,7 +115,10 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
         kind: Int, soft: Float = 0.5f, wayRgb: Int? = null,
     ) {
         if (line == 0.toShort()) newLine()
-        if (wayRgb != null && way == null) way = IntArray(n)
+        if (wayRgb != null && way == null) {
+            way = IntArray(n)
+            changed(0, height - 1)
+        }
         val half = Math.toRadians(halfDeg.toDouble()).toFloat().coerceAtLeast(1e-4f)
         val brush = Brush(half, soft.coerceIn(0f, 1f))
         // Long hops in pieces of up to PIECE_DEG, so each piece's straight chord stays on the sphere.
@@ -147,6 +171,7 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
         val lonC = atan2(cx.toDouble(), -cz.toDouble())
         val j0 = floor((PI / 2 - (latC + span)) / PI * height).toInt().coerceIn(0, height - 1)
         val j1 = floor((PI / 2 - (latC - span)) / PI * height).toInt().coerceIn(0, height - 1)
+        changed(j0, j1)
         val cosSpan = cos(span)
         val sinLatC = sin(latC)
         val cosLatC = cos(latC)

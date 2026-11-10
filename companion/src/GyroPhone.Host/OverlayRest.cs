@@ -9,7 +9,8 @@ namespace GyroPhone.Host;
 /// overlay's Level tilt, turns slower than the stillness threshold, and gets no input (no finger, no
 /// control pressed, no stick or controller off centre). Held in a hand it always turns faster than
 /// the threshold (a steady hand shakes at 1-3°/s), and a frame without gyro counts as moving, so a
-/// held phone never rests. Not thread safe: the engine feeds and reads it under its lock.
+/// held phone never rests. Not thread safe: the engine feeds it under its lock and copies what
+/// <see cref="RestingOf"/> needs into its overlay view, which the overlay windows read without that lock.
 /// </summary>
 public sealed class OverlayRest
 {
@@ -29,7 +30,20 @@ public sealed class OverlayRest
     private long _liveAtUs = long.MinValue;
 
     /// <summary>The phone's turning speed now (deg/s, smoothed), or null without gyro lately.</summary>
-    public float? LiveDps(long nowUs) => float.IsNaN(_liveDps) || nowUs - _liveAtUs > 500_000 ? null : _liveDps;
+    public float? LiveDps(long nowUs) => LiveDpsOf(_liveDps, _liveAtUs, nowUs);
+
+    /// <summary><see cref="LiveDps"/> from a copy of <see cref="LiveDpsRaw"/> and <see cref="LiveAtUs"/>.</summary>
+    public static float? LiveDpsOf(float liveDps, long liveAtUs, long nowUs) =>
+        float.IsNaN(liveDps) || nowUs - liveAtUs > 500_000 ? null : liveDps;
+
+    // What a copy read without the engine lock needs (HostEngine's overlay view): see Resting.
+    public float LiveDpsRaw => _liveDps;
+    public long LiveAtUs => _liveAtUs;
+    public long BusyUs => _busyUs;
+    public long SilentSinceUs => _silentSinceUs;
+
+    /// <summary>When overlay <paramref name="id"/> last saw the phone off its Level tilt (long.MinValue: not yet).</summary>
+    public long OffLevelUs(string id) => _offLevelUs.TryGetValue(id, out long off) ? off : long.MinValue;
 
     /// <summary>No frames now (overlay data off, phone gone): everything starts again.</summary>
     public void Clear(long nowUs)
@@ -62,15 +76,19 @@ public sealed class OverlayRest
     }
 
     /// <summary>Whether overlay <paramref name="id"/> should be faded now; <paramref name="lastFrameUs"/> is when the newest OVERLAY came (long.MinValue: none).</summary>
-    public bool Resting(string id, long nowUs, long lastFrameUs, OverlayRestFade fade)
+    public bool Resting(string id, long nowUs, long lastFrameUs, OverlayRestFade fade) =>
+        RestingOf(fade, nowUs, lastFrameUs, _busyUs, _silentSinceUs, OffLevelUs(id));
+
+    /// <summary><see cref="Resting"/> from copies of <see cref="BusyUs"/>, <see cref="SilentSinceUs"/> and the overlay's <see cref="OffLevelUs"/>.</summary>
+    public static bool RestingOf(OverlayRestFade fade, long nowUs, long lastFrameUs, long busyUs, long silentSinceUs, long offLevelUs)
     {
         if (!fade.On) return false;
         long quiet = fade.QuietMs * 1000L;
         if (lastFrameUs == long.MinValue)
-            return fade.WhenSilent && _silentSinceUs != long.MinValue && nowUs - _silentSinceUs >= quiet;
+            return fade.WhenSilent && silentSinceUs != long.MinValue && nowUs - silentSinceUs >= quiet;
         if (nowUs - lastFrameUs >= quiet) return fade.WhenSilent;
-        if (_busyUs == long.MinValue || !_offLevelUs.TryGetValue(id, out long off)) return false;
-        return nowUs - Math.Max(_busyUs, off) >= quiet;
+        if (busyUs == long.MinValue || offLevelUs == long.MinValue) return false;
+        return nowUs - Math.Max(busyUs, offLevelUs) >= quiet;
     }
 
     /// <summary>The turning speed over this frame (deg/s), or null when it carries no gyro time.</summary>

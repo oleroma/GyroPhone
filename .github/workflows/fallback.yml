@@ -137,10 +137,12 @@ jobs:
         run: |
           set -o pipefail
           bash .agents/hooks/build companion | tee "$RUNNER_TEMP/build.out"
-          file="$(sed -n 's/^build-file: \([^ ]*\) .*/\1/p' "$RUNNER_TEMP/build.out" | head -n 1)"
-          echo "file=$file" >> "$GITHUB_OUTPUT"
+          # The exe and the OpenCV DLLs that ship beside it, one per line, for the publish step.
+          tr -d '\r' <"$RUNNER_TEMP/build.out" | sed -n 's/^build-file: \([^ ]*\) .*/\1/p' >"$RUNNER_TEMP/files.txt"
           echo "version=$(tr -d '\r' <"$RUNNER_TEMP/build.out" | sed -n 's/^build-file: [^ ]* \([^ ]*\)$/\1/p' | head -n 1)" >> "$GITHUB_OUTPUT"
-          echo "$(basename "$file")  SHA-256 \`$(sha256sum "$file" | cut -d' ' -f1)\`" >> "$GITHUB_STEP_SUMMARY"
+          while read -r file; do
+            echo "$(basename "$file")  SHA-256 \`$(sha256sum "$file" | cut -d' ' -f1)\`" >> "$GITHUB_STEP_SUMMARY"
+          done <"$RUNNER_TEMP/files.txt"
 
       # On the same pre-release as the APK, so agent-build pc can download and install it.
       # The android job may have made the release first; then the companion is added to it.
@@ -148,12 +150,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: build/${{ needs.number.outputs.n }}
-          FILE: ${{ steps.build.outputs.file }}
           VERSION: ${{ steps.build.outputs.version }}
-        run: >-
-          gh release create "$TAG" "$FILE" --verify-tag --prerelease
-          --title "$VERSION" --notes "$(bash .agents/release-notes "$GITHUB_SHA" "${TAG#build/}" "CI fallback build of $GITHUB_REF_NAME ($GITHUB_SHA)")"
-          || gh release upload "$TAG" "$FILE"
+        run: |
+          mapfile -t files <"$RUNNER_TEMP/files.txt"
+          gh release create "$TAG" "${files[@]}" --verify-tag --prerelease \
+            --title "$VERSION" --notes "$(bash .agents/release-notes "$GITHUB_SHA" "${TAG#build/}" "CI fallback build of $GITHUB_REF_NAME ($GITHUB_SHA)")" ||
+            gh release upload "$TAG" "${files[@]}"
 
   # Runs only when every build job that ran passed (a part the branch didn't change is skipped).
   checked:

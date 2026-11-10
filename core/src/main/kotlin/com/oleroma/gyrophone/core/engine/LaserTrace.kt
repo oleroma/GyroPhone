@@ -424,15 +424,21 @@ class LaserTrace {
             val back = ArrayList<FloatArray>()
             val p = FloatArray(3)
             val q = FloatArray(3)
+            // One piece of a circle as x, y pairs: a plain float buffer, so no number is boxed.
+            val line = FloatArray((GRID_STEPS + 3) * 2)
+            var size = 0
+            fun add(x: Float, y: Float) {
+                line[size++] = x
+                line[size++] = y
+            }
             fun circle(point: (Double, FloatArray) -> Unit) {
-                var line = ArrayList<Float>()
                 var lastFront = false
                 var lx = 0f
                 var ly = 0f
                 var lz = 0f
                 fun flush() {
-                    if (line.size >= 4) (if (lastFront) front else back).add(line.toFloatArray())
-                    line = ArrayList()
+                    if (size >= 4) (if (lastFront) front else back).add(line.copyOf(size))
+                    size = 0
                 }
                 for (i in 0..GRID_STEPS) {
                     point(i * 2 * Math.PI / GRID_STEPS, p)
@@ -445,11 +451,11 @@ class LaserTrace {
                         var ry = ly + (q[1] - ly) * t
                         val l = sqrt(rx * rx + ry * ry)
                         if (l > 0f) { rx /= l; ry /= l }
-                        line.add(rx); line.add(ry)
+                        add(rx, ry)
                         flush()
-                        line.add(rx); line.add(ry)
+                        add(rx, ry)
                     }
-                    line.add(q[0]); line.add(q[1])
+                    add(q[0], q[1])
                     lastFront = f
                     lx = q[0]; ly = q[1]; lz = q[2]
                 }
@@ -619,10 +625,10 @@ class LaserTrace {
          * Gimbal ring [i] (0 yaw, 1 pitch, 2 roll) for the laser's pose [m] (row-major) as points (x, y, z…): one
          * rigid set turning with the laser's axes, each round its own axis (yaw round its up Y, pitch round its
          * right X, roll round the beam Z), so each ring is the path the other axes sweep turning about it.
+         * Written into [out] (reused from frame to frame) and returned.
          */
-        fun gimbalRing(i: Int, m: FloatArray, steps: Int = 64): FloatArray {
+        fun gimbalRing(i: Int, m: FloatArray, steps: Int = 64, out: FloatArray = FloatArray((steps + 1) * 3)): FloatArray {
             val rho = GIMBAL_RADII[i]
-            val out = FloatArray((steps + 1) * 3)
             for (j in 0..steps) {
                 val t = j * 2f * Math.PI.toFloat() / steps
                 val p = rho * cos(t)

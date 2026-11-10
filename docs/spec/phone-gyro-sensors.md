@@ -6,20 +6,24 @@ How the phone reads its gyro (and accelerometer and magnetometer) with as little
 
 `sensor/GyroSource.kt` builds the candidate sources in order; `GamepadRuntime.startGyro` starts the first that works:
 
-1. **Sensor direct channel** (`DirectChannelGyroSource`): the sensor HAL writes samples into shared memory (or, on phones like the OnePlus 15, a gralloc `HardwareBuffer`, read on the CPU through the small native library in `app/src/main/cpp/gyrobuffer.c` via `sensor/HardwareBufferReader.kt`) at `RATE_VERY_FAST`. No Binder or Looper hop. A poll thread at `THREAD_PRIORITY_URGENT_DISPLAY` checks the memory at the **gyro poll rate** and parses new reports with `core/.../sensor/DirectReportParser.kt`.
+1. **Sensor direct channel** (`DirectChannelGyroSource`): the sensor HAL writes samples into shared memory (or, on phones like the OnePlus 15, a gralloc `HardwareBuffer`, read on the CPU through the small native library in `app/src/main/cpp/gyrobuffer.c` via `sensor/HardwareBufferReader.kt`) at `RATE_VERY_FAST`. No Binder or Looper hop. A poll thread at `THREAD_PRIORITY_URGENT_DISPLAY` checks the memory at the **gyro poll rate** and parses new reports with `core/.../sensor/DirectReportParser.kt`. Each check reads only the header of the slot the HAL writes next (after the newest sample seen; on a gralloc buffer under the same lock as the copy) and copies the whole ring only when that slot holds a new sample. Every 64th check reads the whole ring anyway: if that finds new samples the watched slot didn't have, the HAL fills its slots in another order and every check reads the whole ring until the next start.
 2. **Listener**: `SENSOR_DELAY_FASTEST` on a high-priority thread, used when the direct channel can't start.
 
 The app holds `HIGH_SAMPLING_RATE_SENSORS`, which allows rates above 200 Hz.
 
 **Falling back.** The direct channel is watched:
 
-- If it opens but gives no sample within 1.5 s (seen with gralloc buffers), or its measured rate stays below what the listener would give (the microphone privacy toggle caps it to about 50 Hz, the listener to about 200 Hz), the listener runs instead until the next start or return to the foreground (`onDirectCapped`). The About section then says why ("direct channel limited to ~50 Hz").
+- If it opens but gives no sample within 1.5 s (seen with gralloc buffers), or its measured rate stays below what the listener would give (the microphone privacy toggle caps it to about 50 Hz, the listener to about 200 Hz), the listener runs instead until the next start or return to the foreground (`onDirectCapped`). A direct channel that gave no samples at all is not tried again until the app process restarts (`directSilent`), so later starts and returns to the app don't pay the 1.5 s of dead gyro again; a capped one is tried again, since the toggle may be off by then. The About section then says why ("direct channel limited to ~50 Hz").
 
 On the OnePlus 15 the listener delivers about 480 Hz and the gralloc direct channel about 950 Hz.
 
 ## Poll rate
 
 **Gyro poll rate** (Connection page): 1, 2 or 4 kHz, default 4 kHz. It is how often the poll thread looks at the shared memory, so polling above the HAL's rate adds at most one interval on top of it. It applies at once to a running direct channel, without restarting the sensor. It has no effect on the listener; the page says so while the listener runs.
+
+## Performance hints
+
+The gyro poll thread, the Wi-Fi sender (`WifiPump`) and the Bluetooth sender (`ReportPump`) each open a performance hint session for their own thread (`runtime/WorkHint.kt`, `PerformanceHintManager`) with a 1 ms target per pass, prefer speed to saving power (`setPreferPowerEfficiency(false)`), and report how long each pass took (the longest at most once a millisecond), after the pass's work, so it adds no delay. Without hint support they run as before.
 
 ## When the sensor runs
 
@@ -29,7 +33,7 @@ On the OnePlus 15 the listener delivers about 480 Hz and the gralloc direct chan
 - the PC's phone overlay asks for motion (it shows the phone turning even when the gyro moves nothing), or
 - a rest calibration runs, or an acceleration graph on screen shows its live line.
 
-Otherwise it stops, saving CPU and battery. Ratchets, toggles and the other gyro modes never stop it, so aiming never waits for the sensor to start. Each start resets the sample clock, the rate window and any sub-count remainder.
+Otherwise it stops, saving CPU and battery. Ratchets, toggles and the other gyro modes never stop it, so aiming never waits for the sensor to start. Each start resets the sample clock, the rate window and any sub-count remainder. `updateGyro` only decides: the source is started, switched (`onDirectCapped`) and stopped on its own `GyroControl` thread (`syncGyro`), so opening a direct channel (shared memory and binder calls) or waiting for a stopped source's last sample never holds up the main thread, as when the pad comes back from a menu page. A rest calibration whose gyro can't start ends there.
 
 ## Each sample
 
@@ -47,10 +51,10 @@ The measured rate is shown in App › About and the debug panel (`core/.../senso
 
 ## Accelerometer and magnetometer
 
-`sensor/AccelSource.kt` reads them at a normal rate on their own threads. The accelerometer runs while input is allowed and something needs it: a tilt or shake mapping in the workspace (`MappingEngine.motionMapped`), the World or Player gyro space, a gyro display or the parallax edge that holds its pose to gravity, or the PC overlay. Each reading is turned into the gyro's axes (right, up, toward the player) and goes to:
+`sensor/AccelSource.kt` reads them on their own threads: the accelerometer at about 200 Hz (one reading every 5 ms, `ACCEL_PERIOD_US`), the magnetometer at game rate. The accelerometer runs while input is allowed and something needs it: a tilt or shake mapping in the workspace (`MappingEngine.motionMapped`), the World or Player gyro space, a gyro display or the parallax edge that holds its pose to gravity, or the PC overlay. Each reading is turned into the gyro's axes (right, up, toward the player) and goes to:
 
 - `core/.../engine/GravityPose.kt`: the world's up for World and Player spaces (the gyro's turn pulled toward gravity with a short time constant; a jolt far from 1 g is skipped);
-- `core/.../engine/TiltShake.kt`: **tilt** (sideways: the turn in the screen's plane from upright, + clockwise; forward and back: the lean from where it was held when tilt started, + back) as −1..1 with a deadzone and a range (default 30°, 5..90°, per axis if set), and **shake** (the reading jumping by the shake strength, default 14 m/s², 5..40, at most once per short gap);
+- `core/.../engine/TiltShake.kt`: **tilt** (sideways: the turn in the screen's plane from upright, + clockwise; forward and back: the lean from where it was held when tilt started, + back) as −1..1 with a deadzone and a range (default 30°, 5..90°, per axis if set), from gravity smoothed by time with a 35 ms time constant (`TILT_TAU_NS`; about 63% of a change within 35 ms, settled in about 0.15 s, the same at any sensor rate), and **shake** (the reading jumping by the shake strength, default 14 m/s², 5..40, at most once per short gap). A shake is measured against a slower gravity (90 ms, the old 50 Hz filter's time) and scaled by 0.8 as that filter saw it, so a shake strength needs the same jolt it always did;
 - the gyro displays, the parallax edge and the PC overlay feed.
 
 The magnetometer runs only while a gyro display with a compass is on the pad, or the PC overlay holds its heading by the compass.

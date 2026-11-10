@@ -48,6 +48,29 @@ class ProfileStore(context: Context) {
 
     fun all(): List<Profile> = userProfiles() + BuiltinProfiles.all
 
+    /**
+     * Profile [id] read from its own file alone, without reading every other profile (old ones are
+     * kept on disk for good), or null when that is not certain to give what [userProfiles] would:
+     * the file is missing, unreadable or holds another profile, or a second file for the id
+     * ("<name>-2.json", made when the usual name was taken) exists.
+     */
+    @Synchronized fun readOwnFile(id: String): Profile? {
+        val name = fileName(id)
+        val base = name.removeSuffix(".json")
+        if (dir.list { _, n -> n.startsWith("$base-") && n.endsWith(".json") }.orEmpty().isNotEmpty()) return null
+        val f = File(dir, name)
+        if (!f.isFile) return null
+        val read = ProfileJson.decodeLenient(f.readText()) ?: return null
+        val p = read.profile
+        if (p.id != id || isBuiltin(p)) return null
+        files[id] = f
+        if (read.dropped > 0) {
+            Log.w(TAG, "${f.name}: left out ${read.dropped} mapping(s) this build cannot read")
+            partial += f.path
+        }
+        return p
+    }
+
     /** Files read with mappings left out ([ProfileJson.decodeLenient]): a copy is kept before the first save over one. */
     private val partial = HashSet<String>()
 

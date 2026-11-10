@@ -33,8 +33,9 @@ public enum UsbDirectState
 }
 
 /// <summary>
-/// The direct USB link (Android Open Accessory). Once a second thread gp-usb looks at the USB
-/// devices: a phone in accessory mode with the WinUSB driver gets a <see cref="UsbBridge"/> into the
+/// The direct USB link (Android Open Accessory). Thread gp-usb looks at the USB devices as soon as a
+/// device interface arrives or goes (<see cref="DeviceChangeNotifier"/>), every 250 ms while a phone is
+/// switching to accessory mode, and once a second otherwise as a fallback: a phone in accessory mode with the WinUSB driver gets a <see cref="UsbBridge"/> into the
 /// UDP server; an Android phone in normal mode (found by its adb interface, the one interface of
 /// a phone Windows lets an app send requests to) is asked to switch to accessory mode, naming
 /// GyroPhone, so the app on the phone picks the cable up. Nothing is installed here: the accessory
@@ -57,6 +58,7 @@ public sealed class AoaUsbLink : IDisposable
     private UsbBridge? _bridge;
     private string _lastLogged = "";
     private volatile bool _stopAdb;
+    private DeviceChangeNotifier? _devices;
 
     public AoaUsbLink(int serverPort, bool enabled, Action<string> log)
     {
@@ -94,6 +96,7 @@ public sealed class AoaUsbLink : IDisposable
 
     public void Start()
     {
+        _devices = DeviceChangeNotifier.TryStart(_wake.Set, _log);
         _thread = new Thread(Loop) { Name = "gp-usb", IsBackground = true };
         _thread.Start();
     }
@@ -102,6 +105,8 @@ public sealed class AoaUsbLink : IDisposable
     {
         while (!_stopping)
         {
+            // Cleared before the scan, not after the wait: a device change during the scan wakes the next wait.
+            _wake.Reset();
             try
             {
                 Scan();
@@ -110,8 +115,9 @@ public sealed class AoaUsbLink : IDisposable
             {
                 Set(UsbDirectState.Failed, $"{e.GetType().Name}: {e.Message}");
             }
-            _wake.Wait(1000);
-            _wake.Reset();
+            // Each step of the switch (the phone leaving, coming back as an accessory, its driver loading)
+            // is a device arrival, which wakes this at once; the short wait only backs up a missed one.
+            _wake.Wait(State == UsbDirectState.Switching ? 250 : 1000);
         }
         CloseBridge();
     }
@@ -230,7 +236,12 @@ public sealed class AoaUsbLink : IDisposable
             Set(UsbDirectState.Failed, "the accessory has no bulk endpoints");
             return;
         }
-        var bridge = new UsbBridge(new WinUsbPipe(dev, pipes.In, pipes.Out), _serverPort, _log);
+        // The cable's threads carry every packet ahead of gp-rx: the same MMCSS and throttling opt-out.
+        var bridge = new UsbBridge(new WinUsbPipe(dev, pipes.In, pipes.Out), _serverPort, _log, () =>
+        {
+            Mmcss.TryEnter("Games", Mmcss.AvrtPriorityHigh, _log);
+            PowerQos.TryDisableForThread(_log);
+        });
         bridge.Start();
         _bridge = bridge;
         _log($"usb: accessory open ({n.Name}), bridged to UDP {_serverPort} from {bridge.LocalEndPoint}");
@@ -259,6 +270,8 @@ public sealed class AoaUsbLink : IDisposable
     public void Dispose()
     {
         _stopping = true;
+        _devices?.Dispose();
+        _devices = null;
         _wake.Set();
         if (_thread != null && !_thread.Join(3000)) CloseBridge();
     }

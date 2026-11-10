@@ -16,22 +16,28 @@ export GP_BUILD GP_COMMIT
 version="0.1.$GP_BUILD"
 
 if grep -qw apk <<<"$parts"; then
-  ./gradlew :app:assembleDebug
-  apk="app/build/outputs/apk/debug/gyrophone-$version.apk"
-  cp app/build/outputs/apk/debug/app-debug.apk "$apk"
+  # The release build type: not debuggable (Android runs debuggable apps with most speed-ups off),
+  # no R8, signed with keystore/debug.keystore like every build, so adb install -r keeps app data.
+  ./gradlew :app:assembleRelease
+  apk="app/build/outputs/apk/release/gyrophone-$version.apk"
+  cp app/build/outputs/apk/release/app-release.apk "$apk"
   echo "build-file: $apk $version"
 fi
 
 if grep -qw companion <<<"$parts" && { [ $# -gt 0 ] || [ "${OS:-}" = Windows_NT ]; }; then
-  # Branch builds skip ReadyToRun: it only speeds up startup and makes the build much slower.
+  # Every build (branch and main) is ReadyToRun, so the companion's own code isn't compiled at each
+  # start, and uncompressed, so the exe's parts are mapped in place instead of unpacked at each start
+  # (a bigger exe, a faster start). The publish takes longer, but only when the companion changed.
+  # OpenCV's native DLLs (latency test only) stay out of the exe (GyroPhone.Tray.csproj) and ship
+  # beside it as build files of their own.
   publish=(dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contained true
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
-    -p:EnableCompressionInSingleFile=true -p:DebugType=none)
+    -p:PublishReadyToRun=true -p:DebugType=none)
   out=companion/out
   # The companion is built only from companion/src, companion/Directory.Build.props and the
   # publish settings above. When none of them changed since the exe in companion/out was built,
-  # that exe is reused as is, keeping its own (older) version, and the install hook leaves the
-  # installed companion alone. The version and commit stamped into the exe aren't part of the key.
+  # that exe (and the DLLs beside it) is reused as is, keeping its own (older) version, and the
+  # install hook leaves the installed companion alone. The version and commit stamped into the exe aren't part of the key.
   key="$(git rev-parse HEAD:companion/src HEAD:companion/Directory.Build.props | tr '\n' ' ')$(printf '%s ' "${publish[@]}" | git hash-object --stdin)"
   if [ -f "$out/GyroPhoneCompanion.exe" ] && [ -f "$out/source-key.txt" ] && [ "$(cat "$out/source-key.txt")" = "$key" ]; then
     echo "Companion sources unchanged: reusing companion/out/GyroPhoneCompanion.exe." >&2
@@ -42,6 +48,12 @@ if grep -qw companion <<<"$parts" && { [ $# -gt 0 ] || [ "${OS:-}" = Windows_NT 
     echo "$key" >"$out/source-key.txt"
   fi
   echo "build-file: $out/GyroPhoneCompanion.exe $version"
+  # The DLLs beside the exe, as the publish listed them (not any an older publish left in companion/out).
+  if [ -f "$out/side-files.txt" ]; then
+    while read -r f; do
+      if [ -n "$f" ]; then echo "build-file: $out/$f $version"; fi
+    done < <(tr -d '\r' <"$out/side-files.txt")
+  fi
 fi
 
 if grep -qw driver <<<"$parts" && { [ $# -gt 0 ] || [ "${OS:-}" = Windows_NT ]; }; then

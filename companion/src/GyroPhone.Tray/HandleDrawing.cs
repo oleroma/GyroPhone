@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Runtime.InteropServices;
 using GyroPhone.Protocol;
 
 namespace GyroPhone.Tray;
@@ -18,6 +19,41 @@ internal static class HandleDrawing
     public const float ShoulderDepth = 0.035f;
     private const float OuterRadius = 0.12f;
     private const float InnerRadius = 0.015f;
+
+    /// <summary>
+    /// The drawing's point arrays, made once per thread (the pacer's, or the UI thread's) and filled in
+    /// place every picture: no new arrays or lists per frame. Each is filled, then drawn, before it is
+    /// filled again (a canvas may reuse a filled polygon's shape for an outline of the same array).
+    /// </summary>
+    private sealed class Scratch
+    {
+        public readonly PointF[] Round = new PointF[20], Well = new PointF[28], Box = new PointF[4], Quad = new PointF[4];
+        public readonly PointF[] Pill = new PointF[18];
+        // The handle's outline and the 4-point bumper and trigger take turns: each keeps its own pair.
+        public PointF[]? PillPart, Front, Back;
+        public readonly PointF[] Front4 = new PointF[4], Back4 = new PointF[4];
+        public readonly (float X, float Y)[] BumperRect = new (float, float)[4], TriggerRect = new (float, float)[4];
+        public readonly (float X, float Y)[] Shape4 = new (float, float)[4], Stadium = new (float, float)[18];
+        public readonly List<(float X, float Y)> Cut = new(40), CutScratch = new(40);
+        // Each side's outline in the phone frame, for the sizes it was made for.
+        private readonly (float X, float Y)[]?[] _outline = new (float X, float Y)[]?[2];
+        private readonly (float W, float H, float X0)[] _outlineFor = new (float, float, float)[2];
+
+        public (float X, float Y)[] OutlineFor(int side, float x0, float w, float h)
+        {
+            int k = side < 0 ? 0 : 1;
+            if (_outline[k] is { } kept && _outlineFor[k] == (w, h, x0)) return kept;
+            var outline = Outline(w, h);
+            for (int i = 0; i < outline.Length; i++) outline[i] = (side * (x0 + outline[i].X), outline[i].Y);
+            if (side < 0) Array.Reverse(outline);
+            _outlineFor[k] = (w, h, x0);
+            return _outline[k] = outline;
+        }
+    }
+
+    [ThreadStatic] private static Scratch? t_scratch;
+
+    private static PointF[] Sized(ref PointF[]? a, int n) => a != null && a.Length == n ? a : a = new PointF[n];
 
     /// <summary>The projection the phone is drawn with: phone-frame point to window point, a face's visibility, its shading.</summary>
     internal readonly record struct View(
@@ -41,10 +77,10 @@ internal static class HandleDrawing
         float x0 = phoneWidth / 2;
         float zf = thickness / 2, zb = -thickness / 2;
         float X(float a) => side * (x0 + a);
+        var buf = t_scratch ??= new Scratch();
 
         // The outline in the phone frame, counter-clockwise (y up).
-        var outline = Outline(w, h).Select(p => (side * (x0 + p.X), p.Y)).ToArray();
-        if (side < 0) Array.Reverse(outline);
+        var outline = buf.OutlineFor(side, x0, w, h);
 
         bool l1 = f?.PadHeld(side < 0 ? OverlayFrame.PadL1 : OverlayFrame.PadR1) == true;
         float pull = f == null ? 0f : side < 0 ? f.PadL2Pull : f.PadR2Pull;
@@ -53,47 +89,55 @@ internal static class HandleDrawing
         // Shoulder buttons: L1 / R1 on the top edge, L2 / R2 out of the back near the top.
         float d = ShoulderDepth * h;
         float ba = 0.03f * h, bb = 0.25f * h; // inside the outer corner's curve
-        var bumper = Rect(Math.Min(X(ba), X(bb)), h / 2, Math.Max(X(ba), X(bb)), h / 2 + d);
-        var trigger = Rect(Math.Min(X(ba), X(bb)), h / 2 - 0.2f * h, Math.Max(X(ba), X(bb)), h / 2);
+        var bumper = Rect(buf.BumperRect, Math.Min(X(ba), X(bb)), h / 2, Math.Max(X(ba), X(bb)), h / 2 + d);
+        var trigger = Rect(buf.TriggerRect, Math.Min(X(ba), X(bb)), h / 2 - 0.2f * h, Math.Max(X(ba), X(bb)), h / 2);
         var bumperColor = l1 ? lit : Mix(body, Color.White, 0.08f);
         var triggerColor = Mix(Mix(body, Color.White, 0.08f), lit, l2 ? Math.Max(pull, 0.6f) : pull);
-        void Bumper() => Prism(g, v, bumper, zb, zf, bumperColor);
-        void Trigger() => Prism(g, v, trigger, zb - d, zb, triggerColor);
+        void Bumper() => Prism(g, v, buf, bumper, zb, zf, bumperColor);
+        void Trigger() => Prism(g, v, buf, trigger, zb - d, zb, triggerColor);
 
         bool topSeen = v.Faces((X(0.4f * h), h / 2, 0), (0, 1, 0));
         bool backSeen = v.Faces((X(0.4f * h), 0, zb), (0, 0, -1));
         // Each sits on one of the handle's faces: behind that face's plane it goes first, else after.
         // Between them (the plane y = h/2 parts them): the one nearer the camera last.
-        var order = topSeen ? new Action[] { Trigger, Bumper } : new Action[] { Bumper, Trigger };
-        var after = topSeen ? new[] { backSeen, true } : new[] { false, backSeen };
-        for (int i = 0; i < 2; i++) if (!after[i]) order[i]();
-        bool front = Prism(g, v, outline, zb, zf, body);
-        for (int i = 0; i < 2; i++) if (after[i]) order[i]();
+        // Top seen: trigger then bumper, the trigger after the handle only with the back seen and the
+        // bumper always after; else bumper (before the handle) then trigger (after it with the back seen).
+        bool firstAfter = topSeen && backSeen, secondAfter = topSeen || backSeen;
+        void First() { if (topSeen) Trigger(); else Bumper(); }
+        void Second() { if (topSeen) Bumper(); else Trigger(); }
+        if (!firstAfter) First();
+        if (!secondAfter) Second();
+        bool front = Prism(g, v, buf, outline, zb, zf, body);
+        if (firstAfter) First();
+        if (secondAfter) Second();
         if (!front) return;
 
         // The front: everything a hair above it, by (a, b): a from the phone's edge outward, b down from the top.
         float zs = zf + 0.001f;
         PointF P(float x, float y) => v.Project((x, y, zs));
+        Func<float, float, PointF> project = P; // one delegate for every circle
         float Y(float b) => h / 2 - b * h;
         var idleFill = Tint(body, 0.62f);
 
         void Round(float cx, float cy, float r, bool on, Color? ring = null)
         {
-            var pts = Circle(cx, cy, r, 20).Select(p => P(p.X, p.Y)).ToArray();
+            var pts = buf.Round;
+            CircleInto(pts, cx, cy, r, project);
             g.FillPolygon(on ? lit : idleFill, pts);
             g.DrawPolygon(ring ?? idle, penWidth, pts);
         }
         void Box(float x0b, float y0b, float x1b, float y1b, bool on)
         {
-            var pts = Rect(x0b, y0b, x1b, y1b).Select(p => P(p.X, p.Y)).ToArray();
+            var pts = buf.Box;
+            (pts[0], pts[1], pts[2], pts[3]) = (P(x0b, y0b), P(x1b, y0b), P(x1b, y1b), P(x0b, y1b));
             g.FillPolygon(on ? lit : idleFill, pts);
             g.DrawPolygon(idle, penWidth * 0.75f, pts);
         }
         bool Held(uint b) => f?.PadHeld(b) == true;
 
         // Pills by the top edge, under the shoulder buttons: bumper (inner), trigger (outer, filled by the pull).
-        Pill(g, v, zs, X(0.04f * h), X(0.18f * h), Y(0.04f), Y(0.085f), l1 ? 1f : 0f, lit, idleFill, idle, penWidth);
-        Pill(g, v, zs, X(0.20f * h), X(0.34f * h), Y(0.04f), Y(0.085f), pull, lit, idleFill, idle, penWidth);
+        Pill(g, v, buf, zs, X(0.04f * h), X(0.18f * h), Y(0.04f), Y(0.085f), l1 ? 1f : 0f, lit, idleFill, idle, penWidth);
+        Pill(g, v, buf, zs, X(0.20f * h), X(0.34f * h), Y(0.04f), Y(0.085f), pull, lit, idleFill, idle, penWidth);
 
         // − / + and Home near the phone.
         float mid = X(Width / 2 * h); // every button and stick on the handle's middle line
@@ -127,7 +171,8 @@ internal static class HandleDrawing
 
         void Stick(float cx, float cy, int axis, uint click)
         {
-            var well = Circle(cx, cy, 0.13f * h, 28).Select(p => P(p.X, p.Y)).ToArray();
+            var well = buf.Well;
+            CircleInto(well, cx, cy, 0.13f * h, project);
             g.FillPolygon(Tint(body, 0.45f), well);
             g.DrawPolygon(idle, penWidth, well);
             float sxv = f?.PadSticks[axis] ?? 0f, syv = f?.PadSticks[axis + 1] ?? 0f;
@@ -140,21 +185,28 @@ internal static class HandleDrawing
     }
 
     /// <summary>A pill from x <paramref name="xa"/> to <paramref name="xb"/>, filled by <paramref name="fill"/> (0..1) from the phone's side.</summary>
-    private static void Pill(ICanvas g, View v, float z, float xa, float xb, float yTop, float yBottom, float fill,
+    private static void Pill(ICanvas g, View v, Scratch buf, float z, float xa, float xb, float yTop, float yBottom, float fill,
         Color lit, Color idleFill, Color idle, float penWidth)
     {
         float x0 = Math.Min(xa, xb), x1 = Math.Max(xa, xb);
         float rr = (yTop - yBottom) / 2;
-        var shape = Stadium(x0, yBottom, x1, yTop, rr);
-        var pts = shape.Select(p => v.Project((p.X, p.Y, z))).ToArray();
+        var shape = Stadium(buf.Stadium, x0, yBottom, x1, yTop, rr);
+        var pts = buf.Pill;
+        for (int i = 0; i < shape.Length; i++) pts[i] = v.Project((shape[i].X, shape[i].Y, z));
         g.FillPolygon(idleFill, pts);
         if (fill > 0f)
         {
             // Filled from the phone's end (xa) toward the handle's outer end.
             float cut = xa + (xb - xa) * Math.Clamp(fill, 0f, 1f);
-            var keep = Rect(Math.Min(xa, cut), yBottom - 1, Math.Max(xa, cut), yTop + 1);
-            var part = OverlayRenderer.ClipConvex(shape, keep);
-            if (part.Length >= 3) g.FillPolygon(lit, part.Select(p => v.Project((p.X, p.Y, z))).ToArray());
+            var keep = Rect(buf.Shape4, Math.Min(xa, cut), yBottom - 1, Math.Max(xa, cut), yTop + 1);
+            OverlayRenderer.ClipConvex(shape, keep, buf.Cut, buf.CutScratch);
+            if (buf.Cut.Count >= 3)
+            {
+                var part = Sized(ref buf.PillPart, buf.Cut.Count);
+                var kept = CollectionsMarshal.AsSpan(buf.Cut);
+                for (int i = 0; i < kept.Length; i++) part[i] = v.Project((kept[i].X, kept[i].Y, z));
+                g.FillPolygon(lit, part);
+            }
         }
         g.DrawPolygon(idle, penWidth * 0.75f, pts);
     }
@@ -163,10 +215,16 @@ internal static class HandleDrawing
     /// A prism: <paramref name="outline"/> (counter-clockwise, y up) from z <paramref name="zb"/> to
     /// <paramref name="zf"/>, its sides and whichever end faces the viewer. True when the front end does.
     /// </summary>
-    private static bool Prism(ICanvas g, View v, (float X, float Y)[] outline, float zb, float zf, Color color)
+    private static bool Prism(ICanvas g, View v, Scratch buf, (float X, float Y)[] outline, float zb, float zf, Color color)
     {
-        var front = outline.Select(p => v.Project((p.X, p.Y, zf))).ToArray();
-        var back = outline.Select(p => v.Project((p.X, p.Y, zb))).ToArray();
+        var front = outline.Length == 4 ? buf.Front4 : Sized(ref buf.Front, outline.Length);
+        var back = outline.Length == 4 ? buf.Back4 : Sized(ref buf.Back, outline.Length);
+        for (int i = 0; i < outline.Length; i++)
+        {
+            front[i] = v.Project((outline[i].X, outline[i].Y, zf));
+            back[i] = v.Project((outline[i].X, outline[i].Y, zb));
+        }
+        var quad = buf.Quad;
         float zm = (zb + zf) / 2;
         for (int i = 0; i < outline.Length; i++)
         {
@@ -179,7 +237,7 @@ internal static class HandleDrawing
             var n = (nx / l, ny / l, 0f);
             if (!v.Faces(((a.X + b.X) / 2, (a.Y + b.Y) / 2, zm), n)) continue;
             var side = Tint(color, v.Shade(n) * 0.85f);
-            var quad = new[] { front[i], front[j], back[j], back[i] };
+            (quad[0], quad[1], quad[2], quad[3]) = (front[i], front[j], back[j], back[i]);
             g.FillPolygon(side, quad);
             g.DrawPolygon(side, 1f, quad);
         }
@@ -209,27 +267,31 @@ internal static class HandleDrawing
         return pts.ToArray();
     }
 
-    private static (float X, float Y)[] Rect(float x0, float y0, float x1, float y1) => [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
-
-    private static (float X, float Y)[] Circle(float cx, float cy, float r, int n)
+    /// <summary>A rectangle, filled into <paramref name="pts"/> (4 long).</summary>
+    private static (float X, float Y)[] Rect((float X, float Y)[] pts, float x0, float y0, float x1, float y1)
     {
-        var pts = new (float, float)[n];
-        for (int i = 0; i < n; i++)
-        {
-            float a = i * 2 * MathF.PI / n;
-            pts[i] = (cx + r * MathF.Cos(a), cy + r * MathF.Sin(a));
-        }
+        (pts[0], pts[1], pts[2], pts[3]) = ((x0, y0), (x1, y0), (x1, y1), (x0, y1));
         return pts;
     }
 
-    /// <summary>A rounded bar, counter-clockwise.</summary>
-    private static (float X, float Y)[] Stadium(float x0, float y0, float x1, float y1, float r)
+    /// <summary>A circle of as many points as <paramref name="pts"/> holds, projected by <paramref name="project"/>.</summary>
+    private static void CircleInto(PointF[] pts, float cx, float cy, float r, Func<float, float, PointF> project)
     {
-        var pts = new List<(float, float)>();
+        int n = pts.Length;
+        for (int i = 0; i < n; i++)
+        {
+            float a = i * 2 * MathF.PI / n;
+            pts[i] = project(cx + r * MathF.Cos(a), cy + r * MathF.Sin(a));
+        }
+    }
+
+    /// <summary>A rounded bar, counter-clockwise, filled into <paramref name="pts"/> (18 long).</summary>
+    private static (float X, float Y)[] Stadium((float X, float Y)[] pts, float x0, float y0, float x1, float y1, float r)
+    {
         float cy = (y0 + y1) / 2;
-        for (int i = 0; i <= 8; i++) { float a = -MathF.PI / 2 + i * MathF.PI / 8; pts.Add((x1 - r + r * MathF.Cos(a), cy + r * MathF.Sin(a))); }
-        for (int i = 0; i <= 8; i++) { float a = MathF.PI / 2 + i * MathF.PI / 8; pts.Add((x0 + r + r * MathF.Cos(a), cy + r * MathF.Sin(a))); }
-        return pts.ToArray();
+        for (int i = 0; i <= 8; i++) { float a = -MathF.PI / 2 + i * MathF.PI / 8; pts[i] = (x1 - r + r * MathF.Cos(a), cy + r * MathF.Sin(a)); }
+        for (int i = 0; i <= 8; i++) { float a = MathF.PI / 2 + i * MathF.PI / 8; pts[9 + i] = (x0 + r + r * MathF.Cos(a), cy + r * MathF.Sin(a)); }
+        return pts;
     }
 
     private static Color Tint(Color c, float k) =>

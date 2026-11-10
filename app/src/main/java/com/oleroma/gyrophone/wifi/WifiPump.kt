@@ -21,6 +21,7 @@ import com.oleroma.gyrophone.core.net.StateFrame
 import com.oleroma.gyrophone.core.net.Wire
 import com.oleroma.gyrophone.core.net.WireCodec
 import com.oleroma.gyrophone.core.net.putU64
+import com.oleroma.gyrophone.runtime.WorkHint
 import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -179,6 +180,7 @@ class WifiPump(private val engine: MappingEngine) {
 
     private fun loop() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
+        val hint = WorkHint.forThisThread()
         while (running) {
             // Inside the rate limit nothing can go out: wait instead of taking a snapshot that
             // would use up a quick tap's edge. Motion keeps accumulating in the engine meanwhile.
@@ -189,6 +191,7 @@ class WifiPump(private val engine: MappingEngine) {
                     continue
                 }
             }
+            val passStart = System.nanoTime()
             // Switch first: switchTo resets the gyro's samples, so the tail below starts from the new session's.
             val t = target
             if (t.session !== cur) {
@@ -263,9 +266,13 @@ class WifiPump(private val engine: MappingEngine) {
             var wakeAt = minOf(minOf(scheduler.nextDeadline(), nextPingNs), minOf(lastLinkInfoNs + SECOND_NS, engine.touchpadDeadlineNanos()))
             if (ov != null) wakeAt = minOf(wakeAt, nextOverlayNs)
             if (mo != null) wakeAt = minOf(wakeAt, nextMotionNs)
-            val wait = wakeAt - System.nanoTime()
+            val end = System.nanoTime()
+            // The pass is done: how long it took goes to the performance hint.
+            hint?.done(end - passStart, end)
+            val wait = wakeAt - end
             if (wait > 0) LockSupport.parkNanos(wait)
         }
+        hint?.close()
         cur?.let { goodbye(it, exitByeReason) }
         cur = null
         cipher = null

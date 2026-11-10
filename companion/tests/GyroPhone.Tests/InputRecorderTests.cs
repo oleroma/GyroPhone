@@ -83,6 +83,36 @@ public class InputRecorderTests
     }
 
     [Fact]
+    public void ASlowHandOffSaysWhatTookTheTime()
+    {
+        var (rec, lines) = New();
+        long ms = System.Diagnostics.Stopwatch.Frequency / 1000;
+        var causes = HandOffCauses.Waited(ms / 2, "overlay");
+        causes.AddLockWait(2 * ms, "watchdog");
+        causes.PadTicks = ms / 5;
+        causes.GcPauseUs = 300;
+        rec.Inject(5, 0, 10_000, 14_000, false, causes);
+        var slow = Assert.Single(lines, l => l.Contains("slow hand-off"));
+        Assert.Contains("4.0 ms from receive to SendInput: engine lock 2.5 ms (watchdog had it), pad driver 0.2 ms, garbage collection 0.3 ms, the rest 1.0 ms", slow);
+        rec.Second(new LinkStats(), 1_000_000);
+        Assert.Contains("lockwait 2.5 (watchdog)", Assert.Single(lines, l => l.Contains(" sec ")));
+    }
+
+    [Fact]
+    public void DeferredLinesWaitForWritePending()
+    {
+        var lines = new List<string>();
+        var rec = new InputRecorder(lines.Add) { Deferred = true };
+        rec.SessionStarted("phone", 0);
+        rec.Lost(5, 42, 20_000);
+        Assert.Empty(lines);
+        rec.WritePending();
+        Assert.Equal(2, lines.Count);
+        Assert.Contains("session start", lines[0]);
+        Assert.Contains("5 packets", lines[1]);
+    }
+
+    [Fact]
     public void NothingIsWrittenOutsideASession()
     {
         var lines = new List<string>();

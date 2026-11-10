@@ -5,15 +5,19 @@ using GyroPhone.Protocol;
 namespace GyroPhone.Host;
 
 /// <summary>
-/// 50 ms timer driving HostEngine.OnTick, plus the work that must stay off the rx thread: environment
-/// probes (1 Hz, on the thread pool so a slow COM or service call never holds up OnTick's release of
-/// held input), the held-keys marker and settings writes. No timeBeginPeriod.
+/// The 50 ms tick driving HostEngine.OnTick, on its own thread (gp-watchdog, AboveNormal, an exact timer
+/// where the system has one) so the release of held input never waits behind other work. Environment
+/// probes (1 Hz) go to the thread pool, and the files (the held-keys marker and settings) to a writer
+/// thread (gp-save, BelowNormal) at most twice a second: a slow disk or a virus scan never holds up a
+/// tick. No timeBeginPeriod.
 /// </summary>
 public sealed class Watchdog : IDisposable
 {
     private const long ProbeIntervalUs = 1_000_000;
     /// <summary>A failed settings write is tried again after this long.</summary>
     private const long SaveRetryUs = 1_000_000;
+    /// <summary>How often the writer looks for changes: held.json and settings are written at most this often.</summary>
+    public const int WriteIntervalMs = 500;
 
     private readonly HostEngine _engine;
     private readonly IClock _clock;
@@ -22,9 +26,13 @@ public sealed class Watchdog : IDisposable
     private readonly Func<bool>? _elevatedProbe;
     private readonly Func<bool>? _publicProbe;
     private readonly Func<KeyLabels?>? _keyLabelsProbe;
+    private readonly Func<ITickSleep> _sleep;
     private readonly Action<string> _log;
     private readonly byte[] _held = new byte[StateFrame.KeyBitmapSize];
-    private Timer? _timer;
+    private readonly object _writeLock = new();
+    private readonly ManualResetEventSlim _stopWrites = new(false);
+    private Thread? _tickThread, _writeThread;
+    private volatile bool _stop;
     private int _running;
     private int _probing;
     private long _lastProbeUs = -ProbeIntervalUs;
@@ -32,7 +40,7 @@ public sealed class Watchdog : IDisposable
 
     public Watchdog(HostEngine engine, IClock clock, HeldKeysMarker? marker = null, SettingsStore? store = null,
         Func<bool>? elevatedForegroundProbe = null, Func<bool>? networkPublicProbe = null, Action<string>? log = null,
-        Func<KeyLabels?>? keyLabelsProbe = null)
+        Func<KeyLabels?>? keyLabelsProbe = null, Func<ITickSleep>? tickSleep = null)
     {
         _engine = engine;
         _clock = clock;
@@ -41,13 +49,54 @@ public sealed class Watchdog : IDisposable
         _elevatedProbe = elevatedForegroundProbe;
         _publicProbe = networkPublicProbe;
         _keyLabelsProbe = keyLabelsProbe;
+        _sleep = tickSleep ?? (() => new PlainTickSleep());
         _log = log ?? (_ => { });
     }
 
-    public void Start() =>
-        _timer = new Timer(_ => Tick(), null, Wire.WatchdogTickMs, Wire.WatchdogTickMs);
+    public void Start()
+    {
+        if (_tickThread != null) return;
+        _tickThread = new Thread(TickLoop) { Name = "gp-watchdog", IsBackground = true, Priority = ThreadPriority.AboveNormal };
+        _writeThread = new Thread(WriteLoop) { Name = "gp-save", IsBackground = true, Priority = ThreadPriority.BelowNormal };
+        _tickThread.Start();
+        _writeThread.Start();
+    }
 
-    /// <summary>One tick. Re-entrant calls (a slow tick overlapping the next) are skipped.</summary>
+    /// <summary>Ticks every 50 ms from a fixed start, so a late tick doesn't push the later ones back; one that is a whole tick late is skipped.</summary>
+    private void TickLoop()
+    {
+        using var sleep = _sleep();
+        var clock = System.Diagnostics.Stopwatch.StartNew(); // real time, whatever clock the engine is given
+        const long periodUs = Wire.WatchdogTickMs * 1000L;
+        long next = periodUs;
+        while (!_stop)
+        {
+            long wait = next - (long)clock.Elapsed.TotalMicroseconds;
+            if (wait > 0) sleep.Sleep(wait);
+            if (_stop) return;
+            Tick();
+            next += periodUs;
+            long now = (long)clock.Elapsed.TotalMicroseconds;
+            if (next <= now) next = now + periodUs;
+        }
+    }
+
+    private void WriteLoop()
+    {
+        while (!_stopWrites.Wait(WriteIntervalMs))
+        {
+            try
+            {
+                WriteFiles();
+            }
+            catch (Exception e)
+            {
+                _log($"watchdog write error: {e.GetType().Name}");
+            }
+        }
+    }
+
+    /// <summary>One tick: only in-memory work and posting probes. Re-entrant calls (a slow tick overlapping the next) are skipped.</summary>
     public void Tick()
     {
         if (Interlocked.Exchange(ref _running, 1) == 1) return;
@@ -61,12 +110,6 @@ public sealed class Watchdog : IDisposable
                 _lastProbeUs = now;
                 ThreadPool.UnsafeQueueUserWorkItem(_ => RunProbes(), null);
             }
-            if (_marker != null)
-            {
-                int version = _engine.HeldSnapshot(_held, out byte mb);
-                _marker.Update(version, _held, mb);
-            }
-            if (now >= _saveRetryAfterUs) SaveSettings();
         }
         catch (Exception e)
         {
@@ -75,6 +118,23 @@ public sealed class Watchdog : IDisposable
         finally
         {
             Volatile.Write(ref _running, 0);
+        }
+    }
+
+    /// <summary>
+    /// The writer's turn (gp-save, every <see cref="WriteIntervalMs"/>): held.json when the held set changed,
+    /// and settings when the engine changed them (all the changes since the last turn in one write).
+    /// </summary>
+    public void WriteFiles()
+    {
+        lock (_writeLock)
+        {
+            if (_marker != null)
+            {
+                int version = _engine.HeldSnapshot(_held, out byte mb);
+                _marker.Update(version, _held, mb);
+            }
+            if (_clock.NowUs >= _saveRetryAfterUs) SaveSettingsLocked();
         }
     }
 
@@ -100,6 +160,11 @@ public sealed class Watchdog : IDisposable
 
     /// <summary>Writes settings if the engine changed them. Also called on exit.</summary>
     public void SaveSettings()
+    {
+        lock (_writeLock) SaveSettingsLocked();
+    }
+
+    private void SaveSettingsLocked()
     {
         if (_store == null) return;
         var json = _engine.TakeDirtySettings();
@@ -133,9 +198,12 @@ public sealed class Watchdog : IDisposable
         }
     }
 
+    /// <summary>Stops both threads (waiting a moment for a write in progress); the caller then saves what is left.</summary>
     public void Dispose()
     {
-        _timer?.Dispose();
-        _timer = null;
+        _stop = true;
+        _stopWrites.Set();
+        if (_tickThread is { } t && t != Thread.CurrentThread) t.Join(1000);
+        if (_writeThread is { } w && w != Thread.CurrentThread) w.Join(2000);
     }
 }

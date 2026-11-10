@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using GyroPhone.Protocol;
@@ -5,9 +7,44 @@ using GyroPhone.Protocol;
 namespace GyroPhone.Host;
 
 /// <summary>
+/// What held up one hand-off to Windows, for the input log's <c>slow hand-off</c> line: gp-rx's waits for the
+/// engine lock (and who held it at the longest), the time inside the pad driver and SendInput, and the
+/// garbage collector's pauses since the packet came.
+/// </summary>
+public struct HandOffCauses
+{
+    /// <summary>Stopwatch ticks gp-rx waited for the engine lock.</summary>
+    public long LockWaitTicks;
+    /// <summary>Who had the lock at the longest wait ("ui", "watchdog", ...); null without a wait.</summary>
+    public string? LockHolder;
+    private long _longestWaitTicks;
+    /// <summary>Stopwatch ticks inside the pad driver (ViGEm or the DualSense driver) and inside SendInput.</summary>
+    public long PadTicks, SendInputTicks;
+    /// <summary>How long the garbage collector paused every thread (us).</summary>
+    public long GcPauseUs;
+
+    public static HandOffCauses Waited(long ticks, string? holder)
+    {
+        var c = new HandOffCauses();
+        c.AddLockWait(ticks, holder);
+        return c;
+    }
+
+    public void AddLockWait(long ticks, string? holder)
+    {
+        if (ticks <= 0) return;
+        LockWaitTicks += ticks;
+        if (ticks <= _longestWaitTicks) return;
+        _longestWaitTicks = ticks;
+        LockHolder = holder;
+    }
+}
+
+/// <summary>
 /// Always-on record of how the phone's input reached Windows, for finding stutter in real play
-/// (docs/spec/pc-companion.md, "Input log"). Called by the engine under its lock; <c>write</c> only
-/// enqueues a line. Per second it writes one summary line while a session is up, and at once one line
+/// (docs/spec/pc-companion.md, "Input log"). Called by the engine under its lock; with
+/// <see cref="Deferred"/> (the engine sets it) the lines only queue there, and the engine hands them to
+/// <c>write</c> through <see cref="WritePending"/> once it let go of the lock. Per second it writes one summary line while a session is up, and at once one line
 /// per event: lost packets, packets held up on the way, the phone going quiet, a catch-up, a big
 /// single move, a slow hand-off to Windows, Windows refusing input, a release after silence. It never
 /// writes which keys or buttons, only how many.
@@ -33,6 +70,8 @@ public sealed class InputRecorder
 
     private readonly Action<string> _write;
     private readonly StringBuilder _sb = new(160);
+    private readonly ConcurrentQueue<string> _pending = new();
+    private int _writing;
 
     // Session.
     private bool _active;
@@ -56,6 +95,8 @@ public sealed class InputRecorder
     private long _holdPhoneSpanMaxUs;
 
     // This second.
+    private long _sMaxLockWaitUs;
+    private string? _sLockHolder;
     private int _sStates, _sMoving, _sLost, _sLate, _sInjects, _sMaxStep, _sSlow, _sCatchUps, _sJumps, _sEvents, _sSkipped;
     private long _sPx, _sMaxLateUs, _sMaxInjectUs;
     // Whole session.
@@ -63,6 +104,26 @@ public sealed class InputRecorder
     private readonly long[] _lateHist = new long[64]; // 1 ms buckets of extra delay, last = 63+ ms
 
     public InputRecorder(Action<string> write) => _write = write;
+
+    /// <summary>Lines wait in a queue for <see cref="WritePending"/> instead of going to <c>write</c> at once.</summary>
+    public bool Deferred { get; set; }
+
+    /// <summary>Hands the queued lines to <c>write</c>, in order. Any thread, outside the engine lock; one at a time (a second caller leaves them to the first).</summary>
+    public void WritePending()
+    {
+        while (!_pending.IsEmpty)
+        {
+            if (Interlocked.Exchange(ref _writing, 1) != 0) return;
+            try
+            {
+                while (_pending.TryDequeue(out var line)) _write(line);
+            }
+            finally
+            {
+                Volatile.Write(ref _writing, 0);
+            }
+        }
+    }
 
     public void SessionStarted(string phone, long nowUs)
     {
@@ -102,7 +163,7 @@ public sealed class InputRecorder
         if (!_active || count <= 0) return;
         _sLost += (int)Math.Min(count, 1_000_000);
         _tLost += count;
-        if (count >= 3) Event(nowUs, "lost", $"{count} packets before seq {seq}");
+        if (count >= 3 && EventAllowed()) Line(nowUs, "lost", $"{count} packets before seq {seq}");
     }
 
     /// <summary>
@@ -122,7 +183,7 @@ public sealed class InputRecorder
             if (!lost && span > PhoneGapUs && (_prevActive || active))
             {
                 _tGaps++;
-                Event(recvUs, "phone gap", $"phone sent nothing for {span / 1000.0:0.0} ms" + (_prevActive ? " while input was moving or held" : ""));
+                if (EventAllowed()) Line(recvUs, "phone gap", $"phone sent nothing for {span / 1000.0:0.0} ms" + (_prevActive ? " while input was moving or held" : ""));
             }
             if (_inHoldup) _holdPhoneSpanMaxUs = Math.Max(_holdPhoneSpanMaxUs, span);
         }
@@ -176,12 +237,15 @@ public sealed class InputRecorder
         _inHoldup = false;
         _tHoldups++;
         // Packets that left the phone on time but arrived late together: held up on the way (Wi-Fi or router).
-        Event(_holdStartUs, "late", $"{_holdCount} packets up to {_holdMaxUs / 1000.0:0.0} ms late over {(_holdLastUs - _holdStartUs) / 1000.0:0.0} ms" +
+        if (EventAllowed()) Line(_holdStartUs, "late", $"{_holdCount} packets up to {_holdMaxUs / 1000.0:0.0} ms late over {(_holdLastUs - _holdStartUs) / 1000.0:0.0} ms" +
             (_holdPhoneSpanMaxUs > PhoneGapUs ? " (the phone also paused)" : " (sent on time: held up on the way)"));
     }
 
-    /// <summary>One hand-off to Windows: the mouse move in it and how long after the newest packet's arrival.</summary>
-    public void Inject(int dx, int dy, long recvUs, long nowUs, bool refused)
+    /// <summary>
+    /// One hand-off to Windows: the mouse move in it and how long after the newest packet's arrival
+    /// (<paramref name="recvUs"/> -1: no new packet), with what held it up.
+    /// </summary>
+    public void Inject(int dx, int dy, long recvUs, long nowUs, bool refused, in HandOffCauses causes = default)
     {
         if (!_active) return;
         _sInjects++;
@@ -192,25 +256,60 @@ public sealed class InputRecorder
         {
             _tJumps++;
             _sJumps++;
-            Event(nowUs, "big move", $"{dx},{dy} px in one step");
+            if (EventAllowed()) Line(nowUs, "big move", $"{dx},{dy} px in one step");
         }
         if (recvUs >= 0)
         {
             long took = nowUs - recvUs;
             if (took > _sMaxInjectUs) _sMaxInjectUs = took;
+            long waitUs = Us(causes.LockWaitTicks);
+            if (waitUs > _sMaxLockWaitUs)
+            {
+                _sMaxLockWaitUs = waitUs;
+                _sLockHolder = causes.LockHolder;
+            }
             if (took > SlowInjectUs)
             {
                 _sSlow++;
                 _tSlow++;
-                Event(nowUs, "slow hand-off", $"{took / 1000.0:0.0} ms from receive to SendInput");
+                if (EventAllowed()) Line(nowUs, "slow hand-off", SlowText(took, causes));
             }
         }
         if (refused)
         {
             _tRefused++;
-            Event(nowUs, "refused", "Windows took fewer events than given (an admin window or the lock screen in front)");
+            if (EventAllowed()) Line(nowUs, "refused", "Windows took fewer events than given (an admin window or the lock screen in front)");
         }
     }
+
+    /// <summary>
+    /// "3.1 ms from receive to SendInput: engine lock 2.6 ms (ui had it), pad driver 0.2 ms, SendInput 0.1 ms,
+    /// garbage collection 0.0 ms, the rest 0.2 ms": each cause over 0.05 ms; the rest is gp-rx itself (waiting
+    /// for a CPU, the burst's other packets).
+    /// </summary>
+    private string SlowText(long took, in HandOffCauses c)
+    {
+        _sb.Clear();
+        _sb.Append(CultureInfo.InvariantCulture, $"{took / 1000.0:0.0} ms from receive to SendInput:");
+        long wait = Us(c.LockWaitTicks), pad = Us(c.PadTicks), send = Us(c.SendInputTicks), gc = Math.Max(0, c.GcPauseUs);
+        int parts = 0;
+        void Part(string what, long us, string? extra = null)
+        {
+            if (us < 50) return;
+            _sb.Append(parts++ == 0 ? " " : ", ").Append(what).Append(' ')
+                .Append((us / 1000.0).ToString("0.0", CultureInfo.InvariantCulture)).Append(" ms");
+            if (extra != null) _sb.Append(" (").Append(extra).Append(" had it)");
+        }
+        Part("engine lock", wait, c.LockHolder);
+        Part("pad driver", pad);
+        Part("SendInput", send);
+        Part("garbage collection", gc);
+        Part("the rest", took - wait - pad - send - gc);
+        if (parts == 0) _sb.Append(" no cause measured");
+        return _sb.ToString();
+    }
+
+    private static long Us(long stopwatchTicks) => stopwatchTicks * 1_000_000 / Stopwatch.Frequency;
 
     /// <summary>A late or lost stretch of motion is catching up instead of landing at once.</summary>
     public void CatchUp(long backlogUs, int px, long spreadUs, long nowUs)
@@ -218,7 +317,7 @@ public sealed class InputRecorder
         if (!_active) return;
         _sCatchUps++;
         _tCatchUps++;
-        Event(nowUs, "catch-up", $"{px} px from {backlogUs / 1000.0:0.0} ms of late or lost motion spread over {spreadUs / 1000.0:0.0} ms");
+        if (EventAllowed()) Line(nowUs, "catch-up", $"{px} px from {backlogUs / 1000.0:0.0} ms of late or lost motion spread over {spreadUs / 1000.0:0.0} ms");
     }
 
     /// <summary>Everything let go after the phone was silent (Wire.ReleaseTimeoutMs).</summary>
@@ -226,7 +325,7 @@ public sealed class InputRecorder
     {
         if (!_active) return;
         _tReleases++;
-        Event(nowUs, "release", $"phone silent {Wire.ReleaseTimeoutMs} ms: let go of {held} held keys or buttons");
+        if (EventAllowed()) Line(nowUs, "release", $"phone silent {Wire.ReleaseTimeoutMs} ms: let go of {held} held keys or buttons");
     }
 
     /// <summary>The once-a-second line, with the link numbers the engine rolled just before.</summary>
@@ -240,6 +339,12 @@ public sealed class InputRecorder
         if (_sCatchUps > 0) _sb.Append(" catch-ups ").Append(_sCatchUps);
         if (_sSlow > 0) _sb.Append(" slow ").Append(_sSlow);
         if (_sJumps > 0) _sb.Append(" bigmoves ").Append(_sJumps);
+        // gp-rx's longest wait for the engine lock this second, from 0.1 ms, and who had it.
+        if (_sMaxLockWaitUs >= 100)
+        {
+            _sb.Append(CultureInfo.InvariantCulture, $" lockwait {_sMaxLockWaitUs / 1000.0:0.0}");
+            if (_sLockHolder != null) _sb.Append(" (").Append(_sLockHolder).Append(')');
+        }
         if (_sSkipped > 0) _sb.Append(" (").Append(_sSkipped).Append(" more events not written)");
         Line(nowUs, "sec", _sb.ToString());
         ClearSecond();
@@ -248,7 +353,8 @@ public sealed class InputRecorder
     private void ClearSecond()
     {
         _sStates = _sMoving = _sLost = _sLate = _sInjects = _sMaxStep = _sSlow = _sCatchUps = _sJumps = _sEvents = _sSkipped = 0;
-        _sPx = _sMaxLateUs = _sMaxInjectUs = 0;
+        _sPx = _sMaxLateUs = _sMaxInjectUs = _sMaxLockWaitUs = 0;
+        _sLockHolder = null;
     }
 
     private string Pct(double p)
@@ -265,18 +371,25 @@ public sealed class InputRecorder
         return "-";
     }
 
-    /// <summary>An event line, unless this second already had <see cref="MaxEventsPerSecond"/> (a flick at high sensitivity can make big moves every millisecond).</summary>
-    private void Event(long atUs, string what, string detail)
+    /// <summary>
+    /// Room for one more event line this second (at most <see cref="MaxEventsPerSecond"/>: a flick at high sensitivity
+    /// can make big moves every millisecond); the rest are only counted. Checked before the line's text is made.
+    /// </summary>
+    private bool EventAllowed()
     {
         if (_sEvents >= MaxEventsPerSecond)
         {
             _sSkipped++;
-            return;
+            return false;
         }
         _sEvents++;
-        Line(atUs, what, detail);
+        return true;
     }
 
-    private void Line(long atUs, string what, string detail) =>
-        _write(string.Create(CultureInfo.InvariantCulture, $"{(atUs - _sessionStartUs) / 1e6,10:0.000} {what,-13} {detail}"));
+    private void Line(long atUs, string what, string detail)
+    {
+        var line = string.Create(CultureInfo.InvariantCulture, $"{(atUs - _sessionStartUs) / 1e6,10:0.000} {what,-13} {detail}");
+        if (Deferred) _pending.Enqueue(line);
+        else _write(line);
+    }
 }

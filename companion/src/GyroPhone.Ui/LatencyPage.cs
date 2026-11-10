@@ -33,6 +33,10 @@ internal sealed class LatencyPage : Page
     private static bool s_busy;
     private static event Action? StatusChanged;
     private IReadOnlyList<(string File, LatencyRun Run)> _runs = [];
+    // The result files are read on the thread pool: one read at a time, and one more if asked meanwhile.
+    private bool _loading, _loadAgain;
+    // A save fires several folder events: they make one read, this long after the last.
+    private readonly System.Windows.Threading.DispatcherTimer _settle = new() { Interval = TimeSpan.FromMilliseconds(200) };
 
     public override FrameworkElement View => _root;
 
@@ -104,6 +108,12 @@ internal sealed class LatencyPage : Page
         rb.Children.Add(openAll);
         rb.Children.Add(_list);
         _root.Children.Add(results);
+        _list.Children.Add(Parts.Text("Loading results…", "Sub"));
+        _settle.Tick += (_, _) =>
+        {
+            _settle.Stop();
+            LoadRuns();
+        };
         LoadRuns();
         _choose.IsEnabled = !s_busy;
         Action changed = () =>
@@ -120,7 +130,11 @@ internal sealed class LatencyPage : Page
         {
             Directory.CreateDirectory(LatencyResults.Folder);
             watcher = new FileSystemWatcher(LatencyResults.Folder, "latency-*.json") { EnableRaisingEvents = true };
-            FileSystemEventHandler landed = (_, _) => _root.Dispatcher.BeginInvoke(new Action(LoadRuns));
+            FileSystemEventHandler landed = (_, _) => _root.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _settle.Stop();
+                _settle.Start();
+            }));
             watcher.Created += landed;
             watcher.Changed += landed;
         }
@@ -133,6 +147,7 @@ internal sealed class LatencyPage : Page
             StatusChanged -= changed;
             ResultsChanged -= reload;
             watcher?.Dispose();
+            _settle.Stop();
         };
     }
 
@@ -235,9 +250,30 @@ internal sealed class LatencyPage : Page
 
     private static string Clock(double s) => TimeSpan.FromSeconds(Math.Max(0, s)).ToString(@"m\:ss");
 
+    /// <summary>Reads the result files off the UI thread (they hold every frame's curves), then lists them.</summary>
     private void LoadRuns()
     {
-        _runs = LatencyResults.Load();
+        if (_loading)
+        {
+            _loadAgain = true;
+            return;
+        }
+        _loading = true;
+        Task.Run(LatencyResults.Load).ContinueWith(t => _root.Dispatcher.BeginInvoke(new Action(() =>
+        {
+            _loading = false;
+            ShowRuns(t.IsCompletedSuccessfully ? t.Result : []);
+            if (_loadAgain)
+            {
+                _loadAgain = false;
+                LoadRuns();
+            }
+        })), TaskScheduler.Default);
+    }
+
+    private void ShowRuns(IReadOnlyList<(string File, LatencyRun Run)> runs)
+    {
+        _runs = runs;
         _list.Children.Clear();
         if (_runs.Count == 0)
         {

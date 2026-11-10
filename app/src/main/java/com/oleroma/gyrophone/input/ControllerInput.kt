@@ -36,6 +36,27 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         var learnFor: Any? = null
         /** [last] holds a real event (until then an axis that rests at -1 would read as moved). */
         var seen = false
+        /**
+         * The event source [flat] and [zStick] were read for (0 = not yet): the device's ranges are
+         * looked up once, not on every event, and again when the device changes.
+         */
+        var rangesFor = 0
+        /** Each [AndroidAxis.polled] axis's flat (the deadzone the device reports); NaN where it has none. */
+        val flat = FloatArray(AndroidAxis.polled.size)
+        /** The right stick is on Z / RZ rather than RX / RY, for the PC overlay ([overlayAxes]). */
+        var zStick = false
+
+        fun readRanges(device: InputDevice, source: Int) {
+            val polled = AndroidAxis.polled
+            for (i in polled.indices) flat[i] = device.getMotionRange(polled[i], source)?.flat ?: Float.NaN
+            // Pads on Generic.kl put the right stick on RX / RY (and sometimes triggers on Z / RZ).
+            // So Z / RZ are the stick only without RX / RY, or when the triggers have axes of their own.
+            // The engine's PadDevice.rightStickRx uses the same rule (PhysicalSticks.rightStickOnRx).
+            fun has(axis: Int) = device.getMotionRange(axis) != null
+            val triggers = has(AndroidAxis.LTRIGGER) || has(AndroidAxis.RTRIGGER) || has(AndroidAxis.GAS) || has(AndroidAxis.BRAKE)
+            zStick = has(AndroidAxis.Z) && has(AndroidAxis.RZ) && (!has(AndroidAxis.RX) || !has(AndroidAxis.RY) || triggers)
+            rangesFor = source
+        }
     }
 
     private val sources = SparseArray<Source>()
@@ -62,7 +83,9 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
                 mice.remove(id)
                 sources.removeAt(i)
             } else {
-                sources.valueAt(i).pad = padDevice(d)
+                val src = sources.valueAt(i)
+                src.pad = padDevice(d)
+                src.rangesFor = 0 // its axes may have changed too: read again on the next event
             }
         }
         refresh()
@@ -137,8 +160,9 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             return true
         }
         if (event.action != MotionEvent.ACTION_MOVE) return false
-        val device = event.device ?: return false
-        val src = source(device)
+        // The device itself only the first time (and after it changes): its ranges are kept in its Source.
+        val src = sources.get(event.deviceId) ?: source(event.device ?: return false)
+        if (src.rangesFor != event.source) src.readRanges(event.device ?: return false, event.source)
         val learn = runtime.learnListener
         if (learn !== src.learnFor) {
             src.learnFor = learn
@@ -150,8 +174,9 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         var learned: AxisHalf? = null
         for (i in polled.indices) {
             val axis = polled[i]
-            val range = device.getMotionRange(axis, event.source) ?: continue
-            val v = AndroidAxis.deadzone(axis, event.getAxisValue(axis), range.flat)
+            val flat = src.flat[i]
+            if (flat.isNaN()) continue
+            val v = AndroidAxis.deadzone(axis, event.getAxisValue(axis), flat)
             src.last[i] = v
             if (learn != null) {
                 if (!src.seen) { src.rest[i] = v; continue }
@@ -164,7 +189,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             axisIds[n] = axis; axisValues[n] = v; n++
         }
         src.seen = true
-        if (runtime.wifi.overlay.wanted) overlayAxes(device, src.last)
+        if (runtime.wifi.overlay.wanted) overlayAxes(src.zStick, src.last)
         if (learn != null) {
             if (learned != null) {
                 runtime.learnListener = null
@@ -178,15 +203,11 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         return true
     }
 
-    /** Sends [v] (the [AndroidAxis.polled] axes) to the PC's phone overlay, for its handles. */
-    private fun overlayAxes(device: InputDevice, v: FloatArray) {
-        // Pads on Generic.kl put the right stick on RX / RY (and sometimes triggers on Z / RZ).
-        // So Z / RZ are the stick only without RX / RY, or when the triggers have axes of their own.
-        // The engine's PadDevice.rightStickRx uses the same rule (PhysicalSticks.rightStickOnRx).
-        fun has(axis: Int) = device.getMotionRange(axis) != null
-        val triggers = has(AndroidAxis.LTRIGGER) || has(AndroidAxis.RTRIGGER) || has(AndroidAxis.GAS) || has(AndroidAxis.BRAKE)
-        val zStick = has(AndroidAxis.Z) && has(AndroidAxis.RZ) &&
-            (!has(AndroidAxis.RX) || !has(AndroidAxis.RY) || triggers)
+    /**
+     * Sends [v] (the [AndroidAxis.polled] axes) to the PC's phone overlay, for its handles; [zStick]:
+     * the right stick is on Z / RZ ([Source.zStick]).
+     */
+    private fun overlayAxes(zStick: Boolean, v: FloatArray) {
         val rx = if (zStick) v[POLLED_Z] else v[POLLED_RX]
         val ry = if (zStick) v[POLLED_RZ] else v[POLLED_RY]
         runtime.wifi.overlay.padAxes(
@@ -260,7 +281,10 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
     }
     override fun onInputDeviceChanged(deviceId: Int) {
         val d = inputManager.getInputDevice(deviceId)
-        if (d != null) sources.get(deviceId)?.pad = padDevice(d)
+        if (d != null) sources.get(deviceId)?.let {
+            it.pad = padDevice(d)
+            it.rangesFor = 0 // its axes may have changed: read again on the next event
+        }
         refresh()
     }
 

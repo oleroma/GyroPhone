@@ -60,13 +60,13 @@ A set is kept in two forms (`WorkspaceMappings`):
 - **stored** (`store`): workspaces hold no device mappings, only the id of the preset they pin;
 - **resolved** (`resolve`): each workspace gets its Defaults settings applied and holds its pinned preset's mappings as one pad for any game pad (`pads`), `keyboard`, `mouse` and `phone` (the volume rocker, with an unmapped rocker key turning the PC's volume), plus the preset's key timings, stick and trigger tuning and held-button settings.
 
-`GamepadRuntime.activeProfile` is the resolved set the engine and editors see; `editActiveProfile` applies an edit and saves the stored form in the background (`WorkspaceMappings.settle`: a pad mapping edit becomes the pinned preset's; a new workspace is kept as it comes, a blank one blank).
+`GamepadRuntime.activeProfile` is the resolved set the engine and editors see; `editActiveProfile` applies an edit and saves the stored form in the background (`WorkspaceMappings.settle`: a pad mapping edit becomes the pinned preset's; a new workspace is kept as it comes, a blank one blank). Resolving again reuses each workspace resolved last time whose stored form, Defaults and device presets didn't change (`resolveStored`, `WorkspaceMappings.resolve(set, last, lastResolved)`), and `markOwn` skips a workspace the edit left as the same object or whose settings all stayed equal (a control moved in edit mode), so a settings tap works out only what it touched.
 
 ## Storage
 
 All on the phone, in the app's private storage (`data/ProfileStore.kt`):
 
-- `files/profiles/<id>.json`: the workspace set, read with `ProfileJson.decode` and written atomically (`.tmp` then replace). A mapping a build can't read (a newer build's action) is left out (`decodeLenient`) and the file is first copied to `<file>.newer-build.bak` before it is saved over. A file that fails to decode is skipped but never deleted or overwritten.
+- `files/profiles/<id>.json`: the workspace set, read with `ProfileJson.decode` and written atomically (`.tmp` then replace). At start only the set's own file is read (`ProfileStore.readOwnFile`); every profile file is read only for the one-time merge, or when the set's file is missing, unreadable or has a second copy. The runtime that reads it is built on a background thread from `GyroPhoneApp.onCreate`, so it overlaps the activity's start; the pad waits only for what is left. A mapping a build can't read (a newer build's action) is left out (`decodeLenient`) and the file is first copied to `<file>.newer-build.bak` before it is saved over. A file that fails to decode is skipped but never deleted or overwritten.
 - `files/button_library.json`: the button library (buttons saved with their look and mappings, shared by every workspace).
 - Shared preferences: app-wide options, the active workspace, capsule order, UI state (open sections, card order, recent targets), the gyro bias.
 - The Wi-Fi pairing store and the key folders ([Connection](phone-connection.md)).

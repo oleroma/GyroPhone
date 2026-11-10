@@ -30,4 +30,23 @@
     <!-- OpenCV's native library for the latency test's video analyser (GyroPhone.Latency). -->
     <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20260627" />
   </ItemGroup>
+  <!-- OpenCV's native DLLs (about 95 MB, used only by the latency test) stay out of the single-file exe and
+       ship beside it. Bundled, every new build would first write them out to %TEMP%\.net on its first start
+       (and the antivirus scan them), for the companion and again for the update finisher. The install hook
+       copies them next to the exe, and the update finisher puts in any that wait as "<dll>.new". -->
+  <Target Name="KeepOpenCvOutOfTheBundle" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Condition="'%(Filename)%(Extension)' == 'OpenCvSharpExtern.dll' Or $([System.String]::Copy('%(Filename)').StartsWith('opencv_videoio_ffmpeg'))">
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+  <!-- Names them in side-files.txt in the publish folder, so the build hook ships exactly these (a DLL an
+       older publish left there isn't one). -->
+  <Target Name="ListSideFiles" AfterTargets="Publish" Condition="'$(PublishSingleFile)' == 'true'">
+    <ItemGroup>
+      <_GpSideFile Include="@(ResolvedFileToPublish->'%(RelativePath)')" Condition="'%(ResolvedFileToPublish.ExcludeFromSingleFile)' == 'true' And '%(Extension)' == '.dll'" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(PublishDir)side-files.txt" Lines="@(_GpSideFile)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
 </Project>

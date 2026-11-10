@@ -76,7 +76,8 @@ private fun DefaultsTab(runtime: GamepadRuntime) {
                 OutlinedButton(onClick = { mapping = true }) { Text("Mappings") }
             }
         }
-        val level = defaultsLevel(runtime, profile)
+        // Kept while the profile is: its own keys and children are worked out once, not per recomposition.
+        val level = remember(profile) { defaultsLevel(runtime, profile) }
         WorkspaceSettings(runtime, level, profile.id + "/defaults")
         if (mapping) NoSearch {
             ControlMappingScreen(

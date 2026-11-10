@@ -210,9 +210,20 @@ private fun tabTargets(tab: LibraryTab, extras: List<OutputTarget>): List<Output
     LibraryTab.RECENT, LibraryTab.PRESETS -> emptyList()
 }
 
+/** What [Describe.pickerGroups] reads of an input: inputs alike in these are offered the same targets. */
+private data class PickerKind(val analog: Boolean, val swipe: Boolean, val extra: List<OutputTarget>, val mouseMotion: Boolean)
+
+/**
+ * [allowedTargets] by [PickerKind] (main thread): a drag asks for it on every move, frame and
+ * card, and the targets offered never change, so each kind's set is built once.
+ */
+private val allowedByKind = HashMap<PickerKind, Set<OutputTarget>>()
+
 /** The targets [input]'s picker offers ([Describe.pickerGroups]). */
 private fun allowedTargets(input: BindableInput): Set<OutputTarget> =
-    Describe.pickerGroups(input.analog, input.swipe, input.extra, input.mouseMotion).flatMapTo(HashSet()) { it.second }
+    allowedByKind.getOrPut(PickerKind(input.analog, input.swipe, input.extra, input.mouseMotion)) {
+        Describe.pickerGroups(input.analog, input.swipe, input.extra, input.mouseMotion).flatMapTo(HashSet()) { it.second }
+    }
 
 /** Whether [t] may be mapped to an input offering [allowed]: haptics always, variants of an offered kind too. */
 private fun allows(allowed: Set<OutputTarget>, t: OutputTarget): Boolean {

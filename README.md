@@ -225,8 +225,10 @@ dotnet test companion/GyroPhone.Companion.Linux.slnf
 The companion's protocol and engine tests run on Linux and macOS too. The tray app builds only on Windows:
 
 ```
-dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o out
+dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishReadyToRun=true -o out
 ```
+
+OpenCV's native DLLs (for the latency test) land beside the exe in `out`, and the exe needs them there.
 
 ## Project layout
 

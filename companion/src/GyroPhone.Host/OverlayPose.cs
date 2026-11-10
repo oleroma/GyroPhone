@@ -239,12 +239,17 @@ public sealed class OverlayPose
     private const float ActiveS = 0.15f;
 
     /// <summary>The trackball axes (bit 0 yaw, 1 pitch, 2 roll) the gyro turned in the last 150 ms, to light them up. As the phone's trackballActive.</summary>
-    public int Active()
+    public int Active() => ActiveOf(_activeAt, System.Diagnostics.Stopwatch.GetTimestamp());
+
+    /// <summary>When each trackball axis last turned (Stopwatch ticks), for a copy read without the engine lock (<see cref="ActiveOf"/>).</summary>
+    public void CopyActiveAt(Span<long> into) => _activeAt.CopyTo(into);
+
+    /// <summary><see cref="Active"/> from a copy of <see cref="CopyActiveAt"/> at Stopwatch time <paramref name="now"/>.</summary>
+    public static int ActiveOf(ReadOnlySpan<long> activeAt, long now)
     {
-        long now = System.Diagnostics.Stopwatch.GetTimestamp();
         int bits = 0;
         for (int i = 0; i < 3; i++)
-            if (now - _activeAt[i] < (long)(ActiveS * System.Diagnostics.Stopwatch.Frequency)) bits |= 1 << i;
+            if (now - activeAt[i] < (long)(ActiveS * System.Diagnostics.Stopwatch.Frequency)) bits |= 1 << i;
         return bits;
     }
 

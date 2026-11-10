@@ -105,4 +105,26 @@ class LaserPaintTest {
         t.add(0f, 0f, -1f, 40, draw = false, held = false)
         assertEquals(0, t.strokes.count)
     }
+
+    @Test fun keepsTheRowsChangedSinceTheyWereTaken() {
+        val p = LaserPaint()
+        // A new map: all of it is new to the UI.
+        assertEquals(0, p.changedFrom)
+        assertEquals(p.height - 1, p.changedTo)
+        p.takeChanged()
+        assertTrue(p.changedFrom > p.changedTo)
+        line(p, 0f, 10f, up = 30f)
+        val row = k(p, at(5f, 30f)) / p.width
+        assertTrue(p.changedFrom <= row && row <= p.changedTo)
+        assertTrue(p.changedTo - p.changedFrom < p.height / 8) // only near the line
+        // Every changed texel is within the rows.
+        p.takeChanged()
+        val before = p.amount.copyOf()
+        line(p, 20f, 30f, up = -10f)
+        for (i in before.indices) if (before[i] != p.amount[i]) assertTrue(i / p.width in p.changedFrom..p.changedTo)
+        p.takeChanged()
+        p.clear()
+        assertEquals(0, p.changedFrom)
+        assertEquals(p.height - 1, p.changedTo)
+    }
 }

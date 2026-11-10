@@ -109,6 +109,55 @@ public class KeyPairingTests
     }
 
     [Fact]
+    public void HostKeyReadLaterTurnsKeyPairingOn()
+    {
+        // host.key was held by another program at start-up: the engine starts without it.
+        var h = new Harness(pairDefault: false);
+        h.Engine.SetAuthorizedPhones([new AuthorizedPhone("p.pub", new PubKeyFile(K.Bytes("pkP"), "p"))]);
+        Assert.Null(h.Engine.Snapshot().HostKeyFingerprint);
+        Assert.Empty(h.Engine.Snapshot().PairedPhones);
+        // The background retry reads it.
+        using var hostKey = P256.FromPrivateScalar(K.Bytes("hostPrivD"));
+        Assert.True(h.Engine.SetHostKey(hostKey));
+        Assert.Equal(K.Str("hostFingerprint"), h.Engine.Snapshot().HostKeyFingerprint);
+        Assert.Equal(hostKey.PublicKey, h.Engine.HostPublicKey);
+        h.Engine.SetAuthorizedPhones([new AuthorizedPhone("p.pub", new PubKeyFile(K.Bytes("pkP"), "p"))]);
+        Assert.True(Assert.Single(h.Engine.Snapshot().PairedPhones).ByKey);
+        var phone = FakePhone.Paired(K.Bytes("keyPhoneId"), "OnePlus 15", K.Bytes("pairKey"));
+        Assert.Equal(AnnounceFlags.KeyMatch | AnnounceFlags.KnowsYourKey,
+            AnnounceFlagsFor(h, phone) & (AnnounceFlags.KeyMatch | AnnounceFlags.KnowsYourKey));
+        // A second key never replaces the first.
+        using var other = P256.Generate();
+        Assert.False(h.Engine.SetHostKey(other));
+        Assert.Equal(K.Str("hostFingerprint"), h.Engine.Snapshot().HostKeyFingerprint);
+    }
+
+    [Fact]
+    public void HostKeyLockedForAWhileIsWaitedFor()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "gp-keys-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var files = new KeyFiles(dir, lockedWaitMs: 10_000);
+            using var first = files.LoadOrCreateHostKey(new PlainProtector(), "OLEX");
+            var held = new FileStream(files.HostKeyPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            var release = new Thread(() =>
+            {
+                Thread.Sleep(800);
+                held.Dispose();
+            });
+            release.Start();
+            using var again = files.LoadOrCreateHostKey(new PlainProtector(), "OLEX");
+            release.Join();
+            Assert.Equal(first.PublicKey, again.PublicKey);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public void OneSidedKeysAreReported()
     {
         using var hostKey = P256.FromPrivateScalar(K.Bytes("hostPrivD"));

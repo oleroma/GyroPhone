@@ -273,6 +273,17 @@ class GyroPose {
         gimbal[2] = atan2(2 * (x * y + w * z), 1 - 2 * (x * x + z * z))
     }
 
+    /**
+     * After a pause in its samples (the pad was covered): the pose stays where it was, the old "up"
+     * is forgotten and [fuse] pulls hard toward gravity again for a moment, as a fresh pose does, so
+     * the tilt is right at once. Unlike [reset] the heading and the compass's aim are kept.
+     */
+    @Synchronized
+    fun resettle() {
+        hasUp = false
+        settling = SETTLE_S
+    }
+
     /** Exactly straight, keeping what the sensors last said (unlike [reset]). */
     @Synchronized
     fun straighten() {

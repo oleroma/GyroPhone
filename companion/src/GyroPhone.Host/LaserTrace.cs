@@ -301,25 +301,49 @@ public sealed class LaserTrace
     /// the way from the middle to its colour. With the normal-map colours that is 0.5 + 0.5·d per red, green, blue.
     /// Not moving: the middle. As the phone's LaserTrace.directionColor.
     /// </summary>
-    public static uint DirectionColor((float X, float Y, float Z) d, ReadOnlySpan<uint> colors)
+    public static uint DirectionColor((float X, float Y, float Z) d, ReadOnlySpan<uint> colors) => new WayMix(colors).Of(d);
+
+    /// <summary>
+    /// <see cref="DirectionColor"/> for many directions with the same colours: their middle is worked out once, here,
+    /// not for every direction.
+    /// </summary>
+    public readonly struct WayMix
     {
-        uint argb = 0;
-        Span<float> p = stackalloc float[] { d.X, d.Y, d.Z };
-        for (int ch = 0; ch < 4; ch++)
+        private readonly uint[] _colors;
+        private readonly float[] _mid;
+
+        public WayMix(ReadOnlySpan<uint> colors)
         {
-            int shift = ch * 8;
-            float mid = 0f;
-            for (int i = 0; i < 6; i++) mid += (colors[i] >> shift) & 0xFF;
-            mid /= 6f;
-            float v = mid;
-            for (int a = 0; a < 3; a++)
+            _colors = colors[..6].ToArray();
+            _mid = new float[4];
+            for (int ch = 0; ch < 4; ch++)
             {
-                float c = (colors[p[a] >= 0f ? a * 2 : a * 2 + 1] >> shift) & 0xFF;
-                v += MathF.Abs(p[a]) * (c - mid);
+                int shift = ch * 8;
+                float mid = 0f;
+                for (int i = 0; i < 6; i++) mid += (colors[i] >> shift) & 0xFF;
+                _mid[ch] = mid / 6f;
             }
-            argb |= (uint)Math.Clamp((int)(v + 0.5f), 0, 255) << shift;
         }
-        return argb;
+
+        /// <summary>The colour (ARGB) of moving the way of unit direction <paramref name="d"/>.</summary>
+        public uint Of((float X, float Y, float Z) d)
+        {
+            uint argb = 0;
+            for (int ch = 0; ch < 4; ch++)
+            {
+                int shift = ch * 8;
+                float mid = _mid[ch];
+                float v = mid;
+                for (int a = 0; a < 3; a++)
+                {
+                    float p = a == 0 ? d.X : a == 1 ? d.Y : d.Z;
+                    float c = (_colors[p >= 0f ? a * 2 : a * 2 + 1] >> shift) & 0xFF;
+                    v += MathF.Abs(p) * (c - mid);
+                }
+                argb |= (uint)Math.Clamp((int)(v + 0.5f), 0, 255) << shift;
+            }
+            return argb;
+        }
     }
 
     /// <summary>Clears the strokes.</summary>

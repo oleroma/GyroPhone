@@ -42,12 +42,21 @@ android {
     }
 
     buildTypes {
+        // The build the phone runs (the build hook's assembleRelease): not debuggable, so Android
+        // runs it at full speed and compiles it ahead of time with the profiles profileinstaller
+        // brings (a debuggable app gets neither). No R8: shrinking needs keep rules for the
+        // serialization and JNI classes, and isn't worth that risk.
         release {
             isMinifyEnabled = false
-            // Debug signing so CI release builds install directly on the test phone.
+            // The shared debug key, like every build, so adb install -r updates the installed app
+            // in place (debug and release builds of it alike) and keeps its data.
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    // The full checks run Android lint on the release build (lintRelease); assembleRelease
+    // doesn't run it a second time.
+    lint { checkReleaseBuilds = false }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -73,5 +82,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.zxing.android.embedded)
+    // Installs the app's and Compose's ready-made startup profiles, so ART compiles that code ahead of time.
+    implementation(libs.androidx.profileinstaller)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

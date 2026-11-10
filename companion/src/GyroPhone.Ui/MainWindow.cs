@@ -20,15 +20,25 @@ public enum MainPage
 
 /// <summary>
 /// The main window: a sidebar of pages on the left, the picked page on the right. Each page scrolls
-/// as a whole (nothing scrolls inside it). Refreshed twice a second and whenever the tray app says
-/// something changed.
+/// as a whole (nothing scrolls inside it). A page is built the first time it is shown (Home at once,
+/// for its latency graph), so opening the window builds one or two. Refreshed twice a second and
+/// whenever the tray app says something changed.
 /// </summary>
 public sealed class MainWindow : Window
 {
     private static MainPage _lastPage = MainPage.Home;
 
     private readonly ICompanion _app;
-    private readonly Dictionary<MainPage, (RadioButton Nav, ScrollViewer Scroll, Page Page)> _pages = [];
+    private readonly Dictionary<MainPage, PageSlot> _pages = [];
+
+    /// <summary>A sidebar entry and its page, which is made by <see cref="Make"/> when first shown.</summary>
+    private sealed class PageSlot(RadioButton nav, ScrollViewer scroll, Func<Page> make)
+    {
+        public RadioButton Nav { get; } = nav;
+        public ScrollViewer Scroll { get; } = scroll;
+        public Func<Page> Make { get; } = make;
+        public Page? Page { get; set; }
+    }
     private readonly TextBlock _version;
     private readonly DispatcherTimer _timer;
     private bool _refreshing;
@@ -76,15 +86,16 @@ public sealed class MainWindow : Window
         Grid.SetColumn(content, 1);
         root.Children.Add(content);
 
-        Add(side, content, MainPage.Home, "Home", "", new HomePage(app, Go));
-        Add(side, content, MainPage.Phones, "Phones", "", new PhonesPage(app));
-        Add(side, content, MainPage.Gamepad, "Gamepad", "", new GamepadPage(app));
-        Add(side, content, MainPage.Overlays, "Overlays", "", new OverlaysPage(app, this));
-        Add(side, content, MainPage.Connection, "Connection", "", new ConnectionPage(app));
-        Add(side, content, MainPage.Latency, "Latency test", "", new LatencyPage(app, this, icon));
-        Add(side, content, MainPage.App, "App", "", new AppPage(app));
+        Add(side, content, MainPage.Home, "Home", "", () => new HomePage(app, Go));
+        Add(side, content, MainPage.Phones, "Phones", "", () => new PhonesPage(app));
+        Add(side, content, MainPage.Gamepad, "Gamepad", "", () => new GamepadPage(app));
+        Add(side, content, MainPage.Overlays, "Overlays", "", () => new OverlaysPage(app, this));
+        Add(side, content, MainPage.Connection, "Connection", "", () => new ConnectionPage(app));
+        Add(side, content, MainPage.Latency, "Latency test", "", () => new LatencyPage(app, this, icon));
+        Add(side, content, MainPage.App, "App", "", () => new AppPage(app));
 
         Content = root;
+        Build(MainPage.Home); // its latency graph samples while another page is shown
         Go(_lastPage);
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
@@ -98,7 +109,7 @@ public sealed class MainWindow : Window
         Closed += (_, _) => _timer.Stop();
     }
 
-    private void Add(DockPanel side, Grid content, MainPage id, string name, string glyph, Page page)
+    private void Add(DockPanel side, Grid content, MainPage id, string name, string glyph, Func<Page> make)
     {
         var nav = new RadioButton { Content = name, Tag = glyph, Style = Parts.Style("Nav"), GroupName = "nav" };
         nav.Click += (_, _) => Go(id);
@@ -108,21 +119,32 @@ public sealed class MainWindow : Window
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Content = new Border { Padding = new Thickness(32, 26, 32, 20), Child = page.View },
             Visibility = Visibility.Collapsed,
         };
         content.Children.Add(scroll);
-        _pages[id] = (nav, scroll, page);
+        _pages[id] = new PageSlot(nav, scroll, make);
+    }
+
+    /// <summary>Makes page <paramref name="id"/> if it isn't yet.</summary>
+    private Page Build(MainPage id)
+    {
+        var slot = _pages[id];
+        if (slot.Page is { } made) return made;
+        var page = slot.Make();
+        slot.Page = page;
+        slot.Scroll.Content = new Border { Padding = new Thickness(32, 26, 32, 20), Child = page.View };
+        return page;
     }
 
     /// <summary>Shows page <paramref name="id"/>.</summary>
     public void Go(MainPage id)
     {
         _lastPage = id;
-        foreach (var (key, (nav, scroll, _)) in _pages)
+        Build(id);
+        foreach (var (key, slot) in _pages)
         {
-            Parts.SetChecked(nav, key == id);
-            Parts.Show(scroll, key == id);
+            Parts.SetChecked(slot.Nav, key == id);
+            Parts.Show(slot.Scroll, key == id);
         }
         if (IsLoaded) RefreshNow();
     }
@@ -137,8 +159,26 @@ public sealed class MainWindow : Window
             var v = _app.View();
             _version.Text = v.UpdatePending is { } p ? $"{v.Version}\nRestarting into {p}…" : v.Version;
             // Home's latency graph keeps sampling while another page is shown.
-            foreach (var (key, (_, scroll, page)) in _pages)
-                if (key == _lastPage || page is HomePage) page.Refresh(v);
+            foreach (var (key, slot) in _pages)
+                if (slot.Page is { } page && (key == _lastPage || page is HomePage)) page.Refresh(v);
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+    }
+
+    /// <summary>
+    /// Refreshes only the page shown (a slider being dragged, a toggle): the tray app's full refresh,
+    /// which also refreshes Home, follows once the changes stop.
+    /// </summary>
+    public void RefreshShownPage()
+    {
+        if (_refreshing || !IsLoaded || _pages[_lastPage].Page is not { } page) return;
+        _refreshing = true;
+        try
+        {
+            page.Refresh(_app.View());
         }
         finally
         {

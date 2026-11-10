@@ -3,15 +3,20 @@ using System.Collections.Concurrent;
 namespace GyroPhone.Windows;
 
 /// <summary>
-/// Append-only log in %LOCALAPPDATA%\GyroPhone\logs. Write only enqueues, so it is safe to call
-/// under the engine lock; a background thread does the file I/O. Callers log counters and lifecycle
+/// Append-only log in %LOCALAPPDATA%\GyroPhone\logs. Write only puts the line in a lock-free queue
+/// (and wakes the writer when the queue was empty), so it never waits on the writer thread, which does
+/// the file I/O: safe to call from gp-rx, even under the engine lock. Callers log counters and lifecycle
 /// events only, never keys.
 /// </summary>
 public sealed class FileLog : IDisposable
 {
+    private const int MaxQueued = 1024;
     private readonly long _maxBytes;
 
-    private readonly BlockingCollection<string> _queue = new(boundedCapacity: 1024);
+    private readonly ConcurrentQueue<string> _queue = new();
+    private int _queued;
+    private readonly AutoResetEvent _wake = new(false);
+    private volatile bool _closing;
     private readonly Thread _thread;
     private readonly Action<string>? _echo;
 
@@ -21,7 +26,8 @@ public sealed class FileLog : IDisposable
         Path = System.IO.Path.Combine(Directory, fileName);
         _maxBytes = maxBytes;
         _echo = echo;
-        _thread = new Thread(Run) { Name = "gp-log", IsBackground = true, Priority = ThreadPriority.BelowNormal };
+        // Normal, not below: a writer starved by a busy PC would only let lines pile up (Write never waits on it).
+        _thread = new Thread(Run) { Name = "gp-log", IsBackground = true, Priority = ThreadPriority.Normal };
         _thread.Start();
     }
 
@@ -39,15 +45,15 @@ public sealed class FileLog : IDisposable
 
     public void Write(string message)
     {
-        var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {message}";
-        try
+        if (_closing) return; // late messages during exit are dropped
+        // Dropped when the disk stalls, rather than holding up a hot thread.
+        if (Interlocked.Increment(ref _queued) > MaxQueued)
         {
-            _queue.TryAdd(line); // drops when the disk stalls rather than blocking a hot thread
+            Interlocked.Decrement(ref _queued);
+            return;
         }
-        catch (InvalidOperationException)
-        {
-            // disposed: late messages during exit are dropped
-        }
+        _queue.Enqueue($"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {message}");
+        _wake.Set();
     }
 
     private void Run()
@@ -61,19 +67,31 @@ public sealed class FileLog : IDisposable
         {
             _lastError = $"{e.GetType().Name}: {e.Message}";
         }
-        foreach (var line in _queue.GetConsumingEnumerable())
+        while (true)
         {
-            // Echo from this thread too: a console in QuickEdit selection blocks writers.
-            _echo?.Invoke(line);
-            try
+            bool closing = _closing;
+            while (_queue.TryDequeue(out var line))
             {
-                if (Append(line + Environment.NewLine) > _maxBytes) Rotate();
-                _lastError = null;
+                Interlocked.Decrement(ref _queued);
+                WriteLine(line);
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            {
-                _lastError = $"{e.GetType().Name}: {e.Message}";
-            }
+            if (closing) return;
+            _wake.WaitOne();
+        }
+    }
+
+    private void WriteLine(string line)
+    {
+        // Echo from this thread too: a console in QuickEdit selection blocks writers.
+        _echo?.Invoke(line);
+        try
+        {
+            if (Append(line + Environment.NewLine) > _maxBytes) Rotate();
+            _lastError = null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _lastError = $"{e.GetType().Name}: {e.Message}";
         }
     }
 
@@ -103,7 +121,8 @@ public sealed class FileLog : IDisposable
 
     public void Dispose()
     {
-        _queue.CompleteAdding();
+        _closing = true;
+        _wake.Set();
         _thread.Join(1000);
     }
 }

@@ -16,22 +16,69 @@ object OverridingChildren {
     private const val SEP = " › "
 
     /** The children of the Defaults of [p] that set any of [keys] themselves. */
-    fun ofDefaults(p: Profile, keys: List<String>): List<ChildOverride> = p.workspaces.flatMap { w ->
-        val own = WorkspaceDefaults.own(w)
-        keys.filter { it in own }.take(1).map { k -> ChildOverride(w.name, text(k, WorkspaceDefaults.valueOf(k, w))) } +
-            ofWorkspace(w, keys, w.name + SEP)
+    fun ofDefaults(p: Profile, keys: List<String>): List<ChildOverride> = ofDefaults(p.workspaces.map(::Children), keys)
+
+    /** [ofDefaults] with each workspace's [Children] worked out once ([Children] of every workspace, in order). */
+    fun ofDefaults(workspaces: List<Children>, keys: List<String>): List<ChildOverride> = workspaces.flatMap { c ->
+        c.ownOf(keys) + c.ofWorkspace(keys, c.w.name + SEP)
     }
 
     /** The children of workspace [w] (its layers and buttons) that set any of [keys]; names start with [prefix]. */
     fun ofWorkspace(w: Workspace, keys: List<String>, prefix: String = ""): List<ChildOverride> =
-        w.sets.filter { it.id != MappingSet.BASE }.mapNotNull { set ->
-            val own = WorkspaceDefaults.layerOwn(set)
-            val k = keys.firstOrNull { it in own } ?: return@mapNotNull null
-            ChildOverride(prefix + set.label, text(k, WorkspaceDefaults.valueOf(k, set.settings!!)))
-        } + buttons(w, keys, prefix, null)
+        Children(w).ofWorkspace(keys, prefix)
 
     /** The buttons of [w] that set any of [keys] over layer [setId]: their own Base values and that layer's. */
-    fun ofLayer(w: Workspace, setId: Int, keys: List<String>): List<ChildOverride> = buttons(w, keys, "", setId)
+    fun ofLayer(w: Workspace, setId: Int, keys: List<String>): List<ChildOverride> = Children(w).ofLayer(setId, keys)
+
+    /**
+     * What workspace [w] and its children (layers and buttons) set themselves, worked out once
+     * (and only when first asked): a settings page asks for each of its rows, which then only look
+     * their keys up.
+     */
+    class Children(val w: Workspace) {
+        private val own by lazy { WorkspaceDefaults.own(w) }
+        private val layers by lazy {
+            w.sets.filter { it.id != MappingSet.BASE }.map { it to WorkspaceDefaults.layerOwn(it) }
+        }
+        private val buttons by lazy {
+            w.touchControls.map { c -> ButtonOwn(c, surfaceOwn(c, w), c.gyro.map { it to gyroOwn(it) }) }
+        }
+
+        /** The workspace itself, when it sets any of [keys] (the first of them it sets). */
+        fun ownOf(keys: List<String>): List<ChildOverride> {
+            val k = keys.firstOrNull { it in own } ?: return emptyList()
+            return listOf(ChildOverride(w.name, text(k, WorkspaceDefaults.valueOf(k, w))))
+        }
+
+        /** As [OverridingChildren.ofWorkspace]. */
+        fun ofWorkspace(keys: List<String>, prefix: String = ""): List<ChildOverride> =
+            layers.mapNotNull { (set, own) ->
+                val k = keys.firstOrNull { it in own } ?: return@mapNotNull null
+                ChildOverride(prefix + set.label, text(k, WorkspaceDefaults.valueOf(k, set.settings!!)))
+            } + buttons(keys, prefix, null)
+
+        /** As [OverridingChildren.ofLayer]. */
+        fun ofLayer(setId: Int, keys: List<String>): List<ChildOverride> = buttons(keys, "", setId)
+
+        private fun buttons(keys: List<String>, prefix: String, setId: Int?): List<ChildOverride> {
+            val out = ArrayList<ChildOverride>()
+            for (b in buttons) {
+                val c = b.control
+                val name = prefix + controlName(c)
+                b.surface.firstOrNull { it.key in keys }?.let { out += ChildOverride(name, text(it.key, it.value, it.factor)) }
+                for ((g, owns) in b.gyro) {
+                    if (setId != null && g.set != MappingSet.BASE && g.set != setId) continue
+                    val o = owns.firstOrNull { it.key in keys } ?: continue
+                    val layer = if (g.set == MappingSet.BASE) "" else (w.sets.firstOrNull { it.id == g.set }?.label ?: "Layer ${g.set}") + SEP
+                    out += ChildOverride(prefix + layer + controlName(c), text(o.key, o.value, o.factor))
+                }
+            }
+            return out
+        }
+    }
+
+    /** What button [control] sets itself: beside its gyro ([surfaceOwn]), and per gyro set ([gyroOwn]). */
+    private class ButtonOwn(val control: TouchControl, val surface: List<Own>, val gyro: List<Pair<ButtonGyro, List<Own>>>)
 
     /** [p] with every child of its Defaults following them for [keys] again. */
     fun resetDefaults(p: Profile, keys: List<String>): Profile = p.copy(
@@ -150,20 +197,6 @@ object OverridingChildren {
     /** The gyro sets of [c] a level sees: under a workspace ([setId] null) all, under layer [setId] Base's and its own. */
     private fun gyroSets(c: TouchControl, setId: Int?) =
         c.gyro.filter { setId == null || it.set == MappingSet.BASE || it.set == setId }
-
-    private fun buttons(w: Workspace, keys: List<String>, prefix: String, setId: Int?): List<ChildOverride> {
-        val out = ArrayList<ChildOverride>()
-        for (c in w.touchControls) {
-            val name = prefix + controlName(c)
-            surfaceOwn(c, w).firstOrNull { it.key in keys }?.let { out += ChildOverride(name, text(it.key, it.value, it.factor)) }
-            for (g in gyroSets(c, setId)) {
-                val o = gyroOwn(g).firstOrNull { it.key in keys } ?: continue
-                val layer = if (g.set == MappingSet.BASE) "" else (w.sets.firstOrNull { it.id == g.set }?.label ?: "Layer ${g.set}") + SEP
-                out += ChildOverride(prefix + layer + controlName(c), text(o.key, o.value, o.factor))
-            }
-        }
-        return out
-    }
 
     private fun resetButtons(w: Workspace, keys: List<String>, setId: Int?): Workspace = w.copy(
         touchControls = w.touchControls.map { c0 ->
