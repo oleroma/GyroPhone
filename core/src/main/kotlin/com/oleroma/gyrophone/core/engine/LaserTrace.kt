@@ -329,6 +329,44 @@ class LaserTrace {
             return argb
         }
         const val STROKE_STEP_DEG = 0.5f
+
+        /** Snake: its curve is cut into steps of at most this many degrees. */
+        const val CURVE_STEP_DEG = 0.5f
+
+        /** Snake: at most this many steps between two stroke points (a jump of 32° or more is cut coarser). */
+        const val CURVE_MAX_STEPS = 64
+
+        /**
+         * A smooth curve through unit directions [p1] → [p2] at [t] (0..1) into [out] (unit): a centripetal
+         * Catmull-Rom spline with neighbours [p0] (before [p1]) and [p3] (after [p2]), which never loops or
+         * overshoots however unevenly the points are spaced. A line's ends pass the end point itself as its
+         * missing neighbour. Each point holds x, y, z from its index ([a0] .. [a3]).
+         */
+        fun curve(
+            p0: FloatArray, a0: Int, p1: FloatArray, a1: Int, p2: FloatArray, a2: Int, p3: FloatArray, a3: Int,
+            t: Float, out: FloatArray,
+        ) {
+            fun knot(pa: FloatArray, ia: Int, pb: FloatArray, ib: Int): Float {
+                val dx = pb[ib] - pa[ia]
+                val dy = pb[ib + 1] - pa[ia + 1]
+                val dz = pb[ib + 2] - pa[ia + 2]
+                return sqrt(sqrt(dx * dx + dy * dy + dz * dz)) // centripetal: the chord's square root
+            }
+            val d1 = knot(p1, a1, p2, a2).coerceAtLeast(1e-6f)
+            val d0 = knot(p0, a0, p1, a1).let { if (it < 1e-6f) d1 else it }
+            val d2 = knot(p2, a2, p3, a3).let { if (it < 1e-6f) d1 else it }
+            // Hermite form: the tangents at p1 and p2 scaled to the middle span.
+            for (k in 0..2) {
+                val q0 = p0[a0 + k]; val q1 = p1[a1 + k]; val q2 = p2[a2 + k]; val q3 = p3[a3 + k]
+                val m1 = d1 * ((q1 - q0) / d0 - (q2 - q0) / (d0 + d1) + (q2 - q1) / d1)
+                val m2 = d1 * ((q2 - q1) / d1 - (q3 - q1) / (d1 + d2) + (q3 - q2) / d2)
+                val t2 = t * t
+                val t3 = t2 * t
+                out[k] = (2f * t3 - 3f * t2 + 1f) * q1 + (t3 - 2f * t2 + t) * m1 + (-2f * t3 + 3f * t2) * q2 + (t3 - t2) * m2
+            }
+            unit(out)
+        }
+
         private val STROKE_STEP_COS = cos(Math.toRadians(STROKE_STEP_DEG.toDouble())).toFloat()
 
         /** Perspective: the eye's distance from the centre, in sphere radii (as the 3D phone's). */
