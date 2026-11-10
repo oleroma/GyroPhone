@@ -23,6 +23,10 @@ data class Workspace(
      * [Inheritance.chipByChip] has turned that into Offs.
      */
     val chipInherit: Boolean = false,
+    /** The touchpad's label (text, emoji, symbols), shown at the top centre of the pad while [touchpadLabelShown]. */
+    val touchpadLabel: String = "",
+    /** The pad shows [touchpadLabel] at its top centre, and what the touchpad sends as it does (as buttons show theirs). */
+    val touchpadLabelShown: Boolean = false,
     val touchpad: TouchpadSettings = TouchpadSettings(),
     val gyro: GyroSettings = GyroSettings(),
     /** Opacity of the on-screen controls in play ([Profile.MIN_CONTROL_OPACITY]..1). */
