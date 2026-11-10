@@ -1,6 +1,7 @@
 package com.oleroma.gyrophone.ui
 
 import android.content.res.Configuration
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -1962,21 +1963,25 @@ internal fun ControlMappingScreen(
                     }
                     val barRow = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
                         .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)
-                    if (portrait) {
-                        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) { titleBar() }
-                            doneButton()
-                        }
-                        Row(barRow, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            layerChips(); actionButtons()
-                        }
-                    } else {
-                        Row(barRow, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            layerChips(); titleBar()
-                        }
-                        Row(barRow, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            actionButtons(); doneButton()
-                        }
+                    // The bar sits on its own background, divided from the editor under it.
+                    Column(Modifier.fillMaxWidth().background(colors.surfaceContainer)) {
+                        if (portrait) {
+                            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) { titleBar() }
+                                doneButton()
+                            }
+                            Row(barRow, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                layerChips(); actionButtons()
+                            }
+                        } else {
+                            Row(barRow, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                layerChips(); titleBar()
+                            }
+                            Row(barRow, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                actionButtons(); doneButton()
+                            }
+                    }
+                    HorizontalDivider(color = colors.outlineVariant)
                     }
                     BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                         val landscape = maxWidth > maxHeight
