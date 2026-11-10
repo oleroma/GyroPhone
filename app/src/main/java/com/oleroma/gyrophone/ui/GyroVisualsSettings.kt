@@ -287,7 +287,7 @@ internal fun GyroDisplaySettingsScreen(
         }
         val draw = if (!laser) null else category(runtime, "gyroDisplayDraw", "Draw", "Draw mode, snake, brush, Clear") {
             SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim; the paint stays until you clear it.") { set(d.copy(laserDraw = it)) }
-            SwitchRow("Snake", d.laserSnake, "A line following the beam along the newest stretch of its path, thinning to its tail. With or without Draw mode.") { set(d.copy(laserSnake = it)) }
+            SwitchRow("Snake", d.laserSnake, "A line following the beam along the newest stretch of its path, thinning and fading toward its tail as set. With or without Draw mode.") { set(d.copy(laserSnake = it)) }
             // Length 10° to 720°, finer toward the short ones: the slider's square, in 5° steps.
             if (d.laserSnake) Indented {
                 SavedSlider(
@@ -295,9 +295,14 @@ internal fun GyroDisplaySettingsScreen(
                     sqrt(d.laserSnakeDeg.coerceIn(LASER_LENGTH_MIN, LASER_LENGTH_MAX) / LASER_LENGTH_MAX.toFloat()), 0f..1f,
                     { p -> sqrt(lengthDeg(p) / LASER_LENGTH_MAX.toFloat()) },
                 ) { set(d.copy(laserSnakeDeg = lengthDeg(it))) }
+                IntSlider("Snake brush %d°", d.laserSnakeBrush, 1..20) { set(d.copy(laserSnakeBrush = it)) }
+                PercentSlider("Taper", d.laserSnakeTaper, 0f..1f) { set(d.copy(laserSnakeTaper = it)) }
+                PercentSlider("Tail fade", d.laserSnakeFade, 0f..1f) { set(d.copy(laserSnakeFade = it)) }
+                PercentSlider("Snake glow", d.laserSnakeGlow, 0f..1f) { set(d.copy(laserSnakeGlow = it)) }
+                Hint("Snake brush: how wide its head is. Taper: how much it thins toward its tail (0 keeps it the same width). Tail fade: how see-through it gets toward its tail (0 none). Snake glow: a soft glow round it (0 none). Shots and aiming keep their own brushes.")
             }
             if (d.laserDraw || d.laserSnake) Indented {
-                IntSlider("Brush %d°", d.laserBrush, 1..20) { set(d.copy(laserBrush = it)) }
+                if (d.laserDraw) IntSlider("Brush %d°", d.laserBrush, 1..20) { set(d.copy(laserBrush = it)) }
                 SwitchRow("Clear on ratchet", d.laserClearOnRatchet, "A ratchet press clears the drawing.") { set(d.copy(laserClearOnRatchet = it)) }
                 Hint("The paint uncovers the sphere's own colours where it lands (the Moving colours, laid on the sphere as a normal map: right pink, left teal, up light green, down purple), or with Colour by the way it moved, the colour of each sweep's direction. Shots take the Fire colours and aiming the Aim colours, each with its own brush and glow (Look tab). Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every pointer at once.")
             }

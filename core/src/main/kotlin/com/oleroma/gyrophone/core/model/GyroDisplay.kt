@@ -179,6 +179,15 @@ data class GyroDisplay(
     /** LASER, Snake (with or without Draw mode): a line along the newest [laserSnakeDeg] degrees of the beam's path, thinning to its tail. */
     val laserSnake: Boolean = false,
     val laserSnakeDeg: Int = 180,
+    /**
+     * LASER Snake: its own brush ([laserSnakeBrush] degrees at the head); [laserSnakeTaper] how much it thins toward
+     * its tail (0 none .. 1 to nothing); [laserSnakeFade] how see-through it gets toward its tail (0 none .. 1 gone);
+     * [laserSnakeGlow] a soft glow round it (0 none .. 1 strong).
+     */
+    val laserSnakeBrush: Int = 4,
+    val laserSnakeTaper: Float = 0.8f,
+    val laserSnakeFade: Float = 0.5f,
+    val laserSnakeGlow: Float = 0f,
     /** LASER Draw mode: the paint map's detail, 0 low (512 texels round), 1 normal (1024), 2 high (2048). */
     val laserPaintDetail: Int = 1,
     /** LASER Draw mode: a ratchet press clears the drawing. */

@@ -326,6 +326,10 @@ private class VisState {
     private val wayB = FloatArray(3)
     private val snakeFire = IntArray(4)
     private val snakePaint = Paint()
+    private var snakeXY = FloatArray(0)
+    private var snakeW = FloatArray(0)
+    private var snakeA = FloatArray(0)
+    private var snakeCol = IntArray(0)
     // Reused from frame to frame: the paint's look, the gimbal rings' points, the rifle's muzzle.
     private val paintLook = PointerPaintShader.Look()
     private val gimbalPts = Array(3) { FloatArray(65 * 3) }
@@ -479,30 +483,33 @@ private class VisState {
     }
 
     /**
-     * Snake: the line along the newest stretch of [t]'s strokes, its [front] (near) or far pieces, [width]
-     * wide at the head thinning to a fifth at the tail; coloured as the paint (the Moving colours by where it
-     * is in the scene, or by the way it moved; shots in the Fire colours), shaded as the paint. It follows a
-     * smooth curve through the stroke points ([LaserTrace.curve]), cut into steps of at most
-     * [LaserTrace.CURVE_STEP_DEG] with the colour and width blended along each, so a fast turn (points far
-     * apart) stays round and the pieces' joints don't show. Pieces are drawn opaque into one layer at the
-     * colours' opacity, so overlaps don't darken.
+     * Snake: the line along the newest stretch of [t]'s strokes, its [front] (near) or far pieces,
+     * [GyroDisplay.laserSnakeBrush] wide at the head (shots and aiming their own brushes), thinning by
+     * [GyroDisplay.laserSnakeTaper] and fading by [GyroDisplay.laserSnakeFade] toward its tail, with a soft
+     * [GyroDisplay.laserSnakeGlow]; coloured as the paint (the Moving colours by where it is in the scene, or by
+     * the way it moved; shots in the Fire colours), shaded as the paint. It follows a smooth curve through the
+     * stroke points ([LaserTrace.curve]), cut into steps of at most [LaserTrace.CURVE_STEP_DEG] with the colour,
+     * width and fade blended along each, so a fast turn (points far apart) stays round and the joints don't show.
+     * The pieces go newest first into one layer, each only where the layer is still empty (DST_OVER), so
+     * overlaps neither darken nor show the older piece's round end; the layer is laid on at the colours' opacity.
      */
-    private fun DrawScope.snake(t: LaserTrace, d: GyroDisplay, front: Boolean, c: Offset, r: Float, width: Float, col: (GyroDisplayColor) -> Color) {
+    private fun DrawScope.snake(t: LaserTrace, d: GyroDisplay, front: Boolean, c: Offset, r: Float, col: (GyroDisplayColor) -> Color) {
         val s = t.strokes
         val n = s.count
         if (n < 2) return
         val len = d.laserSnakeDeg.toFloat().coerceAtLeast(1f)
-        val canvas = drawContext.canvas.nativeCanvas
         snakeFire[0] = col(GyroDisplayColor.LASER_FIRE).toArgb(); snakeFire[1] = col(GyroDisplayColor.LASER_FIRE_BEHIND).toArgb()
         snakeFire[2] = col(GyroDisplayColor.LASER_AIM).toArgb(); snakeFire[3] = col(GyroDisplayColor.LASER_AIM_BEHIND).toArgb()
-        val alpha = (moveColors.sumOf { it shr 24 and 0xFF } / 6f).toInt().coerceIn(0, 255)
-        val e = r * 1.1f
-        val layer = canvas.saveLayerAlpha(c.x - e, c.y - e, c.x + e, c.y + e, alpha)
         val ld = PointerPaintShader.lightDir(d.laserLightFrom)
         val reach = if (d.laserSmoothColours) LaserTrace.SMOOTH_REACH else 0
-        snakePaint.strokeCap = Paint.Cap.ROUND
-        snakePaint.style = Paint.Style.STROKE
-        snakePaint.isAntiAlias = true
+        val taper = d.laserSnakeTaper.coerceIn(0f, 1f)
+        val fade = d.laserSnakeFade.coerceIn(0f, 1f)
+        fun brushPx(deg: Int) = maxOf(1.5f * density, r * Math.toRadians(deg.coerceIn(1, 20).toDouble()).toFloat() * BRUSH_WIDTH)
+        val paintPx = brushPx(d.laserSnakeBrush)
+        val firePx = brushPx(d.laserFireBrush)
+        val aimPx = brushPx(d.laserAimBrush)
+        // The pieces of this half, oldest first: from, to, width, colour, opacity.
+        var m = 0
         var hasPrev = false
         var prevX = 0f
         var prevY = 0f
@@ -517,6 +524,7 @@ private class VisState {
             val deg = Math.toDegrees(kotlin.math.acos(dot).toDouble()).toFloat()
             val steps = kotlin.math.ceil(deg / LaserTrace.CURVE_STEP_DEG).toInt().coerceIn(1, LaserTrace.CURVE_MAX_STEPS)
             val kind = s.kind(i)
+            val headPx = when (kind) { LaserPaint.FIRE -> firePx; LaserPaint.AIM -> aimPx; else -> paintPx }
             val tailA = 1f - s.behindNewest(i - 1) / len
             val tailB = 1f - s.behindNewest(i) / len
             val byWay = kind == LaserPaint.PAINT && d.laserColourByWay
@@ -542,15 +550,55 @@ private class VisState {
                         for (q in 0..2) way[q] = wayA[q] + (wayB[q] - wayA[q]) * f
                         LaserTrace.unit(way)
                     }
-                    snakePaint.color = snakeShade(d, kind, byWay, z, front, ld)
                     val tail = (tailA + (tailB - tailA) * f).coerceIn(0f, 1f)
-                    snakePaint.strokeWidth = width * brushScale(d, kind) * (0.2f + 0.8f * tail) * (if (laserPersp) LaserTrace.perspective(z) else 1f)
-                    canvas.drawLine(prevX, prevY, p.x, p.y, snakePaint)
+                    if (m == snakeCol.size) growSnake()
+                    snakeXY[m * 4] = prevX; snakeXY[m * 4 + 1] = prevY; snakeXY[m * 4 + 2] = p.x; snakeXY[m * 4 + 3] = p.y
+                    snakeW[m] = headPx * (1f - taper * (1f - tail)) * (if (laserPersp) LaserTrace.perspective(z) else 1f)
+                    snakeA[m] = 1f - fade * (1f - tail)
+                    snakeCol[m] = snakeShade(d, kind, byWay, z, front, ld)
+                    m++
                 }
                 prevX = p.x; prevY = p.y; prevFront = isFront
             }
         }
+        if (m == 0) return
+        val canvas = drawContext.canvas.nativeCanvas
+        val alpha = moveColors.sumOf { it shr 24 and 0xFF } / (6f * 255f)
+        val e = r * 1.3f
+        snakePaint.strokeCap = Paint.Cap.ROUND
+        snakePaint.style = Paint.Style.STROKE
+        snakePaint.isAntiAlias = true
+        snakePaint.blendMode = android.graphics.BlendMode.DST_OVER
+        // Glow: wider, fainter copies under the line, each its own layer, so together they fall off softly.
+        val glow = d.laserSnakeGlow.coerceIn(0f, 1f)
+        if (glow > 0f) for ((wide, share) in SNAKE_GLOW) {
+            val layer = canvas.saveLayerAlpha(c.x - e, c.y - e, c.x + e, c.y + e, (255f * alpha * glow * share).toInt().coerceIn(0, 255))
+            snakePieces(canvas, m, wide)
+            canvas.restoreToCount(layer)
+        }
+        val layer = canvas.saveLayerAlpha(c.x - e, c.y - e, c.x + e, c.y + e, (255f * alpha).toInt().coerceIn(0, 255))
+        snakePieces(canvas, m, 1f)
         canvas.restoreToCount(layer)
+        snakePaint.blendMode = null
+    }
+
+    /** The Snake's [m] pieces, newest first, [wide] times their width. */
+    private fun snakePieces(canvas: android.graphics.Canvas, m: Int, wide: Float) {
+        for (k in m - 1 downTo 0) {
+            val a = (snakeA[k] * 255f + 0.5f).toInt().coerceIn(0, 255)
+            if (a == 0) continue
+            snakePaint.color = (snakeCol[k] and 0xFFFFFF) or (a shl 24)
+            snakePaint.strokeWidth = snakeW[k] * wide
+            canvas.drawLine(snakeXY[k * 4], snakeXY[k * 4 + 1], snakeXY[k * 4 + 2], snakeXY[k * 4 + 3], snakePaint)
+        }
+    }
+
+    private fun growSnake() {
+        val size = maxOf(256, snakeCol.size * 2)
+        snakeXY = snakeXY.copyOf(size * 4)
+        snakeW = snakeW.copyOf(size)
+        snakeA = snakeA.copyOf(size)
+        snakeCol = snakeCol.copyOf(size)
     }
 
     /**
@@ -596,13 +644,6 @@ private class VisState {
         val spec = d.laserShine * Math.pow((nv[0] * hv[0] + nv[1] * hv[1] + nv[2] * hv[2]).coerceAtLeast(0f).toDouble(), 24.0).toFloat()
         fun b(v: Float) = ((v * k + spec).coerceIn(0f, 1f) * 255f + 0.5f).toInt()
         return (0xFF shl 24) or (b(cr) shl 16) or (b(cg) shl 8) or b(cb)
-    }
-
-    /** A Fire or Aim line's width as a share of the beam's ([GyroDisplay.laserBrush]). */
-    private fun brushScale(d: GyroDisplay, kind: Int): Float = when (kind) {
-        LaserPaint.FIRE -> d.laserFireBrush.coerceIn(1, 20).toFloat() / d.laserBrush.coerceIn(1, 20)
-        LaserPaint.AIM -> d.laserAimBrush.coerceIn(1, 20).toFloat() / d.laserBrush.coerceIn(1, 20)
-        else -> 1f
     }
 
     /** Picture point of shown-frame direction ([x], [y], [z]) on a sphere of radius [r] at [c]; its depth (toward the viewer +) left in [pv]. */
@@ -736,14 +777,13 @@ private class VisState {
             fireGlow = d.laserFireGlow; aimGlow = d.laserAimGlow
             outlineColor = col(GyroDisplayColor.LASER_OUTLINE).toArgb(); wayAlpha = moveAlpha
         }
-        val brushPx = maxOf(1.5f * density, r * Math.toRadians(d.laserBrush.coerceIn(1, 20).toDouble()).toFloat() * BRUSH_WIDTH)
         fun paint(front: Boolean) {
             val t = lt ?: return
             val lp = t.paint
             if (lp != null && look != null) {
                 paintShaders.getOrPut(t) { PointerPaintShader() }.draw(drawContext.canvas.nativeCanvas, lp, front, c.x, c.y, r, viewOf, sceneOf, look, now)
             }
-            if (d.laserSnake) snake(t, d, front, c, r, brushPx, col)
+            if (d.laserSnake) snake(t, d, front, c, r, col)
         }
         val hit = laserAt(c, r, beam[0], beam[1], beam[2])
         val hitFront = pv[2] > 0f
@@ -1554,6 +1594,9 @@ private val PAINT_WIDTHS = intArrayOf(512, 1024, 2048)
 
 /** A pointer's paint is this many degrees wide per Brush degree. */
 private const val BRUSH_WIDTH = 0.6f
+
+// The Snake's glow: copies this many times its width, at this share of the glow's strength (widest first).
+private val SNAKE_GLOW = listOf(3.2f to 0.18f, 2.2f to 0.3f, 1.5f to 0.45f)
 
 /** The edge's swing per degree, its furthest swing, each layer's step inwards and the outer corner radius. */
 private const val EDGE_PX_PER_DEG = 1.5f
