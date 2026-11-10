@@ -45,7 +45,7 @@ class CrosshairKickTest {
             if (s.value > was) rising = true
             was = s.value
         }
-        assertEquals(10, peaks, 1f)
+        assertEquals(10f, peaks.toFloat(), 1f)
         assertTrue(s.step(t + 8, false, CrosshairKick.AUTO, 100))
         assertFalse(s.step(t + 400, false, CrosshairKick.AUTO, 100))
     }
