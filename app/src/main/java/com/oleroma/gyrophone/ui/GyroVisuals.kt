@@ -157,10 +157,12 @@ fun GyroDisplaysLayer(
                 if (k.step(t, firing, d.crosshairKick, CrosshairKick.periodMs(d.rpmOf(gun)), d.countsShots, gun.recoil, gun.pellets)) until = maxOf(until, t + 20)
                 // A gun lowered when idle comes up while aiming or firing.
                 val up = if (!d.laserRifle || !d.gunLowered) 1f
-                else if (firing || k.shotAt >= 0L || runtime.gyroFeed(b.control.id)?.aiming == true) 1f else 0f
+                else if (firing || runtime.gyroFeed(b.control.id)?.aiming == true) 1f else 0f
                 val was = raises[b.control.id] ?: up
                 if (was != up) {
-                    val step = if (dt <= 0f) 1f else dt / AIM_EASE_MS
+                    // Up quickly; down (straight from hip fire, as you let go) over Hip fire recovery, in step with it.
+                    val ms = if (up > was) AIM_EASE_MS else d.gunHipRecoverMs.coerceIn(0, 2000).toFloat()
+                    val step = if (dt <= 0f || ms <= 0f) 1f else dt / ms
                     raises[b.control.id] = if (up > was) minOf(up, was + step) else maxOf(up, was - step)
                     until = maxOf(until, t + 20)
                 } else raises[b.control.id] = up

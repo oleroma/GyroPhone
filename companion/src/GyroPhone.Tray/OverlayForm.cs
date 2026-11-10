@@ -605,11 +605,13 @@ internal sealed class OverlayForm : Form
                 }
             }
             // A gun lowered when idle comes up while aiming or firing.
-            float up = !lf.LaserRifle || !lf.GunLowered || _scene.Firing || _kick.ShotAt >= 0 || goal > 0f ? 1f : 0f;
+            float up = !lf.LaserRifle || !lf.GunLowered || _scene.Firing || goal > 0f ? 1f : 0f;
             float raised = 1f - _scene.Lower;
             if (raised != up)
             {
-                float step = dt <= 0f ? 1f : dt / AimEaseMs;
+                // Up quickly; down (straight from hip fire, as you let go) over Hip fire recovery, in step with it.
+                float lowerMs = up > raised ? AimEaseMs : Math.Clamp(lf.GunHipRecoverMs, 0, 2000);
+                float step = dt <= 0f || lowerMs <= 0f ? 1f : dt / lowerMs;
                 raised = up > raised ? Math.Min(up, raised + step) : Math.Max(up, raised - step);
                 _scene.Lower = 1f - raised;
                 laserFading = true;
