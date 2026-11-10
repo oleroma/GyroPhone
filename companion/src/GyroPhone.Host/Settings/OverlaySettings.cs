@@ -242,6 +242,16 @@ public sealed class OverlaySettings
     public float CrosshairThickness { get; set; } = 2f;
     public bool CrosshairDot { get; set; } = true;
     public bool CrosshairOutline { get; set; } = true;
+    /// <summary>
+    /// Crosshair: on each Fire display shot it kicks out by CrosshairKickScale of its size and bounces back (CrosshairKick):
+    /// CrosshairKick 0 off, 1 once per press, 2 auto rifle at CrosshairKickRpm shots a minute while held.
+    /// CrosshairKickLinesOnly: only the lines grow (length and gap); off, the whole crosshair grows evenly, thickness and dot
+    /// too. As the phone's GyroDisplay.crosshairKick*.
+    /// </summary>
+    public int CrosshairKick { get; set; } = 1;
+    public float CrosshairKickScale { get; set; } = 0.5f;
+    public int CrosshairKickRpm { get; set; } = 600;
+    public bool CrosshairKickLinesOnly { get; set; } = true;
     /// <summary>Laser pointer turned as a trackball: which way of it the laser faces (0 −Z into the screen, 1 +Z, 2 +X, 3 −X, 4 +Y, 5 −Y).</summary>
     public int LaserFaces { get; set; }
     public bool LaserAxes { get; set; } = true;

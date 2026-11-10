@@ -90,7 +90,11 @@ internal sealed class OverlaysPage : Page
     private readonly CheckBox[] _tbStop = new CheckBox[3];
     private readonly ButtonPick _firePick, _aimPick;
     private readonly SliderRow _fireBrush, _fireGlow, _aimSize, _aimBrush, _aimGlow;
-    private readonly StackPanel _fireOptions, _aimOptions;
+    private readonly StackPanel _fireOptions, _aimOptions, _kickOptions;
+    private readonly Seg<int> _kickMode;
+    private readonly Seg<bool> _kickLines;
+    private readonly SliderRow _kickScale, _kickRpm;
+    private readonly UIElement _kickTitle, _kickHint;
     private readonly CheckBox _laserFireOnly;
     private readonly CheckBox[] _tbEase = new CheckBox[3];
     private readonly StackPanel[] _tbEaseOptions = new StackPanel[3];
@@ -353,11 +357,28 @@ internal sealed class OverlaysPage : Page
 
         // Fire display and Aim display: the buttons, sent from the phone or pressed on the PC's controller with
         // "Use PC controller for gyro ratchet" on.
-        _firePick = new ButtonPick("Fire display", "While this button is sent from the phone (or pressed on the PC's controller with \"Use PC controller for gyro ratchet\" on) the rifle's muzzle flashes and Draw mode paints in the Fire colours. Click to pick another, or None.", k => Change(o => o.LaserFire = k));
+        _firePick = new ButtonPick("Fire display", "While this button is sent from the phone (or pressed on the PC's controller with \"Use PC controller for gyro ratchet\" on) the rifle's muzzle flashes, the crosshair kicks and Draw mode paints in the Fire colours. Click to pick another, or None.", k => Change(o => o.LaserFire = k));
         lb.Children.Add(_firePick.View);
         _fireOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
         _fireBrush = new SliderRow("Fire brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserFireBrush = (int)v));
         _fireGlow = new SliderRow("Fire glow", 0, 3, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserFireGlow = (float)v));
+        _kickTitle = Parts.Text("Crosshair kick");
+        _kickHint = Parts.Text("Each shot the crosshair jumps bigger and bounces back like a rifle's recoil. Once: one kick per press. Auto rifle: keeps kicking while the button is held.", "Hint");
+        _fireOptions.Children.Add(_kickTitle);
+        _fireOptions.Children.Add(_kickHint);
+        _kickMode = new Seg<int>(k => Change(o => o.CrosshairKick = k), false,
+            [.. GyroPhone.Host.CrosshairKick.Modes.Select((n, i) => (n, i))]);
+        _kickMode.View.Margin = new Thickness(0, 6, 0, 2);
+        _fireOptions.Children.Add(_kickMode.View);
+        _kickOptions = new StackPanel();
+        _kickScale = new SliderRow("Kick size", 0.05, 2, 0.05, v => $"{v * 100:0}%", v => Change(o => o.CrosshairKickScale = (float)v));
+        _kickRpm = new SliderRow("Fire rate", 120, 1200, 30, v => $"{v:0} a minute", v => Change(o => o.CrosshairKickRpm = (int)v));
+        _kickLines = new Seg<bool>(b => Change(o => o.CrosshairKickLinesOnly = b), false, ("Lines only", true), ("Evenly, thickness too", false));
+        _kickLines.View.Margin = new Thickness(0, 6, 0, 2);
+        _kickOptions.Children.Add(_kickScale.View);
+        _kickOptions.Children.Add(_kickRpm.View);
+        _kickOptions.Children.Add(_kickLines.View);
+        _fireOptions.Children.Add(_kickOptions);
         _fireOptions.Children.Add(_fireBrush.View);
         _fireOptions.Children.Add(_fireGlow.View);
         lb.Children.Add(_fireOptions);
@@ -760,8 +781,18 @@ internal sealed class OverlaysPage : Page
         _firePick.Set(o.LaserFire);
         _aimPick.Set(o.LaserAim);
         bool fires = o.LaserFire != GyroPhone.Host.LaserFire.None, aims = o.LaserAim != GyroPhone.Host.LaserFire.None;
-        Parts.Show(_fireOptions, fires && paints);
+        Parts.Show(_fireOptions, fires && (paints || ch));
+        Parts.Show(_kickTitle, ch);
+        Parts.Show(_kickHint, ch);
+        Parts.Show(_kickMode.View, ch);
+        _kickMode.Set(o.CrosshairKick);
+        Parts.Show(_kickOptions, ch && o.CrosshairKick != GyroPhone.Host.CrosshairKick.Off);
+        _kickScale.Set(o.CrosshairKickScale);
+        _kickRpm.Set(o.CrosshairKickRpm);
+        Parts.Show(_kickRpm.View, o.CrosshairKick == GyroPhone.Host.CrosshairKick.Auto);
+        _kickLines.Set(o.CrosshairKickLinesOnly);
         _fireBrush.Set(o.LaserFireBrush);
+        Parts.Show(_fireBrush.View, paints);
         _fireGlow.Set(o.LaserFireGlow);
         Parts.Show(_fireGlow.View, o.LaserDraw);
         Parts.Show(_aimOptions, aims);

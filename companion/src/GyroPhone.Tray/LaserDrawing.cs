@@ -30,7 +30,7 @@ internal static class LaserDrawing
     /// <paramref name="buf"/> (the window's) keeps the grid between pictures.
     /// </summary>
     public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held, int active = 0, bool firing = false, float[]? raw = null, float aim = 0f,
-        DrawBuffers? buf = null)
+        DrawBuffers? buf = null, float kick = 0f)
     {
         float r = Math.Min(area.Width, area.Height) / 2f * 0.95f;
         var c = new PointF(area.X + area.Width / 2f, area.Y + area.Height / 2f);
@@ -314,13 +314,17 @@ internal static class LaserDrawing
             const float rad = MathF.PI / 180f;
             // Aiming shrinks it to the Aim display's size.
             float ak = 1f + (Math.Clamp(s.LaserAimSize, 0.1f, 1f) - 1f) * aim;
-            var ch = LaserTrace.CrosshairOn(m, beam, s.CrosshairShape, s.CrosshairSize * rad * ak, s.CrosshairGap * rad * ak, s.CrosshairDot);
+            // Firing kicks it out (CrosshairKick): the lines alone, or evenly with their thickness and the dot.
+            float kk = 1f + Math.Clamp(s.CrosshairKickScale, 0f, 3f) * kick;
+            bool even = !s.CrosshairKickLinesOnly;
+            var ch = LaserTrace.CrosshairOn(m, beam, s.CrosshairShape, s.CrosshairSize * rad * ak * kk, s.CrosshairGap * rad * ak * kk, s.CrosshairDot,
+                s.CrosshairSize * rad * ak * (even ? kk : 1f));
             // The colour of the way the beam last moved (it keeps the last way's when the beam stops).
             var color = Color.FromArgb(unchecked((int)LaserTrace.DirectionColor(trace?.Moving ?? (0f, 0f, 0f), moveColors)));
             if (held) color = Fade(color, 0.35f);
             var o = Color.FromArgb(s.Color("crosshair_outline"));
             var outline = Color.FromArgb(Math.Min(o.A, color.A), o);
-            float w = Math.Clamp(s.CrosshairThickness, 0.5f, 8f) * px;
+            float w = Math.Clamp(s.CrosshairThickness, 0.5f, 8f) * px * (even ? Math.Max(kk, 0.2f) : 1f);
             PointF[] Pts((float X, float Y, float Z)[] l)
             {
                 var pts = new PointF[l.Length];
