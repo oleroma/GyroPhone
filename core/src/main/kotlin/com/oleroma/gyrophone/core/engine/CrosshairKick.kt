@@ -10,6 +10,8 @@ import kotlin.math.exp
  * (a sharp rise over [RISE_MS], then a damped spring that dips a little under its rest size and settles
  * by [LENGTH_MS]), so a frame only reads the table. [ONCE] kicks once per press; [AUTO] keeps kicking
  * every [periodMs] while the Fire display button is held, each shot rising from wherever the last one is.
+ * The rifle look kicks back along the same curve, and the muzzle flash ([MuzzleFlash]) times itself by
+ * the same shots ([State.shotAt]).
  */
 object CrosshairKick {
     const val OFF = 0
@@ -51,16 +53,26 @@ object CrosshairKick {
     /** Auto rifle's shots per minute to a shot's period in milliseconds. */
     fun periodMs(rpm: Int): Long = (60_000L / rpm.coerceIn(60, 1800))
 
-    /** One crosshair's kick: [step] it each frame with whether it fires; [value] is −0.2 .. 1 (0 rest). */
+    /** One crosshair's or rifle's kick: [step] it each frame with whether it fires; [value] is −0.2 .. 1 (0 rest). */
     class State {
-        private var shotAt = -1L
+        /** When the last shot was (ms), until its kick has settled ([LENGTH_MS]); −1 none. */
+        var shotAt = -1L
+            private set
         private var from = 0f
         private var held = false
         var value = 0f
             private set
 
-        /** At [t] ms, with [firing] held, in [mode] at [periodMs] per shot: the kick now; true while it still moves. */
-        fun step(t: Long, firing: Boolean, mode: Int, periodMs: Long): Boolean {
+        /**
+         * At [t] ms, with [firing] held, in [mode] at [periodMs] per shot: the kick now; true while it still moves.
+         * With [flash] the shots still count in [OFF] (once per press) for the muzzle flash, without kicking.
+         */
+        fun step(t: Long, firing: Boolean, mode: Int, periodMs: Long, flash: Boolean = false): Boolean {
+            if (mode == OFF && flash) {
+                val moving = step(t, firing, ONCE, periodMs)
+                value = 0f
+                return moving
+            }
             if (mode == OFF) {
                 held = firing
                 shotAt = -1L
