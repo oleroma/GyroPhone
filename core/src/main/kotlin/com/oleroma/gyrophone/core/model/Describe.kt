@@ -86,6 +86,7 @@ object Describe {
             " (the way you hold the phone now becomes the base for the gyro, the displays and the PC overlays)"
         OutputTarget.ClearDisplays -> "Clear displays (pointers on the pad and the PC lose their paint and trail)"
         OutputTarget.NoOutput -> "Nothing (blocks the layer below)"
+        is OutputTarget.Off -> "Nothing instead of the inherited " + shortTarget(t.of)
         is OutputTarget.GyroSens -> gyroSens(t)
     }
 
@@ -196,6 +197,7 @@ object Describe {
         OutputTarget.ClearDisplays -> "Clear displays"
 
         OutputTarget.NoOutput -> "Nothing"
+        is OutputTarget.Off -> "Nothing (" + shortTarget(t.of) + ")"
         is OutputTarget.GyroSens -> "Sens" + if (t.axis == MotionAxis.NONE) "" else " " + t.axis.label.lowercase()
     }
 

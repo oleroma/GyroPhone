@@ -28,7 +28,7 @@ object WorkspaceMappings {
             defaults = defaults,
             devicePresets = presets,
             workspaces = set.workspaces.map {
-                resolve(ToggleUpgrade.latches(WorkspaceDefaults.apply(it, d)), presets)
+                Inheritance.chipByChip(resolve(ToggleUpgrade.latches(WorkspaceDefaults.apply(it, d)), presets), defaults)
             },
         )
     }
@@ -52,7 +52,7 @@ object WorkspaceMappings {
             workspaces = set.workspaces.map { w ->
                 val i = at[w.id]
                 if (i != null && last.workspaces[i] == w) lastResolved.workspaces[i]
-                else resolve(ToggleUpgrade.latches(WorkspaceDefaults.apply(w, d)), presets)
+                else Inheritance.chipByChip(resolve(ToggleUpgrade.latches(WorkspaceDefaults.apply(w, d)), presets), lastResolved.defaults)
             },
         )
     }

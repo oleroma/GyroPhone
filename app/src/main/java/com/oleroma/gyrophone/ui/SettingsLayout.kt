@@ -147,11 +147,16 @@ internal fun Modifier.hiddenLayout(): Modifier = layout { measurable, constraint
 }
 
 /**
- * The search box of a settings page: a low rounded field in the cards' colours, ⌕ in front and
+ * The app's search box (settings pages, the mapping editor's library): a low rounded field in the cards' colours, ⌕ in front and
  * ✕ (clear) at the end while it holds text.
  */
 @Composable
-internal fun SettingsSearchField(query: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+internal fun SettingsSearchField(
+    query: String,
+    onChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    placeholder: String = "Search settings",
+) {
     val keyboard = LocalSoftwareKeyboardController.current
     Surface(
         modifier = modifier.fillMaxWidth().height(40.dp),
@@ -164,7 +169,7 @@ internal fun SettingsSearchField(query: String, onChange: (String) -> Unit, modi
             Spacer(Modifier.width(8.dp))
             Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                 if (query.isEmpty()) {
-                    Text("Search settings", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(placeholder, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 BasicTextField(
                     value = query,

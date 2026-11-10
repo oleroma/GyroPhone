@@ -1,5 +1,8 @@
 package com.oleroma.gyrophone.ui
 
+import android.content.res.Configuration
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.geometry.CornerRadius
@@ -130,6 +133,7 @@ import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.MouseButton
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.nothing
 import com.oleroma.gyrophone.core.model.PhysicalDevice
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchAreaKind
@@ -478,6 +482,12 @@ internal fun ControlMappingScreen(
     workspace: Workspace? = null,
     /** Changes the touch control (a preset's settings); null = presets bring mappings only. */
     onControlChange: (((TouchControl) -> TouchControl) -> Unit)? = null,
+    /** Its label, edited in the title ([LabelField]); null = the title is not editable. */
+    label: String? = null,
+    onLabel: ((String) -> Unit)? = null,
+    /** The touchpad: its label and presses show on the pad ([Workspace.touchpadLabelShown]); null = no such switch. */
+    labelShown: Boolean? = null,
+    onLabelShown: ((Boolean) -> Unit)? = null,
 ) {
     // The edited set seen as Base, so the Base-only Bindings helpers edit it.
     val view = remember(mappings, editSet) { Bindings.viewSet(mappings, editSet) }
@@ -496,12 +506,35 @@ internal fun ControlMappingScreen(
     /** What [input]'s chips call trigger [t] ("Quick swipe"...). */
     fun trigLabel(input: BindableInput, t: Trigger): String = Triggers.label(input.sources.first(), t)
 
-    /** What the level above maps [input] itself to (cleared ones left out), with their triggers. */
-    fun parentOfInput(input: BindableInput): List<Pair<Trigger, OutputTarget>> = trigInputs(input).flatMap { (t, ti) ->
-        Bindings.targets(parentView, ti).filter { it != OutputTarget.NoOutput }.map { t to it }
-    }.distinct()
     // Drag callbacks outlive a composition: everything they read goes through state.
     val currentMappings by rememberUpdatedState(view)
+
+    /**
+     * What the level above maps [input] itself to, with their triggers, that [over] (the edited
+     * mappings) still takes: chip by chip, unless it maps that chip itself, stops it
+     * ([OutputTarget.Off]) or clears the whole action ([OutputTarget.NoOutput]) ([Inheritance]).
+     */
+    fun parentOfInput(input: BindableInput, over: List<Mapping> = currentMappings): List<Pair<Trigger, OutputTarget>> {
+        if (OutputTarget.NoOutput in Bindings.targets(over, input)) return emptyList()
+        // A held control's gyro axis takes the whole axis over while held: none of the level above's then.
+        val g = input.sources.first() as? InputSource.Gyro
+        if (g != null && g.id.isNotEmpty() && trigInputs(input).any { (_, ti) -> Bindings.targets(over, ti).isNotEmpty() }) return emptyList()
+        return trigInputs(input).flatMap { (t, ti) ->
+            val own = Bindings.targets(over, ti)
+            Bindings.targets(parentView, ti).filter { x -> !x.nothing && x !in own && OutputTarget.Off(x) !in own }.map { t to it }
+        }.distinct()
+    }
+
+    /** [m] with each of [chips] (faded ones) stopped: an [OutputTarget.Off] of it on its input (Override). */
+    fun withOffs(m: List<Mapping>, chips: List<Pair<BindableInput, OutputTarget>>): List<Mapping> = chips.fold(m) { acc, (ti, x) ->
+        Bindings.setEntries(acc, ti, Bindings.entries(acc, ti) + Bindings.Entry(OutputTarget.Off(x), null))
+    }
+
+    /** [m] with faded chip [x] on [ti] made its own: the same output, with the level above's options (Replace). */
+    fun withCopy(m: List<Mapping>, ti: BindableInput, x: OutputTarget): List<Mapping> {
+        val e = Bindings.entries(parentView, ti).firstOrNull { it.target == x } ?: Bindings.Entry(x, null)
+        return Bindings.setEntries(m, ti, Bindings.entries(m, ti).filter { it.target != OutputTarget.Off(x) } + e)
+    }
     val allMappings by rememberUpdatedState(mappings)
     val currentSet by rememberUpdatedState(editSet)
     val currentControl by rememberUpdatedState(control)
@@ -642,6 +675,10 @@ internal fun ControlMappingScreen(
 
     /** What the level above maps line [line] to (cleared ones left out), with their triggers. */
     fun parentOf(line: BindableInput): List<Faded> = parentOfInput(line).map { (t, x) -> Faded(t, x) }
+
+    /** Every chip the level above maps on [card]'s lines that [over] still takes, by the input it fires on. */
+    fun fadedOf(card: BindableInput, over: List<Mapping> = currentMappings): List<Pair<BindableInput, OutputTarget>> =
+        groupOf(card).flatMap { line -> parentOfInput(line, over).map { (t, x) -> trig(line, t) to x } }
 
     /** Where [from] (a mapped input, any trigger) is on [card]'s row, or null when it is not on it. */
     fun whereOn(card: BindableInput, from: InputSource): Int? {
@@ -795,10 +832,12 @@ internal fun ControlMappingScreen(
     fun bulkInputs(): List<BindableInput> = inputs.filterNot(Bindings::isTriggerOf).flatMap(::lineInputs).distinctBy { it.sources }
 
     /** [input] maps nothing here, so it does not do what the level above maps it to (a clear on its Hold overrides it all). */
-    fun clear(input: BindableInput) = change(
-        Bindings.setTargets(cardInputs(input).fold(currentMappings) { m, ti -> Bindings.setTargets(m, ti, emptyList()) }, input, listOf(OutputTarget.NoOutput)),
-        "Cleared " + actionTitle(currentControl, input),
-    )
+    fun clear(input: BindableInput) {
+        // Its own chips go, and each of the level above's gets an Off (Override): it does nothing,
+        // and what the level above adds later still shows.
+        val bare = cardInputs(input).fold(currentMappings) { m, ti -> Bindings.setTargets(m, ti, emptyList()) }
+        change(withOffs(bare, fadedOf(input, bare)), "Cleared " + actionTitle(currentControl, input))
+    }
 
     /** [input] follows the level above again: its own mappings here go. */
     fun follow(input: BindableInput) = change(
@@ -895,27 +934,6 @@ internal fun ControlMappingScreen(
     fun inheritedCard(from: BindableInput): BindableInput? =
         shownNow.flatMap(::linesOf).firstOrNull { line -> trigInputs(line).any { (_, ti) -> ti.sources == from.sources } }
 
-    /**
-     * [m] with card [input] overriding the level above without its faded chip [t] on [tr] of
-     * [from] (that Where's input on that trigger): it maps the level above's other chips itself
-     * (their options kept), or is cleared when none is left.
-     */
-    fun withoutInherited(m: List<Mapping>, input: BindableInput, tr: Trigger, t: OutputTarget, from: BindableInput? = null): List<Mapping> {
-        val wheres = groupOf(input)
-        fun isFrom(wi: BindableInput, r: Trigger) = from == null || trig(wi, r).sources == from.sources
-        val rest = wheres.flatMap { wi -> parentOfInput(wi).filterNot { (r, x) -> r == tr && x == t && isFrom(wi, r) } }
-        // Nothing left: the action is cleared (on the Swipe card's Any line for the whole card).
-        val head = wheres.first()
-        if (rest.isEmpty()) return Bindings.setTargets(m, head, Bindings.targets(m, head).filter { it != OutputTarget.NoOutput } + OutputTarget.NoOutput)
-        // Each with its options; the same output with another How (Repeat ×2 and Held) is two.
-        return wheres.fold(m) { acc, wi ->
-            trigInputs(wi).fold(acc) { out, (r, ti) ->
-                val add = Bindings.entries(parentView, ti).filter { it.target != OutputTarget.NoOutput && !(r == tr && it.target == t && isFrom(wi, r)) }
-                if (add.isEmpty()) out else Bindings.setEntries(out, ti, Bindings.entries(out, ti) + add)
-            }
-        }
-    }
-
     /** Every action the level above maps follows it again. */
     fun followAll() {
         val overridden = bulkInputs().filter { Bindings.targets(parentView, it).isNotEmpty() && Bindings.targets(currentMappings, it).isNotEmpty() }
@@ -925,10 +943,11 @@ internal fun ControlMappingScreen(
         )
     }
 
-    /** Every action does nothing: cleared where the level above maps it, its own mappings gone. */
+    /** Every action does nothing: its own mappings gone, each of the level above's chips stopped (Off). */
     fun clearAll() = change(
         bulkInputs().fold(currentMappings) { m, input ->
-            Bindings.setTargets(m, input, if (Bindings.targets(parentView, input).isNotEmpty()) listOf(OutputTarget.NoOutput) else emptyList())
+            val bare = Bindings.setTargets(m, input, emptyList())
+            withOffs(bare, parentOfInput(input, bare).map { (t, x) -> trig(input, t) to x })
         },
         "Cleared every action",
     )
@@ -994,8 +1013,8 @@ internal fun ControlMappingScreen(
     }
 
     /** Line [line] of the Swipe card shows: it has chips or dividers, or the level above's faded chips. */
-    fun lineShown(line: BindableInput, owns: Boolean): Boolean =
-        rowOf(line).isNotEmpty() || (!owns && editSet == MappingSet.BASE && parentOf(line).isNotEmpty())
+    fun lineShown(line: BindableInput, @Suppress("UNUSED_PARAMETER") owns: Boolean): Boolean =
+        rowOf(line).isNotEmpty() || (editSet == MappingSet.BASE && parentOf(line).isNotEmpty())
 
     /**
      * The Swipe card's new line, shown under its lines while a target is dragged: the first direction
@@ -1109,6 +1128,9 @@ internal fun ControlMappingScreen(
 
     /** The chip whose settings are open, with its card. */
     var chipDialog by remember { mutableStateOf<Pair<BindableInput, RowItem.Chip>?>(null) }
+
+    /** A faded chip tapped or dragged out (the input it fires on, its output): Override or Replace? */
+    var fadedAsk by remember { mutableStateOf<Pair<BindableInput, OutputTarget>?>(null) }
 
     /**
      * When [input]'s triggers fire, for those it maps (Hold left out): "Tap: at lift before 400 ms ·
@@ -1267,26 +1289,20 @@ internal fun ControlMappingScreen(
                             if (twin < i) to--
                         }
                         row.add(to.coerceIn(0, row.size), RowItem.Chip(zone, d.target, tr, w, -1))
-                        // A faded chip moved: its card overrides the level above without it (with it, where it landed there).
-                        val over = from?.takeIf { d.inherited }?.let(::inheritedCard)
+                        // A faded chip dropped on a card is mapped there as its own (on its own card, that replaces it).
                         val placed = withRow(base, card, row, if (from != null || d.options != null) d.target to kept else null)
                         change(
-                            if (over != null && from != null) withoutInherited(placed, over, Triggers.of(from.sources.first()), d.target, from) else placed,
-                            (if (from == null) "Mapped " else "Moved ") + Describe.shortTarget(d.target) + " to " + actionTitle(currentControl, zi),
+                            Inheritance.tidy(placed),
+                            (if (from == null || d.inherited) "Mapped " else "Moved ") + Describe.shortTarget(d.target) + " to " + actionTitle(currentControl, zi),
                         )
                         if (fresh != null || onNewLine) chipDialog = card to RowItem.Chip(zone, d.target, tr, w,
                             Bindings.entries(placed, trig(zi, tr)).filter { it.target == d.target }.indexOfFirst { it.shape == shape }.coerceAtLeast(0))
                     }
                     done = true
                 } else if (from != null && libraryBounds.contains(dragPos)) {
-                    // Dropped back on the library it goes; anywhere else it stays.
-                    val card = if (d.inherited) inheritedCard(from) else null
-                    if (card != null) {
-                        change(
-                            withoutInherited(currentMappings, card, Triggers.of(from.sources.first()), d.target, from),
-                            "Removed " + Describe.shortTarget(d.target) + " from " + actionTitle(currentControl, card) + " (overrides " + parentName + ")",
-                        )
-                    } else remove(from, d.target, d.n)
+                    // Dropped back on the library it goes; anywhere else it stays. A faded chip asks
+                    // whether to stop it (Override) or make it its own (Replace).
+                    if (d.inherited) fadedAsk = from to d.target else remove(from, d.target, d.n)
                     done = true
                 }
             }
@@ -1497,7 +1513,7 @@ internal fun ControlMappingScreen(
                     fun swipeLine(i: Int, line: BindableInput): CardLine? {
                         val ls = line.sources.first()
                         val lrow = liveRow(line)
-                        val inh = if (owns || editSet != MappingSet.BASE) emptyList() else parentOf(line)
+                        val inh = if (editSet != MappingSet.BASE) emptyList() else parentOf(line)
                         val rs = rememberScrollState()
                         DisposableEffect(ls) {
                             onDispose {
@@ -1544,6 +1560,7 @@ internal fun ControlMappingScreen(
                                 selectedSrc = ls
                                 startDrag(Dragged.Target(f.target, trig(line, f.trigger), inherited = true), at)
                             },
+                            onInheritedClick = { f -> selectedSrc = ls; fadedAsk = trig(line, f.trigger) to f.target },
                             onClick = { selectedSrc = ls },
                         )
                     }
@@ -1558,10 +1575,10 @@ internal fun ControlMappingScreen(
                             else -> actionLabel(control, input)
                         },
                         row = row,
-                        inherited = if (owns || swipe) emptyList() else parent,
+                        inherited = if (swipe) emptyList() else parent,
                         parentName = parentName,
-                        onClear = if (parent.isNotEmpty() && !(own.isNotEmpty() && own.all { it == OutputTarget.NoOutput })) ({ clear(input) }) else null,
-                        onFollow = if (parent.isNotEmpty() && own.isNotEmpty()) ({ follow(input) }) else null,
+                        onClear = if (parent.isNotEmpty()) ({ clear(input) }) else null,
+                        onFollow = if (own.isNotEmpty() && editSet == MappingSet.BASE && cardLines.any { parentOfInput(it, emptyList()).isNotEmpty() }) ({ follow(input) }) else null,
                         // Each set shows only its own chips: other sets' would clutter it.
                         others = zoneInputs.map { emptyList() },
                         optionsOf = { chip -> chipOptions(view, input, chip) },
@@ -1609,6 +1626,10 @@ internal fun ControlMappingScreen(
                         onInheritedDrag = { f, at ->
                             selectedSrc = src
                             startDrag(Dragged.Target(f.target, trig(wheresOf(input).getOrNull(f.where) ?: input, f.trigger), inherited = true), at)
+                        },
+                        onInheritedClick = { f ->
+                            selectedSrc = src
+                            fadedAsk = trig(wheresOf(input).getOrNull(f.where) ?: input, f.trigger) to f.target
                         },
                         onHandleDrag = { at -> startCardDrag(input, at) },
                         onSavePreset = if (own.any { it != OutputTarget.NoOutput }) ({
@@ -1670,13 +1691,11 @@ internal fun ControlMappingScreen(
             if (b != libraryBounds) libraryBounds = b
         }) {
             Column(Modifier.fillMaxSize().background(colors.surfaceContainerLow).imePadding().padding(top = 8.dp)) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    singleLine = true,
-                    placeholder = { Text("Search, e.g. W, LT, wheel") },
-                    trailingIcon = { if (query.isNotEmpty()) TextButton(onClick = { query = "" }) { Text("✕") } },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                SettingsSearchField(
+                    query,
+                    { query = it },
+                    Modifier.padding(horizontal = 12.dp),
+                    placeholder = "Search, e.g. W, LT, wheel",
                 )
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
@@ -1811,121 +1830,158 @@ internal fun ControlMappingScreen(
             ) {
                 Column(Modifier.fillMaxSize()) {
                     val compact = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                    Row(
-                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                            .padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        Column(Modifier.widthIn(max = 180.dp).padding(end = 8.dp)) {
-                            Text(
-                                control.label.ifBlank { control.id },
-                                style = MaterialTheme.typography.titleLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                controlKindName(control) + " · mapping",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colors.onSurfaceVariant,
-                                maxLines = 1,
-                            )
-                        }
-                        if (onSetsChange != null) {
-                            SetChip("Base", MappingSet.BASE, editSet == MappingSet.BASE, { onEditSet(MappingSet.BASE) }, null)
-                            for (st in sets) {
-                                SetChip(st.label, st.id, editSet == st.id, { onEditSet(st.id) }, { setMenu = st })
-                            }
-                            if (sets.size < MappingSet.MAX) {
-                                TextButton(onClick = {
-                                    val id = (1..MappingSet.MAX).first { n -> sets.none { it.id == n } }
-                                    onSetsChange((sets + MappingSet(id)).sortedBy { it.id }, null)
-                                    onEditSet(id)
-                                }, contentPadding = compact) { Text("+ Layer") }
-                            }
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Box {
-                            TextButton(onClick = { sortMenu = true }, contentPadding = compact) { Text("Sort ▾") }
-                            DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("Default") },
-                                    onClick = { sortMenu = false; confirmDefault = true },
+                    val portrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
+                    // The bar has two rows. The title (the label field) leads the first row in portrait;
+                    // the layer chips always lead their row; the actions follow them.
+                    val titleBar: @Composable () -> Unit = {
+                            Column(Modifier.widthIn(max = 220.dp).padding(end = 8.dp)) {
+                                if (label != null && onLabel != null) {
+                                    // The title is the label: type, add emoji or pick a symbol (☺).
+                                    LabelField(label, if (control.isTouchpadStandIn) "Touchpad" else "Label", onLabel)
+                                } else Text(
+                                    control.label.ifBlank { control.id },
+                                    style = MaterialTheme.typography.titleLarge,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
-                                DropdownMenuItem(
-                                    text = { Text("Custom") },
-                                    enabled = custom.isNotEmpty() && custom != order,
-                                    onClick = { sortMenu = false; saveOrder(custom) },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Mapped first") },
-                                    onClick = {
-                                        sortMenu = false
-                                        // Every action of the control in the order shown, the ones mapped in any layer first.
-                                        val all = sorted(control, inputs, order)
-                                        val keys = all.map { orderKey(control, it) }.distinct()
-                                        val mapped = all.filter { input ->
-                                            val zones = (0 until zonesOf(input)).map { z -> if (z == 0) input else Bindings.zoneInput(input, z) }
-                                            zones.any { zi -> mappings.any { m -> zi.sources.any { it == m.source } } }
-                                        }.mapTo(HashSet()) { orderKey(control, it) }
-                                        saveOrder(keys.filter { it in mapped } + keys.filter { it !in mapped } + order.filter { it !in keys })
-                                    },
+                                Text(
+                                    controlKindName(control) + " · mapping",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.onSurfaceVariant,
+                                    maxLines = 1,
                                 )
                             }
-                        }
-                        val bulk = bulkInputs()
-                        if (bulk.any { Bindings.targets(parentView, it).isNotEmpty() && Bindings.targets(view, it).isNotEmpty() }) {
-                            var asking by remember { mutableStateOf(false) }
-                            TextButton(onClick = { asking = true }, contentPadding = compact) { Text("↺ Reset all") }
-                            if (asking) ConfirmResetAll(
-                                "Every action follows $parentName again; what it maps here goes.",
-                                { asking = false },
-                            ) { asking = false; followAll() }
-                        }
-                        if (bulk.any { (Bindings.targets(view, it).ifEmpty { Bindings.targets(parentView, it) }).any { t -> t != OutputTarget.NoOutput } }) {
-                            TextButton(onClick = { clearAll() }, contentPadding = compact) { Text("✕ Clear all") }
-                        }
-                        // The whole control as a button preset (its mappings in the edited layer, its settings).
-                        if (bulk.any { Bindings.targets(view, it).any { t -> t != OutputTarget.NoOutput } }) {
-                            TextButton(onClick = {
-                                askName("Save button preset", control.label.ifBlank { controlKindName(control) }) { name ->
-                                    val own = view.filter { m -> m.set == MappingSet.BASE && controlInputs.any { Bindings.belongs(m, it) } }
-                                    val touch = !physical && !control.isTouchpadStandIn
-                                    runtime.addToLibrary(
-                                        LibraryButton(
-                                            ButtonLibrary.newId(library.map { it.id }), control.copy(group = null),
-                                            mappings = if (touch) own else emptyList(), name = name,
-                                            chips = if (touch) emptyList() else buttonChips(view),
-                                        ),
+                            if (labelShown != null && onLabelShown != null) {
+                                FilterChip(
+                                    selected = labelShown,
+                                    onClick = { onLabelShown(!labelShown) },
+                                    label = { Text("Show on pad") },
+                                )
+                                Spacer(Modifier.width(8.dp))
+                            }
+                    }
+                    val layerChips: @Composable () -> Unit = {
+                            if (onSetsChange != null) {
+                                SetChip("Base", MappingSet.BASE, editSet == MappingSet.BASE, { onEditSet(MappingSet.BASE) }, null)
+                                for (st in sets) {
+                                    SetChip(st.label, st.id, editSet == st.id, { onEditSet(st.id) }, { setMenu = st })
+                                }
+                                if (sets.size < MappingSet.MAX) {
+                                    TextButton(onClick = {
+                                        val id = (1..MappingSet.MAX).first { n -> sets.none { it.id == n } }
+                                        onSetsChange((sets + MappingSet(id)).sortedBy { it.id }, null)
+                                        onEditSet(id)
+                                    }, contentPadding = compact) { Text("+ Layer") }
+                                }
+                                Spacer(Modifier.width(8.dp))
+                            }
+                    }
+                    val actionButtons: @Composable () -> Unit = {
+                            Box {
+                                TextButton(onClick = { sortMenu = true }, contentPadding = compact) { Text("Sort ▾") }
+                                DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text("Default") },
+                                        onClick = { sortMenu = false; confirmDefault = true },
                                     )
-                                    scope.launch {
-                                        snackbar.showSnackbar("Saved button preset " + name + if (touch) " (Presets, and the Add menu's library)" else " (Presets)")
+                                    DropdownMenuItem(
+                                        text = { Text("Custom") },
+                                        enabled = custom.isNotEmpty() && custom != order,
+                                        onClick = { sortMenu = false; saveOrder(custom) },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Mapped first") },
+                                        onClick = {
+                                            sortMenu = false
+                                            // Every action of the control in the order shown, the ones mapped in any layer first.
+                                            val all = sorted(control, inputs, order)
+                                            val keys = all.map { orderKey(control, it) }.distinct()
+                                            val mapped = all.filter { input ->
+                                                val zones = (0 until zonesOf(input)).map { z -> if (z == 0) input else Bindings.zoneInput(input, z) }
+                                                zones.any { zi -> mappings.any { m -> zi.sources.any { it == m.source } } }
+                                            }.mapTo(HashSet()) { orderKey(control, it) }
+                                            saveOrder(keys.filter { it in mapped } + keys.filter { it !in mapped } + order.filter { it !in keys })
+                                        },
+                                    )
+                                }
+                            }
+                            val bulk = bulkInputs()
+                            if (bulk.any { Bindings.targets(parentView, it).isNotEmpty() && Bindings.targets(view, it).isNotEmpty() }) {
+                                var asking by remember { mutableStateOf(false) }
+                                TextButton(onClick = { asking = true }, contentPadding = compact) { Text("↺ Reset all") }
+                                if (asking) ConfirmResetAll(
+                                    "Every action follows $parentName again; what it maps here goes.",
+                                    { asking = false },
+                                ) { asking = false; followAll() }
+                            }
+                            if (bulk.any { (Bindings.targets(view, it).ifEmpty { Bindings.targets(parentView, it) }).any { t -> t != OutputTarget.NoOutput } }) {
+                                TextButton(onClick = { clearAll() }, contentPadding = compact) { Text("✕ Clear all") }
+                            }
+                            // The whole control as a button preset (its mappings in the edited layer, its settings).
+                            if (bulk.any { Bindings.targets(view, it).any { t -> t != OutputTarget.NoOutput } }) {
+                                TextButton(onClick = {
+                                    askName("Save button preset", control.label.ifBlank { controlKindName(control) }) { name ->
+                                        val own = view.filter { m -> m.set == MappingSet.BASE && controlInputs.any { Bindings.belongs(m, it) } }
+                                        val touch = !physical && !control.isTouchpadStandIn
+                                        runtime.addToLibrary(
+                                            LibraryButton(
+                                                ButtonLibrary.newId(library.map { it.id }), control.copy(group = null),
+                                                mappings = if (touch) own else emptyList(), name = name,
+                                                chips = if (touch) emptyList() else buttonChips(view),
+                                            ),
+                                        )
+                                        scope.launch {
+                                            snackbar.showSnackbar("Saved button preset " + name + if (touch) " (Presets, and the Add menu's library)" else " (Presets)")
+                                        }
+                                    }
+                                }, contentPadding = compact) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("+")
+                                        PresetIcon(PresetLevel.BUTTON, colors.primary)
+                                        Text("Preset")
                                     }
                                 }
-                            }, contentPadding = compact) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text("+")
-                                    PresetIcon(PresetLevel.BUTTON, colors.primary)
-                                    Text("Preset")
-                                }
                             }
-                        }
-                        // One Settings: a touch control's own page (its look and the settings its actions
-                        // share), else the shared settings (the touchpad's: the workspace's).
-                        val shared = settings?.shared
-                        val ownSettings = onSettings != null && !control.isTouchpadStandIn && physicalInputs == null
-                        val openSettings: (() -> Unit)? = when {
-                            ownSettings -> onSettings
-                            shared != null -> ({ sharedOpen = true })
-                            else -> onSettings
-                        }
-                        if (openSettings != null) TextButton(onClick = openSettings, contentPadding = compact) { Text("⚙ Settings") }
-                        TextButton(
-                            onClick = { undoLast() },
-                            enabled = undo.isNotEmpty(),
-                            contentPadding = compact
-                        ) { Text("↶ Undo") }
-                        FilledTonalButton(onClick = onClose, contentPadding = compact) { Text("Done") }
+                            // One Settings: a touch control's own page (its look and the settings its actions
+                            // share), else the shared settings (the touchpad's: the workspace's).
+                            val shared = settings?.shared
+                            val ownSettings = onSettings != null && !control.isTouchpadStandIn && physicalInputs == null
+                            val openSettings: (() -> Unit)? = when {
+                                ownSettings -> onSettings
+                                shared != null -> ({ sharedOpen = true })
+                                else -> onSettings
+                            }
+                            if (openSettings != null) TextButton(onClick = openSettings, contentPadding = compact) { Text("⚙ Settings") }
+                            TextButton(
+                                onClick = { undoLast() },
+                                enabled = undo.isNotEmpty(),
+                                contentPadding = compact
+                            ) { Text("↶ Undo") }
+                    }
+                    val doneButton: @Composable () -> Unit = {
+                            FilledTonalButton(onClick = onClose, contentPadding = compact) { Text("Done") }
+                    }
+                    val barRow = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                        .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)
+                    // The bar sits on its own background, divided from the editor under it.
+                    Column(Modifier.fillMaxWidth().background(colors.surfaceContainer)) {
+                        if (portrait) {
+                            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) { titleBar() }
+                                doneButton()
+                            }
+                            Row(barRow, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                layerChips(); actionButtons()
+                            }
+                        } else {
+                            Row(barRow, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                layerChips(); titleBar()
+                            }
+                            Row(barRow, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                actionButtons(); doneButton()
+                            }
+                    }
+                    HorizontalDivider(color = colors.outlineVariant)
                     }
                     BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                         val landscape = maxWidth > maxHeight
@@ -2065,6 +2121,34 @@ internal fun ControlMappingScreen(
     }
     naming?.let { (title, initial, save) ->
         PresetNameDialog(title, initial, onSave = { n -> naming = null; save(n) }, onDismiss = { naming = null })
+    }
+    fadedAsk?.let { (ti, x) ->
+        AlertDialog(
+            onDismissRequest = { fadedAsk = null },
+            title = { Text(Describe.shortTarget(x) + " from " + parentName) },
+            text = {
+                Text(
+                    "Override: it does nothing here (a Nothing takes its place); " + parentName + "'s other chips still come.\n" +
+                        "Replace: it becomes a chip of its own, the same, to change as you like; if you change it, " +
+                        parentName + "'s comes back.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    fadedAsk = null
+                    change(withCopy(currentMappings, ti, x), "Replaced " + Describe.shortTarget(x) + " with its own")
+                }) { Text("Replace") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { fadedAsk = null }) { Text("Cancel") }
+                    TextButton(onClick = {
+                        fadedAsk = null
+                        change(withOffs(currentMappings, listOf(ti to x)), "Overrode " + Describe.shortTarget(x) + " (does nothing here)")
+                    }) { Text("Override") }
+                }
+            },
+        )
     }
     chipDialog?.let { (input, chip) ->
         val zi = chipInput(input, chip)
@@ -2322,8 +2406,10 @@ private fun ActionCard(
     onChipDrag: (RowItem.Chip, Offset) -> Unit,
     /** A tap on a chip opens its settings (when it fires, its options). */
     onChipClick: (RowItem.Chip) -> Unit,
-    /** A long press on a faded chip starts dragging it: onto the library it goes (the card then overrides the level above). */
+    /** A long press on a faded chip starts dragging it: onto a card it is mapped there; onto the library it asks (Override or Replace). */
     onInheritedDrag: (Faded, Offset) -> Unit,
+    /** A tap on a faded chip asks: Override (stop it here) or Replace (make it its own). */
+    onInheritedClick: (Faded) -> Unit,
     /** The ⠿ handle starts moving the card. */
     onHandleDrag: (Offset) -> Unit,
     modifier: Modifier = Modifier,
@@ -2477,7 +2563,7 @@ private fun ActionCard(
                         optionsOf = optionsOf, rangeOf = rangeOf, badge = badge, landingZone = landingZone, addZone = addZone,
                         rowScroll = rowScroll, onBounds = {}, onRowBounds = onRowBounds, onItemBounds = onItemBounds,
                         onDivider = onDivider, onDividerDrag = onDividerDrag, onChipDrag = onChipDrag, onChipClick = onChipClick,
-                        onInheritedDrag = onInheritedDrag, onClick = onClick,
+                        onInheritedDrag = onInheritedDrag, onInheritedClick = onInheritedClick, onClick = onClick,
                     ),
                     parentName, setOrder, setId, onOther, landingLabel,
                 )
@@ -2510,6 +2596,7 @@ private class CardLine(
     val onChipDrag: (RowItem.Chip, Offset) -> Unit,
     val onChipClick: (RowItem.Chip) -> Unit,
     val onInheritedDrag: (Faded, Offset) -> Unit,
+    val onInheritedClick: (Faded) -> Unit,
     val onClick: () -> Unit,
 )
 
@@ -2527,6 +2614,7 @@ private fun ChipRow(
     val chipDrag by rememberUpdatedState(line.onChipDrag)
     val chipClick by rememberUpdatedState(line.onChipClick)
     val inheritedDrag by rememberUpdatedState(line.onInheritedDrag)
+    val inheritedClick by rememberUpdatedState(line.onInheritedClick)
     val dividerDrag by rememberUpdatedState(line.onDividerDrag)
     // A framed row; a shadow at an end that has more to scroll to.
     val shade = colors.scrim.copy(alpha = 0.28f)
@@ -2595,6 +2683,7 @@ private fun ChipRow(
                     .dragSource("p" to f, coords) { inheritedDrag(f, it) }
                     .alpha(0.5f)
                     .clip(RoundedCornerShape(8.dp))
+                    .clickable { inheritedClick(f) }
                     .border(1.dp, colors.outline, RoundedCornerShape(8.dp))
                     .heightIn(min = 32.dp)
                     .padding(horizontal = 8.dp),
