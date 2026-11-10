@@ -639,15 +639,17 @@ class LaserTrace {
                 // It grows in about its middle.
                 val mid = (sc.front + sc.back) / 2f
                 fun zz(z: Float) = mid + (z - mid) * a
-                val base = sc.y - sc.radius
                 val rail = b.indices.step(6).maxOfOrNull { b[it + 1] + b[it + 4] } ?: 0f
+                // It sits on its mounts, clear of the gun's top.
+                val sy = maxOf(sc.y, rail + sc.radius + 0.012f)
+                val base = sy - sc.radius
                 for (mz in floatArrayOf(sc.front + 0.06f, sc.back - 0.08f)) {
                     val h = ((base - rail) / 2f).coerceAtLeast(0.004f) * a
                     box(0f, rail + h, zz(mz), 0.012f * a, h, 0.014f)
                 }
-                tube(sc.y, zz(sc.front + 0.04f), zz(sc.back - 0.03f), sc.radius * a)
-                tube(sc.y, zz(sc.front - 0.03f), zz(sc.front + 0.04f), sc.bell * a)
-                tube(sc.y, zz(sc.back - 0.03f), zz(sc.back), sc.radius * 1.25f * a)
+                tube(sy, zz(sc.front + 0.04f), zz(sc.back - 0.03f), sc.radius * a)
+                tube(sy, zz(sc.front - 0.03f), zz(sc.front + 0.04f), sc.bell * a)
+                tube(sy, zz(sc.back - 0.03f), zz(sc.back), sc.radius * 1.25f * a)
             }
             faces.sortBy { it.depth }
             return faces

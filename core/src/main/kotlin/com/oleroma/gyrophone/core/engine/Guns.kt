@@ -56,7 +56,7 @@ object Guns {
         ),
         muzzleZ = -0.56f, bore = 0.016f, flash = 0.16f,
         recoil = CrosshairKick.Recoil(riseMs = 14f, decayMs = 25f, swingMs = 90f, lengthMs = 150f, back = 0.06f, climbDeg = 5f),
-        rpm = 800, scope = Scope(0.13f, -0.12f, 0.16f, 0.026f, 0.036f), pivotZ = 0.45f,
+        rpm = 800, scope = Scope(0.13f, -0.12f, 0.16f, 0.042f, 0.058f), pivotZ = 0.45f,
     )
 
     val AR = Gun(
@@ -76,7 +76,7 @@ object Guns {
         ),
         muzzleZ = -0.93f, bore = 0.02f, flash = 0.22f,
         recoil = CrosshairKick.Recoil(riseMs = 24f, decayMs = 42f, swingMs = 150f, lengthMs = 280f, back = 0.12f, climbDeg = 10f),
-        rpm = 600, scope = Scope(0.17f, -0.12f, 0.3f, 0.032f, 0.045f),
+        rpm = 600, scope = Scope(0.17f, -0.12f, 0.3f, 0.051f, 0.072f),
     )
 
     val BATTLE_RIFLE = Gun(
@@ -95,7 +95,7 @@ object Guns {
         ),
         muzzleZ = -0.975f, bore = 0.024f, flash = 0.28f,
         recoil = CrosshairKick.Recoil(riseMs = 28f, decayMs = 55f, swingMs = 180f, lengthMs = 340f, back = 0.16f, climbDeg = 13f),
-        rpm = 450, scope = Scope(0.17f, -0.16f, 0.3f, 0.034f, 0.05f),
+        rpm = 450, scope = Scope(0.17f, -0.16f, 0.3f, 0.054f, 0.08f),
     )
 
     val LMG = Gun(
@@ -113,7 +113,7 @@ object Guns {
         ),
         muzzleZ = -0.94f, bore = 0.022f, flash = 0.28f,
         recoil = CrosshairKick.Recoil(riseMs = 22f, decayMs = 40f, swingMs = 140f, lengthMs = 260f, back = 0.1f, climbDeg = 8f),
-        rpm = 700, scope = Scope(0.17f, -0.2f, 0.18f, 0.032f, 0.045f),
+        rpm = 700, scope = Scope(0.17f, -0.2f, 0.18f, 0.051f, 0.072f),
     )
 
     val SHOTGUN = Gun(
@@ -129,7 +129,7 @@ object Guns {
         ),
         muzzleZ = -0.85f, bore = 0.034f, flash = 0.36f,
         recoil = CrosshairKick.Recoil(riseMs = 30f, decayMs = 80f, swingMs = 240f, lengthMs = 450f, back = 0.22f, climbDeg = 18f),
-        rpm = 80, scope = Scope(0.12f, -0.1f, 0.22f, 0.03f, 0.042f),
+        rpm = 80, scope = Scope(0.12f, -0.1f, 0.22f, 0.048f, 0.067f),
     )
 
     val SNIPER = Gun(
@@ -147,7 +147,7 @@ object Guns {
         ),
         muzzleZ = -0.975f, bore = 0.024f, flash = 0.38f,
         recoil = CrosshairKick.Recoil(riseMs = 34f, decayMs = 100f, swingMs = 300f, lengthMs = 600f, back = 0.26f, climbDeg = 14f),
-        rpm = 45, scope = Scope(0.16f, -0.26f, 0.32f, 0.04f, 0.065f),
+        rpm = 45, scope = Scope(0.16f, -0.26f, 0.32f, 0.064f, 0.104f),
     )
 
     /** Every gun, by its number. */

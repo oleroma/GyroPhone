@@ -44,7 +44,7 @@ public static class Guns
         ],
         MuzzleZ: -0.56f, Bore: 0.016f, Flash: 0.16f,
         Recoil: new CrosshairKick.Recoil(14f, 25f, 90f, 150f, 0.06f, 5f),
-        Rpm: 800, Scope: new Scope(0.13f, -0.12f, 0.16f, 0.026f, 0.036f), PivotZ: 0.45f);
+        Rpm: 800, Scope: new Scope(0.13f, -0.12f, 0.16f, 0.042f, 0.058f), PivotZ: 0.45f);
 
     public static readonly Gun AR = new(
         "ar", "Assault rifle",
@@ -63,7 +63,7 @@ public static class Guns
         ],
         MuzzleZ: -0.93f, Bore: 0.02f, Flash: 0.22f,
         Recoil: new CrosshairKick.Recoil(24f, 42f, 150f, 280f, 0.12f, 10f),
-        Rpm: 600, Scope: new Scope(0.17f, -0.12f, 0.3f, 0.032f, 0.045f), PivotZ: 0.6f);
+        Rpm: 600, Scope: new Scope(0.17f, -0.12f, 0.3f, 0.051f, 0.072f), PivotZ: 0.6f);
 
     public static readonly Gun BattleRifle = new(
         "battle", "Battle rifle",
@@ -81,7 +81,7 @@ public static class Guns
         ],
         MuzzleZ: -0.975f, Bore: 0.024f, Flash: 0.28f,
         Recoil: new CrosshairKick.Recoil(28f, 55f, 180f, 340f, 0.16f, 13f),
-        Rpm: 450, Scope: new Scope(0.17f, -0.16f, 0.3f, 0.034f, 0.05f), PivotZ: 0.6f);
+        Rpm: 450, Scope: new Scope(0.17f, -0.16f, 0.3f, 0.054f, 0.08f), PivotZ: 0.6f);
 
     public static readonly Gun LMG = new(
         "lmg", "LMG",
@@ -98,7 +98,7 @@ public static class Guns
         ],
         MuzzleZ: -0.94f, Bore: 0.022f, Flash: 0.28f,
         Recoil: new CrosshairKick.Recoil(22f, 40f, 140f, 260f, 0.1f, 8f),
-        Rpm: 700, Scope: new Scope(0.17f, -0.2f, 0.18f, 0.032f, 0.045f), PivotZ: 0.6f);
+        Rpm: 700, Scope: new Scope(0.17f, -0.2f, 0.18f, 0.051f, 0.072f), PivotZ: 0.6f);
 
     public static readonly Gun Shotgun = new(
         "shotgun", "Shotgun",
@@ -113,7 +113,7 @@ public static class Guns
         ],
         MuzzleZ: -0.85f, Bore: 0.034f, Flash: 0.36f,
         Recoil: new CrosshairKick.Recoil(30f, 80f, 240f, 450f, 0.22f, 18f),
-        Rpm: 80, Scope: new Scope(0.12f, -0.1f, 0.22f, 0.03f, 0.042f), PivotZ: 0.6f);
+        Rpm: 80, Scope: new Scope(0.12f, -0.1f, 0.22f, 0.048f, 0.067f), PivotZ: 0.6f);
 
     public static readonly Gun Sniper = new(
         "sniper", "Sniper",
@@ -130,7 +130,7 @@ public static class Guns
         ],
         MuzzleZ: -0.975f, Bore: 0.024f, Flash: 0.38f,
         Recoil: new CrosshairKick.Recoil(34f, 100f, 300f, 600f, 0.26f, 14f),
-        Rpm: 45, Scope: new Scope(0.16f, -0.26f, 0.32f, 0.04f, 0.065f), PivotZ: 0.6f);
+        Rpm: 45, Scope: new Scope(0.16f, -0.26f, 0.32f, 0.064f, 0.104f), PivotZ: 0.6f);
 
     /// <summary>Every gun, by its number.</summary>
     public static readonly Gun[] All = [Pistol, SMG, AR, BattleRifle, LMG, Shotgun, Sniper];

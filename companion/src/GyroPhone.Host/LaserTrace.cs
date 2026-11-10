@@ -615,16 +615,18 @@ public sealed class LaserTrace
             // It grows in about its middle.
             float mid = (sc.Front + sc.Back) / 2f;
             float Zz(float z) => mid + (z - mid) * ak;
-            float baseY = sc.Y - sc.Radius, rail = 0f;
+            float rail = 0f;
             for (int o = 0; o < b.Length; o += 6) rail = Math.Max(rail, b[o + 1] + b[o + 4]);
+            // It sits on its mounts, clear of the gun's top.
+            float sy = Math.Max(sc.Y, rail + sc.Radius + 0.012f), baseY = sy - sc.Radius;
             foreach (float mz in new[] { sc.Front + 0.06f, sc.Back - 0.08f })
             {
                 float h = Math.Max((baseY - rail) / 2f, 0.004f) * ak;
                 Box(0f, rail + h, Zz(mz), 0.012f * ak, h, 0.014f);
             }
-            Tube(sc.Y, Zz(sc.Front + 0.04f), Zz(sc.Back - 0.03f), sc.Radius * ak);
-            Tube(sc.Y, Zz(sc.Front - 0.03f), Zz(sc.Front + 0.04f), sc.Bell * ak);
-            Tube(sc.Y, Zz(sc.Back - 0.03f), Zz(sc.Back), sc.Radius * 1.25f * ak);
+            Tube(sy, Zz(sc.Front + 0.04f), Zz(sc.Back - 0.03f), sc.Radius * ak);
+            Tube(sy, Zz(sc.Front - 0.03f), Zz(sc.Front + 0.04f), sc.Bell * ak);
+            Tube(sy, Zz(sc.Back - 0.03f), Zz(sc.Back), sc.Radius * 1.25f * ak);
         }
         shown.Sort((x, y) => x.Depth.CompareTo(y.Depth));
         return shown;
