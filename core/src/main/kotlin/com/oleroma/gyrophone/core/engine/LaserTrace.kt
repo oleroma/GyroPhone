@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.core.engine
 
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
@@ -375,37 +376,43 @@ class LaserTrace {
         /** Perspective: how much bigger a picture point at depth [z] (toward the viewer +, sphere radii) shows. */
         fun perspective(z: Float): Float = CAMERA_DISTANCE / (CAMERA_DISTANCE - z.coerceAtMost(CAMERA_DISTANCE - 0.5f))
 
-        /** The rifle's muzzle tip in its own frame (x right, y up, z toward the stock). */
+        /** The assault rifle's muzzle tip in its own frame (x right, y up, z toward the stock). */
         val MUZZLE = floatArrayOf(0f, 0f, -0.93f)
 
-        /** Aiming ([rifle]'s aim 1) the rifle is shouldered: pulled back toward the player this far. */
+        /** Aiming ([rifle]'s aim 1) the gun is shouldered: pulled back toward the player this far. */
         const val AIM_PULL = 0.12f
 
-        /** Firing, the rifle kicks ([rifle]'s kick 1): back toward the player this far ... */
-        const val KICK_BACK = 0.12f
-
-        /** ... and its muzzle up this many degrees, about [KICK_PIVOT_Z] (the shoulder, where the stock meets it). */
-        const val KICK_RISE_DEG = 10f
-        const val KICK_PIVOT_Z = 0.6f
+        /** With Lowered when idle ([rifle]'s lower 1) the gun rests pitched this many degrees down. */
+        const val LOWER_DEG = 15f
 
         /**
-         * A point (x, y, z) of the rifle's own frame at aim [aim] (0 .. 1) and kick [kick] (0 rest .. 1 full,
-         * a little under 0 as it springs back), into [out] at [at]: shouldered by [AIM_PULL], kicked back by
-         * [KICK_BACK] and its muzzle up by [KICK_RISE_DEG]. [dir]: a direction (a face's normal), turned only.
+         * A point (x, y, z) of [gun]'s own frame at aim [aim] (0 .. 1), kick [kick] (0 rest .. 1 full, a little under
+         * 0 as it springs back) and lowered by [lower] (0 .. 1), into [out] at [at]: shouldered by [AIM_PULL], kicked
+         * back by its recoil's back and its muzzle up by its climb, and pitched down by [LOWER_DEG], both about its
+         * pivot (the shoulder, or the wrist for a pistol). [dir]: a direction (a face's normal), turned only.
          */
-        fun rifleAt(x: Float, y: Float, z: Float, aim: Float, kick: Float, out: FloatArray, at: Int = 0, dir: Boolean = false) {
-            val a = Math.toRadians((KICK_RISE_DEG * kick).toDouble())
+        fun rifleAt(
+            x: Float, y: Float, z: Float, aim: Float, kick: Float, out: FloatArray, at: Int = 0, dir: Boolean = false,
+            gun: Guns.Gun = Guns.AR, lower: Float = 0f,
+        ) {
+            val r = gun.recoil
+            val a = Math.toRadians((r.climbDeg * kick - LOWER_DEG * lower.coerceIn(0f, 1f)).toDouble())
             val c = cos(a).toFloat()
             val s = sin(a).toFloat()
-            val pz = if (dir) 0f else KICK_PIVOT_Z
+            val pz = if (dir) 0f else gun.pivotZ
             val dz = z - pz
             out[at] = x
             out[at + 1] = y * c - dz * s
-            out[at + 2] = pz + y * s + dz * c + (if (dir) 0f else AIM_PULL * aim.coerceIn(0f, 1f) + KICK_BACK * kick)
+            out[at + 2] = pz + y * s + dz * c + (if (dir) 0f else AIM_PULL * aim.coerceIn(0f, 1f) + r.back * kick)
         }
 
-        /** The rifle's muzzle tip at aim [aim] (0 .. 1) and kick [kick], in its own frame, into [out]. */
-        fun muzzle(aim: Float, out: FloatArray, kick: Float = 0f) = rifleAt(MUZZLE[0], MUZZLE[1], MUZZLE[2], aim, kick, out)
+        /** [gun]'s muzzle tip at aim [aim] (0 .. 1), kick [kick] and lowered by [lower], in its own frame, into [out]. */
+        fun muzzle(aim: Float, out: FloatArray, kick: Float = 0f, gun: Guns.Gun = Guns.AR, lower: Float = 0f) =
+            rifleAt(0f, 0f, gun.muzzleZ, aim, kick, out, gun = gun, lower = lower)
+
+        /** [gun]'s direction [dx], [dy], [dz] of its own frame at kick [kick] and lowered by [lower], into [out]. */
+        fun gunDir(dx: Float, dy: Float, dz: Float, out: FloatArray, kick: Float = 0f, gun: Guns.Gun = Guns.AR, lower: Float = 0f) =
+            rifleAt(dx, dy, dz, 0f, kick, out, dir = true, gun = gun, lower = lower)
 
         /** How far round from straight ahead (into the screen) shown-frame direction z is: 0 ahead .. 1 straight behind. */
         fun behind(z: Float): Float = ((1f + z) / 2f).coerceIn(0f, 1f)
@@ -544,92 +551,103 @@ class LaserTrace {
         const val GRID_DEG = 15
         private const val GRID_STEPS = 96
 
-        /**
-         * The rifle look's model in the phone's frame (x right, y up, z toward the player), the muzzle
-         * out of the phone's back as the beam: boxes as centre x, y, z and half sizes, unit radius.
-         */
-        private val RIFLE = floatArrayOf(
-            // stock, buffer tube, receiver, carry rail, handguard, barrel, muzzle, front sight, magazine, grip
-            0.0f, -0.05f, 0.68f, 0.05f, 0.09f, 0.2f,
-            0.0f, 0.0f, 0.42f, 0.03f, 0.03f, 0.08f,
-            0.0f, 0.0f, 0.12f, 0.055f, 0.075f, 0.22f,
-            0.0f, 0.1f, 0.1f, 0.028f, 0.025f, 0.18f,
-            0.0f, 0.0f, -0.32f, 0.055f, 0.055f, 0.2f,
-            0.0f, 0.0f, -0.7f, 0.018f, 0.018f, 0.18f,
-            0.0f, 0.0f, -0.9f, 0.026f, 0.026f, 0.03f,
-            0.0f, 0.07f, -0.5f, 0.012f, 0.06f, 0.015f,
-            0.0f, -0.2f, 0.0f, 0.035f, 0.12f, 0.06f,
-            0.0f, -0.17f, 0.28f, 0.03f, 0.09f, 0.045f,
-        )
+        /** A round scope's sides: this many. */
+        private const val SCOPE_SIDES = 12
 
-        /** The scope that grows onto the rifle's carry rail while aiming: tube, objective bell, eyepiece, two mounts. */
-        private val SCOPE = floatArrayOf(
-            0.0f, 0.17f, 0.08f, 0.032f, 0.032f, 0.2f,
-            0.0f, 0.17f, -0.14f, 0.045f, 0.045f, 0.035f,
-            0.0f, 0.17f, 0.3f, 0.04f, 0.04f, 0.03f,
-            0.0f, 0.132f, 0.0f, 0.014f, 0.01f, 0.014f,
-            0.0f, 0.132f, 0.16f, 0.014f, 0.01f, 0.014f,
-        )
-
-        /** One face of the rifle in the picture: its corners (x, y pairs, unit radius) and how lit it is (0..1). */
+        /** One face of the gun in the picture: its corners (x, y pairs, unit radius, any number) and how lit it is (0..1). */
         class Face(val xy: FloatArray, val light: Float, val depth: Float)
 
         /**
-         * The rifle turned by pose [m], seen as [view] sees it ([axon], [turned]): the faces toward the
-         * viewer, farthest first, lit from above left. Aiming ([aim] 0 .. 1, eased) it is shouldered
-         * ([AIM_PULL]) and a scope grows onto it; firing it kicks ([kick], [rifleAt]).
+         * [gun] turned by pose [m], seen as [view] sees it ([axon], [turned]): the faces toward the viewer, farthest
+         * first, lit from above left. Aiming ([aim] 0 .. 1, eased) it is shouldered ([AIM_PULL]) and, with [scope], its
+         * round scope grows onto it; firing it kicks ([kick], [rifleAt]); [lower] pitches it down ([LOWER_DEG]).
          */
-        fun rifle(m: FloatArray, axon: Boolean, turned: FloatArray?, persp: Boolean = false, aim: Float = 0f, kick: Float = 0f): List<Face> {
-            val faces = ArrayList<Face>(32)
-            val p = FloatArray(24)
-            val n = FloatArray(3)
+        fun rifle(
+            m: FloatArray, axon: Boolean, turned: FloatArray?, persp: Boolean = false, aim: Float = 0f, kick: Float = 0f,
+            gun: Guns.Gun = Guns.AR, lower: Float = 0f, scope: Boolean = true,
+        ): List<Face> {
+            val faces = ArrayList<Face>(64)
             val q = FloatArray(3)
+            val v = FloatArray(3)
             val lx = -0.35f
             val ly = 0.6f
             val lz = 0.72f
             val a = aim.coerceIn(0f, 1f)
-            val boxes = RIFLE.size / 6 + (if (a > 0.02f) SCOPE.size / 6 else 0)
-            for (b in 0 until boxes) {
-                val scope = b >= RIFLE.size / 6
-                val src = if (scope) SCOPE else RIFLE
-                val o = (if (scope) b - RIFLE.size / 6 else b) * 6
-                val g = if (scope) a else 1f // the scope grows in
-                for (k in 0 until 8) {
-                    rifleAt(
-                        src[o] + (if (k and 1 != 0) src[o + 3] * g else -src[o + 3] * g),
-                        src[o + 1] + (if (k and 2 != 0) src[o + 4] * g else -src[o + 4] * g),
-                        src[o + 2] + (if (k and 4 != 0) src[o + 5] * g else -src[o + 5] * g),
-                        a, kick, q,
-                    )
-                    val x = q[0]; val y = q[1]; val z = q[2]
-                    view(m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z, p, k * 3, axon, turned)
-                    if (persp) {
-                        val f = perspective(p[k * 3 + 2])
-                        p[k * 3] *= f
-                        p[k * 3 + 1] *= f
-                    }
+            // One face: its corners in the gun's own frame (x, y, z each), and its normal.
+            fun face(c: FloatArray, nx: Float, ny: Float, nz: Float) {
+                rifleAt(nx, ny, nz, a, kick, q, dir = true, gun = gun, lower = lower)
+                view(m[0] * q[0] + m[1] * q[1] + m[2] * q[2], m[3] * q[0] + m[4] * q[1] + m[5] * q[2], m[6] * q[0] + m[7] * q[1] + m[8] * q[2], v, 0, axon, turned)
+                if (v[2] <= 1e-4f) return
+                val light = (0.45f + 0.55f * (v[0] * lx + v[1] * ly + v[2] * lz).coerceAtLeast(0f)).coerceIn(0f, 1f)
+                val n = c.size / 3
+                val xy = FloatArray(n * 2)
+                var depth = 0f
+                for (i in 0 until n) {
+                    rifleAt(c[i * 3], c[i * 3 + 1], c[i * 3 + 2], a, kick, q, gun = gun, lower = lower)
+                    view(m[0] * q[0] + m[1] * q[1] + m[2] * q[2], m[3] * q[0] + m[4] * q[1] + m[5] * q[2], m[6] * q[0] + m[7] * q[1] + m[8] * q[2], v, 0, axon, turned)
+                    val f = if (persp) perspective(v[2]) else 1f
+                    xy[i * 2] = v[0] * f
+                    xy[i * 2 + 1] = v[1] * f
+                    depth += v[2]
                 }
+                faces.add(Face(xy, light, depth / n))
+            }
+            fun box(cx: Float, cy: Float, cz: Float, hx: Float, hy: Float, hz: Float) {
                 for (f in 0 until 6) {
                     val axis = f / 2
                     val sign = if (f % 2 == 0) -1f else 1f
-                    rifleAt(if (axis == 0) sign else 0f, if (axis == 1) sign else 0f, if (axis == 2) sign else 0f, a, kick, q, dir = true)
-                    val nx = q[0]; val ny = q[1]; val nz = q[2]
-                    view(m[0] * nx + m[1] * ny + m[2] * nz, m[3] * nx + m[4] * ny + m[5] * nz, m[6] * nx + m[7] * ny + m[8] * nz, n, 0, axon, turned)
-                    if (n[2] <= 1e-4f) continue
-                    val bit = 1 shl axis
-                    val on = if (sign > 0) bit else 0
                     // The face's corners, in order round it.
-                    val others = (0..2).filter { it != axis }.map { 1 shl it }
-                    val ring = intArrayOf(0, others[0], others[0] or others[1], others[1]).map { it or on }
-                    val xy = FloatArray(8)
-                    var depth = 0f
-                    for ((i, k) in ring.withIndex()) {
-                        xy[i * 2] = p[k * 3]; xy[i * 2 + 1] = p[k * 3 + 1]
-                        depth += p[k * 3 + 2]
+                    val o1 = (axis + 1) % 3
+                    val o2 = (axis + 2) % 3
+                    val c = FloatArray(12)
+                    val us = floatArrayOf(-1f, 1f, 1f, -1f)
+                    val ws = floatArrayOf(-1f, -1f, 1f, 1f)
+                    val h = floatArrayOf(hx, hy, hz)
+                    val ctr = floatArrayOf(cx, cy, cz)
+                    for (k in 0 until 4) {
+                        for (d in 0..2) c[k * 3 + d] = ctr[d]
+                        c[k * 3 + axis] += sign * h[axis]
+                        c[k * 3 + o1] += us[k] * h[o1]
+                        c[k * 3 + o2] += ws[k] * h[o2]
                     }
-                    val light = (0.45f + 0.55f * (n[0] * lx + n[1] * ly + n[2] * lz).coerceAtLeast(0f)).coerceIn(0f, 1f)
-                    faces.add(Face(xy, light, depth / 4f))
+                    face(c, if (axis == 0) sign else 0f, if (axis == 1) sign else 0f, if (axis == 2) sign else 0f)
                 }
+            }
+            // A round tube along z at height y, from z0 (front) to z1, radius r: its sides and both ends.
+            fun tube(y: Float, z0: Float, z1: Float, r: Float) {
+                val k = SCOPE_SIDES
+                for (i in 0 until k) {
+                    val t0 = 2f * PI.toFloat() * i / k
+                    val t1 = 2f * PI.toFloat() * (i + 1) / k
+                    val tm = (t0 + t1) / 2f
+                    face(
+                        floatArrayOf(
+                            r * cos(t0), y + r * sin(t0), z0, r * cos(t1), y + r * sin(t1), z0,
+                            r * cos(t1), y + r * sin(t1), z1, r * cos(t0), y + r * sin(t0), z1,
+                        ),
+                        cos(tm), sin(tm), 0f,
+                    )
+                }
+                for ((z, nz) in arrayOf(z0 to -1f, z1 to 1f)) {
+                    face(FloatArray(k * 3) { j -> val t = 2f * PI.toFloat() * (j / 3) / k; when (j % 3) { 0 -> r * cos(t); 1 -> y + r * sin(t); else -> z } }, 0f, 0f, nz)
+                }
+            }
+            val b = gun.boxes
+            for (o in b.indices step 6) box(b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5])
+            val sc = gun.scope
+            if (scope && sc != null && a > 0.02f) {
+                // It grows in about its middle.
+                val mid = (sc.front + sc.back) / 2f
+                fun zz(z: Float) = mid + (z - mid) * a
+                val base = sc.y - sc.radius
+                val rail = b.indices.step(6).maxOfOrNull { b[it + 1] + b[it + 4] } ?: 0f
+                for (mz in floatArrayOf(sc.front + 0.06f, sc.back - 0.08f)) {
+                    val h = ((base - rail) / 2f).coerceAtLeast(0.004f) * a
+                    box(0f, rail + h, zz(mz), 0.012f * a, h, 0.014f)
+                }
+                tube(sc.y, zz(sc.front + 0.04f), zz(sc.back - 0.03f), sc.radius * a)
+                tube(sc.y, zz(sc.front - 0.03f), zz(sc.front + 0.04f), sc.bell * a)
+                tube(sc.y, zz(sc.back - 0.03f), zz(sc.back), sc.radius * 1.25f * a)
             }
             faces.sortBy { it.depth }
             return faces

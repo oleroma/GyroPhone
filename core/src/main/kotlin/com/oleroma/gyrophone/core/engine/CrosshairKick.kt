@@ -23,39 +23,62 @@ object CrosshairKick {
 
     const val RISE_MS = 24f
     const val LENGTH_MS = 280f
-    private const val DECAY_MS = 42f
-    private const val SWING_MS = 150f
     private const val STEPS = 128
 
-    /** The bounce after the rise, from 1 just at [RISE_MS] to 0 at [LENGTH_MS], one entry per ([LENGTH_MS] − [RISE_MS]) / [STEPS]. */
-    val CURVE: FloatArray = FloatArray(STEPS + 1) { i ->
-        val s = i * (LENGTH_MS - RISE_MS) / STEPS
-        // Fades out over the last fifth so it ends at exactly 0.
-        val tail = ((LENGTH_MS - RISE_MS - s) / (LENGTH_MS * 0.2f)).coerceIn(0f, 1f)
-        exp(-s / DECAY_MS) * cos(2f * PI.toFloat() * s / SWING_MS) * tail
-    }.also { it[STEPS] = 0f }
+    /**
+     * One gun's recoil ([Guns.Gun.recoil]): a sharp rise over [riseMs], then a damped spring (dying away over
+     * [decayMs], swinging every [swingMs]) settling by [lengthMs], baked into [curve] once. The gun look kicks
+     * [back] toward the player and its muzzle up [climbDeg] at full kick; the crosshair kicks by [strength].
+     */
+    class Recoil(
+        val riseMs: Float, val decayMs: Float, val swingMs: Float, val lengthMs: Float,
+        val back: Float, val climbDeg: Float,
+    ) {
+        /** The bounce after the rise, from 1 just at [riseMs] to 0 at [lengthMs], one entry per ([lengthMs] − [riseMs]) / [STEPS]. */
+        val curve: FloatArray = FloatArray(STEPS + 1) { i ->
+            val s = i * (lengthMs - riseMs) / STEPS
+            // Fades out over the last fifth so it ends at exactly 0.
+            val tail = ((lengthMs - riseMs - s) / (lengthMs * 0.2f)).coerceIn(0f, 1f)
+            exp(-s / decayMs) * cos(2f * PI.toFloat() * s / swingMs) * tail
+        }.also { it[STEPS] = 0f }
 
-    /** The baked curve at [ms] after a shot that rose from [from] (0 rest .. 1 full kick). */
-    fun at(ms: Float, from: Float): Float {
-        if (ms < 0f || ms >= LENGTH_MS) return 0f
-        if (ms < RISE_MS) {
-            // Eases out of the shot: fast at first, like the kick.
-            val u = ms / RISE_MS
-            val e = 1f - (1f - u) * (1f - u)
-            return from + (1f - from) * e
+        /** How hard it kicks next to the assault rifle (1). */
+        val strength: Float get() = back / 0.12f
+
+        /** The baked curve at [ms] after a shot that rose from [from] (0 rest .. 1 full kick). */
+        fun at(ms: Float, from: Float): Float {
+            if (ms < 0f || ms >= lengthMs) return 0f
+            if (ms < riseMs) {
+                // Eases out of the shot: fast at first, like the kick.
+                val u = ms / riseMs
+                val e = 1f - (1f - u) * (1f - u)
+                return from + (1f - from) * e
+            }
+            val x = (ms - riseMs) / (lengthMs - riseMs) * STEPS
+            val i = x.toInt().coerceAtMost(STEPS - 1)
+            val f = x - i
+            return curve[i] + (curve[i + 1] - curve[i]) * f
         }
-        val x = (ms - RISE_MS) / (LENGTH_MS - RISE_MS) * STEPS
-        val i = x.toInt().coerceAtMost(STEPS - 1)
-        val f = x - i
-        return CURVE[i] + (CURVE[i + 1] - CURVE[i]) * f
     }
 
+    /** The assault rifle's recoil, the crosshair's before guns. */
+    val DEFAULT = Recoil(RISE_MS, 42f, 150f, LENGTH_MS, back = 0.12f, climbDeg = 10f)
+
+    /** [DEFAULT]'s baked curve. */
+    val CURVE: FloatArray get() = DEFAULT.curve
+
+    /** [DEFAULT] at [ms] after a shot that rose from [from] (0 rest .. 1 full kick). */
+    fun at(ms: Float, from: Float): Float = DEFAULT.at(ms, from)
+
     /** Auto rifle's shots per minute to a shot's period in milliseconds. */
-    fun periodMs(rpm: Int): Long = (60_000L / rpm.coerceIn(60, 1800))
+    fun periodMs(rpm: Int): Long = (60_000L / rpm.coerceIn(RPM_MIN, 1800))
+
+    /** The slowest fire rate, shots a minute (a sniper's bolt). */
+    const val RPM_MIN = 30
 
     /** One crosshair's or rifle's kick: [step] it each frame with whether it fires; [value] is −0.2 .. 1 (0 rest). */
     class State {
-        /** When the last shot was (ms), until its kick has settled ([LENGTH_MS]); −1 none. */
+        /** When the last shot was (ms), until its kick and flash are over; −1 none. */
         var shotAt = -1L
             private set
         private var from = 0f
@@ -67,9 +90,9 @@ object CrosshairKick {
          * At [t] ms, with [firing] held, in [mode] at [periodMs] per shot: the kick now; true while it still moves.
          * With [flash] the shots still count in [OFF] (once per press) for the muzzle flash, without kicking.
          */
-        fun step(t: Long, firing: Boolean, mode: Int, periodMs: Long, flash: Boolean = false): Boolean {
+        fun step(t: Long, firing: Boolean, mode: Int, periodMs: Long, flash: Boolean = false, recoil: Recoil = DEFAULT): Boolean {
             if (mode == OFF && flash) {
-                val moving = step(t, firing, ONCE, periodMs)
+                val moving = step(t, firing, ONCE, periodMs, recoil = recoil)
                 value = 0f
                 return moving
             }
@@ -79,7 +102,7 @@ object CrosshairKick {
                 value = 0f
                 return false
             }
-            val now = if (shotAt < 0L) 0f else at((t - shotAt).toFloat(), from)
+            val now = if (shotAt < 0L) 0f else recoil.at((t - shotAt).toFloat(), from)
             if (firing && !held) shoot(t, now)
             else if (firing && mode == AUTO && t - shotAt >= periodMs) {
                 // Keeps the beat; a long stall (a dropped frame or two) starts it again from now.
@@ -87,8 +110,9 @@ object CrosshairKick {
                 shoot(if (t - at < periodMs) at else t, now)
             }
             held = firing
-            if (shotAt >= 0L && t - shotAt >= LENGTH_MS) shotAt = -1L
-            value = if (shotAt < 0L) 0f else at((t - shotAt).toFloat(), from)
+            // Kept until both the kick and its muzzle flash are over.
+            if (shotAt >= 0L && t - shotAt >= maxOf(recoil.lengthMs, MuzzleFlash.LENGTH_MS)) shotAt = -1L
+            value = if (shotAt < 0L) 0f else recoil.at((t - shotAt).toFloat(), from)
             return shotAt >= 0L || (firing && mode == AUTO)
         }
 

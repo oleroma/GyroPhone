@@ -38,6 +38,7 @@ import com.oleroma.gyrophone.core.engine.LaserPaint
 import com.oleroma.gyrophone.core.engine.CrosshairKick
 import com.oleroma.gyrophone.core.engine.LaserTrace
 import com.oleroma.gyrophone.core.engine.MuzzleFlash
+import com.oleroma.gyrophone.core.engine.Guns
 import com.oleroma.gyrophone.core.engine.RestDetector
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.model.BallShape
@@ -82,6 +83,8 @@ fun GyroDisplaysLayer(
     val aims = remember { HashMap<String, Float>() }
     // Each crosshair's fire kick (CrosshairKick), stepped once a frame.
     val kicks = remember { HashMap<String, CrosshairKick.State>() }
+    // Each gun's raise now, eased (0 lowered .. 1 up): with Lowered when idle it comes up while aiming or firing.
+    val raises = remember { HashMap<String, Float>() }
     // The pose each display showed when it last moved visibly ([VISIBLE_TURN]).
     val seen = remember { HashMap<String, FloatArray>() }
     // Redraws only while some display's data changes (and a moment after, so ghost trails catch up):
@@ -147,7 +150,17 @@ fun GyroDisplaysLayer(
                 if (d.kind != GyroDisplayKind.LASER || !(d.laserCrosshair || d.laserRifle)) continue
                 val k = kicks.getOrPut(b.control.id) { CrosshairKick.State() }
                 val firing = runtime.gyroFeed(b.control.id)?.firing == true
-                if (k.step(t, firing, d.crosshairKick, CrosshairKick.periodMs(d.crosshairKickRpm), d.muzzleFlash)) until = maxOf(until, t + 20)
+                val gun = d.gun()
+                if (k.step(t, firing, d.crosshairKick, CrosshairKick.periodMs(d.rpmOf(gun)), d.muzzleFlash, gun.recoil)) until = maxOf(until, t + 20)
+                // A gun lowered when idle comes up while aiming or firing.
+                val up = if (!d.laserRifle || !d.gunLowered) 1f
+                else if (firing || k.shotAt >= 0L || runtime.gyroFeed(b.control.id)?.aiming == true) 1f else 0f
+                val was = raises[b.control.id] ?: up
+                if (was != up) {
+                    val step = if (dt <= 0f) 1f else dt / AIM_EASE_MS
+                    raises[b.control.id] = if (up > was) minOf(up, was + step) else maxOf(up, was - step)
+                    until = maxOf(until, t + 20)
+                } else raises[b.control.id] = up
             }
             if (t <= until) frame = t
         }
@@ -163,6 +176,7 @@ fun GyroDisplaysLayer(
             st.aim = aims[b.control.id] ?: 0f
             st.kick = kicks[b.control.id]?.value ?: 0f
             st.shotAt = kicks[b.control.id]?.shotAt ?: -1L
+            st.lower = 1f - (raises[b.control.id] ?: 1f)
             st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
             if (editing) {
                 val sel = b.control.id in selected
@@ -231,6 +245,9 @@ private class VisState {
     var aim = 0f
     /** The crosshair's fire kick now ([CrosshairKick.State.value]). */
     var kick = 0f
+
+    /** How far the gun is lowered now (0 up .. 1 lowered when idle). */
+    var lower = 0f
 
     /** When the last Fire display shot was ([CrosshairKick.State.shotAt]), for its muzzle flash; −1 none. */
     var shotAt = -1L
@@ -420,7 +437,7 @@ private class VisState {
         // Aiming shrinks it to the Aim display's size.
         val k = 1f + (d.laserAimSize.coerceIn(0.1f, 1f) - 1f) * aim
         // Firing kicks it out ([CrosshairKick]): the lines alone, or evenly with their thickness and the dot.
-        val kk = 1f + d.crosshairKickScale.coerceIn(0f, 3f) * kick
+        val kk = 1f + d.kickOf().coerceIn(0f, 3f) * d.gun().recoil.strength * kick
         val even = !d.crosshairKickLinesOnly
         val ch = LaserTrace.crosshair(
             m, beam, d.crosshairShape, d.crosshairSize * rad * k * kk, d.crosshairGap * rad * k * kk, d.crosshairDot,
@@ -465,52 +482,72 @@ private class VisState {
     }
 
     /**
-     * The rifle's muzzle flash, [ms] after a shot ([MuzzleFlash]): a star at its muzzle tip ([LaserTrace.MUZZLE]),
-     * longest along the barrel, white, then [hot], then [end] as it shrinks and fades, a new shape each shot.
+     * The gun's muzzle blast, [ms] after a shot ([MuzzleFlash]): a flame plume out along the barrel and four short
+     * jets slanting out round it, as wide as [gun]'s muzzle ([Guns.Gun.bore]) and as long as its calibre
+     * ([Guns.Gun.flash]), white, then [hot], then [end] as they shrink and fade, with a white-hot core; each shot
+     * its own lengths and turn.
      */
-    private fun DrawScope.muzzleFlash(c: Offset, r: Float, ms: Float, hot: Color, end: Color) {
+    private fun DrawScope.muzzleFlash(c: Offset, r: Float, ms: Float, hot: Color, end: Color, gun: Guns.Gun, kickK: Float) {
         val g = MuzzleFlash.glow(ms)
         if (g <= 0f) return
         val fire = Color(MuzzleFlash.color(ms, hot.toArgb(), end.toArgb(), end.copy(alpha = 0f).toArgb()))
-        val mz = muzzleAt.also { LaserTrace.muzzle(aim, it, kick) }
-        fun at(k: Float): Offset {
-            val x = mz[0]; val y = mz[1]; val z = mz[2] - k
-            return laserAt(c, r, m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z)
-        }
-        val tip = at(0f)
-        val ahead = at(0.1f)
-        val fx = ahead.x - tip.x
-        val fy = ahead.y - tip.y
-        val fl = kotlin.math.sqrt(fx * fx + fy * fy).coerceAtLeast(1e-3f)
-        // A new shape each shot, bursting out and shrinking back.
+        val mz = muzzleAt.also { LaserTrace.muzzle(aim, it, kick * kickK, gun, lower) }
+        val dir = FloatArray(3)
+        fun at(x: Float, y: Float, z: Float): Offset =
+            laserAt(c, r, m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z)
+        val tip = at(mz[0], mz[1], mz[2])
         val step = shotAt
         fun rnd(i: Int): Float = (((step * 7919L + i * 104729L) xor (step shr 3)) % 1000L).let { kotlin.math.abs(it) / 1000f }
-        val size = r * (0.07f + 0.04f * rnd(0)) * (0.5f + 0.7f * kotlin.math.sqrt(g))
-        val turn = rnd(1) * 6.2832f
-        crossPath.reset()
-        val spikes = 8
-        for (j in 0 until spikes * 2) {
-            val a = turn + j * Math.PI.toFloat() / spikes
-            val ca = kotlin.math.cos(a)
-            val sa = kotlin.math.sin(a)
-            // Along the barrel the star stretches out (up to 2.2×).
-            val along = kotlin.math.abs(ca * fx / fl + sa * fy / fl)
-            val len = if (j % 2 == 0) size * (0.6f + 0.6f * rnd(j + 2)) * (1f + 1.2f * along * along) else size * 0.28f
-            val p = Offset(tip.x + ca * len, tip.y + sa * len)
-            if (j == 0) crossPath.moveTo(p.x, p.y) else crossPath.lineTo(p.x, p.y)
+        // Bursts out at once, then shrinks back as it cools.
+        val grow = 0.55f + 0.45f * kotlin.math.sqrt(g)
+        val width = gun.bore * 2.4f * r * grow
+        // One flame from the muzzle along gun direction (dx, dy, dz), [len] long, [w] wide at its widest.
+        fun flame(dx: Float, dy: Float, dz: Float, len: Float, w: Float, color: Color) {
+            LaserTrace.gunDir(dx, dy, dz, dir, kick * kickK, gun, lower)
+            val e = at(mz[0] + dir[0] * len, mz[1] + dir[1] * len, mz[2] + dir[2] * len)
+            val fx = e.x - tip.x
+            val fy = e.y - tip.y
+            val fl = kotlin.math.sqrt(fx * fx + fy * fy)
+            if (fl < w * 0.5f) {
+                // Seen end on: a round burst.
+                drawCircle(color, w * 0.7f, tip)
+                return
+            }
+            val px = -fy / fl * w / 2f
+            val py = fx / fl * w / 2f
+            crossPath.reset()
+            crossPath.moveTo(tip.x + px * 0.6f, tip.y + py * 0.6f)
+            crossPath.lineTo(tip.x + fx * 0.35f + px * 1.3f, tip.y + fy * 0.35f + py * 1.3f)
+            crossPath.lineTo(e.x, e.y)
+            crossPath.lineTo(tip.x + fx * 0.35f - px * 1.3f, tip.y + fy * 0.35f - py * 1.3f)
+            crossPath.lineTo(tip.x - px * 0.6f, tip.y - py * 0.6f)
+            crossPath.close()
+            drawPath(crossPath, color)
         }
-        crossPath.close()
-        drawCircle(fire.copy(alpha = fire.alpha * 0.3f * g), size * 1.8f, tip)
-        drawPath(crossPath, fire)
-        drawCircle(Color.White.copy(alpha = fire.alpha * g), size * 0.3f, tip)
+        drawCircle(fire.copy(alpha = fire.alpha * 0.3f * g), width * 2.2f, tip)
+        val len = gun.flash * grow * (0.8f + 0.4f * rnd(0))
+        val turn = rnd(1) * 1.5708f
+        val slant = 0.9f // about 52° off the barrel
+        val core = Color.White.copy(alpha = fire.alpha * g)
+        for (k in 0 until 4) {
+            val a = turn + k * 1.5708f
+            val sl = len * (0.3f + 0.2f * rnd(k + 2))
+            val dx = kotlin.math.cos(a) * kotlin.math.sin(slant)
+            val dy = kotlin.math.sin(a) * kotlin.math.sin(slant)
+            val dz = -kotlin.math.cos(slant)
+            flame(dx, dy, dz, sl, width * 0.6f, fire)
+        }
+        flame(0f, 0f, -1f, len, width, fire)
+        flame(0f, 0f, -1f, len * 0.45f, width * 0.5f, core)
+        drawCircle(core, width * 0.45f, tip)
     }
 
     /**
      * The rifle's laser sight while aiming ([aim] eases it in): a thin line in [color] from its muzzle
      * along the barrel to where it lands on the sphere, and a dot there with a soft halo.
      */
-    private fun DrawScope.laserSight(c: Offset, r: Float, color: Color) {
-        val mz = muzzleAt.also { LaserTrace.muzzle(aim, it, kick) }
+    private fun DrawScope.laserSight(c: Offset, r: Float, color: Color, gun: Guns.Gun, kickK: Float) {
+        val mz = muzzleAt.also { LaserTrace.muzzle(aim, it, kick * kickK, gun, lower) }
         val x = mz[0]; val y = mz[1]; val z = mz[2]
         val tip = laserAt(c, r, m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z, m[6] * x + m[7] * y + m[8] * z)
         val hit = laserAt(c, r, beam[0], beam[1], beam[2])
@@ -843,13 +880,16 @@ private class VisState {
             }
         }
         if (rifle) {
-            // The rifle look: no sphere or beam; the paint still lands where it aims.
+            // The gun look: no sphere or beam; the paint still lands where it aims.
             axes(false)
             paint(false)
             val body = col(GyroDisplayColor.LASER_RIFLE)
-            for (f in LaserTrace.rifle(m, laserAxon, laserTurned, laserPersp, aim, kick)) {
+            val gun = d.gun()
+            // Kick size scales the gun's own recoil (50% is the gun as it is).
+            val kickK = d.kickOf().coerceIn(0f, 3f) * 2f
+            for (f in LaserTrace.rifle(m, laserAxon, laserTurned, laserPersp, aim, kick * kickK, gun, lower, d.gunScope)) {
                 path.reset()
-                for (i in 0 until 4) {
+                for (i in 0 until f.xy.size / 2) {
                     val x = c.x + f.xy[i * 2] * r
                     val y = c.y - f.xy[i * 2 + 1] * r
                     if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
@@ -859,9 +899,9 @@ private class VisState {
                 drawPath(path, Color(body.red * k, body.green * k, body.blue * k, body.alpha))
                 drawPath(path, Color(body.red * 0.5f, body.green * 0.5f, body.blue * 0.5f, body.alpha), style = Stroke(density * 0.75f, join = StrokeJoin.Round))
             }
-            if (aim > 0f) laserSight(c, r, col(GyroDisplayColor.LASER_AIM))
+            if (aim > 0f) laserSight(c, r, col(GyroDisplayColor.LASER_AIM), gun, kickK)
             val fm = flashMs(d)
-            if (fm >= 0f) muzzleFlash(c, r, fm, col(GyroDisplayColor.LASER_FLASH), col(GyroDisplayColor.LASER_FLASH_END))
+            if (fm >= 0f) muzzleFlash(c, r, fm, col(GyroDisplayColor.LASER_FLASH), col(GyroDisplayColor.LASER_FLASH_END), gun, kickK)
             paint(true)
             axes(true)
             return

@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.oleroma.gyrophone.core.engine.GyroPose
 import com.oleroma.gyrophone.core.engine.LaserFire
+import com.oleroma.gyrophone.core.engine.Guns
 import com.oleroma.gyrophone.core.engine.CrosshairKick
 import com.oleroma.gyrophone.core.engine.LaserTrace
 import com.oleroma.gyrophone.core.model.BallShape
@@ -240,8 +241,13 @@ internal fun GyroDisplaySettingsScreen(
                     GroupTitle("Pointer")
                     Hint("A see-through sphere seen from above and to the side. The pointer at its centre aims along the phone's roll axis (out of its top edge, into the screen at rest) onto the inside; the tick at the dot shows which way the phone's screen faces. The beam dims while a ratchet is held.")
                     val look = if (d.laserRifle) 1 else if (d.laserCrosshair) 2 else 0
-                    Chips(listOf("Sphere" to 0, "Rifle" to 1, "Crosshair" to 2), look) { set(d.copy(laserRifle = it == 1, laserCrosshair = it == 2)) }
-                    if (d.laserRifle) Hint("A rifle aims instead: no sphere or beam, and Draw mode still paints where it points. Best with Axonometric view (face-on you look along the barrel).")
+                    Chips(listOf("Sphere" to 0, "Gun" to 1, "Crosshair" to 2), look) { set(d.copy(laserRifle = it == 1, laserCrosshair = it == 2)) }
+                    if (d.laserRifle) Indented {
+                        Hint("A gun aims instead: no sphere or beam, and Draw mode still paints where it points. Best with Axonometric view (face-on you look along the barrel). Each gun has its own model, recoil, fire rate and muzzle flash.")
+                        Chips(Guns.ALL.mapIndexed { i, g -> g.name to i }, d.laserGun) { set(d.copy(laserGun = it)) }
+                        SwitchRow("Lowered when idle", d.gunLowered, "It rests pitched down and comes up straight while you aim or fire.") { set(d.copy(gunLowered = it)) }
+                        if (d.gun().scope != null) SwitchRow("Scope while aiming", d.gunScope, "Aiming, a round scope grows onto it.") { set(d.copy(gunScope = it)) }
+                    }
                     if (look == 2) Indented {
                         Hint("A crosshair instead: no sphere or beam, just a crosshair lying on the sphere where the pointer lands, facing its centre, so it squashes toward the edge. It turns about the beam as the Trackball's Roll row maps it (Lock keeps it upright, Invert turns it the other way). Draw mode still paints where it points.")
                         Chips(LaserTrace.CROSSHAIRS.mapIndexed { i, n -> n to i }, d.crosshairShape) { set(d.copy(crosshairShape = it)) }
@@ -261,23 +267,28 @@ internal fun GyroDisplaySettingsScreen(
                     if (!d.laserRifle) SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
                     SwitchRow("Axes (pitch X red, yaw Y green, roll Z blue)", d.laserAxes, "They turn with the pointer, R along its beam.") { set(d.copy(laserAxes = it)) }
                     val paints = d.laserDraw || d.laserSnake
-                    ButtonPicker("Fire display", d.laserFire, "While GyroPhone sends this button the rifle and crosshair kick and flash with each shot, and Draw mode paints in the Fire colours. Tap to pick another, or None.") { set(d.copy(laserFire = it)) }
+                    ButtonPicker("Fire display", d.laserFire, "While GyroPhone sends this button the gun and crosshair kick and flash with each shot, and Draw mode paints in the Fire colours. Tap to pick another, or None.") { set(d.copy(laserFire = it)) }
                     if (d.laserFire != LaserFire.NONE && (paints || look != 0)) Indented {
                         if (look != 0) {
                             Text("Kick", style = MaterialTheme.typography.bodyMedium)
-                            Hint(if (look == 2) "Each shot the crosshair jumps bigger and bounces back like a rifle's recoil. Once: one kick per press. Auto rifle: keeps kicking while the button is held." else "Each shot the rifle kicks back toward you, its muzzle jumping up, and springs back. Once: one kick per press. Auto rifle: keeps kicking while the button is held.")
+                            Hint(if (look == 2) "Each shot the crosshair jumps bigger and bounces back with the recoil of the gun picked here. Once: one kick per press. Auto rifle: keeps kicking while the button is held. Each gun keeps its own kick size and fire rate." else "Each shot the gun kicks back toward you, its muzzle jumping up, and springs back with its own recoil. Once: one kick per press. Auto rifle: keeps kicking while the button is held. Each gun keeps its own kick size and fire rate.")
+                            if (look == 2) {
+                                Text("Recoil like", style = MaterialTheme.typography.bodySmall)
+                                Chips(Guns.ALL.mapIndexed { i, g -> g.name to i }, d.laserGun) { set(d.copy(laserGun = it)) }
+                            }
                             Chips(CrosshairKick.MODES.mapIndexed { i, n -> n to i }, d.crosshairKick) { set(d.copy(crosshairKick = it)) }
                             if (d.crosshairKick != CrosshairKick.OFF) {
-                                PercentSlider("Kick size", d.crosshairKickScale, 0.05f..2f) { set(d.copy(crosshairKickScale = it)) }
-                                if (d.crosshairKick == CrosshairKick.AUTO) IntSlider("Fire rate %d a minute", d.crosshairKickRpm, 120..1200, 30) { set(d.copy(crosshairKickRpm = it)) }
+                                val gun = d.gun()
+                                PercentSlider("Kick size (${gun.name})", d.kickOf(gun), 0.05f..2f) { set(d.copy(gunKick = d.gunKick + (gun.key to it))) }
+                                if (d.crosshairKick == CrosshairKick.AUTO) IntSlider("Fire rate %d a minute (${gun.name})", d.rpmOf(gun), CrosshairKick.RPM_MIN..1200, 5) { set(d.copy(gunRpm = d.gunRpm + (gun.key to it))) }
                                 if (look == 2) Chips(listOf("Lines only" to 1, "Evenly, thickness too" to 0), if (d.crosshairKickLinesOnly) 1 else 0) { set(d.copy(crosshairKickLinesOnly = it == 1)) }
                             }
-                            SwitchRow("Muzzle flash", d.muzzleFlash, if (look == 2) "Each shot the crosshair flashes in time with its kick: a burst of white light cooling to the Flash colour (yellow), then Flash end (orange), and back to its own colour." else "Each shot a burst of light at the muzzle in time with the kick: white, cooling to the Flash colour (yellow), then Flash end (orange).") { set(d.copy(muzzleFlash = it)) }
+                            SwitchRow("Muzzle flash", d.muzzleFlash, if (look == 2) "Each shot the crosshair flashes in time with its kick: a burst of white light cooling to the Flash colour (yellow), then Flash end (orange), and back to its own colour." else "Each shot a blast of flame from the muzzle in time with the kick, as wide as the gun's muzzle and as long as its calibre (pistol shortest, shotgun and sniper longest): white, cooling to the Flash colour (yellow), then Flash end (orange).") { set(d.copy(muzzleFlash = it)) }
                         }
                         if (paints) IntSlider("Fire brush %d°", d.laserFireBrush, 1..20) { set(d.copy(laserFireBrush = it)) }
                         if (d.laserDraw) PercentSlider("Fire glow", d.laserFireGlow, 0f..3f) { set(d.copy(laserFireGlow = it)) }
                     }
-                    ButtonPicker("Aim display", d.laserAim, "While GyroPhone sends this button the crosshair shrinks and turns laser red (its Crosshair aiming colour), the rifle is shouldered with a scope and a laser sight, and Draw mode paints in the Aim colours. Firing wins over aiming. Tap to pick another, or None.") { set(d.copy(laserAim = it)) }
+                    ButtonPicker("Aim display", d.laserAim, "While GyroPhone sends this button the crosshair shrinks and turns laser red (its Crosshair aiming colour), the gun is shouldered with a scope and a laser sight, and Draw mode paints in the Aim colours. Firing wins over aiming. Tap to pick another, or None.") { set(d.copy(laserAim = it)) }
                     if (d.laserAim != LaserFire.NONE) Indented {
                         if (look == 2) PercentSlider("Crosshair while aiming", d.laserAimSize, 0.2f..1f) { set(d.copy(laserAimSize = it)) }
                         if (paints) IntSlider("Aim brush %d°", d.laserAimBrush, 1..20) { set(d.copy(laserAimBrush = it)) }
