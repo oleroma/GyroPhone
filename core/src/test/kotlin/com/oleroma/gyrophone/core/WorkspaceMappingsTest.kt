@@ -28,7 +28,7 @@ class WorkspaceMappingsTest {
     private fun touch(id: String, t: OutputTarget, set: Int = 0) = Mapping(InputSource.Touch(id), t, set)
     private fun key(code: Int, t: OutputTarget) = Mapping(InputSource.Key(code), t)
     private fun button(id: String, label: String = id) = TouchControl(id, TouchKind.BUTTON, label, 0.5f, 0.5f)
-    private fun Workspace.controls() = mappings.filterNot { it.source.isTouchpad }
+    private fun Workspace.controls() = mappings.filterNot { it.source.isTouchpad || it.target is OutputTarget.Off }
 
     private val ws1 = Workspace(
         "ws1", "Main", listOf(button("btn1", "Jump"), button("btn2", "Fire")),

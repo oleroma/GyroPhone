@@ -310,7 +310,7 @@ object BuiltinProfiles {
         }
     }
 
-    /** A full keyboard (K380 layout) under a touchpad strip; no gyro, no pads. */
+    /** A full keyboard (compact keyboard layout) under a touchpad strip; no gyro, no pads. */
     val keyboardWorkspace = Workspace(
         id = "keyboard",
         name = "Keyboard",
