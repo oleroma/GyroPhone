@@ -4,9 +4,9 @@ import com.oleroma.gyrophone.core.engine.CrosshairKick
 import com.oleroma.gyrophone.core.engine.Guns
 import com.oleroma.gyrophone.core.engine.LaserTrace
 import kotlin.math.acos
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
+import org.junit.Test
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 
 /** Simulate spread, Bloom, Draw each shot and guns scaled to fit, as the PC's SpreadTests. */
 class SpreadTest {
@@ -20,7 +20,7 @@ class SpreadTest {
         for (i in 0 until 50) {
             k.step(i * 100L, true, CrosshairKick.ONCE, 100, pellets = 8)
             k.step(i * 100L + 50, false, CrosshairKick.ONCE, 100, pellets = 8)
-            assertEquals(8, k.pellets)
+            assertEquals(8L, k.pellets.toLong())
             for (p in 0 until k.pellets) {
                 LaserTrace.shotPoint(identity, beam, k.offsets[p * 2] * spread, k.offsets[p * 2 + 1] * spread, hit)
                 val off = acos((hit[0] * beam[0] + hit[1] * beam[1] + hit[2] * beam[2]).coerceIn(-1f, 1f))
@@ -68,7 +68,7 @@ class SpreadTest {
         val out = FloatArray(3)
         for (g in Guns.ALL) {
             LaserTrace.muzzle(0f, out, gun = g)
-            assertTrue(out[2] > -1.1f && out[2] < -0.3f, g.name)
+            assertTrue(g.name, out[2] > -1.1f && out[2] < -0.3f)
         }
     }
 }
