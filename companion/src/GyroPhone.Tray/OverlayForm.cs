@@ -605,20 +605,24 @@ internal sealed class OverlayForm : Form
                 }
             }
             // A gun lowered when idle comes up while aiming or firing.
-            float up = !lf.LaserRifle || !lf.GunLowered || _scene.Firing || _kick.ShotAt >= 0 || goal > 0f ? 1f : 0f;
+            float up = !lf.LaserRifle || !lf.GunLowered || _scene.Firing || goal > 0f ? 1f : 0f;
             float raised = 1f - _scene.Lower;
             if (raised != up)
             {
-                float step = dt <= 0f ? 1f : dt / AimEaseMs;
+                // Up quickly; down (straight from hip fire, as you let go) over Hip fire recovery, in step with it.
+                float lowerMs = up > raised ? AimEaseMs : Math.Clamp(lf.GunHipRecoverMs, 0, 2000);
+                float step = dt <= 0f || lowerMs <= 0f ? 1f : dt / lowerMs;
                 raised = up > raised ? Math.Min(up, raised + step) : Math.Max(up, raised - step);
                 _scene.Lower = 1f - raised;
                 laserFading = true;
             }
-            // Hip fire: firing (or a shot's kick lasting) without aiming.
-            float hipGoal = lf.LaserRifle && (_scene.Firing || _kick.ShotAt >= 0) && goal == 0f ? 1f : 0f;
+            // Hip fire: firing without aiming; letting go starts the recovery at once (the last kick plays out on top).
+            float hipGoal = lf.LaserRifle && _scene.Firing && goal == 0f ? 1f : 0f;
             if (_scene.Hip != hipGoal)
             {
-                float step = dt <= 0f ? 1f : dt / AimEaseMs;
+                // Into hip fire quickly; back out over Hip fire recovery.
+                float ms = hipGoal > _scene.Hip ? AimEaseMs : Math.Clamp(lf.GunHipRecoverMs, 0, 2000);
+                float step = dt <= 0f || ms <= 0f ? 1f : dt / ms;
                 _scene.Hip = hipGoal > _scene.Hip ? Math.Min(hipGoal, _scene.Hip + step) : Math.Max(hipGoal, _scene.Hip - step);
                 laserFading = true;
             }

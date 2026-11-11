@@ -16,6 +16,22 @@ internal static class LaserDrawing
     /// <summary>The axis letters, X, Y, Z: pitch, yaw, roll as the laser aims (facing −Z).</summary>
     private static readonly string[] AxisLetters = ["P", "Y", "R"];
 
+    // The last GunFrameScale: its inputs and result (drawn by one thread at a time per window; a race only recomputes).
+    private static string _frameKey = "";
+    private static float _frameScale = 1f;
+
+    /// <summary>LaserTrace.GunFrameScale for <paramref name="s"/>'s gun, fully hip fired and kicked, kept while its inputs stay the same.</summary>
+    private static float GunFrameScale(OverlaySettings s)
+    {
+        var gun = s.Gun();
+        float kickK = Math.Clamp(s.KickOf(gun), 0f, 3f) * 2f, hip = Math.Clamp(s.GunHipPull, 0f, 1f);
+        string key = $"{gun.Key} {hip} {kickK} {s.LaserAxonometric} {s.Perspective}";
+        if (key == _frameKey) return _frameScale;
+        float scale = LaserTrace.GunFrameScale(LaserTrace.Aim([1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f]), s.LaserAxonometric, s.Perspective, gun, hip, kickK);
+        (_frameScale, _frameKey) = (scale, key);
+        return scale;
+    }
+
     // A Draw each shot hit's corners.
     private const int HitSides = 12;
 
@@ -35,7 +51,8 @@ internal static class LaserDrawing
     public static void Draw(ICanvas g, RectangleF area, OverlaySettings s, float[] m, LaserTrace? trace, long nowMs, bool held, int active = 0, bool firing = false, float[]? raw = null, float aim = 0f,
         DrawBuffers? buf = null, float kick = 0f, long shotAt = -1, float lower = 0f, float hip = 0f)
     {
-        float r = Math.Min(area.Width, area.Height) / 2f * 0.95f;
+        // The gun look drawn a little smaller where hip fire would push the gun out of its frame.
+        float r = Math.Min(area.Width, area.Height) / 2f * 0.95f * (s.LaserRifle ? GunFrameScale(s) : 1f);
         var c = new PointF(area.X + area.Width / 2f, area.Y + area.Height / 2f);
         float px = Math.Clamp(r * 0.006f, 1f, 3f);
 

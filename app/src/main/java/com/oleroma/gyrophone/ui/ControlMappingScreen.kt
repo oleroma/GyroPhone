@@ -1831,8 +1831,8 @@ internal fun ControlMappingScreen(
                 Column(Modifier.fillMaxSize()) {
                     val compact = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                     val portrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
-                    // The bar has two rows. The title (the label field) leads the first row in portrait;
-                    // the layer chips always lead their row; the actions follow them.
+                    // Portrait: two rows, the title (the label field) leading the first, the layer chips and actions
+                    // the second. Landscape: one thin row scrolling sideways, the label first, Done kept at its end.
                     val titleBar: @Composable () -> Unit = {
                             Column(Modifier.widthIn(max = 220.dp).padding(end = 8.dp)) {
                                 if (label != null && onLabel != null) {
@@ -1844,7 +1844,7 @@ internal fun ControlMappingScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                                Text(
+                                if (portrait) Text(
                                     controlKindName(control) + " · mapping",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant,
@@ -1974,11 +1974,15 @@ internal fun ControlMappingScreen(
                                 layerChips(); actionButtons()
                             }
                         } else {
-                            Row(barRow, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                                layerChips(); titleBar()
-                            }
-                            Row(barRow, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                                actionButtons(); doneButton()
+                            Row(Modifier.fillMaxWidth().padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Row(
+                                    Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(start = 16.dp, top = 2.dp, bottom = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
+                                    titleBar(); layerChips(); actionButtons()
+                                }
+                                doneButton()
                             }
                     }
                     HorizontalDivider(color = colors.outlineVariant)
