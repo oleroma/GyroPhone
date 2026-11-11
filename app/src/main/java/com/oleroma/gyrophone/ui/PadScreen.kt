@@ -240,7 +240,7 @@ private val DraftSaver = Saver<MutableState<Profile?>, String>(
 
 /**
  * PRESS: on a control, not yet moved; HELD: still pressed after a long press (its popup open; on empty space nothing);
- * TWO: two fingers down and still (lifted: a two-finger tap; moved: a PINCH).
+ * TWO: two or three fingers down and still (lifted: undo, or redo for three; moved: a PINCH).
  */
 private enum class EditGesture { PRESS, HELD, MOVE, TWO, PINCH, EMPTY, NONE }
 
@@ -1027,9 +1027,10 @@ fun PadScreen(
                         // A group's pinch: each member's centre (px) and size when the pinch was anchored.
                         var groupStart: Map<String, Pair<Offset, Float>> = emptyMap()
                         var groupBox = Rect.Zero
-                        // Two-finger tap: where each finger landed, and the control under them.
+                        // Two- or three-finger tap: where each finger landed (how many fingers it had).
                         val tapStart = HashMap<PointerId, Offset>()
-                        var tapTarget: String? = null
+                        // The fingers came down before anything moved (not a second finger joining a drag).
+                        var fingerTap = false
                         val under = hitOrder(controls, portrait).filter {
                             it.contains(
                                 downPos.x,
@@ -1092,18 +1093,11 @@ fun PadScreen(
                             // Two fingers: lifted still, they select the control under them; moved, they
                             // pinch-resize the selected control, wherever they are (nothing when none is selected).
                             // With Select on, a second finger stops the gesture: nothing is sized there.
-                            if (down.size >= 2 && selecting) {
-                                mode = EditGesture.NONE
-                                dragging = false
-                            } else if (down.size >= 2 && tapStart.isEmpty() && mode != EditGesture.PINCH) {
+                            if (down.size >= 2 && tapStart.isEmpty() && mode != EditGesture.PINCH) {
+                                fingerTap = mode != EditGesture.MOVE
                                 mode = EditGesture.TWO
+                                // A drag that had started stops here (its move stays, as one undo step).
                                 dragging = false
-                                val second = down.firstOrNull { it.id != pointer }?.position
-                                tapTarget = target ?: second?.let { p ->
-                                    (hit(corners, p) ?: hitOrder(controls, portrait).firstOrNull {
-                                        it.contains(p.x, p.y, w, h, inPortrait = portrait)
-                                    })?.id
-                                }
                             }
                             if (mode == EditGesture.TWO) {
                                 down.forEach { tapStart.getOrPut(it.id) { it.position } }
@@ -1296,6 +1290,10 @@ fun PadScreen(
                         }
 
                         when {
+                            // Lifted without moving: a two-finger tap undoes, a three-finger tap redoes. It is
+                            // known once the fingers lift, so a one-finger tap never waits for a second finger.
+                            mode == EditGesture.TWO -> if (!fingerTap) Unit else if (tapStart.size >= 3) redoEdit() else undoEdit()
+
                             // With Select on, a tap picks a control (its whole group) or drops it; on empty space it drops all.
                             selecting && mode == EditGesture.PRESS -> {
                                 val id = tapPick?.id
@@ -1320,12 +1318,6 @@ fun PadScreen(
                                     selected = tapPick?.id
                                     menu = EditMenu.NONE
                                 }
-                            }
-
-                            mode == EditGesture.TWO -> {
-                                // A two-finger tap selects without opening anything (a long press is for settings).
-                                selected = tapTarget
-                                menu = EditMenu.NONE
                             }
 
                             // A tap on empty space closes a control's popup, else opens the touchpad's mapping editor.

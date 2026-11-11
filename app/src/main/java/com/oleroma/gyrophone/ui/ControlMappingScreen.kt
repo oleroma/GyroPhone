@@ -700,6 +700,8 @@ internal fun ControlMappingScreen(
 
     // Each step: the mappings before, and the control before when a preset changed its settings too.
     val undo = remember(control.id) { mutableStateListOf<Pair<List<Mapping>, TouchControl?>>() }
+    // Each undone step, to redo: the mappings after it, and the control after it when the step changed it too.
+    val redo = remember(control.id) { mutableStateListOf<Pair<List<Mapping>, TouchControl?>>() }
     var recent by remember { mutableStateOf(loadRecent(runtime)) }
     var hapticDraft by remember { mutableStateOf<Pair<BindableInput, OutputTarget>?>(null) }
     var layerDraft by remember { mutableStateOf<Pair<BindableInput, OutputTarget.Layer>?>(null) }
@@ -713,7 +715,16 @@ internal fun ControlMappingScreen(
         val (prev, was) = undo.removeLastOrNull() ?: return
         // Its snackbar's Undo would undo the change before it.
         snackbar.currentSnackbarData?.dismiss()
+        redo.add(allMappings to (if (was != null) currentControl else null))
         emit(prev)
+        if (was != null) onControlChange?.invoke { was }
+    }
+
+    fun redoLast() {
+        val (next, was) = redo.removeLastOrNull() ?: return
+        snackbar.currentSnackbarData?.dismiss()
+        undo.add(allMappings to (if (was != null) currentControl else null))
+        emit(next)
         if (was != null) onControlChange?.invoke { was }
     }
 
@@ -729,6 +740,7 @@ internal fun ControlMappingScreen(
         if (all == prev && controlBefore == null) return
         undo.add(prev to controlBefore)
         if (undo.size > MAX_UNDO) undo.removeAt(0)
+        redo.clear()
         emit(all)
         scope.launch {
             snackbar.currentSnackbarData?.dismiss()
@@ -1810,6 +1822,8 @@ internal fun ControlMappingScreen(
                 Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.safeDrawing)
+                    // A two-finger tap undoes, a three-finger tap redoes, as in edit mode.
+                    .fingerTaps(onTwo = { undoLast() }, onThree = { redoLast() })
                     .onGloballyPositioned { origin = it.positionInRoot() }
                     .pointerInput(Unit) {
                         // Once a source starts a drag, the finger is followed here, before the panes see it.
@@ -1957,6 +1971,11 @@ internal fun ControlMappingScreen(
                                 enabled = undo.isNotEmpty(),
                                 contentPadding = compact
                             ) { Text("↶ Undo") }
+                            TextButton(
+                                onClick = { redoLast() },
+                                enabled = redo.isNotEmpty(),
+                                contentPadding = compact
+                            ) { Text("↷ Redo") }
                     }
                     val doneButton: @Composable () -> Unit = {
                             FilledTonalButton(onClick = onClose, contentPadding = compact) { Text("Done") }
