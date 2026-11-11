@@ -596,15 +596,49 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
 
     private void ShowMainWindow(MainPage? page = null)
     {
+        // Asked again while the window is still opening (a second click, a message handled during Show):
+        // WPF then gives the half-made window to two screens at once ("The root Visual of a VisualTarget
+        // cannot have a parent"), so the second ask is dropped.
+        if (_openingMain)
+        {
+            _log.Write("main window: asked to open while it is opening; ignored");
+            return;
+        }
+        _openingMain = true;
         try
         {
             OpenMainWindow(page);
         }
         catch (Exception e)
         {
-            WindowFailed(e);
+            _log.Write($"main window failed, trying a new one: {e.GetType().Name}: {e.Message}");
+            // A window whose Show failed stays broken: drop it and try once with a new one.
+            var broken = _mainWindow;
+            _mainWindow = null;
+            try
+            {
+                broken?.Close();
+            }
+            catch (Exception)
+            {
+            }
+            try
+            {
+                OpenMainWindow(page);
+            }
+            catch (Exception e2)
+            {
+                _mainWindow = null;
+                WindowFailed(e2);
+            }
+        }
+        finally
+        {
+            _openingMain = false;
         }
     }
+
+    private bool _openingMain;
 
     private void WindowFailed(Exception e)
     {
