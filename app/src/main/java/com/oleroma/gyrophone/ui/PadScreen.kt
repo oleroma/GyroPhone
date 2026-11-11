@@ -7,8 +7,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
@@ -40,30 +39,31 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.runtime.SideEffect
-import com.oleroma.gyrophone.core.model.FingerAxis
-import com.oleroma.gyrophone.core.model.fingerOf
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -81,26 +81,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.layout.layoutId
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
@@ -110,6 +109,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -118,8 +118,6 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.text.TextAutoSize
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
@@ -129,6 +127,7 @@ import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.ButtonLibrary
 import com.oleroma.gyrophone.core.model.ControlGroups
 import com.oleroma.gyrophone.core.model.Describe
+import com.oleroma.gyrophone.core.model.FingerAxis
 import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.GyroMode
@@ -138,27 +137,25 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.LibraryButton
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingProfiles
-import com.oleroma.gyrophone.core.model.isTouchpad
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Placement
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchAreaKind
-import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchLayer
 import com.oleroma.gyrophone.core.model.TouchShape
+import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.WorkspaceMappings
 import com.oleroma.gyrophone.core.model.contains
+import com.oleroma.gyrophone.core.model.fingerOf
 import com.oleroma.gyrophone.core.model.heightRatio
 import com.oleroma.gyrophone.core.model.hitOrder
-import com.oleroma.gyrophone.core.net.OverlayControl
-import com.oleroma.gyrophone.core.net.OverlayFeed
-import com.oleroma.gyrophone.core.net.OverlayLayout
+import com.oleroma.gyrophone.core.model.isTouchpad
 import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.model.ownSurface
 import com.oleroma.gyrophone.core.model.placeSize
@@ -169,6 +166,9 @@ import com.oleroma.gyrophone.core.model.surfaceSettings
 import com.oleroma.gyrophone.core.model.touchedControls
 import com.oleroma.gyrophone.core.model.withPlacement
 import com.oleroma.gyrophone.core.model.withSets
+import com.oleroma.gyrophone.core.net.OverlayControl
+import com.oleroma.gyrophone.core.net.OverlayFeed
+import com.oleroma.gyrophone.core.net.OverlayLayout
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -288,12 +288,12 @@ private enum class EditMenu { NONE, MAPPING, CONTEXT, POPUP }
  */
 private fun mainRowsCap(portrait: Boolean) = if (portrait) 2 else 1
 private fun addRowsCap(portrait: Boolean) = if (portrait) 4 else 3
-// 48 dp: a pill keeps a 48 dp touch area (it draws 40 dp of it).
-private val PANEL_ROW_HEIGHT = 48.dp
+// 32 dp: as tall as a pill (labelLarge text and 6 dp above and below).
+private val PANEL_ROW_HEIGHT = 32.dp
 /** The open Add / Presets list and its tab-like pill. */
 private val PANEL_TAB_COLOR = Color(0xFF2F4A6E)
 private val PANEL_TAB_OUTLINE = Color(0xFF7FB2FF)
-private val PANEL_ROW_GAP = 2.dp
+private val PANEL_ROW_GAP = 4.dp
 
 /**
  * [content]'s items in up to [rows] rows, in order, each into the row that is shortest so far
@@ -2128,7 +2128,6 @@ fun PadScreen(
                 )
             }
         } else {
-            val compact = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
             fun clampMenu(o: Offset): Offset {
                 val mx = max(0f, (w - menuSize.width) / 2f)
                 return Offset(o.x.coerceIn(-mx, mx), o.y.coerceIn(0f, max(0f, h - menuSize.height)))
@@ -2185,8 +2184,41 @@ fun PadScreen(
                 Text(
                     text,
                     style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.heightIn(min = 40.dp).wrapContentHeight().padding(horizontal = 12.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                 )
+            }
+
+            /**
+             * A button of the menu's strips, as small as the Add list's pills so every row stays
+             * compact: filled (light, or in [colors]) or [outlined].
+             */
+            @Composable
+            fun PanelPill(
+                modifier: Modifier = Modifier,
+                outlined: Boolean = false,
+                colors: ButtonColors? = null,
+                onClick: () -> Unit,
+                content: @Composable () -> Unit,
+            ) {
+                val shape = RoundedCornerShape(50)
+                val text = colors?.contentColor ?: Color.White
+                Box(
+                    modifier
+                        .clip(shape)
+                        .then(
+                            when {
+                                colors != null -> Modifier.background(colors.containerColor, shape)
+                                outlined -> Modifier.border(1.dp, Color.White.copy(alpha = 0.6f), shape)
+                                else -> Modifier.background(Color.White.copy(alpha = 0.18f), shape)
+                            },
+                        )
+                        .clickable(onClick = onClick)
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    CompositionLocalProvider(LocalContentColor provides text) {
+                        ProvideTextStyle(MaterialTheme.typography.labelLarge, content)
+                    }
+                }
             }
 
             // The edit menu floats over the pad: drag it by its dots to reach what is under it, and
@@ -2379,8 +2411,8 @@ fun PadScreen(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(50))
                                 .clickable(enabled = enabled, onClick = onClick)
-                                .padding(if (small) 1.dp else 6.dp)
-                                .size(if (small) 18.dp else 22.dp),
+                                .padding(if (small) 1.dp else 5.dp)
+                                .size(if (small) 14.dp else 22.dp),
                         )
                         val canUndo = undoSteps.isNotEmpty() || (undoBase[0] != null && draft !== undoBase[0])
                         val canRedo = redoSteps.isNotEmpty()
@@ -2453,10 +2485,9 @@ fun PadScreen(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    FilledTonalButton(
-                                        contentPadding = compact,
+                                    PanelPill(
                                         onClick = { finishEditing() }) { Text("Done") }
-                                    OutlinedButton(contentPadding = compact, onClick = {
+                                    PanelPill(outlined = true, onClick = {
                                         // Nothing changed: leave at once; else ask first.
                                         if (draft?.copy(gamePresets = profile.gamePresets) == profile) discardEdits() else confirmingCancel = true
                                     }) { Text("Cancel") }
@@ -2467,7 +2498,7 @@ fun PadScreen(
                                     // Select: taps pick several controls to move together, and Group joins them.
                                     // Turning it off keeps a group that was picked selected (ready to pinch).
                                     if (selectMode) {
-                                        FilledTonalButton(contentPadding = compact, colors = pickColors, onClick = {
+                                        PanelPill(colors = pickColors, onClick = {
                                             val controls = editControls()
                                             val left = picked.filterTo(LinkedHashSet()) { id -> controls.any { it.id == id } }
                                             selected = if (ControlGroups.units(controls, left) == 1) left.first() else null
@@ -2476,14 +2507,12 @@ fun PadScreen(
                                         }) { Text("Select") }
                                         val controls = editControls()
                                         if (ControlGroups.units(controls, picked) >= 2) {
-                                            FilledTonalButton(
-                                                contentPadding = compact,
+                                            PanelPill(
                                                 colors = pickColors,
                                                 onClick = { editWorkspace { ControlGroups.group(it, picked) } }) { Text("Group") }
                                         }
                                         if (ControlGroups.anyGrouped(controls, picked)) {
-                                            FilledTonalButton(
-                                                contentPadding = compact,
+                                            PanelPill(
                                                 colors = pickColors,
                                                 onClick = { editWorkspace { ControlGroups.ungroup(it, picked) } }) { Text("Ungroup") }
                                         }
@@ -2495,26 +2524,23 @@ fun PadScreen(
                                         )
                                         val pickedHere = picked.filter { id -> controls.any { it.id == id && it.kind != TouchKind.FULLSCREEN } }
                                         if (pickedHere.size >= 2) {
-                                            FilledTonalButton(
-                                                contentPadding = compact,
+                                            PanelPill(
                                                 colors = syncColors,
                                                 onClick = { editWorkspace { ControlGroups.syncSize(it, pickedHere) } }) { Text("Sync size") }
                                         }
                                         if (ControlGroups.anySynced(controls, picked)) {
-                                            FilledTonalButton(
-                                                contentPadding = compact,
+                                            PanelPill(
                                                 colors = syncColors,
                                                 onClick = { editWorkspace { ControlGroups.unsync(it, picked) } }) { Text("Unsync size") }
                                         }
                                         // One whole group picked: save it as a preset (Add preset).
                                         if (ControlGroups.units(controls, picked) == 1 && ControlGroups.anyGrouped(controls, picked)) {
-                                            FilledTonalButton(
-                                                contentPadding = compact,
+                                            PanelPill(
                                                 colors = pickColors,
                                                 onClick = { savingGroup = controls.filter { it.id in ControlGroups.expand(controls, picked) } }) { Text("Save as preset") }
                                         }
                                     } else {
-                                        OutlinedButton(contentPadding = compact, onClick = {
+                                        PanelPill(outlined = true, onClick = {
                                             val s = findControl(selected)
                                             picked = if (s != null && draft?.let { isCorner(it, s.id) } == false) {
                                                 ControlGroups.unitOf(editControls(), s.id)
@@ -2527,12 +2553,10 @@ fun PadScreen(
                                     // A selected control in a group: Ungroup (amber, like its other buttons).
                                     val grouped = if (selectMode) null else findControl(selected)?.takeIf { it.group != null }
                                     if (grouped != null) {
-                                        FilledTonalButton(
-                                            contentPadding = compact,
+                                        PanelPill(
                                             colors = ButtonDefaults.filledTonalButtonColors(containerColor = SELECTED_COLOR, contentColor = Color.Black),
                                             onClick = { editWorkspace { ControlGroups.ungroup(it, listOf(grouped.id)) } }) { Text("Ungroup") }
-                                        FilledTonalButton(
-                                            contentPadding = compact,
+                                        PanelPill(
                                             colors = ButtonDefaults.filledTonalButtonColors(containerColor = SELECTED_COLOR, contentColor = Color.Black),
                                             onClick = {
                                                 val controls = editControls()
@@ -2548,14 +2572,12 @@ fun PadScreen(
                                         containerColor = SELECTED_COLOR,
                                         contentColor = Color.Black,
                                     )
-                                    FilledTonalButton(
-                                        contentPadding = compact,
+                                    PanelPill(
                                         colors = selColors,
                                         onClick = { menu = EditMenu.CONTEXT }) { Text("Configure") }
                                     val d = draft
                                     if (d != null && !isCorner(d, chosen.id) && chosen.kind != TouchKind.DISPLAY) {
-                                        FilledTonalButton(
-                                            contentPadding = compact,
+                                        PanelPill(
                                             colors = selColors,
                                             onClick = { menu = EditMenu.MAPPING }) { Text("Map") }
                                     }
@@ -2565,9 +2587,8 @@ fun PadScreen(
                                 if (addOpen) {
                                     ListTab("Add ▴", Modifier.layoutId(STRIP_LAST_ROW)) { addOpen = false }
                                 } else {
-                                    OutlinedButton(
+                                    PanelPill(outlined = true,
                                         modifier = Modifier.layoutId(STRIP_LAST_ROW),
-                                        contentPadding = compact,
                                         onClick = { addOpen = true; presetsOpen = false },
                                     ) { Text("Add +") }
                                 }
@@ -2575,19 +2596,16 @@ fun PadScreen(
                                 if (presetsOpen) {
                                     ListTab("Add preset ▴", Modifier.layoutId(STRIP_LAST_ROW)) { presetsOpen = false }
                                 } else {
-                                    OutlinedButton(
+                                    PanelPill(outlined = true,
                                         modifier = Modifier.layoutId(STRIP_LAST_ROW),
-                                        contentPadding = compact,
                                         onClick = { presetsOpen = true; addOpen = false },
                                     ) { Text("Add preset ★") }
                                 }
                                 if (snap) {
-                                    FilledTonalButton(
-                                        contentPadding = compact,
+                                    PanelPill(
                                         onClick = { snap = false }) { Text("Snap: on") }
                                 } else {
-                                    OutlinedButton(
-                                        contentPadding = compact,
+                                    PanelPill(outlined = true,
                                         onClick = { snap = true }) { Text("Snap: off") }
                                 }
                                 // The controller, keyboard and mouse preset this workspace uses, or none.
@@ -2595,7 +2613,7 @@ fun PadScreen(
                                     var picking by remember { mutableStateOf(false) }
                                     val presets = (draft ?: profile).devicePresets
                                     val pinned = presets.firstOrNull { it.id == ws.devicePreset }
-                                    OutlinedButton(contentPadding = compact, onClick = { picking = true }) {
+                                    PanelPill(outlined = true, onClick = { picking = true }) {
                                         Text("Devices: " + (pinned?.name ?: "None"))
                                     }
                                     if (picking) {
