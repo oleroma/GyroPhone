@@ -169,6 +169,9 @@ internal fun CapsuleRow(
             CapsuleChip(
                 label,
                 icons = c == Capsule.Devices,
+                // After the icons: the device preset the current workspace uses (nothing for none).
+                iconsText = if (c == Capsule.Devices) profile.workspaces.getOrNull(wsIndex)?.devicePreset
+                    ?.let { id -> profile.devicePresets.firstOrNull { it.id == id }?.name }.orEmpty() else "",
                 icon = when (c) {
                     Capsule.App -> EditIcons.Gear
                     Capsule.Defaults -> EditIcons.Tune
@@ -283,6 +286,8 @@ private fun CapsuleChip(
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
     icons: Boolean = false,
+    /** Shown after the device icons ([icons]): the preset in use. */
+    iconsText: String = "",
     /** Drawn before [text] (App's gear, Defaults' sliders). */
     icon: ImageVector? = null,
 ) {
@@ -293,10 +298,24 @@ private fun CapsuleChip(
         color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color(0xE02B313A),
     ) {
         if (icons) {
-            DeviceIcons(
-                Color.White,
-                Modifier.semantics { contentDescription = text }.padding(horizontal = 14.dp, vertical = 10.dp),
-            )
+            Row(
+                Modifier.semantics { contentDescription = text + if (iconsText.isEmpty()) "" else ", $iconsText" }
+                    .padding(start = 14.dp, end = if (iconsText.isEmpty()) 14.dp else 16.dp, top = 10.dp, bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                DeviceIcons(Color.White)
+                if (iconsText.isNotEmpty()) {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        iconsText,
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 160.dp),
+                    )
+                }
+            }
             return@Surface
         }
         val fg = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else Color.White
