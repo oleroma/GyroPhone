@@ -121,7 +121,8 @@ public sealed class PerfRecording
             var loads = _seconds.Values.Where(s => s.Load != null).Select(s => s.Load!.Value).ToList();
             double Avg(Func<LoadSample, double> f) => loads.Count > 0 ? loads.Average(f) : 0;
             var linkBySecond = new Dictionary<long, LinkSecond>();
-            foreach (var l in link) linkBySecond[Math.Max(0, (l.AtUs - 1 - StartUs) / 1_000_000)] = l;
+            // A link second ends about a second after its start: keyed by the nearest whole second, minus that one.
+            foreach (var l in link) linkBySecond[Math.Max(0, (long)Math.Round((l.AtUs - StartUs) / 1e6) - 1)] = l;
             var run = new PerfRun(Name, Link, Start, (endUs - StartUs) / 1e6, Game, _sumMs / 1000, fps, FrameStats.Low1Fps([.. _ms]),
                 _jumps, _worst, link.Sum(l => l.Lost), link.Sum(l => l.Late), link.Count > 0 ? link.Max(l => l.MaxLateMs) : 0,
                 link.Sum(l => l.Gaps), link.Sum(l => l.Releases), Avg(l => l.CpuPct), Avg(l => l.DriverPct), Avg(l => l.BusiestCoreDriverPct));
@@ -134,6 +135,7 @@ public sealed class PerfRecording
             sb.AppendLine(c, $"link: lost {run.Lost}, late {run.Late} (worst {run.MaxLateMs:0} ms), phone pauses {run.Gaps}, releases {run.Releases}");
             sb.AppendLine(c, $"PC: CPU {run.CpuPct:0}%, driver time {run.DriverPct:0.0}%, busiest core driver time {run.BusiestCoreDriverPct:0.0}%");
             sb.AppendLine();
+            sb.AppendLine("fps: while the game was in front (a second it was in front only partly has few frames).");
             sb.AppendLine("  s  frames   fps  worst_ms jumps |   rx lost late maxlate_ms gaps rel |  cpu  dpc  int core_drv");
             long last = Math.Max(_seconds.Count > 0 ? _seconds.Keys.Max() : 0, linkBySecond.Count > 0 ? linkBySecond.Keys.Max() : 0);
             for (long k = 0; k <= last; k++)

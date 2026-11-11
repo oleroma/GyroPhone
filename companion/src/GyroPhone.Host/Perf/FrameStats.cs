@@ -23,11 +23,14 @@ public sealed record FrameView(int Pid, bool Focused, double Fps, double Low1Fps
 /// else whichever shows the most. A frame is a jump when it takes at least <see cref="JumpFactor"/> times
 /// the middle of the frames before it and at least <see cref="JumpExtraMs"/> more: one rule at any frame rate.
 /// A frame after a pause of <see cref="PauseMs"/> or more (the game in the background, a loading screen)
-/// starts afresh instead.
+/// starts afresh instead. A recording gets the game's frames only while it is in front, from
+/// <see cref="SettleUs"/> after it came there.
 /// </summary>
 public sealed class FrameStats
 {
     public const double JumpFactor = 2.0, JumpExtraMs = 8, PauseMs = 1000;
+    /// <summary>A recording skips this long after the game comes to the front (switching windows makes its own hitches).</summary>
+    public const long SettleUs = 3_000_000;
     /// <summary>The middle frame time is of this many frames before.</summary>
     public const int MiddleOf = 60;
     /// <summary>How much the graph shows.</summary>
@@ -39,6 +42,7 @@ public sealed class FrameStats
     private Dictionary<int, int> _counts = [], _lastCounts = [];
     private int _game;
     private bool _focused;
+    private long _focusedSinceUs;
     private long _lastUs = -1;
     private readonly float[] _before = new float[MiddleOf];
     private readonly float[] _sorted = new float[MiddleOf];
@@ -76,7 +80,7 @@ public sealed class FrameStats
             var f = new Frame(atUs, (float)ms, IsJump(ms));
             Remember((float)ms);
             _frames.Enqueue(f);
-            if (_focused) _recording?.Add(f);
+            if (_focused && atUs >= _focusedSinceUs + SettleUs) _recording?.Add(f);
         }
     }
 
@@ -122,7 +126,9 @@ public sealed class FrameStats
                 _beforeCount = 0;
                 _frames.Clear();
             }
-            _focused = pick != 0 && pick == foregroundPid;
+            bool focused = pick != 0 && pick == foregroundPid;
+            if (focused && !_focused) _focusedSinceUs = nowUs;
+            _focused = focused;
             while (_frames.Count > 0 && _frames.Peek().AtUs < nowUs - KeepUs) _frames.Dequeue();
             return _game;
         }

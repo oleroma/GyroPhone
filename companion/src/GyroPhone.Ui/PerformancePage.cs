@@ -105,7 +105,8 @@ internal sealed class PerformancePage : Page
         _record.Margin = new Thickness(0, 10, 0, 0);
         _record.HorizontalAlignment = HorizontalAlignment.Left;
         rb.Children.Add(_record);
-        _recordSub = Parts.Text("Start it, then play. Only the time the game is in front counts.", "Sub");
+        _recordSub = Parts.Text("Record closes this window so it costs nothing while you play. Only the time the game is in front counts, " +
+            "from 3 seconds after it comes there. Open the window again for the result.", "Sub");
         _recordSub.Margin = new Thickness(0, 6, 0, 0);
         rb.Children.Add(_recordSub);
         _root.Children.Add(rec);
@@ -138,6 +139,8 @@ internal sealed class PerformancePage : Page
         {
             p.StartRecording(_name.Text, LinkName(_app.View()), _seconds);
             _nameEdited = false;
+            // A fair test runs without this window drawing: it closes, and the record goes on in the tray.
+            if (p.Recording != null) Window.GetWindow(_root)?.Close();
         }
     }
 

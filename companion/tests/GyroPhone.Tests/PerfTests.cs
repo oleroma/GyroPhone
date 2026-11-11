@@ -85,7 +85,8 @@ public class PerfTests
         long t = Frames(s, Game, 0, 100, 10);
         Assert.Equal(0, r.GameSeconds);
         s.Tick(Game, t);
-        t = Frames(s, Game, t, 100, 10);
+        // The first 3 s in front settle; then 1 s counts.
+        t = Frames(s, Game, t, 400, 10);
         r.AddLoad(new LoadSample(60, 1, 2, 15), 500_000);
         var link = new List<LinkSecond> { new(1_000_000, 400, 3, 5, 120, 1, 0), new(2_000_000, 400, 0, 0, 0, 0, 1) };
         var (run, text) = r.Finish(t, link);
@@ -151,16 +152,16 @@ public class PerfTests
         var clock = new FakeClock();
         var src = new FakeSource();
         var m = new PerfMonitor(src, null, new FakeForeground(), clock, dir, _ => { });
-        m.StartRecording("Router", "Wi-Fi 5 GHz", 2);
+        m.StartRecording("Router", "Wi-Fi 5 GHz", 6);
         Assert.Equal(FrameWatchState.On, m.State);
         src.Present!(Game, 0);
         m.Tick();
         long t = 0;
-        for (int i = 0; i < 150; i++) src.Present!(Game, t += 10_000);
+        for (int i = 0; i < 450; i++) src.Present!(Game, t += 10_000);
         clock.NowUs = t;
         m.Tick();
         Assert.NotNull(m.Recording);
-        clock.NowUs = 2_100_000;
+        clock.NowUs = 6_100_000;
         m.Tick();
         Assert.Null(m.Recording);
         Assert.Equal(FrameWatchState.Off, m.State);
