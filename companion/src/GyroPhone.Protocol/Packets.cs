@@ -45,7 +45,20 @@ public readonly record struct Pong(ulong T1, ulong T2, ulong T3);
 
 public readonly record struct LinkInfo(
     long ClockOffsetUs, uint RttMinUs, ushort SendRateHz, sbyte RssiDbm, byte Band,
-    ushort LinkMbps, ushort FreqMhz, byte Flags);
+    ushort LinkMbps, ushort FreqMhz, byte Flags, byte Path = LinkPath.Unknown);
+
+/// <summary>LINK_INFO's path: the way the session's packets go from the phone to the PC.</summary>
+public static class LinkPath
+{
+    public const byte Unknown = 0;
+    /// <summary>The phone's Wi-Fi client (a router, or the PC's own hotspot).</summary>
+    public const byte Wifi = 1;
+    /// <summary>The phone's own hotspot, with the PC joined to it.</summary>
+    public const byte Hotspot = 2;
+    public const byte UsbTether = 3;
+    public const byte UsbDirect = 4;
+    public const byte Ethernet = 5;
+}
 
 public readonly record struct HostStatus(
     uint LastSeq, ushort RxPerSec, ushort LossPermille, uint LatP50Us, uint LatP99Us,

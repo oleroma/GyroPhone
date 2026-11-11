@@ -42,6 +42,10 @@ internal sealed class OverlayScene
     public float Hip;
     /// <summary>This window's drawing buffers (drawn by one thread at a time, under the window's render lock).</summary>
     public readonly DrawBuffers Buffers = new();
+    /// <summary>The FPS overlay: the game's frames, its name, and whether they are watched.</summary>
+    public GyroPhone.Host.Perf.FrameView? Fps;
+    public string? FpsGame;
+    public GyroPhone.Host.Perf.FrameWatchState FpsState;
 }
 
 /// <summary>
@@ -196,6 +200,11 @@ internal static class OverlayRenderer
                 11f, false, Color.FromArgb(230, 255, 255, 255), new RectangleF(0, size.Height - 17, size.Width, 16), TextAlign.Center, TextAlign.Near);
         }
 
+        if (settings.Kind == OverlayKind.Fps)
+        {
+            FpsDrawing.Draw(g, new RectangleF(0, 0, size.Width, size.Height), scene, settings);
+            return;
+        }
         bool live = scene.Connected && scene.FrameAgeUs is >= 0 and < 1_500_000;
         var raw = live ? Shown(scene.Frame, settings) : (1f, 0f, 0f, 0f);
         var m = Matrix3(raw);

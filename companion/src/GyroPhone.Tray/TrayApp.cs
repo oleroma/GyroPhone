@@ -123,6 +123,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             Path.Combine(_log.Directory, "perf"), _log.Write);
         _engine.Recorder!.Timeline = _perf.Link;
         _perf.Ended += _ => _engine.Buzz();
+        _perf.PathNow = () => LinkPath()?.Text;
+        _engine.Recorder!.SecondNote = _perf.SecondNote;
+        OverlayForm.FpsSource = () => (_perf.View(), _perf.GameName, _perf.State);
         if (hostKey != null) _authorized = new AuthorizedPhonesWatcher(_keyFiles, _engine.SetAuthorizedPhones, _log.Write);
         PowerQos.TryDisableForProcess(_log.Write);
         _server = new UdpHostServer(_engine, _clock,
@@ -1066,6 +1069,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         return open.Length == 0 ? "overlays: none open" : "overlays: " + string.Join(" · ", open.Select(f => f.Stats).Where(t => t.Length > 0));
     }
 
+    /// <summary>An overlay window that shows the phone's pose is open (the FPS overlay needs nothing from the phone).</summary>
+    private bool PoseOverlaysOpen() => _overlayForms.Keys.Any(id => OverlayOf(id) is not { Kind: OverlayKind.Fps });
+
     private void ApplyOverlays()
     {
         foreach (var o in _engine.Settings.Overlays.ToList())
@@ -1087,7 +1093,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         // Windows whose settings are gone.
         foreach (var id in _overlayForms.Keys.Where(id => OverlayOf(id) == null).ToList())
             if (_overlayForms.Remove(id, out var f)) f.Close();
-        _engine.SetOverlay(_overlayForms.Count > 0);
+        _engine.SetOverlay(PoseOverlaysOpen());
+        // The game's frames are watched only while an FPS overlay is on.
+        _perf.Watch(_engine.Settings.Overlays.Any(o => o.Kind == OverlayKind.Fps && o.Shown));
         OverlaysChanged();
         foreach (var f in _overlayForms.Values)
         {
@@ -1114,7 +1122,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
                 if (_overlayForms.TryGetValue(id, out var cur) && ReferenceEquals(cur, form))
                 {
                     _overlayForms.Remove(id);
-                    _engine.SetOverlay(_overlayForms.Count > 0);
+                    _engine.SetOverlay(PoseOverlaysOpen());
                     OverlaysChanged();
                 }
             };
@@ -1246,6 +1254,14 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     }
 
     public PerfMonitor Perf => _perf;
+
+    public (string Text, string? Setup)? LinkPath()
+    {
+        var s = _engine.Snapshot();
+        if (!s.Connected || s.PhoneLink is not { } l) return null;
+        var pc = LinkPaths.AdapterFor(_engine.PhoneAddress());
+        return (LinkPaths.Describe(l, pc), LinkPaths.Setup(l, pc));
+    }
 
     public bool AllowFrameWatch() => PerfPermission.Grant(_log.Write);
 

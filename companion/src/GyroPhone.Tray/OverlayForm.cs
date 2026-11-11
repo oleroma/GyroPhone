@@ -19,6 +19,9 @@ namespace GyroPhone.Tray;
 /// </summary>
 internal sealed class OverlayForm : Form
 {
+    /// <summary>The game's frames for FPS overlays (set once by the tray app): the view, the game's name and the watcher's state.</summary>
+    public static Func<(GyroPhone.Host.Perf.FrameView, string?, GyroPhone.Host.Perf.FrameWatchState)>? FpsSource;
+
     private readonly HostEngine _engine;
     private readonly string _id;
     private readonly Action<string, Point> _clicked;
@@ -634,7 +637,8 @@ internal sealed class OverlayForm : Form
         if (fresh && !shows) _lastTime = _scene.Frame.PhoneTimeUs;
         bool changed = _dirty || shows || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||
             !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now) || laserFading ||
-            _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser;
+            _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser ||
+            Settings is { Kind: OverlayKind.Fps } && now - _lastDrawTicks >= FpsDrawing.EveryMs;
         if (!changed && now - _lastDrawTicks < 500) return;
         // Faded out by "Fade when phone rests": a few pictures a second at most. Any input or movement
         // ends the rest, and the next tick draws at once.
@@ -677,7 +681,8 @@ internal sealed class OverlayForm : Form
     private bool StepRestFade(long now)
     {
         var rf = _engine.Settings.OverlayRestFade;
-        bool resting = ClickThrough && _engine.OverlayResting(_id);
+        // The FPS overlay doesn't show the phone: it never fades with it.
+        bool resting = ClickThrough && Settings is not { Kind: OverlayKind.Fps } && _engine.OverlayResting(_id);
         float target = resting ? Math.Clamp(rf.FadeTo, 0.05f, 1f) : 1f;
         float was = _restFade;
         long dtMs = _restFadeAt == 0 ? 0 : Math.Clamp(now - _restFadeAt, 0, 100);
@@ -757,6 +762,7 @@ internal sealed class OverlayForm : Form
         _scene.Arranging = !ClickThrough;
         _scene.Selected = _selected;
         _scene.Title = _title;
+        if (Settings is { Kind: OverlayKind.Fps } && FpsSource is { } fps) (_scene.Fps, _scene.FpsGame, _scene.FpsState) = fps();
         double start = _clock.Elapsed.TotalMilliseconds;
         // Another window found the shared device lost: move to the new one now (not a failure of this window's).
         if (_gpuSurface is { Lost: true })

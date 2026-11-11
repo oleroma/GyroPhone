@@ -1,16 +1,16 @@
 # Latency test
 
-Two ways to see how long input takes to reach a game, both on the companion: **Measure buttons** on Home's latency card (always on while switched on, no video), and the **Latency test** page, which times the gyro from a slow-motion video. Both need the Wi-Fi or USB link; Bluetooth HID has no companion to measure with.
+Two ways to see how long input takes to reach a game, both on the companion's **Performance** page: **Measure buttons** on its Link card (always on while switched on, no video), and the **Latency test** section, which times the gyro from a slow-motion video. Both need the Wi-Fi or USB link; Bluetooth HID has no companion to measure with.
 
 ## Measure buttons
 
-A switch on Home's **Latency** card (off by default, saved as `MeasureButtons` in the settings). While it is on, a line under the graph shows **Buttons: X ms, phone part Y ms** (the middle of the last 64 presses and releases, how many, and the newest one).
+A switch on Performance's **Link** card (off by default, saved as `MeasureButtons` in the settings). While it is on, a line under the graph shows **Buttons: X ms, phone part Y ms** (the middle of the last 64 presses and releases, how many, and the newest one).
 
 - It times each press or release from the moment the phone sees the input (the touch event's or controller key event's own time) to the moment the PC hands the STATE carrying it to the game (SendInput and the virtual pad). The **phone part** is from the input to the phone sending that STATE: Android's input delivery, the app, and any wait a gesture makes on purpose (a When with a Held chip waits up to the Tap time to tell a tap from a hold; a tap's output comes when the finger lifts).
 - It leaves out what happens before the phone sees the input (the touchscreen's or controller's own delay) and after the game gets it (the game and the monitor).
 - How: the PC sends TEST_MODE with PRESS_TIMES. The phone notes the newest touch down or up, controller key edge and mouse button edge (`PressStamp`, forgotten after 1 s if nothing changed) and, after each STATE that first carries a new press or release, sends PRESS_TIME: that STATE's time and the input's time, both in the phone's clock. The PC notes when it injected each STATE (`PressLatency`), matches the PRESS_TIME to the first injection that carried its STATE (a burst injects only its newest STATE), and turns the input time into PC time with the clock offset from LINK_INFO, as the link latency does. Off, the phone sends nothing extra.
 
-## Latency test page
+## Latency test section
 
 A sidebar page in the companion's main window, for anyone (not a debug tool). It measures the time from turning the phone to the game seeing the mouse move, including the screen, from a video filmed with a second phone.
 
@@ -29,4 +29,4 @@ What the number includes: the phone's gyro and app, the link, the companion, Win
 
 ## Key files
 
-`core/.../net/PressStamp.kt`, `app/.../wifi/WifiPump.kt` (PRESS_TIME), `app/.../wifi/WifiLink.kt` (TEST_MODE), `app/.../ui/LatencyMarkers.kt`; `GyroPhone.Host/PressLatency.cs`, `HostEngine.cs` (`SetMeasureButtons`, `SetLatencyScreen`), `GyroPhone.Latency/` (`LatencyMath.cs`, `VideoTracker.cs`), `GyroPhone.Ui/LatencyPage.cs`, `LatencyTestWindow.cs`, `LatencyCard.cs`, `LatencyResults.cs`, `HomePage.cs`.
+`core/.../net/PressStamp.kt`, `app/.../wifi/WifiPump.kt` (PRESS_TIME), `app/.../wifi/WifiLink.kt` (TEST_MODE), `app/.../ui/LatencyMarkers.kt`; `GyroPhone.Host/PressLatency.cs`, `HostEngine.cs` (`SetMeasureButtons`, `SetLatencyScreen`), `GyroPhone.Latency/` (`LatencyMath.cs`, `VideoTracker.cs`), `GyroPhone.Ui/LatencyPage.cs`, `LatencyTestWindow.cs`, `LatencyCard.cs`, `LatencyResults.cs`, `PerformancePage.cs`.

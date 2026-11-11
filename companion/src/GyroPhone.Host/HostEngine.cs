@@ -1518,6 +1518,23 @@ public sealed class HostEngine
     }
 
     /// <summary>"Pause input": releases everything; STATEs keep updating the baseline but inject nothing.</summary>
+    /// <summary>The connected phone's address as the PC sees it (loopback over the direct USB cable), or null.</summary>
+    public System.Net.IPAddress? PhoneAddress()
+    {
+        using (Lock(ByUi))
+        {
+            if (_sessions.Active is not { } a) return null;
+            try
+            {
+                return ((System.Net.IPEndPoint)new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0).Create(a.Endpoint)).Address;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+    }
+
     /// <summary>
     /// Buzzes the connected phone once (a Performance record ended), whatever the output mode. Sent
     /// twice against a lost packet; the phone plays one buzz per second at most.

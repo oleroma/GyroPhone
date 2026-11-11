@@ -100,6 +100,8 @@ public interface ICompanion
     /// admin from the next sign-in. True when added.
     /// </summary>
     bool AllowFrameWatch();
+    /// <summary>The way the phone's packets go now ("Phone hotspot · PC Wi-Fi") and which Record Setup that is, or null without a phone.</summary>
+    (string Text, string? Setup)? LinkPath();
     void OpenPerfFolder();
     /// <summary>Opens a file in its default program.</summary>
     void OpenFile(string path);

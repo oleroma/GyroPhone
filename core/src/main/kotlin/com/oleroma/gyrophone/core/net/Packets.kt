@@ -76,7 +76,21 @@ data class LinkInfo(
     val linkMbps: Int,
     val freqMhz: Int,
     val flags: Int,
+    /** How the session's packets travel ([LinkPath]); [LinkPath.UNKNOWN] from older phones. */
+    val path: Int = LinkPath.UNKNOWN,
 ) : WirePacket
+
+/** LINK_INFO's path: the way this session's packets go from the phone to the PC. */
+object LinkPath {
+    const val UNKNOWN = 0
+    /** The phone's Wi-Fi client (a router, or the PC's own hotspot). */
+    const val WIFI = 1
+    /** The phone's own hotspot, with the PC joined to it. */
+    const val HOTSPOT = 2
+    const val USB_TETHER = 3
+    const val USB_DIRECT = 4
+    const val ETHERNET = 5
+}
 
 data class Bye(val reason: Int) : WirePacket
 

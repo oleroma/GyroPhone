@@ -285,6 +285,7 @@ object WireCodec {
                 out.putU16(off + 16, p.linkMbps)
                 out.putU16(off + 18, p.freqMhz)
                 out.putU8(off + 20, p.flags)
+                out.putU8(off + 21, p.path)
             }
             is Bye -> out.putU8(off, p.reason)
             is HostBye -> out.putU8(off, p.reason)
@@ -330,7 +331,7 @@ object WireCodec {
             PacketType.PONG -> Pong(buf.getU64(off), buf.getU64(off + 8), buf.getU64(off + 16))
             PacketType.LINK_INFO -> LinkInfo(
                 buf.getI64(off), buf.getI32(off + 8), buf.getU16(off + 12), buf.getI8(off + 14), buf.getU8(off + 15),
-                buf.getU16(off + 16), buf.getU16(off + 18), buf.getU8(off + 20),
+                buf.getU16(off + 16), buf.getU16(off + 18), buf.getU8(off + 20), buf.getU8(off + 21),
             )
             PacketType.BYE -> Bye(buf.getU8(off))
             PacketType.HOST_BYE -> HostBye(buf.getU8(off))

@@ -234,7 +234,7 @@ internal sealed class OverlaysPage : Page
         Grid.SetRow(right, 1);
         Grid.SetColumn(right, 2);
         _root.Children.Add(right);
-        _empty = Parts.Text("No overlays yet. Press \"Add overlay\" to put the phone, a 3D shape, an attitude indicator, a bubble disk or a pointer over your game.", "Sub");
+        _empty = Parts.Text("No overlays yet. Press \"Add overlay\" to put the phone, a 3D shape, an attitude indicator, a bubble disk, a pointer or the game's FPS over your game.", "Sub");
         right.Children.Add(_empty);
         right.Children.Add(_settings);
         // Label: names it in the lists and the tray, never drawn in the overlay.
@@ -682,7 +682,7 @@ internal sealed class OverlaysPage : Page
 
     /// <summary>Draw, Paint (while Draw mode or Snake is on) and Colours tabs only for the pointer; other overlays keep their colours in Look.
     /// A tab that goes away falls back to Look.</summary>
-    private void ShowTabs(bool laser, bool paints)
+    private void ShowTabs(bool laser, bool paints, bool fps)
     {
         var home = laser ? _coloursTab : _lookTab;
         if (_coloursCard.Parent != home)
@@ -693,7 +693,9 @@ internal sealed class OverlaysPage : Page
         _tabs.Show(DrawTab, laser);
         _tabs.Show(PaintTab, laser && paints);
         _tabs.Show(ColoursTab, laser);
-        bool gone = _tab switch { DrawTab or ColoursTab => !laser, PaintTab => !laser || !paints, _ => false };
+        // The FPS overlay doesn't turn with the phone.
+        _tabs.Show(TurnTab, !fps);
+        bool gone = _tab switch { DrawTab or ColoursTab => !laser, PaintTab => !laser || !paints, TurnTab => fps, _ => false };
         if (gone)
         {
             _tab = LookTab;
@@ -1044,7 +1046,7 @@ internal sealed class OverlaysPage : Page
         _diskRange.Set(o.DiskRange);
         Parts.SetChecked(_crosshair, o.Crosshair);
         ShowColors(o);
-        ShowTabs(laser, paints);
+        ShowTabs(laser, paints, o.Kind == OverlayKind.Fps);
 
         _turnsWith.Set(o.TurnsWith);
         _turnsHint.Text = o.TurnsWith switch

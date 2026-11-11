@@ -1,3 +1,4 @@
+using GyroPhone.Protocol;
 using GyroPhone.Host;
 using GyroPhone.Host.Abstractions;
 using GyroPhone.Host.Perf;
@@ -154,6 +155,8 @@ public class PerfTests
         var m = new PerfMonitor(src, null, new FakeForeground(), clock, dir, _ => { });
         PerfRun? ended = null;
         m.Ended += r => ended = r;
+        m.PathNow = () => "Router Wi-Fi 5 GHz";
+        m.Watch(true); // the FPS overlay is on
         m.StartRecording("Router", "Wi-Fi 5 GHz", 6);
         Assert.Equal(FrameWatchState.On, m.State);
         src.Present!(Game, 0);
@@ -166,9 +169,13 @@ public class PerfTests
         clock.NowUs = 6_100_000;
         m.Tick();
         Assert.Null(m.Recording);
+        Assert.Equal(FrameWatchState.On, m.State); // the overlay still is
+        m.Watch(false);
         Assert.Equal(FrameWatchState.Off, m.State);
         var run = Assert.Single(m.Runs);
         Assert.Equal(run, ended);
+        Assert.Equal("Router Wi-Fi 5 GHz", run.Path);
+        Assert.True(run.Frames);
         Assert.Equal("Discovery", run.Game);
         Assert.Equal(100, run.AvgFps, 1);
         Assert.True(File.Exists(run.File));
@@ -179,12 +186,63 @@ public class PerfTests
     }
 
     [Fact]
-    public void NoRightsMeansNoRecording()
+    public void ALinkTestNeedsNoFrameWatch()
     {
-        var m = new PerfMonitor(new FakeSource { Answer = FrameWatchState.NeedsPermission }, null, new FakeForeground(), new FakeClock(),
-            Path.Combine(Path.GetTempPath(), "gp-perf-none"), _ => { });
-        m.StartRecording("x", "y", 60);
-        Assert.Null(m.Recording);
-        Assert.Equal(FrameWatchState.NeedsPermission, m.State);
+        var dir = Path.Combine(Path.GetTempPath(), "gp-perf-" + Guid.NewGuid().ToString("N"));
+        var clock = new FakeClock();
+        var src = new FakeSource { Answer = FrameWatchState.NeedsPermission };
+        var m = new PerfMonitor(src, null, new FakeForeground(), clock, dir, _ => { });
+        string path = "Router Wi-Fi 5 GHz";
+        m.PathNow = () => path;
+        m.StartRecording("x", "y", 0);
+        Assert.NotNull(m.Recording);
+        Assert.Equal(FrameWatchState.Off, m.State); // no FPS overlay: nothing watches the game
+        Assert.Null(src.Present);
+        Assert.Null(m.SecondNote());
+        path = "Phone hotspot";
+        clock.NowUs = 1_000_000;
+        m.Tick();
+        m.StopRecording();
+        var run = Assert.Single(m.Runs);
+        Assert.False(run.Frames);
+        Assert.Equal("Router Wi-Fi 5 GHz → Phone hotspot", run.Path);
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public void BurstsJoinNearbySecondsAndKeepTheirTime()
+    {
+        var start = new DateTime(2026, 11, 11, 20, 17, 50);
+        var r = new PerfRecording("t", "l", 0, start, 0);
+        var link = new List<LinkSecond>();
+        for (int s = 1; s <= 12; s++)
+        {
+            bool bad = s is 2 or 3 or 5 or 10;
+            link.Add(new(s * 1_000_000L, 500, 0, bad ? 10 : 0, bad ? 100 : 0, 0, 0, 5, 9, 1));
+        }
+        var (run, text) = r.Finish(13_000_000, link);
+        Assert.Equal(2, run.Bursts); // s1-4 (2, 3 and 5 keyed one lower) and s9
+        Assert.Equal(5, run.LatP50Ms, 3);
+        Assert.Equal(9, run.LatP99Ms, 3);
+        Assert.Contains(":51", text); // the first burst's second of the minute
+        Assert.Contains("not watched", text);
+    }
+}
+
+public class LinkPathTests
+{
+    private static LinkInfo Info(byte path, byte flags = 0, byte band = 5, ushort mhz = 5180) => new(0, 0, 500, -50, band, 866, mhz, flags, path);
+
+    [Fact]
+    public void PathsAreNamedAsTheSetups()
+    {
+        Assert.Equal("Phone hotspot", LinkPaths.Setup(Info(LinkPath.Hotspot), null));
+        Assert.Equal("Router", LinkPaths.Setup(Info(LinkPath.Wifi), new PcAdapter("Ethernet", false)));
+        Assert.Equal("PC hotspot", LinkPaths.Setup(Info(LinkPath.Wifi), new PcAdapter("Local Area Connection* 10", true)));
+        Assert.Equal("Wired (USB)", LinkPaths.Setup(Info(LinkPath.UsbDirect, LinkInfoFlags.Usb | LinkInfoFlags.UsbDirect), null));
+        Assert.Equal("Ethernet", LinkPaths.Setup(Info(LinkPath.Ethernet, LinkInfoFlags.Ethernet), null));
+        Assert.Null(LinkPaths.Setup(Info(LinkPath.Unknown), null));
+        Assert.Equal("Router Wi-Fi 5 GHz ch 36 · PC Ethernet", LinkPaths.Describe(Info(LinkPath.Wifi), new PcAdapter("Ethernet", false)));
+        Assert.Equal("Phone hotspot", LinkPaths.Describe(Info(LinkPath.Hotspot), null));
     }
 }

@@ -8,7 +8,11 @@ namespace GyroPhone.Host.Perf;
 /// <param name="MaxLateMs">The latest packet's extra delay.</param>
 /// <param name="Gaps">Times the phone sent nothing for longer than <see cref="InputRecorder.PhoneGapUs"/> while input was going on.</param>
 /// <param name="Releases">Times held keys and buttons were let go because the phone went silent.</param>
-public readonly record struct LinkSecond(long AtUs, int Rx, int Lost, int Late, float MaxLateMs, int Gaps, int Releases)
+/// <param name="LatP50Ms">The middle phone-to-PC latency, ms (−1 unknown).</param>
+/// <param name="LatP99Ms">The slowest 1%'s latency, ms (−1 unknown).</param>
+/// <param name="JitterMs">How much the latency varied, ms.</param>
+public readonly record struct LinkSecond(long AtUs, int Rx, int Lost, int Late, float MaxLateMs, int Gaps, int Releases,
+    float LatP50Ms = -1, float LatP99Ms = -1, float JitterMs = 0)
 {
     /// <summary>Something went wrong on the link this second.</summary>
     public bool Trouble => Lost > 0 || Late > 0 || Gaps > 0 || Releases > 0;

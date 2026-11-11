@@ -155,6 +155,24 @@ public sealed class FrameStats
         }
     }
 
+    /// <summary>The game's frames in the second before <paramref name="nowUs"/>: count, jumps, longest (ms), and whether it is in front.</summary>
+    public (int Frames, int Jumps, float WorstMs, bool Focused, int Pid) LastSecond(long nowUs)
+    {
+        lock (_lock)
+        {
+            int n = 0, jumps = 0;
+            float worst = 0;
+            foreach (var f in _frames)
+            {
+                if (f.AtUs <= nowUs - 1_000_000) continue;
+                n++;
+                if (f.Jump) jumps++;
+                if (f.Ms > worst) worst = f.Ms;
+            }
+            return (n, jumps, worst, _focused, _game);
+        }
+    }
+
     /// <summary>The slowest 1% of <paramref name="ms"/> (at least one frame), as frames per second; 0 without frames.</summary>
     public static double Low1Fps(List<float> ms)
     {

@@ -22,6 +22,7 @@ import com.oleroma.gyrophone.core.net.Discover
 import com.oleroma.gyrophone.core.net.EnrollResult
 import com.oleroma.gyrophone.core.net.HostFlags
 import com.oleroma.gyrophone.core.net.HostStatus
+import com.oleroma.gyrophone.core.net.LinkPath
 import com.oleroma.gyrophone.core.net.Rumble
 import com.oleroma.gyrophone.core.net.HostStatusFlags
 import com.oleroma.gyrophone.core.net.KeyLabels
@@ -1318,6 +1319,13 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 (if (usbNow && usbEthernet) LinkInfoFlags.ETHERNET else 0) or
                 (if (usbNow && usbDirect) LinkInfoFlags.USB_DIRECT else 0) or
                 (if (debugTrace) LinkInfoFlags.DEBUG_TRACE or LinkInfoFlags.debugSave(debugSaves) else 0),
+            path = when {
+                !usbNow -> LinkPath.WIFI
+                usbEthernet -> LinkPath.ETHERNET
+                usbHotspot -> LinkPath.HOTSPOT
+                usbDirect -> LinkPath.USB_DIRECT
+                else -> LinkPath.USB_TETHER
+            },
         )
     }
 

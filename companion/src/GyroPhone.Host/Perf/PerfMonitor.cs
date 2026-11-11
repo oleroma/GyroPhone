@@ -40,9 +40,10 @@ public interface IForeground
 public sealed record RecordingView(string Name, double Elapsed, int Seconds, double GameSeconds);
 
 /// <summary>
-/// The Performance page's monitor (docs/spec/pc-companion.md, "Performance"): watches the game's frames while
-/// the page is open or a test records, samples the PC's load once a second, and keeps the test records
-/// (perf/runs.jsonl, one per-second text file per record).
+/// The Performance page's monitor (docs/spec/pc-companion.md, "Performance"): watches the game's frames only
+/// while an FPS overlay is on (<see cref="Watch"/>), keeps link test records (the phone link's seconds, the
+/// path the packets took, the PC's load, and the frames when watched; perf/runs.jsonl plus one per-second
+/// text file per record).
 /// </summary>
 public sealed class PerfMonitor : IDisposable
 {
@@ -116,7 +117,24 @@ public sealed class PerfMonitor : IDisposable
 
     public FrameView View() => Frames.View(_clock.NowUs);
 
-    /// <summary>Watching while the page is open; a test record keeps it on until it ends.</summary>
+    /// <summary>The way the phone's packets go now, for records ("Phone hotspot · PC Wi-Fi"), or null.</summary>
+    public Func<string?>? PathNow { get; set; }
+
+    /// <summary>Watching the game's frames: State is On.</summary>
+    public bool Watching => State == FrameWatchState.On;
+
+    /// <summary>For the input log's second line while watching: " fps N jumps J worst W game NAME", else null.</summary>
+    public string? SecondNote()
+    {
+        if (State != FrameWatchState.On) return null;
+        var (n, jumps, worst, focused, pid) = Frames.LastSecond(_clock.NowUs);
+        if (pid == 0) return " fps - (no game)";
+        var name = Name(pid) ?? "?";
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $" fps {n} jumps {jumps} worst {worst:0.0} game {name}{(focused ? "" : " (background)")}");
+    }
+
+    /// <summary>Watching while an FPS overlay is on.</summary>
     public void Watch(bool on)
     {
         lock (_lock)
@@ -139,21 +157,26 @@ public sealed class PerfMonitor : IDisposable
 
     private void Apply()
     {
-        bool want = _watch || _recording != null;
-        if (want && State is FrameWatchState.Off)
+        if (_watch && State is FrameWatchState.Off)
         {
             State = _source.Start(Frames.Present, out var error);
             Error = error;
             _log($"frame watch: {State}{(error != null ? $" ({error})" : "")}");
-            if (State == FrameWatchState.On) _timer ??= new Timer(_ => Tick(), null, 1000, 1000);
         }
-        else if (!want && State == FrameWatchState.On)
+        else if (!_watch && State != FrameWatchState.Off)
         {
-            _source.Stop();
+            if (State == FrameWatchState.On) _source.Stop();
             State = FrameWatchState.Off;
+            Error = null;
+            _log("frame watch: off");
+        }
+        // The timer runs while watching (picks the game) or recording (load, path, the end).
+        bool tick = State == FrameWatchState.On || _recording != null;
+        if (tick) _timer ??= new Timer(_ => Tick(), null, 1000, 1000);
+        else
+        {
             _timer?.Dispose();
             _timer = null;
-            _log("frame watch: off");
         }
     }
 
@@ -164,12 +187,9 @@ public sealed class PerfMonitor : IDisposable
         {
             if (_recording != null) return;
             _recording = new PerfRecording(name.Trim().Length > 0 ? name.Trim() : link, link, _clock.NowUs, DateTime.Now, seconds);
+            _recording.NotePath(PathNow?.Invoke());
+            _load?.Sample(); // starts its count from now
             Apply();
-            if (State != FrameWatchState.On)
-            {
-                _recording = null;
-                return;
-            }
             Frames.Recording = _recording;
             _log($"performance test '{_recording.Name}' started, {seconds} s");
         }
@@ -264,16 +284,18 @@ public sealed class PerfMonitor : IDisposable
         try
         {
             long now = _clock.NowUs;
-            int game = Frames.Tick(_foreground.ForegroundPid(), now);
-            var load = _load?.Sample();
+            int game = State == FrameWatchState.On ? Frames.Tick(_foreground.ForegroundPid(), now) : 0;
             PerfRecording? r;
+            lock (_lock) r = _recording;
+            // The PC's load: only for a record.
+            var load = r != null ? _load?.Sample() : null;
             lock (_lock)
             {
                 _game = game;
                 _lastLoad = load;
-                r = _recording;
             }
             if (r == null) return;
+            r.NotePath(PathNow?.Invoke());
             if (game != 0 && r.Game.Length == 0) r.Game = Name(game) ?? "";
             if (load is { } l) r.AddLoad(l, now);
             if (r.Seconds > 0 && now - r.StartUs >= r.Seconds * 1_000_000L) StopRecording();

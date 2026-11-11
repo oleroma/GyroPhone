@@ -8,41 +8,48 @@ using Frame = GyroPhone.Host.Perf.Frame;
 namespace GyroPhone.Ui;
 
 /// <summary>
-/// Performance (docs/spec/pc-companion.md, "Performance"): the game in front with its frames per second and
-/// every jump (a frame much longer than the ones before), next to the phone link's trouble; "Record test"
-/// saves a few minutes of it under a name, and Results compares the records side by side.
+/// Performance (docs/spec/pc-companion.md, "Performance"): everything measured, and only while this page is on
+/// screen. The phone link live (the way its packets go, packets, latency with a graph, trouble marks, Measure
+/// buttons), link tests ("Record test", compared in Results, link first), and the video Latency test. The
+/// game's frames show only while an FPS overlay is on: it is the only thing that watches them.
 /// </summary>
 internal sealed class PerformancePage : Page
 {
     private readonly ICompanion _app;
     private readonly StackPanel _root = new();
+    private readonly LatencyPage _latency;
     private readonly Border _permission;
     private readonly TextBlock _permissionText;
     private readonly Button _allow, _admin;
-    private readonly TextBlock _gameBig, _gameSub, _loadSub;
+    private readonly TextBlock _linkBig, _linkSub, _latBig, _latSub, _gameSub;
+    private readonly Sparkline _latGraph = new() { Margin = new Thickness(0, 8, 0, 0) };
     private readonly FrameGraph _graph = new() { Margin = new Thickness(0, 10, 0, 4) };
+    private readonly CheckBox _measureButtons;
+    private readonly TextBlock _buttonsSub;
     private readonly TextBox _name;
     private readonly Seg<string> _picks;
     private readonly Seg<int> _length;
     private int _seconds = 180;
     private readonly Button _record;
-    private readonly TextBlock _recordSub;
+    private readonly TextBlock _pathLine, _recordSub;
     private readonly StackPanel _results = new();
     private string _resultsKey = "\0";
-    private bool _nameEdited, _settingName, _granted, _wasRecording;
+    private string? _setup;
+    private bool _nameEdited, _settingName, _granted, _wasRecording, _wasConnected, _shown;
+    private long _sampledAt;
 
     public override FrameworkElement View => _root;
 
-    public PerformancePage(ICompanion app)
+    public PerformancePage(ICompanion app, Window owner, ImageSource? icon)
     {
         _app = app;
         _root.Children.Add(Parts.Text("Performance", "H1"));
-        var intro = Parts.Text("Watches the game in front: its frames per second and every jump (a frame at least twice as long as the ones before it), " +
-            "next to the phone link's lost and late packets. Record a test for each way of connecting, then compare them below.", "Sub");
+        var intro = Parts.Text("The phone link live, link tests to compare ways of connecting, and the video latency test. " +
+            "Measured only while this page is open (and while a test records).", "Sub");
         intro.Margin = new Thickness(0, 0, 0, 14);
         _root.Children.Add(intro);
 
-        // Permission banner
+        // Permission banner (the FPS overlay's frame watch)
         var pg = new Grid();
         pg.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         pg.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -62,37 +69,55 @@ internal sealed class PerformancePage : Page
         _permission = new Border { Style = Parts.Style("Banner"), Child = pg, MinHeight = 44, Margin = new Thickness(0, 0, 0, 14) };
         _root.Children.Add(_permission);
 
-        // Game
-        var (game, gb) = Parts.Card("Game");
-        _gameBig = Parts.Text("", "Big");
-        _gameSub = Parts.Text("", "Sub");
-        gb.Children.Add(_gameBig);
-        gb.Children.Add(_gameSub);
-        gb.Children.Add(_graph);
-        var legend = Parts.Text("Last 10 seconds of frame times (higher is slower). Red dots: jumps. Orange marks under the graph: " +
-            "the phone link lost or held up packets, or let go of held keys, in that second.", "Sub");
+        // Link
+        var (link, lb) = Parts.Card("Link");
+        _linkBig = Parts.Text("", "Big");
+        _linkSub = Parts.Text("", "Sub");
+        lb.Children.Add(_linkBig);
+        lb.Children.Add(_linkSub);
+        var latRow = new WrapPanel { Margin = new Thickness(0, 12, 0, 0) };
+        _latBig = Parts.Text("", "Big");
+        _latBig.Margin = new Thickness(0, 0, 10, 0);
+        _latSub = Parts.Text("", "Sub");
+        _latSub.VerticalAlignment = VerticalAlignment.Bottom;
+        _latSub.Margin = new Thickness(0, 0, 0, 3);
+        latRow.Children.Add(_latBig);
+        latRow.Children.Add(_latSub);
+        lb.Children.Add(latRow);
+        lb.Children.Add(_latGraph);
+        var latLegend = Parts.Text("Latency while this page is open: middle (p50) bright, slowest 1% (p99) faint.", "Sub");
+        latLegend.FontSize = 11.5;
+        lb.Children.Add(latLegend);
+        lb.Children.Add(_graph);
+        var legend = Parts.Text("Last 10 seconds. Orange marks: the link lost or held up packets, the phone paused, or held keys were let go, in that second. " +
+            "With the FPS overlay on, also the game's frame times (higher is slower), jumps as red dots.", "Sub");
         legend.FontSize = 11.5;
-        gb.Children.Add(legend);
-        _loadSub = Parts.Text("", "Sub");
-        _loadSub.Margin = new Thickness(0, 8, 0, 0);
-        gb.Children.Add(_loadSub);
-        _root.Children.Add(game);
+        lb.Children.Add(legend);
+        _gameSub = Parts.Text("", "Sub");
+        _gameSub.Margin = new Thickness(0, 8, 0, 0);
+        lb.Children.Add(_gameSub);
+        _measureButtons = Parts.Toggle("Measure buttons", app.ToggleMeasureButtons,
+            "Times each press from the phone seeing your touch or controller button to the game getting it.");
+        _measureButtons.Margin = new Thickness(0, 10, 0, 0);
+        lb.Children.Add(_measureButtons);
+        _buttonsSub = Parts.Text("", "Sub");
+        lb.Children.Add(_buttonsSub);
+        _root.Children.Add(link);
 
         // Record test
         var (rec, rb) = Parts.Card("Record test");
         _name = new TextBox { MaxLength = 40, Padding = new Thickness(4, 2, 4, 2), MinWidth = 260, HorizontalAlignment = HorizontalAlignment.Left,
-            ToolTip = "What you're testing: pick a setup above or type your own, such as \"Overlays off\". Starts as the link the phone uses now." };
+            ToolTip = "What you're testing. Starts as the setup the phone is on now; type your own, such as \"Overlays off\"." };
         _name.TextChanged += (_, _) =>
         {
             if (!_settingName) _nameEdited = true;
         };
-        var picks = new Seg<string>(n =>
+        _picks = new Seg<string>(n =>
         {
             _name.Text = n;
             _nameEdited = true;
-        }, true, ("Router", "Router"), ("Phone hotspot", "Phone hotspot"), ("PC hotspot", "PC hotspot"), ("Wired (USB)", "Wired (USB)"), ("Ethernet", "Ethernet"));
-        _picks = picks;
-        rb.Children.Add(Parts.Labelled("Setup", picks.View, 90));
+        }, true, [.. LinkPaths.Setups.Select(x => (x, x))]);
+        rb.Children.Add(Parts.Labelled("Setup", _picks.View, 90));
         rb.Children.Add(Parts.Labelled("Name", _name, 90));
         _length = new Seg<int>(s =>
         {
@@ -101,12 +126,16 @@ internal sealed class PerformancePage : Page
         }, false, ("3 min", 180), ("5 min", 300), ("10 min", 600), ("Until I stop", 0));
         _length.Set(_seconds);
         rb.Children.Add(Parts.Labelled("Length", _length.View, 90));
-        _record = Parts.Button("Record", Record, "Accent", "");
+        _pathLine = Parts.Text("", "Sub");
+        _pathLine.Margin = new Thickness(0, 6, 0, 0);
+        rb.Children.Add(_pathLine);
+        _record = Parts.Button("Record", Record, "Accent", "");
         _record.Margin = new Thickness(0, 10, 0, 0);
         _record.HorizontalAlignment = HorizontalAlignment.Left;
         rb.Children.Add(_record);
-        _recordSub = Parts.Text("Record closes this window so it costs nothing while you play. Only the time the game is in front counts, " +
-            "from 3 seconds after it comes there. Opening the window again ends the test and shows the result.", "Sub");
+        _recordSub = Parts.Text("Record closes this window so it costs nothing while you play; the phone buzzes when the test ends. " +
+            "Opening the window again ends it early. The record keeps the link's every second and the way its packets went; " +
+            "the game's frames too while the FPS overlay is on.", "Sub");
         _recordSub.Margin = new Thickness(0, 6, 0, 0);
         rb.Children.Add(_recordSub);
         _root.Children.Add(rec);
@@ -114,15 +143,22 @@ internal sealed class PerformancePage : Page
         // Results
         var (res, sb) = Parts.Card("Results");
         sb.Children.Add(_results);
-        var open = Parts.Button("Open folder", app.OpenPerfFolder, glyph: "");
+        var open = Parts.Button("Open folder", app.OpenPerfFolder, glyph: "");
         open.Margin = new Thickness(0, 10, 0, 0);
         open.HorizontalAlignment = HorizontalAlignment.Left;
         sb.Children.Add(open);
         _root.Children.Add(res);
+
+        // Latency test (video)
+        _latency = new LatencyPage(app, owner, icon);
+        _root.Children.Add(_latency.View);
     }
 
-    /// <summary>Frames are watched only while this page is on screen (and while a test records).</summary>
-    public override void Shown(bool on) => _app.Perf.Watch(on);
+    public override void Shown(bool on)
+    {
+        _shown = on;
+        _latency.Shown(on);
+    }
 
     private void Allow()
     {
@@ -137,7 +173,7 @@ internal sealed class PerformancePage : Page
         if (p.Recording != null) p.StopRecording();
         else
         {
-            p.StartRecording(_name.Text, LinkName(_app.View()), _seconds);
+            p.StartRecording(_name.Text, _app.LinkPath()?.Text ?? LinkName(_app.View()), _seconds);
             _nameEdited = false;
             // A fair test runs without this window drawing: it closes, and the record goes on in the tray.
             if (p.Recording != null) Window.GetWindow(_root)?.Close();
@@ -147,68 +183,104 @@ internal sealed class PerformancePage : Page
     public override void Refresh(CompanionView v)
     {
         var p = _app.Perf;
+        var s = v.Status;
+        var path = s.Connected ? _app.LinkPath() : null;
 
-        // Permission
+        // Permission: only matters while an FPS overlay asks for frames.
         bool needs = p.State is FrameWatchState.NeedsPermission or FrameWatchState.Failed;
         Parts.Show(_permission, needs);
         if (needs)
         {
             _permissionText.Text = p.State == FrameWatchState.Failed
-                ? $"Windows wouldn't let GyroPhone watch frames: {p.Error}."
+                ? $"The FPS overlay can't watch frames: {p.Error}."
                 : _granted
                     ? "Allowed. It works from your next Windows sign-in (sign out and back in), or now if you restart GyroPhone as administrator."
-                    : "Watching the game's frames needs a Windows permission. \"Allow\" asks once for admin rights, then it works without them from your next sign-in.";
+                    : "The FPS overlay needs a Windows permission to watch the game's frames. \"Allow\" asks once for admin rights, then it works without them from your next sign-in.";
             Parts.Show(_allow, p.State == FrameWatchState.NeedsPermission && !_granted);
             Parts.Show(_admin, !v.Elevated);
         }
 
-        // Game
-        var f = p.View();
-        var game = p.GameName;
-        if (p.State != FrameWatchState.On)
+        // Link
+        if (s.PhoneLink is { } l && s.Connected)
         {
-            _gameBig.Text = "—";
-            _gameSub.Text = "Not watching.";
+            _linkBig.Text = path?.Text ?? LinkName(v);
+            bool wire = l.Path is LinkPath.UsbTether or LinkPath.UsbDirect or LinkPath.Ethernet or LinkPath.Hotspot ||
+                (l.Flags & (LinkInfoFlags.Usb | LinkInfoFlags.Ethernet)) != 0;
+            var parts = new List<string> { $"{s.RxPerSec:N0}/s received", $"loss {s.LossPermille / 10.0:0.0}%" };
+            if (!wire) parts.Add($"{l.RssiDbm} dBm · {l.LinkMbps:N0} Mbps");
+            parts.Add($"phone sends {l.SendRateHz:N0} Hz");
+            parts.Add($"round trip {l.RttMinUs / 1000.0:0.0} ms");
+            if (!wire) parts.Add((l.Flags & LinkInfoFlags.LowLatencyLockHeld) != 0 ? "low-latency Wi‑Fi on" : "low-latency Wi‑Fi off");
+            _linkSub.Text = string.Join(" · ", parts);
         }
-        else if (f.Pid == 0 || game == null)
+        else if (s.Connected)
         {
-            _gameBig.Text = "No game";
-            _gameSub.Text = "Start a game: anything that draws with Direct3D shows up here.";
+            _linkBig.Text = "Connected";
+            _linkSub.Text = $"{s.RxPerSec:N0}/s received · loss {s.LossPermille / 10.0:0.0}%";
         }
         else
         {
-            _gameBig.Text = $"{game} · {f.Fps:0} fps";
-            var parts = new List<string>();
-            if (!f.Focused) parts.Add("in the background");
-            parts.Add($"1% low {f.Low1Fps:0} fps");
-            parts.Add($"{f.Jumps} {(f.Jumps == 1 ? "jump" : "jumps")} in the last minute");
-            parts.Add($"worst frame {f.WorstMs:0} ms");
-            _gameSub.Text = string.Join(" · ", parts);
+            _linkBig.Text = "No phone";
+            _linkSub.Text = v.UsbDirect ? $"USB cable: {v.UsbDirectText}" : "Waiting for the phone.";
         }
+        bool known = s.Connected && s.LatP50Us != HostStatus.Unknown;
+        if (known)
+        {
+            _latBig.Text = $"{s.LatP50Us / 1000.0:0.0} ms";
+            _latSub.Text = $"latency p50 · p99 {Ms(s.LatP99Us)} · jitter {s.JitterUs / 1000.0:0.00} ms";
+            long t = Environment.TickCount64;
+            if (_shown && t - _sampledAt >= 450)
+            {
+                _sampledAt = t;
+                _latGraph.Add(s.LatP50Us / 1000.0, s.LatP99Us == HostStatus.Unknown ? s.LatP50Us / 1000.0 : s.LatP99Us / 1000.0);
+            }
+        }
+        else
+        {
+            _latBig.Text = "—";
+            _latSub.Text = s.Connected ? "latency: measuring…" : "latency: no phone";
+        }
+        if (s.Connected && !_wasConnected) _latGraph.Clear();
+        _wasConnected = s.Connected;
+        Parts.SetChecked(_measureButtons, v.MeasureButtons);
+        Parts.Show(_buttonsSub, v.MeasureButtons);
+        if (v.MeasureButtons)
+            _buttonsSub.Text = !s.Connected ? "Buttons: no phone"
+                : v.Buttons is { } b ? $"Buttons: {b.TotalUs / 1000.0:0.0} ms, phone part {b.PhoneUs / 1000.0:0.0} ms (middle of {b.Count} · last {b.LastUs / 1000.0:0.0} ms)"
+                : "Buttons: press something on the phone…";
+
+        // The game: only through the FPS overlay.
+        var f = p.View();
+        if (!p.Watching) _gameSub.Text = "Game frames: off. Add the FPS overlay (Overlays → Add overlay → FPS) to watch them; it's the only thing that does.";
+        else if (f.Pid == 0 || p.GameName == null) _gameSub.Text = "Game frames (FPS overlay on): no game showing frames.";
+        else _gameSub.Text = $"Game frames (FPS overlay on): {p.GameName} · {f.Fps:0} fps · 1% low {f.Low1Fps:0} · {f.Jumps} jumps in the last minute · worst {f.WorstMs:0} ms" +
+            (f.Focused ? "" : " · in the background");
         long now = f.Recent.Length > 0 ? Math.Max(f.Recent[^1].AtUs, NowUs()) : NowUs();
-        _graph.Set(f.Recent, p.Link.Between(now - FrameStats.GraphUs - 1_000_000, now + 1_000_000), now);
-        _loadSub.Text = p.Load is { } l
-            ? $"PC: CPU {l.CpuPct:0}% · driver time {l.DriverPct:0.0}% · busiest processor's driver time {l.BusiestCoreDriverPct:0}%"
-            : "";
+        _graph.Set(p.Watching ? f.Recent : Array.Empty<Frame>(), p.Link.Between(now - FrameStats.GraphUs - 1_000_000, now + 1_000_000), now);
 
         // Record
         var r = p.Recording;
+        _setup = path?.Setup;
         if (!_nameEdited && r == null)
         {
-            var link = LinkName(v);
-            if (_name.Text != link)
+            var want = _setup ?? (path?.Text ?? LinkName(v));
+            if (_name.Text != want)
             {
                 _settingName = true;
-                _name.Text = link;
+                _name.Text = want;
                 _settingName = false;
             }
         }
         _name.IsEnabled = _length.View.IsEnabled = _picks.View.IsEnabled = r == null;
         _picks.Set(_name.Text);
-        _record.IsEnabled = p.State == FrameWatchState.On || r != null;
+        bool picked = LinkPaths.Setups.Contains(_name.Text);
+        _pathLine.Text = path == null ? "The phone isn't connected: a record now has no link to measure."
+            : picked && _setup != null && _setup != _name.Text ? $"⚠ The phone's packets go by {path.Value.Text}, not {_name.Text}. The record keeps the real path either way."
+            : $"Detected: {path.Value.Text}.";
+        _pathLine.SetResourceReference(TextBlock.ForegroundProperty, picked && _setup != null && _setup != _name.Text ? "WarnTextBrush" : "DimBrush");
         SetRecordText(r == null ? "Record" : "Stop");
         if (r != null)
-            _recordSub.Text = $"Recording '{r.Name}': {Clock(r.Elapsed)}{(r.Seconds > 0 ? $" of {Clock(r.Seconds)}" : "")}, game in front {Clock(r.GameSeconds)}.";
+            _recordSub.Text = $"Recording '{r.Name}': {Clock(r.Elapsed)}{(r.Seconds > 0 ? $" of {Clock(r.Seconds)}" : "")}.";
         else if (_wasRecording)
             _recordSub.Text = "Done. The new record is at the top of Results.";
         _wasRecording = r != null;
@@ -221,14 +293,18 @@ internal sealed class PerformancePage : Page
             _resultsKey = key;
             BuildResults(runs);
         }
+
+        _latency.Refresh(v);
     }
+
+    private static string Ms(uint us) => us == HostStatus.Unknown ? "–" : $"{us / 1000.0:0.0} ms";
 
     private void SetRecordText(string text)
     {
         if (_record.Content is StackPanel sp && sp.Children.Count > 1 && sp.Children[1] is TextBlock t)
         {
             t.Text = text;
-            if (sp.Children[0] is TextBlock g) g.Text = text == "Stop" ? "" : "";
+            if (sp.Children[0] is TextBlock g) g.Text = text == "Stop" ? "" : "";
         }
     }
 
@@ -236,17 +312,11 @@ internal sealed class PerformancePage : Page
 
     private static string Clock(double s) => $"{(int)s / 60}:{(int)s % 60:00}";
 
-    /// <summary>The link the phone uses now, as Home names it.</summary>
+    /// <summary>The link the phone uses now, from LINK_INFO alone (without the PC's side).</summary>
     internal static string LinkName(CompanionView v)
     {
         var s = v.Status;
-        if (s.PhoneLink is { } l)
-        {
-            if ((l.Flags & LinkInfoFlags.Ethernet) != 0) return "Ethernet";
-            if ((l.Flags & LinkInfoFlags.Usb) != 0)
-                return (l.Flags & LinkInfoFlags.UsbDirect) != 0 ? "USB cable (direct)" : "USB cable (tethering)";
-            return l.Band == 0 ? "Wi-Fi" : $"Wi-Fi {l.Band} GHz";
-        }
+        if (s.PhoneLink is { } l) return LinkPaths.Phone(l, null);
         return s.Connected ? "Connected" : "No phone";
     }
 
@@ -258,12 +328,17 @@ internal sealed class PerformancePage : Page
             _results.Children.Add(Parts.Text("No tests yet.", "Sub"));
             return;
         }
-        string[] heads = ["Name", "When", "Game", "Avg fps", "1% low", "Jumps/min", "Worst frame", "Lost", "Late", "Let go", "CPU", "Driver"];
+        string[] heads = ["Name", "When", "Path", "Lost", "Late", "Pauses", "Let go", "Bursts", "Latency", "Jitter", "Avg fps", "1% low", "Jumps/min", "Worst frame", "CPU", "Driver"];
         string[] tips =
         [
-            "", "", "Minutes the game was in front and counted.", "Average frames per second.", "The slowest 1% of frames, as frames per second.",
-            "Frames at least twice as long as the ones before them, per minute.", "The longest frame.", "Phone packets lost.",
-            "Phone packets held up on the way (more than 15 ms late).", "Times held keys and buttons were let go because the phone went silent.",
+            "Click a name to open its second-by-second file, with each burst of link trouble and its time.", "",
+            "The way the phone's packets went, detected (→ when it changed during the test).",
+            "Phone packets lost.", "Phone packets held up on the way (more than 15 ms late), and the worst delay.",
+            "Times the phone sent nothing for a while during input.", "Times held keys and buttons were let go because the phone went silent.",
+            "Stretches of link trouble (seconds in a row with lost or late packets, pauses or let-go keys).",
+            "Phone-to-PC latency: typical (middle) · slowest 1%.", "How much the latency varied.",
+            "Average frames per second (only with the FPS overlay on).", "The slowest 1% of frames, as frames per second.",
+            "Frames at least twice as long as the ones before them, per minute.", "The longest frame.",
             "All processors' busy time.", "Time the processors spent in drivers (network, Wi-Fi, USB), and the busiest single processor's.",
         ];
         var g = new Grid();
@@ -278,8 +353,12 @@ internal sealed class PerformancePage : Page
             Cell(g, h, 0, c);
         }
         // The best value in each column is in the accent colour.
-        double bestFps = runs.Max(r => r.AvgFps), bestLow = runs.Max(r => r.Low1Fps), bestJumps = runs.Min(r => r.JumpsPerMin);
-        int bestLost = runs.Min(r => r.Lost), bestLate = runs.Min(r => r.Late);
+        var withFrames = runs.Where(r => r.Frames && r.GameSeconds > 0).ToList();
+        double bestFps = withFrames.Count > 0 ? withFrames.Max(r => r.AvgFps) : 0, bestLow = withFrames.Count > 0 ? withFrames.Max(r => r.Low1Fps) : 0;
+        double bestJumps = withFrames.Count > 0 ? withFrames.Min(r => r.JumpsPerMin) : 0;
+        int bestLost = runs.Min(r => r.Lost), bestLate = runs.Min(r => r.Late), bestGaps = runs.Min(r => r.Gaps), bestBursts = runs.Min(r => r.Bursts);
+        var lat = runs.Where(r => r.LatP50Ms >= 0).ToList();
+        double bestLat = lat.Count > 0 ? lat.Min(r => r.LatP99Ms >= 0 ? r.LatP99Ms : r.LatP50Ms) : 0;
         bool many = runs.Count > 1;
         for (int i = 0; i < runs.Count; i++)
         {
@@ -287,25 +366,31 @@ internal sealed class PerformancePage : Page
             g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             int row = i + 1;
             var name = Parts.Text(r.Name);
-            name.ToolTip = $"{r.Link}" + (r.File != null ? $"\nClick to open the second-by-second file." : "");
+            name.ToolTip = (r.Path.Length > 0 ? r.Path : r.Link) + (r.File != null ? "\nClick to open the second-by-second file." : "");
             if (r.File is { } file)
             {
                 name.Cursor = System.Windows.Input.Cursors.Hand;
                 name.TextDecorations = TextDecorations.Underline;
                 name.MouseLeftButtonUp += (_, _) => _app.OpenFile(file);
             }
+            bool fr = r.Frames && r.GameSeconds > 0;
             Cell(g, name, row, 0);
             Cell(g, Parts.Text(r.Start.ToString("d MMM HH:mm"), "Sub"), row, 1);
-            Cell(g, Parts.Text($"{r.Game} {Clock(r.GameSeconds)}", "Sub"), row, 2);
-            Cell(g, Num($"{r.AvgFps:0}", many && r.AvgFps >= bestFps), row, 3);
-            Cell(g, Num($"{r.Low1Fps:0}", many && r.Low1Fps >= bestLow), row, 4);
-            Cell(g, Num($"{r.JumpsPerMin:0.0}", many && r.JumpsPerMin <= bestJumps), row, 5);
-            Cell(g, Num($"{r.WorstMs:0} ms", false), row, 6);
-            Cell(g, Num($"{r.Lost}", many && r.Lost <= bestLost), row, 7);
-            Cell(g, Num(r.Late > 0 ? $"{r.Late} (≤{r.MaxLateMs:0} ms)" : "0", many && r.Late <= bestLate), row, 8);
-            Cell(g, Num($"{r.Releases}", false), row, 9);
-            Cell(g, Num($"{r.CpuPct:0}%", false), row, 10);
-            Cell(g, Num($"{r.DriverPct:0.0}% · {r.BusiestCoreDriverPct:0}%", false), row, 11);
+            Cell(g, Parts.Text(r.Path.Length > 0 ? r.Path : r.Link + " (typed)", "Sub"), row, 2);
+            Cell(g, Num($"{r.Lost}", many && r.Lost <= bestLost), row, 3);
+            Cell(g, Num(r.Late > 0 ? $"{r.Late} (≤{r.MaxLateMs:0} ms)" : "0", many && r.Late <= bestLate), row, 4);
+            Cell(g, Num($"{r.Gaps}", many && r.Gaps <= bestGaps), row, 5);
+            Cell(g, Num($"{r.Releases}", false), row, 6);
+            Cell(g, Num($"{r.Bursts}", many && r.Bursts <= bestBursts), row, 7);
+            Cell(g, Num(r.LatP50Ms >= 0 ? $"{r.LatP50Ms:0.0} · {r.LatP99Ms:0.0} ms" : "–",
+                many && r.LatP50Ms >= 0 && (r.LatP99Ms >= 0 ? r.LatP99Ms : r.LatP50Ms) <= bestLat), row, 8);
+            Cell(g, Num(r.LatP50Ms >= 0 ? $"{r.JitterMs:0.0} ms" : "–", false), row, 9);
+            Cell(g, Num(fr ? $"{r.AvgFps:0}" : "–", many && fr && r.AvgFps >= bestFps), row, 10);
+            Cell(g, Num(fr ? $"{r.Low1Fps:0}" : "–", many && fr && r.Low1Fps >= bestLow), row, 11);
+            Cell(g, Num(fr ? $"{r.JumpsPerMin:0.0}" : "–", many && fr && r.JumpsPerMin <= bestJumps), row, 12);
+            Cell(g, Num(fr ? $"{r.WorstMs:0} ms" : "–", false), row, 13);
+            Cell(g, Num($"{r.CpuPct:0}%", false), row, 14);
+            Cell(g, Num($"{r.DriverPct:0.0}% · {r.BusiestCoreDriverPct:0}%", false), row, 15);
         }
         _results.Children.Add(new ScrollViewer
         {
