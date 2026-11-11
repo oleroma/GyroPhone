@@ -22,6 +22,7 @@ internal sealed class PerformancePage : Page
     private readonly TextBlock _gameBig, _gameSub, _loadSub;
     private readonly FrameGraph _graph = new() { Margin = new Thickness(0, 10, 0, 4) };
     private readonly TextBox _name;
+    private readonly Seg<string> _picks;
     private readonly Seg<int> _length;
     private int _seconds = 180;
     private readonly Button _record;
@@ -80,11 +81,18 @@ internal sealed class PerformancePage : Page
         // Record test
         var (rec, rb) = Parts.Card("Record test");
         _name = new TextBox { MaxLength = 40, Padding = new Thickness(4, 2, 4, 2), MinWidth = 260, HorizontalAlignment = HorizontalAlignment.Left,
-            ToolTip = "What you're testing, such as \"PC hotspot\" or \"Overlays off\". Starts as the link the phone uses now." };
+            ToolTip = "What you're testing: pick a setup above or type your own, such as \"Overlays off\". Starts as the link the phone uses now." };
         _name.TextChanged += (_, _) =>
         {
             if (!_settingName) _nameEdited = true;
         };
+        var picks = new Seg<string>(n =>
+        {
+            _name.Text = n;
+            _nameEdited = true;
+        }, true, ("Router", "Router"), ("Phone hotspot", "Phone hotspot"), ("PC hotspot", "PC hotspot"), ("Wired (USB)", "Wired (USB)"));
+        _picks = picks;
+        rb.Children.Add(Parts.Labelled("Setup", picks.View, 90));
         rb.Children.Add(Parts.Labelled("Name", _name, 90));
         _length = new Seg<int>(s =>
         {
@@ -192,7 +200,8 @@ internal sealed class PerformancePage : Page
                 _settingName = false;
             }
         }
-        _name.IsEnabled = _length.View.IsEnabled = r == null;
+        _name.IsEnabled = _length.View.IsEnabled = _picks.View.IsEnabled = r == null;
+        _picks.Set(_name.Text);
         _record.IsEnabled = p.State == FrameWatchState.On || r != null;
         SetRecordText(r == null ? "Record" : "Stop");
         if (r != null)
