@@ -216,7 +216,12 @@ public sealed class PerfMonitor : IDisposable
             Frames.Recording = _recording;
             _log($"performance test '{_recording.Name}' started, {seconds} s");
         }
+        try { Started?.Invoke(); }
+        catch (Exception e) { _log($"performance test start notice failed: {e.GetType().Name}: {e.Message}"); }
     }
+
+    /// <summary>A test record started (raised on the thread that started it).</summary>
+    public event Action? Started;
 
     /// <summary>A test record ended and was saved (raised on the thread that stopped it).</summary>
     public event Action<PerfRun>? Ended;

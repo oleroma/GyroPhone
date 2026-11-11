@@ -155,9 +155,13 @@ public class PerfTests
         var m = new PerfMonitor(src, null, new FakeForeground(), clock, dir, _ => { });
         PerfRun? ended = null;
         m.Ended += r => ended = r;
+        int started = 0;
+        m.Started += () => started++;
         m.PathNow = () => "Router Wi-Fi 5 GHz";
         m.Watch(true); // the FPS overlay is on
         m.StartRecording("Router", "Wi-Fi 5 GHz", 6);
+        m.StartRecording("Router", "Wi-Fi 5 GHz", 6); // already recording: no second start
+        Assert.Equal(1, started);
         Assert.Equal(FrameWatchState.On, m.State);
         src.Present!(Game, 0);
         m.Tick();

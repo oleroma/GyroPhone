@@ -1536,7 +1536,7 @@ public sealed class HostEngine
     }
 
     /// <summary>
-    /// Buzzes the connected phone once (a Performance record ended), whatever the output mode. Sent
+    /// Buzzes and beeps the connected phone once (a Performance record started or ended), whatever the output mode. Sent
     /// twice against a lost packet; the phone plays one buzz per second at most.
     /// </summary>
     public void Buzz()

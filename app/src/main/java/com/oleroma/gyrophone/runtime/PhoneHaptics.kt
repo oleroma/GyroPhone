@@ -1,6 +1,8 @@
 package com.oleroma.gyrophone.runtime
 
 import android.content.Context
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Process
@@ -139,7 +141,21 @@ class PhoneHaptics(context: Context, private val connected: () -> Boolean) : Hap
         }
     }
 
-    /** Two short strong buzzes (a Performance record ended on the PC). Repeats within a second are one buzz. */
+    /** Android's double beep at the notification volume, then the tone player is let go. */
+    private fun beep() {
+        try {
+            val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
+            tone.startTone(ToneGenerator.TONE_PROP_BEEP2, BEEP_MS.toInt())
+            worker.postDelayed({ tone.release() }, BEEP_MS + 200)
+        } catch (e: RuntimeException) {
+            log?.invoke("notice beep failed: ${e.message}") // no audio device for tones
+        }
+    }
+
+    /**
+     * Two short strong buzzes and two beeps (a Performance record started or ended on the PC). Repeats
+     * within a second are one. The beeps play at the notification volume, so silent mode silences them.
+     */
     fun buzz() {
         worker.post {
             val now = SystemClock.uptimeMillis()
@@ -151,6 +167,7 @@ class PhoneHaptics(context: Context, private val connected: () -> Boolean) : Hap
             val amplitudes = intArrayOf(0, amplitude, 0, amplitude)
             vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1), hardwareAttrs)
             buzzUntil = now + timings.sum()
+            beep()
             if (rumbleLevel > 0) {
                 worker.removeCallbacks(renewRumble)
                 worker.postAtTime(renewRumble, buzzUntil)
@@ -214,6 +231,7 @@ class PhoneHaptics(context: Context, private val connected: () -> Boolean) : Hap
         const val BUZZ_ON_MS = 90L
         const val BUZZ_OFF_MS = 110L
         const val BUZZ_GAP_MS = 1000L
+        const val BEEP_MS = 400L
         const val AMPLITUDE_STEP = 12
         const val SYSTEM_HOLD_STRENGTH = 160
         /** About how long a predefined click lasts. */
