@@ -31,7 +31,7 @@ public sealed class Watchdog : IDisposable
     private readonly byte[] _held = new byte[StateFrame.KeyBitmapSize];
     private readonly object _writeLock = new();
     private readonly ManualResetEventSlim _stopWrites = new(false);
-    private Thread? _tickThread, _writeThread;
+    private Thread? _tickThread, _writeThread, _keepAwakeThread;
     private volatile bool _stop;
     private int _running;
     private int _probing;
@@ -58,8 +58,10 @@ public sealed class Watchdog : IDisposable
         if (_tickThread != null) return;
         _tickThread = new Thread(TickLoop) { Name = "gp-watchdog", IsBackground = true, Priority = ThreadPriority.AboveNormal };
         _writeThread = new Thread(WriteLoop) { Name = "gp-save", IsBackground = true, Priority = ThreadPriority.BelowNormal };
+        _keepAwakeThread = new Thread(KeepAwakeLoop) { Name = "gp-keepawake", IsBackground = true, Priority = ThreadPriority.AboveNormal };
         _tickThread.Start();
         _writeThread.Start();
+        _keepAwakeThread.Start();
     }
 
     /// <summary>Ticks every 50 ms from a fixed start, so a late tick doesn't push the later ones back; one that is a whole tick late is skipped.</summary>
@@ -78,6 +80,26 @@ public sealed class Watchdog : IDisposable
             next += periodUs;
             long now = (long)clock.Elapsed.TotalMicroseconds;
             if (next <= now) next = now + periodUs;
+        }
+    }
+
+    /// <summary>KEEP_AWAKE every <see cref="Wire.KeepAwakeMs"/> (HostEngine.KeepAwake decides whether to send), on its own exact timer.</summary>
+    private void KeepAwakeLoop()
+    {
+        using var sleep = _sleep();
+        while (!_stop)
+        {
+            sleep.Sleep(Wire.KeepAwakeMs * 1000L);
+            if (_stop) return;
+            try
+            {
+                _engine.KeepAwake();
+            }
+            catch (Exception e)
+            {
+                _log($"keep-awake error: {e.GetType().Name}");
+                Thread.Sleep(1000);
+            }
         }
     }
 
@@ -205,5 +227,6 @@ public sealed class Watchdog : IDisposable
         _stopWrites.Set();
         if (_tickThread is { } t && t != Thread.CurrentThread) t.Join(1000);
         if (_writeThread is { } w && w != Thread.CurrentThread) w.Join(2000);
+        if (_keepAwakeThread is { } k && k != Thread.CurrentThread) k.Join(1000);
     }
 }

@@ -92,12 +92,10 @@ public sealed class MainWindow : Window
         Add(side, content, MainPage.Gamepad, "Gamepad", "", () => new GamepadPage(app));
         Add(side, content, MainPage.Overlays, "Overlays", "", () => new OverlaysPage(app, this));
         Add(side, content, MainPage.Connection, "Connection", "", () => new ConnectionPage(app));
-        Add(side, content, MainPage.Latency, "Latency test", "", () => new LatencyPage(app, this, icon));
-        Add(side, content, MainPage.Performance, "Performance", "\uE9D9", () => new PerformancePage(app));
+        Add(side, content, MainPage.Performance, "Performance", "\uE9D9", () => new PerformancePage(app, this, icon));
         Add(side, content, MainPage.App, "App", "", () => new AppPage(app));
 
         Content = root;
-        Build(MainPage.Home); // its latency graph samples while another page is shown
         Go(_lastPage);
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
@@ -147,6 +145,8 @@ public sealed class MainWindow : Window
     /// <summary>Shows page <paramref name="id"/>.</summary>
     public void Go(MainPage id)
     {
+        // The Latency test is a part of Performance.
+        if (id == MainPage.Latency) id = MainPage.Performance;
         _lastPage = id;
         Build(id);
         foreach (var (key, slot) in _pages)
@@ -175,9 +175,8 @@ public sealed class MainWindow : Window
         {
             var v = _app.View();
             _version.Text = v.UpdatePending is { } p ? $"{v.Version}\nRestarting into {p}…" : v.Version;
-            // Home's latency graph keeps sampling while another page is shown.
-            foreach (var (key, slot) in _pages)
-                if (slot.Page is { } page && (key == _lastPage || page is HomePage)) page.Refresh(v);
+            // Only the page on screen: nothing is measured for a page that isn't.
+            if (_pages[_lastPage].Page is { } page) page.Refresh(v);
         }
         finally
         {

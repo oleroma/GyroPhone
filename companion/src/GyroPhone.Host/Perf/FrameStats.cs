@@ -6,7 +6,7 @@ public readonly record struct Frame(long AtUs, float Ms, bool Jump);
 /// <summary>The game's frames as the Performance page shows them now.</summary>
 /// <param name="Pid">The game's process, 0 when no game shows frames.</param>
 /// <param name="Focused">The game is the window in front.</param>
-/// <param name="Fps">Frames in the last second.</param>
+/// <param name="Fps">Frames in the second up to the newest frame (by the frames' own times: Windows hands them over in batches).</param>
 /// <param name="Low1Fps">The last minute's slowest 1% of frames, as frames per second.</param>
 /// <param name="Jumps">Jumps in the last minute.</param>
 /// <param name="WorstMs">The longest frame in the last minute.</param>
@@ -36,6 +36,8 @@ public sealed class FrameStats
     /// <summary>How much the graph shows.</summary>
     public const long GraphUs = 10_000_000;
     private const long KeepUs = 60_000_000;
+    /// <summary>Frames this much older than now count as stopped (more than the watcher's delivery delay).</summary>
+    private const long StaleUs = 1_500_000;
 
     private readonly object _lock = new();
     private readonly Func<int, bool> _skip;
@@ -143,15 +145,41 @@ public sealed class FrameStats
             double worst = 0;
             var recent = new List<Frame>();
             var all = new List<float>(_frames.Count);
+            // The second up to the newest frame; none for a game that stopped showing frames.
+            long newest = _frames.Count > 0 ? _lastUs : -1;
+            long secondFrom = newest >= nowUs - StaleUs ? newest - 1_000_000 : long.MaxValue;
             foreach (var f in _frames)
             {
-                if (f.AtUs > nowUs - 1_000_000) fps++;
+                if (f.AtUs > secondFrom) fps++;
                 if (f.AtUs > nowUs - GraphUs) recent.Add(f);
                 if (f.Jump) jumps++;
                 if (f.Ms > worst) worst = f.Ms;
                 all.Add(f.Ms);
             }
             return new FrameView(_game, _focused, fps, Low1Fps(all), jumps, worst, [.. recent]);
+        }
+    }
+
+    /// <summary>
+    /// The game's frames in the second up to its newest frame (by the frames' own times, as <see cref="View"/>):
+    /// count, jumps, longest (ms), and whether it is in front.
+    /// </summary>
+    public (int Frames, int Jumps, float WorstMs, bool Focused, int Pid) LastSecond(long nowUs)
+    {
+        lock (_lock)
+        {
+            int n = 0, jumps = 0;
+            float worst = 0;
+            long newest = _frames.Count > 0 ? _lastUs : -1;
+            long from = newest >= nowUs - StaleUs ? newest - 1_000_000 : long.MaxValue;
+            foreach (var f in _frames)
+            {
+                if (f.AtUs <= from) continue;
+                n++;
+                if (f.Jump) jumps++;
+                if (f.Ms > worst) worst = f.Ms;
+            }
+            return (n, jumps, worst, _focused, _game);
         }
     }
 

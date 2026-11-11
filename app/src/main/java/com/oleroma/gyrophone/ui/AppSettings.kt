@@ -106,8 +106,10 @@ private fun AppTab(runtime: GamepadRuntime) {
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
     val orientation by runtime.screenOrientation.collectAsStateWithLifecycle()
     val padOnly by runtime.padOnlyInput.collectAsStateWithLifecycle()
+    val padOnlyHardware by runtime.padOnlyHardware.collectAsStateWithLifecycle()
     val startFullscreen by runtime.startFullscreen.collectAsStateWithLifecycle()
     val keepScreenOn by runtime.keepScreenOn.collectAsStateWithLifecycle()
+    val gameRumble by runtime.gameRumble.collectAsStateWithLifecycle()
     val blackIdle by runtime.blackScreenIdle.collectAsStateWithLifecycle()
     val blackSeconds by runtime.blackScreenSeconds.collectAsStateWithLifecycle()
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
@@ -206,6 +208,14 @@ private fun AppTab(runtime: GamepadRuntime) {
                 hint = if (padOnly) "Controller, keyboard and gyro reach the PC only on the pad, outside its pages and edit mode. The connection stays up."
                 else "Controller, keyboard and gyro reach the PC from anywhere, also with the app in the background.",
             ) { runtime.setPadOnlyInput(it) }
+            if (padOnly) {
+                SwitchRow(
+                    "Hardware devices too", padOnlyHardware,
+                    hint = if (padOnlyHardware) "Controllers, keyboards and the volume buttons also reach the PC only on the pad."
+                    else "Controllers, keyboards and the volume buttons reach the PC with the pad closed too, while GP is on screen " +
+                        "(Android gives an app in the background no buttons). A keyboard still types into GP's boxes.",
+                ) { runtime.setPadOnlyHardware(it) }
+            }
         },
         // Kept under its old id, so its place in the list stays.
         category(runtime, "corners", "Workspace switching", "Previous / next workspace: wrap around") {
@@ -333,6 +343,15 @@ private fun AppTab(runtime: GamepadRuntime) {
                     }
                 }
             }
+        },
+        category(runtime, "vibration", "Vibration", "Game rumble from the PC") {
+            SwitchRow(
+                "Vibrate with game rumble", gameRumble,
+                hint = "When a game rumbles the PC's virtual controller (Xbox 360 or DualShock 4 output), the phone vibrates " +
+                        "with it, as strong as the stronger motor. Keyboard and mouse output has no rumble. The phone's motor is " +
+                        "weaker than a controller's, and long rumble costs battery. The buzz when a Performance test record " +
+                        "ends on the PC plays either way.",
+            ) { runtime.setGameRumble(it) }
         },
         category(runtime, "debugging", "Debugging", "The debug panel and recordings") {
             SwitchRow(

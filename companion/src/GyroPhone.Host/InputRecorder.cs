@@ -109,6 +109,9 @@ public sealed class InputRecorder
     /// <summary>Gets each second's link numbers too, for the Performance page (null: none).</summary>
     public LinkTimeline? Timeline { get; set; }
 
+    /// <summary>More for each second's line (the FPS overlay's frames), or null; called under the engine lock.</summary>
+    public Func<string?>? SecondNote { get; set; }
+
     /// <summary>Lines wait in a queue for <see cref="WritePending"/> instead of going to <c>write</c> at once.</summary>
     public bool Deferred { get; set; }
 
@@ -351,9 +354,12 @@ public sealed class InputRecorder
             _sb.Append(CultureInfo.InvariantCulture, $" lockwait {_sMaxLockWaitUs / 1000.0:0.0}");
             if (_sLockHolder != null) _sb.Append(" (").Append(_sLockHolder).Append(')');
         }
+        if (SecondNote?.Invoke() is { } note) _sb.Append(note);
         if (_sSkipped > 0) _sb.Append(" (").Append(_sSkipped).Append(" more events not written)");
         Line(nowUs, "sec", _sb.ToString());
-        Timeline?.Add(new LinkSecond(nowUs, stats.RxPerSec, _sLost, _sLate, _sMaxLateUs / 1000f, _sGaps, _sReleases));
+        bool lat = stats.LatP50Us != HostStatus.Unknown;
+        Timeline?.Add(new LinkSecond(nowUs, stats.RxPerSec, _sLost, _sLate, _sMaxLateUs / 1000f, _sGaps, _sReleases,
+            lat ? stats.LatP50Us / 1000f : -1, lat && stats.LatP99Us != HostStatus.Unknown ? stats.LatP99Us / 1000f : -1, stats.JitterUs / 1000f));
         ClearSecond();
     }
 

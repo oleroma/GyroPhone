@@ -72,6 +72,13 @@ public static class Wire
     public const int SessionTimeoutMs = 10000;
     public const int PendingSessionMs = 2000;
     public const int WatchdogTickMs = 50;
+    /// <summary>
+    /// KEEP_AWAKE period. A Wi-Fi client in power save wakes only at each beacon (about 100 ms), so while the phone
+    /// sends little (held still) its packets arrive in 100 ms batches; a packet sent to the phone this often keeps the
+    /// PC's radio awake.
+    /// </summary>
+    public const int KeepAwakeMs = 10;
+    public const int KeepAwakePlain = 4;
     public const int PingIntervalMs = 1000;
     public const int StatusIntervalMs = 1000;
     public const int HostSilentMs = 3000;

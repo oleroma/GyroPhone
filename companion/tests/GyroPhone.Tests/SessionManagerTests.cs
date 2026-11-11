@@ -497,4 +497,19 @@ public class SessionManagerTests
         Assert.Equal(PacketType.Rumble, phone.TryOpen(h.Sender.Sent[1].Data, out p));
         Assert.Equal(new Rumble(0, 0), WireCodec.DecodeRumble(p));
     }
+
+    [Fact]
+    public void BuzzIsSentTwiceWithItsPattern()
+    {
+        var h = new Harness();
+        h.Engine.Buzz(); // no phone: nothing
+        Assert.Empty(h.Sender.Sent);
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        h.Sender.Clear();
+        h.Engine.Buzz();
+        Assert.Equal(2, h.Sender.Sent.Count);
+        Assert.Equal(PacketType.Rumble, phone.TryOpen(h.Sender.Sent[0].Data, out var p));
+        Assert.Equal(new Rumble(0, 0, RumblePattern.Buzz), WireCodec.DecodeRumble(p));
+    }
 }

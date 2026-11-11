@@ -359,12 +359,12 @@ public static class WireCodec
         Le.PutU16(b, 16, p.LinkMbps);
         Le.PutU16(b, 18, p.FreqMhz);
         b[20] = p.Flags;
-        b[21] = 0;
+        b[21] = p.Path;
         return Wire.LinkInfoPlain;
     }
 
     public static LinkInfo DecodeLinkInfo(ReadOnlySpan<byte> b) =>
-        new(Le.I64(b, 0), Le.U32(b, 8), Le.U16(b, 12), (sbyte)b[14], b[15], Le.U16(b, 16), Le.U16(b, 18), b[20]);
+        new(Le.I64(b, 0), Le.U32(b, 8), Le.U16(b, 12), (sbyte)b[14], b[15], Le.U16(b, 16), Le.U16(b, 18), b[20], b[21]);
 
     public static int EncodeHostStatus(in HostStatus p, Span<byte> b)
     {
@@ -394,12 +394,12 @@ public static class WireCodec
     {
         b[0] = p.Large;
         b[1] = p.Small;
-        b[2] = 0;
+        b[2] = p.Pattern;
         b[3] = 0;
         return Wire.RumblePlain;
     }
 
-    public static Rumble DecodeRumble(ReadOnlySpan<byte> b) => new(b[0], b[1]);
+    public static Rumble DecodeRumble(ReadOnlySpan<byte> b) => new(b[0], b[1], b[2]);
 
     public static int EncodePressTime(in PressTime p, Span<byte> b)
     {

@@ -141,7 +141,7 @@ public sealed unsafe class FrameWatch : IFrameSource
         }
     }
 
-    /// <summary>EVENT_TRACE_PROPERTIES with room for the session name: real time, QPC timestamps, flushed every second.</summary>
+    /// <summary>EVENT_TRACE_PROPERTIES with room for the session name: real time, QPC timestamps, flushed every 100 ms.</summary>
     private static IntPtr Properties()
     {
         int size = PropertiesSize + 2 * 260;
@@ -151,8 +151,8 @@ public sealed unsafe class FrameWatch : IFrameSource
         Marshal.WriteInt32(p, 40, 1); // Wnode.ClientContext: QueryPerformanceCounter
         Marshal.WriteInt32(p, 44, WnodeFlagTracedGuid); // Wnode.Flags
         Marshal.WriteInt32(p, 48, 64); // BufferSize, KB
-        Marshal.WriteInt32(p, 64, EventTraceRealTimeMode); // LogFileMode
-        Marshal.WriteInt32(p, 68, 1); // FlushTimer, s
+        Marshal.WriteInt32(p, 64, EventTraceRealTimeMode | EventTraceUseMsFlushTimer); // LogFileMode
+        Marshal.WriteInt32(p, 68, 100); // FlushTimer, ms (the frames come in small batches, not once a second)
         Marshal.WriteInt32(p, 116, PropertiesSize); // LoggerNameOffset
         return p;
     }
@@ -162,7 +162,7 @@ public sealed unsafe class FrameWatch : IFrameSource
     private const int LogfileSize = 448, LogfileLoggerName = 8, LogfileProcessTraceMode = 28, LogfileEventRecordCallback = 424;
     private const int RecordProcessId = 12, RecordTimeStamp = 16, RecordProviderId = 24, RecordEventId = 40;
 
-    private const int WnodeFlagTracedGuid = 0x00020000, EventTraceRealTimeMode = 0x00000100;
+    private const int WnodeFlagTracedGuid = 0x00020000, EventTraceRealTimeMode = 0x00000100, EventTraceUseMsFlushTimer = 0x00000010;
     private const int ModeRealTime = 0x00000100, ModeRawTimestamp = 0x00001000, ModeEventRecord = 0x10000000;
     private const uint ControlStop = 1, EnableProvider = 1;
     private const byte LevelInformation = 4;

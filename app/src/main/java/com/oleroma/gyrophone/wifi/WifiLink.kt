@@ -22,6 +22,8 @@ import com.oleroma.gyrophone.core.net.Discover
 import com.oleroma.gyrophone.core.net.EnrollResult
 import com.oleroma.gyrophone.core.net.HostFlags
 import com.oleroma.gyrophone.core.net.HostStatus
+import com.oleroma.gyrophone.core.net.LinkPath
+import com.oleroma.gyrophone.core.net.Rumble
 import com.oleroma.gyrophone.core.net.HostStatusFlags
 import com.oleroma.gyrophone.core.net.KeyLabels
 import com.oleroma.gyrophone.core.net.KeyPairing
@@ -1087,7 +1089,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 is HostStatus -> hostStatus = p
                 is KeyLabels -> onKeyLabels(p)
                 is TestMode -> testMode = p.flags
-                else -> Unit // RUMBLE is ignored in v1; ANNOUNCE was handled already
+                is Rumble -> onRumble?.invoke(p)
+                else -> Unit // ANNOUNCE was handled already
             }
         }
         if (changed) publishState()
@@ -1280,6 +1283,9 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         publishState()
     }
 
+    /** The PC's RUMBLE: the game's rumble on the virtual controller, or a notice buzz. Called on the link's thread. */
+    @Volatile var onRumble: ((Rumble) -> Unit)? = null
+
     /** Debugging is on: LINK_INFO asks the PC to keep its debug log too ([LinkInfoFlags.DEBUG_TRACE]). */
     @Volatile var debugTrace = false
 
@@ -1313,6 +1319,13 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 (if (usbNow && usbEthernet) LinkInfoFlags.ETHERNET else 0) or
                 (if (usbNow && usbDirect) LinkInfoFlags.USB_DIRECT else 0) or
                 (if (debugTrace) LinkInfoFlags.DEBUG_TRACE or LinkInfoFlags.debugSave(debugSaves) else 0),
+            path = when {
+                !usbNow -> LinkPath.WIFI
+                usbEthernet -> LinkPath.ETHERNET
+                usbHotspot -> LinkPath.HOTSPOT
+                usbDirect -> LinkPath.USB_DIRECT
+                else -> LinkPath.USB_TETHER
+            },
         )
     }
 

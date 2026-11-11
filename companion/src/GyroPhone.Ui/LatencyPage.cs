@@ -45,7 +45,10 @@ internal sealed class LatencyPage : Page
         _app = app;
         _owner = owner;
         _icon = icon;
-        _root.Children.Add(Parts.Text("Latency test", "H1"));
+        var heading = Parts.Text("Latency test", "H1");
+        heading.FontSize = 20;
+        heading.Margin = new Thickness(0, 22, 0, 4);
+        _root.Children.Add(heading);
         var intro = Parts.Text("Measures the time from moving the phone to the game seeing the mouse move, from a slow-motion video you film with another phone.", "Sub");
         intro.Margin = new Thickness(0, 0, 0, 14);
         _root.Children.Add(intro);

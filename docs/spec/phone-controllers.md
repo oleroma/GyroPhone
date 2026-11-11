@@ -4,7 +4,7 @@ Physical devices attached to the phone (a clip-on or Bluetooth game pad, a keybo
 
 ## Reading devices
 
-`input/ControllerInput.kt` feeds key and joystick events into the engine. Android delivers them only to the foreground activity, so `MainActivity` forwards them. Each event carries its device; the attached pads are listed in App › Controllers on phone. Input reaches the engine only while input is allowed (the pad is open in play, unless **Send input only while the pad is open** is off).
+`input/ControllerInput.kt` feeds key and joystick events into the engine. Android delivers them only to the foreground activity, so `MainActivity` forwards them. Each event carries its device; the attached pads are listed in App › Controllers on phone. Input reaches the engine while hardware input is allowed: always, unless **Send input only while the pad is open** and its **Hardware devices too** are both on; then only while the pad is open in play (phone-connection.md).
 
 A pad's axes are read by `PhysicalSticks`: sticks `ls` / `rs`, triggers `lt` / `rt`. Pads that put the right stick on RX / RY (Generic.kl) are detected; Z / RZ are then the triggers. The face layout (Xbox, PlayStation, Nintendo) and the drawing come from `core/.../model/KnownLayouts.kt` and `ControllerDiagrams.kt`; unknown pads get the Xbox drawing.
 

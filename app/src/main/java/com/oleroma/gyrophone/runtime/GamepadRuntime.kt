@@ -52,6 +52,7 @@ import com.oleroma.gyrophone.ui.TouchVisuals
 import com.oleroma.gyrophone.data.ProfileStore
 import com.oleroma.gyrophone.core.net.ByeReason
 import com.oleroma.gyrophone.core.net.PcGyroFeed
+import com.oleroma.gyrophone.core.net.Rumble
 import com.oleroma.gyrophone.core.net.Wire
 import com.oleroma.gyrophone.core.sensor.GyroRateWindow
 import com.oleroma.gyrophone.hid.HidDeviceManager
@@ -270,6 +271,14 @@ class GamepadRuntime(context: Context) {
 
     /** When on (the default), controller, keyboard and gyro input reach the PC only while the pad is on screen. */
     val padOnlyInput: StateFlow<Boolean> = _padOnlyInput
+
+    private val _padOnlyHardware = MutableStateFlow(prefs.getBoolean(KEY_PAD_ONLY_HARDWARE, false))
+
+    /**
+     * Whether [padOnlyInput] holds back hardware devices too (controllers, keyboards and the volume
+     * buttons). Off (the default): they reach the PC with the pad closed as well, while the app is in front.
+     */
+    val padOnlyHardware: StateFlow<Boolean> = _padOnlyHardware
 
     private val _idleStopMinutes = MutableStateFlow(prefs.getInt(KEY_IDLE_STOP_MINUTES, DEFAULT_IDLE_STOP_MINUTES))
 
@@ -580,6 +589,11 @@ class GamepadRuntime(context: Context) {
     var inputAllowed = !_padOnlyInput.value
         private set
 
+    /** Whether hardware devices' input goes to the engine: as [inputAllowed], or always while [padOnlyHardware] is off. */
+    @Volatile
+    var hardwareAllowed = !_padOnlyInput.value || !_padOnlyHardware.value
+        private set
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _linkState = MutableStateFlow<LinkState>(LinkState.Off)
 
@@ -592,6 +606,26 @@ class GamepadRuntime(context: Context) {
     /** Plays the engine's haptic mappings while a PC is connected. */
     private val haptics = PhoneHaptics(appContext) { _linkState.value is LinkState.Connected }.also { h ->
         h.log = { line -> debug.trace?.add(com.oleroma.gyrophone.core.debug.DebugTrace.Kind.OUT, line) }
+    }
+
+    private val _gameRumble = MutableStateFlow(prefs.getBoolean(KEY_GAME_RUMBLE, true))
+
+    /** When on (the default), the game's rumble on the PC's virtual controller vibrates the phone. */
+    val gameRumble: StateFlow<Boolean> = _gameRumble
+
+    fun setGameRumble(on: Boolean) {
+        prefs.edit().putBoolean(KEY_GAME_RUMBLE, on).apply()
+        _gameRumble.value = on
+        if (!on) haptics.rumble(0, 0)
+    }
+
+    init {
+        wifi.onRumble = { p ->
+            when {
+                p.pattern == Rumble.Pattern.BUZZ -> haptics.buzz()
+                p.pattern == Rumble.Pattern.MOTORS && _gameRumble.value -> haptics.rumble(p.large, p.small)
+            }
+        }
     }
 
     /** For the debug tools' header: the vibrator. */
@@ -868,6 +902,12 @@ class GamepadRuntime(context: Context) {
         updateInputAllowed()
     }
 
+    fun setPadOnlyHardware(on: Boolean) {
+        prefs.edit().putBoolean(KEY_PAD_ONLY_HARDWARE, on).apply()
+        _padOnlyHardware.value = on
+        updateInputAllowed()
+    }
+
     fun setStartFullscreen(on: Boolean) {
         prefs.edit().putBoolean(KEY_START_FULLSCREEN, on).apply()
         _startFullscreen.value = on
@@ -950,10 +990,14 @@ class GamepadRuntime(context: Context) {
     @Synchronized
     private fun updateInputAllowed() {
         val allowed = !_padOnlyInput.value || (padShown && foreground)
+        val hardware = allowed || !_padOnlyHardware.value
+        val was = hardwareAllowed
+        hardwareAllowed = hardware
         if (allowed != inputAllowed) {
             inputAllowed = allowed
+            // Everything held lets go (a held hardware button is pressed again to send it again).
             if (!allowed) engine.reset()
-        }
+        } else if (was && !hardware) engine.reset()
         updateGyro()
     }
 
@@ -1544,6 +1588,7 @@ class GamepadRuntime(context: Context) {
         private const val KEY_TRANSPORT = "transport"
         private const val KEY_ORIENTATION = "screen_orientation"
         private const val KEY_PAD_ONLY_INPUT = "pad_only_input"
+        private const val KEY_PAD_ONLY_HARDWARE = "pad_only_hardware"
         private const val KEY_IDLE_STOP_MINUTES = "idle_stop_minutes"
         const val DEFAULT_IDLE_STOP_MINUTES = 10
 
@@ -1551,6 +1596,7 @@ class GamepadRuntime(context: Context) {
         val IDLE_STOP_CHOICES = listOf(0, 5, 10, 30)
         private const val KEY_START_FULLSCREEN = "start_fullscreen"
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
+        private const val KEY_GAME_RUMBLE = "game_rumble"
         private const val KEY_BLACK_SCREEN_IDLE = "black_screen_idle"
         private const val KEY_BLACK_SCREEN_SECONDS = "black_screen_seconds"
         const val DEFAULT_BLACK_SCREEN_SECONDS = 60

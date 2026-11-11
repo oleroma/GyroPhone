@@ -36,18 +36,19 @@ Sealed plaintext sizes:
 | STATE_GYRO | 0x26 | P→H | 355 | STATE_HIRES + 285-byte gyro tail (below) |
 | PING | 0x21 | P→H | 8 | t1 u64: phone send time (µs) |
 | PONG | 0x30 | H→P | 24 | t1 (echoed), t2 host receive, t3 host send, u64 each: the phone works out the clock offset and round trip |
-| LINK_INFO | 0x22 | P→H | 22 | clock offset i64, rttMin u32, rate u16, rssi i8, band, link Mbps u16, MHz u16, flags |
+| LINK_INFO | 0x22 | P→H | 22 | clock offset i64, rttMin u32, rate u16, rssi i8, band, link Mbps u16, MHz u16, flags, path u8 (UNKNOWN 0 from older phones, WIFI 1 the phone's Wi-Fi client, HOTSPOT 2 the phone's own hotspot, USB_TETHER 3, USB_DIRECT 4, ETHERNET 5) |
 | HOST_STATUS | 0x31 | H→P | 22 | lastSeq, rx/s, loss ‰, latency p50, p99, jitter, output mode, flags |
 | PAD_GYRO | 0x27 | P→H | 4 + 2 × buttons | ratchet/toggle buttons by pad place, toggle epoch |
 | PAD_GYRO_SET | 0x28 | P→H | 183 | u8 place, u8 0, a 181-byte gyro config block |
 | OVERLAY | 0x24 | P→H | 152 | pose input: raw motion, ratchet, non-gyro mouse, touches, presses (`OverlayFeed`) |
 | OVERLAY_LAYOUT | 0x25 | P→H | 200 | the workspace layout, in chunks (`OverlayFeed`) |
 | MOTION | 0x29 | P→H | 120 | raw gyro and accelerometer for the PC's DualShock 4 or DualSense (below) |
-| RUMBLE | 0x32 | H→P | 4 | large u8, small u8 motor (the phone ignores it today) |
+| RUMBLE | 0x32 | H→P | 4 | large u8, small u8 motor, pattern u8: MOTORS 0 (the game's rumble on the virtual controller, held until the next RUMBLE; sent on change, at most 100 Hz) or BUZZ 1 (a notice buzz and double beep when a Performance test record starts or ends, sent twice; motors unused). Older phones ignore it |
 | FOREGROUND | 0x33 | H→P | 66 | reserved, never sent |
 | KEY_LABELS | 0x34 | H→P | 100 | layout id u32, then a u16 character per character key (`KeyLabels.USAGES`: 0x04..0x27, 0x2D..0x31, 0x33..0x38, 0x64; 0 = types nothing): what each key types on the PC's current layout, sent with every HOST_STATUS. Older phones drop it as an unknown type |
 | PRESS_TIME | 0x2A | P→H | 8 | STATE time u32, input event time u32 (both the phone's µs clock, low 32 bits): sent while TEST_MODE has PRESS_TIMES, after the STATE that first carries a new press or release ([Latency test](pc-latency-test.md#measure-buttons)) |
 | TEST_MODE | 0x35 | H→P | 4 | u8 flags: PRESS_TIMES 1 ("Measure buttons"), LATENCY_SCREEN 2 (the latency test window is open: the pad shows its markers), LINK_TEST 4 (a Link test runs: the phone sends fake moving input marked LINK_TEST); 3 reserved. Sent on change, with every HOST_STATUS while a flag is set, and with the 3 after one ends. Older phones drop it |
+| KEEP_AWAKE | 0x36 | H→P | 4 | zeros. Sent every 10 ms during a session over Wi-Fi (not USB, Ethernet or loopback) so the PC's Wi-Fi never dozes in power save, which would batch the phone's packets at the 100 ms beacon. The phone drops it unopened (it has no size there), as older phones do |
 | BYE | 0x2F | P→H | 4 | reason: USER, TRANSPORT_SWITCH, SHUTDOWN, REKEY |
 | HOST_BYE | 0x3F | H→P | 4 | reason: EXIT, FORGOTTEN, REPLACED |
 

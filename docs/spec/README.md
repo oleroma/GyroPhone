@@ -83,7 +83,6 @@ These came up in design talks and are not in the code. They are listed so nobody
 - Split touch zones and radial menus (Steam Input style).
 - A layers "All" view in the editor.
 - Per-game automatic switching. `Profile.games` and the FOREGROUND packet exist in the model and the wire format, but nothing fills or sends them; game profiles were removed in favour of workspaces.
-- Rumble on the phone. The phone announces the RUMBLE capability and the PC sends RUMBLE, but the phone ignores it.
 - Linux, macOS and Android TV hosts, and an iPhone app.
 - A DualShock-style Bluetooth descriptor with gyro passthrough, and a native Windows Precision Touchpad over Bluetooth.
 - Bluetooth LE HID as a transport.

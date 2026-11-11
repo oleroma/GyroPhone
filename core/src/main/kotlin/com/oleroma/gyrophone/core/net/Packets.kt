@@ -76,7 +76,21 @@ data class LinkInfo(
     val linkMbps: Int,
     val freqMhz: Int,
     val flags: Int,
+    /** How the session's packets travel ([LinkPath]); [LinkPath.UNKNOWN] from older phones. */
+    val path: Int = LinkPath.UNKNOWN,
 ) : WirePacket
+
+/** LINK_INFO's path: the way this session's packets go from the phone to the PC. */
+object LinkPath {
+    const val UNKNOWN = 0
+    /** The phone's Wi-Fi client (a router, or the PC's own hotspot). */
+    const val WIFI = 1
+    /** The phone's own hotspot, with the PC joined to it. */
+    const val HOTSPOT = 2
+    const val USB_TETHER = 3
+    const val USB_DIRECT = 4
+    const val ETHERNET = 5
+}
 
 data class Bye(val reason: Int) : WirePacket
 
@@ -102,7 +116,17 @@ data class PressTime(val stateTimeUs: Int, val eventTimeUs: Int) : WirePacket
 /** The PC's latency tests the phone takes part in ([TestModeFlags]). */
 data class TestMode(val flags: Int) : WirePacket
 
-data class Rumble(val large: Int, val small: Int) : WirePacket
+/**
+ * PC → phone vibration. [pattern] [Pattern.MOTORS]: the game's rumble, [large] and [small] motor
+ * levels (0..255) held until the next RUMBLE. [Pattern.BUZZ]: a fixed notice buzz (a Performance
+ * record ended), motor levels unused.
+ */
+data class Rumble(val large: Int, val small: Int, val pattern: Int = Pattern.MOTORS) : WirePacket {
+    object Pattern {
+        const val MOTORS = 0
+        const val BUZZ = 1
+    }
+}
 
 /**
  * What each key of [USAGES] types on the PC's current keyboard layout: one UTF-16 character each

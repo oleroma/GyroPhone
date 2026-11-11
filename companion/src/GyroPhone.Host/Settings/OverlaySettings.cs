@@ -66,6 +66,8 @@ public enum OverlayKind
     Disk,
     /// <summary>A see-through sphere seen from a fixed angle, a laser at its centre shining out of the phone's back onto its inside.</summary>
     Laser,
+    /// <summary>The game's frames per second, 1% low and jumps, with a frame-time strip; the only thing that watches the game's frames.</summary>
+    Fps,
 }
 
 public enum OverlayShape
@@ -500,6 +502,7 @@ public sealed class OverlaySettings
         OverlayKind.Horizon => HorizonColors,
         OverlayKind.Disk => DiskColors,
         OverlayKind.Laser => LaserColors,
+        OverlayKind.Fps => FpsColors,
         _ => shape switch
         {
             null => ShapeColors,
@@ -515,6 +518,7 @@ public sealed class OverlaySettings
         OverlayKind.Shape => "3D shape",
         OverlayKind.Horizon => "Attitude indicator",
         OverlayKind.Laser => "Pointer",
+        OverlayKind.Fps => "FPS",
         _ => "Bubble disk",
     };
 
@@ -589,6 +593,14 @@ public sealed class OverlaySettings
         new("crosshair_aim", "Crosshair aiming", 0xFFFF2020),
         new("flash", "Flash", 0xFFFFE04A),
         new("flash_end", "Flash end", 0xFFFF7A1A),
+    ];
+
+    private static readonly OverlayColor[] FpsColors =
+    [
+        new("text", "Numbers", 0xFFFFFFFF),
+        new("line", "Frame times", 0xFF7CC4FF),
+        new("jump", "Jumps", 0xFFFF5A5A),
+        new("panel", "Panel", 0x99000000),
     ];
 
     private static readonly OverlayColor[] DiskColors =

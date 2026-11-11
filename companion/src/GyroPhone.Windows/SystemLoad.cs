@@ -7,13 +7,14 @@ namespace GyroPhone.Windows;
 
 /// <summary>
 /// The PC's processor load from Windows' performance counters (by their English names, so it works in any
-/// language): all processors' busy time, their time in DPCs and interrupts, and the busiest processor's.
-/// Needs no admin rights.
+/// language): all processors' busy time, their time in DPCs and interrupts, the busiest processor's, and the
+/// busiest programs (the Process counters: Windows' own process list, no program is opened). Needs no admin rights.
 /// </summary>
 public sealed class SystemLoad : ISystemLoad
 {
     private IntPtr _query;
-    private IntPtr _cpu, _dpc, _int;
+    private IntPtr _cpu, _dpc, _int, _proc;
+    private readonly int _cores = Math.Max(1, Environment.ProcessorCount);
     private bool _primed;
 
     public SystemLoad(Action<string> log)
@@ -31,6 +32,12 @@ public sealed class SystemLoad : ISystemLoad
         {
             log($"performance counters not added ({e:x})");
             Dispose();
+            return;
+        }
+        if (PdhAddEnglishCounterW(_query, @"\Process(*)\% Processor Time", IntPtr.Zero, out _proc) != 0)
+        {
+            _proc = IntPtr.Zero;
+            log("process counters unavailable: no busy-program warning");
         }
     }
 
@@ -48,7 +55,23 @@ public sealed class SystemLoad : ISystemLoad
         double dpcTotal = dpc.GetValueOrDefault("_Total"), intTotal = irq.GetValueOrDefault("_Total"), busiest = 0;
         foreach (var (name, v) in dpc)
             if (name != "_Total") busiest = Math.Max(busiest, v + irq.GetValueOrDefault(name));
-        return new LoadSample(cpu, dpcTotal, intTotal, busiest);
+        return new LoadSample(cpu, dpcTotal, intTotal, busiest, Top());
+    }
+
+    /// <summary>The 6 busiest programs, % of the whole PC, each program's processes ("java", "java#1") together.</summary>
+    private ProgramLoad[]? Top()
+    {
+        if (_proc == IntPtr.Zero) return null;
+        var by = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (instance, v) in Array(_proc))
+        {
+            if (v <= 0) continue;
+            int hash = instance.IndexOf('#');
+            string name = hash > 0 ? instance[..hash] : instance;
+            if (name is "_Total" or "Idle") continue;
+            by[name] = by.GetValueOrDefault(name) + v / _cores;
+        }
+        return [.. by.OrderByDescending(x => x.Value).Take(6).Select(x => new ProgramLoad(x.Key, x.Value))];
     }
 
     private static bool Single(IntPtr counter, out double value)
@@ -65,6 +88,7 @@ public sealed class SystemLoad : ISystemLoad
         uint size = 0;
         PdhGetFormattedCounterArrayW(counter, FmtDouble, ref size, out _, IntPtr.Zero);
         if (size == 0) return map;
+        size += 4096; // the process list can grow between the two calls
         var buf = Marshal.AllocHGlobal((int)size);
         try
         {
