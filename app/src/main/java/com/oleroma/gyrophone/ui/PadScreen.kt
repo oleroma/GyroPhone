@@ -2393,8 +2393,8 @@ fun PadScreen(
                                 // Everything but undo and redo scrolls, so a narrow (portrait) panel reaches it all.
                                 // The workspace's settings, the same page as the touchpad's Settings
                                 // in its mapping editor, on the draft like the rest of edit mode.
-                                // ⚙ and the lock first, in one column: one per row in two rows (the strip puts
-                                // its first two items in rows 1 and 2), stacked small in one row.
+                                // ⚙ and the lock first: side by side in one row; in two rows one above the other
+                                // (the strip puts its first two items in rows 1 and 2).
                                 @Composable
                                 fun Gear(small: Boolean) = MenuIcon(EditIcons.Tune, "Workspace settings", true, small) {
                                     selected = TOUCHPAD_SELECTION
@@ -2407,15 +2407,8 @@ fun PadScreen(
                                     true,
                                     small,
                                 ) { runtime.setEditLayoutLocked(!layoutLocked) }
-                                if (mainRows > 1) {
-                                    Gear(false)
-                                    LockIcon(false)
-                                } else {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Gear(true)
-                                        LockIcon(true)
-                                    }
-                                }
+                                Gear(false)
+                                LockIcon(false)
                                 Row(
                                     Modifier.padding(start = 2.dp, end = 6.dp),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
