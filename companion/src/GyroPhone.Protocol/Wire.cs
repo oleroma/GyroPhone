@@ -233,6 +233,9 @@ public static class LinkInfoFlags
     /// <summary>With DebugTrace: a 3-bit counter; the PC saves its last 30 s of debug log when it changes.</summary>
     public const byte DebugSaveMask = 0x70;
     public const int DebugSaveShift = 4;
+
+    /// <summary>The phone sends over a wired Ethernet adapter (the Wi-Fi fields are then not this link's).</summary>
+    public const byte Ethernet = 0x80;
 }
 
 /// <summary>HOST_STATUS flags.</summary>

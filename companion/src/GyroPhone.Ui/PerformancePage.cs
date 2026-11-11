@@ -90,7 +90,7 @@ internal sealed class PerformancePage : Page
         {
             _name.Text = n;
             _nameEdited = true;
-        }, true, ("Router", "Router"), ("Phone hotspot", "Phone hotspot"), ("PC hotspot", "PC hotspot"), ("Wired (USB)", "Wired (USB)"));
+        }, true, ("Router", "Router"), ("Phone hotspot", "Phone hotspot"), ("PC hotspot", "PC hotspot"), ("Wired (USB)", "Wired (USB)"), ("Ethernet", "Ethernet"));
         _picks = picks;
         rb.Children.Add(Parts.Labelled("Setup", picks.View, 90));
         rb.Children.Add(Parts.Labelled("Name", _name, 90));
@@ -239,6 +239,7 @@ internal sealed class PerformancePage : Page
         var s = v.Status;
         if (s.PhoneLink is { } l)
         {
+            if ((l.Flags & LinkInfoFlags.Ethernet) != 0) return "Ethernet";
             if ((l.Flags & LinkInfoFlags.Usb) != 0)
                 return (l.Flags & LinkInfoFlags.UsbDirect) != 0 ? "USB cable (direct)" : "USB cable (tethering)";
             return l.Band == 0 ? "Wi-Fi" : $"Wi-Fi {l.Band} GHz";

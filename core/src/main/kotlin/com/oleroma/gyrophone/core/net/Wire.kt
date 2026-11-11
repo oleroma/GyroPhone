@@ -318,6 +318,9 @@ object LinkInfoFlags {
     const val DEBUG_SAVE_MASK = 0x70
     const val DEBUG_SAVE_SHIFT = 4
 
+    /** The phone sends over a wired Ethernet adapter (the Wi-Fi fields are then not this link's). */
+    const val ETHERNET = 0x80
+
     fun debugSave(counter: Int): Int = (counter and 7) shl DEBUG_SAVE_SHIFT
 }
 
