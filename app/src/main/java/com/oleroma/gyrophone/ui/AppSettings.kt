@@ -354,7 +354,7 @@ private fun AppTab(runtime: GamepadRuntime) {
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { export(ProfileExport.fileName("Everything"), runtime.exportEverything()) }) {
+                        OutlinedButton(onClick = { export(ProfileExport.fileName("GPEverything"), runtime.exportEverything()) }) {
                             Text("Export everything")
                         }
                         OutlinedButton(onClick = importFile) { Text("Import everything…") }
