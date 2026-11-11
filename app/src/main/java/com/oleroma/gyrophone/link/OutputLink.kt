@@ -50,6 +50,8 @@ data class LinkStats(
     val usb: Boolean = false,
     /** With [usb]: over the direct cable (accessory mode), not tethering. */
     val usbDirect: Boolean = false,
+    /** With [usb]: over the phone's own Wi-Fi hotspot with the PC joined to it, not USB. */
+    val hotspot: Boolean = false,
     /** False when the PC has no virtual gamepad driver (pad input is dropped there). */
     val vigemOk: Boolean? = null,
 )

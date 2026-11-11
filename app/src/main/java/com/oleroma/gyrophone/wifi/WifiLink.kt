@@ -249,6 +249,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     }
     /** The session runs over the direct cable (accessory mode), not tethering. */
     @Volatile private var usbDirect = false
+    /** The session runs over the phone's own Wi-Fi hotspot, with the PC joined to it. */
+    @Volatile private var usbHotspot = false
     private var nextUsbCheckMs = 0L
     private var nextUsbProbeMs = 0L
     private var usbSilentSinceMs = 0L
@@ -459,6 +461,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             lowLatencyLock = locks.held,
             usb = usbActive,
             usbDirect = usbDirect,
+            hotspot = usbActive && usbHotspot,
             vigemOk = hs?.let { it.flags and HostStatusFlags.VIGEM_OK != 0 }
                 ?: welcomeHostFlags?.let { it and HostFlags.VIGEM_OK != 0 },
         )
@@ -1102,15 +1105,18 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     // ---- USB: the direct cable (accessory mode) or USB tethering ----
 
     /**
-     * Once a second: notices the direct cable or USB tethering come and go. While the session runs
-     * over Wi-Fi, a probe sends DISCOVER on it; when the session's PC answers there, the link moves
-     * to USB ([useUsb]). Pulling the cable or the PC going silent on USB moves it back.
+     * Once a second: notices the direct cable, USB tethering or the phone's own hotspot come and go.
+     * While the session runs over Wi-Fi, a probe sends DISCOVER on it; when the session's PC answers
+     * there, the link moves to it ([useUsb]). Pulling the cable, the hotspot going off or the PC going
+     * silent there moves it back.
      */
     private fun usbTick(nowMs: Long) {
-        // No cable to a computer: nothing to find, unless one was found and must be noticed gone.
-        if (nowMs >= nextUsbCheckMs && (usbCabled || usb != null)) {
+        if (nowMs >= nextUsbCheckMs) {
             nextUsbCheckMs = nowMs + USB_CHECK_MS
-            val t = accessory.poll() ?: UsbTether.find()
+            // The cable only with a cable to a computer; tethering and the hotspot by interface.
+            val wifiIf = binder.interfaceName
+            val t = (if (usbCabled) accessory.poll() else null)
+                ?: UsbTether.find(wifiIf, hotspot = wifiIf != null || binder.network == null)
             if (t != usb) {
                 if (usbActive) useWifi()
                 closeUsb()
@@ -1209,6 +1215,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbSocket = s
         usbActive = true
         usbDirect = u.direct
+        usbHotspot = u.hotspot
         usbSilentSinceMs = 0L
         socket = s
         // The live Wi-Fi session keeps sending on the Wi-Fi socket until the USB one's WELCOME.
@@ -1227,6 +1234,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbActive = false
         usbPending = false
         usbDirect = false
+        usbHotspot = false
         socket = w
         pump.useSocket(w)
         usbSocket?.close()
@@ -1254,6 +1262,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbActive = false
         usbPending = false
         usbDirect = false
+        usbHotspot = false
         usbHostId = null
         usbHostAddr = null
     }
@@ -1294,7 +1303,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             band = info.band,
             linkMbps = (info.linkMbps ?: 0).coerceIn(0, 0xFFFF),
             freqMhz = (info.freqMhz ?: 0).coerceIn(0, 0xFFFF),
-            flags = (if (locks.held) LinkInfoFlags.LOW_LATENCY_LOCK_HELD else 0) or (if (usbNow) LinkInfoFlags.USB else 0) or
+            flags = (if (locks.held) LinkInfoFlags.LOW_LATENCY_LOCK_HELD else 0) or (if (usbNow && !usbHotspot) LinkInfoFlags.USB else 0) or
                 (if (usbNow && usbDirect) LinkInfoFlags.USB_DIRECT else 0) or
                 (if (debugTrace) LinkInfoFlags.DEBUG_TRACE or LinkInfoFlags.debugSave(debugSaves) else 0),
         )
@@ -1334,7 +1343,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     /** "5 GHz · 1201 Mbps · −51 dBm", leaving out what is unknown. */
     private fun radioDetail(): String {
-        if (usbActive) return if (usbDirect) "USB cable" else "USB tethering"
+        if (usbActive) return if (usbHotspot) "phone hotspot" else if (usbDirect) "USB cable" else "USB tethering"
         val info = binder.info
         val parts = ArrayList<String>(3)
         if (info.band != 0) parts.add("${info.band} GHz")
