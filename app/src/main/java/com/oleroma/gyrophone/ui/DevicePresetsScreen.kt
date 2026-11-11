@@ -86,8 +86,8 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
     val current = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
     val ws = profile.workspace(current)
     val presets = profile.devicePresets
-    var pickedId by rememberSaveable { mutableStateOf(ws.devicePreset) }
-    val preset = presets.firstOrNull { it.id == pickedId } ?: presets.firstOrNull { it.id == ws.devicePreset } ?: presets.firstOrNull()
+    // The preset shown is the one the current workspace uses: picking a tab makes it that one.
+    val preset = presets.firstOrNull { it.id == ws.devicePreset }
     var deviceName by rememberSaveable { mutableStateOf(PhysicalDevice.CONTROLLER.name) }
     val device = PhysicalDevice.entries.firstOrNull { it.name == deviceName } ?: PhysicalDevice.CONTROLLER
     var editing by remember { mutableStateOf<Element?>(null) }
@@ -97,13 +97,22 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
     var undo by remember { mutableStateOf<Pair<String, DevicePreset>?>(null) }
     val colors = MaterialTheme.colorScheme
 
-    /** Adds a standard preset and picks it. */
+    /** The current workspace uses preset [id] from now on (null: none, its devices do nothing). */
+    fun use(id: String?) {
+        runtime.editActiveProfile { p ->
+            p.copy(workspaces = p.workspaces.mapIndexed { i, w -> if (i == current) w.copy(devicePreset = id) else w })
+        }
+    }
+
+    /** Adds a standard preset, and the current workspace uses it. */
     fun add() {
+        var made: String? = null
         runtime.editActiveProfile { p ->
             val id = DevicePresets.newId(p.devicePresets.map { it.id })
-            pickedId = id
+            made = id
             DevicePresets.put(p, DevicePresets.standard(id, DevicePresets.newName(p.devicePresets.map { it.name })))
         }
+        made?.let { use(it) }
     }
 
     // Clear of the camera cutout at the top (in portrait); in landscape the cutout side has nothing it would hide.
@@ -114,11 +123,12 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             TextButton(onClick = onBack) { Text("← Pad") }
+            if (presets.isNotEmpty()) PresetTab("None", selected = preset == null, onClick = { use(null) }, onLongClick = {})
             for (p in presets) {
                 PresetTab(
                     p.name,
                     selected = p.id == preset?.id,
-                    onClick = { pickedId = p.id },
+                    onClick = { use(p.id) },
                     onLongClick = { menuFor = p },
                 )
             }
@@ -128,10 +138,12 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
         Box(Modifier.weight(1f).fillMaxWidth().padding(8.dp)) {
             if (preset == null) {
                 Column(Modifier.align(Alignment.Center).widthIn(max = 420.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("No device presets yet", style = MaterialTheme.typography.titleMedium)
+                    Text(if (presets.isEmpty()) "No device presets yet" else "No preset in " + ws.name, style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "A preset says what a controller, a keyboard and a mouse attached to the phone do. " +
-                            "Each workspace uses one preset, or none: pick it in the workspace's edit mode.",
+                        if (presets.isEmpty()) "A preset says what a controller, a keyboard and a mouse attached to the phone do. " +
+                            "Each workspace uses one preset, or none."
+                        else "Controllers, keyboards and mice attached to the phone do nothing in this workspace. " +
+                            "Tap a preset above to use it here.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = colors.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -266,7 +278,7 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
         )
     }
 
-    menuFor?.let { p -> PresetMenu(runtime, p, onPick = { pickedId = it }, onDismiss = { menuFor = null }) }
+    menuFor?.let { p -> PresetMenu(runtime, p, onPick = { use(it) }, onDismiss = { menuFor = null }) }
 }
 
 /** A preset's tab. */
