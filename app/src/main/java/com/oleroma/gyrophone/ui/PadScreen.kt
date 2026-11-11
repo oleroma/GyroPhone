@@ -254,6 +254,8 @@ private val SELECTED_COLOR = Color(0xFFFFC857)
 
 /** Edit mode's Select: the controls picked, and the panel buttons that act on them. */
 private val PICKED_COLOR = Color(0xFFFF5A5A)
+/** Edit mode: controls size-synced with the selected or picked ones (with Select on, every synced control). */
+private val SYNCED_COLOR = Color(0xFF3FD1C1)
 
 /** [want] cut down to [can] (the same way, no further); nothing when [can] goes the other way. */
 private fun towards(want: Float, can: Float): Float =
@@ -1087,6 +1089,8 @@ fun PadScreen(
                         // A group's pinch: each member's centre (px) and size when the pinch was anchored.
                         var groupStart: Map<String, Pair<Offset, Float>> = emptyMap()
                         var groupBox = Rect.Zero
+                        // A size-synced control's pinch: each partner's centre and width and height (px) at the anchor.
+                        var syncStart: Map<String, Triple<Offset, Float, Float>> = emptyMap()
                         // Two- or three-finger tap: where each finger landed (how many fingers it had).
                         val tapStart = HashMap<PointerId, Offset>()
                         // The fingers came down before anything moved (not a second finger joining a drag).
@@ -1150,9 +1154,8 @@ fun PadScreen(
                             if (down.isEmpty()) break
                             val main = event.changes.firstOrNull { it.id == pointer }
 
-                            // Two fingers: lifted still, they select the control under them; moved, they
-                            // pinch-resize the selected control, wherever they are (nothing when none is selected).
-                            // With Select on, a second finger stops the gesture: nothing is sized there.
+                            // Two or three fingers: lifted still, they undo or redo; moved, they pinch-resize the
+                            // selected control (and its group, or its size-synced partners), wherever they are.
                             if (down.size >= 2 && tapStart.isEmpty() && mode != EditGesture.PINCH) {
                                 fingerTap = mode != EditGesture.MOVE
                                 mode = EditGesture.TWO
@@ -1199,6 +1202,11 @@ fun PadScreen(
                                         members.associate { it.id to (center(it) to it.placeSize(portrait)) }
                                     }
                                     if (members.size >= 2) groupBox = boundsOf(members)
+                                    val synced = ControlGroups.syncedOf(editControls(), c.id) - c.id
+                                    syncStart = if (members.size >= 2) emptyMap() else {
+                                        editControls().filter { it.id in synced }
+                                            .associate { it.id to Triple(center(it), 2f * half(it), 2f * halfH(it)) }
+                                    }
                                 }
                             }
 
@@ -1339,6 +1347,24 @@ fun PadScreen(
                                                 val sized = c.withPlacement(portrait, c.placeX(portrait), c.placeY(portrait), nw / unit)
                                                     .let { if (rect) it.copy(aspect = nh / nw) else it }
                                                 placeSnapped(sized, cx / w, cy / h)
+                                            }
+                                            // Size-synced: every partner grows or shrinks by the same width and height
+                                            // (a round one by the width), each about its own centre, within the size limits.
+                                            val now = findControl(id)
+                                            if (syncStart.isNotEmpty() && now != null) {
+                                                val dW = 2f * half(now) - startW
+                                                val dH = 2f * halfH(now) - startH
+                                                editWorkspace { wk ->
+                                                    wk.copy(touchControls = wk.touchControls.map { p ->
+                                                        val (at, sw, sh) = syncStart[p.id] ?: return@map p
+                                                        val rect = p.kind == TouchKind.BUTTON && p.shape == TouchShape.SQUARE
+                                                        val pw = (sw + dW).coerceIn(lo, hi)
+                                                        val ph = if (rect) (sh + dH).coerceIn(lo, hi) else pw
+                                                        val sized = p.withPlacement(portrait, p.placeX(portrait), p.placeY(portrait), pw / unit)
+                                                            .let { if (rect) it.copy(aspect = ph / pw) else it }
+                                                        place(sized, at.x / w, at.y / h)
+                                                    })
+                                                }
                                             }
                                         }
                                     }
@@ -1824,7 +1850,19 @@ fun PadScreen(
         val lit = remember(ws, selected, selectMode, picked) {
             if (selectMode) picked else selected?.let { ControlGroups.unitOf(ws.touchControls, it) } ?: emptySet()
         }
-        val litColor: (String) -> Color = { id -> if (!selectMode && id == selected) SELECTED_COLOR else PICKED_COLOR }
+        // Size-synced (teal): the selected control's sync partners; with Select on, every synced control not picked.
+        val syncLit = remember(ws, selected, selectMode, picked) {
+            val all = ws.touchControls
+            if (selectMode) all.filter { it.sizeSync != null && it.id !in picked }.mapTo(HashSet()) { it.id }
+            else selected?.let { ControlGroups.syncedOf(all, it) - it } ?: emptySet()
+        }
+        val litColor: (String) -> Color = { id ->
+            when {
+                id !in lit && id in syncLit -> SYNCED_COLOR
+                !selectMode && id == selected -> SELECTED_COLOR
+                else -> PICKED_COLOR
+            }
+        }
         val displays = ws.touchControls.filter { it.kind == TouchKind.DISPLAY }
         // Cleared only when the pad goes or hides: a display that stays across a change keeps its data and sensors.
         LaunchedEffect(displays, hidden) { runtime.setGyroDisplays(if (hidden) emptyList() else displays) }
@@ -1939,7 +1977,7 @@ fun PadScreen(
                 val r = half(c)
                 val rh = halfH(c)
                 val ctr = center(c)
-                val isSelected = editing && c.id in lit
+                val isSelected = editing && (c.id in lit || c.id in syncLit)
                 // Pressed, latched and live label are read in the control itself: a press recomposes only it.
                 LiveControl(
                     control = c,
@@ -2448,6 +2486,25 @@ fun PadScreen(
                                                 contentPadding = compact,
                                                 colors = pickColors,
                                                 onClick = { editWorkspace { ControlGroups.ungroup(it, picked) } }) { Text("Ungroup") }
+                                        }
+                                        // Sync size: the picked ones keep their places but change size together (teal).
+                                        // A control is grouped or synced, never both: syncing takes it out of its group.
+                                        val syncColors = ButtonDefaults.filledTonalButtonColors(
+                                            containerColor = SYNCED_COLOR,
+                                            contentColor = Color.Black,
+                                        )
+                                        val pickedHere = picked.filter { id -> controls.any { it.id == id && it.kind != TouchKind.FULLSCREEN } }
+                                        if (pickedHere.size >= 2) {
+                                            FilledTonalButton(
+                                                contentPadding = compact,
+                                                colors = syncColors,
+                                                onClick = { editWorkspace { ControlGroups.syncSize(it, pickedHere) } }) { Text("Sync size") }
+                                        }
+                                        if (ControlGroups.anySynced(controls, picked)) {
+                                            FilledTonalButton(
+                                                contentPadding = compact,
+                                                colors = syncColors,
+                                                onClick = { editWorkspace { ControlGroups.unsync(it, picked) } }) { Text("Unsync size") }
                                         }
                                         // One whole group picked: save it as a preset (Add preset).
                                         if (ControlGroups.units(controls, picked) == 1 && ControlGroups.anyGrouped(controls, picked)) {
@@ -3176,6 +3233,7 @@ private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>)
     val copy = c.copy(
         id = id,
         group = null,
+        sizeSync = null,
         x = toCentre(c.x, 0.05f),
         y = toCentre(c.y, 0.05f).coerceIn(lHalf, 1f - lHalf),
         portrait = Placement(toCentre(p.x, 0.05f).coerceIn(pHalf, 1f - pHalf), toCentre(p.y, 0.03f), p.size),

@@ -1939,7 +1939,7 @@ internal fun ControlMappingScreen(
                                         val touch = !physical && !control.isTouchpadStandIn
                                         runtime.addToLibrary(
                                             LibraryButton(
-                                                ButtonLibrary.newId(library.map { it.id }), control.copy(group = null),
+                                                ButtonLibrary.newId(library.map { it.id }), control.copy(group = null, sizeSync = null),
                                                 mappings = if (touch) own else emptyList(), name = name,
                                                 chips = if (touch) emptyList() else buttonChips(view),
                                             ),

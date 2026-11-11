@@ -118,6 +118,11 @@ data class TouchControl(
     val display: GyroDisplay? = null,
     /** Edit mode: controls sharing a group id move and size together ([ControlGroups]); null = none. */
     val group: String? = null,
+    /**
+     * Edit mode: controls sharing a size sync id keep their own places but change size together,
+     * by the same amount ([ControlGroups.syncSize]); null = none. Never with a [group].
+     */
+    val sizeSync: String? = null,
     /** BUTTON: its finger position inputs' own settings ([InputSource.Finger]); an axis not listed has the defaults. */
     val fingers: List<FingerAxisSettings> = emptyList(),
 ) {
