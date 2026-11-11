@@ -37,7 +37,7 @@ import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.runtime.ScreenOrientation
 import kotlin.math.roundToInt
 
-/** The App page (the pad's App capsule, a gear): options of the whole app, with the corners. */
+/** The App page (the pad's App capsule, a gear): options of the whole app. */
 @Composable
 fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
     SearchableSettings(modifier) { AppTab(runtime) }
@@ -108,7 +108,6 @@ private fun AppTab(runtime: GamepadRuntime) {
     val padOnly by runtime.padOnlyInput.collectAsStateWithLifecycle()
     val startFullscreen by runtime.startFullscreen.collectAsStateWithLifecycle()
     val keepScreenOn by runtime.keepScreenOn.collectAsStateWithLifecycle()
-    val autoHide by runtime.cornerAutoHide.collectAsStateWithLifecycle()
     val blackIdle by runtime.blackScreenIdle.collectAsStateWithLifecycle()
     val blackSeconds by runtime.blackScreenSeconds.collectAsStateWithLifecycle()
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
@@ -208,27 +207,12 @@ private fun AppTab(runtime: GamepadRuntime) {
                 else "Controller, keyboard and gyro reach the PC from anywhere, also with the app in the background.",
             ) { runtime.setPadOnlyInput(it) }
         },
-        category(runtime, "corners", "Corners", "The ← / → corners: hiding, opacity, wrap around") {
-            SwitchRow(
-                "Hide the ← / → corners after a few seconds", autoHide,
-                hint = "Tap the screen 4 times quickly to show them again. Hidden corners still work. Off: they are always shown.",
-            ) { runtime.setCornerAutoHide(it) }
-            var cornerOpacity by remember(profile.id) { mutableStateOf(profile.cornerOpacity) }
-            Searchable("Corner opacity", "transparency") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Opacity %.0f%%".format(cornerOpacity * 100), Modifier.padding(end = 8.dp))
-                    Slider(
-                        value = cornerOpacity,
-                        onValueChange = { cornerOpacity = it },
-                        valueRange = Profile.MIN_CONTROL_OPACITY..1f,
-                        onValueChangeFinished = { runtime.editActiveProfile { it.copy(cornerOpacity = cornerOpacity) } },
-                    )
-                }
-            }
-            SwitchRow("Wrap around (→ on the last workspace goes to the first)", profile.wrapWorkspaces) { on ->
+        // Kept under its old id, so its place in the list stays.
+        category(runtime, "corners", "Workspace switching", "Previous / next workspace: wrap around") {
+            SwitchRow("Wrap around (Next workspace on the last one goes to the first)", profile.wrapWorkspaces) { on ->
                 runtime.editActiveProfile { it.copy(wrapWorkspaces = on) }
             }
-            Hint("Size and position of the corners: Edit layout, then tap or drag a corner.")
+            Hint("The ← / → buttons are ordinary buttons of every workspace (Make global): move, resize, map or delete them in Edit layout. Add them back from Add preset ★ → Workspace arrows.")
         },
         category(runtime, "touchDisplay", "Touch display", "Touches, trails, live mappings, swipe lines, Move rulers") {
             SwitchRow("Show touches", visuals.showTouches) { runtime.setTouchVisuals(visuals.copy(showTouches = it)) }

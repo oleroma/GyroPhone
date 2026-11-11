@@ -49,6 +49,7 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.StickZones
+import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchLayer
@@ -117,8 +118,8 @@ internal fun ControlSettingsScreen(
         },
     ) {
         val items = listOfNotNull(
-            category(runtime, "look", "Look", "Label, shape, layer, size", defaultOpen = true, prefKey = "control.Look") {
-                LookSettings(control, inPortrait, onControlChange, onSize)
+            category(runtime, "look", "Look", "Label, shape, layer, size, opacity, fade", defaultOpen = true, prefKey = "control.Look") {
+                LookSettings(control, inPortrait, onControlChange, onSize, workspace.controlOpacity)
             },
             if (workspace.sets.isNotEmpty()) category(runtime, "layers", "Layers", "What it does when the layer changes while held", prefKey = "control.Layers") {
                 SwitchSetting(
@@ -155,6 +156,7 @@ internal fun LookSettings(
     inPortrait: Boolean,
     onControlChange: (TouchControl) -> Unit,
     onSize: (Float) -> Unit,
+    workspaceOpacity: Float = 0.5f,
 ) {
     val current by rememberUpdatedState(control)
     // The label is edited in the mapping editor's title (LabelField).
@@ -188,6 +190,28 @@ internal fun LookSettings(
         "Also works when a finger lands on a control in front of it, so both fire.",
         control.sharesTouches,
     ) { onControlChange(current.copy(sharesTouches = it)) }
+    // Its own opacity (else the workspace's), and Fade when idle: never fully transparent.
+    if (control.kind != TouchKind.DISPLAY) {
+        SwitchSetting(
+            "Own opacity",
+            "Off: the workspace's control opacity (" + (workspaceOpacity * 100).roundToInt() + "%).",
+            control.opacity != null,
+        ) { on -> onControlChange(current.copy(opacity = if (on) workspaceOpacity else null)) }
+        control.opacity?.let { o ->
+            OpacitySlider("Opacity", o) { onControlChange(current.copy(opacity = it, fade = current.fade?.coerceAtMost(it))) }
+        }
+        SwitchSetting(
+            "Fade when idle",
+            "A few seconds after its last touch it fades, never fully: it stays visible. A touch brings it back at once.",
+            control.fade != null,
+        ) { on ->
+            val full = current.opacity ?: workspaceOpacity
+            onControlChange(current.copy(fade = if (on) TouchControl.DEFAULT_FADE.coerceAtMost(full) else null))
+        }
+        control.fade?.let { f ->
+            OpacitySlider("Faded opacity", f, max = control.opacity ?: workspaceOpacity) { onControlChange(current.copy(fade = it)) }
+        }
+    }
     val size = control.placeSize(inPortrait)
     if (control.kind == TouchKind.BUTTON && control.shape == TouchShape.SQUARE) {
         // Width and height apart: each slider keeps the other side as it is.
@@ -274,6 +298,20 @@ internal fun SizeSlider(title: String, value: Float, onChange: (Float) -> Unit) 
         Slider(
             value = sqrt(((value - TouchControl.MIN_SIZE) / span).coerceIn(0f, 1f)),
             onValueChange = { t -> onChange(TouchControl.MIN_SIZE + span * t * t) },
+        )
+    }
+}
+
+/** An opacity from [Profile.MIN_CONTROL_OPACITY] (never fully transparent) to [max]. */
+@Composable
+private fun OpacitySlider(title: String, value: Float, max: Float = 1f, onChange: (Float) -> Unit) = Searchable(title, "transparency fade") {
+    val top = max.coerceAtLeast(Profile.MIN_CONTROL_OPACITY + 0.01f)
+    Column {
+        Text(title + " " + (value * 100).roundToInt() + "%", style = MaterialTheme.typography.labelLarge)
+        Slider(
+            value = value.coerceIn(Profile.MIN_CONTROL_OPACITY, top),
+            onValueChange = onChange,
+            valueRange = Profile.MIN_CONTROL_OPACITY..top,
         )
     }
 }

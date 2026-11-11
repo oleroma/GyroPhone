@@ -9,13 +9,13 @@ There are no game profiles to pick and no automatic switching. The app keeps **o
 - **workspaces**: an ordered list, never empty. The pad shows one at a time.
 - **defaults**: the Defaults, a `Workspace` whose settings and touchpad/motion mappings every workspace uses unless it sets its own.
 - **devicePresets**: what physical devices do ([Controllers](phone-controllers.md)); each workspace pins one.
-- **corners**: the ← / → nav corners shared by every workspace, their opacity (default 50 %) and "same size" (default on).
+- **corners**: the old ← / → nav corners, converted once into global ← / → buttons ([Pad UI](phone-pad-ui.md)); empty after that (`navButtons`).
 - **wrapWorkspaces**: → on the last workspace goes to the first (default off).
 - **gamePresets**: the person's own game turn presets, beside the built-in ones.
 
-A **workspace** (`core/.../model/Workspace.kt`) is one complete setup: its touch controls and their mappings, the touchpad, gyro, tilt and shake settings, control opacity, haptic feel and edge, gesture timings, its layers (`sets`), and the device preset it pins. The screen and the attached devices work at the same time and feed the same PC outputs. Nothing is shared between workspaces, so a duplicate can change freely (`core/.../model/WorkspaceMappings.kt`).
+A **workspace** (`core/.../model/Workspace.kt`) is one complete setup: its touch controls and their mappings, the touchpad, gyro, tilt and shake settings, control opacity, haptic feel and edge, gesture timings, its layers (`sets`), and the device preset it pins. The screen and the attached devices work at the same time and feed the same PC outputs. Nothing is shared between workspaces except global controls (Make global), so a duplicate can change freely (`core/.../model/WorkspaceMappings.kt`).
 
-**Switching**: tap a workspace capsule on the pad, or the ← / → corners. Switching releases everything held, goes back to Base, and the gyro follows the new workspace; a Toggle gyro press stops counting. The last active workspace is remembered.
+**Switching**: tap a workspace capsule on the pad, or the ← / → buttons (Previous / Next workspace mappings). Switching releases everything held, goes back to Base, and the gyro follows the new workspace; a Toggle gyro press stops counting. The last active workspace is remembered.
 
 **A fresh install** (`BuiltinProfiles.default`) has three workspaces, each with the Windows touchpad and Gyro mouse presets filled in where it maps nothing else:
 

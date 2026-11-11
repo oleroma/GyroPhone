@@ -1,10 +1,10 @@
 package com.oleroma.gyrophone.core.model
 
 /**
- * The corner controls every [Profile] has ([Profile.corners], kind [TouchKind.FULLSCREEN]):
- * tap [PREV] = previous workspace, tap [NEXT] = next workspace, both together = fullscreen pad.
- * They send nothing to the PC, are shared by all workspaces and can be moved and resized. The old
- * gyro corner ([GYRO]) became a Toggle gyro touch button in each workspace ([gyroCornerToButtons]).
+ * The old ← / → corners ([Profile.corners], kind [TouchKind.FULLSCREEN]) and the global ← / →
+ * buttons that replaced them ([toButtons]): tap = previous / next workspace, long press =
+ * fullscreen. The old gyro corner ([GYRO]) became a Toggle gyro touch button in each workspace
+ * ([gyroCornerToButtons]).
  */
 object NavCorners {
     const val PREV = "nav_prev"
@@ -54,6 +54,67 @@ object NavCorners {
             },
         )
     }
+
+    /** Size sync id ([TouchControl.sizeSync]) of the ← / → buttons made from the corners. */
+    const val SIZE_SYNC = "nav"
+
+    /**
+     * The ← / → buttons: [prev] and [next] as global touch buttons ([TouchControl.global]) whose
+     * tap shows the previous / next workspace and whose long press switches fullscreen, same size
+     * together ([SIZE_SYNC]) when [sameSize], at [opacity].
+     */
+    fun buttons(prev: TouchControl, next: TouchControl, sameSize: Boolean = true, opacity: Float? = null): Pair<List<TouchControl>, List<Mapping>> {
+        fun button(c: TouchControl, label: String) = c.copy(
+            kind = TouchKind.BUTTON,
+            label = label,
+            global = true,
+            group = null,
+            sizeSync = if (sameSize) SIZE_SYNC else null,
+            opacity = opacity,
+        )
+        val controls = listOf(button(prev, PREV_LABEL), button(next, NEXT_LABEL))
+        val mappings = listOf(
+            Mapping(InputSource.TouchTap(prev.id), OutputTarget.PreviousWorkspace),
+            Mapping(InputSource.TouchLongPress(prev.id), OutputTarget.Fullscreen),
+            Mapping(InputSource.TouchTap(next.id), OutputTarget.NextWorkspace),
+            Mapping(InputSource.TouchLongPress(next.id), OutputTarget.Fullscreen),
+        )
+        return controls to mappings
+    }
+
+    /** The built-in "Workspace arrows" preset: ← / → at the default corner places ([buttons]). */
+    fun arrowsPreset(): Pair<List<TouchControl>, List<Mapping>> {
+        val (prev, next) = defaults()
+        return buttons(prev, next)
+    }
+
+    /**
+     * [p] with its ← / → corners turned into ← / → buttons in every workspace ([buttons]), same
+     * place, size and opacity (at least the old lowest, 25 %), the corners then gone
+     * ([Profile.navButtons]). A workspace with a control of its own under that id keeps it.
+     */
+    fun toButtons(p: Profile): Profile {
+        if (p.navButtons) return p
+        val prev = p.corners.firstOrNull { it.id == PREV }
+        val next = p.corners.firstOrNull { it.id == NEXT }
+        val done = p.copy(corners = emptyList(), navButtons = true)
+        if (prev == null || next == null) return done
+        val (controls, mappings) = buttons(prev, next, p.cornerSameSize, p.cornerOpacity.coerceIn(MIN_OPACITY, 1f))
+        return done.copy(workspaces = p.workspaces.map { w ->
+            var out = w
+            for (c in controls) {
+                if (out.touchControls.any { it.id == c.id }) continue
+                out = out.copy(
+                    touchControls = out.touchControls + c,
+                    mappings = out.mappings + mappings.filter { MappingProfiles.touchId(it.source) == c.id },
+                )
+            }
+            ControlGroups.tidy(out)
+        })
+    }
+
+    /** The lowest opacity the corners had in play. */
+    private const val MIN_OPACITY = 0.25f
 
     /**
      * Turns the fullscreen corners of a profile saved before workspaces (any two FULLSCREEN

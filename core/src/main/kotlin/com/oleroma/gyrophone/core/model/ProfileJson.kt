@@ -72,7 +72,8 @@ object ProfileJson {
         workspaces = workspaces.map { w ->
             if (seen.add(w.id)) w else w.copy(id = newWorkspaceId(workspaces.map { it.id } + seen)).also { seen.add(it.id) }
         }
-        val corners = NavCorners.normalize(p.corners)
+        // After the ← / → buttons ([Profile.navButtons]) there are no corners.
+        val corners = if (p.navButtons) p.corners.filter { it.id == NavCorners.GYRO } else NavCorners.normalize(p.corners)
         return if (workspaces == p.workspaces && corners == p.corners) p else p.copy(workspaces = workspaces, corners = corners)
     }
 

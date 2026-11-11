@@ -43,6 +43,7 @@ import com.oleroma.gyrophone.core.engine.GyroMath
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.GyroSpace
 import com.oleroma.gyrophone.core.model.HapticFeel
+import com.oleroma.gyrophone.core.model.GlobalControls
 import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
@@ -1147,7 +1148,8 @@ class GamepadRuntime(context: Context) {
     fun editActiveProfile(change: (Profile) -> Profile): Profile {
         val before = _activeProfile.value
         // A workspace setting changed by hand stops following the workspace defaults.
-        val changed = WorkspaceDefaults.markOwn(before, change(before))
+        // A global control changed in one workspace changes in all of them.
+        val changed = GlobalControls.sync(before, WorkspaceDefaults.markOwn(before, change(before)))
         if (changed == before) return before
         val set = WorkspaceMappings.store(WorkspaceMappings.settle(before, changed))
         if (set != stored) {
@@ -1506,6 +1508,8 @@ class GamepadRuntime(context: Context) {
     init {
         // Profiles from before Toggle gyro buttons: the gyro corner becomes one in every workspace.
         if (stored.corners.any { it.id == NavCorners.GYRO }) editActiveProfile { NavCorners.gyroCornerToButtons(it) }
+        // Profiles from before ← / → buttons: the corners become global buttons in every workspace.
+        if (!stored.navButtons) editActiveProfile { NavCorners.toButtons(it) }
         // The PC's phone overlay turned on or off: the gyro and accelerometer may be needed (or no longer).
         wifi.overlay.onWantedChange = Runnable { main.post { updateGyro() } }
         // The PC's pad became a DualShock 4 (or no longer is): its gyro and accelerometer need the sensors.

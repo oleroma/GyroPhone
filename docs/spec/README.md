@@ -46,7 +46,7 @@ On the phone:
 3. [Gyro math](phone-gyro-math.md): axes and spaces, sensitivity and real world sensitivity, ratchets and modes, acceleration, inertia, filters.
 4. [Mapping system](phone-mapping.md): inputs, outputs, Where / When / How, layers, touch surfaces, how the engine evaluates and merges.
 5. [Workspaces and inheritance](phone-workspaces.md): the one profile, workspaces, the Defaults, settings and mapping inheritance, storage and migrations.
-6. [Pad UI and edit mode](phone-pad-ui.md): the pad screen, capsules, corners, edit mode, the mapping editor, touch visuals, gyro displays.
+6. [Pad UI and edit mode](phone-pad-ui.md): the pad screen, capsules, ← / → buttons, edit mode, global controls, the mapping editor, touch visuals, gyro displays.
 7. [Settings](phone-settings.md): the Settings page (App and Defaults), the workspace settings page, the Connection page, search and categories.
 8. [Controllers and remapping](phone-controllers.md): attached devices, device presets, the Controller screen, stick and trigger tuning, held-button gyro, PC controller ratchet.
 9. [Volume rocker and black screen](phone-volume-black-screen.md).

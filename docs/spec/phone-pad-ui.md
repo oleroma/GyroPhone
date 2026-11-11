@@ -18,23 +18,22 @@ What the person sees and touches: the pad, its top row, the ← / → corners, e
 
 The row scrolls. Long-press a capsule and drag it to reorder; moving workspaces reorders them. The order is stored as a string of `W`/`D`/`S` (App)/`F` (Defaults)/`C`; an order saved before Defaults existed gets it right after App.
 
-## ← / → corners and fullscreen
+## ← / → buttons and fullscreen
 
 The status and navigation bars never show in the app, on the pad, in settings or in any dialog (`ui/AppDialogs.kt`: the app's `Dialog` and `AlertDialog` hide them in their own windows; `MainActivity` hides them again when it gets focus back). A swipe from the screen edge shows them for a moment.
 
-The two nav corners (`Profile.corners`, shared by all workspaces) are always on the pad:
+The ← / → buttons are ordinary touch buttons, **global** (in every workspace, see Make global below), with ordinary mappings:
 
-- tap ← / → for the previous / next workspace (dimmed to 35 % at an end, unless wrap-around is on);
-- press both together for **fullscreen** (hides the top row); both again, or Back, to leave;
-- their opacity (default 50 %) never goes below 25 % in play, since they are the way out of fullscreen;
-- **Hide the ← / → corners after a few seconds** (default off): they fade 3 s after a reveal; four quick taps (≤300 ms apart) anywhere, or touching a corner, show them again;
-- corners can be moved and sized in edit mode; "Same size for all corners" (default on) sizes both together.
+- **Tap** ← / → = **Previous workspace** / **Next workspace** (nothing at an end, unless wrap-around is on); **Long press** either = **Fullscreen** (hides the top row; again, or Back, to leave). These three actions are in the mapping editor's **Other** group and can go on any button, key or controller button. They send nothing to the PC.
+- They are size-synced (teal), so a pinch on one sizes both.
+- Missing ones come back from **Add preset ★ → Workspace arrows** (shown while the workspace has neither), at the old top corners.
+- Profiles from before (`Profile.corners`) are converted once (`NavCorners.toButtons`, `Profile.navButtons`): the corners become these buttons in every workspace, same place, size and opacity (at least 25 %), size-synced if "Same size for all corners" was on. The corners' auto-hide, four-tap reveal, both-together fullscreen and "Same size for all corners" are gone; **Fade when idle** replaces the auto-hide.
 
 ## Edit mode
 
 Opened by tapping the current workspace's capsule. It works on a **draft** of the profile, kept across activity recreation (up to 100 000 JSON characters). The pad shows the workspace being edited; controls are drawn at least 50 % opaque.
 
-**Gestures**: tap a control to select it; **tap the selected control again** to open its full-screen mapping editor (a gyro display: its settings; a ← / → corner: its menu). On overlapping controls a tap acts on the selected one when it is under the finger, else picks the front one. **Long-press (450 ms)** a control to select it and show its **popup** beside it: **Mappings** (not on a gyro display), **Duplicate**, **Save as preset**, **Ungroup** (a grouped control only) and **Delete** (red; asks "Delete "<name>"?" first, removes only that control, Undo brings it back); a corner's long press opens its menu. A tap on empty space closes an open popup, else opens the touchpad's mapping editor; a long press there does nothing. Drag moves the selected control (with none selected, the one under the finger; a drag also closes the popup); two-finger pinch resizes (per axis when the fingers spread mostly one way); **a two-finger tap undoes, a three-finger tap redoes** (also in Select mode; known when the fingers lift, so a one-finger tap never waits; fingers that moved are a pinch, and a finger added to a drag is no tap). At least 48 dp of a control must stay on screen.
+**Gestures**: tap a control to select it; **tap the selected control again** to open its full-screen mapping editor (a gyro display: its settings). On overlapping controls a tap acts on the selected one when it is under the finger, else picks the front one. **Long-press (450 ms)** a control to select it and show its **popup** beside it: **Mappings** (not on a gyro display), **Duplicate**, **Save as preset**, **Ungroup** (a grouped control only), **Make global** / **Make local** and **Delete** (red; asks "Delete "<name>"?" first, removes only that control (a global one: in every workspace), Undo brings it back). A tap on empty space closes an open popup, else opens the touchpad's mapping editor; a long press there does nothing. Drag moves the selected control (with none selected, the one under the finger; a drag also closes the popup); two-finger pinch resizes (per axis when the fingers spread mostly one way); **a two-finger tap undoes, a three-finger tap redoes** (also in Select mode; known when the fingers lift, so a one-finger tap never waits; fingers that moved are a pinch, and a finger added to a drag is no tap). At least 48 dp of a control must stay on screen.
 
 A control's **mapping editor** and its **settings** (⚙ Settings in the editor, Mappings or Configure in the settings) open over each other: the one opened second lies on top, and its Mappings / Settings button or Done goes back to the one under it, so the pad never shows between them (each is its own window). The mapping editor has ↶ **Undo** and ↷ **Redo** in its top bar, and the same finger taps: anywhere in it, a two-finger tap undoes and a three-finger tap redoes, without also tapping what is under a finger (`ui/FingerTaps.kt`).
 
@@ -118,3 +117,9 @@ See [Volume rocker and black screen](phone-volume-black-screen.md).
 ## Key files
 
 `ui/MainActivity.kt`, `ui/PadMenu.kt`, `ui/PadScreen.kt`, `ui/CapsuleRow.kt`, `ui/WorkspaceBar.kt`, `ui/ControlMappingScreen.kt`, `ui/BindingEditor.kt`, `ui/MappingChipDialog.kt`, `ui/ActionSettings.kt`, `ui/ControlSettingsScreen.kt`, `ui/DirectionSettings.kt`, `ui/TouchVisuals.kt`, `ui/GyroVisuals.kt`, `ui/GyroVisualsSettings.kt`, `ui/Shapes3D.kt`, `ui/DebugOverlay.kt`, `ui/LatencyMarkers.kt`, `core/.../model/Profile.kt` (`TouchControl`, `TouchKind`, `NavCorners`), `core/.../model/ControlGroups.kt`, `core/.../model/GyroDisplay.kt`.
+
+## Global controls, opacity and fade
+
+**Make global** (long-press popup; `core/.../model/GlobalControls.kt`, `TouchControl.global`): the control is copied into every workspace with the same id, place, size, look and mappings, and leaves its group. From then on a change to it in any workspace (moving, sizing, settings, mappings) is made in all of them, a new workspace gets it, and deleting it deletes it everywhere (the confirmation says so). A workspace that already has a different control with that id keeps its own and gets no copy. Global controls show a small 🌐 at their top right in edit mode. **Make local** turns every copy back into its workspace's own control (nothing is deleted).
+
+**Opacity and Fade when idle** (a button's or stick's settings → Look): **Own opacity** (off: the workspace's control opacity) with a slider from 10 %; **Fade when idle** (off by default): 3 s after its last touch it fades to its **Faded opacity** (default 25 %, from 10 % up to its own opacity, never fully transparent); a touch brings it back at once. Edit mode shows every control at least 50 % opaque and never faded. The PC overlay uses each control's own opacity.

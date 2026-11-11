@@ -5,6 +5,7 @@ import android.view.InputDevice
 import android.view.View
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
@@ -65,6 +66,7 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -137,6 +139,7 @@ import com.oleroma.gyrophone.core.model.LibraryButton
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.MappingSet
+import com.oleroma.gyrophone.core.model.GlobalControls
 import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Placement
@@ -937,10 +940,11 @@ fun PadScreen(
             val d = draft ?: return
             // A setting changed here stops following the workspace defaults (shown at once). A move or
             // resize keeps every setting and swipe mode, so both checks return at once while dragging.
-            draft = d.updateWorkspace(editIndex) { old ->
+            // A global control changed here changes in every workspace.
+            draft = GlobalControls.sync(d, d.updateWorkspace(editIndex) { old ->
                 val next = change(old)
                 WorkspaceDefaults.markOwn(old, if (Bindings.sameSwipeInputs(old, next)) next else Bindings.matchSwipeModes(next))
-            }
+            })
         }
 
         fun isCorner(d: Profile, id: String) = d.corners.any { it.id == id }
@@ -1951,7 +1955,7 @@ fun PadScreen(
                             x = o.x / w, y = o.y / h,
                             w = 2f * half(c) / w, h = 2f * halfH(c) / h,
                             label = if (c.kind == TouchKind.DISPLAY) "" else labels[c.id] ?: "",
-                            opacity = ws.controlOpacity,
+                            opacity = controlAlpha(c, ws),
                         )
                     } + shown.shownCorners.map { c ->
                         val o = center(c)
@@ -1980,8 +1984,8 @@ fun PadScreen(
                 }
             }
             // Back first, so the front one (as touches see them) is drawn on top.
-            for (c in hitOrder(ws.touchControls, portrait).asReversed()) {
-                if (c.kind == TouchKind.DISPLAY) continue
+            for (c in hitOrder(ws.touchControls, portrait).asReversed()) key(c.id) {
+                if (c.kind == TouchKind.DISPLAY) return@key
                 val r = half(c)
                 val rh = halfH(c)
                 val ctr = center(c)
@@ -2004,9 +2008,26 @@ fun PadScreen(
                         // A control may be larger than the screen: measured unbounded from its top left,
                         // before the opacity layer, which would otherwise cut it to the screen's size.
                         .wrapContentSize(Alignment.TopStart, unbounded = true)
-                        // While editing, faint controls stay findable.
-                        .alpha(ws.controlOpacity.let { if (editing) max(it, MIN_EDIT_OPACITY) else it }),
+                        // Its own opacity, else the workspace's; while editing, faint controls stay findable.
+                        // Fade when idle: read while drawing, so its frames redraw only this control.
+                        .then(
+                            if (editing) Modifier.alpha(max(controlAlpha(c, ws), MIN_EDIT_OPACITY))
+                            else {
+                                val fade = fadeAlpha(c, ws) { c.id in pressedIds || c.id in heldSticks }
+                                Modifier.graphicsLayer { alpha = fade.value }
+                            },
+                        ),
                 )
+                // Global (in every workspace): a small globe at its top right while editing.
+                if (editing && c.global) {
+                    Text(
+                        "🌐",
+                        fontSize = 12.sp,
+                        modifier = Modifier.offset {
+                            IntOffset((ctr.x + r * 0.7f - 6.dp.toPx()).roundToInt(), (ctr.y - rh - 4.dp.toPx()).roundToInt())
+                        },
+                    )
+                }
             }
             // The touchpad's label and what it sends now, at the pad's top centre (when the workspace asks).
             if (ws.touchpadLabelShown) TouchpadLabel(ws.touchpadLabel, live = { if (editing) null else liveLabels[""] })
@@ -2738,9 +2759,21 @@ fun PadScreen(
                                     } else {
                                         // Presets of a physical control or the touchpad stay in the mapping editor.
                                         val padLibrary = library.filterNot(ButtonLibrary::presetOnly)
+                                        // Built in: the ← / → buttons (previous / next workspace, long press
+                                        // fullscreen), global, while this workspace has neither.
+                                        val hereNow = (draft ?: profile).workspace(editIndex)
+                                        if (hereNow.touchControls.none { it.id == NavCorners.PREV || it.id == NavCorners.NEXT }) {
+                                            AddChip("★ Workspace arrows", true) addArrows@{ _ ->
+                                                if (draft == null) return@addArrows
+                                                val (controls, mappings) = NavCorners.arrowsPreset()
+                                                editWorkspace { it.copy(touchControls = it.touchControls + controls, mappings = it.mappings + mappings) }
+                                                selected = null
+                                                presetsOpen = false
+                                            }
+                                        }
                                         if (padLibrary.isEmpty()) {
                                             Text(
-                                                "None yet: Save as preset in a display's settings, a button's settings or a picked group",
+                                                "No own presets yet: Save as preset in a display's settings, a button's settings or a picked group",
                                                 color = Color.White.copy(alpha = 0.7f),
                                                 style = MaterialTheme.typography.labelLarge,
                                                 modifier = Modifier.padding(horizontal = 4.dp),
@@ -2855,7 +2888,8 @@ fun PadScreen(
                                     TouchKind.STICK -> "stick"
                                     TouchKind.DISPLAY -> "display"
                                     else -> "button"
-                                } + " and its mappings are removed from this layout.",
+                                } + " and its mappings are removed from " +
+                                    if (c.global) "every workspace (it is global)." else "this layout.",
                             )
                         },
                         confirmButton = {
@@ -2885,7 +2919,8 @@ fun PadScreen(
                         runtime, d, editIndex,
                         onProfileChange = { p, at ->
                             val deleted = p.workspaces.size < d.workspaces.size
-                            draft = p
+                            // A new workspace gets the global controls too.
+                            draft = GlobalControls.sync(d, p)
                             // Rename and duplicate keep editing this one; a delete moves on and closes the page.
                             if (deleted) {
                                 editIndex = at.coerceIn(0, p.workspaces.lastIndex)
@@ -2964,6 +2999,16 @@ fun PadScreen(
                             },
                             onDelete = {
                                 confirmingDelete = sel.id
+                                menu = EditMenu.NONE
+                            },
+                            global = sel.global,
+                            onGlobal = {
+                                // Make global: the same control in every workspace; Make local: each keeps its own copy.
+                                val now = draft
+                                if (now != null) {
+                                    draft = if (sel.global) GlobalControls.makeLocal(now, sel.id)
+                                    else GlobalControls.makeGlobal(now, editIndex, sel.id)
+                                }
                                 menu = EditMenu.NONE
                             },
                         )
@@ -3607,7 +3652,8 @@ private fun TouchpadLabel(label: String, live: () -> String?) {
 
 /**
  * A control's long-press popup in edit mode: open its [mappings] editor, duplicate it, save it as
- * a preset, ungroup it ([grouped] only), or delete it (asked first).
+ * a preset, ungroup it ([grouped] only), make it global (in every workspace) or local again
+ * ([global]), or delete it (asked first).
  */
 @Composable
 private fun ControlPopup(
@@ -3618,6 +3664,8 @@ private fun ControlPopup(
     onSavePreset: () -> Unit,
     onUngroup: () -> Unit,
     onDelete: () -> Unit,
+    global: Boolean,
+    onGlobal: () -> Unit,
 ) {
     Surface(
         shape = RoundedCornerShape(16.dp),
@@ -3639,7 +3687,33 @@ private fun ControlPopup(
             Item("Duplicate", onClick = onDuplicate)
             Item("Save as preset", onClick = onSavePreset)
             if (grouped) Item("Ungroup", onClick = onUngroup)
+            Item(if (global) "Make local" else "Make global", onClick = onGlobal)
             Item("Delete", MaterialTheme.colorScheme.error, onDelete)
         }
     }
+}
+
+/** [c]'s opacity in play: its own, else [ws]'s control opacity. */
+private fun controlAlpha(c: TouchControl, ws: Workspace): Float =
+    (c.opacity ?: ws.controlOpacity).coerceIn(Profile.MIN_CONTROL_OPACITY, 1f)
+
+/**
+ * [c]'s opacity in play with Fade when idle ([TouchControl.fade]): full while [touched] and for
+ * [TouchControl.FADE_AFTER_MS] after, then it fades to its faded opacity (never below
+ * [Profile.MIN_CONTROL_OPACITY], so it stays visible). Without fade: [controlAlpha].
+ */
+@Composable
+private fun fadeAlpha(c: TouchControl, ws: Workspace, touched: () -> Boolean): State<Float> {
+    val full = controlAlpha(c, ws)
+    val faded = c.fade?.coerceIn(Profile.MIN_CONTROL_OPACITY, full)
+    val isTouched by remember { derivedStateOf(touched) }
+    var idle by remember { mutableStateOf(false) }
+    LaunchedEffect(isTouched, faded) {
+        idle = false
+        if (faded != null && !isTouched) {
+            delay(TouchControl.FADE_AFTER_MS)
+            idle = true
+        }
+    }
+    return animateFloatAsState(if (idle && faded != null) faded else full, tween(if (idle) 600 else 120), label = "fade")
 }
