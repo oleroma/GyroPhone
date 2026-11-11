@@ -297,6 +297,9 @@ private val PANEL_TAB_COLOR = Color(0xFF2F4A6E)
 private val PANEL_TAB_OUTLINE = Color(0xFF7FB2FF)
 private val PANEL_ROW_GAP = 4.dp
 
+/** The floating menu's fixed column after the ⠿ dots: ↶ and ↷ side by side (each 22 dp plus 5 dp around). */
+private val UNDO_COLUMN_WIDTH = 66.dp
+
 /**
  * [content]'s items in up to [rows] rows, in order, each into the row that is shortest so far
  * (one with Modifier.layoutId([STRIP_LAST_ROW]) into the last row)
@@ -2450,9 +2453,6 @@ fun PadScreen(
                         val canRedo = redoSteps.isNotEmpty()
                         val mainRows = min(panelRows, mainRowsCap(portrait))
                         val listOpen = addOpen || presetsOpen
-                        // One column after the ⠿ dots holds ↶ over ↷: in two main rows, one each; in one row
-                        // with a list open, ↷ moves down beside the list's first row; else both small in the one row.
-                        val redoBelow = mainRows == 1 && listOpen
 
                         /** A row of the fixed column: ⠿ (moves the menu) and, if any, its icon. */
                         @Composable
@@ -2461,7 +2461,7 @@ fun PadScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             DragDots()
-                            Box(Modifier.width(34.dp), contentAlignment = Alignment.Center) { icon() }
+                            Box(Modifier.width(UNDO_COLUMN_WIDTH), contentAlignment = Alignment.Center) { icon() }
                         }
 
                         /** ⠿ and the column's icons for [rows] rows of a strip, lined up with them. */
@@ -2481,15 +2481,11 @@ fun PadScreen(
                                 .onSizeChanged { mainRowWidth = it.width },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            // ↶ and ↷ side by side in the first row of the fixed column, whatever the rows.
                             LeftColumn(mainRows) { r ->
-                                when {
-                                    mainRows > 1 && r == 0 || redoBelow ->
-                                        if (r == 0) MenuIcon(EditIcons.Undo, "Undo", canUndo) { undoEdit() }
-                                    mainRows > 1 -> MenuIcon(EditIcons.Redo, "Redo", canRedo) { redoEdit() }
-                                    else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        MenuIcon(EditIcons.Undo, "Undo", canUndo, small = true) { undoEdit() }
-                                        MenuIcon(EditIcons.Redo, "Redo", canRedo, small = true) { redoEdit() }
-                                    }
+                                if (r == 0) Row(verticalAlignment = Alignment.CenterVertically) {
+                                    MenuIcon(EditIcons.Undo, "Undo", canUndo) { undoEdit() }
+                                    MenuIcon(EditIcons.Redo, "Redo", canRedo) { redoEdit() }
                                 }
                             }
                             ScrollStrip(mainRows, fill = panelWidth != null) {
@@ -2677,9 +2673,7 @@ fun PadScreen(
                                 Modifier.width(with(density) { mainRowWidth.toDp() }),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                LeftColumn(listRows) { r ->
-                                    if (redoBelow && r == 0) MenuIcon(EditIcons.Redo, "Redo", canRedo) { redoEdit() }
-                                }
+                                LeftColumn(listRows) { }
                                 ScrollStrip(listRows, fill = true, tab = true) {
                                     if (addOpen) {
                                         /** Adds a button; [empty]: with every action it would take from the workspace cleared. */
