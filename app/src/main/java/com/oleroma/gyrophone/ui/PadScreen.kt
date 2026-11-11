@@ -286,11 +286,12 @@ private enum class EditMenu { NONE, MAPPING, CONTEXT, POPUP }
  */
 private fun mainRowsCap(portrait: Boolean) = if (portrait) 2 else 1
 private fun addRowsCap(portrait: Boolean) = if (portrait) 4 else 3
-private val PANEL_ROW_HEIGHT = 40.dp
+// 48 dp: a pill keeps a 48 dp touch area (it draws 40 dp of it).
+private val PANEL_ROW_HEIGHT = 48.dp
 /** The open Add / Presets list and its tab-like pill. */
 private val PANEL_TAB_COLOR = Color(0xFF2F4A6E)
 private val PANEL_TAB_OUTLINE = Color(0xFF7FB2FF)
-private val PANEL_ROW_GAP = 6.dp
+private val PANEL_ROW_GAP = 2.dp
 
 /**
  * [content]'s items in up to [rows] rows, in order, each into the row that is shortest so far
