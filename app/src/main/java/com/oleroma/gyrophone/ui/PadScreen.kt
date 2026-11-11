@@ -22,8 +22,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -97,6 +95,7 @@ import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -277,10 +276,58 @@ private fun axisScale(start: Float, now: Float, floor: Float): Float {
 /** What edit mode shows for the selected control: its mapping screen or its settings screen (a corner: its menu). */
 private enum class EditMenu { NONE, MAPPING, CONTEXT, POPUP }
 
-/** The edit menu's strip: at most this many rows, each this tall, this far apart. */
-private const val PANEL_MAX_ROWS = 4
+/**
+ * Rows the edit menu's strips can take, as its corner grip is pulled down: the main strip up to
+ * 1 in landscape and 2 in portrait, the Add / Presets strip up to 3 and 4. Each row is about
+ * [PANEL_ROW_HEIGHT] tall, [PANEL_ROW_GAP] apart.
+ */
+private fun mainRowsCap(portrait: Boolean) = if (portrait) 2 else 1
+private fun addRowsCap(portrait: Boolean) = if (portrait) 4 else 3
 private val PANEL_ROW_HEIGHT = 40.dp
 private val PANEL_ROW_GAP = 6.dp
+
+/**
+ * [content]'s items in up to [rows] rows, in order, each into the row that is shortest so far
+ * (so the rows end up about as long), each row's items centred in its height. As wide as its
+ * longest row: put it in a sideways scroll.
+ */
+@Composable
+private fun StripRows(rows: Int, modifier: Modifier, content: @Composable () -> Unit) {
+    Layout(content = content, modifier = modifier) { measurables, constraints ->
+        val n = rows.coerceAtLeast(1)
+        val gapX = 6.dp.roundToPx()
+        val gapY = PANEL_ROW_GAP.roundToPx()
+        val placeables = measurables.map { it.measure(Constraints(maxHeight = constraints.maxHeight)) }
+        val rowW = IntArray(n)
+        val rowH = IntArray(n)
+        val rowOf = IntArray(placeables.size)
+        val xOf = IntArray(placeables.size)
+        placeables.forEachIndexed { i, p ->
+            var r = 0
+            for (k in 1 until n) if (rowW[k] < rowW[r]) r = k
+            val x = if (rowW[r] == 0) 0 else rowW[r] + gapX
+            rowOf[i] = r
+            xOf[i] = x
+            rowW[r] = x + p.width
+            rowH[r] = max(rowH[r], p.height)
+        }
+        val used = (0 until n).filter { rowW[it] > 0 }
+        val rowY = IntArray(n)
+        var y = 0
+        for (r in used) {
+            rowY[r] = y
+            y += rowH[r] + gapY
+        }
+        val height = if (used.isEmpty()) 0 else y - gapY
+        val width = rowW.maxOrNull() ?: 0
+        layout(width, height) {
+            placeables.forEachIndexed { i, p ->
+                val r = rowOf[i]
+                p.place(xOf[i], rowY[r] + (rowH[r] - p.height) / 2)
+            }
+        }
+    }
+}
 
 /**
  * Which edit-mode page is open ([menu]), and whether the other of a control's two pages (its
@@ -365,7 +412,6 @@ internal object TouchStream {
  * While [hidden] (a menu page covers it, [PadTab]) the pad stays composed but counts as off screen: it
  * holds the profile it showed, sends nothing and stops its polls and per-frame layers until it shows again.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PadScreen(
     runtime: GamepadRuntime,
@@ -435,7 +481,7 @@ fun PadScreen(
 
     /** Width the user dragged the edit menu to (px); null = fit its rows. */
     var panelWidthPx by remember { mutableStateOf<Float?>(null) }
-    /** Rows the edit menu's strip wraps into (dragged down by its corner grip), 1 to [PANEL_MAX_ROWS]. */
+    /** Rows the edit menu's strips may take (its corner grip pulled down), each capped by [mainRowsCap] / [addRowsCap]. */
     var panelRows by remember { mutableIntStateOf(1) }
     var dragging by remember { mutableStateOf(false) }
     /** Cancel was tapped with unsaved changes: asking whether to throw them away. */
@@ -2098,76 +2144,45 @@ fun PadScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         /**
-                         * A scrolling strip of the menu: framed, with a shadow at an edge that has more past it.
-                         * In one row it scrolls sideways; in [rows] of 2 or more its items wrap into that many
-                         * rows and it scrolls up and down.
+                         * A scrolling strip of the menu: framed, scrolling sideways, with a shadow at an edge
+                         * that has more past it. Its items pack into up to [rows] rows, each next one into the
+                         * shortest row so far.
                          */
                         @Composable
-                        fun RowScope.ScrollStrip(rows: Int = 1, content: @Composable RowScope.() -> Unit) {
+                        fun RowScope.ScrollStrip(rows: Int = 1, content: @Composable () -> Unit) {
                             val scroll = rememberScrollState()
                             val shape = RoundedCornerShape(12.dp)
-                            val across = rows <= 1
                             Box(
                                 Modifier
-                                    .weight(1f, fill = !across)
+                                    .weight(1f, fill = false)
                                     .padding(end = 4.dp)
                                     .clip(shape)
                                     .border(1.dp, Color.White.copy(alpha = 0.25f), shape),
                             ) {
-                                if (across) {
-                                    Row(
-                                        Modifier.horizontalScroll(scroll).padding(horizontal = 6.dp, vertical = 4.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        content = content,
-                                    )
-                                } else {
-                                    FlowRow(
-                                        Modifier
-                                            .heightIn(max = PANEL_ROW_HEIGHT * rows + PANEL_ROW_GAP * (rows - 1) + 8.dp)
-                                            .verticalScroll(scroll)
-                                            .padding(horizontal = 6.dp, vertical = 4.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        verticalArrangement = Arrangement.spacedBy(PANEL_ROW_GAP),
-                                        itemVerticalAlignment = Alignment.CenterVertically,
-                                        content = content,
-                                    )
-                                }
+                                StripRows(
+                                    rows,
+                                    Modifier.horizontalScroll(scroll).padding(horizontal = 6.dp, vertical = 4.dp),
+                                    content,
+                                )
                                 val back = scroll.canScrollBackward
                                 val forward = scroll.canScrollForward
                                 if (back || forward) {
                                     Canvas(Modifier.matchParentSize()) {
                                         val edge = 20.dp.toPx()
                                         val shade = Color.Black.copy(alpha = 0.6f)
-                                        if (across) {
-                                            if (back) drawRect(
-                                                Brush.horizontalGradient(listOf(shade, Color.Transparent), endX = edge),
-                                                size = Size(edge, size.height),
-                                            )
-                                            if (forward) drawRect(
-                                                Brush.horizontalGradient(
-                                                    listOf(Color.Transparent, shade),
-                                                    startX = size.width - edge,
-                                                    endX = size.width,
-                                                ),
-                                                topLeft = Offset(size.width - edge, 0f),
-                                                size = Size(edge, size.height),
-                                            )
-                                        } else {
-                                            if (back) drawRect(
-                                                Brush.verticalGradient(listOf(shade, Color.Transparent), endY = edge),
-                                                size = Size(size.width, edge),
-                                            )
-                                            if (forward) drawRect(
-                                                Brush.verticalGradient(
-                                                    listOf(Color.Transparent, shade),
-                                                    startY = size.height - edge,
-                                                    endY = size.height,
-                                                ),
-                                                topLeft = Offset(0f, size.height - edge),
-                                                size = Size(size.width, edge),
-                                            )
-                                        }
+                                        if (back) drawRect(
+                                            Brush.horizontalGradient(listOf(shade, Color.Transparent), endX = edge),
+                                            size = Size(edge, size.height),
+                                        )
+                                        if (forward) drawRect(
+                                            Brush.horizontalGradient(
+                                                listOf(Color.Transparent, shade),
+                                                startX = size.width - edge,
+                                                endX = size.width,
+                                            ),
+                                            topLeft = Offset(size.width - edge, 0f),
+                                            size = Size(edge, size.height),
+                                        )
                                     }
                                 }
                             }
@@ -2277,7 +2292,7 @@ fun PadScreen(
                         // Fixed: dots (move), undo, redo. Then a scrolling strip: ⚙ (this workspace's settings), lock,
                         // Done, Cancel, Select, Group / Ungroup, and the layout tools.
                         // In more than one row: dots, undo and redo stay at the top of the first.
-                        Row(verticalAlignment = if (panelRows > 1) Alignment.Top else Alignment.CenterVertically) {
+                        Row(verticalAlignment = if (min(panelRows, mainRowsCap(portrait)) > 1) Alignment.Top else Alignment.CenterVertically) {
                             DragDots()
                             // Undo, redo, and the lock that keeps drags and pinches from changing the layout.
                             @Composable
@@ -2297,7 +2312,7 @@ fun PadScreen(
                                 undoSteps.isNotEmpty() || (undoBase[0] != null && draft !== undoBase[0]),
                             ) { undoEdit() }
                             MenuIcon(EditIcons.Redo, "Redo", redoSteps.isNotEmpty()) { redoEdit() }
-                            ScrollStrip(panelRows) {
+                            ScrollStrip(min(panelRows, mainRowsCap(portrait))) {
                                 // Everything but undo and redo scrolls, so a narrow (portrait) panel reaches it all.
                                 // The workspace's settings, the same page as the touchpad's Settings
                                 // in its mapping editor, on the draft like the rest of edit mode.
@@ -2462,7 +2477,7 @@ fun PadScreen(
                                     style = MaterialTheme.typography.labelLarge,
                                     modifier = Modifier.padding(start = 12.dp, end = 8.dp),
                                 )
-                                ScrollStrip {
+                                ScrollStrip(min(panelRows, addRowsCap(portrait))) {
                                     if (addOpen) {
                                         /** Adds a button; [empty]: with every action it would take from the workspace cleared. */
                                         fun addButton(empty: Boolean, at: Offset?) {
@@ -2551,7 +2566,7 @@ fun PadScreen(
                         }
                     }
                     // The bottom-right corner: drag sideways to resize the whole menu, down (or up) to wrap
-                    // its strip into more (or fewer) rows, up to PANEL_MAX_ROWS.
+                    // its strips into more (or fewer) rows, as far as the Add strip's cap.
                     Box(
                         Modifier
                             .align(Alignment.Bottom)
@@ -2574,7 +2589,7 @@ fun PadScreen(
                                     menuOffset = clampMenu(clampMenu(menuOffset) + Offset((to - from) / 2f, 0f))
                                     panelWidthPx = to
                                     down += drag.y
-                                    panelRows = (fromRows + (down / step).roundToInt()).coerceIn(1, PANEL_MAX_ROWS)
+                                    panelRows = (fromRows + (down / step).roundToInt()).coerceIn(1, addRowsCap(portrait))
                                 }
                             },
                         contentAlignment = Alignment.Center,

@@ -38,7 +38,7 @@ Opened by tapping the current workspace's capsule. It works on a **draft** of th
 
 A control's **mapping editor** and its **settings** (⚙ Settings in the editor, Mappings or Configure in the settings) open over each other: the one opened second lies on top, and its Mappings / Settings button or Done goes back to the one under it, so the pad never shows between them (each is its own window). The mapping editor has ↶ **Undo** and ↷ **Redo** in its top bar, and the same finger taps: anywhere in it, a two-finger tap undoes and a three-finger tap redoes, without also tapping what is under a finger (`ui/FingerTaps.kt`).
 
-**The floating menu** (drag by its ⠿ dots; drag its **bottom-right corner grip** sideways to resize it, down to wrap its strip into up to 4 rows, which then scrolls up and down instead of sideways; the Add / Presets row stays one sideways row so its items still drag down onto the pad):
+**The floating menu** (drag by its ⠿ dots; drag its **bottom-right corner grip** sideways to resize it and down (or up) for more (or fewer) rows: the main strip takes up to 1 row in landscape and 2 in portrait, the Add / Presets strip up to 3 and 4. Every strip scrolls sideways; its items pack into its rows in order, each into the shortest row so far, and Add / Presets items still drag down onto the pad):
 
 - ↶ **Undo** / ↷ **Redo** (100 steps; changes within 400 ms merge into one step);
 - The sliders icon (the same as the Defaults capsule's) saves the draft and opens the workspace's settings page;
