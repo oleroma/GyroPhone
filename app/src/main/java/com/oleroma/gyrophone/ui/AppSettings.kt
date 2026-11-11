@@ -106,6 +106,7 @@ private fun AppTab(runtime: GamepadRuntime) {
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
     val orientation by runtime.screenOrientation.collectAsStateWithLifecycle()
     val padOnly by runtime.padOnlyInput.collectAsStateWithLifecycle()
+    val padOnlyHardware by runtime.padOnlyHardware.collectAsStateWithLifecycle()
     val startFullscreen by runtime.startFullscreen.collectAsStateWithLifecycle()
     val keepScreenOn by runtime.keepScreenOn.collectAsStateWithLifecycle()
     val gameRumble by runtime.gameRumble.collectAsStateWithLifecycle()
@@ -207,6 +208,14 @@ private fun AppTab(runtime: GamepadRuntime) {
                 hint = if (padOnly) "Controller, keyboard and gyro reach the PC only on the pad, outside its pages and edit mode. The connection stays up."
                 else "Controller, keyboard and gyro reach the PC from anywhere, also with the app in the background.",
             ) { runtime.setPadOnlyInput(it) }
+            if (padOnly) {
+                SwitchRow(
+                    "Hardware devices too", padOnlyHardware,
+                    hint = if (padOnlyHardware) "Controllers, keyboards and the volume buttons also reach the PC only on the pad."
+                    else "Controllers, keyboards and the volume buttons reach the PC with the pad closed too, while GP is on screen " +
+                        "(Android gives an app in the background no buttons). A keyboard still types into GP's boxes.",
+                ) { runtime.setPadOnlyHardware(it) }
+            }
         },
         // Kept under its old id, so its place in the list stays.
         category(runtime, "corners", "Workspace switching", "Previous / next workspace: wrap around") {

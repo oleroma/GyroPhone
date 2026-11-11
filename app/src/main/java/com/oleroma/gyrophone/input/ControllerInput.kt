@@ -119,9 +119,11 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         // Unmapped pad buttons must do nothing, not fall back to BACK / focus navigation.
         val fromPad = event.source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
             runtime.controllers.value.any { it.deviceId == device.id }
-        // Pad not on screen: nothing is sent, and a keyboard types into the app as usual.
-        if (!runtime.inputAllowed) return fromPad
+        // Hardware held back with the pad closed: nothing is sent, and a keyboard types into the app as usual.
+        if (!runtime.hardwareAllowed) return fromPad
         val mapped = runtime.engine.setKey(source(device).pad, event.keyCode, pressed)
+        // Pad closed: a keyboard's keys are sent and still type into the app (its search and name boxes).
+        if (!runtime.inputAllowed) return fromPad
         return mapped || fromPad
     }
 
@@ -131,15 +133,16 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             !device.isExternal && !isPad(device) && device.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC
 
     /**
-     * The volume rocker while the pad is open: a key of the phone's own device ([PHONE_PAD]),
+     * The volume rocker while the pad is open (or with the pad closed while hardware devices aren't held
+     * back, [GamepadRuntime.padOnlyHardware] off): a key of the phone's own device ([PHONE_PAD]),
      * mapped by the workspace's phone mappings (unmapped, the PC's volume keys). Consumed, so the
-     * phone's volume doesn't change or show its slider. With the pad closed, in a menu or while
-     * learning a key it is the phone's volume as usual. Android's repeats of a held key are
+     * phone's volume doesn't change or show its slider. Otherwise, or while learning a key, it is the
+     * phone's volume as usual. Android's repeats of a held key are
      * swallowed: the key stays held, as any button.
      */
     private fun onRocker(event: KeyEvent): Boolean {
         val pressed = event.action == KeyEvent.ACTION_DOWN
-        if (!runtime.inputAllowed || runtime.learnListener != null || runtime.keyLearnListener != null) {
+        if (!runtime.hardwareAllowed || runtime.learnListener != null || runtime.keyLearnListener != null) {
             // A press taken while the pad was open still gets its release.
             if (!pressed) runtime.engine.setKey(PHONE_PAD, event.keyCode, false)
             return false
@@ -198,8 +201,8 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             }
             return true
         }
-        // Pad not on screen: nothing is sent ([last] still follows the device for learning).
-        if (runtime.inputAllowed) runtime.engine.setAxes(src.pad, axisIds, axisValues, n)
+        // Hardware held back with the pad closed: nothing is sent ([last] still follows the device for learning).
+        if (runtime.hardwareAllowed) runtime.engine.setAxes(src.pad, axisIds, axisValues, n)
         return true
     }
 
@@ -225,7 +228,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
     fun onCapturedPointerEvent(event: MotionEvent): Boolean {
         val device = event.device ?: return false
         val pad = mice.get(device.id) ?: mousePad(device).also { mice.put(device.id, it) }
-        if (!runtime.inputAllowed) return true
+        if (!runtime.hardwareAllowed) return true
         val engine = runtime.engine
         when (event.actionMasked) {
             MotionEvent.ACTION_MOVE, MotionEvent.ACTION_HOVER_MOVE -> {

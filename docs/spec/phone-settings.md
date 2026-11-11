@@ -20,7 +20,7 @@ Every settings page (`ui/SettingsLayout.kt`) has a low **search** field on top (
 | | Keep the screen on while the pad is open | on |
 | | Black screen when idle; Black screen after 30 s / 1 / 2 / 5 min | off; 1 min |
 | | Screen rotation: Auto, Landscape, Portrait, Forced portrait, Forced landscape (top left / top right) | Auto |
-| | Send input only while the pad is open | on |
+| | Send input only while the pad is open; under it Hardware devices too (controllers, keyboards, volume buttons) | on; off |
 | Workspace switching | Wrap around (Next workspace on the last one goes to the first) | off |
 | Touch display | Show touches, Trail behind fingers (length, fade), Fade out after lift, Show live mappings on buttons, swipe line, Move rulers | see [Pad UI](phone-pad-ui.md) |
 | Gyro | Jitter cutoff (0–5 °/s), Smoothing below (0–10 °/s); **Slider cap**: the top of every gyro sensitivity slider and Gyro sensitivity range, in RWS for workspaces that know their game (1–50) and in counts per degree for the others (4–250) | both off; 10 RWS, 64 counts/° |

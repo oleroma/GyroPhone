@@ -272,6 +272,14 @@ class GamepadRuntime(context: Context) {
     /** When on (the default), controller, keyboard and gyro input reach the PC only while the pad is on screen. */
     val padOnlyInput: StateFlow<Boolean> = _padOnlyInput
 
+    private val _padOnlyHardware = MutableStateFlow(prefs.getBoolean(KEY_PAD_ONLY_HARDWARE, false))
+
+    /**
+     * Whether [padOnlyInput] holds back hardware devices too (controllers, keyboards and the volume
+     * buttons). Off (the default): they reach the PC with the pad closed as well, while the app is in front.
+     */
+    val padOnlyHardware: StateFlow<Boolean> = _padOnlyHardware
+
     private val _idleStopMinutes = MutableStateFlow(prefs.getInt(KEY_IDLE_STOP_MINUTES, DEFAULT_IDLE_STOP_MINUTES))
 
     /**
@@ -579,6 +587,11 @@ class GamepadRuntime(context: Context) {
      */
     @Volatile
     var inputAllowed = !_padOnlyInput.value
+        private set
+
+    /** Whether hardware devices' input goes to the engine: as [inputAllowed], or always while [padOnlyHardware] is off. */
+    @Volatile
+    var hardwareAllowed = !_padOnlyInput.value || !_padOnlyHardware.value
         private set
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -889,6 +902,12 @@ class GamepadRuntime(context: Context) {
         updateInputAllowed()
     }
 
+    fun setPadOnlyHardware(on: Boolean) {
+        prefs.edit().putBoolean(KEY_PAD_ONLY_HARDWARE, on).apply()
+        _padOnlyHardware.value = on
+        updateInputAllowed()
+    }
+
     fun setStartFullscreen(on: Boolean) {
         prefs.edit().putBoolean(KEY_START_FULLSCREEN, on).apply()
         _startFullscreen.value = on
@@ -971,10 +990,14 @@ class GamepadRuntime(context: Context) {
     @Synchronized
     private fun updateInputAllowed() {
         val allowed = !_padOnlyInput.value || (padShown && foreground)
+        val hardware = allowed || !_padOnlyHardware.value
+        val was = hardwareAllowed
+        hardwareAllowed = hardware
         if (allowed != inputAllowed) {
             inputAllowed = allowed
+            // Everything held lets go (a held hardware button is pressed again to send it again).
             if (!allowed) engine.reset()
-        }
+        } else if (was && !hardware) engine.reset()
         updateGyro()
     }
 
@@ -1565,6 +1588,7 @@ class GamepadRuntime(context: Context) {
         private const val KEY_TRANSPORT = "transport"
         private const val KEY_ORIENTATION = "screen_orientation"
         private const val KEY_PAD_ONLY_INPUT = "pad_only_input"
+        private const val KEY_PAD_ONLY_HARDWARE = "pad_only_hardware"
         private const val KEY_IDLE_STOP_MINUTES = "idle_stop_minutes"
         const val DEFAULT_IDLE_STOP_MINUTES = 10
 
