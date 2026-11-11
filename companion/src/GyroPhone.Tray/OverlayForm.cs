@@ -637,8 +637,9 @@ internal sealed class OverlayForm : Form
         if (fresh && !shows) _lastTime = _scene.Frame.PhoneTimeUs;
         bool changed = _dirty || shows || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||
             !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now) || laserFading ||
-            _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser ||
-            Settings is { Kind: OverlayKind.Fps } && now - _lastDrawTicks >= FpsDrawing.EveryMs;
+            _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser;
+        // The FPS overlay shows nothing of the phone: it draws only on a change of its own settings, and 4 times a second.
+        if (Settings is { Kind: OverlayKind.Fps }) changed = _dirty || now - _lastDrawTicks >= FpsDrawing.EveryMs;
         if (!changed && now - _lastDrawTicks < 500) return;
         // Faded out by "Fade when phone rests": a few pictures a second at most. Any input or movement
         // ends the rest, and the next tick draws at once.

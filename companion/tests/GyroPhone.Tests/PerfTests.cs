@@ -246,3 +246,22 @@ public class LinkPathTests
         Assert.Equal("Phone hotspot", LinkPaths.Describe(Info(LinkPath.Hotspot), null));
     }
 }
+
+public class FpsCountTests
+{
+    [Fact]
+    public void FpsCountsByTheFramesOwnTimesNotDelivery()
+    {
+        var s = new FrameStats(_ => false);
+        s.Present(7, 0);
+        s.Tick(7, 0);
+        long t = 0;
+        for (int i = 0; i < 300; i++) s.Present(7, t += 10_000); // 3 s at 100 fps
+        // Windows delivered them late: now is 0.8 s past the newest frame.
+        var v = s.View(t + 800_000);
+        Assert.Equal(100, v.Fps, 0);
+        Assert.Equal(100, s.LastSecond(t + 800_000).Frames);
+        // Stopped showing frames: 0.
+        Assert.Equal(0, s.View(t + 2_000_000).Fps);
+    }
+}
