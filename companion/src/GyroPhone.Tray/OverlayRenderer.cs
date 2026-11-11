@@ -46,6 +46,8 @@ internal sealed class OverlayScene
     public GyroPhone.Host.Perf.FrameView? Fps;
     public string? FpsGame;
     public GyroPhone.Host.Perf.FrameWatchState FpsState;
+    /// <summary>The link test recording now, or null.</summary>
+    public GyroPhone.Host.Perf.RecordingView? FpsTest;
 }
 
 /// <summary>

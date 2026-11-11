@@ -7,7 +7,8 @@ namespace GyroPhone.Tray;
 /// <summary>
 /// The FPS overlay (docs/spec/pc-overlays.md): the game's frames per second big, then 1% low, jumps and the
 /// worst frame of the last minute, and the last 10 seconds of frame times as a strip with jumps as dots. Its
-/// edge lights in the jump colour for a second after a jump.
+/// edge lights in the jump colour for a second after a jump. While a link test records, its time and what is
+/// left show top left ("● REC 1:12 · 1:48 left").
 /// </summary>
 internal static class FpsDrawing
 {
@@ -56,6 +57,8 @@ internal static class FpsDrawing
         string title = scene.FpsGame is { Length: > 0 } game && watching && f is { Pid: > 0 } ? game : "";
         if (title.Length > 0)
             g.DrawText(title, subPx, false, Color.FromArgb(text.A * 3 / 4, text), new RectangleF(inner.X, inner.Y, inner.Width, subPx * 1.4f), TextAlign.Far, TextAlign.Near);
+        if (scene.FpsTest is { } test)
+            g.DrawText(TestText(test), subPx, true, jump, new RectangleF(inner.X, inner.Y, inner.Width, subPx * 1.4f), TextAlign.Near, TextAlign.Near);
         g.DrawText(big, bigPx, true, text, bigBox, TextAlign.Near, TextAlign.Far);
         g.DrawText(sub, subPx, false, text, subBox, TextAlign.Near, TextAlign.Center);
 
@@ -64,6 +67,14 @@ internal static class FpsDrawing
         // A jump in the last second lights the edge.
         if (watching && f != null && JumpedLately(f.Recent))
             g.DrawRectangle(jump, Math.Max(2f, pad / 2), RectangleF.Inflate(area, -pad / 4, -pad / 4));
+    }
+
+    /// <summary>"● REC 1:12 · 1:48 left", or "● REC 1:12" for a record that runs until stopped.</summary>
+    internal static string TestText(RecordingView r)
+    {
+        static string Clock(double s) => $"{(int)s / 60}:{(int)s % 60:00}";
+        double elapsed = Math.Max(0, r.Elapsed);
+        return r.Seconds > 0 ? $"● REC {Clock(elapsed)} · {Clock(Math.Ceiling(Math.Max(0, r.Seconds - elapsed)))} left" : $"● REC {Clock(elapsed)}";
     }
 
     private static bool JumpedLately(Frame[] frames)

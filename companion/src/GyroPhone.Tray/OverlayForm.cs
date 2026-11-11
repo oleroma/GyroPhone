@@ -20,7 +20,7 @@ namespace GyroPhone.Tray;
 internal sealed class OverlayForm : Form
 {
     /// <summary>The game's frames for FPS overlays (set once by the tray app): the view, the game's name and the watcher's state.</summary>
-    public static Func<(GyroPhone.Host.Perf.FrameView, string?, GyroPhone.Host.Perf.FrameWatchState)>? FpsSource;
+    public static Func<(GyroPhone.Host.Perf.FrameView, string?, GyroPhone.Host.Perf.FrameWatchState, GyroPhone.Host.Perf.RecordingView?)>? FpsSource;
 
     private readonly HostEngine _engine;
     private readonly string _id;
@@ -763,7 +763,7 @@ internal sealed class OverlayForm : Form
         _scene.Arranging = !ClickThrough;
         _scene.Selected = _selected;
         _scene.Title = _title;
-        if (Settings is { Kind: OverlayKind.Fps } && FpsSource is { } fps) (_scene.Fps, _scene.FpsGame, _scene.FpsState) = fps();
+        if (Settings is { Kind: OverlayKind.Fps } && FpsSource is { } fps) (_scene.Fps, _scene.FpsGame, _scene.FpsState, _scene.FpsTest) = fps();
         double start = _clock.Elapsed.TotalMilliseconds;
         // Another window found the shared device lost: move to the new one now (not a failure of this window's).
         if (_gpuSurface is { Lost: true })
