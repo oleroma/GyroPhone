@@ -1551,6 +1551,39 @@ public sealed class HostEngine
         }
     }
 
+    private readonly byte[] _keepAwakePlain = new byte[Wire.KeepAwakePlain];
+
+    /// <summary>
+    /// Sends KEEP_AWAKE to the active session (the keep-awake thread, every <see cref="Wire.KeepAwakeMs"/>): a Wi-Fi
+    /// client in power save wakes only at each beacon, so without it the phone's packets arrive in 100 ms batches while
+    /// it sends little. Skipped over USB, Ethernet and loopback, where no radio sleeps. Takes no engine lock, so it never
+    /// holds up input: a session dropped meanwhile just ignores the send.
+    /// </summary>
+    public void KeepAwake()
+    {
+        var a = _sessions.Active;
+        if (a == null || !a.Promoted || !KeepAwakeWanted(_stats.LastLinkInfo, a.Endpoint)) return;
+        a.SendSealed(PacketType.KeepAwake, _keepAwakePlain, _sender);
+    }
+
+    /// <summary>False over a wire (the phone's LINK_INFO says USB or Ethernet) or loopback (USB direct); true otherwise, also before the first LINK_INFO.</summary>
+    public static bool KeepAwakeWanted(LinkInfo? link, SocketAddress to)
+    {
+        if (link is { } l && ((l.Flags & (LinkInfoFlags.Usb | LinkInfoFlags.Ethernet)) != 0 ||
+            l.Path is LinkPath.UsbTether or LinkPath.UsbDirect or LinkPath.Ethernet)) return false;
+        return !IsLoopback(to);
+    }
+
+    private static bool IsLoopback(SocketAddress a)
+    {
+        if (a.Family == AddressFamily.InterNetwork) return a.Size >= 8 && a[4] == 127;
+        if (a.Family != AddressFamily.InterNetworkV6 || a.Size < 24) return false;
+        // ::1, or ::ffff:127.x.x.x
+        for (int i = 8; i < 18; i++) if (a[i] != 0) return false;
+        if (a[18] == 0 && a[19] == 0) { for (int i = 20; i < 23; i++) if (a[i] != 0) return false; return a[23] == 1; }
+        return a[18] == 0xFF && a[19] == 0xFF && a[20] == 127;
+    }
+
     public void SetPaused(bool paused)
     {
         using (Lock(ByUi))

@@ -44,6 +44,8 @@ public static class PacketType
     public const byte KeyLabels = 0x34;
     /// <summary>Host to phone, with every HOST_STATUS and on change: the latency tests the phone takes part in (<see cref="TestModeFlags"/>).</summary>
     public const byte TestMode = 0x35;
+    /// <summary>Host to phone, every <see cref="Wire.KeepAwakeMs"/> during a session over Wi-Fi: keeps the PC's Wi-Fi out of power save. The phone drops it.</summary>
+    public const byte KeepAwake = 0x36;
     public const byte HostBye = 0x3F;
     /// <summary>Unsealed, from a program on this PC (loopback only): start or stop a Link test (tools/link-test.sh).</summary>
     public const byte LinkTestCtl = 0x7E;

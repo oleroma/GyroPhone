@@ -48,6 +48,7 @@ Sealed plaintext sizes:
 | KEY_LABELS | 0x34 | H→P | 100 | layout id u32, then a u16 character per character key (`KeyLabels.USAGES`: 0x04..0x27, 0x2D..0x31, 0x33..0x38, 0x64; 0 = types nothing): what each key types on the PC's current layout, sent with every HOST_STATUS. Older phones drop it as an unknown type |
 | PRESS_TIME | 0x2A | P→H | 8 | STATE time u32, input event time u32 (both the phone's µs clock, low 32 bits): sent while TEST_MODE has PRESS_TIMES, after the STATE that first carries a new press or release ([Latency test](pc-latency-test.md#measure-buttons)) |
 | TEST_MODE | 0x35 | H→P | 4 | u8 flags: PRESS_TIMES 1 ("Measure buttons"), LATENCY_SCREEN 2 (the latency test window is open: the pad shows its markers), LINK_TEST 4 (a Link test runs: the phone sends fake moving input marked LINK_TEST); 3 reserved. Sent on change, with every HOST_STATUS while a flag is set, and with the 3 after one ends. Older phones drop it |
+| KEEP_AWAKE | 0x36 | H→P | 4 | zeros. Sent every 10 ms during a session over Wi-Fi (not USB, Ethernet or loopback) so the PC's Wi-Fi never dozes in power save, which would batch the phone's packets at the 100 ms beacon. The phone drops it unopened (it has no size there), as older phones do |
 | BYE | 0x2F | P→H | 4 | reason: USER, TRANSPORT_SWITCH, SHUTDOWN, REKEY |
 | HOST_BYE | 0x3F | H→P | 4 | reason: EXIT, FORGOTTEN, REPLACED |
 
