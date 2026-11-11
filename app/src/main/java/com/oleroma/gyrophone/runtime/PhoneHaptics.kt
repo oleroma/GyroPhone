@@ -115,6 +115,62 @@ class PhoneHaptics(context: Context, private val connected: () -> Boolean) : Hap
         }
     }
 
+    // Game rumble and the notice buzz, from the PC (RUMBLE). Touched by the haptics thread only.
+    private var rumbleLevel = 0
+    private var buzzUntil = 0L
+    private var lastBuzz = -BUZZ_GAP_MS
+    private val renewRumble = Runnable { issueRumble() }
+
+    /**
+     * The game's rumble on the PC's virtual controller: the stronger motor sets the strength, held
+     * until the next call (0 stops it). A haptic mapping's hold or tick plays over it.
+     */
+    fun rumble(large: Int, small: Int) {
+        val level = maxOf(large, small).coerceIn(0, 255)
+        worker.post {
+            log?.let { l -> if (level != rumbleLevel) l("game rumble $large/$small") }
+            rumbleLevel = level
+            worker.removeCallbacks(renewRumble)
+            if (level == 0) {
+                if (holding == null && SystemClock.uptimeMillis() >= buzzUntil) vibrator.cancel()
+            } else {
+                issueRumble()
+            }
+        }
+    }
+
+    /** Two short strong buzzes (a Performance record ended on the PC). Repeats within a second are one buzz. */
+    fun buzz() {
+        worker.post {
+            val now = SystemClock.uptimeMillis()
+            if (now - lastBuzz < BUZZ_GAP_MS) return@post
+            lastBuzz = now
+            log?.invoke("notice buzz")
+            val amplitude = if (amplitudeControl) 255 else VibrationEffect.DEFAULT_AMPLITUDE
+            val timings = longArrayOf(0, BUZZ_ON_MS, BUZZ_OFF_MS, BUZZ_ON_MS)
+            val amplitudes = intArrayOf(0, amplitude, 0, amplitude)
+            vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1), hardwareAttrs)
+            buzzUntil = now + timings.sum()
+            if (rumbleLevel > 0) {
+                worker.removeCallbacks(renewRumble)
+                worker.postAtTime(renewRumble, buzzUntil)
+            }
+        }
+    }
+
+    /** Keeps the game's rumble going with short one-shots, so it stops by itself if the link goes. */
+    private fun issueRumble() {
+        if (rumbleLevel == 0) return
+        if (!connected()) { rumbleLevel = 0; return }
+        val now = SystemClock.uptimeMillis()
+        val busy = holding != null || (tickPending && now < resumeAt) || now < buzzUntil
+        if (!busy) {
+            val amplitude = if (amplitudeControl) rumbleLevel.coerceIn(1, 255) else VibrationEffect.DEFAULT_AMPLITUDE
+            vibrator.vibrate(VibrationEffect.createOneShot(HOLD_MS, amplitude), hardwareAttrs)
+        }
+        worker.postDelayed(renewRumble, RENEW_MS)
+    }
+
     /** Plays [feel] once whether or not a PC is connected: a tick, or a short hold for [held]. */
     fun preview(feel: HapticFeel, held: Boolean) {
         worker.post {
@@ -155,6 +211,9 @@ class PhoneHaptics(context: Context, private val connected: () -> Boolean) : Hap
         const val HOLD_MS = 300L
         const val RENEW_MS = 150L
         const val PREVIEW_HOLD_MS = 400L
+        const val BUZZ_ON_MS = 90L
+        const val BUZZ_OFF_MS = 110L
+        const val BUZZ_GAP_MS = 1000L
         const val AMPLITUDE_STEP = 12
         const val SYSTEM_HOLD_STRENGTH = 160
         /** About how long a predefined click lasts. */

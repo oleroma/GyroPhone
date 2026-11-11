@@ -100,7 +100,7 @@ class WireCodecTest {
     @Test fun sealedPlainRoundTrips() {
         val packets = listOf(
             Ping(Long.MAX_VALUE), Pong(1, 2, -1), Bye(ByeReason.REKEY), HostBye(HostByeReason.EXIT),
-            Rumble(255, 0), Foreground("game.exe"),
+            Rumble(255, 0), Rumble(0, 0, Rumble.Pattern.BUZZ), Foreground("game.exe"),
             LinkInfo(-1, 100, 1000, -90, 6, 2402, 5955, 1),
             HostStatus(7, 1000, 0, -1, -1, 0, 2, 31),
             KeyLabels(0x04100410, IntArray(KeyLabels.USAGES.size) { 0x20 + it * 3 }),

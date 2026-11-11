@@ -394,12 +394,12 @@ public static class WireCodec
     {
         b[0] = p.Large;
         b[1] = p.Small;
-        b[2] = 0;
+        b[2] = p.Pattern;
         b[3] = 0;
         return Wire.RumblePlain;
     }
 
-    public static Rumble DecodeRumble(ReadOnlySpan<byte> b) => new(b[0], b[1]);
+    public static Rumble DecodeRumble(ReadOnlySpan<byte> b) => new(b[0], b[1], b[2]);
 
     public static int EncodePressTime(in PressTime p, Span<byte> b)
     {

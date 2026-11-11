@@ -152,6 +152,8 @@ public class PerfTests
         var clock = new FakeClock();
         var src = new FakeSource();
         var m = new PerfMonitor(src, null, new FakeForeground(), clock, dir, _ => { });
+        PerfRun? ended = null;
+        m.Ended += r => ended = r;
         m.StartRecording("Router", "Wi-Fi 5 GHz", 6);
         Assert.Equal(FrameWatchState.On, m.State);
         src.Present!(Game, 0);
@@ -166,6 +168,7 @@ public class PerfTests
         Assert.Null(m.Recording);
         Assert.Equal(FrameWatchState.Off, m.State);
         var run = Assert.Single(m.Runs);
+        Assert.Equal(run, ended);
         Assert.Equal("Discovery", run.Game);
         Assert.Equal(100, run.AvgFps, 1);
         Assert.True(File.Exists(run.File));

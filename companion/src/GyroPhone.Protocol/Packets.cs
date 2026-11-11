@@ -57,7 +57,17 @@ public readonly record struct HostStatus(
 /// <summary>When the phone saw the input behind a press or release, and the time of the STATE that first carries it (both the low 32 bits of the phone's µs clock, as STATE's time).</summary>
 public readonly record struct PressTime(uint StateTimeUs, uint EventTimeUs);
 
-public readonly record struct Rumble(byte Large, byte Small);
+/// <summary>
+/// Host → phone vibration. <see cref="Pattern"/> <see cref="RumblePattern.Motors"/>: the game's rumble,
+/// motor levels held until the next RUMBLE. <see cref="RumblePattern.Buzz"/>: a fixed notice buzz.
+/// </summary>
+public readonly record struct Rumble(byte Large, byte Small, byte Pattern = RumblePattern.Motors);
+
+public static class RumblePattern
+{
+    public const byte Motors = 0;
+    public const byte Buzz = 1;
+}
 
 /// <summary>
 /// KEY_LABELS: what each key of <see cref="Usages"/> types on the PC's current keyboard layout, one

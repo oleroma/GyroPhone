@@ -52,6 +52,7 @@ import com.oleroma.gyrophone.ui.TouchVisuals
 import com.oleroma.gyrophone.data.ProfileStore
 import com.oleroma.gyrophone.core.net.ByeReason
 import com.oleroma.gyrophone.core.net.PcGyroFeed
+import com.oleroma.gyrophone.core.net.Rumble
 import com.oleroma.gyrophone.core.net.Wire
 import com.oleroma.gyrophone.core.sensor.GyroRateWindow
 import com.oleroma.gyrophone.hid.HidDeviceManager
@@ -592,6 +593,26 @@ class GamepadRuntime(context: Context) {
     /** Plays the engine's haptic mappings while a PC is connected. */
     private val haptics = PhoneHaptics(appContext) { _linkState.value is LinkState.Connected }.also { h ->
         h.log = { line -> debug.trace?.add(com.oleroma.gyrophone.core.debug.DebugTrace.Kind.OUT, line) }
+    }
+
+    private val _gameRumble = MutableStateFlow(prefs.getBoolean(KEY_GAME_RUMBLE, true))
+
+    /** When on (the default), the game's rumble on the PC's virtual controller vibrates the phone. */
+    val gameRumble: StateFlow<Boolean> = _gameRumble
+
+    fun setGameRumble(on: Boolean) {
+        prefs.edit().putBoolean(KEY_GAME_RUMBLE, on).apply()
+        _gameRumble.value = on
+        if (!on) haptics.rumble(0, 0)
+    }
+
+    init {
+        wifi.onRumble = { p ->
+            when {
+                p.pattern == Rumble.Pattern.BUZZ -> haptics.buzz()
+                p.pattern == Rumble.Pattern.MOTORS && _gameRumble.value -> haptics.rumble(p.large, p.small)
+            }
+        }
     }
 
     /** For the debug tools' header: the vibrator. */
@@ -1551,6 +1572,7 @@ class GamepadRuntime(context: Context) {
         val IDLE_STOP_CHOICES = listOf(0, 5, 10, 30)
         private const val KEY_START_FULLSCREEN = "start_fullscreen"
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
+        private const val KEY_GAME_RUMBLE = "game_rumble"
         private const val KEY_BLACK_SCREEN_IDLE = "black_screen_idle"
         private const val KEY_BLACK_SCREEN_SECONDS = "black_screen_seconds"
         const val DEFAULT_BLACK_SCREEN_SECONDS = 60

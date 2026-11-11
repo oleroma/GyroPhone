@@ -108,6 +108,7 @@ private fun AppTab(runtime: GamepadRuntime) {
     val padOnly by runtime.padOnlyInput.collectAsStateWithLifecycle()
     val startFullscreen by runtime.startFullscreen.collectAsStateWithLifecycle()
     val keepScreenOn by runtime.keepScreenOn.collectAsStateWithLifecycle()
+    val gameRumble by runtime.gameRumble.collectAsStateWithLifecycle()
     val blackIdle by runtime.blackScreenIdle.collectAsStateWithLifecycle()
     val blackSeconds by runtime.blackScreenSeconds.collectAsStateWithLifecycle()
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
@@ -333,6 +334,15 @@ private fun AppTab(runtime: GamepadRuntime) {
                     }
                 }
             }
+        },
+        category(runtime, "vibration", "Vibration", "Game rumble from the PC") {
+            SwitchRow(
+                "Vibrate with game rumble", gameRumble,
+                hint = "When a game rumbles the PC's virtual controller (Xbox 360 or DualShock 4 output), the phone vibrates " +
+                        "with it, as strong as the stronger motor. Keyboard and mouse output has no rumble. The phone's motor is " +
+                        "weaker than a controller's, and long rumble costs battery. The buzz when a Performance test record " +
+                        "ends on the PC plays either way.",
+            ) { runtime.setGameRumble(it) }
         },
         category(runtime, "debugging", "Debugging", "The debug panel and recordings") {
             SwitchRow(

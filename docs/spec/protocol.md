@@ -43,7 +43,7 @@ Sealed plaintext sizes:
 | OVERLAY | 0x24 | P→H | 152 | pose input: raw motion, ratchet, non-gyro mouse, touches, presses (`OverlayFeed`) |
 | OVERLAY_LAYOUT | 0x25 | P→H | 200 | the workspace layout, in chunks (`OverlayFeed`) |
 | MOTION | 0x29 | P→H | 120 | raw gyro and accelerometer for the PC's DualShock 4 or DualSense (below) |
-| RUMBLE | 0x32 | H→P | 4 | large u8, small u8 motor (the phone ignores it today) |
+| RUMBLE | 0x32 | H→P | 4 | large u8, small u8 motor, pattern u8: MOTORS 0 (the game's rumble on the virtual controller, held until the next RUMBLE; sent on change, at most 100 Hz) or BUZZ 1 (a notice buzz when a Performance test record ends, sent twice; motors unused). Older phones ignore it |
 | FOREGROUND | 0x33 | H→P | 66 | reserved, never sent |
 | KEY_LABELS | 0x34 | H→P | 100 | layout id u32, then a u16 character per character key (`KeyLabels.USAGES`: 0x04..0x27, 0x2D..0x31, 0x33..0x38, 0x64; 0 = types nothing): what each key types on the PC's current layout, sent with every HOST_STATUS. Older phones drop it as an unknown type |
 | PRESS_TIME | 0x2A | P→H | 8 | STATE time u32, input event time u32 (both the phone's µs clock, low 32 bits): sent while TEST_MODE has PRESS_TIMES, after the STATE that first carries a new press or release ([Latency test](pc-latency-test.md#measure-buttons)) |

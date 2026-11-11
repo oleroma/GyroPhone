@@ -175,6 +175,9 @@ public sealed class PerfMonitor : IDisposable
         }
     }
 
+    /// <summary>A test record ended and was saved (raised on the thread that stopped it).</summary>
+    public event Action<PerfRun>? Ended;
+
     public void StopRecording()
     {
         PerfRecording? r;
@@ -207,6 +210,8 @@ public sealed class PerfMonitor : IDisposable
             if (_runs.Count > MaxRuns) _runs.RemoveAt(_runs.Count - 1);
         }
         _log($"performance test '{run.Name}' ended: {run.AvgFps:0.0} fps, 1% low {run.Low1Fps:0.0}, jumps {run.Jumps}, lost {run.Lost}, late {run.Late}");
+        try { Ended?.Invoke(run); }
+        catch (Exception e) { _log($"performance test end notice failed: {e.GetType().Name}: {e.Message}"); }
     }
 
     private static string Safe(string name)

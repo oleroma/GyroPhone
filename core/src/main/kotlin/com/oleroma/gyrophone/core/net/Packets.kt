@@ -102,7 +102,17 @@ data class PressTime(val stateTimeUs: Int, val eventTimeUs: Int) : WirePacket
 /** The PC's latency tests the phone takes part in ([TestModeFlags]). */
 data class TestMode(val flags: Int) : WirePacket
 
-data class Rumble(val large: Int, val small: Int) : WirePacket
+/**
+ * PC → phone vibration. [pattern] [Pattern.MOTORS]: the game's rumble, [large] and [small] motor
+ * levels (0..255) held until the next RUMBLE. [Pattern.BUZZ]: a fixed notice buzz (a Performance
+ * record ended), motor levels unused.
+ */
+data class Rumble(val large: Int, val small: Int, val pattern: Int = Pattern.MOTORS) : WirePacket {
+    object Pattern {
+        const val MOTORS = 0
+        const val BUZZ = 1
+    }
+}
 
 /**
  * What each key of [USAGES] types on the PC's current keyboard layout: one UTF-16 character each

@@ -1518,6 +1518,22 @@ public sealed class HostEngine
     }
 
     /// <summary>"Pause input": releases everything; STATEs keep updating the baseline but inject nothing.</summary>
+    /// <summary>
+    /// Buzzes the connected phone once (a Performance record ended), whatever the output mode. Sent
+    /// twice against a lost packet; the phone plays one buzz per second at most.
+    /// </summary>
+    public void Buzz()
+    {
+        using (Lock(ByUi))
+        {
+            var a = _sessions.Active;
+            if (a == null) return;
+            Span<byte> p = stackalloc byte[Wire.RumblePlain];
+            WireCodec.EncodeRumble(new Rumble(0, 0, RumblePattern.Buzz), p);
+            for (int i = 0; i < 2; i++) a.SendSealed(PacketType.Rumble, p, _sender);
+        }
+    }
+
     public void SetPaused(bool paused)
     {
         using (Lock(ByUi))
