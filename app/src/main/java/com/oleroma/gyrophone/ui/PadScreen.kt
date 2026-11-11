@@ -1984,8 +1984,8 @@ fun PadScreen(
                 }
             }
             // Back first, so the front one (as touches see them) is drawn on top.
-            for (c in hitOrder(ws.touchControls, portrait).asReversed()) key(c.id) {
-                if (c.kind == TouchKind.DISPLAY) return@key
+            // Gyro displays are drawn elsewhere. No return inside key {}: D8 can't take a composable inline return.
+            for (c in hitOrder(ws.touchControls, portrait).asReversed().filter { it.kind != TouchKind.DISPLAY }) key(c.id) {
                 val r = half(c)
                 val rh = halfH(c)
                 val ctr = center(c)
