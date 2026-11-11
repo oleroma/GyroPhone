@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using GyroPhone.Host;
 using GyroPhone.Host.Abstractions;
+using GyroPhone.Host.Perf;
 using GyroPhone.Host.Settings;
 using GyroPhone.Protocol;
 using GyroPhone.Protocol.Mapping;
@@ -37,6 +38,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     private readonly KeyFiles _keyFiles;
     private AuthorizedPhonesWatcher? _authorized;
     private readonly AoaUsbLink _usb;
+    /// <summary>The Performance page's frame watcher and test records (logs\perf).</summary>
+    private readonly PerfMonitor _perf;
     private IPadSink _pad;
     private string? _padError;
 
@@ -116,6 +119,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             Recorder = new InputRecorder(_inputLog.Write),
         };
         _engine.SetPcPad(new XInputPcPad(_log.Write, _clock));
+        _perf = new PerfMonitor(new FrameWatch(_log.Write), new SystemLoad(_log.Write), new Foreground(), _clock,
+            Path.Combine(_log.Directory, "perf"), _log.Write);
+        _engine.Recorder!.Timeline = _perf.Link;
         if (hostKey != null) _authorized = new AuthorizedPhonesWatcher(_keyFiles, _engine.SetAuthorizedPhones, _log.Write);
         PowerQos.TryDisableForProcess(_log.Write);
         _server = new UdpHostServer(_engine, _clock,
@@ -590,15 +596,49 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
 
     private void ShowMainWindow(MainPage? page = null)
     {
+        // Asked again while the window is still opening (a second click, a message handled during Show):
+        // WPF then gives the half-made window to two screens at once ("The root Visual of a VisualTarget
+        // cannot have a parent"), so the second ask is dropped.
+        if (_openingMain)
+        {
+            _log.Write("main window: asked to open while it is opening; ignored");
+            return;
+        }
+        _openingMain = true;
         try
         {
             OpenMainWindow(page);
         }
         catch (Exception e)
         {
-            WindowFailed(e);
+            _log.Write($"main window failed, trying a new one: {e.GetType().Name}: {e.Message}");
+            // A window whose Show failed stays broken: drop it and try once with a new one.
+            var broken = _mainWindow;
+            _mainWindow = null;
+            try
+            {
+                broken?.Close();
+            }
+            catch (Exception)
+            {
+            }
+            try
+            {
+                OpenMainWindow(page);
+            }
+            catch (Exception e2)
+            {
+                _mainWindow = null;
+                WindowFailed(e2);
+            }
+        }
+        finally
+        {
+            _openingMain = false;
         }
     }
+
+    private bool _openingMain;
 
     private void WindowFailed(Exception e)
     {
@@ -608,6 +648,12 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
 
     private void OpenMainWindow(MainPage? page)
     {
+        // A test record runs only with the window closed: opening it ends the record (saved as far as it got).
+        if (_perf.Recording != null)
+        {
+            _perf.StopRecording();
+            page ??= MainPage.Performance;
+        }
         if (_mainWindow == null)
         {
             if (!StartWpf()) return;
@@ -1198,6 +1244,35 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         _authorized?.Reload();
     }
 
+    public PerfMonitor Perf => _perf;
+
+    public bool AllowFrameWatch() => PerfPermission.Grant(_log.Write);
+
+    public void OpenPerfFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(_perf.Folder);
+            using var p = Process.Start(new ProcessStartInfo("explorer.exe", $"\"{_perf.Folder}\"") { UseShellExecute = true });
+        }
+        catch (Exception e) when (e is Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            _log.Write($"open performance folder failed: {e.GetType().Name}");
+        }
+    }
+
+    public void OpenFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path)) using (Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })) { }
+        }
+        catch (Exception e) when (e is Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            _log.Write($"open file failed: {e.GetType().Name}");
+        }
+    }
+
     public void OpenKeysFolder()
     {
         try
@@ -1589,6 +1664,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _engine.Shutdown();
             _server.Stop();
             _usb.Dispose();
+            _perf.Dispose();
             _watchdog.SaveSettings();
             var held = new byte[StateFrame.KeyBitmapSize];
             int version = _engine.HeldSnapshot(held, out byte mb);

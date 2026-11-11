@@ -251,6 +251,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     @Volatile private var usbDirect = false
     /** The session runs over the phone's own Wi-Fi hotspot, with the PC joined to it. */
     @Volatile private var usbHotspot = false
+    /** The session runs over a wired Ethernet adapter on the phone. */
+    @Volatile private var usbEthernet = false
     private var nextUsbCheckMs = 0L
     private var nextUsbProbeMs = 0L
     private var usbSilentSinceMs = 0L
@@ -462,6 +464,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             usb = usbActive,
             usbDirect = usbDirect,
             hotspot = usbActive && usbHotspot,
+            ethernet = usbActive && usbEthernet,
             vigemOk = hs?.let { it.flags and HostStatusFlags.VIGEM_OK != 0 }
                 ?: welcomeHostFlags?.let { it and HostFlags.VIGEM_OK != 0 },
         )
@@ -1216,6 +1219,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbActive = true
         usbDirect = u.direct
         usbHotspot = u.hotspot
+        usbEthernet = u.ethernet
         usbSilentSinceMs = 0L
         socket = s
         // The live Wi-Fi session keeps sending on the Wi-Fi socket until the USB one's WELCOME.
@@ -1235,6 +1239,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbPending = false
         usbDirect = false
         usbHotspot = false
+        usbEthernet = false
         socket = w
         pump.useSocket(w)
         usbSocket?.close()
@@ -1263,6 +1268,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbPending = false
         usbDirect = false
         usbHotspot = false
+        usbEthernet = false
         usbHostId = null
         usbHostAddr = null
     }
@@ -1303,7 +1309,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             band = info.band,
             linkMbps = (info.linkMbps ?: 0).coerceIn(0, 0xFFFF),
             freqMhz = (info.freqMhz ?: 0).coerceIn(0, 0xFFFF),
-            flags = (if (locks.held) LinkInfoFlags.LOW_LATENCY_LOCK_HELD else 0) or (if (usbNow && !usbHotspot) LinkInfoFlags.USB else 0) or
+            flags = (if (locks.held) LinkInfoFlags.LOW_LATENCY_LOCK_HELD else 0) or (if (usbNow && !usbHotspot && !usbEthernet) LinkInfoFlags.USB else 0) or
+                (if (usbNow && usbEthernet) LinkInfoFlags.ETHERNET else 0) or
                 (if (usbNow && usbDirect) LinkInfoFlags.USB_DIRECT else 0) or
                 (if (debugTrace) LinkInfoFlags.DEBUG_TRACE or LinkInfoFlags.debugSave(debugSaves) else 0),
         )
@@ -1343,7 +1350,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     /** "5 GHz · 1201 Mbps · −51 dBm", leaving out what is unknown. */
     private fun radioDetail(): String {
-        if (usbActive) return if (usbHotspot) "phone hotspot" else if (usbDirect) "USB cable" else "USB tethering"
+        if (usbActive) return if (usbHotspot) "phone hotspot" else if (usbEthernet) "Ethernet" else if (usbDirect) "USB cable" else "USB tethering"
         val info = binder.info
         val parts = ArrayList<String>(3)
         if (info.band != 0) parts.add("${info.band} GHz")

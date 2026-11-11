@@ -166,7 +166,7 @@ internal sealed class HomePage : Page
         if (s.PhoneLink is { } l && s.Connected)
         {
             bool usb = (l.Flags & LinkInfoFlags.Usb) != 0;
-            _linkBig.Text = usb
+            _linkBig.Text = (l.Flags & LinkInfoFlags.Ethernet) != 0 ? "Ethernet (phone wired)" : usb
                 ? ((l.Flags & LinkInfoFlags.UsbDirect) != 0 ? "USB cable (direct)" : "USB cable (tethering)")
                 : l.Band == 0 ? "Wi‑Fi" : $"Wi‑Fi {l.Band} GHz";
             var parts = new List<string> { $"{s.RxPerSec:N0}/s received", $"loss {s.LossPermille / 10.0:0.0}%" };

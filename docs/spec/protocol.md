@@ -62,7 +62,7 @@ STATE's mouse and wheel values are **cumulative wrapping totals**, so a lost pac
 - **Announce flags**: PAIRING_OPEN 1, VIGEM_OK 2, PAIRED_WITH_YOU 4, BUSY 8, KEY_MATCH 16, KNOWS_YOUR_KEY 32.
 - **Host flags** (WELCOME): VIGEM 1, FOREGROUND 2, HIRES_WHEEL 4, PC_GYRO 16, MOTION 32. The host sends VIGEM, HIRES_WHEEL, PC_GYRO and MOTION.
 - **Caps** (HELLO): RUMBLE 1, FOREGROUND 2. **Output modes**: 0 none, 1 Xbox 360, 2 DualShock 4, 3 DualSense (the companion's own driver).
-- **LINK_INFO flags**: LOW_LATENCY 1, USB 2, USB_DIRECT 4, DEBUG_TRACE 8, a debug save counter in 0x70.
+- **LINK_INFO flags**: LOW_LATENCY 1, USB 2, USB_DIRECT 4, DEBUG_TRACE 8, a debug save counter in 0x70, ETHERNET 0x80 (a wired Ethernet adapter on the phone).
 - **HOST_STATUS flags**: VIGEM 1, PAD_PLUGGED 2, PAUSED 4, ELEVATED_FG 8, NET_PUBLIC 16, OVERLAY 32, OVERLAY_COMPASS 64, OVERLAY_TOTALS 128.
 - **PAIR_ACK**: OK 0, BAD_COMMIT 1, CLOSED 2, BUSY 3, COOLDOWN 4, UNKNOWN_ATTEMPT 5. **PAIR_DONE**: ACCEPTED 0, DENIED 1, TIMEOUT 2, BAD_CONFIRM 3, PENDING 4. **KEY_ENROLL_ACK**: OK 0, EXPIRED 1, USED 2, NO_KEY 3.
 - **ERROR**: VERSION 1, NOT_PAIRED 2, SESSION_UNKNOWN 3. Sent only for requests of at least 16 bytes, at most 10 per second per IP and 50 overall.

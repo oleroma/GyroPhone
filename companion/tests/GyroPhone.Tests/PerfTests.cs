@@ -1,0 +1,187 @@
+using GyroPhone.Host;
+using GyroPhone.Host.Abstractions;
+using GyroPhone.Host.Perf;
+
+namespace GyroPhone.Tests;
+
+public class PerfTests
+{
+    private const int Game = 100, Other = 200, Self = 300;
+
+    private static FrameStats Stats() => new(pid => pid == Self);
+
+    /// <summary>Frames every <paramref name="ms"/> from <paramref name="t"/>; returns the time after the last.</summary>
+    private static long Frames(FrameStats s, int pid, long t, int count, double ms)
+    {
+        for (int i = 0; i < count; i++, t += (long)(ms * 1000)) s.Present(pid, t);
+        return t;
+    }
+
+    [Fact]
+    public void ForegroundGameIsPickedAndSkippedProcessesNever()
+    {
+        var s = Stats();
+        long t = Frames(s, Self, 0, 200, 5);
+        Frames(s, Other, 0, 10, 100);
+        Assert.Equal(Other, s.Tick(Self, t));
+        Frames(s, Game, t, 100, 10);
+        Frames(s, Other, t, 10, 100);
+        Assert.Equal(Game, s.Tick(Game, t + 1_000_000));
+        // In the background it stays the game while it shows frames.
+        Frames(s, Game, t + 1_000_000, 100, 10);
+        Frames(s, Other, t + 1_000_000, 10, 100);
+        Assert.Equal(Game, s.Tick(Self, t + 2_000_000));
+    }
+
+    [Fact]
+    public void ALongFrameIsAJumpAtAnyFrameRate()
+    {
+        foreach (double ms in new[] { 6.9, 11.1, 16.7, 33.3 })
+        {
+            var s = Stats();
+            s.Present(Game, 0);
+            s.Tick(Game, 0);
+            long t = Frames(s, Game, 0, 100, ms);
+            t += (long)(ms * 500); // one frame half as long again as the steady rhythm...
+            t = Frames(s, Game, t, 1, ms);
+            t += (long)(Math.Max(ms, 8) * 1000) * 2; // ...and one at least twice as long and 8 ms longer
+            t = Frames(s, Game, t, 50, ms);
+            var v = s.View(t);
+            Assert.Equal(1, v.Jumps);
+            Assert.True(v.WorstMs >= 2 * ms);
+        }
+    }
+
+    [Fact]
+    public void APauseIsNotAFrame()
+    {
+        var s = Stats();
+        s.Present(Game, 0);
+        s.Tick(Game, 0);
+        long t = Frames(s, Game, 0, 100, 10);
+        t = Frames(s, Game, t + 3_000_000, 100, 10);
+        var v = s.View(t);
+        Assert.Equal(0, v.Jumps);
+        Assert.True(v.WorstMs < 11);
+        Assert.Equal(99, v.Fps); // the first frame after the pause only starts the count
+    }
+
+    [Fact]
+    public void Low1FpsIsTheSlowestFrames()
+    {
+        var ms = Enumerable.Repeat(10f, 990).Concat(Enumerable.Repeat(40f, 10)).ToList();
+        Assert.Equal(25, FrameStats.Low1Fps(ms), 3);
+        Assert.Equal(0, FrameStats.Low1Fps([]));
+    }
+
+    [Fact]
+    public void RecordingCountsOnlyTheFocusedGameAndSumsTheLink()
+    {
+        var s = Stats();
+        var r = new PerfRecording("PC hotspot", "Wi-Fi 5 GHz", 0, DateTime.Now, 0);
+        s.Recording = r;
+        s.Present(Game, 0);
+        s.Tick(Self, 0); // the game, but not in front
+        long t = Frames(s, Game, 0, 100, 10);
+        Assert.Equal(0, r.GameSeconds);
+        s.Tick(Game, t);
+        // The first 3 s in front settle; then 1 s counts.
+        t = Frames(s, Game, t, 400, 10);
+        r.AddLoad(new LoadSample(60, 1, 2, 15), 500_000);
+        var link = new List<LinkSecond> { new(1_000_000, 400, 3, 5, 120, 1, 0), new(2_000_000, 400, 0, 0, 0, 0, 1) };
+        var (run, text) = r.Finish(t, link);
+        Assert.Equal(100, run.AvgFps, 1);
+        Assert.Equal(1.0, run.GameSeconds, 2);
+        Assert.Equal(3, run.Lost);
+        Assert.Equal(5, run.Late);
+        Assert.Equal(120, run.MaxLateMs);
+        Assert.Equal(1, run.Gaps);
+        Assert.Equal(1, run.Releases);
+        Assert.Equal(3, run.DriverPct, 3);
+        Assert.Contains("PC hotspot", text);
+    }
+
+    [Fact]
+    public void InputLogSecondsReachTheTimeline()
+    {
+        var rec = new InputRecorder(_ => { });
+        var tl = new LinkTimeline();
+        rec.Timeline = tl;
+        rec.SessionStarted("phone", 0);
+        rec.Lost(4, 10, 500_000);
+        rec.ReleasedForSilence(2, 600_000);
+        rec.Second(new LinkStats(), 1_000_000);
+        rec.Second(new LinkStats(), 2_000_000);
+        var secs = tl.Between(0, 3_000_000);
+        Assert.Equal(2, secs.Count);
+        Assert.Equal(4, secs[0].Lost);
+        Assert.Equal(1, secs[0].Releases);
+        Assert.False(secs[1].Trouble);
+    }
+
+    private sealed class FakeClock : IClock
+    {
+        public long NowUs { get; set; }
+    }
+
+    private sealed class FakeSource : IFrameSource
+    {
+        public Action<int, long>? Present;
+        public FrameWatchState Answer = FrameWatchState.On;
+        public FrameWatchState Start(Action<int, long> present, out string? error)
+        {
+            Present = present;
+            error = null;
+            return Answer;
+        }
+        public void Stop() => Present = null;
+        public void Dispose() { }
+    }
+
+    private sealed class FakeForeground : IForeground
+    {
+        public int Pid = Game;
+        public int ForegroundPid() => Pid;
+        public string? NameOf(int pid) => pid == Game ? "Discovery" : "other";
+    }
+
+    [Fact]
+    public void MonitorRecordsATimedTestAndKeepsIt()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "gp-perf-" + Guid.NewGuid().ToString("N"));
+        var clock = new FakeClock();
+        var src = new FakeSource();
+        var m = new PerfMonitor(src, null, new FakeForeground(), clock, dir, _ => { });
+        m.StartRecording("Router", "Wi-Fi 5 GHz", 6);
+        Assert.Equal(FrameWatchState.On, m.State);
+        src.Present!(Game, 0);
+        m.Tick();
+        long t = 0;
+        for (int i = 0; i < 450; i++) src.Present!(Game, t += 10_000);
+        clock.NowUs = t;
+        m.Tick();
+        Assert.NotNull(m.Recording);
+        clock.NowUs = 6_100_000;
+        m.Tick();
+        Assert.Null(m.Recording);
+        Assert.Equal(FrameWatchState.Off, m.State);
+        var run = Assert.Single(m.Runs);
+        Assert.Equal("Discovery", run.Game);
+        Assert.Equal(100, run.AvgFps, 1);
+        Assert.True(File.Exists(run.File));
+        // Kept for next time.
+        var again = new PerfMonitor(new FakeSource(), null, new FakeForeground(), clock, dir, _ => { });
+        Assert.Equal("Router", Assert.Single(again.Runs).Name);
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public void NoRightsMeansNoRecording()
+    {
+        var m = new PerfMonitor(new FakeSource { Answer = FrameWatchState.NeedsPermission }, null, new FakeForeground(), new FakeClock(),
+            Path.Combine(Path.GetTempPath(), "gp-perf-none"), _ => { });
+        m.StartRecording("x", "y", 60);
+        Assert.Null(m.Recording);
+        Assert.Equal(FrameWatchState.NeedsPermission, m.State);
+    }
+}
