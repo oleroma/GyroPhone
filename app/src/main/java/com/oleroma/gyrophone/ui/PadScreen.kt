@@ -97,6 +97,7 @@ import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
@@ -293,9 +294,12 @@ private val PANEL_ROW_GAP = 6.dp
 
 /**
  * [content]'s items in up to [rows] rows, in order, each into the row that is shortest so far
+ * (one with Modifier.layoutId([STRIP_LAST_ROW]) into the last row)
  * (so the rows end up about as long), each row's items centred in its height. As wide as its
  * longest row: put it in a sideways scroll.
  */
+private const val STRIP_LAST_ROW = "lastRow"
+
 @Composable
 private fun StripRows(rows: Int, modifier: Modifier, content: @Composable () -> Unit) {
     Layout(content = content, modifier = modifier) { measurables, constraints ->
@@ -310,6 +314,8 @@ private fun StripRows(rows: Int, modifier: Modifier, content: @Composable () -> 
         placeables.forEachIndexed { i, p ->
             var r = 0
             for (k in 1 until n) if (rowW[k] < rowW[r]) r = k
+            // Pinned to the last row (the Add / Presets pills, right over their list).
+            if (measurables[i].layoutId == STRIP_LAST_ROW) r = n - 1
             val x = if (rowW[r] == 0) 0 else rowW[r] + gapX
             rowOf[i] = r
             xOf[i] = x
@@ -2129,8 +2135,9 @@ fun PadScreen(
 
             /** The pill of the open Add / Presets list, in its list's colours like a tab over it: tap to close it. */
             @Composable
-            fun ListTab(text: String, onClick: () -> Unit) = Surface(
+            fun ListTab(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) = Surface(
                 onClick = onClick,
+                modifier = modifier,
                 shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 6.dp, bottomEnd = 6.dp),
                 color = PANEL_TAB_COLOR,
                 contentColor = Color.White,
@@ -2503,16 +2510,25 @@ fun PadScreen(
                                     }
                                 }
                                 // Everything that can be added sits in the Add row under this strip.
+                                // In the last row, right over the list they open.
                                 if (addOpen) {
-                                    ListTab("Add ▴") { addOpen = false }
+                                    ListTab("Add ▴", Modifier.layoutId(STRIP_LAST_ROW)) { addOpen = false }
                                 } else {
-                                    OutlinedButton(contentPadding = compact, onClick = { addOpen = true; presetsOpen = false }) { Text("Add +") }
+                                    OutlinedButton(
+                                        modifier = Modifier.layoutId(STRIP_LAST_ROW),
+                                        contentPadding = compact,
+                                        onClick = { addOpen = true; presetsOpen = false },
+                                    ) { Text("Add +") }
                                 }
                                 // Your saved buttons, displays and groups, in their own row.
                                 if (presetsOpen) {
-                                    ListTab("Add preset ▴") { presetsOpen = false }
+                                    ListTab("Add preset ▴", Modifier.layoutId(STRIP_LAST_ROW)) { presetsOpen = false }
                                 } else {
-                                    OutlinedButton(contentPadding = compact, onClick = { presetsOpen = true; addOpen = false }) { Text("Add preset ★") }
+                                    OutlinedButton(
+                                        modifier = Modifier.layoutId(STRIP_LAST_ROW),
+                                        contentPadding = compact,
+                                        onClick = { presetsOpen = true; addOpen = false },
+                                    ) { Text("Add preset ★") }
                                 }
                                 if (snap) {
                                     FilledTonalButton(
