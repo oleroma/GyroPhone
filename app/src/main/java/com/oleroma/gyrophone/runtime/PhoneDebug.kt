@@ -165,7 +165,7 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
             s.lossPercent?.let { append(" · loss ${"%.1f".format(it)}%") }
             if (s.latP50Ms != null && s.latP99Ms != null) append(" · latency ${"%.1f".format(s.latP50Ms)} / ${"%.1f".format(s.latP99Ms)} ms (p50/p99)")
             s.rttMs?.let { append(" · round trip ${"%.1f".format(it)} ms") }
-            if (s.usb) append(if (s.usbDirect) " · USB direct" else " · USB tethering")
+            if (s.usb) append(if (s.hotspot) " · phone hotspot" else if (s.usbDirect) " · USB direct" else " · USB tethering")
             else if (s.band != null && s.band != 0) append(" · ${s.band} GHz")
             s.rssi?.let { if (!s.usb) append(" $it dBm") }
             s.linkMbps?.let { if (!s.usb) append(" $it Mbps") }
