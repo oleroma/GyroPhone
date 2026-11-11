@@ -846,6 +846,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     var onBlackScreen: Runnable? = null
 
     /**
+     * Called with the target when a [OutputTarget.PreviousWorkspace], [OutputTarget.NextWorkspace]
+     * or [OutputTarget.Fullscreen] mapping fires, inside the engine lock: it must only hand the
+     * request on (the pad switches), never call back into the engine.
+     */
+    @Volatile
+    var onPadAction: ((OutputTarget) -> Unit)? = null
+
+    /**
      * Called with its granular switch when a [OutputTarget.SetOrientation] mapping fires, inside the
      * engine lock: it must only hand the request on, never call back into the engine.
      */
@@ -2105,6 +2113,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause, is OutputTarget.GyroPauseAxis,
                 OutputTarget.SwitchApps, OutputTarget.Zoom, is OutputTarget.Layer, OutputTarget.LayerBack,
                 OutputTarget.LetGo, OutputTarget.BlackScreen, is OutputTarget.SetOrientation, OutputTarget.ClearDisplays,
+                OutputTarget.PreviousWorkspace, OutputTarget.NextWorkspace, OutputTarget.Fullscreen,
                 OutputTarget.NoOutput, is OutputTarget.Off -> Unit
 
                 // The gyro reads it on every sample ([refreshSens]).
@@ -2525,7 +2534,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** [t] fires when it is pressed ([onPress]) rather than being held. */
     private fun isEvent(t: OutputTarget) = t is OutputTarget.Wheel || t == OutputTarget.GyroToggle || t is OutputTarget.Layer ||
             t == OutputTarget.LayerBack || t == OutputTarget.LetGo || t == OutputTarget.BlackScreen ||
-            t is OutputTarget.SetOrientation || t == OutputTarget.ClearDisplays
+            t is OutputTarget.SetOrientation || t == OutputTarget.ClearDisplays || isPadAction(t)
+
+    private fun isPadAction(t: OutputTarget) =
+        t == OutputTarget.PreviousWorkspace || t == OutputTarget.NextWorkspace || t == OutputTarget.Fullscreen
 
     /** [m]'s shaper in [dev]'s group (the touch group for null). */
     private fun shaperOf(m: Mapping, dev: Dev?): Shaper =
@@ -2705,6 +2717,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             OutputTarget.LayerBack -> layerBack()
             OutputTarget.LetGo -> letGoAll(clock())
             OutputTarget.BlackScreen -> onBlackScreen?.run()
+            OutputTarget.PreviousWorkspace, OutputTarget.NextWorkspace, OutputTarget.Fullscreen -> onPadAction?.invoke(t)
             is OutputTarget.SetOrientation -> onSetOrientation?.invoke(t.granular)
             OutputTarget.ClearDisplays -> onClearDisplays?.run()
             else -> Unit

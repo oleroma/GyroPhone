@@ -125,6 +125,18 @@ data class TouchControl(
     val sizeSync: String? = null,
     /** BUTTON: its finger position inputs' own settings ([InputSource.Finger]); an axis not listed has the defaults. */
     val fingers: List<FingerAxisSettings> = emptyList(),
+    /** Its own opacity in play ([Profile.MIN_CONTROL_OPACITY]..1); null = the workspace's control opacity. */
+    val opacity: Float? = null,
+    /**
+     * Fade when idle: the opacity it fades to ([Profile.MIN_CONTROL_OPACITY].. its opacity) a few
+     * seconds ([FADE_AFTER_MS]) after it was last touched; a touch brings it back. null = never fades.
+     */
+    val fade: Float? = null,
+    /**
+     * In every workspace ([GlobalControls]): the same control (id, place, size, look and mappings)
+     * in each, a change to one made to all.
+     */
+    val global: Boolean = false,
 ) {
     /** Finger position input [axis]'s settings. */
     fun fingerOf(axis: FingerAxis): FingerAxisSettings = fingers.fingerOf(axis)
@@ -170,6 +182,12 @@ data class TouchControl(
          */
         const val PORTRAIT_TOP = 0.45f
         const val PORTRAIT_SIZE_SCALE = 0.75f
+
+        /** Fade when idle: how long after its last touch a control fades. */
+        const val FADE_AFTER_MS = 3000L
+
+        /** Fade when idle: the faded opacity a control starts with. */
+        const val DEFAULT_FADE = 0.25f
     }
 }
 
@@ -1764,6 +1782,11 @@ data class Profile(
     val cornerOpacity: Float = 0.5f,
     /** Resizing one corner resizes the other too. */
     val cornerSameSize: Boolean = true,
+    /**
+     * The corners became ← / → buttons in every workspace ([NavCorners.toButtons]); [corners] is
+     * then empty and no longer read.
+     */
+    val navButtons: Boolean = false,
     /** What physical devices do, pinned by workspaces ([Workspace.devicePreset]). */
     val devicePresets: List<DevicePreset> = emptyList(),
     /**

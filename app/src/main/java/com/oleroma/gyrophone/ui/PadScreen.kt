@@ -7,7 +7,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -776,6 +775,15 @@ fun PadScreen(
         }
     }
     LaunchedEffect(editing, hidden) { if (editing || hidden) black = false }
+    // A Fullscreen mapping fired: the pad goes fullscreen, or back.
+    val fullscreenRequests by runtime.fullscreenRequests.collectAsStateWithLifecycle()
+    val seenFullscreen = remember { IntArray(1) { fullscreenRequests } }
+    LaunchedEffect(fullscreenRequests) {
+        if (fullscreenRequests != seenFullscreen[0]) {
+            seenFullscreen[0] = fullscreenRequests
+            if (!editing && !hidden) setFullscreen(!isFullscreen)
+        }
+    }
     LaunchedEffect(blackIdle, blackSeconds, editing, hidden, black, markersShown) {
         if (!blackIdle || editing || hidden || black || markersShown) return@LaunchedEffect
         lastTouchMs[0] = SystemClock.uptimeMillis()
@@ -2173,18 +2181,21 @@ fun PadScreen(
 
             /** The pill of the open Add / Presets list, in its list's colours like a tab over it: tap to close it. */
             @Composable
-            fun ListTab(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) = Surface(
-                onClick = onClick,
-                modifier = modifier,
-                shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 6.dp, bottomEnd = 6.dp),
-                color = PANEL_TAB_COLOR,
-                contentColor = Color.White,
-                border = BorderStroke(1.dp, PANEL_TAB_OUTLINE),
-            ) {
+            fun ListTab(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+                // Drawn by hand, not a clickable Surface: that keeps a 48 dp touch size, which made
+                // its row taller than the others (the rows spread when a list opened).
+                val shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 6.dp, bottomEnd = 6.dp)
                 Text(
                     text,
+                    color = Color.White,
                     style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    maxLines = 1,
+                    modifier = modifier
+                        .clip(shape)
+                        .background(PANEL_TAB_COLOR, shape)
+                        .border(1.dp, PANEL_TAB_OUTLINE, shape)
+                        .clickable(onClick = onClick)
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
                 )
             }
 

@@ -44,6 +44,7 @@ import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.GyroSpace
 import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.NavCorners
+import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.WorkspaceSet
 import com.oleroma.gyrophone.ui.TouchVisuals
@@ -306,6 +307,11 @@ class GamepadRuntime(context: Context) {
 
     /** Goes up each time a Black screen mapping fires ([OutputTarget.BlackScreen]): the pad goes black at once. */
     val blackScreenRequests: StateFlow<Int> = _blackScreenRequests
+
+    private val _fullscreenRequests = MutableStateFlow(0)
+
+    /** Goes up each time a Fullscreen mapping fires ([OutputTarget.Fullscreen]): the pad goes fullscreen, or back. */
+    val fullscreenRequests: StateFlow<Int> = _fullscreenRequests
 
     private val _cornerAutoHide = MutableStateFlow(prefs.getBoolean(KEY_CORNER_AUTO_HIDE, false))
 
@@ -773,6 +779,10 @@ class GamepadRuntime(context: Context) {
         engine.hapticSink = haptics
         // Inside the engine lock: only bump the counter the pad watches.
         engine.onBlackScreen = Runnable { _blackScreenRequests.update { it + 1 } }
+        engine.onPadAction = { t ->
+            if (t == OutputTarget.Fullscreen) _fullscreenRequests.update { it + 1 }
+            else main.post { stepWorkspace(t == OutputTarget.NextWorkspace) }
+        }
         engine.onSetOrientation = { granular -> main.post { setOrientation(granular) } }
         engine.onClearDisplays = Runnable { main.post { clearDisplays() } }
         // Every other mouse count turns a trackball 3D shape too, as the camera turns.
@@ -1114,6 +1124,14 @@ class GamepadRuntime(context: Context) {
         store.setWorkspaceIndex(profile.id, i)
         applyWorkspaceGyro()
         aimGyroDisplays()
+    }
+
+    /** Previous / Next workspace mappings: the one after ([next]) or before this one; nothing at an end. */
+    fun stepWorkspace(next: Boolean) {
+        val profile = _activeProfile.value
+        val i = _workspaceIndex.value
+        val to = if (next) profile.nextWorkspace(i) else profile.previousWorkspace(i)
+        if (to != null && to != i) switchWorkspace(to)
     }
 
     /** The saved workspace index of [profile], clamped into range. */
