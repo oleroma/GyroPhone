@@ -106,7 +106,7 @@ internal sealed class PerformancePage : Page
         _record.HorizontalAlignment = HorizontalAlignment.Left;
         rb.Children.Add(_record);
         _recordSub = Parts.Text("Record closes this window so it costs nothing while you play. Only the time the game is in front counts, " +
-            "from 3 seconds after it comes there. Open the window again for the result.", "Sub");
+            "from 3 seconds after it comes there. Opening the window again ends the test and shows the result.", "Sub");
         _recordSub.Margin = new Thickness(0, 6, 0, 0);
         rb.Children.Add(_recordSub);
         _root.Children.Add(rec);

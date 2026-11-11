@@ -614,6 +614,12 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
 
     private void OpenMainWindow(MainPage? page)
     {
+        // A test record runs only with the window closed: opening it ends the record (saved as far as it got).
+        if (_perf.Recording != null)
+        {
+            _perf.StopRecording();
+            page ??= MainPage.Performance;
+        }
         if (_mainWindow == null)
         {
             if (!StartWpf()) return;
