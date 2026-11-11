@@ -34,9 +34,11 @@ The two nav corners (`Profile.corners`, shared by all workspaces) are always on 
 
 Opened by tapping the current workspace's capsule. It works on a **draft** of the profile, kept across activity recreation (up to 100 000 JSON characters). The pad shows the workspace being edited; controls are drawn at least 50 % opaque.
 
-**Gestures**: tap a control to select it (taps on overlapping controls cycle through them); **long-press (450 ms)** opens its full-screen mapping editor; drag moves the selected control (with none selected, the one under the finger); two-finger pinch resizes (per axis when the fingers spread mostly one way); a two-finger tap selects nothing. At least 48 dp of a control must stay on screen. A tap on empty space selects the touchpad (opens its mapping editor on long press).
+**Gestures**: tap a control to select it; **tap the selected control again** to open its full-screen mapping editor (a gyro display: its settings; a ← / → corner: its menu). On overlapping controls a tap acts on the selected one when it is under the finger, else picks the front one. **Long-press (450 ms)** a control to select it and show its **popup** beside it: **Mappings** (not on a gyro display), **Duplicate**, **Save as preset**, **Ungroup** (a grouped control only) and **Delete** (red; asks "Delete "<name>"?" first, removes only that control, Undo brings it back); a corner's long press opens its menu. A tap on empty space closes an open popup, else opens the touchpad's mapping editor; a long press there does nothing. Drag moves the selected control (with none selected, the one under the finger; a drag also closes the popup); two-finger pinch resizes (per axis when the fingers spread mostly one way); a two-finger tap selects nothing. At least 48 dp of a control must stay on screen.
 
-**The floating menu** (drag by its ⠿ dots, resize, fold):
+A control's **mapping editor** and its **settings** (⚙ Settings in the editor, Mappings or Configure in the settings) open over each other: the one opened second lies on top, and its Mappings / Settings button or Done goes back to the one under it, so the pad never shows between them (each is its own window).
+
+**The floating menu** (drag by its ⠿ dots; drag its **bottom-right corner grip** sideways to resize it, down to wrap its strip into up to 4 rows, which then scrolls up and down instead of sideways; the Add / Presets row stays one sideways row so its items still drag down onto the pad):
 
 - ↶ **Undo** / ↷ **Redo** (100 steps; changes within 400 ms merge into one step);
 - The sliders icon (the same as the Defaults capsule's) saves the draft and opens the workspace's settings page;

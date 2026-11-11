@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -79,6 +81,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -236,7 +239,7 @@ private val DraftSaver = Saver<MutableState<Profile?>, String>(
 )
 
 /**
- * PRESS: on a control, not yet moved; HELD: the same after a long press (settings screen open);
+ * PRESS: on a control, not yet moved; HELD: still pressed after a long press (its popup open; on empty space nothing);
  * TWO: two fingers down and still (lifted: a two-finger tap; moved: a PINCH).
  */
 private enum class EditGesture { PRESS, HELD, MOVE, TWO, PINCH, EMPTY, NONE }
@@ -272,7 +275,28 @@ private fun axisScale(start: Float, now: Float, floor: Float): Float {
 }
 
 /** What edit mode shows for the selected control: its mapping screen or its settings screen (a corner: its menu). */
-private enum class EditMenu { NONE, MAPPING, CONTEXT }
+private enum class EditMenu { NONE, MAPPING, CONTEXT, POPUP }
+
+/** The edit menu's strip: at most this many rows, each this tall, this far apart. */
+private const val PANEL_MAX_ROWS = 4
+private val PANEL_ROW_HEIGHT = 40.dp
+private val PANEL_ROW_GAP = 6.dp
+
+/**
+ * Which edit-mode page is open ([menu]), and whether the other of a control's two pages (its
+ * mapping editor and its settings) is open over it ([over]). The two pages open over each other
+ * rather than in place of each other: each is its own window, and swapping windows shows the pad
+ * between them for a moment. Setting [menu] closes the one over it.
+ */
+private class EditPages {
+    var menu by mutableStateOf(EditMenu.NONE)
+    var over by mutableStateOf(false)
+    operator fun getValue(thisRef: Any?, property: kotlin.reflect.KProperty<*>) = menu
+    operator fun setValue(thisRef: Any?, property: kotlin.reflect.KProperty<*>, value: EditMenu) {
+        menu = value
+        over = false
+    }
+}
 
 /** What a play-mode finger was doing before an interrupting zone stopped it. */
 private enum class FingerJob { NONE, PAD, BUTTON, STICK }
@@ -341,6 +365,7 @@ internal object TouchStream {
  * While [hidden] (a menu page covers it, [PadTab]) the pad stays composed but counts as off screen: it
  * holds the profile it showed, sends nothing and stops its polls and per-frame layers until it shows again.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PadScreen(
     runtime: GamepadRuntime,
@@ -392,14 +417,15 @@ fun PadScreen(
     /** Workspace shown while editing (index into the draft). */
     var editIndex by rememberSaveable { mutableIntStateOf(0) }
     var selected by remember { mutableStateOf<String?>(null) }
-    var menu by remember { mutableStateOf(EditMenu.NONE) }
+    val pages = remember { EditPages() }
+    var menu by pages
 
     /** The menu's Select: taps pick several controls ([picked], whole groups) and a drag moves them all. */
     var selectMode by remember { mutableStateOf(false) }
     var picked by remember { mutableStateOf<Set<String>>(emptySet()) }
 
-    /** The control's settings were opened from its mapping screen: closing them goes back there. */
-    var settingsFromMap by remember { mutableStateOf(false) }
+    /** The control whose Delete (in its long-press popup) is asking to be confirmed. */
+    var confirmingDelete by remember { mutableStateOf<String?>(null) }
 
     /** The floating edit menu: drag offset from its top-centre home, size, folded. */
     var menuOffset by remember { mutableStateOf(Offset.Zero) }
@@ -409,6 +435,8 @@ fun PadScreen(
 
     /** Width the user dragged the edit menu to (px); null = fit its rows. */
     var panelWidthPx by remember { mutableStateOf<Float?>(null) }
+    /** Rows the edit menu's strip wraps into (dragged down by its corner grip), 1 to [PANEL_MAX_ROWS]. */
+    var panelRows by remember { mutableIntStateOf(1) }
     var dragging by remember { mutableStateOf(false) }
     /** Cancel was tapped with unsaved changes: asking whether to throw them away. */
     var confirmingCancel by remember { mutableStateOf(false) }
@@ -1011,20 +1039,17 @@ fun PadScreen(
                                 inPortrait = portrait
                             )
                         }
-                        // Overlapping controls: a long press and a drag with nothing selected act
-                        // on the selected one when it is under the finger (else the front one); a single tap
-                        // picks the one after it, so taps cycle through them.
+                        // Overlapping controls: a tap, a long press and a drag with nothing selected act
+                        // on the selected one when it is under the finger (else the front one).
                         // With Select on, corners can't be picked and a tap picks the front control.
                         val selecting = selectMode
                         val cornerHit = if (selecting) null else hit(corners, downPos)
                         val selectedUnder = under.indexOfFirst { it.id == selected }
                         val c = cornerHit ?: under.getOrNull(max(0, selectedUnder))
-                        val tapPick = cornerHit ?: if (selecting) under.firstOrNull() else {
-                            under.getOrNull(if (selectedUnder >= 0) (selectedUnder + 1) % under.size else 0)
-                        }
+                        val tapPick = cornerHit ?: under.firstOrNull()
                         val pressedAt = first.uptimeMillis
                         var lastAt = pressedAt
-                        // Empty space: a tap clears the selection, a long press opens the touchpad's mappings.
+                        // Empty space: a tap opens the touchpad's mappings, a long press does nothing.
                         // A drag moves the selected control from wherever it starts, never what is under the finger
                         // (with Select on: the picked ones, held by the one under the finger if it is picked).
                         val sel = if (selecting) {
@@ -1041,7 +1066,7 @@ fun PadScreen(
                         event.changes.forEach { it.consume() }
 
                         while (true) {
-                            // A still press that lasts opens the settings: of the control, or on empty space the touchpad's.
+                            // A still press that lasts: on a control, its popup (a corner: its menu); on empty space, nothing.
                             // (Not with Select on: a press only picks.)
                             val next = if (!selecting && (mode == EditGesture.PRESS || mode == EditGesture.EMPTY)) {
                                 withTimeoutOrNull(max(1L, pressedAt + EDIT_LONG_PRESS_MS - lastAt)) { awaitPointerEvent() }
@@ -1049,18 +1074,12 @@ fun PadScreen(
                                 awaitPointerEvent()
                             }
                             if (next == null) {
-                                if (mode == EditGesture.EMPTY) {
-                                    // On empty space: the touchpad's mapping editor, like any button's.
-                                    mode = EditGesture.NONE
-                                    selected = TOUCHPAD_SELECTION
-                                    menu = EditMenu.MAPPING
-                                } else {
-                                    // A long press opens the mapping editor (a corner or a gyro display: its menu).
-                                    mode = EditGesture.HELD
+                                // Held: a drag still moves what it would have, and lifting is no tap.
+                                mode = EditGesture.HELD
+                                if (target != null) {
+                                    // On a control: selects it and shows its popup (a corner has only its menu).
                                     selected = target
-                                    menu = if (d0 != null && (isCorner(d0, target!!) || findControl(target)?.kind == TouchKind.DISPLAY)) {
-                                        EditMenu.CONTEXT
-                                    } else EditMenu.MAPPING
+                                    menu = if (d0 != null && isCorner(d0, target!!)) EditMenu.CONTEXT else EditMenu.POPUP
                                 }
                                 continue
                             }
@@ -1132,12 +1151,13 @@ fun PadScreen(
                             when (mode) {
                                 EditGesture.PRESS, EditGesture.HELD, EditGesture.EMPTY ->
                                     if (main != null && (main.position - downPos).getDistance() > slop) {
-                                        if (mode != EditGesture.HELD && sel != null) {
+                                        // (Held on empty space, target is none: it moves the selected one too.)
+                                        if ((mode != EditGesture.HELD || target == null) && sel != null) {
                                             target = sel.id
                                             grab = selGrab
                                         }
                                         // Locked (and there before this session): a drag moves nothing (and isn't a tap).
-                                        if (unitLocked(target) || (mode == EditGesture.EMPTY && sel == null)) {
+                                        if (unitLocked(target) || target == null || (mode == EditGesture.EMPTY && sel == null)) {
                                             mode = EditGesture.NONE
                                         } else {
                                             mode = EditGesture.MOVE
@@ -1288,9 +1308,18 @@ fun PadScreen(
                             selecting -> if (mode == EditGesture.EMPTY) picked = emptySet()
 
                             mode == EditGesture.PRESS -> {
-                                // A tap selects at once.
-                                selected = tapPick?.id
-                                menu = EditMenu.NONE
+                                val d = draft
+                                if (selected != null && (selectedUnder >= 0 || cornerHit?.id == selected) && d != null) {
+                                    // A tap on the selected control opens it: its mapping editor (a corner: its menu,
+                                    // a gyro display: its settings).
+                                    menu = if (isCorner(d, selected!!) || findControl(selected)?.kind == TouchKind.DISPLAY) {
+                                        EditMenu.CONTEXT
+                                    } else EditMenu.MAPPING
+                                } else {
+                                    // Else a tap selects at once.
+                                    selected = tapPick?.id
+                                    menu = EditMenu.NONE
+                                }
                             }
 
                             mode == EditGesture.TWO -> {
@@ -1299,10 +1328,12 @@ fun PadScreen(
                                 menu = EditMenu.NONE
                             }
 
-                            mode == EditGesture.EMPTY -> {
-                                // A tap on empty space only clears the selection (a long press maps the touchpad).
-                                selected = null
+                            // A tap on empty space closes a control's popup, else opens the touchpad's mapping editor.
+                            mode == EditGesture.EMPTY -> if (menu == EditMenu.POPUP) {
                                 menu = EditMenu.NONE
+                            } else {
+                                selected = TOUCHPAD_SELECTION
+                                menu = EditMenu.MAPPING
                             }
 
                             else -> Unit
@@ -2070,47 +2101,81 @@ fun PadScreen(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(
-                        // A set width fills the panel, so the resize handle stays on its right edge.
+                        // A set width fills the panel, so the corner grip stays on its right edge.
                         Modifier.weight(1f, fill = panelWidth != null).padding(top = 6.dp, bottom = 6.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        /** A scrolling strip of the menu: framed, with a shadow at an edge that has more past it. */
+                        /**
+                         * A scrolling strip of the menu: framed, with a shadow at an edge that has more past it.
+                         * In one row it scrolls sideways; in [rows] of 2 or more its items wrap into that many
+                         * rows and it scrolls up and down.
+                         */
                         @Composable
-                        fun RowScope.ScrollStrip(content: @Composable RowScope.() -> Unit) {
+                        fun RowScope.ScrollStrip(rows: Int = 1, content: @Composable RowScope.() -> Unit) {
                             val scroll = rememberScrollState()
                             val shape = RoundedCornerShape(12.dp)
+                            val across = rows <= 1
                             Box(
                                 Modifier
-                                    .weight(1f, fill = false)
+                                    .weight(1f, fill = !across)
                                     .padding(end = 4.dp)
                                     .clip(shape)
                                     .border(1.dp, Color.White.copy(alpha = 0.25f), shape),
                             ) {
-                                Row(
-                                    Modifier.horizontalScroll(scroll).padding(horizontal = 6.dp, vertical = 4.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    content = content,
-                                )
+                                if (across) {
+                                    Row(
+                                        Modifier.horizontalScroll(scroll).padding(horizontal = 6.dp, vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        content = content,
+                                    )
+                                } else {
+                                    FlowRow(
+                                        Modifier
+                                            .heightIn(max = PANEL_ROW_HEIGHT * rows + PANEL_ROW_GAP * (rows - 1) + 8.dp)
+                                            .verticalScroll(scroll)
+                                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalArrangement = Arrangement.spacedBy(PANEL_ROW_GAP),
+                                        itemVerticalAlignment = Alignment.CenterVertically,
+                                        content = content,
+                                    )
+                                }
                                 val back = scroll.canScrollBackward
                                 val forward = scroll.canScrollForward
                                 if (back || forward) {
                                     Canvas(Modifier.matchParentSize()) {
                                         val edge = 20.dp.toPx()
                                         val shade = Color.Black.copy(alpha = 0.6f)
-                                        if (back) drawRect(
-                                            Brush.horizontalGradient(listOf(shade, Color.Transparent), endX = edge),
-                                            size = Size(edge, size.height),
-                                        )
-                                        if (forward) drawRect(
-                                            Brush.horizontalGradient(
-                                                listOf(Color.Transparent, shade),
-                                                startX = size.width - edge,
-                                                endX = size.width,
-                                            ),
-                                            topLeft = Offset(size.width - edge, 0f),
-                                            size = Size(edge, size.height),
-                                        )
+                                        if (across) {
+                                            if (back) drawRect(
+                                                Brush.horizontalGradient(listOf(shade, Color.Transparent), endX = edge),
+                                                size = Size(edge, size.height),
+                                            )
+                                            if (forward) drawRect(
+                                                Brush.horizontalGradient(
+                                                    listOf(Color.Transparent, shade),
+                                                    startX = size.width - edge,
+                                                    endX = size.width,
+                                                ),
+                                                topLeft = Offset(size.width - edge, 0f),
+                                                size = Size(edge, size.height),
+                                            )
+                                        } else {
+                                            if (back) drawRect(
+                                                Brush.verticalGradient(listOf(shade, Color.Transparent), endY = edge),
+                                                size = Size(size.width, edge),
+                                            )
+                                            if (forward) drawRect(
+                                                Brush.verticalGradient(
+                                                    listOf(Color.Transparent, shade),
+                                                    startY = size.height - edge,
+                                                    endY = size.height,
+                                                ),
+                                                topLeft = Offset(0f, size.height - edge),
+                                                size = Size(size.width, edge),
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -2219,7 +2284,8 @@ fun PadScreen(
 
                         // Fixed: dots (move), undo, redo. Then a scrolling strip: ⚙ (this workspace's settings), lock,
                         // Done, Cancel, Select, Group / Ungroup, and the layout tools.
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        // In more than one row: dots, undo and redo stay at the top of the first.
+                        Row(verticalAlignment = if (panelRows > 1) Alignment.Top else Alignment.CenterVertically) {
                             DragDots()
                             // Undo, redo, and the lock that keeps drags and pinches from changing the layout.
                             @Composable
@@ -2239,7 +2305,7 @@ fun PadScreen(
                                 undoSteps.isNotEmpty() || (undoBase[0] != null && draft !== undoBase[0]),
                             ) { undoEdit() }
                             MenuIcon(EditIcons.Redo, "Redo", redoSteps.isNotEmpty()) { redoEdit() }
-                            ScrollStrip {
+                            ScrollStrip(panelRows) {
                                 // Everything but undo and redo scrolls, so a narrow (portrait) panel reaches it all.
                                 // The workspace's settings, the same page as the touchpad's Settings
                                 // in its mapping editor, on the draft like the rest of edit mode.
@@ -2336,7 +2402,7 @@ fun PadScreen(
                                     FilledTonalButton(
                                         contentPadding = compact,
                                         colors = selColors,
-                                        onClick = { settingsFromMap = false; menu = EditMenu.CONTEXT }) { Text("Configure") }
+                                        onClick = { menu = EditMenu.CONTEXT }) { Text("Configure") }
                                     val d = draft
                                     if (d != null && !isCorner(d, chosen.id) && chosen.kind != TouchKind.DISPLAY) {
                                         FilledTonalButton(
@@ -2492,31 +2558,42 @@ fun PadScreen(
                             }
                         }
                     }
-                    // The right edge: drag to resize the whole menu.
+                    // The bottom-right corner: drag sideways to resize the whole menu, down (or up) to wrap
+                    // its strip into more (or fewer) rows, up to PANEL_MAX_ROWS.
                     Box(
                         Modifier
-                            .width(20.dp)
-                            .height(56.dp)
+                            .align(Alignment.Bottom)
+                            .size(28.dp)
                             .pointerInput(w, h) {
-                                detectHorizontalDragGestures { change, dx ->
+                                val step = (PANEL_ROW_HEIGHT + PANEL_ROW_GAP).toPx()
+                                var fromRows = 1
+                                var down = 0f
+                                detectDragGestures(
+                                    onDragStart = {
+                                        fromRows = panelRows
+                                        down = 0f
+                                    },
+                                ) { change, drag ->
                                     change.consume()
                                     val from = panelWidthPx?.coerceIn(minPanel, maxPanel)
                                         ?: (menuSize.width - 16.dp.toPx()).coerceIn(minPanel, maxPanel)
-                                    val to = (from + dx).coerceIn(minPanel, maxPanel)
+                                    val to = (from + drag.x).coerceIn(minPanel, maxPanel)
                                     // Keep the left edge where it is (the menu is placed by its centre).
                                     menuOffset = clampMenu(clampMenu(menuOffset) + Offset((to - from) / 2f, 0f))
                                     panelWidthPx = to
+                                    down += drag.y
+                                    panelRows = (fromRows + (down / step).roundToInt()).coerceIn(1, PANEL_MAX_ROWS)
                                 }
                             },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Box(
-                            Modifier
-                                .width(4.dp)
-                                .height(32.dp)
-                                .clip(RoundedCornerShape(2.dp))
-                                .background(Color.White.copy(alpha = 0.5f)),
-                        )
+                        // A corner grip: two short diagonal lines.
+                        Canvas(Modifier.size(14.dp)) {
+                            val c = Color.White.copy(alpha = 0.6f)
+                            val sw = 2.dp.toPx()
+                            drawLine(c, Offset(size.width, size.height * 0.15f), Offset(size.width * 0.15f, size.height), sw, StrokeCap.Round)
+                            drawLine(c, Offset(size.width, size.height * 0.6f), Offset(size.width * 0.6f, size.height), sw, StrokeCap.Round)
+                        }
                     }
                 }
             }
@@ -2546,6 +2623,36 @@ fun PadScreen(
 
             val d = draft
             val sel = findControl(selected)
+            // Delete from a control's popup: asked first (Undo also brings it back).
+            confirmingDelete?.let { id ->
+                val c = findControl(id)
+                if (c == null) {
+                    confirmingDelete = null
+                } else {
+                    AlertDialog(
+                        onDismissRequest = { confirmingDelete = null },
+                        title = { Text("Delete \"${c.label.ifBlank { c.id }}\"?") },
+                        text = {
+                            Text(
+                                "The " + when (c.kind) {
+                                    TouchKind.STICK -> "stick"
+                                    TouchKind.DISPLAY -> "display"
+                                    else -> "button"
+                                } + " and its mappings are removed from this layout.",
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                confirmingDelete = null
+                                editWorkspace { Bindings.removeTouchControl(it, id) }
+                                if (selected == id) selected = null
+                                menu = EditMenu.NONE
+                            }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                        },
+                        dismissButton = { TextButton(onClick = { confirmingDelete = null }) { Text("Cancel") } },
+                    )
+                }
+            }
             if (d != null && selected == TOUCHPAD_SELECTION && !dragging && menu != EditMenu.NONE) {
                 val close = {
                     selected = null
@@ -2608,7 +2715,43 @@ fun PadScreen(
                     )
                 }
             } else if (d != null && sel != null && !dragging && menu != EditMenu.NONE) {
-                if (isCorner(d, sel.id)) {
+                // A copy of the control beside it, selected.
+                val duplicateSel = {
+                    val (nw, id) = duplicate(ws, sel, takenIds(draft ?: profile))
+                    val copy = nw.touchControls.first { it.id == id }
+                    editWorkspace {
+                        nw.copy(touchControls = nw.touchControls.map {
+                            if (it.id == id) place(copy, copy.placeX(portrait), copy.placeY(portrait)) else it
+                        })
+                    }
+                    selected = id
+                }
+                if (menu == EditMenu.POPUP) {
+                    // A long press: what can be done to the control, right next to it.
+                    NearControl(anchor = center(sel), anchorHalfW = half(sel), anchorHalfH = halfH(sel)) {
+                        ControlPopup(
+                            mappings = sel.kind != TouchKind.DISPLAY,
+                            grouped = sel.group != null,
+                            onMappings = { menu = EditMenu.MAPPING },
+                            onDuplicate = {
+                                duplicateSel()
+                                menu = EditMenu.NONE
+                            },
+                            onSavePreset = {
+                                runtime.addToLibrary(ButtonLibrary.save(ws, sel, library.map { it.id }))
+                                menu = EditMenu.NONE
+                            },
+                            onUngroup = {
+                                editWorkspace { ControlGroups.ungroup(it, listOf(sel.id)) }
+                                menu = EditMenu.NONE
+                            },
+                            onDelete = {
+                                confirmingDelete = sel.id
+                                menu = EditMenu.NONE
+                            },
+                        )
+                    }
+                } else if (isCorner(d, sel.id)) {
                     // A corner (no mapping): a small menu right next to it.
                     NearControl(anchor = center(sel), anchorHalfW = half(sel), anchorHalfH = halfH(sel)) {
                         CornerPanel(
@@ -2631,16 +2774,7 @@ fun PadScreen(
                         // A trackball's RWS needs the workspace's game turn (Gyro → Game).
                         gameKnown = ws.gyro.gameCountsPer360 > 0f,
                         onChange = { changed -> updateControl(sel.id) { changed } },
-                        onDuplicate = {
-                            val (nw, id) = duplicate(ws, sel, takenIds(draft ?: profile))
-                            val copy = nw.touchControls.first { it.id == id }
-                            editWorkspace {
-                                nw.copy(touchControls = nw.touchControls.map {
-                                    if (it.id == id) place(copy, copy.placeX(portrait), copy.placeY(portrait)) else it
-                                })
-                            }
-                            selected = id
-                        },
+                        onDuplicate = duplicateSel,
                         onDelete = {
                             editWorkspace { Bindings.removeTouchControl(it, sel.id) }
                             selected = null
@@ -2651,85 +2785,83 @@ fun PadScreen(
                         },
                         onClose = { menu = EditMenu.NONE },
                     )
-                } else if (menu == EditMenu.MAPPING) {
-                    // A tap: the control's mapping screen.
-                    ControlMappingScreen(
-                        control = sel,
-                        mappings = ws.mappings,
-                        runtime = runtime,
-                        label = sel.label,
-                        onLabel = { v -> updateControl(sel.id) { it.copy(label = v) } },
-                        onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
-                        onSettings = { settingsFromMap = true; menu = EditMenu.CONTEXT },
-                        // The control stays selected (ready to pinch); a tap on empty space clears it.
-                        onClose = { menu = EditMenu.NONE },
-                        sets = ws.sets,
-                        editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
-                        onEditSet = { mapSet = it },
-                        onSetsChange = { sets, removed -> editWorkspace { it.withSets(sets, removed) } },
-                        zoneSettings = if (sel.swipes) sel.surfaceSettings(ws.touchpad) else null,
-                        onZoneSettings = { a, b ->
-                            updateControl(sel.id) { it.copy(surface = it.ownSurface.copy(holdZones = a, dirHoldZones = b)) }
-                        },
-                        settings = touchControlSettings(runtime, sel, ws, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE) { change -> updateControl(sel.id, change) },
-                        inherited = run {
-                            val inSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE
-                            val wsMappings = Inheritance.workspace(ws, d.defaults)
-                            // The workspace's gyro mappings show faded on its Motion tab too.
-                            (if (sel.kind == TouchKind.BUTTON) Inheritance.inherited(wsMappings, emptyList(), sel.id, inSet) else emptyList()) +
-                                Inheritance.gyroInherited(wsMappings, sel.id, inSet)
-                        },
-                        parentName = "Workspace",
-                        timing = { sel.longPress(ws) to sel.doubleTap(ws) },
-                        workspace = ws,
-                        onControlChange = { change -> updateControl(sel.id, change) },
-                    )
                 } else {
-                    // A long press: all of the control's settings.
-                    ControlSettingsScreen(
-                        workspace = ws,
-                        control = sel,
-                        runtime = runtime,
-                        inPortrait = portrait,
-                        onControlChange = { changed ->
-                            updateControl(sel.id) {
-                                place(
-                                    changed,
-                                    changed.placeX(portrait),
-                                    changed.placeY(portrait)
-                                )
-                            }
-                        },
-                        onSize = { resize(sel.id, it) },
-                        onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
-                        onEditMappings = { menu = EditMenu.MAPPING },
-                        onDuplicate = {
-                            val (nw, id) = duplicate(ws, sel, takenIds(draft ?: profile))
-                            val copy = nw.touchControls.first { it.id == id }
-                            editWorkspace {
-                                nw.copy(touchControls = nw.touchControls.map {
-                                    if (it.id == id) place(
-                                        copy,
-                                        copy.placeX(portrait),
-                                        copy.placeY(portrait)
-                                    ) else it
-                                })
-                            }
-                            selected = id
-                        },
-                        onDelete = {
-                            editWorkspace { Bindings.removeTouchControl(it, sel.id) }
-                            selected = null
-                            menu = EditMenu.NONE
-                        },
-                        shared = touchControlSettings(runtime, sel, ws, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE) { change -> updateControl(sel.id, change) },
-                        // Back to the mapping screen it was opened from; else the control stays selected
-                        // (ready to pinch) and a tap on empty space clears it.
-                        onClose = {
-                            menu = if (settingsFromMap) EditMenu.MAPPING else EditMenu.NONE
-                            settingsFromMap = false
-                        },
-                    )
+                    // A control's mapping editor and its settings: whichever opened first, with the
+                    // other over it while open from there (so the pad never shows between them).
+                    val editorPage: @Composable () -> Unit = {
+                        ControlMappingScreen(
+                            control = sel,
+                            mappings = ws.mappings,
+                            runtime = runtime,
+                            label = sel.label,
+                            onLabel = { v -> updateControl(sel.id) { it.copy(label = v) } },
+                            onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
+                            // Over the settings when it was opened from there: back to them; else they open over it.
+                            onSettings = { pages.over = menu == EditMenu.MAPPING },
+                            // The control stays selected (ready to pinch); a tap on empty space clears it.
+                            onClose = { menu = EditMenu.NONE },
+                            sets = ws.sets,
+                            editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
+                            onEditSet = { mapSet = it },
+                            onSetsChange = { sets, removed -> editWorkspace { it.withSets(sets, removed) } },
+                            zoneSettings = if (sel.swipes) sel.surfaceSettings(ws.touchpad) else null,
+                            onZoneSettings = { a, b ->
+                                updateControl(sel.id) { it.copy(surface = it.ownSurface.copy(holdZones = a, dirHoldZones = b)) }
+                            },
+                            settings = touchControlSettings(runtime, sel, ws, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE) { change -> updateControl(sel.id, change) },
+                            inherited = run {
+                                val inSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE
+                                val wsMappings = Inheritance.workspace(ws, d.defaults)
+                                // The workspace's gyro mappings show faded on its Motion tab too.
+                                (if (sel.kind == TouchKind.BUTTON) Inheritance.inherited(wsMappings, emptyList(), sel.id, inSet) else emptyList()) +
+                                    Inheritance.gyroInherited(wsMappings, sel.id, inSet)
+                            },
+                            parentName = "Workspace",
+                            timing = { sel.longPress(ws) to sel.doubleTap(ws) },
+                            workspace = ws,
+                            onControlChange = { change -> updateControl(sel.id, change) },
+                        )
+                    }
+                    val settingsPage: @Composable () -> Unit = {
+                        ControlSettingsScreen(
+                            workspace = ws,
+                            control = sel,
+                            runtime = runtime,
+                            inPortrait = portrait,
+                            onControlChange = { changed ->
+                                updateControl(sel.id) {
+                                    place(
+                                        changed,
+                                        changed.placeX(portrait),
+                                        changed.placeY(portrait)
+                                    )
+                                }
+                            },
+                            onSize = { resize(sel.id, it) },
+                            onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
+                            // Opened from the mapping editor: back to it; else it opens over these.
+                            onEditMappings = { pages.over = menu == EditMenu.CONTEXT },
+                            onDuplicate = duplicateSel,
+                            onDelete = {
+                                editWorkspace { Bindings.removeTouchControl(it, sel.id) }
+                                selected = null
+                                menu = EditMenu.NONE
+                            },
+                            shared = touchControlSettings(runtime, sel, ws, if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE) { change -> updateControl(sel.id, change) },
+                            // Back to the mapping editor it was opened from; else the control stays selected
+                            // (ready to pinch).
+                            onClose = {
+                                if (menu == EditMenu.MAPPING) pages.over = false else menu = EditMenu.NONE
+                            },
+                        )
+                    }
+                    if (menu == EditMenu.MAPPING) {
+                        editorPage()
+                        if (pages.over) settingsPage()
+                    } else {
+                        settingsPage()
+                        if (pages.over) editorPage()
+                    }
                 }
             }
         }
@@ -3252,5 +3384,44 @@ private fun TouchpadLabel(label: String, live: () -> String?) {
                 .background(Color(0x66000000), RoundedCornerShape(8.dp))
                 .padding(horizontal = 10.dp, vertical = 4.dp),
         )
+    }
+}
+
+/**
+ * A control's long-press popup in edit mode: open its [mappings] editor, duplicate it, save it as
+ * a preset, ungroup it ([grouped] only), or delete it (asked first).
+ */
+@Composable
+private fun ControlPopup(
+    mappings: Boolean,
+    grouped: Boolean,
+    onMappings: () -> Unit,
+    onDuplicate: () -> Unit,
+    onSavePreset: () -> Unit,
+    onUngroup: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shadowElevation = 8.dp,
+    ) {
+        Column(Modifier.width(IntrinsicSize.Max).padding(vertical = 6.dp)) {
+            @Composable
+            fun Item(text: String, color: Color = MaterialTheme.colorScheme.onSurface, onClick: () -> Unit) = Text(
+                text,
+                color = color,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onClick)
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+            )
+            if (mappings) Item("Mappings", onClick = onMappings)
+            Item("Duplicate", onClick = onDuplicate)
+            Item("Save as preset", onClick = onSavePreset)
+            if (grouped) Item("Ungroup", onClick = onUngroup)
+            Item("Delete", MaterialTheme.colorScheme.error, onDelete)
+        }
     }
 }
