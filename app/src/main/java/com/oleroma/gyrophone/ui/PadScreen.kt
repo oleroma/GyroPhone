@@ -8,6 +8,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -39,6 +40,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.wrapContentSize
@@ -284,6 +286,9 @@ private enum class EditMenu { NONE, MAPPING, CONTEXT, POPUP }
 private fun mainRowsCap(portrait: Boolean) = if (portrait) 2 else 1
 private fun addRowsCap(portrait: Boolean) = if (portrait) 4 else 3
 private val PANEL_ROW_HEIGHT = 40.dp
+/** The open Add / Presets list and its tab-like pill. */
+private val PANEL_TAB_COLOR = Color(0xFF2F4A6E)
+private val PANEL_TAB_OUTLINE = Color(0xFF7FB2FF)
 private val PANEL_ROW_GAP = 6.dp
 
 /**
@@ -483,6 +488,8 @@ fun PadScreen(
     var panelWidthPx by remember { mutableStateOf<Float?>(null) }
     /** Rows the edit menu's strips may take (its corner grip pulled down), each capped by [mainRowsCap] / [addRowsCap]. */
     var panelRows by remember { mutableIntStateOf(1) }
+    /** The edit menu's main row's width (px): the Add / Presets row is as wide. */
+    var mainRowWidth by remember { mutableIntStateOf(0) }
     var dragging by remember { mutableStateOf(false) }
     /** Cancel was tapped with unsaved changes: asking whether to throw them away. */
     var confirmingCancel by remember { mutableStateOf(false) }
@@ -2120,6 +2127,22 @@ fun PadScreen(
                 )
             }
 
+            /** The pill of the open Add / Presets list, in its list's colours like a tab over it: tap to close it. */
+            @Composable
+            fun ListTab(text: String, onClick: () -> Unit) = Surface(
+                onClick = onClick,
+                shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 6.dp, bottomEnd = 6.dp),
+                color = PANEL_TAB_COLOR,
+                contentColor = Color.White,
+                border = BorderStroke(1.dp, PANEL_TAB_OUTLINE),
+            ) {
+                Text(
+                    text,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.heightIn(min = 40.dp).wrapContentHeight().padding(horizontal = 12.dp),
+                )
+            }
+
             // The edit menu floats over the pad: drag it by its dots to reach what is under it, and
             // drag its right edge to show more or fewer of its items.
             Surface(
@@ -2149,19 +2172,31 @@ fun PadScreen(
                          * shortest row so far.
                          */
                         @Composable
-                        fun RowScope.ScrollStrip(rows: Int = 1, content: @Composable () -> Unit) {
+                        fun RowScope.ScrollStrip(
+                            rows: Int = 1,
+                            fill: Boolean = false,
+                            /** The open Add / Presets list: in the colours of its tab (its pill above). */
+                            tab: Boolean = false,
+                            content: @Composable () -> Unit,
+                        ) {
                             val scroll = rememberScrollState()
                             val shape = RoundedCornerShape(12.dp)
                             Box(
                                 Modifier
-                                    .weight(1f, fill = false)
+                                    .weight(1f, fill = fill)
                                     .padding(end = 4.dp)
+                                    // As tall as its rows, so the ⠿ beside each row lines up with it.
+                                    .height(PANEL_ROW_HEIGHT * rows + PANEL_ROW_GAP * (rows - 1) + 8.dp)
                                     .clip(shape)
-                                    .border(1.dp, Color.White.copy(alpha = 0.25f), shape),
+                                    .then(if (tab) Modifier.background(PANEL_TAB_COLOR) else Modifier)
+                                    .border(1.dp, if (tab) PANEL_TAB_OUTLINE else Color.White.copy(alpha = 0.25f), shape),
                             ) {
                                 StripRows(
                                     rows,
-                                    Modifier.horizontalScroll(scroll).padding(horizontal = 6.dp, vertical = 4.dp),
+                                    Modifier
+                                        .align(Alignment.CenterStart)
+                                        .horizontalScroll(scroll)
+                                        .padding(horizontal = 6.dp, vertical = 4.dp),
                                     content,
                                 )
                                 val back = scroll.canScrollBackward
@@ -2289,42 +2324,91 @@ fun PadScreen(
                         fun addAt(at: Offset?, c: TouchControl) =
                             if (at == null) place(c, 0.5f, 0.5f) else placeSnapped(c, at.x / w, at.y / h)
 
-                        // Fixed: dots (move), undo, redo. Then a scrolling strip: ⚙ (this workspace's settings), lock,
-                        // Done, Cancel, Select, Group / Ungroup, and the layout tools.
-                        // In more than one row: dots, undo and redo stay at the top of the first.
-                        Row(verticalAlignment = if (min(panelRows, mainRowsCap(portrait)) > 1) Alignment.Top else Alignment.CenterVertically) {
+                        // Undo and redo, and the lock that keeps drags and pinches from changing the layout.
+                        @Composable
+                        fun MenuIcon(icon: ImageVector, label: String, enabled: Boolean, small: Boolean = false, onClick: () -> Unit) = Icon(
+                            icon,
+                            contentDescription = label,
+                            tint = if (enabled) Color.White else Color.White.copy(alpha = 0.35f),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .clickable(enabled = enabled, onClick = onClick)
+                                .padding(if (small) 1.dp else 6.dp)
+                                .size(if (small) 18.dp else 22.dp),
+                        )
+                        val canUndo = undoSteps.isNotEmpty() || (undoBase[0] != null && draft !== undoBase[0])
+                        val canRedo = redoSteps.isNotEmpty()
+                        val mainRows = min(panelRows, mainRowsCap(portrait))
+                        val listOpen = addOpen || presetsOpen
+                        // One column after the ⠿ dots holds ↶ over ↷: in two main rows, one each; in one row
+                        // with a list open, ↷ moves down beside the list's first row; else both small in the one row.
+                        val redoBelow = mainRows == 1 && listOpen
+
+                        /** A row of the fixed column: ⠿ (moves the menu) and, if any, its icon. */
+                        @Composable
+                        fun LeftCell(icon: @Composable () -> Unit) = Row(
+                            Modifier.height(PANEL_ROW_HEIGHT),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             DragDots()
-                            // Undo, redo, and the lock that keeps drags and pinches from changing the layout.
-                            @Composable
-                            fun MenuIcon(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) = Icon(
-                                icon,
-                                contentDescription = label,
-                                tint = if (enabled) Color.White else Color.White.copy(alpha = 0.35f),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .clickable(enabled = enabled, onClick = onClick)
-                                    .padding(6.dp)
-                                    .size(22.dp),
-                            )
-                            MenuIcon(
-                                EditIcons.Undo,
-                                "Undo",
-                                undoSteps.isNotEmpty() || (undoBase[0] != null && draft !== undoBase[0]),
-                            ) { undoEdit() }
-                            MenuIcon(EditIcons.Redo, "Redo", redoSteps.isNotEmpty()) { redoEdit() }
-                            ScrollStrip(min(panelRows, mainRowsCap(portrait))) {
+                            Box(Modifier.width(34.dp), contentAlignment = Alignment.Center) { icon() }
+                        }
+
+                        /** ⠿ and the column's icons for [rows] rows of a strip, lined up with them. */
+                        @Composable
+                        fun LeftColumn(rows: Int, icon: @Composable (row: Int) -> Unit) = Column(
+                            Modifier.padding(vertical = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(PANEL_ROW_GAP),
+                        ) {
+                            for (r in 0 until rows) LeftCell { icon(r) }
+                        }
+
+                        // Fixed: ⠿ and ↶ ↷. Then a scrolling strip: ⚙ (this workspace's settings), lock,
+                        // Done, Cancel, Select, Group / Ungroup, and the layout tools.
+                        Row(
+                            Modifier
+                                .then(if (panelWidth != null) Modifier.fillMaxWidth() else Modifier)
+                                .onSizeChanged { mainRowWidth = it.width },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            LeftColumn(mainRows) { r ->
+                                when {
+                                    mainRows > 1 && r == 0 || redoBelow ->
+                                        if (r == 0) MenuIcon(EditIcons.Undo, "Undo", canUndo) { undoEdit() }
+                                    mainRows > 1 -> MenuIcon(EditIcons.Redo, "Redo", canRedo) { redoEdit() }
+                                    else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        MenuIcon(EditIcons.Undo, "Undo", canUndo, small = true) { undoEdit() }
+                                        MenuIcon(EditIcons.Redo, "Redo", canRedo, small = true) { redoEdit() }
+                                    }
+                                }
+                            }
+                            ScrollStrip(mainRows, fill = panelWidth != null) {
                                 // Everything but undo and redo scrolls, so a narrow (portrait) panel reaches it all.
                                 // The workspace's settings, the same page as the touchpad's Settings
                                 // in its mapping editor, on the draft like the rest of edit mode.
-                                MenuIcon(EditIcons.Tune, "Workspace settings", true) {
+                                // ⚙ and the lock first, in one column: one per row in two rows (the strip puts
+                                // its first two items in rows 1 and 2), stacked small in one row.
+                                @Composable
+                                fun Gear(small: Boolean) = MenuIcon(EditIcons.Tune, "Workspace settings", true, small) {
                                     selected = TOUCHPAD_SELECTION
                                     menu = EditMenu.CONTEXT
                                 }
-                                MenuIcon(
+                                @Composable
+                                fun LockIcon(small: Boolean) = MenuIcon(
                                     if (layoutLocked) EditIcons.Lock else EditIcons.LockOpen,
                                     if (layoutLocked) "Unlock layout" else "Lock layout",
                                     true,
+                                    small,
                                 ) { runtime.setEditLayoutLocked(!layoutLocked) }
+                                if (mainRows > 1) {
+                                    Gear(false)
+                                    LockIcon(false)
+                                } else {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Gear(true)
+                                        LockIcon(true)
+                                    }
+                                }
                                 Row(
                                     Modifier.padding(start = 2.dp, end = 6.dp),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -2420,13 +2504,13 @@ fun PadScreen(
                                 }
                                 // Everything that can be added sits in the Add row under this strip.
                                 if (addOpen) {
-                                    FilledTonalButton(contentPadding = compact, onClick = { addOpen = false }) { Text("Add ▴") }
+                                    ListTab("Add ▴") { addOpen = false }
                                 } else {
                                     OutlinedButton(contentPadding = compact, onClick = { addOpen = true; presetsOpen = false }) { Text("Add +") }
                                 }
                                 // Your saved buttons, displays and groups, in their own row.
                                 if (presetsOpen) {
-                                    FilledTonalButton(contentPadding = compact, onClick = { presetsOpen = false }) { Text("Add preset ▴") }
+                                    ListTab("Add preset ▴") { presetsOpen = false }
                                 } else {
                                     OutlinedButton(contentPadding = compact, onClick = { presetsOpen = true; addOpen = false }) { Text("Add preset ★") }
                                 }
@@ -2469,15 +2553,17 @@ fun PadScreen(
                         // Add (opened by Add + above): every control and display that can be added. Add preset (★):
                         // the saved buttons, displays and groups (the library, outlined). Tap one to add it in the
                         // middle, drag it down onto the pad to add it there; a preset's long press renames or deletes it.
-                        if (addOpen || presetsOpen) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    if (addOpen) "Add" else "Presets",
-                                    color = Color.White.copy(alpha = 0.7f),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    modifier = Modifier.padding(start = 12.dp, end = 8.dp),
-                                )
-                                ScrollStrip(min(panelRows, addRowsCap(portrait))) {
+                        if (listOpen) {
+                            val listRows = min(panelRows, addRowsCap(portrait))
+                            // As wide as the main row, so both frames end at the same edge.
+                            Row(
+                                Modifier.width(with(density) { mainRowWidth.toDp() }),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                LeftColumn(listRows) { r ->
+                                    if (redoBelow && r == 0) MenuIcon(EditIcons.Redo, "Redo", canRedo) { redoEdit() }
+                                }
+                                ScrollStrip(listRows, fill = true, tab = true) {
                                     if (addOpen) {
                                         /** Adds a button; [empty]: with every action it would take from the workspace cleared. */
                                         fun addButton(empty: Boolean, at: Offset?) {
