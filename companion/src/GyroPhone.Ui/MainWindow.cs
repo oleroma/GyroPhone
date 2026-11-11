@@ -42,7 +42,7 @@ public sealed class MainWindow : Window
     }
     private readonly TextBlock _version;
     private readonly DispatcherTimer _timer;
-    private bool _refreshing;
+    private bool _refreshing, _closed;
 
     public MainWindow(ICompanion app, string title, ImageSource? icon)
     {
@@ -108,7 +108,13 @@ public sealed class MainWindow : Window
             RefreshNow();
             _timer.Start();
         };
-        Closed += (_, _) => _timer.Stop();
+        StateChanged += (_, _) => TellShown();
+        Closed += (_, _) =>
+        {
+            _timer.Stop();
+            _closed = true;
+            TellShown();
+        };
     }
 
     private void Add(DockPanel side, Grid content, MainPage id, string name, string glyph, Func<Page> make)
@@ -148,7 +154,16 @@ public sealed class MainWindow : Window
             Parts.SetChecked(slot.Nav, key == id);
             Parts.Show(slot.Scroll, key == id);
         }
+        TellShown();
         if (IsLoaded) RefreshNow();
+    }
+
+    /// <summary>Tells each made page whether it is on screen: picked, and the window open and not minimized.</summary>
+    private void TellShown()
+    {
+        bool visible = !_closed && WindowState != WindowState.Minimized;
+        foreach (var (key, slot) in _pages)
+            slot.Page?.Shown(visible && key == _lastPage);
     }
 
     /// <summary>Shows the settings and stats as they are now. Called by the tray app on every change, and by the timer.</summary>
@@ -198,4 +213,9 @@ internal abstract class Page
     public abstract FrameworkElement View { get; }
 
     public abstract void Refresh(CompanionView v);
+
+    /// <summary>The page came on screen or went off it (another page picked, the window minimized or closed).</summary>
+    public virtual void Shown(bool on)
+    {
+    }
 }

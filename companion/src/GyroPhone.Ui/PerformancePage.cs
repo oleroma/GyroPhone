@@ -118,9 +118,10 @@ internal sealed class PerformancePage : Page
         open.HorizontalAlignment = HorizontalAlignment.Left;
         sb.Children.Add(open);
         _root.Children.Add(res);
-
-        app.Perf.Watch(true);
     }
+
+    /// <summary>Frames are watched only while this page is on screen (and while a test records).</summary>
+    public override void Shown(bool on) => _app.Perf.Watch(on);
 
     private void Allow()
     {
@@ -143,7 +144,6 @@ internal sealed class PerformancePage : Page
     public override void Refresh(CompanionView v)
     {
         var p = _app.Perf;
-        if (p.State == FrameWatchState.Off) p.Watch(true);
 
         // Permission
         bool needs = p.State is FrameWatchState.NeedsPermission or FrameWatchState.Failed;

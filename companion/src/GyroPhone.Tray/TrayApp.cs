@@ -622,8 +622,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             w.Closed += (_, _) =>
             {
                 if (ReferenceEquals(_mainWindow, w)) _mainWindow = null;
-                // The frame watcher runs while the window is open; a test record keeps it on until it ends.
-                _perf.Watch(false);
             };
             _mainWindow = w;
         }
