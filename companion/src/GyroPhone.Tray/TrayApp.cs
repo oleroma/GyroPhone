@@ -127,6 +127,11 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         _perf.PathNow = () => LinkPath()?.Text;
         _engine.Recorder!.SecondNote = _perf.SecondNote;
         OverlayForm.FpsSource = () => (_perf.View(), _perf.GameName, _perf.State, _perf.Recording);
+        OverlayForm.FpsLinkSource = () =>
+        {
+            long now = _clock.NowUs;
+            return _perf.Link.Between(now - 61_000_000, now + 1_000_000);
+        };
         if (hostKey != null) _authorized = new AuthorizedPhonesWatcher(_keyFiles, _engine.SetAuthorizedPhones, _log.Write);
         PowerQos.TryDisableForProcess(_log.Write);
         _server = new UdpHostServer(_engine, _clock,
