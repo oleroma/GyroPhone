@@ -43,7 +43,9 @@ import com.oleroma.gyrophone.core.engine.GyroMath
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.GyroSpace
 import com.oleroma.gyrophone.core.model.HapticFeel
+import com.oleroma.gyrophone.core.model.GlobalControls
 import com.oleroma.gyrophone.core.model.NavCorners
+import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.WorkspaceSet
 import com.oleroma.gyrophone.ui.TouchVisuals
@@ -306,6 +308,11 @@ class GamepadRuntime(context: Context) {
 
     /** Goes up each time a Black screen mapping fires ([OutputTarget.BlackScreen]): the pad goes black at once. */
     val blackScreenRequests: StateFlow<Int> = _blackScreenRequests
+
+    private val _fullscreenRequests = MutableStateFlow(0)
+
+    /** Goes up each time a Fullscreen mapping fires ([OutputTarget.Fullscreen]): the pad goes fullscreen, or back. */
+    val fullscreenRequests: StateFlow<Int> = _fullscreenRequests
 
     private val _cornerAutoHide = MutableStateFlow(prefs.getBoolean(KEY_CORNER_AUTO_HIDE, false))
 
@@ -773,6 +780,10 @@ class GamepadRuntime(context: Context) {
         engine.hapticSink = haptics
         // Inside the engine lock: only bump the counter the pad watches.
         engine.onBlackScreen = Runnable { _blackScreenRequests.update { it + 1 } }
+        engine.onPadAction = { t ->
+            if (t == OutputTarget.Fullscreen) _fullscreenRequests.update { it + 1 }
+            else main.post { stepWorkspace(t == OutputTarget.NextWorkspace) }
+        }
         engine.onSetOrientation = { granular -> main.post { setOrientation(granular) } }
         engine.onClearDisplays = Runnable { main.post { clearDisplays() } }
         // Every other mouse count turns a trackball 3D shape too, as the camera turns.
@@ -1116,6 +1127,14 @@ class GamepadRuntime(context: Context) {
         aimGyroDisplays()
     }
 
+    /** Previous / Next workspace mappings: the one after ([next]) or before this one; nothing at an end. */
+    fun stepWorkspace(next: Boolean) {
+        val profile = _activeProfile.value
+        val i = _workspaceIndex.value
+        val to = if (next) profile.nextWorkspace(i) else profile.previousWorkspace(i)
+        if (to != null && to != i) switchWorkspace(to)
+    }
+
     /** The saved workspace index of [profile], clamped into range. */
     private fun rememberedWorkspace(profile: Profile): Int =
         store.workspaceIndex(profile.id).coerceIn(0, profile.workspaces.lastIndex)
@@ -1129,7 +1148,8 @@ class GamepadRuntime(context: Context) {
     fun editActiveProfile(change: (Profile) -> Profile): Profile {
         val before = _activeProfile.value
         // A workspace setting changed by hand stops following the workspace defaults.
-        val changed = WorkspaceDefaults.markOwn(before, change(before))
+        // A global control changed in one workspace changes in all of them.
+        val changed = GlobalControls.sync(before, WorkspaceDefaults.markOwn(before, change(before)))
         if (changed == before) return before
         val set = WorkspaceMappings.store(WorkspaceMappings.settle(before, changed))
         if (set != stored) {
@@ -1488,6 +1508,8 @@ class GamepadRuntime(context: Context) {
     init {
         // Profiles from before Toggle gyro buttons: the gyro corner becomes one in every workspace.
         if (stored.corners.any { it.id == NavCorners.GYRO }) editActiveProfile { NavCorners.gyroCornerToButtons(it) }
+        // Profiles from before ← / → buttons: the corners become global buttons in every workspace.
+        if (!stored.navButtons) editActiveProfile { NavCorners.toButtons(it) }
         // The PC's phone overlay turned on or off: the gyro and accelerometer may be needed (or no longer).
         wifi.overlay.onWantedChange = Runnable { main.post { updateGyro() } }
         // The PC's pad became a DualShock 4 (or no longer is): its gyro and accelerometer need the sensors.

@@ -45,6 +45,8 @@ One input can press several outputs, and several inputs can press one output. Th
 | Layer back | `LayerBack` | Back to the sets in use before the last layer change; twice swaps back again. |
 | Let go | `LetGo` | Ends the toggles set to end on it. |
 | Black screen | `BlackScreen` | The pad goes black. See [Volume rocker and black screen](phone-volume-black-screen.md). |
+| Previous workspace / Next workspace | `PreviousWorkspace` / `NextWorkspace` | The pad shows the workspace before / after this one (wrap-around: Settings → Workspace switching). |
+| Fullscreen | `Fullscreen` | The pad goes fullscreen (its top row hides), or back. |
 | Set orientation | `SetOrientation` (saved as `level_displays`) | The way the phone is held now becomes the workspace's base orientation (Yaw axis, saved as its own): the screen axis, either way up, pointing most nearly up, or with the chip's **Granular** switch (off by default) the exact tilt back, leaning sideways left out. Every 3D gyro display on the pad starts again from it, level and facing ahead (its saved Level grip cleared), and every PC overlay shown levels. Nothing held is let go. The PC hears it as a count in OVERLAY (byte 139). |
 | Clear displays | `ClearDisplays` | Every laser pointer display on the pad and every PC laser pointer overlay loses its paint and trail, as its Clear button does. The PC hears it as a count in OVERLAY (byte 148; the first count seen clears nothing). |
 | Nothing | `NoOutput` | Does nothing. In an override layer it stops the input falling through; at a level it clears what the input inherits. |
@@ -123,7 +125,7 @@ Direction tracking (pies, samples, heading lock and "turn after", zones) is `cor
 
 ## Touch controls
 
-`TouchControl` (`core/.../model/Profile.kt`): id, kind (`BUTTON`, `STICK`, `DISPLAY`, and `FULLSCREEN` for the nav corners), label, centre and size (fraction of the pad's shorter side, 0.06..3), circle or rectangle (with an aspect), a separate portrait placement, and:
+`TouchControl` (`core/.../model/Profile.kt`): id, kind (`BUTTON`, `STICK`, `DISPLAY`, and `FULLSCREEN` for the old nav corners), label, centre and size (fraction of the pad's shorter side, 0.06..3), circle or rectangle (with an aspect), a separate portrait placement, and:
 
 - **Sticks**: deadzone (share of the radius that counts as centred) and **zones**: "4, diagonals press two" (each half on its own), 4 zones, or 8 zones (a diagonal fires its own mapping, or both neighbours when it has none). Stick presets in the editor: Left stick, Right stick, WASD, Arrow keys, D-pad, None.
 - **Overlap**: where controls overlap, the front one under a finger gets it (`hitOrder`: Front, then Auto by size with smaller in front, then Back). **Shares touches**: a finger landing here while another control is in front works this one too.

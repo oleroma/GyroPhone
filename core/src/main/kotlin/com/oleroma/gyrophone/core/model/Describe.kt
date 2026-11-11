@@ -82,6 +82,9 @@ object Describe {
         OutputTarget.LayerBack -> "Layer back (to the layers before the last change)"
         OutputTarget.LetGo -> "(Let go): ends the toggles set to end on it"
         OutputTarget.BlackScreen -> "Black screen (the phone's screen goes black until tapped)"
+        OutputTarget.PreviousWorkspace -> "Previous workspace (the pad shows the one before)"
+        OutputTarget.NextWorkspace -> "Next workspace (the pad shows the one after)"
+        OutputTarget.Fullscreen -> "Fullscreen (the buttons at the top of the pad hide, or come back)"
         is OutputTarget.SetOrientation -> "Set orientation" + (if (t.granular) ", granular" else "") +
             " (the way you hold the phone now becomes the base for the gyro, the displays and the PC overlays)"
         OutputTarget.ClearDisplays -> "Clear displays (pointers on the pad and the PC lose their paint and trail)"
@@ -101,9 +104,14 @@ object Describe {
         OutputTarget.LayerBack, OutputTarget.NoOutput,
     )
 
-    /** The "Other" picker group: (Let go), Black screen, Set orientation and Clear displays. */
-    val otherTargets: List<OutputTarget> =
-        listOf(OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.SetOrientation(), OutputTarget.ClearDisplays)
+    /**
+     * The "Other" picker group: (Let go), Black screen, Set orientation, Clear displays, Previous
+     * / Next workspace and Fullscreen.
+     */
+    val otherTargets: List<OutputTarget> = listOf(
+        OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.SetOrientation(), OutputTarget.ClearDisplays,
+        OutputTarget.PreviousWorkspace, OutputTarget.NextWorkspace, OutputTarget.Fullscreen,
+    )
 
     /** "Layer set", "Layer hold", "Override layer set" or "Override layer hold". */
     fun layer(t: OutputTarget.Layer): String = when {
@@ -193,6 +201,9 @@ object Describe {
         OutputTarget.LayerBack -> "Layer back"
         OutputTarget.LetGo -> "(Let go)"
         OutputTarget.BlackScreen -> "Black screen"
+        OutputTarget.PreviousWorkspace -> "← Workspace"
+        OutputTarget.NextWorkspace -> "Workspace →"
+        OutputTarget.Fullscreen -> "Fullscreen"
         is OutputTarget.SetOrientation -> if (t.granular) "Set orientation (granular)" else "Set orientation"
         OutputTarget.ClearDisplays -> "Clear displays"
 

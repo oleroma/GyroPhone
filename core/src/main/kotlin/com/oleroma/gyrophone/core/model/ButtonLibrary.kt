@@ -49,7 +49,7 @@ object ButtonLibrary {
     fun save(w: Workspace, c: TouchControl, taken: Collection<String>): LibraryButton {
         val mappings = w.mappings.filter { MappingProfiles.touchId(it.source) == c.id }
         val used = setsOf(mappings)
-        return LibraryButton(newId(taken), c.copy(group = null), mappings, w.sets.filter { it.id in used }.map { it.copy(settings = null) })
+        return LibraryButton(newId(taken), c.copy(group = null, sizeSync = null), mappings, w.sets.filter { it.id in used }.map { it.copy(settings = null) })
     }
 
     /** [members] of [w] (a group, in its order) as one library item, given an id not in [taken]. */
@@ -59,10 +59,10 @@ object ButtonLibrary {
         val used = setsOf(mappings)
         return LibraryButton(
             newId(taken),
-            members.first().copy(group = null),
+            members.first().copy(group = null, sizeSync = null),
             mappings,
             w.sets.filter { it.id in used }.map { it.copy(settings = null) },
-            more = members.drop(1).map { it.copy(group = null) },
+            more = members.drop(1).map { it.copy(group = null, sizeSync = null) },
         )
     }
 
@@ -106,7 +106,7 @@ object ButtonLibrary {
      * mapping sets [w] does not have are added with those sets, so layer buttons keep working.
      */
     fun addTo(w: Workspace, b: LibraryButton, id: String, placed: (TouchControl) -> TouchControl): Workspace {
-        val control = placed(b.control.copy(id = id, group = null, display = b.control.display?.migrated()))
+        val control = placed(b.control.copy(id = id, group = null, sizeSync = null, display = b.control.display?.migrated()))
         val mappings = WorkspaceMappings.rekeyAll(b.mappings, b.control.id, id)
         val missing = setsOf(mappings).filter { set -> w.sets.none { it.id == set } }
         val added = missing.map { set -> b.sets.firstOrNull { it.id == set } ?: MappingSet(set) }
@@ -135,7 +135,7 @@ object ButtonLibrary {
         val mp = moved.portrait
         val controls = members.mapIndexed { i, c ->
             if (i == 0) {
-                moved.copy(group = group)
+                moved.copy(group = group, sizeSync = null)
             } else {
                 c.copy(
                     id = ids[i],

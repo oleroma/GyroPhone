@@ -269,9 +269,11 @@ private fun allows(allowed: Set<OutputTarget>, t: OutputTarget): Boolean {
         is OutputTarget.MouseAxis -> allowed.any { it is OutputTarget.MouseAxis && it.motion == t.motion }
         is OutputTarget.Key -> allowed.any { it is OutputTarget.Key }
         OutputTarget.GyroHold -> OutputTarget.GyroPause in allowed
-        // Layer actions, (Let go), Black screen, Set orientation, Clear displays and Nothing go where button outputs do.
+        // Layer actions, (Let go), Black screen, Set orientation, Clear displays, workspace switches,
+        // Fullscreen and Nothing go where button outputs do.
         is OutputTarget.Layer, OutputTarget.LayerBack, OutputTarget.LetGo, OutputTarget.BlackScreen,
-        is OutputTarget.SetOrientation, OutputTarget.ClearDisplays, OutputTarget.NoOutput ->
+        is OutputTarget.SetOrientation, OutputTarget.ClearDisplays, OutputTarget.NoOutput,
+        OutputTarget.PreviousWorkspace, OutputTarget.NextWorkspace, OutputTarget.Fullscreen ->
             allowed.any { it is OutputTarget.Key }
         else -> false
     }
@@ -1939,7 +1941,7 @@ internal fun ControlMappingScreen(
                                         val touch = !physical && !control.isTouchpadStandIn
                                         runtime.addToLibrary(
                                             LibraryButton(
-                                                ButtonLibrary.newId(library.map { it.id }), control.copy(group = null),
+                                                ButtonLibrary.newId(library.map { it.id }), control.copy(group = null, sizeSync = null),
                                                 mappings = if (touch) own else emptyList(), name = name,
                                                 chips = if (touch) emptyList() else buttonChips(view),
                                             ),

@@ -470,6 +470,21 @@ sealed interface OutputTarget {
     @SerialName("black_screen")
     data object BlackScreen : OutputTarget
 
+    /** The pad shows the workspace before this one (the last one with wrap-around). Nothing is sent to the PC. */
+    @Serializable
+    @SerialName("previous_workspace")
+    data object PreviousWorkspace : OutputTarget
+
+    /** The pad shows the workspace after this one (the first one with wrap-around). Nothing is sent to the PC. */
+    @Serializable
+    @SerialName("next_workspace")
+    data object NextWorkspace : OutputTarget
+
+    /** The pad goes fullscreen (the buttons at its top hide), or back. Nothing is sent to the PC. */
+    @Serializable
+    @SerialName("fullscreen")
+    data object Fullscreen : OutputTarget
+
     /**
      * Set orientation: the way the phone is held now becomes the workspace's base orientation
      * ([GyroSettings.yawAxis], Set grip) for everything gyro, and every gyro display in the
