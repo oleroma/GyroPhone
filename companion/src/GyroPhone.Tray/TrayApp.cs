@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using GyroPhone.Host;
 using GyroPhone.Host.Abstractions;
+using GyroPhone.Host.Perf;
 using GyroPhone.Host.Settings;
 using GyroPhone.Protocol;
 using GyroPhone.Protocol.Mapping;
@@ -37,6 +38,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     private readonly KeyFiles _keyFiles;
     private AuthorizedPhonesWatcher? _authorized;
     private readonly AoaUsbLink _usb;
+    /// <summary>The Performance page's frame watcher and test records (logs\perf).</summary>
+    private readonly PerfMonitor _perf;
     private IPadSink _pad;
     private string? _padError;
 
@@ -116,6 +119,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             Recorder = new InputRecorder(_inputLog.Write),
         };
         _engine.SetPcPad(new XInputPcPad(_log.Write, _clock));
+        _perf = new PerfMonitor(new FrameWatch(_log.Write), new SystemLoad(_log.Write), new Foreground(), _clock,
+            Path.Combine(_log.Directory, "perf"), _log.Write);
+        _engine.Recorder!.Timeline = _perf.Link;
         if (hostKey != null) _authorized = new AuthorizedPhonesWatcher(_keyFiles, _engine.SetAuthorizedPhones, _log.Write);
         PowerQos.TryDisableForProcess(_log.Write);
         _server = new UdpHostServer(_engine, _clock,
@@ -616,6 +622,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             w.Closed += (_, _) =>
             {
                 if (ReferenceEquals(_mainWindow, w)) _mainWindow = null;
+                // The frame watcher runs while the window is open; a test record keeps it on until it ends.
+                _perf.Watch(false);
             };
             _mainWindow = w;
         }
@@ -1198,6 +1206,35 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         _authorized?.Reload();
     }
 
+    public PerfMonitor Perf => _perf;
+
+    public bool AllowFrameWatch() => PerfPermission.Grant(_log.Write);
+
+    public void OpenPerfFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(_perf.Folder);
+            using var p = Process.Start(new ProcessStartInfo("explorer.exe", $"\"{_perf.Folder}\"") { UseShellExecute = true });
+        }
+        catch (Exception e) when (e is Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            _log.Write($"open performance folder failed: {e.GetType().Name}");
+        }
+    }
+
+    public void OpenFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path)) using (Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })) { }
+        }
+        catch (Exception e) when (e is Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            _log.Write($"open file failed: {e.GetType().Name}");
+        }
+    }
+
     public void OpenKeysFolder()
     {
         try
@@ -1589,6 +1626,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _engine.Shutdown();
             _server.Stop();
             _usb.Dispose();
+            _perf.Dispose();
             _watchdog.SaveSettings();
             var held = new byte[StateFrame.KeyBitmapSize];
             int version = _engine.HeldSnapshot(held, out byte mb);

@@ -15,6 +15,7 @@ public enum MainPage
     Overlays,
     Connection,
     Latency,
+    Performance,
     App,
 }
 
@@ -92,6 +93,7 @@ public sealed class MainWindow : Window
         Add(side, content, MainPage.Overlays, "Overlays", "", () => new OverlaysPage(app, this));
         Add(side, content, MainPage.Connection, "Connection", "", () => new ConnectionPage(app));
         Add(side, content, MainPage.Latency, "Latency test", "", () => new LatencyPage(app, this, icon));
+        Add(side, content, MainPage.Performance, "Performance", "\uE9D9", () => new PerformancePage(app));
         Add(side, content, MainPage.App, "App", "", () => new AppPage(app));
 
         Content = root;

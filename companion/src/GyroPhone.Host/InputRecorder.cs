@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using GyroPhone.Host.Perf;
 using GyroPhone.Protocol;
 
 namespace GyroPhone.Host;
@@ -97,13 +98,16 @@ public sealed class InputRecorder
     // This second.
     private long _sMaxLockWaitUs;
     private string? _sLockHolder;
-    private int _sStates, _sMoving, _sLost, _sLate, _sInjects, _sMaxStep, _sSlow, _sCatchUps, _sJumps, _sEvents, _sSkipped;
+    private int _sStates, _sMoving, _sLost, _sLate, _sGaps, _sReleases, _sInjects, _sMaxStep, _sSlow, _sCatchUps, _sJumps, _sEvents, _sSkipped;
     private long _sPx, _sMaxLateUs, _sMaxInjectUs;
     // Whole session.
     private long _tStates, _tLost, _tLate, _tHoldups, _tGaps, _tCatchUps, _tJumps, _tSlow, _tReleases, _tRefused;
     private readonly long[] _lateHist = new long[64]; // 1 ms buckets of extra delay, last = 63+ ms
 
     public InputRecorder(Action<string> write) => _write = write;
+
+    /// <summary>Gets each second's link numbers too, for the Performance page (null: none).</summary>
+    public LinkTimeline? Timeline { get; set; }
 
     /// <summary>Lines wait in a queue for <see cref="WritePending"/> instead of going to <c>write</c> at once.</summary>
     public bool Deferred { get; set; }
@@ -183,6 +187,7 @@ public sealed class InputRecorder
             if (!lost && span > PhoneGapUs && (_prevActive || active))
             {
                 _tGaps++;
+                _sGaps++;
                 if (EventAllowed()) Line(recvUs, "phone gap", $"phone sent nothing for {span / 1000.0:0.0} ms" + (_prevActive ? " while input was moving or held" : ""));
             }
             if (_inHoldup) _holdPhoneSpanMaxUs = Math.Max(_holdPhoneSpanMaxUs, span);
@@ -325,6 +330,7 @@ public sealed class InputRecorder
     {
         if (!_active) return;
         _tReleases++;
+        _sReleases++;
         if (EventAllowed()) Line(nowUs, "release", $"phone silent {Wire.ReleaseTimeoutMs} ms: let go of {held} held keys or buttons");
     }
 
@@ -347,12 +353,13 @@ public sealed class InputRecorder
         }
         if (_sSkipped > 0) _sb.Append(" (").Append(_sSkipped).Append(" more events not written)");
         Line(nowUs, "sec", _sb.ToString());
+        Timeline?.Add(new LinkSecond(nowUs, stats.RxPerSec, _sLost, _sLate, _sMaxLateUs / 1000f, _sGaps, _sReleases));
         ClearSecond();
     }
 
     private void ClearSecond()
     {
-        _sStates = _sMoving = _sLost = _sLate = _sInjects = _sMaxStep = _sSlow = _sCatchUps = _sJumps = _sEvents = _sSkipped = 0;
+        _sStates = _sMoving = _sLost = _sLate = _sGaps = _sReleases = _sInjects = _sMaxStep = _sSlow = _sCatchUps = _sJumps = _sEvents = _sSkipped = 0;
         _sPx = _sMaxLateUs = _sMaxInjectUs = _sMaxLockWaitUs = 0;
         _sLockHolder = null;
     }

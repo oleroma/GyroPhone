@@ -92,6 +92,18 @@ public interface ICompanion
     /// <summary>"Catch-up time", ms (0 = off).</summary>
     void SetCatchUpMs(int ms);
 
+    // Performance
+    /// <summary>The Performance page's frame watcher, link seconds and test records.</summary>
+    GyroPhone.Host.Perf.PerfMonitor Perf { get; }
+    /// <summary>
+    /// Adds the user to Windows' "Performance Log Users" (one admin prompt), so the frame watcher works without
+    /// admin from the next sign-in. True when added.
+    /// </summary>
+    bool AllowFrameWatch();
+    void OpenPerfFolder();
+    /// <summary>Opens a file in its default program.</summary>
+    void OpenFile(string path);
+
     // Overlays
     IReadOnlyList<OverlaySettings> Overlays { get; }
     OverlaySettings? OverlayOf(string id);
