@@ -31,7 +31,7 @@ internal sealed class PerformancePage : Page
     private readonly Seg<int> _length;
     private int _seconds = 180;
     private readonly Button _record;
-    private readonly TextBlock _pathLine, _recordSub;
+    private readonly TextBlock _pathLine, _busyLine, _recordSub;
     private readonly StackPanel _results = new();
     private string _resultsKey = "\0";
     private string? _setup;
@@ -129,6 +129,10 @@ internal sealed class PerformancePage : Page
         _pathLine = Parts.Text("", "Sub");
         _pathLine.Margin = new Thickness(0, 6, 0, 0);
         rb.Children.Add(_pathLine);
+        _busyLine = Parts.Text("", "Sub");
+        _busyLine.SetResourceReference(TextBlock.ForegroundProperty, "WarnTextBrush");
+        _busyLine.Margin = new Thickness(0, 6, 0, 0);
+        rb.Children.Add(_busyLine);
         _record = Parts.Button("Record", Record, "Accent", "");
         _record.Margin = new Thickness(0, 10, 0, 0);
         _record.HorizontalAlignment = HorizontalAlignment.Left;
@@ -157,6 +161,7 @@ internal sealed class PerformancePage : Page
     public override void Shown(bool on)
     {
         _shown = on;
+        _app.Perf.Check(on);
         _latency.Shown(on);
     }
 
@@ -278,6 +283,11 @@ internal sealed class PerformancePage : Page
             : picked && _setup != null && _setup != _name.Text ? $"⚠ The phone's packets go by {path.Value.Text}, not {_name.Text}. The record keeps the real path either way."
             : $"Detected: {path.Value.Text}.";
         _pathLine.SetResourceReference(TextBlock.ForegroundProperty, picked && _setup != null && _setup != _name.Text ? "WarnTextBrush" : "DimBrush");
+        // Other programs busy (a build, a scan, an update) spoil a test: say so before recording.
+        var busy = r == null ? p.Busy : null;
+        Parts.Show(_busyLine, busy != null);
+        if (busy != null)
+            _busyLine.Text = $"⚠ The PC is busy: {busy}. A build, scan or update running now can cause hitches the test would blame on the link; wait for it to end. Records mark busy seconds either way.";
         SetRecordText(r == null ? "Record" : "Stop");
         if (r != null)
             _recordSub.Text = $"Recording '{r.Name}': {Clock(r.Elapsed)}{(r.Seconds > 0 ? $" of {Clock(r.Seconds)}" : "")}.";
@@ -339,7 +349,7 @@ internal sealed class PerformancePage : Page
             "Phone-to-PC latency: typical (middle) · slowest 1%.", "How much the latency varied.",
             "Average frames per second (only with the FPS overlay on).", "The slowest 1% of frames, as frames per second.",
             "Frames at least twice as long as the ones before them, per minute.", "The longest frame.",
-            "All processors' busy time.", "Time the processors spent in drivers (network, Wi-Fi, USB), and the busiest single processor's.",
+            "All processors' busy time. ⚠ busy: seconds other programs (a build, a scan, an update) used 20% of the PC or more.", "Time the processors spent in drivers (network, Wi-Fi, USB), and the busiest single processor's.",
         ];
         var g = new Grid();
         for (int c = 0; c < heads.Length; c++)
@@ -389,7 +399,14 @@ internal sealed class PerformancePage : Page
             Cell(g, Num(fr ? $"{r.Low1Fps:0}" : "–", many && fr && r.Low1Fps >= bestLow), row, 11);
             Cell(g, Num(fr ? $"{r.JumpsPerMin:0.0}" : "–", many && fr && r.JumpsPerMin <= bestJumps), row, 12);
             Cell(g, Num(fr ? $"{r.WorstMs:0} ms" : "–", false), row, 13);
-            Cell(g, Num($"{r.CpuPct:0}%", false), row, 14);
+            var cpu = Num(r.BusySeconds > 0 ? $"{r.CpuPct:0}% ⚠ busy {r.BusySeconds} s" : $"{r.CpuPct:0}%", false);
+            if (r.BusySeconds > 0)
+            {
+                // Other programs (a build, a scan) kept the PC busy: this test isn't a fair one.
+                cpu.SetResourceReference(TextBlock.ForegroundProperty, "WarnTextBrush");
+                cpu.ToolTip = $"Other programs kept the PC busy for {r.BusySeconds} s, mostly {r.BusyTop}. Their hitches may not be the link's.";
+            }
+            Cell(g, cpu, row, 14);
             Cell(g, Num($"{r.DriverPct:0.0}% · {r.BusiestCoreDriverPct:0}%", false), row, 15);
         }
         _results.Children.Add(new ScrollViewer

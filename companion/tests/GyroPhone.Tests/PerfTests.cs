@@ -265,3 +265,38 @@ public class FpsCountTests
         Assert.Equal(0, s.View(t + 2_000_000).Fps);
     }
 }
+
+public class PcBusyTests
+{
+    private static LoadSample Load(params (string, double)[] top) =>
+        new(60, 1, 1, 5, [.. top.Select(t => new ProgramLoad(t.Item1, t.Item2))]);
+
+    [Fact]
+    public void GameAndGyroPhoneDontCount()
+    {
+        Assert.Null(PcBusy.Of(Load(("Discovery", 55), ("GyroPhoneCompanion", 6), ("dwm", 4), ("chrome", 3)), "Discovery", "GyroPhoneCompanion"));
+    }
+
+    [Fact]
+    public void ABuildIsNamed()
+    {
+        var b = PcBusy.Of(Load(("Discovery", 40), ("java", 31), ("dotnet", 9), ("chrome", 1)), "discovery", "GyroPhoneCompanion");
+        Assert.NotNull(b);
+        Assert.Equal("java 31%, dotnet 9%", b.Value.Text);
+        Assert.Equal("java", b.Value.Top);
+    }
+
+    [Fact]
+    public void RecordMarksBusySeconds()
+    {
+        var r = new PerfRecording("Phone hotspot", "Wi-Fi", 0, DateTime.Now, 0) { Self = "GyroPhoneCompanion" };
+        r.AddLoad(Load(("Discovery", 40), ("java", 30)), 500_000, "Discovery");
+        r.AddLoad(Load(("Discovery", 40), ("chrome", 3)), 1_500_000, "Discovery");
+        var link = new List<LinkSecond> { new(1_000_000, 400, 5, 0, 0, 0, 0), new(2_000_000, 400, 0, 0, 0, 0, 0) };
+        var (run, text) = r.Finish(2_000_000, link);
+        Assert.Equal(1, run.BusySeconds);
+        Assert.Equal("java", run.BusyTop);
+        Assert.Contains("WARNING: the PC was busy", text);
+        Assert.Contains("java 30%", text);
+    }
+}

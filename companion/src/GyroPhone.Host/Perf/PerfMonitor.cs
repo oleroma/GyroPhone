@@ -59,7 +59,8 @@ public sealed class PerfMonitor : IDisposable
     private readonly Dictionary<int, string?> _names = [];
     private readonly List<PerfRun> _runs = [];
     private Timer? _timer;
-    private bool _watch;
+    private bool _watch, _checking;
+    private string? _busy;
     private PerfRecording? _recording;
     private LoadSample? _lastLoad;
     private int _game;
@@ -95,7 +96,28 @@ public sealed class PerfMonitor : IDisposable
         }
     }
 
-    /// <summary>The PC's load in the last second, while watching.</summary>
+    /// <summary>
+    /// The programs other than the game and GyroPhone keeping the PC busy now ("java 45%, dotnet 12%"), or null;
+    /// known while <see cref="Check"/> is on or a record runs.
+    /// </summary>
+    public string? Busy
+    {
+        get { lock (_lock) return _busy; }
+    }
+
+    /// <summary>Samples the PC's load once a second for <see cref="Busy"/>: while the Performance page is shown.</summary>
+    public void Check(bool on)
+    {
+        lock (_lock)
+        {
+            if (_checking == on) return;
+            _checking = on;
+            if (!on) _busy = null;
+            Apply();
+        }
+    }
+
+    /// <summary>The PC's load in the last second, while checking or recording.</summary>
     public LoadSample? Load
     {
         get { lock (_lock) return _lastLoad; }
@@ -170,8 +192,8 @@ public sealed class PerfMonitor : IDisposable
             Error = null;
             _log("frame watch: off");
         }
-        // The timer runs while watching (picks the game) or recording (load, path, the end).
-        bool tick = State == FrameWatchState.On || _recording != null;
+        // The timer runs while watching (picks the game), checking (load) or recording (load, path, the end).
+        bool tick = State == FrameWatchState.On || _checking || _recording != null;
         if (tick) _timer ??= new Timer(_ => Tick(), null, 1000, 1000);
         else
         {
@@ -188,6 +210,7 @@ public sealed class PerfMonitor : IDisposable
             if (_recording != null) return;
             _recording = new PerfRecording(name.Trim().Length > 0 ? name.Trim() : link, link, _clock.NowUs, DateTime.Now, seconds);
             _recording.NotePath(PathNow?.Invoke());
+            _recording.Self = Name(Environment.ProcessId);
             _load?.Sample(); // starts its count from now
             Apply();
             Frames.Recording = _recording;
@@ -287,17 +310,23 @@ public sealed class PerfMonitor : IDisposable
             int game = State == FrameWatchState.On ? Frames.Tick(_foreground.ForegroundPid(), now) : 0;
             PerfRecording? r;
             lock (_lock) r = _recording;
-            // The PC's load: only for a record.
-            var load = r != null ? _load?.Sample() : null;
+            bool checking;
+            lock (_lock) checking = _checking;
+            // The PC's load: only for the page or a record.
+            var load = r != null || checking ? _load?.Sample() : null;
+            // Without the FPS overlay the game isn't known: the program in front stands for it.
+            string? front = load != null ? (game != 0 ? Name(game) : Name(_foreground.ForegroundPid())) : null;
+            var busy = load is { } ld ? PcBusy.Of(ld, front, Name(Environment.ProcessId))?.Text : null;
             lock (_lock)
             {
                 _game = game;
                 _lastLoad = load;
+                _busy = checking ? busy : null;
             }
             if (r == null) return;
             r.NotePath(PathNow?.Invoke());
             if (game != 0 && r.Game.Length == 0) r.Game = Name(game) ?? "";
-            if (load is { } l) r.AddLoad(l, now);
+            if (load is { } l) r.AddLoad(l, now, front);
             if (r.Seconds > 0 && now - r.StartUs >= r.Seconds * 1_000_000L) StopRecording();
         }
         catch (Exception e)
