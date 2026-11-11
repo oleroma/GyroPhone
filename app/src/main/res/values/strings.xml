@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">GyroPhone</string>
+    <string name="app_name">GP</string>
     <string name="notification_channel">Connection</string>
     <string name="notification_text">Sending input to %1$s</string>
     <string name="notification_idle">Waiting for a PC to connect</string>
