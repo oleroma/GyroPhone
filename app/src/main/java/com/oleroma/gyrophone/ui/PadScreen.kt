@@ -2602,23 +2602,51 @@ fun PadScreen(
                                             selected = id
                                             addOpen = false
                                         }
-                                        // Gyro displays: placed and sized like buttons, drawn under everything in play.
-                                        for (kind in GyroDisplayKind.entries) {
-                                            AddChip(kind.label, false) addDisplay@{ at ->
-                                                val d = draft ?: return@addDisplay
-                                                val wk = d.workspace(editIndex)
-                                                val id = freshId(wk, "disp", takenIds(d))
-                                                val (size, aspect) = GyroDisplay.newSize(kind)
-                                                val c = newControl(wk, id, TouchKind.DISPLAY, size, portrait).copy(
-                                                    shape = TouchShape.SQUARE,
-                                                    aspect = aspect,
-                                                    layer = TouchLayer.BACK,
-                                                    display = GyroDisplay.create(kind),
-                                                )
-                                                editWorkspace { it.copy(touchControls = it.touchControls + addAt(at, c)) }
-                                                selected = id
-                                                addOpen = false
-                                            }
+                                        // Gyro displays: one Display chip; tapping or dropping it asks which kind (each
+                                        // display is placed and sized like a button, drawn under everything in play).
+                                        // Holds where it was dropped (null: the middle) while the kind is picked.
+                                        var displayDrop by remember { mutableStateOf<Offset?>(null) }
+                                        var pickingDisplay by remember { mutableStateOf(false) }
+                                        AddChip("Display…", false) { at ->
+                                            displayDrop = at
+                                            pickingDisplay = true
+                                        }
+                                        if (pickingDisplay) {
+                                            AlertDialog(
+                                                onDismissRequest = { pickingDisplay = false },
+                                                title = { Text("Add display") },
+                                                text = {
+                                                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                                                        for (kind in GyroDisplayKind.entries) {
+                                                            Text(
+                                                                kind.label,
+                                                                style = MaterialTheme.typography.bodyLarge,
+                                                                modifier = Modifier
+                                                                    .fillMaxWidth()
+                                                                    .clickable addDisplay@{
+                                                                        pickingDisplay = false
+                                                                        val d = draft ?: return@addDisplay
+                                                                        val wk = d.workspace(editIndex)
+                                                                        val id = freshId(wk, "disp", takenIds(d))
+                                                                        val (size, aspect) = GyroDisplay.newSize(kind)
+                                                                        val c = newControl(wk, id, TouchKind.DISPLAY, size, portrait).copy(
+                                                                            shape = TouchShape.SQUARE,
+                                                                            aspect = aspect,
+                                                                            layer = TouchLayer.BACK,
+                                                                            display = GyroDisplay.create(kind),
+                                                                        )
+                                                                        editWorkspace { it.copy(touchControls = it.touchControls + addAt(displayDrop, c)) }
+                                                                        selected = id
+                                                                        addOpen = false
+                                                                    }
+                                                                    .padding(vertical = 12.dp),
+                                                            )
+                                                        }
+                                                    }
+                                                },
+                                                confirmButton = {},
+                                                dismissButton = { TextButton(onClick = { pickingDisplay = false }) { Text("Cancel") } },
+                                            )
                                         }
                                     } else {
                                         // Presets of a physical control or the touchpad stay in the mapping editor.
