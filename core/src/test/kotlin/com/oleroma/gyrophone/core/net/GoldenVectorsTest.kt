@@ -150,7 +150,7 @@ class GoldenVectorsTest {
 
     @Test fun keyboardUsagesMatchHidUsageNames() {
         val usages = root["keyboardUsages"]!!.jsonArray.map { it.jsonPrimitive.int }
-        assertEquals(122, usages.size)
+        assertEquals(123, usages.size)
         assertEquals(HidUsage.names.keys.sorted(), usages)
     }
 
@@ -233,7 +233,7 @@ class GoldenVectorsTest {
         name == "HOST_BYE" -> HostBye(f.int("reason"))
         name == "HOST_STATUS" -> HostStatus(
             f.u32("lastSeq"), f.int("rxPerSec"), f.int("lossPermille"), f.u32("latP50Us"), f.u32("latP99Us"),
-            f.u32("jitterUs"), f.int("outputMode"), f.int("flags"),
+            f.u32("jitterUs"), f.int("outputMode"), f.int("flags"), f.int("flags2"),
         )
         name == "RUMBLE" -> Rumble(f.int("large"), f.int("small"))
         else -> error("unknown vector $name")

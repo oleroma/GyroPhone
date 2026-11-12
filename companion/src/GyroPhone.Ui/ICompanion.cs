@@ -37,7 +37,13 @@ public sealed record CompanionView(
     string HostKey,
     string KeysFolder,
     string LogPath,
-    IReadOnlyList<Problem> Problems);
+    IReadOnlyList<Problem> Problems,
+    bool MeasureButtons = false,
+    ButtonLatency? Buttons = null,
+    bool InputLog = true,
+    int CatchUpMs = 16,
+    bool PressKeyNotice = true,
+    bool PressKeyListen = true);
 
 /// <summary>
 /// The tray app as the windows see it. Every setter saves the setting and refreshes the open windows,
@@ -50,6 +56,13 @@ public interface ICompanion
 
     /// <summary>The full status text (Home's "Details").</summary>
     string DetailsText();
+
+    // Latency
+    void ToggleMeasureButtons();
+    /// <summary>The latency test window is open: the phone shows its tracking markers.</summary>
+    void SetLatencyScreen(bool on);
+    /// <summary>A line in the companion's log.</summary>
+    void Log(string message);
 
     // Gamepad and input
     void SetOutputMode(OutputMode mode);
@@ -77,11 +90,39 @@ public interface ICompanion
     void SetTrayClick(TrayClickAction action);
     void OpenLogFolder();
     void ShowDebugWindow();
+    void ToggleInputLog();
+    /// <summary>"Use this PC's keys for Press a key".</summary>
+    void TogglePressKeyListen();
+    /// <summary>"Notify when the phone listens for a key".</summary>
+    void TogglePressKeyNotice();
+    /// <summary>"Catch-up time", ms (0 = off).</summary>
+    void SetCatchUpMs(int ms);
+
+    // Performance
+    /// <summary>The Performance page's frame watcher, link seconds and test records.</summary>
+    GyroPhone.Host.Perf.PerfMonitor Perf { get; }
+    /// <summary>
+    /// Adds the user to Windows' "Performance Log Users" (one admin prompt), so the frame watcher works without
+    /// admin from the next sign-in. True when added.
+    /// </summary>
+    bool AllowFrameWatch();
+    /// <summary>The way the phone's packets go now ("Phone hotspot · PC Wi-Fi") and which Record Setup that is, or null without a phone.</summary>
+    (string Text, string? Setup)? LinkPath();
+    void OpenPerfFolder();
+    /// <summary>Opens a file in its default program.</summary>
+    void OpenFile(string path);
 
     // Overlays
     IReadOnlyList<OverlaySettings> Overlays { get; }
     OverlaySettings? OverlayOf(string id);
     string OverlayName(OverlaySettings o);
+    /// <summary>Overlays saved as presets, named by their <see cref="OverlaySettings.Label"/>.</summary>
+    IReadOnlyList<OverlaySettings> OverlayPresets { get; }
+    void SaveOverlayPreset(string id, string name);
+    /// <summary>Adds a new overlay window from a preset; returns its id (null: the preset is gone).</summary>
+    string? AddOverlayFromPreset(string presetId);
+    void RenameOverlayPreset(string presetId, string name);
+    void RemoveOverlayPreset(string presetId);
     string? SelectedOverlay { get; }
     void SelectOverlay(string? id);
     void SetOverlayShown(string id, bool shown);
@@ -93,7 +134,14 @@ public interface ICompanion
     string AddOverlay(OverlayKind kind);
     void RemoveOverlay(string id);
     void LevelOverlay(string id);
+    /// <summary>Clears laser pointer overlay <paramref name="id"/>'s paint and trail.</summary>
+    void ClearOverlay(string id);
     void LevelAll();
+    /// <summary>"Fade when phone rests", for every overlay.</summary>
+    OverlayRestFade RestFade { get; }
+    void ChangeRestFade(Action<OverlayRestFade> change);
+    /// <summary>The phone's turning speed now (deg/s) from its overlay data, or null without any lately.</summary>
+    float? StillnessDps { get; }
 
     // Overlay shortcuts
     OverlayShortcuts Shortcuts { get; }

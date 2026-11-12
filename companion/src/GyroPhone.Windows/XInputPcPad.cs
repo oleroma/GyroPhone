@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using GyroPhone.Host;
 using GyroPhone.Host.Abstractions;
 using GyroPhone.Protocol;
 
@@ -35,6 +36,12 @@ public sealed class XInputPcPad : IPcPad, IDisposable
     private uint _held;
     private readonly float[] _axes = new float[6];
     private int _slot = -1;
+    // A copy of the held buttons, sticks and triggers that Peek reads without _gate (the overlay windows ask every
+    // frame): written under _gate after each change, read lock-free, so a reader never holds up this thread or gp-rx.
+    private readonly SeqLock _pub = new();
+    private uint _pubHeld;
+    private readonly float[] _pubAxes = new float[6];
+    private bool _pubOn;
     private Func<int> _ownSlot = () => -1;
     private Thread? _thread;
     /// <summary>The running reader's stop flag: each reader has its own, so a new one never revives an old one.</summary>
@@ -86,6 +93,30 @@ public sealed class XInputPcPad : IPcPad, IDisposable
             _history.Clear();
             Array.Clear(_axes);
             Volatile.Write(ref _slot, -1);
+            Publish();
+        }
+    }
+
+    /// <summary>Copies the state for <see cref="Peek"/>; under _gate.</summary>
+    private void Publish()
+    {
+        _pub.BeginWrite();
+        _pubHeld = _held;
+        _axes.CopyTo(_pubAxes, 0);
+        _pubOn = _slot >= 0;
+        _pub.EndWrite();
+    }
+
+    public bool Peek(out uint held, Span<float> axes)
+    {
+        int n = Math.Min(axes.Length, _pubAxes.Length);
+        while (true)
+        {
+            int s = _pub.ReadBegin();
+            held = _pubHeld;
+            _pubAxes.AsSpan(0, n).CopyTo(axes);
+            bool on = _pubOn;
+            if (!_pub.ReadRetry(s)) return on;
         }
     }
 
@@ -155,6 +186,7 @@ public sealed class XInputPcPad : IPcPad, IDisposable
                     {
                         if (run.Stopped) return;
                         Volatile.Write(ref _slot, slot);
+                        Publish();
                     }
                     if (slot >= 0) _log?.Invoke($"PC controller for gyro ratchet: reading XInput controller {slot + 1}");
                 }
@@ -172,6 +204,7 @@ public sealed class XInputPcPad : IPcPad, IDisposable
                             _history.Add(_clock.NowUs, 0);
                             Array.Clear(_axes);
                             Volatile.Write(ref _slot, -1);
+                            Publish();
                         }
                     }
                 }
@@ -232,6 +265,7 @@ public sealed class XInputPcPad : IPcPad, IDisposable
             _axes[3] = -Stick(g.ThumbRY);
             _axes[4] = g.LeftTrigger / 255f;
             _axes[5] = g.RightTrigger / 255f;
+            Publish();
         }
     }
 

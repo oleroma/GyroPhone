@@ -2,21 +2,21 @@
 
 ## Where it lives
 
-The companion is one self-contained exe at a fixed path, **`%LOCALAPPDATA%\Programs\GyroPhone\GyroPhoneCompanion.exe`**, so its firewall rule and Run entries stay valid across updates. Settings and keys are in `%APPDATA%\GyroPhone` and survive updates ([Companion](pc-companion.md)). No installer, no admin rights needed except for the firewall rule.
+The companion is one self-contained exe at a fixed path, **`%LOCALAPPDATA%\Programs\GyroPhone\GyroPhoneCompanion.exe`**, with OpenCV's two native DLLs beside it (used only by the latency test, so kept out of the exe), so its firewall rule and Run entries stay valid across updates. Settings and keys are in `%APPDATA%\GyroPhone` and survive updates ([Companion](pc-companion.md)). No installer, no admin rights needed except for the firewall rule.
 
 ## Installing a build
 
 `.agents/hooks/install` (run on the PC by `agent-install` after `agent-build pc`, see [Build and release](build-release.md)):
 
-1. **Companion**: copies the new exe in only when the installed one is from another build (the exe is stamped `<version>-<commit>`; `VERSION.txt` names the build in place). A running exe is never touched: the new build waits next to it as **`GyroPhoneCompanion.exe.new`**. With no companion or watcher running it is copied straight in.
+1. **Companion**: copies the new exe in only when the installed one is from another build (the exe is stamped `<version>-<commit>`; `VERSION.txt` names the build in place). A running exe is never touched: the new build waits next to it as **`GyroPhoneCompanion.exe.new`**. With no companion or watcher running it is copied straight in. Before the exe, OpenCV's DLLs are copied next to it when they differ from the installed ones; one that can't be replaced (a running companion loaded it for the latency test) waits as **`<dll>.new`**.
 2. **Key files**: copies the phone's `phone.pub` (over adb) to `%APPDATA%\GyroPhone\authorized_phones\` and the PC's `host.pub` to the phone's `keys/trusted_hosts/`, so the phone connects over Wi-Fi with no code. Only public keys move. A PC whose companion never ran gets its key from `GyroPhoneCompanion.exe --init-keys` (makes the key and exits, no window).
 3. It never starts or closes the apps.
 
-The APK is installed by `agent-install` with `adb install -r` (an in-place update; same debug signing key `keystore/debug.keystore`, never an uninstall).
+The APK (the release build type) is installed by `agent-install` with `adb install -r` (an in-place update; same signing key `keystore/debug.keystore`, never an uninstall).
 
 ## Self-update
 
-`GyroPhone.Tray/CompanionUpdater.cs` checks every 5 s for `<exe>.new`. When one is there, the running companion stops the watcher, starts the new build as an **update finisher** (`GyroPhoneCompanion.exe.new --finish-update <pid> [--tray] [--watch]`) and exits cleanly (release-all, HOST_BYE EXIT). The finisher (`UpdateFinisher.cs`) waits for it to exit, copies itself over the exe (retrying while the file is still held), and starts the companion and/or watcher again from the usual path with `--updated`, which then says it was updated. It always restarts, even with a phone connected; the phone reconnects by itself (it waits up to 15 s for a PC that said it exited before trying another).
+`GyroPhone.Tray/CompanionUpdater.cs` watches the exe's folder for `<exe>.new` (a FileSystemWatcher; it checks 300 ms after the last event, so a copy still in progress is waited out) and also checks every 5 s in case an event is missed. When one is there, the running companion stops the watcher, starts the new build as an **update finisher** (`GyroPhoneCompanion.exe.new --finish-update <pid> [--tray] [--watch]`) and exits cleanly (release-all, HOST_BYE EXIT). The finisher (`UpdateFinisher.cs`) waits for it to exit, copies itself over the exe (retrying while the file is still held), moves in any `<dll>.new` waiting beside it (only once the exe copy worked; one that still can't be moved keeps waiting for the next update), and starts the companion and/or watcher again from the usual path with `--updated`, which then says it was updated. It always restarts, even with a phone connected; the phone reconnects by itself (it waits up to 15 s for a PC that said it exited before trying another).
 
 If the copy fails, the old build starts again with `--update-failed` and doesn't retry that `.new` until it is installed again. While only the watcher runs, the watcher does the same. Local builds (no CI version) never update themselves.
 
@@ -24,7 +24,7 @@ If the copy fails, the old build starts again with `--update-failed` and doesn't
 
 - **Start with Windows** (App page, default off): the `GyroPhoneCompanion` entry in the per-user Run key (`AutoStart`).
 - **Start when my phone appears** (App page): the `GyroPhoneWatcher` Run entry runs `--watch` at login ([Companion](pc-companion.md#watcher)). Besides Start with Windows, this is the only way the companion starts by itself.
-- One companion per session (a named mutex); `--restarted` (from Restart as administrator) waits for the old one to exit.
+- One companion per session (a named mutex); `--restarted` (from Restart as administrator or an update) waits up to 30 s for the old one to exit, and if it still hasn't, says the previous copy is still closing.
 
 ## Firewall
 
@@ -32,7 +32,7 @@ If the copy fails, the old build starts again with `--update-failed` and doesn't
 
 ## Direct USB cable
 
-With **USB direct** on (default), `GyroPhone.Windows/AoaUsb.cs` switches a phone on the PC's USB port into Android Open Accessory mode (the phone must be in "No data transfer" mode) and `UsbBridge` carries the cable into the UDP server on loopback ([Connection](phone-connection.md#usb)).
+With **USB direct** on (default), `GyroPhone.Windows/AoaUsb.cs` switches a phone on the PC's USB port into Android Open Accessory mode (the phone must be in "No data transfer" mode) and `UsbBridge` carries the cable into the UDP server on loopback ([Connection](phone-connection.md#usb)). Thread gp-usb looks at the USB devices when Windows reports a device interface arriving or leaving (`DeviceChangeNotifier`, CM_Register_Notification), so each step of the switch and a pulled cable are handled at once; it also looks every 250 ms while the phone is switching and once a second otherwise, in case a notification is missed.
 
 ## Key files
 

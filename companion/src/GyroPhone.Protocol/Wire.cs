@@ -28,6 +28,8 @@ public static class Wire
     public const int HelloSize = 68;
     public const int WelcomeSize = 80;
     public const int ErrorSize = 16;
+    /// <summary>LINK_TEST_CTL: u16 seconds@12 (0 = stop), 2 reserved bytes; only from this PC (loopback).</summary>
+    public const int LinkTestCtlSize = 16;
     /// <summary>QR code pairing: the phone's key, MACed with the QR's one-time token.</summary>
     public const int KeyEnrollSize = 137;
     public const int KeyEnrollAckSize = 41;
@@ -45,8 +47,10 @@ public static class Wire
     public const int LinkInfoPlain = 22;
     public const int ByePlain = 4;
     public const int PongPlain = 24;
-    public const int HostStatusPlain = 22;
+    public const int HostStatusPlain = 23;
     public const int RumblePlain = 4;
+    /// <summary>KEY_LABELS: u32 layout id, then a u16 character per <see cref="KeyLabels.Usages"/> key.</summary>
+    public static readonly int KeyLabelsPlain = 4 + 2 * KeyLabels.Usages.Length;
     public const int ForegroundPlain = 66;
     /// <summary>OVERLAY: the phone's pose, touches and presses for the phone overlay (<see cref="OverlayFrame"/>).</summary>
     public const int OverlayPlain = 152;
@@ -54,6 +58,17 @@ public static class Wire
     public const int OverlayLayoutPlain = 200;
     /// <summary>MOTION: the phone's raw gyro and accelerometer samples for the DualShock 4 (<see cref="MotionFrame"/>).</summary>
     public const int MotionPlain = MotionFrame.Size;
+    /// <summary>PRESS_TIME: u32 STATE time, u32 input event time (low 32 bits of the phone's µs clock).</summary>
+    public const int PressTimePlain = 8;
+    /// <summary>TEST_MODE: u8 <see cref="TestModeFlags"/>, 3 reserved bytes.</summary>
+    public const int TestModePlain = 4;
+    /// <summary>CAPTURE: u8 <see cref="CaptureFlags"/>, 3 reserved bytes.</summary>
+    public const int CapturePlain = 4;
+    /// <summary>CAPTURED: u8 count, u8 0, then <see cref="CapturedMax"/> × 4 bytes (kind u8, arg i8, code u16), unused ones zero.</summary>
+    public const int CapturedPlain = 64;
+    public const int CapturedMax = 15;
+    /// <summary>The PC stops listening this long after the last CAPTURE that was on (the phone resends it every second).</summary>
+    public const int CaptureTimeoutMs = 3000;
 
     public static readonly int[] RatesHz = [250, 500, 1000];
     public const int DefaultRateHz = 1000;
@@ -64,6 +79,13 @@ public static class Wire
     public const int SessionTimeoutMs = 10000;
     public const int PendingSessionMs = 2000;
     public const int WatchdogTickMs = 50;
+    /// <summary>
+    /// KEEP_AWAKE period. A Wi-Fi client in power save wakes only at each beacon (about 100 ms), so while the phone
+    /// sends little (held still) its packets arrive in 100 ms batches; a packet sent to the phone this often keeps the
+    /// PC's radio awake.
+    /// </summary>
+    public const int KeepAwakeMs = 10;
+    public const int KeepAwakePlain = 4;
     public const int PingIntervalMs = 1000;
     public const int StatusIntervalMs = 1000;
     public const int HostSilentMs = 3000;
@@ -191,6 +213,11 @@ public enum OutputMode : byte
     None = 0,
     Xbox360 = 1,
     DualShock4 = 2,
+    /// <summary>
+    /// A DualSense through the optional GyroPhone pad driver (driver/), shown only when that driver is
+    /// installed. The phone doesn't know this value yet and treats it like "no DualShock 4" (no MOTION).
+    /// </summary>
+    DualSense = 3,
 }
 
 /// <summary>STATE flags.</summary>
@@ -199,6 +226,8 @@ public static class StateFlags
     public const ushort GyroActive = 1 << 0;
     public const ushort Repeat = 1 << 1;
     public const ushort Keepalive = 1 << 2;
+    /// <summary>A Link test packet: fake input to count, never to inject.</summary>
+    public const ushort LinkTest = 1 << 3;
 }
 
 /// <summary>LINK_INFO flags.</summary>
@@ -218,9 +247,37 @@ public static class LinkInfoFlags
     /// <summary>With DebugTrace: a 3-bit counter; the PC saves its last 30 s of debug log when it changes.</summary>
     public const byte DebugSaveMask = 0x70;
     public const int DebugSaveShift = 4;
+
+    /// <summary>The phone sends over a wired Ethernet adapter (the Wi-Fi fields are then not this link's).</summary>
+    public const byte Ethernet = 0x80;
 }
 
 /// <summary>HOST_STATUS flags.</summary>
+/// <summary>TEST_MODE flags: the latency tests the phone takes part in.</summary>
+/// <summary>CAPTURE flags.</summary>
+public static class CaptureFlags
+{
+    /// <summary>The phone's "Press a key" screen is open: the PC reads its keyboard, mouse and controller (read-only, never held back) and sends CAPTURED.</summary>
+    public const byte On = 1 << 0;
+}
+
+public static class TestModeFlags
+{
+    /// <summary>"Measure buttons" is on: the phone sends PRESS_TIME for each press and release.</summary>
+    public const byte PressTimes = 1 << 0;
+    /// <summary>The latency test window is open: the phone's pad shows the tracking markers.</summary>
+    public const byte LatencyScreen = 1 << 1;
+    /// <summary>A Link test runs: the phone sends fake moving input at its full rate, marked <see cref="StateFlags.LinkTest"/>.</summary>
+    public const byte LinkTest = 1 << 2;
+}
+
+/// <summary>HOST_STATUS's second flags byte (byte 22).</summary>
+public static class HostStatusFlags2
+{
+    /// <summary>"Use the phone over the USB cable" is on: the phone tries the cable now (else it leaves a cable nobody answers on alone).</summary>
+    public const byte UsbDirect = 1 << 0;
+}
+
 public static class HostStatusFlags
 {
     public const byte VigemOk = 1 << 0;

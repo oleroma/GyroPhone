@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.DirField
 import com.oleroma.gyrophone.core.model.DirSettings
 import com.oleroma.gyrophone.core.model.Direction
@@ -45,20 +46,25 @@ internal const val MAX_SURFACE_SENS = 50f
 
 /**
  * The settings a touch surface's actions share (the mapping editor's Settings, and a workspace's
- * own settings), as categories: movement and scrolling, Move directions, quick swipes, held swipes
- * and length zones. Each shows [level]'s value, highlighted with a ↺ where it differs from the
- * parent. [touchpad]: the workspace touchpad, with its own on / off. [zones]: how many length
- * zones each direction has mapped. Their ids are the same at every level, so they keep one order.
+ * own settings), as one category named [title] (the workspace's Touchpad, a button's Swipes), in
+ * groups: Cursor & scrolling, Move X & Y, Quick swipes, Held swipes and Length zones. Each shows
+ * [level]'s value, highlighted with a ↺ where it differs from the parent. [touchpad]: the workspace
+ * touchpad, with its own on / off. [zones]: how many length zones each direction has mapped. Its id
+ * is the same at every level, so it keeps one place in the order.
  */
-internal fun surfaceCategories(runtime: GamepadRuntime, level: SurfaceLevel, key: String, zones: IntArray, touchpad: Boolean): List<SectionItem> = listOf(
-    category(runtime, "movement", "Movement & scrolling", "Speed, acceleration, scrolling, inertia, cursor deadzone") {
+internal fun surfaceCategory(runtime: GamepadRuntime, title: String, level: SurfaceLevel, key: String, zones: IntArray, touchpad: Boolean): SectionItem =
+    category(runtime, "touchpad", title, "Cursor and scrolling, Move X & Y, quick and held swipes, length zones") {
+        SettingsGroupTitle("Cursor & scrolling", first = true)
         SurfaceMovement(level, key, touchpad)
-    },
-    category(runtime, "move", "Move directions", "How Move X and Move Y pick their way, pies, heading lock") { SurfaceMove(level, key) },
-    category(runtime, "quickSwipe", "Quick swipe", "Pies, distance and heading lock of quick swipes") { SurfaceQuickSwipe(level, key) },
-    category(runtime, "swipe", "Swipe", "Held directions: hold mode, pies, distance, drag start point") { SurfaceSwipe(level, key, zones) },
-    category(runtime, "zones", "Length zones", "Zones further along a held direction") { SurfaceZones(level, key, zones) },
-)
+        SettingsGroupTitle("Move X & Y")
+        SurfaceMove(level, key)
+        SettingsGroupTitle("Quick swipes")
+        SurfaceQuickSwipe(level, key)
+        SettingsGroupTitle("Held swipes")
+        SurfaceSwipe(level, key, zones)
+        SettingsGroupTitle("Length zones")
+        SurfaceZones(level, key, zones)
+    }
 
 @Composable
 private fun SurfaceMovement(level: SurfaceLevel, key: String, touchpad: Boolean) {
@@ -68,57 +74,57 @@ private fun SurfaceMovement(level: SurfaceLevel, key: String, touchpad: Boolean)
     fun own(f: SurfaceField) = level.isOwn(f)
     fun reset(f: SurfaceField): () -> Unit = { current.reset(f) }
     if (touchpad) {
-        OverrideSwitch("Enabled", null, s.enabled, own(SurfaceField.ENABLED), reset(SurfaceField.ENABLED)) { v ->
+        OverrideSwitch("Enabled", null, s.enabled, own(SurfaceField.ENABLED), reset(SurfaceField.ENABLED), children = level.kids(SurfaceField.ENABLED)) { v ->
             edit { it.copy(enabled = v) }
         }
         DirNote("Touchpad buttons use these too, unless they set their own (their Mappings, ⚙ Settings).")
     }
     DirNote("Every Move X and Move Y uses these unless its ⚙ sets its own, for each finger count.")
     OverrideSlider(
-        key + "sx", "Sensitivity %.1f", s.sensitivity, 0f..MAX_SURFACE_SENS, 0.1f, own(SurfaceField.SENSITIVITY), reset(SurfaceField.SENSITIVITY),
+        key + "sx", "Sensitivity %.1f", s.sensitivity, 0f..MAX_SURFACE_SENS, 0.1f, own(SurfaceField.SENSITIVITY), reset(SurfaceField.SENSITIVITY), children = level.kids(SurfaceField.SENSITIVITY),
         hint = "Counts per dp of finger travel. A Move X or Y's ⚙ can set its own: 0 turns that direction off.",
     ) { v -> edit { it.copy(sensitivity = v) } }
-    OverrideSlider(key + "acc", "Acceleration %.1f", s.acceleration, 0f..2f, 0.1f, own(SurfaceField.ACCELERATION), reset(SurfaceField.ACCELERATION)) { v ->
+    OverrideSlider(key + "acc", "Acceleration %.1f", s.acceleration, 0f..2f, 0.1f, own(SurfaceField.ACCELERATION), reset(SurfaceField.ACCELERATION), children = level.kids(SurfaceField.ACCELERATION)) { v ->
         edit { it.copy(acceleration = v) }
     }
-    OverrideSlider(key + "scroll", "Scroll speed %.2f", s.scrollSpeed, 0.25f..3f, 0.05f, own(SurfaceField.SCROLL_SPEED), reset(SurfaceField.SCROLL_SPEED)) { v ->
+    OverrideSlider(key + "scroll", "Scroll speed %.2f", s.scrollSpeed, 0.25f..3f, 0.05f, own(SurfaceField.SCROLL_SPEED), reset(SurfaceField.SCROLL_SPEED), children = level.kids(SurfaceField.SCROLL_SPEED)) { v ->
         edit { it.copy(scrollSpeed = v) }
     }
     OverrideSwitch(
         "Natural scrolling",
         if (s.naturalScroll) "Content follows the fingers." else "Content moves against the fingers.",
-        s.naturalScroll, own(SurfaceField.NATURAL_SCROLL), reset(SurfaceField.NATURAL_SCROLL),
+        s.naturalScroll, own(SurfaceField.NATURAL_SCROLL), reset(SurfaceField.NATURAL_SCROLL), children = level.kids(SurfaceField.NATURAL_SCROLL),
     ) { v -> edit { it.copy(naturalScroll = v) } }
     OverrideSwitch(
         "Inertia",
         (if (s.inertia) "A Move keeps going after a flick, cursor and scrolling alike." else "Moves stop when the fingers lift.") +
             " Each Move X / Y ⚙ can set its own; built in, the one-finger cursor's is off.",
-        s.inertia, own(SurfaceField.INERTIA), reset(SurfaceField.INERTIA),
+        s.inertia, own(SurfaceField.INERTIA), reset(SurfaceField.INERTIA), children = level.kids(SurfaceField.INERTIA),
     ) { v -> edit { it.copy(inertia = v) } }
-    InertiaCurveRow(s.inertiaCurve, own(SurfaceField.INERTIA_CURVE), reset(SurfaceField.INERTIA_CURVE)) { c -> edit { it.copy(inertiaCurve = c) } }
+    InertiaCurveRow(s.inertiaCurve, own(SurfaceField.INERTIA_CURVE), reset(SurfaceField.INERTIA_CURVE), children = level.kids(SurfaceField.INERTIA_CURVE)) { c -> edit { it.copy(inertiaCurve = c) } }
     OverrideSlider(
         key + "glide", "Glide %.0f ms", s.inertiaGlideMs, TouchpadSettings.MIN_GLIDE_MS..TouchpadSettings.MAX_GLIDE_MS, 5f,
-        own(SurfaceField.INERTIA_GLIDE), reset(SurfaceField.INERTIA_GLIDE), hint = GLIDE_HINT,
+        own(SurfaceField.INERTIA_GLIDE), reset(SurfaceField.INERTIA_GLIDE), children = level.kids(SurfaceField.INERTIA_GLIDE), hint = GLIDE_HINT,
     ) { v -> edit { it.copy(inertiaGlideMs = v) } }
     OverrideSlider(
         key + "dz", if (s.cursorDeadzoneDp < 1f) "Cursor deadzone: off" else "Cursor deadzone %.0f dp",
-        s.cursorDeadzoneDp, 0f..TouchpadSettings.MAX_CURSOR_DEADZONE_DP, 1f, own(SurfaceField.CURSOR_DEADZONE), reset(SurfaceField.CURSOR_DEADZONE),
+        s.cursorDeadzoneDp, 0f..TouchpadSettings.MAX_CURSOR_DEADZONE_DP, 1f, own(SurfaceField.CURSOR_DEADZONE), reset(SurfaceField.CURSOR_DEADZONE), children = level.kids(SurfaceField.CURSOR_DEADZONE),
         hint = "One finger: the cursor stays still until the finger has moved this far, then catches up with it.",
     ) { v -> edit { it.copy(cursorDeadzoneDp = v) } }
     if (s.cursorDeadzoneDp > 0f) {
         OverrideSlider(
             key + "catch", if (s.catchUpMs < 1) "Catch-up: instant" else "Catch-up %.0f ms",
-            s.catchUpMs.toFloat(), 0f..TouchpadSettings.MAX_CATCH_UP_MS.toFloat(), 10f, own(SurfaceField.CATCH_UP), reset(SurfaceField.CATCH_UP),
+            s.catchUpMs.toFloat(), 0f..TouchpadSettings.MAX_CATCH_UP_MS.toFloat(), 10f, own(SurfaceField.CATCH_UP), reset(SurfaceField.CATCH_UP), children = level.kids(SurfaceField.CATCH_UP),
         ) { v -> edit { it.copy(catchUpMs = v.roundToInt()) } }
         OverrideSlider(
             key + "rearm", if (s.deadzoneRearmMs < 1) "Re-arm: off" else "Re-arm after %.0f ms still",
-            s.deadzoneRearmMs.toFloat(), 0f..TouchpadSettings.MAX_REARM_MS.toFloat(), 10f, own(SurfaceField.REARM), reset(SurfaceField.REARM),
+            s.deadzoneRearmMs.toFloat(), 0f..TouchpadSettings.MAX_REARM_MS.toFloat(), 10f, own(SurfaceField.REARM), reset(SurfaceField.REARM), children = level.kids(SurfaceField.REARM),
             hint = "The deadzone arms again once the finger stands still this long. Off: once per touch.",
         ) { v -> edit { it.copy(deadzoneRearmMs = v.roundToInt()) } }
         if (s.deadzoneRearmMs > 0) {
             OverrideSlider(
                 key + "still", "Still within %.1f dp", s.deadzoneStillDp, 0f..TouchpadSettings.MAX_STILL_DP, 0.5f,
-                own(SurfaceField.STILL), reset(SurfaceField.STILL),
+                own(SurfaceField.STILL), reset(SurfaceField.STILL), children = level.kids(SurfaceField.STILL),
                 hint = "Movement smaller than this still counts as standing still.",
             ) { v -> edit { it.copy(deadzoneStillDp = v) } }
         }
@@ -133,28 +139,28 @@ private fun SurfaceMove(level: SurfaceLevel, key: String) {
     fun own(f: SurfaceField) = level.isOwn(f)
     fun reset(f: SurfaceField): () -> Unit = { current.reset(f) }
     OverrideRow(
-        "Direction", own(SurfaceField.MOVE_MODE), reset(SurfaceField.MOVE_MODE),
+        "Direction", own(SurfaceField.MOVE_MODE), reset(SurfaceField.MOVE_MODE), children = level.kids(SurfaceField.MOVE_MODE),
         hint = moveModeHint(s.moveMode) + " Each Move X / Y ⚙ can set its own.",
     ) { MoveModeChips(s.moveMode) { m -> edit { it.copy(moveMode = m) } } }
     if (s.moveMode != MoveMode.FREE) {
         SharedPies(level, key, PieKind.MOVE)
         OverrideSwitch(
-            "Lock heading", LOCK_HINT, s.moveLock, own(SurfaceField.MOVE_LOCK), reset(SurfaceField.MOVE_LOCK),
+            "Lock heading", LOCK_HINT, s.moveLock, own(SurfaceField.MOVE_LOCK), reset(SurfaceField.MOVE_LOCK), children = level.kids(SurfaceField.MOVE_LOCK),
         ) { v -> edit { it.copy(moveLock = v) } }
         if (s.moveLock) {
             OverrideSlider(
                 key + "turn", "Turn after %.1f dp", s.moveTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
-                own(SurfaceField.MOVE_TURN), reset(SurfaceField.MOVE_TURN), hint = TURN_HINT,
+                own(SurfaceField.MOVE_TURN), reset(SurfaceField.MOVE_TURN), children = level.kids(SurfaceField.MOVE_TURN), hint = TURN_HINT,
             ) { v -> edit { it.copy(moveTurnDp = v) } }
         }
         OverrideSlider(
             key + "margin", if (s.movePieMargin < 1f) "Pie margin: off" else "Pie margin %.0f°",
             s.movePieMargin, 0f..TouchpadSettings.MAX_MOVE_PIE_MARGIN, 1f,
-            own(SurfaceField.MOVE_PIE_MARGIN), reset(SurfaceField.MOVE_PIE_MARGIN), hint = MARGIN_HINT,
+            own(SurfaceField.MOVE_PIE_MARGIN), reset(SurfaceField.MOVE_PIE_MARGIN), children = level.kids(SurfaceField.MOVE_PIE_MARGIN), hint = MARGIN_HINT,
         ) { v -> edit { it.copy(movePieMargin = v) } }
     }
     OverrideSwitch(
-        "Swipe stops Move", HOLD_STOPS_HINT, s.holdStopsMove, own(SurfaceField.HOLD_STOPS_MOVE), reset(SurfaceField.HOLD_STOPS_MOVE),
+        "Swipe stops Move", HOLD_STOPS_HINT, s.holdStopsMove, own(SurfaceField.HOLD_STOPS_MOVE), reset(SurfaceField.HOLD_STOPS_MOVE), children = level.kids(SurfaceField.HOLD_STOPS_MOVE),
     ) { v -> edit { it.copy(holdStopsMove = v) } }
 }
 
@@ -168,7 +174,7 @@ private fun SurfaceQuickSwipe(level: SurfaceLevel, key: String) {
     SharedPies(level, key, PieKind.SWIPE)
     OverrideSlider(
         key + "swipe", "Quick swipe after %.0f dp", s.swipeDp,
-        TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f, own(SurfaceField.SWIPE), reset(SurfaceField.SWIPE),
+        TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f, own(SurfaceField.SWIPE), reset(SurfaceField.SWIPE), children = level.kids(SurfaceField.SWIPE),
         hint = "Measured along the direction, from where the finger turned into it. Each new direction swipes again.",
     ) { v -> edit { it.copy(swipeDp = v) } }
     ChildOverrides(level, DirField.SWIPE)
@@ -176,13 +182,13 @@ private fun SurfaceQuickSwipe(level: SurfaceLevel, key: String) {
         "Lock heading",
         "A quick swipe keeps the way it locked into until the finger heads another way for Turn after, so the wobble " +
                 "at each turnaround of a sideways stroke can't fire Quick swipe up or down.",
-        s.swipeLock, own(SurfaceField.SWIPE_LOCK), reset(SurfaceField.SWIPE_LOCK),
+        s.swipeLock, own(SurfaceField.SWIPE_LOCK), reset(SurfaceField.SWIPE_LOCK), children = level.kids(SurfaceField.SWIPE_LOCK),
     ) { v -> edit { it.copy(swipeLock = v) } }
     ChildOverrides(level, DirField.SWIPE_LOCK)
     if (s.swipeLock) {
         OverrideSlider(
             key + "swipeturn", "Turn after %.1f dp", s.swipeTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
-            own(SurfaceField.SWIPE_TURN), reset(SurfaceField.SWIPE_TURN),
+            own(SurfaceField.SWIPE_TURN), reset(SurfaceField.SWIPE_TURN), children = level.kids(SurfaceField.SWIPE_TURN),
             hint = "How far the finger must head another way, on end, before the quick swipe turns there. That travel counts for the new way.",
         ) { v -> edit { it.copy(swipeTurnDp = v) } }
     }
@@ -200,6 +206,7 @@ private fun SurfaceSwipe(level: SurfaceLevel, key: String, zones: IntArray) {
         "Hold mode",
         own(SurfaceField.HOLD_MODE),
         reset(SurfaceField.HOLD_MODE),
+        children = level.kids(SurfaceField.HOLD_MODE),
         hint = if (s.holdMode == HoldMode.FROM_START) "Held while the finger is past the hold distance from the start point, like a floating stick: sliding back lets go."
         else "Held once the finger has gone the hold distance that way, until it goes another way as far or lifts. There is no neutral spot. " +
                 "Pies of 90° (Larger axis) keep one direction at a time.",
@@ -211,7 +218,7 @@ private fun SurfaceSwipe(level: SurfaceLevel, key: String, zones: IntArray) {
     SharedPies(level, key, PieKind.HOLD)
     OverrideSlider(
         key + "hold", "Hold after %.0f dp", s.holdDp,
-        TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f, own(SurfaceField.HOLD), reset(SurfaceField.HOLD),
+        TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f, own(SurfaceField.HOLD), reset(SurfaceField.HOLD), children = level.kids(SurfaceField.HOLD),
     ) { v -> edit { it.copy(holdDp = v) } }
     ChildOverrides(level, DirField.HOLD)
     OverrideSwitch(
@@ -220,13 +227,13 @@ private fun SurfaceSwipe(level: SurfaceLevel, key: String, zones: IntArray) {
                 "drift never adds up: up / down count from where the finger turned up / down. "
         else "A held direction keeps the way it locked into until the finger heads another way for Turn after. ") +
                 "Pies of 180° count as 90° for the heading; wider than 90° lets diagonals hold both.",
-        s.holdLock, own(SurfaceField.HOLD_LOCK), reset(SurfaceField.HOLD_LOCK),
+        s.holdLock, own(SurfaceField.HOLD_LOCK), reset(SurfaceField.HOLD_LOCK), children = level.kids(SurfaceField.HOLD_LOCK),
     ) { v -> edit { it.copy(holdLock = v) } }
     ChildOverrides(level, DirField.HOLD_LOCK)
     if (s.holdLock) {
         OverrideSlider(
             key + "holdturn", "Turn after %.1f dp", s.holdTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
-            own(SurfaceField.HOLD_TURN), reset(SurfaceField.HOLD_TURN),
+            own(SurfaceField.HOLD_TURN), reset(SurfaceField.HOLD_TURN), children = level.kids(SurfaceField.HOLD_TURN),
             hint = "How far the finger must head another way, on end, before the held heading turns there.",
         ) { v -> edit { it.copy(holdTurnDp = v) } }
     }
@@ -237,13 +244,13 @@ private fun SurfaceSwipe(level: SurfaceLevel, key: String, zones: IntArray) {
             "Drag start point",
             if (zoned && !s.dragStart) "Off while held directions have length zones: they need the start point to stay put."
             else "The start point follows the finger, so sliding back only the release travel lets go, wherever the finger is.",
-            s.dragStart, own(SurfaceField.DRAG_START), reset(SurfaceField.DRAG_START),
+            s.dragStart, own(SurfaceField.DRAG_START), reset(SurfaceField.DRAG_START), children = level.kids(SurfaceField.DRAG_START),
             enabled = s.dragStart || !zoned,
         ) { v -> edit { it.copy(dragStart = v) } }
         if (s.dragStart) {
             OverrideSlider(
                 key + "release", "Release after %.0f dp back", s.releaseDp, 0f..TouchpadSettings.MAX_RELEASE_DP, 1f,
-                own(SurfaceField.RELEASE), reset(SurfaceField.RELEASE),
+                own(SurfaceField.RELEASE), reset(SurfaceField.RELEASE), children = level.kids(SurfaceField.RELEASE),
             ) { v -> edit { it.copy(releaseDp = v) } }
         }
     }
@@ -286,13 +293,13 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
         PiePicture(if (hold) PieKind.HOLD else PieKind.SWIPE, shown = 1 shl d.ordinal) { live ?: s.pieDeg(it, hold) }
         OverrideSlider(
             k + "pie", "Pie %.0f°", s.pieDeg(d, hold), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
-            own(pie), reset(pie),
+            own(pie), reset(pie), children = level.kids(d, pie),
             hint = if (hold) "Where a held ${d.label} counts. Its Quick swipe has a pie of its own." else "Where a quick swipe ${d.label} counts. Its Swipe has a pie of its own.",
             onLive = { live = it },
         ) { v -> edit { if (hold) it.copy(holdPie = v) else it.copy(swipePie = v) } }
         OverrideSlider(
             k + "sample", "Sample %.1f dp", s.sampleDp(d, hold), TouchpadSettings.MIN_SAMPLE_DP..TouchpadSettings.MAX_SAMPLE_DP, 0.5f,
-            own(sample), reset(sample),
+            own(sample), reset(sample), children = level.kids(d, sample),
             hint = SAMPLE_HINT,
         ) { v -> edit { if (hold) it.copy(holdSample = v) else it.copy(swipeSample = v) } }
         val lock = if (hold) DirField.HOLD_LOCK else DirField.SWIPE_LOCK
@@ -301,23 +308,23 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
             "Lock heading",
             "Turning to ${d.label} from another way takes Turn after of heading this way on end, so drift and turnarounds " +
                     "can't reach it." + if (hold && s.holdMode == HoldMode.FROM_START) " From start point, its axis's start point follows the finger while the heading is on the other axis." else "",
-            s.lockOf(d, hold), own(lock), reset(lock),
+            s.lockOf(d, hold), own(lock), reset(lock), children = level.kids(d, lock),
         ) { v -> edit { if (hold) it.copy(holdLock = v) else it.copy(swipeLock = v) } }
         if (s.lockOf(d, hold)) {
             OverrideSlider(
                 k + "turn", "Turn after %.1f dp", s.turnDpOf(d, hold), 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
-                own(turn), reset(turn),
+                own(turn), reset(turn), children = level.kids(d, turn),
             ) { v -> edit { if (hold) it.copy(holdTurn = v) else it.copy(swipeTurn = v) } }
         }
         if (!hold) {
             OverrideSlider(
                 k + "dp", "Quick swipe after %.0f dp", s.swipeDpOf(d), TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f,
-                own(DirField.SWIPE), reset(DirField.SWIPE),
+                own(DirField.SWIPE), reset(DirField.SWIPE), children = level.kids(d, DirField.SWIPE),
             ) { v -> edit { it.copy(swipeDp = v) } }
         } else {
             OverrideSlider(
                 k + "dp", "Hold after %.0f dp", s.holdDpOf(d), TouchpadSettings.MIN_ACTIVATE_DP..TouchpadSettings.MAX_ACTIVATE_DP, 1f,
-                own(DirField.HOLD), reset(DirField.HOLD),
+                own(DirField.HOLD), reset(DirField.HOLD), children = level.kids(d, DirField.HOLD),
                 hint = if (s.dragStart && s.holdMode == HoldMode.FROM_START) "With Drag start point, the start point trails the furthest hold distance of the four." else null,
             ) { v -> edit { it.copy(holdDp = v) } }
         }
@@ -371,14 +378,15 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
             OverrideSlider(
                 k + "sens", "Sensitivity %.1f", sensNow, 0f..MAX_SURFACE_SENS, 0.1f,
                 sensOwn, resetSens, hint = sensHint,
+                children = level.kids(m, MoveField.SENSITIVITY, MoveField.SCALE),
             ) { v -> edit(MoveField.SENSITIVITY) { it.copy(sensitivity = v, scale = null) } }
         }
         OverrideSlider(
             k + "acc", "Acceleration %.1f", if (x) f.accelerationX else f.accelerationY, 0f..2f, 0.1f,
-            own(MoveField.ACCELERATION), reset(MoveField.ACCELERATION),
+            own(MoveField.ACCELERATION), reset(MoveField.ACCELERATION), children = level.kids(slot(MoveField.ACCELERATION), MoveField.ACCELERATION),
         ) { v -> edit(MoveField.ACCELERATION) { it.copy(acceleration = v) } }
         val mode = if (x) f.modeX else f.modeY
-        OverrideRow("Direction", own(MoveField.MODE), reset(MoveField.MODE), hint = moveModeHint(mode)) {
+        OverrideRow("Direction", own(MoveField.MODE), reset(MoveField.MODE), children = level.kids(slot(MoveField.MODE), MoveField.MODE), hint = moveModeHint(mode)) {
             MoveModeChips(mode) { md -> edit(MoveField.MODE) { it.copy(mode = md) } }
         }
         if (mode != MoveMode.FREE) {
@@ -387,54 +395,54 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
             PiePicture(PieKind.MOVE, shown = PieKind.axisMask(x)) { live ?: pie }
             OverrideSlider(
                 k + "pie", "Pie %.0f°", pie, TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
-                own(MoveField.PIE), reset(MoveField.PIE),
+                own(MoveField.PIE), reset(MoveField.PIE), children = level.kids(slot(MoveField.PIE), MoveField.PIE),
                 hint = "It moves while the finger heads within this pie, " + if (x) "left and right alike." else "up and down alike.",
                 onLive = { live = it },
             ) { v -> edit(MoveField.PIE) { it.copy(pie = v) } }
             OverrideSlider(
                 k + "sample", "Sample %.1f dp", f.moveSampleDp, TouchpadSettings.MIN_SAMPLE_DP..TouchpadSettings.MAX_SAMPLE_DP, 0.5f,
-                own(MoveField.SAMPLE), reset(MoveField.SAMPLE),
+                own(MoveField.SAMPLE), reset(MoveField.SAMPLE), children = level.kids(slot(MoveField.SAMPLE), MoveField.SAMPLE),
                 hint = "$SAMPLE_HINT A stroke's first this much waits for it. For Move X and Y alike.",
             ) { v -> edit(MoveField.SAMPLE) { it.copy(sample = v) } }
             OverrideSwitch(
-                "Lock heading", "$LOCK_HINT For Move X and Y alike.", f.moveLock, own(MoveField.LOCK), reset(MoveField.LOCK),
+                "Lock heading", "$LOCK_HINT For Move X and Y alike.", f.moveLock, own(MoveField.LOCK), reset(MoveField.LOCK), children = level.kids(slot(MoveField.LOCK), MoveField.LOCK),
             ) { v -> edit(MoveField.LOCK) { it.copy(lock = v) } }
             if (f.moveLock) {
                 OverrideSlider(
                     k + "turn", "Turn after %.1f dp", f.moveTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
-                    own(MoveField.TURN), reset(MoveField.TURN), hint = "$TURN_HINT For Move X and Y alike.",
+                    own(MoveField.TURN), reset(MoveField.TURN), children = level.kids(slot(MoveField.TURN), MoveField.TURN), hint = "$TURN_HINT For Move X and Y alike.",
                 ) { v -> edit(MoveField.TURN) { it.copy(turnDp = v) } }
             }
             OverrideSlider(
                 k + "margin", if (f.movePieMargin < 1f) "Pie margin: off" else "Pie margin %.0f°",
                 f.movePieMargin, 0f..TouchpadSettings.MAX_MOVE_PIE_MARGIN, 1f,
-                own(MoveField.PIE_MARGIN), reset(MoveField.PIE_MARGIN), hint = "$MARGIN_HINT For Move X and Y alike.",
+                own(MoveField.PIE_MARGIN), reset(MoveField.PIE_MARGIN), children = level.kids(slot(MoveField.PIE_MARGIN), MoveField.PIE_MARGIN), hint = "$MARGIN_HINT For Move X and Y alike.",
             ) { v -> edit(MoveField.PIE_MARGIN) { it.copy(margin = v) } }
         }
         OverrideSwitch(
             "Swipe stops Move", "$HOLD_STOPS_HINT For Move X and Y alike.", f.holdStopsMove,
-            own(MoveField.HOLD_STOPS), reset(MoveField.HOLD_STOPS),
+            own(MoveField.HOLD_STOPS), reset(MoveField.HOLD_STOPS), children = level.kids(slot(MoveField.HOLD_STOPS), MoveField.HOLD_STOPS),
         ) { v -> edit(MoveField.HOLD_STOPS) { it.copy(holdStops = v) } }
         if (m.fingers == 1) {
             OverrideSlider(
                 k + "dz", if (f.cursorDeadzoneDp < 1f) "Cursor deadzone: off" else "Cursor deadzone %.0f dp",
-                f.cursorDeadzoneDp, 0f..TouchpadSettings.MAX_CURSOR_DEADZONE_DP, 1f, own(MoveField.CURSOR_DEADZONE), reset(MoveField.CURSOR_DEADZONE),
+                f.cursorDeadzoneDp, 0f..TouchpadSettings.MAX_CURSOR_DEADZONE_DP, 1f, own(MoveField.CURSOR_DEADZONE), reset(MoveField.CURSOR_DEADZONE), children = level.kids(slot(MoveField.CURSOR_DEADZONE), MoveField.CURSOR_DEADZONE),
                 hint = "The cursor stays still until the finger has moved this far, then catches up with it. For Move X and Y alike.",
             ) { v -> edit(MoveField.CURSOR_DEADZONE) { it.copy(cursorDeadzoneDp = v) } }
             if (f.cursorDeadzoneDp > 0f) {
                 OverrideSlider(
                     k + "catch", if (f.catchUpMs < 1) "Catch-up: instant" else "Catch-up %.0f ms",
-                    f.catchUpMs.toFloat(), 0f..TouchpadSettings.MAX_CATCH_UP_MS.toFloat(), 10f, own(MoveField.CATCH_UP), reset(MoveField.CATCH_UP),
+                    f.catchUpMs.toFloat(), 0f..TouchpadSettings.MAX_CATCH_UP_MS.toFloat(), 10f, own(MoveField.CATCH_UP), reset(MoveField.CATCH_UP), children = level.kids(slot(MoveField.CATCH_UP), MoveField.CATCH_UP),
                 ) { v -> edit(MoveField.CATCH_UP) { it.copy(catchUpMs = v.roundToInt()) } }
                 OverrideSlider(
                     k + "rearm", if (f.deadzoneRearmMs < 1) "Re-arm: off" else "Re-arm after %.0f ms still",
-                    f.deadzoneRearmMs.toFloat(), 0f..TouchpadSettings.MAX_REARM_MS.toFloat(), 10f, own(MoveField.REARM), reset(MoveField.REARM),
+                    f.deadzoneRearmMs.toFloat(), 0f..TouchpadSettings.MAX_REARM_MS.toFloat(), 10f, own(MoveField.REARM), reset(MoveField.REARM), children = level.kids(slot(MoveField.REARM), MoveField.REARM),
                     hint = "The deadzone arms again once the finger stands still this long. Off: once per touch.",
                 ) { v -> edit(MoveField.REARM) { it.copy(deadzoneRearmMs = v.roundToInt()) } }
                 if (f.deadzoneRearmMs > 0) {
                     OverrideSlider(
                         k + "still", "Still within %.1f dp", f.deadzoneStillDp, 0f..TouchpadSettings.MAX_STILL_DP, 0.5f,
-                        own(MoveField.STILL), reset(MoveField.STILL),
+                        own(MoveField.STILL), reset(MoveField.STILL), children = level.kids(slot(MoveField.STILL), MoveField.STILL),
                     ) { v -> edit(MoveField.STILL) { it.copy(deadzoneStillDp = v) } }
                 }
             }
@@ -442,28 +450,28 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
         SectionTitle("Scrolling")
         OverrideSlider(
             k + "scroll", "Scroll speed %.2f", if (x) f.scrollSpeedX else f.scrollSpeedY, 0.25f..3f, 0.05f,
-            own(MoveField.SCROLL_SPEED), reset(MoveField.SCROLL_SPEED),
+            own(MoveField.SCROLL_SPEED), reset(MoveField.SCROLL_SPEED), children = level.kids(slot(MoveField.SCROLL_SPEED), MoveField.SCROLL_SPEED),
         ) { v -> edit(MoveField.SCROLL_SPEED) { it.copy(scrollSpeed = v) } }
         val natural = if (x) f.naturalScrollX else f.naturalScrollY
         OverrideSwitch(
             "Natural scrolling",
             if (natural) "Content follows the fingers." else "Content moves against the fingers.",
-            natural, own(MoveField.NATURAL_SCROLL), reset(MoveField.NATURAL_SCROLL),
+            natural, own(MoveField.NATURAL_SCROLL), reset(MoveField.NATURAL_SCROLL), children = level.kids(slot(MoveField.NATURAL_SCROLL), MoveField.NATURAL_SCROLL),
         ) { v -> edit(MoveField.NATURAL_SCROLL) { it.copy(naturalScroll = v) } }
         SectionTitle("Inertia")
         val inertia = if (x) f.inertiaX else f.inertiaY
         OverrideSwitch(
             "Inertia",
             if (inertia) "Keeps going $axis after a flick, cursor or scrolling, and slows down." else "Stops when the fingers lift.",
-            inertia, own(MoveField.INERTIA), reset(MoveField.INERTIA),
+            inertia, own(MoveField.INERTIA), reset(MoveField.INERTIA), children = level.kids(slot(MoveField.INERTIA), MoveField.INERTIA),
         ) { v -> edit(MoveField.INERTIA) { it.copy(inertia = v) } }
         if (inertia) {
-            InertiaCurveRow(if (x) f.curveX else f.curveY, own(MoveField.CURVE), reset(MoveField.CURVE)) { c ->
+            InertiaCurveRow(if (x) f.curveX else f.curveY, own(MoveField.CURVE), reset(MoveField.CURVE), children = level.kids(slot(MoveField.CURVE), MoveField.CURVE)) { c ->
                 edit(MoveField.CURVE) { it.copy(curve = c) }
             }
             OverrideSlider(
                 k + "glide", "Glide %.0f ms", if (x) f.glideMsX else f.glideMsY, TouchpadSettings.MIN_GLIDE_MS..TouchpadSettings.MAX_GLIDE_MS, 5f,
-                own(MoveField.GLIDE), reset(MoveField.GLIDE), hint = GLIDE_HINT,
+                own(MoveField.GLIDE), reset(MoveField.GLIDE), children = level.kids(slot(MoveField.GLIDE), MoveField.GLIDE), hint = GLIDE_HINT,
             ) { v -> edit(MoveField.GLIDE) { it.copy(glideMs = v) } }
         }
         DirNote("Highlighted: set for ${m.label} only. The rest is the Settings' value, shared by every Move X and Y.")
@@ -475,8 +483,14 @@ internal const val GLIDE_HINT =
 
 /** How a glide slows down ([InertiaCurve]), highlighted with a ↺ when [overridden]. */
 @Composable
-internal fun InertiaCurveRow(curve: InertiaCurve, overridden: Boolean, onReset: (() -> Unit)?, onPick: (InertiaCurve) -> Unit) {
-    OverrideRow("Glide curve", overridden, onReset) {
+internal fun InertiaCurveRow(
+    curve: InertiaCurve,
+    overridden: Boolean,
+    onReset: (() -> Unit)?,
+    children: ChildInfo? = null,
+    onPick: (InertiaCurve) -> Unit,
+) {
+    OverrideRow("Glide curve", overridden, onReset, children = children) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (c in InertiaCurve.entries) SelectChip(c.label, curve == c) { onPick(c) }
         }
@@ -567,6 +581,7 @@ private fun SharedPies(level: SurfaceLevel, key: String, kind: PieKind) {
     OverrideSlider(
         key + kind.name + "x", "X pie %.0f°", kind.x(s), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
         level.isOwn(kind.pieX), { current.reset(kind.pieX) },
+        children = level.kids(kind.pieX),
         hint = "$xs alike.",
         onLive = { v -> live = v?.let { kind.withX(s, it) } },
     ) { v -> edit { kind.withX(it, v) } }
@@ -574,6 +589,7 @@ private fun SharedPies(level: SurfaceLevel, key: String, kind: PieKind) {
     OverrideSlider(
         key + kind.name + "y", "Y pie %.0f°", kind.y(s), TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
         level.isOwn(kind.pieY), { current.reset(kind.pieY) },
+        children = level.kids(kind.pieY),
         hint = "$ys alike.",
         onLive = { v -> live = v?.let { kind.withY(s, it) } },
     ) { v -> edit { kind.withY(it, v) } }
@@ -590,6 +606,7 @@ private fun SharedPies(level: SurfaceLevel, key: String, kind: PieKind) {
     OverrideSlider(
         key + kind.name + "sample", "Sample %.1f dp", kind.sample(s), TouchpadSettings.MIN_SAMPLE_DP..TouchpadSettings.MAX_SAMPLE_DP, 0.5f,
         level.isOwn(kind.sample), { current.reset(kind.sample) },
+        children = level.kids(kind.sample),
         hint = SAMPLE_HINT + if (kind == PieKind.MOVE) " A stroke's first this much waits for it." else "",
     ) { v -> edit { kind.withSample(it, v) } }
     kind.dirSample?.let { ChildOverrides(level, it) }
@@ -622,6 +639,31 @@ private fun SectionTitle(text: String) = NotSearching {
 }
 
 /**
+ * The Swipe row's ⚙: pick an arrow (↑ → ↓ ←) to see what it sets for itself over the Settings'
+ * shared values, its held swipe's ([DirectionSettings] with hold) and its quick swipe's. Swipe
+ * any way has no settings of its own: it uses the shared hold distance and zones.
+ */
+@Composable
+internal fun SwipeArrowSettings(level: SurfaceLevel, key: String, zones: IntArray) {
+    var d by remember { mutableStateOf(Direction.UP) }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        NotSearching {
+            DirNote("Swipe any way uses the Settings' hold distance and zones. Each arrow can set its own here.")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (x in Direction.entries) {
+                    val own = DirField.entries.any { level.isDirOwn(x, it) }
+                    SelectChip(Bindings.slotLabel(x.ordinal) + if (own) " •" else "", d == x) { d = x }
+                }
+            }
+        }
+        SectionTitle("Swipe " + Bindings.slotLabel(d.ordinal))
+        DirectionSettings(level, key, d, hold = true, zones)
+        SectionTitle("Quick swipe " + Bindings.slotLabel(d.ordinal))
+        DirectionSettings(level, key, d, hold = false, zones)
+    }
+}
+
+/**
  * The length zones of held direction [only] ([TouchpadSettings.holdZone]): its own, or the shared
  * ones every direction without its own follows ([only] null: those, as many as the direction with
  * the most). [zone]: only that one (from 0; a zone divider), null = all. [zones]: how many each
@@ -645,7 +687,7 @@ internal fun HoldZoneSettings(
         change(all)
         onChange(shared, all.takeUnless { l -> l.all { it == shared } })
     }
-    val mapped = if (only == null) Direction.entries.maxOf { zones[it.ordinal] } else zones[only.ordinal]
+    val mapped = if (only == null) zones.max() else zones[only.ordinal]
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (s.dragStart && s.holdMode == HoldMode.FROM_START) {
             DirNote(

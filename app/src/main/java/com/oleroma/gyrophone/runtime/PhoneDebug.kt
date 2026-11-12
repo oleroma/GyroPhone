@@ -25,7 +25,9 @@ import java.util.Locale
 class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private val scope: CoroutineScope) {
     private val appContext = context.applicationContext
     private val prefs = context.getSharedPreferences("gyrophone", Context.MODE_PRIVATE)
-    private val dir = File(context.filesDir, "debug")
+    // In the app's external files (Android/data/<package>/files/debug), where adb can pull from without
+    // run-as, which works only on a debuggable app; the phone runs the release build.
+    private val dir = File(context.getExternalFilesDir(null) ?: context.filesDir, "debug")
     private val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
 
     private val _enabled = MutableStateFlow(prefs.getBoolean(KEY_ON, false))
@@ -83,7 +85,7 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
     }
 
     /**
-     * Saves the last 30 s to a file in the app's files (`files/debug/`), and asks the PC to save
+     * Saves the last 30 s to a file in the app's external files (`files/debug/`), and asks the PC to save
      * its side at the same moment when the link is Wi-Fi or USB. Returns the file, or null when
      * debugging is off.
      */
@@ -163,7 +165,7 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
             s.lossPercent?.let { append(" · loss ${"%.1f".format(it)}%") }
             if (s.latP50Ms != null && s.latP99Ms != null) append(" · latency ${"%.1f".format(s.latP50Ms)} / ${"%.1f".format(s.latP99Ms)} ms (p50/p99)")
             s.rttMs?.let { append(" · round trip ${"%.1f".format(it)} ms") }
-            if (s.usb) append(if (s.usbDirect) " · USB direct" else " · USB tethering")
+            if (s.usb) append(if (s.hotspot) " · phone hotspot" else if (s.ethernet) " · Ethernet" else if (s.usbDirect) " · USB direct" else " · USB tethering")
             else if (s.band != null && s.band != 0) append(" · ${s.band} GHz")
             s.rssi?.let { if (!s.usb) append(" $it dBm") }
             s.linkMbps?.let { if (!s.usb) append(" $it Mbps") }

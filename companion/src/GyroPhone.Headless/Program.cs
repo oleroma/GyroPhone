@@ -60,7 +60,7 @@ internal static class Program
         IPadSink pad = NullPadSink.Instance;
         if (!noVigem)
         {
-            pad = ViGEmPadSink.Create(log.Write, out var padError);
+            pad = PadSinks.Create(log.Write, out var padError);
             if (padError != null)
                 log.Write($"{padError}: gamepad output off, keyboard and mouse still work. Driver: {ViGEmPadSink.DriverDownloadUrl}");
         }
@@ -73,6 +73,7 @@ internal static class Program
         var engine = new HostEngine(settings, pad, keyMouse, prompt, protector, clock, events, hostKey: hostKey);
         prompt.Engine = engine;
         engine.SetPcPad(new XInputPcPad(log.Write, clock));
+        engine.SetKeyMouseListener(new RawInputListener(log.Write));
         using var authorized = new AuthorizedPhonesWatcher(keyFiles, engine.SetAuthorizedPhones, log.Write);
         log.Write($"key file pairing: {KeyPairing.Fingerprint(hostKey.PublicKey)}, phones in {keyFiles.AuthorizedDirectory}");
 
@@ -106,7 +107,8 @@ internal static class Program
         if (recovered > 0) log.Write($"released {recovered} inputs left held by a previous run");
         var marker = new HeldKeysMarker(markerPath);
         var watchdog = new Watchdog(engine, clock, marker, store,
-            networkPublicProbe: NetworkCategory.IsAnyConnectedPublic, log: log.Write);
+            networkPublicProbe: NetworkCategory.IsAnyConnectedPublic, log: log.Write,
+            keyLabelsProbe: KeyboardLayoutProbe.Read, tickSleep: () => new HighResolutionSleep());
 
         engine.Start(clock.NowUs);
         if (pair) engine.OpenPairingWindow();

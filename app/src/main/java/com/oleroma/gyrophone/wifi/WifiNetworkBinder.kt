@@ -41,6 +41,9 @@ class WifiNetworkBinder(context: Context, private val onChanged: () -> Unit) {
         private set
     /** The subnet-directed broadcast address of the Wi-Fi network (e.g. 192.168.1.255). */
     @Volatile var broadcast: InetAddress? = null
+
+    /** The Wi-Fi network's interface (e.g. wlan0), so the phone's own hotspot isn't mistaken for it. */
+    @Volatile var interfaceName: String? = null
         private set
 
     @Volatile private var socket: DatagramSocket? = null
@@ -71,6 +74,7 @@ class WifiNetworkBinder(context: Context, private val onChanged: () -> Unit) {
         override fun onLinkPropertiesChanged(network: Network, lp: LinkProperties) {
             if (network != this@WifiNetworkBinder.network) return
             broadcast = directedBroadcast(lp)
+            interfaceName = lp.interfaceName
             val addresses = NetAddresses.ipv4Key(lp.linkAddresses.map { it.address to it.prefixLength })
             val changed = lastAddresses != null && addresses != lastAddresses
             lastAddresses = addresses
@@ -85,6 +89,7 @@ class WifiNetworkBinder(context: Context, private val onChanged: () -> Unit) {
             this@WifiNetworkBinder.network = null
             info = WifiRadioInfo()
             broadcast = null
+            interfaceName = null
             lastAddresses = null
             onChanged()
         }

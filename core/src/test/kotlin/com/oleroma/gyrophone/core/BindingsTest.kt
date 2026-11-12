@@ -217,8 +217,8 @@ class BindingsTest {
     @Test fun builtinLandscapeUnchanged() {
         val ls = BuiltinProfiles.virtualGamepadControls.first { it.id == "ls" }
         assertEquals(Triple(0.14f, 0.62f, 0.38f), Triple(ls.x, ls.y, ls.size))
-        // The Controller preset keeps the same control ids.
-        assertEquals(BuiltinProfiles.virtualGamepadControls.map { it.id },
+        // The Controller preset keeps the same control ids (and adds the stick clicks).
+        assertEquals(BuiltinProfiles.virtualGamepadControls.map { it.id } + listOf("l3", "r3"),
             BuiltinProfiles.controllerWorkspace.touchControls.map { it.id })
     }
 

@@ -125,8 +125,12 @@ internal sealed class FakeKeyMouse : IKeyMouseSink
 
     public IEnumerable<InjectEvent> All => Calls.SelectMany(c => c);
 
+    /// <summary>Runs inside every Inject (under the engine lock), before the events are taken.</summary>
+    public Action? OnInject;
+
     public bool Inject(ReadOnlySpan<InjectEvent> events)
     {
+        OnInject?.Invoke();
         Calls.Add(events.ToArray());
         if (Dropping) return false;
         foreach (var e in events)
@@ -371,11 +375,14 @@ internal sealed class Harness : IDisposable
     public readonly HostEngine Engine;
 
     public Harness(Func<int, byte[]>? random = null, Func<P256>? newKey = null, bool pairDefault = true,
-        OutputMode mode = OutputMode.Xbox360, P256? hostKey = null)
+        OutputMode mode = OutputMode.Xbox360, P256? hostKey = null, Action<Action>? padWorker = null)
     {
         Settings = new HostSettings { HostId = Hex.Range(0x10, 16), HostName = "DESKTOP-OLEX", OutputMode = mode };
         if (pairDefault) AddPaired(Phone1Id, "OnePlus 15", Phone1Key);
-        Engine = new HostEngine(Settings, Pad, KeyMouse, Prompt, new PlainProtector(), Clock, Events, random, newKey, hostKey);
+        Engine = new HostEngine(Settings, Pad, KeyMouse, Prompt, new PlainProtector(), Clock, Events, random, newKey, hostKey)
+        {
+            PadWorker = padWorker ?? (job => job()),
+        };
         Engine.AttachSender(Sender);
     }
 

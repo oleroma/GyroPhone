@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.Surface
@@ -36,6 +37,7 @@ import com.oleroma.gyrophone.input.ControllerInput
 import com.oleroma.gyrophone.link.TransportKind
 import com.oleroma.gyrophone.runtime
 import com.oleroma.gyrophone.service.GamepadService
+import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
 
@@ -83,15 +85,15 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        WindowInsetsControllerCompat(window, window.decorView).apply {
-            hide(WindowInsetsCompat.Type.systemBars())
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        }
+        // No status or navigation bar anywhere in the app (dialogs too: AppDialogs.kt).
+        hideSystemBars(window)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         controllerInput = ControllerInput(this, runtime)
         runtime.closeApp = closeThis
         runtime.capturedPointer = controllerInput::onCapturedPointerEvent
+        runtime.forwardKey = controllerInput::onKeyEvent
+        runtime.forwardMotion = controllerInput::onGenericMotionEvent
 
         // Wi-Fi needs no runtime permission; Bluetooth HID needs BLUETOOTH_CONNECT first.
         // onResume starts the service once it may run.
@@ -105,7 +107,7 @@ class MainActivity : ComponentActivity() {
                 }
                 Surface(Modifier.fillMaxSize()) {
                     // No tabs: the app opens on the pad; Connection and Settings open from its capsules.
-                    // Full-screen pad: the ← and → corners pressed together, or Back (both ways; it
+                    // Full-screen pad: a Fullscreen mapping (long press ← / →), or Back (both ways; it
                     // never closes the app from the pad). Menu pages register their own Back later,
                     // so there it steps back a page instead.
                     var fullscreen by rememberSaveable { mutableStateOf(runtime.startFullscreen.value) }
@@ -153,6 +155,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         runtime.setForeground(false)
+        // A key or finger let go while away would never be seen lifting.
+        runtime.restDetector.clear()
         controllerInput.unregister()
         getSystemService(DisplayManager::class.java).unregisterDisplayListener(displayListener)
         contentResolver.unregisterContentObserver(rotationObserver)
@@ -171,11 +175,23 @@ class MainActivity : ComponentActivity() {
         // A key may just have left touch mode and moved focus (see onCreate): re-ask at once,
         // before the stick's next MOVE events. A no-op when the request is unchanged.
         TouchStream.requestUnbuffered(window.decorView)
+        // "Fade when phone rests": a key held is input.
+        when (event.action) {
+            KeyEvent.ACTION_DOWN -> runtime.restDetector.key(event.keyCode, true, System.nanoTime())
+            KeyEvent.ACTION_UP -> runtime.restDetector.key(event.keyCode, false, System.nanoTime())
+        }
         return controllerInput.onKeyEvent(event) || super.dispatchKeyEvent(event)
     }
 
-    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean =
-        controllerInput.onGenericMotionEvent(event) || super.dispatchGenericMotionEvent(event)
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        // "Fade when phone rests": a controller's stick, trigger or d-pad off centre is input.
+        if (event.isFromSource(InputDevice.SOURCE_JOYSTICK) || event.isFromSource(InputDevice.SOURCE_GAMEPAD)) {
+            var off = false
+            for (axis in REST_AXES) if (abs(event.getAxisValue(axis)) > 0.3f) off = true
+            runtime.restDetector.sticks(off, System.nanoTime())
+        }
+        return controllerInput.onGenericMotionEvent(event) || super.dispatchGenericMotionEvent(event)
+    }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         // Entering touch mode can move focus too; same cheap re-ask as for keys.
@@ -184,6 +200,16 @@ class MainActivity : ComponentActivity() {
         TouchStream.pointerCancelled = event.actionMasked == MotionEvent.ACTION_POINTER_UP &&
             (event.flags and MotionEvent.FLAG_CANCELED) != 0
         TouchStream.eventNanos = event.eventTimeNanos
+        // "Fade when phone rests": fingers on the screen are input until the last one lifts.
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> runtime.restDetector.fingers(true, System.nanoTime())
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> runtime.restDetector.fingers(false, System.nanoTime())
+        }
+        // "Measure buttons" on the PC: a finger landing or lifting may press or release something.
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP ->
+                runtime.wifi.pressStamp.note(event.eventTimeNanos)
+        }
         return super.dispatchTouchEvent(event)
     }
 
@@ -199,7 +225,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) TouchStream.requestUnbuffered(window.decorView)
+        if (hasFocus) {
+            TouchStream.requestUnbuffered(window.decorView)
+            // Back from a dialog, the keyboard or another app: the bars stay hidden.
+            hideSystemBars(window)
+        }
     }
 
     private fun displayDegrees() = when (display?.rotation) {
@@ -222,3 +252,10 @@ class MainActivity : ComponentActivity() {
     private fun hasBluetooth() =
         ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
 }
+
+/** A controller's axes that count as input for "Fade when phone rests" while off centre. */
+private val REST_AXES = intArrayOf(
+    MotionEvent.AXIS_X, MotionEvent.AXIS_Y, MotionEvent.AXIS_Z, MotionEvent.AXIS_RZ,
+    MotionEvent.AXIS_LTRIGGER, MotionEvent.AXIS_RTRIGGER, MotionEvent.AXIS_GAS, MotionEvent.AXIS_BRAKE,
+    MotionEvent.AXIS_HAT_X, MotionEvent.AXIS_HAT_Y,
+)

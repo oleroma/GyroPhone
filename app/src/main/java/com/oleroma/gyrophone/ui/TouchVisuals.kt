@@ -16,6 +16,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -24,6 +25,7 @@ import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.SwipeGuide
 import com.oleroma.gyrophone.core.engine.Touchpad
 import com.oleroma.gyrophone.core.model.Direction
+import androidx.compose.ui.unit.dp
 import kotlinx.serialization.Serializable
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -49,6 +51,10 @@ data class TouchVisuals(
     val liveMappings: Boolean = true,
     val swipeLine: Boolean = true,
     val moveRulers: Boolean = true,
+    /** Sliders on buttons: the fill bars of Position value chips and the values chips send ([ValueBarsOverlay]). */
+    val positionRuler: Boolean = true,
+    /** The sliders' colour (ARGB). */
+    val rulerColor: Long = 0xFFFF9800,
     /** Outlines just inside the screen's edge that sway as the phone turns. */
     val gyroEdge: Boolean = false,
     /** Moved by tilt against gravity (stays while tilted) instead of by turning (springs back). */
@@ -66,6 +72,8 @@ data class TouchVisuals(
     val gyroLevelDeg: Int = 0,
     /** The edge's opacity. */
     val gyroOpacity: Float = 0.6f,
+    /** "Fade when phone rests": the gyro displays fade while the phone lies still at their Level, untouched. */
+    val restFade: com.oleroma.gyrophone.core.model.RestFade = com.oleroma.gyrophone.core.model.RestFade(),
 ) {
     /** The edge holds its pose to gravity (and so needs the accelerometer). */
     val gyroNeedsGravity: Boolean get() = gyroEdge && gyroEdgeTilt
@@ -209,7 +217,8 @@ fun TouchOverlay(trails: TouchTrails, visuals: TouchVisuals, modifier: Modifier 
     LaunchedEffect(active) {
         while (active) withFrameMillis { frame = it }
     }
-    Canvas(modifier) {
+    // Each overlay on its own layer: its redraws leave the others and the gyro displays alone.
+    Canvas(modifier.graphicsLayer()) {
         @Suppress("UNUSED_EXPRESSION") frame // redraw each frame
         trails.draw(this, visuals, SystemClock.uptimeMillis(), DOT_DP * density)
     }
@@ -356,7 +365,7 @@ class SwipeLines {
 /** Draws [lines] over the pad; redraws only when a line changes. */
 @Composable
 fun SwipeLineOverlay(lines: SwipeLines, modifier: Modifier = Modifier) {
-    Canvas(modifier) { lines.draw(this, density) }
+    Canvas(modifier.graphicsLayer()) { lines.draw(this, density) }
 }
 
 /**
@@ -527,7 +536,7 @@ fun MoveRulerOverlay(rulers: MoveRulers, modifier: Modifier = Modifier) {
             frame = it
         }
     }
-    Canvas(modifier) {
+    Canvas(modifier.graphicsLayer()) {
         @Suppress("UNUSED_EXPRESSION") frame // redraw each frame
         rulers.draw(this, SystemClock.uptimeMillis(), density)
     }

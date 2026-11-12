@@ -81,11 +81,41 @@ public sealed class HeldKeysMarkerTests : IDisposable
         h.Send(phone, phone.State(f => f.SetKey(0x2C, true)));
         Assert.False(File.Exists(PathName)); // rx never writes it
         wd.Tick();
+        Assert.False(File.Exists(PathName)); // nor the tick: the writer thread does
+        wd.WriteFiles();
         Assert.True(File.Exists(PathName));
         h.Clock.AdvanceMs(300);
         wd.Tick(); // silence release
-        wd.Tick();
+        wd.WriteFiles();
         Assert.False(File.Exists(PathName));
+    }
+
+    [Fact]
+    public void StartedWatchdogTicksAndWritesOnItsOwnThreads()
+    {
+        var h = new Harness();
+        var marker = new HeldKeysMarker(PathName);
+        using var wd = new Watchdog(h.Engine, h.Clock, marker);
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        h.Send(phone, phone.State(f => f.SetKey(0x2C, true)));
+        wd.Start();
+        // The writer writes the marker within its half-second turn.
+        Assert.True(WaitFor(() => File.Exists(PathName)));
+        // 250 ms of silence: the tick lets go, and the writer deletes the marker.
+        h.Clock.AdvanceMs(300);
+        Assert.True(WaitFor(() => !File.Exists(PathName)));
+    }
+
+    private static bool WaitFor(Func<bool> done)
+    {
+        var until = DateTime.UtcNow.AddSeconds(5);
+        while (!done())
+        {
+            if (DateTime.UtcNow > until) return false;
+            Thread.Sleep(10);
+        }
+        return true;
     }
 
     public void Dispose()

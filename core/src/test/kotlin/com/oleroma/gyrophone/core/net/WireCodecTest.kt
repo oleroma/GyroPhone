@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.core.net
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -16,10 +17,11 @@ class WireCodecTest {
         assertEquals(50, Wire.sizeOf(PacketType.LINK_INFO))
         assertEquals(32, Wire.sizeOf(PacketType.BYE))
         assertEquals(52, Wire.sizeOf(PacketType.PONG))
-        assertEquals(50, Wire.sizeOf(PacketType.HOST_STATUS))
+        assertEquals(51, Wire.sizeOf(PacketType.HOST_STATUS))
         assertEquals(32, Wire.sizeOf(PacketType.RUMBLE))
         assertEquals(94, Wire.sizeOf(PacketType.FOREGROUND))
         assertEquals(32, Wire.sizeOf(PacketType.HOST_BYE))
+        assertEquals(128, Wire.sizeOf(PacketType.KEY_LABELS))
         assertEquals(-1, Wire.sizeOf(0x40))
         for (t in 0..0xFF) assertTrue(Wire.sizeOf(t) <= Wire.MAX_DATAGRAM)
     }
@@ -98,9 +100,11 @@ class WireCodecTest {
     @Test fun sealedPlainRoundTrips() {
         val packets = listOf(
             Ping(Long.MAX_VALUE), Pong(1, 2, -1), Bye(ByeReason.REKEY), HostBye(HostByeReason.EXIT),
-            Rumble(255, 0), Foreground("game.exe"),
-            LinkInfo(-1, 100, 1000, -90, 6, 2402, 5955, 1),
+            Rumble(255, 0), Rumble(0, 0, Rumble.Pattern.BUZZ), Foreground("game.exe"),
+            LinkInfo(-1, 100, 1000, -90, 6, 2402, 5955, 1), LinkInfo(5, 1, 500, -40, 5, 866, 5180, 0, LinkPath.HOTSPOT),
             HostStatus(7, 1000, 0, -1, -1, 0, 2, 31),
+            KeyLabels(0x04100410, IntArray(KeyLabels.USAGES.size) { 0x20 + it * 3 }),
+            PressTime(0x01020304, 0xA0B0C0D0.toInt()), TestMode(TestModeFlags.PRESS_TIMES or TestModeFlags.LATENCY_SCREEN),
         )
         for (p in packets) {
             val n = WireCodec.encodeSealedPlain(p, buf, 3)
@@ -108,6 +112,31 @@ class WireCodecTest {
             assertEquals(p, WireCodec.decodeSealedPlain(WireCodec.sealedTypeOf(p), buf, 3, n))
         }
         assertNull(WireCodec.decodeSealedPlain(PacketType.PING, buf, 0, 7))
+    }
+
+    @Test fun pressTimeAndTestModeBytesMatchThePc() {
+        // The same bytes as the companion's PressLatencyTests.
+        var n = WireCodec.encodeSealedPlain(PressTime(0x01020304, 0xA0B0C0D0.toInt()), buf, 0)
+        assertEquals("04030201d0c0b0a0", buf.copyOf(n).joinToString("") { "%02x".format(it) })
+        n = WireCodec.encodeSealedPlain(TestMode(3), buf, 0)
+        assertEquals("03000000", buf.copyOf(n).joinToString("") { "%02x".format(it) })
+        assertEquals(Wire.sealedSize(8), Wire.sizeOf(PacketType.PRESS_TIME))
+        assertEquals(Wire.sealedSize(4), Wire.sizeOf(PacketType.TEST_MODE))
+        assertTrue(PacketType.isPhoneToHost(PacketType.PRESS_TIME))
+        assertFalse(PacketType.isPhoneToHost(PacketType.TEST_MODE))
+    }
+
+    @Test fun keyLabelsNameKeysByWhatThePcTypes() {
+        // Italian: the key above Enter (US backslash) types ù, the one left of 1 (US grave) types backslash.
+        val chars = IntArray(KeyLabels.USAGES.size)
+        chars[KeyLabels.USAGES.indexOf(0x04)] = 'a'.code
+        chars[KeyLabels.USAGES.indexOf(0x31)] = 'ù'.code
+        chars[KeyLabels.USAGES.indexOf(0x35)] = '\\'.code
+        val labels = KeyLabels(0x0410, chars).labels()
+        assertEquals("A", labels[0x04])
+        assertEquals("Ù", labels[0x31])
+        assertEquals("\\", labels[0x35])
+        assertNull(labels[0x05]) // types nothing: keeps its US name
     }
 
     @Test fun stateRoundTripKeepsEveryField() {

@@ -12,6 +12,7 @@ import android.os.MemoryFile
 import android.os.Process
 import android.util.Log
 import com.oleroma.gyrophone.core.sensor.DirectReportParser
+import com.oleroma.gyrophone.runtime.WorkHint
 import java.util.concurrent.locks.LockSupport
 
 /** Angular velocity in rad/s (Android sensor frame) with the HAL timestamp in ns. */
@@ -102,17 +103,32 @@ class DirectChannelGyroSource(
 
     /** The memory the HAL writes into, read and closed only by the poll thread. */
     private interface Backing : AutoCloseable {
-        fun read(dst: ByteArray, size: Int): Boolean
+        /**
+         * Copies the first [size] bytes into [dst] when event slot [slot] holds an event newer than
+         * [parser] has seen (always when [slot] is -1); false when it does not, or the memory could not be read.
+         */
+        fun read(dst: ByteArray, size: Int, slot: Int, parser: DirectReportParser): Boolean
     }
 
     private class MemoryFileBacking(val file: MemoryFile) : Backing {
-        override fun read(dst: ByteArray, size: Int): Boolean { file.readBytes(dst, 0, 0, size); return true }
+        override fun read(dst: ByteArray, size: Int, slot: Int, parser: DirectReportParser): Boolean {
+            if (slot >= 0) {
+                // Only that event's header first: most checks find nothing new.
+                val at = slot * DirectReportParser.EVENT_SIZE
+                file.readBytes(dst, at, at, DirectReportParser.HEADER_SIZE)
+                if (!parser.isNew(dst, slot)) return false
+            }
+            file.readBytes(dst, 0, 0, size)
+            return true
+        }
         override fun close() = file.close()
     }
 
     private class HardwareBufferBacking(val buffer: HardwareBuffer) : Backing {
         private val reader = HardwareBufferReader(buffer)
-        override fun read(dst: ByteArray, size: Int) = reader.read(dst, size)
+        // The header check runs in the same lock as the copy, so a new sample costs one lock as before.
+        override fun read(dst: ByteArray, size: Int, slot: Int, parser: DirectReportParser) =
+            reader.read(dst, size, if (slot < 0) -1 else slot * DirectReportParser.EVENT_SIZE, parser.newestCounter)
         override fun close() { reader.close(); buffer.close() }
     }
 
@@ -162,20 +178,47 @@ class DirectChannelGyroSource(
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY)
         val parser = DirectReportParser(EVENTS)
         val buf = ByteArray(size)
+        // Each check looks only at the slot the HAL writes next and copies the ring when a new
+        // sample is in it. Every [FULL_READ_EVERY] checks the whole ring is read anyway: when that
+        // finds new samples the watched slot didn't have, this HAL fills its slots in another order
+        // and every check reads the whole ring from then on.
+        var watchNext = true
+        var checks = 0
+        val hint = WorkHint.forThisThread()
         try {
             while (running) {
+                val passStart = System.nanoTime()
+                val watched = if (watchNext) parser.nextSlot else -1
+                val full = watched < 0 || ++checks % FULL_READ_EVERY == 0
                 val ok = try {
-                    backing.read(buf, size)
+                    backing.read(buf, size, if (full) -1 else watched, parser)
                 } catch (e: Exception) {
                     Log.w(TAG, "read failed", e); break
                 }
-                if (ok) for (ev in parser.parse(buf, token)) sink.onGyro(ev.x, ev.y, ev.z, ev.timestampNs)
+                if (ok) {
+                    val missed = full && watched >= 0 && !parser.isNew(buf, watched)
+                    val events = parser.parse(buf, token)
+                    if (missed && events.isNotEmpty()) {
+                        watchNext = false
+                        Log.i(TAG, "samples not in ring order: reading the whole ring on every check")
+                    }
+                    for (i in events.indices) {
+                        val ev = events[i]
+                        sink.onGyro(ev.x, ev.y, ev.z, ev.timestampNs)
+                    }
+                    // The pass is done: how long it took goes to the performance hint.
+                    if (hint != null && events.isNotEmpty()) {
+                        val end = System.nanoTime()
+                        hint.done(end - passStart, end)
+                    }
+                }
                 // Polling at pollHz (1-4 kHz, above the HAL rate) adds at most one interval on top of it.
                 LockSupport.parkNanos(1_000_000_000L / pollHz)
             }
         } finally {
             // Freed here, never under a read still running: stop() may give up waiting for this thread.
             runCatching { backing.close() }
+            hint?.close()
         }
     }
 
@@ -191,6 +234,9 @@ class DirectChannelGyroSource(
     companion object {
         private const val TAG = "DirectChannelGyro"
         private const val EVENTS = 64
+
+        /** How often (in checks) the whole ring is read even when the watched slot has nothing new. */
+        private const val FULL_READ_EVERY = 64
 
         /** The poll-rate choices offered in the app, lowest first. */
         val POLL_RATES_HZ = listOf(1000, 2000, 4000)

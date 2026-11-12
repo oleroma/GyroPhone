@@ -190,11 +190,22 @@ class ReportSchedulerTest {
 class HostReconnectTest {
     private val r = HostReconnect()
 
-    @Test fun unexpectedDropRetriesWithBackoffForAboutAMinute() {
+    @Test fun unexpectedDropRetriesFastThenEveryFiveSecondsWithNoEnd() {
         r.connected("A")
-        val delays = generateSequence { r.disconnected("A", canRetry = true) }.takeWhile { it >= 0 }.toList()
-        assertEquals(listOf(1_000L, 2_000L, 4_000L, 8_000L, 10_000L, 10_000L, 10_000L, 10_000L), delays)
+        val delays = List(200) { r.disconnected("A", canRetry = true) }
+        assertEquals(listOf(1_000L, 2_000L, 4_000L, 5_000L, 5_000L), delays.take(5))
+        assertTrue(delays.drop(3).all { it == HostReconnect.STEADY_MS })
+        assertEquals("A", r.retrying)
+        // Until it is no longer wanted.
+        assertEquals(-1L, r.disconnected("A", canRetry = false))
         assertNull(r.retrying)
+    }
+
+    @Test fun aHostFromAnEarlierRunIsRetriedWhenItsFirstTryFails() {
+        r.remembered("A")
+        assertEquals(1_000L, r.disconnected("A", true))
+        assertEquals("A", r.retrying)
+        assertEquals(-1L, r.disconnected("B", true))
     }
 
     @Test fun connectingResetsTheBackoff() {

@@ -103,15 +103,6 @@ private class Driver(val pad: Touchpad, val stepMs: Long = 5) {
 
 class TouchpadTest {
     @Test
-    fun tapClicksAfterDragWindow() {
-        val d = Driver(pad())
-        d.down(0, 100f, 100f); d.up(80); d.until(600)
-        assertEquals(listOf(0, L, 0), d.buttons.edges())
-        assertEquals(80L, d.firstAt(L))
-        assertTrue(d.firstAt(0, 80) >= 80 + 220)
-    }
-
-    @Test
     fun tapWithoutTapDragIsShortPulse() {
         val d = Driver(pad(TouchpadSettings(acceleration = 0f, tapDrag = false)))
         d.down(0, 100f, 100f); d.up(80); d.until(600)
@@ -122,8 +113,9 @@ class TouchpadTest {
         assertTrue(released <= 80 + 60)
     }
 
+    /** Two taps with Tap left click only (no tap and drag: its Double tap is the engine's, see MappingEngineTest). */
     private fun doubleTap(jitter: Boolean): Driver {
-        val d = Driver(pad())
+        val d = Driver(pad(TouchpadSettings(acceleration = 0f, tapDrag = false)))
         d.down(0, 100f, 100f)
         if (jitter) {
             d.move(20, 105f, 100f); d.move(40, 100f, 104f)
@@ -155,37 +147,6 @@ class TouchpadTest {
         val d = doubleTap(jitter = true)
         assertEquals(listOf(0, L, 0, L, 0), d.buttons.edges())
         assertEquals(0, d.dx); assertEquals(0, d.dy)
-    }
-
-    @Test
-    fun tapThenTouchAndMoveDrags() {
-        val d = Driver(pad())
-        d.down(0, 100f, 100f); d.up(60)
-        d.down(120, 100f, 100f)
-        for (i in 1..10) d.move(120 + i * 10L, 100f + i * 10f, 100f)
-        val lift = 300L
-        d.up(lift); d.until(700)
-        assertEquals(listOf(0, L, 0), d.buttons.edges())
-        // Held throughout the moves.
-        for (i in d.times.indices) {
-            val ms = d.times[i] / MS
-            if (ms in 60 until lift) assertEquals("at $ms ms", L, d.buttons[i])
-        }
-        assertTrue(d.dxWhileLeft > 0)
-        assertEquals(150, d.dx)
-        assertTrue(d.firstAt(0, 60) in lift..lift + 50)
-    }
-
-    @Test
-    fun tapThenHoldBecomesDrag() {
-        val d = Driver(pad())
-        d.down(0, 100f, 100f); d.up(60)
-        d.down(120, 100f, 100f)
-        d.move(400, 130f, 100f)
-        d.up(500); d.until(900)
-        assertEquals(listOf(0, L, 0), d.buttons.edges())
-        assertTrue(d.firstAt(0, 60) >= 500)
-        assertTrue(d.dx > 0)
     }
 
     @Test
@@ -303,30 +264,19 @@ class TouchpadTest {
         assertEquals(listOf(L, 0, 0), listOf(1000L, 2000L, 3000L).map { p.poll(it * MS) })
     }
 
-    private fun dragging(): Driver {
-        val d = Driver(pad())
+    /** A tap's click still shown while the next touch moves. */
+    private fun clickingWhileMoving(): Driver {
+        val d = Driver(pad(TouchpadSettings(acceleration = 0f, tapDrag = false)))
         d.down(0, 100f, 100f); d.up(60)
-        d.down(120, 100f, 100f)
-        d.move(140, 150f, 100f)
-        d.until(200)
+        d.down(70, 100f, 100f)
+        d.move(75, 150f, 100f)
+        d.until(80)
         return d
     }
 
     @Test
-    fun cancelReleasesHeldDrag() {
-        val d = dragging()
-        assertEquals(L, d.buttons.last())
-        d.pad.cancel(d.t)
-        assertEquals(0, d.pad.fingers)
-        d.until(400)
-        assertEquals(listOf(0, L, 0), d.buttons.edges())
-        // L lasted its minimum pulse: visible since 60 ms, so the release is immediate at 200 ms.
-        assertEquals(200L, d.firstAt(0, 60))
-    }
-
-    @Test
     fun cancelHoldsFreshPressForMinimumPulse() {
-        val p = pad()
+        val p = pad(TouchpadSettings(acceleration = 0f, tapDrag = false))
         p.down(1, 0f, 0f, 0); p.up(1, 60 * MS)
         assertEquals(L, p.poll(65 * MS))
         p.cancel(70 * MS)
@@ -347,7 +297,7 @@ class TouchpadTest {
 
     @Test
     fun resetClearsAtOnce() {
-        val d = dragging()
+        val d = clickingWhileMoving()
         d.pad.move(1, 300f, 100f, d.t)
         assertEquals(L, d.pad.poll(d.t))
         d.pad.move(1, 400f, 100f, d.t + MS)
@@ -379,18 +329,10 @@ class TouchpadTest {
 
     @Test
     fun nextDeadlineTracksPendingRelease() {
-        val p = pad()
-        assertEquals(Long.MAX_VALUE, p.nextDeadline())
-        p.down(1, 0f, 0f, 0); p.up(1, 60 * MS)
-        assertTrue(p.nextDeadline() <= 60 * MS) // press pending: poll now
-        assertEquals(L, p.poll(65 * MS))
-        // Press shown; the release waits for the tap-drag window.
-        assertEquals(60 * MS + p.doubleTapNanos, p.nextDeadline())
-        assertEquals(0, p.poll(60 * MS + p.doubleTapNanos))
-        assertEquals(Long.MAX_VALUE, p.nextDeadline())
-
         val q = pad(TouchpadSettings(acceleration = 0f, tapDrag = false))
+        assertEquals(Long.MAX_VALUE, q.nextDeadline())
         q.down(1, 0f, 0f, 0); q.up(1, 60 * MS)
+        assertTrue(q.nextDeadline() <= 60 * MS) // press pending: poll now
         assertEquals(L, q.poll(65 * MS))
         assertEquals(65 * MS + 40 * MS, q.nextDeadline())
         assertEquals(0, q.poll(105 * MS))
@@ -954,19 +896,6 @@ class TouchpadTest {
             "$afterRest vs $slowOnly",
             kotlin.math.abs(afterRest[i] - slowOnly[i]) <= 1
         )
-    }
-
-    @Test
-    fun tapDragKeepsMotionMadeBeforeTheHoldTimer() {
-        val d = Driver(pad(TouchpadSettings(acceleration = 0f, sensitivity = 1f)))
-        d.down(0, 100f, 100f); d.up(60)
-        d.down(120, 100f, 100f)
-        d.move(200, 108f, 100f) // inside the slop: still a possible double tap
-        d.move(320, 110f, 100f) // the hold timer made it a drag before this
-        d.move(330, 120f, 100f)
-        d.up(340); d.until(700)
-        assertEquals(20, d.dx)
-        assertEquals(listOf(0, L, 0), d.buttons.edges())
     }
 
     @Test

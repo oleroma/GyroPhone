@@ -17,6 +17,16 @@ data class Workspace(
      * once [TouchpadSettings.mapped], of the touchpad ([InputSource.isTouchpad]).
      */
     val mappings: List<Mapping> = emptyList(),
+    /**
+     * Its mappings follow the levels above chip by chip ([Inheritance]); false = saved before,
+     * when mapping anything on an action overrode all of the level above's, until
+     * [Inheritance.chipByChip] has turned that into Offs.
+     */
+    val chipInherit: Boolean = false,
+    /** The touchpad's label (text, emoji, symbols), shown at the top centre of the pad while [touchpadLabelShown]. */
+    val touchpadLabel: String = "",
+    /** The pad shows [touchpadLabel] at its top centre, and what the touchpad sends as it does (as buttons show theirs). */
+    val touchpadLabelShown: Boolean = false,
     val touchpad: TouchpadSettings = TouchpadSettings(),
     val gyro: GyroSettings = GyroSettings(),
     /** Opacity of the on-screen controls in play ([Profile.MIN_CONTROL_OPACITY]..1). */
@@ -69,15 +79,20 @@ data class Workspace(
     val triggerTunings: Map<String, TriggerTuning> = emptyMap(),
     /** Physical keys' and buttons' own settings while held: filled from [devicePreset] when resolved, like [keyTimings]. */
     val heldButtons: List<HeldButton> = emptyList(),
+    /** The touchpad's finger position inputs' settings ([InputSource.Finger] with id ""), like [TouchControl.fingers]. */
+    val padFingers: List<FingerAxisSettings> = emptyList(),
+    /** Sensitivities kept by sliders ([SliderOverride]), over its settings in effect; the newest of each sensitivity only. */
+    val sliders: List<SliderOverride> = emptyList(),
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =
         pads.firstOrNull { it.matches(vendorId, productId, name) }
 
     companion object {
-        const val DEFAULT_LONG_PRESS_MS = 400
+        /** The Tap time: a press shorter is a tap, one held longer a long press, and a second touch this soon after a lift a double tap. */
+        const val DEFAULT_LONG_PRESS_MS = 300
         const val MIN_LONG_PRESS_MS = 100
-        const val MAX_LONG_PRESS_MS = 1500
+        const val MAX_LONG_PRESS_MS = 1000
         const val DEFAULT_DOUBLE_TAP_MS = 300
         const val MIN_DOUBLE_TAP_MS = 100
         const val MAX_DOUBLE_TAP_MS = 800
@@ -125,7 +140,7 @@ val InputSource.isTouch: Boolean
             this is InputSource.TouchSwipe || this is InputSource.TouchRelease || this is InputSource.TouchDoubleTap ||
             this is InputSource.TouchTap || this is InputSource.TouchLongPress ||
             this is InputSource.TouchArea || this is InputSource.Surface || this is InputSource.Gyro ||
-            this is InputSource.Tilt || this is InputSource.Shake
+            this is InputSource.Tilt || this is InputSource.Shake || this is InputSource.Finger
 
 /** A source of the workspace touchpad ([InputSource.Surface] with no control id). */
 val InputSource.isTouchpad: Boolean
@@ -138,7 +153,8 @@ val InputSource.isWorkspaceGyro: Boolean
 /** An input of the workspace itself, which it takes from the Defaults unless it maps it: touchpad, gyro, tilt or shake. */
 val InputSource.isWorkspaceInput: Boolean
     get() = isTouchpad || isWorkspaceGyro ||
-            (this is InputSource.Tilt && id.isEmpty()) || (this is InputSource.Shake && id.isEmpty())
+            (this is InputSource.Tilt && id.isEmpty()) || (this is InputSource.Shake && id.isEmpty()) ||
+            (this is InputSource.Finger && id.isEmpty())
 
 /**
  * This workspace with its touchpad mappings: as it is once resolved ([TouchpadSettings.mapped]),

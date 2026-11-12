@@ -19,12 +19,34 @@ public sealed class HostSettings
     public List<PairedPhone> PairedPhones { get; set; } = [];
     /// <summary>The overlay windows (phone, 3D shape, attitude indicator, bubble disk), each with its own settings.</summary>
     public List<OverlaySettings> Overlays { get; set; } = [];
+    /// <summary>
+    /// Overlays saved as presets ("Save as preset"), offered with a ★ under Add overlay: every setting
+    /// and the window's size, named by <see cref="OverlaySettings.Label"/>; not where the window was.
+    /// </summary>
+    public List<OverlaySettings> OverlayPresets { get; set; } = [];
     /// <summary>Overlay windows can be dragged to move and resize; off, the mouse goes through them to the game.</summary>
     public bool OverlayEdit { get; set; }
     /// <summary>Every overlay window is hidden (shortcut or tray), each keeping its own Show for when this is off.</summary>
     public bool OverlaysHidden { get; set; }
+
+    /// <summary>"Measure buttons" on Home's latency card: the phone sends PRESS_TIME.</summary>
+    public bool MeasureButtons { get; set; }
+    /// <summary>"Record input log" on the App page: the engine writes input.log (<see cref="InputRecorder"/>).</summary>
+    public bool InputLog { get; set; } = true;
+    /// <summary>"Use this PC's keys for Press a key" on the App page: off, the PC's keyboard, mouse and controller are never read for it.</summary>
+    public bool PressKeyListen { get; set; } = true;
+    /// <summary>"Notify when the phone listens for a key" on the App page: a tray notification each time the phone's "Press a key" opens.</summary>
+    public bool PressKeyNotice { get; set; } = true;
+    /// <summary>"Catch-up time" on the App page, ms: the longest a lost or late stretch of mouse motion is spread over (<see cref="CatchUpChoices"/>; 0 = off).</summary>
+    public int CatchUpMs { get; set; } = (int)(MouseCatchUp.DefaultMaxUs / 1000);
+    /// <summary>The "Catch-up time" choices, ms.</summary>
+    public static readonly int[] CatchUpChoices = [0, 8, 16, 32];
+    /// <summary>The nearest of <see cref="CatchUpChoices"/> (an edited file may hold anything).</summary>
+    public static int ClampCatchUpMs(int ms) => CatchUpChoices.MinBy(c => Math.Abs(c - ms));
     /// <summary>The overlays' global shortcuts.</summary>
     public OverlayShortcuts OverlayShortcuts { get; set; } = new();
+    /// <summary>"Fade when phone rests": every overlay fades while the phone lies still at its Level, untouched.</summary>
+    public OverlayRestFade OverlayRestFade { get; set; } = new();
     /// <summary>The one phone overlay of earlier builds: read once into <see cref="Overlays"/>.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public OverlaySettings? Overlay { get; set; }
@@ -33,9 +55,20 @@ public sealed class HostSettings
     public void Normalize()
     {
         PairedPhones ??= [];
+        CatchUpMs = ClampCatchUpMs(CatchUpMs);
         Overlays ??= [];
+        OverlayPresets ??= [];
+        OverlayPresets.RemoveAll(o => o == null);
+        foreach (var p in OverlayPresets)
+        {
+            if (string.IsNullOrEmpty(p.Id)) p.Id = OverlaySettings.NewId();
+            p.Colors ??= [];
+            p.MigrateOld();
+        }
         OverlayShortcuts ??= new();
         OverlayShortcuts.Normalize();
+        OverlayRestFade ??= new();
+        OverlayRestFade.Normalize();
         if (Overlay != null)
         {
             if (Overlays.Count == 0) Overlays.Add(Overlay);
@@ -130,6 +163,34 @@ public enum TrayClickAction
     PairNewPhone,
 }
 
+/// <summary>
+/// "Fade when phone rests" (all overlays): the phone lies at an overlay's Level tilt (within
+/// <see cref="FlatWithinDeg"/>), turns slower than <see cref="StillBelowDps"/> and gets no input,
+/// all for <see cref="QuietMs"/>: that overlay fades to <see cref="FadeTo"/> of its opacity over
+/// <see cref="FadeMs"/>, and comes back at once on any input or movement.
+/// </summary>
+public sealed class OverlayRestFade
+{
+    public bool On { get; set; } = true;
+    public float FlatWithinDeg { get; set; } = 10f;
+    public float StillBelowDps { get; set; } = 0.5f;
+    public int QuietMs { get; set; } = 3000;
+    /// <summary>The opacity faded to, as a share of the overlay's own (0.05..1).</summary>
+    public float FadeTo { get; set; } = 0.3f;
+    public int FadeMs { get; set; } = 500;
+    /// <summary>Also fade when no OVERLAY came for <see cref="QuietMs"/> (screen off, app closed, link stopped).</summary>
+    public bool WhenSilent { get; set; } = true;
+
+    public void Normalize()
+    {
+        FlatWithinDeg = Math.Clamp(float.IsFinite(FlatWithinDeg) ? FlatWithinDeg : 10f, 1f, 90f);
+        StillBelowDps = Math.Clamp(float.IsFinite(StillBelowDps) ? StillBelowDps : 0.5f, 0.05f, 10f);
+        QuietMs = Math.Clamp(QuietMs, 500, 60_000);
+        FadeTo = Math.Clamp(float.IsFinite(FadeTo) ? FadeTo : 0.3f, 0.05f, 1f);
+        FadeMs = Math.Clamp(FadeMs, 0, 5000);
+    }
+}
+
 public sealed class PairedPhone
 {
     public byte[] PhoneId { get; set; } = [];
@@ -142,4 +203,5 @@ public sealed class PairedPhone
 
 [JsonSourceGenerationOptions(WriteIndented = true, UseStringEnumConverter = true)]
 [JsonSerializable(typeof(HostSettings))]
+[JsonSerializable(typeof(OverlaySettings))]
 internal sealed partial class HostSettingsJson : JsonSerializerContext;

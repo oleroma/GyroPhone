@@ -1,6 +1,12 @@
 package com.oleroma.gyrophone.ui
 
-import androidx.compose.foundation.BorderStroke
+import com.oleroma.gyrophone.core.model.BindableInput
+import com.oleroma.gyrophone.core.model.InputSource
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.ui.window.Dialog
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -21,16 +27,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -42,32 +49,26 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.max
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
-import com.oleroma.gyrophone.core.model.ControllerDiagram
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.DevicePreset
 import com.oleroma.gyrophone.core.model.DevicePresets
 import com.oleroma.gyrophone.core.model.HeldButton
 import com.oleroma.gyrophone.core.model.Inheritance
-import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.PhysicalDevice
 import com.oleroma.gyrophone.core.model.PhysicalControl
@@ -75,9 +76,6 @@ import com.oleroma.gyrophone.core.model.PhysicalKind
 import com.oleroma.gyrophone.core.model.PhysicalLayouts
 import com.oleroma.gyrophone.core.model.withSets
 import com.oleroma.gyrophone.runtime.GamepadRuntime
-
-/** A control of a device drawing: what its mapping screen edits. */
-private data class Element(val id: String, val label: String, val stick: Boolean, val inputs: List<BindableInput>)
 
 /**
  * The device screens (the pad's Controller capsule): the device presets as tabs along the top
@@ -95,36 +93,51 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
     val current = wsIndex.coerceIn(0, profile.workspaces.lastIndex)
     val ws = profile.workspace(current)
     val presets = profile.devicePresets
-    var pickedId by rememberSaveable { mutableStateOf(ws.devicePreset) }
-    val preset = presets.firstOrNull { it.id == pickedId } ?: presets.firstOrNull { it.id == ws.devicePreset } ?: presets.firstOrNull()
+    // The preset shown is the one the current workspace uses: picking a tab makes it that one.
+    val preset = presets.firstOrNull { it.id == ws.devicePreset }
     var deviceName by rememberSaveable { mutableStateOf(PhysicalDevice.CONTROLLER.name) }
     val device = PhysicalDevice.entries.firstOrNull { it.name == deviceName } ?: PhysicalDevice.CONTROLLER
     var editing by remember { mutableStateOf<Element?>(null) }
     var menuFor by remember { mutableStateOf<DevicePreset?>(null) }
     var mapSet by remember { mutableIntStateOf(MappingSet.BASE) }
+    val board = remember(device, preset?.id) { ControlBoard() }
+    var undo by remember { mutableStateOf<Pair<String, DevicePreset>?>(null) }
+    // "Press a button": waiting for a press on an attached device, to open that control's editor.
+    var learning by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
 
-    /** Adds a standard preset and picks it. */
-    fun add() {
+    /** The current workspace uses preset [id] from now on (null: none, its devices do nothing). */
+    fun use(id: String?) {
         runtime.editActiveProfile { p ->
-            val id = DevicePresets.newId(p.devicePresets.map { it.id })
-            pickedId = id
-            DevicePresets.put(p, DevicePresets.standard(id, DevicePresets.newName(p.devicePresets.map { it.name })))
+            p.copy(workspaces = p.workspaces.mapIndexed { i, w -> if (i == current) w.copy(devicePreset = id) else w })
         }
     }
 
-    Column(Modifier.fillMaxSize().background(colors.surface)) {
+    /** Adds a standard preset, and the current workspace uses it. */
+    fun add() {
+        var made: String? = null
+        runtime.editActiveProfile { p ->
+            val id = DevicePresets.newId(p.devicePresets.map { it.id })
+            made = id
+            DevicePresets.put(p, DevicePresets.standard(id, DevicePresets.newName(p.devicePresets.map { it.name })))
+        }
+        made?.let { use(it) }
+    }
+
+    // Clear of the camera cutout at the top (in portrait); in landscape the cutout side has nothing it would hide.
+    Column(Modifier.fillMaxSize().background(colors.surface).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))) {
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             TextButton(onClick = onBack) { Text("← Pad") }
+            if (presets.isNotEmpty()) PresetTab("None", selected = preset == null, onClick = { use(null) }, onLongClick = {})
             for (p in presets) {
                 PresetTab(
                     p.name,
                     selected = p.id == preset?.id,
-                    onClick = { pickedId = p.id },
+                    onClick = { use(p.id) },
                     onLongClick = { menuFor = p },
                 )
             }
@@ -134,10 +147,12 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
         Box(Modifier.weight(1f).fillMaxWidth().padding(8.dp)) {
             if (preset == null) {
                 Column(Modifier.align(Alignment.Center).widthIn(max = 420.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("No device presets yet", style = MaterialTheme.typography.titleMedium)
+                    Text(if (presets.isEmpty()) "No device presets yet" else "No preset in " + ws.name, style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "A preset says what a controller, a keyboard and a mouse attached to the phone do. " +
-                            "Each workspace uses one preset, or none: pick it in the workspace's edit mode.",
+                        if (presets.isEmpty()) "A preset says what a controller, a keyboard and a mouse attached to the phone do. " +
+                            "Each workspace uses one preset, or none."
+                        else "Controllers, keyboards and mice attached to the phone do nothing in this workspace. " +
+                            "Tap a preset above to use it here.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = colors.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -146,45 +161,94 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
                     FilledTonalButton(onClick = { add() }) { Text("+ New preset") }
                 }
             } else {
-                val view = Bindings.viewSet(preset.mappings(device), mapSet)
-                val open = { e: Element -> editing = e }
-                when (device) {
-                    PhysicalDevice.CONTROLLER -> {
-                        // A back button can be picked when an attached pad has it, or none is attached to tell.
-                        val has = { c: PhysicalControl ->
-                            val keys = PhysicalLayouts.paddles[c.id]
-                            keys == null || controllers.isEmpty() || controllers.any { p -> p.keys.isEmpty() || p.keys.any { it in keys } }
+                val all = preset.mappings(device)
+                val counts = remember(all, device) { HashMap<String, Int>() }
+                fun lines(e: Element) = DevicePresets.remaps(device, all, e.inputs).map { r ->
+                    val layer = if (r.set == MappingSet.BASE) "" else (ws.sets.firstOrNull { it.id == r.set }?.label ?: "Layer ${r.set}") + " · "
+                    layer + r.input to r.targets.joinToString(", ") { Describe.shortTarget(it) }
+                }
+                board.wire(
+                    count = { e -> counts.getOrPut(e.id) { DevicePresets.remaps(device, all, e.inputs).sumOf { it.targets.size } } },
+                    onOpen = { editing = it },
+                    onSwap = { a, b ->
+                        val before = preset
+                        runtime.editActiveProfile { p ->
+                            val now = p.devicePresets.firstOrNull { it.id == preset.id } ?: return@editActiveProfile p
+                            DevicePresets.put(p, DevicePresets.swap(now, device, a.id, a.inputs, b.id, b.inputs))
                         }
-                        BoxWithConstraints(Modifier.fillMaxSize()) {
-                            if (maxWidth > maxHeight) {
-                                Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    DiagramView(PhysicalLayouts.controllerFront, view, has, Modifier.weight(1f).fillMaxSize(), open)
-                                    DiagramView(PhysicalLayouts.controllerBack, view, has, Modifier.weight(1f).fillMaxSize(), open)
-                                }
-                            } else {
-                                Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    DiagramView(PhysicalLayouts.controllerFront, view, has, Modifier.weight(1f).fillMaxSize(), open)
-                                    DiagramView(PhysicalLayouts.controllerBack, view, has, Modifier.weight(1f).fillMaxSize(), open)
-                                }
+                        undo = "Swapped ${a.label} and ${b.label}" to before
+                    },
+                )
+                BoardArea(board, Modifier.fillMaxSize()) {
+                    when (device) {
+                        PhysicalDevice.CONTROLLER -> {
+                            // A back button can be picked when an attached pad has it, or none is attached to tell.
+                            val has = { c: PhysicalControl ->
+                                val keys = PhysicalLayouts.paddles[c.id]
+                                keys == null || controllers.isEmpty() || controllers.any { p -> p.keys.isEmpty() || p.keys.any { it in keys } }
                             }
+                            HandlesView(board, has)
                         }
+                        PhysicalDevice.KEYBOARD -> KeyboardView(board)
+                        PhysicalDevice.MOUSE -> MouseView(board)
+                        PhysicalDevice.PHONE -> PhoneView(board)
                     }
-                    PhysicalDevice.KEYBOARD -> KeyboardView(view, open)
-                    PhysicalDevice.MOUSE -> MouseView(view, open)
-                    PhysicalDevice.PHONE -> PhoneView(view, open)
+                    BoardOverlay(
+                        board,
+                        lines = ::lines,
+                        undo = undo?.first,
+                        onUndo = {
+                            val old = undo?.second
+                            undo = null
+                            if (old != null) runtime.editActiveProfile { DevicePresets.put(it, old) }
+                        },
+                        onUndoGone = { undo = null },
+                    )
                 }
             }
         }
         HorizontalDivider()
         Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            for (d in PhysicalDevice.entries) {
-                FilterChip(selected = d == device, onClick = { deviceName = d.name }, label = { Text(d.label) })
-            }
+            DeviceSwitch(
+                PhysicalDevice.entries,
+                device,
+                label = { it.label },
+                icon = {
+                    when (it) {
+                        PhysicalDevice.CONTROLLER -> DeviceGlyph.PAD
+                        PhysicalDevice.KEYBOARD -> DeviceGlyph.KEYBOARD
+                        PhysicalDevice.MOUSE -> DeviceGlyph.MOUSE
+                        PhysicalDevice.PHONE -> DeviceGlyph.PHONE
+                    }
+                },
+                onPick = { deviceName = it.name },
+            )
+            if (preset != null) TextButton(onClick = { learning = true }) { Text("⌨ Press a button") }
+            Spacer(Modifier.weight(1f))
+            Text(
+                "Tap: what it does · Hold: edit · Hold and drag: swap",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 12.dp),
+            )
         }
+    }
+
+    if (learning) {
+        PressButtonDialog(
+            runtime,
+            onPressed = { kind, element ->
+                learning = false
+                deviceName = kind.name
+                editing = element
+            },
+            onDismiss = { learning = false },
+        )
     }
 
     val e = editing
@@ -236,7 +300,7 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
         )
     }
 
-    menuFor?.let { p -> PresetMenu(runtime, p, onPick = { pickedId = it }, onDismiss = { menuFor = null }) }
+    menuFor?.let { p -> PresetMenu(runtime, p, onPick = { use(it) }, onDismiss = { menuFor = null }) }
 }
 
 /** A preset's tab. */
@@ -333,149 +397,79 @@ private fun PresetMenu(runtime: GamepadRuntime, preset: DevicePreset, onPick: (S
     )
 }
 
-/**
- * What a control is mapped to in [view] (the edited set as Base): its first mapped input's first
- * target, "" when that is just the control itself (A to A), null when nothing is mapped.
- */
-private fun summary(view: List<Mapping>, inputs: List<BindableInput>, label: String): String? {
-    val mapped = inputs.mapNotNull { Bindings.targets(view, it).firstOrNull() }
-    if (mapped.isEmpty()) return null
-    val first = Describe.shortTarget(mapped.first())
-    val more = if (mapped.size > 1) "+" + (mapped.size - 1) else ""
-    return if (first.equals(label, ignoreCase = true)) more else first + if (more.isEmpty()) "" else " $more"
+/** How a controller control is marked: no name on A B X Y and the D-pad, icons on View, Menu and Home. */
+private fun markOf(c: PhysicalControl): Mark = when {
+    c.kind == PhysicalKind.DPAD -> Mark.NONE
+    c.id in setOf("a", "b", "x", "y") -> Mark.NONE
+    c.id == "select" -> Mark.VIEW
+    c.id == "start" -> Mark.MENU
+    c.id == "home" -> Mark.HOME
+    else -> Mark.NAME
 }
 
 /**
- * A control of a device drawing: its [label] and, when mapped to something else, [summary] under
- * it ("" = mapped to itself, null = not mapped). The text shrinks to fit the control.
+ * The controller drawn as the companion's overlay draws it: the phone with a handle on each side,
+ * the triggers and bumpers above the handles, the back buttons and Home below
+ * ([PhysicalLayouts.controllerHandles]), as large as fits. [has]: whether a control can be picked.
  */
 @Composable
-private fun ElementBox(
-    label: String,
-    summary: String?,
-    round: Boolean,
-    enabled: Boolean,
-    modifier: Modifier,
-    onClick: () -> Unit,
-) {
+private fun HandlesView(board: ControlBoard, has: (PhysicalControl) -> Boolean) {
     val colors = MaterialTheme.colorScheme
-    val shape = if (round) CircleShape else RoundedCornerShape(6.dp)
-    val mapped = summary != null
-    val content = if (mapped) colors.onPrimaryContainer else colors.onSurface
-    Surface(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier.alpha(if (enabled) 1f else 0.3f),
-        shape = shape,
-        color = if (mapped) colors.primaryContainer else colors.surfaceContainerHighest,
-        border = BorderStroke(1.dp, if (mapped) colors.primary else colors.outline),
-    ) {
-        BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            val density = LocalDensity.current
-            val second = !summary.isNullOrEmpty()
-            // A circle's text has its inner square; letters are about 0.6 of the size wide.
-            val room = if (round) 0.72f else 0.9f
-            fun fit(text: String, share: Float, max: Float) = with(density) {
-                minOf(maxWidth * room / (0.6f * text.length.coerceAtLeast(1)), maxHeight * room * share).toSp()
-            }.value.coerceIn(6f, max).sp
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    label,
-                    fontSize = fit(label, if (second) 0.5f else 0.6f, 13f),
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    softWrap = false,
-                    color = content,
-                )
-                if (summary != null && second) {
-                    Text(
-                        summary,
-                        fontSize = fit(summary, 0.32f, 10f),
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis,
-                        color = content,
+    val body = colors.surfaceContainer
+    val edge = colors.outlineVariant
+    val screen = colors.surfaceContainerLowest
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // On a narrow (portrait) screen no phone: the handles side by side, as large as fits.
+        val phone = maxWidth > maxHeight
+        val d = if (phone) PhysicalLayouts.controllerHandles else PhysicalLayouts.controllerHandlesNarrow
+        val w = min(maxWidth, maxHeight * d.aspect)
+        val h = w / d.aspect
+        Box(Modifier.align(Alignment.Center).size(w, h)) {
+            Canvas(Modifier.fillMaxSize()) {
+                val u = size.height / PhysicalLayouts.HANDLES_H
+                val top = PhysicalLayouts.HANDLES_TOP * u
+                val hw = PhysicalLayouts.HANDLE_W * u
+                val line = Stroke(width = 1.5.dp.toPx())
+                // Each handle: big round corners outside, small ones against the phone.
+                fun handle(x0: Float, outerLeft: Boolean): Path {
+                    val ro = 0.12f * u
+                    val ri = 0.015f * u
+                    val (rl, rr) = if (outerLeft) ro to ri else ri to ro
+                    return Path().apply {
+                        addRoundRect(
+                            androidx.compose.ui.geometry.RoundRect(
+                                Rect(x0, top, x0 + hw, top + u),
+                                topLeft = CornerRadius(rl), topRight = CornerRadius(rr),
+                                bottomRight = CornerRadius(rr), bottomLeft = CornerRadius(rl),
+                            ),
+                        )
+                    }
+                }
+                for (p in listOf(handle(0f, true), handle(size.width - hw, false))) {
+                    drawPath(p, body)
+                    drawPath(p, edge, style = line)
+                }
+                if (phone) {
+                    val at = Offset(hw, top)
+                    val phoneSize = Size(size.width - 2 * hw, u)
+                    drawRoundRect(body, at, phoneSize, CornerRadius(0.11f * u))
+                    drawRoundRect(edge, at, phoneSize, CornerRadius(0.11f * u), style = line)
+                    val inset = 0.04f * u
+                    drawRoundRect(
+                        screen, at + Offset(inset, inset), Size(phoneSize.width - 2 * inset, u - 2 * inset),
+                        CornerRadius(0.08f * u),
                     )
                 }
             }
-        }
-    }
-}
-
-/**
- * The outline of a symmetric-stick gamepad in a box of [w] x [h], as seen from above: a flat top with round
- * shoulders and two long grips. The back view uses it too.
- */
-private fun padOutline(w: Float, h: Float): Path {
-    // The left half, from the top middle round the left grip to the bottom middle (x, y as box fractions).
-    val half = OUTLINE_HALF
-    return Path().apply {
-        moveTo(w * 0.5f, h * OUTLINE_TOP)
-        for (c in half) cubicTo(w * c[0], h * c[1], w * c[2], h * c[3], w * c[4], h * c[5])
-        // The right half: the same curves mirrored, from the bottom middle back up.
-        val points = ArrayList<Pair<Float, Float>>()
-        points.add(0.5f to OUTLINE_TOP)
-        for (c in half) { points.add(c[0] to c[1]); points.add(c[2] to c[3]); points.add(c[4] to c[5]) }
-        val back = points.reversed()
-        var i = 1
-        while (i + 2 < back.size) {
-            val (x1, y1) = back[i]; val (x2, y2) = back[i + 1]; val (x3, y3) = back[i + 2]
-            cubicTo(w * (1f - x1), h * y1, w * (1f - x2), h * y2, w * (1f - x3), h * y3)
-            i += 3
-        }
-        close()
-    }
-}
-
-private const val OUTLINE_TOP = 0.03f
-private val OUTLINE_HALF = listOf(
-    floatArrayOf(0.36f, 0.03f, 0.22f, 0.02f, 0.13f, 0.05f),
-    floatArrayOf(0.05f, 0.08f, 0.025f, 0.20f, 0.02f, 0.40f),
-    floatArrayOf(0.015f, 0.62f, 0.04f, 0.88f, 0.09f, 0.97f),
-    floatArrayOf(0.13f, 1.02f, 0.21f, 1.0f, 0.25f, 0.92f),
-    floatArrayOf(0.29f, 0.82f, 0.31f, 0.73f, 0.38f, 0.70f),
-    floatArrayOf(0.44f, 0.68f, 0.48f, 0.68f, 0.5f, 0.68f),
-)
-
-/** [d] drawn as large as fits, a game pad body behind its controls; [has]: whether a control can be picked. */
-@Composable
-private fun DiagramView(
-    d: ControllerDiagram,
-    view: List<Mapping>,
-    has: (PhysicalControl) -> Boolean,
-    modifier: Modifier,
-    onOpen: (Element) -> Unit,
-) {
-    val body = MaterialTheme.colorScheme.surfaceContainer
-    val edge = MaterialTheme.colorScheme.outlineVariant
-    BoxWithConstraints(modifier) {
-        val w = min(maxWidth, (maxHeight - 20.dp) * d.aspect)
-        val h = w / d.aspect
-        Text(d.name, style = MaterialTheme.typography.labelLarge, modifier = Modifier.align(Alignment.TopStart))
-        Box(Modifier.align(Alignment.Center).padding(top = 20.dp).size(w, h)) {
-            Canvas(Modifier.fillMaxSize()) {
-                val outline = padOutline(size.width, size.height)
-                drawPath(outline, body)
-                drawPath(outline, edge, style = Stroke(width = 1.5.dp.toPx()))
-                if (d === PhysicalLayouts.controllerFront) {
-                    val (l, t, r, b) = PhysicalLayouts.TOUCHPAD
-                    val pad = Offset(size.width * l, size.height * t)
-                    val padSize = Size(size.width * (r - l), size.height * (b - t))
-                    val corner = CornerRadius(8.dp.toPx())
-                    drawRoundRect(edge.copy(alpha = 0.35f), pad, padSize, corner)
-                    drawRoundRect(edge, pad, padSize, corner, style = Stroke(width = 1.dp.toPx()))
-                }
-            }
             for (c in d.controls) {
-                val enabled = has(c)
-                ElementBox(
-                    c.label,
-                    if (enabled) summary(view, c.inputs, c.label) else null,
-                    round = c.kind == PhysicalKind.STICK || c.kind == PhysicalKind.SYSTEM ||
-                        (c.kind == PhysicalKind.FACE && c.id !in PhysicalLayouts.paddles),
-                    enabled = enabled,
+                val round = c.kind == PhysicalKind.STICK || c.kind == PhysicalKind.SYSTEM ||
+                    (c.kind == PhysicalKind.FACE && c.id !in PhysicalLayouts.paddles)
+                DeviceControl(
+                    board,
+                    Element(c.id, c.label, c.kind == PhysicalKind.STICK, c.inputs, round, markOf(c)),
+                    enabled = has(c),
                     modifier = Modifier.offset(w * (c.x - c.w / 2f), h * (c.y - c.h / 2f)).size(w * c.w, h * c.h),
-                ) { onOpen(Element(c.id, c.label, c.kind == PhysicalKind.STICK, c.inputs)) }
+                )
             }
         }
     }
@@ -483,11 +477,11 @@ private fun DiagramView(
 
 /** A full keyboard: the width split in key units, at least [MIN_KEY] each (then it scrolls sideways). */
 @Composable
-private fun KeyboardView(view: List<Mapping>, onOpen: (Element) -> Unit) {
+private fun KeyboardView(board: ControlBoard) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val rows = PhysicalLayouts.keyboardRows
         val unit = max(maxWidth / PhysicalLayouts.KEYBOARD_UNITS, MIN_KEY)
-        val keyH = min(unit, maxHeight / rows.size)
+        val keyH = min(unit * 1.15f, maxHeight / rows.size)
         Column(
             Modifier.align(Alignment.Center).horizontalScroll(rememberScrollState()),
         ) {
@@ -498,11 +492,12 @@ private fun KeyboardView(view: List<Mapping>, onOpen: (Element) -> Unit) {
                         if (code == null) {
                             Spacer(Modifier.size(unit * k.width, keyH))
                         } else {
-                            val inputs = PhysicalLayouts.buttonInputs(listOf(code))
-                            ElementBox(
-                                k.label, summary(view, inputs, k.label), round = false, enabled = true,
+                            DeviceControl(
+                                board,
+                                Element("key$code", k.label, false, PhysicalLayouts.buttonInputs(listOf(code))),
+                                enabled = true,
                                 modifier = Modifier.size(unit * k.width, keyH).padding(1.5.dp),
-                            ) { onOpen(Element("key$code", k.label, false, inputs)) }
+                            )
                         }
                     }
                 }
@@ -513,9 +508,9 @@ private fun KeyboardView(view: List<Mapping>, onOpen: (Element) -> Unit) {
 
 /** A mouse from above: its buttons, wheel, side buttons and movement. */
 @Composable
-private fun MouseView(view: List<Mapping>, onOpen: (Element) -> Unit) {
-    val body = MaterialTheme.colorScheme.surfaceVariant
-    val line = MaterialTheme.colorScheme.outline
+private fun MouseView(board: ControlBoard) {
+    val body = MaterialTheme.colorScheme.surfaceContainer
+    val line = MaterialTheme.colorScheme.outlineVariant
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val h = min(maxHeight, maxWidth / PhysicalLayouts.MOUSE_ASPECT)
         val w = h * PhysicalLayouts.MOUSE_ASPECT
@@ -532,13 +527,16 @@ private fun MouseView(view: List<Mapping>, onOpen: (Element) -> Unit) {
                     )
                 }
                 drawPath(outline, body)
-                drawLine(line, Offset(sw * 0.5f, sh * 0.02f), Offset(sw * 0.5f, sh * 0.35f), strokeWidth = 2f)
+                drawPath(outline, line, style = Stroke(width = 1.5.dp.toPx()))
+                drawLine(line, Offset(sw * 0.5f, sh * 0.02f), Offset(sw * 0.5f, sh * 0.35f), strokeWidth = 1.5.dp.toPx())
             }
             for (c in PhysicalLayouts.mouseControls) {
-                ElementBox(
-                    c.label, summary(view, c.inputs, c.label), round = false, enabled = true,
+                DeviceControl(
+                    board,
+                    Element(c.id, c.label, false, c.inputs),
+                    enabled = true,
                     modifier = Modifier.offset(w * (c.x - c.w / 2f), h * (c.y - c.h / 2f)).size(w * c.w, h * c.h),
-                ) { onOpen(Element(c.id, c.label, false, c.inputs)) }
+                )
             }
         }
     }
@@ -549,10 +547,10 @@ private fun MouseView(view: List<Mapping>, onOpen: (Element) -> Unit) {
  * open; a key mapped to nothing turns the PC's volume.
  */
 @Composable
-private fun PhoneView(view: List<Mapping>, onOpen: (Element) -> Unit) {
+private fun PhoneView(board: ControlBoard) {
     val colors = MaterialTheme.colorScheme
-    val body = colors.surfaceVariant
-    val line = colors.outline
+    val body = colors.surfaceContainer
+    val line = colors.outlineVariant
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val h = min(maxHeight, maxWidth / PhysicalLayouts.PHONE_ASPECT)
@@ -563,23 +561,28 @@ private fun PhoneView(view: List<Mapping>, onOpen: (Element) -> Unit) {
                     val sh = size.height
                     val top = sh * PhysicalLayouts.PHONE_TOP
                     val r = CornerRadius(sh * 0.12f, sh * 0.12f)
-                    drawRoundRect(body, Offset(sw * 0.02f, top), androidx.compose.ui.geometry.Size(sw * 0.96f, sh - top - sh * 0.02f), r)
+                    val stroke = Stroke(width = 1.5.dp.toPx())
+                    val at = Offset(sw * 0.02f, top)
+                    val bodySize = Size(sw * 0.96f, sh - top - sh * 0.02f)
+                    drawRoundRect(body, at, bodySize, r)
+                    drawRoundRect(line, at, bodySize, r, style = stroke)
                     drawRoundRect(
-                        line, Offset(sw * 0.06f, top + sh * 0.08f),
-                        androidx.compose.ui.geometry.Size(sw * 0.88f, sh - top - sh * 0.18f),
-                        CornerRadius(sh * 0.06f, sh * 0.06f), style = androidx.compose.ui.graphics.drawscope.Stroke(2f),
+                        line, Offset(sw * 0.06f, top + sh * 0.08f), Size(sw * 0.88f, sh - top - sh * 0.18f),
+                        CornerRadius(sh * 0.06f, sh * 0.06f), style = stroke,
                     )
                 }
                 for (c in PhysicalLayouts.phoneControls) {
-                    ElementBox(
-                        c.label, summary(view, c.inputs, c.label), round = false, enabled = true,
+                    DeviceControl(
+                        board,
+                        Element(c.id, c.label, false, c.inputs),
+                        enabled = true,
                         modifier = Modifier.offset(w * (c.x - c.w / 2f), h * (c.y - c.h / 2f)).size(w * c.w, h * c.h),
-                    ) { onOpen(Element(c.id, c.label, false, c.inputs)) }
+                    )
                 }
             }
         }
         Text(
-            "The volume rocker acts while the pad is open. A key mapped to nothing turns the PC's volume.",
+            "The volume rocker acts while the pad is open. A grey key turns the PC's volume.",
             style = MaterialTheme.typography.bodySmall,
             color = colors.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -589,3 +592,72 @@ private fun PhoneView(view: List<Mapping>, onOpen: (Element) -> Unit) {
 }
 
 private val MIN_KEY: Dp = 34.dp
+
+/**
+ * "Press a button": waits for a press on a controller, keyboard or mouse attached to the phone,
+ * then [onPressed] gets the view it is on and its control, to open that control's editor. A press
+ * no view shows says so and waits for the next.
+ */
+@Composable
+private fun PressButtonDialog(
+    runtime: GamepadRuntime,
+    onPressed: (PhysicalDevice, Element) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var message by remember { mutableStateOf<String?>(null) }
+    var arm by remember { mutableIntStateOf(0) }
+    val latest by rememberUpdatedState(onPressed)
+    Dialog(onDismissRequest = onDismiss) {
+        ListenInThisWindow(runtime)
+        DisposableEffect(arm) {
+            val listener: (PhysicalDevice, InputSource) -> Unit = { kind, source ->
+                val element = pressedElement(kind, source)
+                if (element != null) latest(kind, element)
+                else {
+                    message = "That one isn't on the " + kind.label.lowercase() + " view. Press another."
+                    arm++
+                }
+            }
+            runtime.learnListener = listener
+            onDispose { if (runtime.learnListener === listener) runtime.learnListener = null }
+        }
+        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 6.dp) {
+            Column(
+                Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("Press a button…", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    message ?: "On a controller, keyboard or mouse attached to the phone. Its editor opens.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (message != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                OutlinedButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        }
+    }
+}
+
+/** The control of [device]'s view that [source] is one of the inputs of; null when none. */
+private fun pressedElement(device: PhysicalDevice, source: InputSource): Element? {
+    fun same(a: InputSource, b: InputSource): Boolean = when {
+        a is InputSource.Axis && b is InputSource.Axis -> a.axis == b.axis
+        a is InputSource.Key && b is InputSource.Key -> a.keyCode == b.keyCode
+        a is InputSource.KeyGesture && b is InputSource.Key -> a.keyCode == b.keyCode
+        else -> false
+    }
+    fun has(inputs: List<BindableInput>) = inputs.any { i -> i.sources.any { same(it, source) } }
+    return when (device) {
+        PhysicalDevice.CONTROLLER -> PhysicalLayouts.controllerHandles.controls.firstOrNull { has(it.inputs) }
+            ?.let { Element(it.id, it.label, it.kind == PhysicalKind.STICK, it.inputs) }
+        PhysicalDevice.KEYBOARD -> {
+            val code = (source as? InputSource.Key)?.keyCode
+            PhysicalLayouts.keyboardRows.flatten().firstOrNull { it.code != null && it.code == code }
+                ?.let { k -> Element("key${k.code}", k.label, false, PhysicalLayouts.buttonInputs(listOf(k.code!!))) }
+        }
+        PhysicalDevice.MOUSE -> PhysicalLayouts.mouseControls.firstOrNull { has(it.inputs) }?.let { Element(it.id, it.label, false, it.inputs) }
+        PhysicalDevice.PHONE -> null
+    }
+}

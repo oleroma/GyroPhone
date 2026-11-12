@@ -20,6 +20,9 @@ exec 3>&1 >>"$LOG_FILE" 2>&1
 set -x
 
 FINISHED=0
+# Set by agent-build pc: the file its build window makes when Olex cancels the build there.
+CANCEL_FILE=""
+cancelled() { [ -n "$CANCEL_FILE" ] && [ -f "$CANCEL_FILE" ]; }
 
 # Scripts redefine this to undo things such as a lock; it runs on every exit.
 cleanup() { :; }
@@ -34,6 +37,10 @@ finish() {
   FINISHED=1
   local word="$1" out
   shift
+  if cancelled; then
+    word=cancelled
+    set -- "Olex cancelled the build in its window."
+  fi
   out="result: $word"
   if [ $# -gt 0 ]; then out="$out"$'\n'"$(printf '%s\n' "$@")"; fi
   out="$out"$'\n'"log: $LOG_FILE"
@@ -53,9 +60,11 @@ on_exit() {
   local code=$?
   set +x
   cleanup || true
+  if [ "$FINISHED" = 0 ] && cancelled; then finish cancelled; fi
   if [ "$FINISHED" = 0 ]; then
     local out
     out="$(printf 'result: failed\nUnexpected error (exit %s); the last command in the log failed.\nlog: %s' "$code" "$LOG_FILE")"
+    printf '%s\n' "$out"
     printf '%s\n' "$out" >&3
     FINISHED=1
     report "$out" || true
@@ -96,7 +105,9 @@ wait_main_cache() {
 }
 
 # run_fallback: runs fallback.yml on BRANCH (the same tests and build as a PC build) and waits
-# for it. Sets RUN (the run id) and RUN_URL. Returns 1 if the run failed; stops if it can't be found.
+# for it. Sets RUN (the run id) and RUN_URL. Shows the run link at once, and the release lines
+# (release_lines) as soon as every build job has published, before the full checks end.
+# Returns 1 if the run failed; stops if it can't be found.
 run_fallback() {
   local sha since i
   sha="$(git -C "$WORKTREE" rev-parse HEAD)"
@@ -115,7 +126,39 @@ run_fallback() {
   RUN_URL="https://github.com/$SLUG/actions/runs/$RUN"
   # Shown right away (not only in the result), so the run can be followed while it builds.
   echo "CI run: $RUN_URL" >&3
-  gh run watch -R "$SLUG" "$RUN" --exit-status --interval 15
+  local published=0 state="" n
+  while :; do
+    sleep 15
+    if [ "$published" = 0 ] && [ "$(fallback_published "$RUN")" = true ]; then
+      published=1
+      n="$(newest_build_tag "$sha")"
+      if [ -n "$n" ]; then release_lines "$n" >&3; fi
+    fi
+    state="$(gh api "repos/$SLUG/actions/runs/$RUN" --jq '"\(.status) \(.conclusion // "")"')"
+    case "$state" in completed*) break ;; esac
+  done
+  [ "$state" = "completed success" ]
+}
+
+# fallback_published <run>: prints true once every build job of the run that isn't skipped has
+# passed its "Publish" step (and at least one has).
+fallback_published() {
+  gh api "repos/$SLUG/actions/runs/$1/jobs" --jq '[.jobs[] | select(.conclusion != "skipped")
+    | {p: ([.steps[]? | select(.name | startswith("Publish"))][0]), started: ((.steps | length) > 0 or .status == "completed")}]
+    | ((map(select(.p != null)) | length > 0 and all(.p.conclusion == "success")) and all(.started))'
+}
+
+# newest_build_tag <sha>: the highest n whose build/<n> tag is on <sha>, or nothing.
+newest_build_tag() {
+  git -C "$WORKTREE" ls-remote --tags origin 'refs/tags/build/*' |
+    sed -nE "s#^$1\s+refs/tags/build/([0-9]+)\$#\1#p" | sort -n | tail -n 1
+}
+
+# release_lines <n>: the build/<n> pre-release's link and a direct download link for each file.
+release_lines() {
+  local url="https://github.com/$SLUG/releases/tag/build/$1"
+  echo "Published build $(gh api "repos/$SLUG/releases/tags/build/$1" --jq .name): $url"
+  gh api "repos/$SLUG/releases/tags/build/$1" --jq '.assets[] | "\(.name): direct download link \(.browser_download_url)"'
 }
 
 # Every build, on the PC or in CI, runs the full checks once. When they pass, the commit gets a
@@ -132,8 +175,8 @@ mark_checked() {
   gh api -X POST "repos/$SLUG/statuses/$1" -f state=success -f context=full-check -f description="$2" >/dev/null
 }
 
-# Olex tests changes to the pipeline himself (AGENTS.md, "Scripts and hooks"), so a branch whose
-# changes since its last build are only pipeline files or documentation isn't built again.
+# Olex tests changes to the pipeline himself (AGENTS.md, "Scripts and hooks"), so a branch that
+# changes only pipeline files or documentation since main isn't built.
 
 # pipeline_file <path>: true for a file no build uses: the pipeline (.agents/, .github/workflows/),
 # documentation and rules (*.md files and docs/), and git and agent settings.
@@ -144,24 +187,21 @@ pipeline_file() {
   esac
 }
 
-# unbuilt_changes: prints the files this branch's own commits changed after its newest commit
-# whose full checks passed (since main when none has), one per line, without what merges of
-# main brought in. Sets LAST_CHECKED to that commit, or empty.
-unbuilt_changes() {
-  local c base
-  LAST_CHECKED=""
+# branch_changes: sets CHANGES to the files this branch's own commits changed since main, one per
+# line, without what merges of main brought in. Call it directly, not in $( ): a subshell would
+# lose CHANGES.
+branch_changes() {
+  local base
   base="$(git merge-base HEAD origin/main)"
-  while read -r c; do
-    if checked "$c"; then LAST_CHECKED="$c"; break; fi
-  done < <(git rev-list --first-parent "$base..HEAD")
-  git log --first-parent --no-merges --format= --name-only "${LAST_CHECKED:-$base}..HEAD" | grep -v '^$' | sort -u
+  CHANGES="$(git log --first-parent --no-merges --format= --name-only "$base..HEAD" | grep -v '^$' | sort -u || true)"
 }
 
-# only_pipeline_changes: true if the branch changed something since its last build and all of it
-# is pipeline files or documentation (unbuilt_changes). Sets CHANGES to that list.
+# only_pipeline_changes: true if the branch changed something and all of it, since main, is
+# pipeline files or documentation (branch_changes). Sets CHANGES to that list. A branch that also
+# changes code is built every time, even when its newest commits touch only pipeline files.
 only_pipeline_changes() {
   local f
-  CHANGES="$(unbuilt_changes)"
+  branch_changes
   [ -n "$CHANGES" ] || return 1
   while IFS= read -r f; do
     pipeline_file "$f" || return 1

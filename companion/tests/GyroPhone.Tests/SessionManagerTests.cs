@@ -29,6 +29,23 @@ public class SessionManagerTests
     }
 
     [Fact]
+    public void StatusSaysWhetherTheCableIsOnAndTellsAtOnceWhenItChanges()
+    {
+        using var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        // On by default. Each change goes out at once, not with the next second's status.
+        h.Sender.Clear();
+        h.Engine.SetUsbDirect(false);
+        Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out var off));
+        Assert.Equal(0, WireCodec.DecodeHostStatus(off).Flags2);
+        h.Sender.Clear();
+        h.Engine.SetUsbDirect(true);
+        Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out var on));
+        Assert.Equal(HostStatusFlags2.UsbDirect, WireCodec.DecodeHostStatus(on).Flags2);
+    }
+
+    [Fact]
     public void ReplayedHelloDoesNotDisturbActiveSession()
     {
         var h = new Harness();
@@ -130,8 +147,10 @@ public class SessionManagerTests
         Assert.True(h.Engine.Snapshot().Connected);
         h.Tick(150);
         Assert.False(h.Engine.Snapshot().Connected);
-        Assert.Equal(OutputMode.None, h.Pad.Plugged);
-        Assert.Equal(1, h.Pad.Unplugs);
+        // The pad stays plugged, at rest, for the next session.
+        Assert.Equal(OutputMode.Xbox360, h.Pad.Plugged);
+        Assert.Equal(0, h.Pad.Unplugs);
+        Assert.Equal(X360Frame.Neutral, h.Pad.X360[^1]);
     }
 
     [Fact]
@@ -169,7 +188,7 @@ public class SessionManagerTests
         h.Send(phone, phone.Bye(ByeReason.TransportSwitch));
         Assert.True(h.KeyMouse.NothingHeld);
         Assert.False(h.Engine.Snapshot().Connected);
-        Assert.Equal(OutputMode.None, h.Pad.Plugged);
+        Assert.Equal(OutputMode.Xbox360, h.Pad.Plugged); // kept, neutral, for the next session
     }
 
     [Fact]
@@ -179,7 +198,7 @@ public class SessionManagerTests
         var secondId = Hex.Range(0x80, 16);
         var secondKey = Hex.Range(0xA0, 32);
         h.AddPaired(secondId, "Pixel", secondKey);
-        var h2 = new Host.HostEngine(h.Settings, h.Pad, h.KeyMouse, h.Prompt, new PlainProtector(), h.Clock, h.Events);
+        var h2 = new Host.HostEngine(h.Settings, h.Pad, h.KeyMouse, h.Prompt, new PlainProtector(), h.Clock, h.Events) { PadWorker = job => job() };
         h2.AttachSender(h.Sender);
 
         var a = h.NewPhone("192.168.1.50", 40000);
@@ -494,5 +513,20 @@ public class SessionManagerTests
         Assert.Equal(2, h.Sender.Sent.Count);
         Assert.Equal(PacketType.Rumble, phone.TryOpen(h.Sender.Sent[1].Data, out p));
         Assert.Equal(new Rumble(0, 0), WireCodec.DecodeRumble(p));
+    }
+
+    [Fact]
+    public void BuzzIsSentTwiceWithItsPattern()
+    {
+        var h = new Harness();
+        h.Engine.Buzz(); // no phone: nothing
+        Assert.Empty(h.Sender.Sent);
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        h.Sender.Clear();
+        h.Engine.Buzz();
+        Assert.Equal(2, h.Sender.Sent.Count);
+        Assert.Equal(PacketType.Rumble, phone.TryOpen(h.Sender.Sent[0].Data, out var p));
+        Assert.Equal(new Rumble(0, 0, RumblePattern.Buzz), WireCodec.DecodeRumble(p));
     }
 }
