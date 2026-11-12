@@ -33,6 +33,7 @@ import com.oleroma.gyrophone.core.model.MappingPresets
 import com.oleroma.gyrophone.core.model.ProfileExport
 import com.oleroma.gyrophone.core.model.MappingPreset
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
+import com.oleroma.gyrophone.core.model.SetValueSave
 import com.oleroma.gyrophone.core.model.YawAxis
 import com.oleroma.gyrophone.core.model.WorkspaceMappings
 import com.oleroma.gyrophone.core.model.Mapping
@@ -773,6 +774,11 @@ class GamepadRuntime(context: Context) {
      */
     @Volatile private var gyro: GyroSource? = null
     private val main = Handler(Looper.getMainLooper())
+
+    init {
+        // A Set value sensitivity let go: written into its setting on the main thread, like any edit.
+        engine.onSetValue = { c -> main.post { saveSetValue(c) } }
+    }
     private val gyroControl = Handler(HandlerThread("GyroControl").apply { start() }.looper)
 
     /** What [updateGyro] and [stop] ask of the gyro source; [syncGyro] does it. */
@@ -1246,6 +1252,30 @@ class GamepadRuntime(context: Context) {
         }
         activate(resolveStored(stored))
         return _activeProfile.value
+    }
+
+    /**
+     * Writes a Set value sensitivity into the nearest setting it drives ([SetValueSave]) and saves
+     * it, like [editActiveProfile], but puts it into effect without releasing anything held
+     * ([MappingEngine.updateSettings]): the finger lifted mid-game.
+     */
+    private fun saveSetValue(c: MappingEngine.SetCommit) {
+        val before = _activeProfile.value
+        if (c.workspaceIndex != _workspaceIndex.value) return
+        val written = SetValueSave.apply(before, c.workspaceIndex, c.sets, c.mapping, c.value)
+        val changed = GlobalControls.sync(before, WorkspaceDefaults.markOwn(before, written))
+        if (changed == before) return
+        val set = WorkspaceMappings.store(WorkspaceMappings.settle(before, changed))
+        if (set != stored) {
+            stored = set
+            store.saveLater(set)
+        }
+        val resolved = resolveStored(stored)
+        engine.updateSettings(resolved)
+        _activeProfile.value = resolved
+        // The gyro follows without a reset: aiming goes on.
+        gyroMouse.settings = resolved.workspace(_workspaceIndex.value).gyro
+        updateGyro()
     }
 
     /** Adds [button] to the button library. */

@@ -343,6 +343,15 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         return dirs.progress(d, zone, settings)
     }
 
+    /**
+     * How far (dp) [fingers] fingers have slid since their motion started, along X (right) or Y
+     * (up); NaN while no such motion runs. What a Move value chip slides by ([MappingEngine]).
+     */
+    fun slideDp(fingers: Int, x: Boolean): Float {
+        if (phaseN != fingers || fingers !in 1..4 || pxPerDp <= 0f) return Float.NaN
+        return (if (x) trX else -trY) / pxPerDp
+    }
+
     fun level(fingers: Int, input: SurfaceInput, zone: Int = 0): Float {
         if (fingers !in 1..4 || zone !in 0 until TouchpadSettings.MAX_HOLD_ZONES) return 0f
         return when (input) {
