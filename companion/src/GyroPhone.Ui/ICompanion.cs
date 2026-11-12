@@ -109,6 +109,8 @@ public interface ICompanion
     /// <summary>The way the phone's packets go now ("Phone hotspot · PC Wi-Fi") and which Record Setup that is, or null without a phone.</summary>
     (string Text, string? Setup)? LinkPath();
     void OpenPerfFolder();
+    /// <summary>Writes the link tests' results.html afresh and opens it in the default browser.</summary>
+    void OpenPerfResults();
     /// <summary>Opens a file in its default program.</summary>
     void OpenFile(string path);
 

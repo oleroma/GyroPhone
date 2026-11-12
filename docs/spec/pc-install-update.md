@@ -28,7 +28,7 @@ If the copy fails, the old build starts again with `--update-failed` and doesn't
 
 ## Firewall
 
-`FirewallHelper`: one inbound UDP allow rule for the exe's path, **Private and Domain profiles only**; Public networks stay closed (the Connection page and Home warn when the Wi-Fi is Public, `NetworkCategory`). A separate **USB rule** opens the port on Public wired adapters to their own subnet only, for USB tethering. Adding either asks for UAC once. Block rules Windows made from a dismissed first-run prompt are removed with them.
+`FirewallHelper`: one inbound UDP allow rule for the exe's path, **Private and Domain profiles only**; Public networks stay closed by this rule. The phone often gets through on Public anyway (an allow rule Windows made from its own first-run prompt, or the USB rule below when the PC is on Ethernet and the phone on the same subnet), so the Public warning (`NetworkCategory`) shows only when no phone packet has arrived: in Home and the tray after 30 s with none, and on the Connection page as soon as the network is Public and none has arrived. A separate **USB rule** opens the port on Public wired adapters to their own subnet only, for USB tethering. Adding either asks for UAC once. Block rules Windows made from a dismissed first-run prompt are removed with them.
 
 ## Direct USB cable
 

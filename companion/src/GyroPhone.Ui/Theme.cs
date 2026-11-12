@@ -37,6 +37,7 @@ public static class Theme
             throw;
         }
         _started = true; // only once loaded, so a failed load is tried again by the next window
+        WheelScroll.Register();
         SystemEvents.UserPreferenceChanged += (_, e) =>
         {
             if (e.Category != UserPreferenceCategory.General) return;
