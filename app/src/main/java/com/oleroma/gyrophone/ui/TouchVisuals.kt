@@ -576,7 +576,7 @@ class FingerMark(
 
 /**
  * The position ruler: while a finger is on a [FingerMark] button, a strip through the finger for
- * each finger input it maps (Finger X across, Y up, distance from the centre out through the
+ * each finger input it maps (Position X across, Y up, distance from the centre out through the
  * finger, angle as a ring round it), clear in the input's start deadzone, a gradient to full
  * [color] at its end deadzone; and a label with what each of its finger chips sends now, above the
  * finger or, [inCorner], in the button's top-right corner. It follows the fingers frame by frame

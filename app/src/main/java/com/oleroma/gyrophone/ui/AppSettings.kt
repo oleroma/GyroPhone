@@ -271,7 +271,7 @@ private fun AppTab(runtime: GamepadRuntime) {
             ) { runtime.setTouchVisuals(visuals.copy(moveRulers = it)) }
             SwitchRow(
                 "Show the position ruler on buttons", visuals.positionRuler,
-                hint = "A finger on a button that maps its Finger X, Y, distance or angle shows a ruler through the finger for each: " +
+                hint = "A finger on a button that maps its Position X, Y, distance or angle shows a ruler through the finger for each: " +
                         "clear in the start deadzone, then a gradient to full colour at the end deadzone. A label shows what each " +
                         "of those mappings sends now.",
             ) { runtime.setTouchVisuals(visuals.copy(positionRuler = it)) }

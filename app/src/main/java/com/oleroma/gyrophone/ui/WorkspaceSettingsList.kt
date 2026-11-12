@@ -58,6 +58,8 @@ internal class WorkspaceLevel(
     val children: (List<String>) -> List<ChildOverride> = { emptyList() },
     /** Makes every child follow this level again for these keys. */
     val resetChildren: (List<String>) -> Unit = {},
+    /** The Defaults: they list their children whatever they hold. */
+    val isRoot: Boolean = false,
 ) {
     /** [kids] by keys: a level lives as long as its settings (remembered), so each row looks its children up once. */
     private val kidsOf = HashMap<List<String>, ChildInfo?>()
@@ -65,7 +67,8 @@ internal class WorkspaceLevel(
     /** The children setting any of [keys] themselves, for a [ChildLine]; null = none. */
     fun kids(keys: List<String>): ChildInfo? {
         if (keys in kidsOf) return kidsOf[keys]
-        val info = children(keys).takeIf { it.isNotEmpty() }?.let { c -> ChildInfo(c) { resetChildren(keys) } }
+        // A level that follows its parent shows no list: its children are listed at the parent.
+        val info = if (!isRoot && !ownAny(keys)) null else children(keys).takeIf { it.isNotEmpty() }?.let { c -> ChildInfo(c) { resetChildren(keys) } }
         kidsOf[keys] = info
         return info
     }
@@ -143,6 +146,7 @@ internal fun defaultsLevel(runtime: GamepadRuntime, profile: Profile): Workspace
         resetAll = { runtime.editActiveProfile { p -> p.copy(defaults = WorkspaceDefaults.keys.fold(p.defaults) { r, k -> WorkspaceDefaults.take(k, r, builtin) }) } },
         children = { k -> OverridingChildren.ofDefaults(kids, k) },
         resetChildren = { k -> runtime.editActiveProfile { OverridingChildren.resetDefaults(it, k) } },
+        isRoot = true,
     )
 }
 

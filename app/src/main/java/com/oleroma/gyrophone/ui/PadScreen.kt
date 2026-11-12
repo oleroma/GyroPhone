@@ -136,6 +136,8 @@ import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.slides
+import com.oleroma.gyrophone.core.model.valueTarget
 import com.oleroma.gyrophone.core.model.LibraryButton
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingProfiles
@@ -3277,10 +3279,38 @@ fun PadScreen(
         if (showTouchVisuals) TouchOverlay(trails, visuals, Modifier.fillMaxSize())
         if (!editing && visuals.swipeLine) SwipeLineOverlay(swipeLines, Modifier.fillMaxSize())
         if (!editing && visuals.moveRulers) MoveRulerOverlay(moveRulers, Modifier.fillMaxSize())
+        if (!editing && !covered) {
+            // Set value and Move slides: bars, values and the sliders icon on the buttons (and the touchpad) that have them.
+            val valueMarks = remember(ws, w, h, portrait) {
+                val chips = ws.mappings.filter { m ->
+                    m.target.valueTarget && m.source.slides && (m.setValue != null || m.source is InputSource.Surface)
+                }
+                val ids = chips.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
+                val setIds = chips.filter { it.setValue != null }.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
+                buildList {
+                    if ("" in ids) add(ValueMark("", 0f, 0f, w, h, round = false, set = "" in setIds))
+                    for (c in ws.touchControls) {
+                        if (c.id !in ids) continue
+                        val cx = c.placeX(portrait) * w
+                        val cy = c.placeY(portrait) * h
+                        val hw = c.placeSize(portrait) * minOf(w, h) / 2f
+                        val round = c.shape == TouchShape.CIRCLE
+                        val hh = if (round) hw else hw * c.heightRatio
+                        add(ValueMark(c.id, cx - hw, cy - hh, cx + hw, cy + hh, round, c.id in setIds))
+                    }
+                }
+            }
+            val padMarked = valueMarks.any { it.id.isEmpty() }
+            ValueBarsOverlay(
+                runtime.engine, valueMarks, Color(visuals.rulerColor.toInt()), { padMarked || fingersOnButtons > 0 }, Modifier.fillMaxSize(),
+            )
+        }
         if (!editing && !covered && visuals.positionRuler) {
-            // A ruler through the finger on each button whose finger position is mapped (in any layer).
+            // A ruler through the finger on each button whose finger position is mapped (in any layer);
+            // an axis with a Set value chip shows its bar instead (ValueBarsOverlay).
             val marks = remember(ws, w, h, portrait) {
-                val axes = ws.mappings.mapNotNull { it.source as? InputSource.Finger }.filter { it.id.isNotEmpty() }
+                val setAxes = ws.mappings.filter { it.setValue != null }.mapNotNull { it.source as? InputSource.Finger }.toSet()
+                val axes = ws.mappings.mapNotNull { it.source as? InputSource.Finger }.filter { it.id.isNotEmpty() && it !in setAxes }
                 ws.touchControls.filter { c -> c.kind == TouchKind.BUTTON && axes.any { it.id == c.id } }.map { c ->
                     val cx = c.placeX(portrait) * w
                     val cy = c.placeY(portrait) * h

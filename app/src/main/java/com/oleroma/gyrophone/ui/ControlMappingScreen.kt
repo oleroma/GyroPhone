@@ -71,6 +71,10 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import com.oleroma.gyrophone.core.model.AxisRange
 import com.oleroma.gyrophone.core.model.MotionAxis
+import com.oleroma.gyrophone.core.model.FingerAxis
+import com.oleroma.gyrophone.core.model.slides
+import com.oleroma.gyrophone.core.model.valueTarget
+import com.oleroma.gyrophone.core.model.SetValue
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.runtime
 import com.oleroma.gyrophone.core.model.GameSens
@@ -228,7 +232,7 @@ private class MapPreset(
 
 private enum class LibraryTab(val label: String) {
     RECENT("Recent"), PRESETS("Presets"), KEYBOARD("Keyboard"), MOUSE("Mouse"), GAMEPAD("Gamepad"),
-    GYRO("Gyro"), PHONE("Phone"), TOUCHPAD("Touchpad"), LAYERS("Layers"), OTHER("Other"),
+    GYRO("Gyro"), TOUCH("Touch"), PHONE("Phone"), LAYERS("Layers"), OTHER("Other"),
 }
 
 private fun group(name: String): List<OutputTarget> =
@@ -240,10 +244,12 @@ private fun tabTargets(tab: LibraryTab, extras: List<OutputTarget>): List<Output
     LibraryTab.GAMEPAD -> group("Gamepad buttons") + group("Gamepad sticks & triggers")
     LibraryTab.GYRO -> group("Gyro")
     LibraryTab.PHONE -> group("Phone")
-    LibraryTab.TOUCHPAD -> extras
+    LibraryTab.TOUCH -> group("Touch")
     LibraryTab.LAYERS -> Describe.layerTargets
     LibraryTab.OTHER -> Describe.otherTargets
-    LibraryTab.RECENT, LibraryTab.PRESETS -> emptyList()
+    // Switching apps and zoom, where the input offers them, go with the presets.
+    LibraryTab.PRESETS -> extras
+    LibraryTab.RECENT -> emptyList()
 }
 
 /** What [Describe.pickerGroups] reads of an input: inputs alike in these are offered the same targets. */
@@ -622,17 +628,28 @@ internal fun ControlMappingScreen(
     /** A swipe direction's own card (↑ → ↓ ←): not shown, its chips are the Swipe card's. */
     fun isDirectionCard(s: InputSource) = s is InputSource.Surface && s.input.holdDirection != null && s.zone == 0 && s.on == Trigger.HOLD
 
+    /** The one Position card (X, its first line) or Move card (Move X): its other axes are lines of it ([linesOf]). */
+    fun isAxisCard(s: InputSource) = (s is InputSource.Finger && s.axis == FingerAxis.X) ||
+            (s is InputSource.Surface && s.input == SurfaceInput.MOTION_X && s.zone == 0 && s.on == Trigger.HOLD)
+
+    /** Another axis of a Position or Move card (Position Y, distance, angle; Move Y): not a card, a line of it. */
+    fun isAxisLine(s: InputSource) = (s is InputSource.Finger && s.axis != FingerAxis.X) ||
+            (s is InputSource.Surface && s.input == SurfaceInput.MOTION_Y && s.zone == 0 && s.on == Trigger.HOLD)
+
+    // Every card of the list shown (the finger count's on a swipe button), before folding.
+    val cardsAll = (if (!surfaceCards) (if (physicalMotionId != null && fingers == 0) Bindings.gyroInputs(physicalMotionId) else inputs)
+    else if (fingers == 0) Bindings.gyroInputs(control.id) + Bindings.motionInputs(control.id)
+    else Bindings.swipeInputs(control, fingers)).filterNot(Bindings::isTriggerOf)
+
     // A swipe button: one list per finger count (hold, taps, moves, swipes...); the button's own
     // outside and area (any fingers) go with one finger's hold, as its chips.
     val groups = listOf(
         sorted(
             control,
-            (if (!surfaceCards) (if (physicalMotionId != null && fingers == 0) Bindings.gyroInputs(physicalMotionId) else inputs)
-            else if (fingers == 0) Bindings.gyroInputs(control.id) + Bindings.motionInputs(control.id)
-            else Bindings.swipeInputs(control, fingers))
-                .filterNot(Bindings::isTriggerOf)
+            cardsAll
                 .let { l -> if (l.any { isTouchCard(it.sources.first()) }) l.filterNot { isAreaCard(it.sources.first()) } else l }
-                .let { l -> if (l.any { isSwipeCard(it.sources.first()) }) l.filterNot { isDirectionCard(it.sources.first()) } else l },
+                .let { l -> if (l.any { isSwipeCard(it.sources.first()) }) l.filterNot { isDirectionCard(it.sources.first()) } else l }
+                .let { l -> if (l.any { isAxisCard(it.sources.first()) }) l.filterNot { isAxisLine(it.sources.first()) } else l },
             order,
         ),
     )
@@ -649,12 +666,44 @@ internal fun ControlMappingScreen(
      */
     fun linesOf(card: BindableInput): List<BindableInput> {
         val s = card.sources.first()
+        if (isAxisCard(s)) {
+            // Position: X, Y, then a round button's distance and angle; Move: X, Y.
+            val rest = if (s is InputSource.Finger) FingerAxis.entries.drop(1).map { InputSource.Finger(s.id, it) }
+            else listOf((s as InputSource.Surface).copy(input = SurfaceInput.MOTION_Y))
+            return listOf(card) + rest.mapNotNull { r -> cardsAll.firstOrNull { it.sources.first() == r } }
+        }
         if (!isSwipeCard(s)) return listOf(card)
         return listOf(card) + Bindings.swipeSlots((s as InputSource.Surface).fingers, s.id).drop(1)
     }
 
+    /** Line [i]'s label on [card]: the Swipe card's direction (Any, ↑ → ↓ ←), a Position or Move card's axis. */
+    fun lineLabel(card: BindableInput, i: Int): String {
+        val s = card.sources.first()
+        return when {
+            s is InputSource.Finger -> when (FingerAxis.entries.getOrNull(i)) {
+                FingerAxis.X -> "X"
+                FingerAxis.Y -> "Y"
+                FingerAxis.DISTANCE -> "Distance"
+                FingerAxis.ANGLE -> "Angle"
+                null -> ""
+            }
+            isAxisCard(s) -> if (i == 0) "X" else "Y"
+            else -> Bindings.slotLabel(if (i == 0) ANY_SLOT else i - 1)
+        }
+    }
+
     /** The lines that are one action with [line] for inheritance: the Swipe card's all (see [Inheritance.cardOf]), else itself. */
     fun groupOf(line: BindableInput): List<BindableInput> {
+        val ls = line.sources.first()
+        if (isAxisCard(ls) || isAxisLine(ls)) {
+            val first = when (ls) {
+                is InputSource.Finger -> InputSource.Finger(ls.id, FingerAxis.X)
+                is InputSource.Surface -> ls.copy(input = SurfaceInput.MOTION_X)
+                else -> ls
+            }
+            val card = cardsAll.firstOrNull { it.sources.first() == first } ?: return listOf(line)
+            return linesOf(card)
+        }
         val s = line.sources.first() as? InputSource.Surface ?: return listOf(line)
         if (!s.input.heldSwipe || s.zone != 0 || s.on != Trigger.HOLD) return listOf(line)
         val card = inputs.firstOrNull { isSwipeCard(it.sources.first()) && (it.sources.first() as InputSource.Surface).let { c -> c.fingers == s.fingers && c.id == s.id } }
@@ -760,6 +809,10 @@ internal fun ControlMappingScreen(
         if (!allows(allowedTargets(input), t)) return
         addRecent(t)
         var next = Bindings.addTarget(currentMappings, input, t)
+        if (t is OutputTarget.TouchSens) {
+            val base = runtime.engine.workspace.touchpad.sensitivity
+            next = next.map { if (Bindings.belongs(it, input) && it.target == t && it.range == null) it.copy(range = AxisRange(base * 0.8f, base * 1.2f)) else it }
+        }
         if (t is OutputTarget.GyroSens) {
             // It needs a range to do anything: around the sensitivity it would change.
             val g = runtime.engine.workspace.gyro
@@ -923,7 +976,7 @@ internal fun ControlMappingScreen(
                 val base = if (!replace) currentMappings
                 else cardInputs(cardOf(c)).fold(currentMappings) { m, ti -> Bindings.setTargets(m, ti, emptyList()) }
                 val now = Bindings.entries(base, c)
-                val e = Bindings.Entry(ch.target, ch.options, ch.range)
+                val e = Bindings.Entry(ch.target, ch.options, ch.range, ch.setValue, ch.perDp)
                 if (now.any { it.target == e.target && it.shape == e.shape }) base else Bindings.setEntries(base, c, now + e)
             }
             PresetLevel.CARD -> MappingPresets.place(currentMappings, p.chips, cardSlots(cardOf(card ?: return)), replace)
@@ -992,15 +1045,19 @@ internal fun ControlMappingScreen(
 
     /** A chip's range as its text shows it ("10–85 %"), or null. */
     fun chipRangeText(m: List<Mapping>, card: BindableInput, chip: RowItem.Chip): String? {
-        val r = Bindings.entry(m, trig(chipInput(card, chip), chip.trigger), chip.target, chip.n)?.range ?: return null
+        val e = Bindings.entry(m, trig(chipInput(card, chip), chip.trigger), chip.target, chip.n) ?: return null
+        // Set value shows as a pin after the range.
+        val set = if (e.setValue != null) " 📌" else ""
+        val r = e.range ?: return if (set.isEmpty()) null else set.trim()
         return when (chip.target) {
             is OutputTarget.PadAxis -> "%.0f–%.0f %%".format(r.from * 100, r.to * 100)
             is OutputTarget.GyroSens -> {
                 val c = runtime.engine.workspace.gyro.gameCountsPer360
                 if (c > 0f) "%.2f–%.2f".format(GameSens.rws(r.from, c), GameSens.rws(r.to, c)) else "%.1f–%.1f".format(r.from, r.to)
             }
+            is OutputTarget.TouchSens -> "%.2f–%.2f".format(r.from, r.to)
             else -> null
-        }
+        }?.plus(set)
     }
 
     /** [input]'s row as mapped: each zone's chips of the edited set, divided, then the end divider. */
@@ -1049,7 +1106,8 @@ internal fun ControlMappingScreen(
         val lines = linesOf(card)
         if (lines.size == 1) return null
         val owns = groupOwns(card)
-        return (lines.drop(1) + lines.first()).firstOrNull { !lineShown(it, owns) }
+        val order = if (isAxisCard(card.sources.first())) lines else lines.drop(1) + lines.first()
+        return order.firstOrNull { !lineShown(it, owns) }
     }
 
     /** The card (or the line of the Swipe card) under [p]: the line it is on, else the Swipe card's new line. */
@@ -1559,7 +1617,7 @@ internal fun ControlMappingScreen(
                         val lands = landing?.first?.sources?.first() == ls
                         return CardLine(
                             key = ls,
-                            label = if (isNew) "" else Bindings.slotLabel(if (i == 0) ANY_SLOT else i - 1),
+                            label = if (isNew) "" else lineLabel(input, i),
                             selected = selected?.sources?.first() == ls,
                             row = lrow,
                             inherited = inh,
@@ -1594,6 +1652,8 @@ internal fun ControlMappingScreen(
                     ActionCard(
                         lines = lines,
                         title = when {
+                            src is InputSource.Finger && isAxisCard(src) -> "Position"
+                            isAxisCard(src) -> "Move"
                             isSurface(input) && (src as InputSource.Surface).input == SurfaceInput.HOLD -> "Touch"
                             isSurface(input) -> input.label
                             else -> actionLabel(control, input)
@@ -1678,7 +1738,7 @@ internal fun ControlMappingScreen(
 
     var query by remember { mutableStateOf("") }
     val tabs = remember(extras, physical) {
-        LibraryTab.entries.filter { (it != LibraryTab.TOUCHPAD || extras.isNotEmpty()) && !(physical && it == LibraryTab.PHONE) }
+        LibraryTab.entries.filter { !(physical && it == LibraryTab.PHONE) }
     }
     var tab by remember(control.id) {
         mutableStateOf(
@@ -2194,7 +2254,7 @@ internal fun ControlMappingScreen(
         // card's between its directions (Any, ↑ → ↓ ←), in its zone.
         val group = groupOf(input)
         val swipeCard = group.size > 1
-        val names = if (swipeCard) List(group.size) { Bindings.slotLabel(if (it == 0) ANY_SLOT else it - 1) }
+        val names = if (swipeCard) List(group.size) { lineLabel(group.first(), it) }
         else listOf(WHERE_TOUCH, WHERE_AREA, WHERE_OUTSIDE)
         val choices = if (swipeCard) group.map { zin(it, chip.zone) } else wheresIn(input, chip.zone)
         val whereInputs = choices.mapIndexedNotNull { w, wi -> wi?.let { names[w] to it } }
@@ -2204,7 +2264,7 @@ internal fun ControlMappingScreen(
         MappingChipDialog(
             wheres = whereInputs.map { it.first },
             where = whereNow,
-            whereTitle = if (swipeCard) "Direction" else null,
+            whereTitle = if (!swipeCard) null else if (isAxisCard(group.first().sources.first())) "Axis" else "Direction",
             title = Describe.shortTarget(chip.target) + " · " + actionTitle(control, input) +
                 if (chip.zone > 0) " · zone " + (chip.zone + 1) else "",
             triggers = Bindings.triggersOf(zi),
@@ -2214,7 +2274,8 @@ internal fun ControlMappingScreen(
             analog = chip.target is OutputTarget.PadAxis || chip.target is OutputTarget.MouseAxis,
             options = Bindings.entry(view, ti, chip.target, chip.n)?.options,
             range = chipRange(chip.target, Bindings.entry(view, ti, chip.target, chip.n)?.range, runtime.engine.workspace.gyro),
-            onApply = { tr, o, w, r ->
+            value = chipValue(chip.target, zi.sources.first(), Bindings.entry(view, ti, chip.target, chip.n), runtime.engine.workspace.gyro),
+            onApply = { tr, o, w, r, sv, pd ->
                 chipDialog = null
                 val target = (chip.target as? OutputTarget.SetOrientation)?.copy(granular = granular) ?: chip.target
                 val destInput = if (whereInputs.isEmpty()) zi else inputAt(w)
@@ -2224,7 +2285,7 @@ internal fun ControlMappingScreen(
                 val es = Bindings.entries(currentMappings, ti)
                 var k = -1
                 val at = es.indexOfFirst { it.target == chip.target && ++k == chip.n }
-                val now = Bindings.Entry(target, o, r)
+                val now = Bindings.Entry(target, o, r, sv, pd)
                 change(
                     if (dest == ti && at >= 0) Bindings.setEntries(currentMappings, ti, es.toMutableList().apply { set(at, now) })
                     else Bindings.removeEntry(currentMappings, ti, chip.target, chip.n).let { base ->
@@ -3118,11 +3179,40 @@ private fun SplitHandle(landscape: Boolean, onMove: (Float) -> Unit, onEnd: () -
 }
 
 /**
+ * The Set value and Per dp of a value chip of [target] on [source] ([ChipValue]), null for any
+ * other: a pad axis or trigger in % per dp, Gyro sensitivity in RWS per dp when [g]'s game is
+ * known (else counts per degree per dp), Touch sensitivity in its own unit.
+ */
+private fun chipValue(target: OutputTarget, source: InputSource, e: Bindings.Entry?, g: GyroSettings): ChipValue? {
+    if (!target.valueTarget || !source.slides) return null
+    val move = source is InputSource.Surface
+    val def = SetValue.defaultPerDp(target, e?.range)
+    val init = SetValue.initial(target)
+    return when (target) {
+        is OutputTarget.GyroSens -> {
+            val c = g.gameCountsPer360
+            if (c > 0f) ChipValue(
+                e?.setValue, init, move, e?.perDp, def, 0.1f, 0.001f, { "%.3f RWS".format(it) },
+                shown = { GameSens.rws(it, c) }, stored = { GameSens.sensOf(it, c) },
+            ) else ChipValue(e?.setValue, init, move, e?.perDp, def, 1f, 0.005f, { "%.3f".format(it) })
+        }
+        is OutputTarget.TouchSens -> ChipValue(e?.setValue, init, move, e?.perDp, def, 0.1f, 0.001f, { "%.3f".format(it) })
+        else -> ChipValue(
+            e?.setValue, init, move, e?.perDp, def, 5f, 0.05f, { "%.2f %%".format(it) },
+            shown = { it * 100f }, stored = { it / 100f },
+        )
+    }
+}
+
+/**
  * The Range of a chip of [target] ([ChipRange]), null for a target that takes none: a game pad
  * axis or trigger in %, Gyro sensitivity in RWS when [g]'s game is known, else counts per
  * degree, its slider up to the Slider cap (App › Gyro).
  */
 @Composable
+/** Touch sensitivity typed into a range goes up to this. */
+private const val MAX_TOUCH_SENS_TYPED = 50f
+
 private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings): ChipRange? {
     val runtime = LocalContext.current.runtime
     val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
@@ -3149,6 +3239,15 @@ private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings
             ) else ChipRange(
                 current, initial, null, 0f..capCounts.coerceAtMost(MAX_GYRO_SENS), 0f..MAX_GYRO_SENS,
                 0.5f, { "%.1f".format(it) }, hint,
+            )
+        }
+
+        is OutputTarget.TouchSens -> {
+            val base = runtime.engine.workspace.touchpad.sensitivity
+            ChipRange(
+                current, AxisRange(base * 0.8f, base * 1.2f), null, 0f..10f, 0f..MAX_TOUCH_SENS_TYPED, 0.05f, { "%.2f".format(it) },
+                "The touchpad's Move sensitivity at the input's 0 and at full; it changes evenly between them while " +
+                    "the input is active and goes back when it lets go (unless Set value keeps it). Drag one handle past the other to reverse it.",
             )
         }
 

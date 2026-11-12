@@ -39,11 +39,14 @@ class OverridingChildrenTest {
     private val profile = Profile("p", "P", listOf(apex, desk))
 
     @Test
-    fun defaultsListWorkspacesLayersAndButtonsWithValues() {
-        assertEquals(
-            listOf(ChildOverride("Apex", "2.6"), ChildOverride("Apex › Sniper", "0.8"), ChildOverride("Apex › Sniper › Aim", "1.25")),
-            OverridingChildren.ofDefaults(profile, listOf(sens)),
-        )
+    fun eachLevelListsOnlyItsNearestOverrides() {
+        // Apex sets it, so the Defaults list only Apex; Apex lists Sniper; Sniper lists Aim.
+        assertEquals(listOf(ChildOverride("Apex", "2.6")), OverridingChildren.ofDefaults(profile, listOf(sens)))
+        assertEquals(listOf(ChildOverride("Sniper", "0.8")), OverridingChildren.ofWorkspace(apex, listOf(sens)))
+        assertEquals(listOf(ChildOverride("Sniper › Aim", "1.25")), OverridingChildren.ofLayer(apex, 1, listOf(sens)))
+        // A workspace that follows: its own children show under the Defaults.
+        val follows = profile.copy(workspaces = listOf(apex.copy(ownSettings = emptySet()), desk))
+        assertEquals(listOf(ChildOverride("Apex › Sniper", "0.8")), OverridingChildren.ofDefaults(follows, listOf(sens)))
         assertEquals(listOf(ChildOverride("Desk", "Gyro off")), OverridingChildren.ofDefaults(profile, listOf(mode)))
         // A factor shows as one.
         assertEquals(

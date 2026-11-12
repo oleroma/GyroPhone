@@ -427,6 +427,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     private val kept = HashMap<Mapping, Kept>()
 
+    /** What each value chip showed last ([valuesShown]): its input (a Position's 0..1, else NaN) and its output (NaN = none). */
+    private val shown = HashMap<Mapping, FloatArray>()
+
     /** Where a Move value chip's slide started ([chipValue]): its value as the motion started. */
     private val slideBase = HashMap<Mapping, Float>()
 
@@ -493,14 +496,31 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         val sv = m.setValue
         if (!live.isNaN()) {
+            val sh = shown.getOrPut(m) { FloatArray(2) }
+            sh[0] = if (src is InputSource.Finger) fingerValue(src) else Float.NaN
+            sh[1] = live
             if (sv != null) {
                 val k = kept.getOrPut(m) { Kept(live) }
                 k.value = live; k.down = true; k.committed = false
             }
             return live
         }
-        if (sv == null) return Float.NaN
-        val k = kept[m] ?: return Float.NaN
+        if (sv == null) {
+            shown.remove(m); return Float.NaN
+        }
+        val k = kept[m]
+        if (k == null) {
+            // A Set value sensitivity shows its setting (where it was written) while nothing holds it.
+            val t = m.target
+            val r = m.range
+            if (r != null && (t is OutputTarget.GyroSens || t is OutputTarget.TouchSens)) {
+                val v = settingOf(m)
+                val sh = shown.getOrPut(m) { FloatArray(2) }
+                sh[0] = if (src is InputSource.Finger && r.to != r.from) ((v - r.from) / (r.to - r.from)).coerceIn(0f, 1f) else Float.NaN
+                sh[1] = v
+            } else shown.remove(m)
+            return Float.NaN
+        }
         if (k.down) {
             // Just let go: a sensitivity with no end is written into its setting.
             k.down = false; k.liftNs = now; k.armed = false
@@ -511,8 +531,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
         }
         if (!k.committed && timedOut(m, sv, k, now)) {
-            kept.remove(m); return Float.NaN
+            kept.remove(m); shown.remove(m); return Float.NaN
         }
+        shown[m]?.set(1, k.value)
         return k.value
     }
 
@@ -557,7 +578,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (!other) k.armed = true else if (k.armed) end = true
             }
             if (end) {
-                it.remove()
+                it.remove(); shown.remove(m)
                 if (m.target !is OutputTarget.PadAxis) sens = true
             }
         }
@@ -581,7 +602,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         while (it.hasNext()) {
             val (m, k) = it.next()
             if (k.down || k.committed || m.setValue?.endsOnLetGo != true) continue
-            it.remove()
+            it.remove(); shown.remove(m)
             if (m.target !is OutputTarget.PadAxis) sens = true
         }
         if (sens) refreshSens()
@@ -1175,7 +1196,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val loaded = profile.workspace(workspaceIndex)
         // A held value lets go in another workspace, like any held press; a written one is in the settings now.
         if (loaded.id != ws.id) {
-            kept.clear(); slideBase.clear()
+            kept.clear(); slideBase.clear(); shown.clear()
         } else if (kept.isNotEmpty()) kept.values.removeIf { it.committed }
         // The touchpad mappings it does not set come from the Defaults.
         val w = loaded.copy(mappings = Bindings.upgradeSwipes(Inheritance.workspace(loaded, profile.defaults)))
@@ -1267,7 +1288,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         anyDevice.clear()
         touches.clear(); pressOrder.clear(); physDown.clear(); setTouchHeld.clear(); touchSticks.clear()
         fingers.clear(); fingerPointer.clear(); sensOrder.clear(); sensNow.fill(Float.NaN); touchSensNow.fill(Float.NaN)
-        kept.clear(); slideBase.clear()
+        kept.clear(); slideBase.clear(); shown.clear()
         updateGyroNow()
         for (s in surfaceList) s.reset()
         for (a in areas) a.clear()
@@ -1729,6 +1750,26 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
         }
         any
+    }
+
+    /**
+     * The pad's value chips' frame, under one lock: each touch value chip in use that slides or keeps
+     * a value ([Mapping.setValue], a Move slide) and sends something now into [inUse] (cleared
+     * first), with its input (a Position's 0..1 where it was set, else NaN) and output (through its
+     * range) into [values] at 2 × its index, as many as [values] holds. Returns how many.
+     */
+    fun valuesShown(inUse: MutableList<Mapping>, values: FloatArray): Int = synchronized(lock) {
+        inUse.clear()
+        if (shown.isEmpty()) return@synchronized 0
+        for (m in touchMappings) {
+            if (2 * inUse.size + 1 >= values.size) break
+            val v = shown[m] ?: continue
+            if (v[1].isNaN() || !valueChip(m)) continue
+            values[2 * inUse.size] = v[0]
+            values[2 * inUse.size + 1] = v[1]
+            inUse.add(m)
+        }
+        inUse.size
     }
 
     /** Where the finger on [id] is now (0..1 from its bottom-left) into [out], or false when none is. */

@@ -8,9 +8,11 @@ data class ChildOverride(val name: String, val value: String?)
 
 /**
  * Who sets a setting ([WorkspaceDefaults] key) below a level, so the level's value doesn't reach
- * them: under the Defaults every workspace, layer and button; under a workspace its layers and
- * buttons; under a layer the buttons (a button's own value wins over every layer's). And setting
- * them back to follow the level ("Reset children").
+ * them, nearest only: under the Defaults each workspace that sets it (which lists its own
+ * children), else that workspace's children; under a workspace its layers and buttons (a button's
+ * layer value only where neither its Base value nor that layer sets it); under a layer the
+ * buttons (a button's own value wins over every layer's). And setting the whole branch back to
+ * follow the level ("Reset children").
  */
 object OverridingChildren {
     private const val SEP = " › "
@@ -20,7 +22,8 @@ object OverridingChildren {
 
     /** [ofDefaults] with each workspace's [Children] worked out once ([Children] of every workspace, in order). */
     fun ofDefaults(workspaces: List<Children>, keys: List<String>): List<ChildOverride> = workspaces.flatMap { c ->
-        c.ownOf(keys) + c.ofWorkspace(keys, c.w.name + SEP)
+        // Only the nearest: a workspace that sets it stands for its own children (it lists them itself).
+        c.ownOf(keys).ifEmpty { c.ofWorkspace(keys, c.w.name + SEP) }
     }
 
     /** The children of workspace [w] (its layers and buttons) that set any of [keys]; names start with [prefix]. */
@@ -66,9 +69,16 @@ object OverridingChildren {
                 val c = b.control
                 val name = prefix + controlName(c)
                 b.surface.firstOrNull { it.key in keys }?.let { out += ChildOverride(name, text(it.key, it.value, it.factor)) }
+                // Only the nearest: a button's layer value under its own Base value, or (under the
+                // workspace) under a layer that sets it, is listed there, not here.
+                val baseOwn = b.gyro.firstOrNull { it.first.set == MappingSet.BASE }?.second.orEmpty()
                 for ((g, owns) in b.gyro) {
                     if (setId != null && g.set != MappingSet.BASE && g.set != setId) continue
                     val o = owns.firstOrNull { it.key in keys } ?: continue
+                    if (g.set != MappingSet.BASE) {
+                        if (baseOwn.any { it.key == o.key }) continue
+                        if (setId == null && layers.any { (set, own) -> set.id == g.set && o.key in own }) continue
+                    }
                     val layer = if (g.set == MappingSet.BASE) "" else (w.sets.firstOrNull { it.id == g.set }?.label ?: "Layer ${g.set}") + SEP
                     out += ChildOverride(prefix + layer + controlName(c), text(o.key, o.value, o.factor))
                 }

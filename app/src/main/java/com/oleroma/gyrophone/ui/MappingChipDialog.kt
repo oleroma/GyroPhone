@@ -29,6 +29,7 @@ import com.oleroma.gyrophone.core.model.AxisRange
 import com.oleroma.gyrophone.core.model.How
 import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.PresetLevel
+import com.oleroma.gyrophone.core.model.SetValue
 import com.oleroma.gyrophone.core.model.Trigger
 import kotlin.math.roundToInt
 
@@ -118,6 +119,26 @@ internal class ChipRange(
 )
 
 /**
+ * A value chip's Set value and, on a Move input, its per-dp change ([Mapping.setValue],
+ * [Mapping.perDp]) as its dialog shows them: [current] (null = Set value off), [initial] what
+ * ticking it starts with; [move]: a Move input's chip (Per dp, and Tap among the ends); the per-dp
+ * value stored [perDp] (null = [defaultPerDp]), shown through [shown] and written by [format],
+ * its slider up to [max] (shown).
+ */
+internal class ChipValue(
+    val current: SetValue?,
+    val initial: SetValue,
+    val move: Boolean,
+    val perDp: Float?,
+    val defaultPerDp: Float,
+    val max: Float,
+    val step: Float,
+    val format: (Float) -> String,
+    val shown: (Float) -> Float = { it },
+    val stored: (Float) -> Float = { it },
+)
+
+/**
  * The settings of one mapping (a chip): When it starts ([triggers] offered, named by
  * [triggerLabel]; one = none to pick), How it outputs, and its options. [swipe]: a swipe direction's. [onApply] gets the trigger and options picked (null = none); [onRemove]
  * removes the mapping. [onTargetSettings] (a buzz's): a button that opens the target's own settings.
@@ -134,7 +155,7 @@ internal fun MappingChipDialog(
     swipe: Boolean,
     analog: Boolean,
     options: MapOptions?,
-    onApply: (Trigger, MapOptions?, Int, AxisRange?) -> Unit,
+    onApply: (Trigger, MapOptions?, Int, AxisRange?, SetValue?, Float?) -> Unit,
     onRemove: () -> Unit,
     onDismiss: () -> Unit,
     onTargetSettings: (() -> Unit)? = null,
@@ -148,7 +169,16 @@ internal fun MappingChipDialog(
     range: ChipRange? = null,
     /** Saves the chip (as it is mapped now) as a chip preset; null = none. */
     onSavePreset: (() -> Unit)? = null,
+    /** A value chip on a Position or Move input: its Set value, Ends on and Per dp; null = none. */
+    value: ChipValue? = null,
 ) {
+    var setOn by remember { mutableStateOf(value?.current != null) }
+    val sv0 = value?.current ?: value?.initial ?: SetValue()
+    var svNext by remember { mutableStateOf(sv0.endsOnNextInput) }
+    var svLetGo by remember { mutableStateOf(sv0.endsOnLetGo) }
+    var svAfter by remember { mutableIntStateOf(sv0.endsAfterMs) }
+    var svTap by remember { mutableStateOf(sv0.endsOnTap) }
+    var perDp by remember { mutableStateOf(value?.let { it.shown(it.perDp ?: it.defaultPerDp) } ?: 0f) }
     val o0 = options ?: MapOptions()
     val r0 = range?.let { it.current ?: it.initial }
     var rFrom by remember { mutableStateOf(r0?.let { range.shown(it.from) } ?: 0f) }
@@ -222,14 +252,56 @@ internal fun MappingChipDialog(
                     )
                     hint(range.hint)
                 }
+                if (value != null) {
+                    if (value.move) {
+                        Text("Per dp: " + value.format(perDp), style = MaterialTheme.typography.titleSmall)
+                        Slider(
+                            value = perDp.coerceIn(0f, value.max),
+                            onValueChange = { perDp = (it / value.step).roundToInt() * value.step },
+                            valueRange = 0f..value.max,
+                        )
+                        hint("How much the value changes for each dp the finger slides (right or up raises it). A tap changes nothing.")
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = setOn, onCheckedChange = { setOn = it })
+                        Text("Set value", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                    }
+                    hint(
+                        "Keeps the value when you lift your finger. A sensitivity with no end below is written into the " +
+                            "setting it drives (the button's own, else the layer's, the workspace's or the Defaults'). " +
+                            "The button shows a sliders icon in its top-left corner."
+                    )
+                    if (setOn) {
+                        Text("Ends on", style = MaterialTheme.typography.titleSmall)
+                        checkRow("\"Let go\" mapping (any button mapped to (Let go))", svLetGo) { svLetGo = it }
+                        checkRow("Next input (another key or button pressed)", svNext) { svNext = it }
+                        if (value.move) checkRow("Tap (a tap on this button)", svTap) { svTap = it }
+                        Text(
+                            "Timer: " + if (svAfter == 0) "off" else "%.1f s".format(svAfter / 1000f),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        Slider(
+                            value = svAfter / 1000f,
+                            onValueChange = { svAfter = ((it * 10f).roundToInt() * 100) },
+                            valueRange = 0f..MapOptions.MAX_TOGGLE_MS / 1000f,
+                        )
+                        hint("With an end ticked the value holds until then and goes back after; nothing is saved. With none it stays.")
+                    }
+                }
                 if (wheres.size > 1) {
                     Text(whereTitle ?: "Where", style = MaterialTheme.typography.titleSmall)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         wheres.forEachIndexed { i, label ->
-                            FilterChip(selected = w == i, onClick = { w = i }, label = { if (whereTitle != null) DirectionLabel(label) else Text(label) })
+                            FilterChip(selected = w == i, onClick = { w = i }, label = { if (whereTitle == "Direction") DirectionLabel(label) else Text(label) })
                         }
                     }
-                    hint(if (whereTitle != null) directionHint(wheres.getOrNull(w)) else whereHint(wheres.getOrNull(w)))
+                    hint(
+                        when (whereTitle) {
+                            "Direction" -> directionHint(wheres.getOrNull(w))
+                            "Axis" -> "Which axis of the card this chip follows."
+                            else -> whereHint(wheres.getOrNull(w))
+                        }
+                    )
                 }
                 if (triggers.size > 1) {
                     Text("When", style = MaterialTheme.typography.titleSmall)
@@ -314,7 +386,11 @@ internal fun MappingChipDialog(
                     repeat = if (how == How.REPEAT) repeat else 2,
                 )
                 val r = range?.let { AxisRange(it.stored(rFrom), it.stored(rTo)) }?.takeUnless { it == range.identity }
-                onApply(t, o.takeUnless { it.none }, w, r)
+                val sv = if (value != null && setOn) SetValue(
+                    endsOnNextInput = svNext, endsOnLetGo = svLetGo, endsAfterMs = svAfter, endsOnTap = value.move && svTap,
+                ) else null
+                val pd = value?.takeIf { it.move }?.let { v -> v.stored(perDp).takeUnless { kotlin.math.abs(it - v.defaultPerDp) < 1e-6f } }
+                onApply(t, o.takeUnless { it.none }, w, r, sv, pd)
             }) { Text("Done") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
