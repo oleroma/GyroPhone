@@ -225,6 +225,15 @@ private const val TOUCHPAD_SELECTION = "\u0000touchpad"
  */
 private const val EDIT_LONG_PRESS_MS = 450L
 
+/**
+ * Edit mode: on overlapping controls a second tap this soon after the first (from its lift), near it,
+ * is a double tap: it opens the control that was selected before the first tap (which cycled).
+ */
+private const val EDIT_DOUBLE_TAP_MS = 250L
+
+/** Edit mode: an Add chip held still this long is picked up (lit, with a tick) and then drags out any way. */
+private const val ADD_PICK_UP_MS = 200L
+
 /** Edit mode undo: changes this close together (a slider being dragged, say) make one step. */
 private const val UNDO_SETTLE_MS = 400L
 
@@ -419,7 +428,8 @@ internal object TouchStream {
  * Controls have separate landscape and portrait placements; the pad box's shape picks one.
  * Edit mode works on the current workspace in a draft profile. Its menu floats and can be dragged
  * out of the way or resized; its ⚙ saves and opens the workspace's settings page. Tap a control to select it
- * as the tap lifts (taps on overlapping controls cycle through them); long-press it for its full-screen
+ * as the tap lifts, tap it again to open its mapping editor (taps on overlapping controls cycle through them,
+ * a double tap there opens the selected one); long-press it for its full-screen
  * mapping screen, whose Settings opens the control's settings (a corner: a menu next to it). A drag anywhere moves the selected control
  * (with none selected, the one under the finger); a pinch or the size slider resizes it. The menu's 🔒 stops
  * drags and pinches from moving or resizing what was there when edit mode opened (what is added
@@ -1072,6 +1082,10 @@ fun PadScreen(
         val touchModifier = if (editing) {
             Modifier.pointerInput("edit", w, h) {
                 val slop = viewConfiguration.touchSlop
+                // The last tap that cycled overlapping controls: when it lifted, where, and what was selected before it.
+                var cycledAt = Long.MIN_VALUE
+                var cycledPos = Offset.Zero
+                var cycledFrom: String? = null
                 awaitPointerEventScope {
                     while (true) {
                         var event = awaitPointerEvent()
@@ -1405,6 +1419,27 @@ fun PadScreen(
                             }
 
                             selecting -> if (mode == EditGesture.EMPTY) picked = emptySet()
+
+                            // Overlapping controls (not a corner): a tap selects the next one under the finger
+                                // (after the selected one, else the front one); a double tap opens the one that was
+                                // selected before its first tap.
+                            mode == EditGesture.PRESS && cornerHit == null && under.size >= 2 -> {
+                                val d = draft
+                                val again = cycledFrom != null && pressedAt - cycledAt <= EDIT_DOUBLE_TAP_MS &&
+                                    (downPos - cycledPos).getDistance() <= 4f * slop && under.any { it.id == cycledFrom }
+                                if (again && d != null) {
+                                    selected = cycledFrom
+                                    menu = if (findControl(cycledFrom)?.kind == TouchKind.DISPLAY) EditMenu.CONTEXT else EditMenu.MAPPING
+                                    cycledFrom = null
+                                } else {
+                                    val next = if (selectedUnder >= 0) under[(selectedUnder + 1) % under.size] else under.first()
+                                    cycledFrom = if (selectedUnder >= 0) selected else next.id
+                                    cycledAt = lastAt
+                                    cycledPos = downPos
+                                    selected = next.id
+                                    menu = EditMenu.NONE
+                                }
+                            }
 
                             mode == EditGesture.PRESS -> {
                                 val d = draft
@@ -2339,7 +2374,9 @@ fun PadScreen(
                         /**
                          * Something to add from the menu: tap it to add it in the middle of the pad, or drag it
                          * down onto the pad to add it there ([onAdd] gets the pad position, null for the middle).
-                         * A sideways drag scrolls the strip. [onLongPress]: what a long press does, if anything.
+                         * Held still for [ADD_PICK_UP_MS] it is picked up at once (lit, with a tick) and then drags
+                         * out any way; lifted there without dragging, nothing is added. A quick sideways drag
+                         * scrolls the strip. [onLongPress]: what a long press does, if anything.
                          */
                         @Composable
                         fun AddChip(
@@ -2381,52 +2418,71 @@ fun PadScreen(
                                             var total = Offset.Zero
                                             var lastWindow = Offset.Zero
                                             var out = false
-                                            while (true) {
-                                                val event = if (dragged || longPress == null) awaitPointerEvent()
-                                                else withTimeoutOrNull(max(1L, startAt + EDIT_LONG_PRESS_MS - lastAt)) {
-                                                    awaitPointerEvent()
-                                                }
-                                                if (event == null) {
-                                                    longPress?.invoke()
-                                                    break
-                                                }
-                                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                                lastAt = change.uptimeMillis
-                                                if (!dragged && change.isConsumed) break
-                                                if (!change.pressed) {
-                                                    if (dragged) {
-                                                        // Dropped on the pad, not back on the menu: add it there.
-                                                        if (out) add(lastWindow - padOrigin)
-                                                        dropping = null
-                                                    } else if (total.getDistance() <= slop) {
-                                                        change.consume()
-                                                        add(null)
+                                            // Held still long enough: lit and ticked, waiting to be dragged out.
+                                            var picked = false
+                                            try {
+                                                while (true) {
+                                                    // Waits for the pick-up, then (if it has one) the long press.
+                                                    val due = when {
+                                                        dragged -> null
+                                                        !picked -> startAt + ADD_PICK_UP_MS
+                                                        longPress != null -> startAt + EDIT_LONG_PRESS_MS
+                                                        else -> null
                                                     }
-                                                    break
+                                                    val event = if (due == null) awaitPointerEvent()
+                                                    else withTimeoutOrNull(max(1L, due - lastAt)) { awaitPointerEvent() }
+                                                    if (event == null) {
+                                                        lastAt = due!!
+                                                        if (!picked) {
+                                                            picked = true
+                                                            val c = coords[0]
+                                                            if (c != null) lastWindow = c.positionInWindow() + down.position
+                                                            dropping = Triple(label, lastWindow, false)
+                                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            continue
+                                                        }
+                                                        longPress?.invoke()
+                                                        break
+                                                    }
+                                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                                    lastAt = change.uptimeMillis
+                                                    if (!dragged && !picked && change.isConsumed) break
+                                                    if (!change.pressed) {
+                                                        if (dragged) {
+                                                            // Dropped on the pad, not back on the menu: add it there.
+                                                            if (out) add(lastWindow - padOrigin)
+                                                        } else if (!picked && total.getDistance() <= slop) {
+                                                            change.consume()
+                                                            add(null)
+                                                        }
+                                                        break
+                                                    }
+                                                    total += change.positionChange()
+                                                    if (picked) change.consume()
+                                                    if (!dragged && total.getDistance() > slop) {
+                                                        // Picked up, or mostly down (or up): drag it out; else sideways: let the strip scroll.
+                                                        if (picked || abs(total.y) > abs(total.x)) {
+                                                            dragged = true
+                                                            if (!picked) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                        } else break
+                                                    }
+                                                    if (dragged) {
+                                                        change.consume()
+                                                        val c = coords[0]
+                                                        if (c != null) lastWindow = c.positionInWindow() + change.position
+                                                        val p = lastWindow - padOrigin
+                                                        val nowOut = !panelBounds.contains(lastWindow) && p.x in 0f..w && p.y in 0f..h
+                                                        // Out of the menu onto the pad: a firm tick (a light one going back).
+                                                        if (nowOut != out) haptic.performHapticFeedback(
+                                                            if (nowOut) HapticFeedbackType.LongPress else HapticFeedbackType.TextHandleMove,
+                                                        )
+                                                        out = nowOut
+                                                        dropping = Triple(label, lastWindow, out)
+                                                    }
                                                 }
-                                                total += change.positionChange()
-                                                if (!dragged && total.getDistance() > slop) {
-                                                    // Mostly down (or up): drag it out; mostly sideways: let the strip scroll.
-                                                    if (abs(total.y) > abs(total.x)) {
-                                                        dragged = true
-                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    } else break
-                                                }
-                                                if (dragged) {
-                                                    change.consume()
-                                                    val c = coords[0]
-                                                    if (c != null) lastWindow = c.positionInWindow() + change.position
-                                                    val p = lastWindow - padOrigin
-                                                    val nowOut = !panelBounds.contains(lastWindow) && p.x in 0f..w && p.y in 0f..h
-                                                    // Out of the menu onto the pad: a firm tick (a light one going back).
-                                                    if (nowOut != out) haptic.performHapticFeedback(
-                                                        if (nowOut) HapticFeedbackType.LongPress else HapticFeedbackType.TextHandleMove,
-                                                    )
-                                                    out = nowOut
-                                                    dropping = Triple(label, lastWindow, out)
-                                                }
+                                            } finally {
+                                                if (dragged || picked) dropping = null
                                             }
-                                            if (dragged) dropping = null
                                         }
                                     }
                                     .padding(horizontal = 12.dp, vertical = 6.dp),
