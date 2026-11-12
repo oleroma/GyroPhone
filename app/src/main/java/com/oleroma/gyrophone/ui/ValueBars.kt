@@ -105,7 +105,7 @@ fun ValueBarsOverlay(
                     // Chips at the same place sending the same share one line: "40 · Yaw Pitch 4.50 RWS".
                     val p = linePart(m, values[2 * j + 1], counts)
                     val same = lines.firstOrNull { it.pct == p.pct && it.kind == p.kind && it.value == p.value }
-                    if (same == null) lines.add(p) else if (p.name !in same.names) same.names.add(p.name)
+                    if (same == null) lines.add(p) else if (p.names[0] !in same.names) same.names.add(p.names[0])
                 }
                 val label = if (lines.isEmpty()) null else lines.joinToString("\n") { it.text() }
                 if (label != labels[k]) {
