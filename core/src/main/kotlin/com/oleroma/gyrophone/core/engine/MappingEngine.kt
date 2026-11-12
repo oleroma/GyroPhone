@@ -504,6 +504,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (!live.isNaN()) {
             val sh = shown.getOrPut(m) { FloatArray(2) }
             sh[0] = if (src is InputSource.Finger) fingerValue(src) else Float.NaN
+            val snapped = snapped(m, live)
+            if (snapped != live) {
+                live = snapped
+                // A Position's bar sits where the snapped value is.
+                val r = m.range
+                if (src is InputSource.Finger && r != null && r.to != r.from) sh[0] = ((abs(live) - r.from) / (r.to - r.from)).coerceIn(0f, 1f)
+            }
             sh[1] = live
             if (sv != null) {
                 val k = kept.getOrPut(m) { Kept(live) }
@@ -541,6 +548,18 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         shown[m]?.set(1, k.value)
         return k.value
+    }
+
+    /**
+     * [v] on chip [m]'s Snap ([Mapping.snap]): the nearest whole multiple of it, held to its range
+     * (a pad axis without one: 0..1); [v] as it is with no Snap.
+     */
+    private fun snapped(m: Mapping, v: Float): Float {
+        val step = m.snap?.takeIf { it > 0f } ?: return v
+        val r = m.range ?: if (m.target is OutputTarget.PadAxis) UNIT_RANGE else null
+        val mag = kotlin.math.round(abs(v) / step) * step
+        val held = if (r == null) mag else mag.coerceIn(min(r.from, r.to), max(r.from, r.to))
+        return if (v < 0f) -held else held
     }
 
     /** Kept value [k] of [m] ends now by its timer or a tap on its Move button. */

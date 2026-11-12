@@ -60,8 +60,9 @@ data class ValueMark(
  * Value sliders on the pad: on each [ValueMark], a sliders icon in its top-left corner when a chip on it
  * is a Toggle value chip; for each Position value chip (Held or Toggle), a bar across the button where its value is
  * (upright for X, flat for Y, a ring for distance, a needle for angle; the part from 0 lightly
- * filled), clipped by the button's edge; and in its top-right corner one line per chip, "62 · RT
- * 62 %": where the value is in its range (0..100) and what it sends. A Held chip shows
+ * filled, ticks at its Snap steps), clipped by the button's edge; and in a frame outside the
+ * button by its top-right corner ([framePlace]) one line per chip, "62 · RT 62 %": where the value is
+ * in its range (0..100) and what it sends (chips sending the same share a line, RWS named when the game is set). A Held chip shows
  * only while it is driven. [bars] false (Touch display switch off): only the icons. It reads the engine every frame while [active] (a finger is down), else
  * a few times a second, and redraws only when something changed.
  */
@@ -82,7 +83,7 @@ fun ValueBarsOverlay(
     LaunchedEffect(marks) {
         val readChips = ArrayList<Mapping>()
         val readValues = FloatArray(values.size)
-        val lines = ArrayList<String>()
+        val lines = ArrayList<LinePart>()
         var first = true
         while (true) {
             // The first read is at once: a new overlay shows the values from its first frame.
@@ -101,10 +102,12 @@ fun ValueBarsOverlay(
                 for (j in chips.indices) {
                     val m = chips[j]
                     if ((MappingProfiles.touchId(m.source) ?: "") != mk.id) continue
-                    val line = valueLine(m, values[2 * j + 1], counts)
-                    if (line !in lines) lines.add(line)
+                    // Chips at the same place sending the same share one line: "40 · Yaw Pitch 4.50 RWS".
+                    val p = linePart(m, values[2 * j + 1], counts)
+                    val same = lines.firstOrNull { it.pct == p.pct && it.kind == p.kind && it.value == p.value }
+                    if (same == null) lines.add(p) else if (p.name !in same.names) same.names.add(p.name)
                 }
-                val label = if (lines.isEmpty()) null else lines.joinToString("\n")
+                val label = if (lines.isEmpty()) null else lines.joinToString("\n") { it.text() }
                 if (label != labels[k]) {
                     labels[k] = label
                     laid[k] = label?.let { text.measure(it, style) }
@@ -140,15 +143,14 @@ fun ValueBarsOverlay(
                     if (src.id != mk.id) continue
                     val v = values[2 * j]
                     if (v.isNaN()) continue
-                    bar(mk, src.axis, v, color)
+                    bar(mk, src.axis, v, color, snapTicks(m, src.axis, mk))
                 }
             }
             val label = laid[k] ?: continue
             val pad = 6.dp.toPx()
             val bw = label.size.width + 2 * pad
             val bh = label.size.height + 2 * pad
-            val bx = mk.right - bw - pad
-            val by = mk.top + pad
+            val (bx, by) = framePlace(mk, bw, bh, size.width, size.height)
             drawRoundRect(Color(0xEB141418), Offset(bx, by), Size(bw, bh), CornerRadius(8.dp.toPx()))
             drawRoundRect(Color(0xFF666666), Offset(bx, by), Size(bw, bh), CornerRadius(8.dp.toPx()), style = Stroke(1.dp.toPx()))
             drawText(label, topLeft = Offset(bx + pad, by + pad))
@@ -166,26 +168,128 @@ private const val MAX_SHOWN = 32
 private const val IDLE_MS = 120L
 
 /**
- * One chip's corner line: where [out] is in its range (0..100) and what it sends ("62 · RT 62 %",
- * "40 · Sens 4.50"); [counts] = the workspace game's counts per 360 for RWS (0 = none).
+ * One chip's part of a corner line: where [out] is in its range (0..100), its kind, its own name
+ * ("Yaw", "RT") and what it sends; chips alike but for the name share a line ([text]).
  */
-private fun valueLine(m: Mapping, out: Float, counts: Float): String {
+private class LinePart(val pct: String, val kind: Int, name: String, val value: String) {
+    val names = arrayListOf(name)
+
+    /** "40 · Yaw Pitch 4.50 RWS", "40 · Yaw sens 16", "40 · Sens 16", "62 · RT 62 %". */
+    fun text(): String {
+        val n = names.filter { it.isNotEmpty() }.joinToString(" ")
+        val what = when (kind) {
+            KIND_RWS -> listOf(n, "$value RWS")
+            KIND_SENS -> listOf(if (n.isEmpty()) "Sens" else "$n sens", value)
+            KIND_TOUCH -> listOf("Touch sens", n, value)
+            else -> listOf(n, value)
+        }.filter { it.isNotEmpty() }.joinToString(" ")
+        return "$pct · $what"
+    }
+}
+
+private const val KIND_RWS = 0
+private const val KIND_SENS = 1
+private const val KIND_TOUCH = 2
+private const val KIND_PAD = 3
+
+/** Chip [m]'s [LinePart] at output [out]; [counts] = the workspace game's counts per 360 for RWS (0 = none). */
+private fun linePart(m: Mapping, out: Float, counts: Float): LinePart {
     val r = m.range
     val pct = if (r != null && r.to != r.from) (out - r.from) / (r.to - r.from) else out
-    val sends = when (m.target) {
-        is OutputTarget.GyroSens -> if (counts > 0f) "%.2f".format(GameSens.rws(out, counts)) else "%.1f".format(out)
-        is OutputTarget.TouchSens -> "%.2f".format(out)
-        else -> "%.0f %%".format(kotlin.math.abs(out) * 100)
+    val p = "%.0f".format(pct.coerceIn(0f, 1f) * 100)
+    return when (val t = m.target) {
+        is OutputTarget.GyroSens -> {
+            val name = if (t.axis == com.oleroma.gyrophone.core.model.MotionAxis.NONE) "" else t.axis.label
+            if (counts > 0f) LinePart(p, KIND_RWS, name, "%.2f".format(GameSens.rws(out, counts)))
+            else LinePart(p, KIND_SENS, name, "%.1f".format(out).removeSuffix(".0").removeSuffix(",0"))
+        }
+        is OutputTarget.TouchSens -> LinePart(p, KIND_TOUCH, t.axis?.name ?: "", "%.2f".format(out))
+        else -> LinePart(p, KIND_PAD, Describe.shortTarget(t), "%.0f %%".format(kotlin.math.abs(out) * 100))
     }
-    return "%.0f".format(pct.coerceIn(0f, 1f) * 100) + " · " + Describe.shortTarget(m.target) + " " + sends
 }
 
 /**
- * A Position chip's bar on [mk] at its value [v] (0..1) of [axis]: the part from 0 lightly filled,
- * a scale of ticks every 10 % (longer at 50 %; rings for distance, notches round the rim for
- * angle, longest at the top), and a line at the value.
+ * Where a value frame [bw] × [bh] goes by button [mk] on a [sw] × [sh] screen: outside the button by
+ * its top-right corner. A wide (or square) button has it above, from that corner rightwards (below
+ * near the top edge; along the button's right edge near the screen's right edge); a tall one beside
+ * it, at its top (to the left near the right edge). Always kept on screen.
  */
-private fun DrawScope.bar(mk: ValueMark, axis: FingerAxis, v: Float, c: Color) {
+private fun DrawScope.framePlace(mk: ValueMark, bw: Float, bh: Float, sw: Float, sh: Float): Pair<Float, Float> {
+    val gap = 4.dp.toPx()
+    // The touchpad fills the screen: its frame stays inside its top-right corner.
+    if (!mk.framed) return (mk.right - bw - gap).coerceAtLeast(0f) to (mk.top + gap)
+    val w = mk.right - mk.left
+    val h = mk.bottom - mk.top
+    var x: Float
+    var y: Float
+    if (w >= h) {
+        y = mk.top - gap - bh
+        if (y < 0f) y = mk.bottom + gap
+        x = mk.right
+        if (x + bw > sw) x = mk.right - bw
+    } else {
+        x = mk.right + gap
+        if (x + bw > sw) x = mk.left - gap - bw
+        y = mk.top
+    }
+    return x.coerceIn(0f, (sw - bw).coerceAtLeast(0f)) to y.coerceIn(0f, (sh - bh).coerceAtLeast(0f))
+}
+
+/**
+ * The ruler ticks of Position chip [m] on [mk] along [axis], as (place 0..1, long) pairs: with a
+ * Snap ([Mapping.snap]) one at each step its value lands on (every 2nd, 5th, 10th… when they would
+ * sit closer than [MIN_TICK_DP]; every 5th shown one long), else every 10 % (long at 50 %).
+ */
+private fun DrawScope.snapTicks(m: Mapping, axis: FingerAxis, mk: ValueMark): List<Pair<Float, Boolean>> {
+    val step = m.snap?.takeIf { it > 0f }
+    val r = m.range ?: if (m.target is OutputTarget.PadAxis) com.oleroma.gyrophone.core.model.AxisRange(0f, 1f) else null
+    if (step == null || r == null || r.to == r.from) return DEFAULT_TICKS
+    val w = mk.right - mk.left
+    val h = mk.bottom - mk.top
+    val length = when (axis) {
+        FingerAxis.X -> w
+        FingerAxis.Y -> h
+        FingerAxis.DISTANCE -> minOf(w, h) / 2
+        FingerAxis.ANGLE -> (minOf(w, h) * PI).toFloat()
+    }
+    val span = kotlin.math.abs(r.to - r.from)
+    val spacing = step / span * length
+    if (spacing <= 0f) return DEFAULT_TICKS
+    val min = MIN_TICK_DP.dp.toPx()
+    var n = 1
+    val thin = intArrayOf(1, 2, 5)
+    var k = 0
+    while (spacing * n < min && n < 1_000_000) {
+        k++
+        n = thin[k % 3] * pow10(k / 3)
+    }
+    val lo = minOf(r.from, r.to)
+    val hi = maxOf(r.from, r.to)
+    val first = kotlin.math.ceil(lo / (step * n)).toLong()
+    val last = kotlin.math.floor(hi / (step * n)).toLong()
+    if (last - first > MAX_TICKS) return DEFAULT_TICKS
+    return (first..last).mapNotNull { i ->
+        val p = (i * n * step - r.from) / (r.to - r.from)
+        // The ends are the button's edges: no tick there.
+        if (p <= 0.001f || p >= 0.999f) null else p to (i % 5 == 0L)
+    }
+}
+
+private fun pow10(e: Int): Int { var v = 1; repeat(e) { v *= 10 }; return v }
+
+/** Without a Snap: a tick every 10 %, long at 50 %. */
+private val DEFAULT_TICKS = (1..9).map { it / 10f to (it == 5) }
+
+/** Snap ticks closer than this are thinned; past [MAX_TICKS] the plain scale shows. */
+private const val MIN_TICK_DP = 6f
+private const val MAX_TICKS = 400L
+
+/**
+ * A Position chip's bar on [mk] at its value [v] (0..1) of [axis]: the part from 0 lightly filled,
+ * a scale of [ticks] ([snapTicks]; rings for distance, notches round the rim for angle, longest
+ * at the top), and a line at the value.
+ */
+private fun DrawScope.bar(mk: ValueMark, axis: FingerAxis, v: Float, c: Color, ticks: List<Pair<Float, Boolean>>) {
     val w = mk.right - mk.left
     val h = mk.bottom - mk.top
     val fill = c.copy(alpha = c.alpha * 0.18f)
@@ -195,23 +299,23 @@ private fun DrawScope.bar(mk: ValueMark, axis: FingerAxis, v: Float, c: Color) {
     val stroke = TICK_STROKE_DP.dp.toPx()
     val minor = MINOR_DP.dp.toPx()
     val major = MAJOR_DP.dp.toPx()
-    fun len(i: Int) = if (i == 5) major else minor
+    fun len(long: Boolean) = if (long) major else minor
     when (axis) {
         FingerAxis.X -> {
             val x = mk.left + v * w
             drawRect(fill, Offset(mk.left, mk.top), Size(x - mk.left, h))
-            for (i in 1..9) {
-                val tx = mk.left + i * w / 10f
-                drawLine(tick, Offset(tx, mk.bottom), Offset(tx, mk.bottom - len(i)), stroke, StrokeCap.Round)
+            for ((p, long) in ticks) {
+                val tx = mk.left + p * w
+                drawLine(tick, Offset(tx, mk.bottom), Offset(tx, mk.bottom - len(long)), stroke, StrokeCap.Round)
             }
             drawLine(c, Offset(x, mk.top), Offset(x, mk.bottom), line)
         }
         FingerAxis.Y -> {
             val y = mk.bottom - v * h
             drawRect(fill, Offset(mk.left, y), Size(w, mk.bottom - y))
-            for (i in 1..9) {
-                val ty = mk.bottom - i * h / 10f
-                drawLine(tick, Offset(mk.left, ty), Offset(mk.left + len(i), ty), stroke, StrokeCap.Round)
+            for ((p, long) in ticks) {
+                val ty = mk.bottom - p * h
+                drawLine(tick, Offset(mk.left, ty), Offset(mk.left + len(long), ty), stroke, StrokeCap.Round)
             }
             drawLine(c, Offset(mk.left, y), Offset(mk.right, y), line)
         }
@@ -220,7 +324,7 @@ private fun DrawScope.bar(mk: ValueMark, axis: FingerAxis, v: Float, c: Color) {
             val full = minOf(w, h) / 2
             val r = full * v
             drawCircle(fill, r, centre)
-            for (i in 1..9) drawCircle(tick.copy(alpha = if (i == 5) 0.5f else 0.22f), full * i / 10f, centre, style = Stroke(stroke))
+            for ((p, long) in ticks) drawCircle(tick.copy(alpha = if (long) 0.5f else 0.22f), full * p, centre, style = Stroke(stroke))
             drawCircle(c, r, centre, style = Stroke(line))
         }
         FingerAxis.ANGLE -> {
@@ -228,9 +332,10 @@ private fun DrawScope.bar(mk: ValueMark, axis: FingerAxis, v: Float, c: Color) {
             val r = minOf(w, h) / 2
             val sweep = v * 360f
             drawArc(fill, -90f, sweep, true, Offset(centre.x - r, centre.y - r), Size(2 * r, 2 * r))
-            for (i in 0..9) {
-                val ta = (i * 2 * PI / 10 - PI / 2).toFloat()
-                val l = len(if (i == 0) 5 else i)
+            // The top (0 and 100 %) always has the long notch.
+            for ((p, long) in ticks + (0f to true)) {
+                val ta = (p * 2 * PI - PI / 2).toFloat()
+                val l = len(long)
                 drawLine(
                     tick, Offset(centre.x + cos(ta) * r, centre.y + sin(ta) * r),
                     Offset(centre.x + cos(ta) * (r - l), centre.y + sin(ta) * (r - l)), stroke, StrokeCap.Round,

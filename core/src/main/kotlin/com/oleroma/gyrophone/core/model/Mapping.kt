@@ -562,11 +562,16 @@ data class Mapping(
      * null = the default ([SetValue.defaultPerDp]).
      */
     val perDp: Float? = null,
+    /**
+     * A value chip's Snap: the step its value goes by, in its output's unit (as [range]); null = smooth.
+     * The value lands on whole multiples of it, held to the range.
+     */
+    val snap: Float? = null,
 ) {
     // The engine looks mappings up in hash maps on every snapshot: the hash of all its parts is
     // worked out once, as it never changes. Equal mappings still have equal hashes.
     @Transient
-    private val hash: Int = java.util.Objects.hash(source, target, set, options, range, perDp)
+    private val hash: Int = java.util.Objects.hash(source, target, set, options, range, perDp, snap)
 
     /**
      * A value chip on a Position or Move input with How Toggle keeps its value once its input lets

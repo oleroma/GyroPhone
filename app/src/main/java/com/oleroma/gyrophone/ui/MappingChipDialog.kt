@@ -143,6 +143,11 @@ internal class ChipValue(
     val format: (Float) -> String,
     val shown: (Float) -> Float = { it },
     val stored: (Float) -> Float = { it },
+    /** Its Snap (stored unit; null = smooth), and the Snap slider's top, step and look (shown unit). */
+    val snap: Float? = null,
+    val snapMax: Float = 1f,
+    val snapStep: Float = 0.05f,
+    val snapFormat: (Float) -> String = { "%.2f".format(it) },
 )
 
 /**
@@ -162,7 +167,7 @@ internal fun MappingChipDialog(
     swipe: Boolean,
     analog: Boolean,
     options: MapOptions?,
-    onApply: (Trigger, MapOptions?, Int, AxisRange?, Float?) -> Unit,
+    onApply: (Trigger, MapOptions?, Int, AxisRange?, Float?, Float?) -> Unit,
     onRemove: () -> Unit,
     onDismiss: () -> Unit,
     onTargetSettings: (() -> Unit)? = null,
@@ -182,6 +187,7 @@ internal fun MappingChipDialog(
     position: Boolean = false,
 ) {
     var perDp by remember { mutableStateOf(value?.let { it.shown(it.perDp ?: it.defaultPerDp) } ?: 0f) }
+    var snap by remember { mutableStateOf(value?.snap?.let { value.shown(it) } ?: 0f) }
     val o0 = options ?: MapOptions()
     val r0 = range?.let { it.current ?: it.initial }
     var rFrom by remember { mutableStateOf(r0?.let { range.shown(it.from) } ?: 0f) }
@@ -265,6 +271,15 @@ internal fun MappingChipDialog(
                         )
                         hint("How much the value changes for each dp the finger slides (right or up raises it). A tap changes nothing.")
                     }
+                    Text("Snap: " + if (snap <= 0f) "off" else value.snapFormat(snap), style = MaterialTheme.typography.titleSmall)
+                    Slider(
+                        value = snap.coerceIn(0f, value.snapMax),
+                        onValueChange = { snap = (it / value.snapStep).roundToInt() * value.snapStep },
+                        valueRange = 0f..value.snapMax,
+                        typedRange = 0f..value.snapMax * 10f,
+                        typedTitle = "Snap",
+                    )
+                    hint("The value goes in steps of this size, and the ruler on the button marks each step. Off: smooth.")
                 }
                 if (wheres.size > 1) {
                     Text(whereTitle ?: "Where", style = MaterialTheme.typography.titleSmall)
@@ -385,7 +400,8 @@ internal fun MappingChipDialog(
                 )
                 val r = range?.let { AxisRange(it.stored(rFrom), it.stored(rTo)) }?.takeUnless { it == range.identity }
                 val pd = value?.takeIf { it.move }?.let { v -> v.stored(perDp).takeUnless { kotlin.math.abs(it - v.defaultPerDp) < 1e-6f } }
-                onApply(t, o.takeUnless { it.none }, w, r, pd)
+                val sn = value?.takeIf { snap > 0f }?.stored(snap)
+                onApply(t, o.takeUnless { it.none }, w, r, pd, sn)
             }) { Text("Done") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
