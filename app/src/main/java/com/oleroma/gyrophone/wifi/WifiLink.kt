@@ -25,6 +25,7 @@ import com.oleroma.gyrophone.core.net.HostStatus
 import com.oleroma.gyrophone.core.net.LinkPath
 import com.oleroma.gyrophone.core.net.Rumble
 import com.oleroma.gyrophone.core.net.HostStatusFlags
+import com.oleroma.gyrophone.core.net.HostStatusFlags2
 import com.oleroma.gyrophone.core.net.KeyLabels
 import com.oleroma.gyrophone.core.net.KeyPairing
 import com.oleroma.gyrophone.core.net.KeyStatus
