@@ -65,6 +65,22 @@ class ButtonEventsTest {
     }
 
     @Test
+    fun longPressFiresOneShotActionsWhileStillHeld() {
+        val long = InputSource.Surface(1, SurfaceInput.LONG_PRESS, "b")
+        for (options in listOf(null, MapOptions())) {
+            t = 0L
+            val e = engine(Mapping(long, OutputTarget.SetOrientation(), options = options))
+            var fired = 0
+            e.onSetOrientation = { fired++ }
+            e.buttonDown(1, "b", 10f, 10f); e.keys()
+            repeat(100) { t += 5 * MS; e.keys() } // still, past the long-press time
+            assertEquals("options $options", 1, fired)
+            e.buttonUp(1); repeat(10) { t += 5 * MS; e.keys() }
+            assertEquals("options $options", 1, fired)
+        }
+    }
+
+    @Test
     fun pressIsInstantAndReleaseFiresOnEveryLift() {
         val e = engine(press, release)
         e.buttonDown(1, "b", 10f, 10f)

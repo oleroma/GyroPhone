@@ -2175,6 +2175,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         return s
     }
 
+    /** [s]'s next poll may change an input: one waits to show, or a timer of its is due. */
+    private fun changes(s: Touchpad, now: Long) = s.queued || (eventsMapped && s.nextDeadline() <= now)
+
     private fun snapshotLocked(): HidState {
         val now = clock()
         resolveIfDue(now)
@@ -2183,12 +2186,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         accUp = false; accDown = false; accLeft = false; accRight = false
         stick.fill(0f); trigger.fill(0f); heldKeys.fill(false)
         // The touchpad's next input change shows first, so its mappings read it below; one that
-        // engages a wheel or gyro toggle fires it.
+        // engages a wheel or gyro toggle fires it. A timer (a long press, a waiting tap) changes
+        // inputs inside the poll too, so a due one counts as a change.
         var padButtons = 0
-        if (touchpad.queued) firingEvents(now) { padButtons = touchpad.poll(now) } else padButtons = touchpad.poll(now)
+        if (changes(touchpad, now)) firingEvents(now) { padButtons = touchpad.poll(now) } else padButtons = touchpad.poll(now)
         if (gestureButtons.isNotEmpty()) settleTouchpad()
         for (s in surfaceList) {
-            padButtons = padButtons or if (s.queued) {
+            padButtons = padButtons or if (changes(s, now)) {
                 var b = 0; firingEvents(now) { b = s.poll(now) }; b
             } else s.poll(now)
         }
